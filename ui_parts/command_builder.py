@@ -1,4 +1,4 @@
-﻿# LUNAR_SIMULATION/ui_parts/command_builder.py
+# LUNAR_SIMULATION/ui_parts/command_builder.py
 # -*- coding: utf-8 -*-
 """
 UI -> CLI bridge helpers for Lunar Mission Studio.
@@ -498,11 +498,11 @@ def build_mc_command(
     command.extend(["--sigma-area-m2",         str(mc_data.get("sigma_area_m2", 0.0))])
     command.extend(["--sigma-cd",              str(mc_data.get("sigma_cd",  0.0))])
     command.extend(["--sigma-cr",              str(mc_data.get("sigma_cr",  0.0))])
-    # GPU path does not support surrogate gravity — force off when active
+    # use_gpu is forwarded as-is. When ST-LRPS gravity is selected the backend
+    # policy resolver (core.mc_backend_policy) automatically routes to the
+    # TorchBatchPropagator GPU path when PyTorch CUDA is available, and falls
+    # back to CPU DOP853 when it is not.  No command-side override is needed.
     use_gpu = bool(mc_data.get("use_gpu", True))
-    if gravity_mode_override == "st_lrps":
-        use_gpu = False
-        _warn(log_warning, "Surrogate gravity mode selected: GPU batch propagation disabled (CPU-only path).")
     command.extend(["--use-gpu",               bool_to_onoff(use_gpu)])
     command.extend(["--gpu-device-id",         str(mc_data.get("gpu_device_id",  0))])
     command.extend(["--gpu-sh-degree",         str(mc_data.get("gpu_sh_degree", 10))])

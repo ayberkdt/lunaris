@@ -1,4 +1,4 @@
-﻿# LUNAR_SIMULATION/ui_parts/monte_carlo_page.py
+# LUNAR_SIMULATION/ui_parts/monte_carlo_page.py
 # -*- coding: utf-8 -*-
 """
 Monte Carlo Analysis Page (Page 7)
@@ -112,17 +112,28 @@ def _detect_cuda_available() -> bool:
     """
     Best-effort CUDA availability probe for the MC page defaults.
 
-    The page should open safely even on machines without CUDA.  We therefore
-    treat any import/probe failure as "GPU unavailable" and simply default the
-    backend toggle to CPU.
+    Returns True when *either* PyTorch CUDA (needed for ST-LRPS GPU path) or
+    Numba CUDA (needed for classic-SH GPU path) is available.  Either probe
+    failing is not fatal — we simply default the backend toggle to CPU.
     """
 
+    # PyTorch CUDA — sufficient for ST-LRPS TorchBatchPropagator
+    try:
+        import torch  # type: ignore
+        if torch.cuda.is_available():
+            return True
+    except Exception:
+        pass
+
+    # Numba CUDA — required for the classic-SH GPUBatchPropagator
     try:
         from numba import cuda  # type: ignore
-
-        return bool(cuda.is_available())
+        if cuda.is_available():
+            return True
     except Exception:
-        return False
+        pass
+
+    return False
 
 
 def _preferred_output_suffix(fmt: str) -> str:
@@ -591,8 +602,9 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         # GPU-only warning banner
         warn_lbl = _label(
-            "GPU path supports SH <= 24, Sun/Earth third-body, Earth J2, SRP, and relativity. "
-            "Surface-lighting, tides, and surrogate gravity automatically switch the run to the CPU full-fidelity backend.",
+            "Classic-SH GPU: uses Numba CUDA, supports SH ≤ 24, Sun/Earth, Earth J2, SRP, and relativity. "
+            "ST-LRPS GPU: uses PyTorch CUDA (TorchBatchPropagator) — gravity only (point-mass + neural residual). "
+            "Surface-lighting, tides, and non-gravity perturbations force CPU fallback on the ST-LRPS path.",
             muted=True,
         )
         warn_lbl.setWordWrap(True)
