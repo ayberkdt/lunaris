@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+
+# Large data files — acquire separately (see README)
+data/
+
+# HDF5 / NumPy binary results
+*.h5
+*.hdf5
+*.npz
+mc_results/
+mission_results/
+results/
+surrogate_gravity_model/runs/
+surrogate_gravity_model/analysis_out/
+
+# Scratch / local experiment files
+deneme.py
+LATEX/
+
+# Decorative / generated assets
+assets/
+
+# PyTorch model checkpoints
+*.pt
+*.pth
+*.onnx
+
+# IDE / OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Claude settings (local only)
+.claude/
+CLAUDE.md
+
+# Jupyter
+.ipynb_checkpoints/
