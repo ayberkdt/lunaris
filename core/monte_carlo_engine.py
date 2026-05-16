@@ -1,4 +1,4 @@
-﻿# LUNAR_SIMULATION/core/monte_carlo_engine.py
+# LUNAR_SIMULATION/core/monte_carlo_engine.py
 # -*- coding: utf-8 -*-
 """
 Monte Carlo Dispatch Engine
@@ -984,7 +984,7 @@ class MonteCarloEngine:
                 "mc_backend": _plan.final_backend.value,
                 "requested_use_gpu": bool(mc.use_gpu),
                 "final_use_gpu": _plan.use_gpu,
-                "gravity_backend": _plan.gravity_backend,
+                "plan_gravity_backend": _plan.gravity_backend,   # renamed: avoids collision with _st_lrps_meta["gravity_backend"]
                 "torch_cuda_available": _plan.torch_cuda_available,
                 "numba_cuda_available": _plan.numba_cuda_available,
                 "integrator": _plan.integrator,
