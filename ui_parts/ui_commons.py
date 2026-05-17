@@ -259,6 +259,79 @@ def bool_to_onoff(value: bool) -> str:
     return "on" if value else "off"
 
 
+def card_stylesheet() -> str:
+    """Standard card GroupBox QSS used across all pages."""
+    return f"""
+        QGroupBox {{
+            border: 1px solid {THEME['border']};
+            border-radius: 10px;
+            margin-top: 16px;
+            padding-top: 8px;
+            background: {THEME['bg_card']};
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 14px;
+            padding: 0 8px;
+            color: {THEME['fg_soft']};
+            font-weight: 700;
+            font-size: 10pt;
+        }}
+    """
+
+
+def input_stylesheet() -> str:
+    """Standard QLineEdit / QComboBox input field QSS."""
+    return f"""
+        QLineEdit, QComboBox {{
+            background: {THEME['bg_entry']};
+            color: {THEME['fg_main']};
+            border: 1px solid {THEME['border']};
+            border-radius: 6px;
+            padding: 5px 9px;
+            selection-background-color: {THEME['accent']};
+            min-height: 28px;
+        }}
+        QLineEdit:focus, QComboBox:focus {{
+            border: 1px solid {THEME['accent']};
+        }}
+        QLineEdit:hover, QComboBox:hover {{
+            border: 1px solid {THEME['accent_hov']};
+        }}
+        QLineEdit:disabled, QComboBox:disabled {{
+            color: {THEME['fg_muted']};
+            background: {THEME['bg_card']};
+        }}
+        QComboBox::drop-down {{
+            border: none;
+            padding-right: 6px;
+        }}
+        QComboBox QAbstractItemView {{
+            background: {THEME['bg_entry']};
+            color: {THEME['fg_main']};
+            border: 1px solid {THEME['border']};
+            selection-background-color: {THEME['accent']};
+        }}
+    """
+
+
+def section_label(text: str, parent=None) -> "QtWidgets.QLabel":
+    """A styled section header label."""
+    lbl = QtWidgets.QLabel(text, parent)
+    lbl.setStyleSheet(
+        f"color: {THEME['fg_soft']}; font-size: 10pt; font-weight: 700; "
+        f"border-bottom: 1px solid {THEME['border_soft']}; padding-bottom: 4px;"
+    )
+    return lbl
+
+
+def path_validity_badge(parent=None) -> "StatusBadge":
+    """A StatusBadge pre-configured for path validation state."""
+    badge = StatusBadge("NOT SET", kind="error", parent=parent)
+    badge.setFixedWidth(90)
+    return badge
+
 
 # =============================================================================
 # 5.                        CUSTOM UI PRIMITIVES

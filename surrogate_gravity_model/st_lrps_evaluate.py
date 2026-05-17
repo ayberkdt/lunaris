@@ -1501,6 +1501,7 @@ def evaluate(
     if ang_deg_plot:
         ang_plot = np.concatenate(ang_deg_plot, axis=0).reshape(-1)
         save_hist_angular_deg(ang_plot, plots_dir / "hist_angular_err_deg.png", "Angular error (deg) histogram")
+        save_hist_angular_deg(ang_plot, plots_dir / "angular_error_hist.png", "Angular error (deg) histogram")
 
     # masked angular error histogram (excludes near-zero residuals below direction floor)
     if masked_ang_deg.size > 0:
@@ -1534,6 +1535,44 @@ def evaluate(
                 plt.close(_fig)
         except Exception as _ood_plot_err:
             print(f"[warn] OOD bar chart failed: {_ood_plot_err}")
+
+    # cossim_by_altitude.png
+    try:
+        _alt_flat_cs = alt_km_all.reshape(-1)
+        _cossim_flat_plot = np.clip(
+            np.sum(a_pred_vec_np * a_true_vec_np, axis=1) / np.maximum(
+                np.linalg.norm(a_pred_vec_np, axis=1) * np.linalg.norm(a_true_vec_np, axis=1), 1e-18
+            ), -1.0, 1.0
+        )
+        _cs_bin_km = float(alt_bin_km)
+        _cs_lo = math.floor(float(np.nanmin(_alt_flat_cs)) / _cs_bin_km) * _cs_bin_km
+        _cs_hi = math.ceil(float(np.nanmax(_alt_flat_cs)) / _cs_bin_km) * _cs_bin_km
+        _cs_edges = np.arange(_cs_lo, _cs_hi + _cs_bin_km, _cs_bin_km)
+        _cs_centers, _cs_means, _cs_p10s = [], [], []
+        for _i_e in range(len(_cs_edges) - 1):
+            _ca0, _ca1 = _cs_edges[_i_e], _cs_edges[_i_e + 1]
+            _cmask = (_alt_flat_cs >= _ca0) & (_alt_flat_cs < _ca1)
+            if not np.any(_cmask):
+                continue
+            _cs_centers.append(0.5 * (_ca0 + _ca1))
+            _cs_means.append(float(np.mean(_cossim_flat_plot[_cmask])))
+            _cs_p10s.append(float(np.percentile(_cossim_flat_plot[_cmask], 10)))
+        if _cs_centers:
+            apply_professional_style()
+            _cs_fig, _cs_ax = plt.subplots(figsize=(9, 5))
+            _cs_ax.plot(_cs_centers, _cs_means, color="#4C72B0", linewidth=2.0, label="Mean cos_sim")
+            _cs_ax.fill_between(_cs_centers, _cs_p10s, _cs_means, alpha=0.25, color="#4C72B0", label="P10-mean band")
+            _cs_ax.axhline(1.0, color="#95A5A6", linestyle="--", linewidth=0.8)
+            _cs_ax.set_xlabel("Altitude [km]", labelpad=8)
+            _cs_ax.set_ylabel("Cosine Similarity", labelpad=8)
+            _cs_ax.set_title("Mean Cosine Similarity (a_pred vs a_true) by Altitude", pad=12)
+            _cs_ax.set_ylim(bottom=min(float(np.min(_cs_p10s)) - 0.02, 0.95))
+            _cs_ax.legend(frameon=True, fancybox=True, shadow=True)
+            _cs_fig.tight_layout()
+            _cs_fig.savefig(plots_dir / "cossim_by_altitude.png", dpi=300, bbox_inches="tight")
+            plt.close(_cs_fig)
+    except Exception as _csp_err:
+        print(f"[warn] cossim_by_altitude.png failed: {_csp_err}")
 
     # --- Benchmark: throughput + latency ---
     bench_n = min(int(total), 200_000)
@@ -1631,6 +1670,57 @@ def evaluate(
     write_bins_csv(spatial_a, out_dir / "spatial_rmse_accelmag.csv")
     write_mape_csv(spatial_u_mape, out_dir / "spatial_mape_U.csv")
     write_mape_csv(spatial_a_mape, out_dir / "spatial_mape_accel.csv")
+
+    # --- angular_error_by_altitude.csv ---
+    try:
+        _ang_alt_rows = ["alt_km_lo,alt_km_hi,n,mean_deg,median_deg,p90_deg,p95_deg,mean_cossim"]
+        _ang_bin_km = float(alt_bin_km)
+        _alt_flat_ang = alt_km_all.reshape(-1)
+        _ang_flat = ang_deg_all.reshape(-1)
+        _a_true_norm_flat = a_true_norms.reshape(-1)
+        _cossim_flat = np.clip(
+            np.sum(a_pred_vec_np * a_true_vec_np, axis=1) / np.maximum(
+                np.linalg.norm(a_pred_vec_np, axis=1) * np.linalg.norm(a_true_vec_np, axis=1), 1e-18
+            ), -1.0, 1.0
+        )
+        _ang_lo = math.floor(float(np.nanmin(_alt_flat_ang)) / _ang_bin_km) * _ang_bin_km
+        _ang_hi = math.ceil(float(np.nanmax(_alt_flat_ang)) / _ang_bin_km) * _ang_bin_km
+        _ang_edges = np.arange(_ang_lo, _ang_hi + _ang_bin_km, _ang_bin_km)
+        for _i_e in range(len(_ang_edges) - 1):
+            _a0, _a1 = _ang_edges[_i_e], _ang_edges[_i_e + 1]
+            _amask = (_alt_flat_ang >= _a0) & (_alt_flat_ang < _a1)
+            _n_bin = int(np.sum(_amask))
+            if _n_bin == 0:
+                continue
+            _seg = _ang_flat[_amask]
+            _cs = _cossim_flat[_amask]
+            _ang_alt_rows.append(
+                f"{_a0},{_a1},{_n_bin},"
+                f"{float(np.mean(_seg))},{float(np.median(_seg))},"
+                f"{float(np.percentile(_seg, 90))},{float(np.percentile(_seg, 95))},"
+                f"{float(np.mean(_cs))}"
+            )
+        (out_dir / "angular_error_by_altitude.csv").write_text("\n".join(_ang_alt_rows), encoding="utf-8")
+    except Exception as _ang_csv_err:
+        print(f"[warn] angular_error_by_altitude.csv failed: {_ang_csv_err}")
+
+    # --- angular_error_by_accel_norm.csv ---
+    try:
+        _norm_csv_rows = ["bin_label,norm_lo,norm_hi,N,mean_deg,median_deg,p90_deg,p99_deg"]
+        for _nb in norm_binned_ang:
+            if _nb.get("N", 0) == 0:
+                _norm_csv_rows.append(f"{_nb['bin']},,,0,,,,")
+                continue
+            _nlo = _nb.get("norm_range_m_s2", [None, None])[0]
+            _nhi = _nb.get("norm_range_m_s2", [None, None])[1]
+            _norm_csv_rows.append(
+                f"{_nb['bin']},{_nlo},{_nhi},{_nb['N']},"
+                f"{_nb.get('mean_deg','')},{_nb.get('median_deg','')},"
+                f"{_nb.get('p90_deg','')},{_nb.get('p99_deg','')}"
+            )
+        (out_dir / "angular_error_by_accel_norm.csv").write_text("\n".join(_norm_csv_rows), encoding="utf-8")
+    except Exception as _nc_err:
+        print(f"[warn] angular_error_by_accel_norm.csv failed: {_nc_err}")
 
     # --- metrics_summary.csv ---
     _ms_rows = ["metric,mae,rmse,rel_mean_pct,rel_p50_pct,rel_p90_pct,nrmse_pct,linf"]

@@ -122,7 +122,9 @@ def build_preflight_snapshot(
         "ldem_ppd": int(data_files.ldem_ppd),
     }
 
-    if snapshot["orbit_mode"] == "hp_ha":
+    if snapshot["orbit_mode"] == "circular":
+        snapshot["alt_km"] = float(orbit.get("alt_km", 100.0))
+    elif snapshot["orbit_mode"] == "hp_ha":
         snapshot["hp_km"] = float(orbit.get("hp_km", 0.0))
         snapshot["ha_km"] = float(orbit.get("ha_km", orbit.get("hp_km", 0.0)))
     else:
@@ -172,7 +174,9 @@ def build_command(
     command: list[str] = [python_executable, str(main_script_path)]
 
     orbit_mode = orbit.get("mode", "hp_ha")
-    if orbit_mode == "hp_ha":
+    if orbit_mode == "circular":
+        command.extend(["--alt-km", str(orbit.get("alt_km", 100.0))])
+    elif orbit_mode == "hp_ha":
         command.extend(["--hp-km", str(orbit["hp_km"]), "--ha-km", str(orbit["ha_km"])])
     else:
         command.extend(["--a-km", str(orbit["a_km"]), "--e", str(orbit["e"])])
@@ -197,8 +201,12 @@ def build_command(
         else:
             command.extend(["--days", duration_value])
 
+    output_mode = str(integrator.get("output_mode", "dt") or "dt")
     dt_out = str(integrator.get("dt_out", "")).strip()
-    if dt_out:
+    samples_per_period = str(integrator.get("samples_per_period", "")).strip()
+    if output_mode == "spp" and samples_per_period:
+        command.extend(["--samples-per-period", samples_per_period])
+    elif dt_out:
         command.extend(["--output-dt-s", dt_out])
 
     gravity_section = forces.get("gravity", {}) or {}
@@ -352,7 +360,9 @@ def build_mc_command(
 
     # -- Orbit ----------------------------------------------------------------
     orbit_mode = orbit.get("mode", "hp_ha")
-    if orbit_mode == "hp_ha":
+    if orbit_mode == "circular":
+        command.extend(["--alt-km", str(orbit.get("alt_km", 100.0))])
+    elif orbit_mode == "hp_ha":
         command.extend(["--hp-km", str(orbit.get("hp_km", 50.0))])
         command.extend(["--ha-km", str(orbit.get("ha_km", orbit.get("hp_km", 50.0)))])
     else:

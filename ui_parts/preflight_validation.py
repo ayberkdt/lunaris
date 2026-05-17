@@ -159,7 +159,12 @@ class PreFlightWorker(QtCore.QThread):
         """
 
         try:
-            if self.command_data.get("orbit_mode") == "hp_ha":
+            orbit_mode = self.command_data.get("orbit_mode", "hp_ha")
+            if orbit_mode == "circular":
+                alt_km = float(self.command_data.get("alt_km", 0.0))
+                if alt_km < 0.0:
+                    return False
+            elif orbit_mode == "hp_ha":
                 hp_km = float(self.command_data.get("hp_km", 0.0))
                 ha_km = float(self.command_data.get("ha_km", hp_km))
                 if hp_km < 0.0 or ha_km < 0.0:

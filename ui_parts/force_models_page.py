@@ -1405,19 +1405,25 @@ class ForceModelsPage(QtWidgets.QWidget):
 
     def _sync_force_dependencies(self):
         """
-        Enforce dependencies:
-        - SRP/Albedo require Sun
-        - Earth J2 requires Earth point mass
+        Show/hide dependency warnings (non-blocking) and enforce hard deps.
+        - SRP/Albedo/Thermal: warn when Sun is not enabled
+        - Earth J2: warn when Earth third-body is not enabled
         """
-        # SRP/Albedo require Sun
-        if hasattr(self, "sw_sun") and hasattr(self, "sw_srp") and hasattr(self, "sw_albedo"):
-            if (self.sw_srp.isChecked() or self.sw_albedo.isChecked()) and (not self.sw_sun.isChecked()):
-                self.sw_sun.setChecked(True)
+        sun_on = hasattr(self, "sw_sun") and self.sw_sun.isChecked()
+        srp_on = hasattr(self, "sw_srp") and self.sw_srp.isChecked()
+        albedo_on = hasattr(self, "sw_albedo") and self.sw_albedo.isChecked()
+        thermal_on = hasattr(self, "sw_thermal") and self.sw_thermal.isChecked()
+        earth_on = hasattr(self, "sw_earth") and self.sw_earth.isChecked()
+        earth_j2_on = hasattr(self, "sw_earth_j2") and self.sw_earth_j2.isChecked()
 
-        # Earth J2 requires Earth
-        if hasattr(self, "sw_earth") and hasattr(self, "sw_earth_j2"):
-            if self.sw_earth_j2.isChecked() and (not self.sw_earth.isChecked()):
-                self.sw_earth.setChecked(True)
+        # Warning: SRP/Albedo/Thermal without Sun
+        if hasattr(self, "lbl_warn_srp_sun"):
+            needs_sun = srp_on or albedo_on or thermal_on
+            self.lbl_warn_srp_sun.setVisible(needs_sun and not sun_on)
+
+        # Warning: Earth J2 without Earth
+        if hasattr(self, "lbl_warn_earth_j2"):
+            self.lbl_warn_earth_j2.setVisible(earth_j2_on and not earth_on)
 
         # Disable settings buttons when toggles are off
         if hasattr(self, "btn_gravity_settings") and hasattr(self, "sw_gravity"):
@@ -1569,12 +1575,15 @@ class ForceModelsPage(QtWidgets.QWidget):
         earth_j2_row.addWidget(self.ind_earth_j2_cost)
         layout.addLayout(earth_j2_row)
 
-        # Note about J2 requiring Earth point mass
-        note = QtWidgets.QLabel("Note: Earth J2 requires Earth point mass to be enabled.")
-        note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt; font-style: italic;")
-        note.setWordWrap(True)
-        note.setMinimumHeight(22)
-        layout.addWidget(note)
+        # Warning label: Earth J2 requires Earth third-body
+        self.lbl_warn_earth_j2 = QtWidgets.QLabel("Warning: Earth J2 requires Earth third-body to be enabled.")
+        self.lbl_warn_earth_j2.setStyleSheet(
+            f"color: {THEME['warning']}; font-size: 9pt; font-style: italic;"
+        )
+        self.lbl_warn_earth_j2.setWordWrap(True)
+        self.lbl_warn_earth_j2.setMinimumHeight(22)
+        self.lbl_warn_earth_j2.setVisible(False)
+        layout.addWidget(self.lbl_warn_earth_j2)
 
         # Wiring dependencies
         self.sw_sun.toggled.connect(lambda _v: self._sync_force_dependencies())
@@ -1635,10 +1644,22 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.ind_thermal_cost = CostIndicator("medium")
         layout.addWidget(self.ind_thermal_cost, 2, 2)
 
+        # Warning label: SRP/Albedo/Thermal require Sun position
+        self.lbl_warn_srp_sun = QtWidgets.QLabel(
+            "Warning: SRP/Albedo/Thermal require Sun position (enable Sun perturbation)."
+        )
+        self.lbl_warn_srp_sun.setStyleSheet(
+            f"color: {THEME['warning']}; font-size: 9pt; font-style: italic;"
+        )
+        self.lbl_warn_srp_sun.setWordWrap(True)
+        self.lbl_warn_srp_sun.setVisible(False)
+        layout.addWidget(self.lbl_warn_srp_sun, 3, 0, 1, 4)
+
         # Connect SRP/Albedo to require Sun perturbation
         self.sw_srp.toggled.connect(self._sync_srp_requirement_overhauled)
         self.sw_albedo.toggled.connect(self._sync_srp_requirement_overhauled)
         self.sw_albedo.toggled.connect(self._sync_albedo_settings_button)
+        self.sw_thermal.toggled.connect(self._sync_srp_requirement_overhauled)
 
         return gb
 
@@ -1684,8 +1705,13 @@ class ForceModelsPage(QtWidgets.QWidget):
         k3_row.addWidget(self.ind_tides_k3_cost)
         layout.addLayout(k3_row)
 
+        # K3 implies K2 in the backend
+        self.sw_tides_k3.toggled.connect(
+            lambda on: self.sw_tides_k2.setChecked(True) if on else None
+        )
+
         # Info note
-        note = QtWidgets.QLabel("Note: Love numbers represent the Moon's elastic response to tidal forces.")
+        note = QtWidgets.QLabel("Note: Love numbers represent the Moon's elastic response to tidal forces. K3 implies K2.")
         note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt; font-style: italic;")
         note.setWordWrap(True)
         note.setMinimumHeight(36)

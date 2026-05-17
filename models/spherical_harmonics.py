@@ -1313,6 +1313,46 @@ class GravityModel:
     # Default workspace for single-threaded usage
     workspace: Workspace
 
+    @property
+    def degree_max(self) -> int:
+        return self.max_degree
+
+    @property
+    def R_ref_m(self) -> float:
+        return self.r_ref
+        
+    @property
+    def GM_m3s2(self) -> float:
+        return self.mu
+        
+    @property
+    def Cnm(self) -> np.ndarray:
+        return self.c_coeffs
+        
+    @property
+    def Snm(self) -> np.ndarray:
+        return self.s_coeffs
+        
+    @property
+    def diag(self) -> np.ndarray:
+        return self.diag_coeffs
+        
+    @property
+    def subdiag(self) -> np.ndarray:
+        return self.subdiag_coeffs
+        
+    @property
+    def A(self) -> np.ndarray:
+        return self.a_coeffs
+        
+    @property
+    def B(self) -> np.ndarray:
+        return self.b_coeffs
+        
+    @property
+    def scale_m(self) -> np.ndarray:
+        return self.scale_m_table
+
     # --------------------------- Internal Helpers ---------------------------
 
     @staticmethod

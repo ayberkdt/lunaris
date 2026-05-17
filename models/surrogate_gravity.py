@@ -25,7 +25,7 @@ and older ST-LRPS runs:
 
 1. Residual potential models
    - network predicts ``ΔU``
-   - total acceleration = point-mass baseline + neural correction
+   - total acceleration = SH(degree_min) baseline + neural correction
    - typically paired with isometric scaling (``scale`` fields)
 
 2. Absolute potential models
@@ -41,6 +41,7 @@ the wrong physics path.
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,7 +50,15 @@ from typing import Any, Dict, Iterable, Optional, Sequence
 import numpy as np
 
 from common.constants import MU_MOON, R_MOON
-from surrogate_gravity_model.dataset_parameters import looks_like_lunar_run_config
+from models.spherical_harmonics import GravityModel
+from models.torch_spherical_harmonics import TorchSHGravityEvaluator
+from surrogate_gravity_model.dataset_parameters import (
+    DEFAULT_DATASET_CONFIG,
+    looks_like_lunar_run_config,
+    resolve_lunar_gravity_path,
+)
+
+logger = logging.getLogger(__name__)
 
 try:
     import torch
@@ -104,6 +113,12 @@ def _find_checkpoint_for_run(run_dir: Path) -> Path:
     )
 
 
+def find_checkpoint_for_st_lrps_run(run_dir: Path | str) -> Path:
+    """Public wrapper used by validation tools to report the selected weights."""
+
+    return _find_checkpoint_for_run(Path(run_dir).expanduser().resolve())
+
+
 def _extract_degree_metadata(config: Dict[str, Any]) -> tuple:
     """
     Resolve ``degree_min`` and ``degree_max`` from a run ``config.json``.
@@ -136,6 +151,56 @@ def _extract_degree_metadata(config: Dict[str, Any]) -> tuple:
         )
 
     return int(deg_min if deg_min is not None else 0), int(deg_max)
+
+
+def _config_path_value(config: Dict[str, Any], *keys: str) -> Optional[str]:
+    """Return the first non-empty path-like value from config or dataset_meta."""
+
+    mappings: list[Dict[str, Any]] = [config]
+    dataset_meta = config.get("dataset_meta")
+    if isinstance(dataset_meta, dict):
+        mappings.append(dataset_meta)
+
+    for mapping in mappings:
+        for key in keys:
+            value = mapping.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+        cloud_json = mapping.get("cloud_config_json")
+        if isinstance(cloud_json, str) and cloud_json.strip():
+            try:
+                nested = json.loads(cloud_json)
+            except Exception:
+                nested = {}
+            if isinstance(nested, dict):
+                for key in keys:
+                    value = nested.get(key)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+
+    return None
+
+
+def _resolve_baseline_gravity_path(config: Dict[str, Any]) -> Path:
+    """
+    Resolve the SH coefficient file used for the ST-LRPS baseline.
+
+    Older run configs may not carry the path explicitly.  In that case we use
+    the surrogate pipeline SSOT default, which is the repository-local lunar
+    JGGRX file used by the generator defaults.
+    """
+
+    path_value = _config_path_value(
+        config,
+        "gravity_model_path",
+        "gfc_path",
+        "gravity_gfc_path",
+        "gravity_file_path",
+    )
+    if path_value:
+        return resolve_lunar_gravity_path(path_value)
+    return resolve_lunar_gravity_path(getattr(DEFAULT_DATASET_CONFIG, "gravity_gfc_path"))
 
 
 def _looks_like_lunar_run(path: Path) -> bool:
@@ -506,6 +571,8 @@ class SurrogateGravityModel:
         mu_m3s2: float,
         r_ref_m: float,
         config: Dict[str, Any],
+        baseline_gravity_model: Optional[Any] = None,
+        baseline_gravity_path: Optional[Path] = None,
     ) -> None:
         self.model_dir = Path(model_dir).resolve()
         self.model = model
@@ -518,6 +585,10 @@ class SurrogateGravityModel:
         self.R_ref_m = float(r_ref_m)
         self.r_ref_m = float(r_ref_m)
         self.config = dict(config)
+        self.baseline_gravity_model = baseline_gravity_model
+        self.baseline_gravity_path = str(baseline_gravity_path) if baseline_gravity_path is not None else None
+        self._baseline_torch_evaluator: Optional[Any] = None
+        self._baseline_torch_signature: Optional[tuple[str, str, int]] = None
 
         # Degree metadata — required by core.propagator._get_sh_degree() and
         # MC result provenance.  Raised at construction time so the error fires
@@ -526,6 +597,7 @@ class SurrogateGravityModel:
         self.degree_min: int = _deg_min
         self.degree_max: int = _deg_max
         self.base_degree: int = _deg_min        # SH baseline the surrogate sits on
+        self.baseline_degree: int = _deg_min if baseline_gravity_model is not None else 0
         self.target_degree: int = _deg_max      # high-fidelity SH equivalent
         self.effective_degree_max: int = _deg_max
 
@@ -628,6 +700,22 @@ class SurrogateGravityModel:
         model.load_state_dict(_extract_state_dict(checkpoint_obj), strict=True)
         model.eval()
 
+        baseline_model = None
+        baseline_path = None
+        deg_min, _deg_max = _extract_degree_metadata(config)
+        if training_mode == "residual_potential" and int(deg_min) >= 2:
+            baseline_path = _resolve_baseline_gravity_path(config)
+            baseline_model = GravityModel.from_file(
+                str(baseline_path),
+                requested_degree=int(deg_min),
+            )
+            logger.info(
+                "ST-LRPS residual run uses SH%d baseline from %s; "
+                "total acceleration is SH(degree_min) + neural residual.",
+                int(deg_min),
+                baseline_path,
+            )
+
         return cls(
             model_dir=run_dir,
             model=model,
@@ -638,6 +726,8 @@ class SurrogateGravityModel:
             mu_m3s2=float(mu_guess),
             r_ref_m=float(r_ref_guess),
             config=config,
+            baseline_gravity_model=baseline_model,
+            baseline_gravity_path=baseline_path,
         )
 
     @staticmethod
@@ -712,12 +802,46 @@ class SurrogateGravityModel:
         return u_scaled * self._u_scale + self._u_mean
 
     def _base_potential(self, x_phys: "torch.Tensor") -> "torch.Tensor":
+        # Potential is rarely consumed by the propagator.  We keep the monopole
+        # potential as a conservative scalar baseline while acceleration below
+        # uses the physically required SH(degree_min) baseline.
         r = torch.linalg.norm(x_phys, dim=1, keepdim=True).clamp_min(1.0)
         return self.a_sign * self._mu_tensor / r
 
-    def _base_acceleration(self, x_phys: "torch.Tensor") -> "torch.Tensor":
+    def _point_mass_acceleration(self, x_phys: "torch.Tensor") -> "torch.Tensor":
         r = torch.linalg.norm(x_phys, dim=1, keepdim=True).clamp_min(1.0)
-        return (-self._mu_tensor * x_phys) / (r * r * r)
+        return (-self._mu_tensor.to(device=x_phys.device, dtype=x_phys.dtype) * x_phys) / (r * r * r)
+
+    def _base_acceleration(self, x_phys: "torch.Tensor") -> "torch.Tensor":
+        """Return the CPU-safe baseline acceleration for residual models."""
+
+        if self.baseline_gravity_model is None:
+            return self._point_mass_acceleration(x_phys)
+
+        pos_np = x_phys.detach().cpu().numpy().astype(np.float64, copy=False)
+        out = np.empty((pos_np.shape[0], 3), dtype=np.float64)
+        degree = int(self.baseline_degree)
+        for idx, row in enumerate(pos_np):
+            out[idx, :] = self.baseline_gravity_model.accel_fixed(row, degree=degree)
+        return torch.as_tensor(out, device=x_phys.device, dtype=x_phys.dtype)
+
+    def _base_acceleration_torch(self, x_phys: "torch.Tensor") -> "torch.Tensor":
+        """Return batched SH(degree_min) baseline acceleration on the tensor device."""
+
+        if self.baseline_gravity_model is None:
+            return self._point_mass_acceleration(x_phys)
+
+        degree = int(self.baseline_degree)
+        signature = (str(x_phys.device), str(x_phys.dtype), degree)
+        if self._baseline_torch_signature != signature or self._baseline_torch_evaluator is None:
+            self._baseline_torch_evaluator = TorchSHGravityEvaluator(
+                self.baseline_gravity_model,
+                degree=degree,
+                device=x_phys.device,
+                dtype=x_phys.dtype,
+            )
+            self._baseline_torch_signature = signature
+        return self._baseline_torch_evaluator.acceleration(x_phys)
 
     def predict_potential_and_acceleration_fixed(
         self,
@@ -806,6 +930,8 @@ class SurrogateGravityModel:
         self._u_mean = self._u_mean.to(device=device)
         self._u_scale = self._u_scale.to(device=device)
         self._mu_tensor = self._mu_tensor.to(device=device)
+        self._baseline_torch_evaluator = None
+        self._baseline_torch_signature = None
         # Update the stored device so _scale_x and _base_acceleration stay
         # consistent with future inputs.
         object.__setattr__(self, "device", device)  # bypass any frozen guard
@@ -835,13 +961,14 @@ class SurrogateGravityModel:
         - Uses ``torch.autograd.grad`` with ``create_graph=False`` for
           inference-only operation (no double-diff overhead).
         - Requires ``torch.enable_grad()`` because autograd is called.
-        - Does **not** include the point-mass baseline; use
+        - Does **not** include the SH(degree_min) baseline; use
           ``predict_total_accel_torch`` for the full acceleration.
         """
 
         if torch is None:  # pragma: no cover
             raise RuntimeError("PyTorch is not available.")
 
+        out_dtype = x_m.dtype if x_m.is_floating_point() else torch.float32
         x = x_m.to(device=self.device, dtype=torch.float32)
 
         with torch.enable_grad():
@@ -855,18 +982,18 @@ class SurrogateGravityModel:
             )
 
         grad_u_phys = grad_u_scaled * (self._u_scale / self._x_scale)
-        return (self.a_sign * grad_u_phys).detach()
+        return (self.a_sign * grad_u_phys).detach().to(dtype=out_dtype)
 
     def predict_total_accel_torch(
         self,
         x_m: "torch.Tensor",
     ) -> "torch.Tensor":
         """
-        Return the total acceleration (point-mass + neural residual) in m/s².
+        Return the total acceleration (SH baseline + neural residual) in m/s².
 
         This is the GPU-tensor equivalent of ``acceleration_fixed_batch``.
         The result matches the CPU path: for ``residual_potential`` mode the
-        point-mass baseline is added to the neural correction.
+        SH(degree_min) baseline is added to the neural correction.
 
         Parameters
         ----------
@@ -882,13 +1009,14 @@ class SurrogateGravityModel:
         if torch is None:  # pragma: no cover
             raise RuntimeError("PyTorch is not available.")
 
-        x = x_m.to(device=self.device, dtype=torch.float32)
-        delta_a = self.predict_residual_accel_torch(x)
+        out_dtype = x_m.dtype if x_m.is_floating_point() else torch.float32
+        x = x_m.to(device=self.device, dtype=out_dtype)
+        delta_a = self.predict_residual_accel_torch(x_m)
 
         if self.training_mode == "residual_potential":
-            a_base = self._base_acceleration(x)
-            return (delta_a + a_base).detach()
-        return delta_a.detach()
+            a_base = self._base_acceleration_torch(x)
+            return (delta_a + a_base).detach().to(dtype=out_dtype)
+        return delta_a.detach().to(dtype=out_dtype)
 
 
 __all__ = [
@@ -896,5 +1024,6 @@ __all__ = [
     "SurrogateGravityMetadata",
     "SurrogateGravityModel",
     "discover_st_lrps_model_dirs",
+    "find_checkpoint_for_st_lrps_run",
     "find_latest_st_lrps_model_dir",
 ]

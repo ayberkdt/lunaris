@@ -69,7 +69,7 @@ except ImportError as e:
 
 
 try:
-    from .ui_commons import THEME, NumericDragLineEdit, get_icon, R_MOON_KM, MU_MOON_KM3_S2
+    from .ui_commons import THEME, NumericDragLineEdit, get_icon, R_MOON_KM, MU_MOON_KM3_S2, StatusBadge
     R_MOON = R_MOON_KM  # local alias used throughout this module
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
@@ -395,11 +395,12 @@ class OrbitPage(QtWidgets.QWidget):
         mode_layout.setContentsMargins(4, 4, 4, 4)
         mode_layout.setSpacing(0)
         
-        # Create two styled buttons as segments
+        # Create three styled buttons as segments
         self.btn_mode_altitude = QtWidgets.QPushButton("Altitude (hp/ha)")
         self.btn_mode_classical = QtWidgets.QPushButton("Classical (a/e)")
-        
-        for btn in (self.btn_mode_altitude, self.btn_mode_classical):
+        self.btn_mode_circular = QtWidgets.QPushButton("Circular (alt)")
+
+        for btn in (self.btn_mode_altitude, self.btn_mode_classical, self.btn_mode_circular):
             btn.setCheckable(True)
             btn.setCursor(QtCore.Qt.PointingHandCursor)
             btn.setStyleSheet(f"""
@@ -421,16 +422,18 @@ class OrbitPage(QtWidgets.QWidget):
                 }}
             """)
             mode_layout.addWidget(btn)
-        
+
         # Create button group for exclusive selection
         self.mode_button_group = QtWidgets.QButtonGroup(self)
         self.mode_button_group.addButton(self.btn_mode_altitude, 0)
         self.mode_button_group.addButton(self.btn_mode_classical, 1)
+        self.mode_button_group.addButton(self.btn_mode_circular, 2)
         self.mode_button_group.setExclusive(True)
         self.btn_mode_altitude.setChecked(True)
-        
+
         # Connect signal
         self.btn_mode_altitude.toggled.connect(self._sync_orbit_mode_ghosting)
+        self.btn_mode_circular.toggled.connect(self._sync_orbit_mode_ghosting)
         
         layout.addWidget(mode_container)
 
@@ -471,6 +474,9 @@ class OrbitPage(QtWidgets.QWidget):
         self.ent_argp = NumericDragLineEdit("0.0", step=5.0, min_value=0.0, max_value=360.0, decimals=2)
         self.ent_ta = NumericDragLineEdit("0.0", step=5.0, min_value=0.0, max_value=360.0, decimals=2)
         
+        # Circular altitude mode input (shown only in "circular" mode)
+        self.ent_alt_circular = NumericDragLineEdit("100.0", step=10.0, min_value=0.0, max_value=10000.0, decimals=1)
+
         orbit_shape_lbl = QtWidgets.QLabel("Orbit size and shape")
         orbit_shape_lbl.setStyleSheet(f"color: {THEME['fg_soft']}; font-weight: 700;")
         form_layout.addWidget(orbit_shape_lbl, 0, 0, 1, 3)
@@ -480,20 +486,21 @@ class OrbitPage(QtWidgets.QWidget):
         add_param(2, "Aposelene Altitude (ha)", self.ent_ha, "km")
         add_param(3, "Semi-major Axis (a)", self.ent_a, "km")
         add_param(4, "Eccentricity (e)", self.ent_e, "")
+        add_param(5, "Circular Altitude", self.ent_alt_circular, "km")
         
         sep = QtWidgets.QFrame()
         sep.setFrameShape(QtWidgets.QFrame.HLine)
         sep.setStyleSheet(f"color: {THEME['border_soft']};")
-        form_layout.addWidget(sep, 5, 0, 1, 3)
-        
+        form_layout.addWidget(sep, 6, 0, 1, 3)
+
         orientation_lbl = QtWidgets.QLabel("Plane and orientation")
         orientation_lbl.setStyleSheet(f"color: {THEME['fg_soft']}; font-weight: 700;")
-        form_layout.addWidget(orientation_lbl, 6, 0, 1, 3)
+        form_layout.addWidget(orientation_lbl, 7, 0, 1, 3)
 
-        add_param(7, "Inclination (i)", self.ent_inc, "deg")
-        add_param(8, "RAAN (Omega)", self.ent_raan, "deg")
-        add_param(9, "Argument of Periapsis (omega)", self.ent_argp, "deg")
-        add_param(10, "True Anomaly (nu)", self.ent_ta, "deg")
+        add_param(8, "Inclination (i)", self.ent_inc, "deg")
+        add_param(9, "RAAN (Omega)", self.ent_raan, "deg")
+        add_param(10, "Argument of Periapsis (omega)", self.ent_argp, "deg")
+        add_param(11, "True Anomaly (nu)", self.ent_ta, "deg")
         
         layout.addLayout(form_layout)
         
@@ -521,12 +528,13 @@ class OrbitPage(QtWidgets.QWidget):
         self.ent_ha.value_changed.connect(lambda _: self._update_ghost_orbit())
         self.ent_a.value_changed.connect(lambda _: self._update_ghost_orbit())
         self.ent_e.value_changed.connect(lambda _: self._update_ghost_orbit())
-        
+
         # Connect for 3D Visualization
         for w in (self.ent_hp, self.ent_ha, self.ent_a, self.ent_e,
-                  self.ent_inc, self.ent_raan, self.ent_argp, self.ent_ta):
+                  self.ent_alt_circular, self.ent_inc, self.ent_raan, self.ent_argp, self.ent_ta):
             w.value_changed.connect(lambda _: self._update_orbit_3d())
         self.btn_mode_altitude.toggled.connect(self._update_orbit_3d)
+        self.btn_mode_circular.toggled.connect(self._update_orbit_3d)
         
         # Initial Ghosting State
         self._sync_orbit_mode_ghosting()
@@ -577,36 +585,42 @@ class OrbitPage(QtWidgets.QWidget):
     # =========================================================================
 
     def _sync_orbit_mode_ghosting(self, enabled: bool = False):
-        """Toggle between altitude and classical orbit input modes with ghosting."""
+        """Toggle between altitude, classical, and circular orbit input modes with ghosting."""
         is_alt_mode = self.btn_mode_altitude.isChecked()
-        
-        # Apply ghost styling based on mode
-        if is_alt_mode:
-            # Altitude mode active: hp/ha are active, a/e are ghost
+        is_circular_mode = self.btn_mode_circular.isChecked()
+
+        ghost_style = (
+            f"background: rgba(255, 255, 255, 0.02);"
+            f"border: 1px dashed {THEME['border_soft']};"
+            f"color: {THEME['fg_muted']};"
+            "font-style: italic;"
+        )
+
+        if is_circular_mode:
+            # Circular mode: only alt_circular is active; hp/ha/a/e are ghost
+            active_fields = [self.ent_alt_circular]
+            ghost_fields = [self.ent_hp, self.ent_ha, self.ent_a, self.ent_e]
+        elif is_alt_mode:
+            # Altitude mode active: hp/ha are active, a/e and circular are ghost
             active_fields = [self.ent_hp, self.ent_ha]
-            ghost_fields = [self.ent_a, self.ent_e]
+            ghost_fields = [self.ent_a, self.ent_e, self.ent_alt_circular]
         else:
-            # Classical mode active: a/e are active, hp/ha are ghost
+            # Classical mode active: a/e are active, hp/ha and circular are ghost
             active_fields = [self.ent_a, self.ent_e]
-            ghost_fields = [self.ent_hp, self.ent_ha]
-        
+            ghost_fields = [self.ent_hp, self.ent_ha, self.ent_alt_circular]
+
         # Set active fields
         for field in active_fields:
             field.setReadOnly(False)
             field.setStyleSheet("")
             field.setEnabled(True)
-        
+
         # Set ghost fields
         for field in ghost_fields:
             field.setReadOnly(True)
-            field.setStyleSheet(
-                f"background: rgba(255, 255, 255, 0.02);"
-                f"border: 1px dashed {THEME['border_soft']};"
-                f"color: {THEME['fg_muted']};"
-                "font-style: italic;"
-            )
+            field.setStyleSheet(ghost_style)
             field.setEnabled(False)
-        
+
         # Trigger initial ghost calculation
         self._update_ghost_orbit()
 
@@ -691,24 +705,32 @@ class OrbitPage(QtWidgets.QWidget):
         """Update the 3D orbit visualizer."""
         if not hasattr(self, "orbit_viz_3d"):
             return
-        
+
         try:
             # Get parameters based on current mode
-            if self.btn_mode_altitude.isChecked():
+            if self.btn_mode_circular.isChecked():
+                alt_text = self.ent_alt_circular.text().strip()
+                if alt_text:
+                    alt = float(alt_text)
+                    a_km = R_MOON + alt
+                    e = 0.0
+                else:
+                    return
+            elif self.btn_mode_altitude.isChecked():
                 hp_text = self.ent_hp.text().strip()
                 ha_text = self.ent_ha.text().strip()
-                
+
                 if hp_text:
                     hp = float(hp_text)
                     ha = float(ha_text) if ha_text else hp
-                    
+
                     R_body = R_MOON
                     rp = R_body + hp
                     ra = R_body + ha
-                    
+
                     if rp > ra:
                         rp, ra = ra, rp
-                    
+
                     a_km = (rp + ra) / 2.0
                     e = (ra - rp) / (ra + rp) if (ra + rp) > 0 else 0.0
                 else:
@@ -716,7 +738,7 @@ class OrbitPage(QtWidgets.QWidget):
             else:
                 a_text = self.ent_a.text().strip()
                 e_text = self.ent_e.text().strip()
-                
+
                 if a_text:
                     a_km = float(a_text)
                     e = float(e_text) if e_text else 0.0
@@ -774,9 +796,13 @@ class OrbitPage(QtWidgets.QWidget):
         Returns a dictionary suitable for the main simulation logic.
         """
         # Determine active mode
-        is_alt_mode = self.btn_mode_altitude.isChecked()
-        mode = "hp_ha" if is_alt_mode else "a_e"
-        
+        if self.btn_mode_circular.isChecked():
+            mode = "circular"
+        elif self.btn_mode_altitude.isChecked():
+            mode = "hp_ha"
+        else:
+            mode = "a_e"
+
         data = {
             "mode": mode,
             # Angular params are always the same
@@ -785,16 +811,18 @@ class OrbitPage(QtWidgets.QWidget):
             "argp_deg": float(self.ent_argp.text() or "0"),
             "ta_deg": float(self.ent_ta.text() or "0"),
         }
-        
+
         # Add mode-specific params
-        if is_alt_mode:
+        if mode == "circular":
+            data["alt_km"] = float(self.ent_alt_circular.text() or "100")
+        elif mode == "hp_ha":
             data["hp_km"] = float(self.ent_hp.text() or "100")
             # If ha is empty, assume circular (ha=hp)
             data["ha_km"] = float(self.ent_ha.text() or self.ent_hp.text() or "100")
         else:
             data["a_km"] = float(self.ent_a.text() or "2000")
             data["e"] = float(self.ent_e.text() or "0")
-            
+
         return data
 
     def load_data(self, data: dict):
@@ -803,22 +831,24 @@ class OrbitPage(QtWidgets.QWidget):
         """
         if not data:
             return
-            
+
         mode = data.get("mode", "hp_ha")
         self.btn_mode_altitude.setChecked(mode == "hp_ha")
         self.btn_mode_classical.setChecked(mode == "a_e")
-        
+        self.btn_mode_circular.setChecked(mode == "circular")
+
         # Set text fields
         self.ent_hp.setText(str(data.get("hp_km", "100.0")))
         self.ent_ha.setText(str(data.get("ha_km", "")))
         self.ent_a.setText(str(data.get("a_km", "")))
         self.ent_e.setText(str(data.get("e", "0.0")))
-        
+        self.ent_alt_circular.setText(str(data.get("alt_km", "100.0")))
+
         self.ent_inc.setText(str(data.get("inc_deg", "90.0")))
         self.ent_raan.setText(str(data.get("raan_deg", "0.0")))
         self.ent_argp.setText(str(data.get("argp_deg", "0.0")))
         self.ent_ta.setText(str(data.get("ta_deg", "0.0")))
-        
+
         # Force update logic
         self._sync_orbit_mode_ghosting()
         self._update_orbit_3d()

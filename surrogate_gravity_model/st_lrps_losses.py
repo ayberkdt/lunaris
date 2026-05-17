@@ -504,6 +504,8 @@ class SobolevLoss(nn.Module):
         cossim_mean_val = 1.0
         mask_frac_val = 0.0
         dir_loss_active = False
+        angular_mean_deg_val = 0.0
+        angular_p90_deg_val = 0.0
         loss_dir_t: Optional[torch.Tensor] = None
         if lambda_dir > 0.0:
             norms_true = delta_a_true.norm(dim=-1, keepdim=True)  # (B,1)
@@ -516,6 +518,10 @@ class SobolevLoss(nn.Module):
                 loss_dir_t = (1.0 - cos_sim).mean()
                 cossim_mean_val = float(cos_sim.detach().mean().item())
                 loss_dir_val = float(loss_dir_t.detach().item())
+                _ang_rad = torch.acos(cos_sim.detach().clamp(-1.0 + 1e-7, 1.0 - 1e-7))
+                angular_mean_deg_val = float(_ang_rad.mean().item()) * 57.29577951308232
+                _ang_p90 = float(torch.quantile(_ang_rad, 0.90).item()) * 57.29577951308232
+                angular_p90_deg_val = _ang_p90
                 dir_loss_active = True
 
         radial_lambda = float(max(0.0, radial_lambda))
@@ -582,6 +588,8 @@ class SobolevLoss(nn.Module):
             "accel_factor": accel_factor,
             "loss_dir": loss_dir_val,
             "cossim_mean": cossim_mean_val,
+            "angular_mean_deg": angular_mean_deg_val,
+            "angular_p90_deg": angular_p90_deg_val,
             "mask_frac": mask_frac_val,
             "loss_radial": loss_radial_val,
             "loss_cross": loss_cross_val,

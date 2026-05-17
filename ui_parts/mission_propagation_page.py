@@ -623,21 +623,54 @@ class MissionPropagationPage(QtWidgets.QWidget):
         step_note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
         step_layout.addWidget(step_note, 0, 0, 1, 3)
 
+        # Output sampling mode selector
+        step_layout.addWidget(QtWidgets.QLabel("Output Mode:"), 1, 0)
+        self.cb_output_mode = QtWidgets.QComboBox()
+        self.cb_output_mode.addItem("Fixed Interval (dt)", "dt")
+        self.cb_output_mode.addItem("Samples per Period", "spp")
+        step_layout.addWidget(self.cb_output_mode, 1, 1, 1, 2)
+
+        # Fixed interval row
+        self.lbl_dt_out = QtWidgets.QLabel("Output Interval:")
         self.ent_dt_out = NumericDragLineEdit("60.0", step=10.0, min_value=0.1)
-        step_layout.addWidget(QtWidgets.QLabel("Output Interval:"), 1, 0)
-        step_layout.addWidget(self.ent_dt_out, 1, 1)
-        step_layout.addWidget(QtWidgets.QLabel("s"), 1, 2)
+        self.lbl_dt_out_unit = QtWidgets.QLabel("s")
+        step_layout.addWidget(self.lbl_dt_out, 2, 0)
+        step_layout.addWidget(self.ent_dt_out, 2, 1)
+        step_layout.addWidget(self.lbl_dt_out_unit, 2, 2)
+
+        # Samples per period row
+        self.lbl_spp = QtWidgets.QLabel("Samples/Period:")
+        self.ent_samples_per_period = NumericDragLineEdit("360", step=10.0, min_value=2.0, max_value=2000.0, decimals=0)
+        self.lbl_spp_unit = QtWidgets.QLabel("pts")
+        step_layout.addWidget(self.lbl_spp, 3, 0)
+        step_layout.addWidget(self.ent_samples_per_period, 3, 1)
+        step_layout.addWidget(self.lbl_spp_unit, 3, 2)
 
         self.ent_max_step = NumericDragLineEdit("", step=10.0, min_value=0.1)
         self.ent_max_step.setPlaceholderText("Auto (Nyquist)")
-        step_layout.addWidget(QtWidgets.QLabel("Max Step:"), 2, 0)
-        step_layout.addWidget(self.ent_max_step, 2, 1)
-        step_layout.addWidget(QtWidgets.QLabel("s"), 2, 2)
+        step_layout.addWidget(QtWidgets.QLabel("Max Step:"), 4, 0)
+        step_layout.addWidget(self.ent_max_step, 4, 1)
+        step_layout.addWidget(QtWidgets.QLabel("s"), 4, 2)
+
+        # Wire output mode selector
+        self.cb_output_mode.currentIndexChanged.connect(self._sync_output_mode_widgets)
+        self._sync_output_mode_widgets()
 
         layout.addWidget(step_group)
 
         self._sync_integrator_widgets()
         return gb
+
+    def _sync_output_mode_widgets(self) -> None:
+        """Show/hide output interval vs samples-per-period inputs based on selection."""
+        mode = self.cb_output_mode.currentData() or "dt"
+        is_dt = (mode == "dt")
+        self.lbl_dt_out.setVisible(is_dt)
+        self.ent_dt_out.setVisible(is_dt)
+        self.lbl_dt_out_unit.setVisible(is_dt)
+        self.lbl_spp.setVisible(not is_dt)
+        self.ent_samples_per_period.setVisible(not is_dt)
+        self.lbl_spp_unit.setVisible(not is_dt)
 
     def _sync_integrator_widgets(self) -> None:
         txt = self.cb_integrator.currentText() or ""
@@ -649,17 +682,21 @@ class MissionPropagationPage(QtWidgets.QWidget):
     # State helpers (preset/save/load)
     # -------------------------------------------------------------------------
     def to_dict(self) -> Dict[str, Any]:
+        output_mode = self.cb_output_mode.currentData() or "dt"
         return {
             "timeline": {
                 "epoch": self._qdatetime_to_epoch_text(self.dt_epoch.dateTime()),
                 "duration": self.ent_duration.text(),
                 "unit": self.cb_duration_unit.currentText(),
+                "samples_per_period": self.ent_samples_per_period.text(),
             },
             "integrator": {
                 "method": self.cb_integrator.currentText(),
                 "rtol": self.ent_rtol.text(),
-                "dt_out": self.ent_dt_out.text(),
+                "dt_out": self.ent_dt_out.text() if output_mode == "dt" else "",
                 "max_step": self.ent_max_step.text(),
+                "output_mode": output_mode,
+                "samples_per_period": self.ent_samples_per_period.text(),
             },
         }
 
@@ -686,6 +723,17 @@ class MissionPropagationPage(QtWidgets.QWidget):
         )
         self.ent_rtol.setText(f"{float(rtol_value):g}")
 
+        # Restore output sampling mode
+        output_mode = str(integrator.get("output_mode", "dt") or "dt")
+        idx = self.cb_output_mode.findData(output_mode)
+        if idx >= 0:
+            self.cb_output_mode.setCurrentIndex(idx)
+        else:
+            self.cb_output_mode.setCurrentIndex(0)
+
+        samples_per_period_text = str(integrator.get("samples_per_period", self.ent_samples_per_period.text() or "360") or "360")
+        self.ent_samples_per_period.setText(samples_per_period_text)
+
         dt_out_text = str(integrator.get("dt_out", self.ent_dt_out.text() or "60.0") or "60.0")
         self.ent_dt_out.setText(dt_out_text)
 
@@ -703,6 +751,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
             self.ent_max_step.setText(raw_max_step_text)
 
         self._sync_integrator_widgets()
+        self._sync_output_mode_widgets()
 
     def sync_solver_widgets_from_config(self) -> None:
         """

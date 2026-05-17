@@ -151,7 +151,19 @@ from ui_parts.force_models_page import UIAlbedoConfig
 
 
 # =============================================================================
-# 17.                       MAIN WINDOW APPLICATION 
+# 16.                       UI HELPERS
+# =============================================================================
+
+def _make_lbl(text: str, style: str = "") -> QtWidgets.QLabel:
+    """Small helper to create a plain styled QLabel without importing Qt in tests."""
+    lbl = QtWidgets.QLabel(text)
+    if style:
+        lbl.setStyleSheet(style)
+    return lbl
+
+
+# =============================================================================
+# 17.                       MAIN WINDOW APPLICATION
 # =============================================================================
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -363,9 +375,58 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.hide()
         self.lbl_progress.hide()
         self.state_frame.hide()
-        
+
         root.addWidget(header_frame)
-        
+
+        # ---------------------------------------------------------------------
+        # A2. Mission Status Summary Bar
+        # ---------------------------------------------------------------------
+        status_bar_frame = QtWidgets.QFrame()
+        status_bar_frame.setObjectName("missionStatusBar")
+        status_bar_frame.setStyleSheet(f"""
+            QFrame#missionStatusBar {{
+                background: {THEME['bg_card_alt']};
+                border: 1px solid {THEME['border_soft']};
+                border-radius: 8px;
+            }}
+        """)
+        sb_layout = QtWidgets.QHBoxLayout(status_bar_frame)
+        sb_layout.setContentsMargins(12, 6, 12, 6)
+        sb_layout.setSpacing(16)
+
+        _label_style = f"color: {THEME['fg_muted']}; font-size: 9pt;"
+        _value_style = f"color: {THEME['fg_soft']}; font-size: 9pt; font-weight: 600;"
+
+        sb_layout.addWidget(_make_lbl("Gravity:", _label_style))
+        self.lbl_gravity_status = QtWidgets.QLabel("SH [100]")
+        self.lbl_gravity_status.setStyleSheet(_value_style)
+        sb_layout.addWidget(self.lbl_gravity_status)
+
+        sb_layout.addWidget(_make_lbl("|", f"color: {THEME['border']}; font-size: 9pt;"))
+
+        sb_layout.addWidget(_make_lbl("Output:", _label_style))
+        self.lbl_output_status = QtWidgets.QLabel("Not set")
+        self.lbl_output_status.setStyleSheet(_value_style)
+        self.lbl_output_status.setMaximumWidth(200)
+        sb_layout.addWidget(self.lbl_output_status)
+
+        sb_layout.addWidget(_make_lbl("|", f"color: {THEME['border']}; font-size: 9pt;"))
+
+        sb_layout.addWidget(_make_lbl("Preflight:", _label_style))
+        self.lbl_preflight_status = StatusBadge("IDLE", "info")
+        self.lbl_preflight_status.setFixedWidth(70)
+        sb_layout.addWidget(self.lbl_preflight_status)
+
+        sb_layout.addWidget(_make_lbl("|", f"color: {THEME['border']}; font-size: 9pt;"))
+
+        sb_layout.addWidget(_make_lbl("Run:", _label_style))
+        self.lbl_run_status = StatusBadge("IDLE", "info")
+        self.lbl_run_status.setFixedWidth(70)
+        sb_layout.addWidget(self.lbl_run_status)
+
+        sb_layout.addStretch(1)
+        root.addWidget(status_bar_frame)
+
         # ---------------------------------------------------------------------
         # B. Main Content Area (Splitter: Nav+Pages | Log)
         # ---------------------------------------------------------------------
@@ -2362,11 +2423,75 @@ class MainWindow(QtWidgets.QMainWindow):
             self.lbl_progress.clear()
             self.lbl_progress.hide()
     
+    def _update_status_bar(self) -> None:
+        """
+        Refresh the mission status summary bar from current UI state.
+        Called from _ui_tick every 250ms.
+        """
+        try:
+            # Gravity backend label
+            if hasattr(self, "gravity_cfg"):
+                backend = str(getattr(self.gravity_cfg, "backend", "classic_sh") or "classic_sh")
+                if backend == "st_lrps":
+                    model_dir = str(getattr(self.gravity_cfg, "st_lrps_model_dir", "") or "").strip()
+                    model_name = model_dir.split("/")[-1].split("\\")[-1] if model_dir else "?"
+                    grav_text = f"ST-LRPS [{model_name}]"
+                else:
+                    deg = int(getattr(self.gravity_cfg, "degree", 100) or 100)
+                    grav_text = f"SH [{deg}]"
+                if hasattr(self, "lbl_gravity_status"):
+                    self.lbl_gravity_status.setText(grav_text)
+        except Exception:
+            pass
+
+        try:
+            # Output directory (shortened)
+            if hasattr(self, "page_output") and hasattr(self.page_output, "ent_out_dir"):
+                out_dir = self.page_output.ent_out_dir.text().strip()
+                if not out_dir:
+                    out_text = "Not set"
+                elif len(out_dir) > 30:
+                    out_text = "..." + out_dir[-27:]
+                else:
+                    out_text = out_dir
+                if hasattr(self, "lbl_output_status"):
+                    self.lbl_output_status.setText(out_text)
+        except Exception:
+            pass
+
+        try:
+            # Preflight state badge
+            if hasattr(self, "lbl_preflight_status") and hasattr(self, "preflight_worker"):
+                if self.preflight_worker is not None and self.preflight_worker.isRunning():
+                    self.lbl_preflight_status.set_status("warning", "CHECK")
+        except Exception:
+            pass
+
+        try:
+            # Run state badge
+            if hasattr(self, "lbl_run_status") and hasattr(self, "sim_state"):
+                status = self.sim_state.status if hasattr(self.sim_state, "status") else "idle"
+                status_map = {
+                    "idle": ("IDLE", "info"),
+                    "running": ("RUN", "success"),
+                    "done": ("DONE", "success"),
+                    "error": ("ERROR", "error"),
+                    "stopped": ("STOP", "warning"),
+                    "preflight": ("CHECK", "warning"),
+                }
+                kind_text, kind = status_map.get(status, ("IDLE", "info"))
+                self.lbl_run_status.set_status(kind, kind_text)
+        except Exception:
+            pass
+
     def _ui_tick(self):
         """Periodic UI updates."""
         # Update command preview if needed
         self._update_command_preview_silent()
-        
+
+        # Update mission status bar
+        self._update_status_bar()
+
         # Update session auto-save (every 30 seconds)
         current_time = QtCore.QDateTime.currentSecsSinceEpoch()
         if hasattr(self, "_last_save_time"):

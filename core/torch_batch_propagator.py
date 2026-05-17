@@ -92,6 +92,8 @@ class TorchBatchPropagator:
         self._device = torch.device(f"cuda:{int(device_id)}")
         self._dt = float(getattr(mc_cfg, "dt_s", 60.0))
         self._impact_r = float(R_MOON) + float(getattr(mc_cfg, "impact_alt_km", 0.0)) * 1_000.0
+        dtype_name = str(getattr(mc_cfg, "torch_dtype", "float32") or "float32").lower()
+        self._dtype = torch.float64 if dtype_name == "float64" else torch.float32
 
         # Move surrogate model (weights + scaling tensors) to CUDA
         self._model = surrogate_model
@@ -163,9 +165,9 @@ class TorchBatchPropagator:
         t_impact_arr = np.full(N, np.nan, dtype=np.float64)
 
         # Transfer initial state to CUDA (float32 for performance)
-        state = torch.as_tensor(Y0, dtype=torch.float32, device=device)
+        state = torch.as_tensor(Y0, dtype=self._dtype, device=device)
         alive = torch.ones(N, dtype=torch.bool, device=device)
-        r_impact_t = torch.tensor(self._impact_r, dtype=torch.float32, device=device)
+        r_impact_t = torch.tensor(self._impact_r, dtype=self._dtype, device=device)
 
         # ------------------------------------------------------------------
         # Inner helpers (closures capture `model` and `device`)
@@ -197,7 +199,8 @@ class TorchBatchPropagator:
         )
         print(
             f"[MC][GPU-STLRPS] degree_min={deg_min}  degree_max={deg_max}  "
-            f"dt={dt_eff:.1f}s  snaps={n_snaps}  steps/snap={steps_per_snap}",
+            f"dt={dt_eff:.1f}s  snaps={n_snaps}  steps/snap={steps_per_snap}  "
+            f"dtype={str(self._dtype).replace('torch.', '')}",
             flush=True,
         )
 

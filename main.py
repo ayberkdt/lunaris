@@ -47,6 +47,7 @@ from config import load_default_config, SimConfig  # noqa: E402
 from common.constants import R_MOON, MU_MOON, DEG2RAD, DAY_S  # noqa: E402
 from common.time_utils import normalize_iso_datetime_to_utc_string  # noqa: E402
 from common.type_defs import InitialState, PropagationResult  # noqa: E402
+from models.gravity_adapter import adapt_gravity_model as _shared_adapt_gravity_model  # noqa: E402
 
 # Heavy modules (models/core/loaders/analysis) are intentionally NOT imported
 # at module import time. They are imported inside runtime functions (main/init_*)
@@ -785,82 +786,9 @@ def _y0_to_array(y0: Any) -> np.ndarray:
     return arr.astype(float, copy=False)
 
 
-class _GravityModelAdapter:
-    """Adapter that normalizes attribute names between models and core.
-
-    core.dynamics expects (at minimum):
-      - degree_max, R_ref_m, GM_m3s2
-      - ws (workspace with P, dP, cos_m, sin_m)
-      - Cnm, Snm, diag, subdiag, A, B, scale_m
-
-    models.spherical_harmonics.GravityModel uses different field names.
-    This adapter provides a stable contract without modifying either package.
-    """
-
-    __slots__ = ("_g",)
-
-    def __init__(self, g: Any):
-        self._g = g
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._g, name)
-
-    @property
-    def degree_max(self) -> int:
-        return int(getattr(self._g, "degree_max", getattr(self._g, "max_degree")))
-
-    @property
-    def R_ref_m(self) -> float:
-        return float(getattr(self._g, "R_ref_m", getattr(self._g, "r_ref")))
-
-    @property
-    def GM_m3s2(self) -> float:
-        return float(getattr(self._g, "GM_m3s2", getattr(self._g, "mu")))
-
-    @property
-    def ws(self) -> Any:
-        return getattr(self._g, "ws", getattr(self._g, "workspace"))
-
-    def make_workspace(self) -> Any:
-        if hasattr(self._g, "make_workspace"):
-            return self._g.make_workspace()
-        return self.ws
-
-    @property
-    def Cnm(self) -> Any:
-        return getattr(self._g, "Cnm", getattr(self._g, "c_coeffs"))
-
-    @property
-    def Snm(self) -> Any:
-        return getattr(self._g, "Snm", getattr(self._g, "s_coeffs"))
-
-    @property
-    def diag(self) -> Any:
-        return getattr(self._g, "diag", getattr(self._g, "diag_coeffs"))
-
-    @property
-    def subdiag(self) -> Any:
-        return getattr(self._g, "subdiag", getattr(self._g, "subdiag_coeffs"))
-
-    @property
-    def A(self) -> Any:
-        return getattr(self._g, "A", getattr(self._g, "a_coeffs"))
-
-    @property
-    def B(self) -> Any:
-        return getattr(self._g, "B", getattr(self._g, "b_coeffs"))
-
-    @property
-    def scale_m(self) -> Any:
-        return getattr(self._g, "scale_m", getattr(self._g, "scale_m_table"))
-
-
 def _adapt_gravity_model(g: Any) -> Any:
-    """Return g if it matches core's expectations, else wrap in adapter."""
-    required = ("degree_max", "R_ref_m", "GM_m3s2", "Cnm", "Snm", "diag", "subdiag", "A", "B")
-    if all(hasattr(g, k) for k in required) and hasattr(g, "ws"):
-        return g
-    return _GravityModelAdapter(g)
+    """Normalize gravity-model attributes through the shared adapter module."""
+    return _shared_adapt_gravity_model(g)
 
 
 def _initial_state_from_keplerian_fallback(

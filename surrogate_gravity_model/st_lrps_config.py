@@ -133,8 +133,8 @@ class TrainConfig:
     # L_dir = mean(1 - cos_sim(a_pred, a_true)) for points where ||a_true|| > floor.
     # Ramped in after direction_loss_start_epoch to avoid destabilising early training.
     direction_loss_weight: float = 0.10
-    direction_loss_start_epoch: int = 30
-    direction_loss_ramp_epochs: int = 50
+    direction_loss_start_epoch: int = 15
+    direction_loss_ramp_epochs: int = 40
     direction_loss_floor_abs: float = 3e-6   # mask threshold on ||a_true||
 
     # Best-checkpoint selection burn-in.
@@ -145,6 +145,13 @@ class TrainConfig:
     # Set to 0 to disable and start tracking from epoch 0.
     best_ckpt_start_epoch: int = -1
     checkpoint_settle_epochs: int = 5
+
+    # Best-checkpoint metric selection.
+    # "total_loss": default, uses val ref loss (backward-compatible).
+    # "hybrid": val_loss + hybrid_direction_alpha * val_direction_loss.
+    # "direction_loss": val direction loss only (experimental, not recommended alone).
+    best_metric: str = "total_loss"
+    hybrid_direction_alpha: float = 0.5
 
     # Optional altitude-balanced residual loss.
     # Defaults pulled from spatial_cloud_parameters.DEFAULT_SPATIAL_CLOUD_CONFIG
@@ -328,6 +335,16 @@ def parse_args() -> TrainConfig:
                                 "direction_loss_ramp_epochs + checkpoint_settle_epochs when direction loss is active).")
     group_dir.add_argument("--checkpoint-settle-epochs", type=int, default=5,
                            help="Additional settled epochs after the direction-loss ramp before auto best-checkpoint tracking starts.")
+    group_dir.add_argument("--best-metric",
+                           choices=["total_loss", "direction_loss", "hybrid"],
+                           default="total_loss",
+                           help="Metric used for best-checkpoint selection. "
+                                "'total_loss': val ref loss (default, backward-compatible). "
+                                "'hybrid': val_loss + alpha * val_direction_loss. "
+                                "'direction_loss': val direction loss only (experimental).")
+    group_dir.add_argument("--hybrid-direction-alpha", type=float, default=0.5,
+                           help="Weight alpha for direction loss in hybrid best-metric: "
+                                "score = val_loss + alpha * val_direction_loss.")
 
     # Altitude-Balanced Loss
     group_alt = ap.add_argument_group("Altitude-Balanced Loss")
@@ -381,6 +398,45 @@ def parse_args() -> TrainConfig:
                            help="Cap the number of training batches per epoch (None = full epoch).")
     group_log.add_argument("--max-val-batches", type=int, default=None,
                            help="Cap the number of validation batches per epoch (None = full epoch).")
+
+    # ---------------------------------------------------------------------------
+    # Recommended angular-drift mitigation preset (copy-paste template):
+    # python st_lrps_train.py \
+    #   --data path/to/train.h5 \
+    #   --epochs 250 \
+    #   --batch-size 16384 \
+    #   --hidden 512 \
+    #   --depth 6 \
+    #   --activation sine \
+    #   --lr 1e-4 \
+    #   --w-u 1.0 \
+    #   --w-a 1.0 \
+    #   --gradnorm-mode ntk_init \
+    #   --potential-only-epochs 0 \
+    #   --accel-ramp-epochs 40 \
+    #   --accel-min-factor 0.15 \
+    #   --direction-loss-weight 0.20 \
+    #   --direction-loss-start-epoch 10 \
+    #   --direction-loss-ramp-epochs 40 \
+    #   --direction-loss-floor-abs 1e-7 \
+    #   --use-altitude-balanced-loss \
+    #   --altitude-bin-width-km 50 \
+    #   --use-radial-cross-loss \
+    #   --radial-loss-weight 0.05 \
+    #   --cross-loss-weight 0.10 \
+    #   --use-residual-blocks \
+    #   --n-bands 3 \
+    #   --grad-accumulation-steps 2 \
+    #   --preload-data \
+    #   --best-metric hybrid \
+    #   --hybrid-direction-alpha 0.30
+    # Notes:
+    #   - If direction-loss-floor-abs=1e-7 causes noise in low-residual regions,
+    #     increase to 3e-7 or 1e-6.
+    #   - If VRAM is insufficient, use --batch-size 8192 --grad-accumulation-steps 4.
+    #   - If depth=6 + residual blocks is incompatible with a saved architecture,
+    #     remove --use-residual-blocks and --n-bands (inference-compat constraint).
+    # ---------------------------------------------------------------------------
 
     a = ap.parse_args()
 
@@ -557,6 +613,8 @@ def parse_args() -> TrainConfig:
         use_residual_blocks=bool(a.use_residual_blocks),
         n_bands=max(1, int(a.n_bands)),
         grad_accumulation_steps=max(1, int(a.grad_accumulation_steps)),
+        best_metric=str(a.best_metric),
+        hybrid_direction_alpha=float(a.hybrid_direction_alpha),
     )
 
 

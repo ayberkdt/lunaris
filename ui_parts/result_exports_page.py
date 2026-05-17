@@ -33,7 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 from PySide6 import QtCore, QtWidgets
 
@@ -186,6 +186,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         layout.setSpacing(20)
 
         layout.addWidget(self._build_output_config_card())
+        layout.addWidget(self._build_artifacts_card())
         layout.addWidget(self._build_preview_card())
         layout.addStretch(1)
 
@@ -259,6 +260,97 @@ class ResultsExportPage(QtWidgets.QWidget):
         layout.addWidget(note)
 
         return group_box
+
+    def _build_artifacts_card(self) -> QtWidgets.QGroupBox:
+        """
+        Create the Generated Artifacts information card.
+
+        Shows what files will be created after a successful run and provides
+        quick access to the output directory plus a file count refresh.
+        """
+
+        group_box = self._create_card("Generated Artifacts")
+        layout = QtWidgets.QVBoxLayout(group_box)
+        layout.setContentsMargins(20, 24, 20, 20)
+        layout.setSpacing(12)
+
+        info = QtWidgets.QLabel(
+            "The following outputs are generated automatically after a successful propagation run:"
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet(f"color: {THEME['fg_muted']};")
+        layout.addWidget(info)
+
+        always_items = [
+            "Altitude History Plot (PNG)",
+            "Ground Track Plot (PNG)",
+            "Orbital Elements Timeseries (PNG)",
+            "PDF Mission Report (PDF)",
+        ]
+        for item_text in always_items:
+            row = QtWidgets.QHBoxLayout()
+            dot = QtWidgets.QLabel("•")
+            dot.setStyleSheet(f"color: {THEME['success']}; font-size: 12pt;")
+            dot.setFixedWidth(18)
+            lbl = QtWidgets.QLabel(item_text)
+            lbl.setStyleSheet(f"color: {THEME['fg_soft']};")
+            row.addWidget(dot)
+            row.addWidget(lbl)
+            row.addStretch()
+            layout.addLayout(row)
+
+        # 3D plot row (controlled by toggle above)
+        row_3d = QtWidgets.QHBoxLayout()
+        dot_3d = QtWidgets.QLabel("•")
+        dot_3d.setStyleSheet(f"color: {THEME['accent']}; font-size: 12pt;")
+        dot_3d.setFixedWidth(18)
+        lbl_3d = QtWidgets.QLabel("3D Orbit Plot (PNG) — enabled by 3D Animation toggle above")
+        lbl_3d.setStyleSheet(f"color: {THEME['fg_muted']}; font-style: italic;")
+        row_3d.addWidget(dot_3d)
+        row_3d.addWidget(lbl_3d)
+        row_3d.addStretch()
+        layout.addLayout(row_3d)
+
+        # Artifact file count + action buttons
+        btn_row = QtWidgets.QHBoxLayout()
+
+        btn_open_out = QtWidgets.QPushButton("Open Output Folder")
+        btn_open_out.setIcon(get_icon("fa6s.folder-open", THEME["fg_main"]))
+        btn_open_out.clicked.connect(self.open_output_dir_requested.emit)
+        btn_row.addWidget(btn_open_out)
+
+        btn_refresh_artifacts = QtWidgets.QPushButton("Refresh Artifacts")
+        btn_refresh_artifacts.setIcon(get_icon("fa6s.rotate", THEME["fg_main"]))
+        btn_refresh_artifacts.clicked.connect(self._scan_artifacts)
+        btn_row.addWidget(btn_refresh_artifacts)
+
+        btn_row.addStretch()
+
+        self.lbl_artifact_count = QtWidgets.QLabel("No output directory scanned yet.")
+        self.lbl_artifact_count.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
+        btn_row.addWidget(self.lbl_artifact_count)
+
+        layout.addLayout(btn_row)
+
+        # Connect output dir changes to auto-refresh count
+        return group_box
+
+    def _scan_artifacts(self) -> None:
+        """Scan the output directory for PNG/PDF artifacts and update the count label."""
+        out_dir = self.ent_out_dir.text().strip() if hasattr(self, "ent_out_dir") else ""
+        if not out_dir:
+            self.lbl_artifact_count.setText("Output directory not set.")
+            return
+        p = Path(out_dir)
+        if not p.exists():
+            self.lbl_artifact_count.setText("Output directory does not exist yet.")
+            return
+        pngs = list(p.glob("*.png"))
+        pdfs = list(p.glob("*.pdf"))
+        total = len(pngs) + len(pdfs)
+        self.lbl_artifact_count.setText(
+            f"{total} artifact(s) found ({len(pngs)} PNG, {len(pdfs)} PDF)"
+        )
 
     def _build_preview_card(self) -> QtWidgets.QGroupBox:
         """

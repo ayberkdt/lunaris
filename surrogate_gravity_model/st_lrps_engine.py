@@ -199,7 +199,7 @@ class STLRPSTrainer:
 
         total_loss = total_opt_loss = total_u = total_a = total_grad_norm = 0.0
         total_dir = total_cossim = total_radial = total_cross = total_lap = 0.0
-        total_mask_frac = total_a_norm_mean = 0.0
+        total_mask_frac = total_a_norm_mean = total_angular_mean_deg = 0.0
         a_norm_max = 0.0
         n_batches = 0
         samples_done = 0
@@ -346,6 +346,7 @@ class STLRPSTrainer:
                 total_a += float(stats["mse_a"])
                 total_dir += float(stats.get("loss_dir", 0.0))
                 total_cossim += float(stats.get("cossim_mean", 1.0))
+                total_angular_mean_deg += float(stats.get("angular_mean_deg", 0.0))
                 total_mask_frac += float(stats.get("mask_frac", 0.0))
                 total_radial += float(stats.get("loss_radial", 0.0))
                 total_cross += float(stats.get("loss_cross", 0.0))
@@ -366,6 +367,7 @@ class STLRPSTrainer:
                     mem_str = _cuda_memory_string(self.device)
                     dir_str = (
                         f" dir={total_dir/n_batches:.3e} cossim={total_cossim/n_batches:.4f}"
+                        f" ang={total_angular_mean_deg/n_batches:.2f}deg"
                         f" mask_frac={total_mask_frac/n_batches:.2f} lam_dir={lambda_dir_eff:.3e}"
                         if lambda_dir_eff > 0.0 else ""
                     )
@@ -393,6 +395,7 @@ class STLRPSTrainer:
         n_safe = max(1, n_batches)
         dir_summary = (
             f" dir={total_dir/n_safe:.3e} cossim={total_cossim/n_safe:.4f}"
+            f" ang={total_angular_mean_deg/n_safe:.2f}deg"
             f" mask_frac={total_mask_frac/n_safe:.2f} lam_dir={lambda_dir_eff:.3e}"
             if lambda_dir_eff > 0.0 else ""
         )
@@ -420,6 +423,7 @@ class STLRPSTrainer:
             "mse_a": total_a / n_safe,
             "loss_dir": total_dir / n_safe,
             "cossim_mean": total_cossim / n_safe,
+            "angular_mean_deg": total_angular_mean_deg / n_safe,
             "mask_frac": total_mask_frac / n_safe,
             "a_norm_mean": total_a_norm_mean / n_safe,
             "a_norm_max": a_norm_max,
@@ -488,6 +492,8 @@ def _write_training_history_csv(history: List[Dict[str, float]], path: Path) -> 
         "val_loss_cross",
         "val_loss_laplacian",
         "val_mean_cossim",
+        "train_angular_mean_deg",
+        "val_angular_mean_deg",
         "lambda_dir_eff",
         "lr",
         "w_u",
@@ -831,6 +837,17 @@ def train(cfg: TrainConfig) -> None:
     if cfg.use_laplacian_regularization:
         logger.info(f"  Laplacian Reg: ON (w={cfg.laplacian_weight}, every={cfg.laplacian_every_n_batches})")
     logger.info(f"  Direction Loss: weight={cfg.direction_loss_weight}, start={cfg.direction_loss_start_epoch}, ramp={cfg.direction_loss_ramp_epochs}")
+    _bm = str(getattr(cfg, "best_metric", "total_loss"))
+    _ha = float(getattr(cfg, "hybrid_direction_alpha", 0.5))
+    logger.info(f"  Best-checkpoint metric: {_bm}" + (f" (alpha={_ha})" if _bm == "hybrid" else ""))
+    if _bm == "direction_loss":
+        logger.warning("best_metric='direction_loss' is experimental. "
+                       "Early epochs may select underdeveloped checkpoints. "
+                       "Consider 'hybrid' instead.")
+    if _bm == "hybrid" and float(getattr(cfg, "direction_loss_weight", 0.0)) == 0.0:
+        logger.warning("best_metric='hybrid' selected but direction_loss_weight=0. "
+                       "Hybrid score will equal total_loss. "
+                       "Set --direction-loss-weight > 0 to enable hybrid selection.")
 
     # Fail fast on invalid architecture combination
     if cfg.activation.lower() == "sine" and cfg.use_fourier:
@@ -1257,6 +1274,8 @@ def train(cfg: TrainConfig) -> None:
     best_val = float("inf")
     best_epoch = -1
     epochs_without_improve = 0
+    _prev_val_cossim = 1.0   # for direction drift detection
+    _prev_val_mse_a = float("inf")
     best_path = outdir / "checkpoints" / "ckpt_best.pt"
     last_path = outdir / "checkpoints" / "ckpt_last.pt"
     log_path = outdir / "metrics.jsonl"
@@ -1289,6 +1308,9 @@ def train(cfg: TrainConfig) -> None:
                 t_max=cfg.t_max,
             )
             _apply_lr_multiplier(opt, lr_scale)
+            _ldir_log = _direction_loss_factor(epoch, cfg)
+            if _ldir_log > 0.0 or epoch == cfg.direction_loss_start_epoch:
+                logger.info(f"[epoch {epoch+1}] effective lambda_dir={_ldir_log:.4e}")
             tr = trainer.run_epoch(train_loader, is_train=True,  epoch=epoch, max_batches=cfg.max_train_batches)
 
             # Epoch-level explosion detection: save failure manifest and stop on NaN.
@@ -1314,6 +1336,24 @@ def train(cfg: TrainConfig) -> None:
 
             va = trainer.run_epoch(val_loader,   is_train=False, epoch=epoch, max_batches=cfg.max_val_batches)
             epoch_time_s = time.perf_counter() - epoch_t0
+
+            # Direction drift warning: magnitude improving but direction metric worsening.
+            _val_cossim_now = float(va.get("cossim_mean", 1.0))
+            _val_mse_a_now = float(va.get("mse_a", 0.0))
+            if (
+                epoch > 0
+                and float(getattr(cfg, "direction_loss_weight", 0.0)) > 0.0
+                and _val_mse_a_now < _prev_val_mse_a * 0.98
+                and _val_cossim_now < _prev_val_cossim - 0.005
+            ):
+                logger.warning(
+                    f"Epoch {epoch+1}: val mse_a improved ({_prev_val_mse_a:.3e} → {_val_mse_a_now:.3e}) "
+                    f"but direction metric is drifting "
+                    f"(cossim: {_prev_val_cossim:.4f} → {_val_cossim_now:.4f}). "
+                    "Consider increasing direction_loss_weight or lowering direction_loss_floor_abs."
+                )
+            _prev_val_cossim = _val_cossim_now
+            _prev_val_mse_a = _val_mse_a_now
 
             logf.write(json.dumps({"epoch": epoch, "train": tr, "val": va}) + "\n")
             logf.flush()
@@ -1375,19 +1415,30 @@ def train(cfg: TrainConfig) -> None:
                         f"[checkpoint] waiting complete: epoch {epoch+1}. "
                         f"Best-checkpoint tracking and patience counter start from next epoch."
                     )
-            elif va["loss"] < best_val:
-                best_val = float(va["loss"])
-                best_epoch = int(epoch)
-                epochs_without_improve = 0
-                state["best_val"] = best_val
-                state["best_epoch"] = best_epoch
-                state["config"]["best_val_loss"] = best_val
-                state["config"]["best_epoch"] = best_epoch + 1
-                state["config"]["epochs_since_improvement"] = 0
-                torch.save(state, best_path)
-                logger.info(f"[checkpoint] best updated: val_ref={best_val:.6e} epoch={best_epoch + 1}")
             else:
-                epochs_without_improve += 1
+                # Compute checkpoint score based on best_metric setting
+                _best_metric_mode = str(getattr(cfg, "best_metric", "total_loss")).strip().lower()
+                _hybrid_alpha = float(getattr(cfg, "hybrid_direction_alpha", 0.5))
+                if _best_metric_mode == "hybrid" and float(getattr(cfg, "direction_loss_weight", 0.0)) > 0.0:
+                    _ckpt_score = float(va["loss"]) + _hybrid_alpha * float(va.get("loss_dir", 0.0))
+                elif _best_metric_mode == "direction_loss":
+                    _ckpt_score = float(va.get("loss_dir", float(va["loss"])))
+                else:
+                    _ckpt_score = float(va["loss"])
+
+                if _ckpt_score < best_val:
+                    best_val = _ckpt_score
+                    best_epoch = int(epoch)
+                    epochs_without_improve = 0
+                    state["best_val"] = best_val
+                    state["best_epoch"] = best_epoch
+                    state["config"]["best_val_loss"] = best_val
+                    state["config"]["best_epoch"] = best_epoch + 1
+                    state["config"]["epochs_since_improvement"] = 0
+                    torch.save(state, best_path)
+                    logger.info(f"[checkpoint] best updated: val_ref={va['loss']:.6e} score={_ckpt_score:.6e} epoch={best_epoch + 1}")
+                else:
+                    epochs_without_improve += 1
 
             state["best_val"] = best_val
             state["best_epoch"] = best_epoch
@@ -1416,6 +1467,8 @@ def train(cfg: TrainConfig) -> None:
                     "val_loss_cross": float(va.get("loss_cross", 0.0)),
                     "val_loss_laplacian": float(va.get("loss_laplacian", 0.0)),
                     "val_mean_cossim": float(va.get("cossim_mean", 1.0)),
+                    "train_angular_mean_deg": float(tr.get("angular_mean_deg", 0.0)),
+                    "val_angular_mean_deg": float(va.get("angular_mean_deg", 0.0)),
                     "lambda_dir_eff": float(tr.get("lambda_dir_eff", 0.0)),
                     "lr": float(tr["lr"]),
                     "w_u": float(tr["w_u"]),

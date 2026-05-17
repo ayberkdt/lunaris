@@ -44,11 +44,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
-from PySide6 import QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 
 try:
-    from ui_parts.ui_commons import THEME, get_icon
+    from ui_parts.ui_commons import THEME, get_icon, StatusBadge
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -154,6 +154,7 @@ class DataPage(QtWidgets.QWidget):
         self.ent_kernel_dir.setText(st.kernel_dir or "")
 
         self._sync_albedo_path()
+        self.refresh_badges()
 
     # -------------------------------------------------------------------------
     # UI
@@ -194,7 +195,20 @@ class DataPage(QtWidgets.QWidget):
         btn_ldem_browse.clicked.connect(self._browse_ldem_root)
         ldem_row.addWidget(btn_ldem_browse)
 
+        btn_ldem_open = QtWidgets.QPushButton("Open")
+        btn_ldem_open.setIcon(get_icon("fa6s.arrow-up-right-from-square", THEME["fg_main"]))
+        btn_ldem_open.setFixedWidth(72)
+        btn_ldem_open.clicked.connect(lambda: self._open_path(self.ent_ldem_root.text()))
+        ldem_row.addWidget(btn_ldem_open)
+
+        self.badge_ldem = StatusBadge("NOT SET", kind="warning")
+        self.badge_ldem.setFixedWidth(80)
+        ldem_row.addWidget(self.badge_ldem)
+
         layout.addLayout(ldem_row)
+
+        # Connect path change to badge update
+        self.ent_ldem_root.textChanged.connect(lambda _: self._update_badge(self.ent_ldem_root.text(), self.badge_ldem))
 
         # Resolution control
         res_row = QtWidgets.QHBoxLayout()
@@ -250,7 +264,18 @@ class DataPage(QtWidgets.QWidget):
         btn_albedo_browse.clicked.connect(self._browse_albedo_root)
         albedo_path_row.addWidget(btn_albedo_browse)
 
+        btn_albedo_open = QtWidgets.QPushButton("Open")
+        btn_albedo_open.setIcon(get_icon("fa6s.arrow-up-right-from-square", THEME["fg_main"]))
+        btn_albedo_open.setFixedWidth(72)
+        btn_albedo_open.clicked.connect(lambda: self._open_path(self.ent_albedo_root.text()))
+        albedo_path_row.addWidget(btn_albedo_open)
+
+        self.badge_albedo = StatusBadge("NOT SET", kind="warning")
+        self.badge_albedo.setFixedWidth(80)
+        albedo_path_row.addWidget(self.badge_albedo)
+
         albedo_layout.addLayout(albedo_path_row)
+        self.ent_albedo_root.textChanged.connect(lambda _: self._update_badge(self.ent_albedo_root.text(), self.badge_albedo))
         layout.addWidget(self.albedo_container)
 
         note = QtWidgets.QLabel(
@@ -290,7 +315,18 @@ class DataPage(QtWidgets.QWidget):
         btn_kernel_browse.clicked.connect(self._browse_kernel_dir)
         kernel_row.addWidget(btn_kernel_browse)
 
+        btn_kernel_open = QtWidgets.QPushButton("Open")
+        btn_kernel_open.setIcon(get_icon("fa6s.arrow-up-right-from-square", THEME["fg_main"]))
+        btn_kernel_open.setFixedWidth(72)
+        btn_kernel_open.clicked.connect(lambda: self._open_path(self.ent_kernel_dir.text()))
+        kernel_row.addWidget(btn_kernel_open)
+
+        self.badge_kernel = StatusBadge("NOT SET", kind="warning")
+        self.badge_kernel.setFixedWidth(80)
+        kernel_row.addWidget(self.badge_kernel)
+
         layout.addLayout(kernel_row)
+        self.ent_kernel_dir.textChanged.connect(lambda _: self._update_badge(self.ent_kernel_dir.text(), self.badge_kernel))
 
         note = QtWidgets.QLabel(
             "ℹ️ SPICE kernels provide planetary ephemerides, time conversions, and frame "
@@ -354,6 +390,33 @@ class DataPage(QtWidgets.QWidget):
                 self.ent_albedo_root.setText(ldem)
 
         self._state_changed()
+
+    def _update_badge(self, path_text: str, badge: "StatusBadge") -> None:
+        """Update a path validity badge based on whether the path exists."""
+        path_text = path_text.strip()
+        if not path_text:
+            badge.set_status("warning", "NOT SET")
+        elif Path(path_text).exists():
+            badge.set_status("success", "VALID")
+        else:
+            badge.set_status("error", "MISSING")
+
+    def _open_path(self, path_text: str) -> None:
+        """Open a directory path in the OS file explorer."""
+        path_text = path_text.strip()
+        if path_text and Path(path_text).exists():
+            QtCore.QDesktopServices.openUrl(
+                QtCore.QUrl.fromLocalFile(path_text)
+            )
+
+    def refresh_badges(self) -> None:
+        """Re-check all path badges."""
+        if hasattr(self, "badge_ldem"):
+            self._update_badge(self.ent_ldem_root.text(), self.badge_ldem)
+        if hasattr(self, "badge_albedo"):
+            self._update_badge(self.ent_albedo_root.text(), self.badge_albedo)
+        if hasattr(self, "badge_kernel"):
+            self._update_badge(self.ent_kernel_dir.text(), self.badge_kernel)
 
     def _state_changed(self) -> None:
         # keep internal snapshot up to date
