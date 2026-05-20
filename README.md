@@ -94,8 +94,8 @@ rasterio       # LDEM terrain-based impact detection
 **Steps**
 
 ```bash
-git clone https://github.com/ayberkdt/LUNAR_SIMULATION.git
-cd LUNAR_SIMULATION
+git clone https://github.com/ayberkdt/ST_LRPS.git
+cd ST_LRPS
 pip install -r requirements.txt   # or install the packages above manually
 ```
 

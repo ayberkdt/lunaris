@@ -435,7 +435,7 @@ def project_root_from_path(start_path: PathLike, *, max_levels: int = 6) -> Path
 
     last = current
     for _ in range(max(1, int(max_levels))):
-        if current.name == "LUNAR_SIMULATION":
+        if current.name in ("LUNAR_SIMULATION", "ST_LRPS"):
             return current
         if (current / "data" / "assets").is_dir():
             return current
