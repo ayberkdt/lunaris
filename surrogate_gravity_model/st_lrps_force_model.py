@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 st_lrps_force_model.py - Propagator-ready inference API for the lunar residual potential surrogate.
@@ -212,8 +212,14 @@ class SurrogateForceModel:
         delta_u : np.ndarray, shape (N,) or scalar
             Residual potential in m^2/s^2.
         """
-        single = np.asarray(x_m).ndim == 1
-        x_t = _to_tensor(x_m, self.device)
+        x_arr = np.asarray(x_m, dtype=np.float64)
+        if not np.all(np.isfinite(x_arr)):
+            raise ValueError(
+                "predict_residual_potential: Input positions contain NaN or Inf values. "
+                "All position components must be finite real numbers."
+            )
+        single = x_arr.ndim == 1
+        x_t = _to_tensor(x_arr, self.device)
         N = x_t.shape[0]
         u_out = np.empty((N, 1), dtype=np.float64)
         for s in range(0, N, self.chunk_size):

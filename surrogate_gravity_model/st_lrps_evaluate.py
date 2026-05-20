@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 st_lrps_evaluate.py  –  Evaluate a trained residual gravity model from st_lrps_train.py.
@@ -78,15 +78,19 @@ class _StreamingMetrics:
         """Update accumulators with a batch. x shape (N,3), a shape (N,3), u shape (N,)."""
         N = x.shape[0]
         self.count += N
-        a_err = a_pred - a_true
-        a_err_norm = np.linalg.norm(a_err, axis=1)
-        a_true_norm = np.linalg.norm(a_true, axis=1).clip(1e-30)
-        self.sum_abs_a += float(a_err_norm.sum())
-        self.sum_sq_a += float((a_err_norm ** 2).sum())
-        self.max_abs_a = max(self.max_abs_a, float(a_err_norm.max()))
+        
+        a_true_mag = np.linalg.norm(a_true, axis=1)
+        a_pred_mag = np.linalg.norm(a_pred, axis=1)
+        a_mag_err = a_pred_mag - a_true_mag
+        a_err_norm = np.abs(a_mag_err)
+        a_true_norm = a_true_mag.clip(1e-30)
+        
+        self.sum_abs_a += float(np.abs(a_mag_err).sum())
+        self.sum_sq_a += float((a_mag_err ** 2).sum())
+        self.max_abs_a = max(self.max_abs_a, float(np.abs(a_mag_err).max()))
         self.sum_abs_u += float(np.abs(u_pred - u_true).sum())
         self.sum_sq_u += float(((u_pred - u_true) ** 2).sum())
-        self.sum_rel_num += float(a_err_norm.sum())
+        self.sum_rel_num += float(np.abs(a_mag_err).sum())
         self.sum_rel_den += float(a_true_norm.sum())
         # Angular error
         cos_sim = np.sum(a_true * a_pred, axis=1) / (
@@ -1365,63 +1369,84 @@ def evaluate(
         print(f"[eval] Top-{topk_errors} error points saved to {_topk_export_path}")
 
     if streaming and _sm is not None:
-        # Streaming mode: build stub arrays from streaming accumulators for metric computation
         _sm_res = _sm.finalize()
-        # For streaming mode we populate only what's needed for the JSON report
-        # and use zeros/empty arrays for operations that need full arrays.
-        # Create minimal arrays from plot buffers if available, else empty stubs.
-        if u_err_plot:
-            u_err_stub = np.concatenate(u_err_plot, axis=0).reshape(-1)
-        else:
-            u_err_stub = np.array([], dtype=np.float64)
+        metrics: Dict[str, Any] = {
+            "evaluation_mode": "streaming",
+            "memory_safe": True,
+            "n_points": _sm_res["count"],
+            "streaming_limitations": [
+                "exact OOD region table skipped",
+                "exact radial/cross decomposition skipped",
+                "full scatter plots skipped",
+                "exact full-dataset percentiles skipped"
+            ],
+            "U": {
+                "mae": _sm_res["mae_u"],
+                "rmse": _sm_res["rmse_u"],
+                "linf": 0.0,
+                "rel_mean_pct": 0.0,
+            },
+            "|a|": {
+                "mae": _sm_res["mae_a"],
+                "rmse": _sm_res["rmse_a"],
+                "linf": _sm_res["max_abs_a"],
+                "rel_mean_pct": _sm_res["robust_rel_err"] * 100.0,
+            },
+            "angular_metrics": {
+                "residual_all": {
+                    "mean_deg": _sm_res["mean_ang_deg"],
+                    "rmse_deg": _sm_res["rmse_ang_deg"],
+                    "mean_cossim": _sm_res["mean_cos_sim"],
+                }
+            },
+            "model_degree_min": int(degree_min),
+            "model_degree_max": (int(model_degree_max) if model_degree_max is not None else None),
+            "dataset_degree_min": _as_optional_int(ds_meta.get("degree_min")),
+            "dataset_degree_max": (int(ds_degree_max) if ds_degree_max is not None else None),
+            "central_body": (model_body or ds_body or "moon"),
+            "decomposition_frame": "approximate_rtn_like_without_velocity",
+            "device": str(device),
+            "a_sign": float(a_sign),
+            "mu_si": float(mu_si),
+            "r_ref_m": float(r_ref_m),
+            "load_report": load_report,
+            "topk_export_path": str(_topk_export_path) if _topk_export_path else None,
+        }
+        
+        plots_dir = out_dir
+        plots_dir.mkdir(parents=True, exist_ok=True)
         if ang_deg_plot:
-            ang_deg_stub = np.concatenate(ang_deg_plot, axis=0).reshape(-1)
-        else:
-            ang_deg_stub = np.array([], dtype=np.float64)
+            ang_plot = np.concatenate(ang_deg_plot, axis=0).reshape(-1)
+            save_hist_angular_deg(ang_plot, plots_dir / "hist_angular_err_deg_sampled.png", "Angular error (deg) Sampled histogram")
+            
+        metrics_path = out_dir / "evaluate_metrics.json"
+        metrics_path.write_text(json.dumps(metrics, indent=2))
+        print(f"[eval] Streaming metrics saved to {metrics_path}")
+        return metrics
 
-        u_true = np.zeros((1, 1), dtype=np.float64)
-        u_pred = np.zeros((1, 1), dtype=np.float64)
-        a_true_mag = np.ones((1, 1), dtype=np.float64) * 1e-6
-        a_pred_mag = np.ones((1, 1), dtype=np.float64) * 1e-6
-        alt_km_all = np.zeros((1, 1), dtype=np.float64)
-        x_all_np = np.zeros((1, 3), dtype=np.float32)
-        a_err_vec_np = np.zeros((1, 3), dtype=np.float32)
-        ang_deg_all = ang_deg_stub
-        a_true_vec_np = np.zeros((1, 3), dtype=np.float64)
-        a_pred_vec_np = np.zeros((1, 3), dtype=np.float64)
-        a_true_norms = np.ones(1, dtype=np.float64) * 1e-6
+    # Non-streaming full-array extraction
+    u_true = np.concatenate(u_true_all, axis=0).reshape(-1, 1)
+    u_pred = np.concatenate(u_pred_all, axis=0).reshape(-1, 1)
+    a_true_mag = np.concatenate(a_true_mag_all, axis=0).reshape(-1, 1)
+    a_pred_mag = np.concatenate(a_pred_mag_all, axis=0).reshape(-1, 1)
+    alt_km_all = np.concatenate(alt_all, axis=0).reshape(-1, 1)
+    x_all_np = np.concatenate(x_all, axis=0)                    # (N, 3) positions
+    a_err_vec_np = np.concatenate(a_err_vec_all, axis=0)        # (N, 3) vectorial error
+    ang_deg_all = np.concatenate(ang_all, axis=0).reshape(-1)
 
-        u_err = u_err_stub
-        a_mag_err = np.zeros(1, dtype=np.float64)
-        u_rel_floor_abs = 1e-12
-        a_rel_floor_abs = 1e-12
-        direction_floor_abs = float(cfg.get("direction_loss_floor_abs", 3e-6))
-        dir_mask = a_true_norms > direction_floor_abs
-        mask_frac = float(np.mean(dir_mask.astype(np.float64)))
-        masked_ang_deg = ang_deg_all if ang_deg_all.size > 0 else np.array([], dtype=np.float64)
-    else:
-        u_true = np.concatenate(u_true_all, axis=0).reshape(-1, 1)
-        u_pred = np.concatenate(u_pred_all, axis=0).reshape(-1, 1)
-        a_true_mag = np.concatenate(a_true_mag_all, axis=0).reshape(-1, 1)
-        a_pred_mag = np.concatenate(a_pred_mag_all, axis=0).reshape(-1, 1)
-        alt_km_all = np.concatenate(alt_all, axis=0).reshape(-1, 1)
-        x_all_np = np.concatenate(x_all, axis=0)                    # (N, 3) positions
-        a_err_vec_np = np.concatenate(a_err_vec_all, axis=0)        # (N, 3) vectorial error
-        ang_deg_all = np.concatenate(ang_all, axis=0).reshape(-1)
+    u_err = (u_pred - u_true).reshape(-1)
+    a_mag_err = (a_pred_mag - a_true_mag).reshape(-1)
+    u_rel_floor_abs = infer_relative_floor_abs(u_true.reshape(-1))
+    a_rel_floor_abs = infer_relative_floor_abs(a_true_mag.reshape(-1))
 
-        u_err = (u_pred - u_true).reshape(-1)
-        a_mag_err = (a_pred_mag - a_true_mag).reshape(-1)
-        u_rel_floor_abs = infer_relative_floor_abs(u_true.reshape(-1))
-        a_rel_floor_abs = infer_relative_floor_abs(a_true_mag.reshape(-1))
-
-        # ---- Masked angular error (exclude near-zero residuals below the direction floor) ----
-        direction_floor_abs = float(cfg.get("direction_loss_floor_abs", 3e-6))
-        a_true_vec_np = np.concatenate(a_true_vec_all, axis=0)   # (N,3)
-        a_pred_vec_np = np.concatenate(a_pred_vec_all, axis=0)   # (N,3)
-        a_true_norms = np.linalg.norm(a_true_vec_np, axis=1)
-        dir_mask = a_true_norms > direction_floor_abs
-        mask_frac = float(np.mean(dir_mask.astype(np.float64)))
-        masked_ang_deg = ang_deg_all[dir_mask] if dir_mask.any() else np.array([], dtype=np.float64)
+    # ---- Masked angular error (exclude near-zero residuals below the direction floor) ----
+    direction_floor_abs = float(cfg.get("direction_loss_floor_abs", 3e-6))
+    a_true_vec_np = np.concatenate(a_true_vec_all, axis=0)   # (N,3)
+    a_pred_vec_np = np.concatenate(a_pred_vec_all, axis=0)   # (N,3)
+    a_true_norms = np.linalg.norm(a_true_vec_np, axis=1)
+    dir_mask = a_true_norms > direction_floor_abs
+    mask_frac = float(np.mean(dir_mask.astype(np.float64)))
+    masked_ang_deg = ang_deg_all[dir_mask] if dir_mask.any() else np.array([], dtype=np.float64)
 
     # ---- Total-field angular error (residual mode: approximate with point-mass base) ----
     if degree_min < 0:

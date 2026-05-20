@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Training engine for the lunar scalar potential surrogate.
 
@@ -1577,9 +1577,13 @@ def train(cfg: TrainConfig) -> None:
                 _best_metric_mode = str(getattr(cfg, "best_metric", "total_loss")).strip().lower()
                 _hybrid_alpha = float(getattr(cfg, "hybrid_direction_alpha", 0.5))
                 if _best_metric_mode == "hybrid" and float(getattr(cfg, "direction_loss_weight", 0.0)) > 0.0:
-                    _ckpt_score = float(va["loss"]) + _hybrid_alpha * float(va.get("loss_dir", 0.0))
+                    _ckpt_score = float(va.get("val_base_loss", va["loss"])) + _hybrid_alpha * float(va.get("loss_dir", 0.0))
                 elif _best_metric_mode == "direction_loss":
                     _ckpt_score = float(va.get("loss_dir", float(va["loss"])))
+                elif _best_metric_mode == "val_base_loss":
+                    _ckpt_score = float(va.get("val_base_loss", va["loss"]))
+                elif _best_metric_mode == "val_total_loss":
+                    _ckpt_score = float(va.get("val_total_loss", va["loss"]))
                 else:
                     _ckpt_score = float(va["loss"])
 

@@ -579,24 +579,25 @@ def _worker_compute_chunk(start: int, n: int, seed: int) -> Tuple[int, np.ndarra
     )
 
     V, a = _sh_potential_accel_batch_serial(
-        xyz_m=xyz,
-        C=_G["C"],  # type: ignore[arg-type]
-        S=_G["S"],  # type: ignore[arg-type]
-        a_nm=_G["a_nm"],  # type: ignore[arg-type]
-        b_nm=_G["b_nm"],  # type: ignore[arg-type]
-        diag_f=_G["diag_f"],  # type: ignore[arg-type]
-        subdiag_f=_G["subdiag_f"],  # type: ignore[arg-type]
-        k_ratio=_G["k_ratio"],  # type: ignore[arg-type]
-        mu_si=float(_G["mu_si"]),
-        r_ref_m=float(_G["r_ref_m"]),
-        degree_max=int(_G["degree_max"]),
-        degree_min=int(_G["degree_min"]),
+        xyz,
+        _G["C"],  # type: ignore[arg-type]
+        _G["S"],  # type: ignore[arg-type]
+        _G["a_nm"],  # type: ignore[arg-type]
+        _G["b_nm"],  # type: ignore[arg-type]
+        _G["diag_f"],  # type: ignore[arg-type]
+        _G["subdiag_f"],  # type: ignore[arg-type]
+        _G["k_ratio"],  # type: ignore[arg-type]
+        float(_G["mu_si"]),
+        float(_G["r_ref_m"]),
+        int(_G["degree_max"]),
+        int(_G["degree_min"]),
     )
 
     out = np.empty((int(n), 7), dtype=np.float64)
     out[:, 0:3] = xyz
     out[:, 3] = V
     out[:, 4:7] = a
+
 
     if bool(_G["canonical"]):
         DU = float(_G["DU"]); TU = float(_G["TU"]); VU = float(_G["VU"])
@@ -1001,18 +1002,18 @@ def _compute_labels_for_xyz(
     Returns (M,7) float64 array [x,y,z,dU,dax,day,daz].
     """
     V, a = _sh_potential_accel_batch_serial(
-        xyz_m=xyz,
-        C=globals_blob["C"],         # type: ignore[arg-type]
-        S=globals_blob["S"],         # type: ignore[arg-type]
-        a_nm=globals_blob["a_nm"],   # type: ignore[arg-type]
-        b_nm=globals_blob["b_nm"],   # type: ignore[arg-type]
-        diag_f=globals_blob["diag_f"],       # type: ignore[arg-type]
-        subdiag_f=globals_blob["subdiag_f"], # type: ignore[arg-type]
-        k_ratio=globals_blob["k_ratio"],     # type: ignore[arg-type]
-        mu_si=float(globals_blob["mu_si"]),
-        r_ref_m=float(globals_blob["r_ref_m"]),
-        degree_max=int(globals_blob["degree_max"]),
-        degree_min=int(globals_blob["degree_min"]),
+        xyz,
+        globals_blob["C"],         # type: ignore[arg-type]
+        globals_blob["S"],         # type: ignore[arg-type]
+        globals_blob["a_nm"],   # type: ignore[arg-type]
+        globals_blob["b_nm"],   # type: ignore[arg-type]
+        globals_blob["diag_f"],       # type: ignore[arg-type]
+        globals_blob["subdiag_f"], # type: ignore[arg-type]
+        globals_blob["k_ratio"],     # type: ignore[arg-type]
+        float(globals_blob["mu_si"]),
+        float(globals_blob["r_ref_m"]),
+        int(globals_blob["degree_max"]),
+        int(globals_blob["degree_min"]),
     )
     out = np.empty((xyz.shape[0], 7), dtype=np.float64)
     out[:, 0:3] = xyz
@@ -1828,7 +1829,11 @@ def _run_active_refinement(a, ap) -> None:
     total_generated = int(x_all.shape[0])
     print(f"[active-refinement] Generated {total_generated} positions.")
 
-    out_dir = Path(getattr(a, "active_out", None) or getattr(a, "out", ".") or ".")
+    _active_out_path = getattr(a, "active_out", None)
+    if _active_out_path:
+        out_dir = Path(_active_out_path).parent
+    else:
+        out_dir = Path(getattr(a, "out", ".") or ".")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Altitude clipping/rejection
@@ -1908,42 +1913,24 @@ def _run_active_refinement(a, ap) -> None:
 
     # Label with SH
     print(f"[active-refinement] Labeling {x_all.shape[0]} points with SH (degree_min={_degree_min_active}, degree_max={_degree_max_active})...")
-    V_full, a_full = _sh_potential_accel_batch_serial(
-        xyz_m=x_all.astype(np.float64),
-        C=C, S=S,
-        mu=mu_gfc, R=r_ref_gfc,
-        n_max=_degree_max_active,
-        a_nm=a_nm, b_nm=b_nm,
-        diag_f=diag_f, subdiag_f=subdiag_f, k_ratio=k_ratio,
-        n_start=0,
+    V_sh, a_sh = _sh_potential_accel_batch_serial(
+        x_all.astype(np.float64),
+        C, S,
+        a_nm, b_nm,
+        diag_f, subdiag_f, k_ratio,
+        mu_gfc, r_ref_gfc,
+        _degree_max_active,
+        _degree_min_active,
     )
-    V_full = V_full.reshape(-1, 1)
-    a_full = a_full.reshape(-1, 3)
+    V_sh = V_sh.reshape(-1, 1)
+    a_sh = a_sh.reshape(-1, 3)
 
-    # Residual: subtract baseline (degree 0..degree_min)
     _is_residual = (_degree_min_active >= 0)
-    if _is_residual:
-        V_base, a_base = _sh_potential_accel_batch_serial(
-            xyz_m=x_all.astype(np.float64),
-            C=C, S=S,
-            mu=mu_gfc, R=r_ref_gfc,
-            n_max=_degree_min_active,
-            a_nm=a_nm, b_nm=b_nm,
-            diag_f=diag_f, subdiag_f=subdiag_f, k_ratio=k_ratio,
-            n_start=0,
-        )
-        dU = (V_full - V_base.reshape(-1, 1)).reshape(-1, 1)
-        da = (a_full - a_base.reshape(-1, 3)).reshape(-1, 3)
-        target_mode_active = "residual"
-        columns_label = "[x,y,z,dU,dax,day,daz]"
-    else:
-        dU = V_full
-        da = a_full
-        target_mode_active = "full"
-        columns_label = "[x,y,z,U,ax,ay,az]"
+    target_mode_active = "residual" if _is_residual else "full"
+    columns_label = "[x,y,z,dU,dax,day,daz]" if _is_residual else "[x,y,z,U,ax,ay,az]"
 
     # Build output dataset (N, 7)
-    data_out = np.concatenate([x_all.astype(np.float64), dU, da], axis=1)  # (N, 7)
+    data_out = np.concatenate([x_all.astype(np.float64), V_sh, a_sh], axis=1)  # (N, 7)
 
     # Resolve output path
     _active_out_path = getattr(a, "active_out", None)

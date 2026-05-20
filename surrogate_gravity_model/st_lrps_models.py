@@ -428,6 +428,57 @@ class RadialSeparationEncoding(nn.Module):
         return encoded
 
 
+class SHInspiredAngularEncoding(nn.Module):
+    """
+    This is not an exact spherical harmonic basis.
+    It is a smooth Cartesian angular polynomial encoding inspired by low-degree angular harmonic structure.
+    """
+    def __init__(self, degree_max: int = 4, append_raw: bool = True):
+        super().__init__()
+        self.degree_max = int(degree_max)
+        self.append_raw = bool(append_raw)
+        
+        if self.degree_max > 8:
+            raise ValueError(f"SHInspiredAngularEncoding degree_max={self.degree_max} > 8 is not allowed by policy.")
+            
+        if not self.append_raw:
+            raise ValueError(
+                "SHInspiredAngularEncoding with append_raw=False loses radial information. "
+                "You must set append_raw=True or include explicit radial features."
+            )
+
+        import math
+        self.n_features = math.comb(self.degree_max + 3, 3) - 1
+        
+        from itertools import product
+        combos = []
+        for i, j, k in product(range(self.degree_max + 1), repeat=3):
+            if 1 <= i + j + k <= self.degree_max:
+                combos.append((i, j, k))
+        combos.sort(key=lambda t: (sum(t), t[0], t[1], t[2]))
+        
+        self.register_buffer("pow_x", torch.tensor([c[0] for c in combos], dtype=torch.int32))
+        self.register_buffer("pow_y", torch.tensor([c[1] for c in combos], dtype=torch.int32))
+        self.register_buffer("pow_z", torch.tensor([c[2] for c in combos], dtype=torch.int32))
+
+    @property
+    def out_dim(self) -> int:
+        return self.n_features + (3 if self.append_raw else 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        r = torch.norm(x, dim=-1, keepdim=True) + 1e-12
+        nx = x[:, 0:1] / r
+        ny = x[:, 1:2] / r
+        nz = x[:, 2:3] / r
+        
+        features = (nx ** self.pow_x) * (ny ** self.pow_y) * (nz ** self.pow_z)
+        
+        if self.append_raw:
+            return torch.cat([features, x], dim=-1)
+        return features
+
+
+
 # ---------------------------------------------------------------------------
 # PhysicsNet wrapper
 # ---------------------------------------------------------------------------
@@ -435,7 +486,7 @@ class RadialSeparationEncoding(nn.Module):
 class PhysicsNet(nn.Module):
     """Optional FourierEmbedding → backbone. ``embedding=None`` is a no-op pass-through."""
 
-    def __init__(self, backbone: nn.Module, embedding: Optional[FourierInputEmbedding] = None):
+    def __init__(self, backbone: nn.Module, embedding: Optional[nn.Module] = None):
         super().__init__()
         self.embedding = embedding
         self.backbone = backbone
@@ -541,6 +592,15 @@ def build_model_from_config(
             seed=int(_cfg_value(cfg, "fourier_seed", 42)),
             append_raw=bool(_cfg_value(cfg, "fourier_append_raw", True)),
         )
+        backbone_in_dim = int(embedding.out_dim)
+    elif use_sh:
+        embedding = SHInspiredAngularEncoding(
+            degree_max=sh_degree,
+            append_raw=sh_append_raw
+        )
+        backbone_in_dim = int(embedding.out_dim)
+    elif use_radial:
+        embedding = RadialSeparationEncoding(append_raw=radial_append_raw)
         backbone_in_dim = int(embedding.out_dim)
 
     n_bands      = max(1, int(_cfg_value(cfg, "n_bands", 1)))
