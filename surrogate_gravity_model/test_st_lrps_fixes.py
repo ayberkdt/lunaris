@@ -368,10 +368,531 @@ def test_predict_residual_potential_valid_input_unchanged():
     model = build_model_from_config(cfg)
     scaler = mock_scaler()
     fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 1e14, "degree_min": 0}, device=torch.device("cpu"))
-    
+
     x = np.array([[1000.0, 1000.0, 1000.0]])
     res = fm.predict_residual_potential(x)
     assert np.isfinite(res).all()
+
+
+# ==============================================================================
+# TASK 6: SHInspiredAngularEncoding in __all__
+# ==============================================================================
+
+def test_sh_inspired_angular_encoding_in_all():
+    """Task 6: SHInspiredAngularEncoding must be exported from __all__."""
+    import surrogate_gravity_model.st_lrps_models as _m
+    assert "SHInspiredAngularEncoding" in _m.__all__, (
+        "SHInspiredAngularEncoding must be in st_lrps_models.__all__"
+    )
+
+
+# ==============================================================================
+# TASK 1 (cont.) / TASK 2: TrainConfig encoding fields and config.json metadata
+# ==============================================================================
+
+def test_train_config_has_encoding_fields():
+    """Task 1 & 8: TrainConfig must have all 5 encoding fields with correct defaults."""
+    from surrogate_gravity_model.st_lrps_config import TrainConfig
+    import dataclasses as _dc
+    field_names = {f.name for f in _dc.fields(TrainConfig)}
+    for field in ("use_sh_encoding", "sh_encoding_degree", "sh_append_raw",
+                  "use_radial_separation", "radial_append_raw"):
+        assert field in field_names, f"TrainConfig missing field: {field}"
+    # Check defaults (backward-compatible: all off)
+    # TrainConfig needs data and out, so use dummy values
+    cfg = TrainConfig(data="/dev/null", out="/tmp")
+    assert cfg.use_sh_encoding is False
+    assert cfg.sh_encoding_degree == 4
+    assert cfg.sh_append_raw is True
+    assert cfg.use_radial_separation is False
+    assert cfg.radial_append_raw is False
+
+
+def test_sh_encoding_config_written_to_json():
+    """Task 2: config.json must contain encoding fields when SH encoding is active."""
+    import dataclasses
+    from surrogate_gravity_model.st_lrps_config import TrainConfig
+    cfg = TrainConfig(data="/dev/null", out="/tmp", use_sh_encoding=True, sh_encoding_degree=3)
+    payload = dataclasses.asdict(cfg)
+    assert "use_sh_encoding" in payload
+    assert payload["use_sh_encoding"] is True
+    assert payload["sh_encoding_degree"] == 3
+
+
+def test_sh_encoded_model_strict_reload(tmp_path):
+    """Task 2 & 8: Build SH-encoded model, save checkpoint, reload with strict=True."""
+    cfg_dict = {
+        "activation": "sine",
+        "hidden": 32, "depth": 2,
+        "w0_first": 30.0, "w0_hidden": 30.0,
+        "dropout": 0.0,
+        "use_sh_encoding": True, "sh_encoding_degree": 2, "sh_append_raw": True,
+        "use_radial_separation": False, "use_fourier": False,
+        "n_bands": 1, "use_residual_blocks": False,
+    }
+    model = build_model_from_config(cfg_dict, in_dim=3)
+    ckpt_path = tmp_path / "model_sh.pt"
+    torch.save({"model_state_dict": model.state_dict(), "cfg": cfg_dict}, str(ckpt_path))
+
+    # Reload
+    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
+    cfg2 = ckpt["cfg"]
+    model2 = build_model_from_config(cfg2, in_dim=3)
+    model2.load_state_dict(ckpt["model_state_dict"], strict=True)
+
+    x = torch.randn(5, 3, dtype=torch.float32)
+    model.eval()
+    model2.eval()
+    with torch.no_grad():
+        out1 = model(x)
+        out2 = model2(x)
+    assert torch.allclose(out1, out2, atol=1e-6), "SH strict reload outputs differ"
+
+
+def test_radial_encoded_model_strict_reload(tmp_path):
+    """Task 2 & 8: Build radial-encoded model, save checkpoint, reload with strict=True."""
+    cfg_dict = {
+        "activation": "sine",
+        "hidden": 32, "depth": 2,
+        "w0_first": 30.0, "w0_hidden": 30.0,
+        "dropout": 0.0,
+        "use_sh_encoding": False,
+        "use_radial_separation": True, "radial_append_raw": False,
+        "use_fourier": False,
+        "n_bands": 1, "use_residual_blocks": False,
+    }
+    model = build_model_from_config(cfg_dict, in_dim=3)
+    ckpt_path = tmp_path / "model_radial.pt"
+    torch.save({"model_state_dict": model.state_dict(), "cfg": cfg_dict}, str(ckpt_path))
+
+    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
+    cfg2 = ckpt["cfg"]
+    model2 = build_model_from_config(cfg2, in_dim=3)
+    model2.load_state_dict(ckpt["model_state_dict"], strict=True)
+
+    x = torch.randn(5, 3, dtype=torch.float32)
+    model.eval()
+    model2.eval()
+    with torch.no_grad():
+        out1 = model(x)
+        out2 = model2(x)
+    assert torch.allclose(out1, out2, atol=1e-6), "Radial strict reload outputs differ"
+
+
+def _make_encoded_force_model_checkpoint(tmp_path, use_sh=False, use_radial=False):
+    """Helper: build encoded model, save checkpoint + config.json, return (model_dir, cfg_dict)."""
+    cfg_dict = {
+        "activation": "sine",
+        "hidden": 32, "depth": 2,
+        "w0_first": 30.0, "w0_hidden": 30.0,
+        "dropout": 0.0,
+        "use_sh_encoding": use_sh, "sh_encoding_degree": 2, "sh_append_raw": True,
+        "use_radial_separation": use_radial, "radial_append_raw": False,
+        "use_fourier": False,
+        "n_bands": 1, "use_residual_blocks": False,
+        "resolved_a_sign": 1.0,
+        "resolved_mu_si": 4902.8e9,
+        "resolved_r_ref_m": 1.737e6,
+        "degree_min": 2,
+        "residual_mode": True,
+    }
+    model = build_model_from_config(cfg_dict, in_dim=3)
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = ckpt_dir / "ckpt_best.pt"
+    torch.save({"model": model.state_dict(), "cfg": cfg_dict}, str(ckpt_path))
+
+    # Minimal scaler.json (identity ScalerPack format)
+    scaler_data = {
+        "x": {"mean": [0.0, 0.0, 0.0], "scale": 1.0},
+        "u": {"mean": [0.0], "scale": 1.0},
+        "a": {"mean": [0.0, 0.0, 0.0], "scale": 1.0},
+        "provenance": {"fit_rows": 10}
+    }
+    (tmp_path / "scaler.json").write_text(json.dumps(scaler_data))
+
+    full_cfg = dict(cfg_dict)
+    full_cfg["resolved_r_ref_m"] = 1.737e6
+    (tmp_path / "config.json").write_text(json.dumps(full_cfg))
+    return tmp_path, cfg_dict
+
+
+def test_force_model_loads_sh_encoded_checkpoint(tmp_path):
+    """Task 2 & 7: SurrogateForceModel must load an SH-encoded checkpoint and produce finite output."""
+    model_dir, _ = _make_encoded_force_model_checkpoint(tmp_path, use_sh=True)
+    from surrogate_gravity_model.st_lrps_force_model import load_surrogate_force_model
+    fm = load_surrogate_force_model(str(model_dir), device="cpu")
+    x = np.array([[1.8e6, 0.0, 0.0], [0.0, 1.8e6, 0.0]])
+    out = fm.predict_residual_potential(x)
+    assert np.isfinite(out).all(), f"SH-encoded force model produced non-finite output: {out}"
+
+
+def test_force_model_loads_radial_encoded_checkpoint(tmp_path):
+    """Task 2 & 7: SurrogateForceModel must load a radial-encoded checkpoint and produce finite output."""
+    model_dir, _ = _make_encoded_force_model_checkpoint(tmp_path, use_radial=True)
+    from surrogate_gravity_model.st_lrps_force_model import load_surrogate_force_model
+    fm = load_surrogate_force_model(str(model_dir), device="cpu")
+    x = np.array([[1.8e6, 0.0, 0.0], [0.0, 1.8e6, 0.0]])
+    out = fm.predict_residual_potential(x)
+    assert np.isfinite(out).all(), f"Radial-encoded force model produced non-finite output: {out}"
+
+
+# ==============================================================================
+# TASK 8: Backward compatibility — old raw configs load without encoding fields
+# ==============================================================================
+
+def test_old_config_without_encoding_fields_builds_raw_model():
+    """Task 8: build_model_from_config must work with old configs that lack encoding fields."""
+    old_cfg = {
+        "activation": "sine",
+        "hidden": 32, "depth": 2,
+        "w0_first": 30.0, "w0_hidden": 30.0,
+        "dropout": 0.0,
+        "use_fourier": False,
+        "n_bands": 1, "use_residual_blocks": False,
+        # No encoding keys at all (old config)
+    }
+    model = build_model_from_config(old_cfg, in_dim=3)
+    assert model is not None
+    assert getattr(model, "embedding_type", "raw") == "raw"
+    x = torch.randn(4, 3, dtype=torch.float32)
+    out = model(x)
+    assert out.shape == (4, 1)
+
+
+def test_old_raw_checkpoint_strict_reload(tmp_path):
+    """Task 8: Old raw (no-encoding) checkpoints must reload with strict=True after fix."""
+    old_cfg = {
+        "activation": "sine",
+        "hidden": 32, "depth": 2,
+        "w0_first": 30.0, "w0_hidden": 30.0,
+        "dropout": 0.0,
+        "use_fourier": False,
+        "n_bands": 1, "use_residual_blocks": False,
+    }
+    model = build_model_from_config(old_cfg, in_dim=3)
+    ckpt_path = tmp_path / "old_model.pt"
+    torch.save({"model_state_dict": model.state_dict(), "cfg": old_cfg}, str(ckpt_path))
+
+    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
+    # Old config has no encoding keys: build_model_from_config must default to raw
+    model2 = build_model_from_config(ckpt["cfg"], in_dim=3)
+    model2.load_state_dict(ckpt["model_state_dict"], strict=True)
+
+    x = torch.randn(3, 3, dtype=torch.float32)
+    model.eval(); model2.eval()
+    with torch.no_grad():
+        assert torch.allclose(model(x), model2(x), atol=1e-6)
+
+
+# ==============================================================================
+# TASK 3: Active refinement GFC key fixes
+# ==============================================================================
+
+def test_active_refinement_uses_mu_si_and_r_ref_m_keys(tmp_path, monkeypatch):
+    """Task 3: _run_active_refinement must read mu_si and r_ref_m (not earth_gravity_constant/radius)."""
+    import surrogate_gravity_model.spatial_cloud_generator as scg
+
+    captured_keys = {}
+
+    def fake_load_icgem_gfc(file_path, max_degree, **kw):
+        # Return normalized keys (what load_icgem_gfc actually provides)
+        from surrogate_gravity_model.dataset_parameters import MU_MOON_SI, R_MOON_SI
+        gmeta = {
+            "mu_si": MU_MOON_SI,
+            "r_ref_m": R_MOON_SI,
+            "degree": max_degree,
+            "central_body": "moon",
+        }
+        captured_keys.update(gmeta)
+        # Return minimal C, S arrays
+        n = max_degree + 1
+        C = np.zeros((n, n))
+        S = np.zeros((n, n))
+        C[0, 0] = 1.0
+        return C, S, gmeta
+
+    monkeypatch.setattr(scg, "load_icgem_gfc", fake_load_icgem_gfc)
+
+    # Create dummy error points CSV
+    err_csv = tmp_path / "errors.csv"
+    from surrogate_gravity_model.dataset_parameters import R_MOON_SI
+    r0 = R_MOON_SI + 300e3
+    cols = ["x","y","z","u_true","u_pred","ax_true","ay_true","az_true","ax_pred","ay_pred","az_pred","abs_a_error","rel_a_error","altitude_km"]
+    header = ",".join(cols)
+    row1 = f"{r0},0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1e-5,0.0,300.0"
+    row2 = f"0.0,{r0},0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2e-5,0.0,300.0"
+    err_csv.write_text(f"{header}\n{row1}\n{row2}\n")
+
+    gfc_file = tmp_path / "fake.gfc"
+    gfc_file.write_text("")  # content irrelevant — we monkeypatch loader
+
+    class _Ap:
+        def error(self, msg):
+            raise SystemExit(msg)
+
+    args = MockArgs(
+        active_from_error_points=str(err_csv),
+        active_max_source_points=10,
+        active_samples_per_point=1,
+        active_jitter_radial_km=0.1,
+        active_jitter_tangent_km=0.1,
+        active_gfc_file=str(gfc_file),
+        active_degree_max=2,
+        active_degree_min=-1,
+        active_seed=42,
+        active_save_positions_only=False,
+        active_clip_to_alt_range=False,
+        active_reject_outside_alt_range=False,
+        active_out=str(tmp_path / "out.h5"),
+        out=str(tmp_path),
+    )
+
+    scg._run_active_refinement(args, _Ap())
+    out_h5 = tmp_path / "out.h5"
+    assert out_h5.exists(), "Active refinement must write HDF5 output"
+    with h5py.File(str(out_h5), "r") as hf:
+        mu_written = float(hf.attrs["mu_si"])
+        r_ref_written = float(hf.attrs["r_ref_m"])
+    from surrogate_gravity_model.dataset_parameters import MU_MOON_SI, R_MOON_SI
+    assert abs(mu_written - MU_MOON_SI) < 1e6, (
+        f"Active refinement wrote wrong mu_si={mu_written}, expected ~{MU_MOON_SI}"
+    )
+    assert abs(r_ref_written - R_MOON_SI) < 1e3, (
+        f"Active refinement wrote wrong r_ref_m={r_ref_written}, expected ~{R_MOON_SI}"
+    )
+
+
+def test_active_refinement_degree_min_zero_preserved(tmp_path, monkeypatch):
+    """Task 3: degree_min=0 must not be overwritten to -1 by the falsy `or` bug."""
+    import surrogate_gravity_model.spatial_cloud_generator as scg
+    from surrogate_gravity_model.dataset_parameters import MU_MOON_SI, R_MOON_SI
+
+    def fake_load_icgem_gfc(file_path, max_degree, **kw):
+        n = max_degree + 1
+        C = np.zeros((n, n)); S = np.zeros((n, n)); C[0, 0] = 1.0
+        return C, S, {"mu_si": MU_MOON_SI, "r_ref_m": R_MOON_SI,
+                      "degree": max_degree, "central_body": "moon"}
+
+    monkeypatch.setattr(scg, "load_icgem_gfc", fake_load_icgem_gfc)
+
+    err_csv = tmp_path / "err.csv"
+    r0 = R_MOON_SI + 300e3
+    cols = ["x","y","z","u_true","u_pred","ax_true","ay_true","az_true","ax_pred","ay_pred","az_pred","abs_a_error","rel_a_error","altitude_km"]
+    header = ",".join(cols)
+    row1 = f"{r0},0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1e-5,0.0,300.0"
+    err_csv.write_text(f"{header}\n{row1}\n")
+    gfc_file = tmp_path / "fake.gfc"; gfc_file.write_text("")
+
+    class _Ap:
+        def error(self, msg): raise SystemExit(msg)
+
+    args = MockArgs(
+        active_from_error_points=str(err_csv),
+        active_max_source_points=5,
+        active_samples_per_point=1,
+        active_jitter_radial_km=0.1,
+        active_jitter_tangent_km=0.1,
+        active_gfc_file=str(gfc_file),
+        active_degree_max=2,
+        active_degree_min=0,    # ← explicitly zero; must NOT become -1
+        active_seed=42,
+        active_save_positions_only=False,
+        active_clip_to_alt_range=False,
+        active_reject_outside_alt_range=False,
+        active_out=str(tmp_path / "out_deg0.h5"),
+        out=str(tmp_path),
+    )
+    scg._run_active_refinement(args, _Ap())
+    out_h5 = tmp_path / "out_deg0.h5"
+    assert out_h5.exists()
+    with h5py.File(str(out_h5), "r") as hf:
+        deg_min_written = int(hf.attrs.get("degree_min", -99))
+    assert deg_min_written == 0, (
+        f"degree_min=0 was overwritten; got {deg_min_written} (old bug would give -1)"
+    )
+
+
+# ==============================================================================
+# TASK 4: Streaming evaluator U L∞ and relative error are real values
+# ==============================================================================
+
+def _make_small_h5(path: Path, n: int = 150):
+    """Create a minimal valid HDF5 file for evaluator smoke tests."""
+    from surrogate_gravity_model.dataset_parameters import R_MOON_SI, MU_MOON_SI
+    rng = np.random.default_rng(7)
+    r = R_MOON_SI + rng.uniform(200e3, 500e3, n)
+    theta = rng.uniform(0, np.pi, n)
+    phi = rng.uniform(0, 2 * np.pi, n)
+    x = r * np.sin(theta) * np.cos(phi)
+    y = r * np.sin(theta) * np.sin(phi)
+    z = r * np.cos(theta)
+    U = -MU_MOON_SI / r + rng.normal(0, 1.0, n)
+    ax = -MU_MOON_SI * x / r**3 + rng.normal(0, 1e-6, n)
+    ay = -MU_MOON_SI * y / r**3 + rng.normal(0, 1e-6, n)
+    az = -MU_MOON_SI * z / r**3 + rng.normal(0, 1e-6, n)
+    data = np.stack([x, y, z, U, ax, ay, az], axis=1).astype(np.float32)
+    with h5py.File(str(path), "w") as hf:
+        hf.create_dataset("data", data=data)
+        hf.attrs["unit_system"] = "SI"
+        hf.attrs["mu_si"] = float(MU_MOON_SI)
+        hf.attrs["r_ref_m"] = float(R_MOON_SI)
+        hf.attrs["central_body"] = "moon"
+        hf.attrs["target_mode"] = "full"
+        hf.attrs["degree_min"] = -1
+        hf.attrs["requested_degree"] = 2
+        hf.attrs["a_sign_convention"] = 1.0
+        hf.attrs["columns"] = "[x,y,z,U,ax,ay,az]"
+
+
+def _make_minimal_run_dir(tmp_path: Path):
+    """Create a minimal model run dir (config.json + scaler.json + checkpoint) for evaluator."""
+    from surrogate_gravity_model.dataset_parameters import R_MOON_SI, MU_MOON_SI
+    cfg_dict = {
+        "activation": "sine", "hidden": 16, "depth": 2,
+        "w0_first": 30.0, "w0_hidden": 30.0, "dropout": 0.0,
+        "use_sh_encoding": False, "sh_encoding_degree": 4, "sh_append_raw": True,
+        "use_radial_separation": False, "radial_append_raw": False,
+        "use_fourier": False, "n_bands": 1, "use_residual_blocks": False,
+        "resolved_a_sign": 1.0, "resolved_mu_si": MU_MOON_SI,
+        "resolved_r_ref_m": R_MOON_SI, "degree_min": -1, "residual_mode": False,
+        "target_mode": "full",
+    }
+    model = build_model_from_config(cfg_dict, in_dim=3)
+    ckpt_dir = tmp_path / "checkpoints"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    torch.save({"model": model.state_dict(), "cfg": cfg_dict},
+               str(ckpt_dir / "ckpt_best.pt"))
+    (tmp_path / "config.json").write_text(json.dumps(cfg_dict))
+    scaler_data = {
+        "x": {"mean": [0.0, 0.0, 0.0], "scale": 1.0},
+        "u": {"mean": [0.0], "scale": 1.0},
+        "a": {"mean": [0.0, 0.0, 0.0], "scale": 1.0},
+        "provenance": {"fit_rows": 10}
+    }
+    (tmp_path / "scaler.json").write_text(json.dumps(scaler_data))
+    return tmp_path
+
+
+def test_streaming_u_linf_is_not_fake_zero(tmp_path):
+    """Task 4: streaming U.linf must be > 0 for non-trivial data (real L∞ tracking)."""
+    data_path = tmp_path / "data.h5"
+    _make_small_h5(data_path, n=100)
+    run_dir = _make_minimal_run_dir(tmp_path / "run")
+    out_dir = tmp_path / "eval_out"
+    result = evaluate(
+        model_dir=run_dir,
+        data_path=data_path,
+        out_dir=out_dir,
+        streaming=True,
+        device=torch.device("cpu"),
+        batch_size=10,
+        a_sign=1.0,
+        r_ref_m=1737400.0,
+        alt_bin_km=50.0,
+    )
+    u_linf = result.get("U", {}).get("linf", None)
+    assert u_linf is not None, "U.linf missing from streaming result"
+    assert u_linf > 0.0, f"U.linf should be > 0 for non-trivial data; got {u_linf}"
+
+
+def test_streaming_u_relative_error_is_computed(tmp_path):
+    """Task 4: streaming U.rel_mean_pct must be > 0 for non-trivial data."""
+    data_path = tmp_path / "data.h5"
+    _make_small_h5(data_path, n=100)
+    run_dir = _make_minimal_run_dir(tmp_path / "run")
+    out_dir = tmp_path / "eval_out"
+    result = evaluate(
+        model_dir=run_dir,
+        data_path=data_path,
+        out_dir=out_dir,
+        streaming=True,
+        device=torch.device("cpu"),
+        batch_size=10,
+        a_sign=1.0,
+        r_ref_m=1737400.0,
+        alt_bin_km=50.0,
+    )
+    rel_pct = result.get("U", {}).get("rel_mean_pct", None)
+    assert rel_pct is not None, "U.rel_mean_pct missing from streaming result"
+    assert rel_pct > 0.0, f"U.rel_mean_pct should be > 0; got {rel_pct}"
+
+
+# ==============================================================================
+# TASK 5: eval_report.json as primary output from streaming mode
+# ==============================================================================
+
+def test_streaming_writes_eval_report_json(tmp_path):
+    """Task 5: streaming mode must write eval_report.json."""
+    data_path = tmp_path / "data.h5"
+    _make_small_h5(data_path, n=80)
+    run_dir = _make_minimal_run_dir(tmp_path / "run")
+    out_dir = tmp_path / "eval_out"
+    evaluate(
+        model_dir=run_dir,
+        data_path=data_path,
+        out_dir=out_dir,
+        streaming=True,
+        device=torch.device("cpu"),
+        batch_size=10,
+        a_sign=1.0,
+        r_ref_m=1737400.0,
+        alt_bin_km=50.0,
+    )
+    assert (out_dir / "eval_report.json").exists(), (
+        "streaming evaluate() must write eval_report.json"
+    )
+
+
+def test_streaming_eval_report_has_metrics_block(tmp_path):
+    """Task 5: streaming eval_report.json must have a 'metrics' sub-block."""
+    data_path = tmp_path / "data.h5"
+    _make_small_h5(data_path, n=80)
+    run_dir = _make_minimal_run_dir(tmp_path / "run")
+    out_dir = tmp_path / "eval_out"
+    evaluate(
+        model_dir=run_dir,
+        data_path=data_path,
+        out_dir=out_dir,
+        streaming=True,
+        device=torch.device("cpu"),
+        batch_size=10,
+        a_sign=1.0,
+        r_ref_m=1737400.0,
+        alt_bin_km=50.0,
+    )
+    report_path = out_dir / "eval_report.json"
+    report = json.loads(report_path.read_text())
+    assert "metrics" in report, (
+        "eval_report.json must have a 'metrics' top-level key (got: " + str(list(report.keys())) + ")"
+    )
+    metrics = report["metrics"]
+    assert "U" in metrics
+    assert "evaluation_mode" in metrics
+    assert metrics["evaluation_mode"] == "streaming"
+
+
+def test_streaming_also_writes_evaluate_metrics_json_legacy(tmp_path):
+    """Task 5: streaming mode must still write evaluate_metrics.json for backward compat."""
+    data_path = tmp_path / "data.h5"
+    _make_small_h5(data_path, n=80)
+    run_dir = _make_minimal_run_dir(tmp_path / "run")
+    out_dir = tmp_path / "eval_out"
+    evaluate(
+        model_dir=run_dir,
+        data_path=data_path,
+        out_dir=out_dir,
+        streaming=True,
+        device=torch.device("cpu"),
+        batch_size=10,
+        a_sign=1.0,
+        r_ref_m=1737400.0,
+        alt_bin_km=50.0,
+    )
+    assert (out_dir / "evaluate_metrics.json").exists(), (
+        "streaming evaluate() must still write evaluate_metrics.json (legacy alias)"
+    )
+
 
 if __name__ == "__main__":
     pytest.main(["-v", __file__])

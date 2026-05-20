@@ -55,11 +55,14 @@ class _StreamingMetrics:
         self.max_abs_a = 0.0
         self.sum_abs_u = 0.0
         self.sum_sq_u = 0.0
+        self.max_abs_u = 0.0          # Task 4: U L∞ tracker
+        self.sum_u_rel_num = 0.0      # Task 4: Σ |u_err|  for per-point U relative error
+        self.sum_u_rel_den = 0.0      # Task 4: Σ |u_true| (clipped) for U relative error
         self.sum_ang_rad = 0.0
         self.sum_sq_ang_rad = 0.0
         self.sum_cos_sim = 0.0
-        self.sum_rel_num = 0.0   # sum |err| for relative error
-        self.sum_rel_den = 0.0   # sum |true| for relative error
+        self.sum_rel_num = 0.0   # Σ |a_mag_err|  for acceleration relative error
+        self.sum_rel_den = 0.0   # Σ |a_true_mag| for acceleration relative error
         # Altitude bins
         self.n_alt_bins = n_alt_bins
         self.alt_min_km = alt_min_km
@@ -88,8 +91,15 @@ class _StreamingMetrics:
         self.sum_abs_a += float(np.abs(a_mag_err).sum())
         self.sum_sq_a += float((a_mag_err ** 2).sum())
         self.max_abs_a = max(self.max_abs_a, float(np.abs(a_mag_err).max()))
-        self.sum_abs_u += float(np.abs(u_pred - u_true).sum())
-        self.sum_sq_u += float(((u_pred - u_true) ** 2).sum())
+        u_err = u_pred - u_true
+        u_abs_err = np.abs(u_err)
+        self.sum_abs_u += float(u_abs_err.sum())
+        self.sum_sq_u += float((u_err ** 2).sum())
+        # Task 4: U L∞ and per-point relative error
+        self.max_abs_u = max(self.max_abs_u, float(u_abs_err.max()))
+        u_true_abs = np.abs(u_true).clip(1e-30)
+        self.sum_u_rel_num += float(u_abs_err.sum())
+        self.sum_u_rel_den += float(u_true_abs.sum())
         self.sum_rel_num += float(np.abs(a_mag_err).sum())
         self.sum_rel_den += float(a_true_norm.sum())
         # Angular error
@@ -120,6 +130,10 @@ class _StreamingMetrics:
             "max_abs_a": self.max_abs_a,
             "mae_u": self.sum_abs_u / n,
             "rmse_u": math.sqrt(self.sum_sq_u / n),
+            "max_abs_u": self.max_abs_u,                               # Task 4: U L∞
+            "robust_rel_err_u": (                                      # Task 4: U relative error
+                self.sum_u_rel_num / max(self.sum_u_rel_den, 1e-30)
+            ),
             "mean_ang_deg": math.degrees(self.sum_ang_rad / n),
             "rmse_ang_deg": math.degrees(math.sqrt(self.sum_sq_ang_rad / n)),
             "mean_cos_sim": self.sum_cos_sim / n,
@@ -1383,8 +1397,9 @@ def evaluate(
             "U": {
                 "mae": _sm_res["mae_u"],
                 "rmse": _sm_res["rmse_u"],
-                "linf": 0.0,
-                "rel_mean_pct": 0.0,
+                # Task 4: real L∞ and relative error (previously stub 0.0)
+                "linf": _sm_res["max_abs_u"],
+                "rel_mean_pct": _sm_res["robust_rel_err_u"] * 100.0,
             },
             "|a|": {
                 "mae": _sm_res["mae_a"],
@@ -1412,16 +1427,22 @@ def evaluate(
             "load_report": load_report,
             "topk_export_path": str(_topk_export_path) if _topk_export_path else None,
         }
-        
+
         plots_dir = out_dir
         plots_dir.mkdir(parents=True, exist_ok=True)
         if ang_deg_plot:
             ang_plot = np.concatenate(ang_deg_plot, axis=0).reshape(-1)
             save_hist_angular_deg(ang_plot, plots_dir / "hist_angular_err_deg_sampled.png", "Angular error (deg) Sampled histogram")
-            
+
+        # Task 5: eval_report.json is the primary output (consistent with non-streaming mode).
+        # evaluate_metrics.json is written as a backward-compatible legacy alias.
+        report_path = out_dir / "eval_report.json"
+        report_payload = {"metrics": metrics}
+        report_path.write_text(json.dumps(report_payload, indent=2))
+        print(f"[eval] Streaming report saved to {report_path}")
+        # Legacy alias
         metrics_path = out_dir / "evaluate_metrics.json"
         metrics_path.write_text(json.dumps(metrics, indent=2))
-        print(f"[eval] Streaming metrics saved to {metrics_path}")
         return metrics
 
     # Non-streaming full-array extraction

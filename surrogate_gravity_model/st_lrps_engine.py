@@ -1213,6 +1213,24 @@ def train(cfg: TrainConfig) -> None:
     _total_params = sum(p.numel() for p in model.parameters())
     logger.info(f"Total parameters: {_total_params:,}")
 
+    # Task 2: Update config.json with model-derived embedding metadata now that
+    # the model has been built and has .embedding_type / .input_feature_dim set.
+    try:
+        _emb_type_built = str(getattr(model, "embedding_type", "raw"))
+        _in_fdim_built = int(getattr(model, "input_feature_dim", 3))
+        with open(config_path, "r", encoding="utf-8") as _cf:
+            _cfg_payload = json.load(_cf)
+        _cfg_payload["embedding_type"] = _emb_type_built
+        _cfg_payload["input_feature_dim"] = _in_fdim_built
+        _cfg_payload["total_params"] = int(_total_params)
+        with open(config_path, "w", encoding="utf-8") as _cf:
+            json.dump(_cfg_payload, _cf, indent=2)
+        logger.info(
+            f"Encoding: embedding_type={_emb_type_built}  input_feature_dim={_in_fdim_built}"
+        )
+    except Exception as _cfg_update_exc:
+        logger.warning(f"Could not update config.json with model metadata: {_cfg_update_exc}")
+
     weights = GradNormWeights(
         w_u=cfg.w_u,
         w_a=cfg.w_a,
@@ -1363,6 +1381,16 @@ def train(cfg: TrainConfig) -> None:
         "direction_loss_ramp_epochs": int(cfg.direction_loss_ramp_epochs),
         "checkpoint_settle_epochs": int(getattr(cfg, "checkpoint_settle_epochs", 5)),
     }
+    # Task 2: Record encoding configuration so strict checkpoint reloads can
+    # reconstruct the exact same PhysicsNet architecture.
+    payload["use_sh_encoding"] = bool(getattr(cfg, "use_sh_encoding", False))
+    payload["sh_encoding_degree"] = int(getattr(cfg, "sh_encoding_degree", 4))
+    payload["sh_append_raw"] = bool(getattr(cfg, "sh_append_raw", True))
+    payload["use_radial_separation"] = bool(getattr(cfg, "use_radial_separation", False))
+    payload["radial_append_raw"] = bool(getattr(cfg, "radial_append_raw", False))
+    # Derive embedding_type and input_feature_dim from model after build
+    # (model is built later; insert placeholder; updated after build below)
+    payload["model_builder_version"] = "v2"
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
 

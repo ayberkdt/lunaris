@@ -1900,13 +1900,18 @@ def _run_active_refinement(a, ap) -> None:
     if not gfc_path.exists():
         ap.error(f"--active-gfc-file not found: {gfc_path}")
 
-    _degree_max_active = int(getattr(a, "active_degree_max", None) or getattr(a, "degree_max", 50))
-    _degree_min_active = int(getattr(a, "active_degree_min", None) or getattr(a, "degree_min", -1))
+    # Explicit None check: using `or` would override degree_min=0 and degree_max=0.
+    _adm = getattr(a, "active_degree_max", None)
+    _degree_max_active = int(_adm if _adm is not None else getattr(a, "degree_max", 50))
+    _adm_min = getattr(a, "active_degree_min", None)
+    _degree_min_active = int(_adm_min if _adm_min is not None else getattr(a, "degree_min", -1))
 
     print(f"[active-refinement] Loading GFC: {gfc_path.name} (degree_max={_degree_max_active})")
     C, S, gmeta = load_icgem_gfc(file_path=str(gfc_path), max_degree=_degree_max_active)
-    mu_gfc = float(gmeta.get("earth_gravity_constant") or gmeta.get("mu") or MU_MOON_SI)
-    r_ref_gfc = float(gmeta.get("radius") or R_MOON_SI)
+    # load_icgem_gfc normalizes the header keys into mu_si and r_ref_m.
+    # Do NOT use raw ICGEM keys ("earth_gravity_constant", "radius") here.
+    mu_gfc = float(gmeta.get("mu_si", MU_MOON_SI))
+    r_ref_gfc = float(gmeta.get("r_ref_m", R_MOON_SI))
 
     print(f"[active-refinement] Precomputing Legendre constants (degree_max={_degree_max_active})...")
     a_nm, b_nm, diag_f, subdiag_f, k_ratio = precompute_legendre_constants(_degree_max_active)

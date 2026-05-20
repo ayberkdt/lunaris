@@ -645,6 +645,21 @@ def build_model_from_config(
     model = PhysicsNet(backbone=backbone, embedding=embedding)
     if device is not None or dtype is not None:
         model = model.to(device=device, dtype=dtype)
+
+    # Attach metadata attributes so the engine/evaluator can save them in
+    # config.json and checkpoint files without re-deriving them.
+    if use_sh:
+        _emb_type = "sh_angular"
+    elif use_radial:
+        _emb_type = "radial_separation"
+    elif use_fourier:
+        _emb_type = "fourier_rff"
+    else:
+        _emb_type = "raw"
+    model.embedding_type: str = _emb_type  # type: ignore[assignment]
+    model.input_feature_dim: int = int(backbone_in_dim)  # type: ignore[assignment]
+    model.model_builder_version: str = "v2"  # type: ignore[assignment]
+
     return model
 
 
@@ -656,6 +671,7 @@ __all__ = [
     "MLP",
     "FourierInputEmbedding",
     "RadialSeparationEncoding",
+    "SHInspiredAngularEncoding",
     "PhysicsNet",
     "siren_init_first_",
     "siren_init_hidden_",

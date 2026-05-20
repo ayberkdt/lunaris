@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Configuration and CLI parsing for the lunar potential surrogate trainer.
 
@@ -182,6 +182,17 @@ class TrainConfig:
     # Separate control over collocation samples (alias for laplacian_subset_size in collocation call)
     collocation_laplacian_samples: int = 512
     collocation_laplacian_hutchinson_samples: int = 4
+
+    # Angular / radial input encodings.
+    # Only one of use_sh_encoding or use_radial_separation may be True.
+    # Both default to False → raw Cartesian xyz input (backward-compatible).
+    # use_sh_encoding: SHInspiredAngularEncoding (Cartesian angular polynomial).
+    # use_radial_separation: RadialSeparationEncoding [r, ux, uy, uz].
+    use_sh_encoding: bool = False
+    sh_encoding_degree: int = 4          # max polynomial degree (1..8)
+    sh_append_raw: bool = True           # always True (required by SHInspiredAngularEncoding)
+    use_radial_separation: bool = False
+    radial_append_raw: bool = False      # True → 7-dim output, False → 4-dim
 
     # Residual SIREN blocks — wraps hidden layers in SirenResBlock.
     # Recommended for depth >= 6; adds LayerNorm + zero-init skip per block.
@@ -406,6 +417,56 @@ def parse_args() -> TrainConfig:
     group_lap.add_argument("--collocation-laplacian-hutchinson-samples", type=int,
         default=_TC_DEFAULTS.get('collocation_laplacian_hutchinson_samples', 4),
         help="Hutchinson samples per collocation Laplacian estimate (default: 4).")
+
+    # Angular / Radial Input Encoding
+    group_enc = ap.add_argument_group("Input Encoding (SH-angular or radial separation)")
+    enc_sh_group = group_enc.add_mutually_exclusive_group()
+    enc_sh_group.add_argument(
+        "--use-sh-encoding", action="store_true", dest="use_sh_encoding",
+        help="Use SHInspiredAngularEncoding (Cartesian angular polynomial). "
+             "Mutually exclusive with --use-radial-separation.",
+    )
+    enc_sh_group.add_argument(
+        "--no-sh-encoding", action="store_false", dest="use_sh_encoding",
+        help="Disable SH angular polynomial encoding (default).",
+    )
+    group_enc.add_argument(
+        "--sh-encoding-degree", type=int, default=_TC_DEFAULTS.get("sh_encoding_degree", 4),
+        help="Max polynomial degree for SH-inspired angular encoding (1..8, default: 4).",
+    )
+    sh_raw_group = group_enc.add_mutually_exclusive_group()
+    sh_raw_group.add_argument(
+        "--sh-append-raw", action="store_true", dest="sh_append_raw",
+        help="Append raw xyz coordinates to SH encoding output (required; default: True).",
+    )
+    sh_raw_group.add_argument(
+        "--no-sh-append-raw", action="store_false", dest="sh_append_raw",
+        help="Do not append raw xyz to SH encoding (will raise if SH encoding is active).",
+    )
+    enc_rad_group = group_enc.add_mutually_exclusive_group()
+    enc_rad_group.add_argument(
+        "--use-radial-separation", action="store_true", dest="use_radial_separation",
+        help="Use RadialSeparationEncoding [r_norm, ux, uy, uz]. "
+             "Mutually exclusive with --use-sh-encoding.",
+    )
+    enc_rad_group.add_argument(
+        "--no-radial-separation", action="store_false", dest="use_radial_separation",
+        help="Disable radial separation encoding (default).",
+    )
+    rad_raw_group = group_enc.add_mutually_exclusive_group()
+    rad_raw_group.add_argument(
+        "--radial-append-raw", action="store_true", dest="radial_append_raw",
+        help="Append raw xyz to radial separation encoding (7-dim output).",
+    )
+    rad_raw_group.add_argument(
+        "--no-radial-append-raw", action="store_false", dest="radial_append_raw",
+        help="Do not append raw xyz to radial encoding (4-dim output, default).",
+    )
+    ap.set_defaults(
+        use_sh_encoding=False, sh_encoding_degree=_TC_DEFAULTS.get("sh_encoding_degree", 4),
+        sh_append_raw=True,
+        use_radial_separation=False, radial_append_raw=False,
+    )
 
     # PINN architecture
     group_pinn = ap.add_argument_group("PINN Architecture (residual & multi-scale SIREN)")
@@ -645,6 +706,11 @@ def parse_args() -> TrainConfig:
         laplacian_every_n_batches=max(0, int(a.laplacian_every_n_batches)),
         laplacian_subset_size=max(1, int(a.laplacian_subset_size)),
         n_hutchinson_samples=max(1, int(a.n_hutchinson_samples)),
+        use_sh_encoding=bool(a.use_sh_encoding),
+        sh_encoding_degree=max(1, min(8, int(a.sh_encoding_degree))),
+        sh_append_raw=bool(a.sh_append_raw),
+        use_radial_separation=bool(a.use_radial_separation),
+        radial_append_raw=bool(a.radial_append_raw),
         use_residual_blocks=bool(a.use_residual_blocks),
         n_bands=max(1, int(a.n_bands)),
         grad_accumulation_steps=max(1, int(a.grad_accumulation_steps)),

@@ -56,6 +56,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import (
     QEasingCurve,
+    QEvent,
+    QObject,
     QProcess,
     QProcessEnvironment,
     QPropertyAnimation,
@@ -251,6 +253,32 @@ def _send_os_notification(title: str, message: str) -> None:
         pass
 
 
+def _apply_status_tips(root: QWidget) -> None:
+    """Copy each input widget's toolTip() to statusTip() so the status bar shows it on hover.
+
+    Qt's built-in StatusTip mechanism bubbles the event up to QMainWindow's status bar
+    automatically — no signal connections needed.
+    """
+    for cls in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox):
+        for w in root.findChildren(cls):
+            tip = w.toolTip()
+            if tip and not w.statusTip():
+                w.setStatusTip(tip.replace("\n", "  ·  "))
+
+
+class _NoWheelOnSpinFilter(QObject):
+    """App-level event filter: prevents accidental spinbox value changes via scroll wheel."""
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if (
+            event.type() == QEvent.Type.Wheel
+            and isinstance(obj, (QSpinBox, QDoubleSpinBox))
+        ):
+            event.ignore()
+            return True
+        return False
+
+
 # =============================================================================
 # 2. DATASET INTROSPECTION (Feature #14)
 # =============================================================================
@@ -381,9 +409,13 @@ class CollapsibleSection(QWidget):
         self._toggle_btn.setChecked(False)
         self._toggle_btn.setProperty("kind", "ghost")
         self._toggle_btn.setStyleSheet(
-            "QPushButton { text-align: left; padding: 8px 12px; font-weight: 600; "
-            "color: #9aa7ff; border: none; background: transparent; }"
-            "QPushButton:hover { color: #c4ccff; }"
+            "QPushButton { text-align: left; padding: 8px 14px; font-weight: 600; "
+            "color: #9aa7ff; border: 1px solid transparent; border-radius: 8px; "
+            "background: rgba(124, 92, 255, 0.05); }"
+            "QPushButton:hover { color: #c4ccff; background: rgba(124, 92, 255, 0.10); "
+            "border-color: rgba(124, 92, 255, 0.20); }"
+            "QPushButton:checked { color: #c4ccff; background: rgba(124, 92, 255, 0.12); "
+            "border-color: rgba(124, 92, 255, 0.22); }"
         )
         self._toggle_btn.clicked.connect(self._on_toggle)
         self._content = QWidget()
@@ -414,7 +446,10 @@ class DatasetInfoLabel(QLabel):
         super().__init__(parent)
         self.setWordWrap(True)
         self.setStyleSheet(
-            "QLabel { color: #7c8dc7; font-size: 11px; padding: 2px 4px; }"
+            "QLabel { color: #7c8dc7; font-size: 11px; padding: 3px 10px;"
+            " background: rgba(124, 92, 255, 0.06);"
+            " border-left: 2px solid rgba(124, 92, 255, 0.35);"
+            " border-radius: 0 6px 6px 0; }"
         )
         self.setVisible(False)
 
@@ -590,10 +625,11 @@ class LiveLossPlot(QWidget):
             }
             QLabel[metric="true"] {
                 color: #dbe4ff;
-                background-color: rgba(255, 255, 255, 0.055);
-                border: 1px solid rgba(185, 194, 221, 0.14);
+                background-color: rgba(255, 255, 255, 0.05);
+                border: 1px solid rgba(185, 194, 221, 0.13);
                 border-radius: 10px;
-                padding: 5px 9px;
+                padding: 7px 10px;
+                min-width: 90px;
                 font-family: Consolas, 'Courier New', monospace;
                 font-size: 11px;
             }
@@ -619,79 +655,76 @@ class LiveLossPlot(QWidget):
         )
 
         card_layout = QVBoxLayout()
-        card_layout.setContentsMargins(14, 12, 14, 14)
-        card_layout.setSpacing(10)
+        card_layout.setContentsMargins(16, 14, 16, 16)
+        card_layout.setSpacing(12)
         self._card.setLayout(card_layout)
 
         # ----------------------------
-        # Header
+        # Row 1: başlık  |  kontroller
         # ----------------------------
-        header = QHBoxLayout()
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(10)
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(12)
 
         title_col = QVBoxLayout()
         title_col.setContentsMargins(0, 0, 0, 0)
-        title_col.setSpacing(2)
-
-        title = QLabel("Canlı Eğitim Grafiği")
+        title_col.setSpacing(3)
+        title = QLabel("Canlı Eğitim İzleme")
         title.setObjectName("lossTitle")
-        subtitle = QLabel("Train / validation loss akışı — log ölçek önerilir")
+        subtitle = QLabel("Eğitim / doğrulama kayıp eğrisi  ·  logaritmik ölçek önerilir")
         subtitle.setObjectName("lossSubtitle")
         title_col.addWidget(title)
         title_col.addWidget(subtitle)
-        header.addLayout(title_col, 1)
-
-        self._lbl_train = self._metric_label("Train opt/ref: —")
-        self._lbl_val = self._metric_label("Val ref: —")
-        self._lbl_best = self._metric_label("Best val_ref: —")
-        self._lbl_best_epoch = self._metric_label("Best@: —")
-        self._lbl_no_improve = self._metric_label("NoImp: —")
-        self._lbl_lam_dir = self._metric_label("lam_dir: —")
-        self._lbl_lr = self._metric_label("LR: —")
-        for w in (
-            self._lbl_train,
-            self._lbl_val,
-            self._lbl_best,
-            self._lbl_best_epoch,
-            self._lbl_no_improve,
-            self._lbl_lam_dir,
-            self._lbl_lr,
-        ):
-            header.addWidget(w, 0)
-
-        card_layout.addLayout(header)
-
-        # ----------------------------
-        # Controls
-        # ----------------------------
-        controls = QHBoxLayout()
-        controls.setContentsMargins(0, 0, 0, 0)
-        controls.setSpacing(8)
+        top_row.addLayout(title_col, 1)
 
         self._chk_log_y = QCheckBox("Log Y")
         self._chk_log_y.setChecked(True)
-        self._chk_log_y.setToolTip("Loss değerleri birkaç mertebe değiştiği için log-y görünüm varsayılan.")
+        self._chk_log_y.setToolTip(
+            "Y eksenini logaritmik ölçekte gösterir.\n"
+            "Kayıp değerleri birkaç büyüklük mertebesinde değiştiğinden bu görünüm önerilir."
+        )
         self._chk_log_y.toggled.connect(self._on_log_toggle)
-        controls.addWidget(self._chk_log_y)
+        top_row.addWidget(self._chk_log_y)
 
-        self._btn_fit = QPushButton("Fit")
+        self._btn_fit = QPushButton("Otomatik Ölçek")
         self._btn_fit.setProperty("plotControl", True)
-        self._btn_fit.setToolTip("Grafiği mevcut veriye yeniden sığdır.")
+        self._btn_fit.setToolTip("Grafiği mevcut veriye otomatik olarak yeniden sığdırır.")
         self._btn_fit.clicked.connect(self._auto_range)
-        controls.addWidget(self._btn_fit)
+        top_row.addWidget(self._btn_fit)
 
-        self._btn_clear = QPushButton("Temizle")
+        self._btn_clear = QPushButton("Sıfırla")
         self._btn_clear.setProperty("plotControl", True)
-        self._btn_clear.setToolTip("Canlı grafikte biriken loss geçmişini temizler.")
+        self._btn_clear.setToolTip("Canlı grafikteki tüm kayıp geçmişini ve metrikleri sıfırlar.")
         self._btn_clear.clicked.connect(self.clear)
-        controls.addWidget(self._btn_clear)
+        top_row.addWidget(self._btn_clear)
 
-        controls.addStretch(1)
-        self._lbl_status = QLabel("Bekleniyor")
-        self._lbl_status.setStyleSheet("color: #6f7ca8; font-size: 11px; padding-right: 2px;")
-        controls.addWidget(self._lbl_status)
-        card_layout.addLayout(controls)
+        card_layout.addLayout(top_row)
+
+        # ----------------------------
+        # Row 2: metrik chip'leri (7 eşit genişlik)
+        # ----------------------------
+        self._lbl_train = self._metric_label("Eğitim opt/ref", "—")
+        self._lbl_val   = self._metric_label("Doğrulama",      "—")
+        self._lbl_best  = self._metric_label("En İyi Val",     "—")
+        self._lbl_best_epoch  = self._metric_label("En İyi Epoch",   "—")
+        self._lbl_no_improve  = self._metric_label("İyileşme Yok",   "—")
+        self._lbl_lam_dir     = self._metric_label("λ Yön Ağrl.",    "—")
+        self._lbl_lr          = self._metric_label("Öğr. Hızı",      "—")
+
+        metrics_row = QHBoxLayout()
+        metrics_row.setContentsMargins(0, 0, 0, 0)
+        metrics_row.setSpacing(6)
+        for w in (
+            self._lbl_train, self._lbl_val, self._lbl_best,
+            self._lbl_best_epoch, self._lbl_no_improve, self._lbl_lam_dir, self._lbl_lr,
+        ):
+            metrics_row.addWidget(w, 1)
+        card_layout.addLayout(metrics_row)
+
+        # durum etiketi (altta ortalanmış)
+        self._lbl_status = QLabel("Eğitim bekleniyor…")
+        self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._lbl_status.setStyleSheet("color: #5a647a; font-size: 11px;")
 
         # ----------------------------
         # Plot body
@@ -700,8 +733,7 @@ class LiveLossPlot(QWidget):
             pg.setConfigOptions(antialias=True, background=None, foreground="#b9c2dd")
 
             self._plot_widget = pg.PlotWidget()
-            self._plot_widget.setMinimumHeight(220)
-            self._plot_widget.setMaximumHeight(340)
+            self._plot_widget.setMinimumHeight(260)
             self._plot_widget.setStyleSheet(
                 """
                 PlotWidget {
@@ -792,6 +824,7 @@ class LiveLossPlot(QWidget):
             )
             card_layout.addWidget(placeholder)
 
+        card_layout.addWidget(self._lbl_status)
         outer.addWidget(self._card)
         self.setLayout(outer)
 
@@ -819,11 +852,13 @@ class LiveLossPlot(QWidget):
 
         self._refresh_metric_labels()
 
-    def _metric_label(self, text: str) -> QLabel:
-        lbl = QLabel(text)
+    def _metric_label(self, name: str, value: str = "—") -> QLabel:
+        lbl = QLabel(f"<span style='color:#7480a8;font-size:10px'>{name}</span><br>"
+                     f"<span style='font-family:Consolas,monospace;font-size:11px'>{value}</span>")
         lbl.setProperty("metric", True)
-        lbl.setMinimumWidth(104)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setTextFormat(Qt.TextFormat.RichText)
+        lbl._metric_name = name
         return lbl
 
     @staticmethod
@@ -1006,9 +1041,11 @@ class LiveLossPlot(QWidget):
         if len(self._epochs) >= 2:
             self._plot_widget.setXRange(max(0, min(self._epochs) - 1), max(self._epochs) + 1, padding=0.02)
         if self._epochs:
-            self._lbl_status.setText(f"Epoch {self._latest_epoch or self._epochs[-1]} | {self._checkpoint_status}")
+            self._lbl_status.setText(
+                f"Epoch {self._latest_epoch or self._epochs[-1]}  ·  {self._checkpoint_status}"
+            )
         else:
-            self._lbl_status.setText(self._checkpoint_status or "Bekleniyor")
+            self._lbl_status.setText(self._checkpoint_status or "Eğitim bekleniyor…")
 
     def _refresh_metric_labels(self) -> None:
         latest_train = next((v for v in reversed(self._train_loss) if math.isfinite(v)), None)
@@ -1019,17 +1056,27 @@ class LiveLossPlot(QWidget):
         self._latest_train_opt = latest_train_opt if latest_train_opt is not None else self._latest_train_opt
         self._latest_train_ref = latest_train if latest_train is not None else self._latest_train_ref
         self._latest_val_ref = latest_val if latest_val is not None else self._latest_val_ref
-        self._lbl_train.setText(
-            f"Train opt/ref: {self._fmt_metric(self._latest_train_opt)} / {self._fmt_metric(self._latest_train_ref)}"
-        )
-        self._lbl_val.setText(f"Val ref: {self._fmt_metric(self._latest_val_ref)}")
-        self._lbl_best.setText(f"Best val_ref: {self._fmt_metric(self._best_val)}")
-        self._lbl_best_epoch.setText(f"Best@: {self._best_epoch if self._best_epoch is not None else '—'}")
-        self._lbl_no_improve.setText(
-            f"NoImp: {self._epochs_since_improvement if self._epochs_since_improvement is not None else '—'}"
-        )
-        self._lbl_lam_dir.setText(f"lam_dir: {self._fmt_metric(self._latest_lam_dir)}")
-        self._lbl_lr.setText(f"LR: {self._fmt_metric(latest_lr)}")
+        def _chip(name: str, value: str) -> str:
+            return (
+                f"<span style='color:#7480a8;font-size:10px'>{name}</span><br>"
+                f"<span style='font-family:Consolas,monospace;font-size:11px'>{value}</span>"
+            )
+
+        opt_s  = self._fmt_metric(self._latest_train_opt)
+        ref_s  = self._fmt_metric(self._latest_train_ref)
+        self._lbl_train.setText(_chip("Eğitim opt/ref", f"{opt_s} / {ref_s}"))
+        self._lbl_val.setText(_chip("Doğrulama", self._fmt_metric(self._latest_val_ref)))
+        self._lbl_best.setText(_chip("En İyi Val", self._fmt_metric(self._best_val)))
+        self._lbl_best_epoch.setText(_chip(
+            "En İyi Epoch",
+            str(self._best_epoch) if self._best_epoch is not None else "—",
+        ))
+        self._lbl_no_improve.setText(_chip(
+            "İyileşme Yok",
+            str(self._epochs_since_improvement) if self._epochs_since_improvement is not None else "—",
+        ))
+        self._lbl_lam_dir.setText(_chip("λ Yön Ağrl.", self._fmt_metric(self._latest_lam_dir)))
+        self._lbl_lr.setText(_chip("Öğr. Hızı", self._fmt_metric(latest_lr)))
 
     def _on_log_toggle(self, checked: bool) -> None:
         if self._plot_widget and _HAS_PYQTGRAPH:
@@ -1068,7 +1115,7 @@ class LiveLossPlot(QWidget):
             self._curve_val.setData([], [])
             self._curve_val_shadow.setData([], [])
             self._best_line.setVisible(False)
-        self._lbl_status.setText("Bekleniyor")
+        self._lbl_status.setText("Eğitim bekleniyor…")
         self._refresh_metric_labels()
 
     def get_final_losses(self) -> Dict[str, Any]:
@@ -1107,7 +1154,7 @@ class ImageGallery(QWidget):
         super().__init__(parent)
         self._header = QLabel("Sonuç Grafikleri")
         self._header.setStyleSheet(
-            "font-weight: 600; color: #c4ccff; font-size: 13px; padding: 4px 0;"
+            "font-weight: 600; color: #c4ccff; font-size: 13px; padding: 4px 2px;"
         )
         self._tabs = QTabWidget()
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -1122,7 +1169,7 @@ class ImageGallery(QWidget):
         )
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setStyleSheet(
-            "color: #6b7394; padding: 24px; font-style: italic;"
+            "color: #6b7394; padding: 32px; font-style: italic; font-size: 12px;"
         )
         lo = QVBoxLayout()
         lo.setContentsMargins(0, 6, 0, 0)
@@ -1250,7 +1297,7 @@ class ProcessPane(QWidget):
         self._auto_scroll.setChecked(True)
         self._auto_scroll.setToolTip("Aktifken yeni satırlarda otomatik alta kayar.")
         self._auto_scroll.setStyleSheet(
-            "QCheckBox { font-size: 11px; color: #8892b0; }"
+            "QCheckBox { font-size: 11px; color: #7480a8; }"
         )
 
         self.btn_start = QPushButton("Başlat")
@@ -1276,12 +1323,24 @@ class ProcessPane(QWidget):
         btn_row.addWidget(self._auto_scroll)
         btn_row.addWidget(self.btn_clear)
 
+        self.status.setStyleSheet(
+            "QLabel { color: #9aa7c7; font-size: 12px; padding: 2px 0; }"
+        )
+
+        _log_sep = QFrame()
+        _log_sep.setFrameShape(QFrame.Shape.HLine)
+        _log_sep.setFixedHeight(1)
+        _log_sep.setStyleSheet(
+            "background: rgba(185, 194, 221, 0.10); border: none; margin: 2px 0;"
+        )
+
         layout = QVBoxLayout()
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(10)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
         layout.addWidget(self.status)
         layout.addWidget(self.progress)
         layout.addLayout(btn_row)
+        layout.addWidget(_log_sep)
         layout.addWidget(self.log, 1)
         self.setLayout(layout)
 
@@ -1546,30 +1605,14 @@ class TrainingQueue(QWidget):
 
         # --- Header ---
         lbl = QLabel("Eğitim Kuyruğu")
-        lbl.setStyleSheet("font-weight: 600; color: #c4ccff; font-size: 13px;")
+        lbl.setStyleSheet("font-weight: 600; color: #c4ccff; font-size: 13px; padding: 2px 0;")
 
         self._status_lbl = QLabel("")
-        self._status_lbl.setStyleSheet("color: #8892b0; font-size: 11px;")
+        self._status_lbl.setStyleSheet("color: #7480a8; font-size: 11px;")
 
         # --- List ---
         self._list = QListWidget()
         self._list.setMinimumHeight(80)
-        self._list.setStyleSheet("""
-            QListWidget {
-                background-color: rgba(7, 11, 20, 0.92);
-                border: 1px solid rgba(185, 194, 221, 0.22);
-                border-radius: 10px;
-                padding: 6px;
-                font-size: 12px;
-            }
-            QListWidget::item {
-                padding: 6px 8px;
-                border-bottom: 1px solid rgba(185, 194, 221, 0.08);
-            }
-            QListWidget::item:selected {
-                background-color: rgba(124, 92, 255, 0.25);
-            }
-        """)
 
         # --- Buttons ---
         self.btn_start_queue = QPushButton("Kuyruğu Başlat")
@@ -1959,24 +2002,40 @@ class STLRPSTrainTab(QWidget):
         self.hidden = QSpinBox()
         self.hidden.setRange(1, 8192)
         self.hidden.setValue(512)
-        self.hidden.setToolTip("Gizli katman nöron sayısı. Varsayılan: 512.")
+        self.hidden.setToolTip(
+            "Her gizli katmandaki nöron (birim) sayısı.\n"
+            "Daha yüksek değer → daha güçlü ağ, daha yavaş eğitim.\n"
+            "SIREN için önerilen aralık: 256–1024."
+        )
         self.depth = QSpinBox()
         self.depth.setRange(1, 64)
         self.depth.setValue(5)
-        self.depth.setToolTip("Gizli katman sayısı. Sobolev için 3-6 önerilir.")
+        self.depth.setToolTip(
+            "Gizli katman sayısı (derinlik).\n"
+            "Çok derin ağlar (>6) SIREN'de gradyan kaybolmasına yol açabilir.\n"
+            "Önerilen: 3–5."
+        )
         self.activation = QComboBox()
         self.activation.addItems(["sine", "silu", "tanh", "softplus"])
         self.activation.setCurrentText("sine")
         self.activation.setToolTip(
-            "'sine' = SIREN (önerilen). 'silu'/'tanh'/'softplus' = klasik MLP.\n"
-            "SIREN + Fourier birlikte kullanılamaz (sin(sin(…)) OOD hatası)."
+            "Aktivasyon fonksiyonu:\n"
+            "  sine   — SIREN ağı; sürekli türevli, yüksek frekanslı alanlar için önerilir.\n"
+            "  silu   — SiLU (Swish); genel amaçlı, daha hızlı yakınsama.\n"
+            "  tanh   — Klasik MLP; küçük ağlarda dengeli.\n"
+            "  softplus — Pozitif çıktı gerektiren durumlarda kullanılır.\n"
+            "Not: SIREN aktivasyonu ile Fourier gömme birlikte kullanılamaz."
         )
         self.dropout = QDoubleSpinBox()
         self.dropout.setDecimals(4)
         self.dropout.setRange(0.0, 0.99)
         self.dropout.setValue(0.0)
         self.dropout.setSingleStep(0.01)
-        self.dropout.setToolTip("Dropout oranı. Fizik ağlarında genellikle 0.")
+        self.dropout.setToolTip(
+            "Dropout oranı (0 = kapalı).\n"
+            "Eğitim sırasında bu oranda nöron rastgele devre dışı bırakılır.\n"
+            "Fizik tabanlı ağlarda genellikle 0 önerilir — aşırı regularizasyon hassasiyeti bozar."
+        )
 
         # SIREN w0 controls
         self.w0_first = QDoubleSpinBox()
@@ -1985,15 +2044,20 @@ class STLRPSTrainTab(QWidget):
         self.w0_first.setValue(30.0)
         self.w0_first.setSingleStep(1.0)
         self.w0_first.setToolTip(
-            "SIREN ilk katman w0. Otomatik: 3·√degree_max (parse_args'ta).\n"
-            "Boş bırakırsanız st_lrps_train.py dataset'ten otomatik hesaplar."
+            "SIREN ilk katman frekans çarpanı (ω₀).\n"
+            "İlk katmanın sinüs fonksiyonu bu değerle ölçeklenir: sin(ω₀·Wx+b).\n"
+            "Varsayılan: 30. Eğer boş bırakılırsa st_lrps_train.py, veri setinden otomatik hesaplar."
         )
         self.w0_hidden = QDoubleSpinBox()
         self.w0_hidden.setDecimals(1)
         self.w0_hidden.setRange(1.0, 200.0)
         self.w0_hidden.setValue(30.0)
         self.w0_hidden.setSingleStep(1.0)
-        self.w0_hidden.setToolTip("SIREN gizli katman w0.")
+        self.w0_hidden.setToolTip(
+            "SIREN gizli katman frekans çarpanı (ω₀).\n"
+            "İlk katman dışındaki tüm katmanlara uygulanır.\n"
+            "Genellikle ilk katman değeriyle aynı tutulur: 30."
+        )
 
         # Fourier/RFF section (only valid for non-sine activations)
         self._fourier_section = CollapsibleSection("Fourier/RFF Gömme (sine dışı aktivasyon)")
@@ -2057,23 +2121,38 @@ class STLRPSTrainTab(QWidget):
         self.epochs = QSpinBox()
         self.epochs.setRange(1, 5_000_000)
         self.epochs.setValue(200)
-        self.epochs.setToolTip("Toplam epoch sayısı.")
+        self.epochs.setToolTip(
+            "Toplam eğitim turu (epoch) sayısı.\n"
+            "Her epoch tüm eğitim verisi üzerinden bir geçiş anlamına gelir."
+        )
         self.batch_size = QSpinBox()
         self.batch_size.setRange(1, 10_000_000)
         self.batch_size.setValue(8192)
-        self.batch_size.setToolTip("Mini-batch boyutu. SIREN için 8192 önerilir.")
+        self.batch_size.setToolTip(
+            "Her güncelleme adımında kullanılan örnek (satır) sayısı.\n"
+            "Büyük batch → kararlı gradyanlar, yüksek GPU bellek kullanımı.\n"
+            "SIREN için önerilen: 4096–16384."
+        )
         self.lr = QDoubleSpinBox()
         self.lr.setDecimals(8)
         self.lr.setRange(1e-8, 10.0)
         self.lr.setValue(1e-4)
         self.lr.setSingleStep(1e-5)
-        self.lr.setToolTip("Başlangıç learning rate. SIREN için 1e-4 önerilir.")
+        self.lr.setToolTip(
+            "Başlangıç öğrenme hızı (Learning Rate).\n"
+            "AdamW optimizer bu değerden başlar; cosine decay ile azaltılır.\n"
+            "SIREN için önerilen: 1e-4. Çok yüksek değerler ağın ıraksamas  ına yol açabilir."
+        )
         self.weight_decay = QDoubleSpinBox()
         self.weight_decay.setDecimals(8)
         self.weight_decay.setRange(0.0, 10.0)
         self.weight_decay.setValue(1e-6)
         self.weight_decay.setSingleStep(1e-7)
-        self.weight_decay.setToolTip("AdamW L2 regularizasyon.")
+        self.weight_decay.setToolTip(
+            "AdamW L2 ağırlık düzenlemesi (weight decay).\n"
+            "Ağırlıkları sıfıra çekerek aşırı öğrenmeyi azaltır.\n"
+            "Önerilen: 1e-6 ila 1e-4 arası."
+        )
         self.output_head_lr_mult = QDoubleSpinBox()
         self.output_head_lr_mult.setDecimals(2)
         self.output_head_lr_mult.setRange(0.1, 100.0)
@@ -2487,8 +2566,14 @@ class STLRPSTrainTab(QWidget):
         form_adv.addRow(self.quick_check)
         form_adv.addRow("Max Train Batch/Epoch", self.max_train_batches)
         form_adv.addRow("Max Val Batch/Epoch", self.max_val_batches)
-        _adv_sep = QLabel("── PINN Mimarisi ──")
-        _adv_sep.setStyleSheet("color: #7c8dc7; font-size: 11px; font-weight: 600;")
+        _adv_sep = QLabel("  PINN Mimarisi")
+        _adv_sep.setStyleSheet(
+            "color: #9aa7ff; font-size: 11px; font-weight: 600;"
+            " padding: 4px 10px; margin-top: 4px;"
+            " background: rgba(124, 92, 255, 0.08);"
+            " border-left: 2px solid rgba(124, 92, 255, 0.40);"
+            " border-radius: 0 6px 6px 0;"
+        )
         form_adv.addRow(_adv_sep)
         form_adv.addRow(self.use_residual_blocks)
         form_adv.addRow("Frekans Bandı Sayısı (n_bands)", self.n_bands)
@@ -2581,27 +2666,40 @@ class STLRPSTrainTab(QWidget):
         self._queue = TrainingQueue()
         self._queue.job_started.connect(self._on_queue_job_started)
 
-        # --- Top section (scrollable parameters) ---
+        # --- Controls bar (pinned above scroll area — always visible) ---
+        controls_bar = QFrame()
+        controls_bar.setObjectName("trainControlsBar")
+        controls_bar.setStyleSheet(
+            "QFrame#trainControlsBar {"
+            "  background: rgba(11, 16, 32, 0.80);"
+            "  border: 1px solid rgba(185, 194, 221, 0.12);"
+            "  border-radius: 10px;"
+            "}"
+        )
+        ctrl_lo = QVBoxLayout()
+        ctrl_lo.setContentsMargins(10, 8, 10, 8)
+        ctrl_lo.setSpacing(6)
+        ctrl_lo.addLayout(workflow_bar)
+        ctrl_lo.addLayout(preset_bar)
+        controls_bar.setLayout(ctrl_lo)
+
+        # --- Scrollable parameters ---
         top = QWidget()
         top_l = QVBoxLayout()
-        top_l.setContentsMargins(8, 8, 8, 8)
+        top_l.setContentsMargins(6, 6, 6, 6)
         top_l.setSpacing(8)
-        top_l.addLayout(workflow_bar)
-        top_l.addLayout(preset_bar)
         top_l.addWidget(self._checklist_label)
         top_l.addLayout(grid)
         top.setLayout(top_l)
 
-        # --- Bottom: runner + live plot + enqueue button + queue ---
-        # Build a horizontal split: left = runner log, right = live chart
+        # --- Bottom execution area ---
         runner_and_plot = QSplitter(Qt.Orientation.Horizontal)
         runner_and_plot.addWidget(self.runner)
         runner_and_plot.addWidget(self._live_plot)
-        runner_and_plot.setStretchFactor(0, 2)
+        runner_and_plot.setStretchFactor(0, 1)
         runner_and_plot.setStretchFactor(1, 1)
-        runner_and_plot.setSizes([600, 300])
+        runner_and_plot.setSizes([420, 380])
 
-        # Enqueue button row (below start button)
         enqueue_row = QHBoxLayout()
         enqueue_row.setContentsMargins(0, 0, 0, 0)
         enqueue_row.addStretch(1)
@@ -2616,18 +2714,19 @@ class STLRPSTrainTab(QWidget):
         bottom_l.addWidget(self._queue, 1)
         bottom.setLayout(bottom_l)
 
-        # --- Splitter: top params vs bottom execution ---
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(_scroll_wrap(top))
-        splitter.addWidget(bottom)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([420, 540])
+        # --- Vertical splitter: scrollable params vs execution panel ---
+        params_splitter = QSplitter(Qt.Orientation.Vertical)
+        params_splitter.addWidget(_scroll_wrap(top))
+        params_splitter.addWidget(bottom)
+        params_splitter.setStretchFactor(0, 0)
+        params_splitter.setStretchFactor(1, 1)
+        params_splitter.setSizes([340, 450])
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-        layout.addWidget(splitter, 1)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+        layout.addWidget(controls_bar)
+        layout.addWidget(params_splitter, 1)
         self.setLayout(layout)
 
         self._epochs_max = int(self.epochs.value())
@@ -3741,7 +3840,7 @@ class CloudGenTab(QWidget):
         mode_bar.setContentsMargins(0, 0, 0, 4)
         mode_bar.setSpacing(8)
         mode_lbl = QLabel("Mod:")
-        mode_lbl.setStyleSheet("font-weight: bold;")
+        mode_lbl.setStyleSheet("font-weight: 600; color: #c4ccff;")
         self._mode_combo = QComboBox()
         self._mode_combo.addItem("Tek Bulut (Single Cloud)", self._MODE_SINGLE)
         self._mode_combo.addItem("Dataset Suite", self._MODE_SUITE)
@@ -3828,7 +3927,7 @@ class CloudGenTab(QWidget):
         splitter.addWidget(self.runner)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([560, 360])
+        splitter.setSizes([460, 300])
 
         main_lo = QVBoxLayout()
         main_lo.setContentsMargins(10, 10, 10, 10)
@@ -5990,46 +6089,24 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Lunar Potential Surrogate Dashboard")
-        self.resize(1500, 1020)
+        self.resize(1280, 820)
+        self.setMinimumSize(1024, 680)
 
-        # --- Create tabs with inter-tab wiring ---
+        # --- Page widgets with inter-widget wiring ---
         self._cloud_tab    = CloudGenTab()
         self._train_tab    = STLRPSTrainTab()
         self._eval_tab     = STLRPSEvalTab()
         self._analysis_tab = CloudAnalysisTab()
 
-        # Wire suite auto-fill: cloud tab needs a reference to train tab
         self._cloud_tab.set_train_tab(self._train_tab)
-
-        # Sync altitude range from cloud gen to training whenever user edits it
         self._cloud_tab.cloud_params_changed.connect(self._train_tab.sync_from_cloud)
 
-        # --- Group 1: Veri (data generation + analysis) ---
-        _grp_veri = QTabWidget()
-        _grp_veri.setTabPosition(QTabWidget.TabPosition.North)
-        _grp_veri.setMovable(False)
-        _grp_veri.addTab(self._cloud_tab,    "  Veri Üretimi  ")
-        _grp_veri.addTab(self._analysis_tab, "  Veri Analizi  ")
-
-        # --- Group 2: Model (training + evaluation) ---
-        _grp_model = QTabWidget()
-        _grp_model.setTabPosition(QTabWidget.TabPosition.North)
-        _grp_model.setMovable(False)
-        _grp_model.addTab(self._train_tab, "  Eğitim (Train)  ")
-        _grp_model.addTab(self._eval_tab,  "  Değerlendirme (Eval)  ")
-
-        # --- Top-level tab bar with two group tabs ---
-        _GROUP_TAB_STYLE = (
-            "QTabWidget::pane { border: none; }"
-            "QTabBar::tab { padding: 7px 22px; font-size: 13px; font-weight: 600; "
-            "border-radius: 6px 6px 0 0; min-width: 180px; }"
-        )
-        tabs = QTabWidget()
-        tabs.setTabPosition(QTabWidget.TabPosition.North)
-        tabs.setMovable(False)
-        tabs.setStyleSheet(_GROUP_TAB_STYLE)
-        tabs.addTab(_grp_veri,  "  Veri  ")
-        tabs.addTab(_grp_model, "  Model  ")
+        # --- Content stack (replaces nested QTabWidgets) ---
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._cloud_tab)     # index 0
+        self._stack.addWidget(self._analysis_tab)  # index 1
+        self._stack.addWidget(self._train_tab)     # index 2
+        self._stack.addWidget(self._eval_tab)      # index 3
 
         dep_info = []
         if not _HAS_PYQTGRAPH:
@@ -6037,27 +6114,163 @@ class MainWindow(QMainWindow):
         if not _HAS_H5PY:
             dep_info.append("h5py yüklü değil (dataset ön izleme devre dışı)")
 
-        info_text = (
-            "<b>Lunar Potential Surrogate Dashboard</b>  ·  "
-            "Veri: Üretim + Analiz  |  Model: Eğitim + Değerlendirme  "
-            "<span style='color:#7c8dc7; font-size:11px;'>"
-            "(dU artik potansiyeli; ivme grad(dU) ile elde edilir)</span>"
+        # --- Header card ---
+        header_card = QFrame()
+        header_card.setObjectName("appHeaderCard")
+        header_card.setStyleSheet(
+            "QFrame#appHeaderCard {"
+            "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+            "    stop:0 rgba(30, 20, 72, 0.80), stop:0.5 rgba(16, 24, 52, 0.75),"
+            "    stop:1 rgba(10, 18, 46, 0.80));"
+            "  border: 1px solid rgba(124, 92, 255, 0.24);"
+            "  border-radius: 14px;"
+            "}"
         )
-        if dep_info:
-            info_text += f"<br><i style='color:#fbbf24;'>&#9888; {' | '.join(dep_info)}</i>"
+        header_lo = QHBoxLayout()
+        header_lo.setContentsMargins(18, 10, 18, 10)
+        header_lo.setSpacing(16)
 
-        info = QLabel(info_text)
-        info.setWordWrap(True)
-        info.setStyleSheet("color: #c4ccff; padding: 4px 10px; font-size: 12px;")
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(3)
+        lbl_title = QLabel("Lunar Potential Surrogate Dashboard")
+        lbl_title.setStyleSheet(
+            "color: #e8ecf8; font-size: 15px; font-weight: 700;"
+            " letter-spacing: 0.3px; background: transparent; border: none;"
+        )
+        lbl_subtitle = QLabel(
+            "Veri: Üretim + Analiz  ·  Model: Eğitim + Değerlendirme"
+            "<span style='color:#6f7ca8; font-size:11px;'>"
+            "  —  dU artık potansiyeli; ivme grad(dU) ile elde edilir</span>"
+        )
+        lbl_subtitle.setStyleSheet(
+            "color: #8892b0; font-size: 12px; background: transparent; border: none;"
+        )
+        title_col.addWidget(lbl_title)
+        title_col.addWidget(lbl_subtitle)
+        header_lo.addLayout(title_col, 1)
+
+        if dep_info:
+            warn_lbl = QLabel("⚠  " + "  ·  ".join(dep_info))
+            warn_lbl.setStyleSheet(
+                "color: #fbbf24; font-size: 11px; font-style: italic;"
+                " background: rgba(251, 191, 36, 0.08);"
+                " border: 1px solid rgba(251, 191, 36, 0.22);"
+                " border-radius: 8px; padding: 5px 10px;"
+            )
+            header_lo.addWidget(warn_lbl, 0)
+
+        header_card.setLayout(header_lo)
+
+        # --- Sidebar navigation ---
+        self._nav_buttons: List[QPushButton] = []
+        sidebar = self._build_sidebar()
+
+        # --- Main content area: sidebar + page stack ---
+        content_area = QWidget()
+        content_lo = QHBoxLayout()
+        content_lo.setContentsMargins(0, 0, 0, 0)
+        content_lo.setSpacing(10)
+        content_lo.addWidget(sidebar)
+        content_lo.addWidget(self._stack, 1)
+        content_area.setLayout(content_lo)
 
         root = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(8)
-        layout.addWidget(info)
-        layout.addWidget(tabs, 1)
-        root.setLayout(layout)
+        root_lo = QVBoxLayout()
+        root_lo.setContentsMargins(12, 10, 12, 10)
+        root_lo.setSpacing(10)
+        root_lo.addWidget(header_card)
+        root_lo.addWidget(content_area, 1)
+        root.setLayout(root_lo)
         self.setCentralWidget(root)
+
+        # --- Status bar: parametre açıklamaları hover'da gösterilir ---
+        sb = self.statusBar()
+        sb.setSizeGripEnabled(False)
+        sb.setStyleSheet(
+            "QStatusBar {"
+            "  background: rgba(6, 9, 18, 0.95);"
+            "  border-top: 1px solid rgba(185, 194, 221, 0.09);"
+            "  color: #5a6480; font-size: 11px; padding: 0 12px;"
+            "  min-height: 22px;"
+            "}"
+            "QStatusBar::item { border: none; }"
+        )
+        sb.showMessage("Bir parametrenin üzerine gelin — açıklama burada görünür.")
+
+        # Tüm sayfalardaki input widget'larının tooltip'ini status bar'a bağla
+        for tab in (
+            self._cloud_tab, self._analysis_tab,
+            self._train_tab, self._eval_tab,
+        ):
+            _apply_status_tips(tab)
+
+    def _build_sidebar(self) -> QFrame:
+        sidebar = QFrame()
+        sidebar.setObjectName("navSidebar")
+        sidebar.setFixedWidth(192)
+        sidebar.setStyleSheet(
+            "QFrame#navSidebar {"
+            "  background: rgba(9, 13, 26, 0.88);"
+            "  border: 1px solid rgba(185, 194, 221, 0.11);"
+            "  border-radius: 14px;"
+            "}"
+        )
+
+        _NAV_BTN_STYLE = (
+            "QPushButton {"
+            "  text-align: left; padding: 9px 12px 9px 16px;"
+            "  border: none; border-left: 3px solid transparent;"
+            "  border-radius: 0; font-size: 13px; font-weight: 500;"
+            "  color: #7480a8; background: transparent;"
+            "}"
+            "QPushButton:hover {"
+            "  color: #c4ccff; background: rgba(124, 92, 255, 0.09);"
+            "}"
+            "QPushButton:checked {"
+            "  color: #e8ecf8; font-weight: 600;"
+            "  background: rgba(124, 92, 255, 0.16);"
+            "  border-left: 3px solid rgba(124, 92, 255, 0.90);"
+            "}"
+        )
+
+        def _section_lbl(text: str) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setStyleSheet(
+                "color: rgba(185, 194, 221, 0.32); font-size: 10px; font-weight: 700;"
+                " letter-spacing: 1.8px; padding: 12px 12px 4px 16px;"
+                " background: transparent; border: none;"
+            )
+            return lbl
+
+        def _nav_btn(label: str, page_idx: int) -> QPushButton:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setStyleSheet(_NAV_BTN_STYLE)
+            btn.clicked.connect(lambda _c, i=page_idx: self._navigate(i))
+            self._nav_buttons.append(btn)
+            return btn
+
+        lo = QVBoxLayout()
+        lo.setContentsMargins(0, 8, 0, 14)
+        lo.setSpacing(1)
+        lo.addWidget(_section_lbl("VERİ"))
+        lo.addWidget(_nav_btn("Veri Üretimi", 0))
+        lo.addWidget(_nav_btn("Veri Analizi", 1))
+        lo.addSpacing(4)
+        lo.addWidget(_section_lbl("MODEL"))
+        lo.addWidget(_nav_btn("Eğitim", 2))
+        lo.addWidget(_nav_btn("Değerlendirme", 3))
+        lo.addStretch(1)
+        sidebar.setLayout(lo)
+
+        self._navigate(0)
+        return sidebar
+
+    def _navigate(self, page_idx: int) -> None:
+        self._stack.setCurrentIndex(page_idx)
+        for i, btn in enumerate(self._nav_buttons):
+            btn.setChecked(i == page_idx)
 
 
 # =============================================================================
@@ -6099,8 +6312,11 @@ def apply_premium_dark_theme(app: QApplication) -> None:
             border-radius: 14px; margin-top: 18px; padding-top: 10px;
         }
         QGroupBox::title {
-            subcontrol-origin: margin; left: 16px; padding: 2px 12px;
+            subcontrol-origin: margin; left: 14px; padding: 3px 14px;
             color: #c4ccff; font-weight: 600; font-size: 13px;
+            background-color: rgba(16, 24, 58, 0.98);
+            border: 1px solid rgba(120, 92, 255, 0.26);
+            border-radius: 8px;
         }
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
             background-color: rgba(7, 11, 20, 0.92);
@@ -6144,8 +6360,10 @@ def apply_premium_dark_theme(app: QApplication) -> None:
             min-width: 80px; max-width: 240px;
         }
         QTabBar::tab:selected {
-            background: rgba(15, 24, 48, 0.92);
-            border-color: rgba(124, 92, 255, 0.55); color: #fff; font-weight: 600;
+            background: rgba(15, 24, 48, 0.95);
+            border-color: rgba(124, 92, 255, 0.50);
+            border-top: 2px solid rgba(124, 92, 255, 0.80);
+            color: #e8ecf8; font-weight: 600;
         }
         QTabBar::tab:hover:!selected { color: #c4ccff; background: rgba(20, 30, 58, 0.8); }
         QTabBar::scroller { width: 24px; }
@@ -6182,12 +6400,36 @@ def apply_premium_dark_theme(app: QApplication) -> None:
             background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                 stop:0 rgba(134, 102, 255, 1.0), stop:1 rgba(66, 199, 255, 0.95));
         }
-        QPushButton[kind="danger"] { border: 1px solid rgba(248, 113, 113, 0.55); background-color: rgba(248, 113, 113, 0.18); }
-        QPushButton[kind="danger"]:hover { background-color: rgba(248, 113, 113, 0.3); }
-        QPushButton[kind="ghost"] { background-color: rgba(16, 24, 48, 0.35); }
+        QPushButton[kind="danger"] {
+            border: 1px solid rgba(248, 113, 113, 0.50);
+            background-color: rgba(248, 113, 113, 0.14);
+            color: #fca5a5;
+        }
+        QPushButton[kind="danger"]:hover {
+            background-color: rgba(248, 113, 113, 0.26);
+            border-color: rgba(248, 113, 113, 0.70);
+        }
+        QPushButton[kind="ghost"] {
+            background-color: rgba(16, 24, 48, 0.30);
+            border-color: rgba(185, 194, 221, 0.12);
+            color: #9aa7c7;
+        }
+        QPushButton[kind="ghost"]:hover {
+            background-color: rgba(26, 36, 70, 0.55);
+            color: #c4ccff;
+            border-color: rgba(185, 194, 221, 0.22);
+        }
         QCheckBox { spacing: 10px; }
-        QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px; border: 1px solid rgba(185, 194, 221, 0.22); background: rgba(7, 11, 20, 0.92); }
-        QCheckBox::indicator:checked { background: rgba(124, 92, 255, 0.9); border-color: rgba(124, 92, 255, 0.9); }
+        QCheckBox::indicator {
+            width: 17px; height: 17px; border-radius: 5px;
+            border: 1px solid rgba(185, 194, 221, 0.22);
+            background: rgba(7, 11, 20, 0.92);
+        }
+        QCheckBox::indicator:hover { border-color: rgba(124, 92, 255, 0.55); }
+        QCheckBox::indicator:checked {
+            background: rgba(124, 92, 255, 0.9);
+            border-color: rgba(124, 92, 255, 0.92);
+        }
         QCheckBox:disabled { color: rgba(185, 194, 221, 0.35); }
         QLabel { color: #b9c2dd; font-size: 12px; }
         QScrollBar:vertical { background: transparent; width: 10px; }
@@ -6197,6 +6439,30 @@ def apply_premium_dark_theme(app: QApplication) -> None:
         QScrollBar:horizontal { background: transparent; height: 10px; }
         QScrollBar::handle:horizontal { background: rgba(185, 194, 221, 0.2); min-width: 28px; border-radius: 5px; }
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }
+        QSplitter::handle { background: rgba(185, 194, 221, 0.07); }
+        QSplitter::handle:horizontal { width: 5px; }
+        QSplitter::handle:vertical   { height: 5px; }
+        QSplitter::handle:hover      { background: rgba(124, 92, 255, 0.20); }
+        QListWidget {
+            background-color: rgba(7, 11, 20, 0.92);
+            border: 1px solid rgba(185, 194, 221, 0.18);
+            border-radius: 12px; padding: 6px; font-size: 12px;
+        }
+        QListWidget::item { padding: 7px 10px; border-radius: 7px; }
+        QListWidget::item:selected {
+            background-color: rgba(124, 92, 255, 0.26); color: #ffffff;
+        }
+        QListWidget::item:hover:!selected { background-color: rgba(124, 92, 255, 0.10); }
+        QStatusBar {
+            background: rgba(7, 11, 20, 0.95);
+            border-top: 1px solid rgba(185, 194, 221, 0.10);
+            color: #6f7ca8; font-size: 11px;
+        }
+        QStatusBar::item { border: none; }
+        QFrame#navSidebar QPushButton {
+            border-radius: 0;
+            border-left: 3px solid transparent;
+        }
         QInputDialog { background-color: #0f1830; }
     """)
 
@@ -6217,6 +6483,8 @@ def main() -> None:
     os.chdir(str(SCRIPT_DIR))
     app = QApplication(sys.argv)
     apply_premium_dark_theme(app)
+    _wheel_guard = _NoWheelOnSpinFilter(app)
+    app.installEventFilter(_wheel_guard)
     w = MainWindow()
     w.show()
     sys.exit(app.exec())
