@@ -71,44 +71,67 @@ APP_VERSION = "13.0"
 
 
 # Theme configuration using a dictionary for easier QSS (Qt Style Sheet) integration
+# Lunar Aurora palette — deep-space, mission-control aesthetic.
+# Primary accent: ion cyan (#35D0FF).  Secondary highlight: restrained violet (#8B7CFF).
+# No dominant gold/champagne.  All tokens below are the single source of truth.
 THEME = {
-    # Visual direction:
-    # - keep the application's dark lunar-control-room identity
-    # - introduce a restrained champagne-gold accent instead of bright blue
-    # - improve separation between shells, cards, and inputs without creating
-    #   high-contrast neon edges that become tiring during long sessions
-    "bg_space":    "#0A111E",  # main application canvas
-    "bg_shell":    "#0E1728",  # header / sidebar shell
-    "bg_card":     "#131E32",  # primary cards
-    "bg_card_alt": "#17233A",  # nested cards / elevated blocks
-    "bg_entry":    "#1B2943",  # fields / selectors
-    "bg_log":      "#09111E",  # execution log
-    "fg_main":     "#F4EFE6",  # primary text
-    "fg_soft":     "#DDD2BD",  # warmer headline / premium tint
-    "fg_muted":    "#A89D8C",  # secondary/helper text
-    "accent":      "#B9975B",  # champagne-gold accent
-    "accent_hov":  "#C9AA71",  # hover gold
-    "accent_deep": "#8B6B3A",  # darker accent edge
-    "border":      "#2B3957",  # card/input borders
-    "border_soft": "#22304A",  # quieter separators
-    "success":     "#32B48D",  # success states
-    "error":       "#E07C72",  # error / danger states
-    "warning":     "#D3A15C",  # warning states
+    # ── Backgrounds ──────────────────────────────────────────────────────────
+    "bg_space":    "#070B14",   # deepest canvas
+    "bg_shell":    "#0B1220",   # header / sidebar shell
+    "bg_card":     "#101A2B",   # primary cards
+    "bg_card_alt": "#17243A",   # elevated cards / hover surfaces
+    "bg_entry":    "#0D1626",   # input fields / selectors
+    "bg_log":      "#050812",   # terminal / log panel
+
+    # ── Foreground ────────────────────────────────────────────────────────────
+    "fg_main":     "#E6EDF7",   # primary text
+    "fg_soft":     "#BFD2EA",   # secondary headings
+    "fg_muted":    "#7F91AC",   # helper / muted text
+
+    # ── Primary accent (cyan / ion-blue) ─────────────────────────────────────
+    "accent":      "#35D0FF",   # primary cyan — progress, active, primary CTAs
+    "accent_hov":  "#7CE7FF",   # hover / brighter cyan
+    "accent_dim":  "rgba(53,208,255,0.13)",  # subtle tinted background
+
+    # ── Secondary accent (violet) ─────────────────────────────────────────────
+    "secondary":       "#8B7CFF",   # selected state, secondary UI
+    "secondary_hov":   "#B0A7FF",
+    "secondary_dim":   "rgba(139,124,255,0.13)",
+
+    # ── Semantic colors ───────────────────────────────────────────────────────
+    "success":     "#2DD4BF",   # teal — success states
+    "warning":     "#F6C177",   # amber — warnings (not used as dominant accent)
+    "error":       "#FF6B7A",   # soft coral — error / danger
+    "info":        "#60A5FA",   # sky blue — info chips
+
+    # ── Borders ───────────────────────────────────────────────────────────────
+    "border":      "#26364F",   # card / input borders
+    "border_soft": "#1A2940",   # quieter separators
+
+    # ── Semantic aliases (for callers that use these token names) ─────────────
+    "primary":        "#35D0FF",   # → accent
+    "primary_hover":  "#7CE7FF",   # → accent_hov
+    "selected_bg":    "rgba(139,124,255,0.13)",   # → secondary_dim
+    "panel_shadow":   "rgba(0,0,0,0.40)",
+    "plot_bg":        "#050812",   # → bg_log
+    "grid_color":     "rgba(38,54,79,0.55)",
+    "text_disabled":  "rgba(127,145,172,0.45)",
+
+    # ── Backward-compat keys (kept so older pages still resolve) ─────────────
+    # accent_deep was used for darker gold edges; map to a deep cyan instead.
+    "accent_deep": "#1A607A",
 }
 
-# Rich Text Log Colors (HTML)
+# Rich Text Log Colors (HTML) — aligned with Lunar Aurora palette
 LOG_COLORS = {
-    # The palette intentionally avoids neon colors. The previous styling looked
-    # lively but reduced scanability during long runs. These tones preserve
-    # severity cues while keeping body text readable on a dark background.
-    "error": "#E7A49A",
-    "warning": "#DEC084",
-    "success": "#9ECFBA",
-    "system": "#D6C6A3",
-    "info": "#EEE7DA",
-    "debug": "#9F9B91",
-    "timestamp": "#837B6E",
-    "default": "#EEE7DA",
+    "error":     "#FF8B96",   # soft coral — readable on dark bg
+    "warning":   "#F6C177",   # amber
+    "success":   "#2DD4BF",   # teal
+    "system":    "#BFD2EA",   # fg_soft
+    "info":      "#7CE7FF",   # cyan highlight
+    "debug":     "#7F91AC",   # fg_muted
+    "timestamp": "#4A6080",   # dimmed
+    "default":   "#E6EDF7",   # fg_main
 }
 
 # Window and Navigation Constants
@@ -416,7 +439,7 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
         self.setObjectName("numericDrag")  # For QSS targeting
         self.setMinimumHeight(38)
 
-        # Styling
+        # Styling — uses Lunar Aurora cyan accent
         self.setStyleSheet(f"""
             QLineEdit#numericDrag {{
                 background-color: {THEME['bg_entry']};
@@ -424,10 +447,10 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
                 border: 1px solid {THEME['border']};
                 border-radius: 9px;
                 padding: 7px 10px;
-                selection-background-color: {THEME['accent']};
+                selection-background-color: {THEME['secondary']};
             }}
             QLineEdit#numericDrag:hover {{
-                border: 1px solid {THEME['accent_hov']};
+                border: 1px solid rgba(53,208,255,0.45);
             }}
             QLineEdit#numericDrag:focus {{
                 border: 1px solid {THEME['accent']};
@@ -550,7 +573,7 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         is_on = self.isChecked()
         is_enabled = self.isEnabled()
         
-        # Colors from THEME
+        # Colors from THEME (cyan when on, dark entry when off)
         bg_color = QtGui.QColor(THEME['accent'] if is_on else THEME['bg_entry'])
         knob_color = QtGui.QColor(THEME['fg_main'])
         
@@ -717,21 +740,26 @@ def style_primary_button(btn: "QtWidgets.QPushButton") -> None:
     btn.setStyleSheet(
         f"""
         QPushButton#primaryBtn {{
-            background: {THEME['accent']};
-            color: #FFFFFF;
+            background: qlineargradient(
+                x1: 0, y1: 0, x2: 1, y2: 0,
+                stop: 0 {THEME['accent']},
+                stop: 1 {THEME['secondary']}
+            );
+            color: #05090F;
             border: 1px solid {THEME['accent']};
             border-radius: 8px;
             padding: 7px 16px;
-            font-weight: 600;
+            font-weight: 700;
         }}
         QPushButton#primaryBtn:hover {{
             background: {THEME['accent_hov']};
             border-color: {THEME['accent_hov']};
+            color: #05090F;
         }}
         QPushButton#primaryBtn:disabled {{
             background: {THEME['bg_entry']};
             border-color: {THEME['border']};
-            color: {THEME['fg_muted']};
+            color: {THEME['text_disabled']};
         }}
         """
     )
@@ -773,4 +801,254 @@ def style_secondary_button(btn: "QtWidgets.QPushButton") -> None:
         btn.style().polish(btn)
     except Exception:
         pass
+
+
+# =============================================================================
+# 8.                   NEW FACTORY HELPERS (Task 1 additions)
+# =============================================================================
+
+
+def create_card(
+    title: str,
+    parent: Optional["QtWidgets.QWidget"] = None,
+) -> "QtWidgets.QGroupBox":
+    """
+    Return a styled QGroupBox card with the project-wide dark card language.
+
+    Drop-in replacement for the inline card-factory closures that individual
+    pages previously defined locally.
+    """
+    gb = QtWidgets.QGroupBox(title, parent)
+    gb.setStyleSheet(card_stylesheet())
+    return gb
+
+
+def create_section_header(
+    title: str,
+    subtitle: Optional[str] = None,
+    parent: Optional["QtWidgets.QWidget"] = None,
+) -> "QtWidgets.QWidget":
+    """
+    Return a labelled section header widget (title + optional subtitle row).
+    """
+    container = QtWidgets.QWidget(parent)
+    lay = QtWidgets.QVBoxLayout(container)
+    lay.setContentsMargins(0, 0, 0, 4)
+    lay.setSpacing(2)
+
+    lbl_title = QtWidgets.QLabel(title)
+    lbl_title.setStyleSheet(
+        f"color: {THEME['fg_soft']}; font-size: 10pt; font-weight: 700;"
+        f" border-bottom: 1px solid {THEME['border_soft']}; padding-bottom: 4px;"
+    )
+    lay.addWidget(lbl_title)
+
+    if subtitle:
+        lbl_sub = QtWidgets.QLabel(subtitle)
+        lbl_sub.setStyleSheet(
+            f"color: {THEME['fg_muted']}; font-size: 9pt;"
+        )
+        lay.addWidget(lbl_sub)
+
+    return container
+
+
+def create_hint_label(
+    text: str,
+    kind: str = "info",
+    parent: Optional["QtWidgets.QWidget"] = None,
+) -> "QtWidgets.QLabel":
+    """
+    Return a small inline hint / callout label.
+
+    *kind* can be ``"info"``, ``"warning"``, ``"success"``, or ``"error"``.
+    """
+    color_map = {
+        "info":    THEME["info"],
+        "warning": THEME["warning"],
+        "success": THEME["success"],
+        "error":   THEME["error"],
+    }
+    color = color_map.get(kind, THEME["fg_muted"])
+    lbl = QtWidgets.QLabel(text, parent)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(
+        f"color: {color}; font-size: 9pt; font-style: italic; padding: 4px 0;"
+    )
+    return lbl
+
+
+def create_primary_button(
+    text: str,
+    icon: Optional["QtGui.QIcon"] = None,
+    parent: Optional["QtWidgets.QWidget"] = None,
+) -> "QtWidgets.QPushButton":
+    """Return a styled primary (cyan) action button."""
+    btn = QtWidgets.QPushButton(text, parent)
+    if icon:
+        btn.setIcon(icon)
+    style_primary_button(btn)
+    return btn
+
+
+def create_secondary_button(
+    text: str,
+    icon: Optional["QtGui.QIcon"] = None,
+    parent: Optional["QtWidgets.QWidget"] = None,
+) -> "QtWidgets.QPushButton":
+    """Return a styled secondary (neutral) action button."""
+    btn = QtWidgets.QPushButton(text, parent)
+    if icon:
+        btn.setIcon(icon)
+    style_secondary_button(btn)
+    return btn
+
+
+def create_danger_button(
+    text: str,
+    icon: Optional["QtGui.QIcon"] = None,
+    parent: Optional["QtWidgets.QWidget"] = None,
+) -> "QtWidgets.QPushButton":
+    """Return a styled danger (coral) action button."""
+    btn = QtWidgets.QPushButton(text, parent)
+    if icon:
+        btn.setIcon(icon)
+    btn.setObjectName("dangerBtn")
+    btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+    btn.setStyleSheet(
+        f"""
+        QPushButton#dangerBtn {{
+            background: rgba(255,107,122,0.12);
+            color: {THEME['fg_main']};
+            border: 1px solid rgba(255,107,122,0.30);
+            border-radius: 8px;
+            padding: 7px 16px;
+            font-weight: 600;
+        }}
+        QPushButton#dangerBtn:hover {{
+            background: rgba(255,107,122,0.22);
+            border-color: {THEME['error']};
+        }}
+        QPushButton#dangerBtn:disabled {{
+            background: {THEME['bg_entry']};
+            border-color: {THEME['border']};
+            color: {THEME['fg_muted']};
+        }}
+        """
+    )
+    return btn
+
+
+def create_metric_chip(
+    title: str,
+    value: str = "—",
+    subtitle: str = "",
+    parent: Optional["QtWidgets.QWidget"] = None,
+) -> "QtWidgets.QFrame":
+    """
+    Return a compact metric card: dim title on top, bold value, optional
+    subtitle.  Suitable for header metric rows in monitoring pages.
+    """
+    frame = QtWidgets.QFrame(parent)
+    frame.setObjectName("metricChip")
+    frame.setStyleSheet(
+        f"QFrame#metricChip {{"
+        f"  background: {THEME['bg_card_alt']};"
+        f"  border: 1px solid {THEME['border_soft']};"
+        f"  border-radius: 10px;"
+        f"  padding: 8px 14px;"
+        f"}}"
+    )
+    lay = QtWidgets.QVBoxLayout(frame)
+    lay.setContentsMargins(10, 8, 10, 8)
+    lay.setSpacing(2)
+
+    lbl_title = QtWidgets.QLabel(title)
+    lbl_title.setStyleSheet(
+        f"color: {THEME['fg_muted']}; font-size: 9pt; font-weight: 500;"
+    )
+    lbl_title.setAlignment(QtCore.Qt.AlignCenter)
+    lay.addWidget(lbl_title)
+
+    lbl_value = QtWidgets.QLabel(value)
+    lbl_value.setObjectName("metricChipValue")
+    lbl_value.setStyleSheet(
+        f"color: {THEME['accent']}; font-size: 13pt; font-weight: 700;"
+        f" font-family: Consolas, monospace;"
+    )
+    lbl_value.setAlignment(QtCore.Qt.AlignCenter)
+    lay.addWidget(lbl_value)
+
+    if subtitle:
+        lbl_sub = QtWidgets.QLabel(subtitle)
+        lbl_sub.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 8pt;")
+        lbl_sub.setAlignment(QtCore.Qt.AlignCenter)
+        lay.addWidget(lbl_sub)
+
+    frame._value_label = lbl_value  # type: ignore[attr-defined]
+    return frame
+
+
+def apply_tree_style(tree: "QtWidgets.QTreeWidget") -> None:
+    """Apply project-wide styling to a QTreeWidget."""
+    tree.setStyleSheet(
+        f"""
+        QTreeWidget {{
+            background: {THEME['bg_entry']};
+            color: {THEME['fg_main']};
+            border: 1px solid {THEME['border']};
+            border-radius: 8px;
+            alternate-background-color: {THEME['bg_card_alt']};
+        }}
+        QTreeWidget::item {{
+            padding: 4px 6px;
+        }}
+        QTreeWidget::item:selected {{
+            background: {THEME['secondary_dim']};
+            color: {THEME['fg_main']};
+        }}
+        QTreeWidget::item:hover {{
+            background: {THEME['accent_dim']};
+        }}
+        QHeaderView::section {{
+            background: {THEME['bg_card']};
+            color: {THEME['fg_soft']};
+            border: none;
+            border-bottom: 1px solid {THEME['border']};
+            padding: 5px 8px;
+            font-weight: 600;
+        }}
+        """
+    )
+
+
+def apply_plot_theme(widget: "QtWidgets.QWidget") -> None:
+    """
+    Apply the project-wide pyqtgraph/canvas background color to *widget*.
+
+    This helper is intentionally thin — it only configures the background so
+    that callers that construct their own plots stay in control of axis colors,
+    pen widths, etc.
+    """
+    try:
+        widget.setBackground(THEME["plot_bg"])  # type: ignore[attr-defined]
+    except AttributeError:
+        widget.setStyleSheet(f"background: {THEME['plot_bg']};")
+
+
+def status_text(text: str, kind: str = "info") -> str:
+    """
+    Return an HTML-styled status string suitable for QLabel.setText().
+
+    Handy for inline validation labels that need color-coded feedback.
+    """
+    color_map = {
+        "info":    THEME["accent"],
+        "success": THEME["success"],
+        "warning": THEME["warning"],
+        "error":   THEME["error"],
+        "muted":   THEME["fg_muted"],
+    }
+    color = color_map.get(kind, THEME["fg_muted"])
+    return f"<span style='color:{color};font-weight:600'>{text}</span>"
 

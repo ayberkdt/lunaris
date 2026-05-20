@@ -95,8 +95,10 @@ from ui_parts.result_exports_page import OutputPageState, ResultsExportPage
 from ui_parts.solver_policy import normalize_solver_config_object
 from ui_parts.session_persistence import (
     apply_session_snapshot,
+    apply_visual_state,
     autodetect_data_state,
     collect_session_snapshot,
+    collect_visual_state,
 )
 from ui_parts.surrogate_studio_page import SurrogateStudioPage
 
@@ -320,7 +322,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 font-size: 9pt;
             }}
             QProgressBar::chunk {{
-                background: {THEME['accent']};
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 {THEME['accent']},
+                    stop: 1 {THEME['secondary']}
+                );
                 border-radius: 2px;
             }}
         """)
@@ -631,7 +637,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pal.setColor(QtGui.QPalette.Highlight, QtGui.QColor(THEME['accent']))
             app.setPalette(pal)
         
-        # 2. Generate CSS from THEME dict
+        # 2. Generate CSS from THEME dict — Lunar Aurora palette
         qss = f"""
         /* GLOBAL FOUNDATION */
         QMainWindow,
@@ -640,7 +646,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 x1: 0, y1: 0, x2: 1, y2: 1,
                 stop: 0 {THEME['bg_space']},
                 stop: 0.48 {THEME['bg_shell']},
-                stop: 1 #111B2E
+                stop: 1 #0F1A2E
             );
             color: {THEME['fg_main']};
         }}
@@ -680,7 +686,7 @@ class MainWindow(QtWidgets.QMainWindow):
             border-radius: 7px;
         }}
         QMenuBar::item:selected {{
-            background: rgba(185, 151, 91, 0.12);
+            background: {THEME['accent_dim']};
             color: {THEME['fg_soft']};
         }}
         QMenu {{
@@ -694,7 +700,7 @@ class MainWindow(QtWidgets.QMainWindow):
             border-radius: 7px;
         }}
         QMenu::item:selected {{
-            background: rgba(185, 151, 91, 0.14);
+            background: {THEME['accent_dim']};
             color: {THEME['fg_soft']};
         }}
         QMenu::separator {{
@@ -714,8 +720,8 @@ class MainWindow(QtWidgets.QMainWindow):
             border-radius: 14px;
         }}
         QFrame#stateFrame {{
-            background: rgba(185, 151, 91, 0.08);
-            border: 1px solid rgba(185, 151, 91, 0.18);
+            background: {THEME['accent_dim']};
+            border: 1px solid rgba(53,208,255,0.20);
             border-radius: 8px;
             padding: 2px 8px;
         }}
@@ -756,36 +762,50 @@ class MainWindow(QtWidgets.QMainWindow):
             color: {THEME['fg_muted']};
         }}
         QListWidget#navDrawer::item:hover {{
-            background: rgba(255, 255, 255, 0.04);
+            background: rgba(53,208,255,0.06);
             color: {THEME['fg_main']};
         }}
         QListWidget#navDrawer::item:selected {{
-            background: rgba(185, 151, 91, 0.14);
+            background: {THEME['secondary_dim']};
             color: {THEME['fg_soft']};
             font-weight: 700;
             border-left: 3px solid {THEME['accent']};
         }}
 
         /* INPUTS */
-        QLineEdit, QPlainTextEdit, QComboBox, QDoubleSpinBox, QDateTimeEdit {{
+        QLineEdit, QPlainTextEdit, QComboBox, QDoubleSpinBox, QDateTimeEdit, QSpinBox {{
             background: {THEME['bg_entry']};
             color: {THEME['fg_main']};
             border: 1px solid {THEME['border']};
             border-radius: 9px;
             padding: 7px 10px;
-            selection-background-color: {THEME['accent']};
+            selection-background-color: {THEME['secondary']};
         }}
-        QLineEdit:hover, QComboBox:hover, QPlainTextEdit:hover, QDoubleSpinBox:hover, QDateTimeEdit:hover {{
-            border: 1px solid {THEME['accent_hov']};
+        QLineEdit:hover, QComboBox:hover, QPlainTextEdit:hover,
+        QDoubleSpinBox:hover, QDateTimeEdit:hover, QSpinBox:hover {{
+            border: 1px solid rgba(53,208,255,0.45);
         }}
-        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QDoubleSpinBox:focus, QDateTimeEdit:focus {{
+        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus,
+        QDoubleSpinBox:focus, QDateTimeEdit:focus, QSpinBox:focus {{
             border: 1px solid {THEME['accent']};
             background: {THEME['bg_card_alt']};
+        }}
+        QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled,
+        QDoubleSpinBox:disabled, QDateTimeEdit:disabled {{
+            color: {THEME['text_disabled']};
+            background: {THEME['bg_card']};
+            border-color: {THEME['border_soft']};
         }}
         QComboBox::drop-down,
         QDateTimeEdit::drop-down {{
             border: none;
             width: 24px;
+        }}
+        QComboBox QAbstractItemView {{
+            background: {THEME['bg_card_alt']};
+            color: {THEME['fg_main']};
+            border: 1px solid {THEME['border']};
+            selection-background-color: {THEME['secondary_dim']};
         }}
 
         /* CARDS */
@@ -805,30 +825,37 @@ class MainWindow(QtWidgets.QMainWindow):
             font-size: 10.4pt;
         }}
 
-        /* BUTTONS */
+        /* BUTTONS (default / secondary) */
         QPushButton {{
             background: {THEME['bg_card_alt']};
+            color: {THEME['fg_main']};
             border: 1px solid {THEME['border']};
             border-radius: 9px;
             padding: 7px 16px;
             font-weight: 600;
         }}
         QPushButton:hover {{
-            border-color: {THEME['accent_hov']};
+            border-color: rgba(53,208,255,0.45);
             background: {THEME['bg_entry']};
+            color: {THEME['fg_main']};
         }}
         QPushButton:pressed {{
             background: {THEME['border_soft']};
         }}
+        QPushButton:disabled {{
+            background: {THEME['bg_card']};
+            border-color: {THEME['border_soft']};
+            color: {THEME['text_disabled']};
+        }}
         QPushButton#quickChip {{
-            background: rgba(185, 151, 91, 0.06);
-            border: 1px solid rgba(185, 151, 91, 0.18);
+            background: {THEME['accent_dim']};
+            border: 1px solid rgba(53,208,255,0.20);
             color: {THEME['fg_soft']};
             border-radius: 9px;
             padding: 5px 12px;
         }}
         QPushButton#quickChip:hover {{
-            background: rgba(185, 151, 91, 0.14);
+            background: rgba(53,208,255,0.18);
             border-color: {THEME['accent']};
         }}
 
@@ -837,30 +864,37 @@ class MainWindow(QtWidgets.QMainWindow):
             background: qlineargradient(
                 x1: 0, y1: 0, x2: 1, y2: 0,
                 stop: 0 {THEME['accent']},
-                stop: 1 {THEME['accent_hov']}
+                stop: 1 {THEME['secondary']}
             );
             border: 1px solid {THEME['accent']};
-            color: #FFFFFF;
+            color: #05090F;
+            font-weight: 700;
         }}
         QPushButton#primaryBtn:hover {{
             background: {THEME['accent_hov']};
             border-color: {THEME['accent_hov']};
+            color: #05090F;
+        }}
+        QPushButton#primaryBtn:disabled {{
+            background: {THEME['bg_entry']};
+            border-color: {THEME['border']};
+            color: {THEME['text_disabled']};
         }}
 
         /* DANGER BUTTON (STOP) */
         QPushButton#dangerBtn {{
-            background: rgba(224, 124, 114, 0.12);
-            border: 1px solid rgba(224, 124, 114, 0.28);
+            background: rgba(255,107,122,0.10);
+            border: 1px solid rgba(255,107,122,0.26);
             color: {THEME['fg_main']};
         }}
         QPushButton#dangerBtn:hover {{
-            background: rgba(224, 124, 114, 0.2);
+            background: rgba(255,107,122,0.20);
             border-color: {THEME['error']};
         }}
         QPushButton#dangerBtn:disabled {{
             background: {THEME['bg_entry']};
             border-color: {THEME['border']};
-            color: {THEME['fg_muted']};
+            color: {THEME['text_disabled']};
         }}
 
         /* TOOL + CHECK CONTROLS */
@@ -870,7 +904,7 @@ class MainWindow(QtWidgets.QMainWindow):
             padding: 4px;
         }}
         QToolButton:hover {{
-            background: rgba(185, 151, 91, 0.12);
+            background: {THEME['accent_dim']};
             border-radius: 7px;
         }}
         QCheckBox {{
@@ -888,6 +922,9 @@ class MainWindow(QtWidgets.QMainWindow):
             background: {THEME['accent']};
             border-color: {THEME['accent']};
         }}
+        QCheckBox::indicator:hover {{
+            border-color: rgba(53,208,255,0.55);
+        }}
 
         /* STATUS BADGE */
         QLabel#statusBadge {{
@@ -896,10 +933,10 @@ class MainWindow(QtWidgets.QMainWindow):
             font-weight: 700;
             padding: 0 8px;
         }}
-        QLabel#statusBadge[kind="info"] {{ background: rgba(185, 151, 91, 0.1); color: {THEME['accent_hov']}; border-color: rgba(185, 151, 91, 0.38); }}
-        QLabel#statusBadge[kind="success"] {{ background: rgba(50, 180, 141, 0.12); color: {THEME['success']}; border-color: rgba(50, 180, 141, 0.32); }}
-        QLabel#statusBadge[kind="error"] {{ background: rgba(224, 124, 114, 0.12); color: {THEME['error']}; border-color: rgba(224, 124, 114, 0.3); }}
-        QLabel#statusBadge[kind="warning"] {{ background: rgba(211, 161, 92, 0.12); color: {THEME['warning']}; border-color: rgba(211, 161, 92, 0.32); }}
+        QLabel#statusBadge[kind="info"] {{ background: {THEME['accent_dim']}; color: {THEME['accent_hov']}; border-color: rgba(53,208,255,0.35); }}
+        QLabel#statusBadge[kind="success"] {{ background: rgba(45,212,191,0.12); color: {THEME['success']}; border-color: rgba(45,212,191,0.32); }}
+        QLabel#statusBadge[kind="error"] {{ background: rgba(255,107,122,0.12); color: {THEME['error']}; border-color: rgba(255,107,122,0.30); }}
+        QLabel#statusBadge[kind="warning"] {{ background: rgba(246,193,119,0.12); color: {THEME['warning']}; border-color: rgba(246,193,119,0.32); }}
 
         /* RUN DOT */
         QFrame#runDot {{ border-radius: 6px; }}
@@ -916,7 +953,7 @@ class MainWindow(QtWidgets.QMainWindow):
             top: -1px;
         }}
         QTabBar::tab {{
-            background: rgba(255, 255, 255, 0.03);
+            background: rgba(255,255,255,0.03);
             color: {THEME['fg_muted']};
             border: 1px solid {THEME['border_soft']};
             padding: 8px 16px;
@@ -925,13 +962,14 @@ class MainWindow(QtWidgets.QMainWindow):
             border-top-right-radius: 10px;
         }}
         QTabBar::tab:selected {{
-            background: rgba(185, 151, 91, 0.12);
+            background: {THEME['accent_dim']};
             color: {THEME['fg_soft']};
-            border-color: rgba(185, 151, 91, 0.28);
+            border-color: rgba(53,208,255,0.30);
+            border-bottom: 2px solid {THEME['accent']};
         }}
         QTabBar::tab:hover:!selected {{
             color: {THEME['fg_main']};
-            background: rgba(255, 255, 255, 0.05);
+            background: rgba(255,255,255,0.04);
         }}
 
         /* LOGGING */
@@ -946,24 +984,28 @@ class MainWindow(QtWidgets.QMainWindow):
         }}
 
         /* SCROLLBARS */
-        QScrollBar:vertical {{
+        QScrollBar:vertical, QScrollBar:horizontal {{
             background: transparent;
             width: 8px;
+            height: 8px;
             margin: 0;
         }}
-        QScrollBar::handle:vertical {{
+        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
             background: {THEME['border']};
             border-radius: 4px;
             min-height: 20px;
+            min-width: 20px;
         }}
-        QScrollBar::handle:vertical:hover {{
-            background: {THEME['fg_muted']};
+        QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
+            background: rgba(53,208,255,0.40);
         }}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ height: 0px; width: 0px; }}
 
         /* SPLITTER */
+        /* SPLITTER */
         QSplitter::handle {{
-            background: {THEME['border']};
+            background: {THEME['border_soft']};
         }}
         QSplitter::handle:vertical {{
             height: 8px;
@@ -972,7 +1014,7 @@ class MainWindow(QtWidgets.QMainWindow):
             image: none;
         }}
         QSplitter::handle:vertical:hover {{
-            background: {THEME['accent']};
+            background: rgba(53,208,255,0.35);
         }}
         QSplitter#mainSplit::handle:vertical {{
             background: {THEME['border']};
@@ -980,7 +1022,36 @@ class MainWindow(QtWidgets.QMainWindow):
             border-radius: 3px;
         }}
         QSplitter#mainSplit::handle:vertical:hover {{
-            background: {THEME['accent']};
+            background: rgba(53,208,255,0.40);
+        }}
+
+        /* TREE / LIST WIDGETS */
+        QTreeWidget, QListWidget {{
+            background: {THEME['bg_entry']};
+            color: {THEME['fg_main']};
+            border: 1px solid {THEME['border']};
+            border-radius: 10px;
+            outline: none;
+            alternate-background-color: {THEME['bg_card_alt']};
+        }}
+        QTreeWidget::item, QListWidget::item {{
+            padding: 4px 6px;
+            border-radius: 5px;
+        }}
+        QTreeWidget::item:selected, QListWidget::item:selected {{
+            background: {THEME['secondary_dim']};
+            color: {THEME['fg_main']};
+        }}
+        QTreeWidget::item:hover, QListWidget::item:hover {{
+            background: {THEME['accent_dim']};
+        }}
+        QHeaderView::section {{
+            background: {THEME['bg_card']};
+            color: {THEME['fg_soft']};
+            border: none;
+            border-bottom: 1px solid {THEME['border']};
+            padding: 5px 8px;
+            font-weight: 600;
         }}
         """
         self.setStyleSheet(qss)
@@ -2263,7 +2334,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _collect_preset_dict(self) -> Dict[str, Any]:
         """Collect all modular page/config state into a serializable snapshot."""
 
-        return collect_session_snapshot(
+        snapshot = collect_session_snapshot(
             orbit_page=self.page_orbit,
             propagation_page=self.page_propagation,
             force_page=self.page_forces,
@@ -2277,6 +2348,69 @@ class MainWindow(QtWidgets.QMainWindow):
             mc_page=getattr(self, "page_mc", None),
             surrogate_page=getattr(self, "page_surrogate", None),
         )
+
+        # Collect visual workspace state (Task 11)
+        active_key = ""
+        try:
+            row = self.nav_list.currentRow()
+            if 0 <= row < len(NAV_PAGES):
+                active_key = NAV_PAGES[row][0]
+        except Exception:
+            pass
+
+        splitter_sizes: list[int] = []
+        try:
+            splitter_sizes = list(self.main_splitter.sizes())
+        except Exception:
+            pass
+
+        telemetry_plot_type = ""
+        telemetry_time_unit = ""
+        try:
+            mp = getattr(getattr(self, "page_telemetry", None), "multi_plot", None)
+            if mp is None:
+                mp = getattr(self, "page_telemetry", None)
+            if mp is not None:
+                combo = getattr(mp, "plot_type_combo", None)
+                if combo:
+                    telemetry_plot_type = combo.currentText()
+                tu = getattr(mp, "time_axis_combo", None)
+                if tu:
+                    telemetry_time_unit = tu.currentText()
+        except Exception:
+            pass
+
+        artifact_filter = ""
+        artifact_recursive = False
+        try:
+            cb = getattr(getattr(self, "page_output", None), "cb_artifact_filter", None)
+            if cb:
+                artifact_filter = cb.currentText()
+            chk = getattr(getattr(self, "page_output", None), "chk_recursive_scan", None)
+            if chk:
+                artifact_recursive = chk.isChecked()
+        except Exception:
+            pass
+
+        mc_active_tab = 0
+        try:
+            mc_tabs = getattr(getattr(self, "page_mc", None), "tabs", None)
+            if mc_tabs:
+                mc_active_tab = mc_tabs.currentIndex()
+        except Exception:
+            pass
+
+        snapshot["visual_state"] = collect_visual_state(
+            active_page_key=active_key,
+            splitter_sizes=splitter_sizes,
+            log_collapsed=bool(self.is_log_collapsed),
+            telemetry_plot_type=telemetry_plot_type,
+            telemetry_time_unit=telemetry_time_unit,
+            artifact_filter=artifact_filter,
+            artifact_recursive=artifact_recursive,
+            mc_active_tab=mc_active_tab,
+        )
+        return snapshot
 
     def _apply_preset_dict(self, data: Dict[str, Any]):
         """Apply a saved session payload through the modular restore helpers."""
@@ -2305,6 +2439,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ldem_ppd = state.ldem_ppd
         except Exception as e:
             self._log_message(f"[Warning] Could not fully restore session: {e}", severity="warning")
+
+        # Restore visual workspace state — tolerant of missing key (old sessions)
+        try:
+            visual = data.get("visual_state", {}) or {}
+            if visual:
+                apply_visual_state(visual, main_window=self)
+        except Exception as e:
+            self._log_message(f"[Warning] Could not restore visual state: {e}", severity="warning")
 
     def _browse_out_dir(self, _checked: bool = False):
         """Open directory dialog for output directory."""

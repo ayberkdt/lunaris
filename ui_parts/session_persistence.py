@@ -174,6 +174,8 @@ def collect_session_snapshot(
             if surrogate_page is not None
             else {"runs_root": "", "selected_run": ""}
         ),
+        # Visual workspace state — absent in old sessions; restore tolerates absence.
+        "visual_state": {},   # populated via collect_visual_state() if caller fills it
     }
 
 
@@ -312,6 +314,129 @@ def apply_session_snapshot(
             surrogate_page.apply_state(surrogate_payload)
         except Exception as exc:
             warn(f"[Warning] Surrogate page restore failed: {exc}")
+
+
+def collect_visual_state(
+    *,
+    active_page_key: str = "",
+    splitter_sizes: Optional[list[int]] = None,
+    log_collapsed: bool = False,
+    telemetry_plot_type: str = "",
+    telemetry_time_unit: str = "",
+    artifact_filter: str = "",
+    artifact_recursive: bool = False,
+    mc_active_tab: int = 0,
+) -> dict[str, Any]:
+    """
+    Build the ``visual_state`` sub-dict for session persistence.
+
+    All parameters default to safe sentinel values so callers can pass only
+    the fields they actually know about.
+    """
+    return {
+        "active_page_key":    active_page_key,
+        "splitter_sizes":     list(splitter_sizes) if splitter_sizes else [],
+        "log_collapsed":      bool(log_collapsed),
+        "telemetry_plot_type": telemetry_plot_type,
+        "telemetry_time_unit": telemetry_time_unit,
+        "artifact_filter":     artifact_filter,
+        "artifact_recursive":  bool(artifact_recursive),
+        "mc_active_tab":       int(mc_active_tab),
+    }
+
+
+def apply_visual_state(
+    visual: dict[str, Any],
+    *,
+    main_window: Any = None,
+) -> None:
+    """
+    Restore visual workspace state captured by :py:func:`collect_visual_state`.
+
+    All keys are optional and missing values are silently ignored so old session
+    files without a ``visual_state`` block remain loadable.
+    """
+    if not isinstance(visual, dict) or not visual:
+        return
+
+    # Active page
+    active_page_key = str(visual.get("active_page_key", "") or "")
+    if active_page_key and main_window is not None:
+        _safe_call(None, lambda: main_window._switch_page(active_page_key))
+
+    # Main splitter sizes
+    splitter_sizes = visual.get("splitter_sizes")
+    if splitter_sizes and main_window is not None:
+        _safe_call(None, lambda: main_window.main_splitter.setSizes(list(splitter_sizes)))
+
+    # Log collapsed state
+    log_collapsed = bool(visual.get("log_collapsed", False))
+    if main_window is not None and hasattr(main_window, "is_log_collapsed"):
+        _safe_call(None, lambda: _restore_log_collapsed(main_window, log_collapsed))
+
+    # Telemetry page
+    plot_type = str(visual.get("telemetry_plot_type", "") or "")
+    time_unit = str(visual.get("telemetry_time_unit", "") or "")
+    if main_window is not None:
+        telem = getattr(main_window, "page_telemetry", None)
+        if telem is not None and plot_type:
+            _safe_call(None, lambda: _restore_telemetry_visual(telem, plot_type, time_unit))
+
+    # Artifact browser
+    artifact_filter = str(visual.get("artifact_filter", "") or "")
+    artifact_recursive = bool(visual.get("artifact_recursive", False))
+    if main_window is not None:
+        output_page = getattr(main_window, "page_output", None)
+        if output_page is not None:
+            _safe_call(None, lambda: _restore_artifact_visual(output_page, artifact_filter, artifact_recursive))
+
+    # MC active tab
+    mc_tab = int(visual.get("mc_active_tab", 0) or 0)
+    if main_window is not None:
+        mc_page = getattr(main_window, "page_mc", None)
+        if mc_page is not None and hasattr(mc_page, "tabs"):
+            _safe_call(None, lambda: mc_page.tabs.setCurrentIndex(mc_tab))
+
+
+def _restore_log_collapsed(mw: Any, collapsed: bool) -> None:
+    if mw.is_log_collapsed != collapsed:
+        try:
+            mw._toggle_log_collapsed()
+        except Exception:
+            pass
+
+
+def _restore_telemetry_visual(telem: Any, plot_type: str, time_unit: str) -> None:
+    try:
+        mp = getattr(telem, "multi_plot", None)
+        if mp is None:
+            mp = telem
+        combo = getattr(mp, "plot_type_combo", None)
+        if combo is not None and plot_type:
+            idx = combo.findText(plot_type)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+        tu_combo = getattr(mp, "time_axis_combo", None)
+        if tu_combo is not None and time_unit:
+            idx = tu_combo.findText(time_unit)
+            if idx >= 0:
+                tu_combo.setCurrentIndex(idx)
+    except Exception:
+        pass
+
+
+def _restore_artifact_visual(output_page: Any, artifact_filter: str, recursive: bool) -> None:
+    try:
+        cb = getattr(output_page, "cb_artifact_filter", None)
+        if cb is not None and artifact_filter:
+            idx = cb.findText(artifact_filter)
+            if idx >= 0:
+                cb.setCurrentIndex(idx)
+        chk = getattr(output_page, "chk_recursive_scan", None)
+        if chk is not None:
+            chk.setChecked(recursive)
+    except Exception:
+        pass
 
 
 def autodetect_data_state(project_root: Path, current_state: DataFilesState) -> tuple[DataFilesState, list[str]]:

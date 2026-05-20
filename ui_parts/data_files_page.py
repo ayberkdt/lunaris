@@ -48,7 +48,7 @@ from PySide6 import QtCore, QtWidgets
 
 
 try:
-    from ui_parts.ui_commons import THEME, get_icon, StatusBadge
+    from ui_parts.ui_commons import THEME, get_icon, StatusBadge, create_hint_label
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -207,8 +207,16 @@ class DataPage(QtWidgets.QWidget):
 
         layout.addLayout(ldem_row)
 
-        # Connect path change to badge update
-        self.ent_ldem_root.textChanged.connect(lambda _: self._update_badge(self.ent_ldem_root.text(), self.badge_ldem))
+        # Detail label under the LDEM path row
+        self.lbl_ldem_detail = QtWidgets.QLabel("")
+        self.lbl_ldem_detail.setStyleSheet(
+            f"color: {THEME['fg_muted']}; font-size: 9pt; padding-left: 4px;"
+        )
+        self.lbl_ldem_detail.setVisible(False)
+        layout.addWidget(self.lbl_ldem_detail)
+
+        # Connect path change to content-aware badge update
+        self.ent_ldem_root.textChanged.connect(lambda _: self._update_ldem_badge())
 
         # Resolution control
         res_row = QtWidgets.QHBoxLayout()
@@ -237,6 +245,7 @@ class DataPage(QtWidgets.QWidget):
         self.chk_use_ldem_for_albedo.setChecked(False)
         self.chk_use_ldem_for_albedo.setStyleSheet(f"color: {THEME['fg_main']};")
         self.chk_use_ldem_for_albedo.toggled.connect(self._sync_albedo_path)
+        self.chk_use_ldem_for_albedo.toggled.connect(lambda _: self._update_albedo_badge())
         layout.addWidget(self.chk_use_ldem_for_albedo)
 
         # Albedo container (shown only when not using LDEM)
@@ -275,7 +284,15 @@ class DataPage(QtWidgets.QWidget):
         albedo_path_row.addWidget(self.badge_albedo)
 
         albedo_layout.addLayout(albedo_path_row)
-        self.ent_albedo_root.textChanged.connect(lambda _: self._update_badge(self.ent_albedo_root.text(), self.badge_albedo))
+
+        self.lbl_albedo_detail = QtWidgets.QLabel("")
+        self.lbl_albedo_detail.setStyleSheet(
+            f"color: {THEME['fg_muted']}; font-size: 9pt; padding-left: 4px;"
+        )
+        self.lbl_albedo_detail.setVisible(False)
+        albedo_layout.addWidget(self.lbl_albedo_detail)
+
+        self.ent_albedo_root.textChanged.connect(lambda _: self._update_albedo_badge())
         layout.addWidget(self.albedo_container)
 
         note = QtWidgets.QLabel(
@@ -326,7 +343,15 @@ class DataPage(QtWidgets.QWidget):
         kernel_row.addWidget(self.badge_kernel)
 
         layout.addLayout(kernel_row)
-        self.ent_kernel_dir.textChanged.connect(lambda _: self._update_badge(self.ent_kernel_dir.text(), self.badge_kernel))
+
+        self.lbl_kernel_detail = QtWidgets.QLabel("")
+        self.lbl_kernel_detail.setStyleSheet(
+            f"color: {THEME['fg_muted']}; font-size: 9pt; padding-left: 4px;"
+        )
+        self.lbl_kernel_detail.setVisible(False)
+        layout.addWidget(self.lbl_kernel_detail)
+
+        self.ent_kernel_dir.textChanged.connect(lambda _: self._update_kernel_badge())
 
         note = QtWidgets.QLabel(
             "ℹ️ SPICE kernels provide planetary ephemerides, time conversions, and frame "
@@ -391,15 +416,147 @@ class DataPage(QtWidgets.QWidget):
 
         self._state_changed()
 
+    # -------------------------------------------------------------------------
+    # Content-aware validation helpers (Task 4)
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_ldem_content(root: Path) -> tuple[str, str]:
+        """
+        Return (kind, detail) for an LDEM root directory.
+
+        Possible kinds: 'not_set', 'missing', 'content_ok', 'path_ok'.
+        """
+        if not root or not str(root).strip():
+            return ("not_set", "")
+        if not root.exists():
+            return ("missing", "Directory not found")
+        # Check for typical LDEM files
+        patterns = ["*.lbl", "*.lbl.txt", "*.img", "ldem_*", "*.tif", "*.tiff"]
+        found: list[str] = []
+        for pat in patterns:
+            hits = list(root.glob(pat))
+            if hits:
+                found.append(f"{len(hits)} {pat.strip('*').lstrip('.')} file(s)")
+        if found:
+            return ("content_ok", ", ".join(found[:2]))
+        # Directory exists but no recognizable LDEM files
+        all_files = list(root.iterdir())
+        if all_files:
+            return ("path_ok", f"{len(all_files)} file(s) found (no LDEM pattern matched)")
+        return ("path_ok", "Directory is empty")
+
+    @staticmethod
+    def _detect_albedo_content(root: Path) -> tuple[str, str]:
+        """Return (kind, detail) for an Albedo root directory."""
+        if not root or not str(root).strip():
+            return ("not_set", "")
+        if not root.exists():
+            return ("missing", "Directory not found")
+        patterns = ["ldam_*", "*.img", "*.lbl", "albedo*", "*.tif"]
+        found: list[str] = []
+        for pat in patterns:
+            hits = list(root.glob(pat))
+            if hits:
+                found.append(f"{len(hits)} {pat.strip('*').lstrip('.')} file(s)")
+        if found:
+            return ("content_ok", ", ".join(found[:2]))
+        all_files = list(root.iterdir())
+        if all_files:
+            return ("path_ok", f"{len(all_files)} file(s) found (no albedo pattern matched)")
+        return ("path_ok", "Directory is empty")
+
+    @staticmethod
+    def _detect_kernel_content(root: Path) -> tuple[str, str]:
+        """Return (kind, detail) for a SPICE kernel directory."""
+        if not root or not str(root).strip():
+            return ("not_set", "")
+        if not root.exists():
+            return ("missing", "Directory not found")
+        kernel_exts = {".bsp", ".tls", ".tpc", ".tf", ".bc", ".bpc"}
+        found_by_ext: dict[str, int] = {}
+        for p in root.rglob("*"):
+            if p.suffix.lower() in kernel_exts:
+                found_by_ext[p.suffix.lower()] = found_by_ext.get(p.suffix.lower(), 0) + 1
+        if found_by_ext:
+            total = sum(found_by_ext.values())
+            detail = f"{total} kernel file(s): " + ", ".join(
+                f"{cnt} {ext}" for ext, cnt in sorted(found_by_ext.items())
+            )
+            return ("content_ok", detail)
+        all_files = list(root.iterdir())
+        if all_files:
+            return ("path_ok", f"{len(all_files)} file(s) found (no .bsp/.tls/.tpc kernels)")
+        return ("path_ok", "Directory is empty")
+
     def _update_badge(self, path_text: str, badge: "StatusBadge") -> None:
-        """Update a path validity badge based on whether the path exists."""
+        """
+        Update a path validity badge.
+        'NOT SET' → path is blank.
+        'MISSING' → path does not exist.
+        'PATH OK' → directory exists but no recognized content detected.
+        'CONTENT OK' → directory exists and recognized content was found.
+        """
         path_text = path_text.strip()
         if not path_text:
             badge.set_status("warning", "NOT SET")
-        elif Path(path_text).exists():
-            badge.set_status("success", "VALID")
-        else:
+            return
+        p = Path(path_text)
+        if not p.exists():
             badge.set_status("error", "MISSING")
+            return
+        # Determine which badge this is by its object name or identity
+        # (We call the right detection function from refresh_badges instead)
+        badge.set_status("success", "PATH OK")
+
+    def _update_ldem_badge(self) -> None:
+        """Content-aware update for the LDEM badge + detail label."""
+        path_text = self.ent_ldem_root.text().strip()
+        p = Path(path_text) if path_text else Path("")
+        kind, detail = self._detect_ldem_content(p)
+        self._set_badge_from_kind(self.badge_ldem, kind)
+        if hasattr(self, "lbl_ldem_detail"):
+            self.lbl_ldem_detail.setText(detail or "")
+            self.lbl_ldem_detail.setVisible(bool(detail))
+
+    def _update_albedo_badge(self) -> None:
+        """Content-aware update for the Albedo badge + detail label."""
+        if self.chk_use_ldem_for_albedo.isChecked():
+            ldem_text = self.ent_ldem_root.text().strip()
+            p = Path(ldem_text) if ldem_text else Path("")
+            kind, detail = self._detect_albedo_content(p)
+            detail = f"(using LDEM dir)  {detail}" if detail else "(using LDEM dir)"
+        else:
+            path_text = self.ent_albedo_root.text().strip()
+            p = Path(path_text) if path_text else Path("")
+            kind, detail = self._detect_albedo_content(p)
+        self._set_badge_from_kind(self.badge_albedo, kind)
+        if hasattr(self, "lbl_albedo_detail"):
+            self.lbl_albedo_detail.setText(detail or "")
+            self.lbl_albedo_detail.setVisible(bool(detail))
+
+    def _update_kernel_badge(self) -> None:
+        """Content-aware update for the SPICE kernel badge + detail label."""
+        path_text = self.ent_kernel_dir.text().strip()
+        p = Path(path_text) if path_text else Path("")
+        kind, detail = self._detect_kernel_content(p)
+        self._set_badge_from_kind(self.badge_kernel, kind)
+        if hasattr(self, "lbl_kernel_detail"):
+            self.lbl_kernel_detail.setText(detail or "")
+            self.lbl_kernel_detail.setVisible(bool(detail))
+
+    @staticmethod
+    def _set_badge_from_kind(badge: "StatusBadge", kind: str) -> None:
+        labels = {
+            "not_set":   ("warning", "NOT SET"),
+            "missing":   ("error",   "MISSING"),
+            "path_ok":   ("info",    "PATH OK"),
+            "content_ok": ("success", "CONTENT OK"),
+        }
+        status_kind, text = labels.get(kind, ("warning", "NOT SET"))
+        badge.set_status(status_kind, text)
+        # Widen badge to fit longer labels
+        badge.setFixedWidth(max(80, len(text) * 7 + 20))
 
     def _open_path(self, path_text: str) -> None:
         """Open a directory path in the OS file explorer."""
@@ -410,13 +567,13 @@ class DataPage(QtWidgets.QWidget):
             )
 
     def refresh_badges(self) -> None:
-        """Re-check all path badges."""
+        """Re-check all path badges with content-aware validation."""
         if hasattr(self, "badge_ldem"):
-            self._update_badge(self.ent_ldem_root.text(), self.badge_ldem)
+            self._update_ldem_badge()
         if hasattr(self, "badge_albedo"):
-            self._update_badge(self.ent_albedo_root.text(), self.badge_albedo)
+            self._update_albedo_badge()
         if hasattr(self, "badge_kernel"):
-            self._update_badge(self.ent_kernel_dir.text(), self.badge_kernel)
+            self._update_kernel_badge()
 
     def _state_changed(self) -> None:
         # keep internal snapshot up to date

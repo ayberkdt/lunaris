@@ -426,14 +426,28 @@ class ResultsExportPage(QtWidgets.QWidget):
         ".log": "Text",
     }
 
+    # -------------------------------------------------------------------------
+    # Artifact browser state
+    # -------------------------------------------------------------------------
+    _FILTER_TYPES: dict[str, set[str]] = {
+        "All":     set(),   # empty = no filter
+        "Plots":   {".png", ".jpg", ".jpeg", ".svg"},
+        "Reports": {".pdf"},
+        "Data":    {".csv", ".json", ".h5", ".hdf5", ".npz", ".npy"},
+        "Logs":    {".txt", ".log"},
+    }
+
     def _build_artifact_browser_card(self) -> QtWidgets.QGroupBox:
         """
-        Render the per-file artifact browser.
+        Render the enhanced per-file artifact browser.
 
-        The tree lists every file found under the current output directory and
-        offers quick "Open" / "Copy Path" actions either via a context menu or a
-        button bar.  The widget never crashes if the directory does not exist;
-        it simply shows an empty state.
+        Features:
+        - Optional recursive directory scan
+        - File type filter (All / Plots / Reports / Data / Logs)
+        - Sort by modified time descending by default
+        - Open Latest Report / Plot shortcuts
+        - Copy Selected Path action
+        - Informative empty states
         """
 
         group_box = self._create_card("Artifact Browser")
@@ -441,6 +455,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         layout.setContentsMargins(20, 24, 20, 20)
         layout.setSpacing(10)
 
+        # --- Row 1: path + action buttons ---
         header_row = QtWidgets.QHBoxLayout()
         self.lbl_browser_out_dir = QtWidgets.QLabel("Output Directory: —")
         self.lbl_browser_out_dir.setStyleSheet(f"color: {THEME['fg_muted']};")
@@ -458,20 +473,57 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         layout.addLayout(header_row)
 
+        # --- Row 2: filter + recursive controls ---
+        filter_row = QtWidgets.QHBoxLayout()
+        filter_row.addWidget(QtWidgets.QLabel("Filter:"))
+        self.cb_artifact_filter = QtWidgets.QComboBox()
+        self.cb_artifact_filter.addItems(list(self._FILTER_TYPES.keys()))
+        self.cb_artifact_filter.setFixedWidth(100)
+        self.cb_artifact_filter.currentTextChanged.connect(self._refresh_artifact_browser)
+        filter_row.addWidget(self.cb_artifact_filter)
+
+        self.chk_recursive_scan = QtWidgets.QCheckBox("Recursive scan")
+        self.chk_recursive_scan.setToolTip(
+            "Scan subdirectories for artifacts (useful when outputs are placed in run subfolders)"
+        )
+        self.chk_recursive_scan.toggled.connect(self._refresh_artifact_browser)
+        filter_row.addWidget(self.chk_recursive_scan)
+
+        filter_row.addStretch(1)
+
+        btn_latest_report = QtWidgets.QPushButton("Open Latest Report")
+        btn_latest_report.setIcon(get_icon("fa6s.file-pdf", THEME["fg_main"]))
+        btn_latest_report.clicked.connect(self._open_latest_report)
+        self.btn_latest_report = btn_latest_report
+        filter_row.addWidget(btn_latest_report)
+
+        btn_latest_plot = QtWidgets.QPushButton("Open Latest Plot")
+        btn_latest_plot.setIcon(get_icon("fa6s.image", THEME["fg_main"]))
+        btn_latest_plot.clicked.connect(self._open_latest_plot)
+        self.btn_latest_plot = btn_latest_plot
+        filter_row.addWidget(btn_latest_plot)
+
+        layout.addLayout(filter_row)
+
+        # --- Tree ---
         self.tree_artifacts = QtWidgets.QTreeWidget()
-        self.tree_artifacts.setColumnCount(4)
-        self.tree_artifacts.setHeaderLabels(["Name", "Type", "Size", "Modified"])
+        self.tree_artifacts.setColumnCount(5)
+        self.tree_artifacts.setHeaderLabels(["Name", "Type", "Size", "Modified", "Path"])
         self.tree_artifacts.setRootIsDecorated(False)
         self.tree_artifacts.setAlternatingRowColors(True)
         self.tree_artifacts.setUniformRowHeights(True)
         self.tree_artifacts.setSortingEnabled(True)
+        # Sort by Modified (col 3) descending by default
+        self.tree_artifacts.sortByColumn(3, QtCore.Qt.DescendingOrder)
         self.tree_artifacts.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
         self.tree_artifacts.customContextMenuRequested.connect(self._on_artifacts_context_menu)
         self.tree_artifacts.itemDoubleClicked.connect(self._on_artifacts_open_selected)
-        self.tree_artifacts.setMinimumHeight(180)
+        self.tree_artifacts.setMinimumHeight(200)
+        # Hide the raw path column (just used as data)
+        self.tree_artifacts.setColumnHidden(4, True)
         layout.addWidget(self.tree_artifacts)
 
-        # Action row
+        # --- Action row ---
         action_row = QtWidgets.QHBoxLayout()
 
         btn_open = QtWidgets.QPushButton("Open File")
@@ -501,7 +553,6 @@ class ResultsExportPage(QtWidgets.QWidget):
         except Exception:
             pass
 
-        # Initial fill (best effort)
         QtCore.QTimer.singleShot(0, self._refresh_artifact_browser)
         return group_box
 
@@ -530,8 +581,10 @@ class ResultsExportPage(QtWidgets.QWidget):
             pass
         self._refresh_artifact_browser()
 
-    def _refresh_artifact_browser(self) -> None:
+    def _refresh_artifact_browser(self, *_args) -> None:
+        """Scan output dir (optionally recursive) and populate the tree."""
         try:
+            self.tree_artifacts.setSortingEnabled(False)
             self.tree_artifacts.clear()
         except Exception:
             return
@@ -548,30 +601,72 @@ class ResultsExportPage(QtWidgets.QWidget):
         self.lbl_browser_out_dir.setText(f"Output Directory: {display}")
 
         if not out_dir_text:
-            self.lbl_artifact_summary.setText("No artifacts yet.")
+            self.lbl_artifact_summary.setText("Output directory not set.")
+            self._update_latest_buttons([], [])
             return
 
         out_dir = Path(out_dir_text)
         if not out_dir.exists() or not out_dir.is_dir():
             self.lbl_artifact_summary.setText("Output directory does not exist yet.")
+            self._update_latest_buttons([], [])
             return
+
+        # Determine scan depth
+        recursive = False
+        try:
+            recursive = bool(self.chk_recursive_scan.isChecked())
+        except Exception:
+            pass
+
+        # Determine active type filter
+        active_filter: set[str] = set()
+        try:
+            filter_key = self.cb_artifact_filter.currentText()
+            active_filter = self._FILTER_TYPES.get(filter_key, set())
+        except Exception:
+            pass
 
         try:
-            entries: List[Path] = []
-            for entry in out_dir.iterdir():
-                if entry.is_file():
-                    entries.append(entry)
+            if recursive:
+                all_entries: List[Path] = [p for p in out_dir.rglob("*") if p.is_file()]
+            else:
+                all_entries = [p for p in out_dir.iterdir() if p.is_file()]
         except Exception as exc:
             self.lbl_artifact_summary.setText(f"Could not list directory: {exc}")
+            self._update_latest_buttons([], [])
             return
+
+        if not all_entries:
+            self.lbl_artifact_summary.setText("No artifacts found.")
+            self._update_latest_buttons([], [])
+            return
+
+        # Apply filter
+        if active_filter:
+            entries = [e for e in all_entries if e.suffix.lower() in active_filter]
+        else:
+            entries = all_entries
 
         if not entries:
-            self.lbl_artifact_summary.setText("No artifacts yet.")
+            total = len(all_entries)
+            self.lbl_artifact_summary.setText(
+                f"Filter hides all artifacts ({total} total; change filter to see them)."
+            )
+            self._update_latest_buttons(all_entries, all_entries)
             return
 
-        plots = 0
-        reports = 0
-        data_files = 0
+        # Sort by mtime descending
+        def _mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except Exception:
+                return 0.0
+
+        entries.sort(key=_mtime, reverse=True)
+
+        plots: List[Path] = []
+        reports: List[Path] = []
+        data_count = 0
 
         for entry in entries:
             suffix = entry.suffix.lower()
@@ -579,26 +674,36 @@ class ResultsExportPage(QtWidgets.QWidget):
             try:
                 stat = entry.stat()
                 size_bytes = stat.st_size
-                mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+                mtime_raw = stat.st_mtime
+                mtime = datetime.fromtimestamp(mtime_raw).strftime("%Y-%m-%d %H:%M")
             except Exception:
                 size_bytes = 0
                 mtime = "?"
             size_str = self._format_size(size_bytes)
 
+            # Show relative path when recursive scan is active
+            if recursive:
+                try:
+                    display_name = str(entry.relative_to(out_dir))
+                except Exception:
+                    display_name = entry.name
+            else:
+                display_name = entry.name
+
             item = QtWidgets.QTreeWidgetItem(
-                [entry.name, type_label, size_str, mtime]
+                [display_name, type_label, size_str, mtime, str(entry)]
             )
             item.setData(0, QtCore.Qt.UserRole, str(entry))
             try:
                 if type_label == "Plot":
                     item.setIcon(0, get_icon("fa6s.image", THEME["fg_main"]))
-                    plots += 1
+                    plots.append(entry)
                 elif type_label == "Report":
                     item.setIcon(0, get_icon("fa6s.file-pdf", THEME["fg_main"]))
-                    reports += 1
+                    reports.append(entry)
                 elif type_label in ("HDF5", "NPZ", "NPY", "CSV", "JSON"):
                     item.setIcon(0, get_icon("fa6s.database", THEME["fg_main"]))
-                    data_files += 1
+                    data_count += 1
                 else:
                     item.setIcon(0, get_icon("fa6s.file", THEME["fg_main"]))
             except Exception:
@@ -606,14 +711,64 @@ class ResultsExportPage(QtWidgets.QWidget):
             self.tree_artifacts.addTopLevelItem(item)
 
         try:
+            self.tree_artifacts.setSortingEnabled(True)
+            self.tree_artifacts.sortByColumn(3, QtCore.Qt.DescendingOrder)
             for col in range(4):
                 self.tree_artifacts.resizeColumnToContents(col)
         except Exception:
             pass
 
+        shown = len(entries)
+        total = len(all_entries)
+        scan_note = " (recursive)" if recursive else ""
+        filter_note = f" [{self.cb_artifact_filter.currentText()} filter]" if active_filter else ""
         self.lbl_artifact_summary.setText(
-            f"{plots} plots, {reports} reports, {data_files} data files"
+            f"{shown} / {total} artifact(s){scan_note}{filter_note}  —  "
+            f"{len(plots)} plots, {len(reports)} reports, {data_count} data files"
         )
+        self._update_latest_buttons(plots, reports)
+
+    def _update_latest_buttons(self, plots: List[Path], reports: List[Path]) -> None:
+        """Enable/disable the Open Latest buttons based on what was found."""
+        try:
+            self.btn_latest_plot.setEnabled(bool(plots))
+            self.btn_latest_report.setEnabled(bool(reports))
+        except Exception:
+            pass
+        try:
+            self._latest_plot = plots[0] if plots else None
+            self._latest_report = reports[0] if reports else None
+        except Exception:
+            self._latest_plot = None
+            self._latest_report = None
+
+    def _open_latest_report(self) -> None:
+        p = getattr(self, "_latest_report", None)
+        if p and Path(p).exists():
+            self._open_path_externally(Path(p))
+
+    def _open_latest_plot(self) -> None:
+        p = getattr(self, "_latest_plot", None)
+        if p and Path(p).exists():
+            self._open_path_externally(Path(p))
+
+    def _open_path_externally(self, p: Path) -> None:
+        """Open *p* in the OS default viewer."""
+        try:
+            url = QtCore.QUrl.fromLocalFile(str(p))
+            if QtGui.QDesktopServices.openUrl(url):
+                return
+        except Exception:
+            pass
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(p))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(p)])
+            else:
+                subprocess.Popen(["xdg-open", str(p)])
+        except Exception:
+            pass
 
     @staticmethod
     def _format_size(num_bytes: int) -> str:
@@ -655,23 +810,8 @@ class ResultsExportPage(QtWidgets.QWidget):
         if not path:
             return
         p = Path(path)
-        if not p.exists():
-            return
-        try:
-            url = QtCore.QUrl.fromLocalFile(str(p))
-            if QtGui.QDesktopServices.openUrl(url):
-                return
-        except Exception:
-            pass
-        try:
-            if sys.platform == "win32":
-                os.startfile(str(p))  # type: ignore[attr-defined]
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(p)])
-            else:
-                subprocess.Popen(["xdg-open", str(p)])
-        except Exception:
-            pass
+        if p.exists():
+            self._open_path_externally(p)
 
     def _on_artifacts_copy_path(self, *_args) -> None:
         path = self._selected_artifact_path()

@@ -354,22 +354,37 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.tabs.addTab(self.analysis_panel, "Result Analysis")
 
     # ------------------------------------------------------------------
-    # Backend Comparison (preview only, no subprocess launch)
+    # Backend Command Preview (preview only — commands are copied, NOT executed)
     # ------------------------------------------------------------------
 
     def _card_backend_comparison(self) -> QtWidgets.QGroupBox:
         """
-        Render a collapsible backend-comparison card.
+        Render a collapsible backend command preview card.
 
         Each row maps to a notional backend (classic-SH at three degrees plus
-        ST-LRPS). Generating the command formats the row's parameters into a
-        ready-to-paste ``mc_runner.py`` command line.  Nothing is executed.
+        ST-LRPS).  Generating the command formats the row's parameters into a
+        ready-to-paste ``mc_runner.py`` command line.
+
+        IMPORTANT: Nothing is executed here.  This section is PREVIEW ONLY.
+        Commands must be copied and run manually in a terminal.
         """
 
-        gb = _card("Backend Comparison")
+        gb = _card("Backend Command Preview")
         outer = QtWidgets.QVBoxLayout(gb)
         outer.setContentsMargins(16, 20, 16, 16)
         outer.setSpacing(10)
+
+        # Prominent preview-only notice
+        notice = QtWidgets.QLabel(
+            "⚠  Preview only — commands are copied to clipboard, NOT executed."
+        )
+        notice.setStyleSheet(
+            f"color: {THEME['warning']}; font-size: 9pt; font-weight: 600;"
+            f" background: rgba(246,193,119,0.08); border: 1px solid rgba(246,193,119,0.25);"
+            f" border-radius: 6px; padding: 5px 10px;"
+        )
+        notice.setWordWrap(True)
+        outer.addWidget(notice)
 
         # Header / collapse toggle
         header_row = QtWidgets.QHBoxLayout()
@@ -378,7 +393,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.btn_backend_compare_toggle.setChecked(False)
         self.btn_backend_compare_toggle.setArrowType(QtCore.Qt.RightArrow)
         self.btn_backend_compare_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
-        self.btn_backend_compare_toggle.setText("Show comparison matrix")
+        self.btn_backend_compare_toggle.setText("Show command matrix")
         self.btn_backend_compare_toggle.setStyleSheet(
             "QToolButton { border: none; padding: 4px; }"
         )
@@ -394,17 +409,17 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         intro = _label(
             "Each row generates a ready-to-paste mc_runner.py command line.\n"
-            "Use this to compare classical SH degrees against ST-LRPS without\n"
-            "rerunning the full mission configuration.",
+            "Click 'Copy Command' on a row, or use 'Copy All' to copy all commands.\n"
+            "Paste into a terminal to run. No comparison is performed automatically.",
             muted=True,
         )
         intro.setWordWrap(True)
         body_layout.addWidget(intro)
 
         self.tbl_backend_compare = QtWidgets.QTableWidget()
-        self.tbl_backend_compare.setColumnCount(6)
+        self.tbl_backend_compare.setColumnCount(5)
         self.tbl_backend_compare.setHorizontalHeaderLabels(
-            ["Backend", "Degree / Model", "MC Gravity Mode", "GPU", "Status", "Output Path"]
+            ["Backend", "Degree / Model", "MC Gravity Mode", "GPU", "Output Path"]
         )
         self.tbl_backend_compare.horizontalHeader().setStretchLastSection(True)
         self.tbl_backend_compare.verticalHeader().setVisible(False)
@@ -412,15 +427,15 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.tbl_backend_compare.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
 
         rows = [
-            ("SH-20",    "20",      "classic_sh", "On", "not run", "mc_results/compare_sh20.h5"),
-            ("SH-60",    "60",      "classic_sh", "On", "not run", "mc_results/compare_sh60.h5"),
-            ("SH-100",   "100",     "classic_sh", "Off", "not run", "mc_results/compare_sh100.h5"),
-            ("ST-LRPS",  "surrogate", "st_lrps", "On", "not run", "mc_results/compare_stlrps.h5"),
+            ("SH-20",    "20",      "classic_sh", "On",  "mc_results/preview_sh20.h5"),
+            ("SH-60",    "60",      "classic_sh", "On",  "mc_results/preview_sh60.h5"),
+            ("SH-100",   "100",     "classic_sh", "Off", "mc_results/preview_sh100.h5"),
+            ("ST-LRPS",  "surrogate", "st_lrps",  "On",  "mc_results/preview_stlrps.h5"),
         ]
         self.tbl_backend_compare.setRowCount(len(rows))
         self._backend_compare_meta: List[Dict[str, Any]] = []
-        for r, (name, deg, mode, gpu, status, out_path) in enumerate(rows):
-            for c, text in enumerate((name, deg, mode, gpu, status, out_path)):
+        for r, (name, deg, mode, gpu, out_path) in enumerate(rows):
+            for c, text in enumerate((name, deg, mode, gpu, out_path)):
                 item = QtWidgets.QTableWidgetItem(str(text))
                 if c == 0:
                     item.setFont(QtGui.QFont(item.font().family(), item.font().pointSize(), QtGui.QFont.Bold))
@@ -434,20 +449,26 @@ class MonteCarloPage(QtWidgets.QWidget):
                 "output_path": out_path,
             })
 
-            btn = QtWidgets.QPushButton("Generate Command")
+        # "Copy Command" buttons — inserted into a separate column via cellWidget
+        self.tbl_backend_compare.setColumnCount(6)
+        self.tbl_backend_compare.setHorizontalHeaderLabels(
+            ["Backend", "Degree / Model", "MC Gravity Mode", "GPU", "Output Path", "Action"]
+        )
+        for r in range(len(rows)):
+            btn = QtWidgets.QPushButton("Copy Command")
             btn.setCursor(QtCore.Qt.PointingHandCursor)
             btn.clicked.connect(lambda _checked=False, row=r: self._generate_backend_compare_command(row))
-            self.tbl_backend_compare.setCellWidget(r, 4, btn)
+            self.tbl_backend_compare.setCellWidget(r, 5, btn)
 
         self.tbl_backend_compare.setMinimumHeight(170)
         body_layout.addWidget(self.tbl_backend_compare)
 
-        # Preview text and global "Compare" button (disabled).
+        # Preview text
         self.txt_backend_compare_cmd = QtWidgets.QPlainTextEdit()
         self.txt_backend_compare_cmd.setReadOnly(True)
         self.txt_backend_compare_cmd.setMinimumHeight(80)
         self.txt_backend_compare_cmd.setPlaceholderText(
-            "Generated command will appear here. Copy it to a terminal to run."
+            "Click 'Copy Command' on a row — the generated command appears here and is copied to clipboard."
         )
         self.txt_backend_compare_cmd.setStyleSheet(
             f"background-color: {THEME['bg_log']}; color: {THEME['fg_main']};"
@@ -456,10 +477,17 @@ class MonteCarloPage(QtWidgets.QWidget):
         body_layout.addWidget(self.txt_backend_compare_cmd)
 
         bottom_row = QtWidgets.QHBoxLayout()
-        self.btn_backend_compare_run = QtWidgets.QPushButton("Compare")
-        self.btn_backend_compare_run.setEnabled(False)
-        self.btn_backend_compare_run.setToolTip("Future: auto-run all backends")
-        bottom_row.addWidget(self.btn_backend_compare_run)
+
+        btn_copy_selected = QtWidgets.QPushButton("Copy Selected Command")
+        btn_copy_selected.setIcon(get_icon("fa6s.copy", THEME["fg_main"]))
+        btn_copy_selected.clicked.connect(self._copy_selected_backend_command)
+        bottom_row.addWidget(btn_copy_selected)
+
+        btn_copy_all = QtWidgets.QPushButton("Copy All Commands")
+        btn_copy_all.setIcon(get_icon("fa6s.clipboard-list", THEME["fg_main"]))
+        btn_copy_all.clicked.connect(self._copy_all_backend_commands)
+        bottom_row.addWidget(btn_copy_all)
+
         bottom_row.addStretch(1)
         body_layout.addLayout(bottom_row)
 
@@ -474,7 +502,7 @@ class MonteCarloPage(QtWidgets.QWidget):
                 QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow
             )
             self.btn_backend_compare_toggle.setText(
-                "Hide comparison matrix" if checked else "Show comparison matrix"
+                "Hide command matrix" if checked else "Show command matrix"
             )
         except Exception:
             pass
@@ -533,6 +561,58 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         try:
             QtWidgets.QApplication.clipboard().setText(rendered)
+        except Exception:
+            pass
+
+    def _copy_selected_backend_command(self) -> None:
+        """Copy the currently previewed command to clipboard."""
+        try:
+            text = self.txt_backend_compare_cmd.toPlainText().strip()
+            if text:
+                QtWidgets.QApplication.clipboard().setText(text)
+        except Exception:
+            pass
+
+    def _copy_all_backend_commands(self) -> None:
+        """Generate and copy all backend preview commands to clipboard."""
+        try:
+            project_root = ST_LRPS_RUNS_DIR.parent.parent
+        except Exception:
+            project_root = Path.cwd()
+        runner = str((project_root / "mc_runner.py").resolve())
+        python_exec = sys.executable
+        n_samples = "100"
+        try:
+            n_samples = str(int(float(self.ent_n_samples.text())))
+        except Exception:
+            pass
+        all_cmds: List[str] = []
+        for meta in getattr(self, "_backend_compare_meta", []):
+            gravity_mode = str(meta.get("mode", "classic_sh"))
+            degree = meta.get("degree", "20")
+            gpu_on = bool(meta.get("gpu_on", True))
+            out_path = str(meta.get("output_path", "mc_results/preview.h5"))
+            cmd: List[str] = [python_exec, runner]
+            cmd.extend(["--n-samples", n_samples])
+            cmd.extend(["--mc-gravity-mode", gravity_mode])
+            cmd.extend(["--enable-sh", "on"])
+            if gravity_mode == "classic_sh":
+                try:
+                    cmd.extend(["--degree", str(int(degree))])
+                except Exception:
+                    pass
+            cmd.extend(["--use-gpu", "on" if gpu_on else "off"])
+            cmd.extend(["--mc-output-format", "hdf5"])
+            cmd.extend(["--mc-output-path", out_path])
+            if os.name == "nt":
+                rendered = subprocess.list2cmdline(cmd)
+            else:
+                rendered = shlex.join(cmd)
+            all_cmds.append(f"# {meta.get('name', '?')}\n{rendered}")
+        joined = "\n\n".join(all_cmds)
+        try:
+            QtWidgets.QApplication.clipboard().setText(joined)
+            self.txt_backend_compare_cmd.setPlainText(joined)
         except Exception:
             pass
 
