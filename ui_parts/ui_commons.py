@@ -623,12 +623,154 @@ class CostIndicator(QtWidgets.QWidget):
         
         for i in range(3):
             x_pos = i * (bar_width + gap)
-            
+
             if i < active_bars:
                 p.setBrush(active_color)
             else:
                 p.setBrush(inactive_color)
-                
+
             p.setPen(QtCore.Qt.NoPen)
             p.drawRoundedRect(QtCore.QRectF(x_pos, y_pos, bar_width, bar_height), 2, 2)
+
+
+# =============================================================================
+# 7.                       FACTORY HELPERS (theming aids)
+# =============================================================================
+
+def create_metric_card(parent: Optional["QtWidgets.QWidget"] = None) -> "tuple[QtWidgets.QGroupBox, QtWidgets.QGridLayout]":
+    """
+    Return a ``(card, grid)`` tuple for rendering compact key/value metrics.
+
+    The grid is intended for label-value pairs arranged into two columns. The
+    card itself uses the project-wide dark-card visual language.
+    """
+
+    card = QtWidgets.QGroupBox(parent)
+    card.setStyleSheet(card_stylesheet())
+    grid = QtWidgets.QGridLayout(card)
+    grid.setContentsMargins(16, 22, 16, 16)
+    grid.setHorizontalSpacing(18)
+    grid.setVerticalSpacing(6)
+    return card, grid
+
+
+def create_empty_state(message: str, parent: Optional["QtWidgets.QWidget"] = None) -> "QtWidgets.QLabel":
+    """
+    Return a centered, muted label suitable for empty-state placeholders.
+
+    Empty states should remain unobtrusive so the page never feels broken when
+    the underlying data source is simply not populated yet.
+    """
+
+    lbl = QtWidgets.QLabel(message, parent)
+    lbl.setAlignment(QtCore.Qt.AlignCenter)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(
+        f"color: {THEME['fg_muted']}; font-style: italic; padding: 12px;"
+    )
+    return lbl
+
+
+def create_path_row(
+    label_text: str,
+    placeholder: str = "",
+    parent: Optional["QtWidgets.QWidget"] = None,
+) -> "tuple[QtWidgets.QWidget, QtWidgets.QLineEdit, QtWidgets.QPushButton]":
+    """
+    Return a reusable label + line-edit + browse-button row.
+
+    Callers are expected to connect the returned button's ``clicked`` signal to
+    a host-owned file/directory dialog handler.
+    """
+
+    row = QtWidgets.QWidget(parent)
+    layout = QtWidgets.QHBoxLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(8)
+
+    label = QtWidgets.QLabel(label_text)
+    label.setStyleSheet(f"color: {THEME['fg_muted']};")
+    layout.addWidget(label)
+
+    line_edit = QtWidgets.QLineEdit()
+    if placeholder:
+        line_edit.setPlaceholderText(placeholder)
+    layout.addWidget(line_edit, 1)
+
+    button = QtWidgets.QPushButton("Browse")
+    button.setIcon(get_icon("fa6s.folder-open", THEME["fg_main"]))
+    layout.addWidget(button)
+
+    return row, line_edit, button
+
+
+def style_primary_button(btn: "QtWidgets.QPushButton") -> None:
+    """
+    Apply the project-wide primary accent style to ``btn``.
+
+    The application QSS already targets ``QPushButton#primaryBtn`` so this
+    helper simply assigns the object name and re-polishes the widget.
+    """
+
+    btn.setObjectName("primaryBtn")
+    btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+    btn.setStyleSheet(
+        f"""
+        QPushButton#primaryBtn {{
+            background: {THEME['accent']};
+            color: #FFFFFF;
+            border: 1px solid {THEME['accent']};
+            border-radius: 8px;
+            padding: 7px 16px;
+            font-weight: 600;
+        }}
+        QPushButton#primaryBtn:hover {{
+            background: {THEME['accent_hov']};
+            border-color: {THEME['accent_hov']};
+        }}
+        QPushButton#primaryBtn:disabled {{
+            background: {THEME['bg_entry']};
+            border-color: {THEME['border']};
+            color: {THEME['fg_muted']};
+        }}
+        """
+    )
+    try:
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+    except Exception:
+        pass
+
+
+def style_secondary_button(btn: "QtWidgets.QPushButton") -> None:
+    """Apply the project's quieter, neutral button style to ``btn``."""
+
+    btn.setObjectName("secondaryBtn")
+    btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+    btn.setStyleSheet(
+        f"""
+        QPushButton#secondaryBtn {{
+            background: {THEME['bg_card_alt']};
+            color: {THEME['fg_main']};
+            border: 1px solid {THEME['border']};
+            border-radius: 8px;
+            padding: 7px 16px;
+            font-weight: 600;
+        }}
+        QPushButton#secondaryBtn:hover {{
+            background: {THEME['bg_entry']};
+            border-color: {THEME['accent_hov']};
+        }}
+        QPushButton#secondaryBtn:disabled {{
+            background: {THEME['bg_entry']};
+            border-color: {THEME['border']};
+            color: {THEME['fg_muted']};
+        }}
+        """
+    )
+    try:
+        btn.style().unpolish(btn)
+        btn.style().polish(btn)
+    except Exception:
+        pass
 

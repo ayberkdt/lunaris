@@ -39,6 +39,9 @@ from __future__ import annotations
 
 import os
 import math
+import shlex
+import subprocess
+import sys
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -340,10 +343,198 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         run_root.addWidget(right_widget, 4)
 
+        # Backend comparison card lives below the existing run cards so users
+        # discover it after configuring a baseline run.  The widget is
+        # preview-only — building a command just writes it to the clipboard.
+        left_layout.addWidget(self._card_backend_comparison())
+
         self.analysis_panel = MonteCarloAnalysisPanel(parent=self)
 
         self.tabs.addTab(run_tab, "Setup & Run")
         self.tabs.addTab(self.analysis_panel, "Result Analysis")
+
+    # ------------------------------------------------------------------
+    # Backend Comparison (preview only, no subprocess launch)
+    # ------------------------------------------------------------------
+
+    def _card_backend_comparison(self) -> QtWidgets.QGroupBox:
+        """
+        Render a collapsible backend-comparison card.
+
+        Each row maps to a notional backend (classic-SH at three degrees plus
+        ST-LRPS). Generating the command formats the row's parameters into a
+        ready-to-paste ``mc_runner.py`` command line.  Nothing is executed.
+        """
+
+        gb = _card("Backend Comparison")
+        outer = QtWidgets.QVBoxLayout(gb)
+        outer.setContentsMargins(16, 20, 16, 16)
+        outer.setSpacing(10)
+
+        # Header / collapse toggle
+        header_row = QtWidgets.QHBoxLayout()
+        self.btn_backend_compare_toggle = QtWidgets.QToolButton()
+        self.btn_backend_compare_toggle.setCheckable(True)
+        self.btn_backend_compare_toggle.setChecked(False)
+        self.btn_backend_compare_toggle.setArrowType(QtCore.Qt.RightArrow)
+        self.btn_backend_compare_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
+        self.btn_backend_compare_toggle.setText("Show comparison matrix")
+        self.btn_backend_compare_toggle.setStyleSheet(
+            "QToolButton { border: none; padding: 4px; }"
+        )
+        self.btn_backend_compare_toggle.clicked.connect(self._toggle_backend_comparison)
+        header_row.addWidget(self.btn_backend_compare_toggle)
+        header_row.addStretch(1)
+        outer.addLayout(header_row)
+
+        self._backend_compare_body = QtWidgets.QWidget()
+        body_layout = QtWidgets.QVBoxLayout(self._backend_compare_body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(8)
+
+        intro = _label(
+            "Each row generates a ready-to-paste mc_runner.py command line.\n"
+            "Use this to compare classical SH degrees against ST-LRPS without\n"
+            "rerunning the full mission configuration.",
+            muted=True,
+        )
+        intro.setWordWrap(True)
+        body_layout.addWidget(intro)
+
+        self.tbl_backend_compare = QtWidgets.QTableWidget()
+        self.tbl_backend_compare.setColumnCount(6)
+        self.tbl_backend_compare.setHorizontalHeaderLabels(
+            ["Backend", "Degree / Model", "MC Gravity Mode", "GPU", "Status", "Output Path"]
+        )
+        self.tbl_backend_compare.horizontalHeader().setStretchLastSection(True)
+        self.tbl_backend_compare.verticalHeader().setVisible(False)
+        self.tbl_backend_compare.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.tbl_backend_compare.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+
+        rows = [
+            ("SH-20",    "20",      "classic_sh", "On", "not run", "mc_results/compare_sh20.h5"),
+            ("SH-60",    "60",      "classic_sh", "On", "not run", "mc_results/compare_sh60.h5"),
+            ("SH-100",   "100",     "classic_sh", "Off", "not run", "mc_results/compare_sh100.h5"),
+            ("ST-LRPS",  "surrogate", "st_lrps", "On", "not run", "mc_results/compare_stlrps.h5"),
+        ]
+        self.tbl_backend_compare.setRowCount(len(rows))
+        self._backend_compare_meta: List[Dict[str, Any]] = []
+        for r, (name, deg, mode, gpu, status, out_path) in enumerate(rows):
+            for c, text in enumerate((name, deg, mode, gpu, status, out_path)):
+                item = QtWidgets.QTableWidgetItem(str(text))
+                if c == 0:
+                    item.setFont(QtGui.QFont(item.font().family(), item.font().pointSize(), QtGui.QFont.Bold))
+                self.tbl_backend_compare.setItem(r, c, item)
+
+            self._backend_compare_meta.append({
+                "name": name,
+                "degree": deg,
+                "mode": mode,
+                "gpu_on": gpu.lower() == "on",
+                "output_path": out_path,
+            })
+
+            btn = QtWidgets.QPushButton("Generate Command")
+            btn.setCursor(QtCore.Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _checked=False, row=r: self._generate_backend_compare_command(row))
+            self.tbl_backend_compare.setCellWidget(r, 4, btn)
+
+        self.tbl_backend_compare.setMinimumHeight(170)
+        body_layout.addWidget(self.tbl_backend_compare)
+
+        # Preview text and global "Compare" button (disabled).
+        self.txt_backend_compare_cmd = QtWidgets.QPlainTextEdit()
+        self.txt_backend_compare_cmd.setReadOnly(True)
+        self.txt_backend_compare_cmd.setMinimumHeight(80)
+        self.txt_backend_compare_cmd.setPlaceholderText(
+            "Generated command will appear here. Copy it to a terminal to run."
+        )
+        self.txt_backend_compare_cmd.setStyleSheet(
+            f"background-color: {THEME['bg_log']}; color: {THEME['fg_main']};"
+            f" font-family: Consolas, monospace; border-radius: 6px;"
+        )
+        body_layout.addWidget(self.txt_backend_compare_cmd)
+
+        bottom_row = QtWidgets.QHBoxLayout()
+        self.btn_backend_compare_run = QtWidgets.QPushButton("Compare")
+        self.btn_backend_compare_run.setEnabled(False)
+        self.btn_backend_compare_run.setToolTip("Future: auto-run all backends")
+        bottom_row.addWidget(self.btn_backend_compare_run)
+        bottom_row.addStretch(1)
+        body_layout.addLayout(bottom_row)
+
+        outer.addWidget(self._backend_compare_body)
+        self._backend_compare_body.setVisible(False)
+        return gb
+
+    def _toggle_backend_comparison(self, checked: bool) -> None:
+        try:
+            self._backend_compare_body.setVisible(bool(checked))
+            self.btn_backend_compare_toggle.setArrowType(
+                QtCore.Qt.DownArrow if checked else QtCore.Qt.RightArrow
+            )
+            self.btn_backend_compare_toggle.setText(
+                "Hide comparison matrix" if checked else "Show comparison matrix"
+            )
+        except Exception:
+            pass
+
+    def _generate_backend_compare_command(self, row: int) -> None:
+        """Render a single-row mc_runner.py command into the preview box."""
+        try:
+            if row < 0 or row >= len(self._backend_compare_meta):
+                return
+            meta = self._backend_compare_meta[row]
+        except Exception:
+            return
+
+        # Best-effort: pull the project root from the surrogate runs dir
+        try:
+            project_root = ST_LRPS_RUNS_DIR.parent.parent
+        except Exception:
+            project_root = Path.cwd()
+
+        runner = str((project_root / "mc_runner.py").resolve())
+        try:
+            python_exec = sys.executable
+        except Exception:
+            python_exec = "python"
+
+        gravity_mode = str(meta.get("mode", "classic_sh"))
+        degree = meta.get("degree", "20")
+        gpu_on = bool(meta.get("gpu_on", True))
+        out_path = str(meta.get("output_path", "mc_results/backend_compare.h5"))
+
+        n_samples = "100"
+        try:
+            n_samples = str(int(float(self.ent_n_samples.text())))
+        except Exception:
+            pass
+
+        cmd: List[str] = [python_exec, runner]
+        cmd.extend(["--n-samples", n_samples])
+        cmd.extend(["--mc-gravity-mode", gravity_mode])
+        cmd.extend(["--enable-sh", "on"])
+        if gravity_mode == "classic_sh":
+            try:
+                cmd.extend(["--degree", str(int(degree))])
+            except Exception:
+                pass
+        cmd.extend(["--use-gpu", "on" if gpu_on else "off"])
+        cmd.extend(["--mc-output-format", "hdf5"])
+        cmd.extend(["--mc-output-path", out_path])
+
+        if os.name == "nt":
+            rendered = subprocess.list2cmdline(cmd)
+        else:
+            rendered = shlex.join(cmd)
+
+        self.txt_backend_compare_cmd.setPlainText(rendered)
+
+        try:
+            QtWidgets.QApplication.clipboard().setText(rendered)
+        except Exception:
+            pass
 
     # -------------------------------------------------------------------------
     # Configuration cards

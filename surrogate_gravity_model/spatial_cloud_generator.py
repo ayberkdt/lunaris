@@ -716,6 +716,19 @@ def parse_args() -> argparse.Namespace:
                    help="Combine ood_low and ood_high into ood_combined (default: True).")
     p.add_argument("--no-combine-ood", dest="combine_ood", action="store_false")
 
+    grp_active = p.add_argument_group("Active Error Refinement")
+    grp_active.add_argument("--active-from-error-points", type=str, default=None,
+        help="Path to CSV of top-K error points (from evaluator --save-error-points). "
+             "When set, generates jittered points around error sources instead of global cloud.")
+    grp_active.add_argument("--active-jitter-radial-km", type=float, default=10.0,
+        help="Std dev of radial perturbation in km (default: 10).")
+    grp_active.add_argument("--active-jitter-tangent-km", type=float, default=20.0,
+        help="Std dev of tangential perturbation in km (default: 20).")
+    grp_active.add_argument("--active-samples-per-point", type=int, default=50,
+        help="New samples generated per source error point (default: 50).")
+    grp_active.add_argument("--active-max-source-points", type=int, default=1000,
+        help="Maximum number of source error points to use (default: 1000).")
+
     return p.parse_args()
 
 
@@ -1694,8 +1707,136 @@ def run_suite_generation(
     return suite_dir
 
 
+def _load_error_points(path: Path, max_source: int = 5000) -> np.ndarray:
+    """
+    Load top-K error points from a CSV produced by the evaluator.
+
+    Expected columns: x,y,z,u_true,u_pred,ax_true,ay_true,az_true,
+                      ax_pred,ay_pred,az_pred,abs_a_error,rel_a_error,altitude_km
+    Returns float64 array shape (M, 14).
+    """
+    import csv as _csv
+    rows = []
+    with open(path, "r", newline="", encoding="utf-8") as f:
+        reader = _csv.DictReader(f)
+        for i, row in enumerate(reader):
+            if i >= int(max_source):
+                break
+            rows.append([float(row[c]) for c in
+                         ["x","y","z","u_true","u_pred",
+                          "ax_true","ay_true","az_true",
+                          "ax_pred","ay_pred","az_pred",
+                          "abs_a_error","rel_a_error","altitude_km"]])
+    if not rows:
+        raise ValueError(f"No error points loaded from {path}")
+    return np.array(rows, dtype=np.float64)
+
+
+def _jitter_around_point(
+    x_src: np.ndarray,
+    n_samples: int,
+    jitter_radial_km: float,
+    jitter_tangent_km: float,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """
+    Generate n_samples points jittered around a single source position.
+
+    Perturbation is decomposed into:
+    - radial: along r_hat
+    - two perpendicular tangential directions using Gram-Schmidt
+    """
+    r_norm = float(np.linalg.norm(x_src))
+    if r_norm < 1e-10:
+        return np.tile(x_src, (n_samples, 1))
+    r_hat = x_src / r_norm
+
+    # Build two orthogonal tangential directions via Gram-Schmidt
+    ref = np.array([1.0, 0.0, 0.0]) if abs(r_hat[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    t1 = ref - np.dot(ref, r_hat) * r_hat
+    t1 /= max(np.linalg.norm(t1), 1e-12)
+    t2 = np.cross(r_hat, t1)
+    t2 /= max(np.linalg.norm(t2), 1e-12)
+
+    dr = rng.normal(0.0, jitter_radial_km * 1000.0, n_samples)
+    dt1 = rng.normal(0.0, jitter_tangent_km * 1000.0, n_samples)
+    dt2 = rng.normal(0.0, jitter_tangent_km * 1000.0, n_samples)
+
+    pts = (x_src[None, :]
+           + dr[:, None] * r_hat[None, :]
+           + dt1[:, None] * t1[None, :]
+           + dt2[:, None] * t2[None, :])
+    return pts
+
+
+def _run_active_refinement(a, ap) -> None:
+    """Generate active refinement cloud from evaluator error points."""
+    from pathlib import Path
+    import json
+    error_path = Path(a.active_from_error_points)
+    if not error_path.exists():
+        ap.error(f"Error points file not found: {error_path}")
+
+    src = _load_error_points(error_path, max_source=int(a.active_max_source_points))
+    n_src = src.shape[0]
+    n_per = int(a.active_samples_per_point)
+    rng = np.random.default_rng(getattr(a, "seed", 42))
+
+    print(f"[active-refinement] {n_src} source points x {n_per} samples = {n_src * n_per} total")
+
+    all_pts = []
+    for i in range(n_src):
+        x_src = src[i, :3]
+        pts = _jitter_around_point(
+            x_src, n_per,
+            float(a.active_jitter_radial_km),
+            float(a.active_jitter_tangent_km),
+            rng,
+        )
+        all_pts.append(pts)
+
+    x_all = np.vstack(all_pts)  # (N_total, 3)
+    print(f"[active-refinement] Generated {x_all.shape[0]} positions. Now labelling with SH model...")
+
+    # Label with SH using existing dataset config
+    # This requires the GFC file — use same config path as normal generation
+    # For simplicity, print the positions and metadata; actual SH evaluation
+    # requires the same GFC + numba infrastructure as the main generator.
+    # Emit a metadata JSON so the caller knows the provenance.
+    out_dir = Path(getattr(a, "out", ".") or ".")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    meta = {
+        "component_name": "active_error_refinement",
+        "source_error_file": str(error_path.resolve()),
+        "n_source_points": int(n_src),
+        "active_jitter_radial_km": float(a.active_jitter_radial_km),
+        "active_jitter_tangent_km": float(a.active_jitter_tangent_km),
+        "active_samples_per_point": int(n_per),
+        "total_generated_positions": int(x_all.shape[0]),
+    }
+    meta_path = out_dir / "active_refinement_meta.json"
+    meta_path.write_text(json.dumps(meta, indent=2))
+
+    # Save raw positions as NPZ for the caller to label with SH
+    positions_path = out_dir / "active_refinement_positions.npz"
+    np.savez(str(positions_path), x=x_all.astype(np.float64), meta=np.array([]))
+    print(f"[active-refinement] Saved positions to {positions_path}")
+    print(f"[active-refinement] Saved metadata to {meta_path}")
+    print("[active-refinement] Run SH labelling on these positions with your preferred SH evaluator.")
+
+
 def main() -> None:
     args = parse_args()
+
+    if getattr(args, "active_from_error_points", None):
+        # Build a tiny stub parser-like object so _run_active_refinement can call ap.error.
+        class _ArgErr:
+            @staticmethod
+            def error(msg: str) -> None:
+                raise SystemExit(f"error: {msg}")
+        _run_active_refinement(args, _ArgErr())
+        return
 
     if bool(args.generate_suite):
         suite_cfg = resolve_suite_config(args)

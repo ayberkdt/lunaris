@@ -36,10 +36,153 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import h5py
+import heapq
 import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
+
+
+class _StreamingMetrics:
+    """
+    Online metric accumulators for large-dataset evaluation.
+    Avoids storing all predictions in memory.
+    """
+    def __init__(self, n_alt_bins: int = 20, alt_min_km: float = 0.0, alt_max_km: float = 1000.0):
+        self.count = 0
+        self.sum_abs_a = 0.0
+        self.sum_sq_a = 0.0
+        self.max_abs_a = 0.0
+        self.sum_abs_u = 0.0
+        self.sum_sq_u = 0.0
+        self.sum_ang_rad = 0.0
+        self.sum_sq_ang_rad = 0.0
+        self.sum_cos_sim = 0.0
+        self.sum_rel_num = 0.0   # sum |err| for relative error
+        self.sum_rel_den = 0.0   # sum |true| for relative error
+        # Altitude bins
+        self.n_alt_bins = n_alt_bins
+        self.alt_min_km = alt_min_km
+        self.alt_max_km = alt_max_km
+        self.alt_bin_count = np.zeros(n_alt_bins, dtype=np.int64)
+        self.alt_bin_sum_sq_a = np.zeros(n_alt_bins, dtype=np.float64)
+        self.alt_bin_sum_abs_a = np.zeros(n_alt_bins, dtype=np.float64)
+
+    def _alt_bin(self, alt_km: float) -> int:
+        span = max(self.alt_max_km - self.alt_min_km, 1e-6)
+        idx = int((alt_km - self.alt_min_km) / span * self.n_alt_bins)
+        return max(0, min(self.n_alt_bins - 1, idx))
+
+    def update(self, x: np.ndarray, a_true: np.ndarray, a_pred: np.ndarray,
+               u_true: np.ndarray, u_pred: np.ndarray, r_ref_m: float) -> None:
+        """Update accumulators with a batch. x shape (N,3), a shape (N,3), u shape (N,)."""
+        N = x.shape[0]
+        self.count += N
+        a_err = a_pred - a_true
+        a_err_norm = np.linalg.norm(a_err, axis=1)
+        a_true_norm = np.linalg.norm(a_true, axis=1).clip(1e-30)
+        self.sum_abs_a += float(a_err_norm.sum())
+        self.sum_sq_a += float((a_err_norm ** 2).sum())
+        self.max_abs_a = max(self.max_abs_a, float(a_err_norm.max()))
+        self.sum_abs_u += float(np.abs(u_pred - u_true).sum())
+        self.sum_sq_u += float(((u_pred - u_true) ** 2).sum())
+        self.sum_rel_num += float(a_err_norm.sum())
+        self.sum_rel_den += float(a_true_norm.sum())
+        # Angular error
+        cos_sim = np.sum(a_true * a_pred, axis=1) / (
+            np.linalg.norm(a_true, axis=1).clip(1e-30) *
+            np.linalg.norm(a_pred, axis=1).clip(1e-30)
+        )
+        cos_sim = np.clip(cos_sim, -1.0, 1.0)
+        ang_rad = np.arccos(cos_sim)
+        self.sum_ang_rad += float(ang_rad.sum())
+        self.sum_sq_ang_rad += float((ang_rad ** 2).sum())
+        self.sum_cos_sim += float(cos_sim.sum())
+        # Altitude bins
+        r_norm = np.linalg.norm(x, axis=1)
+        alt_km = (r_norm - r_ref_m) / 1000.0
+        for i in range(N):
+            b = self._alt_bin(float(alt_km[i]))
+            self.alt_bin_count[b] += 1
+            self.alt_bin_sum_sq_a[b] += float(a_err_norm[i] ** 2)
+            self.alt_bin_sum_abs_a[b] += float(a_err_norm[i])
+
+    def finalize(self) -> dict:
+        n = max(self.count, 1)
+        return {
+            "count": self.count,
+            "mae_a": self.sum_abs_a / n,
+            "rmse_a": math.sqrt(self.sum_sq_a / n),
+            "max_abs_a": self.max_abs_a,
+            "mae_u": self.sum_abs_u / n,
+            "rmse_u": math.sqrt(self.sum_sq_u / n),
+            "mean_ang_deg": math.degrees(self.sum_ang_rad / n),
+            "rmse_ang_deg": math.degrees(math.sqrt(self.sum_sq_ang_rad / n)),
+            "mean_cos_sim": self.sum_cos_sim / n,
+            "robust_rel_err": self.sum_rel_num / max(self.sum_rel_den, 1e-30),
+            "alt_bin_count": self.alt_bin_count.tolist(),
+            "alt_bin_rmse_a": [
+                math.sqrt(sq / max(cnt, 1))
+                for sq, cnt in zip(self.alt_bin_sum_sq_a, self.alt_bin_count)
+            ],
+            "alt_bin_mae_a": [
+                ab / max(cnt, 1)
+                for ab, cnt in zip(self.alt_bin_sum_abs_a, self.alt_bin_count)
+            ],
+        }
+
+
+class _TopKErrors:
+    """Min-heap keeping the top-K worst samples by acceleration error norm.
+
+    Implemented as a min-heap keyed on POSITIVE error: heap[0] is the smallest
+    error currently retained. A new sample replaces heap[0] when its error
+    exceeds heap[0], so the heap converges to the K worst samples seen.
+    """
+    def __init__(self, k: int):
+        self.k = int(k)
+        self._heap: list = []  # (err_norm, tiebreak_idx, row_data)
+        self._counter = 0       # monotonic tiebreaker (avoids tuple comparison on row)
+
+    def update_batch(self, x: np.ndarray, u_true: np.ndarray, u_pred: np.ndarray,
+                     a_true: np.ndarray, a_pred: np.ndarray, r_ref_m: float) -> None:
+        if self.k <= 0:
+            return
+        N = x.shape[0]
+        a_err = a_pred - a_true
+        a_err_norm = np.linalg.norm(a_err, axis=1)
+        a_true_norm = np.linalg.norm(a_true, axis=1).clip(1e-30)
+        rel_err = a_err_norm / a_true_norm
+        r_norm = np.linalg.norm(x, axis=1)
+        alt_km = (r_norm - r_ref_m) / 1000.0
+        for i in range(N):
+            row = (
+                x[i, 0], x[i, 1], x[i, 2],
+                float(u_true[i]), float(u_pred[i]),
+                a_true[i, 0], a_true[i, 1], a_true[i, 2],
+                a_pred[i, 0], a_pred[i, 1], a_pred[i, 2],
+                float(a_err_norm[i]), float(rel_err[i]), float(alt_km[i]),
+            )
+            err = float(a_err_norm[i])
+            self._counter += 1
+            if len(self._heap) < self.k:
+                heapq.heappush(self._heap, (err, self._counter, row))
+            elif err > self._heap[0][0]:
+                heapq.heapreplace(self._heap, (err, self._counter, row))
+
+    def to_array(self) -> np.ndarray:
+        """Return shape (K, 14) array sorted by descending error."""
+        if not self._heap:
+            return np.zeros((0, 14), dtype=np.float64)
+        # Sort descending by err (heap items are (err, counter, row))
+        items = sorted(self._heap, key=lambda t: -t[0])
+        rows = [item[2] for item in items]
+        return np.array(rows, dtype=np.float64)
+
+    def save_csv(self, path: Path) -> None:
+        arr = self.to_array()
+        header = "x,y,z,u_true,u_pred,ax_true,ay_true,az_true,ax_pred,ay_pred,az_pred,abs_a_error,rel_a_error,altitude_km"
+        np.savetxt(str(path), arr, delimiter=",", header=header, comments="")
 
 try:
     from .dataset_parameters import (

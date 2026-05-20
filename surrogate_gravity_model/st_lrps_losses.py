@@ -617,8 +617,84 @@ def _get_last_hidden_params(model: nn.Module) -> List[nn.Parameter]:
     return params
 
 
+def collocation_laplacian_loss(
+    model: torch.nn.Module,
+    scaler: "ScalerPack",
+    r_min_m: float,
+    r_max_m: float,
+    n_points: int,
+    device: torch.device,
+    dtype: torch.dtype = torch.float32,
+    n_hutchinson: int = 4,
+    mode: str = "diagnostic",   # "diagnostic" | "train"
+) -> torch.Tensor:
+    """
+    Collocation-style Laplacian regularizer for the residual potential surrogate.
+
+    Generates ``n_points`` random collocation points inside a spherical shell
+    ``[r_min_m, r_max_m]`` (in physical metres) and evaluates the squared mean
+    Laplacian of the network's prediction using a Hutchinson stochastic-trace
+    estimator with ``n_hutchinson`` Rademacher samples.
+
+    Modes
+    -----
+    diagnostic
+        ``create_graph=False`` everywhere; the returned loss does NOT require
+        grad and is suitable for cheap logging only.
+    train
+        ``create_graph=True`` on BOTH the first autograd.grad (so the HVP can
+        be differentiated through) AND the HVP call (so gradients flow back to
+        the model parameters). The returned loss requires_grad and can be
+        ``.backward()``-ed to push the Laplace constraint into model weights.
+    """
+    mode = str(mode).strip().lower()
+    if mode not in ("diagnostic", "train"):
+        raise ValueError(f"mode must be 'diagnostic' or 'train'; got {mode!r}")
+
+    n_points = max(1, int(n_points))
+    K = max(1, int(n_hutchinson))
+
+    # Sample random directions on the unit sphere + radii in [r_min, r_max].
+    r_lo = float(min(r_min_m, r_max_m))
+    r_hi = float(max(r_min_m, r_max_m))
+    dirs = torch.randn(n_points, 3, device=device, dtype=dtype)
+    dirs = dirs / dirs.norm(dim=-1, keepdim=True).clamp_min(1e-12)
+    radii = torch.rand(n_points, 1, device=device, dtype=dtype) * (r_hi - r_lo) + r_lo
+    x_phys = dirs * radii  # (N,3) in metres
+
+    # Scale to network input space; require grad on scaled coords so HVP works.
+    x_scaled = scaler.scale_x(x_phys).detach().clone().requires_grad_(True)
+    u_pred = model(x_scaled)  # (N,1)
+
+    lap_acc = torch.zeros(n_points, device=device, dtype=dtype)
+    for _ in range(K):
+        v = torch.randint(0, 2, (n_points, 3), device=device, dtype=dtype) * 2 - 1
+        grad_u = torch.autograd.grad(
+            u_pred, x_scaled, grad_outputs=torch.ones_like(u_pred),
+            create_graph=True, retain_graph=True,   # always True: needed for HVP
+        )[0]
+        Jv = (grad_u * v).sum(dim=-1, keepdim=True)
+        hvp_cg = (mode == "train")  # True in train mode so grad flows to weights
+        hvp = torch.autograd.grad(
+            Jv, x_scaled, grad_outputs=torch.ones_like(Jv),
+            create_graph=hvp_cg, retain_graph=True,
+        )[0]
+        lap_acc = lap_acc + (hvp * v).sum(dim=-1)
+
+    lap = lap_acc / float(K)
+    loss_val = (lap ** 2).mean()
+    if mode == "train" and not loss_val.requires_grad:
+        raise RuntimeError(
+            "collocation_laplacian_loss(mode='train'): computed loss does not require_grad. "
+            "This means the Laplacian constraint cannot push gradients into model parameters. "
+            "Ensure the model is in training mode and x_scaled.requires_grad_(True) is set."
+        )
+    return loss_val
+
+
 __all__ = [
     'GradNormWeights', 'LossCurriculum', 'SobolevLoss',
     '_direction_loss_factor', '_altitude_km_from_positions',
     '_altitude_balanced_mean_square', '_radial_cross_components',
+    'collocation_laplacian_loss',
 ]

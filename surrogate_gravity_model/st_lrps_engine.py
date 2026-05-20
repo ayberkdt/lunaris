@@ -437,6 +437,9 @@ class STLRPSTrainer:
             "w_a_raw": float(last_stats.get("w_a_raw", self.cfg.w_a)),
             "accel_factor": float(last_stats.get("accel_factor", accel_factor)),
             "grad_norm": total_grad_norm / n_safe,
+            "val_base_loss": (total_u + total_a) / n_safe,  # U + accel MSE only
+            "val_physics_loss": (total_dir + total_radial + total_cross + total_lap) / n_safe,
+            "val_total_loss": total_loss / n_safe,   # alias for "loss"
         }
 
 def _lr_multiplier_for_epoch(
@@ -622,6 +625,16 @@ def train(cfg: TrainConfig) -> None:
     device = get_device()
     outdir = safe_mkdir(cfg.out)
     (outdir / "checkpoints").mkdir(exist_ok=True)
+
+    # Save resolved (fully-merged) config snapshot for provenance.
+    try:
+        import dataclasses as _dc
+        resolved_cfg_path = outdir / "resolved_config.json"
+        resolved_cfg_path.write_text(
+            json.dumps(_dc.asdict(cfg), indent=2, default=str)
+        )
+    except Exception:
+        pass
 
     logging.basicConfig(
         level=logging.INFO,
@@ -1432,8 +1445,16 @@ def train(cfg: TrainConfig) -> None:
                     epochs_without_improve = 0
                     state["best_val"] = best_val
                     state["best_epoch"] = best_epoch
+                    state["best_score"] = float(_ckpt_score)
+                    state["best_score_name"] = str(_best_metric_mode)
+                    state["best_val_base_loss"] = float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0)))
+                    state["best_val_total_loss"] = float(va.get("val_total_loss", va["loss"]))
                     state["config"]["best_val_loss"] = best_val
                     state["config"]["best_epoch"] = best_epoch + 1
+                    state["config"]["best_score"] = float(_ckpt_score)
+                    state["config"]["best_score_name"] = str(_best_metric_mode)
+                    state["config"]["best_val_base_loss"] = state["best_val_base_loss"]
+                    state["config"]["best_val_total_loss"] = state["best_val_total_loss"]
                     state["config"]["epochs_since_improvement"] = 0
                     torch.save(state, best_path)
                     logger.info(f"[checkpoint] best updated: val_ref={va['loss']:.6e} score={_ckpt_score:.6e} epoch={best_epoch + 1}")

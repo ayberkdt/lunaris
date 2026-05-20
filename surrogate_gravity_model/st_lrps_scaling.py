@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import List, Tuple
 
@@ -38,6 +38,7 @@ class ScalerPack:
     x: IsometricScaleParams
     u: IsometricScaleParams
     a: IsometricScaleParams
+    provenance: dict = field(default_factory=dict)
 
     def save_json(self, path: Path) -> None:
         with open(path, "w", encoding="utf-8") as f:
@@ -51,6 +52,7 @@ class ScalerPack:
             x=IsometricScaleParams(**d["x"]),
             u=IsometricScaleParams(**d["u"]),
             a=IsometricScaleParams(**d["a"]),
+            provenance=d.get("provenance", {}),
         )
 
     @staticmethod
@@ -266,7 +268,24 @@ def fit_scaler_streaming(
     # breaks the 1/r symmetry that SH expansions depend on.
     # x_scale = max ‖x‖ (from origin, not from data mean) preserves ΔU isotropy.
     x_mean = np.zeros(3, dtype=np.float64)
-    x_scale = max(max_r_from_origin, 1e-12)
+
+    # Prefer metadata-based x_scale when altitude bounds are known.
+    # This is more reliable than streaming max-norm because the training shell
+    # boundary is exact from dataset metadata, whereas streaming fit can miss
+    # the true maximum radius when n_fit < total_rows.
+    x_scale_source = "streaming_fit"
+    r_ref_m_meta = float(getattr(meta, "r_ref_m", None) or 0.0)
+    alt_max_km_meta = float(getattr(meta, "alt_max_km", None) or 0.0)
+    if r_ref_m_meta > 0 and alt_max_km_meta > 0:
+        x_scale_from_meta = r_ref_m_meta + alt_max_km_meta * 1000.0
+        x_scale = max(x_scale_from_meta, 1e-12)
+        x_scale_source = "metadata_altitude_max"
+        logger.info(
+            f"  x_scale: {x_scale:.3e} m [from metadata: r_ref={r_ref_m_meta:.3e} + alt_max={alt_max_km_meta:.1f} km]"
+        )
+    else:
+        x_scale = max(max_r_from_origin, 1e-12)
+        logger.info(f"  x_scale: {x_scale:.3e} m [from streaming max-norm fit over {seen_rows:,} rows]")
 
     u_mean, u_scale = u_stats.finalize(mode="max")
     a_mean, a_scale = a_stats.finalize(mode="max")
@@ -276,10 +295,20 @@ def fit_scaler_streaming(
     logger.info(f"  da: mean_norm={np.linalg.norm(a_mean):.3e}, char_scale={a_scale:.3e}")
     logger.info("Isometric scaler fitting complete (residual mode).")
 
+    provenance = {
+        "x_scale_source": x_scale_source,
+        "r_ref_m": r_ref_m_meta if x_scale_source == "metadata_altitude_max" else None,
+        "alt_min_km": float(getattr(meta, "alt_min_km", None) or 0.0),
+        "alt_max_km": alt_max_km_meta,
+        "fit_rows": seen_rows,
+        "fit_seed": int(seed),
+        "unit_system": str(getattr(meta, "unit_system", "unknown")),
+    }
     return ScalerPack(
         x=IsometricScaleParams(mean=x_mean.tolist(), scale=float(x_scale)),
         u=IsometricScaleParams(mean=u_mean.tolist(), scale=float(u_scale)),
         a=IsometricScaleParams(mean=a_mean.tolist(), scale=float(a_scale)),
+        provenance=provenance,
     )
 
 

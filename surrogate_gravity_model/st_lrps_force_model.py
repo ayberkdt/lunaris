@@ -119,6 +119,14 @@ class SurrogateForceModel:
         self.degree_min = int(cfg.get("degree_min", -1))
         self.r_ref_m = float(cfg.get("resolved_r_ref_m", R_MOON_SI))
 
+        # Training altitude bounds (loaded from config.json if available)
+        self._train_alt_min_km: Optional[float] = None
+        self._train_alt_max_km: Optional[float] = None
+        if "altitude_min_km" in cfg:
+            self._train_alt_min_km = float(cfg["altitude_min_km"])
+        if "altitude_max_km" in cfg:
+            self._train_alt_max_km = float(cfg["altitude_max_km"])
+
     def _predict_chunk(self, x_t: torch.Tensor) -> tuple:
         """Forward + autograd for one chunk. Returns (delta_u_np, delta_a_np)."""
         x_scaled = self.scaler.scale_x(x_t).requires_grad_(True)
@@ -157,9 +165,15 @@ class SurrogateForceModel:
 
         return u_out, a_out
 
-    def predict_residual_potential(
-        self, x_m: Union[np.ndarray, torch.Tensor]
-    ) -> np.ndarray:
+    def _predict_potential_only_chunk(self, x_t: torch.Tensor) -> np.ndarray:
+        """Forward-only (no autograd). For predict_residual_potential() fast path."""
+        with torch.no_grad():
+            x_scaled = self.scaler.scale_x(x_t)
+            delta_u_scaled = self.model(x_scaled)
+            delta_u = self.scaler.unscale_u(delta_u_scaled)
+        return delta_u.cpu().numpy()
+
+    def predict_residual_potential(self, x_m):
         """
         Predict residual gravitational potential DeltaU(x) in m^2/s^2.
 
@@ -174,8 +188,13 @@ class SurrogateForceModel:
             Residual potential in m^2/s^2.
         """
         single = np.asarray(x_m).ndim == 1
-        du, _ = self._chunked_predict(x_m)
-        result = du.reshape(-1)
+        x_t = _to_tensor(x_m, self.device)
+        N = x_t.shape[0]
+        u_out = np.empty((N, 1), dtype=np.float64)
+        for s in range(0, N, self.chunk_size):
+            e = min(s + self.chunk_size, N)
+            u_out[s:e] = self._predict_potential_only_chunk(x_t[s:e])
+        result = u_out.reshape(-1)
         return float(result[0]) if single else result
 
     def predict_residual_accel(
@@ -197,6 +216,73 @@ class SurrogateForceModel:
         single = np.asarray(x_m).ndim == 1
         _, da = self._chunked_predict(x_m)
         return da[0] if single else da
+
+    def domain_status(self, x_m: Union[np.ndarray, torch.Tensor]) -> dict:
+        """
+        Return a domain-validity report for the given input positions.
+
+        Keys
+        ----
+        finite_input : bool
+        altitude_km_min : float
+        altitude_km_max : float
+        in_training_altitude_range : bool or None  (None if bounds unknown)
+        normalized_radius_max : float
+        exceeds_scaler_radius : bool
+        recommended_fallback : bool
+        reason : str
+        """
+        x_arr = np.asarray(x_m, dtype=np.float64)
+        if x_arr.ndim == 1:
+            x_arr = x_arr[None, :]
+        finite_input = bool(np.all(np.isfinite(x_arr)))
+        r_norm = np.linalg.norm(x_arr, axis=1)
+        alt_km_arr = (r_norm - self.r_ref_m) / 1000.0
+        alt_km_min = float(alt_km_arr.min())
+        alt_km_max = float(alt_km_arr.max())
+        x_scale = float(self.scaler.x.scale)
+        norm_r_max = float(r_norm.max()) / max(x_scale, 1.0)
+        exceeds_scaler = norm_r_max > 1.05  # 5% tolerance
+
+        in_range = None
+        if self._train_alt_min_km is not None and self._train_alt_max_km is not None:
+            in_range = bool(
+                alt_km_min >= self._train_alt_min_km - 1.0
+                and alt_km_max <= self._train_alt_max_km + 1.0
+            )
+
+        reasons = []
+        if not finite_input:
+            reasons.append("non-finite input positions")
+        if exceeds_scaler:
+            reasons.append(f"normalized_radius_max={norm_r_max:.3f} > 1.05 (extrapolation)")
+        if in_range is False:
+            reasons.append(
+                f"altitude [{alt_km_min:.1f}, {alt_km_max:.1f}] km outside "
+                f"training range [{self._train_alt_min_km:.1f}, {self._train_alt_max_km:.1f}] km"
+            )
+
+        recommended_fallback = not finite_input or exceeds_scaler or (in_range is False)
+        return {
+            "finite_input": finite_input,
+            "altitude_km_min": alt_km_min,
+            "altitude_km_max": alt_km_max,
+            "in_training_altitude_range": in_range,
+            "normalized_radius_max": norm_r_max,
+            "exceeds_scaler_radius": exceeds_scaler,
+            "recommended_fallback": recommended_fallback,
+            "reason": "; ".join(reasons) if reasons else "ok",
+        }
+
+    def predict_total_accel_with_status(
+        self,
+        x_m: Union[np.ndarray, torch.Tensor],
+        base_accel_fn: Optional[Callable] = None,
+    ) -> "tuple[np.ndarray, dict]":
+        """predict_total_accel() + domain_status() in one call."""
+        status = self.domain_status(x_m)
+        a_total = self.predict_total_accel(x_m, base_accel_fn)
+        return a_total, status
 
     def predict_total_accel(
         self,
@@ -230,6 +316,11 @@ class SurrogateForceModel:
 
         if base_accel_fn is not None:
             a_base = np.asarray(base_accel_fn(x_arr), dtype=np.float64)
+            if a_base.shape != (x_arr.shape[0], 3):
+                raise ValueError(
+                    f"base_accel_fn must return shape (N,3), got {a_base.shape}. "
+                    f"N={x_arr.shape[0]}"
+                )
         elif self.degree_min < 0:
             # Point-mass approximation: a = -mu * r / |r|^3
             r_norm = np.linalg.norm(x_arr, axis=1, keepdims=True)

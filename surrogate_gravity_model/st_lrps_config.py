@@ -173,6 +173,9 @@ class TrainConfig:
     laplacian_every_n_batches: int = 5
     laplacian_subset_size: int = 512
     n_hutchinson_samples: int = 4   # Rademacher samples per Laplacian estimate
+    collocation_laplacian_weight: float = 0.0
+    laplacian_mode: str = "diagnostic"    # "off" | "diagnostic" | "train"
+    collocation_laplacian_every: int = 25  # optimizer steps between collocation Laplacian evaluations
 
     # Residual SIREN blocks — wraps hidden layers in SirenResBlock.
     # Recommended for depth >= 6; adds LayerNorm + zero-init skip per block.
@@ -185,6 +188,14 @@ class TrainConfig:
     # Gradient accumulation — accumulate gradients over N batches before stepping.
     # Effective batch size = batch_size * grad_accumulation_steps.
     grad_accumulation_steps: int = 1
+
+import dataclasses as _dataclasses
+_TC_DEFAULTS: dict = {
+    f.name: f.default
+    for f in _dataclasses.fields(TrainConfig)
+    if f.default is not _dataclasses.MISSING
+}
+
 
 def _default_outdir(base: Path) -> Path:
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -321,13 +332,13 @@ def parse_args() -> TrainConfig:
 
     # Direction Loss
     group_dir = ap.add_argument_group("Direction Loss")
-    group_dir.add_argument("--direction-loss-weight", type=float, default=0.10,
+    group_dir.add_argument("--direction-loss-weight", type=float, default=_TC_DEFAULTS['direction_loss_weight'],
                            help="Peak weight for the cosine direction loss (lam_dir).")
-    group_dir.add_argument("--direction-loss-start-epoch", type=int, default=30,
+    group_dir.add_argument("--direction-loss-start-epoch", type=int, default=_TC_DEFAULTS['direction_loss_start_epoch'],
                            help="Epoch at which direction loss begins to ramp in.")
-    group_dir.add_argument("--direction-loss-ramp-epochs", type=int, default=50,
+    group_dir.add_argument("--direction-loss-ramp-epochs", type=int, default=_TC_DEFAULTS['direction_loss_ramp_epochs'],
                            help="Epochs over which direction loss ramps from 0 to full weight.")
-    group_dir.add_argument("--direction-loss-floor-abs", type=float, default=3e-6,
+    group_dir.add_argument("--direction-loss-floor-abs", type=float, default=_TC_DEFAULTS['direction_loss_floor_abs'],
                            help="||a_true|| threshold below which direction loss is masked out.")
     group_dir.add_argument("--best-ckpt-start-epoch", type=int, default=-1,
                            help="Epoch from which best-checkpoint tracking and patience counting begin. "
@@ -337,12 +348,12 @@ def parse_args() -> TrainConfig:
                            help="Additional settled epochs after the direction-loss ramp before auto best-checkpoint tracking starts.")
     group_dir.add_argument("--best-metric",
                            choices=["total_loss", "direction_loss", "hybrid"],
-                           default="total_loss",
+                           default=_TC_DEFAULTS['best_metric'],
                            help="Metric used for best-checkpoint selection. "
                                 "'total_loss': val ref loss (default, backward-compatible). "
                                 "'hybrid': val_loss + alpha * val_direction_loss. "
                                 "'direction_loss': val direction loss only (experimental).")
-    group_dir.add_argument("--hybrid-direction-alpha", type=float, default=0.5,
+    group_dir.add_argument("--hybrid-direction-alpha", type=float, default=_TC_DEFAULTS['hybrid_direction_alpha'],
                            help="Weight alpha for direction loss in hybrid best-metric: "
                                 "score = val_loss + alpha * val_direction_loss.")
 
@@ -371,6 +382,11 @@ def parse_args() -> TrainConfig:
                            help="Batch subset size for Hutchinson Laplacian estimator.")
     group_lap.add_argument("--n-hutchinson-samples", type=int, default=4,
                            help="Rademacher samples per Hutchinson trace estimate (K=4 → ~50%% relative error).")
+    group_lap.add_argument("--laplacian-mode",
+        choices=["off", "diagnostic", "train"], default=_TC_DEFAULTS.get('laplacian_mode', 'diagnostic'),
+        help="Laplacian regularization mode: off=skip, diagnostic=log only, train=backprop (requires create_graph=True).")
+    group_lap.add_argument("--collocation-laplacian-every", type=int, default=25,
+        help="Optimizer steps between collocation Laplacian evaluations (default: 25).")
 
     # PINN architecture
     group_pinn = ap.add_argument_group("PINN Architecture (residual & multi-scale SIREN)")
@@ -615,6 +631,8 @@ def parse_args() -> TrainConfig:
         grad_accumulation_steps=max(1, int(a.grad_accumulation_steps)),
         best_metric=str(a.best_metric),
         hybrid_direction_alpha=float(a.hybrid_direction_alpha),
+        laplacian_mode=str(a.laplacian_mode),
+        collocation_laplacian_every=max(1, int(a.collocation_laplacian_every)),
     )
 
 

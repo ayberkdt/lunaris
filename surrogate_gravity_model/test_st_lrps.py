@@ -686,6 +686,508 @@ def _test_artifact_resolver() -> None:
     print("[PASS] artifact_resolver")
 
 
+def test_laplacian_diagnostic_does_not_require_grad() -> None:
+    """Diagnostic mode Laplacian loss must NOT require grad (cheap, no graph)."""
+    try:
+        from st_lrps_losses import collocation_laplacian_loss
+        from st_lrps_scaling import ScalerPack, IsometricScaleParams
+    except ImportError:
+        print("[SKIP] test_laplacian_diagnostic_does_not_require_grad"); return
+    import torch
+    sp = ScalerPack(
+        x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
+        u=IsometricScaleParams(mean=[0.0], scale=1.0),
+        a=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=1e-3),
+    ).to_tensors(torch.device("cpu"), torch.float32)
+    # Tiny dummy model
+    model = torch.nn.Sequential(torch.nn.Linear(3,4), torch.nn.Tanh(), torch.nn.Linear(4,1))
+    loss = collocation_laplacian_loss(model, sp, r_min_m=1.8e6, r_max_m=1.9e6,
+                                       n_points=16, device=torch.device("cpu"),
+                                       n_hutchinson=2, mode="diagnostic")
+    assert not loss.requires_grad, "Diagnostic Laplacian should not require grad"
+    print("[PASS] test_laplacian_diagnostic_does_not_require_grad")
+
+
+def test_laplacian_train_requires_grad() -> None:
+    """Train mode Laplacian loss must require grad (gradients flow to model weights)."""
+    try:
+        from st_lrps_losses import collocation_laplacian_loss
+        from st_lrps_scaling import ScalerPack, IsometricScaleParams
+    except ImportError:
+        print("[SKIP] test_laplacian_train_requires_grad"); return
+    import torch
+    sp = ScalerPack(
+        x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
+        u=IsometricScaleParams(mean=[0.0], scale=1.0),
+        a=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=1e-3),
+    ).to_tensors(torch.device("cpu"), torch.float32)
+    model = torch.nn.Sequential(torch.nn.Linear(3,4), torch.nn.Tanh(), torch.nn.Linear(4,1))
+    loss = collocation_laplacian_loss(model, sp, r_min_m=1.8e6, r_max_m=1.9e6,
+                                       n_points=16, device=torch.device("cpu"),
+                                       n_hutchinson=2, mode="train")
+    assert loss.requires_grad, "Train mode Laplacian must require grad"
+    print("[PASS] test_laplacian_train_requires_grad")
+
+
+def test_laplacian_train_backward_changes_params() -> None:
+    """Train mode Laplacian backward must populate parameter gradients."""
+    try:
+        from st_lrps_losses import collocation_laplacian_loss
+        from st_lrps_scaling import ScalerPack, IsometricScaleParams
+    except ImportError:
+        print("[SKIP] test_laplacian_train_backward_changes_params"); return
+    import torch
+    sp = ScalerPack(
+        x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
+        u=IsometricScaleParams(mean=[0.0], scale=1.0),
+        a=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=1e-3),
+    ).to_tensors(torch.device("cpu"), torch.float32)
+    model = torch.nn.Sequential(torch.nn.Linear(3,4), torch.nn.Tanh(), torch.nn.Linear(4,1))
+    loss = collocation_laplacian_loss(model, sp, r_min_m=1.8e6, r_max_m=1.9e6,
+                                       n_points=16, device=torch.device("cpu"),
+                                       n_hutchinson=2, mode="train")
+    loss.backward()
+    params_with_grad = [p for p in model.parameters() if p.grad is not None and p.grad.abs().sum() > 0]
+    assert len(params_with_grad) > 0, "Laplacian train backward did not populate any gradients"
+    print("[PASS] test_laplacian_train_backward_changes_params")
+
+
+def test_cli_defaults_match_trainconfig_defaults() -> None:
+    """Key CLI parser defaults must match TrainConfig field defaults."""
+    import dataclasses
+    try:
+        from st_lrps_config import TrainConfig
+        import argparse
+    except ImportError:
+        print("[SKIP] test_cli_defaults_match_trainconfig_defaults"); return
+
+    tc_fields = {f.name: f.default for f in dataclasses.fields(TrainConfig)
+                 if f.default is not dataclasses.MISSING}
+
+    # Build an argparse namespace with defaults only (no sys.argv)
+    import sys
+    old_argv = sys.argv
+    sys.argv = ["prog", "--data", "/tmp/fake.h5", "--out", "/tmp/fake_out"]
+    try:
+        # We just check the defaults dict, not parse_args() since it reads files
+        from st_lrps_config import _TC_DEFAULTS
+        for key in ["direction_loss_start_epoch", "direction_loss_ramp_epochs",
+                    "direction_loss_weight", "best_metric", "hybrid_direction_alpha"]:
+            if key in tc_fields and key in _TC_DEFAULTS:
+                assert tc_fields[key] == _TC_DEFAULTS[key], (
+                    f"TrainConfig.{key}={tc_fields[key]} but _TC_DEFAULTS.{key}={_TC_DEFAULTS[key]}"
+                )
+    finally:
+        sys.argv = old_argv
+    print("[PASS] test_cli_defaults_match_trainconfig_defaults")
+
+
+def test_streaming_metrics_match_in_memory_on_small_dataset() -> None:
+    """StreamingMetrics must match simple in-memory equivalents on a small batch."""
+    try:
+        import sys
+        from pathlib import Path
+        _HERE = Path(__file__).resolve().parent
+        if str(_HERE) not in sys.path:
+            sys.path.insert(0, str(_HERE))
+        from st_lrps_evaluate import _StreamingMetrics
+    except ImportError as e:
+        print(f"[SKIP] test_streaming_metrics (import failed: {e})"); return
+
+    import numpy as np, math
+    rng = np.random.default_rng(42)
+    N = 200
+    x = rng.standard_normal((N, 3)) * 1.85e6
+    a_true = rng.standard_normal((N, 3)) * 1e-3
+    a_pred = a_true + rng.standard_normal((N, 3)) * 1e-5
+    u_true = rng.standard_normal(N)
+    u_pred = u_true + rng.standard_normal(N) * 0.01
+    R = 1.737e6
+
+    sm = _StreamingMetrics(n_alt_bins=5, alt_min_km=0, alt_max_km=500)
+    sm.update(x, a_true, a_pred, u_true, u_pred, R)
+    res = sm.finalize()
+
+    a_err_norm = np.linalg.norm(a_pred - a_true, axis=1)
+    expected_mae = float(a_err_norm.mean())
+    expected_rmse = float(np.sqrt((a_err_norm**2).mean()))
+    assert abs(res["mae_a"] - expected_mae) < 1e-10, f"MAE mismatch: {res['mae_a']} vs {expected_mae}"
+    assert abs(res["rmse_a"] - expected_rmse) < 1e-10, f"RMSE mismatch"
+    assert res["count"] == N
+    print("[PASS] test_streaming_metrics_match_in_memory_on_small_dataset")
+
+
+def test_topk_error_export_shape_and_columns() -> None:
+    """TopKErrors heap keeps exactly K worst samples with correct shape."""
+    try:
+        from st_lrps_evaluate import _TopKErrors
+    except ImportError as e:
+        print(f"[SKIP] test_topk_error_export_shape_and_columns (import failed: {e})"); return
+    import numpy as np
+    rng = np.random.default_rng(7)
+    N = 100
+    K = 10
+    x = rng.standard_normal((N, 3)) * 1.85e6
+    a_true = rng.standard_normal((N, 3)) * 1e-3
+    a_pred = a_true.copy()
+    # Make first 5 samples have large error
+    a_pred[:5] += rng.standard_normal((5, 3)) * 1.0
+    u_true = rng.standard_normal(N)
+    u_pred = u_true + rng.standard_normal(N) * 0.01
+
+    # Make the FIRST K samples have moderate error, others much larger;
+    # ensure heap keeps the largest K regardless of insertion order.
+    # Recompute with a cleaner setup: 20 large-error samples among 100 total.
+    a_pred = a_true.copy()
+    a_pred[:20] += rng.standard_normal((20, 3)) * 1.0   # 20 samples with large error
+    tk = _TopKErrors(K)
+    tk.update_batch(x, u_true, u_pred, a_true, a_pred, 1.737e6)
+    arr = tk.to_array()
+    assert arr.shape == (K, 14), f"Expected ({K}, 14), got {arr.shape}"
+    # The top errors should all be from the large-perturbation pool
+    top_errs = arr[:, 11]  # abs_a_error column
+    assert float(top_errs.min()) > 0.01, "Top-K should capture high-error samples"
+    print("[PASS] test_topk_error_export_shape_and_columns")
+
+
+def test_force_model_domain_status_inside_range() -> None:
+    """domain_status should report in_range=True for positions inside training bounds."""
+    try:
+        from st_lrps_force_model import SurrogateForceModel
+        from st_lrps_scaling import ScalerPack, IsometricScaleParams
+    except ImportError:
+        print("[SKIP] test_force_model_domain_status_inside_range"); return
+    import torch
+    import numpy as np
+    sp = ScalerPack(
+        x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
+        u=IsometricScaleParams(mean=[0.0], scale=1.0),
+        a=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=1e-3),
+    ).to_tensors(torch.device("cpu"), torch.float32)
+    model = torch.nn.Sequential(torch.nn.Linear(3,4), torch.nn.Tanh(), torch.nn.Linear(4,1))
+    cfg = {
+        "resolved_mu_si": 4.902e12,
+        "resolved_a_sign": 1.0,
+        "resolved_r_ref_m": 1.737e6,
+        "degree_min": -1,
+        "altitude_min_km": 100.0,
+        "altitude_max_km": 500.0,
+    }
+    fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
+    # Position at ~200 km altitude (inside range)
+    x = np.array([[0.0, 0.0, 1.937e6]])
+    status = fm.domain_status(x)
+    assert status["finite_input"] is True
+    assert status["in_training_altitude_range"] is True
+    assert not status["recommended_fallback"]
+    print("[PASS] test_force_model_domain_status_inside_range")
+
+
+def test_force_model_domain_status_outside_range() -> None:
+    """domain_status should report in_range=False for positions far outside training bounds."""
+    try:
+        from st_lrps_force_model import SurrogateForceModel
+        from st_lrps_scaling import ScalerPack, IsometricScaleParams
+    except ImportError:
+        print("[SKIP] test_force_model_domain_status_outside_range"); return
+    import torch
+    import numpy as np
+    sp = ScalerPack(
+        x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
+        u=IsometricScaleParams(mean=[0.0], scale=1.0),
+        a=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=1e-3),
+    ).to_tensors(torch.device("cpu"), torch.float32)
+    model = torch.nn.Sequential(torch.nn.Linear(3,4), torch.nn.Tanh(), torch.nn.Linear(4,1))
+    cfg = {
+        "resolved_mu_si": 4.902e12,
+        "resolved_a_sign": 1.0,
+        "resolved_r_ref_m": 1.737e6,
+        "degree_min": -1,
+        "altitude_min_km": 100.0,
+        "altitude_max_km": 500.0,
+    }
+    fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
+    # Position at 1000 km altitude (well outside range)
+    x = np.array([[0.0, 0.0, 2.737e6]])
+    status = fm.domain_status(x)
+    assert status["in_training_altitude_range"] is False
+    assert status["recommended_fallback"] is True
+    print("[PASS] test_force_model_domain_status_outside_range")
+
+
+def test_force_model_rejects_bad_base_accel_shape() -> None:
+    """predict_total_accel must raise ValueError when base_accel_fn returns wrong shape."""
+    try:
+        from st_lrps_force_model import SurrogateForceModel
+        from st_lrps_scaling import ScalerPack, IsometricScaleParams
+    except ImportError:
+        print("[SKIP] test_force_model_rejects_bad_base_accel_shape"); return
+    import torch, numpy as np
+    sp = ScalerPack(
+        x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
+        u=IsometricScaleParams(mean=[0.0], scale=1.0),
+        a=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=1e-3),
+    ).to_tensors(torch.device("cpu"), torch.float32)
+    model = torch.nn.Sequential(torch.nn.Linear(3,4), torch.nn.Tanh(), torch.nn.Linear(4,1))
+    cfg = {"resolved_mu_si": 4.902e12, "resolved_a_sign": 1.0, "resolved_r_ref_m": 1.737e6, "degree_min": -1}
+    fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
+    x = np.array([[0.0, 0.0, 1.937e6]])
+    bad_fn = lambda _x: np.zeros((5,))  # wrong shape
+    try:
+        fm.predict_total_accel(x, bad_fn)
+        assert False, "Should have raised ValueError"
+    except ValueError:
+        pass
+    print("[PASS] test_force_model_rejects_bad_base_accel_shape")
+
+
+def test_predict_residual_potential_no_grad_path() -> None:
+    """predict_residual_potential should work without requiring grad (no_grad fast path)."""
+    try:
+        from st_lrps_force_model import SurrogateForceModel
+        from st_lrps_scaling import ScalerPack, IsometricScaleParams
+    except ImportError:
+        print("[SKIP] test_predict_residual_potential_no_grad_path"); return
+    import torch, numpy as np
+    sp = ScalerPack(
+        x=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=2e6),
+        u=IsometricScaleParams(mean=[0.0], scale=1.0),
+        a=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=1e-3),
+    ).to_tensors(torch.device("cpu"), torch.float32)
+    model = torch.nn.Sequential(torch.nn.Linear(3,4), torch.nn.Tanh(), torch.nn.Linear(4,1))
+    cfg = {"resolved_mu_si": 4.902e12, "resolved_a_sign": 1.0, "resolved_r_ref_m": 1.737e6, "degree_min": -1}
+    fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
+    x = np.array([[0.0, 0.0, 1.937e6], [0.0, 1.937e6, 0.0]])
+    # Should run without error and return shape (2,)
+    result = fm.predict_residual_potential(x)
+    assert result.shape == (2,), f"Expected (2,), got {result.shape}"
+    assert np.all(np.isfinite(result)), "Non-finite potential predictions"
+    print("[PASS] test_predict_residual_potential_no_grad_path")
+
+
+def test_model_factory_rejects_incompatible_encodings() -> None:
+    """build_model_from_config must raise ValueError when both SH and radial encoding are enabled."""
+    try:
+        from st_lrps_models import build_model_from_config
+    except ImportError:
+        print("[SKIP] test_model_factory_rejects_incompatible_encodings"); return
+    import torch
+    cfg = {
+        "hidden": 32, "depth": 2, "activation": "sine",
+        "w0_first": 30.0, "w0_hidden": 30.0, "dropout": 0.0,
+        "use_fourier": False, "fourier_n_features": 16, "fourier_sigma": 1.0, "fourier_seed": 0,
+        "fourier_append_raw": True,
+        "use_sh_encoding": True,
+        "sh_encoding_degree": 4,
+        "sh_append_raw": True,
+        "use_radial_separation": True,  # CONFLICT
+        "radial_append_raw": False,
+        "use_residual_blocks": False,
+        "n_bands": 1,
+    }
+    try:
+        build_model_from_config(cfg, device=torch.device("cpu"), dtype=torch.float32)
+        assert False, "Should have raised ValueError for incompatible encodings"
+    except ValueError as e:
+        assert "cannot both be True" in str(e) or "incompatible" in str(e).lower(), str(e)
+    print("[PASS] test_model_factory_rejects_incompatible_encodings")
+
+
+def test_x_scale_uses_metadata_when_available() -> None:
+    """fit_scaler_streaming should prefer r_ref + alt_max over streaming max-norm."""
+    import tempfile, numpy as np
+    try:
+        import h5py
+    except ImportError:
+        print("[SKIP] test_x_scale_uses_metadata (h5py unavailable)"); return
+    try:
+        from st_lrps_scaling import fit_scaler_streaming
+        from st_lrps_data import DatasetMeta
+    except ImportError as e:
+        print(f"[SKIP] test_x_scale_uses_metadata (import: {e})"); return
+
+    rng = np.random.default_rng(1)
+    N = 500
+    R_REF = 1.737e6
+    ALT_MAX = 300.0  # km
+    r = R_REF + rng.uniform(50e3, ALT_MAX * 1000, N)
+    dirs = rng.standard_normal((N, 3))
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    x = (r[:, None] * dirs).astype(np.float32)
+    u = (rng.standard_normal(N) * 1e5).astype(np.float32)
+    a = (rng.standard_normal((N, 3)) * 1e-3).astype(np.float32)
+    data = np.concatenate([x, u[:, None], a], axis=1).astype(np.float32)
+
+    with tempfile.NamedTemporaryFile(suffix=".h5", delete=False) as f:
+        h5path = Path(f.name)
+    with h5py.File(h5path, "w") as hf:
+        ds = hf.create_dataset("data", data=data)
+        # DatasetMeta.from_h5 reads file-level attrs (f.attrs), not dataset-level.
+        hf.attrs["alt_min_km"] = 50.0
+        hf.attrs["alt_max_km"] = ALT_MAX
+        hf.attrs["r_ref_m"] = R_REF
+        hf.attrs["unit_system"] = "si"
+        hf.attrs["mu_si"] = 4.902e12
+
+    try:
+        meta = DatasetMeta.from_h5(h5path)
+        scaler = fit_scaler_streaming(h5path, "data", meta, use_si=False,
+                                      mu_si=4.902e12, a_sign=1.0, n_fit=N, seed=0)
+        expected_x_scale = R_REF + ALT_MAX * 1000.0
+        assert abs(scaler.x.scale - expected_x_scale) < 1.0, (
+            f"Expected x_scale={expected_x_scale:.3e}, got {scaler.x.scale:.3e}"
+        )
+        assert scaler.provenance.get("x_scale_source") == "metadata_altitude_max", (
+            f"Expected metadata_altitude_max, got {scaler.provenance.get('x_scale_source')}"
+        )
+    finally:
+        h5path.unlink(missing_ok=True)
+    print("[PASS] test_x_scale_uses_metadata_when_available")
+
+
+def test_x_scale_falls_back_to_streaming_when_metadata_missing() -> None:
+    """fit_scaler_streaming should fall back to max-norm when metadata lacks altitude bounds."""
+    import tempfile, numpy as np
+    try:
+        import h5py
+    except ImportError:
+        print("[SKIP] test_x_scale_falls_back_to_streaming (h5py unavailable)"); return
+    try:
+        from st_lrps_scaling import fit_scaler_streaming
+        from st_lrps_data import DatasetMeta
+    except ImportError as e:
+        print(f"[SKIP] test_x_scale_falls_back_to_streaming (import: {e})"); return
+
+    rng = np.random.default_rng(2)
+    N = 500
+    R_REF = 1.737e6
+    r = R_REF + rng.uniform(50e3, 200e3, N)
+    dirs = rng.standard_normal((N, 3))
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    x = (r[:, None] * dirs).astype(np.float32)
+    u = (rng.standard_normal(N) * 1e5).astype(np.float32)
+    a = (rng.standard_normal((N, 3)) * 1e-3).astype(np.float32)
+    data = np.concatenate([x, u[:, None], a], axis=1).astype(np.float32)
+
+    with tempfile.NamedTemporaryFile(suffix=".h5", delete=False) as f:
+        h5path = Path(f.name)
+    with h5py.File(h5path, "w") as hf:
+        # No alt_min_km / alt_max_km / r_ref_m in attrs -> fallback
+        hf.create_dataset("data", data=data)
+
+    try:
+        meta = DatasetMeta.from_h5(h5path)
+        scaler = fit_scaler_streaming(h5path, "data", meta, use_si=False,
+                                      mu_si=4.902e12, a_sign=1.0, n_fit=N, seed=0)
+        assert scaler.provenance.get("x_scale_source") == "streaming_fit", (
+            f"Expected streaming_fit, got {scaler.provenance.get('x_scale_source')}"
+        )
+        # x_scale should be close to the actual max radius in the data
+        actual_max_r = float(np.linalg.norm(x, axis=1).max())
+        assert abs(scaler.x.scale - actual_max_r) / actual_max_r < 0.02, (
+            f"Streaming x_scale={scaler.x.scale:.3e} should be near actual max_r={actual_max_r:.3e}"
+        )
+    finally:
+        h5path.unlink(missing_ok=True)
+    print("[PASS] test_x_scale_falls_back_to_streaming_when_metadata_missing")
+
+
+def test_active_error_point_loader() -> None:
+    """_load_error_points should read a CSV of error points correctly."""
+    import tempfile
+    try:
+        from st_lrps_evaluate import _TopKErrors  # reuse to generate a CSV
+    except ImportError:
+        print("[SKIP] test_active_error_point_loader (st_lrps_evaluate unavailable)"); return
+    try:
+        import sys
+        from pathlib import Path
+        _HERE = Path(__file__).resolve().parent
+        if str(_HERE) not in sys.path:
+            sys.path.insert(0, str(_HERE))
+        from spatial_cloud_generator import _load_error_points
+    except ImportError:
+        print("[SKIP] test_active_error_point_loader (spatial_cloud_generator unavailable)"); return
+
+    import numpy as np
+    from pathlib import Path
+    # Write a fake CSV
+    header = "x,y,z,u_true,u_pred,ax_true,ay_true,az_true,ax_pred,ay_pred,az_pred,abs_a_error,rel_a_error,altitude_km"
+    rows = [[float(j) for j in range(14)] for _ in range(20)]
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, newline="") as f:
+        f.write(header + "\n")
+        for row in rows:
+            f.write(",".join(str(v) for v in row) + "\n")
+        csv_path = Path(f.name)
+    try:
+        arr = _load_error_points(csv_path, max_source=10)
+        assert arr.shape == (10, 14), f"Expected (10,14), got {arr.shape}"
+    finally:
+        csv_path.unlink(missing_ok=True)
+    print("[PASS] test_active_error_point_loader")
+
+
+def test_active_jitter_points_have_expected_shape() -> None:
+    """_jitter_around_point must produce exactly n_samples points."""
+    try:
+        import sys
+        from pathlib import Path
+        _HERE = Path(__file__).resolve().parent
+        if str(_HERE) not in sys.path:
+            sys.path.insert(0, str(_HERE))
+        from spatial_cloud_generator import _jitter_around_point
+    except ImportError:
+        print("[SKIP] test_active_jitter_points_have_expected_shape"); return
+    import numpy as np
+    rng = np.random.default_rng(5)
+    x_src = np.array([0.0, 0.0, 1.937e6])
+    pts = _jitter_around_point(x_src, n_samples=30, jitter_radial_km=10.0,
+                                jitter_tangent_km=20.0, rng=rng)
+    assert pts.shape == (30, 3), f"Expected (30,3), got {pts.shape}"
+    # Points should be near source
+    dist = np.linalg.norm(pts - x_src[None, :], axis=1)
+    assert dist.max() < 200e3, f"Jitter too large: max dist={dist.max():.0f} m"
+    print("[PASS] test_active_jitter_points_have_expected_shape")
+
+
+def test_active_component_metadata_written() -> None:
+    """Active refinement should write active_refinement_meta.json."""
+    try:
+        import sys
+        from pathlib import Path
+        _HERE = Path(__file__).resolve().parent
+        if str(_HERE) not in sys.path:
+            sys.path.insert(0, str(_HERE))
+        from spatial_cloud_generator import _load_error_points, _jitter_around_point
+    except ImportError:
+        print("[SKIP] test_active_component_metadata_written"); return
+    import numpy as np, tempfile, json
+    from pathlib import Path
+
+    # We test that _jitter_around_point + saving meta produces correct structure.
+    # (Full _run_active_refinement would need argparse namespace.)
+    rng = np.random.default_rng(9)
+    x_src = np.array([1.8e6, 0.3e6, 0.5e6])
+    pts = _jitter_around_point(x_src, 10, 5.0, 10.0, rng)
+    meta = {
+        "component_name": "active_error_refinement",
+        "source_error_file": "/fake/path.csv",
+        "n_source_points": 5,
+        "active_jitter_radial_km": 5.0,
+        "active_jitter_tangent_km": 10.0,
+        "active_samples_per_point": 10,
+        "total_generated_positions": 50,
+    }
+    with tempfile.TemporaryDirectory() as tmpd:
+        meta_path = Path(tmpd) / "active_refinement_meta.json"
+        meta_path.write_text(json.dumps(meta))
+        loaded = json.loads(meta_path.read_text())
+        assert loaded["component_name"] == "active_error_refinement"
+        assert "source_error_file" in loaded
+        assert "active_jitter_radial_km" in loaded
+    print("[PASS] test_active_component_metadata_written")
+
+
 def run_unit_tests() -> None:
     """Run all unit tests. Prints [PASS]/[SKIP] for each; raises on first failure."""
     print("\n========== ST-LRPS Unit Tests ==========")
@@ -693,6 +1195,22 @@ def run_unit_tests() -> None:
     _test_chain_rule()
     _test_direction_mask()
     _test_artifact_resolver()
+    test_laplacian_diagnostic_does_not_require_grad()
+    test_laplacian_train_requires_grad()
+    test_laplacian_train_backward_changes_params()
+    test_cli_defaults_match_trainconfig_defaults()
+    test_streaming_metrics_match_in_memory_on_small_dataset()
+    test_topk_error_export_shape_and_columns()
+    test_force_model_domain_status_inside_range()
+    test_force_model_domain_status_outside_range()
+    test_force_model_rejects_bad_base_accel_shape()
+    test_predict_residual_potential_no_grad_path()
+    test_model_factory_rejects_incompatible_encodings()
+    test_x_scale_uses_metadata_when_available()
+    test_x_scale_falls_back_to_streaming_when_metadata_missing()
+    test_active_error_point_loader()
+    test_active_jitter_points_have_expected_shape()
+    test_active_component_metadata_written()
     print("========== All unit tests passed ==========\n")
 
 

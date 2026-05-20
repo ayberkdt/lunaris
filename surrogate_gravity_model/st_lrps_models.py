@@ -407,6 +407,28 @@ class FourierInputEmbedding(nn.Module):
 
 
 # ---------------------------------------------------------------------------
+# Radial separation encoding
+# ---------------------------------------------------------------------------
+
+class RadialSeparationEncoding(nn.Module):
+    """Explicit radial/direction separation: [r_norm, ux, uy, uz] or [r_norm, ux, uy, uz, x, y, z]."""
+    def __init__(self, append_raw: bool = False):
+        super().__init__()
+        self.append_raw = bool(append_raw)
+
+    @property
+    def out_dim(self) -> int:
+        return 7 if self.append_raw else 4
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        r = torch.norm(x, dim=-1, keepdim=True).clamp(min=1e-10)
+        encoded = torch.cat([r, x / r], dim=-1)  # (N, 4)
+        if self.append_raw:
+            return torch.cat([encoded, x], dim=-1)  # (N, 7)
+        return encoded
+
+
+# ---------------------------------------------------------------------------
 # PhysicsNet wrapper
 # ---------------------------------------------------------------------------
 
@@ -485,6 +507,30 @@ def build_model_from_config(
             "Disable Fourier/RFF or use a non-sine activation."
         )
 
+    # Optional alternative input encodings (SH / radial separation).
+    use_sh = bool(_cfg_value(cfg, "use_sh_encoding", False))
+    use_radial = bool(_cfg_value(cfg, "use_radial_separation", False))
+    sh_degree = int(_cfg_value(cfg, "sh_encoding_degree", 6))
+    sh_append_raw = bool(_cfg_value(cfg, "sh_append_raw", True))
+    radial_append_raw = bool(_cfg_value(cfg, "radial_append_raw", False))
+
+    if use_sh and use_radial:
+        raise ValueError(
+            "use_sh_encoding and use_radial_separation cannot both be True. "
+            "SH encoding already subsumes radial information. "
+            "Set only one or neither."
+        )
+    if use_sh and sh_degree > 8:
+        import warnings
+        warnings.warn(
+            f"sh_encoding_degree={sh_degree} > 8. This significantly increases input "
+            "dimensionality and training cost. Consider degree <= 6 for typical residual "
+            "SH training shells.",
+            UserWarning, stacklevel=2
+        )
+    if use_sh and not (0 <= sh_degree <= 16):
+        raise ValueError(f"sh_encoding_degree must be in [0, 16], got {sh_degree}")
+
     embedding = None
     backbone_in_dim = int(in_dim)
     if use_fourier:
@@ -549,6 +595,7 @@ __all__ = [
     "MultiScaleSirenMLP",
     "MLP",
     "FourierInputEmbedding",
+    "RadialSeparationEncoding",
     "PhysicsNet",
     "siren_init_first_",
     "siren_init_hidden_",

@@ -31,11 +31,15 @@ that tabular/report artifacts are backend-managed.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
     from .ui_commons import THEME, ToggleSwitch, get_icon
@@ -187,6 +191,7 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         layout.addWidget(self._build_output_config_card())
         layout.addWidget(self._build_artifacts_card())
+        layout.addWidget(self._build_artifact_browser_card())
         layout.addWidget(self._build_preview_card())
         layout.addStretch(1)
 
@@ -401,6 +406,281 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         enabled = bool(self.toggle_anim3d.isChecked())
         self.spin_downsample_3d.setEnabled(enabled)
+
+    # ------------------------------------------------------------------
+    # Artifact Browser
+    # ------------------------------------------------------------------
+
+    _TYPE_FOR_SUFFIX: dict[str, str] = {
+        ".png": "Plot",
+        ".jpg": "Plot",
+        ".jpeg": "Plot",
+        ".pdf": "Report",
+        ".csv": "CSV",
+        ".json": "JSON",
+        ".h5": "HDF5",
+        ".hdf5": "HDF5",
+        ".npz": "NPZ",
+        ".npy": "NPY",
+        ".txt": "Text",
+        ".log": "Text",
+    }
+
+    def _build_artifact_browser_card(self) -> QtWidgets.QGroupBox:
+        """
+        Render the per-file artifact browser.
+
+        The tree lists every file found under the current output directory and
+        offers quick "Open" / "Copy Path" actions either via a context menu or a
+        button bar.  The widget never crashes if the directory does not exist;
+        it simply shows an empty state.
+        """
+
+        group_box = self._create_card("Artifact Browser")
+        layout = QtWidgets.QVBoxLayout(group_box)
+        layout.setContentsMargins(20, 24, 20, 20)
+        layout.setSpacing(10)
+
+        header_row = QtWidgets.QHBoxLayout()
+        self.lbl_browser_out_dir = QtWidgets.QLabel("Output Directory: —")
+        self.lbl_browser_out_dir.setStyleSheet(f"color: {THEME['fg_muted']};")
+        header_row.addWidget(self.lbl_browser_out_dir, 1)
+
+        btn_browser_refresh = QtWidgets.QPushButton("Refresh")
+        btn_browser_refresh.setIcon(get_icon("fa6s.rotate", THEME["fg_main"]))
+        btn_browser_refresh.clicked.connect(self._refresh_artifact_browser)
+        header_row.addWidget(btn_browser_refresh)
+
+        btn_browser_open_folder = QtWidgets.QPushButton("Open Folder")
+        btn_browser_open_folder.setIcon(get_icon("fa6s.folder-open", THEME["fg_main"]))
+        btn_browser_open_folder.clicked.connect(self.open_output_dir_requested.emit)
+        header_row.addWidget(btn_browser_open_folder)
+
+        layout.addLayout(header_row)
+
+        self.tree_artifacts = QtWidgets.QTreeWidget()
+        self.tree_artifacts.setColumnCount(4)
+        self.tree_artifacts.setHeaderLabels(["Name", "Type", "Size", "Modified"])
+        self.tree_artifacts.setRootIsDecorated(False)
+        self.tree_artifacts.setAlternatingRowColors(True)
+        self.tree_artifacts.setUniformRowHeights(True)
+        self.tree_artifacts.setSortingEnabled(True)
+        self.tree_artifacts.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self.tree_artifacts.customContextMenuRequested.connect(self._on_artifacts_context_menu)
+        self.tree_artifacts.itemDoubleClicked.connect(self._on_artifacts_open_selected)
+        self.tree_artifacts.setMinimumHeight(180)
+        layout.addWidget(self.tree_artifacts)
+
+        # Action row
+        action_row = QtWidgets.QHBoxLayout()
+
+        btn_open = QtWidgets.QPushButton("Open File")
+        btn_open.setIcon(get_icon("fa6s.up-right-from-square", THEME["fg_main"]))
+        btn_open.clicked.connect(self._on_artifacts_open_selected)
+        action_row.addWidget(btn_open)
+
+        btn_copy_path = QtWidgets.QPushButton("Copy Path")
+        btn_copy_path.setIcon(get_icon("fa6s.copy", THEME["fg_main"]))
+        btn_copy_path.clicked.connect(self._on_artifacts_copy_path)
+        action_row.addWidget(btn_copy_path)
+
+        action_row.addStretch(1)
+
+        self.lbl_artifact_summary = QtWidgets.QLabel("No artifacts yet.")
+        self.lbl_artifact_summary.setStyleSheet(
+            f"color: {THEME['fg_muted']}; font-size: 9pt;"
+        )
+        action_row.addWidget(self.lbl_artifact_summary)
+
+        layout.addLayout(action_row)
+
+        # Wire auto-refresh when output dir changes
+        try:
+            self.ent_out_dir.editingFinished.connect(self._refresh_artifact_browser)
+            self.ent_out_dir.textChanged.connect(self._on_out_dir_text_changed_for_browser)
+        except Exception:
+            pass
+
+        # Initial fill (best effort)
+        QtCore.QTimer.singleShot(0, self._refresh_artifact_browser)
+        return group_box
+
+    def _on_out_dir_text_changed_for_browser(self, _text: str) -> None:
+        # Avoid hammering disk on every keystroke; rely on editingFinished
+        # combined with the Refresh button. Still update the displayed path.
+        try:
+            txt = self.ent_out_dir.text().strip()
+            display = txt or "—"
+            if len(display) > 70:
+                display = "..." + display[-67:]
+            self.lbl_browser_out_dir.setText(f"Output Directory: {display}")
+        except Exception:
+            pass
+
+    def refresh_artifacts(self, output_dir: str) -> None:
+        """
+        Public API used by the host window when the output directory changes.
+
+        Falls back gracefully if the directory does not exist yet.
+        """
+        try:
+            if output_dir:
+                self.ent_out_dir.setText(output_dir)
+        except Exception:
+            pass
+        self._refresh_artifact_browser()
+
+    def _refresh_artifact_browser(self) -> None:
+        try:
+            self.tree_artifacts.clear()
+        except Exception:
+            return
+
+        out_dir_text = ""
+        try:
+            out_dir_text = self.ent_out_dir.text().strip()
+        except Exception:
+            pass
+
+        display = out_dir_text or "—"
+        if len(display) > 70:
+            display = "..." + display[-67:]
+        self.lbl_browser_out_dir.setText(f"Output Directory: {display}")
+
+        if not out_dir_text:
+            self.lbl_artifact_summary.setText("No artifacts yet.")
+            return
+
+        out_dir = Path(out_dir_text)
+        if not out_dir.exists() or not out_dir.is_dir():
+            self.lbl_artifact_summary.setText("Output directory does not exist yet.")
+            return
+
+        try:
+            entries: List[Path] = []
+            for entry in out_dir.iterdir():
+                if entry.is_file():
+                    entries.append(entry)
+        except Exception as exc:
+            self.lbl_artifact_summary.setText(f"Could not list directory: {exc}")
+            return
+
+        if not entries:
+            self.lbl_artifact_summary.setText("No artifacts yet.")
+            return
+
+        plots = 0
+        reports = 0
+        data_files = 0
+
+        for entry in entries:
+            suffix = entry.suffix.lower()
+            type_label = self._TYPE_FOR_SUFFIX.get(suffix, "File")
+            try:
+                stat = entry.stat()
+                size_bytes = stat.st_size
+                mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                size_bytes = 0
+                mtime = "?"
+            size_str = self._format_size(size_bytes)
+
+            item = QtWidgets.QTreeWidgetItem(
+                [entry.name, type_label, size_str, mtime]
+            )
+            item.setData(0, QtCore.Qt.UserRole, str(entry))
+            try:
+                if type_label == "Plot":
+                    item.setIcon(0, get_icon("fa6s.image", THEME["fg_main"]))
+                    plots += 1
+                elif type_label == "Report":
+                    item.setIcon(0, get_icon("fa6s.file-pdf", THEME["fg_main"]))
+                    reports += 1
+                elif type_label in ("HDF5", "NPZ", "NPY", "CSV", "JSON"):
+                    item.setIcon(0, get_icon("fa6s.database", THEME["fg_main"]))
+                    data_files += 1
+                else:
+                    item.setIcon(0, get_icon("fa6s.file", THEME["fg_main"]))
+            except Exception:
+                pass
+            self.tree_artifacts.addTopLevelItem(item)
+
+        try:
+            for col in range(4):
+                self.tree_artifacts.resizeColumnToContents(col)
+        except Exception:
+            pass
+
+        self.lbl_artifact_summary.setText(
+            f"{plots} plots, {reports} reports, {data_files} data files"
+        )
+
+    @staticmethod
+    def _format_size(num_bytes: int) -> str:
+        """Render a byte count as a short, human readable string."""
+        try:
+            size = float(num_bytes)
+        except Exception:
+            return "?"
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if size < 1024.0 or unit == "TB":
+                if unit == "B":
+                    return f"{int(size)} {unit}"
+                return f"{size:.1f} {unit}"
+            size /= 1024.0
+        return "?"
+
+    def _on_artifacts_context_menu(self, pos: QtCore.QPoint) -> None:
+        item = self.tree_artifacts.itemAt(pos)
+        if item is None:
+            return
+        menu = QtWidgets.QMenu(self)
+        act_open = menu.addAction("Open File")
+        act_copy = menu.addAction("Copy Path")
+        chosen = menu.exec(self.tree_artifacts.viewport().mapToGlobal(pos))
+        if chosen is act_open:
+            self._on_artifacts_open_selected()
+        elif chosen is act_copy:
+            self._on_artifacts_copy_path()
+
+    def _selected_artifact_path(self) -> Optional[str]:
+        item = self.tree_artifacts.currentItem()
+        if item is None:
+            return None
+        data = item.data(0, QtCore.Qt.UserRole)
+        return str(data) if data else None
+
+    def _on_artifacts_open_selected(self, *_args) -> None:
+        path = self._selected_artifact_path()
+        if not path:
+            return
+        p = Path(path)
+        if not p.exists():
+            return
+        try:
+            url = QtCore.QUrl.fromLocalFile(str(p))
+            if QtGui.QDesktopServices.openUrl(url):
+                return
+        except Exception:
+            pass
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(p))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(p)])
+            else:
+                subprocess.Popen(["xdg-open", str(p)])
+        except Exception:
+            pass
+
+    def _on_artifacts_copy_path(self, *_args) -> None:
+        path = self._selected_artifact_path()
+        if not path:
+            return
+        try:
+            QtWidgets.QApplication.clipboard().setText(path)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

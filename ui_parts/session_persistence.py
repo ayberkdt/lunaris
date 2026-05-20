@@ -90,6 +90,7 @@ def collect_session_snapshot(
     spacecraft_cfg: Any,
     app_version: str,
     mc_page: Optional[Any] = None,
+    surrogate_page: Optional[Any] = None,
 ) -> dict[str, Any]:
     """
     Collect a full UI session payload suitable for JSON persistence.
@@ -166,6 +167,13 @@ def collect_session_snapshot(
         "gravity_config": gravity_cfg.to_dict(),
         # Monte Carlo configuration (absent when mc_page is not wired in)
         "monte_carlo": _safe_call({}, lambda: mc_page.get_data()) if mc_page is not None else {},
+        # Surrogate Studio page state (runs root + selected run).  Absent in
+        # older session files; restore code below tolerates that.
+        "surrogate_studio": (
+            _safe_call({"runs_root": "", "selected_run": ""}, lambda: surrogate_page.get_state())
+            if surrogate_page is not None
+            else {"runs_root": "", "selected_run": ""}
+        ),
     }
 
 
@@ -184,6 +192,7 @@ def apply_session_snapshot(
     project_root: Path,
     log_warning: Optional[Callable[[str], None]] = None,
     mc_page: Optional[Any] = None,
+    surrogate_page: Optional[Any] = None,
 ) -> None:
     """
     Restore a previously saved payload back into the modular UI.
@@ -295,6 +304,14 @@ def apply_session_snapshot(
             mc_page.load_data(mc_payload)
         except Exception as exc:
             warn(f"[Warning] Monte Carlo page restore failed: {exc}")
+
+    # Surrogate Studio page restore (optional / tolerant)
+    surrogate_payload = payload.get("surrogate_studio", {}) or {}
+    if surrogate_page is not None and surrogate_payload:
+        try:
+            surrogate_page.apply_state(surrogate_payload)
+        except Exception as exc:
+            warn(f"[Warning] Surrogate page restore failed: {exc}")
 
 
 def autodetect_data_state(project_root: Path, current_state: DataFilesState) -> tuple[DataFilesState, list[str]]:
