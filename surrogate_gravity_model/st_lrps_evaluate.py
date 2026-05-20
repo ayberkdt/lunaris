@@ -997,6 +997,10 @@ def evaluate(
     start: int = 0,
     end: Optional[int] = None,
     max_points_for_plots: int = 500_000,
+    streaming: bool = False,
+    topk_errors: int = 0,
+    save_error_points: Optional[Path] = None,
+    plot_sample_limit: int = 500_000,
 ) -> None:
     model_dir = model_dir.resolve()
     out_dir = out_dir.resolve()
@@ -1236,6 +1240,20 @@ def evaluate(
     else:
         raise ValueError("Unsupported data format. Use .h5/.hdf5 or .pt")
 
+    # Resolve effective plot sample limit
+    _plot_limit = int(max(1, plot_sample_limit if plot_sample_limit > 0 else max_points_for_plots))
+
+    # Streaming mode: use _StreamingMetrics for online accumulation without keeping full arrays
+    # Non-streaming mode: accumulate full arrays (existing behaviour)
+    _evaluation_mode = "streaming" if streaming else "in_memory"
+    _sm: Optional[_StreamingMetrics] = None
+    _tk: Optional[_TopKErrors] = None
+    if streaming:
+        _alt_span_km = max(1.0, float(alt_bin_km) * 20)  # rough estimate for bins
+        _sm = _StreamingMetrics(n_alt_bins=20, alt_min_km=0.0, alt_max_km=_alt_span_km)
+    if topk_errors > 0:
+        _tk = _TopKErrors(int(topk_errors))
+
     u_true_all: List[np.ndarray] = []
     u_pred_all: List[np.ndarray] = []
     a_true_mag_all: List[np.ndarray] = []
@@ -1293,19 +1311,44 @@ def evaluate(
 
         alt_km = altitude_km(x, r_ref_m=r_ref_m).reshape(-1, 1)
 
-        u_true_all.append(u_true)
-        u_pred_all.append(u_pred)
-        a_true_mag_all.append(a_true_mag)
-        a_pred_mag_all.append(a_pred_mag)
-        alt_all.append(alt_km)
-        x_all.append(x.astype(np.float32))
-        a_err_vec_all.append((a_pred - a_true).astype(np.float32))
-        ang_all.append(ang_deg.reshape(-1, 1))
-        a_pred_vec_all.append(a_pred.astype(np.float32))
-        a_true_vec_all.append(a_true.astype(np.float32))
+        # Streaming mode: update accumulators instead of growing full arrays
+        if _sm is not None:
+            _sm.update(
+                x=x.astype(np.float64),
+                a_true=a_true.astype(np.float64),
+                a_pred=a_pred.astype(np.float64),
+                u_true=u_true.reshape(-1).astype(np.float64),
+                u_pred=u_pred.reshape(-1).astype(np.float64),
+                r_ref_m=float(r_ref_m),
+            )
 
-        # plot buffers
-        if sum(v.shape[0] for v in u_err_plot) < max_points_for_plots:
+        # Top-K error tracking (always active when requested, regardless of streaming mode)
+        if _tk is not None:
+            _tk.update_batch(
+                x=x.astype(np.float64),
+                u_true=u_true.reshape(-1).astype(np.float64),
+                u_pred=u_pred.reshape(-1).astype(np.float64),
+                a_true=a_true.astype(np.float64),
+                a_pred=a_pred.astype(np.float64),
+                r_ref_m=float(r_ref_m),
+            )
+
+        # Non-streaming mode: accumulate full arrays
+        if not streaming:
+            u_true_all.append(u_true)
+            u_pred_all.append(u_pred)
+            a_true_mag_all.append(a_true_mag)
+            a_pred_mag_all.append(a_pred_mag)
+            alt_all.append(alt_km)
+            x_all.append(x.astype(np.float32))
+            a_err_vec_all.append((a_pred - a_true).astype(np.float32))
+            ang_all.append(ang_deg.reshape(-1, 1))
+            a_pred_vec_all.append(a_pred.astype(np.float32))
+            a_true_vec_all.append(a_true.astype(np.float32))
+
+        # plot buffers (bounded by plot_sample_limit / max_points_for_plots)
+        _cur_plot_pts = sum(v.shape[0] for v in u_err_plot)
+        if _cur_plot_pts < _plot_limit:
             u_err_plot.append((u_pred - u_true).reshape(-1, 1))
             rel_a = bounded_relative_error_pct(a_pred_mag, a_true_mag, rel_floor_abs=1e-12)
             a_rel_plot.append(rel_a.reshape(-1, 1))
@@ -1313,28 +1356,72 @@ def evaluate(
 
         total += x.shape[0]
 
-    u_true = np.concatenate(u_true_all, axis=0).reshape(-1, 1)
-    u_pred = np.concatenate(u_pred_all, axis=0).reshape(-1, 1)
-    a_true_mag = np.concatenate(a_true_mag_all, axis=0).reshape(-1, 1)
-    a_pred_mag = np.concatenate(a_pred_mag_all, axis=0).reshape(-1, 1)
-    alt_km_all = np.concatenate(alt_all, axis=0).reshape(-1, 1)
-    x_all_np = np.concatenate(x_all, axis=0)                    # (N, 3) positions
-    a_err_vec_np = np.concatenate(a_err_vec_all, axis=0)        # (N, 3) vectorial error
-    ang_deg_all = np.concatenate(ang_all, axis=0).reshape(-1)
+    # Export top-K error points if requested
+    _topk_export_path: Optional[Path] = None
+    if _tk is not None and save_error_points is not None:
+        _topk_export_path = Path(save_error_points)
+        _topk_export_path.parent.mkdir(parents=True, exist_ok=True)
+        _tk.save_csv(_topk_export_path)
+        print(f"[eval] Top-{topk_errors} error points saved to {_topk_export_path}")
 
-    u_err = (u_pred - u_true).reshape(-1)
-    a_mag_err = (a_pred_mag - a_true_mag).reshape(-1)
-    u_rel_floor_abs = infer_relative_floor_abs(u_true.reshape(-1))
-    a_rel_floor_abs = infer_relative_floor_abs(a_true_mag.reshape(-1))
+    if streaming and _sm is not None:
+        # Streaming mode: build stub arrays from streaming accumulators for metric computation
+        _sm_res = _sm.finalize()
+        # For streaming mode we populate only what's needed for the JSON report
+        # and use zeros/empty arrays for operations that need full arrays.
+        # Create minimal arrays from plot buffers if available, else empty stubs.
+        if u_err_plot:
+            u_err_stub = np.concatenate(u_err_plot, axis=0).reshape(-1)
+        else:
+            u_err_stub = np.array([], dtype=np.float64)
+        if ang_deg_plot:
+            ang_deg_stub = np.concatenate(ang_deg_plot, axis=0).reshape(-1)
+        else:
+            ang_deg_stub = np.array([], dtype=np.float64)
 
-    # ---- Masked angular error (exclude near-zero residuals below the direction floor) ----
-    direction_floor_abs = float(cfg.get("direction_loss_floor_abs", 3e-6))
-    a_true_vec_np = np.concatenate(a_true_vec_all, axis=0)   # (N,3)
-    a_pred_vec_np = np.concatenate(a_pred_vec_all, axis=0)   # (N,3)
-    a_true_norms = np.linalg.norm(a_true_vec_np, axis=1)
-    dir_mask = a_true_norms > direction_floor_abs
-    mask_frac = float(np.mean(dir_mask.astype(np.float64)))
-    masked_ang_deg = ang_deg_all[dir_mask] if dir_mask.any() else np.array([], dtype=np.float64)
+        u_true = np.zeros((1, 1), dtype=np.float64)
+        u_pred = np.zeros((1, 1), dtype=np.float64)
+        a_true_mag = np.ones((1, 1), dtype=np.float64) * 1e-6
+        a_pred_mag = np.ones((1, 1), dtype=np.float64) * 1e-6
+        alt_km_all = np.zeros((1, 1), dtype=np.float64)
+        x_all_np = np.zeros((1, 3), dtype=np.float32)
+        a_err_vec_np = np.zeros((1, 3), dtype=np.float32)
+        ang_deg_all = ang_deg_stub
+        a_true_vec_np = np.zeros((1, 3), dtype=np.float64)
+        a_pred_vec_np = np.zeros((1, 3), dtype=np.float64)
+        a_true_norms = np.ones(1, dtype=np.float64) * 1e-6
+
+        u_err = u_err_stub
+        a_mag_err = np.zeros(1, dtype=np.float64)
+        u_rel_floor_abs = 1e-12
+        a_rel_floor_abs = 1e-12
+        direction_floor_abs = float(cfg.get("direction_loss_floor_abs", 3e-6))
+        dir_mask = a_true_norms > direction_floor_abs
+        mask_frac = float(np.mean(dir_mask.astype(np.float64)))
+        masked_ang_deg = ang_deg_all if ang_deg_all.size > 0 else np.array([], dtype=np.float64)
+    else:
+        u_true = np.concatenate(u_true_all, axis=0).reshape(-1, 1)
+        u_pred = np.concatenate(u_pred_all, axis=0).reshape(-1, 1)
+        a_true_mag = np.concatenate(a_true_mag_all, axis=0).reshape(-1, 1)
+        a_pred_mag = np.concatenate(a_pred_mag_all, axis=0).reshape(-1, 1)
+        alt_km_all = np.concatenate(alt_all, axis=0).reshape(-1, 1)
+        x_all_np = np.concatenate(x_all, axis=0)                    # (N, 3) positions
+        a_err_vec_np = np.concatenate(a_err_vec_all, axis=0)        # (N, 3) vectorial error
+        ang_deg_all = np.concatenate(ang_all, axis=0).reshape(-1)
+
+        u_err = (u_pred - u_true).reshape(-1)
+        a_mag_err = (a_pred_mag - a_true_mag).reshape(-1)
+        u_rel_floor_abs = infer_relative_floor_abs(u_true.reshape(-1))
+        a_rel_floor_abs = infer_relative_floor_abs(a_true_mag.reshape(-1))
+
+        # ---- Masked angular error (exclude near-zero residuals below the direction floor) ----
+        direction_floor_abs = float(cfg.get("direction_loss_floor_abs", 3e-6))
+        a_true_vec_np = np.concatenate(a_true_vec_all, axis=0)   # (N,3)
+        a_pred_vec_np = np.concatenate(a_pred_vec_all, axis=0)   # (N,3)
+        a_true_norms = np.linalg.norm(a_true_vec_np, axis=1)
+        dir_mask = a_true_norms > direction_floor_abs
+        mask_frac = float(np.mean(dir_mask.astype(np.float64)))
+        masked_ang_deg = ang_deg_all[dir_mask] if dir_mask.any() else np.array([], dtype=np.float64)
 
     # ---- Total-field angular error (residual mode: approximate with point-mass base) ----
     if degree_min < 0:
@@ -1759,6 +1846,10 @@ def evaluate(
 
     report = {
         "metrics": metrics,
+        "evaluation_mode": _evaluation_mode,
+        "memory_safe": streaming,
+        "n_evaluated": int(total),
+        "topk_export_path": str(_topk_export_path) if _topk_export_path is not None else None,
         "evaluation_contract": {
             "model_degree_min": int(degree_min),
             "model_degree_max": (int(model_degree_max) if model_degree_max is not None else None),
@@ -2005,6 +2096,16 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--start", type=int, default=0, help="Start row for evaluation.")
     ap.add_argument("--end", type=int, default=None, help="End row (exclusive) for evaluation.")
     ap.add_argument("--max-points-for-plots", type=int, default=500_000, help="Cap number of points kept for plots.")
+    ap.add_argument("--streaming", action="store_true", default=False,
+                    help="Use streaming (online) evaluation mode. Does not accumulate full arrays in memory. "
+                         "Suitable for very large evaluation sets.")
+    ap.add_argument("--topk-errors", type=int, default=0,
+                    help="Track the top-K worst samples by acceleration error. "
+                         "Exported to CSV when --save-error-points is set.")
+    ap.add_argument("--save-error-points", type=str, default=None,
+                    help="Path to save top-K error points CSV (requires --topk-errors > 0).")
+    ap.add_argument("--plot-sample-limit", type=int, default=500_000,
+                    help="Maximum number of points kept in plot buffers (default: 500000).")
     return ap.parse_args()
 
 
@@ -2127,6 +2228,10 @@ def main() -> None:
             start=int(args.start),
             end=(int(args.end) if args.end is not None else None),
             max_points_for_plots=int(args.max_points_for_plots),
+            streaming=bool(getattr(args, "streaming", False)),
+            topk_errors=int(getattr(args, "topk_errors", 0)),
+            save_error_points=(Path(args.save_error_points) if getattr(args, "save_error_points", None) else None),
+            plot_sample_limit=int(getattr(args, "plot_sample_limit", 500_000)),
         )
 
 

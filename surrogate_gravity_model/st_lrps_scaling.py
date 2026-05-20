@@ -7,7 +7,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import h5py
 import numpy as np
@@ -214,7 +214,18 @@ def fit_scaler_streaming(
     seed: int = 0,
     chunk_rows: int = 131_072,
     degree_min: int = -1,
+    target_mode: "Optional[str]" = None,
+    degree_max: "Optional[int]" = None,
 ) -> "ScalerPack":
+    """Stream-fit isometric scalers on residuals ΔU/Δa (baseline already subtracted).
+
+    Parameters
+    ----------
+    target_mode : str, optional
+        The dataset target mode ("residual" or "full"). Stored in provenance.
+    degree_max : int, optional
+        Maximum SH degree of the dataset. Stored in provenance.
+    """
     """Stream-fit isometric scalers on residuals ΔU/Δa (baseline already subtracted)."""
     logger.info(f"Fitting isometric scaler on {n_fit:,} rows from '{h5_path.name}'...")
     logger.info(f"  Residual mode: subtracting point-mass baseline (mu_si={mu_si:.6e}, a_sign={a_sign:+.1f})")
@@ -303,6 +314,9 @@ def fit_scaler_streaming(
         "fit_rows": seen_rows,
         "fit_seed": int(seed),
         "unit_system": str(getattr(meta, "unit_system", "unknown")),
+        "target_mode": str(target_mode) if target_mode is not None else None,
+        "degree_min": int(degree_min),
+        "degree_max": int(degree_max) if degree_max is not None else None,
     }
     return ScalerPack(
         x=IsometricScaleParams(mean=x_mean.tolist(), scale=float(x_scale)),

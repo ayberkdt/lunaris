@@ -176,6 +176,12 @@ class TrainConfig:
     collocation_laplacian_weight: float = 0.0
     laplacian_mode: str = "diagnostic"    # "off" | "diagnostic" | "train"
     collocation_laplacian_every: int = 25  # optimizer steps between collocation Laplacian evaluations
+    # Collocation altitude bounds (defaults to altitude_min_km / altitude_max_km when None)
+    collocation_alt_min_km: Optional[float] = None
+    collocation_alt_max_km: Optional[float] = None
+    # Separate control over collocation samples (alias for laplacian_subset_size in collocation call)
+    collocation_laplacian_samples: int = 512
+    collocation_laplacian_hutchinson_samples: int = 4
 
     # Residual SIREN blocks — wraps hidden layers in SirenResBlock.
     # Recommended for depth >= 6; adds LayerNorm + zero-init skip per block.
@@ -387,6 +393,19 @@ def parse_args() -> TrainConfig:
         help="Laplacian regularization mode: off=skip, diagnostic=log only, train=backprop (requires create_graph=True).")
     group_lap.add_argument("--collocation-laplacian-every", type=int, default=25,
         help="Optimizer steps between collocation Laplacian evaluations (default: 25).")
+    group_lap.add_argument("--collocation-alt-min-km", type=float, default=None,
+        help="Min altitude in km for collocation Laplacian points (default: use altitude-min-km).")
+    group_lap.add_argument("--collocation-alt-max-km", type=float, default=None,
+        help="Max altitude in km for collocation Laplacian points (default: use altitude-max-km).")
+    group_lap.add_argument("--collocation-laplacian-weight", type=float,
+        default=_TC_DEFAULTS.get('collocation_laplacian_weight', 0.0),
+        help="Weight applied to collocation Laplacian loss when mode='train'.")
+    group_lap.add_argument("--collocation-laplacian-samples", type=int,
+        default=_TC_DEFAULTS.get('collocation_laplacian_samples', 512),
+        help="Number of collocation points for the Laplacian estimator (default: 512).")
+    group_lap.add_argument("--collocation-laplacian-hutchinson-samples", type=int,
+        default=_TC_DEFAULTS.get('collocation_laplacian_hutchinson_samples', 4),
+        help="Hutchinson samples per collocation Laplacian estimate (default: 4).")
 
     # PINN architecture
     group_pinn = ap.add_argument_group("PINN Architecture (residual & multi-scale SIREN)")
@@ -633,6 +652,11 @@ def parse_args() -> TrainConfig:
         hybrid_direction_alpha=float(a.hybrid_direction_alpha),
         laplacian_mode=str(a.laplacian_mode),
         collocation_laplacian_every=max(1, int(a.collocation_laplacian_every)),
+        collocation_alt_min_km=(float(a.collocation_alt_min_km) if a.collocation_alt_min_km is not None else None),
+        collocation_alt_max_km=(float(a.collocation_alt_max_km) if a.collocation_alt_max_km is not None else None),
+        collocation_laplacian_weight=float(a.collocation_laplacian_weight),
+        collocation_laplacian_samples=max(1, int(a.collocation_laplacian_samples)),
+        collocation_laplacian_hutchinson_samples=max(1, int(a.collocation_laplacian_hutchinson_samples)),
     )
 
 

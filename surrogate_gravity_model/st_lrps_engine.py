@@ -43,10 +43,13 @@ try:
         _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
         _resolve_lunar_dataset_contract, collate_h5, infer_a_sign_from_data,
     )
-    from .st_lrps_losses import GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor
+    from .st_lrps_losses import (
+        GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
+        collocation_laplacian_loss,
+    )
     from .st_lrps_models import (
         FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
-        _compute_harmonic_w0_bands, _get_output_head_params,
+        _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
     )
     from .st_lrps_scaling import ScalerPack, fit_scaler_streaming
 except ImportError:  # pragma: no cover
@@ -57,10 +60,13 @@ except ImportError:  # pragma: no cover
         _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
         _resolve_lunar_dataset_contract, collate_h5, infer_a_sign_from_data,
     )
-    from st_lrps_losses import GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor
+    from st_lrps_losses import (
+        GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
+        collocation_laplacian_loss,
+    )
     from st_lrps_models import (
         FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
-        _compute_harmonic_w0_bands, _get_output_head_params,
+        _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
     )
     from st_lrps_scaling import ScalerPack, fit_scaler_streaming
 
@@ -148,6 +154,8 @@ class STLRPSTrainer:
         weights: "GradNormWeights",
         device: torch.device,
         cfg: TrainConfig,
+        collocation_r_min_m: Optional[float] = None,
+        collocation_r_max_m: Optional[float] = None,
     ):
         self.model = model
         self.loss_fn = loss_fn
@@ -160,6 +168,16 @@ class STLRPSTrainer:
             accel_ramp_epochs=cfg.accel_ramp_epochs,
             accel_min_factor=float(getattr(cfg, "accel_min_factor", 0.05)),
         )
+        # Collocation Laplacian bounds
+        self.collocation_r_min_m: Optional[float] = collocation_r_min_m
+        self.collocation_r_max_m: Optional[float] = collocation_r_max_m
+        # Backward compat: if use_laplacian_regularization=True but no laplacian_mode, treat as "diagnostic"
+        _lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
+        if _lmode not in ("off", "diagnostic", "train"):
+            _lmode = "diagnostic"
+        if _lmode == "off" and bool(getattr(cfg, "use_laplacian_regularization", False)):
+            _lmode = "diagnostic"
+        self.laplacian_mode: str = _lmode
         
         # bfloat16 instead of float16: SIREN sin(w0 · x) overflows fp16 mantissa.
         # bfloat16 has fp32 exponent range; disable AMP entirely if unavailable.
@@ -200,8 +218,11 @@ class STLRPSTrainer:
         total_loss = total_opt_loss = total_u = total_a = total_grad_norm = 0.0
         total_dir = total_cossim = total_radial = total_cross = total_lap = 0.0
         total_mask_frac = total_a_norm_mean = total_angular_mean_deg = 0.0
+        total_col_lap_diag = total_col_lap_train = 0.0
+        col_lap_diag_count = col_lap_train_count = 0
         a_norm_max = 0.0
         n_batches = 0
+        optimizer_steps_done = 0
         samples_done = 0
         last_stats: Dict[str, float] = {}
 
@@ -287,6 +308,9 @@ class STLRPSTrainer:
                         "mse_u": float("nan"), "mse_a": float("nan"),
                         "loss_dir": 0.0, "cossim_mean": 0.0,
                         "loss_radial": 0.0, "loss_cross": 0.0, "loss_laplacian": 0.0,
+                        "loss_laplacian_diag": 0.0, "loss_laplacian_train": 0.0,
+                        "lambda_laplacian_eff": float(getattr(self.cfg, "collocation_laplacian_weight", 0.0)),
+                        "collocation_laplacian_applied": False,
                         "lambda_dir_eff": lambda_dir_eff,
                         "lr": float(self.optimizer.param_groups[0]["lr"]),
                         "w_u": float(last_stats.get("w_u", self.cfg.w_u)),
@@ -295,12 +319,105 @@ class STLRPSTrainer:
                         "accel_factor": float(accel_factor),
                         "grad_norm": 0.0,
                         "nan_detected": True,
+                        "val_base_loss": float("nan"),
+                        "val_physics_loss": float("nan"),
+                        "val_total_loss": float("nan"),
+                        "train_base_loss": float("nan"),
+                        "train_physics_loss": float("nan"),
                     }
 
                 if is_train:
+                    # Collocation Laplacian: computed BEFORE backward so it can be added to
+                    # the loss in "train" mode, or logged only in "diagnostic" mode.
+                    _col_lap_weight = float(getattr(self.cfg, "collocation_laplacian_weight", 0.0))
+                    _col_lap_every = max(1, int(getattr(self.cfg, "collocation_laplacian_every", 25)))
+                    _col_lap_active = (
+                        self.laplacian_mode in ("diagnostic", "train")
+                        and self.collocation_r_min_m is not None
+                        and self.collocation_r_max_m is not None
+                        and optimizer_steps_done % _col_lap_every == 0
+                    )
+                    _col_lap_loss_val: Optional[torch.Tensor] = None
+                    _col_lap_scalar = 0.0
+                    if _col_lap_active:
+                        _n_pts = max(1, int(getattr(self.cfg, "collocation_laplacian_samples",
+                                                     getattr(self.cfg, "laplacian_subset_size", 512))))
+                        _n_hutch = max(1, int(getattr(self.cfg, "collocation_laplacian_hutchinson_samples",
+                                                       getattr(self.cfg, "n_hutchinson_samples", 4))))
+                        try:
+                            # Always use the ScalerPack from loss_fn for consistent scaling
+                            _cl_loss = collocation_laplacian_loss(
+                                self.model, self.loss_fn,
+                                r_min_m=float(self.collocation_r_min_m),
+                                r_max_m=float(self.collocation_r_max_m),
+                                n_points=_n_pts,
+                                device=self.device,
+                                dtype=DTYPE,
+                                n_hutchinson=_n_hutch,
+                                mode=self.laplacian_mode,
+                            )
+                            _col_lap_scalar = float(_cl_loss.detach().item())
+                            if math.isfinite(_col_lap_scalar):
+                                if self.laplacian_mode == "train":
+                                    total_col_lap_train += _col_lap_scalar
+                                    col_lap_train_count += 1
+                                    _col_lap_loss_val = _cl_loss
+                                else:  # diagnostic
+                                    total_col_lap_diag += _col_lap_scalar
+                                    col_lap_diag_count += 1
+                        except Exception as _col_e:
+                            logger.warning(f"[train] collocation_laplacian_loss failed: {_col_e}")
+
                     # Scale loss by accumulation steps so gradients average over the
                     # effective batch rather than summing (preserves LR invariance).
                     scaled_loss = loss / float(grad_accum)
+
+                    # Add collocation laplacian to loss in "train" mode
+                    if _col_lap_loss_val is not None and self.laplacian_mode == "train" and _col_lap_weight > 0.0:
+                        scaled_loss = scaled_loss + (_col_lap_weight * _col_lap_loss_val) / float(grad_accum)
+                        # NaN/Inf guard for collocation Laplacian contribution
+                        _cl_check = float(scaled_loss.item())
+                        if math.isnan(_cl_check) or math.isinf(_cl_check):
+                            logger.error(
+                                f"[train] NaN/Inf after adding collocation Laplacian at epoch={epoch+1} "
+                                f"batch={n_batches}. Saving failure manifest and stopping."
+                            )
+                            import json as _json_mod
+                            try:
+                                _fm_path = Path(self.cfg.out) / "failure_manifest.json"
+                                _fm_path.parent.mkdir(parents=True, exist_ok=True)
+                                import dataclasses as _dc_mod
+                                _fm_path.write_text(
+                                    _json_mod.dumps({
+                                        "epoch": epoch, "batch": n_batches,
+                                        "reason": "nan_loss_after_collocation_laplacian",
+                                        "collocation_laplacian_scalar": _col_lap_scalar,
+                                    }, indent=2, default=str)
+                                )
+                            except Exception:
+                                pass
+                            return {
+                                "loss": float("nan"), "objective_loss": float("nan"),
+                                "mse_u": float("nan"), "mse_a": float("nan"),
+                                "loss_dir": 0.0, "cossim_mean": 0.0,
+                                "loss_radial": 0.0, "loss_cross": 0.0, "loss_laplacian": 0.0,
+                                "loss_laplacian_diag": 0.0, "loss_laplacian_train": _col_lap_scalar,
+                                "lambda_laplacian_eff": _col_lap_weight,
+                                "collocation_laplacian_applied": True,
+                                "lambda_dir_eff": lambda_dir_eff,
+                                "lr": float(self.optimizer.param_groups[0]["lr"]),
+                                "w_u": float(last_stats.get("w_u", self.cfg.w_u)),
+                                "w_a": float(last_stats.get("w_a", self.cfg.w_a)),
+                                "w_a_raw": float(last_stats.get("w_a_raw", self.cfg.w_a)),
+                                "accel_factor": float(accel_factor),
+                                "grad_norm": 0.0,
+                                "nan_detected": True,
+                                "val_base_loss": float("nan"),
+                                "val_physics_loss": float("nan"),
+                                "val_total_loss": float("nan"),
+                                "train_base_loss": float("nan"),
+                                "train_physics_loss": float("nan"),
+                            }
 
                     if self.use_amp and self.scaler_amp is not None:
                         self.scaler_amp.scale(scaled_loss).backward()
@@ -314,6 +431,7 @@ class STLRPSTrainer:
                                 grad_norm = torch.tensor(0.0, device=self.device)
                             self.scaler_amp.step(self.optimizer)
                             self.scaler_amp.update()
+                            optimizer_steps_done += 1
                             total_grad_norm += float(grad_norm)
                             if float(grad_norm) > 50.0:
                                 logger.warning(
@@ -331,6 +449,7 @@ class STLRPSTrainer:
                             else:
                                 grad_norm = torch.tensor(0.0, device=self.device)
                             self.optimizer.step()
+                            optimizer_steps_done += 1
                             total_grad_norm += float(grad_norm)
                             if float(grad_norm) > 50.0:
                                 logger.warning(
@@ -416,6 +535,12 @@ class STLRPSTrainer:
             f" accel_f={accel_factor:.3f}{dir_summary}{extra_summary}"
         )
 
+        _n_col_diag = max(1, col_lap_diag_count)
+        _n_col_train = max(1, col_lap_train_count)
+        _col_lap_diag_avg = total_col_lap_diag / _n_col_diag if col_lap_diag_count > 0 else 0.0
+        _col_lap_train_avg = total_col_lap_train / _n_col_train if col_lap_train_count > 0 else 0.0
+        _col_lap_applied = (col_lap_diag_count > 0 or col_lap_train_count > 0)
+        _col_lap_weight_eff = float(getattr(self.cfg, "collocation_laplacian_weight", 0.0))
         return {
             "loss": total_loss / n_safe,
             "objective_loss": total_opt_loss / n_safe,
@@ -430,6 +555,10 @@ class STLRPSTrainer:
             "loss_radial": total_radial / n_safe,
             "loss_cross": total_cross / n_safe,
             "loss_laplacian": total_lap / n_safe,
+            "loss_laplacian_diag": _col_lap_diag_avg,
+            "loss_laplacian_train": _col_lap_train_avg,
+            "lambda_laplacian_eff": _col_lap_weight_eff,
+            "collocation_laplacian_applied": _col_lap_applied,
             "lambda_dir_eff": lambda_dir_eff,
             "lr": float(self.optimizer.param_groups[0]["lr"]),
             "w_u": float(last_stats.get("w_u", self.cfg.w_u)),
@@ -438,8 +567,10 @@ class STLRPSTrainer:
             "accel_factor": float(last_stats.get("accel_factor", accel_factor)),
             "grad_norm": total_grad_norm / n_safe,
             "val_base_loss": (total_u + total_a) / n_safe,  # U + accel MSE only
-            "val_physics_loss": (total_dir + total_radial + total_cross + total_lap) / n_safe,
+            "val_physics_loss": (total_dir + total_radial + total_cross + total_lap + _col_lap_train_avg) / n_safe,
             "val_total_loss": total_loss / n_safe,   # alias for "loss"
+            "train_base_loss": (total_u + total_a) / n_safe,
+            "train_physics_loss": (total_dir + total_radial + total_cross + total_lap + _col_lap_train_avg) / n_safe,
         }
 
 def _lr_multiplier_for_epoch(
@@ -912,6 +1043,8 @@ def train(cfg: TrainConfig) -> None:
             use_si=cfg.use_si, mu_si=mu_val, a_sign=a_sign,
             n_fit=cfg.fit_rows, seed=cfg.fit_seed, chunk_rows=cfg.fit_chunk_rows,
             degree_min=degree_min_val,
+            target_mode=_effective_target,
+            degree_max=int(meta.degree_max if meta.degree_max is not None else (meta.requested_degree or -1)),
         )
         scaler.save_json(scaler_path)
 
@@ -1041,64 +1174,44 @@ def train(cfg: TrainConfig) -> None:
         train_loader = DataLoader(train_ds, **_tr_kw)
         val_loader   = DataLoader(val_ds,   **_va_kw)
 
-    # 9. Build model (SIREN backbone + optional Fourier embedding)
-    # Mutual exclusion: SIREN (activation="sine") + RFF = sin(sin(...)) catastrophic OOD failure
-    if cfg.activation.lower() == "sine" and cfg.use_fourier:
-        raise ValueError(
-            "activation='sine' (SIREN) and use_fourier=True are mutually exclusive. "
-            "Stacking RFF on a SIREN creates a sin-of-sin composition that causes "
-            "catastrophic out-of-distribution overfitting. "
-            "Use one of:\n"
-            "  (1) activation='silu'/'tanh' + use_fourier=True\n"
-            "  (2) activation='sine' + use_fourier=False  (recommended default)"
-        )
+    # 9. Build model via the shared factory (build_model_from_config) — authoritative builder
+    # used by evaluator and force model. This ensures SH/radial encoding flags are honoured.
+    # The SIREN+Fourier mutual exclusion check is inside build_model_from_config().
+    model = build_model_from_config(
+        cfg,
+        in_dim=3,
+        device=device,
+        dtype=DTYPE,
+    )
 
-    embedding: Optional[FourierInputEmbedding] = None
-    backbone_in_dim = 3
+    # Log architecture details (equivalent to old manual logging, but from the built model)
+    _n_bands_built = max(1, int(getattr(cfg, "n_bands", 1)))
+    _use_res_built = bool(getattr(cfg, "use_residual_blocks", False))
     if cfg.use_fourier:
-        embedding = FourierInputEmbedding(
-            in_dim=3, n_features=cfg.fourier_n_features,
-            sigma=cfg.fourier_sigma, seed=cfg.fourier_seed,
-            append_raw=cfg.fourier_append_raw,
+        logger.info(
+            f"Fourier embedding: n_features={cfg.fourier_n_features}, "
+            f"sigma={cfg.fourier_sigma}, append_raw={cfg.fourier_append_raw}"
         )
-        backbone_in_dim = embedding.out_dim
-        logger.info(f"Fourier embedding: n_features={cfg.fourier_n_features}, "
-                    f"sigma={cfg.fourier_sigma}, append_raw={cfg.fourier_append_raw}, out_dim={backbone_in_dim}")
-
-    n_bands   = max(1, int(getattr(cfg, "n_bands", 1)))
-    use_res   = bool(getattr(cfg, "use_residual_blocks", False))
-
     if cfg.activation.lower() == "sine":
-        if n_bands > 1:
-            degree_max_meta = int(meta.requested_degree) if meta.requested_degree else 50
-            w0_bands = _compute_harmonic_w0_bands(n_bands, degree_min_val, degree_max_meta)
+        if _n_bands_built > 1:
+            degree_max_meta_log = int(meta.requested_degree) if meta.requested_degree else 50
+            w0_bands_log = _compute_harmonic_w0_bands(_n_bands_built, degree_min_val, degree_max_meta_log)
             logger.info(
-                f"Building Multi-Scale SIREN: n_bands={n_bands}, w0_bands={w0_bands}, "
-                f"depth={cfg.depth}, hidden={cfg.hidden}, in_dim={backbone_in_dim}"
-            )
-            backbone: nn.Module = MultiScaleSirenMLP(
-                in_dim=backbone_in_dim, hidden=cfg.hidden, depth=cfg.depth,
-                w0_bands=w0_bands, dropout=cfg.dropout, use_residual=True,
+                f"Built Multi-Scale SIREN: n_bands={_n_bands_built}, w0_bands={w0_bands_log}, "
+                f"depth={cfg.depth}, hidden={cfg.hidden}"
             )
         else:
             logger.info(
-                f"Building SIREN backbone: depth={cfg.depth}, hidden={cfg.hidden}, "
+                f"Built SIREN backbone: depth={cfg.depth}, hidden={cfg.hidden}, "
                 f"w0_first={cfg.w0_first}, w0_hidden={cfg.w0_hidden}, "
-                f"residual_blocks={use_res}, in_dim={backbone_in_dim}"
-            )
-            backbone = SirenMLP(
-                in_dim=backbone_in_dim, hidden=cfg.hidden, depth=cfg.depth,
-                w0_first=cfg.w0_first, w0_hidden=cfg.w0_hidden,
-                dropout=cfg.dropout, use_residual=use_res,
+                f"residual_blocks={_use_res_built}"
             )
     else:
-        logger.info(f"Building MLP backbone: depth={cfg.depth}, hidden={cfg.hidden}, "
-                    f"activation={cfg.activation}, in_dim={backbone_in_dim}")
-        backbone = MLP(
-            in_dim=backbone_in_dim, hidden=cfg.hidden, depth=cfg.depth,
-            activation=cfg.activation, dropout=cfg.dropout
+        logger.info(
+            f"Built MLP backbone: depth={cfg.depth}, hidden={cfg.hidden}, activation={cfg.activation}"
         )
-    model = PhysicsNet(backbone=backbone, embedding=embedding).to(device=device, dtype=DTYPE)
+    _total_params = sum(p.numel() for p in model.parameters())
+    logger.info(f"Total parameters: {_total_params:,}")
 
     weights = GradNormWeights(
         w_u=cfg.w_u,
@@ -1254,7 +1367,38 @@ def train(cfg: TrainConfig) -> None:
         json.dump(payload, f, indent=2)
 
     # 11. Train
-    trainer = STLRPSTrainer(model, loss_fn, opt, weights, device, cfg)
+    # Resolve collocation altitude bounds
+    _col_r_min_m: Optional[float] = None
+    _col_r_max_m: Optional[float] = None
+    _col_lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
+    if _col_lmode not in ("off", "diagnostic", "train"):
+        _col_lmode = "diagnostic"
+    if _col_lmode in ("diagnostic", "train"):
+        _r_ref_col = float(resolved_r_ref_m)
+        _col_alt_min = getattr(cfg, "collocation_alt_min_km", None)
+        _col_alt_max = getattr(cfg, "collocation_alt_max_km", None)
+        _col_alt_min_resolved = float(_col_alt_min) if _col_alt_min is not None else float(cfg.altitude_min_km)
+        _col_alt_max_resolved = float(_col_alt_max) if _col_alt_max is not None else float(cfg.altitude_max_km)
+        if _col_lmode == "train":
+            if _col_alt_min_resolved is None or _col_alt_max_resolved is None:
+                raise ValueError(
+                    "laplacian_mode='train' requires collocation altitude bounds to be resolvable. "
+                    "Set --collocation-alt-min-km / --collocation-alt-max-km or "
+                    "--altitude-min-km / --altitude-max-km."
+                )
+        _col_r_min_m = _r_ref_col + _col_alt_min_resolved * 1000.0
+        _col_r_max_m = _r_ref_col + _col_alt_max_resolved * 1000.0
+        logger.info(
+            f"Collocation Laplacian: mode={_col_lmode}, r_min={_col_r_min_m:.3e} m, "
+            f"r_max={_col_r_max_m:.3e} m "
+            f"(alt [{_col_alt_min_resolved:.1f}, {_col_alt_max_resolved:.1f}] km)"
+        )
+
+    trainer = STLRPSTrainer(
+        model, loss_fn, opt, weights, device, cfg,
+        collocation_r_min_m=_col_r_min_m,
+        collocation_r_max_m=_col_r_max_m,
+    )
 
     # Resolve the epoch from which best-checkpoint tracking and patience counting begin.
     # Auto mode waits until direction loss has started, completed its ramp, and
@@ -1439,6 +1583,9 @@ def train(cfg: TrainConfig) -> None:
                 else:
                     _ckpt_score = float(va["loss"])
 
+                # Set val_checkpoint_score in va dict for logging/CSV
+                va["val_checkpoint_score"] = float(_ckpt_score)
+
                 if _ckpt_score < best_val:
                     best_val = _ckpt_score
                     best_epoch = int(epoch)
@@ -1449,12 +1596,14 @@ def train(cfg: TrainConfig) -> None:
                     state["best_score_name"] = str(_best_metric_mode)
                     state["best_val_base_loss"] = float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0)))
                     state["best_val_total_loss"] = float(va.get("val_total_loss", va["loss"]))
+                    state["best_val_physics_loss"] = float(va.get("val_physics_loss", 0.0))
                     state["config"]["best_val_loss"] = best_val
                     state["config"]["best_epoch"] = best_epoch + 1
                     state["config"]["best_score"] = float(_ckpt_score)
                     state["config"]["best_score_name"] = str(_best_metric_mode)
                     state["config"]["best_val_base_loss"] = state["best_val_base_loss"]
                     state["config"]["best_val_total_loss"] = state["best_val_total_loss"]
+                    state["config"]["best_val_physics_loss"] = state["best_val_physics_loss"]
                     state["config"]["epochs_since_improvement"] = 0
                     torch.save(state, best_path)
                     logger.info(f"[checkpoint] best updated: val_ref={va['loss']:.6e} score={_ckpt_score:.6e} epoch={best_epoch + 1}")

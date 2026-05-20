@@ -119,13 +119,38 @@ class SurrogateForceModel:
         self.degree_min = int(cfg.get("degree_min", -1))
         self.r_ref_m = float(cfg.get("resolved_r_ref_m", R_MOON_SI))
 
-        # Training altitude bounds (loaded from config.json if available)
+        # Training altitude bounds: resolved from 3 sources in priority order.
+        # Priority 1: explicit top-level config fields
+        # Priority 2: dataset_meta block
+        # Priority 3: scaler provenance
         self._train_alt_min_km: Optional[float] = None
         self._train_alt_max_km: Optional[float] = None
-        if "altitude_min_km" in cfg:
-            self._train_alt_min_km = float(cfg["altitude_min_km"])
-        if "altitude_max_km" in cfg:
-            self._train_alt_max_km = float(cfg["altitude_max_km"])
+
+        # Priority 1: explicit config fields
+        _v = cfg.get("altitude_min_km")
+        if _v is not None:
+            self._train_alt_min_km = float(_v)
+        _v = cfg.get("altitude_max_km")
+        if _v is not None:
+            self._train_alt_max_km = float(_v)
+
+        # Priority 2: dataset_meta block
+        _meta = cfg.get("dataset_meta") or {}
+        _v = _meta.get("alt_min_km")
+        if _v is not None and self._train_alt_min_km is None:
+            self._train_alt_min_km = float(_v)
+        _v = _meta.get("alt_max_km")
+        if _v is not None and self._train_alt_max_km is None:
+            self._train_alt_max_km = float(_v)
+
+        # Priority 3: scaler provenance
+        _prov = getattr(scaler, "provenance", {}) or {}
+        _v = _prov.get("alt_min_km")
+        if _v is not None and self._train_alt_min_km is None:
+            self._train_alt_min_km = float(_v)
+        _v = _prov.get("alt_max_km")
+        if _v is not None and self._train_alt_max_km is None:
+            self._train_alt_max_km = float(_v)
 
     def _predict_chunk(self, x_t: torch.Tensor) -> tuple:
         """Forward + autograd for one chunk. Returns (delta_u_np, delta_a_np)."""
@@ -213,7 +238,13 @@ class SurrogateForceModel:
         delta_a : np.ndarray, shape (3,) or (N,3)
             Residual acceleration in m/s^2.
         """
-        single = np.asarray(x_m).ndim == 1
+        x_arr = np.asarray(x_m, dtype=np.float64)
+        if not np.all(np.isfinite(x_arr)):
+            raise ValueError(
+                "predict_residual_accel: Input positions contain NaN or Inf values. "
+                "All position components must be finite real numbers."
+            )
+        single = x_arr.ndim == 1
         _, da = self._chunked_predict(x_m)
         return da[0] if single else da
 
@@ -309,6 +340,11 @@ class SurrogateForceModel:
         """
         single = np.asarray(x_m).ndim == 1
         x_arr = np.asarray(x_m, dtype=np.float64)
+        if not np.all(np.isfinite(x_arr)):
+            raise ValueError(
+                "predict_total_accel: Input positions contain NaN or Inf values. "
+                "All position components must be finite real numbers."
+            )
         if x_arr.ndim == 1:
             x_arr = x_arr[None, :]
 

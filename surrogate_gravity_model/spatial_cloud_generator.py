@@ -728,6 +728,22 @@ def parse_args() -> argparse.Namespace:
         help="New samples generated per source error point (default: 50).")
     grp_active.add_argument("--active-max-source-points", type=int, default=1000,
         help="Maximum number of source error points to use (default: 1000).")
+    grp_active.add_argument("--active-gfc-file", type=str, default=None,
+        help="Path to ICGEM GFC file used for SH labeling of active-refinement points.")
+    grp_active.add_argument("--active-degree-max", type=int, default=None,
+        help="Maximum SH degree for active-refinement labeling (default: uses --degree-max).")
+    grp_active.add_argument("--active-degree-min", type=int, default=None,
+        help="Baseline SH degree for residual active-refinement labeling (default: uses --degree-min).")
+    grp_active.add_argument("--active-out", type=str, default=None,
+        help="Output HDF5 path for active-refinement labeled cloud (default: <out_dir>/active_refinement_labeled.h5).")
+    grp_active.add_argument("--active-seed", type=int, default=42,
+        help="Random seed for active-refinement jitter generation (default: 42).")
+    grp_active.add_argument("--active-clip-to-alt-range", action="store_true", default=False,
+        help="Clip jittered active-refinement points to the configured altitude range before labeling.")
+    grp_active.add_argument("--active-reject-outside-alt-range", action="store_true", default=False,
+        help="Reject (discard) jittered points outside the configured altitude range instead of clipping.")
+    grp_active.add_argument("--active-save-positions-only", action="store_true", default=False,
+        help="Debug flag: save only the jittered positions as NPZ without SH labeling, then exit.")
 
     return p.parse_args()
 
@@ -1770,9 +1786,21 @@ def _jitter_around_point(
 
 
 def _run_active_refinement(a, ap) -> None:
-    """Generate active refinement cloud from evaluator error points."""
+    """Generate active refinement cloud from evaluator error points, with SH labeling.
+
+    Produces a labeled HDF5 file in the same column format as normal clouds:
+    [x, y, z, U, ax, ay, az] (full field) or [x, y, z, dU, dax, day, daz] (residual),
+    depending on target_mode derived from degree_min/degree_max settings.
+
+    If --active-save-positions-only is set, saves only positions NPZ (debug mode).
+    """
     from pathlib import Path
     import json
+    try:
+        import h5py as _h5py
+    except ImportError:
+        ap.error("h5py is required for active refinement HDF5 output. pip install h5py")
+
     error_path = Path(a.active_from_error_points)
     if not error_path.exists():
         ap.error(f"Error points file not found: {error_path}")
@@ -1780,7 +1808,8 @@ def _run_active_refinement(a, ap) -> None:
     src = _load_error_points(error_path, max_source=int(a.active_max_source_points))
     n_src = src.shape[0]
     n_per = int(a.active_samples_per_point)
-    rng = np.random.default_rng(getattr(a, "seed", 42))
+    _seed = int(getattr(a, "active_seed", getattr(a, "seed", 42)))
+    rng = np.random.default_rng(_seed)
 
     print(f"[active-refinement] {n_src} source points x {n_per} samples = {n_src * n_per} total")
 
@@ -1796,34 +1825,194 @@ def _run_active_refinement(a, ap) -> None:
         all_pts.append(pts)
 
     x_all = np.vstack(all_pts)  # (N_total, 3)
-    print(f"[active-refinement] Generated {x_all.shape[0]} positions. Now labelling with SH model...")
+    total_generated = int(x_all.shape[0])
+    print(f"[active-refinement] Generated {total_generated} positions.")
 
-    # Label with SH using existing dataset config
-    # This requires the GFC file — use same config path as normal generation
-    # For simplicity, print the positions and metadata; actual SH evaluation
-    # requires the same GFC + numba infrastructure as the main generator.
-    # Emit a metadata JSON so the caller knows the provenance.
-    out_dir = Path(getattr(a, "out", ".") or ".")
+    out_dir = Path(getattr(a, "active_out", None) or getattr(a, "out", ".") or ".")
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Altitude clipping/rejection
+    _alt_min_km = float(getattr(a, "altitude_min_km", 0.0) or 0.0)
+    _alt_max_km = float(getattr(a, "altitude_max_km", 10000.0) or 10000.0)
+    _r_ref_m = float(MU_MOON_SI ** 0.0 * R_MOON_SI)  # = R_MOON_SI
+    _clip = bool(getattr(a, "active_clip_to_alt_range", False))
+    _reject = bool(getattr(a, "active_reject_outside_alt_range", False))
+
+    if _clip or _reject:
+        r_norms = np.linalg.norm(x_all, axis=1)
+        r_min_lim = _r_ref_m + _alt_min_km * 1000.0
+        r_max_lim = _r_ref_m + _alt_max_km * 1000.0
+        if _clip:
+            # Project outside-range points to nearest boundary by scaling radius
+            dirs = x_all / r_norms[:, None].clip(1e-10)
+            r_clipped = np.clip(r_norms, r_min_lim, r_max_lim)
+            x_all = dirs * r_clipped[:, None]
+            print(f"[active-refinement] Clipped radii to [{r_min_lim:.3e}, {r_max_lim:.3e}] m")
+        elif _reject:
+            # Resample points outside range (up to 3 attempts per bad point)
+            for _attempt in range(3):
+                r_norms = np.linalg.norm(x_all, axis=1)
+                bad_mask = (r_norms < r_min_lim) | (r_norms > r_max_lim)
+                n_bad = int(np.sum(bad_mask))
+                if n_bad == 0:
+                    break
+                print(f"[active-refinement] Attempt {_attempt+1}: resampling {n_bad} out-of-range points")
+                bad_idx = np.where(bad_mask)[0]
+                # Resample from random source points
+                src_replace_idx = rng.integers(0, n_src, size=n_bad)
+                for _j, _bi in enumerate(bad_idx):
+                    x_src_rep = src[src_replace_idx[_j], :3]
+                    new_pts = _jitter_around_point(x_src_rep, 1, float(a.active_jitter_radial_km),
+                                                   float(a.active_jitter_tangent_km), rng)
+                    x_all[_bi] = new_pts[0]
+
+    # Debug path: save positions only (NPZ) and return
+    if bool(getattr(a, "active_save_positions_only", False)):
+        positions_path = out_dir / "active_refinement_positions.npz"
+        np.savez(str(positions_path), x=x_all.astype(np.float64))
+        meta_debug = {
+            "component_name": "active_error_refinement",
+            "source_error_file": str(error_path.resolve()),
+            "n_source_points": int(n_src),
+            "active_jitter_radial_km": float(a.active_jitter_radial_km),
+            "active_jitter_tangent_km": float(a.active_jitter_tangent_km),
+            "active_samples_per_point": int(n_per),
+            "total_generated_positions": total_generated,
+            "mode": "positions_only_debug",
+        }
+        (out_dir / "active_refinement_meta.json").write_text(json.dumps(meta_debug, indent=2))
+        print(f"[active-refinement] DEBUG: saved positions to {positions_path}")
+        return
+
+    # Require GFC file for SH labeling
+    _gfc_file = getattr(a, "active_gfc_file", None)
+    if not _gfc_file:
+        raise ValueError(
+            "Active refinement requires --active-gfc-file to be set for SH labeling. "
+            "Set --active-save-positions-only to skip labeling (debug mode)."
+        )
+    gfc_path = Path(str(_gfc_file))
+    if not gfc_path.exists():
+        ap.error(f"--active-gfc-file not found: {gfc_path}")
+
+    _degree_max_active = int(getattr(a, "active_degree_max", None) or getattr(a, "degree_max", 50))
+    _degree_min_active = int(getattr(a, "active_degree_min", None) or getattr(a, "degree_min", -1))
+
+    print(f"[active-refinement] Loading GFC: {gfc_path.name} (degree_max={_degree_max_active})")
+    C, S, gmeta = load_icgem_gfc(file_path=str(gfc_path), max_degree=_degree_max_active)
+    mu_gfc = float(gmeta.get("earth_gravity_constant") or gmeta.get("mu") or MU_MOON_SI)
+    r_ref_gfc = float(gmeta.get("radius") or R_MOON_SI)
+
+    print(f"[active-refinement] Precomputing Legendre constants (degree_max={_degree_max_active})...")
+    a_nm, b_nm, diag_f, subdiag_f, k_ratio = precompute_legendre_constants(_degree_max_active)
+
+    # Label with SH
+    print(f"[active-refinement] Labeling {x_all.shape[0]} points with SH (degree_min={_degree_min_active}, degree_max={_degree_max_active})...")
+    V_full, a_full = _sh_potential_accel_batch_serial(
+        xyz_m=x_all.astype(np.float64),
+        C=C, S=S,
+        mu=mu_gfc, R=r_ref_gfc,
+        n_max=_degree_max_active,
+        a_nm=a_nm, b_nm=b_nm,
+        diag_f=diag_f, subdiag_f=subdiag_f, k_ratio=k_ratio,
+        n_start=0,
+    )
+    V_full = V_full.reshape(-1, 1)
+    a_full = a_full.reshape(-1, 3)
+
+    # Residual: subtract baseline (degree 0..degree_min)
+    _is_residual = (_degree_min_active >= 0)
+    if _is_residual:
+        V_base, a_base = _sh_potential_accel_batch_serial(
+            xyz_m=x_all.astype(np.float64),
+            C=C, S=S,
+            mu=mu_gfc, R=r_ref_gfc,
+            n_max=_degree_min_active,
+            a_nm=a_nm, b_nm=b_nm,
+            diag_f=diag_f, subdiag_f=subdiag_f, k_ratio=k_ratio,
+            n_start=0,
+        )
+        dU = (V_full - V_base.reshape(-1, 1)).reshape(-1, 1)
+        da = (a_full - a_base.reshape(-1, 3)).reshape(-1, 3)
+        target_mode_active = "residual"
+        columns_label = "[x,y,z,dU,dax,day,daz]"
+    else:
+        dU = V_full
+        da = a_full
+        target_mode_active = "full"
+        columns_label = "[x,y,z,U,ax,ay,az]"
+
+    # Build output dataset (N, 7)
+    data_out = np.concatenate([x_all.astype(np.float64), dU, da], axis=1)  # (N, 7)
+
+    # Resolve output path
+    _active_out_path = getattr(a, "active_out", None)
+    if _active_out_path:
+        h5_path = Path(str(_active_out_path))
+    else:
+        h5_path = out_dir / "active_refinement_labeled.h5"
+
+    h5_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Compute alt bounds from generated points
+    r_norms_out = np.linalg.norm(x_all, axis=1)
+    alt_km_out = (r_norms_out - r_ref_gfc) / 1000.0
+    alt_min_out = float(alt_km_out.min())
+    alt_max_out = float(alt_km_out.max())
+
+    print(f"[active-refinement] Saving labeled HDF5 to {h5_path} (shape={data_out.shape}) ...")
+    with _h5py.File(str(h5_path), "w") as hf:
+        ds = hf.create_dataset("data", data=data_out.astype(np.float64),
+                                chunks=(min(65536, data_out.shape[0]), 7),
+                                compression="gzip", compression_opts=4)
+        # Required HDF5 attrs
+        hf.attrs["component_name"] = "active_error_refinement"
+        hf.attrs["source_error_file"] = str(error_path.resolve())
+        hf.attrs["active_jitter_radial_km"] = float(a.active_jitter_radial_km)
+        hf.attrs["active_jitter_tangent_km"] = float(a.active_jitter_tangent_km)
+        hf.attrs["active_samples_per_point"] = int(n_per)
+        hf.attrs["active_max_source_points"] = int(a.active_max_source_points)
+        hf.attrs["n_source_points_used"] = int(n_src)
+        hf.attrs["total_generated_points"] = int(total_generated)
+        hf.attrs["degree_min"] = int(_degree_min_active)
+        hf.attrs["degree_max"] = int(_degree_max_active)
+        hf.attrs["target_mode"] = str(target_mode_active)
+        hf.attrs["central_body"] = "moon"
+        hf.attrs["mu_si"] = float(mu_gfc)
+        hf.attrs["r_ref_m"] = float(r_ref_gfc)
+        hf.attrs["alt_min_km"] = alt_min_out
+        hf.attrs["alt_max_km"] = alt_max_out
+        hf.attrs["columns"] = columns_label
+        hf.attrs["a_sign_convention"] = "+1"
+        hf.attrs["unit_system"] = "si"
+        hf.attrs["created_by"] = "spatial_cloud_generator._run_active_refinement"
+
+    # Save metadata JSON
     meta = {
         "component_name": "active_error_refinement",
         "source_error_file": str(error_path.resolve()),
-        "n_source_points": int(n_src),
         "active_jitter_radial_km": float(a.active_jitter_radial_km),
         "active_jitter_tangent_km": float(a.active_jitter_tangent_km),
         "active_samples_per_point": int(n_per),
-        "total_generated_positions": int(x_all.shape[0]),
+        "active_max_source_points": int(a.active_max_source_points),
+        "n_source_points_used": int(n_src),
+        "total_generated_points": total_generated,
+        "degree_min": int(_degree_min_active),
+        "degree_max": int(_degree_max_active),
+        "target_mode": str(target_mode_active),
+        "central_body": "moon",
+        "mu_si": float(mu_gfc),
+        "r_ref_m": float(r_ref_gfc),
+        "alt_min_km": alt_min_out,
+        "alt_max_km": alt_max_out,
+        "columns": columns_label,
+        "a_sign_convention": "+1",
+        "output_h5": str(h5_path),
     }
     meta_path = out_dir / "active_refinement_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2))
-
-    # Save raw positions as NPZ for the caller to label with SH
-    positions_path = out_dir / "active_refinement_positions.npz"
-    np.savez(str(positions_path), x=x_all.astype(np.float64), meta=np.array([]))
-    print(f"[active-refinement] Saved positions to {positions_path}")
-    print(f"[active-refinement] Saved metadata to {meta_path}")
-    print("[active-refinement] Run SH labelling on these positions with your preferred SH evaluator.")
+    print(f"[active-refinement] Done. Labeled {data_out.shape[0]} points -> {h5_path}")
+    print(f"[active-refinement] Metadata saved to {meta_path}")
 
 
 def main() -> None:
