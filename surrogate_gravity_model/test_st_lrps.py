@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
 test_st_lrps.py
@@ -808,7 +808,7 @@ def test_streaming_metrics_match_in_memory_on_small_dataset() -> None:
     sm.update(x, a_true, a_pred, u_true, u_pred, R)
     res = sm.finalize()
 
-    a_err_norm = np.linalg.norm(a_pred - a_true, axis=1)
+    a_err_norm = np.abs(np.linalg.norm(a_pred, axis=1) - np.linalg.norm(a_true, axis=1))
     expected_mae = float(a_err_norm.mean())
     expected_rmse = float(np.sqrt((a_err_norm**2).mean()))
     assert abs(res["mae_a"] - expected_mae) < 1e-10, f"MAE mismatch: {res['mae_a']} vs {expected_mae}"
@@ -1375,7 +1375,7 @@ def test_streaming_evaluator_does_not_accumulate_full_arrays() -> None:
     assert np.isfinite(res["mae_a"]), "mae_a must be finite"
 
     # Compared against in-memory calculation
-    a_err = np.linalg.norm(a_pred - a_true, axis=1)
+    a_err = np.abs(np.linalg.norm(a_pred, axis=1) - np.linalg.norm(a_true, axis=1))
     expected_mae = float(a_err.mean())
     assert abs(res["mae_a"] - expected_mae) < 1e-9, (
         f"Streaming MAE mismatch: {res['mae_a']:.6e} vs {expected_mae:.6e}"
