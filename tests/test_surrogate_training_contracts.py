@@ -200,7 +200,6 @@ def test_train_parse_args_defaults_are_safe(tmp_path: Path, monkeypatch: pytest.
 
     assert cfg.activation == "sine"
     assert cfg.use_fourier is False
-    assert cfg.dynamic_weights is False
     assert cfg.gradnorm_mode == "ntk_init"
     assert cfg.amp is False
     # Production defaults as of the AI/ML training-system upgrade.

@@ -1435,7 +1435,7 @@ def train(cfg: TrainConfig) -> None:
 
     # 8. Construct DataLoaders
     dataset_mb = bytes_est / (1024.0 * 1024.0)
-    # Resolve the preload policy. --preload-data is a legacy alias for "always".
+    # Resolve the preload policy. --preload-data is a convenience alias for "always".
     _policy = str(getattr(cfg, "preload_policy", "auto")).strip().lower()
     if bool(getattr(cfg, "preload_data", False)) and _policy != "never":
         _policy = "always"
@@ -1676,12 +1676,10 @@ def train(cfg: TrainConfig) -> None:
         w_u=cfg.w_u,
         w_a=cfg.w_a,
         mode=cfg.gradnorm_mode,
-        dynamic=cfg.dynamic_weights,
         w_a_min=cfg.gradnorm_w_a_min,
         w_a_max=cfg.gradnorm_w_a_max,
     )
-    _gmode = "dynamic (legacy EMA)" if cfg.dynamic_weights else cfg.gradnorm_mode
-    logger.info(f"Loss weighting: mode={_gmode}  w_u={cfg.w_u:.2f}  w_a_init={cfg.w_a:.2f}")
+    logger.info(f"Loss weighting: mode={cfg.gradnorm_mode}  w_u={cfg.w_u:.2f}  w_a_init={cfg.w_a:.2f}")
 
     loss_fn = SobolevLoss(
         scaler=scaler,
@@ -1920,8 +1918,8 @@ def train(cfg: TrainConfig) -> None:
         if float(cfg.direction_loss_weight) > 0.0 and _ckpt_start < _direction_ready_epoch:
             logger.warning(
                 "Manual best_ckpt_start_epoch is earlier than the direction-ready epoch "
-                f"({_ckpt_start} < {_direction_ready_epoch}). The run is allowed for "
-                "backward compatibility, but auto mode is safer for production checkpoints."
+                f"({_ckpt_start} < {_direction_ready_epoch}). The run is allowed, but auto "
+                "mode is safer for production checkpoints."
             )
 
     best_val = float("inf")

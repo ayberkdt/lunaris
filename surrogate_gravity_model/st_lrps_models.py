@@ -151,7 +151,8 @@ class SirenMLP(nn.Module):
         Replace each hidden ``Linear+Sine`` with a ``SirenResBlock``.
         Recommended for ``depth >= 6``.  Adds LayerNorm per block (~negligible
         parameter overhead) and zero-initialises skip outputs so the network
-        starts shallow.  Backward-compatible default is ``False``.
+        starts shallow.  Defaults to ``False`` here (the plain SIREN path); the
+        trainer enables it by default via ``TrainConfig.use_residual_blocks``.
     """
 
     def __init__(
@@ -405,12 +406,17 @@ class AdditiveMultiBandSirenMLP(nn.Module):
     shared trunk. The additive form keeps each frequency scale in a separate
     subnetwork, which can be easier to interpret per band.
 
-    The total hidden width is split across bands (each band trunk has
-    ``hidden // n_bands`` units), so the parameter budget is comparable to a
-    same-width, same-depth single SIREN.
+    Parameter count
+    ---------------
+    Each band trunk is intentionally narrowed to ``hidden // n_bands`` units to
+    keep compute controlled. As a result the total parameter count is generally
+    LOWER than the ``concat_shared`` model at the same ``hidden``/``depth`` — these
+    two modes are NOT parameter-matched. Compare them explicitly if a fair
+    parameter budget is required.
 
     Experimental: ``concat_shared`` (:class:`MultiScaleSirenMLP`) remains the
-    default multi-scale composition.
+    default multi-scale composition. Evaluate this mode via ablation rather than
+    using it as a default; its effect is not benchmarked.
     """
 
     def __init__(
@@ -587,16 +593,18 @@ class SHInspiredAngularEncoding(nn.Module):
 
 class RadialDecayEncoding(nn.Module):
     """
-    Radial decay-aware encoding for SH residual potential fields.
+    Scaled inverse-radius decay features (experimental).
 
-    Spherical-harmonic residual terms decay roughly as ``(R/r)^(l+1)``, so
-    altitude generalization benefits from explicitly exposing the radial-decay
-    structure to the network rather than forcing it to learn ``1/r`` powers from
-    raw Cartesian coordinates.
+    Inspired by the ``R/r`` radial decay of spherical-harmonic terms (degree-``l``
+    contributions fall off roughly as ``(R/r)^(l+1)``), this encoding exposes
+    inverse-radius powers to the network rather than forcing it to learn ``1/r``
+    behaviour from raw Cartesian coordinates.
 
-    The network input ``x`` is already divided by ``x_scale`` (the max training
-    radius), so ``r = ||x||`` is a dimensionless scaled radius (≈ ``r_phys/r_max``,
-    typically in ``[~0.8, 1.0]`` for an LLO shell). This encoder builds:
+    Important: this is NOT exactly ``R_ref / r_phys``. The network input ``x`` is
+    already divided by ``x_scale`` (the max training radius), so ``r = ||x||`` is a
+    dimensionless *scaled* radius (≈ ``r_phys / r_max``, typically in ``[~0.8, 1.0]``
+    for an LLO shell), and ``rho = 1 / r`` is therefore the inverse scaled radius,
+    not a physical ``R_ref / r``. The features built are:
 
         r       = ||x||              (scaled radial magnitude)
         u       = x / r              (unit direction, 3 components)
@@ -609,11 +617,13 @@ class RadialDecayEncoding(nn.Module):
 
     Notes
     -----
-    * Working in scaled coordinates keeps the encoding self-contained and
-      reload-stable (it needs no reference-radius metadata). When ``R_ref/r_phys``
-      is preferred it can be substituted upstream without changing this layout.
+    * Working purely in network-scaled coordinates keeps the encoding
+      self-contained and reload-stable: it needs no reference-radius / scaler
+      metadata, so a reloaded model reproduces identical features.
+    * A future physical-radius variant could use scaler metadata to form a true
+      ``R_ref / r_phys``; this class intentionally avoids that dependency.
     * Experimental: off by default. Physically motivated for altitude
-      generalization but not yet benchmarked as a default.
+      generalization, but its effect is not benchmarked — evaluate via ablation.
     """
 
     def __init__(self, max_power: int = 4, append_raw: bool = True, eps: float = 1e-6):
@@ -681,6 +691,10 @@ class RealSHBasisEncoding(nn.Module):
         [r (if include_radial), Y_{0,0}, ... Y_{L,L}, (x, y, z if append_raw)]
 
     Experimental: off by default; intended for angular-generalization ablations.
+
+    TODO: validate low-degree normalization/order against an external SH
+    reference (e.g. scipy.special.sph_harm_y) — see the optional scipy-gated
+    check in tests/test_surrogate_architecture_upgrades.py.
     """
 
     def __init__(

@@ -119,14 +119,13 @@ class GradNormWeights:
         Use w_u and w_a exactly as set; no gradient computation.
 
     ``"dynamic"``
-        Legacy EMA-based GradNorm (Chen et al. 2018); amortised every
-        ``update_interval`` steps. Kept for ablation studies only.
+        EMA-based GradNorm (Chen et al. 2018); amortised every
+        ``update_interval`` steps. For ablation studies only.
     """
 
     w_u: float = 1.0
     w_a: float = 1.0
     mode: str = "ntk_init"          # "ntk_init" | "fixed" | "dynamic"
-    dynamic: bool = False           # legacy field; True forces mode="dynamic"
     ema_beta: float = 0.9
     update_interval: int = 10
     w_a_min: float = 0.35
@@ -143,9 +142,7 @@ class GradNormWeights:
     last_n_grad_a: int = 0
 
     def _effective_mode(self) -> str:
-        """Resolve the active mode, honouring the legacy ``dynamic`` bool."""
-        if self.dynamic and self.mode == "ntk_init":
-            return "dynamic"   # legacy override: dynamic=True → full EMA mode
+        """Return the active loss-weighting mode."""
         return self.mode
 
     def _compute_grad_norm_ratio(
@@ -249,7 +246,7 @@ class GradNormWeights:
                 )
             return self.w_u, self.w_a
 
-        # mode == "dynamic": legacy EMA GradNorm
+        # mode == "dynamic": EMA GradNorm (ablation only)
         self._step_counter += 1
         if self._step_counter % self.update_interval != 1 and self._step_counter > 1:
             return self.w_u, self.w_a

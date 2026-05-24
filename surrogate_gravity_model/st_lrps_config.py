@@ -99,18 +99,18 @@ class TrainConfig:
     w_u: float = 1.0
     w_a: float = 1.0
     # gradnorm_mode: "ntk_init" (default) | "fixed" | "dynamic"
-    # "ntk_init" computes gradient-norm ratio once at training start then freezes w_a.
-    # Avoids instability from repeated Hessian-level updates (a_pred = ∇U makes
-    # ∂L_a/∂W a second-order quantity, which makes full EMA GradNorm unstable).
+    # "ntk_init" computes the gradient-norm ratio once at training start then
+    # freezes w_a. This avoids the instability of repeated Hessian-level updates
+    # (a_pred = ∇U makes ∂L_a/∂W a second-order quantity). "dynamic" is the
+    # EMA-based GradNorm variant, kept for ablation only.
     gradnorm_mode: str = "ntk_init"
-    dynamic_weights: bool = False  # legacy flag; True overrides gradnorm_mode → "dynamic"
     gradnorm_w_a_min: float = 0.05
     gradnorm_w_a_max: float = 2.0
     potential_only_epochs: int = 0
     accel_ramp_epochs: int = 40
     # Minimum acceleration factor applied even during potential_only phase.
     # Prevents the derivative field from drifting completely unconstrained.
-    # Set to 0.0 to restore original full potential-only behaviour.
+    # Set to 0.0 for a pure potential-only warm-up (no acceleration floor).
     accel_min_factor: float = 0.15
     a_sign: Union[float, str] = "auto"
 
@@ -373,11 +373,9 @@ def parse_args() -> TrainConfig:
     group_phys.add_argument("--w-u", type=float, default=1.0, help="Initial weight for Potential (ΔU) loss.")
     group_phys.add_argument("--w-a", type=float, default=1.0, help="Initial weight for Acceleration (Δa) loss.")
     group_phys.add_argument("--gradnorm-mode", choices=["fixed", "ntk_init", "dynamic"], default="ntk_init",
-                            help="Loss-weighting policy for the Sobolev objective.")
-    group_phys.add_argument("--dynamic-weights", action="store_true", default=False,
-                            help="Legacy alias that forces gradnorm_mode='dynamic'.")
-    group_phys.add_argument("--no-dynamic-weights", action="store_false", dest="dynamic_weights",
-                            help="Disable the legacy dynamic-weight override.")
+                            help="Loss-weighting policy for the Sobolev objective: 'ntk_init' "
+                                 "(default; compute w_a once then freeze), 'fixed' (use w_u/w_a "
+                                 "as set), or 'dynamic' (EMA GradNorm; ablation only).")
     group_phys.add_argument("--gradnorm-w-a-min", type=float, default=0.05,
                             help="Lower clamp for NTK/dynamic acceleration-loss weight.")
     group_phys.add_argument("--gradnorm-w-a-max", type=float, default=2.0,
@@ -446,9 +444,9 @@ def parse_args() -> TrainConfig:
                            choices=["total_loss", "direction_loss", "hybrid"],
                            default=_TC_DEFAULTS['best_metric'],
                            help="Metric used for best-checkpoint selection. "
-                                "'total_loss': val ref loss (default, backward-compatible). "
-                                "'hybrid': val_loss + alpha * val_direction_loss. "
-                                "'direction_loss': val direction loss only (experimental).")
+                                "'hybrid': validation loss + alpha * validation direction loss (default). "
+                                "'total_loss': validation reference loss only. "
+                                "'direction_loss': validation direction loss only (experimental).")
     group_dir.add_argument("--hybrid-direction-alpha", type=float, default=_TC_DEFAULTS['hybrid_direction_alpha'],
                            help="Weight alpha for direction loss in hybrid best-metric: "
                                 "score = val_loss + alpha * val_direction_loss.")
@@ -849,7 +847,6 @@ def parse_args() -> TrainConfig:
         w_u=a.w_u,
         w_a=a.w_a,
         gradnorm_mode=str(a.gradnorm_mode),
-        dynamic_weights=a.dynamic_weights,
         gradnorm_w_a_min=a.gradnorm_w_a_min,
         gradnorm_w_a_max=a.gradnorm_w_a_max,
         potential_only_epochs=max(0, int(a.potential_only_epochs)),
