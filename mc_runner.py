@@ -40,15 +40,15 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 # ---------------------------------------------------------------------------
-# Re-use the orbit/physics helpers from main.py (pure functions, no side fx)
+# Shared, pure orbit/physics CLI helpers live in cli.common_args (import-safe;
+# no dependency on the sibling main.py entry point).
 # ---------------------------------------------------------------------------
-from main import (                                      # noqa: E402
+from cli.common_args import (                           # noqa: E402
     apply_args_to_config,
     init_surface_provider,
     resolve_orbit_elements,
     str2bool,
     parse_adaptive_table,
-    _initial_state_from_keplerian_fallback,
 )
 from config import load_default_config                  # noqa: E402
 from common.constants import R_MOON, MU_MOON, DEG2RAD  # noqa: E402
@@ -66,7 +66,7 @@ from common.montecarlo_defs import (                   # noqa: E402
 def _build_parser() -> argparse.ArgumentParser:
     """Return the combined sim + MC argument parser."""
     p = argparse.ArgumentParser(
-        description="LunarSim Monte Carlo Runner",
+        description="ST_LRPS Monte Carlo Runner",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -309,20 +309,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             argp = op["argp_deg"] * DEG2RAD
             ta   = op["ta_deg"]   * DEG2RAD
 
-            try:
-                from core.state import create_state_from_keplerian
-                mu = float(MU_MOON)
-                y0 = create_state_from_keplerian(
-                    semi_major_axis=a_m, eccentricity=e,
-                    inclination=inc, raan=raan, argp=argp,
-                    true_anomaly=ta, mu=mu,
-                )
-            except Exception:
-                y0 = _initial_state_from_keplerian_fallback(
-                    a_m=a_m, e=e,
-                    inc_rad=inc, raan_rad=raan, argp_rad=argp, ta_rad=ta,
-                    mu=float(MU_MOON),
-                )
+            # Canonical SSOT conversion (no silent fallback): a failure here is fatal.
+            from core.state import create_state_from_keplerian
+            mu = float(MU_MOON)
+            y0 = create_state_from_keplerian(
+                semi_major_axis=a_m, eccentricity=e,
+                inclination=inc, raan=raan, argp=argp,
+                true_anomaly=ta, mu=mu,
+            )
 
             from dataclasses import replace
             cfg = replace(cfg, initial_state=y0)

@@ -1,4 +1,4 @@
-# analysis/threeD_animation.py
+# ST_LRPS/visualization/orbit_animation.py
 # -*- coding: utf-8 -*-
 """
 ST_LRPS — Scientific-grade 3D orbit animation (Moon-centered)
@@ -8,10 +8,10 @@ Moon-centered trajectory with physically meaningful lighting, a dense
 starfield, and a live telemetry HUD.
 
 Primary API (called from main.py):
-    animate_orbit(result, config, output_file)
+    render_orbit_animation(result, config, output_file)
 
-Legacy API (hist-dict mode, kept for notebooks/tests):
-    animate_orbit(hist, out_dir, filename)
+History API (for notebooks/tests):
+    render_orbit_animation_from_history(history, output_file)
 
 Key features
 - Space-black background with high-density starfield (log-normal star sizes).
@@ -572,9 +572,20 @@ def _sun_arrow_text(s: np.ndarray) -> str:
 # ==========================
 
 def render_orbit_animation(
-    result_or_hist,
-    config_or_out_dir=None,
-    output_file_or_filename: str = "orbit_3d.mp4",
+    result,
+    config,
+    output_file: str = "orbit_3d.mp4",
+    **kwargs
+) -> Optional[str]:
+    """
+    Create a high-quality Moon-centered orbit animation from propagation results.
+    """
+    hist = _result_to_hist(result, config)
+    return render_orbit_animation_from_history(hist, output_file, **kwargs)
+
+def render_orbit_animation_from_history(
+    history: dict,
+    output_file: str,
     # --- keyword-only visual / encoding params ---
     frames: int = 900,
     fps: int = 30,
@@ -592,65 +603,13 @@ def render_orbit_animation(
     dpi: int = 170,
     crf: int = 18,
     preset: str = "slow",
-    # new API keyword aliases
-    result=None,
-    config=None,
-    output_file: Optional[str] = None,
 ) -> Optional[str]:
     """
-    Create a high-quality Moon-centered orbit animation.
-
-    **New API** (main.py call style):
-        animate_orbit(result, config, output_file="orbit_3d.mp4")
-
-    **Legacy API** (hist-dict style):
-        animate_orbit(hist, out_dir, filename)
-
-    Parameters
-    ----------
-    result_or_hist:
-        PropagationResult (new API) or hist dict (legacy API).
-    config_or_out_dir:
-        SimConfig (new API) or output directory string (legacy API).
-    output_file_or_filename:
-        Full output file path (new API) or filename within out_dir (legacy API).
-
-    Returns the saved file path on success, otherwise None.
+    Create a high-quality Moon-centered orbit animation from a history dict.
     """
-    # -------------------------------------------------------
-    # Dispatch: detect which calling convention was used.
-    # Supports three modes:
-    #   (1) keyword: animate_orbit(result=..., config=..., output_file=...)
-    #   (2) positional new: animate_orbit(PropagationResult, SimConfig, path)
-    #   (3) positional legacy: animate_orbit(hist_dict, out_dir_str, filename)
-    # -------------------------------------------------------
-
-    # Mode (1): keyword arguments override positional
-    if result is not None:
-        result_or_hist = result
-        if config is not None:
-            config_or_out_dir = config
-        if output_file is not None:
-            output_file_or_filename = output_file
-
-    # Mode (2) vs (3): distinguish by type of first argument
-    is_new_api = (
-        hasattr(result_or_hist, "t")
-        and hasattr(result_or_hist, "y")
-        and not isinstance(result_or_hist, dict)
-    )
-
-    if is_new_api:
-        hist = _result_to_hist(result_or_hist, config_or_out_dir)
-        save_path = str(output_file_or_filename)
-        out_dir = os.path.dirname(save_path) or "."
-        filename = os.path.basename(save_path)
-    else:
-        hist = result_or_hist
-        out_dir = str(config_or_out_dir) if config_or_out_dir is not None else "."
-        filename = str(output_file_or_filename)
-        save_path = os.path.join(out_dir, filename)
-
+    hist = history
+    save_path = str(output_file)
+    out_dir = os.path.dirname(save_path) or "."
     os.makedirs(out_dir, exist_ok=True)
 
     # -------------------------------------------------------

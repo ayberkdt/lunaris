@@ -1,4 +1,4 @@
-# # ST_LRPS/analysis/report_manager.py
+# # ST_LRPS/analysis/reporting/manager.py
 
 """
 ST_LRPS Report Manager
@@ -61,7 +61,8 @@ Usage
 -----
 Typical batch use::
 
-    from analysis import process_simulation_results, plot_all
+    from analysis.postprocess import process_simulation_results
+    from analysis.reporting.manager import plot_all
 
     history = process_simulation_results(result, ctx=engine, cfg=config)
     outputs = plot_all(history, out_dir="results/run_01", ctx=engine)
@@ -195,72 +196,6 @@ def _ensure_dir(path: Optional[str]) -> str:
     return str(p)
 
 
-def _format_duration(seconds: float) -> str:
-    """Human-readable duration string."""
-    try:
-        s = float(seconds)
-    except (TypeError, ValueError):
-        return "0 s"
-
-    if not np.isfinite(s) or s <= 0.0:
-        return "0 s"
-    if s < 60.0:
-        return f"{s:.2f} s"
-    if s < 3600.0:
-        return f"{s / 60.0:.2f} min"
-    if s < 86400.0:
-        return f"{s / 3600.0:.2f} h"
-    return f"{s / 86400.0:.2f} d"
-
-
-def _safe_float(value: Any) -> float:
-    """Best-effort float conversion used by report formatting helpers."""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float("nan")
-
-
-def _format_count(value: Any) -> str:
-    """Render integer-like counters with thousands separators."""
-    try:
-        return f"{int(value):,}"
-    except (TypeError, ValueError):
-        return "N/A"
-
-
-def _format_percent(value: Any, *, decimals: int = 2) -> str:
-    """Render fractional values as percentages."""
-    f = _safe_float(value)
-    if not np.isfinite(f):
-        return "N/A"
-    return f"{f * 100.0:.{decimals}f}%"
-
-
-def _format_days(seconds: Any, *, decimals: int = 3) -> str:
-    """Render elapsed seconds as a day-based engineering quantity."""
-    f = _safe_float(seconds)
-    if not np.isfinite(f):
-        return "N/A"
-    return f"{f / 86400.0:.{decimals}f} d"
-
-
-def _format_km(value: Any, *, decimals: int = 3) -> str:
-    """Render kilometer-scale values with a consistent suffix."""
-    f = _safe_float(value)
-    if not np.isfinite(f):
-        return "N/A"
-    return f"{f:.{decimals}f} km"
-
-
-def _format_sci_or_na(value: Any, *, decimals: int = 3) -> str:
-    """Render scientific-notation diagnostics or return a neutral placeholder."""
-    f = _safe_float(value)
-    if not np.isfinite(f):
-        return "N/A"
-    return f"{f:.{decimals}e}"
-
-
 def _find_default_lunar_surface_map() -> Optional[str]:
     """
     Compatibility wrapper around the loader-layer lunar-map locator.
@@ -374,11 +309,11 @@ def figure_summary_page(
     max_rel_h = float(np.nanmax(np.abs(rel_h))) if rel_h.size else float("nan")
 
     primary_rows = [
-        ("Trajectory span", f"{_format_days(dur_s)} ({_format_duration(dur_s)})"),
-        ("Output epochs", _format_count(n_steps)),
-        ("Altitude floor", _format_km(altitude_min)),
-        ("Altitude ceiling", _format_km(altitude_max)),
-        ("Final altitude", _format_km(altitude_final)),
+        ("Trajectory span", f"{format_days(dur_s)} ({format_duration(dur_s)})"),
+        ("Output epochs", format_count(n_steps)),
+        ("Altitude floor", format_km(altitude_min)),
+        ("Altitude ceiling", format_km(altitude_max)),
+        ("Final altitude", format_km(altitude_final)),
         ("Final eccentricity", f"{ecc_final:.6f}" if np.isfinite(ecc_final) else "N/A"),
         ("Final inclination", f"{inc_final:.4f} deg" if np.isfinite(inc_final) else "N/A"),
         ("Impact detected", "Yes" if has_impact else "No"),
@@ -387,10 +322,10 @@ def figure_summary_page(
         ("Integrator", str(integrator_name)),
         ("Output cadence", "Auto" if output_dt_s in (None, "") else f"{output_dt_s} s"),
         ("Active models", f"{active_effects} / {len(effects)} enabled"),
-        ("Periapsis passes", _format_count(n_peri)),
-        ("Apoapsis passes", _format_count(n_apo)),
-        ("Peak rel. energy drift", _format_sci_or_na(max_rel_energy)),
-        ("Peak rel. ang. mom. drift", _format_sci_or_na(max_rel_h)),
+        ("Periapsis passes", format_count(n_peri)),
+        ("Apoapsis passes", format_count(n_apo)),
+        ("Peak rel. energy drift", format_sci_or_na(max_rel_energy)),
+        ("Peak rel. ang. mom. drift", format_sci_or_na(max_rel_h)),
         ("Config source", str(source_label)),
     ]
 
@@ -421,9 +356,9 @@ def figure_summary_page(
     fig.add_artist(plt.Line2D([0.08, 0.92], [0.888, 0.888], transform=fig.transFigure, color=c_line, linewidth=1.0))
 
     card_specs = [
-        ("Trajectory Span", _format_duration(dur_s), "#1E3A8A"),
+        ("Trajectory Span", format_duration(dur_s), "#1E3A8A"),
         ("Integrator", str(integrator_name).upper(), "#334155"),
-        ("Output Epochs", _format_count(n_steps), "#0F766E"),
+        ("Output Epochs", format_count(n_steps), "#0F766E"),
         ("Impact State", "YES" if has_impact else "CLEAR", "#B91C1C" if has_impact else "#166534"),
     ]
     for idx, (label, value, color) in enumerate(card_specs):
@@ -709,9 +644,9 @@ def figure_run_config_page(
         ("Integrator", str(integrator)),
         ("Tolerance (rtol / atol)", f"{rtol} / {atol}"),
         ("Gravity model", f"Spherical harmonics up to degree {sh_degree}"),
-        ("Central-body GM", _format_sci_or_na(mu, decimals=4) + " m^3/s^2"),
+        ("Central-body GM", format_sci_or_na(mu, decimals=4) + " m^3/s^2"),
         ("Output step", "Auto" if out_dt_s is None else f"{out_dt_s} s"),
-        ("Reported span", f"{_format_days(duration_s)} ({_format_duration(duration_s)})"),
+        ("Reported span", f"{format_days(duration_s)} ({format_duration(duration_s)})"),
     ]
     spacecraft_rows = [
         ("Dry mass", f"{mass} kg"),
@@ -720,15 +655,15 @@ def figure_run_config_page(
         ("Reflectivity Cr", str(cr)),
     ]
     event_rows = [
-        ("Periapsis detections", _format_count(n_peri)),
-        ("Apoapsis detections", _format_count(n_apo)),
+        ("Periapsis detections", format_count(n_peri)),
+        ("Apoapsis detections", format_count(n_apo)),
         ("Impact detected", "Yes" if has_impact else "No"),
         ("Impact threshold", f"{ev.get('impact_alt_km')} km" if ev.get("impact_alt_km", None) is not None else "N/A"),
     ]
     perf_rows = [
         ("Propagation time", f"{t_prop:.4f} s"),
         ("Total wall time", f"{t_wall:.4f} s"),
-        ("Output epochs", _format_count(n_steps)),
+        ("Output epochs", format_count(n_steps)),
         ("Wall / propagation ratio", f"{(t_wall / t_prop):.2f}x" if t_prop > 0.0 else "N/A"),
     ]
 

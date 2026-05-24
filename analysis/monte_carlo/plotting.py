@@ -1,4 +1,4 @@
-# ST_LRPS/analysis/mc_plotting.py
+# ST_LRPS/analysis/monte_carlo/plotting.py
 # -*- coding: utf-8 -*-
 """
 Monte Carlo Visualization
@@ -33,7 +33,7 @@ plot_mc_report
 Design conventions
 ------------------
 - Functions return ``matplotlib.figure.Figure`` objects; callers save/show.
-- Default colour scheme and font sizes respect ``analysis.styling`` when
+- Default colour scheme and font sizes respect ``analysis.reporting.styling`` when
   available (graceful import fallback).
 - No side effects beyond the returned figure.
 """

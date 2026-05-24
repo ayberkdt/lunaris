@@ -1,4 +1,4 @@
-# analysis/compare_gravity_models.py
+# ST_LRPS/validation/gravity/compare_gravity_models.py
 # -*- coding: utf-8 -*-
 """
 Lunar Gravity Model Validation Harness
@@ -10,20 +10,20 @@ as ground truth, either for a single orbit or across N random scenarios.
 Smoke tests:
 
   # CPU smoke (no GPU needed)
-  python analysis/compare_gravity_models.py \\
+  python -m validation.gravity.compare_gravity_models \\
       --random-scenarios 3 --duration-days 0.01 \\
       --models sh20,sh80 --truth sh200 \\
       --output-dir results/smoke_cpu
 
   # ST-LRPS force batch evaluation
-  python analysis/compare_gravity_models.py \\
+  python -m validation.gravity.compare_gravity_models \\
       --force-sample-trajectory sh200 \\
       --models st_lrps,sh80 \\
       --st-lrps-mode gpu_rk4 --force-batch-size 8192 \\
       --output-dir results/smoke_force_gpu
 
   # 100-orbit ST-LRPS GPU batch RK4
-  python analysis/compare_gravity_models.py \\
+  python -m validation.gravity.compare_gravity_models \\
       --random-scenarios 100 --scenario-seed 42 \\
       --scenario-mode near_circular_altitude \\
       --altitude-min-km 200 --altitude-max-km 400 \\
@@ -34,7 +34,7 @@ Smoke tests:
       --output-dir results/stlrps_batch_rk4_100
 
   # Full comparison (DOP853 + batch RK4)
-  python analysis/compare_gravity_models.py \\
+  python -m validation.gravity.compare_gravity_models \\
       --random-scenarios 100 --scenario-seed 42 \\
       --scenario-mode near_circular_altitude \\
       --altitude-min-km 200 --altitude-max-km 400 \\
@@ -45,7 +45,7 @@ Smoke tests:
       --output-dir results/full_validation_100
 
   # Full GPU batch comparison: SH200 DOP853 truth vs GPU RK4 models
-  python analysis/compare_gravity_models.py \\
+  python -m validation.gravity.compare_gravity_models \\
       --random-scenarios 100 --scenario-seed 42 \\
       --scenario-mode near_circular_altitude \\
       --altitude-min-km 200 --altitude-max-km 400 \\
@@ -57,7 +57,7 @@ Smoke tests:
       --output-dir results/gpu_sh_vs_stlrps_100
 
   # Faster GPU batch smoke
-  python analysis/compare_gravity_models.py \\
+  python -m validation.gravity.compare_gravity_models \\
       --random-scenarios 5 --duration-days 0.05 \\
       --truth sh200 \\
       --gpu-models sh200,sh60,sh20,st_lrps \\
@@ -85,7 +85,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-project_root = Path(__file__).resolve().parent.parent
+project_root = Path(__file__).resolve().parents[2]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 

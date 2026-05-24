@@ -1,10 +1,10 @@
 # config.py
 """
-LUNAR SIMULATION CONFIGURATION FACTORY
-======================================
+ST_LRPS CONFIGURATION FACTORY
+=============================
 
 This module acts as the "Builder" and "Single Source of Truth" (SSOT) manager
-for the LunarSim environment.
+for the ST_LRPS environment.
 
 While `common.type_defs` defines the *atomic building blocks* (Bricks),
 this module defines the *blueprints* and the *construction logic* (The Building).
@@ -29,7 +29,6 @@ Design Philosophy
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Mapping, Optional, Tuple, TYPE_CHECKING
@@ -95,10 +94,15 @@ def _pick_existing_file(folder: Path, candidates: Tuple[str, ...], what: str) ->
 
 
 def _resolve_default_kernel_paths() -> Tuple[str, ...]:
-    """Resolve default kernel set using local filename candidates (no heavy imports)."""
+    """Default local SPICE-kernel resolver for the ST_LRPS config factory only.
+
+    Dependency-light: resolves paths from local filename candidates without
+    importing heavy loaders/model modules. Runtime kernel loading/validation is
+    performed elsewhere (models.ephemeris).
+    """
     if not KERNEL_DIR.exists():
         raise FileNotFoundError(
-            f"CRITICAL: SPICE kernel directory not found: {KERNEL_DIR}\n"
+            f"CRITICAL: ST_LRPS SPICE kernel directory not found: {KERNEL_DIR}\n"
             f"Expected folder structure: {DATA_DIR}/ephemeris_models"
         )
 
@@ -109,10 +113,14 @@ def _resolve_default_kernel_paths() -> Tuple[str, ...]:
 
 
 def _resolve_default_gravity_path() -> Path:
-    """Resolve the default gravity model file (no heavy imports)."""
+    """Default local gravity-model resolver for the ST_LRPS config factory only.
+
+    Dependency-light: resolves the default gravity file from local filename
+    candidates without importing heavy loaders/model modules.
+    """
     if not GRAV_DIR.exists():
         raise FileNotFoundError(
-            f"CRITICAL: Gravity model directory not found: {GRAV_DIR}\n"
+            f"CRITICAL: ST_LRPS gravity model directory not found: {GRAV_DIR}\n"
             f"Expected folder structure: {DATA_DIR}/gravity_models"
         )
     return _pick_existing_file(GRAV_DIR, _GRAVITY_CANDIDATES, what="gravity model")
@@ -405,22 +413,18 @@ def load_default_config() -> SimConfig:
 
 
 # =============================================================================
-# 4) GLOBAL INSTANCE (lazy singleton)
+# 4) CONVENIENCE ACCESSOR
 # =============================================================================
 
-cfg: Optional[SimConfig] = None
+def get_default_config() -> SimConfig:
+    """Explicit accessor for the default configuration.
 
-try:
-    cfg = load_default_config()
-except (FileNotFoundError, ImportError) as e:
-    # Expected "environment not ready" case: missing data or missing optional deps.
-    sys.stderr.write("\n[CONFIG WARNING] Default configuration could not be loaded.\n")
-    sys.stderr.write(f"Detail: {e}\n\n")
-    cfg = None
-except Exception as e:
-    # Unexpected logic/code bug: fail fast.
-    sys.stderr.write("\n[CONFIG FATAL] Unexpected error while loading default configuration.\n")
-    raise
+    This is a thin alias for :func:`load_default_config`. There is intentionally
+    no module-level default instance: importing this module must never trigger
+    asset discovery, SPICE/gravity loading, or optional-dependency imports.
+    Callers obtain a config only by explicitly calling this (or the factory).
+    """
+    return load_default_config()
 
 
 # =============================================================================
@@ -429,7 +433,7 @@ except Exception as e:
 
 if __name__ == "__main__":
     print("\n" + "=" * 60)
-    print("🛠️   LUNAR SIMULATION CONFIGURATION CHECK")
+    print("🛠️   ST_LRPS CONFIGURATION CHECK")
     print("=" * 60 + "\n")
 
     try:
@@ -475,5 +479,5 @@ __all__ = [
     "VisualConfig",
     "OutputConfig",
     "load_default_config",
-    "cfg",
+    "get_default_config",
 ]

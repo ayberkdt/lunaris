@@ -1,4 +1,4 @@
-# ST_LRPS/analysis/mc_analysis.py
+# ST_LRPS/analysis/monte_carlo/statistics.py
 # -*- coding: utf-8 -*-
 """
 Monte Carlo Statistical Analysis
