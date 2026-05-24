@@ -50,9 +50,14 @@ class _StreamingMetrics:
     """
     def __init__(self, n_alt_bins: int = 20, alt_min_km: float = 0.0, alt_max_km: float = 1000.0):
         self.count = 0
-        self.sum_abs_a = 0.0
-        self.sum_sq_a = 0.0
-        self.max_abs_a = 0.0
+        # Vector acceleration error  ‖a_pred - a_true‖  (the physically correct error).
+        self.sum_abs_a_vec = 0.0
+        self.sum_sq_a_vec = 0.0
+        self.max_abs_a_vec = 0.0
+        # Magnitude-only error  |‖a_pred‖ - ‖a_true‖|  (ignores direction; kept for diagnostics).
+        self.sum_abs_a_mag = 0.0
+        self.sum_sq_a_mag = 0.0
+        self.max_abs_a_mag = 0.0
         self.sum_abs_u = 0.0
         self.sum_sq_u = 0.0
         self.max_abs_u = 0.0          # Task 4: U L∞ tracker
@@ -61,15 +66,20 @@ class _StreamingMetrics:
         self.sum_ang_rad = 0.0
         self.sum_sq_ang_rad = 0.0
         self.sum_cos_sim = 0.0
-        self.sum_rel_num = 0.0   # Σ |a_mag_err|  for acceleration relative error
-        self.sum_rel_den = 0.0   # Σ |a_true_mag| for acceleration relative error
+        # Acceleration relative error: vector-error norm over true-magnitude.
+        self.sum_rel_num = 0.0   # Σ ‖a_pred - a_true‖
+        self.sum_rel_den = 0.0   # Σ ‖a_true‖
+        # Magnitude-only relative error (legacy), separately tracked.
+        self.sum_rel_mag_num = 0.0
         # Altitude bins
         self.n_alt_bins = n_alt_bins
         self.alt_min_km = alt_min_km
         self.alt_max_km = alt_max_km
         self.alt_bin_count = np.zeros(n_alt_bins, dtype=np.int64)
-        self.alt_bin_sum_sq_a = np.zeros(n_alt_bins, dtype=np.float64)
-        self.alt_bin_sum_abs_a = np.zeros(n_alt_bins, dtype=np.float64)
+        self.alt_bin_sum_sq_a_vec = np.zeros(n_alt_bins, dtype=np.float64)
+        self.alt_bin_sum_abs_a_vec = np.zeros(n_alt_bins, dtype=np.float64)
+        self.alt_bin_sum_sq_a_mag = np.zeros(n_alt_bins, dtype=np.float64)
+        self.alt_bin_sum_abs_a_mag = np.zeros(n_alt_bins, dtype=np.float64)
 
     def _alt_bin(self, alt_km: float) -> int:
         span = max(self.alt_max_km - self.alt_min_km, 1e-6)
@@ -81,16 +91,24 @@ class _StreamingMetrics:
         """Update accumulators with a batch. x shape (N,3), a shape (N,3), u shape (N,)."""
         N = x.shape[0]
         self.count += N
-        
+
         a_true_mag = np.linalg.norm(a_true, axis=1)
         a_pred_mag = np.linalg.norm(a_pred, axis=1)
-        a_mag_err = a_pred_mag - a_true_mag
-        a_err_norm = np.abs(a_mag_err)
+
+        # Vector error (captures BOTH magnitude and direction).
+        a_vec_err = a_pred - a_true
+        a_vec_err_norm = np.linalg.norm(a_vec_err, axis=1)
+        # Magnitude-only error (direction-blind; can be ~0 even when direction is wrong).
+        a_mag_err = np.abs(a_pred_mag - a_true_mag)
         a_true_norm = a_true_mag.clip(1e-30)
-        
-        self.sum_abs_a += float(np.abs(a_mag_err).sum())
-        self.sum_sq_a += float((a_mag_err ** 2).sum())
-        self.max_abs_a = max(self.max_abs_a, float(np.abs(a_mag_err).max()))
+
+        self.sum_abs_a_vec += float(a_vec_err_norm.sum())
+        self.sum_sq_a_vec += float((a_vec_err_norm ** 2).sum())
+        self.max_abs_a_vec = max(self.max_abs_a_vec, float(a_vec_err_norm.max()))
+        self.sum_abs_a_mag += float(a_mag_err.sum())
+        self.sum_sq_a_mag += float((a_mag_err ** 2).sum())
+        self.max_abs_a_mag = max(self.max_abs_a_mag, float(a_mag_err.max()))
+
         u_err = u_pred - u_true
         u_abs_err = np.abs(u_err)
         self.sum_abs_u += float(u_abs_err.sum())
@@ -100,7 +118,8 @@ class _StreamingMetrics:
         u_true_abs = np.abs(u_true).clip(1e-30)
         self.sum_u_rel_num += float(u_abs_err.sum())
         self.sum_u_rel_den += float(u_true_abs.sum())
-        self.sum_rel_num += float(np.abs(a_mag_err).sum())
+        self.sum_rel_num += float(a_vec_err_norm.sum())
+        self.sum_rel_mag_num += float(a_mag_err.sum())
         self.sum_rel_den += float(a_true_norm.sum())
         # Angular error
         cos_sim = np.sum(a_true * a_pred, axis=1) / (
@@ -118,16 +137,48 @@ class _StreamingMetrics:
         for i in range(N):
             b = self._alt_bin(float(alt_km[i]))
             self.alt_bin_count[b] += 1
-            self.alt_bin_sum_sq_a[b] += float(a_err_norm[i] ** 2)
-            self.alt_bin_sum_abs_a[b] += float(a_err_norm[i])
+            self.alt_bin_sum_sq_a_vec[b] += float(a_vec_err_norm[i] ** 2)
+            self.alt_bin_sum_abs_a_vec[b] += float(a_vec_err_norm[i])
+            self.alt_bin_sum_sq_a_mag[b] += float(a_mag_err[i] ** 2)
+            self.alt_bin_sum_abs_a_mag[b] += float(a_mag_err[i])
 
     def finalize(self) -> dict:
         n = max(self.count, 1)
+        mae_a_vec = self.sum_abs_a_vec / n
+        rmse_a_vec = math.sqrt(self.sum_sq_a_vec / n)
+        mae_a_mag = self.sum_abs_a_mag / n
+        rmse_a_mag = math.sqrt(self.sum_sq_a_mag / n)
+        alt_bin_rmse_a_vec = [
+            math.sqrt(sq / max(cnt, 1))
+            for sq, cnt in zip(self.alt_bin_sum_sq_a_vec, self.alt_bin_count)
+        ]
+        alt_bin_mae_a_vec = [
+            ab / max(cnt, 1)
+            for ab, cnt in zip(self.alt_bin_sum_abs_a_vec, self.alt_bin_count)
+        ]
+        alt_bin_rmse_a_mag = [
+            math.sqrt(sq / max(cnt, 1))
+            for sq, cnt in zip(self.alt_bin_sum_sq_a_mag, self.alt_bin_count)
+        ]
+        alt_bin_mae_a_mag = [
+            ab / max(cnt, 1)
+            for ab, cnt in zip(self.alt_bin_sum_abs_a_mag, self.alt_bin_count)
+        ]
         return {
             "count": self.count,
-            "mae_a": self.sum_abs_a / n,
-            "rmse_a": math.sqrt(self.sum_sq_a / n),
-            "max_abs_a": self.max_abs_a,
+            # Vector-error acceleration metrics (PHYSICALLY CORRECT).
+            "mae_a_vec": mae_a_vec,
+            "rmse_a_vec": rmse_a_vec,
+            "max_abs_a_vec": self.max_abs_a_vec,
+            # Magnitude-only acceleration metrics (direction-blind diagnostics).
+            "mae_a_mag": mae_a_mag,
+            "rmse_a_mag": rmse_a_mag,
+            "max_abs_a_mag": self.max_abs_a_mag,
+            # Backward-compatible aliases now point at the VECTOR error so that
+            # a directionally-wrong model can no longer look accurate.
+            "mae_a": mae_a_vec,
+            "rmse_a": rmse_a_vec,
+            "max_abs_a": self.max_abs_a_vec,
             "mae_u": self.sum_abs_u / n,
             "rmse_u": math.sqrt(self.sum_sq_u / n),
             "max_abs_u": self.max_abs_u,                               # Task 4: U L∞
@@ -137,16 +188,17 @@ class _StreamingMetrics:
             "mean_ang_deg": math.degrees(self.sum_ang_rad / n),
             "rmse_ang_deg": math.degrees(math.sqrt(self.sum_sq_ang_rad / n)),
             "mean_cos_sim": self.sum_cos_sim / n,
+            # Relative error: vector-based (primary) and magnitude-based (legacy).
             "robust_rel_err": self.sum_rel_num / max(self.sum_rel_den, 1e-30),
+            "robust_rel_err_mag": self.sum_rel_mag_num / max(self.sum_rel_den, 1e-30),
             "alt_bin_count": self.alt_bin_count.tolist(),
-            "alt_bin_rmse_a": [
-                math.sqrt(sq / max(cnt, 1))
-                for sq, cnt in zip(self.alt_bin_sum_sq_a, self.alt_bin_count)
-            ],
-            "alt_bin_mae_a": [
-                ab / max(cnt, 1)
-                for ab, cnt in zip(self.alt_bin_sum_abs_a, self.alt_bin_count)
-            ],
+            # Altitude-binned: vector error by default + magnitude-only alongside.
+            "alt_bin_rmse_a": alt_bin_rmse_a_vec,
+            "alt_bin_mae_a": alt_bin_mae_a_vec,
+            "alt_bin_rmse_a_vec": alt_bin_rmse_a_vec,
+            "alt_bin_mae_a_vec": alt_bin_mae_a_vec,
+            "alt_bin_rmse_a_mag": alt_bin_rmse_a_mag,
+            "alt_bin_mae_a_mag": alt_bin_mae_a_mag,
         }
 
 
@@ -170,7 +222,10 @@ class _TopKErrors:
         a_err = a_pred - a_true
         a_err_norm = np.linalg.norm(a_err, axis=1)
         a_true_norm = np.linalg.norm(a_true, axis=1).clip(1e-30)
+        a_pred_norm = np.linalg.norm(a_pred, axis=1).clip(1e-30)
         rel_err = a_err_norm / a_true_norm
+        cos_sim = np.clip(np.sum(a_true * a_pred, axis=1) / (a_true_norm * a_pred_norm), -1.0, 1.0)
+        ang_deg = np.degrees(np.arccos(cos_sim))
         r_norm = np.linalg.norm(x, axis=1)
         alt_km = (r_norm - r_ref_m) / 1000.0
         for i in range(N):
@@ -180,6 +235,7 @@ class _TopKErrors:
                 a_true[i, 0], a_true[i, 1], a_true[i, 2],
                 a_pred[i, 0], a_pred[i, 1], a_pred[i, 2],
                 float(a_err_norm[i]), float(rel_err[i]), float(alt_km[i]),
+                float(cos_sim[i]), float(ang_deg[i]),
             )
             err = float(a_err_norm[i])
             self._counter += 1
@@ -189,9 +245,13 @@ class _TopKErrors:
                 heapq.heapreplace(self._heap, (err, self._counter, row))
 
     def to_array(self) -> np.ndarray:
-        """Return shape (K, 14) array sorted by descending error."""
+        """Return shape (K, 16) array sorted by descending error.
+
+        Columns: x,y,z,u_true,u_pred,ax_true,ay_true,az_true,ax_pred,ay_pred,
+        az_pred,abs_a_error,rel_a_error,altitude_km,cos_sim,angular_deg.
+        """
         if not self._heap:
-            return np.zeros((0, 14), dtype=np.float64)
+            return np.zeros((0, 16), dtype=np.float64)
         # Sort descending by err (heap items are (err, counter, row))
         items = sorted(self._heap, key=lambda t: -t[0])
         rows = [item[2] for item in items]
@@ -199,7 +259,8 @@ class _TopKErrors:
 
     def save_csv(self, path: Path) -> None:
         arr = self.to_array()
-        header = "x,y,z,u_true,u_pred,ax_true,ay_true,az_true,ax_pred,ay_pred,az_pred,abs_a_error,rel_a_error,altitude_km"
+        header = ("x,y,z,u_true,u_pred,ax_true,ay_true,az_true,ax_pred,ay_pred,az_pred,"
+                  "abs_a_error,rel_a_error,altitude_km,cos_sim,angular_deg")
         np.savetxt(str(path), arr, delimiter=",", header=header, comments="")
 
 try:
@@ -261,11 +322,45 @@ def _sync(device: torch.device) -> None:
 
 # --- Shared model/scaler implementation ---
 try:
-    from .st_lrps_models import FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP, build_model_from_config
+    from .st_lrps_artifacts import (
+        append_run_evaluation,
+        default_eval_output_dir,
+        load_best_or_last,
+        load_checkpoint,
+        make_run_layout,
+        read_run_manifest,
+        reload_model_from_run_dir as reload_model_from_artifact_run_dir,
+        resolve_run_dir,
+        update_run_manifest,
+        write_eval_manifest,
+        write_evaluate_summary,
+    )
+    from .st_lrps_models import (
+        FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP, build_model_from_config,
+        ARCH_SIGNATURE_FIELDS, MODEL_BUILDER_VERSION, architecture_mismatch_fields,
+        compute_architecture_signature, reconstruct_model_from_artifacts,
+    )
     from .st_lrps_data import DatasetMeta
     from .st_lrps_scaling import IsometricScaleParams, ScalerPack, compute_base_accel, compute_base_potential
 except ImportError:  # pragma: no cover - script execution fallback
-    from st_lrps_models import FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP, build_model_from_config
+    from st_lrps_artifacts import (  # type: ignore
+        append_run_evaluation,
+        default_eval_output_dir,
+        load_best_or_last,
+        load_checkpoint,
+        make_run_layout,
+        read_run_manifest,
+        reload_model_from_run_dir as reload_model_from_artifact_run_dir,
+        resolve_run_dir,
+        update_run_manifest,
+        write_eval_manifest,
+        write_evaluate_summary,
+    )
+    from st_lrps_models import (
+        FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP, build_model_from_config,
+        ARCH_SIGNATURE_FIELDS, MODEL_BUILDER_VERSION, architecture_mismatch_fields,
+        compute_architecture_signature, reconstruct_model_from_artifacts,
+    )
     from st_lrps_data import DatasetMeta
     from st_lrps_scaling import IsometricScaleParams, ScalerPack, compute_base_accel, compute_base_potential
 
@@ -323,13 +418,35 @@ def _read_eval_dataset_meta(path: Path, dataset_name: str = "data") -> Dict[str,
 
 def load_checkpoint_state(path: Path, device: torch.device) -> Dict[str, Any]:
     """Load a training checkpoint across PyTorch versions."""
-    try:
-        state = torch.load(path, map_location=device, weights_only=False)
-    except TypeError:
-        state = torch.load(path, map_location=device)
-    if isinstance(state, dict) and isinstance(state.get("model"), dict):
-        return state["model"]
-    return state
+    ckpt = load_checkpoint(path, device)
+    return ckpt["model_state_dict"]
+
+
+def load_full_checkpoint(path: Path, device: torch.device) -> Dict[str, Any]:
+    """Load the full checkpoint payload (model + config + provenance)."""
+    return load_checkpoint(path, device)
+
+
+def reload_model_from_run_dir(
+    run_dir: Path,
+    device: torch.device,
+    *,
+    prefer: str = "best",
+    allow_config_mismatch: bool = False,
+) -> Tuple[nn.Module, "ScalerPack", Dict[str, Any], Dict[str, Any]]:
+    """Reload a trained model + scaler using the canonical evaluation path.
+
+    Returns ``(model, scaler, merged_cfg, report)``. ``report`` carries the
+    resolved checkpoint path/epoch and the reconstruction provenance. This is
+    the single source of truth used by both ``evaluate()`` and the reload-parity
+    regression test, so a future architecture/scaler drift is caught here.
+    """
+    return reload_model_from_artifact_run_dir(
+        run_dir,
+        device,
+        prefer=prefer,
+        allow_config_mismatch=allow_config_mismatch,
+    )
 
 
 def _discover_h5_dataset_name(path: Path, preferred: str = "data") -> str:
@@ -464,6 +581,34 @@ def predict_u_and_a(
     return u_total, a_total
 
 
+def predict_residual_u_a(
+    model: nn.Module,
+    scaler: "ScalerPack",
+    x_phys: torch.Tensor,
+    a_sign: float = 1.0,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Predict the network's RESIDUAL ΔU (B,1) and Δa (B,3) (no base added).
+
+    This is the exact residual path used both at training time (loss) and at
+    evaluation time, exposed as a small utility for reload-parity testing:
+      ΔU = unscale(model(scale_x(x)))
+      Δa = a_sign · ∇(model output) · (u_scale / x_scale)
+    """
+    x_scaled = scaler.scale_x(x_phys).requires_grad_(True)
+    delta_u_scaled = model(x_scaled)
+    grad_delta_u_scaled = torch.autograd.grad(
+        outputs=delta_u_scaled,
+        inputs=x_scaled,
+        grad_outputs=torch.ones_like(delta_u_scaled),
+        create_graph=False,
+        retain_graph=False,
+        only_inputs=True,
+    )[0]
+    delta_a_phys = float(a_sign) * grad_delta_u_scaled * (scaler._u_scale / scaler._x_scale)
+    delta_u_phys = scaler.unscale_u(delta_u_scaled)
+    return delta_u_phys, delta_a_phys
+
+
 # -----------------------------
 # Metrics
 # -----------------------------
@@ -554,6 +699,42 @@ def compute_metrics(
         linf=linf,
         rel_floor_abs=floor_abs,
     )
+
+
+def _build_eval_warnings(sm_res: Dict[str, Any], recon_report: Dict[str, Any]) -> List[str]:
+    """Surface red-flag diagnostics so a bad model cannot read as good.
+
+    Flags: directional collapse (cos_sim ~ 0 / angle ~ 90 deg), the tell-tale
+    'good magnitude but bad vector' signature, and any config/checkpoint
+    architecture mismatch that was force-overridden.
+    """
+    warnings: List[str] = []
+    cos = float(sm_res.get("mean_cos_sim", 1.0))
+    ang = float(sm_res.get("mean_ang_deg", 0.0))
+    mae_vec = float(sm_res.get("mae_a_vec", 0.0))
+    mae_mag = float(sm_res.get("mae_a_mag", 0.0))
+    if cos < 0.2:
+        warnings.append(
+            f"mean cosine similarity is near zero ({cos:.3f}): the predicted residual "
+            "acceleration is nearly uncorrelated in direction with the truth."
+        )
+    if ang > 80.0:
+        warnings.append(
+            f"mean angular error is ~{ang:.1f} deg (near 90): direction is essentially random."
+        )
+    if mae_mag > 0.0 and mae_vec > 5.0 * max(mae_mag, 1e-30):
+        warnings.append(
+            f"magnitude error is small (mae_mag={mae_mag:.3e}) but vector error is much "
+            f"larger (mae_vec={mae_vec:.3e}): the model gets |a| roughly right while the "
+            "direction is wrong. Magnitude-only metrics would be misleading here."
+        )
+    if recon_report.get("architecture_mismatch_fields"):
+        warnings.append(
+            "config.json and checkpoint architecture disagreed and were force-overridden "
+            f"(--allow-config-mismatch): {recon_report['architecture_mismatch_fields']}. "
+            "Predictions may not correspond to the trained model."
+        )
+    return warnings
 
 
 def altitude_km(x: np.ndarray, r_ref_m: float) -> np.ndarray:
@@ -1019,29 +1200,30 @@ def evaluate(
     topk_errors: int = 0,
     save_error_points: Optional[Path] = None,
     plot_sample_limit: int = 500_000,
+    allow_config_mismatch: bool = False,
 ) -> None:
-    model_dir = model_dir.resolve()
+    model_dir = resolve_run_dir(model_dir)
+    layout = make_run_layout(model_dir)
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    cfg_path = model_dir / "config.json"
-    sc_path = model_dir / "scaler.json"
-    ckpt_path = model_dir / "checkpoints" / "ckpt_best.pt"
-    if not ckpt_path.exists():
-        # Fallback: use ckpt_last.pt if ckpt_best.pt was never written (e.g. short training runs)
-        _last = model_dir / "checkpoints" / "ckpt_last.pt"
-        if _last.exists():
-            print(f"[eval] ckpt_best.pt not found; falling back to ckpt_last.pt")
-            ckpt_path = _last
-    if not cfg_path.exists():
-        raise FileNotFoundError(cfg_path)
-    if not sc_path.exists():
-        raise FileNotFoundError(sc_path)
-    if not ckpt_path.exists():
-        raise FileNotFoundError(ckpt_path)
-
-    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-    scaler = ScalerPack.load(sc_path, device=device, dtype=torch.float32)
+    _prefer = "best"
+    ckpt_path, _ckpt_full = load_best_or_last(layout, prefer=_prefer, device=device)
+    model, scaler, cfg, _recon_report = reload_model_from_artifact_run_dir(
+        model_dir,
+        device,
+        prefer=_prefer,
+        allow_config_mismatch=allow_config_mismatch,
+    )
+    print(
+        f"[eval] reconstruction: source={_recon_report['checkpoint_config_source']} "
+        f"schema={_recon_report.get('checkpoint_schema_version')} "
+        f"signature={_recon_report.get('architecture_signature')} "
+        f"kind={_recon_report.get('checkpoint_kind')} "
+        f"epoch={_recon_report.get('checkpoint_epoch_display')}"
+    )
+    if _recon_report["architecture_mismatch_fields"]:
+        print("[eval][WARN] config/checkpoint architecture mismatch (overridden by "
+              f"--allow-config-mismatch): {_recon_report['architecture_mismatch_fields']}")
 
     # Read dataset metadata for unit conversion and consistency checks
     ds_meta = _read_eval_dataset_meta(data_path, dataset_name=dataset_name)
@@ -1232,17 +1414,7 @@ def evaluate(
         print(f"  {label:<20}  {mv:>26}  {dv:>26}  [{ok}]")
     print("====================================================\n")
 
-    model = build_model_from_config(cfg, device=device)
     model.eval()
-
-    state = load_checkpoint_state(ckpt_path, device=device)
-    _load_result = model.load_state_dict(state, strict=True)
-    load_report = {
-        "missing_keys": list(_load_result.missing_keys),
-        "unexpected_keys": list(_load_result.unexpected_keys),
-    }
-    if load_report["missing_keys"] or load_report["unexpected_keys"]:
-        print(f"[WARN] Checkpoint key mismatch: {load_report}")
 
     suffix = data_path.suffix.lower()
     if suffix in [".h5", ".hdf5"]:
@@ -1269,8 +1441,8 @@ def evaluate(
     if streaming:
         _alt_span_km = max(1.0, float(alt_bin_km) * 20)  # rough estimate for bins
         _sm = _StreamingMetrics(n_alt_bins=20, alt_min_km=0.0, alt_max_km=_alt_span_km)
-    if topk_errors > 0:
-        _tk = _TopKErrors(int(topk_errors))
+    _effective_topk = int(topk_errors) if int(topk_errors) > 0 else 100
+    _tk = _TopKErrors(_effective_topk)
 
     u_true_all: List[np.ndarray] = []
     u_pred_all: List[np.ndarray] = []
@@ -1375,12 +1547,11 @@ def evaluate(
         total += x.shape[0]
 
     # Export top-K error points if requested
-    _topk_export_path: Optional[Path] = None
-    if _tk is not None and save_error_points is not None:
-        _topk_export_path = Path(save_error_points)
+    _topk_export_path: Optional[Path] = Path(save_error_points).resolve() if save_error_points is not None else (out_dir / "topk_worst.csv")
+    if _tk is not None and _topk_export_path is not None:
         _topk_export_path.parent.mkdir(parents=True, exist_ok=True)
         _tk.save_csv(_topk_export_path)
-        print(f"[eval] Top-{topk_errors} error points saved to {_topk_export_path}")
+        print(f"[eval] Top-{_effective_topk} error points saved to {_topk_export_path}")
 
     if streaming and _sm is not None:
         _sm_res = _sm.finalize()
@@ -1402,10 +1573,43 @@ def evaluate(
                 "rel_mean_pct": _sm_res["robust_rel_err_u"] * 100.0,
             },
             "|a|": {
+                # Backward-compatible block: now VECTOR error (not magnitude-only).
                 "mae": _sm_res["mae_a"],
                 "rmse": _sm_res["rmse_a"],
                 "linf": _sm_res["max_abs_a"],
                 "rel_mean_pct": _sm_res["robust_rel_err"] * 100.0,
+                "error_kind": "vector",
+            },
+            # Explicit, unambiguous metric blocks so a directionally-wrong model
+            # can no longer hide behind good magnitude-only numbers.
+            "residual_vector_metrics": {
+                "mae": _sm_res["mae_a_vec"],
+                "rmse": _sm_res["rmse_a_vec"],
+                "linf": _sm_res["max_abs_a_vec"],
+                "rel_mean_pct": _sm_res["robust_rel_err"] * 100.0,
+                "description": "norm(a_pred - a_true): captures magnitude AND direction.",
+            },
+            "residual_magnitude_metrics": {
+                "mae": _sm_res["mae_a_mag"],
+                "rmse": _sm_res["rmse_a_mag"],
+                "linf": _sm_res["max_abs_a_mag"],
+                "rel_mean_pct": _sm_res["robust_rel_err_mag"] * 100.0,
+                "description": "abs(|a_pred| - |a_true|): direction-blind diagnostic only.",
+            },
+            "residual_angular_metrics": {
+                "mean_deg": _sm_res["mean_ang_deg"],
+                "rmse_deg": _sm_res["rmse_ang_deg"],
+                "mean_cossim": _sm_res["mean_cos_sim"],
+            },
+            "total_approx_metrics": {
+                "note": (
+                    "Metrics above are RESIDUAL (dU / da) because model degree_min>=0; "
+                    "total-field error is dominated by the SH(degree_min) baseline and is "
+                    "NOT reported here."
+                ) if int(degree_min) >= 0 else (
+                    "degree_min<0: residual baseline is point-mass; metrics approximate total field."
+                ),
+                "degree_min": int(degree_min),
             },
             "angular_metrics": {
                 "residual_all": {
@@ -1424,15 +1628,30 @@ def evaluate(
             "a_sign": float(a_sign),
             "mu_si": float(mu_si),
             "r_ref_m": float(r_ref_m),
-            "load_report": load_report,
+            # Reconstruction provenance (reload-safety).
+            "architecture_signature": _recon_report.get("architecture_signature"),
+            "checkpoint_schema_version": _recon_report.get("checkpoint_schema_version"),
+            "checkpoint_kind": _recon_report.get("checkpoint_kind"),
+            "checkpoint_path": _recon_report.get("checkpoint_path"),
+            "checkpoint_epoch": _recon_report.get("checkpoint_epoch"),
+            "checkpoint_epoch_display": _recon_report.get("checkpoint_epoch_display"),
+            "checkpoint_metric": _recon_report.get("checkpoint_metric"),
+            "checkpoint_config_source": _recon_report.get("checkpoint_config_source"),
+            "run_manifest_path": _recon_report.get("run_manifest_path"),
+            "scaler_source": _recon_report.get("scaler_source"),
+            "scaler_hash": _recon_report.get("scaler_hash"),
+            "checkpoint_hash": _recon_report.get("checkpoint_hash"),
+            "target_mode": str(cfg.get("target_mode") or ("residual" if degree_min >= 0 else "full")),
+            "w0_bands": _recon_report.get("w0_bands"),
             "topk_export_path": str(_topk_export_path) if _topk_export_path else None,
         }
+        metrics["warnings"] = _build_eval_warnings(_sm_res, _recon_report)
 
-        plots_dir = out_dir
+        plots_dir = out_dir / "plots"
         plots_dir.mkdir(parents=True, exist_ok=True)
         if ang_deg_plot:
             ang_plot = np.concatenate(ang_deg_plot, axis=0).reshape(-1)
-            save_hist_angular_deg(ang_plot, plots_dir / "hist_angular_err_deg_sampled.png", "Angular error (deg) Sampled histogram")
+            save_hist_angular_deg(ang_plot, plots_dir / "accel_error_histogram.png", "Angular error (deg) Sampled histogram")
 
         # Task 5: eval_report.json is the primary output (consistent with non-streaming mode).
         # evaluate_metrics.json is written as a backward-compatible legacy alias.
@@ -1443,6 +1662,50 @@ def evaluate(
         # Legacy alias
         metrics_path = out_dir / "evaluate_metrics.json"
         metrics_path.write_text(json.dumps(metrics, indent=2))
+        write_evaluate_summary(
+            out_dir,
+            [
+                f"dataset={data_path}",
+                f"checkpoint={_recon_report.get('checkpoint_path')}",
+                f"schema={_recon_report.get('checkpoint_schema_version')}",
+                f"kind={_recon_report.get('checkpoint_kind')}",
+                f"epoch={_recon_report.get('checkpoint_epoch_display')}",
+                f"target_mode={metrics.get('target_mode')}",
+                f"u_rmse={metrics.get('U', {}).get('rmse')}",
+                f"a_vec_rmse={metrics.get('residual_vector_metrics', {}).get('rmse')}",
+                f"ang_mean_deg={metrics.get('residual_angular_metrics', {}).get('mean_deg')}",
+            ],
+        )
+        write_eval_manifest(
+            out_dir,
+            {
+                "source_run_dir": str(layout.run_dir),
+                "checkpoint_path": _recon_report.get("checkpoint_path"),
+                "checkpoint_hash": _recon_report.get("checkpoint_hash"),
+                "checkpoint_kind": _recon_report.get("checkpoint_kind"),
+                "checkpoint_epoch": _recon_report.get("checkpoint_epoch"),
+                "dataset_path": str(data_path),
+                "metrics_path": str(metrics_path),
+                "report_path": str(report_path),
+                "plot_paths": [str(p) for p in sorted(plots_dir.glob("*.png"))],
+                "topk_worst_csv": str(_topk_export_path) if _topk_export_path else None,
+            },
+        )
+        append_run_evaluation(
+            layout,
+            {
+                "dataset": str(data_path),
+                "out_dir": str(out_dir),
+                "checkpoint_kind": _recon_report.get("checkpoint_kind"),
+                "checkpoint_epoch": _recon_report.get("checkpoint_epoch"),
+                "metrics_summary": {
+                    "u_rmse": metrics.get("U", {}).get("rmse"),
+                    "a_vec_rmse": metrics.get("residual_vector_metrics", {}).get("rmse"),
+                    "mean_ang_deg": metrics.get("residual_angular_metrics", {}).get("mean_deg"),
+                },
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+        )
         return metrics
 
     # Non-streaming full-array extraction
@@ -1687,13 +1950,48 @@ def evaluate(
     else:
         _angular_metrics["total_approx"] = {"note": total_ang_note}
 
+    # Vector acceleration error (magnitude AND direction) is the canonical
+    # acceleration metric for both in-memory and streaming evaluation paths.
+    # Magnitude-only diagnostics remain available under residual_magnitude_metrics.
+    a_vec_err_norm_np = np.linalg.norm(a_err_vec_np, axis=1)
+    _a_true_norm_clip = a_true_mag.reshape(-1).clip(1e-30)
+    _vec_mae = float(np.mean(a_vec_err_norm_np))
+    _vec_rmse = float(np.sqrt(np.mean(a_vec_err_norm_np ** 2)))
+    _mag_mae = float(np.mean(np.abs(a_mag_err)))
+    _mean_cossim_full = float(ang_sum_cossim / max(1, ang_count))
+    _mean_ang_full = float(ang_sum_deg / max(1, ang_count))
     metrics: Dict[str, Any] = {
         "U": compute_metrics(u_err, u_true.reshape(-1), rel_floor_abs=u_rel_floor_abs).__dict__,
-        "|a|": compute_metrics(a_mag_err, a_true_mag.reshape(-1), rel_floor_abs=a_rel_floor_abs).__dict__,
-        "a_vectorial": {
-            "mean_deg": float(ang_sum_deg / max(1, ang_count)),
+        "|a|": {
+            **compute_metrics(
+                a_vec_err_norm_np,
+                a_true_mag.reshape(-1),
+                rel_floor_abs=a_rel_floor_abs,
+            ).__dict__,
+            "error_kind": "vector",
+        },
+        "residual_vector_metrics": {
+            "mae": _vec_mae,
+            "rmse": _vec_rmse,
+            "linf": float(np.max(a_vec_err_norm_np)),
+            "rel_mean_pct": 100.0 * float(np.mean(a_vec_err_norm_np / _a_true_norm_clip)),
+            "description": "norm(a_pred - a_true): captures magnitude AND direction.",
+        },
+        "residual_magnitude_metrics": {
+            "mae": _mag_mae,
+            "rmse": float(np.sqrt(np.mean(a_mag_err ** 2))),
+            "linf": float(np.max(np.abs(a_mag_err))),
+            "description": "abs(|a_pred| - |a_true|): direction-blind diagnostic only.",
+        },
+        "residual_angular_metrics": {
+            "mean_deg": _mean_ang_full,
             "max_deg": float(ang_max_deg),
-            "mean_cossim": float(ang_sum_cossim / max(1, ang_count)),
+            "mean_cossim": _mean_cossim_full,
+        },
+        "a_vectorial": {
+            "mean_deg": _mean_ang_full,
+            "max_deg": float(ang_max_deg),
+            "mean_cossim": _mean_cossim_full,
         },
         "angular_metrics": _angular_metrics,
         "a_directional": directional_metrics,
@@ -1709,8 +2007,31 @@ def evaluate(
         "a_sign": float(a_sign),
         "mu_si": float(mu_si),
         "r_ref_m": float(r_ref_m),
-        "load_report": load_report,
+        "target_mode": str(cfg.get("target_mode") or ("residual" if degree_min >= 0 else "full")),
+        # Reconstruction provenance (reload-safety).
+        "architecture_signature": _recon_report.get("architecture_signature"),
+        "checkpoint_schema_version": _recon_report.get("checkpoint_schema_version"),
+        "checkpoint_kind": _recon_report.get("checkpoint_kind"),
+        "checkpoint_path": _recon_report.get("checkpoint_path"),
+        "checkpoint_epoch": _recon_report.get("checkpoint_epoch"),
+        "checkpoint_epoch_display": _recon_report.get("checkpoint_epoch_display"),
+        "checkpoint_metric": _recon_report.get("checkpoint_metric"),
+        "checkpoint_config_source": _recon_report.get("checkpoint_config_source"),
+        "run_manifest_path": _recon_report.get("run_manifest_path"),
+        "scaler_source": _recon_report.get("scaler_source"),
+        "scaler_hash": _recon_report.get("scaler_hash"),
+        "checkpoint_hash": _recon_report.get("checkpoint_hash"),
+        "w0_bands": _recon_report.get("w0_bands"),
     }
+    metrics["warnings"] = _build_eval_warnings(
+        {
+            "mean_cos_sim": _mean_cossim_full,
+            "mean_ang_deg": _mean_ang_full,
+            "mae_a_vec": _vec_mae,
+            "mae_a_mag": _mag_mae,
+        },
+        _recon_report,
+    )
 
     spatial_u = spatial_rmse_by_altitude(alt_km_all.reshape(-1), u_err, bin_km=alt_bin_km)
     spatial_a = spatial_rmse_by_altitude(alt_km_all.reshape(-1), a_mag_err, bin_km=alt_bin_km)
@@ -1723,9 +2044,15 @@ def evaluate(
         bin_km=alt_bin_km, rel_floor_abs=a_rel_floor_abs,
     )
 
-    plots_dir = out_dir
+    plots_dir = out_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
+    save_parity_plot(
+        y_true=u_true.reshape(-1),
+        y_pred=u_pred.reshape(-1),
+        path=plots_dir / "potential_parity.png",
+        title="Potential: prediction vs truth",
+    )
     save_parity_plot(
         y_true=u_true.reshape(-1),
         y_pred=u_pred.reshape(-1),
@@ -1736,13 +2063,26 @@ def evaluate(
     rel_a_all = bounded_relative_error_pct(a_pred_mag, a_true_mag, rel_floor_abs=a_rel_floor_abs)
     save_scatter_altitude(
         alt_km=alt_km_all.reshape(-1),
+        rel_err_pct=a_vec_err_norm_np.reshape(-1),
+        path=plots_dir / "accel_vector_error_vs_altitude.png",
+        title="Acceleration vector error norm vs altitude",
+    )
+    save_scatter_altitude(
+        alt_km=alt_km_all.reshape(-1),
         rel_err_pct=rel_a_all.reshape(-1),
         path=plots_dir / "scatter_relerr_accel_vs_alt.png",
         title="|a| bounded relative error vs altitude",
     )
+    save_scatter_altitude(
+        alt_km=alt_km_all.reshape(-1),
+        rel_err_pct=ang_deg_all.reshape(-1),
+        path=plots_dir / "accel_angular_error_vs_altitude.png",
+        title="Acceleration angular error vs altitude",
+    )
 
     save_log_hist(u_err, plots_dir / "hist_abs_err_U_log.png", "U absolute error histogram")
     save_log_hist(a_mag_err, plots_dir / "hist_abs_err_accelmag_log.png", "|a| absolute error histogram")
+    save_log_hist(a_vec_err_norm_np.reshape(-1), plots_dir / "accel_error_histogram.png", "Acceleration vector error histogram")
 
     # Percentage error histograms
     rel_u_pct = bounded_relative_error_pct(u_pred.reshape(-1), u_true.reshape(-1), rel_floor_abs=u_rel_floor_abs)
@@ -1845,6 +2185,7 @@ def evaluate(
             _cs_ax.set_ylim(bottom=min(float(np.min(_cs_p10s)) - 0.02, 0.95))
             _cs_ax.legend(frameon=True, fancybox=True, shadow=True)
             _cs_fig.tight_layout()
+            _cs_fig.savefig(plots_dir / "accel_cos_sim_vs_altitude.png", dpi=300, bbox_inches="tight")
             _cs_fig.savefig(plots_dir / "cossim_by_altitude.png", dpi=300, bbox_inches="tight")
             plt.close(_cs_fig)
     except Exception as _csp_err:
@@ -1877,9 +2218,12 @@ def evaluate(
 
     # CPU baseline
     cpu = torch.device("cpu")
-    scaler_cpu = ScalerPack.load(model_dir / "scaler.json", device=cpu, dtype=torch.float32)
-    model_cpu = build_model_from_config(cfg, device=cpu)
-    model_cpu.load_state_dict(state, strict=True)
+    model_cpu, scaler_cpu, _, _ = reload_model_from_artifact_run_dir(
+        model_dir,
+        cpu,
+        prefer=_prefer,
+        allow_config_mismatch=allow_config_mismatch,
+    )
 
     throughput_points_per_sec["cpu"] = benchmark_throughput(
         model_cpu, scaler_cpu, x_for_bench, device=cpu, batch_size=min(4096, batch_size),
@@ -1917,13 +2261,17 @@ def evaluate(
         "artifacts": {
             "model_dir": str(model_dir),
             "data_path": str(data_path),
-            "config": str(cfg_path),
-            "scaler": str(sc_path),
+            "config": str(layout.config_json),
+            "scaler": str(layout.scaler_json),
             "checkpoint": str(ckpt_path),
             "out_dir": str(out_dir),
+            "run_manifest": str(layout.run_manifest_json) if layout.run_manifest_json.exists() else None,
         },
     }
-    (out_dir / "eval_report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    report_path = out_dir / "eval_report.json"
+    metrics_path = out_dir / "evaluate_metrics.json"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
     def write_bins_csv(bins: Dict[str, Any], path: Path, extra_cols: List[str] = []) -> None:
         header = "alt_km_lo,alt_km_hi,n,rmse"
@@ -2115,11 +2463,56 @@ def evaluate(
     print("--- Latency (ms; batch_size=1; U+grad) ---")
     for k, v in latency_ms_batch1.items():
         print(f"{k:>8s}: {v:,.3f} ms")
-    print(f"\nSaved: {out_dir / 'eval_report.json'}")
+    print(f"\nSaved: {report_path}")
     print("Plots:")
     for p in sorted(plots_dir.glob("*.png")):
         print(f"  {p.name}")
     print("======================================================\n")
+
+    write_evaluate_summary(
+        out_dir,
+        [
+            f"dataset={data_path}",
+            f"checkpoint={_recon_report.get('checkpoint_path')}",
+            f"schema={_recon_report.get('checkpoint_schema_version')}",
+            f"kind={_recon_report.get('checkpoint_kind')}",
+            f"epoch={_recon_report.get('checkpoint_epoch_display')}",
+            f"target_mode={metrics.get('target_mode')}",
+            f"u_rmse={metrics.get('U', {}).get('rmse')}",
+            f"a_vec_rmse={metrics.get('residual_vector_metrics', {}).get('rmse')}",
+            f"ang_mean_deg={metrics.get('residual_angular_metrics', {}).get('mean_deg')}",
+        ],
+    )
+    write_eval_manifest(
+        out_dir,
+        {
+            "source_run_dir": str(layout.run_dir),
+            "checkpoint_path": _recon_report.get("checkpoint_path"),
+            "checkpoint_hash": _recon_report.get("checkpoint_hash"),
+            "checkpoint_kind": _recon_report.get("checkpoint_kind"),
+            "checkpoint_epoch": _recon_report.get("checkpoint_epoch"),
+            "dataset_path": str(data_path),
+            "metrics_path": str(metrics_path),
+            "report_path": str(report_path),
+            "plot_paths": [str(p) for p in sorted(plots_dir.glob("*.png"))],
+            "topk_worst_csv": str(_topk_export_path) if _topk_export_path else None,
+        },
+    )
+    append_run_evaluation(
+        layout,
+        {
+            "dataset": str(data_path),
+            "out_dir": str(out_dir),
+            "checkpoint_kind": _recon_report.get("checkpoint_kind"),
+            "checkpoint_epoch": _recon_report.get("checkpoint_epoch"),
+            "metrics_summary": {
+                "u_rmse": metrics.get("U", {}).get("rmse"),
+                "a_vec_rmse": metrics.get("residual_vector_metrics", {}).get("rmse"),
+                "mean_ang_deg": metrics.get("residual_angular_metrics", {}).get("mean_deg"),
+            },
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
+    )
 
 
 # -----------------------------
@@ -2133,7 +2526,7 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--ood-data", default=None, help="Optional OOD/extrapolation dataset. Evaluated into <out>/ood when provided.")
     ap.add_argument("--use-config-datasets", action="store_true", help="Use test_data_path / ood_data_path from config.json when explicit paths are not supplied.")
     ap.add_argument("--dataset-name", default="data", help="HDF5 dataset name (default: data, auto-fallback to first dataset).")
-    ap.add_argument("--out", default=None, help="Output directory (default: <model-dir>/eval_results).")
+    ap.add_argument("--out", default=None, help="Output directory (default: <run-dir>/evals/eval_<dataset>_<timestamp>).")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     ap.add_argument("--batch-size", type=int, default=8192)
     ap.add_argument("--a-sign", type=float, default=1.0, help="Fallback a_sign if config.json lacks resolved_a_sign. +1 for geodesy, -1 for physics.")
@@ -2152,11 +2545,14 @@ def parse_args() -> argparse.Namespace:
                     help="Path to save top-K error points CSV (requires --topk-errors > 0).")
     ap.add_argument("--plot-sample-limit", type=int, default=500_000,
                     help="Maximum number of points kept in plot buffers (default: 500000).")
+    ap.add_argument("--allow-config-mismatch", action="store_true", default=False,
+                    help="Permit evaluation when config.json and the checkpoint disagree on "
+                         "architecture-critical fields. Unsafe: predictions may be meaningless.")
     return ap.parse_args()
 
 
 def _dataset_path_from_config(model_dir: Path, key: str) -> Optional[Path]:
-    cfg_path = model_dir / "config.json"
+    cfg_path = make_run_layout(resolve_run_dir(model_dir)).config_json
     if not cfg_path.is_file():
         return None
     try:
@@ -2186,7 +2582,7 @@ def main() -> None:
     args = parse_args()
 
     # --- model dir auto-detect ---
-    model_dir: Optional[Path] = Path(args.model_dir).resolve() if args.model_dir else None
+    model_dir: Optional[Path] = resolve_run_dir(Path(args.model_dir).resolve()) if args.model_dir else None
     if model_dir is None:
         env_md = os.environ.get("ST_LRPS_MODEL_DIR")
         if env_md:
@@ -2241,10 +2637,18 @@ def main() -> None:
             r_ref_m_resolved = float(MOON_R_REF_M_DEFAULT)
             print(f"[auto] r_ref_m not found in dataset meta; falling back to lunar reference radius: {r_ref_m_resolved:g} m")
 
-    out_dir = Path(args.out).resolve() if args.out else (model_dir / "eval_results")
+    run_layout = make_run_layout(model_dir)
+    out_root = Path(args.out).resolve() if args.out else None
     device = get_device(args.device)
 
-    jobs: List[Tuple[str, Path, Path]] = [("primary", data_path, out_dir)]
+    eval_timestamp = time.strftime("%Y%m%d_%H%M%S")
+    jobs: List[Tuple[str, Path, Path]] = [
+        (
+            "primary",
+            data_path,
+            (out_root if out_root is not None else default_eval_output_dir(run_layout, data_path, timestamp=eval_timestamp)),
+        )
+    ]
     test_path = Path(args.test_data).resolve() if args.test_data else None
     ood_path = Path(args.ood_data).resolve() if args.ood_data else None
     if args.use_config_datasets:
@@ -2253,11 +2657,23 @@ def main() -> None:
     if test_path is not None and test_path != data_path:
         if not test_path.exists():
             raise FileNotFoundError(test_path)
-        jobs.append(("test", test_path, out_dir / "test"))
+        jobs.append(
+            (
+                "test",
+                test_path,
+                (out_root / "test" if out_root is not None else default_eval_output_dir(run_layout, test_path, timestamp=eval_timestamp)),
+            )
+        )
     if ood_path is not None:
         if not ood_path.exists():
             raise FileNotFoundError(ood_path)
-        jobs.append(("ood", ood_path, out_dir / "ood"))
+        jobs.append(
+            (
+                "ood",
+                ood_path,
+                (out_root / "ood" if out_root is not None else default_eval_output_dir(run_layout, ood_path, timestamp=eval_timestamp)),
+            )
+        )
 
     for label, job_data_path, job_out_dir in jobs:
         print(f"[eval:{label}] dataset={job_data_path}")
@@ -2278,6 +2694,7 @@ def main() -> None:
             topk_errors=int(getattr(args, "topk_errors", 0)),
             save_error_points=(Path(args.save_error_points) if getattr(args, "save_error_points", None) else None),
             plot_sample_limit=int(getattr(args, "plot_sample_limit", 500_000)),
+            allow_config_mismatch=bool(getattr(args, "allow_config_mismatch", False)),
         )
 
 

@@ -97,7 +97,19 @@ class ScalerPack:
         return a_scaled * self._a_scale + self._a_mean
 
 class OnlineIsometricStats:
-    """Streaming Welford mean + running max-norm for isometric scale fitting."""
+    """Streaming Welford mean + running max-norm for isometric scale fitting.
+
+    Accuracy note
+    -------------
+    ``mean`` and the RMS scale (derived from the Welford ``M2`` accumulator) are
+    exact for the rows seen. ``max_norm`` is *approximate*: it is tracked against
+    the running mean estimate, which drifts as more chunks arrive, so an early
+    chunk can register a max-norm relative to a slightly-wrong centre. For
+    residual targets (centred near zero) the drift is negligible. Prefer
+    ``mode="hybrid"``: its RMS term is exact and outlier-robust, and ``max_norm``
+    only acts as a soft upper cap. Use ``mode="max"`` only for backward
+    compatibility, where this approximation is most visible.
+    """
     def __init__(self, dim: int):
         self.dim = int(dim)
         self.n = 0
@@ -216,6 +228,9 @@ def fit_scaler_streaming(
     degree_min: int = -1,
     target_mode: "Optional[str]" = None,
     degree_max: "Optional[int]" = None,
+    u_scale_mode: str = "hybrid",
+    a_scale_mode: str = "hybrid",
+    target_scale_multiplier: float = 6.0,
 ) -> "ScalerPack":
     """Stream-fit isometric scalers on residuals ΔU/Δa (baseline already subtracted).
 
@@ -225,10 +240,19 @@ def fit_scaler_streaming(
         The dataset target mode ("residual" or "full"). Stored in provenance.
     degree_max : int, optional
         Maximum SH degree of the dataset. Stored in provenance.
+    u_scale_mode, a_scale_mode : str
+        Scale rule for the residual potential / acceleration targets:
+        ``"max"`` (legacy; one outlier shrinks every target), ``"rms"``, or
+        ``"hybrid"`` (``min(max_norm, multiplier*rms)``; default, outlier-robust).
+        The x (input) scale is always origin-fixed max-radius and is unaffected.
+    target_scale_multiplier : float
+        RMS expansion factor used by the ``"rms"``/``"hybrid"`` target modes.
     """
-    """Stream-fit isometric scalers on residuals ΔU/Δa (baseline already subtracted)."""
     logger.info(f"Fitting isometric scaler on {n_fit:,} rows from '{h5_path.name}'...")
-    logger.info(f"  Residual mode: subtracting point-mass baseline (mu_si={mu_si:.6e}, a_sign={a_sign:+.1f})")
+    logger.info(
+        f"  Residual mode: subtracting point-mass baseline (mu_si={mu_si:.6e}, a_sign={a_sign:+.1f}); "
+        f"u_scale_mode={u_scale_mode}, a_scale_mode={a_scale_mode}, mult={target_scale_multiplier}"
+    )
     rng = np.random.default_rng(seed)
     
     x_stats = OnlineIsometricStats(3)
@@ -298,8 +322,9 @@ def fit_scaler_streaming(
         x_scale = max(max_r_from_origin, 1e-12)
         logger.info(f"  x_scale: {x_scale:.3e} m [from streaming max-norm fit over {seen_rows:,} rows]")
 
-    u_mean, u_scale = u_stats.finalize(mode="max")
-    a_mean, a_scale = a_stats.finalize(mode="max")
+    _mult = float(target_scale_multiplier)
+    u_mean, u_scale = u_stats.finalize(mode=str(u_scale_mode), multiplier=_mult)
+    a_mean, a_scale = a_stats.finalize(mode=str(a_scale_mode), multiplier=_mult)
 
     logger.info(f"  x : mean=[0,0,0] (fixed -> Moon CoM), max_r={x_scale:.3e} m")
     logger.info(f"  dU: mean={u_mean[0]:.3e}, char_scale={u_scale:.3e}")
@@ -317,6 +342,9 @@ def fit_scaler_streaming(
         "target_mode": str(target_mode) if target_mode is not None else None,
         "degree_min": int(degree_min),
         "degree_max": int(degree_max) if degree_max is not None else None,
+        "u_scale_mode": str(u_scale_mode),
+        "a_scale_mode": str(a_scale_mode),
+        "target_scale_multiplier": float(target_scale_multiplier),
     }
     return ScalerPack(
         x=IsometricScaleParams(mean=x_mean.tolist(), scale=float(x_scale)),

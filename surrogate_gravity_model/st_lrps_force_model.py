@@ -27,11 +27,23 @@ import torch
 import torch.nn as nn
 
 try:
-    from .st_lrps_models import build_model_from_config
+    from .st_lrps_artifacts import (
+        load_best_or_last,
+        make_run_layout,
+        read_run_manifest,
+        reload_model_from_run_dir as reload_model_from_artifact_run_dir,
+        resolve_run_dir as resolve_run_dir_from_artifacts,
+    )
     from .st_lrps_scaling import ScalerPack, compute_base_accel, compute_base_potential
     from .dataset_parameters import MU_MOON_SI, R_MOON_SI
 except ImportError:
-    from st_lrps_models import build_model_from_config
+    from st_lrps_artifacts import (  # type: ignore
+        load_best_or_last,
+        make_run_layout,
+        read_run_manifest,
+        reload_model_from_run_dir as reload_model_from_artifact_run_dir,
+        resolve_run_dir as resolve_run_dir_from_artifacts,
+    )
     from st_lrps_scaling import ScalerPack, compute_base_accel, compute_base_potential
     from dataset_parameters import MU_MOON_SI, R_MOON_SI
 
@@ -41,28 +53,14 @@ def _resolve_run_dir(model_dir: Union[str, Path]) -> Path:
     Accept run dir, checkpoint dir, or direct checkpoint path.
     Returns the run directory (parent of checkpoints/).
     """
-    p = Path(model_dir).expanduser().resolve()
-    if p.is_file():
-        # Direct checkpoint path -> run dir is grandparent
-        return p.parent.parent
-    if p.is_dir() and p.name == "checkpoints":
-        # checkpoints/ dir -> run dir is parent
-        return p.parent
-    # Assume it's already the run dir
-    return p
+    return resolve_run_dir_from_artifacts(model_dir)
 
 
 def _find_checkpoint(run_dir: Path) -> Path:
     """Prefer ckpt_best.pt, fall back to ckpt_last.pt."""
-    ckpt_dir = run_dir / "checkpoints"
-    for name in ("ckpt_best.pt", "ckpt_last.pt"):
-        p = ckpt_dir / name
-        if p.exists():
-            return p
-    raise FileNotFoundError(
-        f"No checkpoint found in {ckpt_dir}. "
-        "Expected ckpt_best.pt or ckpt_last.pt."
-    )
+    layout = make_run_layout(run_dir)
+    ckpt_path, _ = load_best_or_last(layout, prefer="best", device=torch.device("cpu"))
+    return ckpt_path
 
 
 def _to_tensor(x: Union[np.ndarray, torch.Tensor], device: torch.device) -> torch.Tensor:
@@ -107,12 +105,20 @@ class SurrogateForceModel:
         cfg: dict,
         device: torch.device,
         chunk_size: int = 8192,
+        checkpoint_path: Optional[str] = None,
+        checkpoint_epoch: Optional[int] = None,
+        architecture_signature: Optional[str] = None,
+        run_manifest: Optional[dict] = None,
     ):
         self.model = model.eval()
         self.scaler = scaler
         self.cfg = cfg
         self.device = device
         self.chunk_size = int(chunk_size)
+        self.checkpoint_path = checkpoint_path
+        self.checkpoint_epoch = checkpoint_epoch
+        self.architecture_signature = architecture_signature
+        self.run_manifest = dict(run_manifest or {})
 
         self.mu_si = float(cfg.get("resolved_mu_si", MU_MOON_SI))
         self.a_sign = float(cfg.get("resolved_a_sign", 1.0))
@@ -383,6 +389,7 @@ def load_surrogate_force_model(
     model_dir: Union[str, Path],
     device: str = "auto",
     chunk_size: int = 8192,
+    allow_config_mismatch: bool = False,
 ) -> SurrogateForceModel:
     """
     Load a trained surrogate force model from a run directory.
@@ -407,21 +414,7 @@ def load_surrogate_force_model(
         Ready-to-use force model.
     """
     run_dir = _resolve_run_dir(model_dir)
-    ckpt_path_input = Path(model_dir).expanduser().resolve()
-    if ckpt_path_input.is_file():
-        ckpt_path = ckpt_path_input
-    else:
-        ckpt_path = _find_checkpoint(run_dir)
-
-    cfg_path = run_dir / "config.json"
-    sc_path = run_dir / "scaler.json"
-
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"config.json not found in run dir: {run_dir}")
-    if not sc_path.exists():
-        raise FileNotFoundError(f"scaler.json not found in run dir: {run_dir}")
-
-    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    layout = make_run_layout(run_dir)
 
     # Resolve device
     dev_str = str(device).lower()
@@ -434,26 +427,23 @@ def load_surrogate_force_model(
             dev = torch.device("cpu")
     else:
         dev = torch.device(dev_str)
-
-    scaler = ScalerPack.load(sc_path, device=dev, dtype=torch.float32)
-
-    model = build_model_from_config(cfg, device=dev, dtype=torch.float32)
-    model.eval()
-
-    try:
-        ckpt = torch.load(ckpt_path, map_location=dev, weights_only=False)
-    except TypeError:
-        ckpt = torch.load(ckpt_path, map_location=dev)
-
-    state_dict = ckpt.get("model", ckpt) if isinstance(ckpt, dict) else ckpt
-    model.load_state_dict(state_dict, strict=True)
-
-    # Prefer resolved physics from checkpoint if available (enriched by recent engine changes)
-    for key in ("resolved_mu_si", "resolved_a_sign", "resolved_r_ref_m", "degree_min"):
-        if key not in cfg and key in ckpt:
-            cfg[key] = ckpt[key]
-
-    return SurrogateForceModel(model=model, scaler=scaler, cfg=cfg, device=dev, chunk_size=chunk_size)
+    model, scaler, cfg, report = reload_model_from_artifact_run_dir(
+        run_dir,
+        dev,
+        prefer="best",
+        allow_config_mismatch=allow_config_mismatch,
+    )
+    return SurrogateForceModel(
+        model=model,
+        scaler=scaler,
+        cfg=cfg,
+        device=dev,
+        chunk_size=chunk_size,
+        checkpoint_path=report.get("checkpoint_path"),
+        checkpoint_epoch=report.get("checkpoint_epoch"),
+        architecture_signature=report.get("architecture_signature"),
+        run_manifest=read_run_manifest(layout),
+    )
 
 
 __all__ = ["SurrogateForceModel", "load_surrogate_force_model"]

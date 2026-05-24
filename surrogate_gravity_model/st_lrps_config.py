@@ -152,6 +152,8 @@ class TrainConfig:
     # "direction_loss": val direction loss only (experimental, not recommended alone).
     best_metric: str = "total_loss"
     hybrid_direction_alpha: float = 0.5
+    save_epoch_snapshots: bool = False
+    epoch_snapshot_every: int = 1
 
     # Optional altitude-balanced residual loss.
     # Defaults pulled from spatial_cloud_parameters.DEFAULT_SPATIAL_CLOUD_CONFIG
@@ -201,6 +203,33 @@ class TrainConfig:
     # Multi-scale SIREN — parallel frequency bands matched to the harmonic range.
     # n_bands > 1 uses MultiScaleSirenMLP; requires degree_min/degree_max metadata.
     n_bands: int = 1
+
+    # Harmonic degree range of the dataset. Resolved from HDF5 metadata by the
+    # engine BEFORE the model is built, then persisted to config.json and the
+    # checkpoint so evaluation reconstructs the identical multi-scale spectrum.
+    # Leaving these None at build time for n_bands>1 is a hard error (no silent
+    # fallback to 0/50, which silently corrupted reloaded MultiScale SIRENs).
+    degree_min: Optional[int] = None
+    degree_max: Optional[int] = None
+    # Resolved per-band SIREN frequencies (filled in by the engine for n_bands>1).
+    w0_bands: Optional[list] = None
+
+    # Target scaler robustness. "max" lets a single outlier shrink every
+    # normalized residual target; "hybrid" caps the scale at
+    # target_scale_multiplier * RMS, which is far more robust. x scaling is
+    # always origin-fixed max-radius and is NOT affected by these.
+    u_scale_mode: str = "hybrid"   # "max" | "rms" | "hybrid"
+    a_scale_mode: str = "hybrid"
+    target_scale_multiplier: float = 6.0
+
+    # Dataset convention safety. Datasets generated before the dP_dphi sign fix
+    # have sign-flipped latitude acceleration; training on them is silently
+    # wrong. By default such datasets are rejected; set True only for inspection.
+    allow_legacy_derivative_convention: bool = False
+
+    # Determinism / cuDNN. Defaults preserve prior behavior.
+    deterministic: bool = True
+    benchmark_cudnn: bool = False
 
     # Gradient accumulation — accumulate gradients over N batches before stepping.
     # Effective batch size = batch_size * grad_accumulation_steps.
@@ -373,6 +402,18 @@ def parse_args() -> TrainConfig:
     group_dir.add_argument("--hybrid-direction-alpha", type=float, default=_TC_DEFAULTS['hybrid_direction_alpha'],
                            help="Weight alpha for direction loss in hybrid best-metric: "
                                 "score = val_loss + alpha * val_direction_loss.")
+    group_dir.add_argument(
+        "--save-epoch-snapshots",
+        action="store_true",
+        default=_TC_DEFAULTS["save_epoch_snapshots"],
+        help="Also write checkpoints/ckpt_epoch_XXXXXX.pt snapshots at the configured interval.",
+    )
+    group_dir.add_argument(
+        "--epoch-snapshot-every",
+        type=int,
+        default=_TC_DEFAULTS["epoch_snapshot_every"],
+        help="Write an epoch snapshot every N epochs when --save-epoch-snapshots is enabled.",
+    )
 
     # Altitude-Balanced Loss
     group_alt = ap.add_argument_group("Altitude-Balanced Loss")
@@ -483,6 +524,35 @@ def parse_args() -> TrainConfig:
     group_pinn.add_argument("--grad-accumulation-steps", type=int, default=1,
                             help="Accumulate gradients over N batches before optimizer step. "
                                  "Effective batch = batch_size × N. (default: 1 = no accumulation)")
+
+    # Scaler robustness
+    group_scaler = ap.add_argument_group("Target Scaler")
+    group_scaler.add_argument("--u-scale-mode", choices=["max", "rms", "hybrid"],
+                              default=_TC_DEFAULTS.get("u_scale_mode", "hybrid"),
+                              help="Isometric scale rule for the residual potential target "
+                                   "(default: hybrid = robust to outliers).")
+    group_scaler.add_argument("--a-scale-mode", choices=["max", "rms", "hybrid"],
+                              default=_TC_DEFAULTS.get("a_scale_mode", "hybrid"),
+                              help="Isometric scale rule for the residual acceleration target "
+                                   "(default: hybrid).")
+    group_scaler.add_argument("--target-scale-multiplier", type=float,
+                              default=_TC_DEFAULTS.get("target_scale_multiplier", 6.0),
+                              help="RMS expansion factor for rms/hybrid target scaling (default: 6.0).")
+
+    # Dataset convention / determinism
+    group_safety = ap.add_argument_group("Dataset Safety & Determinism")
+    group_safety.add_argument("--allow-legacy-derivative-convention", action="store_true",
+                              default=False,
+                              help="Permit training on datasets generated before the dP_dphi "
+                                   "sign fix (sign-flipped latitude acceleration). Inspection only.")
+    det_group = group_safety.add_mutually_exclusive_group()
+    det_group.add_argument("--deterministic", action="store_true", dest="deterministic",
+                           help="Set deterministic cuDNN (default: True).")
+    det_group.add_argument("--no-deterministic", action="store_false", dest="deterministic",
+                           help="Disable deterministic cuDNN.")
+    group_safety.add_argument("--benchmark-cudnn", action="store_true", default=False,
+                              help="Enable cudnn.benchmark autotuner (non-deterministic).")
+    ap.set_defaults(deterministic=True)
 
     # Logging & Quick-check
     group_log = ap.add_argument_group("Logging & Quick-check")
@@ -716,6 +786,14 @@ def parse_args() -> TrainConfig:
         grad_accumulation_steps=max(1, int(a.grad_accumulation_steps)),
         best_metric=str(a.best_metric),
         hybrid_direction_alpha=float(a.hybrid_direction_alpha),
+        save_epoch_snapshots=bool(a.save_epoch_snapshots),
+        epoch_snapshot_every=max(1, int(a.epoch_snapshot_every)),
+        u_scale_mode=str(a.u_scale_mode),
+        a_scale_mode=str(a.a_scale_mode),
+        target_scale_multiplier=float(a.target_scale_multiplier),
+        allow_legacy_derivative_convention=bool(a.allow_legacy_derivative_convention),
+        deterministic=bool(a.deterministic),
+        benchmark_cudnn=bool(a.benchmark_cudnn),
         laplacian_mode=str(a.laplacian_mode),
         collocation_laplacian_every=max(1, int(a.collocation_laplacian_every)),
         collocation_alt_min_km=(float(a.collocation_alt_min_km) if a.collocation_alt_min_km is not None else None),

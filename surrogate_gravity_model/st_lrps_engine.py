@@ -22,11 +22,13 @@ import csv
 import json
 import logging
 import math
+import os
 import random
+import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
 import h5py
 import numpy as np
@@ -42,6 +44,23 @@ try:
         DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
         _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
         _resolve_lunar_dataset_contract, collate_h5, infer_a_sign_from_data,
+        validate_training_dataset_convention,
+    )
+    from .st_lrps_artifacts import (
+        atomic_write_json,
+        append_run_evaluation,
+        build_checkpoint_payload,
+        build_resolved_config,
+        capture_environment_snapshot,
+        compute_file_sha256,
+        compute_payload_sha256,
+        ensure_run_layout,
+        update_run_manifest,
+        save_checkpoint,
+        verify_critical_config_fields_match,
+        write_command_txt,
+        write_scaler_json,
+        write_run_manifest,
     )
     from .st_lrps_losses import (
         GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
@@ -50,6 +69,7 @@ try:
     from .st_lrps_models import (
         FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
         _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
+        MODEL_BUILDER_VERSION, compute_architecture_signature,
     )
     from .st_lrps_scaling import ScalerPack, fit_scaler_streaming
 except ImportError:  # pragma: no cover
@@ -59,6 +79,23 @@ except ImportError:  # pragma: no cover
         DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
         _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
         _resolve_lunar_dataset_contract, collate_h5, infer_a_sign_from_data,
+        validate_training_dataset_convention,
+    )
+    from st_lrps_artifacts import (  # type: ignore
+        atomic_write_json,
+        append_run_evaluation,
+        build_checkpoint_payload,
+        build_resolved_config,
+        capture_environment_snapshot,
+        compute_file_sha256,
+        compute_payload_sha256,
+        ensure_run_layout,
+        update_run_manifest,
+        save_checkpoint,
+        verify_critical_config_fields_match,
+        write_command_txt,
+        write_scaler_json,
+        write_run_manifest,
     )
     from st_lrps_losses import (
         GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
@@ -67,22 +104,27 @@ except ImportError:  # pragma: no cover
     from st_lrps_models import (
         FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
         _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
+        MODEL_BUILDER_VERSION, compute_architecture_signature,
     )
     from st_lrps_scaling import ScalerPack, fit_scaler_streaming
 
 logger = logging.getLogger(__name__)
 
-def set_seed(seed: int = 42) -> None:
+def set_seed(seed: int = 42, *, deterministic: bool = True, benchmark: bool = False) -> None:
     """
     Fixes all random number generator (RNG) seeds for reproducibility.
+
+    ``deterministic`` / ``benchmark`` control cuDNN behavior. Defaults preserve
+    the historical deterministic configuration; pass ``deterministic=False`` /
+    ``benchmark=True`` for throughput at the cost of run-to-run reproducibility.
     """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+
+    torch.backends.cudnn.deterministic = bool(deterministic)
+    torch.backends.cudnn.benchmark = bool(benchmark)
 
 def get_device() -> torch.device:
     """
@@ -220,6 +262,7 @@ class STLRPSTrainer:
         total_mask_frac = total_a_norm_mean = total_angular_mean_deg = 0.0
         total_col_lap_diag = total_col_lap_train = 0.0
         col_lap_diag_count = col_lap_train_count = 0
+        col_lap_attempt_count = col_lap_fail_count = col_lap_success_count = 0
         a_norm_max = 0.0
         n_batches = 0
         optimizer_steps_done = 0
@@ -324,6 +367,8 @@ class STLRPSTrainer:
                         "val_total_loss": float("nan"),
                         "train_base_loss": float("nan"),
                         "train_physics_loss": float("nan"),
+                        "optimizer_steps": int(optimizer_steps_done),
+                        "samples_seen": int(samples_done),
                     }
 
                 if is_train:
@@ -344,6 +389,7 @@ class STLRPSTrainer:
                                                      getattr(self.cfg, "laplacian_subset_size", 512))))
                         _n_hutch = max(1, int(getattr(self.cfg, "collocation_laplacian_hutchinson_samples",
                                                        getattr(self.cfg, "n_hutchinson_samples", 4))))
+                        col_lap_attempt_count += 1
                         try:
                             # Always use the ScalerPack from loss_fn for consistent scaling
                             _cl_loss = collocation_laplacian_loss(
@@ -358,6 +404,7 @@ class STLRPSTrainer:
                             )
                             _col_lap_scalar = float(_cl_loss.detach().item())
                             if math.isfinite(_col_lap_scalar):
+                                col_lap_success_count += 1
                                 if self.laplacian_mode == "train":
                                     total_col_lap_train += _col_lap_scalar
                                     col_lap_train_count += 1
@@ -365,7 +412,29 @@ class STLRPSTrainer:
                                 else:  # diagnostic
                                     total_col_lap_diag += _col_lap_scalar
                                     col_lap_diag_count += 1
+                            else:
+                                col_lap_fail_count += 1
+                                if self.laplacian_mode == "train":
+                                    raise RuntimeError(
+                                        f"collocation_laplacian_loss returned non-finite "
+                                        f"value {_col_lap_scalar} in train mode."
+                                    )
+                                logger.warning(
+                                    "[train] collocation_laplacian_loss non-finite "
+                                    f"({_col_lap_scalar}); skipped this step (diagnostic mode)."
+                                )
                         except Exception as _col_e:
+                            col_lap_fail_count += 1
+                            # In train mode the Laplacian is part of the objective; a
+                            # silent skip would disable the physics constraint while the
+                            # logs/metrics still claim it is active. Fail loudly instead.
+                            if self.laplacian_mode == "train":
+                                raise RuntimeError(
+                                    "collocation_laplacian_loss failed in train mode "
+                                    f"(epoch={epoch+1}, batch={n_batches}): {_col_e}. "
+                                    "The physics constraint cannot be silently dropped; "
+                                    "fix the cause or switch laplacian_mode to 'diagnostic'/'off'."
+                                ) from _col_e
                             logger.warning(f"[train] collocation_laplacian_loss failed: {_col_e}")
 
                     # Scale loss by accumulation steps so gradients average over the
@@ -417,6 +486,8 @@ class STLRPSTrainer:
                                 "val_total_loss": float("nan"),
                                 "train_base_loss": float("nan"),
                                 "train_physics_loss": float("nan"),
+                                "optimizer_steps": int(optimizer_steps_done),
+                                "samples_seen": int(samples_done),
                             }
 
                     if self.use_amp and self.scaler_amp is not None:
@@ -559,6 +630,9 @@ class STLRPSTrainer:
             "loss_laplacian_train": _col_lap_train_avg,
             "lambda_laplacian_eff": _col_lap_weight_eff,
             "collocation_laplacian_applied": _col_lap_applied,
+            "collocation_laplacian_attempt_count": int(col_lap_attempt_count),
+            "collocation_laplacian_success_count": int(col_lap_success_count),
+            "collocation_laplacian_fail_count": int(col_lap_fail_count),
             "lambda_dir_eff": lambda_dir_eff,
             "lr": float(self.optimizer.param_groups[0]["lr"]),
             "w_u": float(last_stats.get("w_u", self.cfg.w_u)),
@@ -571,6 +645,8 @@ class STLRPSTrainer:
             "val_total_loss": total_loss / n_safe,   # alias for "loss"
             "train_base_loss": (total_u + total_a) / n_safe,
             "train_physics_loss": (total_dir + total_radial + total_cross + total_lap + _col_lap_train_avg) / n_safe,
+            "optimizer_steps": int(optimizer_steps_done),
+            "samples_seen": int(samples_done),
         }
 
 def _lr_multiplier_for_epoch(
@@ -611,6 +687,8 @@ def _write_training_history_csv(history: List[Dict[str, float]], path: Path) -> 
     fieldnames = [
         "epoch",
         "train_loss_total",
+        "train_loss_base",
+        "train_loss_physics",
         "train_loss_u",
         "train_loss_a",
         "train_loss_dir",
@@ -618,22 +696,33 @@ def _write_training_history_csv(history: List[Dict[str, float]], path: Path) -> 
         "train_loss_cross",
         "train_loss_laplacian",
         "train_mean_cossim",
+        "train_cos_sim",
         "val_loss_total",
+        "val_loss_base",
+        "val_loss_physics",
         "val_loss_u",
         "val_loss_a",
         "val_loss_dir",
         "val_loss_radial",
         "val_loss_cross",
         "val_loss_laplacian",
+        "val_checkpoint_score",
         "val_mean_cossim",
+        "val_cos_sim",
         "train_angular_mean_deg",
         "val_angular_mean_deg",
+        "val_ang_deg",
+        "val_mae_a_vec",
+        "val_rmse_a_vec",
         "lambda_dir_eff",
         "lr",
         "w_u",
         "w_a_raw",
         "w_a_eff",
         "grad_norm",
+        "col_lap_attempts",
+        "col_lap_success",
+        "col_lap_fail",
         "epoch_time_s",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -641,6 +730,57 @@ def _write_training_history_csv(history: List[Dict[str, float]], path: Path) -> 
         writer.writeheader()
         for row in history:
             writer.writerow(row)
+
+
+def _append_history_jsonl(path: Path, record: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(record, sort_keys=True, default=str) + "\n")
+
+
+def _dataset_meta_snapshot(
+    meta: DatasetMeta,
+    *,
+    dataset_name: str,
+    data_path: Optional[Path],
+    train_data_path: Optional[Path],
+    val_data_path: Optional[Path],
+    test_data_path: Optional[str],
+    ood_data_path: Optional[str],
+    target_mode: str,
+    central_body: str,
+    resolved_mu_si: float,
+    resolved_r_ref_m: float,
+) -> Dict[str, Any]:
+    snapshot = {
+        "dataset_name": str(dataset_name),
+        "data_path": (str(data_path) if data_path is not None else None),
+        "train_data_path": (str(train_data_path) if train_data_path is not None else None),
+        "val_data_path": (str(val_data_path) if val_data_path is not None else None),
+        "test_data_path": (str(test_data_path) if test_data_path else None),
+        "ood_data_path": (str(ood_data_path) if ood_data_path else None),
+        "target_mode": str(target_mode),
+        "central_body": str(central_body),
+        "mu_si": float(resolved_mu_si),
+        "r_ref_m": float(resolved_r_ref_m),
+        "unit_system": meta.unit_system,
+        "requested_degree": meta.requested_degree,
+        "degree_min": meta.degree_min,
+        "degree_max": meta.degree_max,
+        "alt_min_km": meta.alt_min_km,
+        "alt_max_km": meta.alt_max_km,
+        "columns": meta.columns,
+        "a_sign_convention": meta.a_sign_convention,
+        "derivative_convention_version": meta.derivative_convention_version,
+        "DU_m": meta.DU_m,
+        "TU_s": meta.TU_s,
+        "VU_m_s": meta.VU_m_s,
+        "include_potential": meta.include_potential,
+        "gravity_model_path": meta.gravity_model_path,
+        "cloud_config": meta.cloud_config,
+        "raw_attrs": dict(meta.raw_attrs),
+    }
+    return snapshot
 
 def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
     if not history:
@@ -653,6 +793,9 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
     except ImportError:
         logger.warning("matplotlib is not installed; skipping training-history plots.")
         return
+
+    outdir = Path(outdir) / "plots" / "training"
+    outdir.mkdir(parents=True, exist_ok=True)
 
     epochs = [int(item["epoch"]) + 1 for item in history]
 
@@ -752,28 +895,54 @@ def train(cfg: TrainConfig) -> None:
     """
 
     # 1. Initialization
-    set_seed(cfg.seed)
+    set_seed(
+        cfg.seed,
+        deterministic=bool(getattr(cfg, "deterministic", True)),
+        benchmark=bool(getattr(cfg, "benchmark_cudnn", False)),
+    )
     device = get_device()
-    outdir = safe_mkdir(cfg.out)
-    (outdir / "checkpoints").mkdir(exist_ok=True)
-
-    # Save resolved (fully-merged) config snapshot for provenance.
-    try:
-        import dataclasses as _dc
-        resolved_cfg_path = outdir / "resolved_config.json"
-        resolved_cfg_path.write_text(
-            json.dumps(_dc.asdict(cfg), indent=2, default=str)
-        )
-    except Exception:
-        pass
+    layout = ensure_run_layout(Path(cfg.out))
+    outdir = layout.run_dir
+    run_created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[logging.StreamHandler(), logging.FileHandler(outdir / "train.log")]
+        handlers=[logging.StreamHandler(), logging.FileHandler(layout.train_log)]
     )
 
+    logger.info(f"[artifacts] run_dir={outdir}")
     logger.info(f"Using device: {device.type.upper()}")
+    command_line = write_command_txt(layout)
+    write_run_manifest(
+        layout,
+        {
+            "schema_version": "st_lrps_run_manifest_v1",
+            "run_id": outdir.name,
+            "created_at_utc": run_created_at,
+            "status": "running",
+            "command_line": command_line,
+            "command_path": str(layout.command_txt),
+            "script_version": "st_lrps_engine",
+            "git_commit": os.environ.get("GIT_COMMIT") or None,
+            "data_paths": {
+                "data": str(cfg.data),
+                "train_data": str(cfg.train_data) if cfg.train_data else None,
+                "val_data": str(cfg.val_data) if cfg.val_data else None,
+                "test_data": str(cfg.test_data) if cfg.test_data else None,
+                "ood_data": str(cfg.ood_data) if cfg.ood_data else None,
+                "suite_manifest": str(cfg.suite_manifest) if cfg.suite_manifest else None,
+            },
+            "config_path": str(layout.config_json),
+            "scaler_path": str(layout.scaler_json),
+            "best_checkpoint_path": str(layout.ckpt_best),
+            "last_checkpoint_path": str(layout.ckpt_last),
+            "history_csv_path": str(layout.history_csv),
+            "history_jsonl_path": str(layout.history_jsonl),
+            "warnings": [],
+            "evaluations": [],
+        },
+    )
 
     if cfg.quick_check:
         logger.info("=" * 62)
@@ -879,6 +1048,15 @@ def train(cfg: TrainConfig) -> None:
     _effective_target = meta.target_mode or ("residual" if degree_min_val >= 0 else "full")
     dataset_body_name, resolved_mu_si, resolved_r_ref_m = _resolve_lunar_dataset_contract(
         meta, data_path=primary_path,
+    )
+    # Hard convention guard: reject sign-flipped legacy datasets and other
+    # silently-wrong metadata before any training happens.
+    validate_training_dataset_convention(
+        meta,
+        data_path=primary_path,
+        allow_legacy_derivative_convention=bool(
+            getattr(cfg, "allow_legacy_derivative_convention", False)
+        ),
     )
     if _effective_target == "residual" and degree_min_val < 0:
         raise ValueError(
@@ -1033,10 +1211,16 @@ def train(cfg: TrainConfig) -> None:
         a_sign = float(cfg.a_sign)
 
     # 7. Fit isometric scalers on residuals
-    scaler_path = outdir / "scaler.json"
+    scaler_path = layout.scaler_json
+    scaler_hash_info: Dict[str, Any]
     if scaler_path.exists():
         logger.info(f"Loading existing scaler from {scaler_path.name}")
         scaler = ScalerPack.load_json(scaler_path)
+        scaler_hash_info = {
+            "scaler_hash": compute_payload_sha256(asdict(scaler)),
+            "scaler_file_sha256": compute_file_sha256(scaler_path),
+            "scaler_payload": asdict(scaler),
+        }
     else:
         scaler = fit_scaler_streaming(
             h5_path=primary_path, dset_name=dset_name, meta=meta,
@@ -1045,8 +1229,20 @@ def train(cfg: TrainConfig) -> None:
             degree_min=degree_min_val,
             target_mode=_effective_target,
             degree_max=int(meta.degree_max if meta.degree_max is not None else (meta.requested_degree or -1)),
+            u_scale_mode=str(getattr(cfg, "u_scale_mode", "hybrid")),
+            a_scale_mode=str(getattr(cfg, "a_scale_mode", "hybrid")),
+            target_scale_multiplier=float(getattr(cfg, "target_scale_multiplier", 6.0)),
         )
-        scaler.save_json(scaler_path)
+        scaler_hash_info = write_scaler_json(layout, scaler)
+    logger.info(f"[artifacts] scaler_hash={scaler_hash_info['scaler_hash']}")
+    update_run_manifest(
+        layout,
+        {
+            "scaler_path": str(layout.scaler_json),
+            "scaler_hash": scaler_hash_info["scaler_hash"],
+            "scaler_file_sha256": scaler_hash_info["scaler_file_sha256"],
+        },
+    )
 
     # 8. Construct DataLoaders
     dataset_mb = bytes_est / (1024.0 * 1024.0)
@@ -1177,6 +1373,36 @@ def train(cfg: TrainConfig) -> None:
     # 9. Build model via the shared factory (build_model_from_config) — authoritative builder
     # used by evaluator and force model. This ensures SH/radial encoding flags are honoured.
     # The SIREN+Fourier mutual exclusion check is inside build_model_from_config().
+    #
+    # CRITICAL (reload-safety): resolve the dataset's degree range and the
+    # multi-scale band frequencies INTO cfg before building, and BEFORE writing
+    # config.json. Previously the model was built from cfg (which had no degree
+    # fields → silent 0/50 defaults) while config.json recorded the meta-derived
+    # degrees. For n_bands>1 that produced a model whose SIREN band frequencies
+    # differed from what evaluation reconstructed: the state_dict matched by
+    # shape but the functional model was wrong. Resolving here makes training
+    # and evaluation build the identical spectrum.
+    degree_max_val = int(
+        meta.degree_max if meta.degree_max is not None
+        else (meta.requested_degree if meta.requested_degree is not None else -1)
+    )
+    cfg.degree_min = int(degree_min_val)
+    cfg.degree_max = int(degree_max_val)
+    if cfg.activation.lower() == "sine" and int(getattr(cfg, "n_bands", 1)) > 1:
+        if cfg.degree_max <= 0:
+            raise ValueError(
+                "Multi-scale SIREN (n_bands>1) requires a known degree_max from the "
+                f"dataset metadata, but resolved degree_max={cfg.degree_max}. "
+                "Regenerate the dataset with degree_max recorded, or use n_bands=1."
+            )
+        cfg.w0_bands = [
+            float(w) for w in _compute_harmonic_w0_bands(
+                int(cfg.n_bands), int(cfg.degree_min), int(cfg.degree_max)
+            )
+        ]
+    else:
+        cfg.w0_bands = None
+
     model = build_model_from_config(
         cfg,
         in_dim=3,
@@ -1194,12 +1420,20 @@ def train(cfg: TrainConfig) -> None:
         )
     if cfg.activation.lower() == "sine":
         if _n_bands_built > 1:
-            degree_max_meta_log = int(meta.requested_degree) if meta.requested_degree else 50
-            w0_bands_log = _compute_harmonic_w0_bands(_n_bands_built, degree_min_val, degree_max_meta_log)
+            # Log the EXACT bands the model was built with (resolved into cfg above),
+            # not an independently recomputed value that could silently diverge.
             logger.info(
-                f"Built Multi-Scale SIREN: n_bands={_n_bands_built}, w0_bands={w0_bands_log}, "
+                f"Built Multi-Scale SIREN: n_bands={_n_bands_built}, w0_bands={cfg.w0_bands}, "
+                f"degree_min={cfg.degree_min}, degree_max={cfg.degree_max}, "
                 f"depth={cfg.depth}, hidden={cfg.hidden}"
             )
+            # Defensive cross-check: the model's resolved bands must equal cfg's.
+            _model_bands = list(getattr(model, "w0_bands", []) or [])
+            if _model_bands and [round(b, 4) for b in _model_bands] != [round(b, 4) for b in (cfg.w0_bands or [])]:
+                raise RuntimeError(
+                    f"Internal error: model w0_bands {_model_bands} != cfg.w0_bands {cfg.w0_bands}. "
+                    "Refusing to train a model whose spectrum cannot be reproduced from config."
+                )
         else:
             logger.info(
                 f"Built SIREN backbone: depth={cfg.depth}, hidden={cfg.hidden}, "
@@ -1213,23 +1447,16 @@ def train(cfg: TrainConfig) -> None:
     _total_params = sum(p.numel() for p in model.parameters())
     logger.info(f"Total parameters: {_total_params:,}")
 
-    # Task 2: Update config.json with model-derived embedding metadata now that
-    # the model has been built and has .embedding_type / .input_feature_dim set.
-    try:
-        _emb_type_built = str(getattr(model, "embedding_type", "raw"))
-        _in_fdim_built = int(getattr(model, "input_feature_dim", 3))
-        with open(config_path, "r", encoding="utf-8") as _cf:
-            _cfg_payload = json.load(_cf)
-        _cfg_payload["embedding_type"] = _emb_type_built
-        _cfg_payload["input_feature_dim"] = _in_fdim_built
-        _cfg_payload["total_params"] = int(_total_params)
-        with open(config_path, "w", encoding="utf-8") as _cf:
-            json.dump(_cfg_payload, _cf, indent=2)
-        logger.info(
-            f"Encoding: embedding_type={_emb_type_built}  input_feature_dim={_in_fdim_built}"
-        )
-    except Exception as _cfg_update_exc:
-        logger.warning(f"Could not update config.json with model metadata: {_cfg_update_exc}")
+    # Capture model-derived architecture metadata for config.json / checkpoint
+    # persistence below. (Previously this block tried to rewrite config.json
+    # before it had been created, so the metadata was silently lost every run.)
+    _emb_type_built = str(getattr(model, "embedding_type", "raw"))
+    _in_fdim_built = int(getattr(model, "input_feature_dim", 3))
+    _arch_signature = compute_architecture_signature(cfg)
+    logger.info(
+        f"Encoding: embedding_type={_emb_type_built}  input_feature_dim={_in_fdim_built}  "
+        f"builder={MODEL_BUILDER_VERSION}  arch_signature={_arch_signature}"
+    )
 
     weights = GradNormWeights(
         w_u=cfg.w_u,
@@ -1279,85 +1506,98 @@ def train(cfg: TrainConfig) -> None:
     for group in opt.param_groups:
         group["initial_lr"] = float(group["lr"])
 
-    # 10. Save config snapshot
-    config_path = outdir / "config.json"
-    payload = asdict(cfg)
-    payload["resolved_a_sign"] = float(a_sign)
-    payload["resolved_mu_si"] = float(mu_val)
-    payload["resolved_r_ref_m"] = float(resolved_r_ref_m)
-    payload["mu_si"] = float(mu_val)
-    payload["r_ref_m"] = float(resolved_r_ref_m)
-    payload["degree_min"] = degree_min_val
-    payload["degree_max"] = int(meta.degree_max if meta.degree_max is not None else (meta.requested_degree or -1))
-    payload["use_fourier"] = bool(cfg.use_fourier)
-    payload["fourier_append_raw"] = bool(cfg.fourier_append_raw)
-    payload["fourier_n_features"] = int(cfg.fourier_n_features)
-    payload["fourier_features"] = int(cfg.fourier_n_features)  # compatibility alias for older tools
-    payload["fourier_sigma"] = float(cfg.fourier_sigma)
-    payload["fourier_seed"] = int(cfg.fourier_seed)
-    payload["output_head_lr_mult"] = float(cfg.output_head_lr_mult)
-    payload["potential_only_epochs"] = int(cfg.potential_only_epochs)
-    payload["accel_ramp_epochs"] = int(cfg.accel_ramp_epochs)
-    payload["gradnorm_mode"] = str(cfg.gradnorm_mode)
-    payload["dynamic_weights"] = bool(cfg.dynamic_weights)
-    payload["x_mean_policy"] = "origin_fixed"
-    payload["x_scale_policy"] = "max_norm_from_origin"
+    # 10. Save canonical config + provenance snapshot
+    config_path = layout.config_json
     _is_residual = (_effective_target == "residual")
-    payload["residual_mode"] = _is_residual
-    payload["target_mode"] = _effective_target
-    payload["unit_system"] = meta.unit_system
-    payload["scaler_kind"] = "isometric"
-    payload["base_potential_kind"] = "point_mass"
-    payload["st_lrps_version"] = "st_lrps_lunar_hybrid_fourier_v1"
-    payload["lr_schedule"] = {
-        "kind": "warmup_cosine",
-        "warmup_epochs": int(cfg.warmup_epochs),
-        "min_lr_ratio": float(cfg.min_lr_ratio),
-        "t_max": (int(cfg.t_max) if cfg.t_max is not None else None),
-    }
-    payload["best_val_loss"] = None
-    payload["best_epoch"] = None
-    payload["best_ckpt_start_epoch_resolved"] = None
-    payload["dataset_meta"] = {
-        "unit_system": meta.unit_system,
-        "central_body": dataset_body_name,
-        "mu_si": resolved_mu_si,
-        "r_ref_m": resolved_r_ref_m,
-        "DU_m": meta.DU_m,
-        "TU_s": meta.TU_s,
-        "VU_m_s": meta.VU_m_s,
-        "requested_degree": meta.requested_degree,
-        "degree_min": degree_min_val,
-        "degree_max": meta.degree_max,
-        "target_mode": _effective_target,
-        "columns": meta.columns,
-        "a_sign_convention": meta.a_sign_convention,
-        "alt_min_km": meta.alt_min_km,
-        "alt_max_km": meta.alt_max_km,
-        "r_ref_m_fallback": float(R_MOON_SI),
-    }
-    payload["central_body"] = dataset_body_name
-    # Record which dataset paths were used (for reproducibility / evaluation)
-    if independent_val:
-        payload["train_data_path"] = str(train_data_path)
-        payload["val_data_path"] = str(val_data_path)
-    if cfg.test_data:
-        payload["test_data_path"] = str(cfg.test_data)
-    if cfg.ood_data:
-        payload["ood_data_path"] = str(cfg.ood_data)
+    dataset_snapshot = _dataset_meta_snapshot(
+        meta,
+        dataset_name=dset_name,
+        data_path=(None if independent_val else data_path),
+        train_data_path=(train_data_path if independent_val else None),
+        val_data_path=(val_data_path if independent_val else None),
+        test_data_path=cfg.test_data,
+        ood_data_path=cfg.ood_data,
+        target_mode=_effective_target,
+        central_body=dataset_body_name,
+        resolved_mu_si=resolved_mu_si,
+        resolved_r_ref_m=resolved_r_ref_m,
+    )
+    atomic_write_json(layout.provenance_dir / "dataset_meta.json", dataset_snapshot)
+
     suite_manifest_path = str(getattr(cfg, "suite_manifest", "") or "").strip()
+    suite_manifest: Dict[str, Any] = {}
     if suite_manifest_path:
-        payload["suite_manifest"] = suite_manifest_path
         try:
             manifest_path = Path(suite_manifest_path)
             if manifest_path.exists():
                 suite_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                payload["suite_id"] = suite_manifest.get("suite_id")
-                payload["suite_name"] = suite_manifest.get("suite_name")
-                payload["suite_files"] = suite_manifest.get("output_files")
-                payload["suite_component_counts"] = suite_manifest.get("train_components")
-                payload["suite_train_total_n"] = suite_manifest.get("train_total_n")
-                payload["suite_seeds"] = {
+                atomic_write_json(layout.provenance_dir / "suite_manifest_snapshot.json", suite_manifest)
+            else:
+                logger.warning(f"Suite manifest not found while writing config: {suite_manifest_path}")
+        except Exception as exc:
+            logger.warning(f"Could not read suite manifest while writing config: {exc}")
+
+    capture_environment_snapshot(layout, extra={"device": str(device), "run_id": outdir.name})
+
+    resolved_cfg_source = asdict(cfg)
+    resolved_cfg_source.update(
+        {
+            "resolved_a_sign": float(a_sign),
+            "resolved_mu_si": float(mu_val),
+            "resolved_r_ref_m": float(resolved_r_ref_m),
+            "mu_si": float(mu_val),
+            "r_ref_m": float(resolved_r_ref_m),
+            "degree_min": int(degree_min_val),
+            "degree_max": int(degree_max_val),
+            "target_mode": _effective_target,
+            "residual_mode": _is_residual,
+            "unit_system": meta.unit_system,
+            "central_body": dataset_body_name,
+            "train_data_path": (str(train_data_path) if independent_val else None),
+            "val_data_path": (str(val_data_path) if independent_val else None),
+            "test_data_path": (str(cfg.test_data) if cfg.test_data else None),
+            "ood_data_path": (str(cfg.ood_data) if cfg.ood_data else None),
+            "suite_manifest": suite_manifest_path or None,
+            "dataset_name": str(dset_name),
+            "x_mean_policy": "origin_fixed",
+            "x_scale_policy": "max_norm_from_origin",
+            "lr_schedule": {
+                "kind": "warmup_cosine",
+                "warmup_epochs": int(cfg.warmup_epochs),
+                "min_lr_ratio": float(cfg.min_lr_ratio),
+                "t_max": (int(cfg.t_max) if cfg.t_max is not None else None),
+            },
+            "loss_features": {
+                "altitude_balanced": bool(cfg.use_altitude_balanced_loss),
+                "radial_cross": bool(cfg.use_radial_cross_loss),
+                "laplacian_regularization": bool(cfg.use_laplacian_regularization),
+                "direction_loss_weight": float(cfg.direction_loss_weight),
+                "direction_loss_start_epoch": int(cfg.direction_loss_start_epoch),
+                "direction_loss_ramp_epochs": int(cfg.direction_loss_ramp_epochs),
+                "checkpoint_settle_epochs": int(getattr(cfg, "checkpoint_settle_epochs", 5)),
+            },
+            "best_val_loss": None,
+            "best_epoch": None,
+            "best_score": None,
+            "best_score_name": str(getattr(cfg, "best_metric", "total_loss")),
+            "best_ckpt_start_epoch_resolved": None,
+            "model_builder_version": MODEL_BUILDER_VERSION,
+            "embedding_type": _emb_type_built,
+            "input_feature_dim": int(_in_fdim_built),
+            "total_params": int(_total_params),
+            "w0_bands": list(cfg.w0_bands) if cfg.w0_bands is not None else None,
+            "dataset_meta": dataset_snapshot,
+        }
+    )
+    if suite_manifest:
+        resolved_cfg_source.update(
+            {
+                "suite_id": suite_manifest.get("suite_id"),
+                "suite_name": suite_manifest.get("suite_name"),
+                "suite_files": suite_manifest.get("output_files"),
+                "suite_component_counts": suite_manifest.get("train_components"),
+                "suite_train_total_n": suite_manifest.get("train_total_n"),
+                "suite_seeds": {
                     "train_uniform": (suite_manifest.get("train_components") or {}).get("stratified_uniform", {}).get("seed"),
                     "train_inverse_r2": (suite_manifest.get("train_components") or {}).get("inverse_r2", {}).get("seed"),
                     "train_residual_mag": (suite_manifest.get("train_components") or {}).get("residual_mag", {}).get("seed"),
@@ -1366,33 +1606,42 @@ def train(cfg: TrainConfig) -> None:
                     "test": suite_manifest.get("test_seed"),
                     "ood_low": suite_manifest.get("ood_low_seed"),
                     "ood_high": suite_manifest.get("ood_high_seed"),
-                }
-            else:
-                logger.warning(f"Suite manifest not found while writing config: {suite_manifest_path}")
-        except Exception as exc:
-            logger.warning(f"Could not read suite manifest while writing config: {exc}")
-    # Record active optional losses
-    payload["loss_features"] = {
-        "altitude_balanced": bool(cfg.use_altitude_balanced_loss),
-        "radial_cross": bool(cfg.use_radial_cross_loss),
-        "laplacian_regularization": bool(cfg.use_laplacian_regularization),
-        "direction_loss_weight": float(cfg.direction_loss_weight),
-        "direction_loss_start_epoch": int(cfg.direction_loss_start_epoch),
-        "direction_loss_ramp_epochs": int(cfg.direction_loss_ramp_epochs),
-        "checkpoint_settle_epochs": int(getattr(cfg, "checkpoint_settle_epochs", 5)),
-    }
-    # Task 2: Record encoding configuration so strict checkpoint reloads can
-    # reconstruct the exact same PhysicsNet architecture.
-    payload["use_sh_encoding"] = bool(getattr(cfg, "use_sh_encoding", False))
-    payload["sh_encoding_degree"] = int(getattr(cfg, "sh_encoding_degree", 4))
-    payload["sh_append_raw"] = bool(getattr(cfg, "sh_append_raw", True))
-    payload["use_radial_separation"] = bool(getattr(cfg, "use_radial_separation", False))
-    payload["radial_append_raw"] = bool(getattr(cfg, "radial_append_raw", False))
-    # Derive embedding_type and input_feature_dim from model after build
-    # (model is built later; insert placeholder; updated after build below)
-    payload["model_builder_version"] = "v2"
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+                },
+            }
+        )
+
+    payload = build_resolved_config(
+        resolved_cfg_source,
+        dataset_snapshot,
+        model,
+        scaler,
+        _arch_signature,
+    )
+    atomic_write_json(config_path, payload)
+    payload_readback = json.loads(config_path.read_text(encoding="utf-8"))
+    verify_critical_config_fields_match(payload_readback, payload)
+    update_run_manifest(
+        layout,
+        {
+            "config_path": str(layout.config_json),
+            "resolved_config_summary": {key: payload.get(key) for key in (
+                "activation",
+                "hidden",
+                "depth",
+                "n_bands",
+                "w0_bands",
+                "embedding_type",
+                "input_feature_dim",
+                "architecture_signature",
+                "degree_min",
+                "degree_max",
+                "target_mode",
+            )},
+            "architecture_signature": _arch_signature,
+            "w0_bands": payload.get("w0_bands"),
+            "status": "running",
+        },
+    )
 
     # 11. Train
     # Resolve collocation altitude bounds
@@ -1461,11 +1710,13 @@ def train(cfg: TrainConfig) -> None:
     epochs_without_improve = 0
     _prev_val_cossim = 1.0   # for direction drift detection
     _prev_val_mse_a = float("inf")
-    best_path = outdir / "checkpoints" / "ckpt_best.pt"
-    last_path = outdir / "checkpoints" / "ckpt_last.pt"
-    log_path = outdir / "metrics.jsonl"
+    best_path = layout.ckpt_best
+    last_path = layout.ckpt_last
+    log_path = layout.history_jsonl
     history: List[Dict[str, float]] = []
     _prev_mse_a: Optional[float] = None  # for epoch-level explosion detection
+    global_step = 0
+    run_status = "completed"
 
     if _ckpt_start > 0:
         logger.info(
@@ -1478,10 +1729,21 @@ def train(cfg: TrainConfig) -> None:
     payload["best_ckpt_start_epoch_resolved"] = int(_ckpt_start)
     payload["best_ckpt_start_epoch_resolved_display"] = int(_ckpt_start + 1)
     payload["checkpoint_settle_epochs"] = int(getattr(cfg, "checkpoint_settle_epochs", 5))
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    atomic_write_json(config_path, payload)
     ckpt_config_base = dict(payload)
+    update_run_manifest(
+        layout,
+        {
+            "best_ckpt_start_epoch": int(_ckpt_start),
+            "best_ckpt_start_epoch_display": int(_ckpt_start + 1),
+            "checkpoint_settle_epochs": int(getattr(cfg, "checkpoint_settle_epochs", 5)),
+        },
+    )
+    logger.info(f"[artifacts] schema=st_lrps_checkpoint_v2")
+    logger.info(f"[artifacts] architecture_signature={_arch_signature}")
     logger.info("Beginning training loop...")
+    if log_path.exists():
+        log_path.unlink()
     with open(log_path, "w", encoding="utf-8") as logf:
         for epoch in range(cfg.epochs):
             epoch_t0 = time.perf_counter()
@@ -1500,12 +1762,21 @@ def train(cfg: TrainConfig) -> None:
 
             # Epoch-level explosion detection: save failure manifest and stop on NaN.
             if tr.get("nan_detected"):
+                run_status = "failed"
                 logger.error(
                     f"Training stopped at epoch {epoch+1} due to NaN/Inf loss. "
                     f"Saving failure manifest to {outdir / 'failure_manifest.json'}."
                 )
                 with open(outdir / "failure_manifest.json", "w", encoding="utf-8") as _fmf:
                     json.dump({"epoch": epoch, "reason": "nan_loss", "config": asdict(cfg)}, _fmf, indent=2, default=str)
+                update_run_manifest(
+                    layout,
+                    {
+                        "status": "failed",
+                        "latest_epoch": int(epoch + 1),
+                        "notes": [f"Training stopped due to NaN/Inf loss at epoch {epoch + 1}."],
+                    },
+                )
                 break
 
             # Warn if acceleration loss jumped 100x vs previous epoch (early explosion signal).
@@ -1521,6 +1792,7 @@ def train(cfg: TrainConfig) -> None:
 
             va = trainer.run_epoch(val_loader,   is_train=False, epoch=epoch, max_batches=cfg.max_val_batches)
             epoch_time_s = time.perf_counter() - epoch_t0
+            global_step += int(tr.get("optimizer_steps", 0))
 
             # Direction drift warning: magnitude improving but direction metric worsening.
             _val_cossim_now = float(va.get("cossim_mean", 1.0))
@@ -1540,57 +1812,60 @@ def train(cfg: TrainConfig) -> None:
             _prev_val_cossim = _val_cossim_now
             _prev_val_mse_a = _val_mse_a_now
 
-            logf.write(json.dumps({"epoch": epoch, "train": tr, "val": va}) + "\n")
-            logf.flush()
+            _best_metric_mode = str(getattr(cfg, "best_metric", "total_loss")).strip().lower()
+            _hybrid_alpha = float(getattr(cfg, "hybrid_direction_alpha", 0.5))
+            if _best_metric_mode == "hybrid" and float(getattr(cfg, "direction_loss_weight", 0.0)) > 0.0:
+                _ckpt_score = float(va.get("val_base_loss", va["loss"])) + _hybrid_alpha * float(va.get("loss_dir", 0.0))
+            elif _best_metric_mode == "direction_loss":
+                _ckpt_score = float(va.get("loss_dir", float(va["loss"])))
+            elif _best_metric_mode == "val_base_loss":
+                _ckpt_score = float(va.get("val_base_loss", va["loss"]))
+            elif _best_metric_mode == "val_total_loss":
+                _ckpt_score = float(va.get("val_total_loss", va["loss"]))
+            else:
+                _ckpt_score = float(va["loss"])
+            va["val_checkpoint_score"] = float(_ckpt_score)
 
             ckpt_config = dict(ckpt_config_base)
             ckpt_config["best_val_loss"] = float(best_val) if math.isfinite(best_val) else None
             ckpt_config["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
+            ckpt_config["best_score"] = float(best_val) if math.isfinite(best_val) else None
+            ckpt_config["best_score_name"] = str(_best_metric_mode)
             ckpt_config["best_ckpt_start_epoch_resolved"] = int(_ckpt_start)
             ckpt_config["current_epoch"] = int(epoch + 1)
             ckpt_config["current_val_ref_loss"] = float(va["loss"])
+            ckpt_config["epochs_since_improvement"] = int(epochs_without_improve)
 
-            state = {
-                "epoch": epoch,
-                "model": model.state_dict(),
-                "optimizer": opt.state_dict(),
-                "scheduler": {
-                    "kind": "warmup_cosine",
-                    "epoch": int(epoch),
-                    "warmup_epochs": int(cfg.warmup_epochs),
-                    "min_lr_ratio": float(cfg.min_lr_ratio),
-                    "t_max": (int(cfg.t_max) if cfg.t_max is not None else None),
-                },
-                "best_val": best_val,
-                "best_epoch": int(best_epoch),
-                "scaler": asdict(scaler),
-                "config": ckpt_config,
-                # Resolved physics (authoritatively resolved at training time)
-                "resolved_a_sign": float(a_sign),
-                "resolved_mu_si": float(mu_val),
-                "resolved_r_ref_m": float(resolved_r_ref_m),
-                "degree_min": int(degree_min_val),
-                "degree_max": int(meta.degree_max if meta.degree_max is not None else (meta.requested_degree or -1)),
-                # Dataset provenance
-                "dataset_name": str(getattr(cfg, "dataset_name", "") or ""),
-                "central_body": str(dataset_body_name),
-                # Model architecture snapshot
-                "activation": str(cfg.activation),
-                "hidden": int(cfg.hidden),
-                "depth": int(cfg.depth),
-                "n_bands": int(cfg.n_bands),
-                "use_residual_blocks": bool(cfg.use_residual_blocks),
-                "use_fourier": bool(cfg.use_fourier),
-                "fourier_append_raw": bool(cfg.fourier_append_raw),
-                "fourier_n_features": int(cfg.fourier_n_features),
-                "fourier_sigma": float(cfg.fourier_sigma),
-                "fourier_seed": int(cfg.fourier_seed),
-                # Modes
-                "residual_mode": _is_residual,
-                "target_mode": _effective_target,
-                "scaler_kind": "isometric",
-                "base_potential_kind": "point_mass",
-                "st_lrps_version": "st_lrps_lunar_hybrid_fourier_v1",
+            scheduler_state = {
+                "kind": "warmup_cosine",
+                "epoch": int(epoch),
+                "warmup_epochs": int(cfg.warmup_epochs),
+                "min_lr_ratio": float(cfg.min_lr_ratio),
+                "t_max": (int(cfg.t_max) if cfg.t_max is not None else None),
+            }
+            checkpoint_train_stats = dict(tr)
+            checkpoint_train_stats["gradnorm_status"] = str(getattr(cfg, "gradnorm_mode", "fixed"))
+            checkpoint_payload = build_checkpoint_payload(
+                kind="last",
+                epoch=epoch,
+                model=model,
+                optimizer=opt,
+                scheduler=scheduler_state,
+                cfg=ckpt_config,
+                scaler=scaler,
+                train_stats=checkpoint_train_stats,
+                val_stats=va,
+                dataset_meta=dataset_snapshot,
+                architecture_signature=_arch_signature,
+                global_step=global_step,
+            )
+            verify_critical_config_fields_match(payload_readback, checkpoint_payload["config"])
+
+            checkpoint_info = {
+                "kind": "last",
+                "score": float(_ckpt_score),
+                "path": str(last_path),
+                "best_epoch": int(best_epoch + 1) if best_epoch >= 0 else None,
             }
             if epoch < _ckpt_start:
                 # Burn-in phase: save last checkpoint but do not update best or count patience.
@@ -1601,59 +1876,83 @@ def train(cfg: TrainConfig) -> None:
                         f"Best-checkpoint tracking and patience counter start from next epoch."
                     )
             else:
-                # Compute checkpoint score based on best_metric setting
-                _best_metric_mode = str(getattr(cfg, "best_metric", "total_loss")).strip().lower()
-                _hybrid_alpha = float(getattr(cfg, "hybrid_direction_alpha", 0.5))
-                if _best_metric_mode == "hybrid" and float(getattr(cfg, "direction_loss_weight", 0.0)) > 0.0:
-                    _ckpt_score = float(va.get("val_base_loss", va["loss"])) + _hybrid_alpha * float(va.get("loss_dir", 0.0))
-                elif _best_metric_mode == "direction_loss":
-                    _ckpt_score = float(va.get("loss_dir", float(va["loss"])))
-                elif _best_metric_mode == "val_base_loss":
-                    _ckpt_score = float(va.get("val_base_loss", va["loss"]))
-                elif _best_metric_mode == "val_total_loss":
-                    _ckpt_score = float(va.get("val_total_loss", va["loss"]))
-                else:
-                    _ckpt_score = float(va["loss"])
-
-                # Set val_checkpoint_score in va dict for logging/CSV
-                va["val_checkpoint_score"] = float(_ckpt_score)
-
                 if _ckpt_score < best_val:
                     best_val = _ckpt_score
                     best_epoch = int(epoch)
                     epochs_without_improve = 0
-                    state["best_val"] = best_val
-                    state["best_epoch"] = best_epoch
-                    state["best_score"] = float(_ckpt_score)
-                    state["best_score_name"] = str(_best_metric_mode)
-                    state["best_val_base_loss"] = float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0)))
-                    state["best_val_total_loss"] = float(va.get("val_total_loss", va["loss"]))
-                    state["best_val_physics_loss"] = float(va.get("val_physics_loss", 0.0))
-                    state["config"]["best_val_loss"] = best_val
-                    state["config"]["best_epoch"] = best_epoch + 1
-                    state["config"]["best_score"] = float(_ckpt_score)
-                    state["config"]["best_score_name"] = str(_best_metric_mode)
-                    state["config"]["best_val_base_loss"] = state["best_val_base_loss"]
-                    state["config"]["best_val_total_loss"] = state["best_val_total_loss"]
-                    state["config"]["best_val_physics_loss"] = state["best_val_physics_loss"]
-                    state["config"]["epochs_since_improvement"] = 0
-                    torch.save(state, best_path)
+                    checkpoint_payload["scoring"]["score"] = float(_ckpt_score)
+                    checkpoint_payload["config"]["best_val_loss"] = float(best_val)
+                    checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1)
+                    checkpoint_payload["config"]["best_score"] = float(_ckpt_score)
+                    checkpoint_payload["config"]["best_score_name"] = str(_best_metric_mode)
+                    checkpoint_payload["config"]["best_val_base_loss"] = float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0)))
+                    checkpoint_payload["config"]["best_val_total_loss"] = float(va.get("val_total_loss", va["loss"]))
+                    checkpoint_payload["config"]["best_val_physics_loss"] = float(va.get("val_physics_loss", 0.0))
+                    checkpoint_payload["config"]["epochs_since_improvement"] = 0
+                    save_checkpoint(layout, kind="best", payload=checkpoint_payload, epoch=epoch)
+                    best_ckpt_hash = compute_file_sha256(best_path)
+                    logger.info(f"[artifacts] checkpoint saved: kind=best epoch={epoch + 1}")
                     logger.info(f"[checkpoint] best updated: val_ref={va['loss']:.6e} score={_ckpt_score:.6e} epoch={best_epoch + 1}")
+                    checkpoint_info = {
+                        "kind": "best",
+                        "score": float(_ckpt_score),
+                        "path": str(best_path),
+                        "best_epoch": int(best_epoch + 1),
+                    }
+                    update_run_manifest(
+                        layout,
+                        {
+                            "best_checkpoint_path": str(best_path),
+                            "last_checkpoint_path": str(last_path),
+                            "best_epoch": int(best_epoch + 1),
+                            "best_score": float(_ckpt_score),
+                            "latest_epoch": int(epoch + 1),
+                            "checkpoint_hashes": {
+                                "best": best_ckpt_hash,
+                                "last": (compute_file_sha256(last_path) if last_path.exists() else None),
+                            },
+                        },
+                    )
                 else:
                     epochs_without_improve += 1
 
-            state["best_val"] = best_val
-            state["best_epoch"] = best_epoch
-            state["config"]["best_val_loss"] = float(best_val) if math.isfinite(best_val) else None
-            state["config"]["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
-            state["config"]["epochs_since_improvement"] = int(epochs_without_improve)
-            torch.save(state, last_path)
+            checkpoint_payload["config"]["best_val_loss"] = float(best_val) if math.isfinite(best_val) else None
+            checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
+            checkpoint_payload["config"]["best_score"] = float(best_val) if math.isfinite(best_val) else None
+            checkpoint_payload["config"]["best_score_name"] = str(_best_metric_mode)
+            checkpoint_payload["config"]["epochs_since_improvement"] = int(epochs_without_improve)
+            save_checkpoint(
+                layout,
+                kind="last",
+                payload=checkpoint_payload,
+                epoch=epoch,
+                write_epoch_snapshot=bool(
+                    getattr(cfg, "save_epoch_snapshots", False)
+                    and ((epoch + 1) % max(1, int(getattr(cfg, "epoch_snapshot_every", 1))) == 0)
+                ),
+            )
+            last_ckpt_hash = compute_file_sha256(last_path)
+            logger.info(f"[artifacts] checkpoint saved: kind=last epoch={epoch + 1}")
             logger.info(f"[checkpoint] last saved: epoch={epoch + 1}")
+            update_run_manifest(
+                layout,
+                {
+                    "status": "running",
+                    "latest_epoch": int(epoch + 1),
+                    "last_checkpoint_path": str(last_path),
+                    "checkpoint_hashes": {
+                        "best": (compute_file_sha256(best_path) if best_path.exists() else None),
+                        "last": last_ckpt_hash,
+                    },
+                },
+            )
 
             history.append(
                 {
                     "epoch": int(epoch),
                     "train_loss_total": float(tr["loss"]),
+                    "train_loss_base": float(tr.get("train_base_loss", tr.get("mse_u", 0.0) + tr.get("mse_a", 0.0))),
+                    "train_loss_physics": float(tr.get("train_physics_loss", 0.0)),
                     "train_loss_u": float(tr["mse_u"]),
                     "train_loss_a": float(tr["mse_a"]),
                     "train_loss_dir": float(tr.get("loss_dir", 0.0)),
@@ -1661,25 +1960,69 @@ def train(cfg: TrainConfig) -> None:
                     "train_loss_cross": float(tr.get("loss_cross", 0.0)),
                     "train_loss_laplacian": float(tr.get("loss_laplacian", 0.0)),
                     "train_mean_cossim": float(tr.get("cossim_mean", 1.0)),
+                    "train_cos_sim": float(tr.get("cossim_mean", 1.0)),
                     "val_loss_total": float(va["loss"]),
+                    "val_loss_base": float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0))),
+                    "val_loss_physics": float(va.get("val_physics_loss", 0.0)),
                     "val_loss_u": float(va["mse_u"]),
                     "val_loss_a": float(va["mse_a"]),
                     "val_loss_dir": float(va.get("loss_dir", 0.0)),
                     "val_loss_radial": float(va.get("loss_radial", 0.0)),
                     "val_loss_cross": float(va.get("loss_cross", 0.0)),
                     "val_loss_laplacian": float(va.get("loss_laplacian", 0.0)),
+                    "val_checkpoint_score": float(va.get("val_checkpoint_score", va["loss"])),
                     "val_mean_cossim": float(va.get("cossim_mean", 1.0)),
+                    "val_cos_sim": float(va.get("cossim_mean", 1.0)),
                     "train_angular_mean_deg": float(tr.get("angular_mean_deg", 0.0)),
                     "val_angular_mean_deg": float(va.get("angular_mean_deg", 0.0)),
+                    "val_ang_deg": float(va.get("angular_mean_deg", 0.0)),
+                    "val_mae_a_vec": float(va.get("mae_a_vec", 0.0)) if va.get("mae_a_vec") is not None else None,
+                    "val_rmse_a_vec": float(va.get("rmse_a_vec", 0.0)) if va.get("rmse_a_vec") is not None else None,
                     "lambda_dir_eff": float(tr.get("lambda_dir_eff", 0.0)),
                     "lr": float(tr["lr"]),
                     "w_u": float(tr["w_u"]),
                     "w_a_raw": float(tr["w_a_raw"]),
                     "w_a_eff": float(tr["w_a"]),
                     "grad_norm": float(tr["grad_norm"]),
+                    "col_lap_attempts": int(tr.get("collocation_laplacian_attempt_count", 0)),
+                    "col_lap_success": int(tr.get("collocation_laplacian_success_count", 0)),
+                    "col_lap_fail": int(tr.get("collocation_laplacian_fail_count", 0)),
                     "epoch_time_s": float(epoch_time_s),
                 }
             )
+            logf.write(
+                json.dumps(
+                    {
+                        "epoch": int(epoch),
+                        "train": {
+                            "loss_total": float(tr["loss"]),
+                            "loss_base": float(tr.get("train_base_loss", tr.get("mse_u", 0.0) + tr.get("mse_a", 0.0))),
+                            "loss_physics": float(tr.get("train_physics_loss", 0.0)),
+                            "loss_dir": float(tr.get("loss_dir", 0.0)),
+                            "cos_sim": float(tr.get("cossim_mean", 1.0)),
+                            "ang_deg": float(tr.get("angular_mean_deg", 0.0)),
+                        },
+                        "val": {
+                            "loss_total": float(va["loss"]),
+                            "loss_base": float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0))),
+                            "loss_physics": float(va.get("val_physics_loss", 0.0)),
+                            "loss_dir": float(va.get("loss_dir", 0.0)),
+                            "checkpoint_score": float(va.get("val_checkpoint_score", va["loss"])),
+                            "cos_sim": float(va.get("cossim_mean", 1.0)),
+                            "ang_deg": float(va.get("angular_mean_deg", 0.0)),
+                            "mae_a_vec": va.get("mae_a_vec"),
+                            "rmse_a_vec": va.get("rmse_a_vec"),
+                        },
+                        "checkpoint": checkpoint_info,
+                        "lr": float(tr["lr"]),
+                        "timing": {"epoch_time_s": float(epoch_time_s)},
+                    },
+                    sort_keys=True,
+                    default=str,
+                )
+                + "\n"
+            )
+            logf.flush()
 
             _lde = float(tr.get("lambda_dir_eff", 0.0))
             _dir_log = (
@@ -1705,13 +2048,26 @@ def train(cfg: TrainConfig) -> None:
                 )
                 break
 
-    _write_training_history_csv(history, outdir / "training_history.csv")
+    _write_training_history_csv(history, layout.history_csv)
     _save_training_plots(history, outdir)
 
     payload["best_val_loss"] = float(best_val) if math.isfinite(best_val) else None
     payload["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    payload["best_score"] = float(best_val) if math.isfinite(best_val) else None
+    atomic_write_json(config_path, payload)
+    update_run_manifest(
+        layout,
+        {
+            "status": run_status,
+            "best_epoch": int(best_epoch + 1) if best_epoch >= 0 else None,
+            "best_score": float(best_val) if math.isfinite(best_val) else None,
+            "latest_epoch": (int(history[-1]["epoch"]) + 1) if history else 0,
+            "checkpoint_hashes": {
+                "best": (compute_file_sha256(best_path) if best_path.exists() else None),
+                "last": (compute_file_sha256(last_path) if last_path.exists() else None),
+            },
+        },
+    )
 
     if math.isfinite(best_val):
         logger.info(f"Training Complete. Best Validation Loss: {best_val:.6e}")

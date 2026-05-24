@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
+import logging
 import math
-from typing import Any, List, Mapping, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +315,18 @@ class MultiScaleSirenMLP(nn.Module):
             w0_bands = [30.0]
         self.w0_bands: List[float] = [float(w) for w in w0_bands]
         n_bands = len(self.w0_bands)
+        self.n_bands: int = n_bands
+
+        # Persist the band frequencies in the state_dict so a reload cannot
+        # silently reconstruct the network with a DIFFERENT spectrum. The
+        # frequencies are not learnable, but if config.json and the checkpoint
+        # ever disagree (e.g. degree_min/degree_max drift), this buffer is the
+        # authoritative record of the spectrum the weights were trained against.
+        self.register_buffer(
+            "w0_bands_tensor",
+            torch.tensor(self.w0_bands, dtype=torch.float32),
+            persistent=True,
+        )
 
         # Split hidden width across bands; last band absorbs the remainder.
         bw_base = hidden // n_bands
@@ -353,6 +369,20 @@ class MultiScaleSirenMLP(nn.Module):
         head_bound = 0.1 * (math.sqrt(6.0 / hidden) / max(w0_deep, 1.0))
         nn.init.uniform_(self.head.weight, -head_bound, head_bound)
         nn.init.zeros_(self.head.bias)
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # Keep the Python-side w0_bands list (used by forward) in sync with the
+        # band frequencies stored in the checkpoint. This guards against a
+        # reconstruction whose construction-time bands differ from the trained
+        # ones: after load, the band-stage spectrum follows the checkpoint.
+        key = prefix + "w0_bands_tensor"
+        incoming = state_dict.get(key)
+        if incoming is not None:
+            try:
+                self.w0_bands = [float(v) for v in incoming.detach().cpu().tolist()]
+            except Exception:
+                pass
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
         acts = [
@@ -606,15 +636,48 @@ def build_model_from_config(
     n_bands      = max(1, int(_cfg_value(cfg, "n_bands", 1)))
     use_residual = bool(_cfg_value(cfg, "use_residual_blocks", False))
 
+    resolved_w0_bands: Optional[List[float]] = None
     if activation == "sine":
         hidden  = int(_cfg_value(cfg, "hidden",  512))
         depth   = int(_cfg_value(cfg, "depth",   4))
         dropout = float(_cfg_value(cfg, "dropout", 0.0))
 
         if n_bands > 1:
-            degree_min_cfg = max(-1, int(_cfg_value(cfg, "degree_min", 0)))
-            degree_max_cfg = max(1,  int(_cfg_value(cfg, "degree_max", 50)))
-            w0_bands = _compute_harmonic_w0_bands(n_bands, degree_min_cfg, degree_max_cfg)
+            # Multi-scale SIREN: the per-band frequencies (w0_bands) define the
+            # functional model. They MUST be reconstructed identically at eval
+            # time or the loaded weights (which match by shape) will be driven
+            # at the wrong frequencies — a silent, catastrophic mismatch.
+            # Resolution order:
+            #   1. explicit cfg["w0_bands"] (authoritative; written at train time)
+            #   2. derive from BOTH degree_min and degree_max (must be present)
+            # Silent fallback to (0, 50) is forbidden.
+            explicit_bands = _cfg_value(cfg, "w0_bands", None)
+            if explicit_bands:
+                w0_bands = [float(w) for w in explicit_bands]
+                if len(w0_bands) != n_bands:
+                    raise ValueError(
+                        f"w0_bands has length {len(w0_bands)} but n_bands={n_bands}. "
+                        "The number of band frequencies must equal n_bands."
+                    )
+            else:
+                dmin_raw = _cfg_value(cfg, "degree_min", None)
+                dmax_raw = _cfg_value(cfg, "degree_max", None)
+                if dmin_raw is None or dmax_raw is None:
+                    raise ValueError(
+                        "MultiScaleSirenMLP (n_bands>1) requires either an explicit "
+                        "'w0_bands' list or BOTH 'degree_min' and 'degree_max' in the "
+                        "config so the per-band SIREN frequencies can be reconstructed "
+                        "deterministically. Refusing to silently default to (degree_min=0, "
+                        "degree_max=50): that would build a model with different band "
+                        "frequencies than the one the checkpoint was trained with, and the "
+                        "state_dict would load by shape while predicting nonsense. "
+                        "Re-run training with the current engine (which records w0_bands), "
+                        "or add 'w0_bands'/'degree_min'+'degree_max' to config.json."
+                    )
+                degree_min_cfg = max(-1, int(dmin_raw))
+                degree_max_cfg = max(1,  int(dmax_raw))
+                w0_bands = _compute_harmonic_w0_bands(n_bands, degree_min_cfg, degree_max_cfg)
+            resolved_w0_bands = [float(w) for w in w0_bands]
             backbone: nn.Module = MultiScaleSirenMLP(
                 in_dim=backbone_in_dim,
                 hidden=hidden,
@@ -658,9 +721,235 @@ def build_model_from_config(
         _emb_type = "raw"
     model.embedding_type: str = _emb_type  # type: ignore[assignment]
     model.input_feature_dim: int = int(backbone_in_dim)  # type: ignore[assignment]
-    model.model_builder_version: str = "v2"  # type: ignore[assignment]
+    model.model_builder_version: str = MODEL_BUILDER_VERSION  # type: ignore[assignment]
+    # Resolved per-band SIREN frequencies (None for single-scale / non-SIREN).
+    # The engine persists this so evaluation reconstructs the exact spectrum.
+    model.w0_bands = resolved_w0_bands  # type: ignore[assignment]
 
     return model
+
+
+# ---------------------------------------------------------------------------
+# Architecture signature (reload-safety)
+# ---------------------------------------------------------------------------
+
+# Bumped whenever the build logic changes in a way that affects the functional
+# architecture for a fixed config. Persisted into config.json and checkpoints.
+MODEL_BUILDER_VERSION: str = "v3"
+
+# Fields that fully determine the functional architecture. Two configs that
+# agree on all of these must build identical (shape- AND frequency-identical)
+# models. Used to detect config/checkpoint drift on reload.
+ARCH_SIGNATURE_FIELDS = (
+    "activation", "hidden", "depth", "dropout",
+    "use_residual_blocks", "n_bands",
+    "degree_min", "degree_max", "w0_bands",
+    "use_sh_encoding", "sh_encoding_degree", "sh_append_raw",
+    "use_radial_separation", "radial_append_raw",
+    "use_fourier", "fourier_n_features", "fourier_sigma", "fourier_seed",
+    "fourier_append_raw",
+    "input_feature_dim", "embedding_type", "model_builder_version",
+)
+
+
+def _normalize_signature_value(key: str, value: Any) -> Any:
+    """Normalize a config value so equivalent configs hash identically."""
+    if value is None:
+        return None
+    if key == "w0_bands":
+        try:
+            return [round(float(v), 4) for v in value]
+        except (TypeError, ValueError):
+            return value
+    if key in ("hidden", "depth", "n_bands", "degree_min", "degree_max",
+               "sh_encoding_degree", "fourier_n_features", "fourier_seed",
+               "input_feature_dim"):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return value
+    if key in ("dropout", "fourier_sigma"):
+        try:
+            return round(float(value), 6)
+        except (TypeError, ValueError):
+            return value
+    if key in ("use_residual_blocks", "use_sh_encoding", "sh_append_raw",
+               "use_radial_separation", "radial_append_raw", "use_fourier",
+               "fourier_append_raw"):
+        return bool(value)
+    return str(value)
+
+
+def architecture_fingerprint(cfg: Any) -> Dict[str, Any]:
+    """Return the normalized architecture-critical fields for ``cfg``."""
+    return {
+        key: _normalize_signature_value(key, _cfg_value(cfg, key, None))
+        for key in ARCH_SIGNATURE_FIELDS
+    }
+
+
+def compute_architecture_signature(cfg: Any) -> str:
+    """Stable short hash of the architecture-critical config fields."""
+    import hashlib
+    import json as _json
+
+    payload = architecture_fingerprint(cfg)
+    blob = _json.dumps(payload, sort_keys=True, default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def architecture_mismatch_fields(cfg_a: Any, cfg_b: Any) -> List[str]:
+    """Return field names where two configs disagree on the architecture."""
+    fa = architecture_fingerprint(cfg_a)
+    fb = architecture_fingerprint(cfg_b)
+    out: List[str] = []
+    for key in ARCH_SIGNATURE_FIELDS:
+        va, vb = fa.get(key), fb.get(key)
+        # Treat "absent on one side" as agreement to stay lenient toward
+        # partial configs; only flag genuine value disagreements.
+        if va is None or vb is None:
+            continue
+        if va != vb:
+            out.append(key)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Reload-safe reconstruction (shared by evaluator, force model, tests)
+# ---------------------------------------------------------------------------
+
+# Buffers that may legitimately be absent from older checkpoints. Their absence
+# must NOT be treated as a state_dict mismatch; everything else must match.
+_OPTIONAL_BUFFER_SUFFIXES = ("w0_bands_tensor",)
+
+
+def _is_optional_state_key(key: str) -> bool:
+    return any(key.endswith(suf) for suf in _OPTIONAL_BUFFER_SUFFIXES)
+
+
+def _verify_reconstructed_model(model: nn.Module, ref_cfg: Dict[str, Any]) -> None:
+    """Fail loudly if the built model disagrees with the checkpoint config.
+
+    Catches the failure mode where a state_dict loads by shape but the functional
+    architecture (SIREN band frequencies / input encoding) differs.
+    """
+    problems: List[str] = []
+
+    ref_n_bands = ref_cfg.get("n_bands")
+    if ref_n_bands is not None and int(ref_n_bands) > 1:
+        ref_bands = ref_cfg.get("w0_bands")
+        model_bands = getattr(model, "w0_bands", None)
+        if ref_bands is not None and model_bands is not None:
+            rb = [round(float(v), 4) for v in ref_bands]
+            mb = [round(float(v), 4) for v in model_bands]
+            if rb != mb:
+                problems.append(f"w0_bands: checkpoint={rb} but reconstructed={mb}")
+
+    ref_ifd = ref_cfg.get("input_feature_dim")
+    model_ifd = getattr(model, "input_feature_dim", None)
+    if ref_ifd is not None and model_ifd is not None and int(ref_ifd) != int(model_ifd):
+        problems.append(f"input_feature_dim: checkpoint={ref_ifd} but reconstructed={model_ifd}")
+
+    ref_emb = ref_cfg.get("embedding_type")
+    model_emb = getattr(model, "embedding_type", None)
+    if ref_emb is not None and model_emb is not None and str(ref_emb) != str(model_emb):
+        problems.append(f"embedding_type: checkpoint={ref_emb} but reconstructed={model_emb}")
+
+    ref_ver = ref_cfg.get("model_builder_version")
+    model_ver = getattr(model, "model_builder_version", None)
+    if ref_ver is not None and model_ver is not None and str(ref_ver) != str(model_ver):
+        logger.warning(
+            "model_builder_version: checkpoint=%s reconstructed=%s (build logic changed)",
+            ref_ver, model_ver,
+        )
+
+    if problems:
+        raise RuntimeError(
+            "Reconstructed model does not match the checkpoint architecture: "
+            + "; ".join(problems)
+            + ". Refusing to evaluate a functionally different model."
+        )
+
+
+def reconstruct_model_from_artifacts(
+    cfg_json: Dict[str, Any],
+    ckpt: Dict[str, Any],
+    device: Optional[torch.device] = None,
+    *,
+    dtype: torch.dtype = torch.float32,
+    allow_config_mismatch: bool = False,
+) -> Tuple[nn.Module, Dict[str, Any], Dict[str, Any]]:
+    """Reconstruct the EXACT trained model from config.json + checkpoint.
+
+    Reload-safety contract:
+      * The checkpoint's own ``config`` block is authoritative for architecture
+        fields. If config.json disagrees on any architecture-critical field,
+        raise ``RuntimeError`` unless ``allow_config_mismatch``.
+      * After ``load_state_dict``, verify n_bands / w0_bands / input_feature_dim /
+        embedding_type. Any mismatch fails loudly: a shape-compatible state_dict
+        must no longer hide a functional architecture mismatch.
+
+    Returns ``(model, merged_cfg, report)``.
+    """
+    ckpt_cfg = ckpt.get("config", {}) if isinstance(ckpt, dict) else {}
+    if not isinstance(ckpt_cfg, dict):
+        ckpt_cfg = {}
+
+    mismatches = architecture_mismatch_fields(cfg_json, ckpt_cfg) if ckpt_cfg else []
+    if mismatches and not allow_config_mismatch:
+        details = {f: (cfg_json.get(f), ckpt_cfg.get(f)) for f in mismatches}
+        raise RuntimeError(
+            "config.json and checkpoint['config'] disagree on architecture-critical "
+            f"fields {mismatches}: {details}. The checkpoint was trained with the "
+            "checkpoint['config'] architecture; evaluating with a different one would "
+            "load weights by shape while predicting nonsense. Pass allow_config_mismatch="
+            "True only if you understand the risk."
+        )
+
+    merged_cfg: Dict[str, Any] = dict(cfg_json)
+    used_ckpt_config = False
+    for key in ARCH_SIGNATURE_FIELDS:
+        if key in ckpt_cfg and ckpt_cfg[key] is not None:
+            merged_cfg[key] = ckpt_cfg[key]
+            used_ckpt_config = True
+    for key in ("resolved_mu_si", "resolved_a_sign", "resolved_r_ref_m",
+                "degree_min", "degree_max", "w0_bands"):
+        if key in ckpt and ckpt[key] is not None and merged_cfg.get(key) is None:
+            merged_cfg[key] = ckpt[key]
+
+    model = build_model_from_config(merged_cfg, device=device, dtype=dtype)
+    model.eval()
+    if isinstance(ckpt, dict):
+        state = ckpt.get("model_state_dict")
+        if state is None:
+            state = ckpt.get("model", ckpt)
+    else:
+        state = ckpt
+    load_result = model.load_state_dict(state, strict=False)
+    missing = [k for k in load_result.missing_keys if not _is_optional_state_key(k)]
+    unexpected = [k for k in load_result.unexpected_keys if not _is_optional_state_key(k)]
+    if missing or unexpected:
+        raise RuntimeError(
+            f"Checkpoint state_dict does not match the reconstructed architecture. "
+            f"missing_keys={missing}, unexpected_keys={unexpected}. This indicates a "
+            "genuine architecture mismatch (not just an optional buffer)."
+        )
+
+    _verify_reconstructed_model(model, ckpt_cfg or merged_cfg)
+
+    report: Dict[str, Any] = {
+        "checkpoint_config_source": "checkpoint" if used_ckpt_config else "config_json",
+        "architecture_mismatch_fields": mismatches,
+        "allow_config_mismatch": bool(allow_config_mismatch),
+        "architecture_signature": (
+            ckpt_cfg.get("architecture_signature")
+            or (ckpt.get("architecture", {}) if isinstance(ckpt, dict) else {}).get("signature")
+            or compute_architecture_signature(merged_cfg)
+        ),
+        "model_w0_bands": list(getattr(model, "w0_bands", []) or []),
+        "n_bands": int(merged_cfg.get("n_bands", 1) or 1),
+    }
+    return model, merged_cfg, report
 
 
 __all__ = [
@@ -678,4 +967,10 @@ __all__ = [
     "_compute_harmonic_w0_bands",
     "_get_output_head_params",
     "build_model_from_config",
+    "MODEL_BUILDER_VERSION",
+    "ARCH_SIGNATURE_FIELDS",
+    "architecture_fingerprint",
+    "compute_architecture_signature",
+    "architecture_mismatch_fields",
+    "reconstruct_model_from_artifacts",
 ]

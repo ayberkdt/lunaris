@@ -214,7 +214,11 @@ class DatasetMeta:
                 try:
                     _v = cloud_cfg.get("degree_max")
                     if _v is not None:
-                        req_deg = int(_v) or None
+                        # NOTE: do NOT use ``int(_v) or None`` — that turns a
+                        # legitimate degree of 0 into None. Only treat negative
+                        # as "absent"; keep 0 as a real (if unusual) value.
+                        _iv = int(_v)
+                        req_deg = _iv if _iv >= 0 else None
                 except (TypeError, ValueError):
                     pass
             if deg_min is None:
@@ -364,6 +368,94 @@ def _resolve_lunar_dataset_contract(meta: DatasetMeta, *, data_path: Path) -> Tu
     resolved_mu = float(meta.mu_si) if meta.mu_si is not None else float(MU_MOON_SI)
     resolved_r_ref = float(meta.r_ref_m) if meta.r_ref_m is not None else float(R_MOON_SI)
     return resolved_body, resolved_mu, resolved_r_ref
+
+
+REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
+
+
+def validate_training_dataset_convention(
+    meta: DatasetMeta,
+    *,
+    data_path: Path,
+    allow_legacy_derivative_convention: bool = False,
+) -> None:
+    """Fail-fast guard against training on a silently-wrong dataset.
+
+    Checks (all raise ``ValueError`` on violation):
+      * derivative_convention_version == "dP_dphi_corrected_v1". Datasets made
+        before the dP_dphi sign fix have sign-flipped latitude acceleration; the
+        model would learn an inverted field with no error signal. Override only
+        for inspection via ``allow_legacy_derivative_convention=True``.
+      * central_body is lunar.
+      * target_mode, when present, is "residual" or "full".
+      * degree_max > degree_min when both are known.
+      * a_sign_convention, when present, is parseable as +1/-1.
+
+    Column-vs-mode consistency is a soft warning (logged), since column labels
+    vary across generator versions.
+    """
+    name = Path(data_path).name
+
+    # --- derivative convention (the dangerous, silent one) ---
+    deriv = meta.derivative_convention_version
+    if deriv != REQUIRED_DERIVATIVE_CONVENTION:
+        msg = (
+            f"Dataset {name!r} has derivative_convention_version={deriv!r}, expected "
+            f"{REQUIRED_DERIVATIVE_CONVENTION!r}. Datasets generated before the dP_dphi "
+            "sign fix have sign-flipped latitude acceleration components; training on "
+            "them learns an inverted field with no error signal. Regenerate with the "
+            "current spatial_cloud_generator.py."
+        )
+        if allow_legacy_derivative_convention:
+            logger.warning("OVERRIDDEN (allow_legacy_derivative_convention=True): " + msg)
+        else:
+            raise ValueError(
+                msg + " Pass --allow-legacy-derivative-convention only for inspection."
+            )
+
+    # --- central body ---
+    body = _normalized_dataset_body_name(meta)
+    if body is not None and body not in _LUNAR_ALIASES:
+        raise ValueError(
+            f"Dataset {name!r} declares central_body={body!r}, which is not lunar."
+        )
+
+    # --- target_mode ---
+    if meta.target_mode is not None:
+        tmode = str(meta.target_mode).strip().lower()
+        if tmode not in ("residual", "full"):
+            raise ValueError(
+                f"Dataset {name!r} has target_mode={meta.target_mode!r}; expected "
+                "'residual' or 'full'."
+            )
+
+    # --- degree ordering ---
+    dmax = meta.degree_max if meta.degree_max is not None else meta.requested_degree
+    if meta.degree_min is not None and dmax is not None:
+        if int(dmax) <= int(meta.degree_min):
+            raise ValueError(
+                f"Dataset {name!r} has degree_max={dmax} <= degree_min={meta.degree_min}; "
+                "a residual band requires degree_max > degree_min."
+            )
+
+    # --- a_sign convention parseable ---
+    if meta.a_sign_convention is not None:
+        if str(meta.a_sign_convention).strip() not in ("+1", "1", "-1"):
+            logger.warning(
+                "Dataset %s has unrecognised a_sign_convention=%r; a_sign will be "
+                "auto-inferred from data.", name, meta.a_sign_convention,
+            )
+
+    # --- columns vs mode (soft) ---
+    if meta.columns is not None and meta.degree_min is not None:
+        cols = str(meta.columns).lower()
+        residual_cols = ("du" in cols or "dax" in cols)
+        if int(meta.degree_min) >= 0 and not residual_cols and "[x,y,z,u,ax,ay,az]" in cols:
+            logger.warning(
+                "Dataset %s columns look full-field (%r) but degree_min=%s suggests "
+                "residual. Verify generation parameters.",
+                name, meta.columns, meta.degree_min,
+            )
 
 
 # --- Isometric scaling ---

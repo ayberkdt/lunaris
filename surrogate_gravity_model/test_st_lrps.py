@@ -47,6 +47,12 @@ try:
         FourierInputEmbedding,
         build_model_from_config,
     )
+    from st_lrps_artifacts import (
+        load_best_or_last,
+        make_run_layout,
+        reload_model_from_run_dir,
+    )
+    from st_lrps_evaluate import predict_residual_u_a
     from st_lrps_scaling import (
         IsometricScaleParams,
         ScalerPack,
@@ -64,6 +70,8 @@ except Exception as _e:
             IsometricScaleParams,
             ScalerPack,
         )
+        from st_lrps_artifacts import load_best_or_last, make_run_layout, reload_model_from_run_dir  # type: ignore
+        from st_lrps_evaluate import predict_residual_u_a  # type: ignore
         _STLRPS_IMPORTED = True
         _STLRPS_IMPORT_ERR = ""
     except Exception as _fallback_e:
@@ -215,65 +223,6 @@ def resolve_dataset_path(
 
 
 # =============================================================================
-# Checkpoint loading
-# =============================================================================
-
-def load_checkpoint(ckpt_path: Path, device: torch.device) -> Dict[str, Any]:
-    try:
-        return torch.load(str(ckpt_path), map_location=device, weights_only=False)
-    except Exception:
-        return torch.load(str(ckpt_path), map_location=device)
-
-
-def extract_state_dict(ckpt: Any) -> Dict[str, torch.Tensor]:
-    if isinstance(ckpt, dict):
-        if "model" in ckpt and isinstance(ckpt["model"], dict):
-            return ckpt["model"]
-        if "model_state_dict" in ckpt and isinstance(ckpt["model_state_dict"], dict):
-            return ckpt["model_state_dict"]
-        if all(isinstance(k, str) for k in ckpt) and all(
-            torch.is_tensor(v) for v in ckpt.values()
-        ):
-            return ckpt  # type: ignore[return-value]
-    raise ValueError("Unrecognized checkpoint format.")
-
-
-# =============================================================================
-# Model reconstruction from checkpoint config
-# =============================================================================
-
-def _build_model_from_ckpt(ckpt: Dict[str, Any]) -> nn.Module:
-    """Reconstruct the exact architecture from the saved config using the shared builder."""
-    if not _STLRPS_IMPORTED:
-        raise ImportError(
-            f"Could not import model classes: {_STLRPS_IMPORT_ERR}\n"
-            "Make sure st_lrps_models.py is in the same directory as test_st_lrps.py."
-        )
-    saved_cfg = ckpt.get("config", {})
-    # build_model_from_config handles SIREN/Fourier mutual exclusion and correct API names
-    return build_model_from_config(saved_cfg)
-
-
-def _load_scaler_from_ckpt(ckpt: Dict[str, Any]) -> "ScalerPack":
-    """Load ScalerPack from checkpoint state. Falls back to scaler.json if missing."""
-    scaler_dict = ckpt.get("scaler")
-    if scaler_dict and _STLRPS_IMPORTED:
-        def _parse(d: Dict[str, Any]) -> "IsometricScaleParams":
-            return IsometricScaleParams(
-                mean=[float(v) for v in d["mean"]],
-                scale=float(d["scale"]),
-            )
-        return ScalerPack(
-            x=_parse(scaler_dict["x"]),
-            u=_parse(scaler_dict["u"]),
-            a=_parse(scaler_dict["a"]),
-        )
-    raise ValueError(
-        "Checkpoint does not contain 'scaler'. Re-train with the current codebase."
-    )
-
-
-# =============================================================================
 # Metrics
 # =============================================================================
 
@@ -317,6 +266,31 @@ def angle_deg(a_true: np.ndarray, a_pred: np.ndarray) -> Dict[str, float]:
     }
 
 
+def vector_metrics(a_true: np.ndarray, a_pred: np.ndarray) -> Dict[str, float]:
+    err = np.asarray(a_pred, dtype=np.float64) - np.asarray(a_true, dtype=np.float64)
+    err_norm = np.linalg.norm(err, axis=1)
+    return {
+        "mae_vec": float(np.mean(err_norm)),
+        "rmse_vec": float(np.sqrt(np.mean(err_norm ** 2))),
+        "median_ae_vec": float(np.median(err_norm)),
+        "p95_ae_vec": float(np.percentile(err_norm, 95)),
+        "linf_vec": float(np.max(err_norm)),
+    }
+
+
+def cos_sim_metrics(a_true: np.ndarray, a_pred: np.ndarray) -> Dict[str, float]:
+    a_true = np.asarray(a_true, dtype=np.float64)
+    a_pred = np.asarray(a_pred, dtype=np.float64)
+    denom = np.linalg.norm(a_true, axis=1) * np.linalg.norm(a_pred, axis=1)
+    cos_sim = np.sum(a_true * a_pred, axis=1) / np.maximum(denom, 1e-12)
+    cos_sim = np.clip(cos_sim, -1.0, 1.0)
+    return {
+        "mean_cos_sim": float(np.mean(cos_sim)),
+        "median_cos_sim": float(np.median(cos_sim)),
+        "p95_cos_sim": float(np.percentile(cos_sim, 95)),
+    }
+
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -327,42 +301,54 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ap.add_argument("--project-root", type=str, default=None)
-    ap.add_argument("--run-dir", type=str, default=None,
-                    help="Path to a specific run dir (st_lrps_*). Default: latest.")
-    ap.add_argument("--dataset", type=str, default=None,
-                    help="Override dataset .h5 path.")
-    ap.add_argument("--device", type=str, default="cuda",
-                    choices=["cuda", "cpu"])
-    ap.add_argument("--n", type=int, default=200,
-                    help="Number of unique random points to test.")
+    ap.add_argument(
+        "--run-dir",
+        type=str,
+        default=None,
+        help="Path to a specific run dir (st_lrps_*). Default: latest.",
+    )
+    ap.add_argument("--dataset", type=str, default=None, help="Override dataset .h5 path.")
+    ap.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"])
+    ap.add_argument(
+        "--prefer",
+        choices=["best", "last"],
+        default="best",
+        help="Preferred checkpoint kind when both best/last are available.",
+    )
+    ap.add_argument("--n", type=int, default=200, help="Number of unique random points to test.")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--progress", action="store_true",
-                    help="Print progress messages.")
-    ap.add_argument("--chunk", type=int, default=50000,
-                    help="Chunk size for forward+grad (lower = less VRAM).")
-    ap.add_argument("--a-sign-override", type=float, default=None,
-                    help="Explicitly set a_sign (1.0 or -1.0). Only needed for old checkpoints "
-                         "missing resolved_a_sign in config.json.")
+    ap.add_argument("--progress", action="store_true", help="Print progress messages.")
+    ap.add_argument(
+        "--chunk",
+        type=int,
+        default=50000,
+        help="Chunk size for forward+grad (lower = less VRAM).",
+    )
+    ap.add_argument(
+        "--a-sign-override",
+        type=float,
+        default=None,
+        help="Explicitly set a_sign (1.0 or -1.0). Only needed for old checkpoints missing resolved_a_sign in config.json.",
+    )
+    ap.add_argument(
+        "--allow-config-mismatch",
+        action="store_true",
+        help="Unsafe debug escape hatch: allow evaluation when config.json and the checkpoint disagree on architecture-critical fields.",
+    )
     args = ap.parse_args()
 
-    # Resolve project root and run dir
     project_root = (
         Path(args.project_root).resolve() if args.project_root else find_project_root()
     )
     run_dir = (
-        Path(args.run_dir).resolve()
-        if args.run_dir
-        else find_latest_run_dir(project_root)
+        Path(args.run_dir).resolve() if args.run_dir else find_latest_run_dir(project_root)
     )
-    ckpt_path = find_checkpoint(run_dir)
+    layout = make_run_layout(run_dir)
 
-    # Read config.json for metadata (dataset path, etc.)
-    cfg_path = run_dir / "config.json"
-    if not cfg_path.exists():
+    if not layout.config_json.exists():
         raise FileNotFoundError(f"Missing config.json in: {run_dir}")
-    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-
-    dataset_path = resolve_dataset_path(cfg, project_root, args.dataset)
+    cfg_for_dataset = json.loads(layout.config_json.read_text(encoding="utf-8"))
+    dataset_path = resolve_dataset_path(cfg_for_dataset, project_root, args.dataset)
 
     device = (
         torch.device("cpu")
@@ -375,75 +361,65 @@ def main() -> None:
     if args.progress:
         _log(f"project_root : {project_root}")
         _log(f"run_dir      : {run_dir}")
-        _log(f"ckpt         : {ckpt_path}")
         _log(f"dataset      : {dataset_path}")
         _log(f"device       : {device}")
+        _log("Reloading model via canonical artifact path...")
 
-    # Load checkpoint
-    if args.progress:
-        _log("Loading checkpoint...")
-    ckpt = load_checkpoint(ckpt_path, device)
+    if args.allow_config_mismatch:
+        print(
+            "[WARN] --allow-config-mismatch is enabled. "
+            "The checkpoint architecture will override config.json."
+        )
 
-    # Print key metadata
-    arch = ckpt.get("config", {})
-    print(f"\n  activation    : {arch.get('activation', '?')}")
-    print(f"  hidden/depth  : {arch.get('hidden', '?')} / {arch.get('depth', '?')}")
-    print(f"  w0_first/hid  : {arch.get('w0_first', '?')} / {arch.get('w0_hidden', '?')}")
-    print(f"  use_fourier   : {arch.get('use_fourier', False)}")
-    print(f"  residual_mode : {ckpt.get('residual_mode', '?')}")
-    print(f"  target_mode   : {ckpt.get('target_mode', '?')}")
+    model, scaler, cfg, reload_report = reload_model_from_run_dir(
+        run_dir,
+        device,
+        prefer=args.prefer,
+        allow_config_mismatch=bool(args.allow_config_mismatch),
+    )
+    ckpt_path, ckpt = load_best_or_last(layout, prefer=args.prefer, device=device)
 
-    # Build model from saved config
-    if args.progress:
-        _log("Building model from checkpoint config...")
-    model = _build_model_from_ckpt(ckpt).to(device)
+    print(f"\n  checkpoint schema : {reload_report.get('checkpoint_schema_version', '?')}")
+    print(f"  checkpoint path   : {reload_report.get('checkpoint_path', ckpt_path)}")
+    print(
+        f"  checkpoint epoch  : "
+        f"{reload_report.get('checkpoint_epoch_display', ckpt.get('epoch_display', '?'))}"
+    )
+    print(f"  architecture sig  : {reload_report.get('architecture_signature', '?')}")
+    print(f"  w0_bands          : {reload_report.get('w0_bands', '?')}")
+    print(f"  input_feature_dim : {reload_report.get('input_feature_dim', '?')}")
+    print(f"  embedding_type    : {reload_report.get('embedding_type', '?')}")
+    print(f"  scaler source     : {reload_report.get('scaler_source', '?')}")
+    print(f"  scaler hash       : {reload_report.get('scaler_hash', '?')}")
 
-    state = extract_state_dict(ckpt)
-    missing, unexpected = model.load_state_dict(state, strict=False)
-    if missing and args.progress:
-        _log(f"missing keys   : {missing}")
-    if unexpected and args.progress:
-        _log(f"unexpected keys: {unexpected}")
     model.eval()
-
-    # Load scaler (isometric: mean + scalar scale)
-    if args.progress:
-        _log("Loading scaler from checkpoint...")
-    scaler = _load_scaler_from_ckpt(ckpt)
-
-    x_mean_np = np.array(scaler.x.mean, dtype=np.float64)   # [0,0,0] by design
-    x_scale = float(scaler.x.scale)                          # scalar max‖x‖
-    u_mean_np = np.array(scaler.u.mean, dtype=np.float64)
+    x_scale = float(scaler.x.scale)
     u_scale = float(scaler.u.scale)
 
-    # --a-sign-override allows explicit specification for old checkpoints
     if args.a_sign_override is not None:
         a_sign = float(args.a_sign_override)
         _log(f"a_sign overridden by CLI: {a_sign:+.1f}")
-    # Refuse to silently guess a_sign — a wrong sign inverts all predicted accelerations.
     elif "resolved_a_sign" in cfg:
         a_sign = float(cfg["resolved_a_sign"])
     else:
-        _raw = cfg.get("a_sign", "MISSING")
-        if str(_raw).lower() in ("auto", "missing"):
+        raw_sign = cfg.get("a_sign", "MISSING")
+        if str(raw_sign).lower() in ("auto", "missing"):
             raise ValueError(
-                "config.json is missing 'resolved_a_sign'. "
-                "Re-train with the current codebase, or pass --a-sign-override <value> "
-                "if you know the correct sign convention for this checkpoint."
+                "config.json is missing 'resolved_a_sign'. Re-train with the current codebase, "
+                "or pass --a-sign-override <value> if you know the correct sign convention."
             )
         try:
-            a_sign = float(_raw)
-        except (ValueError, TypeError) as _exc:
+            a_sign = float(raw_sign)
+        except (TypeError, ValueError) as exc:
             raise ValueError(
-                f"Cannot parse a_sign from config.json (got {_raw!r}). "
+                f"Cannot parse a_sign from config.json (got {raw_sign!r}). "
                 "Re-train or use --a-sign-override."
-            ) from _exc
+            ) from exc
 
-    # Load dataset
     try:
         import h5py
-    except Exception as e:
-        raise RuntimeError("h5py is required. pip install h5py") from e
+    except Exception as exc:
+        raise RuntimeError("h5py is required. pip install h5py") from exc
 
     rng = np.random.default_rng(int(args.seed))
     dataset_name = str(cfg.get("dataset_name", "data"))
@@ -452,12 +428,11 @@ def main() -> None:
         _log(f"Opening HDF5 and sampling n={args.n} points...")
 
     with h5py.File(str(dataset_path), "r") as f:
-        # Try configured dataset name, fall back to first 2-D dataset
         ds_key = dataset_name if dataset_name in f else None
         if ds_key is None:
-            for k in f:
-                if hasattr(f[k], "shape") and len(f[k].shape) >= 2:
-                    ds_key = k
+            for key in f:
+                if hasattr(f[key], "shape") and len(f[key].shape) >= 2:
+                    ds_key = key
                     break
         if ds_key is None:
             raise KeyError(f"No suitable dataset found in {dataset_path}")
@@ -473,96 +448,89 @@ def main() -> None:
     x_np = batch[:, 0:3].astype(np.float64)
     u_true = batch[:, 3].astype(np.float64)
     a_true = batch[:, 4:7].astype(np.float64)
+    x_t_all = torch.from_numpy(x_np.astype(np.float32)).to(device)
 
-    # Isometric scaling: x_mean=[0,0,0], x_scale is scalar
-    x_scaled_np = (x_np - x_mean_np) / x_scale
-    x_t_all = torch.from_numpy(x_scaled_np.astype(np.float32)).to(device)
-
-    # Chain-rule factor (scalar / scalar — isometric)
-    chain_factor = float(u_scale) / float(x_scale)
-
-    # Chunked forward + autograd
-    N = x_t_all.shape[0]
+    n_points = x_t_all.shape[0]
     chunk = int(max(1, args.chunk))
-    u_pred = np.empty((N,), dtype=np.float64)
-    a_pred = np.empty((N, 3), dtype=np.float64)
+    u_pred = np.empty((n_points,), dtype=np.float64)
+    a_pred = np.empty((n_points, 3), dtype=np.float64)
 
     if args.progress:
-        _log(f"Forward+grad (N={N}, chunk={chunk}, a_sign={a_sign})...")
+        _log(f"Forward+grad (N={n_points}, chunk={chunk}, a_sign={a_sign})...")
 
     with torch.set_grad_enabled(True):
-        for start in range(0, N, chunk):
-            end = min(start + chunk, N)
-            x_chunk = x_t_all[start:end].detach().clone().requires_grad_(True)
-
-            u_scaled_chunk = model(x_chunk)   # (B,1)
-
-            grad_u_scaled = torch.autograd.grad(
-                outputs=u_scaled_chunk,
-                inputs=x_chunk,
-                grad_outputs=torch.ones_like(u_scaled_chunk),
-                create_graph=False,
-                retain_graph=False,
-                only_inputs=True,
-            )[0]  # (B,3)
-
-            # Unscale U:  U_phys = U_scaled * u_scale + u_mean
-            u_s_np = u_scaled_chunk.detach().cpu().numpy().reshape(-1)
-            u_pred[start:end] = u_s_np * u_scale + u_mean_np.reshape(-1)[0]
-
-            # Isometric chain rule: Δa = a_sign · ∇(U_scaled) · (u_scale / x_scale)
-            a_pred[start:end, :] = (
-                a_sign * chain_factor * grad_u_scaled.detach().cpu().numpy().astype(np.float64)
+        for start_idx in range(0, n_points, chunk):
+            end_idx = min(start_idx + chunk, n_points)
+            u_chunk_t, a_chunk_t = predict_residual_u_a(
+                model,
+                scaler,
+                x_t_all[start_idx:end_idx],
+                a_sign=a_sign,
             )
-
-            if args.progress and end % max(chunk, 1) == 0:
-                _log(f"  processed {end}/{N}")
+            u_pred[start_idx:end_idx] = (
+                u_chunk_t.detach().cpu().numpy().reshape(-1).astype(np.float64)
+            )
+            a_pred[start_idx:end_idx, :] = (
+                a_chunk_t.detach().cpu().numpy().astype(np.float64)
+            )
+            if args.progress:
+                _log(f"  processed {end_idx}/{n_points}")
 
     if args.progress:
         _log("Computing metrics...")
 
     u_m = metrics(u_true, u_pred)
+    a_vec_m = vector_metrics(a_true, a_pred)
     a_mag_true = np.linalg.norm(a_true, axis=1)
     a_mag_pred = np.linalg.norm(a_pred, axis=1)
-    a_m = metrics(a_mag_true, a_mag_pred)
+    a_mag_m = metrics(a_mag_true, a_mag_pred)
+    a_cos = cos_sim_metrics(a_true, a_pred)
     ang = angle_deg(a_true, a_pred)
 
-    # Determine comparison mode from checkpoint metadata
-    _target_mode = ckpt.get("target_mode") or cfg.get("target_mode", "unknown")
-    _degree_min = ckpt.get("config", {}).get("degree_min", cfg.get("degree_min", "unknown"))
+    target_mode = ckpt.get("dataset", {}).get("target_mode") or cfg.get("target_mode", "unknown")
+    degree_min = ckpt.get("dataset", {}).get(
+        "degree_min",
+        ckpt.get("config", {}).get("degree_min", cfg.get("degree_min", "unknown")),
+    )
     try:
-        _dm_int = int(_degree_min)
-        _is_residual = _dm_int >= 0
+        degree_min_int = int(degree_min)
+        is_residual = degree_min_int >= 0
     except (TypeError, ValueError):
-        _is_residual = (_target_mode == "residual")
-    _comparison_mode = "residual_vs_residual" if _is_residual else "total_vs_total"
+        is_residual = target_mode == "residual"
+    comparison_mode = "residual_vs_residual" if is_residual else "total_vs_total"
 
     print("\n==================== ST-LRPS TEST SUMMARY ====================")
-    print(f"  Points           : {N}")
+    print(f"  Points           : {n_points}")
     print(f"  a_sign           : {a_sign:+.1f}")
     print(f"  x_scale          : {x_scale:.6e}  (isometric, scalar)")
     print(f"  u_scale          : {u_scale:.6e}")
-    print(f"  dataset target   : {_target_mode}")
-    print(f"  degree_min       : {_degree_min}")
-    print(f"  comparison_mode  : {_comparison_mode}")
-    if not _is_residual:
+    print(f"  dataset target   : {target_mode}")
+    print(f"  degree_min       : {degree_min}")
+    print(f"  comparison_mode  : {comparison_mode}")
+    if not is_residual:
         print("  WARNING: full-field comparison -- model predicts residual only.")
         print("  Add a base U/a reconstruction for a fair total-field comparison.")
     print("--- delta_U (residual potential) ---")
-    for k, v in u_m.items():
-        if k.startswith("_"):
+    for key, value in u_m.items():
+        if key.startswith("_"):
             continue
-        print(f"  {k:18s}: {v:.4e}")
+        print(f"  {key:18s}: {value:.4e}")
     print(f"  [robust_rel denominator floor: {u_m['_rel_denom_floor']:.2e}]")
+    print("--- delta_a vector error ---")
+    for key, value in a_vec_m.items():
+        print(f"  {key:18s}: {value:.4e}")
     print("--- |delta_a| (residual acceleration magnitude) ---")
-    for k, v in a_m.items():
-        if k.startswith("_"):
+    for key, value in a_mag_m.items():
+        if key.startswith("_"):
             continue
-        print(f"  {k:18s}: {v:.4e}")
-    print(f"  [robust_rel denominator floor: {a_m['_rel_denom_floor']:.2e}]")
-    print("--- delta_a direction (degrees) ---")
-    for k, v in ang.items():
-        print(f"  {k:18s}: {v:.3f} deg")
+        print(f"  {key:18s}: {value:.4e}")
+    print(f"  [robust_rel denominator floor: {a_mag_m['_rel_denom_floor']:.2e}]")
+    print("--- delta_a direction ---")
+    for key, value in a_cos.items():
+        print(f"  {key:18s}: {value:.6f}")
+    print("--- delta_a angular error (degrees) ---")
+    for key, value in ang.items():
+        print(f"  {key:18s}: {value:.3f} deg")
     print("==========================================================\n")
 
 
@@ -808,11 +776,17 @@ def test_streaming_metrics_match_in_memory_on_small_dataset() -> None:
     sm.update(x, a_true, a_pred, u_true, u_pred, R)
     res = sm.finalize()
 
-    a_err_norm = np.abs(np.linalg.norm(a_pred, axis=1) - np.linalg.norm(a_true, axis=1))
-    expected_mae = float(a_err_norm.mean())
-    expected_rmse = float(np.sqrt((a_err_norm**2).mean()))
-    assert abs(res["mae_a"] - expected_mae) < 1e-10, f"MAE mismatch: {res['mae_a']} vs {expected_mae}"
-    assert abs(res["rmse_a"] - expected_rmse) < 1e-10, f"RMSE mismatch"
+    # mae_a / rmse_a are now the VECTOR error norm (magnitude AND direction).
+    vec_err = np.linalg.norm(a_pred - a_true, axis=1)
+    exp_mae_vec = float(vec_err.mean())
+    exp_rmse_vec = float(np.sqrt((vec_err ** 2).mean()))
+    assert abs(res["mae_a"] - exp_mae_vec) < 1e-10, f"vec MAE mismatch: {res['mae_a']} vs {exp_mae_vec}"
+    assert abs(res["rmse_a"] - exp_rmse_vec) < 1e-10, "vec RMSE mismatch"
+    assert abs(res["mae_a_vec"] - exp_mae_vec) < 1e-10
+    # Magnitude-only metrics are tracked separately.
+    mag_err = np.abs(np.linalg.norm(a_pred, axis=1) - np.linalg.norm(a_true, axis=1))
+    exp_mae_mag = float(mag_err.mean())
+    assert abs(res["mae_a_mag"] - exp_mae_mag) < 1e-10, "mag MAE mismatch"
     assert res["count"] == N
     print("[PASS] test_streaming_metrics_match_in_memory_on_small_dataset")
 
@@ -843,10 +817,13 @@ def test_topk_error_export_shape_and_columns() -> None:
     tk = _TopKErrors(K)
     tk.update_batch(x, u_true, u_pred, a_true, a_pred, 1.737e6)
     arr = tk.to_array()
-    assert arr.shape == (K, 14), f"Expected ({K}, 14), got {arr.shape}"
+    assert arr.shape == (K, 16), f"Expected ({K}, 16), got {arr.shape}"
     # The top errors should all be from the large-perturbation pool
-    top_errs = arr[:, 11]  # abs_a_error column
+    top_errs = arr[:, 11]  # abs_a_error column (vector error norm)
     assert float(top_errs.min()) > 0.01, "Top-K should capture high-error samples"
+    # New columns: cos_sim (14) and angular_deg (15) must be finite and in range.
+    assert np.all(np.isfinite(arr[:, 14])) and np.all(np.abs(arr[:, 14]) <= 1.0 + 1e-6)
+    assert np.all(arr[:, 15] >= 0.0) and np.all(arr[:, 15] <= 180.0 + 1e-6)
     print("[PASS] test_topk_error_export_shape_and_columns")
 
 
@@ -1374,11 +1351,11 @@ def test_streaming_evaluator_does_not_accumulate_full_arrays() -> None:
     assert "mae_a" in res and "rmse_a" in res, "Missing expected keys in streaming finalize()"
     assert np.isfinite(res["mae_a"]), "mae_a must be finite"
 
-    # Compared against in-memory calculation
-    a_err = np.abs(np.linalg.norm(a_pred, axis=1) - np.linalg.norm(a_true, axis=1))
-    expected_mae = float(a_err.mean())
+    # Compared against in-memory calculation (mae_a is now VECTOR error).
+    vec_err = np.linalg.norm(a_pred - a_true, axis=1)
+    expected_mae = float(vec_err.mean())
     assert abs(res["mae_a"] - expected_mae) < 1e-9, (
-        f"Streaming MAE mismatch: {res['mae_a']:.6e} vs {expected_mae:.6e}"
+        f"Streaming vec MAE mismatch: {res['mae_a']:.6e} vs {expected_mae:.6e}"
     )
     print("[PASS] test_streaming_evaluator_does_not_accumulate_full_arrays")
 
@@ -1815,7 +1792,7 @@ def test_topk_wired_into_evaluate_streaming() -> None:
 
     arr = tk.to_array()
     assert arr.shape[0] == K, f"Expected {K} rows, got {arr.shape[0]}"
-    assert arr.shape[1] == 14, f"Expected 14 columns, got {arr.shape[1]}"
+    assert arr.shape[1] == 16, f"Expected 16 columns, got {arr.shape[1]}"
 
     # All top-K errors should be from the large-error pool (abs_a_error > 1.0 m/s^2 ish)
     abs_errors = arr[:, 11]

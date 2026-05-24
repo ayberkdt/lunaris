@@ -22,6 +22,7 @@ import argparse
 import datetime
 import json
 import math
+import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import replace
@@ -753,9 +754,16 @@ def resolve_cloud_config(args: argparse.Namespace) -> SpatialCloudConfig:
     cfg: SpatialCloudConfig = DEFAULT_SPATIAL_CLOUD_CONFIG
 
     if str(args.preset).strip():
+        # Visible, on-stderr warning (a DeprecationWarning alone is hidden by
+        # default and let scripts believe --preset still worked).
         import warnings
-        warnings.warn("--preset is deprecated; use --config-json or explicit CLI flags instead.", DeprecationWarning)
-        # Ignore preset silently; explicit flags take precedence
+        msg = (
+            f"--preset={args.preset!r} is DEPRECATED and IGNORED. Presets no longer "
+            "control generation; use --config-json or explicit CLI flags. The run will "
+            "proceed with the default/explicit configuration, NOT the named preset."
+        )
+        print(f"[WARN] {msg}", file=sys.stderr)
+        warnings.warn(msg, DeprecationWarning, stacklevel=2)
 
     if str(args.config_json).strip():
         cfg = SpatialCloudConfig.from_json(str(args.config_json).strip())
@@ -1749,6 +1757,75 @@ def _load_error_points(path: Path, max_source: int = 5000) -> np.ndarray:
     return np.array(rows, dtype=np.float64)
 
 
+def _resolve_active_alt_bounds(a) -> "Tuple[Optional[float], Optional[float], str]":
+    """Resolve the active-refinement altitude shell [min, max] km and its source.
+
+    Priority: explicit CLI args -> source dataset HDF5 metadata -> suite manifest.
+    Returns ``(alt_min_km, alt_max_km, source_label)``; min/max are None when
+    unresolved so the caller can fail loudly instead of using a bogus default.
+    """
+    def _pair(lo_name: str, hi_name: str):
+        lo = getattr(a, lo_name, None)
+        hi = getattr(a, hi_name, None)
+        if lo is not None and hi is not None:
+            try:
+                return float(lo), float(hi)
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    # 1. Explicit args (active-specific first, then generic training-shell args).
+    for lo_name, hi_name in (
+        ("active_alt_min_km", "active_alt_max_km"),
+        ("altitude_min_km", "altitude_max_km"),
+        ("alt_min_km", "alt_max_km"),
+    ):
+        got = _pair(lo_name, hi_name)
+        if got is not None:
+            return got[0], got[1], f"args:{lo_name}/{hi_name}"
+
+    # 2. Source dataset metadata (HDF5 attrs / cloud_config_json).
+    for ds_attr in ("active_source_dataset", "source_dataset", "data"):
+        ds_path = getattr(a, ds_attr, None)
+        if not ds_path:
+            continue
+        p = Path(str(ds_path))
+        if p.suffix.lower() not in (".h5", ".hdf5") or not p.exists():
+            continue
+        try:
+            import h5py as _h5
+            with _h5.File(p, "r") as _f:
+                _at = {str(k): _f.attrs[k] for k in _f.attrs.keys()}
+            lo = _at.get("alt_min_km")
+            hi = _at.get("alt_max_km")
+            if lo is None or hi is None:
+                _cc = _at.get("cloud_config_json")
+                if _cc is not None:
+                    if isinstance(_cc, bytes):
+                        _cc = _cc.decode("utf-8")
+                    _cc = json.loads(str(_cc))
+                    lo = lo if lo is not None else _cc.get("alt_min_km")
+                    hi = hi if hi is not None else _cc.get("alt_max_km")
+            if lo is not None and hi is not None:
+                return float(lo), float(hi), f"dataset:{p.name}"
+        except Exception:
+            continue
+
+    # 3. Suite manifest.
+    sm = getattr(a, "suite_manifest", None)
+    if sm:
+        try:
+            manifest = json.loads(Path(str(sm)).read_text(encoding="utf-8"))
+            lo = manifest.get("alt_min_km")
+            hi = manifest.get("alt_max_km")
+            if lo is not None and hi is not None:
+                return float(lo), float(hi), "suite_manifest"
+        except Exception:
+            pass
+
+    return None, None, "unresolved"
+
+
 def _jitter_around_point(
     x_src: np.ndarray,
     n_samples: int,
@@ -1837,22 +1914,43 @@ def _run_active_refinement(a, ap) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Altitude clipping/rejection
-    _alt_min_km = float(getattr(a, "altitude_min_km", 0.0) or 0.0)
-    _alt_max_km = float(getattr(a, "altitude_max_km", 10000.0) or 10000.0)
-    _r_ref_m = float(MU_MOON_SI ** 0.0 * R_MOON_SI)  # = R_MOON_SI
+    _r_ref_m = float(R_MOON_SI)
     _clip = bool(getattr(a, "active_clip_to_alt_range", False))
     _reject = bool(getattr(a, "active_reject_outside_alt_range", False))
 
     if _clip or _reject:
+        # Resolve the training shell from a trustworthy source. Never silently
+        # fall back to (0, 10000) km — that admits points far outside the Moon's
+        # neighbourhood (R_moon = 1737 km) into the refinement cloud with no error.
+        # Priority: explicit args -> source dataset metadata -> suite manifest.
+        _alt_min_km, _alt_max_km, _alt_src = _resolve_active_alt_bounds(a)
+        if _alt_min_km is None or _alt_max_km is None:
+            raise ValueError(
+                "Active refinement was asked to clip/reject by altitude "
+                "(--active-clip-to-alt-range / --active-reject-outside-alt-range) but the "
+                "training altitude shell could not be resolved. Provide --active-alt-min-km "
+                "and --active-alt-max-km (or --altitude-min-km/--altitude-max-km), or a "
+                "source dataset / suite manifest that records alt_min_km/alt_max_km. "
+                "Refusing to default to a 0..10000 km shell."
+            )
+        if not (np.isfinite(_alt_min_km) and np.isfinite(_alt_max_km)) or _alt_max_km <= _alt_min_km:
+            raise ValueError(
+                f"Active refinement altitude shell is invalid: "
+                f"[{_alt_min_km}, {_alt_max_km}] km (source={_alt_src})."
+            )
+        print(f"[active-refinement] Altitude shell [{_alt_min_km:.1f}, {_alt_max_km:.1f}] km "
+              f"(source={_alt_src})")
         r_norms = np.linalg.norm(x_all, axis=1)
         r_min_lim = _r_ref_m + _alt_min_km * 1000.0
         r_max_lim = _r_ref_m + _alt_max_km * 1000.0
         if _clip:
             # Project outside-range points to nearest boundary by scaling radius
+            _n_out = int(np.sum((r_norms < r_min_lim) | (r_norms > r_max_lim)))
             dirs = x_all / r_norms[:, None].clip(1e-10)
             r_clipped = np.clip(r_norms, r_min_lim, r_max_lim)
             x_all = dirs * r_clipped[:, None]
-            print(f"[active-refinement] Clipped radii to [{r_min_lim:.3e}, {r_max_lim:.3e}] m")
+            print(f"[active-refinement] Clipped {_n_out}/{total_generated} out-of-range radii "
+                  f"to [{r_min_lim:.3e}, {r_max_lim:.3e}] m")
         elif _reject:
             # Resample points outside range (up to 3 attempts per bad point)
             for _attempt in range(3):
@@ -1870,6 +1968,19 @@ def _run_active_refinement(a, ap) -> None:
                     new_pts = _jitter_around_point(x_src_rep, 1, float(a.active_jitter_radial_km),
                                                    float(a.active_jitter_tangent_km), rng)
                     x_all[_bi] = new_pts[0]
+            # Drop any points still out of range so the cloud never contains
+            # far-shell junk (jitter may exceed the shell for tight bounds).
+            r_norms = np.linalg.norm(x_all, axis=1)
+            still_bad = (r_norms < r_min_lim) | (r_norms > r_max_lim)
+            n_still_bad = int(np.sum(still_bad))
+            if n_still_bad > 0:
+                frac = n_still_bad / max(1, x_all.shape[0])
+                print(f"[active-refinement] WARNING: {n_still_bad} points ({frac:.1%}) still "
+                      "out-of-range after resampling; dropping them.")
+                x_all = x_all[~still_bad]
+                if frac > 0.10:
+                    print("[active-refinement] WARNING: >10% of points were unrecoverable; "
+                          "consider widening the shell or reducing jitter radius.")
 
     # Debug path: save positions only (NPZ) and return
     if bool(getattr(a, "active_save_positions_only", False)):

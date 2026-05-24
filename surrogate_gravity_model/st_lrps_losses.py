@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -133,6 +134,13 @@ class GradNormWeights:
     _ema_ratio: float = 1.0
     _step_counter: int = 0
     _ntk_done: bool = False         # True after ntk_init computation is complete
+    # Diagnostics from the most recent ratio computation (for logging / tests).
+    last_gradnorm_status: str = "uninitialized"  # "ok" | "empty_grad_a" | "empty_grad_u" | "nonfinite" | "zero_norm_a"
+    last_norm_u: float = float("nan")
+    last_norm_a: float = float("nan")
+    last_raw_ratio: float = float("nan")
+    last_n_grad_u: int = 0
+    last_n_grad_a: int = 0
 
     def _effective_mode(self) -> str:
         """Resolve the active mode, honouring the legacy ``dynamic`` bool."""
@@ -146,17 +154,66 @@ class GradNormWeights:
         loss_a: torch.Tensor,
         shared_params: List[torch.nn.Parameter],
     ) -> float:
-        """Return ‖∂L_U/∂W‖ / ‖∂L_a/∂W‖, clamped to [w_a_min, w_a_max]."""
+        """Return ‖∂L_U/∂W‖ / ‖∂L_a/∂W‖, clamped to [w_a_min, w_a_max].
+
+        Robustness: if the acceleration loss has no gradient path to the shared
+        params (all-None grads), or either norm is non-finite, or ``norm_a`` is
+        effectively zero, the ratio is undefined. Rather than let ``norm_u/eps``
+        blow up and silently clamp ``w_a`` to ``w_a_max`` (which would freeze a
+        meaningless weight for the whole run under ntk_init), we log a detailed
+        warning and return the CURRENT ``w_a`` unchanged. ``last_gradnorm_status``
+        records the outcome so callers/tests can react.
+        """
+        _logger = logging.getLogger(__name__)
+        eps = 1e-12
+
         grad_u = torch.autograd.grad(
             loss_u, shared_params, retain_graph=True, create_graph=False, allow_unused=True
         )
         grad_a = torch.autograd.grad(
             loss_a, shared_params, retain_graph=True, create_graph=False, allow_unused=True
         )
-        eps = 1e-12
-        norm_u = sum(g.detach().norm().item() ** 2 for g in grad_u if g is not None) ** 0.5
-        norm_a = sum(g.detach().norm().item() ** 2 for g in grad_a if g is not None) ** 0.5
-        raw = norm_u / max(norm_a, eps)
+        gu = [g for g in grad_u if g is not None]
+        ga = [g for g in grad_a if g is not None]
+        self.last_n_grad_u = len(gu)
+        self.last_n_grad_a = len(ga)
+
+        def _fail(status: str, reason: str) -> float:
+            self.last_gradnorm_status = status
+            self.last_raw_ratio = float("nan")
+            _logger.warning(
+                "GradNorm: %s; keeping current w_a=%.4f unchanged "
+                "(n_grad_u=%d, n_grad_a=%d, norm_u=%s, norm_a=%s). %s",
+                status, float(self.w_a), self.last_n_grad_u, self.last_n_grad_a,
+                f"{self.last_norm_u:.3e}", f"{self.last_norm_a:.3e}", reason,
+            )
+            return float(self.w_a)
+
+        if not gu:
+            self.last_norm_u = 0.0
+            self.last_norm_a = float("nan")
+            return _fail("empty_grad_u",
+                         "Potential loss has no gradient path to the shared params.")
+        if not ga:
+            self.last_norm_u = float(sum(g.detach().norm().item() ** 2 for g in gu) ** 0.5)
+            self.last_norm_a = 0.0
+            return _fail("empty_grad_a",
+                         "Acceleration loss has no gradient path to the shared params "
+                         "(da branch disconnected?).")
+
+        norm_u = float(sum(g.detach().norm().item() ** 2 for g in gu) ** 0.5)
+        norm_a = float(sum(g.detach().norm().item() ** 2 for g in ga) ** 0.5)
+        self.last_norm_u = norm_u
+        self.last_norm_a = norm_a
+
+        if not (math.isfinite(norm_u) and math.isfinite(norm_a)):
+            return _fail("nonfinite", "Non-finite gradient norm.")
+        if norm_a <= eps:
+            return _fail("zero_norm_a", "Acceleration-loss gradient norm is ~0.")
+
+        raw = norm_u / norm_a
+        self.last_raw_ratio = float(raw)
+        self.last_gradnorm_status = "ok"
         return float(min(max(raw, float(self.w_a_min)), float(self.w_a_max)))
 
     def compute_gradnorm_weights(
@@ -173,11 +230,23 @@ class GradNormWeights:
         if mode == "ntk_init":
             if self._ntk_done:
                 return self.w_u, self.w_a
-            # Compute once from NTK gradient norms at initialization
-            self.w_a = self._compute_grad_norm_ratio(loss_u, loss_a, shared_params)
-            self._ntk_done = True
+            # Compute once from NTK gradient norms at initialization.
+            _new_w_a = self._compute_grad_norm_ratio(loss_u, loss_a, shared_params)
             _gnw_logger = logging.getLogger(__name__)
-            _gnw_logger.info(f"NTK-init: w_a={self.w_a:.4f} (frozen for rest of training)")
+            if self.last_gradnorm_status == "ok":
+                self.w_a = _new_w_a
+                self._ntk_done = True   # freeze only on a valid computation
+                _gnw_logger.info(
+                    f"NTK-init: w_a={self.w_a:.4f} (norm_u={self.last_norm_u:.3e}, "
+                    f"norm_a={self.last_norm_a:.3e}, raw={self.last_raw_ratio:.4f}; "
+                    "frozen for rest of training)"
+                )
+            else:
+                # Do NOT freeze: retry on a later step once gradients connect.
+                _gnw_logger.warning(
+                    f"NTK-init deferred (status={self.last_gradnorm_status}); "
+                    f"using w_a={self.w_a:.4f} this step and retrying."
+                )
             return self.w_u, self.w_a
 
         # mode == "dynamic": legacy EMA GradNorm

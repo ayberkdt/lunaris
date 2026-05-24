@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 ui_st_lrps.py  -  v3
 
@@ -130,6 +130,36 @@ try:
 except ImportError:
     _HAS_H5PY = False
 
+try:
+    from .st_lrps_artifacts import (
+        CHECKPOINT_SCHEMA_VERSION,
+        CRITICAL_CONFIG_FIELDS,
+        compute_payload_sha256,
+        load_checkpoint as load_artifact_checkpoint,
+        make_run_layout,
+        read_run_manifest,
+        resolve_run_dir as resolve_artifact_run_dir,
+    )
+except Exception:
+    try:
+        from st_lrps_artifacts import (  # type: ignore
+            CHECKPOINT_SCHEMA_VERSION,
+            CRITICAL_CONFIG_FIELDS,
+            compute_payload_sha256,
+            load_checkpoint as load_artifact_checkpoint,
+            make_run_layout,
+            read_run_manifest,
+            resolve_run_dir as resolve_artifact_run_dir,
+        )
+    except Exception:
+        CHECKPOINT_SCHEMA_VERSION = "st_lrps_checkpoint_v2"  # type: ignore[assignment]
+        CRITICAL_CONFIG_FIELDS = tuple()  # type: ignore[assignment]
+        compute_payload_sha256 = None  # type: ignore[assignment]
+        load_artifact_checkpoint = None  # type: ignore[assignment]
+        make_run_layout = None  # type: ignore[assignment]
+        read_run_manifest = None  # type: ignore[assignment]
+        resolve_artifact_run_dir = None  # type: ignore[assignment]
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 _PRESETS_DIR = SCRIPT_DIR / "presets"
@@ -219,6 +249,140 @@ def _scroll_wrap(widget: QWidget) -> QScrollArea:
 
 def _settings() -> QSettings:
     return QSettings(_SETTINGS_ORG, _SETTINGS_APP)
+
+
+def _read_json_if_exists(path: Path) -> Dict[str, Any]:
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _inspect_run_artifacts(run_dir: str) -> Dict[str, Any]:
+    status: Dict[str, Any] = {
+        "run_dir": "",
+        "manifest_path": None,
+        "config_path": None,
+        "scaler_path": None,
+        "checkpoint_path": None,
+        "best_epoch": None,
+        "best_score": None,
+        "architecture_signature": None,
+        "w0_bands": None,
+        "checkpoint_schema_version": None,
+        "scaler_hash": None,
+        "scaler_status": "unknown",
+        "warnings": [],
+        "source": "fallback",
+    }
+    if not run_dir or make_run_layout is None:
+        return status
+    try:
+        resolved = (
+            resolve_artifact_run_dir(run_dir)
+            if resolve_artifact_run_dir is not None
+            else Path(run_dir).expanduser().resolve()
+        )
+        layout = make_run_layout(Path(resolved))
+    except Exception as exc:
+        status["warnings"].append(f"run_dir_unusable: {exc}")
+        return status
+
+    status["run_dir"] = str(layout.run_dir)
+    status["manifest_path"] = str(layout.run_manifest_json)
+    status["config_path"] = str(layout.config_json)
+    status["scaler_path"] = str(layout.scaler_json)
+
+    manifest = read_run_manifest(layout) if read_run_manifest is not None else {}
+    if manifest:
+        status["source"] = "run_manifest"
+    config_payload = _read_json_if_exists(layout.config_json)
+    scaler_payload = _read_json_if_exists(layout.scaler_json)
+    scaler_hash = manifest.get("scaler_hash")
+    if not scaler_hash and scaler_payload and compute_payload_sha256 is not None:
+        try:
+            scaler_hash = compute_payload_sha256(scaler_payload)
+        except Exception:
+            scaler_hash = None
+    status["scaler_hash"] = scaler_hash
+
+    ckpt_path: Optional[Path] = None
+    if layout.ckpt_best.exists():
+        ckpt_path = layout.ckpt_best
+    elif layout.ckpt_last.exists():
+        ckpt_path = layout.ckpt_last
+    if ckpt_path is None:
+        status["warnings"].append("missing_checkpoint")
+    else:
+        status["checkpoint_path"] = str(ckpt_path)
+
+    if not layout.scaler_json.exists():
+        status["warnings"].append("missing_scaler")
+        status["scaler_status"] = "missing"
+
+    ckpt: Dict[str, Any] = {}
+    if ckpt_path is not None and load_artifact_checkpoint is not None:
+        try:
+            import torch
+
+            ckpt = load_artifact_checkpoint(ckpt_path, torch.device("cpu"))
+        except Exception as exc:
+            status["warnings"].append(f"checkpoint_load_failed: {exc}")
+    status["checkpoint_schema_version"] = ckpt.get("schema_version") if ckpt else None
+    status["best_epoch"] = (
+        manifest.get("best_epoch")
+        or ckpt.get("epoch_display")
+        or ckpt.get("epoch")
+    )
+    status["best_score"] = manifest.get("best_score") or (ckpt.get("scoring") or {}).get("score")
+    status["architecture_signature"] = (
+        manifest.get("architecture_signature")
+        or (ckpt.get("architecture") or {}).get("signature")
+        or (ckpt.get("config") or {}).get("architecture_signature")
+        or config_payload.get("architecture_signature")
+    )
+    status["w0_bands"] = (
+        manifest.get("w0_bands")
+        or (ckpt.get("architecture") or {}).get("w0_bands")
+        or (ckpt.get("config") or {}).get("w0_bands")
+        or config_payload.get("w0_bands")
+    )
+
+    if ckpt and ckpt.get("schema_version") != CHECKPOINT_SCHEMA_VERSION:
+        status["warnings"].append("legacy_checkpoint_schema")
+
+    if scaler_payload and (ckpt.get("scaler") or None) and compute_payload_sha256 is not None:
+        try:
+            scaler_file_hash = compute_payload_sha256(scaler_payload)
+            ckpt_scaler_hash = compute_payload_sha256(ckpt["scaler"])
+            if scaler_file_hash == ckpt_scaler_hash:
+                status["scaler_status"] = "match"
+            else:
+                status["scaler_status"] = "mismatch"
+                status["warnings"].append("scaler_mismatch")
+        except Exception:
+            status["scaler_status"] = "unknown"
+    elif layout.scaler_json.exists():
+        status["scaler_status"] = "present"
+
+    mismatch_fields: List[str] = []
+    ckpt_cfg = ckpt.get("config") if isinstance(ckpt, dict) else {}
+    if isinstance(config_payload, dict) and isinstance(ckpt_cfg, dict):
+        for field in CRITICAL_CONFIG_FIELDS:
+            if field in config_payload and field in ckpt_cfg and config_payload.get(field) != ckpt_cfg.get(field):
+                mismatch_fields.append(field)
+    if mismatch_fields:
+        status["warnings"].append(
+            "config_checkpoint_mismatch:" + ", ".join(mismatch_fields[:8])
+        )
+
+    if ckpt_path is None and not layout.ckpt_last.exists():
+        status["warnings"].append("missing_best_and_last_checkpoint")
+
+    return status
 
 
 def _split_cli_args(text: str) -> Tuple[Optional[List[str]], Optional[str]]:
@@ -2310,7 +2474,7 @@ class STLRPSTrainTab(QWidget):
             "Yön kaybını 0'dan tam ağırlığa çıkarma epoch sayısı."
         )
         self.direction_loss_floor_abs = QDoubleSpinBox()
-        self.direction_loss_floor_abs.setDecimals(2)
+        self.direction_loss_floor_abs.setDecimals(8)
         self.direction_loss_floor_abs.setRange(0.0, 1.0)
         self.direction_loss_floor_abs.setValue(3e-6)
         self.direction_loss_floor_abs.setSingleStep(1e-7)
@@ -3517,9 +3681,8 @@ class STLRPSTrainTab(QWidget):
         if use_config_datasets:
             args += ["--use-config-datasets"]
         args += ["--dataset-name", self.dataset_name.text().strip() or "data"]
-        eval_out = out_dir or (str(Path(model_dir) / "eval_results") if model_dir else "")
-        if eval_out:
-            args += ["--out", eval_out]
+        if out_dir:
+            args += ["--out", out_dir]
         # Hardware
         dev = self.device_hint.currentText()
         args += ["--device", dev if dev != "auto" else "auto"]
@@ -3658,30 +3821,6 @@ class STLRPSTrainTab(QWidget):
 
         run_dir = self.runner._output_dir or self.out_dir.text().strip()
 
-        # --- Write run_manifest.json ---
-        if run_dir and Path(run_dir).is_dir():
-            try:
-                manifest = {
-                    "command_train": self.command_preview.toPlainText(),
-                    "dataset_paths": {
-                        "data":       self.data.text().strip(),
-                        "train_data": self.train_data.text().strip(),
-                        "val_data":   self.val_data.text().strip(),
-                        "test_data":  self.test_data.text().strip(),
-                        "ood_data":   self.ood_data.text().strip(),
-                    },
-                    "model_dir": run_dir,
-                    "exit_code":  exit_code,
-                    "exit_status": str(exit_status),
-                    "workflow_mode": self.workflow_mode.currentData(),
-                    "preset": self._preset_combo.currentData() or "",
-                }
-                manifest_path = Path(run_dir) / "run_manifest.json"
-                with open(manifest_path, "w", encoding="utf-8") as fh:
-                    json.dump(manifest, fh, indent=2, default=str)
-            except Exception as _exc:
-                self.runner.append(f"[UI] run_manifest.json write failed: {_exc}")
-
         # --- Notify the queue so it can advance ---
         if self._queue.is_running():
             self._queue.on_job_finished(exit_code, exit_status)
@@ -3699,19 +3838,26 @@ class STLRPSTrainTab(QWidget):
 
         # Verify checkpoint exists before launching eval
         if run_dir:
-            ckpt_best = Path(run_dir) / "checkpoints" / "ckpt_best.pt"
-            ckpt_last = Path(run_dir) / "checkpoints" / "ckpt_last.pt"
-            cfg_json = Path(run_dir) / "config.json"
-            scaler_json = Path(run_dir) / "scaler.json"
-            missing = [str(p) for p in (cfg_json, scaler_json) if not p.exists()]
-            if not ckpt_best.exists() and not ckpt_last.exists():
-                missing.append(str(ckpt_best) + " or " + str(ckpt_last))
+            layout = make_run_layout(Path(run_dir)) if make_run_layout is not None else None
+            missing: List[str] = []
+            if layout is not None:
+                if not layout.config_json.exists():
+                    missing.append(str(layout.config_json))
+                if not layout.scaler_json.exists():
+                    missing.append(str(layout.scaler_json))
+                if not layout.ckpt_best.exists() and not layout.ckpt_last.exists():
+                    missing.append(f"{layout.ckpt_best} or {layout.ckpt_last}")
             if missing:
                 self.runner.append(
                     "[UI] Cannot auto-evaluate — missing files:\n  " + "\n  ".join(missing)
                 )
                 return
-            if not ckpt_best.exists() and ckpt_last.exists():
+            status = _inspect_run_artifacts(run_dir)
+            if status.get("warnings"):
+                self.runner.append(
+                    "[UI] Artifact warnings:\n  " + "\n  ".join(str(item) for item in status["warnings"])
+                )
+            if layout is not None and not layout.ckpt_best.exists() and layout.ckpt_last.exists():
                 self.runner.append(
                     "[UI] ckpt_best.pt was not written yet; evaluator will fall back to ckpt_last.pt. "
                     "This usually means the run ended before direction-aware best-checkpoint tracking began."
@@ -3755,24 +3901,8 @@ class STLRPSTrainTab(QWidget):
             self.runner.append(f"[EVAL] {line}")
 
     def _on_auto_eval_finished(self, exit_code: int, exit_status: "QProcess.ExitStatus") -> None:
-        run_dir = getattr(self, "_eval_run_dir", "")
         if exit_code == 0:
             self.runner.append("[UI] ─── Auto-evaluation complete ───")
-            # Update manifest with eval command
-            if run_dir and Path(run_dir).is_dir():
-                manifest_path = Path(run_dir) / "run_manifest.json"
-                try:
-                    data = {}
-                    if manifest_path.exists():
-                        with open(manifest_path, "r", encoding="utf-8") as fh:
-                            data = json.load(fh)
-                    eval_out = str(Path(run_dir) / "eval_results")
-                    data["eval_exit_code"] = exit_code
-                    data["eval_out_dir"] = eval_out
-                    with open(manifest_path, "w", encoding="utf-8") as fh:
-                        json.dump(data, fh, indent=2, default=str)
-                except Exception as _exc:
-                    self.runner.append(f"[UI] manifest update failed: {_exc}")
         else:
             self.runner.append(
                 f"[UI] Auto-evaluation exited with code {exit_code}."
@@ -5419,11 +5549,20 @@ class STLRPSEvalTab(QWidget):
 
         self.dataset_name = QLineEdit("data")
         self.out_dir = ValidatedPathEdit(
-            placeholder="Boş → <model-dir>/eval_results", check_file=False
+            placeholder="Boş → <run-dir>/evals/eval_<dataset>_<timestamp>", check_file=False
         )
         btn_out = QPushButton("Seç…")
         btn_out.clicked.connect(self._pick_out_dir)
         out_row = _row_lineedit_with_button(self.out_dir, btn_out)
+        self.run_artifact_badge = QLabel("No run selected")
+        self.run_artifact_badge.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        self.run_artifact_summary = QPlainTextEdit()
+        self.run_artifact_summary.setReadOnly(True)
+        self.run_artifact_summary.setFont(_mono_font())
+        self.run_artifact_summary.setMaximumHeight(150)
+        self.run_artifact_summary.setPlaceholderText(
+            "run_manifest.json-aware artifact summary will appear here."
+        )
 
         form_input.addRow("Model Klasörü", model_row)
         form_input.addRow("Test Dataseti", data_row)
@@ -5435,6 +5574,8 @@ class STLRPSEvalTab(QWidget):
         form_input.addRow("Hard sample metric", self.hard_sample_metric)
         form_input.addRow("HDF5 Dataset Adı", self.dataset_name)
         form_input.addRow("Çıktı Klasörü", out_row)
+        form_input.addRow("Artifact Status", self.run_artifact_badge)
+        form_input.addRow("Artifact Summary", self.run_artifact_summary)
         grp_input.setLayout(form_input)
 
         grp_hw = QGroupBox("Donanım ve İşlem")
@@ -5531,7 +5672,9 @@ class STLRPSEvalTab(QWidget):
         layout.addWidget(splitter, 1)
         self.setLayout(layout)
         self._effective_out_dir = ""
+        self.model_dir.textChanged.connect(self._refresh_run_artifact_summary)
         self._restore_settings()
+        self._refresh_run_artifact_summary()
 
     def _pick_model_dir(self):
         d = QFileDialog.getExistingDirectory(
@@ -5539,6 +5682,42 @@ class STLRPSEvalTab(QWidget):
         )
         if d:
             self.model_dir.setText(_norm_path(d))
+
+    def _refresh_run_artifact_summary(self) -> None:
+        run_dir = self.model_dir.text().strip()
+        if not run_dir:
+            self.run_artifact_badge.setText("No run selected")
+            self.run_artifact_badge.setStyleSheet("color: #94a3b8; font-size: 10px;")
+            self.run_artifact_summary.setPlainText("")
+            return
+        status = _inspect_run_artifacts(run_dir)
+        warnings = list(status.get("warnings") or [])
+        badge_text = "Ready" if not warnings else f"Warnings: {len(warnings)}"
+        badge_color = "#6ee7b7" if not warnings else "#f59e0b"
+        if any(
+            str(item).startswith(("missing_", "checkpoint_load_failed", "config_checkpoint_mismatch"))
+            for item in warnings
+        ):
+            badge_color = "#f87171"
+        self.run_artifact_badge.setText(badge_text)
+        self.run_artifact_badge.setStyleSheet(f"color: {badge_color}; font-size: 10px;")
+
+        summary_lines = [
+            f"source: {status.get('source', 'fallback')}",
+            f"run_dir: {status.get('run_dir') or run_dir}",
+            f"best_epoch: {status.get('best_epoch')}",
+            f"best_score: {status.get('best_score')}",
+            f"architecture_signature: {status.get('architecture_signature')}",
+            f"w0_bands: {status.get('w0_bands')}",
+            f"checkpoint_schema_version: {status.get('checkpoint_schema_version')}",
+            f"checkpoint_path: {status.get('checkpoint_path')}",
+            f"scaler_hash: {status.get('scaler_hash')}",
+            f"scaler_status: {status.get('scaler_status')}",
+        ]
+        if warnings:
+            summary_lines.append("warnings:")
+            summary_lines.extend(f"  - {warning}" for warning in warnings)
+        self.run_artifact_summary.setPlainText("\n".join(summary_lines))
 
     def _pick_data(self):
         fn, _ = QFileDialog.getOpenFileName(
