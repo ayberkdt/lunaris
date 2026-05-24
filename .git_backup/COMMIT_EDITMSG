@@ -1,1 +1,0 @@
-feat(mc): implement modular GPU backend policy and torch-native batch propagation
