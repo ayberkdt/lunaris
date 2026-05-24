@@ -1,0 +1,33 @@
+{
+  "checkpoint_epoch": 162,
+  "checkpoint_hash": "286d68937fc3fba7c698fd381907a8030946e0408a1142aab5c7a2399724be01",
+  "checkpoint_kind": "best",
+  "checkpoint_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\checkpoints\\ckpt_best.pt",
+  "created_at_utc": "2026-05-23T08:08:51Z",
+  "dataset_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\train_hybrid_10M.h5",
+  "metrics_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\evaluate_metrics.json",
+  "plot_paths": [
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\accel_angular_error_vs_altitude.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\accel_cos_sim_vs_altitude.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\accel_error_histogram.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\accel_vector_error_vs_altitude.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\angular_error_hist.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\angular_error_masked.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\binned_mape_accel_vs_alt.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\binned_mape_U_vs_alt.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\cossim_by_altitude.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\hist_abs_err_accelmag_log.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\hist_abs_err_U_log.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\hist_angular_err_deg.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\hist_rel_err_accel_pct.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\hist_rel_err_U_pct.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\ood_bar_accel_rmse.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\parity_U.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\potential_parity.png",
+    "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\plots\\scatter_relerr_accel_vs_alt.png"
+  ],
+  "report_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\eval_report.json",
+  "schema_version": "st_lrps_eval_manifest_v1",
+  "source_run_dir": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod",
+  "topk_worst_csv": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606\\topk_worst.csv"
+}

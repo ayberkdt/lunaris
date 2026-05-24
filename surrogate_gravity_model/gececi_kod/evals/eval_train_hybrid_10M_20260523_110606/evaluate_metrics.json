@@ -1,0 +1,255 @@
+{
+  "U": {
+    "mae": 0.016173448035835022,
+    "rmse": 0.030713584251377248,
+    "rel_mean_pct": 20.478267470033355,
+    "rel_p50_pct": 10.677735713836835,
+    "rel_p90_pct": 55.197494193489945,
+    "nrmse_pct": 1.1878783376623703,
+    "linf": 0.7028522491455078,
+    "rel_floor_abs": 0.028564634799957266
+  },
+  "|a|": {
+    "mae": 4.216843000071387e-07,
+    "rmse": 9.001814142068051e-07,
+    "rel_mean_pct": 16.138184614017817,
+    "rel_p50_pct": 11.992252476848945,
+    "rel_p90_pct": 38.08828702275023,
+    "nrmse_pct": 1.737985555129509,
+    "linf": 0.00014969312178436667,
+    "rel_floor_abs": 7.228810542891803e-07,
+    "error_kind": "vector"
+  },
+  "residual_vector_metrics": {
+    "mae": 4.2168420577581855e-07,
+    "rmse": 9.001817034004489e-07,
+    "linf": 0.00014969312178436667,
+    "rel_mean_pct": 877.4494975653539,
+    "description": "norm(a_pred - a_true): captures magnitude AND direction."
+  },
+  "residual_magnitude_metrics": {
+    "mae": 2.814359410370483e-07,
+    "rmse": 6.723199113466647e-07,
+    "linf": 0.00014967119857904783,
+    "description": "abs(|a_pred| - |a_true|): direction-blind diagnostic only."
+  },
+  "residual_angular_metrics": {
+    "mean_deg": 35.93754803424597,
+    "max_deg": 179.9544425563947,
+    "mean_cossim": 0.6413564148555602
+  },
+  "a_vectorial": {
+    "mean_deg": 35.93754803424597,
+    "max_deg": 179.9544425563947,
+    "mean_cossim": 0.6413564148555602
+  },
+  "angular_metrics": {
+    "residual_all": {
+      "mean_deg": 35.93754803424597,
+      "max_deg": 179.9544425563947,
+      "mean_cossim": 0.6413564148555602,
+      "p50_deg": 11.198288658399832,
+      "p90_deg": 110.84029555024533,
+      "p99_deg": 159.5146060904299
+    },
+    "residual_masked": {
+      "direction_floor_abs": 3e-06,
+      "mask_frac": 0.3446514,
+      "N_masked": 3446514,
+      "mean_deg": 0.6920615997060472,
+      "p50_deg": 0.5539498731912633,
+      "p90_deg": 1.2952640907962891
+    },
+    "norm_binned": [
+      {
+        "bin": "<1e-10",
+        "norm_range_m_s2": [
+          0.0,
+          1e-10
+        ],
+        "N": 2,
+        "mean_deg": 89.23758059782038,
+        "median_deg": 89.23758059782038,
+        "p90_deg": 94.94598560539198,
+        "p99_deg": 96.23037673209558
+      },
+      {
+        "bin": "1e-10-1e-9",
+        "norm_range_m_s2": [
+          1e-10,
+          1e-09
+        ],
+        "N": 5580,
+        "mean_deg": 94.7983640967629,
+        "median_deg": 96.99194502841797,
+        "p90_deg": 144.17313056458818,
+        "p99_deg": 168.48750679153065
+      },
+      {
+        "bin": "1e-9-1e-8",
+        "norm_range_m_s2": [
+          1e-09,
+          1e-08
+        ],
+        "N": 1300310,
+        "mean_deg": 88.94240219870439,
+        "median_deg": 88.50166928538789,
+        "p90_deg": 144.43127590015214,
+        "p99_deg": 168.95452252099886
+      },
+      {
+        "bin": "1e-8-1e-7",
+        "norm_range_m_s2": [
+          1e-08,
+          1e-07
+        ],
+        "N": 2406936,
+        "mean_deg": 77.30592220898056,
+        "median_deg": 73.24551875348168,
+        "p90_deg": 135.35089435129737,
+        "p99_deg": 166.22491598845153
+      },
+      {
+        "bin": ">1e-7",
+        "norm_range_m_s2": [
+          1e-07,
+          Infinity
+        ],
+        "N": 6287172,
+        "mean_deg": 9.085678714475543,
+        "median_deg": 1.1236971065050587,
+        "p90_deg": 29.144615242152984,
+        "p99_deg": 91.56824612023681
+      }
+    ],
+    "total_approx": {
+      "note": "point_mass_base_approximation",
+      "mean_deg": 1.4337333206853128e-05,
+      "p50_deg": 8.622691156561379e-06,
+      "p90_deg": 2.937775443794112e-05,
+      "p99_deg": 0.00010353923193188038,
+      "max_deg": 0.0006472082919862466
+    }
+  },
+  "a_directional": {
+    "frame": "approximate_rtn_like_without_velocity",
+    "accel_err_radial_mae": 2.646417813051138e-07,
+    "accel_err_radial_rmse": 6.930266472169006e-07,
+    "accel_err_cross_radial_mae": 2.819630183298425e-07,
+    "accel_err_cross_radial_rmse": 5.744916402311348e-07,
+    "approx_T_rmse": 4.0668214808260545e-07,
+    "approx_N_rmse": 4.057712103222424e-07
+  },
+  "ood_table": {
+    "train_alt_range_km": [
+      100.0,
+      1000.0
+    ],
+    "classification": "altitude_margin",
+    "ood_margin_pct": 10.0,
+    "ood_margin_km": 90.0,
+    "definitions": {
+      "lower_ood_km": [
+        10.0,
+        100.0
+      ],
+      "in_band_km": [
+        100.0,
+        1000.0
+      ],
+      "upper_ood_km": [
+        1000.0,
+        1090.0
+      ]
+    },
+    "lower_ood": {
+      "region": "10.0-100.0 km",
+      "N": 2,
+      "RMSE_U": 0.11973171525531115,
+      "MAE_U": 0.11944524571299553,
+      "RMSE_accel_norm": 8.557886120208185e-06,
+      "MAE_accel_norm": 6.521444244854005e-06,
+      "robust_rel_accel_mean_pct": 8.962848757326617,
+      "robust_rel_accel_p90_pct": 15.345999213867987,
+      "angular_error_mean_deg": 1.6331762691693688,
+      "angular_error_p90_deg": 1.8190300684651746
+    },
+    "in_band": {
+      "region": "100.0-1000.0 km",
+      "N": 9999997,
+      "RMSE_U": 0.030713541790504947,
+      "MAE_U": 0.016173427446102916,
+      "RMSE_accel_norm": 6.723091187517274e-07,
+      "MAE_accel_norm": 2.8143471726249293e-07,
+      "robust_rel_accel_mean_pct": 12.508874185434117,
+      "robust_rel_accel_p90_pct": 34.000727170085625,
+      "angular_error_mean_deg": 35.93755264652555,
+      "angular_error_p90_deg": 110.84030843515895
+    },
+    "upper_ood": {
+      "region": "1000.0-1090.0 km",
+      "N": 1,
+      "RMSE_U": 0.0155271120602265,
+      "MAE_U": 0.0155271120602265,
+      "RMSE_accel_norm": 3.9161215711472386e-08,
+      "MAE_accel_norm": 3.9161215711472386e-08,
+      "robust_rel_accel_mean_pct": 5.41738028395006,
+      "robust_rel_accel_p90_pct": 5.41738028395006,
+      "angular_error_mean_deg": 58.423509585430615,
+      "angular_error_p90_deg": 58.423509585430615
+    },
+    "in_train": {
+      "region": "10.0-1090.0 km",
+      "N": 9999997,
+      "RMSE_U": 0.030713541790504947,
+      "MAE_U": 0.016173427446102916,
+      "RMSE_accel_norm": 6.723091187517274e-07,
+      "MAE_accel_norm": 2.8143471726249293e-07,
+      "robust_rel_accel_mean_pct": 12.508874185434117,
+      "robust_rel_accel_p90_pct": 34.000727170085625,
+      "angular_error_mean_deg": 35.93755264652555,
+      "angular_error_p90_deg": 110.84030843515895
+    },
+    "above_train": {
+      "region": "> 1090.0 km",
+      "N": 1,
+      "RMSE_U": 0.0155271120602265,
+      "MAE_U": 0.0155271120602265,
+      "RMSE_accel_norm": 3.9161215711472386e-08,
+      "MAE_accel_norm": 3.9161215711472386e-08,
+      "robust_rel_accel_mean_pct": 5.41738028395006,
+      "robust_rel_accel_p90_pct": 5.41738028395006,
+      "angular_error_mean_deg": 58.423509585430615,
+      "angular_error_p90_deg": 58.423509585430615
+    }
+  },
+  "model_degree_min": 20,
+  "model_degree_max": 200,
+  "dataset_degree_min": 20,
+  "dataset_degree_max": 200,
+  "central_body": "moon",
+  "decomposition_frame": "approximate_rtn_like_without_velocity",
+  "n_points": 10000000,
+  "device": "cuda",
+  "a_sign": 1.0,
+  "mu_si": 4902800306330.2,
+  "r_ref_m": 1738000.0,
+  "target_mode": "residual",
+  "architecture_signature": "728422935f846610",
+  "checkpoint_schema_version": "st_lrps_checkpoint_v2",
+  "checkpoint_kind": "best",
+  "checkpoint_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\checkpoints\\ckpt_best.pt",
+  "checkpoint_epoch": 162,
+  "checkpoint_epoch_display": 163,
+  "checkpoint_metric": 1.1539144163541969e-05,
+  "checkpoint_config_source": "checkpoint",
+  "run_manifest_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\run_manifest.json",
+  "scaler_source": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\scaler.json",
+  "scaler_hash": "9f8f6d61ab05f6e8e0863cddbd9cf85cb6b87c23cf16a343df1e6671ab7c3e20",
+  "checkpoint_hash": "286d68937fc3fba7c698fd381907a8030946e0408a1142aab5c7a2399724be01",
+  "w0_bands": [
+    13.7,
+    42.4
+  ],
+  "warnings": []
+}

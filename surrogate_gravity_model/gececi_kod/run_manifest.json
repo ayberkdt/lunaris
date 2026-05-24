@@ -1,0 +1,95 @@
+{
+  "architecture_signature": "728422935f846610",
+  "best_checkpoint_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\checkpoints\\ckpt_best.pt",
+  "best_ckpt_start_epoch": 105,
+  "best_ckpt_start_epoch_display": 106,
+  "checkpoint_hashes": {
+    "best": "286d68937fc3fba7c698fd381907a8030946e0408a1142aab5c7a2399724be01",
+    "last": "7ed6b934bbfef8d3fa5320d294965ee0e0f9b0d5e98b8e8523f205864cf6d85b"
+  },
+  "checkpoint_settle_epochs": 5,
+  "command_line": "C:\\Users\\ayber\\AppData\\Local\\Programs\\Python\\Python312\\python.exe C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\st_lrps_train.py --train-data C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\train_hybrid_10M.h5 --val-data C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\val_uniform_2M.h5 --test-data C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\test_uniform_2M.h5 --ood-data C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\ood_combined_1000k.h5 --split-seed 42 --out gececi_kod --dataset-name data --hidden 512 --depth 5 --activation sine --w0-first 30.0 --w0-hidden 30.0 --dropout 0.0 --no-fourier --epochs 400 --batch-size 8192 --lr 7e-05 --weight-decay 1e-06 --output-head-lr-mult 1.0 --max-grad-norm 0.5 --t-max 350 --warmup-epochs 5 --min-lr-ratio 0.05 --patience 80 --w-u 1.0 --w-a 1.0 --gradnorm-mode ntk_init --gradnorm-w-a-min 0.05 --gradnorm-w-a-max 2.0 --potential-only-epochs 5 --accel-ramp-epochs 80 --accel-min-factor 0.05 --a-sign auto --use-si --direction-loss-weight 0.1 --direction-loss-start-epoch 30 --direction-loss-ramp-epochs 70 --direction-loss-floor-abs 3e-06 --best-ckpt-start-epoch -1 --checkpoint-settle-epochs 5 --use-altitude-balanced-loss --altitude-bin-width-km 50.0 --altitude-min-km 100.0 --altitude-max-km 1000.0 --use-radial-cross-loss --radial-loss-weight 0.05 --cross-loss-weight 0.05 --use-laplacian-regularization --laplacian-weight 1e-06 --laplacian-every-n-batches 100 --laplacian-subset-size 512 --num-workers 4 --cache-rows 65536 --fit-rows 2000000 --seed 42 --log-every 100 --auto-preload-mb 1024.0 --pin-memory --use-residual-blocks --n-bands 2 --grad-accumulation-steps 1 --n-hutchinson-samples 2 --suite-manifest C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\manifest.json",
+  "command_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\command.txt",
+  "config_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\config.json",
+  "created_at_utc": "2026-05-22T10:11:39Z",
+  "data_paths": {
+    "data": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\train_hybrid_10M.h5",
+    "ood_data": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\ood_combined_1000k.h5",
+    "suite_manifest": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\manifest.json",
+    "test_data": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\test_uniform_2M.h5",
+    "train_data": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\train_hybrid_10M.h5",
+    "val_data": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\val_uniform_2M.h5"
+  },
+  "evaluations": [
+    {
+      "checkpoint_epoch": 162,
+      "checkpoint_kind": "best",
+      "dataset": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\train_hybrid_10M.h5",
+      "metrics_summary": {
+        "a_vec_rmse": 9.001817034004489e-07,
+        "mean_ang_deg": 35.93754803424597,
+        "u_rmse": 0.030713584251377248
+      },
+      "out_dir": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_train_hybrid_10M_20260523_110606",
+      "timestamp": "2026-05-23T08:08:51Z"
+    },
+    {
+      "checkpoint_epoch": 162,
+      "checkpoint_kind": "best",
+      "dataset": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\test_uniform_2M.h5",
+      "metrics_summary": {
+        "a_vec_rmse": 5.216027716414828e-07,
+        "mean_ang_deg": 34.138557608934235,
+        "u_rmse": 0.020467425198171376
+      },
+      "out_dir": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_test_uniform_2M_20260523_110606",
+      "timestamp": "2026-05-23T08:09:59Z"
+    },
+    {
+      "checkpoint_epoch": 162,
+      "checkpoint_kind": "best",
+      "dataset": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\data\\cloud_suites\\second_run_100_1000km_10Mp_20260520_203208\\ood_combined_1000k.h5",
+      "metrics_summary": {
+        "a_vec_rmse": 0.00011909633758477867,
+        "mean_ang_deg": 51.227789656565854,
+        "u_rmse": 1.9010541101387246
+      },
+      "out_dir": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\evals\\eval_ood_combined_1000k_20260523_110606",
+      "timestamp": "2026-05-23T08:10:43Z"
+    }
+  ],
+  "git_commit": null,
+  "history_csv_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\history.csv",
+  "history_jsonl_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\history.jsonl",
+  "last_checkpoint_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\checkpoints\\ckpt_last.pt",
+  "latest_epoch": 13,
+  "resolved_config_summary": {
+    "activation": "sine",
+    "architecture_signature": "728422935f846610",
+    "degree_max": 200,
+    "degree_min": 20,
+    "depth": 5,
+    "embedding_type": "raw",
+    "hidden": 512,
+    "input_feature_dim": 3,
+    "n_bands": 2,
+    "target_mode": "residual",
+    "w0_bands": [
+      13.7,
+      42.4
+    ]
+  },
+  "run_id": "gececi_kod",
+  "scaler_file_sha256": "9f8f6d61ab05f6e8e0863cddbd9cf85cb6b87c23cf16a343df1e6671ab7c3e20",
+  "scaler_hash": "9f8f6d61ab05f6e8e0863cddbd9cf85cb6b87c23cf16a343df1e6671ab7c3e20",
+  "scaler_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\scaler.json",
+  "schema_version": "st_lrps_run_manifest_v1",
+  "script_version": "st_lrps_engine",
+  "status": "running",
+  "updated_at_utc": "2026-05-23T08:10:43Z",
+  "w0_bands": [
+    13.7,
+    42.4
+  ],
+  "warnings": []
+}

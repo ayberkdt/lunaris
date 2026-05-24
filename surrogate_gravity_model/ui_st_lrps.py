@@ -754,6 +754,9 @@ class LiveLossPlot(QWidget):
         self._train_opt_loss: List[float] = []
         self._val_base_loss: List[float] = []
         self._val_dir_loss: List[float] = []
+        self._val_loss_a: List[float] = []
+        self._val_angular_mean_deg: List[float] = []
+        self._val_cos_sim: List[float] = []
         self._checkpoint_scores: List[float] = []
         self._best_scores: List[float] = []
         self._lr_values: List[float] = []
@@ -1009,7 +1012,10 @@ class LiveLossPlot(QWidget):
             self._direction_plot.setLabel("left", "Direction / accel", color="#aeb8d8", size="10pt")
             self._direction_plot.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
             self._direction_plot.setLogMode(x=False, y=True)
-            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#f59e0b", width=2.4), name="Val direction")
+            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#f59e0b", width=2.4), name="Val dir loss")
+            self._curve_val_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#10b981", width=2.4), name="Val loss_a")
+            self._curve_val_angular = self._direction_plot.plot([], [], pen=pg.mkPen(color="#3b82f6", width=2.4), name="Val angular (deg)")
+            self._curve_val_cossim = self._direction_plot.plot([], [], pen=pg.mkPen(color="#8b5cf6", width=2.4), name="Val cos_sim")
 
             self._checkpoint_plot = pg.PlotWidget()
             self._checkpoint_plot.setMinimumHeight(260)
@@ -1276,6 +1282,9 @@ class LiveLossPlot(QWidget):
                 self._val_loss.append(float(row.get("val_loss_total", "nan")))
                 self._val_base_loss.append(float(row.get("val_loss_base", "nan")))
                 self._val_dir_loss.append(float(row.get("val_loss_dir", "nan")))
+                self._val_loss_a.append(float(row.get("val_loss_a", "nan")))
+                self._val_angular_mean_deg.append(float(row.get("val_angular_mean_deg", "nan")))
+                self._val_cos_sim.append(float(row.get("val_cos_sim", "nan")))
                 self._checkpoint_scores.append(float(row.get("checkpoint_score", row.get("val_checkpoint_score", "nan"))))
                 self._best_scores.append(float(row.get("best_score", "nan")))
                 self._lr_values.append(float(row.get("lr", "nan")))
@@ -1344,6 +1353,9 @@ class LiveLossPlot(QWidget):
         t_ep, t_val = self._valid_xy(self._train_loss)
         v_ep, v_val = self._valid_xy(self._val_loss)
         dir_ep, dir_val = self._valid_xy(self._val_dir_loss)
+        a_ep, a_val = self._valid_xy(self._val_loss_a)
+        ang_ep, ang_val = self._valid_xy(self._val_angular_mean_deg)
+        cos_ep, cos_val = self._valid_xy(self._val_cos_sim)
         score_ep, score_val = self._valid_xy(self._checkpoint_scores)
         best_ep, best_val = self._valid_xy(self._best_scores)
 
@@ -1353,6 +1365,12 @@ class LiveLossPlot(QWidget):
         self._curve_val_shadow.setData(v_ep, v_val)
         if getattr(self, "_curve_val_dir", None) is not None:
             self._curve_val_dir.setData(dir_ep, dir_val)
+        if getattr(self, "_curve_val_loss_a", None) is not None:
+            self._curve_val_loss_a.setData(a_ep, a_val)
+        if getattr(self, "_curve_val_angular", None) is not None:
+            self._curve_val_angular.setData(ang_ep, ang_val)
+        if getattr(self, "_curve_val_cossim", None) is not None:
+            self._curve_val_cossim.setData(cos_ep, cos_val)
         if getattr(self, "_curve_score", None) is not None:
             self._curve_score.setData(score_ep, score_val)
         if getattr(self, "_curve_best_score", None) is not None:
@@ -1437,6 +1455,9 @@ class LiveLossPlot(QWidget):
         self._train_opt_loss.clear()
         self._val_base_loss.clear()
         self._val_dir_loss.clear()
+        self._val_loss_a.clear()
+        self._val_angular_mean_deg.clear()
+        self._val_cos_sim.clear()
         self._checkpoint_scores.clear()
         self._best_scores.clear()
         self._lr_values.clear()
@@ -1459,6 +1480,12 @@ class LiveLossPlot(QWidget):
             self._curve_val_shadow.setData([], [])
             if getattr(self, "_curve_val_dir", None) is not None:
                 self._curve_val_dir.setData([], [])
+            if getattr(self, "_curve_val_loss_a", None) is not None:
+                self._curve_val_loss_a.setData([], [])
+            if getattr(self, "_curve_val_angular", None) is not None:
+                self._curve_val_angular.setData([], [])
+            if getattr(self, "_curve_val_cossim", None) is not None:
+                self._curve_val_cossim.setData([], [])
             if getattr(self, "_curve_score", None) is not None:
                 self._curve_score.setData([], [])
             if getattr(self, "_curve_best_score", None) is not None:

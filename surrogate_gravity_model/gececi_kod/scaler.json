@@ -1,0 +1,39 @@
+{
+  "a": {
+    "mean": [
+      2.661140126950961e-08,
+      4.82332192954943e-09,
+      7.350615129990167e-09
+    ],
+    "scale": 0.00031027894436742084
+  },
+  "provenance": {
+    "a_scale_mode": "hybrid",
+    "alt_max_km": 1000.0,
+    "alt_min_km": 100.0,
+    "degree_max": 200,
+    "degree_min": 20,
+    "fit_rows": 2000000,
+    "fit_seed": 123,
+    "r_ref_m": 1738000.0,
+    "target_mode": "residual",
+    "target_scale_multiplier": 6.0,
+    "u_scale_mode": "hybrid",
+    "unit_system": "si",
+    "x_scale_source": "metadata_altitude_max"
+  },
+  "u": {
+    "mean": [
+      -0.0031186866202170043
+    ],
+    "scale": 15.482156664767524
+  },
+  "x": {
+    "mean": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "scale": 2738000.0
+  }
+}

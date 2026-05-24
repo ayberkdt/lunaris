@@ -1,0 +1,2 @@
+rank_accuracy,model,median_rms_pos_err_km,p95_rms_pos_err_km,max_rms_pos_err_km,median_along_rms_km,n_scenarios_ok
+1,GPU_ST_LRPS_RK4,0.0001583186177533526,0.0006889769517041394,0.0009597296943297907,0.00015032153712718385,100

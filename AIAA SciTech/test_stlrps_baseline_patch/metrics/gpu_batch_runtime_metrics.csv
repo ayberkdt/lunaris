@@ -1,0 +1,2 @@
+model,backend,device,dtype,n_scenarios,n_steps,n_saved_outputs,total_runtime_s,runtime_per_scenario_s,trajectory_steps_per_second,acceleration_evaluations_per_second,truth_total_runtime_s,truth_mean_runtime_per_scenario_s,speedup_vs_truth_total,speedup_vs_truth_per_scenario,speedup_vs_gpu_st_lrps_rk4
+GPU_ST_LRPS_RK4,torch_st_lrps,cuda:0,float64,1,2,3,0.7142942000064068,0.7142942000064068,2.7999667363700578,11.199866945480231,1.1150928999995813,1.1150928999995813,1.5611115139806253,1.5611115139806253,1.0

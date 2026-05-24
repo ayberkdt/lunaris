@@ -1,0 +1,30 @@
+{
+    "models": [
+        "sh20",
+        "sh80",
+        "sh120",
+        "sh160",
+        "st_lrps"
+    ],
+    "truth": "sh200",
+    "random_scenarios": 100,
+    "scenario_seed": 42,
+    "scenario_mode": "near_circular_altitude",
+    "altitude_min_km": 200.0,
+    "altitude_max_km": 400.0,
+    "duration_days": 1.0,
+    "dt_out_s": 60.0,
+    "integrator": "DOP853",
+    "rtol": 1e-10,
+    "atol": 1e-12,
+    "max_step_s": 30.0,
+    "st_lrps_model_dir": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\runs\\hnn_train_20260515_124507_ders_cikisi",
+    "st_lrps_weight_file": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\runs\\hnn_train_20260515_124507_ders_cikisi\\checkpoints\\ckpt_best.pt",
+    "st_lrps_mode": "cpu_dop853",
+    "batch_rk4": false,
+    "batch_rk4_reference": "sh200_dop853_interpolated",
+    "rk4_dt_s": 10.0,
+    "gpu_fallback": "error",
+    "torch_dtype": "float64",
+    "force_batch_size": 8192
+}

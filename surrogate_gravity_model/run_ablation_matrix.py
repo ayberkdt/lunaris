@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _TRAIN_SCRIPT = _SCRIPT_DIR / "st_lrps_train.py"
+_EVALUATE_SCRIPT = _SCRIPT_DIR / "st_lrps_evaluate.py"
 
 
 @dataclass(frozen=True)
@@ -126,6 +127,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ap.add_argument("--matrix", choices=["default", "all"], default="default", help="Ablation matrix to prepare.")
     ap.add_argument("--only", nargs="+", default=None, help="Restrict to these ablation names.")
     ap.add_argument("--force", "--overwrite", dest="force", action="store_true", default=False, help="Re-run ablations even when a completed run manifest exists.")
+    ap.add_argument("--run-eval-after-training", action="store_true", default=False, help="Automatically run evaluator on test/ood data after training completes.")
+    ap.add_argument("--eval-streaming", action="store_true", default=False, help="Run the evaluator in memory-safe streaming mode.")
     grp = ap.add_mutually_exclusive_group()
     grp.add_argument("--dry-run", dest="execute", action="store_false", help="Only write commands + manifest; do not launch training.")
     grp.add_argument("--execute", dest="execute", action="store_true", help="Launch each ablation run sequentially.")
@@ -175,6 +178,16 @@ def build_matrix(args: argparse.Namespace) -> List[Dict[str, Any]]:
         if args.epochs is not None:
             cmd += ["--epochs", str(int(args.epochs))]
         cmd += list(spec.cli_overrides)
+        eval_cmds = []
+        if args.run_eval_after_training:
+            base_eval = [sys.executable, str(_EVALUATE_SCRIPT), "--model-dir", str(run_dir)]
+            if args.eval_streaming:
+                base_eval.append("--streaming")
+            if args.test_data:
+                eval_cmds.append(base_eval + ["--data", str(args.test_data), "--out-dir", str(run_dir / "evals" / "test")])
+            if args.ood_data:
+                eval_cmds.append(base_eval + ["--data", str(args.ood_data), "--out-dir", str(run_dir / "evals" / "ood_high")])
+
         entry = {
             **asdict(spec),
             "flags": list(spec.cli_overrides),
@@ -182,6 +195,7 @@ def build_matrix(args: argparse.Namespace) -> List[Dict[str, Any]]:
             "out_dir": str(run_dir),
             "seed": int(args.seed),
             "command": cmd,
+            "eval_commands": eval_cmds,
         }
         entries.append(entry)
     return entries
@@ -344,6 +358,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("[ablation] DRY RUN: nothing launched.")
         for entry in entries:
             print(f"  - {entry['name']}: {_command_to_str(entry['command'])}")
+            for ecmd in entry.get("eval_commands", []):
+                print(f"    (eval) -> {_command_to_str(ecmd)}")
         aggregate(entries, out_root)
         return 0
 
@@ -360,6 +376,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         if result.returncode != 0:
             failures += 1
             print(f"[ablation] FAILED {entry['name']} (exit {result.returncode}).", file=sys.stderr)
+        else:
+            for ecmd in entry.get("eval_commands", []):
+                print(f"[ablation] EVAL {entry['name']} -> {ecmd[-1]}")
+                eres = subprocess.run(ecmd)
+                if eres.returncode != 0:
+                    failures += 1
+                    print(f"[ablation] EVAL FAILED {entry['name']} (exit {eres.returncode}).", file=sys.stderr)
         aggregate(entries, out_root)
 
     aggregate(entries, out_root)

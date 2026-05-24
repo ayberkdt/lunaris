@@ -2085,7 +2085,8 @@ def evaluate(
     )
 
     spatial_u = spatial_rmse_by_altitude(alt_km_all.reshape(-1), u_err, bin_km=alt_bin_km)
-    spatial_a = spatial_rmse_by_altitude(alt_km_all.reshape(-1), a_mag_err, bin_km=alt_bin_km)
+    spatial_a_vec = spatial_rmse_by_altitude(alt_km_all.reshape(-1), a_vec_err_norm_np, bin_km=alt_bin_km)
+    spatial_a_mag = spatial_rmse_by_altitude(alt_km_all.reshape(-1), a_mag_err, bin_km=alt_bin_km)
     spatial_u_mape = spatial_mape_by_altitude(
         alt_km_all.reshape(-1), u_true.reshape(-1), u_pred.reshape(-1),
         bin_km=alt_bin_km, rel_floor_abs=u_rel_floor_abs,
@@ -2346,7 +2347,8 @@ def evaluate(
         path.write_text("\n".join(rows), encoding="utf-8")
 
     write_bins_csv(spatial_u, out_dir / "spatial_rmse_U.csv")
-    write_bins_csv(spatial_a, out_dir / "spatial_rmse_accelmag.csv")
+    write_bins_csv(spatial_a_vec, out_dir / "spatial_rmse_accelvec.csv")
+    write_bins_csv(spatial_a_mag, out_dir / "spatial_rmse_accelmag.csv")
     write_mape_csv(spatial_u_mape, out_dir / "spatial_mape_U.csv")
     write_mape_csv(spatial_a_mape, out_dir / "spatial_mape_accel.csv")
 
@@ -2413,19 +2415,20 @@ def evaluate(
 
     # --- altitude_binned_metrics.csv (combined U + accel RMSE + MAPE) ---
     _ab_rows = [
-        "alt_km_lo,alt_km_hi,n,rmse_U,rmse_accel,mae_a_vec,p95_a_error,"
+        "alt_km_lo,alt_km_hi,n,rmse_U,rmse_a_vec,rmse_a_mag,mae_a_vec,p95_a_error,"
         "angular_mean_deg,angular_p90_deg,radial_rmse,cross_rmse,"
         "mape_U_pct,mape_accel_pct,mape_U_p90_pct,mape_accel_p90_pct"
     ]
     _rmse_u_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_u.get("bins", [])}
-    _rmse_a_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a.get("bins", [])}
+    _rmse_a_vec_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_vec.get("bins", [])}
+    _rmse_a_mag_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_mag.get("bins", [])}
     _mape_u_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_u_mape.get("bins", [])}
     _mape_a_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_mape.get("bins", [])}
-    _all_bin_keys = sorted(set(_rmse_u_bins) | set(_rmse_a_bins) | set(_mape_u_bins) | set(_mape_a_bins))
+    _all_bin_keys = sorted(set(_rmse_u_bins) | set(_rmse_a_vec_bins) | set(_rmse_a_mag_bins) | set(_mape_u_bins) | set(_mape_a_bins))
     for _k in _all_bin_keys:
-        _ru = _rmse_u_bins.get(_k, {}); _ra = _rmse_a_bins.get(_k, {})
+        _ru = _rmse_u_bins.get(_k, {}); _ra_vec = _rmse_a_vec_bins.get(_k, {}); _ra_mag = _rmse_a_mag_bins.get(_k, {})
         _mu = _mape_u_bins.get(_k, {}); _ma = _mape_a_bins.get(_k, {})
-        _n = _ru.get("n", _ra.get("n", _mu.get("n", _ma.get("n", 0))))
+        _n = _ru.get("n", _ra_vec.get("n", _ra_mag.get("n", _mu.get("n", _ma.get("n", 0)))))
         _mask_bin = (alt_km_all.reshape(-1) >= float(_k[0])) & (alt_km_all.reshape(-1) < float(_k[1]))
         if np.any(_mask_bin):
             _aerr_bin = a_vec_err_norm_np[_mask_bin]
@@ -2443,7 +2446,8 @@ def evaluate(
         _ab_rows.append(
             f"{_k[0]},{_k[1]},{_n},"
             f"{_ru.get('rmse','')},"
-            f"{_ra.get('rmse','')},"
+            f"{_ra_vec.get('rmse','')},"
+            f"{_ra_mag.get('rmse','')},"
             f"{_mae_a_vec},"
             f"{_p95_a_error},"
             f"{_angular_mean},"
@@ -2738,7 +2742,8 @@ def _aggregate_altitude_csv(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
                     "altitude_bin_max_km": row.get("alt_km_hi"),
                     "n_samples": row.get("n"),
                     "rmse_u": row.get("rmse_U"),
-                    "rmse_a_vec": row.get("rmse_accel"),
+                    "rmse_a_vec": row.get("rmse_a_vec", row.get("rmse_accel")),
+                    "rmse_a_mag": row.get("rmse_a_mag"),
                     "mae_a_vec": row.get("mae_a_vec"),
                     "p95_a_error": row.get("p95_a_error"),
                     "angular_mean_deg": row.get("angular_mean_deg"),

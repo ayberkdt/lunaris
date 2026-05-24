@@ -1,0 +1,245 @@
+{
+  "U": {
+    "mae": 0.5296460515945403,
+    "rmse": 1.9010541101387246,
+    "rel_mean_pct": 12.288297137346921,
+    "rel_p50_pct": 6.929720227349386,
+    "rel_p90_pct": 25.05156548867429,
+    "nrmse_pct": 22.967259899023695,
+    "linf": 59.016658782958984,
+    "rel_floor_abs": 0.1315913553237915
+  },
+  "|a|": {
+    "mae": 4.190873475608435e-05,
+    "rmse": 0.00011909635767939579,
+    "rel_mean_pct": 20.516833687515184,
+    "rel_p50_pct": 12.571705119716276,
+    "rel_p90_pct": 50.475628658841565,
+    "nrmse_pct": 64.15490592649313,
+    "linf": 0.0016999781364575028,
+    "rel_floor_abs": 3.090222048717605e-06,
+    "error_kind": "vector"
+  },
+  "residual_vector_metrics": {
+    "mae": 4.1908737330231816e-05,
+    "rmse": 0.00011909633758477867,
+    "linf": 0.0016999781364575028,
+    "rel_mean_pct": 5381.042007122411,
+    "description": "norm(a_pred - a_true): captures magnitude AND direction."
+  },
+  "residual_magnitude_metrics": {
+    "mae": 3.163198487705468e-05,
+    "rmse": 8.858608658299748e-05,
+    "linf": 0.0010303612880705592,
+    "description": "abs(|a_pred| - |a_true|): direction-blind diagnostic only."
+  },
+  "residual_angular_metrics": {
+    "mean_deg": 51.227789656565854,
+    "max_deg": 179.93048049888532,
+    "mean_cossim": 0.4685080100675853
+  },
+  "a_vectorial": {
+    "mean_deg": 51.227789656565854,
+    "max_deg": 179.93048049888532,
+    "mean_cossim": 0.4685080100675853
+  },
+  "angular_metrics": {
+    "residual_all": {
+      "mean_deg": 51.227789656565854,
+      "max_deg": 179.93048049888532,
+      "mean_cossim": 0.4685080100675853,
+      "p50_deg": 33.05916683625345,
+      "p90_deg": 131.0341891418492,
+      "p99_deg": 165.817304432883
+    },
+    "residual_masked": {
+      "direction_floor_abs": 3e-06,
+      "mask_frac": 0.499988,
+      "N_masked": 499988,
+      "mean_deg": 13.460326846799795,
+      "p50_deg": 5.49170664500279,
+      "p90_deg": 34.555233964731535
+    },
+    "norm_binned": [
+      {
+        "bin": "<1e-10",
+        "N": 0
+      },
+      {
+        "bin": "1e-10-1e-9",
+        "norm_range_m_s2": [
+          1e-10,
+          1e-09
+        ],
+        "N": 5326,
+        "mean_deg": 90.91523348451823,
+        "median_deg": 91.15479290088052,
+        "p90_deg": 141.94307829097363,
+        "p99_deg": 167.95224151256187
+      },
+      {
+        "bin": "1e-9-1e-8",
+        "norm_range_m_s2": [
+          1e-09,
+          1e-08
+        ],
+        "N": 450395,
+        "mean_deg": 89.10531789071563,
+        "median_deg": 88.67183758122994,
+        "p90_deg": 146.36367934684375,
+        "p99_deg": 169.76424879050026
+      },
+      {
+        "bin": "1e-8-1e-7",
+        "norm_range_m_s2": [
+          1e-08,
+          1e-07
+        ],
+        "N": 44279,
+        "mean_deg": 87.63539560160513,
+        "median_deg": 86.60726051698217,
+        "p90_deg": 149.74716141909832,
+        "p99_deg": 171.22997427695157
+      },
+      {
+        "bin": ">1e-7",
+        "norm_range_m_s2": [
+          1e-07,
+          Infinity
+        ],
+        "N": 500000,
+        "mean_deg": 13.461155579589928,
+        "median_deg": 5.491855092973886,
+        "p90_deg": 34.55665524457601,
+        "p99_deg": 112.64742834907594
+      }
+    ],
+    "total_approx": {
+      "note": "point_mass_base_approximation",
+      "mean_deg": 0.00048024222665871944,
+      "p50_deg": 3.643323357156881e-05,
+      "p90_deg": 0.0013341340838912738,
+      "p99_deg": 0.006562418009632747,
+      "max_deg": 0.024810132999784015
+    }
+  },
+  "a_directional": {
+    "frame": "approximate_rtn_like_without_velocity",
+    "accel_err_radial_mae": 3.836386087331209e-05,
+    "accel_err_radial_rmse": 0.00011343357331579666,
+    "accel_err_cross_radial_mae": 1.2535183872439058e-05,
+    "accel_err_cross_radial_rmse": 3.628728236190788e-05,
+    "approx_T_rmse": 2.5693986193929383e-05,
+    "approx_N_rmse": 2.5623932849564595e-05
+  },
+  "ood_table": {
+    "train_alt_range_km": [
+      100.0,
+      1000.0
+    ],
+    "classification": "metadata_row_ranges",
+    "definitions": {
+      "lower_ood_rows": [
+        0,
+        500000
+      ],
+      "upper_ood_rows": [
+        500000,
+        1000000
+      ],
+      "lower_ood_km": [
+        50.0,
+        100.0
+      ],
+      "upper_ood_km": [
+        1000.0,
+        1050.0
+      ],
+      "in_band_km": [
+        100.0,
+        1000.0
+      ]
+    },
+    "lower_ood": {
+      "region": "50.0-100.0 km",
+      "N": 500000,
+      "RMSE_U": 2.688432385320043,
+      "MAE_U": 1.0451265685615745,
+      "RMSE_accel_norm": 0.00012527852961027508,
+      "MAE_accel_norm": 6.284193453303957e-05,
+      "robust_rel_accel_mean_pct": 19.871580145376715,
+      "robust_rel_accel_p90_pct": 55.28735220123553,
+      "angular_error_mean_deg": 13.461155579589928,
+      "angular_error_p90_deg": 34.55665524457601
+    },
+    "in_band": {
+      "region": "100.0-1000.0 km",
+      "N": 0
+    },
+    "upper_ood": {
+      "region": "1000.0-1050.0 km",
+      "N": 500000,
+      "RMSE_U": 0.018567953927573103,
+      "MAE_U": 0.014165534627505947,
+      "RMSE_accel_norm": 5.286689588843414e-07,
+      "MAE_accel_norm": 4.220352210698206e-07,
+      "robust_rel_accel_mean_pct": 13.657116363044487,
+      "robust_rel_accel_p90_pct": 24.72798795208717,
+      "angular_error_mean_deg": 88.99442373354178,
+      "angular_error_p90_deg": 146.66327833215436
+    },
+    "combined_ood": {
+      "region": "lower + upper OOD",
+      "N": 1000000,
+      "RMSE_U": 1.9010541101387246,
+      "MAE_U": 0.5296460515945403,
+      "RMSE_accel_norm": 8.858608658299748e-05,
+      "MAE_accel_norm": 3.163198487705468e-05,
+      "robust_rel_accel_mean_pct": 16.764348254210606,
+      "robust_rel_accel_p90_pct": 40.40518524945034,
+      "angular_error_mean_deg": 51.227789656565854,
+      "angular_error_p90_deg": 131.0341891418492
+    },
+    "ood_combined_meta": {
+      "ood_low_n_generated": 500000,
+      "ood_high_n_generated": 500000,
+      "ood_low_alt_range_km": [
+        50.0,
+        100.0
+      ],
+      "ood_high_alt_range_km": [
+        1000.0,
+        1050.0
+      ]
+    }
+  },
+  "model_degree_min": 20,
+  "model_degree_max": 200,
+  "dataset_degree_min": 20,
+  "dataset_degree_max": 200,
+  "central_body": "moon",
+  "decomposition_frame": "approximate_rtn_like_without_velocity",
+  "n_points": 1000000,
+  "device": "cuda",
+  "a_sign": 1.0,
+  "mu_si": 4902800306330.2,
+  "r_ref_m": 1738000.0,
+  "target_mode": "residual",
+  "architecture_signature": "728422935f846610",
+  "checkpoint_schema_version": "st_lrps_checkpoint_v2",
+  "checkpoint_kind": "best",
+  "checkpoint_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\checkpoints\\ckpt_best.pt",
+  "checkpoint_epoch": 162,
+  "checkpoint_epoch_display": 163,
+  "checkpoint_metric": 1.1539144163541969e-05,
+  "checkpoint_config_source": "checkpoint",
+  "run_manifest_path": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\run_manifest.json",
+  "scaler_source": "C:\\Users\\ayber\\Desktop\\LUNAR_SIMULATION\\surrogate_gravity_model\\gececi_kod\\scaler.json",
+  "scaler_hash": "9f8f6d61ab05f6e8e0863cddbd9cf85cb6b87c23cf16a343df1e6671ab7c3e20",
+  "checkpoint_hash": "286d68937fc3fba7c698fd381907a8030946e0408a1142aab5c7a2399724be01",
+  "w0_bands": [
+    13.7,
+    42.4
+  ],
+  "warnings": []
+}
