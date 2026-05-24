@@ -1,8 +1,11 @@
 # LUNAR_SIMULATION/common/math_utils.py
 # -*- coding: utf-8 -*-
 """
-Math Utilities (NumPy + Optional Numba Acceleration)
-====================================================
+Numba-Accelerated Math Utilities
+================================
+
+Numba is a required dependency for this module. The functions are written around
+JIT-compiled kernels used by the propagation and post-processing pipeline.
 
 Low-level mathematical primitives used across the project. This module is intentionally
 independent of higher-level layers (SPICE, file I/O, UI).

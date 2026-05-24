@@ -865,8 +865,8 @@ def build_model_from_config(
     ]
     if len(_active_encodings) > 1:
         raise ValueError(
-            f"At most one input encoding may be active, but got {_active_encodings}. "
-            "These are mutually exclusive; enable only one (or none for raw xyz)."
+            f"Incompatible encodings: At most one input encoding may be active, but got {_active_encodings}. "
+            "These cannot both be True. They are mutually exclusive; enable only one (or none for raw xyz)."
         )
     if use_sh and sh_degree > 8:
         import warnings

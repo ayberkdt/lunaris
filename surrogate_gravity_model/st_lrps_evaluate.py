@@ -2304,7 +2304,8 @@ def evaluate(
         },
         "spatial_breakdown": {
             "U_rmse_by_alt":  spatial_u,
-            "|a|_rmse_by_alt": spatial_a,
+            "a_vec_rmse_by_alt": spatial_a_vec,
+            "|a|_rmse_by_alt": spatial_a_mag,
             "U_mape_by_alt":  spatial_u_mape,
             "|a|_mape_by_alt": spatial_a_mape,
         },

@@ -224,7 +224,7 @@ def init_surface_provider(args: argparse.Namespace) -> Optional[Any]:
     """Load surface provider strictly when CLI roots are provided.
 
     Contract:
-      - Returns an object implementing get_provider()->dict for core.dynamics
+      - Returns an object implementing as_numba_dict()->dict for core.dynamics
       - Also exposes .grids().topo for topo-aware impact events (optional)
     """
     if args.ldem_root is None and args.albedo_root is None:

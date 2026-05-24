@@ -405,7 +405,7 @@ def extract_surface_provider_strict(surface_provider: Any) -> Dict[str, Any]:
 
     Accepts:
       - mapping/dict directly, OR
-      - an object implementing get_provider() -> mapping/dict
+      - an object implementing as_numba_dict() -> mapping/dict
 
     No grids() legacy path.
     """
@@ -415,6 +415,12 @@ def extract_surface_provider_strict(surface_provider: Any) -> Dict[str, Any]:
     if isinstance(surface_provider, Mapping):
         return dict(surface_provider)
 
+    if hasattr(surface_provider, "as_numba_dict"):
+        p = surface_provider.as_numba_dict()  # type: ignore[attr-defined]
+        if not isinstance(p, Mapping):
+            raise TypeError("surface_provider.as_numba_dict() must return a mapping/dict.")
+        return dict(p)
+
     if hasattr(surface_provider, "get_provider"):
         p = surface_provider.get_provider()  # type: ignore[attr-defined]
         if not isinstance(p, Mapping):
@@ -422,7 +428,7 @@ def extract_surface_provider_strict(surface_provider: Any) -> Dict[str, Any]:
         return dict(p)
 
     raise TypeError(
-        "surface_provider must be a mapping/dict or implement get_provider()->mapping (UI contract)."
+        "surface_provider must be a mapping/dict or implement as_numba_dict()->mapping (UI contract)."
     )
 
 

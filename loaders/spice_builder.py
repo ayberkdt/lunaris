@@ -171,7 +171,7 @@ def resolve_kernel_paths(kernels: Sequence[str], *, auto_fix: bool = True) -> li
             )
 
         if path.is_file():
-            resolved.append(str(path))
+            resolved.append(str(path.resolve()))
             continue
 
         if auto_fix:
@@ -181,7 +181,7 @@ def resolve_kernel_paths(kernels: Sequence[str], *, auto_fix: bool = True) -> li
                     found = candidate
                     break
             if found is not None:
-                resolved.append(str(found))
+                resolved.append(str(found.resolve()))
                 continue
 
         missing.append(raw_as_str)

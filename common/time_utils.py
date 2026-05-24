@@ -11,7 +11,9 @@ without requiring SPICE. The primary internal time coordinate is:
 Design Goals
 ------------
 - Deterministic: Pure arithmetic, no external kernels, consistent across platforms.
-- Fast: Optional `numba` acceleration for hot-path kernels.
+- Fast: Numba-accelerated arithmetic kernels.
+  Numba is required. This module intentionally keeps time conversions dependency-light
+  otherwise, but the hot-path scalar conversion kernels use `@njit`.
 - Portable: Works in pure Python when `numba` is unavailable.
 
 What’s Included

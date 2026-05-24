@@ -214,15 +214,15 @@ class GravityConfig:
 
     def __post_init__(self) -> None:
         path = self.file_path.strip() if self.file_path else ""
-        if not path:
-            raise ValueError("GravityConfig.file_path cannot be empty.")
-
         backend = str(self.backend).strip().lower()
         if backend not in {"classic_sh", "st_lrps"}:
             raise ValueError(
                 "GravityConfig.backend must be 'classic_sh' or 'st_lrps'. "
                 f"Got {self.backend!r}"
             )
+
+        if backend == "classic_sh" and not path:
+            raise ValueError("GravityConfig.file_path cannot be empty when backend='classic_sh'.")
 
         surrogate_dir = self.st_lrps_model_dir.strip() if self.st_lrps_model_dir else ""
         if backend == "st_lrps" and not surrogate_dir:

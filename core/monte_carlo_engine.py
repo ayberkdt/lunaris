@@ -618,9 +618,12 @@ class MonteCarloEngine:
 
                     # Prioritize the MC-specific ST-LRPS run directory if provided.
                     st_lrps_dir = self._mc.st_lrps_model_dir or cfg.gravity.st_lrps_model_dir
+                    
+                    from common.montecarlo_defs import validate_st_lrps_model_dir
+                    valid_dir = validate_st_lrps_model_dir(st_lrps_dir)
 
                     grav_model = SurrogateGravityModel.from_model_dir(
-                        st_lrps_dir,
+                        str(valid_dir),
                         mu_override=float(MU_MOON),
                         r_ref_override=float(R_MOON),
                         device_preference="cpu",

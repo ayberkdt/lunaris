@@ -148,6 +148,26 @@ class SpacecraftUncertainty:
 # 3.                       MONTE CARLO CONFIG
 # =============================================================================
 
+def validate_st_lrps_model_dir(path: str | Path) -> Path:
+    """
+    Verify that the given path is a valid ST-LRPS model directory.
+    It must exist, contain config.json, and have a valid checkpoint.
+    """
+    st_lrps_path = Path(path).expanduser().resolve()
+    if not st_lrps_path.is_dir():
+        raise ValueError(f"st_lrps_model_dir must point to an existing trained ST-LRPS run directory, got {str(path)!r}")
+    if not (st_lrps_path / "config.json").is_file():
+        raise ValueError(f"st_lrps_model_dir must contain config.json from a trained ST-LRPS run, got {str(path)!r}")
+    ckpt_dir = st_lrps_path / "checkpoints"
+    has_best_or_last = (
+        (ckpt_dir / "ckpt_best.pt").is_file()
+        or (ckpt_dir / "ckpt_last.pt").is_file()
+    )
+    if not has_best_or_last:
+        raise ValueError(f"st_lrps_model_dir must contain checkpoints/ckpt_best.pt or checkpoints/ckpt_last.pt, got {str(path)!r}")
+    return st_lrps_path
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MonteCarloConfig:
     """
@@ -220,28 +240,8 @@ class MonteCarloConfig:
                 f"Got {self.gravity_mode_override!r}"
             )
         st_lrps_model_dir = str(self.st_lrps_model_dir or "").strip()
-        if st_lrps_model_dir:
-            st_lrps_path = Path(st_lrps_model_dir).expanduser()
-            if not st_lrps_path.is_dir():
-                raise ValueError(
-                    "st_lrps_model_dir must point to an existing trained ST-LRPS run "
-                    f"directory, got {st_lrps_model_dir!r}"
-                )
-            if not (st_lrps_path / "config.json").is_file():
-                raise ValueError(
-                    "st_lrps_model_dir must contain config.json from a trained ST-LRPS run, "
-                    f"got {st_lrps_model_dir!r}"
-                )
-            ckpt_dir = st_lrps_path / "checkpoints"
-            has_best_or_last = (
-                (ckpt_dir / "ckpt_best.pt").is_file()
-                or (ckpt_dir / "ckpt_last.pt").is_file()
-            )
-            if not has_best_or_last:
-                raise ValueError(
-                    "st_lrps_model_dir must contain checkpoints/ckpt_best.pt or "
-                    f"checkpoints/ckpt_last.pt, got {st_lrps_model_dir!r}"
-                )
+        if self.gravity_mode_override == "st_lrps" and not st_lrps_model_dir:
+            raise ValueError("st_lrps_model_dir cannot be empty when gravity_mode_override='st_lrps'.")
         if not (0 <= self.gpu_sh_degree <= 24):
             raise ValueError(
                 f"gpu_sh_degree must be in [0, 24] (GPU kernel limit), "
@@ -372,4 +372,5 @@ __all__ = [
     "SpacecraftUncertainty",
     "MonteCarloConfig",
     "MCRunResult",
+    "validate_st_lrps_model_dir",
 ]

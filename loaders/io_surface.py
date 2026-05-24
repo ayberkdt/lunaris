@@ -1484,7 +1484,14 @@ class FileBackedSurfaceProvider:
         return _grid_albedo_payload(self._grids.albedo, default_albedo=self.default_albedo)
 
     def get_provider(self) -> Dict[str, Any]:
-        """Compatibility alias used by some call sites."""
+        """
+        Deprecated compatibility alias; prefer `as_numba_dict()`.
+        """
+        warnings.warn(
+            "get_provider() is deprecated; use as_numba_dict() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.as_numba_dict()
 
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float:
@@ -1539,7 +1546,14 @@ class InMemorySurfaceProvider:
         return _grid_albedo_payload(self.albedo, default_albedo=self.default_albedo)
 
     def get_provider(self) -> Dict[str, Any]:
-        """Strict surface-provider contract for core.dynamics."""
+        """
+        Deprecated compatibility alias; prefer `as_numba_dict()`.
+        """
+        warnings.warn(
+            "get_provider() is deprecated; use as_numba_dict() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.as_numba_dict()
 
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float:

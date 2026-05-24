@@ -54,6 +54,22 @@ from typing import Callable, Optional, Sequence
 
 PathLike = str | Path
 
+CANONICAL_PROJECT_MARKERS = ("ST_LRPS",)
+LEGACY_PROJECT_MARKERS = ("LUNAR_SIMULATION",)
+PROJECT_ROOT_MARKERS = CANONICAL_PROJECT_MARKERS + LEGACY_PROJECT_MARKERS
+
+CANONICAL_TOPOGRAPHY_DIRS = (
+    "data/topography_models",
+    "data/topography",
+    "data/surface",
+    "data/ldem",
+    "data/LDEM",
+)
+LEGACY_TOPOGRAPHY_DIRS = (
+    "data/topografy_models",
+)
+
+
 
 @dataclass(frozen=True, slots=True)
 class DataRootHints:
@@ -331,16 +347,12 @@ def autodetect_repository_data_roots(
     use_ldem_for_albedo = bool(state.use_ldem_for_albedo)
 
     if not ldem_root:
+        ldem_candidates = [root / p for p in CANONICAL_TOPOGRAPHY_DIRS]
+        ldem_candidates.append(root / "ldem")
+        # Legacy typo retained for existing local datasets
+        ldem_candidates.extend([root / p for p in LEGACY_TOPOGRAPHY_DIRS])
         ldem_root = first_matching_directory(
-            [
-                data_root / "topografy_models",
-                data_root / "topography_models",
-                data_root / "topography",
-                data_root / "surface",
-                data_root / "ldem",
-                data_root / "LDEM",
-                root / "ldem",
-            ],
+            ldem_candidates,
             lambda path: directory_looks_like_surface_data(path, keywords=("ldem", "topo", "surface")),
         )
 
@@ -414,19 +426,19 @@ _LUNAR_MAP_NAMES: tuple[str, ...] = (
 )
 
 
-def project_root_from_path(start_path: PathLike, *, max_levels: int = 6) -> Path:
+def project_root_from_path(start_path: PathLike, *, max_levels: int = 6, strict: bool = False) -> Path:
     """
     Best-effort repository-root discovery relative to an arbitrary path.
 
     Heuristics
     ----------
     Walking upward from `start_path`, return the first directory that:
-    - is itself named `LUNAR_SIMULATION`, or
+    - is itself named with a marker in `PROJECT_ROOT_MARKERS` (canonical `ST_LRPS` or legacy `LUNAR_SIMULATION`), or
     - contains `data/assets`
 
-    If no strong signal is found within `max_levels`, the last visited path is
-    returned. This keeps the helper deterministic and safe for callers that are
-    only using it to build fallback search paths.
+    If no strong signal is found within `max_levels`:
+    - if strict=False, the last visited path is returned (fallback).
+    - if strict=True, FileNotFoundError is raised.
     """
 
     current = Path(start_path).expanduser().resolve()
@@ -435,12 +447,14 @@ def project_root_from_path(start_path: PathLike, *, max_levels: int = 6) -> Path
 
     last = current
     for _ in range(max(1, int(max_levels))):
-        if current.name in ("LUNAR_SIMULATION", "ST_LRPS"):
+        if current.name in PROJECT_ROOT_MARKERS:
             return current
         if (current / "data" / "assets").is_dir():
             return current
         last = current
         current = current.parent
+    if strict:
+        raise FileNotFoundError(f"Project root not found within {max_levels} levels of {start_path}")
     return last
 
 

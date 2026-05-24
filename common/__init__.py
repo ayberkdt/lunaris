@@ -8,7 +8,9 @@ Shared, foundational building blocks for the project.
 Public API
 ----------
 - Flat exports from `common.constants` and `common.type_defs` are re-exported at
-  package level (data-only).
+  package level.
+- `constants` contains dependency-light project constants.
+- `type_defs` contains public dataclasses, configuration containers, and result containers.
   Example:
       >>> from common import MU_MOON, SpacecraftProps, GravityConfig
 
