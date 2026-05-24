@@ -45,7 +45,7 @@ _TRAIN_SCRIPT = _SCRIPT_DIR / "st_lrps_train.py"
 _LAPLACIAN_TRAIN_WEIGHT = "1e-12"
 
 # Ordered list of (name, description, extra-flags). Flags are appended verbatim
-# to the base command, so they override the (now production) defaults.
+# to the base command, so they override the recommended production defaults.
 ABLATIONS: List[Dict[str, object]] = [
     {
         "name": "plain_siren",
@@ -100,6 +100,24 @@ ABLATIONS: List[Dict[str, object]] = [
         "description": "Production defaults + trainable collocation Laplacian regulariser.",
         "flags": ["--laplacian-mode", "train",
                   "--collocation-laplacian-weight", _LAPLACIAN_TRAIN_WEIGHT],
+    },
+    {
+        "name": "radial_decay_encoding",
+        "description": "Radial decay-aware encoding (R/r powers, experimental), residual blocks, 3 bands.",
+        "flags": ["--use-radial-decay-encoding", "--radial-decay-max-power", "4",
+                  "--radial-decay-append-raw", "--use-residual-blocks", "--n-bands", "3"],
+    },
+    {
+        "name": "real_sh_basis",
+        "description": "Real spherical-harmonic angular basis (experimental), residual blocks, 3 bands.",
+        "flags": ["--use-real-sh-basis", "--real-sh-degree", "4",
+                  "--real-sh-append-raw", "--real-sh-include-radial",
+                  "--use-residual-blocks", "--n-bands", "3"],
+    },
+    {
+        "name": "additive_multiband",
+        "description": "Additive multi-band SIREN (per-band trunks summed, experimental), residual blocks, 3 bands.",
+        "flags": ["--multiscale-mode", "additive", "--use-residual-blocks", "--n-bands", "3"],
     },
 ]
 
@@ -210,6 +228,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     manifest = {
         "schema_version": "st_lrps_ablation_matrix_v1",
+        "note": (
+            "The default architecture (no extra flags) is the current recommended "
+            "production configuration defined by TrainConfig. Every ablation below is "
+            "an explicit deviation from that default."
+        ),
         "seed": int(args.seed),
         "out_root": str(out_root),
         "execute": bool(args.execute),

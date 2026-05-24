@@ -304,6 +304,23 @@ def move_batch_to_device(
         a.to(device, non_blocking=nb),
     )
 
+def _laplacian_requested(cfg: TrainConfig) -> bool:
+    """Return True only if the user explicitly asked for any Laplacian work.
+
+    With the default config (use_laplacian_regularization=False,
+    laplacian_mode="diagnostic", collocation_laplacian_weight=0,
+    laplacian_weight=0) this is False, so normal training does ZERO Laplacian
+    computation — no in-batch penalty, no collocation diagnostics, no autograd
+    overhead, and no Laplacian term in the objective.
+    """
+    return (
+        bool(getattr(cfg, "use_laplacian_regularization", False))
+        or str(getattr(cfg, "laplacian_mode", "off")).strip().lower() == "train"
+        or float(getattr(cfg, "collocation_laplacian_weight", 0.0)) > 0.0
+        or float(getattr(cfg, "laplacian_weight", 0.0)) > 0.0
+    )
+
+
 class STLRPSTrainer:
     """
     Encapsulates the training state and execution logic.
@@ -333,7 +350,9 @@ class STLRPSTrainer:
         # Collocation Laplacian bounds
         self.collocation_r_min_m: Optional[float] = collocation_r_min_m
         self.collocation_r_max_m: Optional[float] = collocation_r_max_m
-        # Backward compat: if use_laplacian_regularization=True but no laplacian_mode, treat as "diagnostic"
+        # Whether any Laplacian work is requested at all. When False, the default,
+        # all Laplacian paths are skipped (no autograd overhead).
+        self.laplacian_requested: bool = _laplacian_requested(cfg)
         _lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
         if _lmode not in ("off", "diagnostic", "train"):
             _lmode = "diagnostic"
@@ -423,6 +442,7 @@ class STLRPSTrainer:
 
                 apply_lap = (
                     is_train
+                    and self.laplacian_requested
                     and bool(self.cfg.use_laplacian_regularization)
                     and int(self.cfg.laplacian_every_n_batches) > 0
                     and (batch_idx % int(self.cfg.laplacian_every_n_batches) == 0)
@@ -498,7 +518,8 @@ class STLRPSTrainer:
                     _col_lap_weight = float(getattr(self.cfg, "collocation_laplacian_weight", 0.0))
                     _col_lap_every = max(1, int(getattr(self.cfg, "collocation_laplacian_every", 25)))
                     _col_lap_active = (
-                        self.laplacian_mode in ("diagnostic", "train")
+                        self.laplacian_requested
+                        and self.laplacian_mode in ("diagnostic", "train")
                         and self.collocation_r_min_m is not None
                         and self.collocation_r_max_m is not None
                         and optimizer_steps_done % _col_lap_every == 0
@@ -1837,13 +1858,18 @@ def train(cfg: TrainConfig) -> None:
     )
 
     # 11. Train
-    # Resolve collocation altitude bounds
+    # Resolve collocation altitude bounds — only when a Laplacian is requested.
+    # By default no Laplacian is requested, so these stay None and the collocation
+    # path is fully skipped (no overhead).
     _col_r_min_m: Optional[float] = None
     _col_r_max_m: Optional[float] = None
+    _lap_requested = _laplacian_requested(cfg)
     _col_lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
     if _col_lmode not in ("off", "diagnostic", "train"):
         _col_lmode = "diagnostic"
-    if _col_lmode in ("diagnostic", "train"):
+    if not _lap_requested:
+        logger.info("Laplacian: not requested (default) — no Laplacian diagnostics or regularization.")
+    if _lap_requested and _col_lmode in ("diagnostic", "train"):
         _r_ref_col = float(resolved_r_ref_m)
         _col_alt_min = getattr(cfg, "collocation_alt_min_km", None)
         _col_alt_max = getattr(cfg, "collocation_alt_max_km", None)

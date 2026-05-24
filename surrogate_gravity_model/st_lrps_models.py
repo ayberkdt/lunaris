@@ -67,7 +67,7 @@ def _compute_harmonic_w0_bands(
     Parameters
     ----------
     n_bands:
-        Number of frequency bands.  1 reproduces the legacy single-w0 behaviour.
+        Number of frequency bands.  1 reproduces the single-w0 SirenMLP behaviour.
     degree_min:
         Maximum degree of the analytical baseline model.  The first band starts at
         ``degree_min + 1`` to cover only the residual range.
@@ -207,11 +207,11 @@ class SirenMLP(nn.Module):
 
 
 # ---------------------------------------------------------------------------
-# Legacy MLP (non-SIREN activations)
+# Plain MLP (non-SIREN activations, for ablation against SIREN)
 # ---------------------------------------------------------------------------
 
 class MLP(nn.Module):
-    """Standard MLP (kept for backward compatibility with non-SIREN modes)."""
+    """Standard MLP backbone for the non-SIREN activations (silu/tanh/softplus)."""
 
     def __init__(
         self,
@@ -395,6 +395,79 @@ class MultiScaleSirenMLP(nn.Module):
         return self.head(h)
 
 
+class AdditiveMultiBandSirenMLP(nn.Module):
+    """
+    Additive multi-band SIREN: ``ΔU(x) = Σ_k ΔU_k(x)``.
+
+    Each band is an independent small SIREN trunk with its own frequency ``w0``,
+    and their scalar outputs are summed. This contrasts with
+    :class:`MultiScaleSirenMLP`, which concatenates band activations into a single
+    shared trunk. The additive form keeps each frequency scale in a separate
+    subnetwork, which can be easier to interpret per band.
+
+    The total hidden width is split across bands (each band trunk has
+    ``hidden // n_bands`` units), so the parameter budget is comparable to a
+    same-width, same-depth single SIREN.
+
+    Experimental: ``concat_shared`` (:class:`MultiScaleSirenMLP`) remains the
+    default multi-scale composition.
+    """
+
+    def __init__(
+        self,
+        in_dim: int = 3,
+        hidden: int = 512,
+        depth: int = 6,
+        w0_bands: Optional[List[float]] = None,
+        dropout: float = 0.0,
+        use_residual: bool = True,
+    ):
+        super().__init__()
+        if w0_bands is None:
+            w0_bands = [30.0]
+        self.w0_bands: List[float] = [float(w) for w in w0_bands]
+        n_bands = len(self.w0_bands)
+        self.n_bands: int = n_bands
+
+        # Persist band frequencies in the state_dict (reload-safety; see
+        # MultiScaleSirenMLP for the rationale).
+        self.register_buffer(
+            "w0_bands_tensor",
+            torch.tensor(self.w0_bands, dtype=torch.float32),
+            persistent=True,
+        )
+
+        band_hidden = max(8, hidden // n_bands)
+        self.bands: nn.ModuleList = nn.ModuleList(
+            SirenMLP(
+                in_dim=in_dim,
+                hidden=band_hidden,
+                depth=depth,
+                w0_first=w0,
+                w0_hidden=w0,
+                dropout=dropout,
+                use_residual=use_residual,
+            )
+            for w0 in self.w0_bands
+        )
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        key = prefix + "w0_bands_tensor"
+        incoming = state_dict.get(key)
+        if incoming is not None:
+            try:
+                self.w0_bands = [float(v) for v in incoming.detach().cpu().tolist()]
+            except Exception:
+                pass
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+
+    def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
+        out = self.bands[0](x_scaled)
+        for band in self.bands[1:]:
+            out = out + band(x_scaled)
+        return out
+
+
 # ---------------------------------------------------------------------------
 # Random Fourier Features (Tancik et al. 2020)
 # ---------------------------------------------------------------------------
@@ -502,11 +575,181 @@ class SHInspiredAngularEncoding(nn.Module):
         nz = x[:, 2:3] / r
         
         features = (nx ** self.pow_x) * (ny ** self.pow_y) * (nz ** self.pow_z)
-        
+
         if self.append_raw:
             return torch.cat([features, x], dim=-1)
         return features
 
+
+# ---------------------------------------------------------------------------
+# Radial decay-aware encoding (experimental)
+# ---------------------------------------------------------------------------
+
+class RadialDecayEncoding(nn.Module):
+    """
+    Radial decay-aware encoding for SH residual potential fields.
+
+    Spherical-harmonic residual terms decay roughly as ``(R/r)^(l+1)``, so
+    altitude generalization benefits from explicitly exposing the radial-decay
+    structure to the network rather than forcing it to learn ``1/r`` powers from
+    raw Cartesian coordinates.
+
+    The network input ``x`` is already divided by ``x_scale`` (the max training
+    radius), so ``r = ||x||`` is a dimensionless scaled radius (≈ ``r_phys/r_max``,
+    typically in ``[~0.8, 1.0]`` for an LLO shell). This encoder builds:
+
+        r       = ||x||              (scaled radial magnitude)
+        u       = x / r              (unit direction, 3 components)
+        rho     = 1 / clamp(r, eps)  (inverse scaled radius)
+        rho^k   for k = 1 .. max_power
+
+    Output layout::
+
+        [r, ux, uy, uz, rho, rho^2, ..., rho^max_power, (x, y, z if append_raw)]
+
+    Notes
+    -----
+    * Working in scaled coordinates keeps the encoding self-contained and
+      reload-stable (it needs no reference-radius metadata). When ``R_ref/r_phys``
+      is preferred it can be substituted upstream without changing this layout.
+    * Experimental: off by default. Physically motivated for altitude
+      generalization but not yet benchmarked as a default.
+    """
+
+    def __init__(self, max_power: int = 4, append_raw: bool = True, eps: float = 1e-6):
+        super().__init__()
+        self.max_power = int(max_power)
+        if self.max_power < 1:
+            raise ValueError(f"RadialDecayEncoding max_power must be >= 1, got {self.max_power}")
+        self.append_raw = bool(append_raw)
+        self.eps = float(eps)
+
+    @property
+    def out_dim(self) -> int:
+        return 1 + 3 + self.max_power + (3 if self.append_raw else 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        r = torch.norm(x, dim=-1, keepdim=True).clamp_min(self.eps)   # (N, 1)
+        u = x / r                                                     # (N, 3)
+        rho = 1.0 / r                                                 # (N, 1)
+        feats: List[torch.Tensor] = [r, u]
+        rho_power = rho
+        feats.append(rho_power)
+        for _ in range(2, self.max_power + 1):
+            rho_power = rho_power * rho
+            feats.append(rho_power)
+        if self.append_raw:
+            feats.append(x)
+        return torch.cat(feats, dim=-1)
+
+
+# ---------------------------------------------------------------------------
+# Real spherical-harmonic angular basis (experimental)
+# ---------------------------------------------------------------------------
+
+class RealSHBasisEncoding(nn.Module):
+    """
+    Genuine real spherical-harmonic angular basis up to degree ``degree_max``.
+
+    This computes the 4π fully-normalized real spherical harmonics (geodesy
+    convention, Condon-Shortley phase omitted) for degrees ``l = 0 .. L`` and
+    orders ``m = -l .. l`` — ``(L+1)^2`` angular terms — torch-natively, with no
+    SciPy dependency.
+
+    Numerical method (pole-safe)
+    ----------------------------
+    Let ``n = x/||x||`` with ``t = n_z = cosθ``. Define the column-recurrence
+    quantities
+
+        C_m = Re((n_x + i n_y)^m) = sinθ^m · cos(mφ)
+        S_m = Im((n_x + i n_y)^m) = sinθ^m · sin(mφ)
+
+    computed by a complex-power recurrence that never divides by ``sinθ`` (so it
+    is finite at the poles, where ``C_m = S_m = 0`` for ``m ≥ 1``).
+
+    The associated-Legendre polynomial part ``Q_{l,m}(t) = P̄_{l,m}(t)/sinθ^m`` is
+    built with the standard fully-normalized forward recurrence (Holmes &
+    Featherstone 2002), which is a polynomial in ``t`` and therefore also
+    pole-stable. The real SH are then
+
+        Y_{l,0}      = Q_{l,0}(t)
+        Y_{l,m}^cos  = √2 · Q_{l,m}(t) · C_m       (m > 0)
+        Y_{l,m}^sin  = √2 · Q_{l,m}(t) · S_m       (m > 0)
+
+    Output layout::
+
+        [r (if include_radial), Y_{0,0}, ... Y_{L,L}, (x, y, z if append_raw)]
+
+    Experimental: off by default; intended for angular-generalization ablations.
+    """
+
+    def __init__(
+        self,
+        degree_max: int = 4,
+        append_raw: bool = True,
+        include_radial: bool = True,
+        eps: float = 1e-12,
+    ):
+        super().__init__()
+        self.degree_max = int(degree_max)
+        if not (0 <= self.degree_max <= 8):
+            raise ValueError(f"RealSHBasisEncoding degree_max must be in [0, 8], got {self.degree_max}")
+        self.append_raw = bool(append_raw)
+        self.include_radial = bool(include_radial)
+        self.eps = float(eps)
+        self.n_angular = (self.degree_max + 1) ** 2
+
+    @property
+    def out_dim(self) -> int:
+        return self.n_angular + (1 if self.include_radial else 0) + (3 if self.append_raw else 0)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        L = self.degree_max
+        r = torch.norm(x, dim=-1, keepdim=True).clamp_min(self.eps)   # (N, 1)
+        n = x / r
+        nx = n[:, 0:1]
+        ny = n[:, 1:2]
+        t = n[:, 2:3]                                                 # cosθ
+        ones = torch.ones_like(t)
+
+        # C_m = sinθ^m cos(mφ), S_m = sinθ^m sin(mφ) via complex-power recurrence.
+        C: List[torch.Tensor] = [ones]
+        S: List[torch.Tensor] = [torch.zeros_like(t)]
+        for _m in range(1, L + 1):
+            C.append(C[-1] * nx - S[-1] * ny)
+            S.append(C[-2] * ny + S[-1] * nx)
+
+        # Q[(l, m)] = P̄_{l,m}(t) / sinθ^m  (polynomial in t; sinθ^m carried by C/S).
+        Q: Dict[Tuple[int, int], torch.Tensor] = {(0, 0): ones}
+        sec = 1.0
+        for m in range(1, L + 1):
+            sec *= math.sqrt((2 * m + 1) / (2 * m))   # constant sectoral seed (no sinθ)
+            Q[(m, m)] = sec * ones
+        for m in range(0, L + 1):
+            for l in range(m + 1, L + 1):
+                a = math.sqrt((2 * l - 1) * (2 * l + 1) / ((l - m) * (l + m)))
+                if l - 2 >= m:
+                    b = math.sqrt(
+                        (2 * l + 1) * (l + m - 1) * (l - m - 1)
+                        / ((2 * l - 3) * (l - m) * (l + m))
+                    )
+                    Q[(l, m)] = a * t * Q[(l - 1, m)] - b * Q[(l - 2, m)]
+                else:
+                    Q[(l, m)] = a * t * Q[(l - 1, m)]
+
+        sqrt2 = math.sqrt(2.0)
+        feats: List[torch.Tensor] = []
+        if self.include_radial:
+            feats.append(r)
+        for l in range(0, L + 1):
+            feats.append(Q[(l, 0)])                       # Y_{l,0}
+            for m in range(1, l + 1):
+                base = sqrt2 * Q[(l, m)]
+                feats.append(base * C[m])                 # cos term
+                feats.append(base * S[m])                 # sin term
+        if self.append_raw:
+            feats.append(x)
+        return torch.cat(feats, dim=-1)
 
 
 # ---------------------------------------------------------------------------
@@ -588,18 +831,28 @@ def build_model_from_config(
             "Disable Fourier/RFF or use a non-sine activation."
         )
 
-    # Optional alternative input encodings (SH / radial separation).
+    # Optional alternative input encodings. At most one may be active.
     use_sh = bool(_cfg_value(cfg, "use_sh_encoding", False))
     use_radial = bool(_cfg_value(cfg, "use_radial_separation", False))
+    use_radial_decay = bool(_cfg_value(cfg, "use_radial_decay_encoding", False))
+    use_real_sh = bool(_cfg_value(cfg, "use_real_sh_basis", False))
     sh_degree = int(_cfg_value(cfg, "sh_encoding_degree", 6))
     sh_append_raw = bool(_cfg_value(cfg, "sh_append_raw", True))
     radial_append_raw = bool(_cfg_value(cfg, "radial_append_raw", False))
 
-    if use_sh and use_radial:
+    _active_encodings = [
+        name for name, flag in (
+            ("use_fourier", use_fourier),
+            ("use_sh_encoding", use_sh),
+            ("use_radial_separation", use_radial),
+            ("use_radial_decay_encoding", use_radial_decay),
+            ("use_real_sh_basis", use_real_sh),
+        ) if flag
+    ]
+    if len(_active_encodings) > 1:
         raise ValueError(
-            "use_sh_encoding and use_radial_separation cannot both be True. "
-            "SH encoding already subsumes radial information. "
-            "Set only one or neither."
+            f"At most one input encoding may be active, but got {_active_encodings}. "
+            "These are mutually exclusive; enable only one (or none for raw xyz)."
         )
     if use_sh and sh_degree > 8:
         import warnings
@@ -631,6 +884,19 @@ def build_model_from_config(
         backbone_in_dim = int(embedding.out_dim)
     elif use_radial:
         embedding = RadialSeparationEncoding(append_raw=radial_append_raw)
+        backbone_in_dim = int(embedding.out_dim)
+    elif use_radial_decay:
+        embedding = RadialDecayEncoding(
+            max_power=int(_cfg_value(cfg, "radial_decay_max_power", 4)),
+            append_raw=bool(_cfg_value(cfg, "radial_decay_append_raw", True)),
+        )
+        backbone_in_dim = int(embedding.out_dim)
+    elif use_real_sh:
+        embedding = RealSHBasisEncoding(
+            degree_max=int(_cfg_value(cfg, "real_sh_degree", 4)),
+            append_raw=bool(_cfg_value(cfg, "real_sh_append_raw", True)),
+            include_radial=bool(_cfg_value(cfg, "real_sh_include_radial", True)),
+        )
         backbone_in_dim = int(embedding.out_dim)
 
     n_bands      = max(1, int(_cfg_value(cfg, "n_bands", 1)))
@@ -678,14 +944,29 @@ def build_model_from_config(
                 degree_max_cfg = max(1,  int(dmax_raw))
                 w0_bands = _compute_harmonic_w0_bands(n_bands, degree_min_cfg, degree_max_cfg)
             resolved_w0_bands = [float(w) for w in w0_bands]
-            backbone: nn.Module = MultiScaleSirenMLP(
-                in_dim=backbone_in_dim,
-                hidden=hidden,
-                depth=depth,
-                w0_bands=w0_bands,
-                dropout=dropout,
-                use_residual=True,
-            )
+            multiscale_mode = str(_cfg_value(cfg, "multiscale_mode", "concat_shared")).lower()
+            if multiscale_mode not in ("concat_shared", "additive"):
+                raise ValueError(
+                    f"multiscale_mode must be 'concat_shared' or 'additive', got {multiscale_mode!r}."
+                )
+            if multiscale_mode == "additive":
+                backbone: nn.Module = AdditiveMultiBandSirenMLP(
+                    in_dim=backbone_in_dim,
+                    hidden=hidden,
+                    depth=depth,
+                    w0_bands=w0_bands,
+                    dropout=dropout,
+                    use_residual=use_residual,
+                )
+            else:
+                backbone = MultiScaleSirenMLP(
+                    in_dim=backbone_in_dim,
+                    hidden=hidden,
+                    depth=depth,
+                    w0_bands=w0_bands,
+                    dropout=dropout,
+                    use_residual=True,
+                )
         else:
             backbone = SirenMLP(
                 in_dim=backbone_in_dim,
@@ -715,6 +996,10 @@ def build_model_from_config(
         _emb_type = "sh_angular"
     elif use_radial:
         _emb_type = "radial_separation"
+    elif use_radial_decay:
+        _emb_type = "radial_decay"
+    elif use_real_sh:
+        _emb_type = "real_sh"
     elif use_fourier:
         _emb_type = "fourier_rff"
     else:
@@ -742,10 +1027,12 @@ MODEL_BUILDER_VERSION: str = "v3"
 # models. Used to detect config/checkpoint drift on reload.
 ARCH_SIGNATURE_FIELDS = (
     "activation", "hidden", "depth", "dropout",
-    "use_residual_blocks", "n_bands",
+    "use_residual_blocks", "n_bands", "multiscale_mode",
     "degree_min", "degree_max", "w0_bands",
     "use_sh_encoding", "sh_encoding_degree", "sh_append_raw",
     "use_radial_separation", "radial_append_raw",
+    "use_radial_decay_encoding", "radial_decay_max_power", "radial_decay_append_raw",
+    "use_real_sh_basis", "real_sh_degree", "real_sh_append_raw", "real_sh_include_radial",
     "use_fourier", "fourier_n_features", "fourier_sigma", "fourier_seed",
     "fourier_append_raw",
     "input_feature_dim", "embedding_type", "model_builder_version",
@@ -763,7 +1050,7 @@ def _normalize_signature_value(key: str, value: Any) -> Any:
             return value
     if key in ("hidden", "depth", "n_bands", "degree_min", "degree_max",
                "sh_encoding_degree", "fourier_n_features", "fourier_seed",
-               "input_feature_dim"):
+               "input_feature_dim", "radial_decay_max_power", "real_sh_degree"):
         try:
             return int(value)
         except (TypeError, ValueError):
@@ -775,7 +1062,8 @@ def _normalize_signature_value(key: str, value: Any) -> Any:
             return value
     if key in ("use_residual_blocks", "use_sh_encoding", "sh_append_raw",
                "use_radial_separation", "radial_append_raw", "use_fourier",
-               "fourier_append_raw"):
+               "fourier_append_raw", "use_radial_decay_encoding", "radial_decay_append_raw",
+               "use_real_sh_basis", "real_sh_append_raw", "real_sh_include_radial"):
         return bool(value)
     return str(value)
 
@@ -957,10 +1245,13 @@ __all__ = [
     "SirenResBlock",
     "SirenMLP",
     "MultiScaleSirenMLP",
+    "AdditiveMultiBandSirenMLP",
     "MLP",
     "FourierInputEmbedding",
     "RadialSeparationEncoding",
     "SHInspiredAngularEncoding",
+    "RadialDecayEncoding",
+    "RealSHBasisEncoding",
     "PhysicsNet",
     "siren_init_first_",
     "siren_init_hidden_",

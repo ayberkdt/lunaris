@@ -4,8 +4,11 @@ Tests for the ST-LRPS surrogate AI/ML training-system upgrade.
 
 Covers the targeted production-quality changes:
   * TensorMemoryDataset returns torch tensors; generalized collate handles both backends
-  * new production defaults + --legacy-defaults restoration
+  * single-source-of-truth production defaults (no legacy-default mode)
+  * Laplacian is off by default; diagnostic mode never enters the objective
   * trainable vs diagnostic Laplacian gradient flow
+  * radial decay + real spherical-harmonic input encodings (experimental)
+  * encoding mutual exclusion
   * multi-scale SIREN w0_bands persistence through a state_dict round-trip
   * force-model strict_domain behaviour
   * ablation matrix dry-run command/manifest generation
@@ -31,9 +34,17 @@ from surrogate_gravity_model.st_lrps_data import (
     collate_xyz_u_a,
 )
 from surrogate_gravity_model.st_lrps_config import TrainConfig, parse_args
-from surrogate_gravity_model.st_lrps_losses import collocation_laplacian_loss
+from surrogate_gravity_model.st_lrps_engine import _laplacian_requested
+from surrogate_gravity_model.st_lrps_losses import (
+    collocation_laplacian_loss,
+    GradNormWeights,
+    SobolevLoss,
+)
 from surrogate_gravity_model.st_lrps_models import (
     build_model_from_config,
+    compute_architecture_signature,
+    RadialDecayEncoding,
+    RealSHBasisEncoding,
     _compute_harmonic_w0_bands,
 )
 from surrogate_gravity_model.st_lrps_scaling import IsometricScaleParams, ScalerPack
@@ -145,10 +156,28 @@ def test_general_collate_handles_numpy_and_tensors():
 
 
 # ---------------------------------------------------------------------------
-# Item 1 / 2 — defaults and --legacy-defaults
+# Item 1 / 2 — single-source-of-truth defaults; no legacy-default mode
 # ---------------------------------------------------------------------------
 
-def test_new_defaults_construct_train_config():
+def test_no_legacy_defaults_flag_exists(tmp_path, monkeypatch):
+    # The legacy-default preset system was removed: --legacy-defaults must be
+    # rejected by the parser (there is exactly one default configuration).
+    data = tmp_path / "cloud.h5"
+    _write_min_cloud(data)
+    out = tmp_path / "run"
+    monkeypatch.setattr(
+        sys, "argv",
+        ["st_lrps_train.py", "--data", str(data), "--out", str(out), "--legacy-defaults"],
+    )
+    with pytest.raises(SystemExit):
+        parse_args()
+    # The helper module must not retain any legacy-default machinery.
+    import surrogate_gravity_model.st_lrps_config as cfgmod
+    assert not hasattr(cfgmod, "_LEGACY_DEFAULTS")
+    assert not hasattr(cfgmod, "_apply_legacy_defaults")
+
+
+def test_current_defaults_are_single_source_of_truth():
     cfg = TrainConfig(data="x.h5", out="o")
     assert cfg.depth == 6
     assert cfg.use_residual_blocks is True
@@ -166,33 +195,13 @@ def test_new_defaults_construct_train_config():
     assert cfg.hybrid_direction_alpha == pytest.approx(0.30)
     assert cfg.auto_preload_mb == pytest.approx(2048.0)
     assert cfg.preload_policy == "auto"
-
-
-def test_legacy_defaults_flag_restores_old_defaults(tmp_path, monkeypatch):
-    data = tmp_path / "cloud.h5"
-    _write_min_cloud(data)
-    out = tmp_path / "run"
-    # --depth is explicit and must survive; everything else falls back to legacy.
-    monkeypatch.setattr(
-        sys, "argv",
-        ["st_lrps_train.py", "--data", str(data), "--out", str(out),
-         "--legacy-defaults", "--depth", "7"],
-    )
-    cfg = parse_args()
-    assert cfg.depth == 7                       # explicit CLI preserved
-    assert cfg.use_residual_blocks is False
-    assert cfg.n_bands == 1
-    assert cfg.accel_ramp_epochs == 80
-    assert cfg.accel_min_factor == pytest.approx(0.05)
-    assert cfg.direction_loss_weight == pytest.approx(0.10)
-    assert cfg.direction_loss_start_epoch == 15
-    assert cfg.direction_loss_floor_abs == pytest.approx(3e-6)
-    assert cfg.use_altitude_balanced_loss is False
-    assert cfg.use_radial_cross_loss is False
-    assert cfg.radial_loss_weight == pytest.approx(0.0)
-    assert cfg.cross_loss_weight == pytest.approx(0.0)
-    assert cfg.best_metric == "total_loss"
-    assert cfg.hybrid_direction_alpha == pytest.approx(0.5)
+    assert cfg.multiscale_mode == "concat_shared"
+    # Experimental encodings off by default.
+    assert cfg.use_radial_decay_encoding is False
+    assert cfg.use_real_sh_basis is False
+    # Laplacian off by default.
+    assert cfg.use_laplacian_regularization is False
+    assert cfg.collocation_laplacian_weight == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +233,126 @@ def test_laplacian_train_mode_has_gradients():
         for p in model.parameters()
     )
     assert nonzero
+
+
+# ---------------------------------------------------------------------------
+# Item 3 / 4 — Laplacian gating and objective purity
+# ---------------------------------------------------------------------------
+
+def test_laplacian_not_requested_by_default():
+    cfg = TrainConfig(data="x.h5", out="o")
+    assert _laplacian_requested(cfg) is False
+    # Any explicit request flips it on.
+    assert _laplacian_requested(TrainConfig(data="x", out="o", laplacian_mode="train")) is True
+    assert _laplacian_requested(TrainConfig(data="x", out="o", use_laplacian_regularization=True)) is True
+    assert _laplacian_requested(TrainConfig(data="x", out="o", collocation_laplacian_weight=1e-12)) is True
+    assert _laplacian_requested(TrainConfig(data="x", out="o", laplacian_weight=1e-6)) is True
+
+
+def _sobolev_setup():
+    sc = _tiny_scaler_tensors()
+    model = torch.nn.Sequential(torch.nn.Linear(3, 8), torch.nn.Tanh(), torch.nn.Linear(8, 1))
+    loss = SobolevLoss(sc, a_sign=1.0)
+    weights = GradNormWeights(mode="fixed")
+    g = torch.Generator().manual_seed(0)
+    x = torch.randn(16, 3, generator=g) * 2.0e6
+    u = torch.randn(16, 1, generator=g)
+    a = torch.randn(16, 3, generator=g) * 1.0e-3
+    return loss, model, weights, x, u, a
+
+
+def test_diagnostic_laplacian_does_not_modify_objective():
+    loss, model, weights, x, u, a = _sobolev_setup()
+    # Baseline: no laplacian.
+    l_base, s_base = loss(model, x, u, a, weights, is_train=True, apply_laplacian=False)
+    # Diagnostic in-batch laplacian with a large lambda: must NOT change the objective.
+    l_diag, s_diag = loss(
+        model, x, u, a, weights, is_train=True,
+        apply_laplacian=True, laplacian_lambda=1.0, laplacian_mode="diagnostic",
+    )
+    assert s_diag["laplacian_applied"] is True
+    assert s_diag["laplacian_mode"] == "diagnostic"
+    assert s_diag["loss_laplacian_diag"] > 0.0      # reported as a metric
+    assert s_diag["loss_laplacian_train"] == 0.0
+    # Objective (loss_opt / loss_ref) identical to baseline -> diagnostic is metric-only.
+    assert float(l_diag) == pytest.approx(float(l_base), abs=0.0, rel=0.0)
+    assert s_diag["loss_opt"] == pytest.approx(s_base["loss_opt"])
+    assert s_diag["loss_ref"] == pytest.approx(s_base["loss_ref"])
+
+
+def test_train_laplacian_modifies_objective_and_flows_grad():
+    loss, model, weights, x, u, a = _sobolev_setup()
+    l_train, s_train = loss(
+        model, x, u, a, weights, is_train=True,
+        apply_laplacian=True, laplacian_lambda=1.0, laplacian_mode="train",
+    )
+    assert s_train["laplacian_mode"] == "train"
+    assert s_train["loss_laplacian_train"] > 0.0
+    assert l_train.requires_grad
+    model.zero_grad(set_to_none=True)
+    l_train.backward()
+    assert any(
+        p.grad is not None and float(p.grad.abs().sum()) > 0.0 for p in model.parameters()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Item 6 / 7 — radial decay and real SH encodings
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("append_raw", [True, False])
+def test_radial_decay_encoding_shape_and_finite(append_raw):
+    enc = RadialDecayEncoding(max_power=4, append_raw=append_raw)
+    expected = 1 + 3 + 4 + (3 if append_raw else 0)
+    assert enc.out_dim == expected
+    x = torch.randn(13, 3) * 2.0e6
+    y = enc(x)
+    assert tuple(y.shape) == (13, expected)
+    assert torch.isfinite(y).all()
+    # Degenerate (origin) input must not produce NaN/Inf thanks to the eps clamp.
+    y0 = enc(torch.zeros(2, 3))
+    assert torch.isfinite(y0).all()
+
+
+def test_radial_decay_encoding_registered_in_architecture_signature():
+    base = {"activation": "sine", "hidden": 16, "depth": 3, "n_bands": 1,
+            "use_radial_decay_encoding": True, "radial_decay_max_power": 4,
+            "radial_decay_append_raw": True}
+    sig4 = compute_architecture_signature(base)
+    sig3 = compute_architecture_signature({**base, "radial_decay_max_power": 3})
+    assert sig4 != sig3   # changing the power changes the architecture signature
+
+
+def test_real_sh_basis_shape_and_finite():
+    enc = RealSHBasisEncoding(degree_max=4, append_raw=True, include_radial=True)
+    expected = (4 + 1) ** 2 + 1 + 3
+    assert enc.out_dim == expected
+    # Points at the poles, equator, and a generic direction must all be finite.
+    x = torch.tensor(
+        [[0.0, 0.0, 2.0e6], [0.0, 0.0, -2.0e6], [2.0e6, 0.0, 0.0],
+         [0.0, 2.0e6, 0.0], [1.0e6, 1.0e6, 1.0e6]],
+        dtype=torch.float32,
+    )
+    y = enc(x)
+    assert tuple(y.shape) == (5, expected)
+    assert torch.isfinite(y).all()
+    # Angular-only variant.
+    enc2 = RealSHBasisEncoding(degree_max=3, append_raw=False, include_radial=False)
+    assert enc2.out_dim == (3 + 1) ** 2
+    assert torch.isfinite(enc2(x)).all()
+
+
+def test_encoding_mutual_exclusion():
+    with pytest.raises(ValueError, match="one input encoding"):
+        build_model_from_config({
+            "activation": "sine", "hidden": 8, "depth": 2, "n_bands": 1,
+            "use_radial_decay_encoding": True, "use_real_sh_basis": True,
+        })
+    with pytest.raises(ValueError, match="one input encoding"):
+        build_model_from_config({
+            "activation": "sine", "hidden": 8, "depth": 2, "n_bands": 1,
+            "use_radial_separation": True, "use_real_sh_basis": True,
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -335,12 +464,15 @@ def test_ablation_command_generation_dry_run(tmp_path):
 
     manifest = json.loads(manifest_json.read_text(encoding="utf-8"))
     assert manifest["execute"] is False
+    # The manifest documents that the default = the recommended production architecture.
+    assert "note" in manifest and "recommended production" in manifest["note"]
     names = [a["name"] for a in manifest["ablations"]]
     expected = [
         "plain_siren", "residual_siren", "multiscale_siren_3band",
         "multiscale_siren_5band", "radial_encoding", "sh_encoding",
         "no_direction_loss", "no_altitude_balance", "no_radial_cross",
-        "laplacian_train",
+        "laplacian_train", "radial_decay_encoding", "real_sh_basis",
+        "additive_multiband",
     ]
     assert names == expected
     for ab in manifest["ablations"]:
@@ -354,6 +486,22 @@ def test_ablation_command_generation_dry_run(tmp_path):
 
     # Dry-run must NOT create any per-run directory (only the root + files).
     assert not (out_root / "plain_siren").exists()
+
+
+def test_ablation_matrix_contains_radial_decay_and_real_sh(tmp_path):
+    from surrogate_gravity_model import run_ablation_matrix as ram
+
+    out_root = tmp_path / "ablations2"
+    rc = ram.main(["--train-data", "train.h5", "--out-root", str(out_root), "--dry-run"])
+    assert rc == 0
+    manifest = json.loads((out_root / "ablation_manifest.json").read_text(encoding="utf-8"))
+    by_name = {a["name"]: a for a in manifest["ablations"]}
+    assert "radial_decay_encoding" in by_name
+    assert "real_sh_basis" in by_name
+    assert "additive_multiband" in by_name
+    assert "--use-radial-decay-encoding" in by_name["radial_decay_encoding"]["flags"]
+    assert "--use-real-sh-basis" in by_name["real_sh_basis"]["flags"]
+    assert "--multiscale-mode" in by_name["additive_multiband"]["flags"]
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,21 @@ dashboard builds commands against these names, and ``st_lrps_train.py`` delegate
 all argument parsing here. Defaults that describe generated cloud geometry
 (altitude range in particular) are pulled from ``spatial_cloud_parameters`` so
 the generator and trainer do not drift apart.
+
+Configuration policy
+--------------------
+* ``TrainConfig`` defaults ARE the recommended production/research configuration.
+  There is no hidden "legacy mode". Older configurations are reproduced by passing
+  the corresponding CLI flags explicitly (e.g. ``--no-residual-blocks --n-bands 1``)
+  or via ``run_ablation_matrix.py``.
+* The word "legacy" elsewhere refers only to loading older checkpoints/datasets
+  (e.g. ``--allow-legacy-derivative-convention``), not to a default-config mode.
+* Experimental input encodings (off by default): ``--use-radial-decay-encoding``
+  (physically motivated R/r decay; helps altitude generalization) and
+  ``--use-real-sh-basis`` (genuine 4π-normalized real spherical harmonics).
+  Treat both as ablation/experimental until benchmarked.
+* The Laplacian regulariser is OFF by default and adds no overhead unless
+  explicitly requested. JAX migration is out of scope for this stack.
 """
 
 from __future__ import annotations
@@ -120,7 +135,7 @@ class TrainConfig:
 
     # RAM preload → load whole dataset into CPU tensors for better GPU throughput
     # On Windows, HDF5 forces num_workers=0; RAM mode removes that constraint.
-    preload_data: bool = False        # legacy: force preload regardless of size (== preload_policy="always")
+    preload_data: bool = False        # convenience alias for preload_policy="always"
     auto_preload_mb: float = 2048.0   # auto-preload when dataset fits in this many MB
     # Preload policy: "auto" (preload if estimated size <= auto_preload_mb),
     # "always" (always preload), or "never" (always stream from HDF5).
@@ -150,8 +165,8 @@ class TrainConfig:
     checkpoint_settle_epochs: int = 5
 
     # Best-checkpoint metric selection.
-    # "total_loss": default, uses val ref loss (backward-compatible).
-    # "hybrid": val_loss + hybrid_direction_alpha * val_direction_loss.
+    # "hybrid" (default): val_base_loss + hybrid_direction_alpha * val_direction_loss.
+    # "total_loss": val reference loss only.
     # "direction_loss": val direction loss only (experimental, not recommended alone).
     best_metric: str = "hybrid"
     hybrid_direction_alpha: float = 0.30
@@ -188,26 +203,45 @@ class TrainConfig:
     collocation_laplacian_samples: int = 512
     collocation_laplacian_hutchinson_samples: int = 4
 
-    # Angular / radial input encodings.
-    # Only one of use_sh_encoding or use_radial_separation may be True.
-    # Both default to False → raw Cartesian xyz input (backward-compatible).
-    # use_sh_encoding: SHInspiredAngularEncoding (Cartesian angular polynomial).
-    # use_radial_separation: RadialSeparationEncoding [r, ux, uy, uz].
+    # Input encodings. At most ONE of {use_fourier, use_sh_encoding,
+    # use_radial_separation, use_radial_decay_encoding, use_real_sh_basis} may be
+    # True. All default to False → raw Cartesian xyz input.
+    #   use_sh_encoding         : SHInspiredAngularEncoding (Cartesian angular polynomial).
+    #   use_radial_separation   : RadialSeparationEncoding [r, ux, uy, uz].
+    #   use_radial_decay_encoding: RadialDecayEncoding (R/r decay powers; experimental).
+    #   use_real_sh_basis       : RealSHBasisEncoding (real spherical harmonics; experimental).
     use_sh_encoding: bool = False
     sh_encoding_degree: int = 4          # max polynomial degree (1..8)
     sh_append_raw: bool = True           # always True (required by SHInspiredAngularEncoding)
     use_radial_separation: bool = False
     radial_append_raw: bool = False      # True → 7-dim output, False → 4-dim
 
+    # Radial decay-aware encoding (experimental). Encodes the R/r radial decay of
+    # SH residual terms via inverse-radial powers, which is important for altitude
+    # generalization. See RadialDecayEncoding.
+    use_radial_decay_encoding: bool = False
+    radial_decay_max_power: int = 4
+    radial_decay_append_raw: bool = True
+
+    # Real spherical-harmonic angular basis (experimental). Genuine real SH up to
+    # real_sh_degree (orthonormal recurrence). See RealSHBasisEncoding.
+    use_real_sh_basis: bool = False
+    real_sh_degree: int = 4
+    real_sh_append_raw: bool = True
+    real_sh_include_radial: bool = True
+
     # Residual SIREN blocks — wraps hidden layers in SirenResBlock.
     # Recommended for depth >= 6; adds LayerNorm + zero-init skip per block.
-    # Default on (recommended); disable with --no-residual-blocks / --legacy-defaults.
+    # Default on (recommended); disable with --no-residual-blocks.
     use_residual_blocks: bool = True
 
     # Multi-scale SIREN — parallel frequency bands matched to the harmonic range.
-    # n_bands > 1 uses MultiScaleSirenMLP; requires degree_min/degree_max metadata.
-    # Default 3 (recommended); set --n-bands 1 (or --legacy-defaults) for single-scale.
+    # n_bands > 1 uses a multi-scale SIREN; requires degree_min/degree_max metadata.
+    # Default 3 (recommended); set --n-bands 1 for a single-scale SirenMLP.
     n_bands: int = 3
+    # Multi-scale composition: "concat_shared" (parallel bands -> concat -> shared
+    # trunk, default) or "additive" (per-band trunks summed: dU = sum_k dU_k).
+    multiscale_mode: str = "concat_shared"
 
     # Harmonic degree range of the dataset. Resolved from HDF5 metadata by the
     # engine BEFORE the model is built, then persisted to config.json and the
@@ -252,70 +286,6 @@ def _default_outdir(base: Path) -> Path:
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     return base / "runs" / f"st_lrps_train_{ts}"
 
-
-# Legacy ("conservative") default values restored by --legacy-defaults.
-# Maps argparse dest -> legacy value. Keys mirror the production defaults that
-# were flipped on in this revision.
-_LEGACY_DEFAULTS: dict = {
-    "depth": 5,
-    "use_residual_blocks": False,
-    "n_bands": 1,
-    "accel_ramp_epochs": 80,
-    "accel_min_factor": 0.05,
-    "direction_loss_weight": 0.10,
-    "direction_loss_start_epoch": 15,
-    "direction_loss_floor_abs": 3e-6,
-    "use_altitude_balanced_loss": False,
-    "use_radial_cross_loss": False,
-    "radial_loss_weight": 0.0,
-    "cross_loss_weight": 0.0,
-    "best_metric": "total_loss",
-    "hybrid_direction_alpha": 0.5,
-}
-
-# Maps argparse dest -> CLI option strings that set it. Used to detect whether
-# the user explicitly provided a value (so --legacy-defaults never clobbers it).
-_LEGACY_OPTION_STRINGS: dict = {
-    "depth": ["--depth"],
-    "use_residual_blocks": ["--use-residual-blocks", "--no-residual-blocks"],
-    "n_bands": ["--n-bands"],
-    "accel_ramp_epochs": ["--accel-ramp-epochs"],
-    "accel_min_factor": ["--accel-min-factor"],
-    "direction_loss_weight": ["--direction-loss-weight"],
-    "direction_loss_start_epoch": ["--direction-loss-start-epoch"],
-    "direction_loss_floor_abs": ["--direction-loss-floor-abs"],
-    "use_altitude_balanced_loss": ["--use-altitude-balanced-loss", "--no-altitude-balanced-loss"],
-    "use_radial_cross_loss": ["--use-radial-cross-loss", "--no-radial-cross-loss"],
-    "radial_loss_weight": ["--radial-loss-weight"],
-    "cross_loss_weight": ["--cross-loss-weight"],
-    "best_metric": ["--best-metric"],
-    "hybrid_direction_alpha": ["--hybrid-direction-alpha"],
-}
-
-
-def _option_explicitly_provided(argv: list, option_strings: list) -> bool:
-    """Return True if any of ``option_strings`` appears in ``argv`` (``--opt`` or ``--opt=value``)."""
-    for tok in argv:
-        for opt in option_strings:
-            if tok == opt or tok.startswith(opt + "="):
-                return True
-    return False
-
-
-def _apply_legacy_defaults(a: "argparse.Namespace", argv: list) -> None:
-    """Overwrite parsed args with legacy values, skipping anything set explicitly."""
-    restored = []
-    skipped = []
-    for dest, legacy_value in _LEGACY_DEFAULTS.items():
-        if _option_explicitly_provided(argv, _LEGACY_OPTION_STRINGS[dest]):
-            skipped.append(dest)
-            continue
-        setattr(a, dest, legacy_value)
-        restored.append(dest)
-    print("[legacy-defaults] Restoring conservative defaults.")
-    print(f"[legacy-defaults]   restored: {', '.join(restored) if restored else '(none)'}")
-    if skipped:
-        print(f"[legacy-defaults]   kept explicit CLI values for: {', '.join(skipped)}")
 
 def parse_args() -> TrainConfig:
     if hasattr(sys.stdout, "reconfigure"):
@@ -446,7 +416,7 @@ def parse_args() -> TrainConfig:
     preload_group = group_perf.add_mutually_exclusive_group()
     preload_group.add_argument("--preload-data", action="store_true", dest="preload_data",
                                help="Always load the full dataset into CPU RAM before training "
-                                    "(legacy alias for --preload-policy always).")
+                                    "(alias for --preload-policy always).")
     preload_group.add_argument("--no-auto-preload", action="store_true", dest="no_auto_preload",
                                help="Disable automatic RAM preload even for small datasets.")
     group_perf.add_argument("--auto-preload-mb", type=float, default=_TC_DEFAULTS["auto_preload_mb"],
@@ -501,7 +471,7 @@ def parse_args() -> TrainConfig:
     alt_bal_group.add_argument("--use-altitude-balanced-loss", action="store_true", dest="use_altitude_balanced_loss",
                                help="Compute acceleration error by altitude bins instead of raw sample mean (default: on).")
     alt_bal_group.add_argument("--no-altitude-balanced-loss", action="store_false", dest="use_altitude_balanced_loss",
-                               help="Use the raw per-sample mean instead of altitude-binned balancing (legacy).")
+                               help="Use the raw per-sample mean instead of altitude-binned balancing.")
     group_alt.add_argument("--altitude-bin-width-km", type=float, default=50.0, help="Bin width in km.")
     group_alt.add_argument("--altitude-min-km", type=float, default=_DEFAULT_ALT_MIN_KM, help="Min altitude in km.")
     group_alt.add_argument("--altitude-max-km", type=float, default=_DEFAULT_ALT_MAX_KM, help="Max altitude in km.")
@@ -512,7 +482,7 @@ def parse_args() -> TrainConfig:
     rad_cross_group.add_argument("--use-radial-cross-loss", action="store_true", dest="use_radial_cross_loss",
                                  help="Decompose acceleration error and penalise radial/cross components (default: on).")
     rad_cross_group.add_argument("--no-radial-cross-loss", action="store_false", dest="use_radial_cross_loss",
-                                 help="Disable the radial/cross-radial acceleration penalties (legacy).")
+                                 help="Disable the radial/cross-radial acceleration penalties.")
     group_rad.add_argument("--radial-loss-weight", type=float, default=_TC_DEFAULTS["radial_loss_weight"],
                            help="Weight for radial loss (default: 0.05).")
     group_rad.add_argument("--cross-loss-weight", type=float, default=_TC_DEFAULTS["cross_loss_weight"],
@@ -594,10 +564,75 @@ def parse_args() -> TrainConfig:
         "--no-radial-append-raw", action="store_false", dest="radial_append_raw",
         help="Do not append raw xyz to radial encoding (4-dim output, default).",
     )
+
+    # Radial decay-aware encoding (experimental).
+    dec_group = group_enc.add_mutually_exclusive_group()
+    dec_group.add_argument(
+        "--use-radial-decay-encoding", action="store_true", dest="use_radial_decay_encoding",
+        help="Use RadialDecayEncoding (R/r inverse-radial decay powers). Experimental; "
+             "mutually exclusive with the other encodings.",
+    )
+    dec_group.add_argument(
+        "--no-radial-decay-encoding", action="store_false", dest="use_radial_decay_encoding",
+        help="Disable radial decay encoding (default).",
+    )
+    group_enc.add_argument(
+        "--radial-decay-max-power", type=int, default=_TC_DEFAULTS.get("radial_decay_max_power", 4),
+        help="Highest inverse-radial power for RadialDecayEncoding (default: 4).",
+    )
+    dec_raw_group = group_enc.add_mutually_exclusive_group()
+    dec_raw_group.add_argument(
+        "--radial-decay-append-raw", action="store_true", dest="radial_decay_append_raw",
+        help="Append raw xyz to radial decay encoding (default).",
+    )
+    dec_raw_group.add_argument(
+        "--no-radial-decay-append-raw", action="store_false", dest="radial_decay_append_raw",
+        help="Do not append raw xyz to radial decay encoding.",
+    )
+
+    # Real spherical-harmonic angular basis (experimental).
+    rsh_group = group_enc.add_mutually_exclusive_group()
+    rsh_group.add_argument(
+        "--use-real-sh-basis", action="store_true", dest="use_real_sh_basis",
+        help="Use RealSHBasisEncoding (genuine real spherical harmonics). Experimental; "
+             "mutually exclusive with the other encodings.",
+    )
+    rsh_group.add_argument(
+        "--no-real-sh-basis", action="store_false", dest="use_real_sh_basis",
+        help="Disable real SH basis encoding (default).",
+    )
+    group_enc.add_argument(
+        "--real-sh-degree", type=int, default=_TC_DEFAULTS.get("real_sh_degree", 4),
+        help="Max degree L for RealSHBasisEncoding ((L+1)^2 angular terms, default: 4).",
+    )
+    rsh_raw_group = group_enc.add_mutually_exclusive_group()
+    rsh_raw_group.add_argument(
+        "--real-sh-append-raw", action="store_true", dest="real_sh_append_raw",
+        help="Append raw xyz to real SH basis encoding (default).",
+    )
+    rsh_raw_group.add_argument(
+        "--no-real-sh-append-raw", action="store_false", dest="real_sh_append_raw",
+        help="Do not append raw xyz to real SH basis encoding.",
+    )
+    rsh_rad_group = group_enc.add_mutually_exclusive_group()
+    rsh_rad_group.add_argument(
+        "--real-sh-include-radial", action="store_true", dest="real_sh_include_radial",
+        help="Prepend the scaled radial magnitude to the real SH basis (default).",
+    )
+    rsh_rad_group.add_argument(
+        "--no-real-sh-include-radial", action="store_false", dest="real_sh_include_radial",
+        help="Angular-only real SH basis (no radial feature).",
+    )
+
     ap.set_defaults(
         use_sh_encoding=False, sh_encoding_degree=_TC_DEFAULTS.get("sh_encoding_degree", 4),
         sh_append_raw=True,
         use_radial_separation=False, radial_append_raw=False,
+        use_radial_decay_encoding=False,
+        radial_decay_append_raw=_TC_DEFAULTS.get("radial_decay_append_raw", True),
+        use_real_sh_basis=False,
+        real_sh_append_raw=_TC_DEFAULTS.get("real_sh_append_raw", True),
+        real_sh_include_radial=_TC_DEFAULTS.get("real_sh_include_radial", True),
     )
 
     # PINN architecture
@@ -607,12 +642,17 @@ def parse_args() -> TrainConfig:
                            help="Wrap SIREN hidden layers in SirenResBlock (pre-norm + zero-init skip). "
                                 "Recommended for --depth >= 6.")
     res_group.add_argument("--no-residual-blocks", action="store_false", dest="use_residual_blocks",
-                           help="Use plain Linear+Sine hidden layers (legacy default).")
+                           help="Use plain Linear+Sine hidden layers instead of residual blocks.")
     group_pinn.add_argument("--n-bands", type=int, default=_TC_DEFAULTS["n_bands"],
                             help="Number of harmonic frequency bands for multi-scale SIREN. "
-                                 ">1 uses MultiScaleSirenMLP with band w0s derived from "
-                                 "degree_min/degree_max. (default: 3 = multi-scale; requires "
-                                 "degree_max metadata. Use 1 for standard SirenMLP / --legacy-defaults.)")
+                                 ">1 uses a multi-scale SIREN with band w0s derived from "
+                                 "degree_min/degree_max. (default: 3; requires degree_max "
+                                 "metadata. Use 1 for a standard single-scale SirenMLP.)")
+    group_pinn.add_argument("--multiscale-mode", choices=["concat_shared", "additive"],
+                            default=_TC_DEFAULTS.get("multiscale_mode", "concat_shared"),
+                            help="Multi-scale composition when n_bands>1: 'concat_shared' "
+                                 "(parallel bands -> concat -> shared trunk, default) or "
+                                 "'additive' (per-band trunks summed; experimental).")
     group_pinn.add_argument("--grad-accumulation-steps", type=int, default=1,
                             help="Accumulate gradients over N batches before optimizer step. "
                                  "Effective batch = batch_size × N. (default: 1 = no accumulation)")
@@ -646,17 +686,6 @@ def parse_args() -> TrainConfig:
                               help="Enable cudnn.benchmark autotuner (non-deterministic).")
     ap.set_defaults(deterministic=True)
 
-    # Legacy defaults preset
-    group_legacy = ap.add_argument_group("Legacy Defaults")
-    group_legacy.add_argument(
-        "--legacy-defaults", action="store_true", default=False,
-        help="Restore the older conservative defaults (depth=5, no residual blocks, "
-             "n_bands=1, accel-ramp=80, accel-min=0.05, direction-loss-weight=0.10, "
-             "direction-loss-start=15, direction-loss-floor=3e-6, no altitude-balanced loss, "
-             "no radial/cross loss, best-metric=total_loss, hybrid-alpha=0.5). "
-             "Any value you pass explicitly on the CLI is preserved.",
-    )
-
     # Logging & Quick-check
     group_log = ap.add_argument_group("Logging & Quick-check")
     group_log.add_argument("--log-every", type=int, default=10,
@@ -669,41 +698,29 @@ def parse_args() -> TrainConfig:
                            help="Cap the number of validation batches per epoch (None = full epoch).")
 
     # ---------------------------------------------------------------------------
-    # Recommended production defaults (NOW THE BUILT-IN DEFAULTS).
-    # The following are the active defaults as of this revision, so the minimal
-    # recommended run is simply:
+    # TrainConfig is the single source of truth for the recommended configuration.
+    # There is no hidden "legacy mode": the dataclass defaults ARE the recommended
+    # production/research architecture. Any older configuration is reproduced by
+    # passing the corresponding CLI flags explicitly (or via run_ablation_matrix.py).
+    #
+    # The minimal recommended run is simply:
     #
     #   python st_lrps_train.py --data path/to/train.h5 --epochs 250
     #
-    # Active defaults baked in here:
-    #   hidden=512, depth=6, activation=sine, lr=1e-4, weight_decay=1e-6,
-    #   batch_size=8192, gradnorm_mode=ntk_init,
-    #   use_residual_blocks=True, n_bands=3,
-    #   accel_ramp_epochs=40, accel_min_factor=0.15,
-    #   direction_loss_weight=0.20, direction_loss_start_epoch=10,
-    #   direction_loss_ramp_epochs=40, direction_loss_floor_abs=1e-7,
-    #   use_altitude_balanced_loss=True, altitude_bin_width_km=50,
-    #   use_radial_cross_loss=True, radial_loss_weight=0.05, cross_loss_weight=0.10,
-    #   best_metric=hybrid, hybrid_direction_alpha=0.30,
-    #   u_scale_mode=hybrid, a_scale_mode=hybrid, target_scale_multiplier=6.0.
     # Notes:
     #   - n_bands=3 (multi-scale SIREN) REQUIRES degree_max in the dataset metadata.
-    #     Use --n-bands 1 (or --legacy-defaults) for datasets without it.
+    #     Use --n-bands 1 for datasets without it.
     #   - If direction-loss-floor-abs=1e-7 causes noise in low-residual regions,
     #     increase to 3e-7 or 1e-6.
     #   - If VRAM is insufficient: --batch-size 4096 --grad-accumulation-steps 4
     #     (an advisory warning is printed at startup when batch_size looks large
     #     for the detected GPU).
-    #   - To reproduce the older conservative configuration, pass --legacy-defaults.
+    #   - Experimental input encodings (off by default): --use-radial-decay-encoding
+    #     (physically motivated R/r decay) and --use-real-sh-basis (real spherical
+    #     harmonic angular basis). See run_ablation_matrix.py for controlled studies.
     # ---------------------------------------------------------------------------
 
     a = ap.parse_args()
-
-    # 0. Legacy defaults preset (--legacy-defaults).
-    # Restores the older conservative configuration, but only for fields the user
-    # did NOT explicitly set on the command line. Explicit CLI values always win.
-    if getattr(a, "legacy_defaults", False):
-        _apply_legacy_defaults(a, sys.argv[1:])
 
     # 1. Resolve Data Path
     script_dir = Path(__file__).resolve().parent
@@ -881,8 +898,16 @@ def parse_args() -> TrainConfig:
         sh_append_raw=bool(a.sh_append_raw),
         use_radial_separation=bool(a.use_radial_separation),
         radial_append_raw=bool(a.radial_append_raw),
+        use_radial_decay_encoding=bool(a.use_radial_decay_encoding),
+        radial_decay_max_power=max(1, int(a.radial_decay_max_power)),
+        radial_decay_append_raw=bool(a.radial_decay_append_raw),
+        use_real_sh_basis=bool(a.use_real_sh_basis),
+        real_sh_degree=max(0, min(8, int(a.real_sh_degree))),
+        real_sh_append_raw=bool(a.real_sh_append_raw),
+        real_sh_include_radial=bool(a.real_sh_include_radial),
         use_residual_blocks=bool(a.use_residual_blocks),
         n_bands=max(1, int(a.n_bands)),
+        multiscale_mode=str(a.multiscale_mode),
         grad_accumulation_steps=max(1, int(a.grad_accumulation_steps)),
         best_metric=str(a.best_metric),
         hybrid_direction_alpha=float(a.hybrid_direction_alpha),

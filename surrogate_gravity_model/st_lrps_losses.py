@@ -645,17 +645,29 @@ class SobolevLoss(nn.Module):
             loss_radial_val = float(loss_radial_t.detach().item())
             loss_cross_val = float(loss_cross_t.detach().item())
 
+        # In-batch Laplacian. "diagnostic" is a metric ONLY — it must never enter
+        # the objective (loss_ref/loss_opt) or it would pollute the reported loss
+        # and the best-checkpoint metric. "train" backpropagates into the weights.
+        _lap_mode = str(laplacian_mode).strip().lower()
         loss_lap_t = torch.zeros((), device=x_phys.device, dtype=x_phys.dtype)
         loss_lap_val = 0.0
-        if apply_laplacian and float(laplacian_lambda) > 0.0:
+        loss_lap_diag = 0.0
+        loss_lap_train = 0.0
+        laplacian_applied = False
+        if apply_laplacian and float(laplacian_lambda) > 0.0 and _lap_mode in ("diagnostic", "train"):
             loss_lap_t = self._laplacian_penalty(
                 grad_u_scaled,
                 x_scaled,
                 subset_size=laplacian_subset_size,
                 n_hutchinson_samples=int(laplacian_n_hutchinson),
-                laplacian_mode=str(laplacian_mode),
+                laplacian_mode=_lap_mode,
             )
             loss_lap_val = float(loss_lap_t.detach().item())
+            laplacian_applied = True
+            if _lap_mode == "train":
+                loss_lap_train = loss_lap_val
+            else:
+                loss_lap_diag = loss_lap_val
 
         loss_ref = (w_u * mse_u) + (w_a * mse_a)
         loss_opt = (w_u * mse_u) + (effective_w_a * mse_a)
@@ -665,9 +677,10 @@ class SobolevLoss(nn.Module):
         if use_radial_cross_loss and (radial_lambda > 0.0 or cross_lambda > 0.0):
             loss_ref = loss_ref + (radial_lambda * loss_radial_t) + (cross_lambda * loss_cross_t)
             loss_opt = loss_opt + (radial_lambda * loss_radial_t) + (cross_lambda * loss_cross_t)
-        if apply_laplacian and float(laplacian_lambda) > 0.0:
-            loss_ref = loss_ref + (float(laplacian_lambda) * loss_lap_t)
+        # ONLY the trainable Laplacian enters the objective; diagnostic is logged only.
+        if laplacian_applied and _lap_mode == "train":
             loss_opt = loss_opt + (float(laplacian_lambda) * loss_lap_t)
+            loss_ref = loss_ref + (float(laplacian_lambda) * loss_lap_t)
 
         stats = {
             "loss": loss_ref.detach().item(),
@@ -689,6 +702,10 @@ class SobolevLoss(nn.Module):
             "loss_radial": loss_radial_val,
             "loss_cross": loss_cross_val,
             "loss_laplacian": loss_lap_val,
+            "loss_laplacian_diag": loss_lap_diag,
+            "loss_laplacian_train": loss_lap_train,
+            "laplacian_mode": (_lap_mode if laplacian_applied else "off"),
+            "laplacian_applied": bool(laplacian_applied),
             "altitude_balanced": float(bool(use_altitude_balanced_loss)),
         }
         return loss_opt, stats
