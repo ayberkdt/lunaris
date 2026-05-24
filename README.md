@@ -246,6 +246,10 @@ visualization/           Interactive visualization and animation tools
 surrogate_gravity_model/ ST-LRPS data generation, training, evaluation, inference API
 ui_parts/                PySide6 page widgets and helpers
 cli/                     Command-line interface helpers
+tests/                   Unit and integration tests for all packages
+data/                    Local storage for SPICE kernels, topography, and SH coefficients
+results/                 Default output directory for single-run reports and telemetry
+mc_results/              Default output directory for Monte Carlo run outputs
 config.py                SimConfig Single Source of Truth
 main.py                  Single-run CLI entry point
 mc_runner.py             Monte Carlo CLI entry point
