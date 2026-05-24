@@ -25,17 +25,36 @@ except ImportError:  # pragma: no cover - script execution fallback
 logger = logging.getLogger(__name__)
 DTYPE = torch.float32
 
-def collate_h5(batch: List[Tuple[np.ndarray, np.ndarray, np.ndarray]]) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+def collate_xyz_u_a(
+    batch: List[Tuple[Any, Any, Any]],
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Pickle-safe collate function for Windows multiprocessing.
-    Batch is a list of (x_np, u_np, a_np), each np.float32 arrays.
-    Returns torch float tensors directly using memory-efficient as_tensor.
+    Pickle-safe collate for (x, u, a) samples from either dataset backend.
+
+    Handles both:
+      * ``np.ndarray`` items (``H5BlockDataset.__getitem__``) → stacked via
+        ``torch.as_tensor(np.stack(...))`` (single copy, no per-sample tensor
+        construction).
+      * ``torch.Tensor`` items (``TensorMemoryDataset.__getitem__``) → stacked
+        via ``torch.stack`` with zero NumPy round-trip, which keeps the fast
+        all-in-RAM path tensor-native and ``pin_memory``-friendly.
+
+    Returns float tensors of shape ``(B, 3)``, ``(B, 1)``, ``(B, 3)``.
     """
-    x = torch.as_tensor(np.stack([b[0] for b in batch], axis=0), dtype=DTYPE)
-    u = torch.as_tensor(np.stack([b[1] for b in batch], axis=0), dtype=DTYPE)
-    a = torch.as_tensor(np.stack([b[2] for b in batch], axis=0), dtype=DTYPE)
-    
+    first_x = batch[0][0]
+    if isinstance(first_x, torch.Tensor):
+        x = torch.stack([b[0] for b in batch], dim=0).to(DTYPE)
+        u = torch.stack([b[1] for b in batch], dim=0).to(DTYPE)
+        a = torch.stack([b[2] for b in batch], dim=0).to(DTYPE)
+    else:
+        x = torch.as_tensor(np.stack([b[0] for b in batch], axis=0), dtype=DTYPE)
+        u = torch.as_tensor(np.stack([b[1] for b in batch], axis=0), dtype=DTYPE)
+        a = torch.as_tensor(np.stack([b[2] for b in batch], axis=0), dtype=DTYPE)
     return x, u, a
+
+
+# Backward-compatible alias: older code (and the engine) imports ``collate_h5``.
+collate_h5 = collate_xyz_u_a
 
 
 # --- Utilities ---
@@ -647,12 +666,12 @@ class TensorMemoryDataset(Dataset):
     def __len__(self) -> int:
         return int(self._x.shape[0])
 
-    def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        return (
-            self._x[idx].numpy(),
-            self._u[idx].numpy(),
-            self._a[idx].numpy(),
-        )
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        # Return torch tensors directly: the previous ``.numpy()`` round-trip was
+        # pure overhead because the collate function only re-wrapped them as
+        # tensors again. Returning tensors keeps the all-in-RAM path tensor-native
+        # and pin_memory-friendly (collate_xyz_u_a stacks tensors without a copy).
+        return self._x[idx], self._u[idx], self._a[idx]
 
 
 # --- SIREN: Sinusoidal Representation Network (Sitzmann et al. 2020) ---
@@ -785,7 +804,7 @@ def infer_a_sign_from_data(
 
 __all__ = [
     'DTYPE', 'DatasetMeta', 'H5BlockDataset', 'TensorMemoryDataset',
-    'BlockShuffleSampler', 'collate_h5', '_resolve_loader_worker_count',
+    'BlockShuffleSampler', 'collate_xyz_u_a', 'collate_h5', '_resolve_loader_worker_count',
     '_build_train_val_indices', '_find_latest_dataset', '_discover_dataset_name',
     '_resolve_lunar_dataset_contract', 'infer_a_sign_from_data',
 ]

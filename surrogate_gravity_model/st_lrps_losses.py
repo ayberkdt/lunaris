@@ -417,31 +417,46 @@ class SobolevLoss(nn.Module):
         *,
         subset_size: int,
         n_hutchinson_samples: int = 4,
+        laplacian_mode: str = "diagnostic",
     ) -> torch.Tensor:
         """
-        Stochastic Laplacian penalty via the Hutchinson trace estimator.
+        In-batch stochastic Laplacian penalty via the Hutchinson trace estimator.
 
         Enforces the Laplace equation ∇²U = 0 (satisfied by any gravitational
-        potential in free space) as a soft physics constraint.
+        potential in free space) as a soft physics constraint, reusing the
+        already-computed in-batch ``grad_u_scaled``.
 
         Algorithm
         ---------
         Tr(∇²U) ≈ (1/K) Σₖ vₖᵀ ∇²U vₖ,   vₖ ~ Rademacher{±1}³
 
-        Using the identity  vᵀ ∇²U v = ∂(∇U · v)/∂x · v,  each sample
-        requires exactly ONE additional autograd call.  Crucially, that call
-        uses ``create_graph=False`` (first-order only), so the estimator is:
+        Using the identity  vᵀ ∇²U v = ∂(∇U · v)/∂x · v,  each sample requires
+        one additional autograd call.
 
-        * **AMP-compatible**: no second-order graph under mixed precision.
-        * **O(K·B)** compute instead of O(3·B) for the exact Laplacian diagonal,
-          with K=4 giving ≈50% relative error — sufficient for a regulariser.
-        * **Memory-efficient**: no Hessian rows stored.
+        Modes
+        -----
+        ``"diagnostic"`` (default)
+            The HVP autograd call uses ``create_graph=False``, so the returned
+            scalar is DETACHED from the model parameters: it does NOT
+            ``requires_grad`` and contributes **zero** gradient if added to the
+            loss. It is therefore a *physics-violation diagnostic only* — cheap,
+            AMP-compatible, and safe to log. Use this to monitor ∇²U without
+            perturbing optimisation.
+        ``"train"``
+            The HVP uses ``create_graph=True`` so gradients flow back into the
+            model parameters and the penalty can actually be ``.backward()``-ed.
+            Requires ``grad_u_scaled`` to carry a graph (it does when produced by
+            ``accel_from_u_scaled(..., create_graph=True)`` during training).
 
-        The ``grad_u_scaled`` argument must already carry ``create_graph=True``
-        (it does: it is produced by ``accel_from_u_scaled`` with
-        ``create_graph=is_train``).  This function does not add a new
-        computation graph layer.
+        Note: for a dedicated trainable Laplacian regulariser the engine prefers
+        :func:`collocation_laplacian_loss` (independent collocation points). This
+        in-batch variant stays diagnostic by default.
         """
+        mode = str(laplacian_mode).strip().lower()
+        if mode not in ("diagnostic", "train"):
+            raise ValueError(f"laplacian_mode must be 'diagnostic' or 'train'; got {laplacian_mode!r}")
+        create_graph = (mode == "train")
+
         k = min(int(subset_size), int(x_scaled.shape[0]))
         if k <= 0:
             return torch.zeros((), device=x_scaled.device, dtype=x_scaled.dtype)
@@ -454,12 +469,14 @@ class SobolevLoss(nn.Module):
         for _ in range(K):
             v = 2.0 * (torch.rand_like(g_sub) > 0.5).float() - 1.0  # Rademacher (k, 3)
             Jv = (g_sub * v).sum()                                    # scalar
-            # ∂Jv/∂x_scaled — first-order only, no new graph needed.
+            # ∂Jv/∂x_scaled. In diagnostic mode create_graph=False (first-order
+            # only, detached → diagnostic). In train mode create_graph=True so the
+            # penalty can backprop into the model weights.
             # retain_graph=True: the main computational graph (shared with the
             # acceleration loss) must survive for loss.backward() after this call.
             Hv_full = torch.autograd.grad(
                 Jv, x_scaled,
-                create_graph=False,
+                create_graph=create_graph,
                 retain_graph=True,
                 only_inputs=True,
             )[0]                                     # (B, 3)
@@ -468,7 +485,14 @@ class SobolevLoss(nn.Module):
         trace_est = trace_acc / float(K)
         # Chain-rule scaling: ∇²U_phys = ∇²U_scaled · (u_scale / x_scale²)
         lap_phys = trace_est * (self.u_scale.squeeze(0) / (self.x_scale.squeeze(0) ** 2))
-        return torch.mean(lap_phys ** 2)
+        loss_lap = torch.mean(lap_phys ** 2)
+        if mode == "train" and not loss_lap.requires_grad:
+            raise RuntimeError(
+                "_laplacian_penalty(laplacian_mode='train'): the computed penalty does not "
+                "require grad, so it cannot backpropagate into model parameters. Ensure the "
+                "model is in training mode and grad_u_scaled was produced with create_graph=True."
+            )
+        return loss_lap
 
     def accel_from_u_scaled(
         self, u_scaled: torch.Tensor, x_scaled: torch.Tensor, *, create_graph: bool
@@ -511,6 +535,7 @@ class SobolevLoss(nn.Module):
         laplacian_lambda: float = 0.0,
         laplacian_subset_size: int = 512,
         laplacian_n_hutchinson: int = 4,
+        laplacian_mode: str = "diagnostic",
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
         Compute the staged Sobolev objective and its reference metrics.
@@ -628,6 +653,7 @@ class SobolevLoss(nn.Module):
                 x_scaled,
                 subset_size=laplacian_subset_size,
                 n_hutchinson_samples=int(laplacian_n_hutchinson),
+                laplacian_mode=str(laplacian_mode),
             )
             loss_lap_val = float(loss_lap_t.detach().item())
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import heapq
 import json
 import math
 import sys
@@ -708,6 +709,15 @@ def parse_args() -> argparse.Namespace:
     # Suite residual-mag params
     p.add_argument("--residual-mag-candidate-multiplier", type=int, default=None)
     p.add_argument("--residual-mag-weight-power", type=float, default=None)
+    rm_stream_grp = p.add_mutually_exclusive_group()
+    rm_stream_grp.add_argument("--residual-mag-streaming", dest="residual_mag_streaming",
+                               action="store_true", default=None,
+                               help="Use memory-bounded streaming (weighted reservoir) residual-mag "
+                                    "sampling (default).")
+    rm_stream_grp.add_argument("--no-residual-mag-streaming", dest="residual_mag_streaming",
+                               action="store_false", default=None,
+                               help="Use the exact in-memory residual-mag sampling (higher peak RAM; "
+                                    "reproduces legacy datasets bit-for-bit).")
 
     # Suite boundary params
     p.add_argument("--boundary-mode", choices=["strict", "soft"], default=None)
@@ -1175,6 +1185,75 @@ def _generate_component(
     return np.concatenate(results, axis=0) if results else np.empty((0, 7), dtype=np.float64)
 
 
+def _residual_mag_bin_counts(
+    n: int, r_min_m: float, r_max_m: float, n_bins: int
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Return per-bin sample counts (sum == n) and the r-space bin edges."""
+    r_edges = np.linspace(float(r_min_m), float(r_max_m), n_bins + 1)
+    bin_vols = np.array(
+        [r_edges[i + 1] ** 3 - r_edges[i] ** 3 for i in range(n_bins)], dtype=np.float64
+    )
+    bin_vols /= bin_vols.sum()
+    bin_counts_f = bin_vols * float(n)
+    bin_counts = np.floor(bin_counts_f).astype(int)
+    deficit = int(n) - int(bin_counts.sum())
+    if deficit > 0:
+        extra_idx = np.argsort(bin_counts_f - bin_counts)[::-1][:deficit]
+        bin_counts[extra_idx] += 1
+    return bin_counts, r_edges
+
+
+def _residual_mag_stream_bin(
+    n_bin: int,
+    lo_r: float,
+    hi_r: float,
+    rng: np.random.Generator,
+    globals_blob: Dict[str, object],
+    chunk_size: int,
+    *,
+    candidate_multiplier: int,
+    weight_power: float,
+    probability_floor: float,
+) -> np.ndarray:
+    """Memory-bounded weighted reservoir sampling of ``n_bin`` rows for one bin.
+
+    Uses the Efraimidis-Spirakis A-Res weighted reservoir algorithm: each
+    candidate gets key ``log(u)/w`` (u~Uniform, w = floor + ||da||^power) and we
+    retain the ``n_bin`` largest keys in a fixed-size min-heap. Candidates are
+    generated and scored in ``chunk_size`` sub-batches and discarded immediately,
+    so peak memory is O(n_bin + chunk_size) instead of O(n_bin * multiplier).
+
+    Reproducibility: the result depends only on the candidate stream and the key
+    draws, both taken from ``rng`` in a fixed order — same seed → same rows.
+    """
+    n_cand = n_bin * max(1, int(candidate_multiplier))
+    # min-heap of (key, tie_breaker, row); the smallest key sits at heap[0].
+    heap: List[Tuple[float, int, np.ndarray]] = []
+    tie = 0
+    gen = 0
+    while gen < n_cand:
+        cnt = min(int(chunk_size), n_cand - gen)
+        xyz = sample_uniform_shell_xyz(cnt, lo_r, hi_r, rng)
+        labeled = _compute_labels_for_xyz(xyz, globals_blob)
+        scores = np.linalg.norm(labeled[:, 4:7], axis=1).astype(np.float64)
+        weights = float(probability_floor) + np.power(np.maximum(scores, 0.0), float(weight_power))
+        u = rng.random(cnt)
+        # key = u^(1/w); rank in log-space for numerical stability: log(key)=log(u)/w.
+        keys = np.log(np.clip(u, 1e-300, 1.0)) / np.maximum(weights, 1e-12)
+        for j in range(cnt):
+            item = (float(keys[j]), tie, labeled[j])
+            tie += 1
+            if len(heap) < n_bin:
+                heapq.heappush(heap, item)
+            elif item[0] > heap[0][0]:
+                heapq.heapreplace(heap, item)
+        gen += cnt
+
+    if not heap:
+        return np.empty((0, 7), dtype=np.float64)
+    return np.stack([h[2] for h in heap], axis=0)
+
+
 def _generate_residual_mag_component(
     n: int,
     r_min_m: float,
@@ -1188,41 +1267,40 @@ def _generate_residual_mag_component(
     weight_power: float = 0.5,
     probability_floor: float = 1e-3,
     n_altitude_bins: int = 20,
+    streaming: bool = True,
 ) -> np.ndarray:
     """Residual-acceleration magnitude weighted sampling.
 
-    Uses a per-altitude-bin approach so the full candidate set is never
-    held in memory at once: each bin generates candidates in small chunks,
-    scores them, and weighted-samples the required quota before discarding
-    the candidates.
+    Points are allocated across altitude bins (proportional to r-volume) and,
+    within each bin, drawn with probability rising with ``||da||``.
+
+    ``streaming`` (default True)
+        Memory-bounded weighted reservoir sampling (A-Res): candidates are scored
+        in ``chunk_size`` sub-batches and only an ``n_bin``-sized pool is ever
+        retained, so the full ``n * candidate_multiplier`` candidate set is never
+        materialised. Weights use raw ``||da||^power`` (no per-bin median
+        normalisation), a small approximation of the exact method that keeps
+        memory bounded.
+
+    ``streaming=False``
+        The exact legacy method: materialise every candidate in a bin, normalise
+        scores by the bin median, and draw with ``rng.choice``. Higher peak
+        memory but reproduces prior datasets bit-for-bit.
+
+    Both paths return exactly ``n`` rows and are reproducible for a fixed seed.
     """
     if n <= 0:
         return np.empty((0, 7), dtype=np.float64)
 
     rng = np.random.default_rng(int(seed))
     n_bins = max(1, int(n_altitude_bins))
-
-    # Altitude bin edges (uniform in r-space -> slightly non-uniform in km, fine)
-    r_edges = np.linspace(float(r_min_m), float(r_max_m), n_bins + 1)
-
-    # Distribute n_samples across bins proportional to bin r-volume (r² dr)
-    bin_vols = np.array([
-        r_edges[i + 1] ** 3 - r_edges[i] ** 3
-        for i in range(n_bins)
-    ], dtype=np.float64)
-    bin_vols /= bin_vols.sum()
-    bin_counts_f = bin_vols * float(n)
-    # Integer allocation with remainder assigned to largest-volume bins
-    bin_counts = np.floor(bin_counts_f).astype(int)
-    deficit = int(n) - int(bin_counts.sum())
-    if deficit > 0:
-        extra_idx = np.argsort(bin_counts_f - bin_counts)[::-1][:deficit]
-        bin_counts[extra_idx] += 1
+    bin_counts, r_edges = _residual_mag_bin_counts(int(n), float(r_min_m), float(r_max_m), n_bins)
 
     total_candidates = int(n) * max(1, int(candidate_multiplier))
     print(
         f"[suite/residual_mag] {n:,} points in {n_bins} altitude bins "
-        f"(~{total_candidates:,} total candidates, {chunk_size:,}/chunk) ..."
+        f"(~{total_candidates:,} total candidates, {chunk_size:,}/chunk, "
+        f"mode={'streaming-reservoir' if streaming else 'exact-in-memory'}) ..."
     )
 
     results: List[np.ndarray] = []
@@ -1232,11 +1310,19 @@ def _generate_residual_mag_component(
             continue
         lo_r = float(r_edges[i])
         hi_r = float(r_edges[i + 1])
-        n_cand_bin = n_bin * max(1, int(candidate_multiplier))
 
-        # Generate candidates for this bin in chunks - never hold more than chunk_size at once
-        # Use a two-pass reservoir-style approach: collect all bin candidates then select
-        # For memory safety, limit per-bin candidate array to n_cand_bin rows
+        if streaming:
+            chosen = _residual_mag_stream_bin(
+                n_bin, lo_r, hi_r, rng, globals_blob, chunk_size,
+                candidate_multiplier=int(candidate_multiplier),
+                weight_power=float(weight_power),
+                probability_floor=float(probability_floor),
+            )
+            results.append(chosen)
+            continue
+
+        # Exact (legacy) path: materialise all bin candidates, then weighted choice.
+        n_cand_bin = n_bin * max(1, int(candidate_multiplier))
         bin_chunks: List[np.ndarray] = []
         gen = 0
         while gen < n_cand_bin:
@@ -1377,6 +1463,8 @@ def resolve_suite_config(args: argparse.Namespace) -> "CloudSuiteConfig":
         kw["residual_mag_candidate_multiplier"] = int(args.residual_mag_candidate_multiplier)
     if getattr(args, "residual_mag_weight_power", None) is not None:
         kw["residual_mag_weight_power"] = float(args.residual_mag_weight_power)
+    if getattr(args, "residual_mag_streaming", None) is not None:
+        kw["residual_mag_streaming"] = bool(args.residual_mag_streaming)
     if getattr(args, "boundary_mode", None) is not None:
         kw["boundary_mode"] = str(args.boundary_mode)
     if getattr(args, "boundary_width_km", None) is not None:
@@ -1501,6 +1589,7 @@ def run_suite_generation(
             candidate_multiplier=int(cfg.residual_mag_candidate_multiplier),
             weight_power=float(cfg.residual_mag_weight_power),
             probability_floor=float(cfg.residual_mag_probability_floor),
+            streaming=bool(getattr(cfg, "residual_mag_streaming", True)),
         )
     component_counts["residual_mag"] = len(rm_data)
 
@@ -1556,6 +1645,7 @@ def run_suite_generation(
             "n": component_counts["residual_mag"],
             "candidate_multiplier": int(cfg.residual_mag_candidate_multiplier),
             "weight_power": float(cfg.residual_mag_weight_power),
+            "streaming": bool(getattr(cfg, "residual_mag_streaming", True)),
         },
         "boundary": {
             "n": component_counts["boundary"],
@@ -1694,6 +1784,7 @@ def run_suite_generation(
                 "seed": int(cfg.train_residual_mag_seed),
                 "candidate_multiplier": int(cfg.residual_mag_candidate_multiplier),
                 "weight_power": float(cfg.residual_mag_weight_power),
+                "streaming": bool(getattr(cfg, "residual_mag_streaming", True)),
             },
             "boundary": {
                 "n": component_counts["boundary"],

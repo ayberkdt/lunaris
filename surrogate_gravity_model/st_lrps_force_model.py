@@ -19,12 +19,15 @@ physically wrong accelerations with no error signal.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Callable, Optional, Union
 
 import numpy as np
 import torch
 import torch.nn as nn
+
+logger = logging.getLogger(__name__)
 
 try:
     from .st_lrps_artifacts import (
@@ -109,6 +112,7 @@ class SurrogateForceModel:
         checkpoint_epoch: Optional[int] = None,
         architecture_signature: Optional[str] = None,
         run_manifest: Optional[dict] = None,
+        strict_domain: bool = False,
     ):
         self.model = model.eval()
         self.scaler = scaler
@@ -119,6 +123,12 @@ class SurrogateForceModel:
         self.checkpoint_epoch = checkpoint_epoch
         self.architecture_signature = architecture_signature
         self.run_manifest = dict(run_manifest or {})
+        # When True, predict_residual_accel / predict_total_accel raise if the
+        # domain check recommends falling back (extrapolation outside the trained
+        # shell / scaler radius). Default False preserves prior behaviour.
+        self.strict_domain = bool(strict_domain)
+        # Warn-once guard so out-of-range inputs do not spam the logs every call.
+        self._warned_out_of_range = False
 
         self.mu_si = float(cfg.get("resolved_mu_si", MU_MOON_SI))
         self.a_sign = float(cfg.get("resolved_a_sign", 1.0))
@@ -234,6 +244,28 @@ class SurrogateForceModel:
         result = u_out.reshape(-1)
         return float(result[0]) if single else result
 
+    def _enforce_domain(self, x_m: Union[np.ndarray, torch.Tensor], *, caller: str) -> dict:
+        """Run the domain check; raise when strict, otherwise warn-once on extrapolation.
+
+        Returns the ``domain_status`` dict so callers can reuse it if needed.
+        """
+        status = self.domain_status(x_m)
+        if status["recommended_fallback"] and self.strict_domain:
+            raise RuntimeError(
+                f"{caller}: strict_domain=True and the input is outside the surrogate's valid "
+                f"domain ({status['reason']}). Refusing to return an extrapolated prediction; "
+                "use a base/SH model for these points or load with strict_domain=False."
+            )
+        if status.get("in_training_altitude_range") is False and not self._warned_out_of_range:
+            self._warned_out_of_range = True
+            logger.warning(
+                "SurrogateForceModel: input altitude outside training range (%s). "
+                "Predictions here are extrapolation. This warning is shown only once per "
+                "model instance; pass strict_domain=True to hard-fail instead.",
+                status["reason"],
+            )
+        return status
+
     def predict_residual_accel(
         self, x_m: Union[np.ndarray, torch.Tensor]
     ) -> np.ndarray:
@@ -249,6 +281,12 @@ class SurrogateForceModel:
         -------
         delta_a : np.ndarray, shape (3,) or (N,3)
             Residual acceleration in m/s^2.
+
+        Raises
+        ------
+        RuntimeError
+            If the model was loaded with ``strict_domain=True`` and the input
+            lies outside the trained domain (see :meth:`domain_status`).
         """
         x_arr = np.asarray(x_m, dtype=np.float64)
         if not np.all(np.isfinite(x_arr)):
@@ -256,6 +294,7 @@ class SurrogateForceModel:
                 "predict_residual_accel: Input positions contain NaN or Inf values. "
                 "All position components must be finite real numbers."
             )
+        self._enforce_domain(x_arr, caller="predict_residual_accel")
         single = x_arr.ndim == 1
         _, da = self._chunked_predict(x_m)
         return da[0] if single else da
@@ -357,6 +396,7 @@ class SurrogateForceModel:
                 "predict_total_accel: Input positions contain NaN or Inf values. "
                 "All position components must be finite real numbers."
             )
+        self._enforce_domain(x_arr, caller="predict_total_accel")
         if x_arr.ndim == 1:
             x_arr = x_arr[None, :]
 
@@ -390,6 +430,7 @@ def load_surrogate_force_model(
     device: str = "auto",
     chunk_size: int = 8192,
     allow_config_mismatch: bool = False,
+    strict_domain: bool = False,
 ) -> SurrogateForceModel:
     """
     Load a trained surrogate force model from a run directory.
@@ -407,6 +448,11 @@ def load_surrogate_force_model(
         "auto" (GPU if available), "cpu", "cuda", or "mps".
     chunk_size : int
         Batch size for chunked inference. Reduce for low-memory GPUs.
+    strict_domain : bool
+        When True, predict_residual_accel / predict_total_accel raise
+        RuntimeError if the input lies outside the surrogate's valid domain
+        (see SurrogateForceModel.domain_status). Default False keeps the prior
+        behaviour of always returning a (possibly extrapolated) prediction.
 
     Returns
     -------
@@ -443,6 +489,7 @@ def load_surrogate_force_model(
         checkpoint_epoch=report.get("checkpoint_epoch"),
         architecture_signature=report.get("architecture_signature"),
         run_manifest=read_run_manifest(layout),
+        strict_domain=strict_domain,
     )
 
 

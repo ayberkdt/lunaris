@@ -368,6 +368,10 @@ class CloudSuiteConfig:
     residual_mag_candidate_multiplier: int = 5
     residual_mag_weight_power: float = 0.5
     residual_mag_probability_floor: float = 1e-3
+    # Memory-bounded streaming (weighted reservoir) residual-mag sampling.
+    # True keeps peak memory at O(n_bin) instead of O(n_bin * multiplier);
+    # False reproduces the exact legacy in-memory method bit-for-bit.
+    residual_mag_streaming: bool = True
 
     # ----------------------------
     # Boundary buffer
@@ -460,6 +464,7 @@ class CloudSuiteConfig:
             "residual_mag_candidate_multiplier": int(self.residual_mag_candidate_multiplier),
             "residual_mag_weight_power": float(self.residual_mag_weight_power),
             "residual_mag_probability_floor": float(self.residual_mag_probability_floor),
+            "residual_mag_streaming": bool(self.residual_mag_streaming),
             "boundary_mode": str(self.boundary_mode),
             "boundary_width_km": float(self.boundary_width_km),
             "out_format": str(self.out_format),

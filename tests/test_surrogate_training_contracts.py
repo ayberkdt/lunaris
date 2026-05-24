@@ -203,9 +203,16 @@ def test_train_parse_args_defaults_are_safe(tmp_path: Path, monkeypatch: pytest.
     assert cfg.dynamic_weights is False
     assert cfg.gradnorm_mode == "ntk_init"
     assert cfg.amp is False
-    assert cfg.accel_ramp_epochs == 80
+    # Production defaults as of the AI/ML training-system upgrade.
+    assert cfg.accel_ramp_epochs == 40
     assert cfg.warmup_epochs == 5
     assert cfg.min_lr_ratio == pytest.approx(0.05)
+    assert cfg.depth == 6
+    assert cfg.use_residual_blocks is True
+    assert cfg.n_bands == 3
+    assert cfg.use_altitude_balanced_loss is True
+    assert cfg.use_radial_cross_loss is True
+    assert cfg.best_metric == "hybrid"
 
 
 def test_ood_region_masks_match_immediate_shell_outside_training_band() -> None:

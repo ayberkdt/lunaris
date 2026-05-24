@@ -64,7 +64,7 @@ class TrainConfig:
 
     # Model architecture
     hidden: int = 512
-    depth: int = 5
+    depth: int = 6
     activation: str = "sine"   # "sine" (SIREN) | "silu" | "tanh" | "softplus"
     dropout: float = 0.0
     w0_first: float = 30.0
@@ -92,11 +92,11 @@ class TrainConfig:
     gradnorm_w_a_min: float = 0.05
     gradnorm_w_a_max: float = 2.0
     potential_only_epochs: int = 0
-    accel_ramp_epochs: int = 80
+    accel_ramp_epochs: int = 40
     # Minimum acceleration factor applied even during potential_only phase.
     # Prevents the derivative field from drifting completely unconstrained.
     # Set to 0.0 to restore original full potential-only behaviour.
-    accel_min_factor: float = 0.05
+    accel_min_factor: float = 0.15
     a_sign: Union[float, str] = "auto"
 
     # SSOT / Physics Meta behavior
@@ -120,8 +120,11 @@ class TrainConfig:
 
     # RAM preload → load whole dataset into CPU tensors for better GPU throughput
     # On Windows, HDF5 forces num_workers=0; RAM mode removes that constraint.
-    preload_data: bool = False        # always preload regardless of size
-    auto_preload_mb: float = 256.0    # auto-preload when dataset fits in this many MB
+    preload_data: bool = False        # legacy: force preload regardless of size (== preload_policy="always")
+    auto_preload_mb: float = 2048.0   # auto-preload when dataset fits in this many MB
+    # Preload policy: "auto" (preload if estimated size <= auto_preload_mb),
+    # "always" (always preload), or "never" (always stream from HDF5).
+    preload_policy: str = "auto"
 
     # Quick-check mode: run 1 epoch with 5 train + 2 val batches to verify the
     # full pipeline (CUDA, autograd, checkpoint, metrics) in under a minute.
@@ -132,10 +135,10 @@ class TrainConfig:
     # Acceleration direction loss -> penalises angular error between a_pred and a_true.
     # L_dir = mean(1 - cos_sim(a_pred, a_true)) for points where ||a_true|| > floor.
     # Ramped in after direction_loss_start_epoch to avoid destabilising early training.
-    direction_loss_weight: float = 0.10
-    direction_loss_start_epoch: int = 15
+    direction_loss_weight: float = 0.20
+    direction_loss_start_epoch: int = 10
     direction_loss_ramp_epochs: int = 40
-    direction_loss_floor_abs: float = 3e-6   # mask threshold on ||a_true||
+    direction_loss_floor_abs: float = 1e-7   # mask threshold on ||a_true||
 
     # Best-checkpoint selection burn-in.
     # -1 (default) = auto: if direction_loss_weight > 0, delays to
@@ -150,23 +153,23 @@ class TrainConfig:
     # "total_loss": default, uses val ref loss (backward-compatible).
     # "hybrid": val_loss + hybrid_direction_alpha * val_direction_loss.
     # "direction_loss": val direction loss only (experimental, not recommended alone).
-    best_metric: str = "total_loss"
-    hybrid_direction_alpha: float = 0.5
+    best_metric: str = "hybrid"
+    hybrid_direction_alpha: float = 0.30
     save_epoch_snapshots: bool = False
     epoch_snapshot_every: int = 1
 
     # Optional altitude-balanced residual loss.
     # Defaults pulled from spatial_cloud_parameters.DEFAULT_SPATIAL_CLOUD_CONFIG
     # so training envelope always matches the generated dataset without edits.
-    use_altitude_balanced_loss: bool = False
+    use_altitude_balanced_loss: bool = True
     altitude_bin_width_km: float = 50.0
     altitude_min_km: float = _DEFAULT_ALT_MIN_KM
     altitude_max_km: float = _DEFAULT_ALT_MAX_KM
 
     # Optional radial / cross-radial acceleration penalties.
-    use_radial_cross_loss: bool = False
-    radial_loss_weight: float = 0.0
-    cross_loss_weight: float = 0.0
+    use_radial_cross_loss: bool = True
+    radial_loss_weight: float = 0.05
+    cross_loss_weight: float = 0.10
 
     # Optional sparse Laplacian regularisation for the residual potential.
     # Uses the Hutchinson stochastic trace estimator (AMP-compatible, O(K) passes).
@@ -198,11 +201,13 @@ class TrainConfig:
 
     # Residual SIREN blocks — wraps hidden layers in SirenResBlock.
     # Recommended for depth >= 6; adds LayerNorm + zero-init skip per block.
-    use_residual_blocks: bool = False
+    # Default on (recommended); disable with --no-residual-blocks / --legacy-defaults.
+    use_residual_blocks: bool = True
 
     # Multi-scale SIREN — parallel frequency bands matched to the harmonic range.
     # n_bands > 1 uses MultiScaleSirenMLP; requires degree_min/degree_max metadata.
-    n_bands: int = 1
+    # Default 3 (recommended); set --n-bands 1 (or --legacy-defaults) for single-scale.
+    n_bands: int = 3
 
     # Harmonic degree range of the dataset. Resolved from HDF5 metadata by the
     # engine BEFORE the model is built, then persisted to config.json and the
@@ -247,6 +252,71 @@ def _default_outdir(base: Path) -> Path:
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     return base / "runs" / f"st_lrps_train_{ts}"
 
+
+# Legacy ("conservative") default values restored by --legacy-defaults.
+# Maps argparse dest -> legacy value. Keys mirror the production defaults that
+# were flipped on in this revision.
+_LEGACY_DEFAULTS: dict = {
+    "depth": 5,
+    "use_residual_blocks": False,
+    "n_bands": 1,
+    "accel_ramp_epochs": 80,
+    "accel_min_factor": 0.05,
+    "direction_loss_weight": 0.10,
+    "direction_loss_start_epoch": 15,
+    "direction_loss_floor_abs": 3e-6,
+    "use_altitude_balanced_loss": False,
+    "use_radial_cross_loss": False,
+    "radial_loss_weight": 0.0,
+    "cross_loss_weight": 0.0,
+    "best_metric": "total_loss",
+    "hybrid_direction_alpha": 0.5,
+}
+
+# Maps argparse dest -> CLI option strings that set it. Used to detect whether
+# the user explicitly provided a value (so --legacy-defaults never clobbers it).
+_LEGACY_OPTION_STRINGS: dict = {
+    "depth": ["--depth"],
+    "use_residual_blocks": ["--use-residual-blocks", "--no-residual-blocks"],
+    "n_bands": ["--n-bands"],
+    "accel_ramp_epochs": ["--accel-ramp-epochs"],
+    "accel_min_factor": ["--accel-min-factor"],
+    "direction_loss_weight": ["--direction-loss-weight"],
+    "direction_loss_start_epoch": ["--direction-loss-start-epoch"],
+    "direction_loss_floor_abs": ["--direction-loss-floor-abs"],
+    "use_altitude_balanced_loss": ["--use-altitude-balanced-loss", "--no-altitude-balanced-loss"],
+    "use_radial_cross_loss": ["--use-radial-cross-loss", "--no-radial-cross-loss"],
+    "radial_loss_weight": ["--radial-loss-weight"],
+    "cross_loss_weight": ["--cross-loss-weight"],
+    "best_metric": ["--best-metric"],
+    "hybrid_direction_alpha": ["--hybrid-direction-alpha"],
+}
+
+
+def _option_explicitly_provided(argv: list, option_strings: list) -> bool:
+    """Return True if any of ``option_strings`` appears in ``argv`` (``--opt`` or ``--opt=value``)."""
+    for tok in argv:
+        for opt in option_strings:
+            if tok == opt or tok.startswith(opt + "="):
+                return True
+    return False
+
+
+def _apply_legacy_defaults(a: "argparse.Namespace", argv: list) -> None:
+    """Overwrite parsed args with legacy values, skipping anything set explicitly."""
+    restored = []
+    skipped = []
+    for dest, legacy_value in _LEGACY_DEFAULTS.items():
+        if _option_explicitly_provided(argv, _LEGACY_OPTION_STRINGS[dest]):
+            skipped.append(dest)
+            continue
+        setattr(a, dest, legacy_value)
+        restored.append(dest)
+    print("[legacy-defaults] Restoring conservative defaults.")
+    print(f"[legacy-defaults]   restored: {', '.join(restored) if restored else '(none)'}")
+    if skipped:
+        print(f"[legacy-defaults]   kept explicit CLI values for: {', '.join(skipped)}")
+
 def parse_args() -> TrainConfig:
     if hasattr(sys.stdout, "reconfigure"):
         try:
@@ -277,7 +347,8 @@ def parse_args() -> TrainConfig:
     # Architecture
     group_arch = ap.add_argument_group("Model Architecture")
     group_arch.add_argument("--hidden", type=int, default=512, help="Neurons per hidden layer (default: 512).")
-    group_arch.add_argument("--depth", type=int, default=5, help="Number of hidden layers (default: 5).")
+    group_arch.add_argument("--depth", type=int, default=_TC_DEFAULTS["depth"],
+                            help="Number of hidden layers (default: 6).")
     group_arch.add_argument("--activation", type=str, default="sine",
                             choices=["sine", "silu", "tanh", "softplus"],
                             help="Activation function. 'sine' = SIREN.")
@@ -343,17 +414,21 @@ def parse_args() -> TrainConfig:
                             help="Upper clamp for NTK/dynamic acceleration-loss weight.")
     group_phys.add_argument("--potential-only-epochs", type=int, default=0,
                             help="Initial epochs that optimise only the residual potential ΔU.")
-    group_phys.add_argument("--accel-ramp-epochs", type=int, default=80,
-                            help="Epochs used to linearly ramp the acceleration loss from accel_min_factor to full weight.")
-    group_phys.add_argument("--accel-min-factor", type=float, default=0.05,
+    group_phys.add_argument("--accel-ramp-epochs", type=int, default=_TC_DEFAULTS["accel_ramp_epochs"],
+                            help="Epochs used to linearly ramp the acceleration loss from accel_min_factor to full weight (default: 40).")
+    group_phys.add_argument("--accel-min-factor", type=float, default=_TC_DEFAULTS["accel_min_factor"],
                             help="Minimum acceleration loss factor during curriculum warm-up (floor). "
-                                 "0.0 = pure potential-only; 0.05 = small floor to prevent derivative drift.")
+                                 "0.0 = pure potential-only; 0.15 = floor to prevent derivative drift (default: 0.15).")
     group_phys.add_argument("--a-sign", default="auto", help="Sign of -grad(U). 'auto' or +1/-1.")
     group_phys.add_argument("--use-si", action="store_true", dest="use_si", help="Convert canonical units to SI.")
     group_phys.add_argument("--no-si", action="store_false", dest="use_si", help="Keep dataset units as-is.")
     ap.set_defaults(use_si=True, pin_memory=True)
     ap.set_defaults(use_fourier=False, fourier_append_raw=True, amp=False)
-    ap.set_defaults(use_residual_blocks=False)
+    ap.set_defaults(use_residual_blocks=_TC_DEFAULTS["use_residual_blocks"])
+    ap.set_defaults(
+        use_altitude_balanced_loss=_TC_DEFAULTS["use_altitude_balanced_loss"],
+        use_radial_cross_loss=_TC_DEFAULTS["use_radial_cross_loss"],
+    )
 
     # Hardware & Performance
     group_perf = ap.add_argument_group("Performance & Scaler")
@@ -370,11 +445,16 @@ def parse_args() -> TrainConfig:
                             help="DataLoader prefetch_factor (only valid when num_workers > 0).")
     preload_group = group_perf.add_mutually_exclusive_group()
     preload_group.add_argument("--preload-data", action="store_true", dest="preload_data",
-                               help="Always load the full dataset into CPU RAM before training.")
+                               help="Always load the full dataset into CPU RAM before training "
+                                    "(legacy alias for --preload-policy always).")
     preload_group.add_argument("--no-auto-preload", action="store_true", dest="no_auto_preload",
                                help="Disable automatic RAM preload even for small datasets.")
-    group_perf.add_argument("--auto-preload-mb", type=float, default=256.0,
-                            help="Auto-preload when dataset size is at most this many MB (default: 256).")
+    group_perf.add_argument("--auto-preload-mb", type=float, default=_TC_DEFAULTS["auto_preload_mb"],
+                            help="Auto-preload when dataset size is at most this many MB (default: 2048).")
+    group_perf.add_argument("--preload-policy", choices=["auto", "always", "never"],
+                            default=_TC_DEFAULTS["preload_policy"],
+                            help="RAM preload policy: 'auto' (preload if estimated size <= --auto-preload-mb "
+                                 "and RAM allows), 'always', or 'never' (default: auto).")
 
     # Direction Loss
     group_dir = ap.add_argument_group("Direction Loss")
@@ -417,18 +497,26 @@ def parse_args() -> TrainConfig:
 
     # Altitude-Balanced Loss
     group_alt = ap.add_argument_group("Altitude-Balanced Loss")
-    group_alt.add_argument("--use-altitude-balanced-loss", action="store_true", default=False,
-                           help="Compute acceleration error by altitude bins instead of raw sample mean.")
+    alt_bal_group = group_alt.add_mutually_exclusive_group()
+    alt_bal_group.add_argument("--use-altitude-balanced-loss", action="store_true", dest="use_altitude_balanced_loss",
+                               help="Compute acceleration error by altitude bins instead of raw sample mean (default: on).")
+    alt_bal_group.add_argument("--no-altitude-balanced-loss", action="store_false", dest="use_altitude_balanced_loss",
+                               help="Use the raw per-sample mean instead of altitude-binned balancing (legacy).")
     group_alt.add_argument("--altitude-bin-width-km", type=float, default=50.0, help="Bin width in km.")
     group_alt.add_argument("--altitude-min-km", type=float, default=_DEFAULT_ALT_MIN_KM, help="Min altitude in km.")
     group_alt.add_argument("--altitude-max-km", type=float, default=_DEFAULT_ALT_MAX_KM, help="Max altitude in km.")
 
     # Radial / Cross-Radial Loss
     group_rad = ap.add_argument_group("Radial/Cross-Radial Loss")
-    group_rad.add_argument("--use-radial-cross-loss", action="store_true", default=False,
-                           help="Decompose acceleration error and penalise components.")
-    group_rad.add_argument("--radial-loss-weight", type=float, default=0.0, help="Weight for radial loss.")
-    group_rad.add_argument("--cross-loss-weight", type=float, default=0.0, help="Weight for cross-radial loss.")
+    rad_cross_group = group_rad.add_mutually_exclusive_group()
+    rad_cross_group.add_argument("--use-radial-cross-loss", action="store_true", dest="use_radial_cross_loss",
+                                 help="Decompose acceleration error and penalise radial/cross components (default: on).")
+    rad_cross_group.add_argument("--no-radial-cross-loss", action="store_false", dest="use_radial_cross_loss",
+                                 help="Disable the radial/cross-radial acceleration penalties (legacy).")
+    group_rad.add_argument("--radial-loss-weight", type=float, default=_TC_DEFAULTS["radial_loss_weight"],
+                           help="Weight for radial loss (default: 0.05).")
+    group_rad.add_argument("--cross-loss-weight", type=float, default=_TC_DEFAULTS["cross_loss_weight"],
+                           help="Weight for cross-radial loss (default: 0.10).")
 
     # Sparse Laplacian Regularization
     group_lap = ap.add_argument_group("Sparse Laplacian Regularization")
@@ -442,7 +530,10 @@ def parse_args() -> TrainConfig:
                            help="Rademacher samples per Hutchinson trace estimate (K=4 → ~50%% relative error).")
     group_lap.add_argument("--laplacian-mode",
         choices=["off", "diagnostic", "train"], default=_TC_DEFAULTS.get('laplacian_mode', 'diagnostic'),
-        help="Laplacian regularization mode: off=skip, diagnostic=log only, train=backprop (requires create_graph=True).")
+        help="Laplacian regularization mode. "
+             "diagnostic = logs the physics (Laplace) violation only, no gradient is backpropagated; "
+             "train = backpropagates the Laplacian penalty into model weights (create_graph=True); "
+             "off = skip entirely. Default: diagnostic.")
     group_lap.add_argument("--collocation-laplacian-every", type=int, default=25,
         help="Optimizer steps between collocation Laplacian evaluations (default: 25).")
     group_lap.add_argument("--collocation-alt-min-km", type=float, default=None,
@@ -517,10 +608,11 @@ def parse_args() -> TrainConfig:
                                 "Recommended for --depth >= 6.")
     res_group.add_argument("--no-residual-blocks", action="store_false", dest="use_residual_blocks",
                            help="Use plain Linear+Sine hidden layers (legacy default).")
-    group_pinn.add_argument("--n-bands", type=int, default=1,
+    group_pinn.add_argument("--n-bands", type=int, default=_TC_DEFAULTS["n_bands"],
                             help="Number of harmonic frequency bands for multi-scale SIREN. "
                                  ">1 uses MultiScaleSirenMLP with band w0s derived from "
-                                 "degree_min/degree_max. (default: 1 = standard SirenMLP)")
+                                 "degree_min/degree_max. (default: 3 = multi-scale; requires "
+                                 "degree_max metadata. Use 1 for standard SirenMLP / --legacy-defaults.)")
     group_pinn.add_argument("--grad-accumulation-steps", type=int, default=1,
                             help="Accumulate gradients over N batches before optimizer step. "
                                  "Effective batch = batch_size × N. (default: 1 = no accumulation)")
@@ -554,6 +646,17 @@ def parse_args() -> TrainConfig:
                               help="Enable cudnn.benchmark autotuner (non-deterministic).")
     ap.set_defaults(deterministic=True)
 
+    # Legacy defaults preset
+    group_legacy = ap.add_argument_group("Legacy Defaults")
+    group_legacy.add_argument(
+        "--legacy-defaults", action="store_true", default=False,
+        help="Restore the older conservative defaults (depth=5, no residual blocks, "
+             "n_bands=1, accel-ramp=80, accel-min=0.05, direction-loss-weight=0.10, "
+             "direction-loss-start=15, direction-loss-floor=3e-6, no altitude-balanced loss, "
+             "no radial/cross loss, best-metric=total_loss, hybrid-alpha=0.5). "
+             "Any value you pass explicitly on the CLI is preserved.",
+    )
+
     # Logging & Quick-check
     group_log = ap.add_argument_group("Logging & Quick-check")
     group_log.add_argument("--log-every", type=int, default=10,
@@ -566,45 +669,41 @@ def parse_args() -> TrainConfig:
                            help="Cap the number of validation batches per epoch (None = full epoch).")
 
     # ---------------------------------------------------------------------------
-    # Recommended angular-drift mitigation preset (copy-paste template):
-    # python st_lrps_train.py \
-    #   --data path/to/train.h5 \
-    #   --epochs 250 \
-    #   --batch-size 16384 \
-    #   --hidden 512 \
-    #   --depth 6 \
-    #   --activation sine \
-    #   --lr 1e-4 \
-    #   --w-u 1.0 \
-    #   --w-a 1.0 \
-    #   --gradnorm-mode ntk_init \
-    #   --potential-only-epochs 0 \
-    #   --accel-ramp-epochs 40 \
-    #   --accel-min-factor 0.15 \
-    #   --direction-loss-weight 0.20 \
-    #   --direction-loss-start-epoch 10 \
-    #   --direction-loss-ramp-epochs 40 \
-    #   --direction-loss-floor-abs 1e-7 \
-    #   --use-altitude-balanced-loss \
-    #   --altitude-bin-width-km 50 \
-    #   --use-radial-cross-loss \
-    #   --radial-loss-weight 0.05 \
-    #   --cross-loss-weight 0.10 \
-    #   --use-residual-blocks \
-    #   --n-bands 3 \
-    #   --grad-accumulation-steps 2 \
-    #   --preload-data \
-    #   --best-metric hybrid \
-    #   --hybrid-direction-alpha 0.30
+    # Recommended production defaults (NOW THE BUILT-IN DEFAULTS).
+    # The following are the active defaults as of this revision, so the minimal
+    # recommended run is simply:
+    #
+    #   python st_lrps_train.py --data path/to/train.h5 --epochs 250
+    #
+    # Active defaults baked in here:
+    #   hidden=512, depth=6, activation=sine, lr=1e-4, weight_decay=1e-6,
+    #   batch_size=8192, gradnorm_mode=ntk_init,
+    #   use_residual_blocks=True, n_bands=3,
+    #   accel_ramp_epochs=40, accel_min_factor=0.15,
+    #   direction_loss_weight=0.20, direction_loss_start_epoch=10,
+    #   direction_loss_ramp_epochs=40, direction_loss_floor_abs=1e-7,
+    #   use_altitude_balanced_loss=True, altitude_bin_width_km=50,
+    #   use_radial_cross_loss=True, radial_loss_weight=0.05, cross_loss_weight=0.10,
+    #   best_metric=hybrid, hybrid_direction_alpha=0.30,
+    #   u_scale_mode=hybrid, a_scale_mode=hybrid, target_scale_multiplier=6.0.
     # Notes:
+    #   - n_bands=3 (multi-scale SIREN) REQUIRES degree_max in the dataset metadata.
+    #     Use --n-bands 1 (or --legacy-defaults) for datasets without it.
     #   - If direction-loss-floor-abs=1e-7 causes noise in low-residual regions,
     #     increase to 3e-7 or 1e-6.
-    #   - If VRAM is insufficient, use --batch-size 8192 --grad-accumulation-steps 4.
-    #   - If depth=6 + residual blocks is incompatible with a saved architecture,
-    #     remove --use-residual-blocks and --n-bands (inference-compat constraint).
+    #   - If VRAM is insufficient: --batch-size 4096 --grad-accumulation-steps 4
+    #     (an advisory warning is printed at startup when batch_size looks large
+    #     for the detected GPU).
+    #   - To reproduce the older conservative configuration, pass --legacy-defaults.
     # ---------------------------------------------------------------------------
 
     a = ap.parse_args()
+
+    # 0. Legacy defaults preset (--legacy-defaults).
+    # Restores the older conservative configuration, but only for fields the user
+    # did NOT explicitly set on the command line. Explicit CLI values always win.
+    if getattr(a, "legacy_defaults", False):
+        _apply_legacy_defaults(a, sys.argv[1:])
 
     # 1. Resolve Data Path
     script_dir = Path(__file__).resolve().parent
@@ -755,6 +854,7 @@ def parse_args() -> TrainConfig:
         log_every=max(0, int(a.log_every)),
         preload_data=bool(a.preload_data),
         auto_preload_mb=float(a.auto_preload_mb) if not getattr(a, "no_auto_preload", False) else 0.0,
+        preload_policy=("never" if getattr(a, "no_auto_preload", False) else str(a.preload_policy)),
         quick_check=bool(a.quick_check),
         max_train_batches=(int(a.max_train_batches) if a.max_train_batches is not None else None),
         max_val_batches=(int(a.max_val_batches) if a.max_val_batches is not None else None),

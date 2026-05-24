@@ -43,7 +43,7 @@ try:
     from .st_lrps_data import (
         DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
         _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
-        _resolve_lunar_dataset_contract, collate_h5, infer_a_sign_from_data,
+        _resolve_lunar_dataset_contract, collate_xyz_u_a, infer_a_sign_from_data,
         validate_training_dataset_convention,
     )
     from .st_lrps_artifacts import (
@@ -78,7 +78,7 @@ except ImportError:  # pragma: no cover
     from st_lrps_data import (
         DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
         _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
-        _resolve_lunar_dataset_contract, collate_h5, infer_a_sign_from_data,
+        _resolve_lunar_dataset_contract, collate_xyz_u_a, infer_a_sign_from_data,
         validate_training_dataset_convention,
     )
     from st_lrps_artifacts import (  # type: ignore
@@ -169,6 +169,126 @@ def _cuda_memory_string(device: torch.device) -> str:
     alloc_mb = torch.cuda.memory_allocated(device) // (1024 * 1024)
     reserved_mb = torch.cuda.memory_reserved(device) // (1024 * 1024)
     return f" cuda_mem={alloc_mb}/{reserved_mb}MiB"
+
+
+def _available_ram_mb() -> Optional[float]:
+    """Return available system RAM in MB using psutil, or None if unavailable.
+
+    psutil is an optional dependency: when it is missing we simply skip the
+    RAM-safety check rather than failing the run.
+    """
+    try:
+        import psutil  # optional
+    except Exception:
+        return None
+    try:
+        return float(psutil.virtual_memory().available) / (1024.0 * 1024.0)
+    except Exception:
+        return None
+
+
+def _estimate_preload_ram_mb(n_rows: int) -> float:
+    """Estimate peak RAM (MB) to preload ``n_rows`` of [x,y,z,U,ax,ay,az].
+
+    The preload path reads the whole array as float64 ``(N, 7)`` and then builds
+    float32 train/val copies, so the transient peak is roughly the float64 buffer
+    plus the float32 copies.
+    """
+    f64 = float(n_rows) * 7.0 * 8.0
+    f32 = float(n_rows) * 7.0 * 4.0
+    return (f64 + f32) / (1024.0 * 1024.0)
+
+
+def _decide_preload(
+    policy: str,
+    *,
+    dataset_mb: float,
+    auto_preload_mb: float,
+    est_ram_mb: float,
+    avail_ram_mb: Optional[float],
+) -> Tuple[bool, str]:
+    """Resolve whether to RAM-preload the dataset and explain why.
+
+    Returns ``(should_preload, reason)``. The 60%-of-available-RAM guard vetoes
+    the ``auto`` decision; under an explicit ``always`` request it does not veto
+    but emits a loud warning embedded in the reason string.
+    """
+    policy = str(policy).strip().lower()
+    over_ram = (avail_ram_mb is not None) and (est_ram_mb > 0.60 * avail_ram_mb)
+
+    if policy == "never":
+        return False, "policy=never"
+    if policy == "always":
+        if over_ram:
+            return True, (
+                f"policy=always (WARNING: estimated {est_ram_mb:.0f} MB exceeds 60% of "
+                f"available {avail_ram_mb:.0f} MB - OOM risk; honouring explicit request)"
+            )
+        return True, "policy=always"
+    # auto
+    if dataset_mb > auto_preload_mb:
+        return False, (
+            f"policy=auto: dataset {dataset_mb:.1f} MB > auto_preload_mb {auto_preload_mb:.1f} MB"
+        )
+    if over_ram:
+        return False, (
+            f"policy=auto: estimated {est_ram_mb:.0f} MB > 60% of available "
+            f"{avail_ram_mb:.0f} MB (RAM safety veto)"
+        )
+    return True, (
+        f"policy=auto: dataset {dataset_mb:.1f} MB <= auto_preload_mb {auto_preload_mb:.1f} MB"
+    )
+
+
+def _warn_batch_size_for_vram(device: torch.device, cfg: TrainConfig) -> None:
+    """Advisory-only check: warn if batch_size looks large for the detected GPU.
+
+    Sobolev training holds a second-order autograd graph (a = ∇U), so memory
+    scales with batch_size, depth, and the number of multi-scale bands. This
+    never changes the batch size — it only suggests using
+    ``grad_accumulation_steps`` to keep the effective batch while fitting VRAM.
+    """
+    if device.type != "cuda":
+        return
+    try:
+        props = torch.cuda.get_device_properties(device)
+        total_gb = float(props.total_memory) / (1024.0 ** 3)
+        gpu_name = props.name
+    except Exception:
+        return
+
+    bs = int(cfg.batch_size)
+    depth = int(getattr(cfg, "depth", 6))
+    n_bands = int(getattr(cfg, "n_bands", 1))
+    heavy = depth >= 6 and n_bands >= 3
+    logger.info(f"CUDA device: {gpu_name} ({total_gb:.1f} GiB total VRAM)")
+
+    suggestion = (
+        "Sobolev autograd memory scales with batch_size×depth×n_bands. "
+        "Prefer raising --grad-accumulation-steps over lowering the effective batch."
+    )
+    if total_gb <= 8.0:
+        if bs > 4096:
+            logger.warning(
+                f"VRAM advisory: batch_size={bs} on a {total_gb:.1f} GiB GPU may OOM. "
+                f"Consider --batch-size 4096 with --grad-accumulation-steps 2-4. {suggestion}"
+            )
+    elif total_gb <= 16.0:
+        if heavy and bs >= 8192:
+            logger.warning(
+                f"VRAM advisory: batch_size={bs} with depth={depth}+n_bands={n_bands} on a "
+                f"{total_gb:.1f} GiB GPU is borderline. If you hit OOM, use "
+                f"--grad-accumulation-steps 2. {suggestion}"
+            )
+        elif bs > 16384:
+            logger.warning(
+                f"VRAM advisory: batch_size={bs} on a {total_gb:.1f} GiB GPU may be tight. {suggestion}"
+            )
+    else:
+        if bs > 65536:
+            logger.warning(
+                f"VRAM advisory: batch_size={bs} is very large even for {total_gb:.1f} GiB. {suggestion}"
+            )
 
 def move_batch_to_device(
     x: torch.Tensor,
@@ -334,6 +454,7 @@ class STLRPSTrainer:
                         laplacian_lambda=float(self.cfg.laplacian_weight),
                         laplacian_subset_size=int(self.cfg.laplacian_subset_size),
                         laplacian_n_hutchinson=int(getattr(self.cfg, "n_hutchinson_samples", 4)),
+                        laplacian_mode=self.laplacian_mode,
                     )
 
                 # Explosion guard: stop on NaN/Inf immediately to avoid corrupt checkpoints.
@@ -913,6 +1034,42 @@ def train(cfg: TrainConfig) -> None:
 
     logger.info(f"[artifacts] run_dir={outdir}")
     logger.info(f"Using device: {device.type.upper()}")
+    _warn_batch_size_for_vram(device, cfg)
+
+    # Effective configuration summary (so the active feature set is unambiguous in
+    # the log, especially now that several features default ON).
+    _grad_accum = int(getattr(cfg, "grad_accumulation_steps", 1))
+    logger.info("=== Effective Training Configuration ===")
+    logger.info(
+        f"  arch: hidden={cfg.hidden} depth={cfg.depth} activation={cfg.activation} "
+        f"residual_blocks={bool(getattr(cfg, 'use_residual_blocks', False))} "
+        f"n_bands={int(getattr(cfg, 'n_bands', 1))} "
+        f"(multi-scale SIREN {'ACTIVE' if int(getattr(cfg, 'n_bands', 1)) > 1 else 'off'})"
+    )
+    logger.info(
+        f"  optim: lr={cfg.lr:g} weight_decay={cfg.weight_decay:g} batch_size={cfg.batch_size} "
+        f"grad_accum={_grad_accum} (effective batch={cfg.batch_size * _grad_accum})"
+    )
+    logger.info(
+        f"  curriculum: accel_ramp_epochs={cfg.accel_ramp_epochs} accel_min_factor={getattr(cfg, 'accel_min_factor', 0.05)}"
+    )
+    logger.info(
+        f"  direction loss: weight={cfg.direction_loss_weight} start_epoch={cfg.direction_loss_start_epoch} "
+        f"ramp={cfg.direction_loss_ramp_epochs} floor_abs={cfg.direction_loss_floor_abs:g}"
+    )
+    logger.info(
+        f"  altitude_balanced_loss={bool(cfg.use_altitude_balanced_loss)} | "
+        f"radial_cross_loss={bool(cfg.use_radial_cross_loss)} "
+        f"(radial_w={cfg.radial_loss_weight}, cross_w={cfg.cross_loss_weight})"
+    )
+    logger.info(
+        f"  best_checkpoint_metric={getattr(cfg, 'best_metric', 'total_loss')} "
+        f"(hybrid_alpha={getattr(cfg, 'hybrid_direction_alpha', 0.5)}) | "
+        f"scalers u={getattr(cfg, 'u_scale_mode', 'hybrid')}/a={getattr(cfg, 'a_scale_mode', 'hybrid')} "
+        f"mult={getattr(cfg, 'target_scale_multiplier', 6.0)}"
+    )
+    logger.info("  (w0_bands for multi-scale SIREN are resolved from dataset degrees and logged at model build)")
+
     command_line = write_command_txt(layout)
     write_run_manifest(
         layout,
@@ -1157,7 +1314,18 @@ def train(cfg: TrainConfig) -> None:
     if cfg.use_radial_cross_loss:
         logger.info(f"  Radial/Cross Loss: ON (radial_w={cfg.radial_loss_weight}, cross_w={cfg.cross_loss_weight})")
     if cfg.use_laplacian_regularization:
-        logger.info(f"  Laplacian Reg: ON (w={cfg.laplacian_weight}, every={cfg.laplacian_every_n_batches})")
+        _lap_mode_log = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
+        if _lap_mode_log == "train":
+            logger.info(
+                f"  In-batch Laplacian Reg: ON, mode=train (gradient backpropagates) "
+                f"(w={cfg.laplacian_weight}, every={cfg.laplacian_every_n_batches})"
+            )
+        else:
+            logger.info(
+                f"  In-batch Laplacian Reg: ON, mode={_lap_mode_log} (DIAGNOSTIC ONLY - logged, "
+                f"NOT backpropagated). For a trainable physics constraint set --laplacian-mode train "
+                f"(collocation Laplacian is the preferred trainable regulariser)."
+            )
     logger.info(f"  Direction Loss: weight={cfg.direction_loss_weight}, start={cfg.direction_loss_start_epoch}, ramp={cfg.direction_loss_ramp_epochs}")
     _bm = str(getattr(cfg, "best_metric", "total_loss"))
     _ha = float(getattr(cfg, "hybrid_direction_alpha", 0.5))
@@ -1246,7 +1414,32 @@ def train(cfg: TrainConfig) -> None:
 
     # 8. Construct DataLoaders
     dataset_mb = bytes_est / (1024.0 * 1024.0)
-    should_preload = cfg.preload_data or (dataset_mb <= cfg.auto_preload_mb)
+    # Resolve the preload policy. --preload-data is a legacy alias for "always".
+    _policy = str(getattr(cfg, "preload_policy", "auto")).strip().lower()
+    if bool(getattr(cfg, "preload_data", False)) and _policy != "never":
+        _policy = "always"
+    _est_ram_mb = _estimate_preload_ram_mb(int(N))
+    _avail_ram_mb = _available_ram_mb()
+    should_preload, _preload_reason = _decide_preload(
+        _policy,
+        dataset_mb=dataset_mb,
+        auto_preload_mb=float(getattr(cfg, "auto_preload_mb", 2048.0)),
+        est_ram_mb=_est_ram_mb,
+        avail_ram_mb=_avail_ram_mb,
+    )
+    logger.info("=== Data Loading Policy ===")
+    logger.info(f"  dataset estimated size : {dataset_mb:.1f} MB ({N:,} rows)")
+    logger.info(f"  preload_policy         : {_policy}")
+    logger.info(f"  auto_preload_mb        : {float(getattr(cfg, 'auto_preload_mb', 2048.0)):.1f} MB")
+    logger.info(f"  estimated preload RAM  : {_est_ram_mb:.0f} MB")
+    if _avail_ram_mb is not None:
+        logger.info(f"  available system RAM   : {_avail_ram_mb:.0f} MB (psutil)")
+    else:
+        logger.info("  available system RAM   : unknown (psutil not installed; RAM safety check skipped)")
+    logger.info(f"  decision               : {'RAM preload' if should_preload else 'HDF5 streaming'}")
+    logger.info(f"  reason                 : {_preload_reason}")
+    if should_preload and "WARNING" in _preload_reason:
+        logger.warning(f"Preload RAM-safety: {_preload_reason}")
 
     if should_preload:
         logger.info(f"Data mode: RAM preload")
@@ -1311,7 +1504,7 @@ def train(cfg: TrainConfig) -> None:
 
         _dl_kw: Dict[str, Any] = dict(
             batch_size=cfg.batch_size, num_workers=mem_workers, pin_memory=pin,
-            persistent_workers=(mem_workers > 0), collate_fn=collate_h5,
+            persistent_workers=(mem_workers > 0), collate_fn=collate_xyz_u_a,
         )
         if pf is not None:
             _dl_kw["prefetch_factor"] = pf
@@ -1356,12 +1549,12 @@ def train(cfg: TrainConfig) -> None:
         _tr_kw: Dict[str, Any] = dict(
             batch_size=cfg.batch_size, sampler=train_sampler,
             num_workers=train_workers, pin_memory=pin,
-            persistent_workers=(train_workers > 0), collate_fn=collate_h5, drop_last=True,
+            persistent_workers=(train_workers > 0), collate_fn=collate_xyz_u_a, drop_last=True,
         )
         _va_kw: Dict[str, Any] = dict(
             batch_size=cfg.batch_size, sampler=val_sampler,
             num_workers=val_workers, pin_memory=pin,
-            persistent_workers=(val_workers > 0), collate_fn=collate_h5, drop_last=False,
+            persistent_workers=(val_workers > 0), collate_fn=collate_xyz_u_a, drop_last=False,
         )
         if tr_pf is not None:
             _tr_kw["prefetch_factor"] = tr_pf
