@@ -54,13 +54,13 @@ The ST-LRPS (Sobolev-Trained Lunar Residual Potential Surrogate) component repla
 
 ## Architecture
 
-The codebase follows a strict four-layer dependency rule: each layer imports only from layers below it.
+The codebase follows a strict multi-layer dependency rule: each layer imports only from layers below it.
 
-```
+```text
 Layer 1  common/          Physical constants (SI SSOT), configuration dataclasses
 Layer 2  models/          Numba-JIT force kernels — one file per perturbation
 Layer 3  core/            ODE engine, Monte Carlo propagators, dynamics assembly
-Layer 4  analysis/ + UI   Post-processing, plotting, PDF reports, PySide6 app
+Layer 4  analysis/, etc.  Post-processing, plotting, PDF reports, PySide6 app, visualization
 ```
 
 All configuration flows through a single frozen `SimConfig` dataclass (`config.py`). CLI overrides are applied in `main.py`; the UI writes to the same dataclass through `apply_args_to_config()`.
@@ -195,7 +195,7 @@ python surrogate_gravity_model/st_lrps_train.py \
 ```bash
 python main.py \
     --gravity-backend st_lrps \
-    --st-lrps-model-dir surrogate_gravity_model/runs/st_lrps_train_<timestamp>/ \
+    --surrogate-gravity-model-dir surrogate_gravity_model/runs/st_lrps_train_<timestamp>/ \
     ...
 ```
 
@@ -232,18 +232,24 @@ Key test modules:
 
 ## Project Structure
 
-```
-common/                 Constants, type definitions, MC config dataclasses
-models/                 Force kernels: gravity, SRP, third-body, albedo, tides, relativity
-core/                   Dynamics engine, propagator, Monte Carlo engine and propagators
-analysis/               Post-processing, plotting, report generation
-loaders/                Asset loaders: gravity files, SPICE, surface grids
+```text
+common/                  Constants, type definitions, unified configuration dataclasses
+models/                  Force kernels: gravity, SRP, third-body, albedo, tides, relativity
+core/                    Dynamics engine, propagator, Monte Carlo engine and propagators
+analysis/                Post-processing, MC statistics, formatting, and report generation
+  ├── reporting/         Report management, styling, and Matplotlib plotting
+  └── monte_carlo/       Monte Carlo statistics and ensemble plotting
+loaders/                 Asset loaders: gravity files, SPICE, surface grids
+validation/              Validation and benchmark scripts
+  └── gravity/           Gravity model comparison and benchmarks
+visualization/           Interactive visualization and animation tools
 surrogate_gravity_model/ ST-LRPS data generation, training, evaluation, inference API
-ui_parts/               PySide6 page widgets and helpers
-config.py               SimConfig SSOT
-main.py                 Single-run CLI entry point
-mc_runner.py            Monte Carlo CLI entry point
-ui.py                   Desktop application entry point
+ui_parts/                PySide6 page widgets and helpers
+cli/                     Command-line interface helpers
+config.py                SimConfig Single Source of Truth
+main.py                  Single-run CLI entry point
+mc_runner.py             Monte Carlo CLI entry point
+ui.py                    Desktop application entry point
 ```
 
 ---
