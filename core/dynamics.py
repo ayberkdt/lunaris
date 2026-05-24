@@ -1,4 +1,4 @@
-﻿# LUNAR_SIMULATION/core/dynamics.py
+# ST_LRPS/core/dynamics.py
 # -*- coding: utf-8 -*-
 """
 Core Dynamics Engine (EOM / RHS Builder)
@@ -153,7 +153,11 @@ def _is_surrogate_gravity_provider(obj: Any) -> bool:
     that provider class and route the RHS build accordingly.
     """
 
-    return bool(obj is not None and hasattr(obj, "acceleration_fixed"))
+    return bool(
+        obj is not None 
+        and getattr(obj, "model_kind", None) == "st_lrps"
+        and hasattr(obj, "acceleration_fixed")
+    )
 
 
 @njit(cache=True)
@@ -421,14 +425,8 @@ def extract_surface_provider_strict(surface_provider: Any) -> Dict[str, Any]:
             raise TypeError("surface_provider.as_numba_dict() must return a mapping/dict.")
         return dict(p)
 
-    if hasattr(surface_provider, "get_provider"):
-        p = surface_provider.get_provider()  # type: ignore[attr-defined]
-        if not isinstance(p, Mapping):
-            raise TypeError("surface_provider.get_provider() must return a mapping/dict.")
-        return dict(p)
-
     raise TypeError(
-        "surface_provider must be a mapping/dict or implement as_numba_dict()->mapping (UI contract)."
+        "surface_provider must be a mapping/dict or implement as_numba_dict()."
     )
 
 
@@ -812,25 +810,19 @@ class DynamicsEngine:
         # Features that may exist on flags but are not implemented here
         f = self.flags
         if bool(getattr(f, "enable_thermal", getattr(f, "enable_thermal_ir", False))):
-            warnings.warn(
-                "Thermal perturbation enabled but not implemented in core.dynamics (ignored).",
-                category=RuntimeWarning,
-                stacklevel=2,
+            raise NotImplementedError(
+                "Thermal perturbation enabled but not implemented in core.dynamics."
             )
         if bool(getattr(f, "enable_tides_k2", False)) or bool(getattr(f, "enable_tides_k3", False)) or bool(
             getattr(f, "enable_solid_tides", False)
         ):
-            warnings.warn(
-                "Solid tides enabled but not implemented in core.dynamics (ignored).",
-                category=RuntimeWarning,
-                stacklevel=2,
+            raise NotImplementedError(
+                "Solid tides enabled but not implemented in core.dynamics."
             )
 
         if bool(getattr(f, "enable_earth_j2", False)) and (self.earth_j2 is None):
-            warnings.warn(
-                "enable_earth_j2=True but earth_j2 params are None. Running without Earth J2.",
-                category=RuntimeWarning,
-                stacklevel=2,
+            raise ValueError(
+                "enable_earth_j2=True but earth_j2 params are None."
             )
 
     # -------------------------------------------------------------------------

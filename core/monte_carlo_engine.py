@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/core/monte_carlo_engine.py
+# ST_LRPS/core/monte_carlo_engine.py
 # -*- coding: utf-8 -*-
 """
 Monte Carlo Dispatch Engine
@@ -58,95 +58,12 @@ import numpy as np
 from common.constants import DAY_S, MU_MOON, R_MOON
 from common.montecarlo_defs import MCRunResult, MonteCarloConfig, StateUncertainty
 from common.type_defs import F64Array
+from models.gravity_adapter import adapt_gravity_model
 
 
 # =============================================================================
 # 0.                    LOCAL BOOTSTRAP / COMPAT HELPERS
 # =============================================================================
-
-class _GravityModelAdapter:
-    """
-    Normalize the modern ``GravityModel`` API to the strict core.dynamics contract.
-
-    The Monte Carlo engine intentionally mirrors the runtime bootstrap used by
-    the main single-run pipeline.  The dynamics layer expects attributes such
-    as ``degree_max`` / ``R_ref_m`` / ``GM_m3s2`` while the modern
-    ``models.spherical_harmonics.GravityModel`` exposes ``max_degree`` /
-    ``r_ref`` / ``mu``.  This lightweight adapter keeps the MC path aligned
-    with the rest of the project without mutating the source model object.
-    """
-
-    __slots__ = ("_model",)
-
-    def __init__(self, model: Any) -> None:
-        self._model = model
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._model, name)
-
-    @property
-    def degree_max(self) -> int:
-        return int(getattr(self._model, "degree_max", getattr(self._model, "max_degree")))
-
-    @property
-    def R_ref_m(self) -> float:
-        return float(getattr(self._model, "R_ref_m", getattr(self._model, "r_ref")))
-
-    @property
-    def GM_m3s2(self) -> float:
-        return float(getattr(self._model, "GM_m3s2", getattr(self._model, "mu")))
-
-    @property
-    def ws(self) -> Any:
-        return getattr(self._model, "ws", getattr(self._model, "workspace"))
-
-    def make_workspace(self) -> Any:
-        if hasattr(self._model, "make_workspace"):
-            return self._model.make_workspace()
-        return self.ws
-
-    @property
-    def Cnm(self) -> Any:
-        return getattr(self._model, "Cnm", getattr(self._model, "c_coeffs"))
-
-    @property
-    def Snm(self) -> Any:
-        return getattr(self._model, "Snm", getattr(self._model, "s_coeffs"))
-
-    @property
-    def diag(self) -> Any:
-        return getattr(self._model, "diag", getattr(self._model, "diag_coeffs"))
-
-    @property
-    def subdiag(self) -> Any:
-        return getattr(self._model, "subdiag", getattr(self._model, "subdiag_coeffs"))
-
-    @property
-    def A(self) -> Any:
-        return getattr(self._model, "A", getattr(self._model, "a_coeffs"))
-
-    @property
-    def B(self) -> Any:
-        return getattr(self._model, "B", getattr(self._model, "b_coeffs"))
-
-    @property
-    def scale_m(self) -> Any:
-        return getattr(self._model, "scale_m", getattr(self._model, "scale_m_table"))
-
-
-def _adapt_gravity_model(model: Any) -> Any:
-    """
-    Return the model unchanged when it already satisfies the strict contract.
-
-    Keeping this as a helper instead of inlining the attribute checks makes the
-    MC bootstrap easier to follow and keeps the compatibility story explicit.
-    """
-
-    required = ("degree_max", "R_ref_m", "GM_m3s2", "Cnm", "Snm", "diag", "subdiag", "A", "B")
-    if all(hasattr(model, name) for name in required) and hasattr(model, "ws"):
-        return model
-    return _GravityModelAdapter(model)
-
 
 def _state_to_array(state_like: Any) -> np.ndarray:
     """
@@ -632,20 +549,27 @@ class MonteCarloEngine:
                     from models.spherical_harmonics import GravityModel
 
                     requested_degree = int(cfg.gravity.degree) if cfg.gravity.degree is not None else None
-                    grav_model = _adapt_gravity_model(
+                    grav_model = adapt_gravity_model(
                         GravityModel.from_file(
                             path=str(cfg.gravity.file_path),
                             requested_degree=requested_degree,
                         )
                     )
             except Exception as exc:
-                warnings.warn(f"[MC] Could not load gravity model: {exc}", RuntimeWarning)
+                raise RuntimeError(
+                    f"Monte Carlo bootstrap failed: Could not load gravity model.\n"
+                    f"ST-LRPS mode: {getattr(cfg.gravity, 'uses_st_lrps', False)}\n"
+                    f"Error: {exc}"
+                ) from exc
 
         if _need_ephemeris(cfg, topo_requested=topo_requested):
             try:
                 ephem_manager = _build_ephemeris_manager(cfg)
             except Exception as exc:
-                warnings.warn(f"[MC] Could not load ephemeris: {exc}", RuntimeWarning)
+                raise RuntimeError(
+                    f"Monte Carlo bootstrap failed: Could not load ephemeris.\n"
+                    f"Error: {exc}"
+                ) from exc
 
         earth_j2 = getattr(cfg, "earth_j2", None)
 

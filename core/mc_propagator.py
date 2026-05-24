@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/core/mc_propagator.py
+# ST_LRPS/core/mc_propagator.py
 # -*- coding: utf-8 -*-
 """
 Batch Monte Carlo Propagators (GPU + CPU)
@@ -1324,6 +1324,8 @@ class CPUBatchPropagator:
                     float(result.t_impact_s) if result.t_impact_s is not None else float("nan"),
                 )
             except Exception as exc:
+                if not getattr(self._mc, "allow_sample_failures", False):
+                    raise RuntimeError(f"Monte Carlo CPU sample {i} failed: {exc}") from exc
                 warnings.warn(f"[MC][CPU] Sample {i} failed: {exc}", RuntimeWarning)
                 results_by_idx[i] = (None, None, False, float("nan"))
 

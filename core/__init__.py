@@ -1,7 +1,7 @@
-# LUNAR_SIMULATION/core/__init__.py
+# ST_LRPS/core/__init__.py
 # -*- coding: utf-8 -*-
 """
-LunarSim core simulation engine.
+ST_LRPS core simulation engine.
 
 This package contains the runtime logic of the simulation:
 - state helpers (Cartesian/COE utilities)
@@ -13,7 +13,7 @@ Public API is exposed lazily via PEP 562 (__getattr__) to keep import time low.
 
 Typical usage:
     from core import DynamicsEngine, propagate
-    from core import create_state_from_coe, ae_from_rp_ra, events
+    from core import create_state_from_keplerian, events
 """
 
 from __future__ import annotations
@@ -27,15 +27,22 @@ __all__ = [
     "DynamicsEngine",
     "propagate",
     "build_events",
-    "create_state_from_coe",
-    "ae_from_rp_ra",
+    "create_state_from_keplerian",
+    "calculate_ae_from_altitudes",
+    "calculate_ae_from_radii",
+    "calculate_altitudes_from_ae",
     "events",
 ]
 
 if TYPE_CHECKING:
     from .dynamics import DynamicsEngine
     from .propagator import build_events, propagate
-    from .state import ae_from_rp_ra, create_state_from_coe
+    from .state import (
+        create_state_from_keplerian,
+        calculate_ae_from_altitudes,
+        calculate_ae_from_radii,
+        calculate_altitudes_from_ae,
+    )
     from . import events
 
 
@@ -44,8 +51,10 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "DynamicsEngine": (".dynamics", "DynamicsEngine"),
     "propagate": (".propagator", "propagate"),
     "build_events": (".propagator", "build_events"),
-    "create_state_from_coe": (".state", "create_state_from_coe"),
-    "ae_from_rp_ra": (".state", "ae_from_rp_ra"),
+    "create_state_from_keplerian": (".state", "create_state_from_keplerian"),
+    "calculate_ae_from_altitudes": (".state", "calculate_ae_from_altitudes"),
+    "calculate_ae_from_radii": (".state", "calculate_ae_from_radii"),
+    "calculate_altitudes_from_ae": (".state", "calculate_altitudes_from_ae"),
 }
 
 

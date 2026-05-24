@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/core/events.py
+# ST_LRPS/core/events.py
 # -*- coding: utf-8 -*-
 """
 core.events

@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/core/torch_batch_propagator.py
+# ST_LRPS/core/torch_batch_propagator.py
 # -*- coding: utf-8 -*-
 """
 GPU-Accelerated Batched Monte Carlo Propagator — ST-LRPS Path

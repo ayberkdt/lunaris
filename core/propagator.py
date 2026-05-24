@@ -986,8 +986,9 @@ def _integrate_fixed_step(
     if checkpoint_path:
         try:
             _atomic_save_npz(checkpoint_path, t=t_arr, y_row=y_arr)
-        except Exception:
-            pass
+        except Exception as exc:
+            import warnings
+            warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning)
 
     return (
         ode_like,
@@ -1349,8 +1350,9 @@ def propagate(
                             t_tmp = np.concatenate(t_parts) if t_parts else np.array([], dtype=np.float64)
                             y_tmp = np.concatenate(y_parts, axis=1) if y_parts else np.zeros((y0_arr.size, 0), dtype=np.float64)
                             _atomic_save_npz(checkpoint_path, t=t_tmp, y_row=y_tmp.T)
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        import warnings
+                        warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning)
 
                 if int(getattr(sol_k, "status", 0)) == 1:
                     stopped_early = True
@@ -1428,8 +1430,9 @@ def propagate(
         if checkpoint_path:
             try:
                 _atomic_save_npz(checkpoint_path, t=np.asarray(t_cat, dtype=np.float64), y_row=y_row)
-            except Exception:
-                pass
+            except Exception as exc:
+                import warnings
+                warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning)
 
         res = PropagationResult(
             t=np.asarray(t_cat, dtype=np.float64),

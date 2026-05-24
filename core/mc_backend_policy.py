@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/core/mc_backend_policy.py
+# ST_LRPS/core/mc_backend_policy.py
 # -*- coding: utf-8 -*-
 """
 Monte Carlo Backend Capability Matrix and Policy Resolver

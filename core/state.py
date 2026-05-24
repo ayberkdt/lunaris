@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/core/state.py
+# ST_LRPS/core/state.py
 # -*- coding: utf-8 -*-
 """
 Orbital State & Coordinate Transformation Engine

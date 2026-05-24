@@ -1,4 +1,4 @@
-﻿# tests/test_dynamics.py
+# tests/test_dynamics.py
 from __future__ import annotations
 
 import math
@@ -164,8 +164,12 @@ def test_acceleration_breakdown_smoke(engine_point_mass: Tuple[DynamicsEngine, c
 
 def test_surrogate_gravity_provider_can_drive_python_rhs() -> None:
     class _StubSurrogateGravity:
+        model_kind = "st_lrps"
         R_ref_m = 1_737_400.0
         GM_m3s2 = 4.9048695e12
+
+        def surrogate_forward(self, *args, **kwargs):
+            return np.array([-1.25, 0.0, 0.0], dtype=np.float64)
 
         def acceleration_fixed(self, _r_fixed):
             return np.array([-1.25, 0.0, 0.0], dtype=np.float64)
