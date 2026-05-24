@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/analysis/mc_plotting.py
+# ST_LRPS/analysis/mc_plotting.py
 # -*- coding: utf-8 -*-
 """
 Monte Carlo Visualization
@@ -45,6 +45,8 @@ from typing import Any, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from analysis.formatting import safe_float, format_percent, format_days, format_km
+
 try:
     import matplotlib
     matplotlib.use("Agg")   # non-interactive backend for headless runs
@@ -57,7 +59,7 @@ except ImportError:
     _MPL_OK = False
     plt = None  # type: ignore[assignment]
 
-from analysis.mc_analysis import (
+from analysis.monte_carlo.statistics import (
     EnsembleStatistics,
     ErrorEllipsoids,
     ImpactStatistics,
@@ -92,36 +94,13 @@ def _default_figsize(landscape: bool = True) -> Tuple[float, float]:
     return (12.0, 7.0) if landscape else (8.0, 10.0)
 
 
-def _safe_float(value: Any) -> float:
-    """Best-effort float conversion used by compact report-format helpers."""
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return math.nan
 
 
-def _format_percent(prob: Any, decimals: int = 2) -> str:
-    """Render probabilities as human-readable percentages."""
-    value = _safe_float(prob)
-    if not math.isfinite(value):
-        return "N/A"
-    return f"{value * 100.0:.{decimals}f}%"
 
 
-def _format_days(seconds: Any, decimals: int = 3) -> str:
-    """Render durations stored in seconds as day-based engineering values."""
-    value = _safe_float(seconds)
-    if not math.isfinite(value):
-        return "N/A"
-    return f"{value / DAY_S:.{decimals}f} d"
 
 
-def _format_km(value: Any, decimals: int = 3) -> str:
-    """Render kilometre-scale quantities with a consistent unit suffix."""
-    number = _safe_float(value)
-    if not math.isfinite(number):
-        return "N/A"
-    return f"{number:.{decimals}f} km"
+
 
 
 def _style_ax(ax: Any, xlabel: str = "", ylabel: str = "", title: str = "") -> None:
@@ -214,9 +193,9 @@ def plot_mc_summary(
     )
 
     kpi_specs = [
-        ("Impact Probability", _format_percent(impacts.p_impact), "#C65151"),
-        ("Survival Rate", _format_percent(n_survivors / max(1, total_samples)), "#1E7A57"),
-        ("Peak 3-sigma Tube", _format_km(peak_tube_km), "#355CBE"),
+        ("Impact Probability", format_percent(impacts.p_impact), "#C65151"),
+        ("Survival Rate", format_percent(n_survivors / max(1, total_samples)), "#1E7A57"),
+        ("Peak 3-sigma Tube", format_km(peak_tube_km), "#355CBE"),
     ]
     for idx, (label, value, accent) in enumerate(kpi_specs):
         left = 0.06 + idx * 0.30
@@ -238,18 +217,18 @@ def plot_mc_summary(
 
     left_metrics = [
         ("Scenarios", f"{total_samples:,}"),
-        ("Impacted Samples", f"{n_impacts:,} ({_format_percent(impacts.p_impact)})"),
-        ("95% Wilson CI", f"{_format_percent(impacts.p_impact_ci95[0])} to {_format_percent(impacts.p_impact_ci95[1])}"),
-        ("Mean Impact Epoch", "No impacts" if not math.isfinite(_safe_float(impacts.t_impact_mean)) else _format_days(impacts.t_impact_mean)),
-        ("Impact Time 1-sigma", _format_days(impacts.t_impact_std)),
+        ("Impacted Samples", f"{n_impacts:,} ({format_percent(impacts.p_impact)})"),
+        ("95% Wilson CI", f"{format_percent(impacts.p_impact_ci95[0])} to {format_percent(impacts.p_impact_ci95[1])}"),
+        ("Mean Impact Epoch", "No impacts" if not math.isfinite(safe_float(impacts.t_impact_mean)) else format_days(impacts.t_impact_mean)),
+        ("Impact Time 1-sigma", format_days(impacts.t_impact_std)),
         ("Output Epochs", f"{int(len(result.t)):,}"),
     ]
     right_metrics = [
-        ("Trajectory Span", _format_days(duration_s)),
-        ("Initial Mean Altitude", _format_km(initial_alt_mean_km)),
-        ("Initial Altitude 1-sigma", _format_km(initial_alt_std_km)),
-        ("Final Mean Altitude", _format_km(final_alt_mean_km)),
-        ("Final Altitude 1-sigma", _format_km(final_alt_std_km)),
+        ("Trajectory Span", format_days(duration_s)),
+        ("Initial Mean Altitude", format_km(initial_alt_mean_km)),
+        ("Initial Altitude 1-sigma", format_km(initial_alt_std_km)),
+        ("Final Mean Altitude", format_km(final_alt_mean_km)),
+        ("Final Altitude 1-sigma", format_km(final_alt_std_km)),
         ("OE Dispersion", "Included" if mc_stats.oe_disp is not None else "Not requested"),
     ]
 
@@ -296,7 +275,7 @@ def plot_mc_summary(
     fig.text(
         0.94,
         0.06,
-        "LunarSim Monte Carlo Report",
+        "ST_LRPS Monte Carlo Report",
         fontsize=9,
         color="#8A97AC",
         ha="right",
@@ -719,7 +698,7 @@ def plot_mc_report(
         p.parent.mkdir(parents=True, exist_ok=True)
         with PdfPages(str(p)) as pdf:
             info = pdf.infodict()
-            info["Title"] = "LunarSim Monte Carlo Analysis Report"
+            info["Title"] = "ST_LRPS Monte Carlo Analysis Report"
             info["Subject"] = "Monte Carlo uncertainty, dispersion, and impact-risk summary"
             for fig in figs:
                 pdf.savefig(fig, bbox_inches="tight")

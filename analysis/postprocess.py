@@ -1,7 +1,7 @@
-# LUNAR_SIMULATION/analysis/postprocess.py
+# ST_LRPS/analysis/postprocess.py
 # -*- coding: utf-8 -*-
 """
-LunarSim post-processing utilities.
+ST_LRPS post-processing utilities.
 
 This module converts raw propagation output (time grid + state history) into a
 plot/report-friendly "history" dictionary with derived series and optional
@@ -886,6 +886,7 @@ def compute_history(
     compute_eclipse: bool = True,
     compute_groundtrack: bool = True,
     compute_accel_breakdown: bool = True,
+    strict: bool = False,
 ) -> Dict[str, Any]:
     """
     Compute derived time series and event indices from a propagated state history.
@@ -1026,6 +1027,8 @@ def compute_history(
                 hist["accel_mag"] = acc_mag
                 hist["t_s_accel"] = t
         except Exception:
+            if strict:
+                raise
             # keep core history valid even if optional product fails
             pass
 
@@ -1035,6 +1038,8 @@ def compute_history(
             if gt is not None:
                 hist["groundtrack"] = gt
         except Exception:
+            if strict:
+                raise
             pass
 
     if compute_eclipse:
@@ -1045,6 +1050,8 @@ def compute_history(
                 hist["eclipse_total_s"] = float(ecl.get("total_s", 0.0))
                 hist["eclipse_fraction"] = float(ecl.get("fraction", 0.0))
         except Exception:
+            if strict:
+                raise
             pass
 
     # Preserve downsampling index if downstream wants to relate to original arrays
@@ -1076,7 +1083,7 @@ def summarize_history(hist: Dict[str, Any]) -> Dict[str, float]:
 # 6.                       HIGH-LEVEL ENTRYPOINT (STRICT)
 # =============================================================================
 
-def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None) -> Dict[str, Any]:
+def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None, *, strict: bool = False) -> Dict[str, Any]:
     """
     Preferred postprocess entry point.
 
@@ -1205,6 +1212,7 @@ def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None) ->
         compute_eclipse=bool(compute_eclipse),
         compute_groundtrack=bool(compute_groundtrack),
         compute_accel_breakdown=bool(compute_accel_breakdown),
+        strict=bool(strict),
     )
 
     # ---------------------------------------------------------------------

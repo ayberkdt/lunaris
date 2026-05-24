@@ -104,7 +104,7 @@ try:
     )
     from common.constants import MU_MOON, R_MOON
 except ImportError as exc:
-    print(f"CRITICAL: Must run from LUNAR_SIMULATION root. Missing: {exc}", file=sys.stderr)
+    print(f"CRITICAL: Must run from ST_LRPS root. Missing: {exc}", file=sys.stderr)
     sys.exit(1)
 
 from dataclasses import replace

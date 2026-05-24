@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/analysis/mc_analysis.py
+# ST_LRPS/analysis/mc_analysis.py
 # -*- coding: utf-8 -*-
 """
 Monte Carlo Statistical Analysis
@@ -36,9 +36,10 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
-from common.constants import DAY_S, R_MOON_MEAN
 from common.montecarlo_defs import MCRunResult
 from common.type_defs import F64Array
+from core.state import cartesian_to_keplerian
+from common.constants import R_MOON
 
 
 # =============================================================================
@@ -79,73 +80,6 @@ def _position_ellipsoid_axes(P_pos: F64Array) -> Tuple[F64Array, F64Array]:
     return semi_axes, eigvecs
 
 
-def _cartesian_to_keplerian(r_vec: F64Array, v_vec: F64Array, mu: float) -> Dict[str, float]:
-    """
-    Convert Cartesian state to osculating Keplerian elements.
-
-    Returns dict with keys: a_km, e, inc_deg, raan_deg, argp_deg, ta_deg.
-    Returns NaN-filled dict on degenerate input.
-    """
-    nan6 = {"a_km": math.nan, "e": math.nan, "inc_deg": math.nan,
-            "raan_deg": math.nan, "argp_deg": math.nan, "ta_deg": math.nan}
-
-    r = np.asarray(r_vec, dtype=np.float64).reshape(3)
-    v = np.asarray(v_vec, dtype=np.float64).reshape(3)
-    r_norm = float(np.linalg.norm(r))
-    v_norm = float(np.linalg.norm(v))
-    if r_norm < 1.0 or v_norm < 1e-10 or mu <= 0.0:
-        return nan6
-
-    h_vec = np.cross(r, v)
-    h     = float(np.linalg.norm(h_vec))
-    if h < 1e-10:
-        return nan6
-
-    # Eccentricity vector
-    e_vec = np.cross(v, h_vec) / mu - r / r_norm
-    e = float(np.linalg.norm(e_vec))
-
-    # Semi-major axis (vis-viva)
-    energy = v_norm ** 2 / 2.0 - mu / r_norm
-    if abs(energy) < 1e-30:
-        return nan6
-    a = -mu / (2.0 * energy)
-
-    # Inclination
-    inc = math.degrees(math.acos(float(np.clip(h_vec[2] / h, -1.0, 1.0))))
-
-    # RAAN
-    N_vec = np.cross(np.array([0.0, 0.0, 1.0]), h_vec)
-    N     = float(np.linalg.norm(N_vec))
-    if N < 1e-10:
-        raan = 0.0
-    else:
-        raan_rad = math.acos(float(np.clip(N_vec[0] / N, -1.0, 1.0)))
-        raan = math.degrees(raan_rad if N_vec[1] >= 0.0 else 2.0 * math.pi - raan_rad)
-
-    # Argument of perigee
-    if N < 1e-10 or e < 1e-10:
-        argp = 0.0
-    else:
-        argp_rad = math.acos(float(np.clip(np.dot(N_vec / N, e_vec / e), -1.0, 1.0)))
-        argp = math.degrees(argp_rad if e_vec[2] >= 0.0 else 2.0 * math.pi - argp_rad)
-
-    # True anomaly
-    if e < 1e-10:
-        ta = 0.0
-    else:
-        ta_cos = float(np.clip(np.dot(e_vec / e, r / r_norm), -1.0, 1.0))
-        ta_rad = math.acos(ta_cos)
-        ta = math.degrees(ta_rad if float(np.dot(r, v)) >= 0.0 else 2.0 * math.pi - ta_rad)
-
-    return {
-        "a_km":     a / 1_000.0,
-        "e":        e,
-        "inc_deg":  inc,
-        "raan_deg": raan,
-        "argp_deg": argp,
-        "ta_deg":   ta,
-    }
 
 
 def _binomial_ci_wilson(k: int, n: int, z: float = 1.96) -> Tuple[float, float]:
@@ -290,7 +224,7 @@ def compute_ensemble_statistics(
     result: MCRunResult,
     *,
     use_survived_only: bool = False,
-    r_ref_m: float = R_MOON_MEAN,
+    r_ref_m: float = R_MOON,
 ) -> EnsembleStatistics:
     """
     Compute time-varying mean, covariance, and altitude statistics.
@@ -381,7 +315,7 @@ def compute_error_ellipsoids(
 def compute_impact_statistics(
     result: MCRunResult,
     *,
-    r_ref_m: float = R_MOON_MEAN,
+    r_ref_m: float = R_MOON,
 ) -> ImpactStatistics:
     """
     Compute impact probability and geographic distribution of impact sites.
@@ -468,10 +402,15 @@ def compute_oe_dispersion(
     for k in range(T):
         a_arr   = np.zeros(sub); e_arr   = np.zeros(sub); inc_arr = np.zeros(sub)
         for j, i in enumerate(idx):
-            oe = _cartesian_to_keplerian(Y[k, i, :3], Y[k, i, 3:], mu)
-            a_arr[j]   = oe["a_km"]   if math.isfinite(oe["a_km"])   else math.nan
-            e_arr[j]   = oe["e"]      if math.isfinite(oe["e"])      else math.nan
-            inc_arr[j] = oe["inc_deg"]if math.isfinite(oe["inc_deg"])else math.nan
+            try:
+                a_m, e_val, inc_rad, _, _, _ = cartesian_to_keplerian(Y[k, i, :3], Y[k, i, 3:], mu=mu)
+                a_arr[j]   = (a_m / 1000.0) if math.isfinite(a_m) else math.nan
+                e_arr[j]   = e_val          if math.isfinite(e_val) else math.nan
+                inc_arr[j] = math.degrees(inc_rad) if math.isfinite(inc_rad) else math.nan
+            except Exception:
+                a_arr[j]   = math.nan
+                e_arr[j]   = math.nan
+                inc_arr[j] = math.nan
 
         a_mean[k]   = float(np.nanmean(a_arr))
         a_std[k]    = float(np.nanstd(a_arr,  ddof=1))
@@ -492,7 +431,7 @@ def compute_mc_statistics(
     result: MCRunResult,
     *,
     mu: float = 4.9048695e12,
-    r_ref_m: float = R_MOON_MEAN,
+    r_ref_m: float = R_MOON,
     compute_oe: bool = True,
     use_survived_only: bool = False,
 ) -> MCStatistics:

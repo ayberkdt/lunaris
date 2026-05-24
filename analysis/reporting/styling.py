@@ -1,9 +1,9 @@
-# LUNAR_SIMULATION/analysis/styling.py
+# ST_LRPS/analysis/styling.py
 """
-LunarSim Plot Styling (analysis.styling)
+ST_LRPS Plot Styling (analysis.reporting.styling)
 ======================================
 
-This module is the single, project-wide source of truth for *all* plot aesthetics in LunarSim.
+This module is the single, project-wide source of truth for *all* plot aesthetics in ST_LRPS.
 It is designed for three goals:
 
 1) Consistency
@@ -25,7 +25,7 @@ Quick start
 In any analysis script:
 
     import matplotlib.pyplot as plt
-    from analysis.styling import apply_rcparams, apply_axes_style, apply_standard_legend
+    from analysis.reporting.styling import apply_rcparams, apply_axes_style, apply_standard_legend
 
     apply_rcparams()  # call once at program start
 
@@ -47,7 +47,7 @@ Core concepts
 3) Semantic mapping (SEMANTIC)
    - Domain concepts -> colors (orbit / spherical harmonics / SRP / third-body / albedo / relativity).
    - These should be stable across the entire project. If you change a semantic color,
-     you are changing the "visual language" of LunarSim.
+     you are changing the "visual language" of ST_LRPS.
 
 4) Series colors (SERIES_COLORS)
    - Canonical time series keys (altitude, rp/ra, drift metrics, trajectories, events) -> colors.
@@ -65,11 +65,11 @@ The module optionally supports drawing a lunar texture behind plots (e.g., groun
 If a texture is not available, background helpers are safe no-ops.
 
 Canonical asset location:
-    LUNAR_SIMULATION/data/assets/
+    ST_LRPS/data/assets/
 
 Environment overrides (optional):
-    LUNARSIM_LUNAR_MAP   -> explicit image file path
-    LUNARSIM_ASSETS_DIR  -> directory containing textures
+    STLRPS_LUNAR_MAP   -> explicit image file path
+    STLRPS_ASSETS_DIR  -> directory containing textures
 
 Public API overview
 -------------------
@@ -733,7 +733,7 @@ def load_lunar_map(path: Optional[str] = None, *, cache: bool = True):
     Load the lunar surface texture as a NumPy array (via matplotlib.image).
 
     - If `path` is not provided, uses `_find_lunar_map_path()` which checks
-      LUNAR_SIMULATION/data/assets plus common local filenames and env vars.
+      ST_LRPS/data/assets plus common local filenames and env vars.
     - Uses a simple in-memory cache keyed by resolved absolute path.
 
     Returns
@@ -782,7 +782,7 @@ def add_lunar_background(
     Draw a lunar map behind the given Axes using `imshow`.
 
     Improvements:
-    - Loads from canonical assets dir (LUNAR_SIMULATION/data/assets)
+    - Loads from canonical assets dir (ST_LRPS/data/assets)
     - Keeps existing x/y limits by default (background shouldn't change view)
     - Adds interpolation control for nicer output
     - Robust handling for grayscale vs RGB/RGBA
@@ -1103,7 +1103,7 @@ __all__ = [
     # Assets & backgrounds
     # -------------------------------------------------------------------------
     # load_lunar_map():
-    #   Loads a lunar texture (supports canonical path: LUNAR_SIMULATION/data/assets).
+    #   Loads a lunar texture (supports canonical path: ST_LRPS/data/assets).
     "load_lunar_map",
 
     # add_lunar_background():

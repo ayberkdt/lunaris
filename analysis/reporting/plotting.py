@@ -1,7 +1,7 @@
-# LUNAR_SIMULATION/analysis/plotting.py
+# ST_LRPS/analysis/plotting.py
 # -*- coding: utf-8 -*-
 """
-Plotting and report-figure utilities for LunarSim.
+Plotting and report-figure utilities for ST_LRPS.
 
 This module generates Matplotlib figures used by the PDF/HTML reporting layer and
 provides small helpers for table rendering and metadata discovery. It is designed
@@ -43,7 +43,7 @@ import matplotlib
 
 # --- Matplotlib backend selection ---
 # Must run BEFORE importing pyplot.
-if os.environ.get("LUNARSIM_INTERACTIVE", "0").strip().lower() not in ("1", "true", "yes", "y"):
+if os.environ.get("STLRPS_INTERACTIVE", "0").strip().lower() not in ("1", "true", "yes", "y"):
     try:
         matplotlib.use("Agg")
     except Exception:
@@ -62,7 +62,7 @@ try:
 except ImportError:
     make_accel = None
 
-from .postprocess import (
+from analysis.postprocess import (
     extract_time_seconds,
     extract_time_days,
     extract_elements,
@@ -1030,7 +1030,7 @@ def figure_ground_track(
     gt = _first_present(history, ["groundtrack", "ground_track", "gt"])
     if not isinstance(gt, Mapping) and ctx is not None:
         try:
-            from .postprocess import _groundtrack_if_available
+            from analysis.postprocess import _groundtrack_if_available
             t_s = _as_np(_first_present(history, ["t_s", "t", "time_s", "time"]), float, atleast_1d=True, ravel=True)
             y = _as_np(_first_present(history, ["y", "y_ns", "state", "states", "Y"]), float)
             if t_s.size and y.size:
@@ -2225,7 +2225,7 @@ def effects_from_meta_history(
 
 def _try_load_nearby_config(search_dir: str) -> Tuple[Optional[dict], Optional[str]]:
     """
-    Scan a directory for a likely LunarSim run configuration (JSON).
+    Scan a directory for a likely ST_LRPS run configuration (JSON).
 
     The scoring is conservative: false positives are worse than false negatives.
     We prioritize small JSON files whose *structure* resembles a run config

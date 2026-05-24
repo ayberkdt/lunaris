@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/analysis/extras/surface_topography_explorer.py
+# ST_LRPS/analysis/extras/surface_topography_explorer.py
 """
 Manual 2D/3D exploration for lunar surface products.
 

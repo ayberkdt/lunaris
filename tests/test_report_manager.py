@@ -11,8 +11,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from analysis.plotting import effects_from_meta_history, figure_perturbation_magnitude
-from analysis.report_manager import (
+from analysis.reporting.plotting import effects_from_meta_history, figure_perturbation_magnitude
+from analysis.reporting.manager import (
     figure_run_config_page,
     figure_summary_page,
     make_report_pdf,

@@ -1,7 +1,7 @@
 # analysis/threeD_animation.py
 # -*- coding: utf-8 -*-
 """
-LunarSim — Scientific-grade 3D orbit animation (Moon-centered)
+ST_LRPS — Scientific-grade 3D orbit animation (Moon-centered)
 
 Produces a publication / agency-documentation quality 3D animation of a
 Moon-centered trajectory with physically meaningful lighting, a dense
@@ -571,7 +571,7 @@ def _sun_arrow_text(s: np.ndarray) -> str:
 # Public API
 # ==========================
 
-def animate_orbit(
+def render_orbit_animation(
     result_or_hist,
     config_or_out_dir=None,
     output_file_or_filename: str = "orbit_3d.mp4",
@@ -854,7 +854,7 @@ def animate_orbit(
     mean_sma = float(np.nanmean(sma_anim)) if np.any(np.isfinite(sma_anim)) else 0.0
     mean_per = float(np.nanmean(period_anim)) if np.any(np.isfinite(period_anim)) else 0.0
     title_info = (
-        f"LunarSim — Orbit Evolution  |  "
+        f"ST_LRPS — Orbit Evolution  |  "
         f"{duration_days:.2f} d  |  "
         f"mean alt {mean_alt:.0f} km  |  "
         f"SMA {mean_sma:.0f} km  |  "
@@ -1224,5 +1224,5 @@ if __name__ == "__main__":
     }
     out = os.path.join(os.path.dirname(__file__), "_test_anim")
     os.makedirs(out, exist_ok=True)
-    animate_orbit(mock, out, filename="test_orbit.mp4",
+    render_orbit_animation(mock, out, filename="test_orbit.mp4",
                   frames=900, fps=30, trail_length=260, preset="slow", crf=18)

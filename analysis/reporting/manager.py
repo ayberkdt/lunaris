@@ -1,7 +1,7 @@
-# # LUNAR_SIMULATION/analysis/report_manager.py
+# # ST_LRPS/analysis/report_manager.py
 
 """
-LunarSim Report Manager
+ST_LRPS Report Manager
 ======================
 
 This module produces publication-ready visual reports from simulation outputs.
@@ -93,7 +93,7 @@ from loaders.io_helpers import find_lunar_map_path
 # IMPORTANT: backend must be selected BEFORE importing pyplot.
 import matplotlib
 
-_INTERACTIVE = os.environ.get("LUNARSIM_INTERACTIVE", "0").strip().lower() in {"1", "true", "yes", "y"}
+_INTERACTIVE = os.environ.get("STLRPS_INTERACTIVE", "0").strip().lower() in {"1", "true", "yes", "y"}
 if not _INTERACTIVE:
     # Agg is safe for servers/CI/headless PDF generation.
     matplotlib.use("Agg")
@@ -116,7 +116,7 @@ except ImportError:  # styling is optional
 
 
 # --- Postprocess extractors (hard dependency) ---
-from .postprocess import (  # type: ignore
+from analysis.postprocess import (  # type: ignore
     extract_time_seconds,
     extract_time_days,
     extract_altitude_km,
@@ -793,7 +793,7 @@ def save_quicklook_pngs(
     out_dir: str,
     history: Mapping[str, Any],
     *,
-    prefix: str = "LunarSim",
+    prefix: str = "ST_LRPS",
     meta: Optional[Mapping[str, Any]] = None,
     dpi: int = 300,
     ctx: Any = None,
@@ -881,8 +881,8 @@ def make_report_pdf(
     with PdfPages(pdf_path) as pdf:
         # Metadata
         d = pdf.infodict()
-        d["Title"] = "LunarSim Mission Analysis Report"
-        d["Author"] = "LunarSim"
+        d["Title"] = "ST_LRPS Mission Analysis Report"
+        d["Author"] = "ST_LRPS"
         d["Subject"] = "Orbital Mechanics Simulation Results"
         d["Keywords"] = "Astrodynamics, Moon, Orbit, Simulation, Python"
         d["CreationDate"] = _dt.datetime.now()
@@ -940,7 +940,7 @@ def plot_all(
     history: Mapping[str, Any],
     out_dir: str,
     *,
-    title_prefix: str = "LunarSim",
+    title_prefix: str = "ST_LRPS",
     save_pdf: Optional[bool] = None,
     save_png: Optional[bool] = None,
     dpi: Optional[int] = None,
@@ -1010,7 +1010,7 @@ def plot_all(
 
         # --- PDF report ---
         if save_pdf:
-            safe_title = re.sub(r"[^A-Za-z0-9_\-]+", "_", title_prefix).strip("_") or "LunarSim"
+            safe_title = re.sub(r"[^A-Za-z0-9_\-]+", "_", title_prefix).strip("_") or "ST_LRPS"
             pdf_path = str(Path(run_dir) / f"{safe_title}_Report.pdf")
 
             final_pdf_path = make_report_pdf(

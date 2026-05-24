@@ -1052,7 +1052,7 @@ def main() -> int:
     # Reports / plots
     try:
         from analysis.postprocess import process_simulation_results
-        from analysis.report_manager import plot_all
+        from analysis.reporting.manager import plot_all
 
         hist = process_simulation_results(result, ctx=engine, cfg=cfg)
         plot_all(
@@ -1066,22 +1066,22 @@ def main() -> int:
             save_pdf=True,
         )
     except ImportError:
-        print("[WARN] analysis.report_manager not found; skipping plots.")
+        print("[WARN] analysis.reporting.manager not found; skipping plots.")
     except Exception as e:
         print(f"[ERROR] Plot/report failed: {e}")
 
     # 3D visualization (optional)
     if cfg.output.make_3d_plots:
         try:
-            from analysis.threeD_animation import animate_orbit
+            from visualization.orbit_animation import render_orbit_animation
 
-            animate_orbit(
+            render_orbit_animation(
                 result=result,
                 config=cfg,
                 output_file=str(out_dir / "orbit_3d.mp4"),
             )
         except ImportError:
-            print("[WARN] analysis.threeD_animation not found; skipping 3D render.")
+            print("[WARN] visualization.orbit_animation not found; skipping 3D render.")
         except Exception as e:
             print(f"[ERROR] 3D render failed: {e}")
 
