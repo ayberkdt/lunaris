@@ -398,7 +398,7 @@ def test_train_config_has_encoding_fields():
     for field in ("use_sh_encoding", "sh_encoding_degree", "sh_append_raw",
                   "use_radial_separation", "radial_append_raw"):
         assert field in field_names, f"TrainConfig missing field: {field}"
-    # Check defaults (backward-compatible: all off)
+    # Check defaults (all off)
     # TrainConfig needs data and out, so use dummy values
     cfg = TrainConfig(data="/dev/null", out="/tmp")
     assert cfg.use_sh_encoding is False
@@ -872,7 +872,7 @@ def test_streaming_eval_report_has_metrics_block(tmp_path):
     assert metrics["evaluation_mode"] == "streaming"
 
 
-def test_streaming_also_writes_evaluate_metrics_json_legacy(tmp_path):
+def test_streaming_also_writes_evaluate_metrics_json_alias(tmp_path):
     """Task 5: streaming mode must still write evaluate_metrics.json for backward compat."""
     data_path = tmp_path / "data.h5"
     _make_small_h5(data_path, n=80)
@@ -890,7 +890,7 @@ def test_streaming_also_writes_evaluate_metrics_json_legacy(tmp_path):
         alt_bin_km=50.0,
     )
     assert (out_dir / "evaluate_metrics.json").exists(), (
-        "streaming evaluate() must still write evaluate_metrics.json (legacy alias)"
+        "streaming evaluate() must still write evaluate_metrics.json (compatibility alias)"
     )
 
 

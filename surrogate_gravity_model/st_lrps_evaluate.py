@@ -33,7 +33,7 @@ import time
 from dataclasses import dataclass
 import os
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
 
 import h5py
 import heapq
@@ -69,7 +69,7 @@ class _StreamingMetrics:
         # Acceleration relative error: vector-error norm over true-magnitude.
         self.sum_rel_num = 0.0   # Σ ‖a_pred - a_true‖
         self.sum_rel_den = 0.0   # Σ ‖a_true‖
-        # Magnitude-only relative error (legacy), separately tracked.
+        # Magnitude-only relative error, separately tracked for diagnostics.
         self.sum_rel_mag_num = 0.0
         # Altitude bins
         self.n_alt_bins = n_alt_bins
@@ -188,7 +188,7 @@ class _StreamingMetrics:
             "mean_ang_deg": math.degrees(self.sum_ang_rad / n),
             "rmse_ang_deg": math.degrees(math.sqrt(self.sum_sq_ang_rad / n)),
             "mean_cos_sim": self.sum_cos_sim / n,
-            # Relative error: vector-based (primary) and magnitude-based (legacy).
+            # Relative error: vector-based (primary) and magnitude-based diagnostics.
             "robust_rel_err": self.sum_rel_num / max(self.sum_rel_den, 1e-30),
             "robust_rel_err_mag": self.sum_rel_mag_num / max(self.sum_rel_den, 1e-30),
             "alt_bin_count": self.alt_bin_count.tolist(),
@@ -377,7 +377,7 @@ def infer_r_ref_m_from_dataset(path: Path, dataset_name: str = "data") -> Option
 
 
 def _read_eval_dataset_meta(path: Path, dataset_name: str = "data") -> Dict[str, Any]:
-    """Return evaluation dataset metadata in the legacy evaluator dict shape."""
+    """Return evaluation dataset metadata in the existing evaluator dict shape."""
     if Path(path).suffix.lower() not in {".h5", ".hdf5"}:
         return {"unit_system": "unknown"}
     meta = DatasetMeta.from_h5(Path(path))
@@ -1206,6 +1206,61 @@ def evaluate(
     layout = make_run_layout(model_dir)
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    def _as_optional_int(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _as_optional_float(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _model_degree_max_from_cfg(cfg_payload: Mapping[str, Any]) -> Optional[int]:
+        model_meta = cfg_payload.get("dataset_meta") or {}
+        if not isinstance(model_meta, Mapping):
+            model_meta = {}
+        model_degree = _as_optional_int(cfg_payload.get("degree_max"))
+        if model_degree is None:
+            model_degree = _as_optional_int(model_meta.get("degree_max"))
+        if model_degree is None:
+            model_degree = _as_optional_int(model_meta.get("requested_degree"))
+        return model_degree
+
+    def _dataset_degree_max_from_meta(dataset_meta: Mapping[str, Any]) -> Optional[int]:
+        dataset_degree = _as_optional_int(dataset_meta.get("degree_max"))
+        if dataset_degree is None:
+            dataset_degree = _as_optional_int(dataset_meta.get("requested_degree"))
+        return dataset_degree
+
+    def _validate_degree_max_compat(
+        cfg_payload: Mapping[str, Any],
+        dataset_meta: Mapping[str, Any],
+    ) -> Tuple[Optional[int], Optional[int]]:
+        model_degree = _model_degree_max_from_cfg(cfg_payload)
+        dataset_degree = _dataset_degree_max_from_meta(dataset_meta)
+        if model_degree is not None and dataset_degree is not None and model_degree != dataset_degree:
+            raise ValueError(
+                f"Model degree_max={model_degree} does not match dataset degree_max={dataset_degree}. "
+                "Evaluation refuses to continue because the residual harmonic band would be inconsistent."
+            )
+        return model_degree, dataset_degree
+
+    # Read dataset metadata before checkpoint deserialization so cheap contract
+    # mismatches fail early, even when a checkpoint file is missing or corrupt.
+    ds_meta = _read_eval_dataset_meta(data_path, dataset_name=dataset_name)
+    if layout.config_json.exists():
+        cfg_preflight = json.loads(layout.config_json.read_text(encoding="utf-8"))
+        if isinstance(cfg_preflight, Mapping):
+            _validate_degree_max_compat(cfg_preflight, ds_meta)
+
     _prefer = "best"
     ckpt_path, _ckpt_full = load_best_or_last(layout, prefer=_prefer, device=device)
     model, scaler, cfg, _recon_report = reload_model_from_artifact_run_dir(
@@ -1225,8 +1280,7 @@ def evaluate(
         print("[eval][WARN] config/checkpoint architecture mismatch (overridden by "
               f"--allow-config-mismatch): {_recon_report['architecture_mismatch_fields']}")
 
-    # Read dataset metadata for unit conversion and consistency checks
-    ds_meta = _read_eval_dataset_meta(data_path, dataset_name=dataset_name)
+    # Dataset metadata for unit conversion and consistency checks
     ds_unit_system = str(ds_meta.get("unit_system", "unknown")).lower()
     ds_DU_m: Optional[float] = None
     ds_TU_s: Optional[float] = None
@@ -1241,22 +1295,6 @@ def evaluate(
                 "Canonical dataset requires DU_m, TU_s, and VU_m_s for SI conversion. "
                 f"Got DU_m={ds_meta.get('DU_m')}, TU_s={ds_meta.get('TU_s')}, VU_m_s={ds_meta.get('VU_m_s')}."
             )
-
-    def _as_optional_int(value: Any) -> Optional[int]:
-        if value is None:
-            return None
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    def _as_optional_float(value: Any) -> Optional[float]:
-        if value is None:
-            return None
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return None
 
     mu_si = float(cfg.get("resolved_mu_si", MU_MOON_SI))
     # Backward-compat: old models stored degree_min only inside dataset_meta
@@ -1313,20 +1351,7 @@ def evaluate(
             pass
 
     model_meta = cfg.get("dataset_meta") or {}
-    model_degree_max = _as_optional_int(cfg.get("degree_max"))
-    if model_degree_max is None:
-        model_degree_max = _as_optional_int(model_meta.get("degree_max"))
-    if model_degree_max is None:
-        model_degree_max = _as_optional_int(model_meta.get("requested_degree"))
-
-    ds_degree_max = _as_optional_int(ds_meta.get("degree_max"))
-    if ds_degree_max is None:
-        ds_degree_max = _as_optional_int(ds_meta.get("requested_degree"))
-    if model_degree_max is not None and ds_degree_max is not None and model_degree_max != ds_degree_max:
-        raise ValueError(
-            f"Model degree_max={model_degree_max} does not match dataset degree_max={ds_degree_max}. "
-            "Evaluation refuses to continue because the residual harmonic band would be inconsistent."
-        )
+    model_degree_max, ds_degree_max = _validate_degree_max_compat(cfg, ds_meta)
 
     model_body = str(cfg.get("central_body") or model_meta.get("central_body") or "").strip().lower() or None
     ds_body = str(ds_meta.get("central_body", "") or "").strip().lower() or None
@@ -1654,12 +1679,12 @@ def evaluate(
             save_hist_angular_deg(ang_plot, plots_dir / "accel_error_histogram.png", "Angular error (deg) Sampled histogram")
 
         # Task 5: eval_report.json is the primary output (consistent with non-streaming mode).
-        # evaluate_metrics.json is written as a backward-compatible legacy alias.
+        # evaluate_metrics.json is written as a compatibility alias.
         report_path = out_dir / "eval_report.json"
         report_payload = {"metrics": metrics}
         report_path.write_text(json.dumps(report_payload, indent=2))
         print(f"[eval] Streaming report saved to {report_path}")
-        # Legacy alias
+        # Compatibility alias
         metrics_path = out_dir / "evaluate_metrics.json"
         metrics_path.write_text(json.dumps(metrics, indent=2))
         write_evaluate_summary(

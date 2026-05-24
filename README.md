@@ -205,6 +205,13 @@ Trained run directories must contain `config.json` (including `degree_min`/`degr
 
 ## Testing
 
+Focused ST-LRPS contract checks:
+
+```bash
+python -m pytest tests/test_surrogate_training_contracts.py -q
+python -m pytest tests/test_surrogate_architecture_upgrades.py -q
+```
+
 ```bash
 pytest tests/
 ```
@@ -218,6 +225,7 @@ Key test modules:
 | `test_dynamics.py` | Force model assembly, RHS evaluation |
 | `test_spherical_harmonics.py` | SH acceleration kernels |
 | `test_surrogate_training_contracts.py` | Training pipeline contracts |
+| `test_surrogate_architecture_upgrades.py` | ST-LRPS architecture cleanup contracts |
 
 ---
 

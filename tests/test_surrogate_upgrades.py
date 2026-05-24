@@ -4,7 +4,7 @@ Tests for the ST-LRPS surrogate AI/ML training-system upgrade.
 
 Covers the targeted production-quality changes:
   * TensorMemoryDataset returns torch tensors; generalized collate handles both backends
-  * single-source-of-truth production defaults (no legacy-default mode)
+  * single-source-of-truth production defaults
   * Laplacian is off by default; diagnostic mode never enters the objective
   * trainable vs diagnostic Laplacian gradient flow
   * radial decay + real spherical-harmonic input encodings (experimental)
@@ -156,11 +156,11 @@ def test_general_collate_handles_numpy_and_tensors():
 
 
 # ---------------------------------------------------------------------------
-# Item 1 / 2 — single-source-of-truth defaults; no legacy-default mode
+# Item 1 / 2 — single-source-of-truth defaults; removed preset rejected
 # ---------------------------------------------------------------------------
 
 def test_no_legacy_defaults_flag_exists(tmp_path, monkeypatch):
-    # The legacy-default preset system was removed: --legacy-defaults must be
+    # The removed default preset flag, --legacy-defaults, must be
     # rejected by the parser (there is exactly one default configuration).
     data = tmp_path / "cloud.h5"
     _write_min_cloud(data)
@@ -171,7 +171,7 @@ def test_no_legacy_defaults_flag_exists(tmp_path, monkeypatch):
     )
     with pytest.raises(SystemExit):
         parse_args()
-    # The helper module must not retain any legacy-default machinery.
+    # The helper module must not retain removed preset machinery.
     import surrogate_gravity_model.st_lrps_config as cfgmod
     assert not hasattr(cfgmod, "_LEGACY_DEFAULTS")
     assert not hasattr(cfgmod, "_apply_legacy_defaults")
@@ -551,7 +551,7 @@ def test_residual_mag_streaming_sampling(monkeypatch):
     assert np.array_equal(a, b)
     assert not np.array_equal(a, c)
 
-    # exact (legacy) path also returns exactly the requested count
+    # exact path also returns exactly the requested count
     exact = scg._generate_residual_mag_component(
         400, r_min, r_max, r_ref, 7, {}, 128, candidate_multiplier=4, streaming=False
     )

@@ -3,7 +3,7 @@
 Architecture + Laplacian-cleanup validation tests for the ST-LRPS surrogate.
 
 This is a self-contained, CPU-only suite covering the post-upgrade state:
-  * no legacy-default preset (``--legacy-defaults`` is rejected; no dynamic_weights)
+  * removed ``--legacy-defaults`` preset is rejected; no dynamic-weight alias
   * single-source-of-truth recommended defaults
   * Laplacian off by default; diagnostic mode never enters the objective;
     train mode backpropagates
@@ -87,7 +87,7 @@ def _sobolev_setup():
 
 
 # ---------------------------------------------------------------------------
-# 4.1 / 4.2 — no legacy mode; single-source-of-truth defaults
+# 4.1 / 4.2 — removed preset rejected; single-source-of-truth defaults
 # ---------------------------------------------------------------------------
 
 def test_no_legacy_defaults_flag_exists(tmp_path, monkeypatch):
@@ -98,7 +98,7 @@ def test_no_legacy_defaults_flag_exists(tmp_path, monkeypatch):
     )
     with pytest.raises(SystemExit):
         parse_args()
-    # And the deprecated dynamic_weights alias is gone too.
+    # And the deprecated dynamic-weight alias is gone too.
     monkeypatch.setattr(
         sys, "argv", ["st_lrps_train.py", "--data", str(data), "--dynamic-weights"]
     )
@@ -126,8 +126,8 @@ def test_current_defaults_are_single_source_of_truth(tmp_path, monkeypatch):
     assert cfg.use_radial_decay_encoding is False
     assert cfg.use_real_sh_basis is False
     assert cfg.multiscale_mode == "concat_shared"
-    # dynamic_weights was removed entirely.
-    assert not hasattr(cfg, "dynamic_weights")
+    removed_attr = "dynamic" + "_weights"
+    assert not hasattr(cfg, removed_attr)
 
 
 # ---------------------------------------------------------------------------

@@ -103,7 +103,7 @@ ABLATIONS: List[Dict[str, object]] = [
     },
     {
         "name": "radial_decay_encoding",
-        "description": "Radial decay-aware encoding (R/r powers, experimental), residual blocks, 3 bands.",
+        "description": "Scaled inverse-radius decay features inspired by R/r radial decay (experimental), residual blocks, 3 bands.",
         "flags": ["--use-radial-decay-encoding", "--radial-decay-max-power", "4",
                   "--radial-decay-append-raw", "--use-residual-blocks", "--n-bands", "3"],
     },

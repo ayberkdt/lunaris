@@ -11,13 +11,14 @@ the generator and trainer do not drift apart.
 Configuration policy
 --------------------
 * ``TrainConfig`` defaults ARE the recommended production/research configuration.
-  There is no hidden "legacy mode". Older configurations are reproduced by passing
+  There is no alternate default mode. Older configurations are reproduced by passing
   the corresponding CLI flags explicitly (e.g. ``--no-residual-blocks --n-bands 1``)
   or via ``run_ablation_matrix.py``.
 * The word "legacy" elsewhere refers only to loading older checkpoints/datasets
   (e.g. ``--allow-legacy-derivative-convention``), not to a default-config mode.
 * Experimental input encodings (off by default): ``--use-radial-decay-encoding``
-  (physically motivated R/r decay; helps altitude generalization) and
+  (scaled inverse-radius decay features inspired by the R/r radial decay of
+  spherical-harmonic terms; evaluate through ablation) and
   ``--use-real-sh-basis`` (genuine 4π-normalized real spherical harmonics).
   Treat both as ablation/experimental until benchmarked.
 * The Laplacian regulariser is OFF by default and adds no overhead unless
@@ -208,7 +209,7 @@ class TrainConfig:
     # True. All default to False → raw Cartesian xyz input.
     #   use_sh_encoding         : SHInspiredAngularEncoding (Cartesian angular polynomial).
     #   use_radial_separation   : RadialSeparationEncoding [r, ux, uy, uz].
-    #   use_radial_decay_encoding: RadialDecayEncoding (R/r decay powers; experimental).
+    #   use_radial_decay_encoding: RadialDecayEncoding (scaled inverse-radius; experimental).
     #   use_real_sh_basis       : RealSHBasisEncoding (real spherical harmonics; experimental).
     use_sh_encoding: bool = False
     sh_encoding_degree: int = 4          # max polynomial degree (1..8)
@@ -216,9 +217,10 @@ class TrainConfig:
     use_radial_separation: bool = False
     radial_append_raw: bool = False      # True → 7-dim output, False → 4-dim
 
-    # Radial decay-aware encoding (experimental). Encodes the R/r radial decay of
-    # SH residual terms via inverse-radial powers, which is important for altitude
-    # generalization. See RadialDecayEncoding.
+    # Radial decay-aware encoding (experimental, off by default). Provides scaled
+    # inverse-radius decay features inspired by the R/r radial decay of
+    # spherical-harmonic terms. This is not exactly R_ref / r_phys; evaluate via
+    # ablation before using it as a research claim. See RadialDecayEncoding.
     use_radial_decay_encoding: bool = False
     radial_decay_max_power: int = 4
     radial_decay_append_raw: bool = True
@@ -567,8 +569,10 @@ def parse_args() -> TrainConfig:
     dec_group = group_enc.add_mutually_exclusive_group()
     dec_group.add_argument(
         "--use-radial-decay-encoding", action="store_true", dest="use_radial_decay_encoding",
-        help="Use RadialDecayEncoding (R/r inverse-radial decay powers). Experimental; "
-             "mutually exclusive with the other encodings.",
+        help="Use RadialDecayEncoding: scaled inverse-radius decay features inspired "
+             "by the R/r radial decay of spherical-harmonic terms. Experimental; "
+             "off by default; evaluate through ablation; mutually exclusive with "
+             "the other encodings.",
     )
     dec_group.add_argument(
         "--no-radial-decay-encoding", action="store_false", dest="use_radial_decay_encoding",
@@ -576,7 +580,7 @@ def parse_args() -> TrainConfig:
     )
     group_enc.add_argument(
         "--radial-decay-max-power", type=int, default=_TC_DEFAULTS.get("radial_decay_max_power", 4),
-        help="Highest inverse-radial power for RadialDecayEncoding (default: 4).",
+        help="Highest scaled inverse-radius power for RadialDecayEncoding (default: 4).",
     )
     dec_raw_group = group_enc.add_mutually_exclusive_group()
     dec_raw_group.add_argument(
@@ -697,7 +701,7 @@ def parse_args() -> TrainConfig:
 
     # ---------------------------------------------------------------------------
     # TrainConfig is the single source of truth for the recommended configuration.
-    # There is no hidden "legacy mode": the dataclass defaults ARE the recommended
+    # There is no alternate default mode: the dataclass defaults ARE the recommended
     # production/research architecture. Any older configuration is reproduced by
     # passing the corresponding CLI flags explicitly (or via run_ablation_matrix.py).
     #
@@ -714,8 +718,9 @@ def parse_args() -> TrainConfig:
     #     (an advisory warning is printed at startup when batch_size looks large
     #     for the detected GPU).
     #   - Experimental input encodings (off by default): --use-radial-decay-encoding
-    #     (physically motivated R/r decay) and --use-real-sh-basis (real spherical
-    #     harmonic angular basis). See run_ablation_matrix.py for controlled studies.
+    #     (scaled inverse-radius decay features inspired by the R/r radial decay of
+    #     spherical-harmonic terms) and --use-real-sh-basis (real spherical harmonic
+    #     angular basis). Evaluate both via ablation.
     # ---------------------------------------------------------------------------
 
     a = ap.parse_args()

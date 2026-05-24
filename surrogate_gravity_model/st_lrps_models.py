@@ -409,10 +409,10 @@ class AdditiveMultiBandSirenMLP(nn.Module):
     Parameter count
     ---------------
     Each band trunk is intentionally narrowed to ``hidden // n_bands`` units to
-    keep compute controlled. As a result the total parameter count is generally
-    LOWER than the ``concat_shared`` model at the same ``hidden``/``depth`` — these
-    two modes are NOT parameter-matched. Compare them explicitly if a fair
-    parameter budget is required.
+    keep compute controlled. As a result the total parameter count may be lower
+    than the ``concat_shared`` model at the same ``hidden``/``depth``; these two
+    modes are not assumed to be parameter-matched. Compute the counts explicitly
+    if a fair parameter budget is required.
 
     Experimental: ``concat_shared`` (:class:`MultiScaleSirenMLP`) remains the
     default multi-scale composition. Evaluate this mode via ablation rather than
@@ -693,8 +693,8 @@ class RealSHBasisEncoding(nn.Module):
     Experimental: off by default; intended for angular-generalization ablations.
 
     TODO: validate low-degree normalization/order against an external SH
-    reference (e.g. scipy.special.sph_harm_y) — see the optional scipy-gated
-    check in tests/test_surrogate_architecture_upgrades.py.
+    reference; the optional SciPy-gated check in
+    tests/test_surrogate_architecture_upgrades.py must remain optional.
     """
 
     def __init__(
