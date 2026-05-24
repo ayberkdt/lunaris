@@ -167,7 +167,8 @@ class TrainConfig:
 
     # Best-checkpoint metric selection.
     # "hybrid" (default): val_base_loss + hybrid_direction_alpha * val_direction_loss.
-    # "total_loss": val reference loss only.
+    # "val_total_loss": validation reference loss only ("total_loss" is accepted as an old alias).
+    # "val_base_loss": validation U + acceleration MSE only.
     # "direction_loss": val direction loss only (experimental, not recommended alone).
     best_metric: str = "hybrid"
     hybrid_direction_alpha: float = 0.30
@@ -443,15 +444,16 @@ def parse_args() -> TrainConfig:
     group_dir.add_argument("--checkpoint-settle-epochs", type=int, default=5,
                            help="Additional settled epochs after the direction-loss ramp before auto best-checkpoint tracking starts.")
     group_dir.add_argument("--best-metric",
-                           choices=["total_loss", "direction_loss", "hybrid"],
+                           choices=["val_total_loss", "val_base_loss", "total_loss", "direction_loss", "hybrid"],
                            default=_TC_DEFAULTS['best_metric'],
                            help="Metric used for best-checkpoint selection. "
-                                "'hybrid': validation loss + alpha * validation direction loss (default). "
-                                "'total_loss': validation reference loss only. "
+                                "'hybrid': val_base_loss + alpha * val_loss_dir (default). "
+                                "'val_total_loss': validation reference loss only ('total_loss' alias accepted). "
+                                "'val_base_loss': validation U + acceleration MSE only. "
                                 "'direction_loss': validation direction loss only (experimental).")
     group_dir.add_argument("--hybrid-direction-alpha", type=float, default=_TC_DEFAULTS['hybrid_direction_alpha'],
                            help="Weight alpha for direction loss in hybrid best-metric: "
-                                "score = val_loss + alpha * val_direction_loss.")
+                                "score = val_base_loss + alpha * val_loss_dir.")
     group_dir.add_argument(
         "--save-epoch-snapshots",
         action="store_true",

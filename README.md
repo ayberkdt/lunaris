@@ -208,6 +208,7 @@ Trained run directories must contain `config.json` (including `degree_min`/`degr
 Focused ST-LRPS contract checks:
 
 ```bash
+python -m pytest tests/test_st_lrps_metrics.py -q
 python -m pytest tests/test_surrogate_training_contracts.py -q
 python -m pytest tests/test_surrogate_architecture_upgrades.py -q
 ```

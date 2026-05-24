@@ -356,7 +356,7 @@ def test_ablation_matrix_contains_new_experimental_architectures(tmp_path):
     from surrogate_gravity_model import run_ablation_matrix as ram
 
     names = [a["name"] for a in ram.ABLATIONS]
-    for required in ("radial_decay_encoding", "real_sh_basis", "additive_multiband"):
+    for required in ("radial_decay_encoding", "real_sh_basis_encoding_optional", "additive_multiband"):
         assert required in names
 
     # Generate the manifest (dry-run) and check the note + flag wiring.
@@ -367,7 +367,7 @@ def test_ablation_matrix_contains_new_experimental_architectures(tmp_path):
     assert "note" in manifest and "recommended" in manifest["note"].lower()
     by_name = {a["name"]: a for a in manifest["ablations"]}
     assert "--use-radial-decay-encoding" in by_name["radial_decay_encoding"]["flags"]
-    assert "--use-real-sh-basis" in by_name["real_sh_basis"]["flags"]
+    assert "--use-real-sh-basis" in by_name["real_sh_basis_encoding_optional"]["flags"]
     assert "--multiscale-mode" in by_name["additive_multiband"]["flags"]
 
 

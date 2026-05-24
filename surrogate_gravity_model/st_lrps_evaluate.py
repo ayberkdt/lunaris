@@ -27,6 +27,7 @@ Metrics saved:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import time
@@ -1492,6 +1493,7 @@ def evaluate(
     ang_count = 0
 
     total = 0
+    eval_t0 = time.perf_counter()
     for arr in batch_iter:
         x = arr[:, 0:3]
         u_true = arr[:, 3:4]
@@ -1570,6 +1572,8 @@ def evaluate(
             ang_deg_plot.append(ang_deg.reshape(-1, 1))
 
         total += x.shape[0]
+    inference_time_s = max(time.perf_counter() - eval_t0, 1e-12)
+    inference_samples_per_sec = float(total / inference_time_s)
 
     # Export top-K error points if requested
     _topk_export_path: Optional[Path] = Path(save_error_points).resolve() if save_error_points is not None else (out_dir / "topk_worst.csv")
@@ -1584,6 +1588,10 @@ def evaluate(
             "evaluation_mode": "streaming",
             "memory_safe": True,
             "n_points": _sm_res["count"],
+            "n_samples": _sm_res["count"],
+            "inference_time_s": float(inference_time_s),
+            "inference_samples_per_sec": float(inference_samples_per_sec),
+            "dtype": str(torch.float32).replace("torch.", ""),
             "streaming_limitations": [
                 "exact OOD region table skipped",
                 "exact radial/cross decomposition skipped",
@@ -1951,6 +1959,7 @@ def evaluate(
             "mean_cossim": float(ang_sum_cossim / max(ang_count, 1)),
             "p50_deg": float(np.median(ang_deg_all)),
             "p90_deg": float(np.percentile(ang_deg_all, 90)),
+            "p95_deg": float(np.percentile(ang_deg_all, 95)),
             "p99_deg": float(np.percentile(ang_deg_all, 99)),
         },
         "residual_masked": {
@@ -1985,6 +1994,15 @@ def evaluate(
     _mag_mae = float(np.mean(np.abs(a_mag_err)))
     _mean_cossim_full = float(ang_sum_cossim / max(1, ang_count))
     _mean_ang_full = float(ang_sum_deg / max(1, ang_count))
+    _a_true_norm_clip = np.maximum(np.linalg.norm(a_true_vec_np, axis=1), 1e-30)
+    _rel_a_err = a_vec_err_norm_np / _a_true_norm_clip
+    _a_err_percentiles = {
+        "p50": float(np.percentile(a_vec_err_norm_np, 50)),
+        "p90": float(np.percentile(a_vec_err_norm_np, 90)),
+        "p95": float(np.percentile(a_vec_err_norm_np, 95)),
+        "p99": float(np.percentile(a_vec_err_norm_np, 99)),
+        "max": float(np.max(a_vec_err_norm_np)),
+    }
     metrics: Dict[str, Any] = {
         "U": compute_metrics(u_err, u_true.reshape(-1), rel_floor_abs=u_rel_floor_abs).__dict__,
         "|a|": {
@@ -1999,7 +2017,9 @@ def evaluate(
             "mae": _vec_mae,
             "rmse": _vec_rmse,
             "linf": float(np.max(a_vec_err_norm_np)),
-            "rel_mean_pct": 100.0 * float(np.mean(a_vec_err_norm_np / _a_true_norm_clip)),
+            "rel_mean_pct": 100.0 * float(np.mean(_rel_a_err)),
+            "rel_median": float(np.median(_rel_a_err)),
+            "percentiles": _a_err_percentiles,
             "description": "norm(a_pred - a_true): captures magnitude AND direction.",
         },
         "residual_magnitude_metrics": {
@@ -2028,7 +2048,13 @@ def evaluate(
         "central_body": (model_body or ds_body or "moon"),
         "decomposition_frame": "approximate_rtn_like_without_velocity",
         "n_points": int(u_true.shape[0]),
+        "n_samples": int(u_true.shape[0]),
         "device": str(device),
+        "dtype": str(torch.float32).replace("torch.", ""),
+        "inference_time_s": float(inference_time_s),
+        "inference_samples_per_sec": float(inference_samples_per_sec),
+        "altitude_min_km": float(np.nanmin(alt_km_all)),
+        "altitude_max_km": float(np.nanmax(alt_km_all)),
         "a_sign": float(a_sign),
         "mu_si": float(mu_si),
         "r_ref_m": float(r_ref_m),
@@ -2386,7 +2412,11 @@ def evaluate(
     (out_dir / "metrics_summary.csv").write_text("\n".join(_ms_rows), encoding="utf-8")
 
     # --- altitude_binned_metrics.csv (combined U + accel RMSE + MAPE) ---
-    _ab_rows = ["alt_km_lo,alt_km_hi,n,rmse_U,rmse_accel,mape_U_pct,mape_accel_pct,mape_U_p90_pct,mape_accel_p90_pct"]
+    _ab_rows = [
+        "alt_km_lo,alt_km_hi,n,rmse_U,rmse_accel,mae_a_vec,p95_a_error,"
+        "angular_mean_deg,angular_p90_deg,radial_rmse,cross_rmse,"
+        "mape_U_pct,mape_accel_pct,mape_U_p90_pct,mape_accel_p90_pct"
+    ]
     _rmse_u_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_u.get("bins", [])}
     _rmse_a_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a.get("bins", [])}
     _mape_u_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_u_mape.get("bins", [])}
@@ -2396,10 +2426,30 @@ def evaluate(
         _ru = _rmse_u_bins.get(_k, {}); _ra = _rmse_a_bins.get(_k, {})
         _mu = _mape_u_bins.get(_k, {}); _ma = _mape_a_bins.get(_k, {})
         _n = _ru.get("n", _ra.get("n", _mu.get("n", _ma.get("n", 0))))
+        _mask_bin = (alt_km_all.reshape(-1) >= float(_k[0])) & (alt_km_all.reshape(-1) < float(_k[1]))
+        if np.any(_mask_bin):
+            _aerr_bin = a_vec_err_norm_np[_mask_bin]
+            _ang_bin = ang_deg_all.reshape(-1)[_mask_bin]
+            _rad_bin = a_r[_mask_bin]
+            _cross_bin = a_cross[_mask_bin]
+            _mae_a_vec = float(np.mean(np.abs(_aerr_bin)))
+            _p95_a_error = float(np.percentile(_aerr_bin, 95))
+            _angular_mean = float(np.mean(_ang_bin))
+            _angular_p90 = float(np.percentile(_ang_bin, 90))
+            _radial_rmse = float(np.sqrt(np.mean(_rad_bin ** 2)))
+            _cross_rmse = float(np.sqrt(np.mean(_cross_bin ** 2)))
+        else:
+            _mae_a_vec = _p95_a_error = _angular_mean = _angular_p90 = _radial_rmse = _cross_rmse = ""
         _ab_rows.append(
             f"{_k[0]},{_k[1]},{_n},"
             f"{_ru.get('rmse','')},"
             f"{_ra.get('rmse','')},"
+            f"{_mae_a_vec},"
+            f"{_p95_a_error},"
+            f"{_angular_mean},"
+            f"{_angular_p90},"
+            f"{_radial_rmse},"
+            f"{_cross_rmse},"
             f"{_mu.get('mape_pct','')},"
             f"{_ma.get('mape_pct','')},"
             f"{_mu.get('p90_pct','')},"
@@ -2545,13 +2595,17 @@ def evaluate(
 # -----------------------------
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model-dir", default=None, help="Directory containing config.json, scaler.json, and checkpoints/ckpt_best.pt or ckpt_last.pt. If omitted, auto-detects the newest lunar-compatible run near this script or via env ST_LRPS_MODEL_DIR.")
+    ap.add_argument("--model-dir", "--run-dir", dest="model_dir", default=None, help="Directory containing config.json, scaler.json, and checkpoints/ckpt_best.pt or ckpt_last.pt. If omitted, auto-detects the newest lunar-compatible run near this script or via env ST_LRPS_MODEL_DIR.")
     ap.add_argument("--data", default=None, help="Test dataset path (.h5/.hdf5/.pt). If omitted, auto-detect the newest lunar-compatible dataset near model-dir.")
+    ap.add_argument("--train-sample-data", default=None, help="Optional small training-sample dataset for publication summary.")
+    ap.add_argument("--val-data", default=None, help="Optional validation dataset. Evaluated into <out>/val when provided.")
     ap.add_argument("--test-data", default=None, help="Optional independent in-band test dataset. Evaluated into <out>/test when provided.")
     ap.add_argument("--ood-data", default=None, help="Optional OOD/extrapolation dataset. Evaluated into <out>/ood when provided.")
+    ap.add_argument("--ood-low-data", default=None, help="Optional low-altitude OOD dataset. Evaluated into <out>/ood_low.")
+    ap.add_argument("--ood-high-data", default=None, help="Optional high-altitude OOD dataset. Evaluated into <out>/ood_high.")
     ap.add_argument("--use-config-datasets", action="store_true", help="Use test_data_path / ood_data_path from config.json when explicit paths are not supplied.")
     ap.add_argument("--dataset-name", default="data", help="HDF5 dataset name (default: data, auto-fallback to first dataset).")
-    ap.add_argument("--out", default=None, help="Output directory (default: <run-dir>/evals/eval_<dataset>_<timestamp>).")
+    ap.add_argument("--out", "--output-dir", dest="out", default=None, help="Output directory (default: <run-dir>/evals/eval_<dataset>_<timestamp>).")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     ap.add_argument("--batch-size", type=int, default=8192)
     ap.add_argument("--a-sign", type=float, default=1.0, help="Fallback a_sign if config.json lacks resolved_a_sign. +1 for geodesy, -1 for physics.")
@@ -2601,6 +2655,243 @@ def _dataset_path_from_config(model_dir: Path, key: str) -> Optional[Path]:
 def _auto_find_testset(model_dir: Path) -> Optional[Path]:
     """Fallback: try to recover a test dataset from config.json."""
     return _dataset_path_from_config(model_dir, "test_data_path")
+
+
+def _safe_get(mapping: Mapping[str, Any], *keys: str, default: Any = None) -> Any:
+    cur: Any = mapping
+    for key in keys:
+        if not isinstance(cur, Mapping):
+            return default
+        cur = cur.get(key)
+        if cur is None:
+            return default
+    return cur
+
+
+def _summary_row_from_report(split: str, report_path: Path, alt_bin_km: float) -> Dict[str, Any]:
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    metrics = report.get("metrics") or {}
+    u = metrics.get("U") or {}
+    avec = metrics.get("residual_vector_metrics") or metrics.get("|a|") or {}
+    pct = avec.get("percentiles") or {}
+    angular_all = _safe_get(metrics, "angular_metrics", "residual_all", default={}) or {}
+    directional = metrics.get("a_directional") or {}
+    rel_mean = avec.get("rel_mean_pct")
+    rel_median = avec.get("rel_median")
+    if rel_median is None:
+        rel_median = avec.get("rel_p50_pct")
+        if rel_median is not None:
+            rel_median = float(rel_median) / 100.0
+    row = {
+        "split": split,
+        "n_samples": metrics.get("n_samples", metrics.get("n_points", report.get("n_evaluated"))),
+        "rmse_u": u.get("rmse"),
+        "mae_u": u.get("mae"),
+        "rmse_a_vec": avec.get("rmse"),
+        "mae_a_vec": avec.get("mae"),
+        "p50_a_error": pct.get("p50"),
+        "p90_a_error": pct.get("p90"),
+        "p95_a_error": pct.get("p95"),
+        "p99_a_error": pct.get("p99"),
+        "max_a_error": pct.get("max", avec.get("linf")),
+        "mean_relative_a_error": (float(rel_mean) / 100.0 if rel_mean is not None else None),
+        "median_relative_a_error": rel_median,
+        "angular_mean_deg": angular_all.get("mean_deg", _safe_get(metrics, "residual_angular_metrics", "mean_deg")),
+        "angular_p90_deg": angular_all.get("p90_deg"),
+        "angular_p95_deg": angular_all.get("p95_deg"),
+        "radial_rmse": directional.get("accel_err_radial_rmse"),
+        "cross_rmse": directional.get("accel_err_cross_radial_rmse"),
+        "radial_mae": directional.get("accel_err_radial_mae"),
+        "cross_mae": directional.get("accel_err_cross_radial_mae"),
+        "altitude_min_km": metrics.get("altitude_min_km"),
+        "altitude_max_km": metrics.get("altitude_max_km"),
+        "altitude_bin_width_km": float(alt_bin_km),
+        "inference_samples_per_sec": metrics.get("inference_samples_per_sec"),
+        "inference_time_s": metrics.get("inference_time_s"),
+        "device": metrics.get("device"),
+        "dtype": metrics.get("dtype"),
+        "report_path": str(report_path),
+    }
+    return row
+
+
+def _write_rows_csv(path: Path, rows: List[Mapping[str, Any]], fieldnames: List[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(dict(row))
+
+
+def _aggregate_altitude_csv(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
+    path = eval_dir / "altitude_binned_metrics.csv"
+    if not path.exists():
+        return []
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            rows.append(
+                {
+                    "split": split,
+                    "altitude_bin_min_km": row.get("alt_km_lo"),
+                    "altitude_bin_max_km": row.get("alt_km_hi"),
+                    "n_samples": row.get("n"),
+                    "rmse_u": row.get("rmse_U"),
+                    "rmse_a_vec": row.get("rmse_accel"),
+                    "mae_a_vec": row.get("mae_a_vec"),
+                    "p95_a_error": row.get("p95_a_error"),
+                    "angular_mean_deg": row.get("angular_mean_deg"),
+                    "angular_p90_deg": row.get("angular_p90_deg"),
+                    "radial_rmse": row.get("radial_rmse"),
+                    "cross_rmse": row.get("cross_rmse"),
+                }
+            )
+    return rows
+
+
+def _aggregate_angular_csv(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
+    path = eval_dir / "angular_error_by_altitude.csv"
+    if not path.exists():
+        return []
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            rows.append({"split": split, **row})
+    return rows
+
+
+def _aggregate_radial_cross_csv(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
+    path = eval_dir / "acceleration_decomposition.csv"
+    if not path.exists():
+        return []
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            rows.append({"split": split, **row})
+    return rows
+
+
+def _aggregate_worst_cases(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
+    path = eval_dir / "topk_worst.csv"
+    if not path.exists():
+        return []
+    rows: List[Dict[str, Any]] = []
+    with path.open("r", newline="", encoding="utf-8") as handle:
+        for rank, row in enumerate(csv.DictReader(handle), start=1):
+            try:
+                x = np.array([[float(row["x"]), float(row["y"]), float(row["z"])]], dtype=float)
+                a_true = np.array([[float(row["ax_true"]), float(row["ay_true"]), float(row["az_true"])]], dtype=float)
+                a_pred = np.array([[float(row["ax_pred"]), float(row["ay_pred"]), float(row["az_pred"])]], dtype=float)
+                radial, cross, _, _ = _accel_error_radial_cross_components(a_pred - a_true, x)
+                radial_error = float(radial[0])
+                cross_error = float(cross[0])
+            except Exception:
+                radial_error = ""
+                cross_error = ""
+            rows.append(
+                {
+                    "split": split,
+                    "rank": rank,
+                    "x_m": row.get("x"),
+                    "y_m": row.get("y"),
+                    "z_m": row.get("z"),
+                    "altitude_km": row.get("altitude_km"),
+                    "true_ax": row.get("ax_true"),
+                    "true_ay": row.get("ay_true"),
+                    "true_az": row.get("az_true"),
+                    "pred_ax": row.get("ax_pred"),
+                    "pred_ay": row.get("ay_pred"),
+                    "pred_az": row.get("az_pred"),
+                    "abs_a_error": row.get("abs_a_error"),
+                    "relative_a_error": row.get("rel_a_error"),
+                    "angular_error_deg": row.get("angular_deg"),
+                    "radial_error": radial_error,
+                    "cross_error": cross_error,
+                }
+            )
+    return rows
+
+
+def _write_publication_eval_suite(
+    out_root: Path,
+    completed_jobs: List[Tuple[str, Path, Path]],
+    *,
+    model_dir: Path,
+    alt_bin_km: float,
+) -> None:
+    out_root.mkdir(parents=True, exist_ok=True)
+    summary_rows: List[Dict[str, Any]] = []
+    altitude_rows: List[Dict[str, Any]] = []
+    angular_rows: List[Dict[str, Any]] = []
+    radial_rows: List[Dict[str, Any]] = []
+    worst_rows: List[Dict[str, Any]] = []
+    for split, _data_path, eval_dir in completed_jobs:
+        report_path = eval_dir / "eval_report.json"
+        if not report_path.exists():
+            continue
+        summary_rows.append(_summary_row_from_report(split, report_path, alt_bin_km))
+        altitude_rows.extend(_aggregate_altitude_csv(split, eval_dir))
+        angular_rows.extend(_aggregate_angular_csv(split, eval_dir))
+        radial_rows.extend(_aggregate_radial_cross_csv(split, eval_dir))
+        worst_rows.extend(_aggregate_worst_cases(split, eval_dir))
+
+    summary_fields = [
+        "split", "n_samples", "rmse_u", "mae_u", "rmse_a_vec", "mae_a_vec",
+        "p50_a_error", "p90_a_error", "p95_a_error", "p99_a_error", "max_a_error",
+        "mean_relative_a_error", "median_relative_a_error", "angular_mean_deg",
+        "angular_p90_deg", "angular_p95_deg", "radial_rmse", "cross_rmse",
+        "radial_mae", "cross_mae", "altitude_min_km", "altitude_max_km",
+        "altitude_bin_width_km", "inference_samples_per_sec", "inference_time_s",
+        "device", "dtype", "report_path",
+    ]
+    _write_rows_csv(out_root / "summary_metrics.csv", summary_rows, summary_fields)
+    (out_root / "summary_metrics.json").write_text(json.dumps(summary_rows, indent=2), encoding="utf-8")
+    _write_rows_csv(
+        out_root / "altitude_binned_metrics.csv",
+        altitude_rows,
+        [
+            "split", "altitude_bin_min_km", "altitude_bin_max_km", "n_samples",
+            "rmse_u", "rmse_a_vec", "mae_a_vec", "p95_a_error",
+            "angular_mean_deg", "angular_p90_deg", "radial_rmse", "cross_rmse",
+        ],
+    )
+    _write_rows_csv(
+        out_root / "angular_error_metrics.csv",
+        angular_rows,
+        sorted({k for row in angular_rows for k in row.keys()} | {"split"}),
+    )
+    _write_rows_csv(
+        out_root / "radial_cross_metrics.csv",
+        radial_rows,
+        sorted({k for row in radial_rows for k in row.keys()} | {"split"}),
+    )
+    _write_rows_csv(
+        out_root / "worst_cases.csv",
+        worst_rows,
+        [
+            "split", "rank", "x_m", "y_m", "z_m", "altitude_km",
+            "true_ax", "true_ay", "true_az", "pred_ax", "pred_ay", "pred_az",
+            "abs_a_error", "relative_a_error", "angular_error_deg",
+            "radial_error", "cross_error",
+        ],
+    )
+    manifest = {
+        "schema_version": "st_lrps_eval_suite_v1",
+        "model_dir": str(model_dir),
+        "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "summary_metrics_json": str(out_root / "summary_metrics.json"),
+        "summary_metrics_csv": str(out_root / "summary_metrics.csv"),
+        "altitude_binned_metrics_csv": str(out_root / "altitude_binned_metrics.csv"),
+        "angular_error_metrics_csv": str(out_root / "angular_error_metrics.csv"),
+        "radial_cross_metrics_csv": str(out_root / "radial_cross_metrics.csv"),
+        "worst_cases_csv": str(out_root / "worst_cases.csv"),
+        "splits": [
+            {"split": split, "data_path": str(data_path), "eval_dir": str(eval_dir)}
+            for split, data_path, eval_dir in completed_jobs
+        ],
+    }
+    (out_root / "eval_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def main() -> None:
@@ -2667,39 +2958,37 @@ def main() -> None:
     device = get_device(args.device)
 
     eval_timestamp = time.strftime("%Y%m%d_%H%M%S")
-    jobs: List[Tuple[str, Path, Path]] = [
-        (
-            "primary",
-            data_path,
-            (out_root if out_root is not None else default_eval_output_dir(run_layout, data_path, timestamp=eval_timestamp)),
-        )
-    ]
+    def _job_out(label: str, path: Path, *, primary: bool = False) -> Path:
+        if out_root is None:
+            return default_eval_output_dir(run_layout, path, timestamp=eval_timestamp)
+        return out_root if primary else out_root / label
+
+    jobs: List[Tuple[str, Path, Path]] = []
+    jobs.append(("primary", data_path, _job_out("primary", data_path, primary=True)))
+    train_sample_path = Path(args.train_sample_data).resolve() if args.train_sample_data else None
+    val_path = Path(args.val_data).resolve() if args.val_data else None
     test_path = Path(args.test_data).resolve() if args.test_data else None
     ood_path = Path(args.ood_data).resolve() if args.ood_data else None
+    ood_low_path = Path(args.ood_low_data).resolve() if args.ood_low_data else None
+    ood_high_path = Path(args.ood_high_data).resolve() if args.ood_high_data else None
     if args.use_config_datasets:
+        val_path = val_path or _dataset_path_from_config(model_dir, "val_data_path")
         test_path = test_path or _dataset_path_from_config(model_dir, "test_data_path")
         ood_path = ood_path or _dataset_path_from_config(model_dir, "ood_data_path")
-    if test_path is not None and test_path != data_path:
-        if not test_path.exists():
-            raise FileNotFoundError(test_path)
-        jobs.append(
-            (
-                "test",
-                test_path,
-                (out_root / "test" if out_root is not None else default_eval_output_dir(run_layout, test_path, timestamp=eval_timestamp)),
-            )
-        )
-    if ood_path is not None:
-        if not ood_path.exists():
-            raise FileNotFoundError(ood_path)
-        jobs.append(
-            (
-                "ood",
-                ood_path,
-                (out_root / "ood" if out_root is not None else default_eval_output_dir(run_layout, ood_path, timestamp=eval_timestamp)),
-            )
-        )
+    for label, maybe_path in (
+        ("train_sample_optional", train_sample_path),
+        ("val", val_path),
+        ("test", test_path),
+        ("ood_low", ood_low_path),
+        ("ood_high", ood_high_path or ood_path),
+    ):
+        if maybe_path is None or maybe_path == data_path:
+            continue
+        if not maybe_path.exists():
+            raise FileNotFoundError(maybe_path)
+        jobs.append((label, maybe_path, _job_out(label, maybe_path)))
 
+    completed_jobs: List[Tuple[str, Path, Path]] = []
     for label, job_data_path, job_out_dir in jobs:
         print(f"[eval:{label}] dataset={job_data_path}")
         evaluate(
@@ -2721,6 +3010,16 @@ def main() -> None:
             plot_sample_limit=int(getattr(args, "plot_sample_limit", 500_000)),
             allow_config_mismatch=bool(getattr(args, "allow_config_mismatch", False)),
         )
+        completed_jobs.append((label, job_data_path, job_out_dir))
+
+    if out_root is not None:
+        _write_publication_eval_suite(
+            out_root,
+            completed_jobs,
+            model_dir=model_dir,
+            alt_bin_km=float(args.alt_bin_km),
+        )
+        print(f"[eval] publication summary -> {out_root / 'summary_metrics.json'}")
 
 
 if __name__ == "__main__":

@@ -917,10 +917,17 @@ def build_checkpoint_payload(
     scoring = {
         "best_metric": _coerce_str_or_none(cfg_dict.get("best_metric")) or "val_total_loss",
         "score": score if score is not None else 0.0,
+        "formula": _coerce_str_or_none(val_stats.get("checkpoint_formula"))
+                   or _coerce_str_or_none((cfg_dict.get("checkpoint_selection") or {}).get("formula")),
+        "lower_is_better": bool((cfg_dict.get("checkpoint_selection") or {}).get("lower_is_better", True)),
+        "eligible_for_best": bool(val_stats.get("eligible_for_best", True)),
         "val_loss": float(val_stats.get("loss", 0.0) or 0.0),
         "val_base_loss": _coerce_float_or_none(val_stats.get("val_base_loss")),
         "val_total_loss": _coerce_float_or_none(val_stats.get("val_total_loss")),
         "val_physics_loss": _coerce_float_or_none(val_stats.get("val_physics_loss")),
+        "val_loss_u": _coerce_float_or_none(val_stats.get("mse_u")),
+        "val_loss_a": _coerce_float_or_none(val_stats.get("mse_a")),
+        "val_loss_dir": _coerce_float_or_none(val_stats.get("loss_dir")),
         "loss_dir": _coerce_float_or_none(val_stats.get("loss_dir")),
         "mean_cos_sim": _coerce_float_or_none(val_stats.get("cossim_mean")),
         "mean_ang_deg": _coerce_float_or_none(val_stats.get("angular_mean_deg")),

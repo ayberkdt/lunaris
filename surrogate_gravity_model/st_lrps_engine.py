@@ -66,6 +66,15 @@ try:
         GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
         collocation_laplacian_loss,
     )
+    from .st_lrps_metrics import (
+        HISTORY_FIELDNAMES,
+        checkpoint_selection_block,
+        compute_checkpoint_score,
+        flatten_epoch_metrics,
+        format_batch_summary,
+        format_epoch_summary,
+        normalize_best_metric,
+    )
     from .st_lrps_models import (
         FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
         _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
@@ -101,6 +110,15 @@ except ImportError:  # pragma: no cover
         GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
         collocation_laplacian_loss,
     )
+    from st_lrps_metrics import (  # type: ignore
+        HISTORY_FIELDNAMES,
+        checkpoint_selection_block,
+        compute_checkpoint_score,
+        flatten_epoch_metrics,
+        format_batch_summary,
+        format_epoch_summary,
+        normalize_best_metric,
+    )
     from st_lrps_models import (
         FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
         _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
@@ -109,6 +127,13 @@ except ImportError:  # pragma: no cover
     from st_lrps_scaling import ScalerPack, fit_scaler_streaming
 
 logger = logging.getLogger(__name__)
+
+
+def _log_section(title: str, values: Mapping[str, Any]) -> None:
+    logger.info(f"=== {title} ===")
+    for key, value in values.items():
+        logger.info(f"{str(key):24s}: {value}")
+
 
 def set_seed(seed: int = 42, *, deterministic: bool = True, benchmark: bool = False) -> None:
     """
@@ -715,12 +740,21 @@ class STLRPSTrainer:
                         extra_terms += " alt-balance=on"
                     # loss_opt = optimizer loss (uses accel_factor); loss_ref = full diagnostic loss
                     logger.info(
-                        f"[{phase}] epoch={epoch+1} batch={n_batches}/{total_batches_est}"
-                        f" elapsed={_format_seconds(elapsed)} eta={_format_seconds(eta)}"
-                        f" loss_opt={total_opt_loss/n_batches:.3e} loss_ref={total_loss/n_batches:.3e}"
-                        f" U={total_u/n_batches:.3e} a={total_a/n_batches:.3e}"
-                        f" accel_f={accel_factor:.3f} w_a_eff={w_a_cur:.3f}"
-                        f"{dir_str}{extra_terms} lr={cur_lr:.3e} samples/s={sps:,.0f}{mem_str}"
+                        format_batch_summary(
+                            phase=phase.strip(),
+                            epoch=epoch + 1,
+                            batch=n_batches,
+                            total_batches=total_batches_est,
+                            loss_opt=total_opt_loss / n_batches,
+                            loss_ref=total_loss / n_batches,
+                            loss_u=total_u / n_batches,
+                            loss_a=total_a / n_batches,
+                            loss_dir=(total_dir / n_batches if lambda_dir_eff > 0.0 else None),
+                            lr=cur_lr,
+                            eta_s=eta,
+                            samples_per_s=sps,
+                            memory=mem_str,
+                        )
                     )
 
         phase_time = time.perf_counter() - phase_t0
@@ -826,49 +860,10 @@ def _apply_lr_multiplier(optimizer: torch.optim.Optimizer, multiplier: float) ->
 def _write_training_history_csv(history: List[Dict[str, float]], path: Path) -> None:
     if not history:
         return
-    fieldnames = [
-        "epoch",
-        "train_loss_total",
-        "train_loss_base",
-        "train_loss_physics",
-        "train_loss_u",
-        "train_loss_a",
-        "train_loss_dir",
-        "train_loss_radial",
-        "train_loss_cross",
-        "train_loss_laplacian",
-        "train_mean_cossim",
-        "train_cos_sim",
-        "val_loss_total",
-        "val_loss_base",
-        "val_loss_physics",
-        "val_loss_u",
-        "val_loss_a",
-        "val_loss_dir",
-        "val_loss_radial",
-        "val_loss_cross",
-        "val_loss_laplacian",
-        "val_checkpoint_score",
-        "val_mean_cossim",
-        "val_cos_sim",
-        "train_angular_mean_deg",
-        "val_angular_mean_deg",
-        "val_ang_deg",
-        "val_mae_a_vec",
-        "val_rmse_a_vec",
-        "lambda_dir_eff",
-        "lr",
-        "w_u",
-        "w_a_raw",
-        "w_a_eff",
-        "grad_norm",
-        "col_lap_attempts",
-        "col_lap_success",
-        "col_lap_fail",
-        "epoch_time_s",
-    ]
+    extra_fields = sorted({str(k) for row in history for k in row.keys()} - set(HISTORY_FIELDNAMES))
+    fieldnames = list(HISTORY_FIELDNAMES) + extra_fields
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for row in history:
             writer.writerow(row)
@@ -1053,43 +1048,45 @@ def train(cfg: TrainConfig) -> None:
         handlers=[logging.StreamHandler(), logging.FileHandler(layout.train_log)]
     )
 
-    logger.info(f"[artifacts] run_dir={outdir}")
-    logger.info(f"Using device: {device.type.upper()}")
+    _log_section(
+        "ST-LRPS Training",
+        {
+            "run_dir": outdir,
+            "created_at_utc": run_created_at,
+            "physics_design": "scalar residual potential dU; acceleration from autograd grad(dU)",
+        },
+    )
+    _log_section(
+        "Runtime / Device",
+        {
+            "device": device.type.upper(),
+            "seed": cfg.seed,
+            "torch_dtype": str(DTYPE).replace("torch.", ""),
+        },
+    )
     _warn_batch_size_for_vram(device, cfg)
 
     # Effective configuration summary (so the active feature set is unambiguous in
     # the log, especially now that several features default ON).
     _grad_accum = int(getattr(cfg, "grad_accumulation_steps", 1))
-    logger.info("=== Effective Training Configuration ===")
-    logger.info(
-        f"  arch: hidden={cfg.hidden} depth={cfg.depth} activation={cfg.activation} "
-        f"residual_blocks={bool(getattr(cfg, 'use_residual_blocks', False))} "
-        f"n_bands={int(getattr(cfg, 'n_bands', 1))} "
-        f"(multi-scale SIREN {'ACTIVE' if int(getattr(cfg, 'n_bands', 1)) > 1 else 'off'})"
+    _log_section(
+        "Loss Configuration",
+        {
+            "optim.lr": f"{cfg.lr:g}",
+            "optim.weight_decay": f"{cfg.weight_decay:g}",
+            "batch_size": cfg.batch_size,
+            "grad_accumulation_steps": _grad_accum,
+            "effective_batch": cfg.batch_size * _grad_accum,
+            "accel_ramp_epochs": cfg.accel_ramp_epochs,
+            "accel_min_factor": getattr(cfg, "accel_min_factor", 0.05),
+            "direction.weight": cfg.direction_loss_weight,
+            "direction.start_epoch": cfg.direction_loss_start_epoch,
+            "direction.ramp_epochs": cfg.direction_loss_ramp_epochs,
+            "direction.floor_abs": f"{cfg.direction_loss_floor_abs:g}",
+            "altitude_balanced": bool(cfg.use_altitude_balanced_loss),
+            "radial_cross": f"{bool(cfg.use_radial_cross_loss)} (radial={cfg.radial_loss_weight}, cross={cfg.cross_loss_weight})",
+        },
     )
-    logger.info(
-        f"  optim: lr={cfg.lr:g} weight_decay={cfg.weight_decay:g} batch_size={cfg.batch_size} "
-        f"grad_accum={_grad_accum} (effective batch={cfg.batch_size * _grad_accum})"
-    )
-    logger.info(
-        f"  curriculum: accel_ramp_epochs={cfg.accel_ramp_epochs} accel_min_factor={getattr(cfg, 'accel_min_factor', 0.05)}"
-    )
-    logger.info(
-        f"  direction loss: weight={cfg.direction_loss_weight} start_epoch={cfg.direction_loss_start_epoch} "
-        f"ramp={cfg.direction_loss_ramp_epochs} floor_abs={cfg.direction_loss_floor_abs:g}"
-    )
-    logger.info(
-        f"  altitude_balanced_loss={bool(cfg.use_altitude_balanced_loss)} | "
-        f"radial_cross_loss={bool(cfg.use_radial_cross_loss)} "
-        f"(radial_w={cfg.radial_loss_weight}, cross_w={cfg.cross_loss_weight})"
-    )
-    logger.info(
-        f"  best_checkpoint_metric={getattr(cfg, 'best_metric', 'total_loss')} "
-        f"(hybrid_alpha={getattr(cfg, 'hybrid_direction_alpha', 0.5)}) | "
-        f"scalers u={getattr(cfg, 'u_scale_mode', 'hybrid')}/a={getattr(cfg, 'a_scale_mode', 'hybrid')} "
-        f"mult={getattr(cfg, 'target_scale_multiplier', 6.0)}"
-    )
-    logger.info("  (w0_bands for multi-scale SIREN are resolved from dataset degrees and logged at model build)")
 
     command_line = write_command_txt(layout)
     write_run_manifest(
@@ -1119,6 +1116,18 @@ def train(cfg: TrainConfig) -> None:
             "history_jsonl_path": str(layout.history_jsonl),
             "warnings": [],
             "evaluations": [],
+        },
+    )
+    _log_section(
+        "Output Artifacts",
+        {
+            "config_json": layout.config_json,
+            "scaler_json": layout.scaler_json,
+            "train_log": layout.train_log,
+            "history_csv": layout.history_csv,
+            "history_jsonl": layout.history_jsonl,
+            "ckpt_best": layout.ckpt_best,
+            "ckpt_last": layout.ckpt_last,
         },
     )
 
@@ -1251,7 +1260,7 @@ def train(cfg: TrainConfig) -> None:
                 "Verify dataset generation parameters."
             )
 
-    logger.info("=== Dataset Configuration ===")
+    logger.info("=== Dataset ===")
     if independent_val:
         logger.info(f"Train file: {train_data_path.name} ({n_train:,} samples)")
         logger.info(f"Val file  : {val_data_path.name} ({n_val:,} samples)")
@@ -1286,14 +1295,19 @@ def train(cfg: TrainConfig) -> None:
     if meta.alt_min_km is not None and meta.alt_max_km is not None:
         logger.info(f"alt range    : [{meta.alt_min_km}, {meta.alt_max_km}] km")
     logger.info(f"Conversion factors (DU/TU/VU): {meta.DU_m} / {meta.TU_s} / {meta.VU_m_s}")
-    logger.info("=== Model Architecture (auto-configured) ===")
+    logger.info("=== Model ===")
     _n_bands_log = getattr(cfg, "n_bands", 1)
     _use_res_log = getattr(cfg, "use_residual_blocks", False)
     _grad_acc_log = getattr(cfg, "grad_accumulation_steps", 1)
-    logger.info(f"activation={cfg.activation} | hidden={cfg.hidden} | depth={cfg.depth} | "
-                f"w0_first={cfg.w0_first} | w0_hidden={cfg.w0_hidden} | "
-                f"n_bands={_n_bands_log} | residual_blocks={_use_res_log} | "
-                f"grad_accum={_grad_acc_log}")
+    logger.info(f"{'model.activation':24s}: {cfg.activation}")
+    logger.info(f"{'model.hidden':24s}: {cfg.hidden}")
+    logger.info(f"{'model.depth':24s}: {cfg.depth}")
+    logger.info(f"{'model.n_bands':24s}: {_n_bands_log}")
+    logger.info(f"{'model.w0_first':24s}: {cfg.w0_first}")
+    logger.info(f"{'model.w0_hidden':24s}: {cfg.w0_hidden}")
+    logger.info(f"{'model.w0_bands':24s}: {getattr(cfg, 'w0_bands', None)}")
+    logger.info(f"{'model.residual_blocks':24s}: {_use_res_log}")
+    logger.info(f"{'grad_accum':24s}: {_grad_acc_log}")
     # SIREN derivative-training safety check
     if cfg.activation.lower() == "sine":
         if cfg.lr > 5e-4:
@@ -1348,16 +1362,16 @@ def train(cfg: TrainConfig) -> None:
                 f"(collocation Laplacian is the preferred trainable regulariser)."
             )
     logger.info(f"  Direction Loss: weight={cfg.direction_loss_weight}, start={cfg.direction_loss_start_epoch}, ramp={cfg.direction_loss_ramp_epochs}")
-    _bm = str(getattr(cfg, "best_metric", "total_loss"))
-    _ha = float(getattr(cfg, "hybrid_direction_alpha", 0.5))
-    logger.info(f"  Best-checkpoint metric: {_bm}" + (f" (alpha={_ha})" if _bm == "hybrid" else ""))
+    _bm = str(_best_metric_canonical)
+    _ha = float(getattr(cfg, "hybrid_direction_alpha", 0.30))
+    logger.info(f"  Best-checkpoint metric: {_bm} | formula={checkpoint_selection['formula']}")
     if _bm == "direction_loss":
         logger.warning("best_metric='direction_loss' is experimental. "
                        "Early epochs may select underdeveloped checkpoints. "
                        "Consider 'hybrid' instead.")
     if _bm == "hybrid" and float(getattr(cfg, "direction_loss_weight", 0.0)) == 0.0:
         logger.warning("best_metric='hybrid' selected but direction_loss_weight=0. "
-                       "Hybrid score will equal total_loss. "
+                       "Hybrid score will effectively use val_base_loss. "
                        "Set --direction-loss-weight > 0 to enable hybrid selection.")
 
     # Fail fast on invalid architecture combination
@@ -1751,6 +1765,45 @@ def train(cfg: TrainConfig) -> None:
 
     capture_environment_snapshot(layout, extra={"device": str(device), "run_id": outdir.name})
 
+    _raw_ckpt_start = int(getattr(cfg, "best_ckpt_start_epoch", -1))
+    _direction_ready_epoch = (
+        int(cfg.direction_loss_start_epoch)
+        + int(cfg.direction_loss_ramp_epochs)
+        + int(getattr(cfg, "checkpoint_settle_epochs", 5))
+    )
+    if _raw_ckpt_start < 0:
+        if float(cfg.direction_loss_weight) > 0.0:
+            _ckpt_start = _direction_ready_epoch
+            _ckpt_start_reason = "waits until direction loss ramp is active and settled"
+        else:
+            _ckpt_start = 0
+            _ckpt_start_reason = "direction loss disabled; checkpoint tracking starts immediately"
+    else:
+        _ckpt_start = _raw_ckpt_start
+        _ckpt_start_reason = "manual best_ckpt_start_epoch"
+        if float(cfg.direction_loss_weight) > 0.0 and _ckpt_start < _direction_ready_epoch:
+            logger.warning(
+                "Manual best_ckpt_start_epoch is earlier than the direction-ready epoch "
+                f"({_ckpt_start} < {_direction_ready_epoch}). The run is allowed, but auto "
+                "mode is safer for production checkpoints."
+            )
+    _best_metric_canonical = normalize_best_metric(getattr(cfg, "best_metric", "hybrid"))
+    checkpoint_selection = checkpoint_selection_block(
+        cfg,
+        start_epoch=int(_ckpt_start),
+        reason=_ckpt_start_reason,
+    )
+    _log_section(
+        "Checkpoint Selection",
+        {
+            "best_metric": checkpoint_selection["best_metric"],
+            "formula": checkpoint_selection["formula"],
+            "start_epoch": checkpoint_selection["start_epoch_display"],
+            "reason": checkpoint_selection.get("reason"),
+            "lower_is_better": checkpoint_selection["lower_is_better"],
+        },
+    )
+
     resolved_cfg_source = asdict(cfg)
     resolved_cfg_source.update(
         {
@@ -1791,8 +1844,11 @@ def train(cfg: TrainConfig) -> None:
             "best_val_loss": None,
             "best_epoch": None,
             "best_score": None,
-            "best_score_name": str(getattr(cfg, "best_metric", "total_loss")),
-            "best_ckpt_start_epoch_resolved": None,
+            "best_score_name": str(_best_metric_canonical),
+            "best_metric": str(_best_metric_canonical),
+            "best_ckpt_start_epoch_resolved": int(_ckpt_start),
+            "best_ckpt_start_epoch_resolved_display": int(_ckpt_start + 1),
+            "checkpoint_selection": checkpoint_selection,
             "model_builder_version": MODEL_BUILDER_VERSION,
             "embedding_type": _emb_type_built,
             "input_feature_dim": int(_in_fdim_built),
@@ -1894,34 +1950,6 @@ def train(cfg: TrainConfig) -> None:
         collocation_r_max_m=_col_r_max_m,
     )
 
-    # Resolve the epoch from which best-checkpoint tracking and patience counting begin.
-    # Auto mode waits until direction loss has started, completed its ramp, and
-    # settled for a few epochs. This keeps ckpt_best aligned with the final
-    # direction-aware objective while still saving ckpt_last every epoch.
-    _raw_ckpt_start = int(getattr(cfg, "best_ckpt_start_epoch", -1))
-    _direction_ready_epoch = (
-        int(cfg.direction_loss_start_epoch)
-        + int(cfg.direction_loss_ramp_epochs)
-        + int(getattr(cfg, "checkpoint_settle_epochs", 5))
-    )
-    if _raw_ckpt_start < 0:
-        # Direction-aware checkpoints should not be selected before the model has
-        # actually trained with the direction penalty.  Validation can compute the
-        # direction term from epoch 0, but an early model has not yet learned under
-        # that constraint, so auto mode waits until the direction ramp is settled.
-        if float(cfg.direction_loss_weight) > 0.0:
-            _ckpt_start = _direction_ready_epoch
-        else:
-            _ckpt_start = 0
-    else:
-        _ckpt_start = _raw_ckpt_start
-        if float(cfg.direction_loss_weight) > 0.0 and _ckpt_start < _direction_ready_epoch:
-            logger.warning(
-                "Manual best_ckpt_start_epoch is earlier than the direction-ready epoch "
-                f"({_ckpt_start} < {_direction_ready_epoch}). The run is allowed, but auto "
-                "mode is safer for production checkpoints."
-            )
-
     best_val = float("inf")
     best_epoch = -1
     epochs_without_improve = 0
@@ -1946,6 +1974,7 @@ def train(cfg: TrainConfig) -> None:
     payload["best_ckpt_start_epoch_resolved"] = int(_ckpt_start)
     payload["best_ckpt_start_epoch_resolved_display"] = int(_ckpt_start + 1)
     payload["checkpoint_settle_epochs"] = int(getattr(cfg, "checkpoint_settle_epochs", 5))
+    payload["checkpoint_selection"] = dict(checkpoint_selection)
     atomic_write_json(config_path, payload)
     ckpt_config_base = dict(payload)
     update_run_manifest(
@@ -1954,6 +1983,7 @@ def train(cfg: TrainConfig) -> None:
             "best_ckpt_start_epoch": int(_ckpt_start),
             "best_ckpt_start_epoch_display": int(_ckpt_start + 1),
             "checkpoint_settle_epochs": int(getattr(cfg, "checkpoint_settle_epochs", 5)),
+            "checkpoint_selection": dict(checkpoint_selection),
         },
     )
     logger.info(f"[artifacts] schema=st_lrps_checkpoint_v2")
@@ -2029,25 +2059,20 @@ def train(cfg: TrainConfig) -> None:
             _prev_val_cossim = _val_cossim_now
             _prev_val_mse_a = _val_mse_a_now
 
-            _best_metric_mode = str(getattr(cfg, "best_metric", "total_loss")).strip().lower()
-            _hybrid_alpha = float(getattr(cfg, "hybrid_direction_alpha", 0.5))
-            if _best_metric_mode == "hybrid" and float(getattr(cfg, "direction_loss_weight", 0.0)) > 0.0:
-                _ckpt_score = float(va.get("val_base_loss", va["loss"])) + _hybrid_alpha * float(va.get("loss_dir", 0.0))
-            elif _best_metric_mode == "direction_loss":
-                _ckpt_score = float(va.get("loss_dir", float(va["loss"])))
-            elif _best_metric_mode == "val_base_loss":
-                _ckpt_score = float(va.get("val_base_loss", va["loss"]))
-            elif _best_metric_mode == "val_total_loss":
-                _ckpt_score = float(va.get("val_total_loss", va["loss"]))
-            else:
-                _ckpt_score = float(va["loss"])
+            _best_metric_mode = str(_best_metric_canonical)
+            va["eligible_for_best"] = bool(epoch >= _ckpt_start)
+            _ckpt_score, checkpoint_report = compute_checkpoint_score(va, cfg)
             va["val_checkpoint_score"] = float(_ckpt_score)
+            va["checkpoint_formula"] = str(checkpoint_report["formula"])
+            va["best_metric"] = str(checkpoint_report["best_metric"])
 
             ckpt_config = dict(ckpt_config_base)
             ckpt_config["best_val_loss"] = float(best_val) if math.isfinite(best_val) else None
             ckpt_config["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
             ckpt_config["best_score"] = float(best_val) if math.isfinite(best_val) else None
             ckpt_config["best_score_name"] = str(_best_metric_mode)
+            ckpt_config["checkpoint_selection"] = dict(checkpoint_selection)
+            ckpt_config["checkpoint_report"] = dict(checkpoint_report)
             ckpt_config["best_ckpt_start_epoch_resolved"] = int(_ckpt_start)
             ckpt_config["current_epoch"] = int(epoch + 1)
             ckpt_config["current_val_ref_loss"] = float(va["loss"])
@@ -2081,9 +2106,14 @@ def train(cfg: TrainConfig) -> None:
             checkpoint_info = {
                 "kind": "last",
                 "score": float(_ckpt_score),
+                "formula": str(checkpoint_report["formula"]),
+                "best_metric": str(checkpoint_report["best_metric"]),
                 "path": str(last_path),
                 "best_epoch": int(best_epoch + 1) if best_epoch >= 0 else None,
             }
+            checkpoint_report["is_best_update"] = False
+            checkpoint_report["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
+            checkpoint_report["best_score"] = float(best_val) if math.isfinite(best_val) else None
             if epoch < _ckpt_start:
                 # Burn-in phase: save last checkpoint but do not update best or count patience.
                 logger.info(f"[checkpoint] waiting: epoch {epoch+1} < start epoch {_ckpt_start + 1}")
@@ -2102,10 +2132,16 @@ def train(cfg: TrainConfig) -> None:
                     checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1)
                     checkpoint_payload["config"]["best_score"] = float(_ckpt_score)
                     checkpoint_payload["config"]["best_score_name"] = str(_best_metric_mode)
+                    checkpoint_payload["config"]["checkpoint_selection"] = dict(checkpoint_selection)
                     checkpoint_payload["config"]["best_val_base_loss"] = float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0)))
                     checkpoint_payload["config"]["best_val_total_loss"] = float(va.get("val_total_loss", va["loss"]))
                     checkpoint_payload["config"]["best_val_physics_loss"] = float(va.get("val_physics_loss", 0.0))
                     checkpoint_payload["config"]["epochs_since_improvement"] = 0
+                    checkpoint_report["is_best_update"] = True
+                    checkpoint_report["best_epoch"] = int(best_epoch + 1)
+                    checkpoint_report["best_score"] = float(best_val)
+                    checkpoint_payload["config"]["checkpoint_report"] = dict(checkpoint_report)
+                    checkpoint_payload["scoring"].update(dict(checkpoint_report))
                     save_checkpoint(layout, kind="best", payload=checkpoint_payload, epoch=epoch)
                     best_ckpt_hash = compute_file_sha256(best_path)
                     logger.info(f"[artifacts] checkpoint saved: kind=best epoch={epoch + 1}")
@@ -2113,6 +2149,8 @@ def train(cfg: TrainConfig) -> None:
                     checkpoint_info = {
                         "kind": "best",
                         "score": float(_ckpt_score),
+                        "formula": str(checkpoint_report["formula"]),
+                        "best_metric": str(checkpoint_report["best_metric"]),
                         "path": str(best_path),
                         "best_epoch": int(best_epoch + 1),
                     }
@@ -2123,6 +2161,8 @@ def train(cfg: TrainConfig) -> None:
                             "last_checkpoint_path": str(last_path),
                             "best_epoch": int(best_epoch + 1),
                             "best_score": float(_ckpt_score),
+                            "checkpoint_selection": dict(checkpoint_selection),
+                            "checkpoint_report": dict(checkpoint_report),
                             "latest_epoch": int(epoch + 1),
                             "checkpoint_hashes": {
                                 "best": best_ckpt_hash,
@@ -2137,6 +2177,11 @@ def train(cfg: TrainConfig) -> None:
             checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
             checkpoint_payload["config"]["best_score"] = float(best_val) if math.isfinite(best_val) else None
             checkpoint_payload["config"]["best_score_name"] = str(_best_metric_mode)
+            checkpoint_payload["config"]["checkpoint_selection"] = dict(checkpoint_selection)
+            checkpoint_report["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
+            checkpoint_report["best_score"] = float(best_val) if math.isfinite(best_val) else None
+            checkpoint_payload["config"]["checkpoint_report"] = dict(checkpoint_report)
+            checkpoint_payload["scoring"].update(dict(checkpoint_report))
             checkpoint_payload["config"]["epochs_since_improvement"] = int(epochs_without_improve)
             save_checkpoint(
                 layout,
@@ -2156,6 +2201,8 @@ def train(cfg: TrainConfig) -> None:
                 {
                     "status": "running",
                     "latest_epoch": int(epoch + 1),
+                    "checkpoint_report": dict(checkpoint_report),
+                    "checkpoint_selection": dict(checkpoint_selection),
                     "last_checkpoint_path": str(last_path),
                     "checkpoint_hashes": {
                         "best": (compute_file_sha256(best_path) if best_path.exists() else None),
@@ -2164,81 +2211,18 @@ def train(cfg: TrainConfig) -> None:
                 },
             )
 
-            history.append(
-                {
-                    "epoch": int(epoch),
-                    "train_loss_total": float(tr["loss"]),
-                    "train_loss_base": float(tr.get("train_base_loss", tr.get("mse_u", 0.0) + tr.get("mse_a", 0.0))),
-                    "train_loss_physics": float(tr.get("train_physics_loss", 0.0)),
-                    "train_loss_u": float(tr["mse_u"]),
-                    "train_loss_a": float(tr["mse_a"]),
-                    "train_loss_dir": float(tr.get("loss_dir", 0.0)),
-                    "train_loss_radial": float(tr.get("loss_radial", 0.0)),
-                    "train_loss_cross": float(tr.get("loss_cross", 0.0)),
-                    "train_loss_laplacian": float(tr.get("loss_laplacian", 0.0)),
-                    "train_mean_cossim": float(tr.get("cossim_mean", 1.0)),
-                    "train_cos_sim": float(tr.get("cossim_mean", 1.0)),
-                    "val_loss_total": float(va["loss"]),
-                    "val_loss_base": float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0))),
-                    "val_loss_physics": float(va.get("val_physics_loss", 0.0)),
-                    "val_loss_u": float(va["mse_u"]),
-                    "val_loss_a": float(va["mse_a"]),
-                    "val_loss_dir": float(va.get("loss_dir", 0.0)),
-                    "val_loss_radial": float(va.get("loss_radial", 0.0)),
-                    "val_loss_cross": float(va.get("loss_cross", 0.0)),
-                    "val_loss_laplacian": float(va.get("loss_laplacian", 0.0)),
-                    "val_checkpoint_score": float(va.get("val_checkpoint_score", va["loss"])),
-                    "val_mean_cossim": float(va.get("cossim_mean", 1.0)),
-                    "val_cos_sim": float(va.get("cossim_mean", 1.0)),
-                    "train_angular_mean_deg": float(tr.get("angular_mean_deg", 0.0)),
-                    "val_angular_mean_deg": float(va.get("angular_mean_deg", 0.0)),
-                    "val_ang_deg": float(va.get("angular_mean_deg", 0.0)),
-                    "val_mae_a_vec": float(va.get("mae_a_vec", 0.0)) if va.get("mae_a_vec") is not None else None,
-                    "val_rmse_a_vec": float(va.get("rmse_a_vec", 0.0)) if va.get("rmse_a_vec") is not None else None,
-                    "lambda_dir_eff": float(tr.get("lambda_dir_eff", 0.0)),
-                    "lr": float(tr["lr"]),
-                    "w_u": float(tr["w_u"]),
-                    "w_a_raw": float(tr["w_a_raw"]),
-                    "w_a_eff": float(tr["w_a"]),
-                    "grad_norm": float(tr["grad_norm"]),
-                    "col_lap_attempts": int(tr.get("collocation_laplacian_attempt_count", 0)),
-                    "col_lap_success": int(tr.get("collocation_laplacian_success_count", 0)),
-                    "col_lap_fail": int(tr.get("collocation_laplacian_fail_count", 0)),
-                    "epoch_time_s": float(epoch_time_s),
-                }
-            )
-            logf.write(
-                json.dumps(
-                    {
-                        "epoch": int(epoch),
-                        "train": {
-                            "loss_total": float(tr["loss"]),
-                            "loss_base": float(tr.get("train_base_loss", tr.get("mse_u", 0.0) + tr.get("mse_a", 0.0))),
-                            "loss_physics": float(tr.get("train_physics_loss", 0.0)),
-                            "loss_dir": float(tr.get("loss_dir", 0.0)),
-                            "cos_sim": float(tr.get("cossim_mean", 1.0)),
-                            "ang_deg": float(tr.get("angular_mean_deg", 0.0)),
-                        },
-                        "val": {
-                            "loss_total": float(va["loss"]),
-                            "loss_base": float(va.get("val_base_loss", va.get("mse_u", 0.0) + va.get("mse_a", 0.0))),
-                            "loss_physics": float(va.get("val_physics_loss", 0.0)),
-                            "loss_dir": float(va.get("loss_dir", 0.0)),
-                            "checkpoint_score": float(va.get("val_checkpoint_score", va["loss"])),
-                            "cos_sim": float(va.get("cossim_mean", 1.0)),
-                            "ang_deg": float(va.get("angular_mean_deg", 0.0)),
-                            "mae_a_vec": va.get("mae_a_vec"),
-                            "rmse_a_vec": va.get("rmse_a_vec"),
-                        },
-                        "checkpoint": checkpoint_info,
-                        "lr": float(tr["lr"]),
-                        "timing": {"epoch_time_s": float(epoch_time_s)},
-                    },
-                    sort_keys=True,
-                    default=str,
-                )
-                + "\n"
-            )
+            tr_with_time = dict(tr)
+            tr_with_time["epoch_time_s"] = float(epoch_time_s)
+            row = flatten_epoch_metrics(epoch, tr_with_time, va, checkpoint_report, cfg)
+            # Extra compatibility / diagnostics not in the stable core schema.
+            row["val_mae_a_vec"] = float(va.get("mae_a_vec", 0.0)) if va.get("mae_a_vec") is not None else None
+            row["val_rmse_a_vec"] = float(va.get("rmse_a_vec", 0.0)) if va.get("rmse_a_vec") is not None else None
+            history.append(row)
+            jsonl_row = dict(row)
+            jsonl_row["train"] = dict(tr)
+            jsonl_row["val"] = dict(va)
+            jsonl_row["checkpoint_report"] = dict(checkpoint_report)
+            logf.write(json.dumps(jsonl_row, sort_keys=True, default=str) + "\n")
             logf.flush()
 
             _lde = float(tr.get("lambda_dir_eff", 0.0))
@@ -2247,16 +2231,7 @@ def train(cfg: TrainConfig) -> None:
                 f" cossim={tr.get('cossim_mean',1.0):.4f} lam={_lde:.2e}"
                 if _lde > 0.0 else ""
             )
-            logger.info(
-                f"Epoch [{epoch + 1:03d}/{cfg.epochs:03d}] | "
-                f"Train opt={tr.get('objective_loss', tr['loss']):.5e} ref={tr['loss']:.5e} "
-                f"(dU={tr['mse_u']:.2e}, da={tr['mse_a']:.2e}) | "
-                f"Val ref={va['loss']:.5e} (dU={va['mse_u']:.2e}, da={va['mse_a']:.2e})"
-                f"{_dir_log} | "
-                f"LR: {tr['lr']:.2e} | w_U: {tr['w_u']:.3f} | "
-                f"accel_f: {tr.get('accel_factor', 1.0):.3f} | w_a_eff: {tr['w_a']:.3f} | "
-                f"grad: {tr['grad_norm']:.3e} | epoch: {epoch_time_s:.2f}s"
-            )
+            logger.info(format_epoch_summary(row, total_epochs=int(cfg.epochs)))
 
             if epochs_without_improve >= int(cfg.patience):
                 logger.info(
@@ -2271,6 +2246,9 @@ def train(cfg: TrainConfig) -> None:
     payload["best_val_loss"] = float(best_val) if math.isfinite(best_val) else None
     payload["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
     payload["best_score"] = float(best_val) if math.isfinite(best_val) else None
+    payload["best_score_name"] = str(_best_metric_canonical)
+    payload["best_metric"] = str(_best_metric_canonical)
+    payload["checkpoint_selection"] = dict(checkpoint_selection)
     atomic_write_json(config_path, payload)
     update_run_manifest(
         layout,
@@ -2278,6 +2256,8 @@ def train(cfg: TrainConfig) -> None:
             "status": run_status,
             "best_epoch": int(best_epoch + 1) if best_epoch >= 0 else None,
             "best_score": float(best_val) if math.isfinite(best_val) else None,
+            "best_metric": str(_best_metric_canonical),
+            "checkpoint_selection": dict(checkpoint_selection),
             "latest_epoch": (int(history[-1]["epoch"]) + 1) if history else 0,
             "checkpoint_hashes": {
                 "best": (compute_file_sha256(best_path) if best_path.exists() else None),
@@ -2286,14 +2266,25 @@ def train(cfg: TrainConfig) -> None:
         },
     )
 
-    if math.isfinite(best_val):
-        logger.info(f"Training Complete. Best Validation Loss: {best_val:.6e}")
-    else:
-        logger.info(
-            "Training Complete. No best checkpoint was selected because the run ended before "
-            "best-checkpoint tracking started; ckpt_last.pt remains available."
-        )
-    logger.info(f"Checkpoints saved to: {outdir.name}/checkpoints")
+    eval_suggestion = (
+        f"python surrogate_gravity_model/st_lrps_evaluate.py --model-dir {outdir} "
+        f"--data {cfg.test_data or cfg.val_data or cfg.data} --out {outdir / 'evals' / 'publication_eval'}"
+    )
+    _log_section(
+        "Training Complete",
+        {
+            "status": run_status,
+            "best_epoch": int(best_epoch + 1) if best_epoch >= 0 else "none",
+            "best_score": f"{best_val:.6e}" if math.isfinite(best_val) else "none",
+            "best_metric": str(_best_metric_canonical),
+            "best_formula": checkpoint_selection["formula"],
+            "best_checkpoint": best_path if best_path.exists() else "not selected",
+            "last_checkpoint": last_path,
+            "history_csv": layout.history_csv,
+            "history_jsonl": layout.history_jsonl,
+            "eval_suggestion": eval_suggestion,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

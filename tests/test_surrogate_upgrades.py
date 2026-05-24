@@ -468,24 +468,21 @@ def test_ablation_command_generation_dry_run(tmp_path):
     assert "note" in manifest and "recommended production" in manifest["note"]
     names = [a["name"] for a in manifest["ablations"]]
     expected = [
-        "plain_siren", "residual_siren", "multiscale_siren_3band",
-        "multiscale_siren_5band", "radial_encoding", "sh_encoding",
-        "no_direction_loss", "no_altitude_balance", "no_radial_cross",
-        "laplacian_train", "radial_decay_encoding", "real_sh_basis",
-        "additive_multiband",
+        "baseline_single_siren", "multiscale_siren", "multiscale_no_resblocks",
+        "multiscale_no_direction", "multiscale_no_altitude_balance",
+        "multiscale_no_radial_cross", "radial_decay_encoding",
+        "real_sh_basis_encoding_optional", "additive_multiband",
     ]
     assert names == expected
     for ab in manifest["ablations"]:
         assert isinstance(ab["command"], list) and ab["command"]
         assert ab["seed"] == 7
 
-    # laplacian_train must request the trainable Laplacian with a small safe weight.
-    lap = next(a for a in manifest["ablations"] if a["name"] == "laplacian_train")
-    assert "--laplacian-mode" in lap["flags"]
-    assert "train" in lap["flags"]
+    assert all("expected_purpose" in ab for ab in manifest["ablations"])
+    assert all("experimental" in ab for ab in manifest["ablations"])
 
     # Dry-run must NOT create any per-run directory (only the root + files).
-    assert not (out_root / "plain_siren").exists()
+    assert not (out_root / "baseline_single_siren").exists()
 
 
 def test_ablation_matrix_contains_radial_decay_and_real_sh(tmp_path):
@@ -497,10 +494,10 @@ def test_ablation_matrix_contains_radial_decay_and_real_sh(tmp_path):
     manifest = json.loads((out_root / "ablation_manifest.json").read_text(encoding="utf-8"))
     by_name = {a["name"]: a for a in manifest["ablations"]}
     assert "radial_decay_encoding" in by_name
-    assert "real_sh_basis" in by_name
+    assert "real_sh_basis_encoding_optional" in by_name
     assert "additive_multiband" in by_name
     assert "--use-radial-decay-encoding" in by_name["radial_decay_encoding"]["flags"]
-    assert "--use-real-sh-basis" in by_name["real_sh_basis"]["flags"]
+    assert "--use-real-sh-basis" in by_name["real_sh_basis_encoding_optional"]["flags"]
     assert "--multiscale-mode" in by_name["additive_multiband"]["flags"]
 
 

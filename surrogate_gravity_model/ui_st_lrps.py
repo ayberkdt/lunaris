@@ -752,6 +752,10 @@ class LiveLossPlot(QWidget):
         self._train_loss: List[float] = []
         self._val_loss: List[float] = []
         self._train_opt_loss: List[float] = []
+        self._val_base_loss: List[float] = []
+        self._val_dir_loss: List[float] = []
+        self._checkpoint_scores: List[float] = []
+        self._best_scores: List[float] = []
         self._lr_values: List[float] = []
         self._best_val: Optional[float] = None
         self._best_epoch: Optional[int] = None
@@ -760,6 +764,9 @@ class LiveLossPlot(QWidget):
         self._latest_train_ref: Optional[float] = None
         self._latest_val_ref: Optional[float] = None
         self._latest_lam_dir: Optional[float] = None
+        self._latest_checkpoint_score: Optional[float] = None
+        self._best_metric_name: str = "best metric"
+        self._best_formula: str = "N/A"
         self._epochs_since_improvement: Optional[int] = None
         self._checkpoint_status: str = "Waiting for training"
         self._paused: bool = False
@@ -875,6 +882,9 @@ class LiveLossPlot(QWidget):
         self._lbl_lam_dir     = self._metric_label("λ Yön Ağrl.",    "—")
         self._lbl_lr          = self._metric_label("Öğr. Hızı",      "—")
 
+        self._lbl_score = self._metric_label("Checkpoint Score", "...")
+        self._lbl_formula = self._metric_label("Formula", "N/A")
+
         metrics_row = QHBoxLayout()
         metrics_row.setContentsMargins(0, 0, 0, 0)
         metrics_row.setSpacing(6)
@@ -884,6 +894,24 @@ class LiveLossPlot(QWidget):
         ):
             metrics_row.addWidget(w, 1)
         card_layout.addLayout(metrics_row)
+
+        metrics_row2 = QHBoxLayout()
+        metrics_row2.setContentsMargins(0, 0, 0, 0)
+        metrics_row2.setSpacing(6)
+        metrics_row2.addWidget(self._lbl_score, 1)
+        metrics_row2.addWidget(self._lbl_formula, 3)
+        card_layout.addLayout(metrics_row2)
+
+        help_label = QLabel(
+            "Best metric selects ckpt_best.pt. Hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
+        )
+        help_label.setWordWrap(True)
+        help_label.setStyleSheet("color: #7f8ab0; font-size: 10px;")
+        help_label.setToolTip(
+            "Best metric is the scalar score used to select ckpt_best.pt. "
+            "For hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
+        )
+        card_layout.addWidget(help_label)
 
         # durum etiketi (altta ortalanmış)
         self._lbl_status = QLabel("Eğitim bekleniyor…")
@@ -973,9 +1001,37 @@ class LiveLossPlot(QWidget):
                 # Older pyqtgraph versions do not support all styling kwargs.
                 self._legend = plot_item.addLegend(offset=(12, 12))
 
-            card_layout.addWidget(self._plot_widget, 1)
+            self._direction_plot = pg.PlotWidget()
+            self._direction_plot.setMinimumHeight(260)
+            self._direction_plot.setBackground("#050915")
+            self._direction_plot.setMenuEnabled(False)
+            self._direction_plot.showGrid(x=True, y=True, alpha=0.18)
+            self._direction_plot.setLabel("left", "Direction / accel", color="#aeb8d8", size="10pt")
+            self._direction_plot.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
+            self._direction_plot.setLogMode(x=False, y=True)
+            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#f59e0b", width=2.4), name="Val direction")
+
+            self._checkpoint_plot = pg.PlotWidget()
+            self._checkpoint_plot.setMinimumHeight(260)
+            self._checkpoint_plot.setBackground("#050915")
+            self._checkpoint_plot.setMenuEnabled(False)
+            self._checkpoint_plot.showGrid(x=True, y=True, alpha=0.18)
+            self._checkpoint_plot.setLabel("left", "Checkpoint score", color="#aeb8d8", size="10pt")
+            self._checkpoint_plot.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
+            self._checkpoint_plot.setLogMode(x=False, y=True)
+            self._curve_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#34d399", width=2.6), name="Score")
+            self._curve_best_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#f472b6", width=2.2, style=Qt.PenStyle.DashLine), name="Best")
+
+            self._plot_tabs = QTabWidget()
+            self._plot_tabs.setDocumentMode(True)
+            self._plot_tabs.addTab(self._plot_widget, "Loss overview")
+            self._plot_tabs.addTab(self._direction_plot, "Acceleration / direction")
+            self._plot_tabs.addTab(self._checkpoint_plot, "Checkpoint score")
+            card_layout.addWidget(self._plot_tabs, 1)
         else:
             self._plot_widget = None
+            self._direction_plot = None
+            self._checkpoint_plot = None
             placeholder = QLabel(
                 "pyqtgraph yüklü değil — canlı grafik devre dışı.\n"
                 "Yüklemek için:  pip install pyqtgraph"
@@ -994,10 +1050,16 @@ class LiveLossPlot(QWidget):
 
         # Regex patterns for parsing. Supports both old pretty logs and compact logger lines.
         _num = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
-        self._re_epoch = re.compile(r"Epoch\s*\[\s*(\d+)\s*/\s*(\d+)\s*\]", re.IGNORECASE)
+        self._re_epoch = re.compile(r"Epoch\s*\[?\s*(\d+)\s*/\s*(\d+)\s*\]?", re.IGNORECASE)
         self._re_epoch_kv = re.compile(r"\bepoch\s*=\s*(\d+)\b", re.IGNORECASE)
         self._re_train_opt_ref = re.compile(rf"\bTrain\s+opt\s*[:=]\s*({_num})\s+ref\s*[:=]\s*({_num})", re.IGNORECASE)
         self._re_val_ref = re.compile(rf"\bVal\s+ref\s*[:=]\s*({_num})", re.IGNORECASE)
+        self._re_val_total = re.compile(rf"\bval\s+total\s*[:=]\s*({_num})", re.IGNORECASE)
+        self._re_val_base = re.compile(rf"\bbase\s*[:=]\s*({_num})", re.IGNORECASE)
+        self._re_val_dir = re.compile(rf"\bdir\s*[:=]\s*({_num})", re.IGNORECASE)
+        self._re_score = re.compile(rf"\bscore\s*[:=]\s*({_num})", re.IGNORECASE)
+        self._re_best_score = re.compile(rf"\bbest\s*=\s*(?:YES|no).*?\bscore\s*[:=]\s*({_num})", re.IGNORECASE)
+        self._re_best_formula = re.compile(r"\[([^:\]]+):\s*([^\]]+)\]")
         self._re_loss_opt = re.compile(rf"\bloss_opt\s*[:=]\s*({_num})", re.IGNORECASE)
         self._re_loss_ref = re.compile(rf"\bloss_ref\s*[:=]\s*({_num})", re.IGNORECASE)
         self._re_train_loss = re.compile(
@@ -1061,6 +1123,10 @@ class LiveLossPlot(QWidget):
         train_opt: Optional[float] = None
         train_ref: Optional[float] = None
         val_ref: Optional[float] = None
+        val_base: Optional[float] = None
+        val_dir: Optional[float] = None
+        checkpoint_score: Optional[float] = None
+        best_score: Optional[float] = None
 
         m_train_opt_ref = self._re_train_opt_ref.search(line)
         if m_train_opt_ref:
@@ -1070,6 +1136,25 @@ class LiveLossPlot(QWidget):
         m_val_ref = self._re_val_ref.search(line)
         if m_val_ref:
             val_ref = float(m_val_ref.group(1))
+        m_val_total = self._re_val_total.search(line)
+        if m_val_total:
+            val_ref = float(m_val_total.group(1))
+        m_val_base = self._re_val_base.search(line)
+        if m_val_base:
+            val_base = float(m_val_base.group(1))
+        m_val_dir = self._re_val_dir.search(line)
+        if m_val_dir:
+            val_dir = float(m_val_dir.group(1))
+        m_score = self._re_score.search(line)
+        if m_score:
+            checkpoint_score = float(m_score.group(1))
+        m_best_score = self._re_best_score.search(line)
+        if m_best_score:
+            best_score = float(m_best_score.group(1))
+        m_formula = self._re_best_formula.search(line)
+        if m_formula:
+            self._best_metric_name = m_formula.group(1).strip()
+            self._best_formula = m_formula.group(2).strip()
 
         if train_ref is None and is_train_phase:
             m_loss_ref = self._re_loss_ref.search(line)
@@ -1104,7 +1189,11 @@ class LiveLossPlot(QWidget):
         if m_lam:
             self._latest_lam_dir = float(m_lam.group(1))
 
-        if train_ref is None and val_ref is None and train_opt is None and not m_lr and not m_lam:
+        if (
+            train_ref is None and val_ref is None and train_opt is None
+            and checkpoint_score is None and val_base is None and val_dir is None
+            and not m_lr and not m_lam
+        ):
             self._refresh_metric_labels()
             self._lbl_status.setText(f"Epoch {self._latest_epoch or epoch} | {self._checkpoint_status}")
             return
@@ -1118,6 +1207,14 @@ class LiveLossPlot(QWidget):
                 self._train_opt_loss[idx] = train_opt
             if val_ref is not None:
                 self._val_loss[idx] = val_ref
+            if val_base is not None:
+                self._val_base_loss[idx] = val_base
+            if val_dir is not None:
+                self._val_dir_loss[idx] = val_dir
+            if checkpoint_score is not None:
+                self._checkpoint_scores[idx] = checkpoint_score
+            if best_score is not None:
+                self._best_scores[idx] = best_score
             if m_lr:
                 self._lr_values[idx] = lr_val
         else:
@@ -1125,6 +1222,10 @@ class LiveLossPlot(QWidget):
             self._train_loss.append(train_ref if train_ref is not None else float("nan"))
             self._train_opt_loss.append(train_opt if train_opt is not None else float("nan"))
             self._val_loss.append(val_ref if val_ref is not None else float("nan"))
+            self._val_base_loss.append(val_base if val_base is not None else float("nan"))
+            self._val_dir_loss.append(val_dir if val_dir is not None else float("nan"))
+            self._checkpoint_scores.append(checkpoint_score if checkpoint_score is not None else float("nan"))
+            self._best_scores.append(best_score if best_score is not None else float("nan"))
             self._lr_values.append(lr_val)
 
         if train_opt is not None and math.isfinite(train_opt):
@@ -1142,8 +1243,60 @@ class LiveLossPlot(QWidget):
                 self._epochs_since_improvement = max(0, int(epoch) - int(self._best_epoch))
         elif self._best_epoch is not None:
             self._epochs_since_improvement = max(0, int(epoch) - int(self._best_epoch))
+        if checkpoint_score is not None and math.isfinite(checkpoint_score):
+            self._latest_checkpoint_score = float(checkpoint_score)
+        if best_score is not None and math.isfinite(best_score):
+            self._best_val = float(best_score)
 
         self._update_plot()
+
+    def load_history_file(self, path: str) -> None:
+        """Load flat history JSONL/CSV rows without blocking the launcher path."""
+        p = Path(path)
+        if not p.exists():
+            return
+        try:
+            rows: List[Dict[str, Any]] = []
+            if p.suffix.lower() == ".jsonl":
+                for line in p.read_text(encoding="utf-8").splitlines():
+                    if line.strip():
+                        rows.append(json.loads(line))
+            elif p.suffix.lower() == ".csv":
+                import csv as _csv
+                with p.open("r", newline="", encoding="utf-8") as handle:
+                    rows.extend(dict(row) for row in _csv.DictReader(handle))
+            else:
+                return
+            self.clear()
+            for row in rows:
+                epoch = int(float(row.get("epoch_display") or (float(row.get("epoch", 0)) + 1)))
+                self._epochs.append(epoch)
+                self._train_loss.append(float(row.get("train_loss_total", "nan")))
+                self._train_opt_loss.append(float(row.get("train_loss_objective", "nan")))
+                self._val_loss.append(float(row.get("val_loss_total", "nan")))
+                self._val_base_loss.append(float(row.get("val_loss_base", "nan")))
+                self._val_dir_loss.append(float(row.get("val_loss_dir", "nan")))
+                self._checkpoint_scores.append(float(row.get("checkpoint_score", row.get("val_checkpoint_score", "nan"))))
+                self._best_scores.append(float(row.get("best_score", "nan")))
+                self._lr_values.append(float(row.get("lr", "nan")))
+                if row.get("best_metric"):
+                    self._best_metric_name = str(row.get("best_metric"))
+                if row.get("checkpoint_formula"):
+                    self._best_formula = str(row.get("checkpoint_formula"))
+                try:
+                    best_epoch = row.get("best_epoch")
+                    if best_epoch not in (None, ""):
+                        self._best_epoch = int(float(best_epoch))
+                    best_score = row.get("best_score")
+                    if best_score not in (None, ""):
+                        best_score_f = float(best_score)
+                        if math.isfinite(best_score_f):
+                            self._best_val = best_score_f
+                except Exception:
+                    pass
+            self._update_plot()
+        except Exception:
+            self._lbl_status.setText("History unavailable")
 
     def _parse_checkpoint_status(self, line: str) -> None:
         """Update checkpoint status chips from engine checkpoint log lines."""
@@ -1190,11 +1343,20 @@ class LiveLossPlot(QWidget):
 
         t_ep, t_val = self._valid_xy(self._train_loss)
         v_ep, v_val = self._valid_xy(self._val_loss)
+        dir_ep, dir_val = self._valid_xy(self._val_dir_loss)
+        score_ep, score_val = self._valid_xy(self._checkpoint_scores)
+        best_ep, best_val = self._valid_xy(self._best_scores)
 
         self._curve_train.setData(t_ep, t_val)
         self._curve_train_shadow.setData(t_ep, t_val)
         self._curve_val.setData(v_ep, v_val)
         self._curve_val_shadow.setData(v_ep, v_val)
+        if getattr(self, "_curve_val_dir", None) is not None:
+            self._curve_val_dir.setData(dir_ep, dir_val)
+        if getattr(self, "_curve_score", None) is not None:
+            self._curve_score.setData(score_ep, score_val)
+        if getattr(self, "_curve_best_score", None) is not None:
+            self._curve_best_score.setData(best_ep, best_val)
 
         if self._best_val is not None and math.isfinite(self._best_val) and self._best_val > 0:
             self._best_line.setValue(float(self._best_val))
@@ -1242,9 +1404,19 @@ class LiveLossPlot(QWidget):
         self._lbl_lam_dir.setText(_chip("λ Yön Ağrl.", self._fmt_metric(self._latest_lam_dir)))
         self._lbl_lr.setText(_chip("Öğr. Hızı", self._fmt_metric(latest_lr)))
 
+        self._lbl_score.setText(_chip("Checkpoint Score", self._fmt_metric(self._latest_checkpoint_score)))
+        formula = self._best_formula if self._best_formula else "N/A"
+        if len(formula) > 56:
+            formula = formula[:53] + "..."
+        self._lbl_formula.setText(_chip(self._best_metric_name or "Formula", formula))
+
     def _on_log_toggle(self, checked: bool) -> None:
         if self._plot_widget and _HAS_PYQTGRAPH:
             self._plot_widget.setLogMode(x=False, y=checked)
+            if getattr(self, "_direction_plot", None) is not None:
+                self._direction_plot.setLogMode(x=False, y=checked)
+            if getattr(self, "_checkpoint_plot", None) is not None:
+                self._checkpoint_plot.setLogMode(x=False, y=checked)
             self._plot_widget.setLabel(
                 "left",
                 "Loss (log)" if checked else "Loss",
@@ -1263,6 +1435,10 @@ class LiveLossPlot(QWidget):
         self._train_loss.clear()
         self._val_loss.clear()
         self._train_opt_loss.clear()
+        self._val_base_loss.clear()
+        self._val_dir_loss.clear()
+        self._checkpoint_scores.clear()
+        self._best_scores.clear()
         self._lr_values.clear()
         self._best_val = None
         self._best_epoch = None
@@ -1271,6 +1447,9 @@ class LiveLossPlot(QWidget):
         self._latest_train_ref = None
         self._latest_val_ref = None
         self._latest_lam_dir = None
+        self._latest_checkpoint_score = None
+        self._best_metric_name = "best metric"
+        self._best_formula = "N/A"
         self._epochs_since_improvement = None
         self._checkpoint_status = "Waiting for training"
         if self._plot_widget and _HAS_PYQTGRAPH:
@@ -1278,6 +1457,12 @@ class LiveLossPlot(QWidget):
             self._curve_train_shadow.setData([], [])
             self._curve_val.setData([], [])
             self._curve_val_shadow.setData([], [])
+            if getattr(self, "_curve_val_dir", None) is not None:
+                self._curve_val_dir.setData([], [])
+            if getattr(self, "_curve_score", None) is not None:
+                self._curve_score.setData([], [])
+            if getattr(self, "_curve_best_score", None) is not None:
+                self._curve_best_score.setData([], [])
             self._best_line.setVisible(False)
         self._lbl_status.setText("Eğitim bekleniyor…")
         self._refresh_metric_labels()
@@ -1303,6 +1488,9 @@ class LiveLossPlot(QWidget):
             result["best_epoch"] = self._best_epoch
         if self._latest_lam_dir is not None:
             result["lambda_dir_eff"] = self._latest_lam_dir
+        if self._latest_checkpoint_score is not None:
+            result["checkpoint_score"] = self._latest_checkpoint_score
+            result["best_metric_formula"] = self._best_formula
         if self._epochs_since_improvement is not None:
             result["epochs_since_improvement"] = self._epochs_since_improvement
         return result
@@ -2819,6 +3007,11 @@ class STLRPSTrainTab(QWidget):
 
         # --- Live Loss Plot (Feature #13) ---
         self._live_plot = LiveLossPlot()
+        self._history_poll_timer = QTimer(self)
+        self._history_poll_timer.setInterval(2000)
+        self._history_poll_timer.timeout.connect(self._poll_training_history)
+        self._history_poll_path: Optional[Path] = None
+        self._history_poll_mtime: float = 0.0
 
         # --- "Add to Queue" button (Feature #15) ---
         self.btn_enqueue = QPushButton("Kuyruğa Ekle")
@@ -3763,6 +3956,7 @@ class STLRPSTrainTab(QWidget):
 
         self._live_plot.clear()
         self.runner.set_output_dir(out_dir if out_dir else "")
+        self._set_history_poll_dir(out_dir)
         self._save_settings()
         self.runner.start(sys.executable, args, workdir=str(SCRIPT_DIR))
 
@@ -3792,7 +3986,52 @@ class STLRPSTrainTab(QWidget):
         self.runner.progress.setValue(0)
         self.runner.progress.setFormat("Epoch %v / %m  [Kuyruk]")
         self.runner.set_output_dir("")
+        self._set_history_poll_dir(self._arg_value(args, "--out") or "")
         self.runner.start(sys.executable, args, workdir=str(SCRIPT_DIR))
+
+    def _arg_value(self, args: List[str], flag: str) -> Optional[str]:
+        try:
+            idx = args.index(flag)
+            if idx + 1 < len(args):
+                return str(args[idx + 1])
+        except ValueError:
+            pass
+        return None
+
+    def _set_history_poll_dir(self, run_dir: str) -> None:
+        run_dir = str(run_dir or "").strip()
+        self._history_poll_path = None
+        self._history_poll_mtime = 0.0
+        if not run_dir:
+            self._history_poll_timer.stop()
+            return
+        root = Path(run_dir)
+        self._history_poll_path = root / "history.jsonl"
+        self._history_poll_timer.start()
+
+    def _poll_training_history(self) -> None:
+        run_dir = self.runner._output_dir or self.out_dir.text().strip()
+        if self._history_poll_path is None and run_dir:
+            self._set_history_poll_dir(run_dir)
+        if self._history_poll_path is None:
+            return
+        candidates = [self._history_poll_path]
+        if self._history_poll_path.suffix.lower() == ".jsonl":
+            candidates.append(self._history_poll_path.with_suffix(".csv"))
+        else:
+            candidates.append(self._history_poll_path.with_suffix(".jsonl"))
+        path = next((p for p in candidates if p.exists()), None)
+        if path is None:
+            return
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return
+        if path == self._history_poll_path and mtime <= self._history_poll_mtime:
+            return
+        self._history_poll_path = path
+        self._history_poll_mtime = mtime
+        self._live_plot.load_history_file(str(path))
 
     # -----------------------------------------------------------------
     # Post-run hook
@@ -3800,6 +4039,8 @@ class STLRPSTrainTab(QWidget):
     def _on_train_finished(
         self, exit_code: int, exit_status: QProcess.ExitStatus
     ) -> None:
+        self._poll_training_history()
+        self._history_poll_timer.stop()
         training_ok = (
             exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
         )
@@ -3816,6 +4057,9 @@ class STLRPSTrainTab(QWidget):
                     candidate = m.group(1).strip().strip("'\"")
                     if Path(candidate).is_dir():
                         self.runner.set_output_dir(candidate)
+                        self._set_history_poll_dir(candidate)
+                        self._poll_training_history()
+                        self._history_poll_timer.stop()
                         self.runner.btn_open_folder.setVisible(True)
                         break
 
@@ -3912,12 +4156,12 @@ class STLRPSTrainTab(QWidget):
     # Progress parsing (+ live plot feeding)
     # -----------------------------------------------------------------
     def _parse_progress(self, line: str) -> None:
-        m = re.search(r"Epoch\s*\[\s*(\d+)\s*/\s*(\d+)\s*\]", line)
+        m = re.search(r"Epoch\s*(?:\[\s*)?(\d+)\s*/\s*(\d+)(?:\s*\])?", line)
         if m:
             ep = int(m.group(1))
             total = int(m.group(2))
             self.runner.progress.setRange(0, max(1, total))
-            self.runner.progress.setValue(min(ep + 1, total))
+            self.runner.progress.setValue(min(ep if ep >= 1 else ep + 1, total))
 
         # Feature #13: feed line to the live loss plot
         self._live_plot.parse_line(line)
@@ -3929,6 +4173,7 @@ class STLRPSTrainTab(QWidget):
                 candidate = m2.group(1).strip().strip("'\"")
                 if Path(candidate).is_dir():
                     self.runner.set_output_dir(candidate)
+                    self._set_history_poll_dir(candidate)
 
 
 # =============================================================================

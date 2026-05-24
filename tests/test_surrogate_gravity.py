@@ -50,7 +50,7 @@ def _make_tiny_run(
         "resolved_mu_si": float(MU_MOON),
         "resolved_a_sign": 1.0,
         "scaler_kind": "isometric",
-        "degree_min": 10,
+        "degree_min": 0,
         "degree_max": 50,
     }
     if extra_config:

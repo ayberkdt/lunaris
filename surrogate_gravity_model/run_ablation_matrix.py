@@ -1,160 +1,143 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-run_ablation_matrix.py - Generate (and optionally execute) the standard ST-LRPS
-ablation matrix for the lunar residual gravity surrogate.
-
-Each ablation is a single ``st_lrps_train.py`` run with a fixed set of
-architecture / loss flags layered on top of the shared dataset + seed. The
-script writes:
-
-* ``<out_root>/ablation_commands.txt`` - one shell command per ablation
-* ``<out_root>/ablation_manifest.json`` - compact machine-readable description
-* ``<out_root>/<ablation_name>/`` - per-run output directory (created lazily)
-
-By default it is a DRY RUN (commands are written but not executed). Pass
-``--execute`` to actually launch the runs sequentially. Existing run
-directories are skipped unless ``--overwrite`` is given.
-
-Usage
------
-    python run_ablation_matrix.py \
-        --train-data suite/train_hybrid.h5 \
-        --val-data   suite/val_uniform.h5 \
-        --out-root   ablation_runs \
-        --dry-run
-
-    python run_ablation_matrix.py --train-data train.h5 --val-data val.h5 \
-        --out-root ablation_runs --execute
-"""
+"""Practical ST-LRPS ablation launcher and aggregator."""
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import subprocess
 import sys
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-# The trainer entry point lives next to this script.
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _TRAIN_SCRIPT = _SCRIPT_DIR / "st_lrps_train.py"
 
-# Small, safe collocation Laplacian weight for the laplacian_train ablation.
-_LAPLACIAN_TRAIN_WEIGHT = "1e-12"
 
-# Ordered list of (name, description, extra-flags). Flags are appended verbatim
-# to the base command, so they override the recommended production defaults.
-ABLATIONS: List[Dict[str, object]] = [
+@dataclass(frozen=True)
+class AblationSpec:
+    name: str
+    description: str
+    cli_overrides: List[str]
+    expected_purpose: str
+    experimental: bool = False
+    include_in_default_matrix: bool = True
+
+
+ABLATION_REGISTRY: List[AblationSpec] = [
+    AblationSpec(
+        name="baseline_single_siren",
+        description="Single-scale SIREN baseline without residual blocks or auxiliary balancing losses.",
+        cli_overrides=["--no-residual-blocks", "--n-bands", "1", "--no-altitude-balanced-loss", "--no-radial-cross-loss"],
+        expected_purpose="Establish the simplest scalar-potential SIREN baseline.",
+    ),
+    AblationSpec(
+        name="multiscale_siren",
+        description="Current multi-scale SIREN default with residual blocks.",
+        cli_overrides=["--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Reference production architecture.",
+    ),
+    AblationSpec(
+        name="multiscale_no_resblocks",
+        description="Three-band multi-scale SIREN without residual blocks.",
+        cli_overrides=["--no-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Measure the contribution of residual SIREN blocks.",
+    ),
+    AblationSpec(
+        name="multiscale_no_direction",
+        description="Production multi-scale SIREN with direction loss disabled.",
+        cli_overrides=["--direction-loss-weight", "0.0"],
+        expected_purpose="Measure the contribution of the angular acceleration objective.",
+    ),
+    AblationSpec(
+        name="multiscale_no_altitude_balance",
+        description="Production multi-scale SIREN without altitude-balanced loss.",
+        cli_overrides=["--no-altitude-balanced-loss"],
+        expected_purpose="Measure the contribution of altitude-balanced residual weighting.",
+    ),
+    AblationSpec(
+        name="multiscale_no_radial_cross",
+        description="Production multi-scale SIREN without radial/cross-radial penalties.",
+        cli_overrides=["--no-radial-cross-loss"],
+        expected_purpose="Measure the contribution of radial/cross-radial loss decomposition.",
+    ),
+    AblationSpec(
+        name="radial_decay_encoding",
+        description="Scaled inverse-radius decay features inspired by R/r radial decay.",
+        cli_overrides=["--use-radial-decay-encoding", "--radial-decay-max-power", "4", "--radial-decay-append-raw", "--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Test the experimental scaled inverse-radius input encoding.",
+        experimental=True,
+    ),
+    AblationSpec(
+        name="real_sh_basis_encoding_optional",
+        description="Torch-native real spherical-harmonic basis encoding.",
+        cli_overrides=["--use-real-sh-basis", "--real-sh-degree", "4", "--real-sh-append-raw", "--real-sh-include-radial", "--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Test the experimental angular SH basis encoding.",
+        experimental=True,
+    ),
+    AblationSpec(
+        name="additive_multiband",
+        description="Additive multi-band SIREN with per-band trunks summed.",
+        cli_overrides=["--multiscale-mode", "additive", "--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Test the experimental additive multi-band composition.",
+        experimental=True,
+    ),
+    AblationSpec(
+        name="direct_accel_baseline_optional_only_if_easy",
+        description="Placeholder for a direct-acceleration baseline; not part of default matrix.",
+        cli_overrides=[],
+        expected_purpose="Reserved for a future non-ST-LRPS baseline; omitted to preserve scalar potential design.",
+        experimental=True,
+        include_in_default_matrix=False,
+    ),
+]
+
+# Backward-compatible list-of-dicts shape used by older tests/callers.
+ABLATIONS: List[Dict[str, Any]] = [
     {
-        "name": "plain_siren",
-        "description": "Single-scale SIREN, no residual blocks, no balanced/radial-cross losses.",
-        "flags": ["--no-residual-blocks", "--n-bands", "1",
-                  "--no-altitude-balanced-loss", "--no-radial-cross-loss"],
-    },
-    {
-        "name": "residual_siren",
-        "description": "Residual SIREN blocks, single scale (n_bands=1).",
-        "flags": ["--use-residual-blocks", "--n-bands", "1"],
-    },
-    {
-        "name": "multiscale_siren_3band",
-        "description": "Residual blocks + 3-band multi-scale SIREN (recommended default).",
-        "flags": ["--use-residual-blocks", "--n-bands", "3"],
-    },
-    {
-        "name": "multiscale_siren_5band",
-        "description": "Residual blocks + 5-band multi-scale SIREN.",
-        "flags": ["--use-residual-blocks", "--n-bands", "5"],
-    },
-    {
-        "name": "radial_encoding",
-        "description": "Radial separation encoding [r, ux, uy, uz] + raw, residual blocks, 3 bands.",
-        "flags": ["--use-radial-separation", "--radial-append-raw",
-                  "--use-residual-blocks", "--n-bands", "3"],
-    },
-    {
-        "name": "sh_encoding",
-        "description": "SH-inspired angular encoding (degree 4), residual blocks, 3 bands.",
-        "flags": ["--use-sh-encoding", "--sh-encoding-degree", "4",
-                  "--use-residual-blocks", "--n-bands", "3"],
-    },
-    {
-        "name": "no_direction_loss",
-        "description": "Production defaults but with the direction (cosine) loss disabled.",
-        "flags": ["--direction-loss-weight", "0.0"],
-    },
-    {
-        "name": "no_altitude_balance",
-        "description": "Production defaults but without altitude-balanced loss.",
-        "flags": ["--no-altitude-balanced-loss"],
-    },
-    {
-        "name": "no_radial_cross",
-        "description": "Production defaults but without radial/cross-radial penalties.",
-        "flags": ["--no-radial-cross-loss"],
-    },
-    {
-        "name": "laplacian_train",
-        "description": "Production defaults + trainable collocation Laplacian regulariser.",
-        "flags": ["--laplacian-mode", "train",
-                  "--collocation-laplacian-weight", _LAPLACIAN_TRAIN_WEIGHT],
-    },
-    {
-        "name": "radial_decay_encoding",
-        "description": "Scaled inverse-radius decay features inspired by R/r radial decay (experimental), residual blocks, 3 bands.",
-        "flags": ["--use-radial-decay-encoding", "--radial-decay-max-power", "4",
-                  "--radial-decay-append-raw", "--use-residual-blocks", "--n-bands", "3"],
-    },
-    {
-        "name": "real_sh_basis",
-        "description": "Real spherical-harmonic angular basis (experimental), residual blocks, 3 bands.",
-        "flags": ["--use-real-sh-basis", "--real-sh-degree", "4",
-                  "--real-sh-append-raw", "--real-sh-include-radial",
-                  "--use-residual-blocks", "--n-bands", "3"],
-    },
-    {
-        "name": "additive_multiband",
-        "description": "Additive multi-band SIREN (per-band trunks summed, experimental), residual blocks, 3 bands.",
-        "flags": ["--multiscale-mode", "additive", "--use-residual-blocks", "--n-bands", "3"],
-    },
+        "name": spec.name,
+        "description": spec.description,
+        "flags": list(spec.cli_overrides),
+        "cli_overrides": list(spec.cli_overrides),
+        "expected_purpose": spec.expected_purpose,
+        "experimental": bool(spec.experimental),
+        "include_in_default_matrix": bool(spec.include_in_default_matrix),
+    }
+    for spec in ABLATION_REGISTRY
 ]
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        description="Generate / run the standard ST-LRPS ablation matrix.",
+        description="Generate, run, and aggregate an ST-LRPS ablation matrix.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ap.add_argument("--train-data", default=None, help="Path to the training HDF5 cloud.")
-    ap.add_argument("--val-data", default=None, help="Path to the validation HDF5 cloud (independent val).")
-    ap.add_argument("--test-data", default=None, help="Optional test HDF5 cloud (stored in each run config).")
-    ap.add_argument("--ood-data", default=None, help="Optional OOD HDF5 cloud (stored in each run config).")
+    ap.add_argument("--val-data", default=None, help="Path to the validation HDF5 cloud.")
+    ap.add_argument("--test-data", default=None, help="Optional test HDF5 cloud stored in each run config.")
+    ap.add_argument("--ood-data", default=None, help="Optional OOD HDF5 cloud stored in each run config.")
     ap.add_argument("--suite-manifest", default=None, help="Optional dataset suite manifest.json for provenance.")
     ap.add_argument("--out-root", default="ablation_runs", help="Root directory for ablation outputs.")
     ap.add_argument("--seed", type=int, default=42, help="Seed shared by every ablation run.")
     ap.add_argument("--epochs", type=int, default=None, help="Optional --epochs override forwarded to every run.")
-    ap.add_argument("--only", nargs="+", default=None,
-                    help="Restrict to these ablation names (default: all).")
-    ap.add_argument("--overwrite", action="store_true", default=False,
-                    help="Re-run / overwrite ablations whose output directory already exists.")
+    ap.add_argument("--matrix", choices=["default", "all"], default="default", help="Ablation matrix to prepare.")
+    ap.add_argument("--only", nargs="+", default=None, help="Restrict to these ablation names.")
+    ap.add_argument("--force", "--overwrite", dest="force", action="store_true", default=False, help="Re-run ablations even when a completed run manifest exists.")
     grp = ap.add_mutually_exclusive_group()
-    grp.add_argument("--dry-run", dest="execute", action="store_false",
-                     help="Only write commands + manifest; do not launch anything (default).")
-    grp.add_argument("--execute", dest="execute", action="store_true",
-                     help="Launch each ablation run sequentially via subprocess.")
+    grp.add_argument("--dry-run", dest="execute", action="store_false", help="Only write commands + manifest; do not launch training.")
+    grp.add_argument("--execute", dest="execute", action="store_true", help="Launch each ablation run sequentially.")
     ap.set_defaults(execute=False)
     return ap.parse_args(argv)
 
 
 def _data_flags(args: argparse.Namespace) -> List[str]:
-    """Build the dataset-selection flags shared by every ablation command."""
     flags: List[str] = []
     if args.train_data and args.val_data:
         flags += ["--train-data", str(args.train_data), "--val-data", str(args.val_data)]
     elif args.train_data:
-        # No independent validation set: feed the trainer's internal split path.
         flags += ["--data", str(args.train_data)]
     if args.test_data:
         flags += ["--test-data", str(args.test_data)]
@@ -165,78 +148,183 @@ def _data_flags(args: argparse.Namespace) -> List[str]:
     return flags
 
 
-def build_matrix(args: argparse.Namespace) -> List[Dict[str, object]]:
-    """Return a list of resolved ablation entries (name, out_dir, flags, command)."""
+def _selected_specs(args: argparse.Namespace) -> List[AblationSpec]:
+    selected = set(args.only or [])
+    specs = [
+        spec for spec in ABLATION_REGISTRY
+        if (args.matrix == "all" or spec.include_in_default_matrix)
+    ]
+    if selected:
+        known = {spec.name for spec in ABLATION_REGISTRY}
+        unknown = sorted(selected - known)
+        if unknown:
+            raise ValueError(f"Unknown ablation name(s): {', '.join(unknown)}")
+        specs = [spec for spec in specs if spec.name in selected]
+    return specs
+
+
+def build_matrix(args: argparse.Namespace) -> List[Dict[str, Any]]:
     out_root = Path(args.out_root)
     base_data = _data_flags(args)
-    selected = set(args.only) if args.only else None
-
-    entries: List[Dict[str, object]] = []
-    for ab in ABLATIONS:
-        name = str(ab["name"])
-        if selected is not None and name not in selected:
-            continue
-        run_dir = out_root / name
+    entries: List[Dict[str, Any]] = []
+    for spec in _selected_specs(args):
+        run_dir = out_root / spec.name
         cmd: List[str] = [sys.executable, str(_TRAIN_SCRIPT)]
         cmd += base_data
         cmd += ["--out", str(run_dir), "--seed", str(int(args.seed))]
         if args.epochs is not None:
             cmd += ["--epochs", str(int(args.epochs))]
-        cmd += [str(f) for f in ab["flags"]]
-        entries.append({
-            "name": name,
-            "description": ab["description"],
+        cmd += list(spec.cli_overrides)
+        entry = {
+            **asdict(spec),
+            "flags": list(spec.cli_overrides),
+            "overrides": list(spec.cli_overrides),
             "out_dir": str(run_dir),
             "seed": int(args.seed),
-            "flags": [str(f) for f in ab["flags"]],
             "command": cmd,
-        })
+        }
+        entries.append(entry)
     return entries
 
 
-def _command_to_str(cmd: List[str]) -> str:
-    """Render a command list as a copy-pasteable single line."""
+def _command_to_str(cmd: Iterable[str]) -> str:
     parts = []
     for tok in cmd:
-        parts.append(f'"{tok}"' if (" " in tok) else tok)
+        text = str(tok)
+        parts.append(f'"{text}"' if (" " in text) else text)
     return " ".join(parts)
+
+
+def _run_completed(run_dir: Path) -> bool:
+    manifest = run_dir / "run_manifest.json"
+    if not manifest.exists():
+        return False
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return str(payload.get("status", "")).lower() == "completed"
+
+
+def _read_json(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _last_history_row(run_dir: Path) -> Dict[str, Any]:
+    path = run_dir / "history.jsonl"
+    if not path.exists():
+        return {}
+    last = ""
+    with path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if line.strip():
+                last = line
+    return json.loads(last) if last else {}
+
+
+def _ablation_summary_row(entry: Mapping[str, Any]) -> Dict[str, Any]:
+    run_dir = Path(str(entry["out_dir"]))
+    manifest = _read_json(run_dir / "run_manifest.json")
+    config = _read_json(run_dir / "config.json")
+    hist = _last_history_row(run_dir)
+    eval_root = run_dir / "evals"
+    row = {
+        "name": entry["name"],
+        "description": entry["description"],
+        "expected_purpose": entry.get("expected_purpose"),
+        "experimental": entry.get("experimental"),
+        "included_in_default_matrix": entry.get("include_in_default_matrix"),
+        "out_dir": str(run_dir),
+        "status": manifest.get("status", "missing"),
+        "trained_run": str(run_dir) if run_dir.exists() else None,
+        "overrides": " ".join(str(x) for x in entry.get("overrides", entry.get("flags", []))),
+        "best_checkpoint_score": manifest.get("best_score", config.get("best_score", hist.get("best_score"))),
+        "best_epoch": manifest.get("best_epoch", config.get("best_epoch", hist.get("best_epoch"))),
+        "best_metric": manifest.get("best_metric", config.get("best_metric", hist.get("best_metric"))),
+        "final_val_total_loss": hist.get("val_loss_total"),
+        "final_val_base_loss": hist.get("val_loss_base"),
+        "final_val_loss_dir": hist.get("val_loss_dir"),
+        "final_checkpoint_score": hist.get("checkpoint_score"),
+        "test_eval_path": str(eval_root / "test") if (eval_root / "test").exists() else None,
+        "ood_eval_path": str(eval_root / "ood_high") if (eval_root / "ood_high").exists() else None,
+        "test_rmse_a": None,
+        "ood_rmse_a": None,
+    }
+    for split, key in (("test", "test_rmse_a"), ("ood_high", "ood_rmse_a"), ("ood", "ood_rmse_a")):
+        summary = _read_json(eval_root / split / "summary_metrics.json")
+        if isinstance(summary, list) and summary:
+            row[key] = summary[0].get("rmse_a_vec")
+    return row
+
+
+def _write_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
+    fields = sorted({k for row in rows for k in row.keys()})
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(dict(row))
+
+
+def aggregate(entries: List[Dict[str, Any]], out_root: Path) -> None:
+    rows = [_ablation_summary_row(entry) for entry in entries]
+    (out_root / "ablation_summary.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
+    _write_csv(out_root / "ablation_summary.csv", rows)
+
+    def _rank(name: str, key: str) -> None:
+        def sort_key(row: Mapping[str, Any]) -> float:
+            try:
+                value = float(row.get(key))
+            except (TypeError, ValueError):
+                value = float("inf")
+            return value
+        _write_csv(out_root / name, sorted(rows, key=sort_key))
+
+    _rank("ablation_ranked_by_val_base_loss.csv", "final_val_base_loss")
+    _rank("ablation_ranked_by_test_rmse_a.csv", "test_rmse_a")
+    _rank("ablation_ranked_by_ood_rmse_a.csv", "ood_rmse_a")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = parse_args(argv)
-
     if not args.train_data:
-        print("[ablation] WARNING: no --train-data provided. Commands will be written but "
-              "are not runnable until you fill in a dataset.", file=sys.stderr)
+        print("[ablation] WARNING: no --train-data provided; commands may not be runnable.", file=sys.stderr)
 
     out_root = Path(args.out_root)
     out_root.mkdir(parents=True, exist_ok=True)
 
-    entries = build_matrix(args)
+    try:
+        entries = build_matrix(args)
+    except ValueError as exc:
+        print(f"[ablation] {exc}", file=sys.stderr)
+        return 1
     if not entries:
-        print("[ablation] No ablations selected (check --only).", file=sys.stderr)
+        print("[ablation] No ablations selected.", file=sys.stderr)
         return 1
 
-    # Write the commands file and the JSON manifest (always, even on dry-run).
     commands_path = out_root / "ablation_commands.txt"
     manifest_path = out_root / "ablation_manifest.json"
-
-    with commands_path.open("w", encoding="utf-8") as fh:
-        for e in entries:
-            fh.write(f"# {e['name']}: {e['description']}\n")
-            fh.write(_command_to_str(e["command"]) + "\n\n")
+    with commands_path.open("w", encoding="utf-8") as handle:
+        for entry in entries:
+            handle.write(f"# {entry['name']}: {entry['description']}\n")
+            handle.write(_command_to_str(entry["command"]) + "\n\n")
 
     manifest = {
-        "schema_version": "st_lrps_ablation_matrix_v1",
+        "schema_version": "st_lrps_ablation_matrix_v2",
         "note": (
-            "The default architecture (no extra flags) is the current recommended "
-            "production configuration defined by TrainConfig. Every ablation below is "
-            "an explicit deviation from that default."
+            "The default matrix compares explicit, named deviations around the "
+            "recommended production ST-LRPS scalar-potential configuration."
         ),
+        "matrix": args.matrix,
         "seed": int(args.seed),
         "out_root": str(out_root),
         "execute": bool(args.execute),
-        "overwrite": bool(args.overwrite),
+        "force": bool(args.force),
         "data": {
             "train_data": args.train_data,
             "val_data": args.val_data,
@@ -244,10 +332,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "ood_data": args.ood_data,
             "suite_manifest": args.suite_manifest,
         },
-        "ablations": [
-            {k: e[k] for k in ("name", "description", "out_dir", "seed", "flags", "command")}
-            for e in entries
-        ],
+        "ablations": entries,
     }
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -256,25 +341,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"[ablation] manifest -> {manifest_path}")
 
     if not args.execute:
-        print("[ablation] DRY RUN: nothing launched. Re-run with --execute to train.")
-        for e in entries:
-            print(f"  - {e['name']}: {_command_to_str(e['command'])}")
+        print("[ablation] DRY RUN: nothing launched.")
+        for entry in entries:
+            print(f"  - {entry['name']}: {_command_to_str(entry['command'])}")
+        aggregate(entries, out_root)
         return 0
 
-    # Execute each ablation sequentially.
     failures = 0
-    for e in entries:
-        run_dir = Path(str(e["out_dir"]))
-        if run_dir.exists() and any(run_dir.iterdir()) and not args.overwrite:
-            print(f"[ablation] SKIP {e['name']}: {run_dir} already exists (use --overwrite to re-run).")
+    for entry in entries:
+        run_dir = Path(str(entry["out_dir"]))
+        if _run_completed(run_dir) and not args.force:
+            print(f"[ablation] SKIP {entry['name']}: completed manifest exists (use --force to rerun).")
             continue
         run_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[ablation] RUN  {e['name']} -> {run_dir}")
-        result = subprocess.run(e["command"])
+        (run_dir / "ablation_spec.json").write_text(json.dumps(entry, indent=2), encoding="utf-8")
+        print(f"[ablation] RUN  {entry['name']} -> {run_dir}")
+        result = subprocess.run(entry["command"])
         if result.returncode != 0:
             failures += 1
-            print(f"[ablation] FAILED {e['name']} (exit {result.returncode}).", file=sys.stderr)
+            print(f"[ablation] FAILED {entry['name']} (exit {result.returncode}).", file=sys.stderr)
+        aggregate(entries, out_root)
 
+    aggregate(entries, out_root)
     if failures:
         print(f"[ablation] Completed with {failures} failure(s).", file=sys.stderr)
         return 2
