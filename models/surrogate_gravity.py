@@ -1,4 +1,4 @@
-﻿"""
+"""
 Surrogate Gravity Runtime
 =========================
 
@@ -466,6 +466,12 @@ class PhysicsNet(nn.Module):
 
 def _build_model_from_config(cfg: Dict[str, Any]) -> nn.Module:
     """Instantiate the network architecture encoded in ``config.json``."""
+
+    if cfg.get("architecture") in ("MultiScale", "Residual") or int(cfg.get("n_bands", 1)) > 1:
+        raise ValueError(
+            "This legacy surrogate provider does not support MultiScale or advanced Residual models. "
+            "Please use the surrogate_gravity_model module."
+        )
 
     activation = str(cfg.get("activation", "sine")).strip().lower()
     hidden = int(cfg.get("hidden", 256))

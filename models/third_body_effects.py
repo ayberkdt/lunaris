@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/models/third_body_effects.py
+# ST_LRPS/models/third_body_effects.py
 """
 Third-Body Effects (Differential Gravity, Solid Tides, and Optional Earth J2)
 ============================================================================

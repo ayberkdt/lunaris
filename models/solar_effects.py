@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/models/solar_effects.py
+# ST_LRPS/models/solar_effects.py
 """
 Solar Radiation Pressure (SRP) and Eclipse Geometry
 ===================================================

@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/models/ephemeris.py
+# ST_LRPS/models/ephemeris.py
 """
 Ephemeris (SPICE) Tables + Runtime Interpolator.
 
@@ -147,6 +147,7 @@ from spiceypy.utils.exceptions import SpiceyError
 from common.constants import MU_EARTH, MU_SUN, KM_TO_M, KM3_TO_M3
 from common.type_defs import F64Array, TimeConfig
 from common.math_utils import quat_rotate_vec, quat_conj, interp_quat_slerp, interp_vec3_catmull
+from loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_kernel_paths
 
 
 
@@ -245,232 +246,7 @@ class EphemerisTables:
 
 
 # =============================================================================
-# 3.                     PRIVATE FILE/KERNEL RESOLUTION HELPERS
-# =============================================================================
-
-_OPTIONAL_TEXT_SUFFIX = ".txt"
-
-# "Base" extensions for SPICE kernel files (ignoring the optional trailing .txt)
-_SPICE_KERNEL_BASE_EXTS: frozenset[str] = frozenset(
-    {".tls", ".tpc", ".tf", ".fk", ".bsp", ".bpc"}
-)
-
-_BAD_CHARS: tuple[str, ...] = ("\n", "\r", "\t")
-
-
-def _strip_optional_txt(p: Path) -> Path:
-    """Return a Path with a trailing '.txt' stripped, if present."""
-    return p.with_suffix("") if p.suffix.lower() == _OPTIONAL_TEXT_SUFFIX else p
-
-
-def _base_suffix(p: Path) -> str:
-    """File suffix without an optional trailing '.txt' (lowercase)."""
-    return _strip_optional_txt(p).suffix.lower()
-
-
-def _has_base_suffix(p: Path, base_exts: frozenset[str]) -> bool:
-    return _base_suffix(p) in base_exts
-
-
-def _toggle_optional_txt(p: Path) -> Path:
-    """Toggle a trailing '.txt' suffix (add it if absent, remove it if present)."""
-    if p.suffix.lower() == _OPTIONAL_TEXT_SUFFIX:
-        return p.with_suffix("")
-    return Path(str(p) + _OPTIONAL_TEXT_SUFFIX)
-
-
-def _iter_optional_txt_variants(p: Path, *, base_exts: frozenset[str]) -> Iterator[Path]:
-    """Yield (p, toggled-p) if p looks like a SPICE kernel (by base suffix)."""
-    yield p
-    if _has_base_suffix(p, base_exts):
-        alt = _toggle_optional_txt(p)
-        if alt != p:
-            yield alt
-
-
-def resolve_kernel_paths(kernels: Sequence[str], *, auto_fix: bool = True) -> list[str]:
-    """
-    Resolve and validate SPICE kernel paths.
-
-    Steps
-    -----
-    1) Expand '~' and normalize the path.
-    2) Reject paths that contain newline/tab characters (copy/paste errors).
-    3) Check existence; optionally toggle a trailing '.txt' suffix for known kernels.
-
-    Raises
-    ------
-    ValueError:
-        If a path contains newline/tab characters.
-    FileNotFoundError:
-        If any kernel cannot be found.
-    """
-    resolved: list[str] = []
-    missing: list[str] = []
-
-    for raw in kernels:
-        p = Path(raw).expanduser()
-
-        s = str(p)
-        if any(ch in s for ch in _BAD_CHARS):
-            raise ValueError(
-                f"Kernel path contains control characters (newline/tab): {raw!r}\n"
-                "Fix the string in your config (common copy/paste issue)."
-            )
-
-        # Exact match
-        if p.is_file():
-            resolved.append(str(p))
-            continue
-
-        # Optional '.txt' wrapper handling (best-effort)
-        if auto_fix:
-            found: Optional[Path] = None
-            for cand in _iter_optional_txt_variants(p, base_exts=_SPICE_KERNEL_BASE_EXTS):
-                if cand.is_file():
-                    found = cand
-                    break
-            if found is not None:
-                resolved.append(str(found))
-                continue
-
-        missing.append(s)
-
-    if missing:
-        msg = "The following SPICE kernels could not be found:\n" + "\n".join(
-            f" - {m}" for m in missing
-        )
-        raise FileNotFoundError(msg)
-
-    return resolved
-
-
-
-# =============================================================================
-# 4.          PRIVATE FK/TF AUTO-DISCOVERY (LUNAR FRAMES)
-# =============================================================================
-
-# High-fidelity lunar frames that typically need a TF/FK in addition to a BPC.
-_LUNAR_HIFI_FRAMES: frozenset[str] = frozenset({
-    "MOON_PA",
-    "MOON_ME",
-    "MOON_PA_DE440",
-    "MOON_ME_DE440_ME421",
-})
-
-# Sub-groups of kernel types (by *base* suffix, ignoring optional '.txt')
-_SPICE_FRAME_BASE_EXTS: frozenset[str] = frozenset({".tf", ".fk"})
-_SPICE_BPC_BASE_EXTS: frozenset[str] = frozenset({".bpc"})
-
-
-def _is_kernel_with_base_ext(pathlike: str | Path, base_exts: frozenset[str]) -> bool:
-    """True if file matches one of base_exts, allowing an optional trailing '.txt'."""
-    p = pathlike if isinstance(pathlike, Path) else Path(str(pathlike))
-    return _base_suffix(p) in base_exts
-
-
-def _norm_kernel_name(name: str) -> str:
-    """Lowercase filename with a trailing '.txt' stripped (if present)."""
-    n = str(name).lower()
-    return n[: -len(_OPTIONAL_TEXT_SUFFIX)] if n.endswith(_OPTIONAL_TEXT_SUFFIX) else n
-
-
-def _maybe_autoinclude_lunar_fk(kernels: Sequence[str], fixed_frame: str) -> list[str]:
-    """
-    Heuristic auto-discovery: inject a lunar TF/FK if a high-fidelity lunar fixed frame is
-    requested but the kernel list only contains a BPC (binary orientation kernel).
-
-    Notes
-    -----
-    - This function is intentionally "best-effort": if nothing is found it returns the input list.
-    - It keeps behavior deterministic by scoring candidates and choosing the best match
-      in the first directory that yields at least one candidate.
-    - No prints (library code). If a TF/FK is injected, a RuntimeWarning is emitted.
-    """
-    # 1) Only apply to known high-fidelity lunar frames
-    if str(fixed_frame).strip().upper() not in _LUNAR_HIFI_FRAMES:
-        return list(kernels)
-
-    # 2) If TF/FK already present, do nothing
-    if any(_is_kernel_with_base_ext(k, _SPICE_FRAME_BASE_EXTS) for k in kernels):
-        return list(kernels)
-
-    # 3) Search directories: prioritize dirs that contain a BPC, then the rest
-    bpc_dirs: list[Path] = []
-    other_dirs: list[Path] = []
-    seen: set[Path] = set()
-
-    for k in kernels:
-        p = Path(str(k)).expanduser()
-        d = p.parent
-        if d in seen:
-            continue
-        seen.add(d)
-        if _is_kernel_with_base_ext(p, _SPICE_BPC_BASE_EXTS):
-            bpc_dirs.append(d)
-        else:
-            other_dirs.append(d)
-
-    search_dirs = bpc_dirs + other_dirs
-
-    # 4) Scoring: lower is better
-    def _score(name: str) -> tuple[int, str]:
-        full = name.lower()
-        base = _norm_kernel_name(full)
-
-        # Prefer the commonly-used NAIF lunar frames kernel when present
-        if base == "moon_de440_220930.tf":
-            return (0, full)
-
-        # Prefer MOON_DE440_* TF kernels, then any DE440 TF, then any Moon TF/FK
-        if base.startswith("moon_de440_") and base.endswith(".tf"):
-            return (1, full)
-        if "de440" in base and base.endswith(".tf"):
-            return (2, full)
-        if "moon" in base and _is_kernel_with_base_ext(full, _SPICE_FRAME_BASE_EXTS):
-            return (3, full)
-
-        return (9, full)
-
-    # 5) Find best candidate
-    found: Optional[Path] = None
-    for d in search_dirs:
-        try:
-            if not d.is_dir():
-                continue
-            candidates = [
-                p for p in d.iterdir()
-                if p.is_file()
-                and ("moon" in p.name.lower())
-                and _is_kernel_with_base_ext(p, _SPICE_FRAME_BASE_EXTS)
-            ]
-        except OSError:
-            continue
-
-        if not candidates:
-            continue
-
-        found = min(candidates, key=lambda p: _score(p.name))
-        break
-
-    if found is None:
-        return list(kernels)
-
-    warnings.warn(
-        f"Auto-injected lunar TF/FK kernel: {found}",
-        RuntimeWarning,
-        stacklevel=2,
-    )
-
-    out = list(kernels)
-    # Best practice: load text frame definitions before binary data (PCK/SPK)
-    out.insert(0, str(found))
-    return out
-
-
-
-# =============================================================================
-# 5.                PRIVATE SPICE POOL QUERIES (GM, ETC)
+# 3.                PRIVATE SPICE POOL QUERIES (GM, ETC)
 # =============================================================================
 
 def get_body_gm_m3s2(
@@ -635,7 +411,7 @@ def build_tables(
 
     # Resolve and normalize kernel paths (and optionally auto-include lunar FK/TF).
     k_list = resolve_kernel_paths(list(kernels), auto_fix=bool(auto_fix_kernel_paths))
-    k_list = _maybe_autoinclude_lunar_fk(k_list, fixed_frame)
+    k_list = maybe_autoinclude_lunar_fk(k_list, fixed_frame)
 
     # Deterministic time grid
     t_tab = _build_time_grid(float(duration_s), dt)

@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/models/relativity_effects.py
+# ST_LRPS/models/relativity_effects.py
 """
 Relativistic Effects: Schwarzschild 1PN Correction
 ==================================================

@@ -163,12 +163,12 @@ def _get_attr(obj, *names):
 def _point_mass(sh, x: float, y: float, z: float, mu: float):
     """
     Support both names:
-      - accel_point_mass(x,y,z,mu)
       - compute_point_mass_acceleration(x,y,z,mu)
+      - GravityModel (degree 0) fallback
     """
-    if hasattr(sh, "accel_point_mass"):
-        return sh.accel_point_mass(x, y, z, mu)
     if hasattr(sh, "compute_point_mass_acceleration"):
+        return sh.compute_point_mass_acceleration(x, y, z, mu)
+    if hasattr(sh, "_compute_point_mass_acceleration"):
         return sh.compute_point_mass_acceleration(x, y, z, mu)
     pytest.skip("Module under test has no point-mass acceleration function.")
 

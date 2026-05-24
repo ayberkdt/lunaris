@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/models/__init__.py
+# ST_LRPS/models/__init__.py
 # -*- coding: utf-8 -*-
 """
 Lunar Simulation - Models package
@@ -38,13 +38,12 @@ _EXPORTS: Final[dict[str, tuple[str, str, str]]] = {
     # Gravity / Spherical Harmonics (compute-only)
     "GravityModel": (".spherical_harmonics", "GravityModel", "High-level SH gravity wrapper."), 
     "SHWorkspace": (".spherical_harmonics", "SHWorkspace", "Reusable scratch buffers for SH kernels."),
-    "accel_point_mass": (".spherical_harmonics", "accel_point_mass", "Baseline point-mass gravity."),
+    "compute_point_mass_acceleration": (".spherical_harmonics", "compute_point_mass_acceleration", "Baseline point-mass gravity."),
     "build_legendre_coeffs": (".spherical_harmonics", "build_legendre_coeffs", "Legendre recurrence constants."),
     "slice_gravity_model": (".spherical_harmonics", "slice_gravity_model", "Truncate/pad SH coefficient matrices."),
     "make_sh_workspace": (".spherical_harmonics", "make_sh_workspace", "Allocate SHWorkspace for a max degree."),
     "sh_accel_fixed": (".spherical_harmonics", "sh_accel_fixed", "Fixed-degree SH acceleration (dispatcher)."),
     "sh_accel_fixed_numba": (".spherical_harmonics", "sh_accel_fixed_numba", "Numba kernel: fixed-degree SH accel."),
-    "sh_accel_fixed_numba_dual": (".spherical_harmonics", "sh_accel_fixed_numba_dual", "Numba kernel: alternative fixed-degree path."),
     "sh_accel_adaptive_blend_numba": (".spherical_harmonics", "sh_accel_adaptive_blend_numba", "Numba kernel: adaptive/blended degree SH accel."),
 
     # Ephemeris & SPICE
@@ -171,13 +170,12 @@ if TYPE_CHECKING:
     from .spherical_harmonics import (  # noqa: F401
         GravityModel,
         SHWorkspace,
-        accel_point_mass,
+        compute_point_mass_acceleration,
         build_legendre_coeffs,
         slice_gravity_model,
         make_sh_workspace,
         sh_accel_fixed,
         sh_accel_fixed_numba,
-        sh_accel_fixed_numba_dual,
         sh_accel_adaptive_blend_numba,
     )
     from .ephemeris import (  # noqa: F401

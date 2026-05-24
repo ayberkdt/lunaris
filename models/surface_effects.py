@@ -1,4 +1,4 @@
-#LUNAR_SIMULATION/models/surface_effects.py
+# ST_LRPS/models/surface_effects.py
 """Lunar surface radiative effects (physics layer).
 
 This module owns the **dynamics / force models** that depend on the lunar
@@ -331,17 +331,6 @@ def thermal_accel(
     )
     return np.array((ax, ay, az), dtype=np.float64)
 
-
-def accel_thermal_lommel_seeliger(*args, **kwargs):
-    """Compatibility stub.
-
-    Historically some call sites requested a Lommel–Seeliger variant for thermal
-    recoil. In this codebase, thermal recoil is modeled as a simple radial term,
-    so we route to :func:`accel_thermal_simple`.
-    """
-    return accel_thermal_simple(*args, **kwargs)
-
-
 __all__ = (
     # Config bundles
     "AlbedoConfig",
@@ -350,7 +339,6 @@ __all__ = (
     "accel_albedo_simple",
     "accel_albedo_lommel_seeliger",
     "accel_thermal_simple",
-    "accel_thermal_lommel_seeliger",
     # High-level wrappers
     "albedo_accel",
     "thermal_accel",

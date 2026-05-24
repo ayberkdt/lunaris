@@ -27,6 +27,8 @@ class GravityModelAdapter:
     """
     Normalize SH gravity-model attributes to the core dynamics contract.
 
+    TODO(ST_LRPS): Remove this adapter once models emit strictly identical structs.
+
     ``models.spherical_harmonics.GravityModel`` exposes names such as
     ``max_degree`` and ``c_coeffs``.  ``core.dynamics`` expects names such as
     ``degree_max`` and ``Cnm``.  The adapter deliberately does not copy large
