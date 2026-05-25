@@ -309,23 +309,35 @@ def _tune_form(form: QFormLayout) -> None:
 
 
 def _tune_inputs(root: QWidget, h: int = 38) -> None:
-    try:
-        inputs = root.findChildren((QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox))
-    except TypeError:
+    # PySide6 does not support passing a tuple of types to findChildren and prints
+    # a warning (FIXME qt_isinstance...) to standard error if attempted.
+    if _USE_PYSIDE:
         inputs = []
         for cls in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox):
             inputs.extend(root.findChildren(cls))
+    else:
+        try:
+            inputs = root.findChildren((QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox))
+        except TypeError:
+            inputs = []
+            for cls in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox):
+                inputs.extend(root.findChildren(cls))
 
     for w in inputs:
         w.setMinimumHeight(h)
         w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    try:
-        spinboxes = root.findChildren((QSpinBox, QDoubleSpinBox))
-    except TypeError:
+    if _USE_PYSIDE:
         spinboxes = []
         for cls in (QSpinBox, QDoubleSpinBox):
             spinboxes.extend(root.findChildren(cls))
+    else:
+        try:
+            spinboxes = root.findChildren((QSpinBox, QDoubleSpinBox))
+        except TypeError:
+            spinboxes = []
+            for cls in (QSpinBox, QDoubleSpinBox):
+                spinboxes.extend(root.findChildren(cls))
 
     for sb in spinboxes:
         sb.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
