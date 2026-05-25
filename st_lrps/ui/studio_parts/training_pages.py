@@ -3643,7 +3643,7 @@ class STLRPSTrainTab(QWidget):
             ep = int(m.group(1))
             total = int(m.group(2))
         else:
-            m_kv = re.search(r"\bepoch\s*=\s*(\d+)", line, re.IGNORECASE)
+            m_kv = re.search(r"\b(?:epoch|ep)\s*[=:]\s*(\d+)", line, re.IGNORECASE)
             if m_kv:
                 ep = int(m_kv.group(1))
         if ep is not None:
