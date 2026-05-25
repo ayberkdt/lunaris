@@ -51,7 +51,8 @@ def iter_source_files(root: Path):
     exclude_dirs = {
         ".git", ".pytest_cache", "__pycache__", ".claude",
         "data", "results", "mc_results", "runs", "artifacts",
-        "output", "outputs", "reports", ".vscode", ".idea"
+        "output", "outputs", "reports", ".vscode", ".idea",
+        "AIAA SciTech", "LATEX",
     }
     
     for dirpath, dirnames, filenames in os.walk(root):
@@ -67,6 +68,29 @@ def iter_source_files(root: Path):
                 if path.resolve() == Path(__file__).resolve():
                     continue
                 yield path
+
+def test_no_root_temp_refactor_artifacts():
+    root = get_project_root()
+    forbidden_root_entries = [
+        "all_tracked_files",
+        "all_tracked_files.txt",
+        "suspicious",
+        "suspicious.txt",
+        "temp_matches",
+        "temp_matches.txt",
+        "rename_script.py",
+        "refactor_manager.py",
+        "refactor_plotting.py",
+        "deneme.py",
+        "active_refinement_labeled.h5",
+    ]
+
+    found = [name for name in forbidden_root_entries if (root / name).exists()]
+    assert not found, "Temporary root artifacts should not exist: " + ", ".join(found)
+
+def test_no_validation_typo_folder():
+    root = get_project_root()
+    assert not (root / "validtion").exists(), "Use validation/, not validtion/"
 
 def get_committed_files(root: Path):
     try:

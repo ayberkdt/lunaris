@@ -10,23 +10,39 @@ and should not be committed.
 
 Generated validation outputs may also be written under `outputs/`, `artifacts/`, or external scratch storage. Do not write generated validation products into source package directories.
 
-## Required/Expected Files
+## Current / Expected Gravity Validation Outputs
 
-The following files are expected or recommended outputs depending on the validation mode (not all are always generated):
+The following files are current or expected outputs for gravity validation runs. Not all are produced by every mode, but these are the core validation outputs documented by this schema:
 - `per_scenario_metrics.csv`
 - `batch_metrics.csv`
 - `gpu_batch_metrics.csv`
+- `summary.json`
+- `validation_summary.json`
+- `figures/`
+- `report.pdf` or equivalent PDF summary, if generated
+
+## Mode-dependent or optional outputs
+
+Some validation modes may write additional products, such as:
+- cached truth trajectories under an output-directory cache
+- selected scenario plots
+- batch trajectory archives when explicitly requested
+- force-sample trajectory summaries
+
+These files are mode-dependent and are not universally required validation outputs.
+
+## Generated artifacts that should not be committed
+
+Generated training, evaluation, and run artifacts may exist in local run directories, but they should not be committed and should not live in source package directories:
+- `history.jsonl`
+- `run_manifest.json`
+- `checkpoints/`
+- `evals/`
 - `metrics_summary.csv`
 - `topk_worst.csv`
 - `ood_metrics.csv`
-- `summary.json`
-- `validation_summary.json`
-- `history.jsonl`
-- `run_manifest.json`
-- `figures/`
-- `checkpoints/`
-- `evals/`
-- `report.pdf` or equivalent PDF summary, if generated
+
+Treat these as non-source run products. Keep them under ignored output locations such as `runs/`, `results/`, `outputs/`, `artifacts/`, or external scratch storage.
 
 ## `per_scenario_metrics.csv` fields
 
