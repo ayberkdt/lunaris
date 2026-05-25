@@ -471,6 +471,7 @@ def test_ablation_command_generation_dry_run(tmp_path):
         "baseline_single_siren", "multiscale_siren", "multiscale_no_resblocks",
         "multiscale_no_direction", "multiscale_no_altitude_balance",
         "multiscale_no_radial_cross", "radial_decay_encoding",
+        "physical_radial_decay_recommended",
         "real_sh_basis_encoding_optional", "additive_multiband",
     ]
     assert names == expected

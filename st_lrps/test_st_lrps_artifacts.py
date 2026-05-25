@@ -66,7 +66,7 @@ def _write_dataset(path: Path, n_rows: int = 32) -> None:
         handle.attrs["degree_min"] = 2
         handle.attrs["degree_max"] = 4
         handle.attrs["a_sign_convention"] = "1.0"
-        handle.attrs["derivative_convention_version"] = "test_v1"
+        handle.attrs["derivative_convention_version"] = "dP_dphi_corrected_v1"
         handle.attrs["columns"] = "[x,y,z,dU,dax,day,daz]"
 
 
@@ -129,7 +129,7 @@ def _create_canonical_run(tmp_path: Path) -> dict:
         "alt_min_km": 50.0,
         "alt_max_km": 250.0,
         "a_sign_convention": "1.0",
-        "derivative_convention_version": "test_v1",
+        "derivative_convention_version": "dP_dphi_corrected_v1",
     }
     model = build_model_from_config(cfg)
     seed_cfg = build_resolved_config(cfg, dataset_meta, model, scaler, "pending")

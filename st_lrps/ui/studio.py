@@ -57,65 +57,133 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from PyQt6.QtCore import (
-    QEasingCurve,
-    QEvent,
-    QObject,
-    QProcess,
-    QProcessEnvironment,
-    QPropertyAnimation,
-    QSettings,
-    QSize,
-    Qt,
-    QTimer,
-    QUrl,
-    pyqtSignal,
-)
-from PyQt6.QtGui import (
-    QColor,
-    QDesktopServices,
-    QFont,
-    QGuiApplication,
-    QIcon,
-    QPalette,
-    QPixmap,
-    QSyntaxHighlighter,
-    QTextCharFormat,
-    QTextDocument,
-)
-from PyQt6.QtWidgets import (
-    QAbstractSpinBox,
-    QApplication,
-    QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
-    QFileDialog,
-    QFormLayout,
-    QFrame,
-    QGridLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QInputDialog,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
-    QMainWindow,
-    QMessageBox,
-    QPlainTextEdit,
-    QProgressBar,
-    QPushButton,
-    QScrollArea,
-    QSizePolicy,
-    QSpinBox,
-    QSplitter,
-    QStackedWidget,
-    QSystemTrayIcon,
-    QTabWidget,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
+import sys
+
+_USE_PYSIDE = "PySide6" in sys.modules or ("PyQt6" not in sys.modules and ("PySide6" in sys.modules or True))
+
+try:
+    if _USE_PYSIDE:
+        from PySide6.QtCore import (
+            QEasingCurve,
+            QEvent,
+            QObject,
+            QProcess,
+            QProcessEnvironment,
+            QPropertyAnimation,
+            QSettings,
+            QSize,
+            Qt,
+            QTimer,
+            QUrl,
+            Signal as pyqtSignal,
+        )
+        from PySide6.QtGui import (
+            QColor,
+            QDesktopServices,
+            QFont,
+            QGuiApplication,
+            QIcon,
+            QPalette,
+            QPixmap,
+            QSyntaxHighlighter,
+            QTextCharFormat,
+            QTextDocument,
+        )
+        from PySide6.QtWidgets import (
+            QAbstractSpinBox,
+            QApplication,
+            QCheckBox,
+            QComboBox,
+            QDoubleSpinBox,
+            QFileDialog,
+            QFormLayout,
+            QFrame,
+            QGridLayout,
+            QGroupBox,
+            QHBoxLayout,
+            QInputDialog,
+            QLabel,
+            QLineEdit,
+            QListWidget,
+            QListWidgetItem,
+            QMainWindow,
+            QMessageBox,
+            QPlainTextEdit,
+            QProgressBar,
+            QPushButton,
+            QScrollArea,
+            QSizePolicy,
+            QSpinBox,
+            QSplitter,
+            QStackedWidget,
+            QSystemTrayIcon,
+            QTabWidget,
+            QToolButton,
+            QVBoxLayout,
+            QWidget,
+        )
+    else:
+        raise ImportError
+except ImportError:
+    from PyQt6.QtCore import (
+        QEasingCurve,
+        QEvent,
+        QObject,
+        QProcess,
+        QProcessEnvironment,
+        QPropertyAnimation,
+        QSettings,
+        QSize,
+        Qt,
+        QTimer,
+        QUrl,
+        pyqtSignal,
+    )
+    from PyQt6.QtGui import (
+        QColor,
+        QDesktopServices,
+        QFont,
+        QGuiApplication,
+        QIcon,
+        QPalette,
+        QPixmap,
+        QSyntaxHighlighter,
+        QTextCharFormat,
+        QTextDocument,
+    )
+    from PyQt6.QtWidgets import (
+        QAbstractSpinBox,
+        QApplication,
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFileDialog,
+        QFormLayout,
+        QFrame,
+        QGridLayout,
+        QGroupBox,
+        QHBoxLayout,
+        QInputDialog,
+        QLabel,
+        QLineEdit,
+        QListWidget,
+        QListWidgetItem,
+        QMainWindow,
+        QMessageBox,
+        QPlainTextEdit,
+        QProgressBar,
+        QPushButton,
+        QScrollArea,
+        QSizePolicy,
+        QSpinBox,
+        QSplitter,
+        QStackedWidget,
+        QSystemTrayIcon,
+        QTabWidget,
+        QToolButton,
+        QVBoxLayout,
+        QWidget,
+    )
 
 # pyqtgraph — optional, graceful fallback
 try:
@@ -241,10 +309,25 @@ def _tune_form(form: QFormLayout) -> None:
 
 
 def _tune_inputs(root: QWidget, h: int = 38) -> None:
-    for w in root.findChildren((QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox)):
+    try:
+        inputs = root.findChildren((QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox))
+    except TypeError:
+        inputs = []
+        for cls in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox):
+            inputs.extend(root.findChildren(cls))
+
+    for w in inputs:
         w.setMinimumHeight(h)
         w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-    for sb in root.findChildren((QSpinBox, QDoubleSpinBox)):
+
+    try:
+        spinboxes = root.findChildren((QSpinBox, QDoubleSpinBox))
+    except TypeError:
+        spinboxes = []
+        for cls in (QSpinBox, QDoubleSpinBox):
+            spinboxes.extend(root.findChildren(cls))
+
+    for sb in spinboxes:
         sb.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)
         sb.setCorrectionMode(QAbstractSpinBox.CorrectionMode.CorrectToNearestValue)
 
@@ -771,6 +854,7 @@ class LiveLossPlot(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        from pyqtgraph.Qt import QtCore as pg_QtCore
 
         self._epochs: List[int] = []
         self._train_loss: List[float] = []
@@ -1029,19 +1113,19 @@ class LiveLossPlot(QWidget):
             )
             self._curve_train_opt = self._plot_widget.plot(
                 [], [],
-                pen=pg.mkPen(color="#a78bfa", width=1.8, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(color="#a78bfa", width=1.8, style=pg_QtCore.Qt.PenStyle.DashLine),
                 name="train_objective",
             )
             self._curve_val_base = self._plot_widget.plot(
                 [], [],
-                pen=pg.mkPen(color="#67e8f9", width=1.8, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(color="#67e8f9", width=1.8, style=pg_QtCore.Qt.PenStyle.DashLine),
                 name="val_base",
             )
 
             self._best_line = pg.InfiniteLine(
                 angle=0,
                 movable=False,
-                pen=pg.mkPen(color=(52, 211, 153, 130), width=1.2, style=Qt.PenStyle.DashLine),
+                pen=pg.mkPen(color=(52, 211, 153, 130), width=1.2, style=pg_QtCore.Qt.PenStyle.DashLine),
             )
             self._best_line.setVisible(False)
             self._plot_widget.addItem(self._best_line)
@@ -1099,7 +1183,7 @@ class LiveLossPlot(QWidget):
             self._checkpoint_plot.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
             self._checkpoint_plot.setLogMode(x=False, y=True)
             self._curve_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#34d399", width=2.6), name="Score")
-            self._curve_best_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#f472b6", width=2.2, style=Qt.PenStyle.DashLine), name="Best")
+            self._curve_best_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#f472b6", width=2.2, style=pg_QtCore.Qt.PenStyle.DashLine), name="Best")
 
             self._plot_tabs = QTabWidget()
             self._plot_tabs.setDocumentMode(True)

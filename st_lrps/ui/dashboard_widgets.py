@@ -19,27 +19,51 @@ import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-try:
-    from PyQt6.QtCore import (
-        QAbstractTableModel,
-        QModelIndex,
-        QTimer,
-        Qt,
-    )
-    from PyQt6.QtGui import QColor, QFont
-    from PyQt6.QtWidgets import (
-        QFrame,
-        QHBoxLayout,
-        QHeaderView,
-        QLabel,
-        QPlainTextEdit,
-        QSizePolicy,
-        QTabWidget,
-        QTableView,
-        QVBoxLayout,
-        QWidget,
-    )
+import sys
 
+_USE_PYSIDE = "PySide6" in sys.modules or ("PyQt6" not in sys.modules and ("PySide6" in sys.modules or True))
+
+try:
+    if _USE_PYSIDE:
+        from PySide6.QtCore import (
+            QAbstractTableModel,
+            QModelIndex,
+            QTimer,
+            Qt,
+        )
+        from PySide6.QtGui import QColor, QFont
+        from PySide6.QtWidgets import (
+            QFrame,
+            QHBoxLayout,
+            QHeaderView,
+            QLabel,
+            QPlainTextEdit,
+            QSizePolicy,
+            QTabWidget,
+            QTableView,
+            QVBoxLayout,
+            QWidget,
+        )
+    else:
+        from PyQt6.QtCore import (
+            QAbstractTableModel,
+            QModelIndex,
+            QTimer,
+            Qt,
+        )
+        from PyQt6.QtGui import QColor, QFont
+        from PyQt6.QtWidgets import (
+            QFrame,
+            QHBoxLayout,
+            QHeaderView,
+            QLabel,
+            QPlainTextEdit,
+            QSizePolicy,
+            QTabWidget,
+            QTableView,
+            QVBoxLayout,
+            QWidget,
+        )
     _HAS_QT = True
 except ImportError:
     _HAS_QT = False
