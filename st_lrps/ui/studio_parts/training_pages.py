@@ -1642,31 +1642,16 @@ class STLRPSTrainTab(QWidget):
         workspace_grid.addWidget(self.advanced_section, 5, 0, 1, 2)
         workspace_grid.addWidget(self._model_repr_section, 6, 0, 1, 2)
 
-        workspace_inner = QWidget()
-        workspace_inner.setLayout(workspace_grid)
-        params_page = _scroll_wrap(workspace_inner)
-
-        # ── 5. Command & Launch secondary bottom card (Phase 3) ──
-        cmd_card = QFrame()
-        cmd_card.setObjectName("setupCmdCard")
-        cmd_card.setStyleSheet(
-            "QFrame#setupCmdCard {"
-            "  background: rgba(11, 16, 32, 0.58);"
-            "  border: 1px solid rgba(185, 194, 221, 0.10);"
-            "  border-radius: 8px;"
-            "}"
-        )
+        # ── 5. Command & Launch collapsible section ──
+        cmd_section = CollapsibleSection("Command Preview & CLI Arguments")
         cmd_l = QVBoxLayout()
-        cmd_l.setContentsMargins(12, 10, 12, 10)
+        cmd_l.setContentsMargins(0, 0, 0, 0)
         cmd_l.setSpacing(8)
         
         cmd_header = QHBoxLayout()
-        cmd_title = QLabel("Command & Launch")
-        cmd_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #e8ecf8;")
-        cmd_header.addWidget(cmd_title)
-        cmd_header.addStretch(1)
         cmd_header.addWidget(self.btn_preview_cmd_setup)
         cmd_header.addWidget(self.btn_copy_cmd_setup)
+        cmd_header.addStretch(1)
         
         self.command_preview.setMinimumHeight(60)
         self.command_preview.setMaximumHeight(80)
@@ -1677,11 +1662,25 @@ class STLRPSTrainTab(QWidget):
         extra_row_layout.addWidget(extra_lbl)
         extra_row_layout.addWidget(self.extra_args, 1)
 
-        cmd_l.addLayout(cmd_header)
         cmd_l.addLayout(extra_row_layout)
         cmd_l.addWidget(self.command_preview)
         cmd_l.addWidget(self.command_warning)
-        cmd_card.setLayout(cmd_l)
+        cmd_l.addLayout(cmd_header)
+        
+        cmd_inner = QWidget()
+        cmd_inner.setLayout(cmd_l)
+        cmd_vbox = QVBoxLayout()
+        cmd_vbox.setContentsMargins(0,0,0,0)
+        cmd_vbox.addWidget(cmd_inner)
+        cmd_section.set_content_layout(cmd_vbox)
+
+        # Add both to the bottom of the grid layout
+        workspace_grid.addWidget(saved_profiles_section, 7, 0, 1, 2)
+        workspace_grid.addWidget(cmd_section, 8, 0, 1, 2)
+
+        workspace_inner = QWidget()
+        workspace_inner.setLayout(workspace_grid)
+        params_page = _scroll_wrap(workspace_inner)
 
         # ── 6. Setup Page Assembly ──
         self.setup_page = QWidget()
@@ -1701,13 +1700,6 @@ class STLRPSTrainTab(QWidget):
         setup_l.addWidget(launch_strip)
         setup_l.addWidget(params_page, 1)
         
-        bottom_row = QHBoxLayout()
-        bottom_row.setContentsMargins(0, 0, 0, 0)
-        bottom_row.setSpacing(12)
-        bottom_row.addWidget(saved_profiles_section, 0)
-        bottom_row.addWidget(cmd_card, 1)
-        
-        setup_l.addLayout(bottom_row)
         self.setup_page.setLayout(setup_l)
 
         # ── 7. Training Monitor (Dashboard v2) ──
