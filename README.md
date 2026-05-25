@@ -127,6 +127,19 @@ Runtime import example:
 from st_lrps.runtime.force_model import load_surrogate_force_model
 ```
 
+Runtime profiling:
+
+```bash
+python -m st_lrps.runtime.profiling \
+    --model-dir runs/st_lrps_train_xxx \
+    --batch-sizes 1,16,128,1024,8192 \
+    --n-warmup 10 \
+    --n-repeat 50 \
+    --out-dir results/profiling/st_lrps_runtime
+```
+
+See `docs/profiling.md` for synthetic and dataset-backed profiling, CPU/CUDA timing, chunk-size sensitivity, and output interpretation.
+
 Training and evaluation outputs should be written to user-selected output directories such as top-level `runs/`, `artifacts/`, `outputs/`, or a scratch location outside the repository. Do not place generated runs inside source package directories.
 
 ## Resuming ST-LRPS Training

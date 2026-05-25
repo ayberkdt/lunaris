@@ -54,6 +54,14 @@ reports/
 mc_results/
 mission_results/
 
+# Profiling outputs
+benchmarks/output/
+profiling_results/
+runtime_profile.json
+runtime_profile.csv
+runtime_profile_summary.md
+runtime_profile_*.png
+
 # ST-LRPS generated artifacts
 runs/
 # Anchored to repo root so the ST-LRPS *source* subpackage st_lrps/artifacts/ is NOT
