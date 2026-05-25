@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -136,6 +136,47 @@ class GradNormWeights:
     def _effective_mode(self) -> str:
         """Return the active loss-weighting mode."""
         return self.mode
+
+    def state_dict(self) -> Dict[str, Any]:
+        """Serialize the mutable loss-weighting state for checkpoint resume.
+
+        Captures the live weights and the NTK/EMA bookkeeping so a resumed run
+        does not recompute (or re-freeze) the gradient-norm ratio from scratch.
+        Static configuration (mode, clamps, EMA hyperparameters) is intentionally
+        NOT restored here — it comes from the resumed TrainConfig.
+        """
+        return {
+            "w_u": float(self.w_u),
+            "w_a": float(self.w_a),
+            "_ema_ratio": float(self._ema_ratio),
+            "_step_counter": int(self._step_counter),
+            "_ntk_done": bool(self._ntk_done),
+            "last_gradnorm_status": str(self.last_gradnorm_status),
+            "last_norm_u": float(self.last_norm_u),
+            "last_norm_a": float(self.last_norm_a),
+            "last_raw_ratio": float(self.last_raw_ratio),
+            "last_n_grad_u": int(self.last_n_grad_u),
+            "last_n_grad_a": int(self.last_n_grad_a),
+        }
+
+    def load_state_dict(self, state: Optional[Mapping[str, Any]]) -> None:
+        """Restore mutable state captured by :meth:`state_dict`.
+
+        Tolerant of missing keys (older checkpoints) and of ``None``; only the
+        runtime/bookkeeping fields are overwritten, never the static config.
+        """
+        if not state:
+            return
+        for key in ("w_u", "w_a", "_ema_ratio", "last_norm_u", "last_norm_a", "last_raw_ratio"):
+            if state.get(key) is not None:
+                setattr(self, key, float(state[key]))
+        for key in ("_step_counter", "last_n_grad_u", "last_n_grad_a"):
+            if state.get(key) is not None:
+                setattr(self, key, int(state[key]))
+        if "_ntk_done" in state and state["_ntk_done"] is not None:
+            self._ntk_done = bool(state["_ntk_done"])
+        if state.get("last_gradnorm_status") is not None:
+            self.last_gradnorm_status = str(state["last_gradnorm_status"])
 
     def _compute_grad_norm_ratio(
         self,

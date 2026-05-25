@@ -129,6 +129,36 @@ from st_lrps.runtime.force_model import load_surrogate_force_model
 
 Training and evaluation outputs should be written to user-selected output directories such as top-level `runs/`, `artifacts/`, `outputs/`, or a scratch location outside the repository. Do not place generated runs inside source package directories.
 
+## Resuming ST-LRPS Training
+
+Training is checkpointed every epoch. If a run stops (Ctrl+C, machine shutdown), continue it from the last completed epoch instead of restarting:
+
+```bash
+python -m st_lrps.training.cli \
+    --resume-from runs/st_lrps_train_YYYYMMDD_HHMMSS \
+    --epochs 300
+```
+
+`--resume-from` accepts a run directory, its `checkpoints/` directory, or a specific `.pt` checkpoint.
+
+Key points:
+
+- **`--epochs` is the TOTAL target epoch count, not additional epochs.** If a run completed epoch 100 and you resume with `--epochs 300`, training continues at epoch 101 and stops after epoch 300. To run 200 more epochs after epoch 100, pass `--epochs 300`.
+- Resume defaults to **`ckpt_last.pt`** (it carries the optimizer, GradNorm, and RNG state needed to continue). `ckpt_best.pt` is for evaluation/selection; use `--resume-checkpoint best` only for fine-tuning.
+- Resume restores model weights **and** optimizer state, the LR schedule position, loss-weighting (GradNorm) state, best-checkpoint tracking, `global_step`, and RNG state — not just the model weights.
+- `--data` and `--out` are inferred from the previous run when omitted.
+- History is **appended** by default (use `--resume-overwrite-history` to start fresh). The run manifest records the resume event (`resumed: true`, `resume_start_epoch`, `previous_latest_epoch`, `target_epochs`).
+- Architecture, encoding, scaler, and dataset-identity settings are locked to the previous run; a critical mismatch fails in strict mode. Use `--resume-nonstrict` to allow non-critical differences.
+- Resume is **epoch-level**: if interrupted mid-epoch, it resumes from the last fully completed (saved) epoch. RNG state is restored, but exact DataLoader worker ordering is not bitwise-guaranteed. There is no mid-batch resume.
+
+Resuming from a specific checkpoint file:
+
+```bash
+python -m st_lrps.training.cli \
+    --resume-from runs/st_lrps_train_YYYYMMDD_HHMMSS/checkpoints/ckpt_last.pt \
+    --epochs 300
+```
+
 ## Propagation And Analysis
 
 Single-run propagation is driven by `main.py`; Monte Carlo workflows are driven by `mc_runner.py`. These commands are data-dependent and should be configured with local input files and output paths:

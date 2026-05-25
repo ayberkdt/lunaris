@@ -4,8 +4,10 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import platform
+import random
 import shutil
 import subprocess
 import sys
@@ -15,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Literal, Mapping, MutableMapping, Optional, Sequence, Tuple
 
+import numpy as np
 import torch
 
 from st_lrps.networks.models import (
@@ -25,6 +28,8 @@ from st_lrps.networks.models import (
 )
 from st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
+
+logger = logging.getLogger(__name__)
 
 CHECKPOINT_SCHEMA_VERSION = "st_lrps_checkpoint_v2"
 RUN_MANIFEST_SCHEMA_VERSION = "st_lrps_run_manifest_v1"
@@ -444,6 +449,9 @@ def normalize_legacy_checkpoint(ckpt: dict) -> dict:
         "accel_factor": _coerce_float_or_none((ckpt.get("training_state") or {}).get("accel_factor")) or _coerce_float_or_none(ckpt.get("accel_factor")) or 1.0,
         "lambda_dir_eff": _coerce_float_or_none((ckpt.get("training_state") or {}).get("lambda_dir_eff")) or _coerce_float_or_none(ckpt.get("lambda_dir_eff")) or 0.0,
         "rng_state": (ckpt.get("training_state") or {}).get("rng_state"),
+        # Resume-only: loss-weighting (GradNorm) internal state. Optional; older
+        # checkpoints simply carry None and resume falls back to a fresh GradNorm.
+        "gradnorm_weights": (ckpt.get("training_state") or {}).get("gradnorm_weights"),
     }
 
     normalized = {
@@ -723,6 +731,110 @@ def resolve_run_dir(path_like: Path | str) -> Path:
     return path
 
 
+def resolve_resume_checkpoint(
+    path_like: Path | str,
+    *,
+    prefer: str = "last",
+    device: Optional[torch.device] = None,
+) -> Tuple["RunLayout", Path, dict]:
+    """Resolve a resume target into ``(layout, checkpoint_path, checkpoint_payload)``.
+
+    Centralizes all resume path handling so the engine never re-implements it.
+
+    Accepts:
+      * a direct ``.pt`` checkpoint file (run_dir inferred via :func:`resolve_run_dir`),
+      * a ``checkpoints/`` directory (parent is the run dir),
+      * a run directory (``checkpoints/ckpt_last.pt`` by default, or
+        ``ckpt_best.pt`` when ``prefer='best'``).
+
+    The checkpoint is loaded and schema-validated through :func:`load_checkpoint`.
+    """
+    dev = device or torch.device("cpu")
+    prefer_l = str(prefer).strip().lower()
+    if prefer_l not in {"last", "best"}:
+        raise ValueError("resume prefer must be 'last' or 'best'")
+
+    p = Path(path_like).expanduser().resolve()
+    if not p.exists():
+        raise FileNotFoundError(f"Resume path does not exist: {p}")
+
+    run_dir = resolve_run_dir(p)
+    layout = make_run_layout(run_dir)
+
+    if p.is_file():
+        ckpt_path = p
+    else:
+        order = (
+            [layout.ckpt_best, layout.ckpt_last]
+            if prefer_l == "best"
+            else [layout.ckpt_last, layout.ckpt_best]
+        )
+        ckpt_path = next((c for c in order if c.exists()), None)
+        if ckpt_path is None:
+            raise FileNotFoundError(
+                f"No checkpoint found to resume from in {layout.checkpoints_dir}. "
+                f"Expected {layout.ckpt_last.name} or {layout.ckpt_best.name}."
+            )
+
+    payload = load_checkpoint(ckpt_path, dev)
+    return layout, ckpt_path, payload
+
+
+def capture_rng_state() -> Dict[str, Any]:
+    """Capture Python / NumPy / torch (CPU + CUDA) RNG state for resume.
+
+    Returns a pickle/torch-saveable dict. Restoration is best-effort and
+    epoch-level: it does NOT guarantee bitwise-identical DataLoader worker
+    ordering, only that the core generators continue from a consistent state.
+    """
+    state: Dict[str, Any] = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch_cpu": torch.get_rng_state(),
+    }
+    try:
+        if torch.cuda.is_available():
+            state["torch_cuda_all"] = torch.cuda.get_rng_state_all()
+    except Exception as exc:  # pragma: no cover - hardware dependent
+        logger.warning("capture_rng_state: could not capture CUDA RNG state: %s", exc)
+    return state
+
+
+def restore_rng_state(state: Optional[Mapping[str, Any]]) -> None:
+    """Restore RNG state captured by :func:`capture_rng_state`.
+
+    Tolerant of ``None`` and of partial/foreign payloads; never raises so a
+    resume is not aborted by an RNG-restore hiccup.
+    """
+    if not state:
+        return
+    py = state.get("python")
+    if py is not None:
+        try:
+            random.setstate(tuple(py) if isinstance(py, list) else py)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("restore_rng_state: python RNG restore failed: %s", exc)
+    nps = state.get("numpy")
+    if nps is not None:
+        try:
+            np.random.set_state(nps)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("restore_rng_state: numpy RNG restore failed: %s", exc)
+    tc = state.get("torch_cpu")
+    if tc is not None:
+        try:
+            torch.set_rng_state(tc.cpu().to(torch.uint8) if hasattr(tc, "cpu") else tc)
+        except Exception as exc:  # pragma: no cover
+            logger.warning("restore_rng_state: torch CPU RNG restore failed: %s", exc)
+    cuda = state.get("torch_cuda_all")
+    if cuda is not None:
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.set_rng_state_all([s.cpu() for s in cuda])
+        except Exception as exc:  # pragma: no cover - hardware dependent
+            logger.warning("restore_rng_state: torch CUDA RNG restore failed: %s", exc)
+
+
 def canonical_scaler_payload(scaler: Any) -> Dict[str, Any]:
     if isinstance(scaler, dict):
         return _json_safe(scaler)
@@ -932,6 +1044,9 @@ def build_checkpoint_payload(
         "accel_factor": float(train_stats.get("accel_factor", 1.0) or 1.0),
         "lambda_dir_eff": float(train_stats.get("lambda_dir_eff", 0.0) or 0.0),
         "rng_state": train_stats.get("rng_state"),
+        # Resume-only: GradNormWeights.state_dict() so a resumed run continues the
+        # frozen NTK / EMA loss-weighting instead of recomputing it.
+        "gradnorm_weights": train_stats.get("gradnorm_weights"),
     }
 
     payload = {

@@ -51,9 +51,13 @@ from st_lrps.artifacts.manager import (
     build_checkpoint_payload,
     build_resolved_config,
     capture_environment_snapshot,
+    capture_rng_state,
     compute_file_sha256,
     compute_payload_sha256,
     ensure_run_layout,
+    read_run_manifest,
+    resolve_resume_checkpoint,
+    restore_rng_state,
     update_run_manifest,
     save_checkpoint,
     verify_critical_config_fields_match,
@@ -1003,6 +1007,106 @@ def train(cfg: TrainConfig) -> None:
         handlers=[logging.StreamHandler(), logging.FileHandler(layout.train_log)]
     )
 
+    # -----------------------------------------------------------------------
+    # Resume resolution (epoch-level). When cfg.resume_from is set, restore
+    # model/optimizer/GradNorm/RNG state (below) and continue from the last
+    # completed epoch. cfg.epochs is the TOTAL target epoch count, not extra
+    # epochs. Architecture/scaler/dataset-identity fields are locked to the
+    # previous run so the rebuilt model + scaler match the checkpoint exactly.
+    # -----------------------------------------------------------------------
+    _resume_requested = bool(getattr(cfg, "resume_from", None))
+    _resume_ckpt: Optional[Dict[str, Any]] = None
+    _resume_ckpt_path: Optional[Path] = None
+    start_epoch = 0
+    _resume_best_val = float("inf")
+    _resume_best_epoch = -1
+    _resume_epochs_without_improve = 0
+    _resume_global_step = 0
+    _resume_prev_manifest: Dict[str, Any] = {}
+    if _resume_requested:
+        _resume_layout, _resume_ckpt_path, _resume_ckpt = resolve_resume_checkpoint(
+            cfg.resume_from,
+            prefer=str(getattr(cfg, "resume_checkpoint", "last")),
+            device=device,
+        )
+        if _resume_layout.run_dir != layout.run_dir:
+            logger.warning(
+                f"[resume] --out ({layout.run_dir}) differs from the resumed run "
+                f"({_resume_layout.run_dir}); writing to the resumed run directory."
+            )
+            layout = ensure_run_layout(_resume_layout.run_dir)
+            outdir = layout.run_dir
+            cfg.out = str(outdir)
+        _resume_prev_manifest = read_run_manifest(layout) or {}
+        run_created_at = str(_resume_prev_manifest.get("created_at_utc") or run_created_at)
+
+        # Load previous resolved config (prefer config.json; fall back to ckpt).
+        _prev_cfg: Dict[str, Any] = {}
+        if layout.config_json.is_file():
+            try:
+                _prev_cfg = json.loads(layout.config_json.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.warning(f"[resume] could not read previous config.json: {exc}")
+        if not _prev_cfg:
+            _prev_cfg = dict(_resume_ckpt.get("config") or {})
+
+        # Lock architecture / encoding / scaler-math / dataset-identity fields so
+        # the rebuilt model + scaler reproduce the checkpoint exactly. Optimization,
+        # LR schedule, and the epoch target are intentionally taken from THIS run.
+        _RESUME_LOCKED_FIELDS = (
+            "activation", "hidden", "depth", "dropout", "w0_first", "w0_hidden",
+            "use_residual_blocks", "n_bands", "multiscale_mode",
+            "use_fourier", "fourier_append_raw", "fourier_n_features", "fourier_sigma", "fourier_seed",
+            "use_sh_encoding", "sh_encoding_degree", "sh_append_raw",
+            "use_radial_separation", "radial_append_raw",
+            "use_radial_decay_encoding", "radial_decay_max_power", "radial_decay_append_raw",
+            "use_real_sh_basis", "real_sh_degree", "real_sh_append_raw", "real_sh_include_radial",
+            "u_scale_mode", "a_scale_mode", "target_scale_multiplier",
+            "use_si", "dataset_name", "split_seed", "val_ratio", "seed",
+        )
+        _locked_changed = []
+        for _f in _RESUME_LOCKED_FIELDS:
+            if _f in _prev_cfg and hasattr(cfg, _f):
+                if getattr(cfg, _f) != _prev_cfg.get(_f):
+                    _locked_changed.append(_f)
+                setattr(cfg, _f, _prev_cfg.get(_f))
+        if _locked_changed:
+            logger.info(f"[resume] locked architecture/scaler fields to previous run: {_locked_changed}")
+
+        # Continuation counters from the checkpoint.
+        start_epoch = int(_resume_ckpt.get("epoch", -1)) + 1
+        _ck_cfg = dict(_resume_ckpt.get("config") or {})
+        _bs = _ck_cfg.get("best_score", _ck_cfg.get("best_val_loss"))
+        try:
+            _resume_best_val = float(_bs) if (_bs is not None and math.isfinite(float(_bs))) else float("inf")
+        except (TypeError, ValueError):
+            _resume_best_val = float("inf")
+        _be = _ck_cfg.get("best_epoch")
+        try:
+            _resume_best_epoch = (int(_be) - 1) if (_be is not None and int(_be) > 0) else -1
+        except (TypeError, ValueError):
+            _resume_best_epoch = -1
+        try:
+            _resume_epochs_without_improve = int(_ck_cfg.get("epochs_since_improvement", 0) or 0)
+        except (TypeError, ValueError):
+            _resume_epochs_without_improve = 0
+        try:
+            _resume_global_step = int(_resume_ckpt.get("global_step") or 0)
+        except (TypeError, ValueError):
+            _resume_global_step = 0
+
+        if int(cfg.epochs) <= int(start_epoch):
+            raise ValueError(
+                f"--epochs ({cfg.epochs}) must be greater than the last completed epoch "
+                f"({start_epoch}) to resume. --epochs is the TOTAL target epoch count; "
+                f"pass e.g. --epochs {start_epoch + 100}."
+            )
+        logger.info(
+            f"[resume] checkpoint={_resume_ckpt_path} | last_completed_epoch={start_epoch} "
+            f"| resuming at epoch {start_epoch + 1} | target_epochs={cfg.epochs} "
+            f"| strict={bool(getattr(cfg, 'resume_strict', True))}"
+        )
+
     _log_section(
         "ST-LRPS Training",
         {
@@ -1044,35 +1148,61 @@ def train(cfg: TrainConfig) -> None:
     )
 
     command_line = write_command_txt(layout)
-    write_run_manifest(
-        layout,
-        {
-            "schema_version": "st_lrps_run_manifest_v1",
-            "run_id": outdir.name,
-            "created_at_utc": run_created_at,
-            "status": "running",
-            "command_line": command_line,
-            "command_path": str(layout.command_txt),
-            "script_version": "st_lrps_engine",
-            "git_commit": os.environ.get("GIT_COMMIT") or None,
-            "data_paths": {
-                "data": str(cfg.data),
-                "train_data": str(cfg.train_data) if cfg.train_data else None,
-                "val_data": str(cfg.val_data) if cfg.val_data else None,
-                "test_data": str(cfg.test_data) if cfg.test_data else None,
-                "ood_data": str(cfg.ood_data) if cfg.ood_data else None,
-                "suite_manifest": str(cfg.suite_manifest) if cfg.suite_manifest else None,
-            },
-            "config_path": str(layout.config_json),
-            "scaler_path": str(layout.scaler_json),
-            "best_checkpoint_path": str(layout.ckpt_best),
-            "last_checkpoint_path": str(layout.ckpt_last),
-            "history_csv_path": str(layout.history_csv),
-            "history_jsonl_path": str(layout.history_jsonl),
-            "warnings": [],
-            "evaluations": [],
+    _manifest_dict = {
+        "schema_version": "st_lrps_run_manifest_v1",
+        "run_id": outdir.name,
+        "created_at_utc": run_created_at,
+        "status": "running",
+        "command_line": command_line,
+        "command_path": str(layout.command_txt),
+        "script_version": "st_lrps_engine",
+        "git_commit": os.environ.get("GIT_COMMIT") or None,
+        "data_paths": {
+            "data": str(cfg.data),
+            "train_data": str(cfg.train_data) if cfg.train_data else None,
+            "val_data": str(cfg.val_data) if cfg.val_data else None,
+            "test_data": str(cfg.test_data) if cfg.test_data else None,
+            "ood_data": str(cfg.ood_data) if cfg.ood_data else None,
+            "suite_manifest": str(cfg.suite_manifest) if cfg.suite_manifest else None,
         },
-    )
+        "config_path": str(layout.config_json),
+        "scaler_path": str(layout.scaler_json),
+        "best_checkpoint_path": str(layout.ckpt_best),
+        "last_checkpoint_path": str(layout.ckpt_last),
+        "history_csv_path": str(layout.history_csv),
+        "history_jsonl_path": str(layout.history_jsonl),
+        "warnings": [],
+        "evaluations": [],
+    }
+    if _resume_requested:
+        # Preserve the original run manifest (run_id, created_at, evaluations);
+        # record the resume event and set status back to "running".
+        _resumed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        try:
+            _resume_cmd_path = layout.provenance_dir / (
+                "resume_command_" + time.strftime("%Y%m%d_%H%M%S", time.gmtime()) + ".txt"
+            )
+            _resume_cmd_path.write_text(command_line + "\n", encoding="utf-8")
+        except Exception as _rc_exc:  # pragma: no cover - defensive
+            logger.warning(f"[resume] could not write resume command provenance: {_rc_exc}")
+        update_run_manifest(
+            layout,
+            {
+                "status": "running",
+                "command_line": command_line,
+                "command_path": str(layout.command_txt),
+                "resumed": True,
+                "resumed_from_checkpoint": str(_resume_ckpt_path),
+                "resume_start_epoch": int(start_epoch) + 1,
+                "previous_latest_epoch": int(
+                    _resume_ckpt.get("epoch_display", start_epoch) or start_epoch
+                ),
+                "target_epochs": int(cfg.epochs),
+                "resumed_at_utc": _resumed_at,
+            },
+        )
+    else:
+        write_run_manifest(layout, _manifest_dict)
     _log_section(
         "Output Artifacts",
         {
@@ -1087,11 +1217,15 @@ def train(cfg: TrainConfig) -> None:
     )
 
     if cfg.quick_check:
+        # Quick-check runs ONE epoch to verify the pipeline. On resume that means
+        # one ADDITIONAL epoch past the last completed one (start_epoch), so the
+        # quick-check still does real work instead of an empty range.
+        _qc_epochs = (int(start_epoch) + 1) if _resume_requested else 1
         logger.info("=" * 62)
         logger.info("QUICK CHECK MODE: this is not a real training run.")
-        logger.info("  epochs=1  max_train_batches=5  max_val_batches=2  log_every=1")
+        logger.info(f"  epochs={_qc_epochs}  max_train_batches=5  max_val_batches=2  log_every=1")
         logger.info("=" * 62)
-        cfg.epochs = 1
+        cfg.epochs = _qc_epochs
         cfg.log_every = 1
         cfg.max_train_batches = cfg.max_train_batches if cfg.max_train_batches is not None else 5
         cfg.max_val_batches   = cfg.max_val_batches   if cfg.max_val_batches   is not None else 2
@@ -1317,17 +1451,9 @@ def train(cfg: TrainConfig) -> None:
                 f"(collocation Laplacian is the preferred trainable regulariser)."
             )
     logger.info(f"  Direction Loss: weight={cfg.direction_loss_weight}, start={cfg.direction_loss_start_epoch}, ramp={cfg.direction_loss_ramp_epochs}")
-    _bm = str(_best_metric_canonical)
-    _ha = float(getattr(cfg, "hybrid_direction_alpha", 0.30))
-    logger.info(f"  Best-checkpoint metric: {_bm} | formula={checkpoint_selection['formula']}")
-    if _bm == "direction_loss":
-        logger.warning("best_metric='direction_loss' is experimental. "
-                       "Early epochs may select underdeveloped checkpoints. "
-                       "Consider 'hybrid' instead.")
-    if _bm == "hybrid" and float(getattr(cfg, "direction_loss_weight", 0.0)) == 0.0:
-        logger.warning("best_metric='hybrid' selected but direction_loss_weight=0. "
-                       "Hybrid score will effectively use val_base_loss. "
-                       "Set --direction-loss-weight > 0 to enable hybrid selection.")
+    # NOTE: best-checkpoint-metric logging moved below, after _best_metric_canonical
+    # and checkpoint_selection are defined (they were referenced here before
+    # assignment, which made train() raise UnboundLocalError on every run).
 
     # Fail fast on invalid architecture combination
     if cfg.activation.lower() == "sine" and cfg.use_fourier:
@@ -1593,6 +1719,17 @@ def train(cfg: TrainConfig) -> None:
         dtype=DTYPE,
     )
 
+    if _resume_requested and _resume_ckpt is not None:
+        _msd = _resume_ckpt.get("model_state_dict") or _resume_ckpt.get("model")
+        if _msd is None:
+            raise RuntimeError("[resume] checkpoint has no model_state_dict.")
+        _load_res = model.load_state_dict(_msd, strict=bool(getattr(cfg, "resume_strict", True)))
+        _missing = list(getattr(_load_res, "missing_keys", []) or [])
+        _unexpected = list(getattr(_load_res, "unexpected_keys", []) or [])
+        if _missing or _unexpected:
+            logger.warning(f"[resume] non-strict model load: missing={_missing} unexpected={_unexpected}")
+        logger.info(f"[resume] model weights restored from {_resume_ckpt_path}")
+
     # Log architecture details (equivalent to old manual logging, but from the built model)
     _n_bands_built = max(1, int(getattr(cfg, "n_bands", 1)))
     _use_res_built = bool(getattr(cfg, "use_residual_blocks", False))
@@ -1650,6 +1787,19 @@ def train(cfg: TrainConfig) -> None:
     )
     logger.info(f"Loss weighting: mode={cfg.gradnorm_mode}  w_u={cfg.w_u:.2f}  w_a_init={cfg.w_a:.2f}")
 
+    if _resume_requested:
+        _gnw_state = (_resume_ckpt.get("training_state") or {}).get("gradnorm_weights")
+        if _gnw_state:
+            weights.load_state_dict(_gnw_state)
+            logger.info(
+                f"[resume] GradNorm state restored (w_a={weights.w_a:.4f}, ntk_done={weights._ntk_done})."
+            )
+        else:
+            logger.warning(
+                "[resume] checkpoint lacks GradNorm state; continuing with a fresh GradNorm "
+                "(NTK init may recompute on the first resumed step)."
+            )
+
     loss_fn = SobolevLoss(
         scaler=scaler,
         a_sign=a_sign,
@@ -1686,6 +1836,27 @@ def train(cfg: TrainConfig) -> None:
     )
     for group in opt.param_groups:
         group["initial_lr"] = float(group["lr"])
+
+    if _resume_requested:
+        _osd = _resume_ckpt.get("optimizer_state_dict")
+        if _osd is not None:
+            try:
+                opt.load_state_dict(_osd)
+                logger.info("[resume] optimizer state restored.")
+            except Exception as _oexc:
+                if bool(getattr(cfg, "resume_strict", True)):
+                    raise RuntimeError(f"[resume] optimizer state restore failed: {_oexc}") from _oexc
+                logger.warning(f"[resume] optimizer restore failed (non-strict); continuing fresh: {_oexc}")
+        elif bool(getattr(cfg, "resume_strict", True)):
+            raise RuntimeError(
+                "[resume] checkpoint has no optimizer_state_dict (strict). "
+                "Use --resume-nonstrict to continue with a fresh optimizer."
+            )
+        else:
+            logger.warning("[resume] checkpoint has no optimizer_state_dict; continuing with a fresh optimizer.")
+        # Re-assert the manual-cosine base LR per group (load_state_dict may not carry it).
+        for group in opt.param_groups:
+            group.setdefault("initial_lr", float(group["lr"]))
 
     # 10. Save canonical config + provenance snapshot
     config_path = layout.config_json
@@ -1758,6 +1929,16 @@ def train(cfg: TrainConfig) -> None:
             "lower_is_better": checkpoint_selection["lower_is_better"],
         },
     )
+    _bm = str(_best_metric_canonical)
+    logger.info(f"  Best-checkpoint metric: {_bm} | formula={checkpoint_selection['formula']}")
+    if _bm == "direction_loss":
+        logger.warning("best_metric='direction_loss' is experimental. "
+                       "Early epochs may select underdeveloped checkpoints. "
+                       "Consider 'hybrid' instead.")
+    if _bm == "hybrid" and float(getattr(cfg, "direction_loss_weight", 0.0)) == 0.0:
+        logger.warning("best_metric='hybrid' selected but direction_loss_weight=0. "
+                       "Hybrid score will effectively use val_base_loss. "
+                       "Set --direction-loss-weight > 0 to enable hybrid selection.")
 
     resolved_cfg_source = asdict(cfg)
     resolved_cfg_source.update(
@@ -1843,6 +2024,18 @@ def train(cfg: TrainConfig) -> None:
     atomic_write_json(config_path, payload)
     payload_readback = json.loads(config_path.read_text(encoding="utf-8"))
     verify_critical_config_fields_match(payload_readback, payload)
+    if _resume_requested:
+        # Compatibility gate: the rebuilt config must agree with the resumed
+        # checkpoint on architecture/dataset/scaler-critical fields.
+        try:
+            verify_critical_config_fields_match(payload_readback, dict(_resume_ckpt.get("config") or {}))
+            logger.info("[resume] checkpoint config is compatible with the rebuilt run config.")
+        except RuntimeError as _vexc:
+            if bool(getattr(cfg, "resume_strict", True)):
+                raise RuntimeError(
+                    f"[resume] architecture/dataset-critical config mismatch vs checkpoint: {_vexc}"
+                ) from _vexc
+            logger.warning(f"[resume] non-strict: ignoring config mismatch vs checkpoint: {_vexc}")
     update_run_manifest(
         layout,
         {
@@ -1918,6 +2111,18 @@ def train(cfg: TrainConfig) -> None:
     global_step = 0
     run_status = "completed"
 
+    if _resume_requested:
+        best_val = _resume_best_val
+        best_epoch = _resume_best_epoch
+        epochs_without_improve = _resume_epochs_without_improve
+        global_step = _resume_global_step
+        logger.info(
+            "[resume] restored counters: "
+            f"best_epoch={best_epoch + 1 if best_epoch >= 0 else 'none'}, "
+            f"best_val={best_val if math.isfinite(best_val) else 'inf'}, "
+            f"epochs_without_improve={epochs_without_improve}, global_step={global_step}"
+        )
+
     if _ckpt_start > 0:
         logger.info(
             f"[checkpoint] best tracking starts at epoch {_ckpt_start + 1} "
@@ -1944,10 +2149,69 @@ def train(cfg: TrainConfig) -> None:
     logger.info(f"[artifacts] schema=st_lrps_checkpoint_v2")
     logger.info(f"[artifacts] architecture_signature={_arch_signature}")
     logger.info("Beginning training loop...")
-    if log_path.exists():
-        log_path.unlink()
-    with open(log_path, "w", encoding="utf-8") as logf:
-        for epoch in range(cfg.epochs):
+    # Restore RNG state and decide history append-vs-overwrite for resume.
+    _hist_mode = "w"
+    if _resume_requested:
+        _rng_state = (_resume_ckpt.get("training_state") or {}).get("rng_state")
+        if _rng_state:
+            restore_rng_state(_rng_state)
+            logger.info("[resume] RNG state restored (epoch-level; DataLoader worker order is not bitwise-guaranteed).")
+        else:
+            logger.warning("[resume] checkpoint lacks RNG state; continuing with the seeded RNG.")
+        if bool(getattr(cfg, "resume_append_history", True)) and log_path.exists():
+            try:
+                with open(log_path, "r", encoding="utf-8") as _hf:
+                    for _line in _hf:
+                        _line = _line.strip()
+                        if not _line:
+                            continue
+                        try:
+                            _prev_row = json.loads(_line)
+                        except Exception:
+                            continue
+                        # Project to the flat row schema (strip nested train/val blocks).
+                        history.append({
+                            k: v for k, v in _prev_row.items()
+                            if k not in ("train", "val", "checkpoint_report")
+                        })
+                logger.info(f"[resume] loaded {len(history)} previous history rows (append mode).")
+                _hist_mode = "a"
+            except Exception as _hexc:
+                logger.warning(f"[resume] could not read previous history ({_hexc}); writing fresh rows.")
+                _hist_mode = "w"
+        elif log_path.exists():
+            log_path.unlink()
+    else:
+        if log_path.exists():
+            log_path.unlink()
+
+    # Graceful, epoch-level interruption. A single Ctrl+C (SIGINT) sets a flag;
+    # the loop finishes the current epoch, saves ckpt_last, marks the manifest
+    # "interrupted", and exits. A second Ctrl+C restores default handling for a
+    # hard stop. Installing a handler requires the main thread; if unavailable
+    # (e.g. tests in a worker thread) we fall back to plain KeyboardInterrupt.
+    import signal as _signal
+    _interrupt = {"flag": False}
+    _orig_sigint = None
+
+    def _on_sigint(_signum, _frame):  # pragma: no cover - signal timing dependent
+        if _interrupt["flag"]:
+            if _orig_sigint is not None:
+                _signal.signal(_signal.SIGINT, _orig_sigint)
+            raise KeyboardInterrupt
+        _interrupt["flag"] = True
+        logger.warning(
+            "[interrupt] Stop requested — will finish the current epoch, save, and exit. "
+            "Press Ctrl+C again to force-quit."
+        )
+
+    try:
+        _orig_sigint = _signal.signal(_signal.SIGINT, _on_sigint)
+    except (ValueError, OSError):
+        _orig_sigint = None
+
+    with open(log_path, _hist_mode, encoding="utf-8") as logf:
+        for epoch in range(start_epoch, cfg.epochs):
             epoch_t0 = time.perf_counter()
             lr_scale = _lr_multiplier_for_epoch(
                 epoch,
@@ -2042,6 +2306,10 @@ def train(cfg: TrainConfig) -> None:
             }
             checkpoint_train_stats = dict(tr)
             checkpoint_train_stats["gradnorm_status"] = str(getattr(cfg, "gradnorm_mode", "fixed"))
+            # Resume state: GradNorm internal state + RNG snapshot so a resumed
+            # run continues loss-weighting and randomness from this epoch.
+            checkpoint_train_stats["gradnorm_weights"] = weights.state_dict()
+            checkpoint_train_stats["rng_state"] = capture_rng_state()
             checkpoint_payload = build_checkpoint_payload(
                 kind="last",
                 epoch=epoch,
@@ -2194,6 +2462,32 @@ def train(cfg: TrainConfig) -> None:
                     f"Best epoch: {best_epoch + 1} | best_val_loss={best_val:.6e}"
                 )
                 break
+
+            if _interrupt["flag"]:
+                run_status = "interrupted"
+                _interrupt_done = int(epoch) + 1
+                _resume_hint = f"python -m st_lrps.training.cli --resume-from {outdir} --epochs {cfg.epochs}"
+                logger.warning(
+                    f"[interrupt] Stopping after completed epoch {_interrupt_done}. "
+                    f"ckpt_last.pt is saved. Resume with:\n  {_resume_hint}"
+                )
+                update_run_manifest(
+                    layout,
+                    {
+                        "status": "interrupted",
+                        "latest_epoch": _interrupt_done,
+                        "interrupted_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "resume_hint": _resume_hint,
+                    },
+                )
+                break
+
+    # Restore the original SIGINT handler (best-effort).
+    if _orig_sigint is not None:
+        try:
+            _signal.signal(_signal.SIGINT, _orig_sigint)
+        except Exception:  # pragma: no cover
+            pass
 
     _write_training_history_csv(history, layout.history_csv)
     _save_training_plots(history, outdir)

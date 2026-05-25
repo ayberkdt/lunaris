@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import json
 import os
 import sys
 from dataclasses import dataclass
@@ -271,6 +272,16 @@ class TrainConfig:
     # Gradient accumulation — accumulate gradients over N batches before stepping.
     # Effective batch size = batch_size * grad_accumulation_steps.
     grad_accumulation_steps: int = 1
+
+    # Resume / continuation. When resume_from is set, the engine restores model,
+    # optimizer, GradNorm and RNG state from a previous run and continues from the
+    # last completed epoch. --epochs is the TOTAL target epoch count (not extra
+    # epochs). Defaults preserve existing behavior when resume is not used.
+    resume_from: Optional[str] = None
+    resume_checkpoint: str = "last"          # "last" (continue training) | "best" (fine-tune)
+    resume_strict: bool = True               # fail on architecture/dataset/scaler-critical mismatch
+    resume_allow_longer_epochs: bool = True  # allow extending the epoch target on resume
+    resume_append_history: bool = True       # preserve/append previous history by default
 
 import dataclasses as _dataclasses
 _TC_DEFAULTS: dict = {
@@ -696,6 +707,37 @@ def parse_args() -> TrainConfig:
     group_log.add_argument("--max-val-batches", type=int, default=None,
                            help="Cap the number of validation batches per epoch (None = full epoch).")
 
+    # Resume / Continuation
+    group_resume = ap.add_argument_group("Resume / Continuation")
+    group_resume.add_argument(
+        "--resume-from", type=str, default=None,
+        help="Resume training from a previous ST-LRPS run directory, its checkpoints/ "
+             "directory, or a specific .pt checkpoint. A run directory loads "
+             "checkpoints/ckpt_last.pt by default. --data/--out are inferred from the "
+             "previous run when omitted. --epochs is the TOTAL target epoch count.",
+    )
+    group_resume.add_argument(
+        "--resume-checkpoint", choices=["last", "best"], default="last",
+        help="Which checkpoint to prefer when --resume-from points to a run directory. "
+             "Default: last (continues training/optimizer state). Use 'best' to "
+             "fine-tune from the best-selected checkpoint.",
+    )
+    group_resume.add_argument(
+        "--resume-nonstrict", action="store_true", default=False,
+        help="Allow limited non-critical config differences when resuming. "
+             "Architecture/dataset/scaler-critical mismatches still fail.",
+    )
+    resume_hist_group = group_resume.add_mutually_exclusive_group()
+    resume_hist_group.add_argument(
+        "--resume-append-history", action="store_true", dest="resume_append_history",
+        help="Append to / preserve the existing history when resuming (default).",
+    )
+    resume_hist_group.add_argument(
+        "--resume-overwrite-history", action="store_false", dest="resume_append_history",
+        help="Overwrite the existing history when resuming.",
+    )
+    ap.set_defaults(resume_append_history=True)
+
     # ---------------------------------------------------------------------------
     # TrainConfig is the single source of truth for the recommended configuration.
     # There is no alternate default mode: the dataclass defaults ARE the recommended
@@ -721,6 +763,33 @@ def parse_args() -> TrainConfig:
     # ---------------------------------------------------------------------------
 
     a = ap.parse_args()
+
+    # 0. Resume pre-resolution.
+    # When --resume-from is given, default --data/--out from the previous run so
+    # the user only needs `--resume-from <run> [--epochs N]`. Full checkpoint
+    # loading + architecture locking happens later in the training engine.
+    resume_from = getattr(a, "resume_from", None)
+    if resume_from:
+        from st_lrps.artifacts.manager import resolve_run_dir as _resolve_run_dir
+        resume_run_dir = _resolve_run_dir(Path(resume_from).expanduser())
+        prev_cfg: dict = {}
+        prev_cfg_path = resume_run_dir / "config.json"
+        if prev_cfg_path.is_file():
+            try:
+                prev_cfg = json.loads(prev_cfg_path.read_text(encoding="utf-8"))
+            except Exception as _e:  # pragma: no cover - defensive
+                print(f"[RESUME] Warning: could not read previous config.json: {_e}")
+        # Infer data/out from the previous run when not explicitly provided.
+        if a.data is None and a.train_data is None:
+            prev_data = prev_cfg.get("data")
+            if prev_data:
+                a.data = str(prev_data)
+            else:
+                a.train_data = a.train_data or prev_cfg.get("train_data_path") or prev_cfg.get("train_data")
+                a.val_data = a.val_data or prev_cfg.get("val_data_path") or prev_cfg.get("val_data")
+        if not a.out:
+            a.out = str(resume_run_dir)
+        print(f"[RESUME] Resuming run: {resume_run_dir}  (prefer={a.resume_checkpoint})")
 
     # 1. Resolve Data Path
     # Anchor dataset auto-discovery and the default output dir at the st_lrps
@@ -928,6 +997,11 @@ def parse_args() -> TrainConfig:
         collocation_laplacian_weight=float(a.collocation_laplacian_weight),
         collocation_laplacian_samples=max(1, int(a.collocation_laplacian_samples)),
         collocation_laplacian_hutchinson_samples=max(1, int(a.collocation_laplacian_hutchinson_samples)),
+        resume_from=(str(a.resume_from) if getattr(a, "resume_from", None) else None),
+        resume_checkpoint=str(getattr(a, "resume_checkpoint", "last")),
+        resume_strict=(not bool(getattr(a, "resume_nonstrict", False))),
+        resume_allow_longer_epochs=True,
+        resume_append_history=bool(getattr(a, "resume_append_history", True)),
     )
 
 
