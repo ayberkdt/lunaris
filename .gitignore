@@ -106,3 +106,17 @@ st_lrps/**/provenance/
 *.zip
 *.7z
 *.rar
+
+# LaTeX files and directory
+LATEX/
+*.aux
+*.bbl
+*.bcf
+*.fdb_latexmk
+*.fls
+*.out
+*.pdf
+*.run.xml
+*.synctex.gz
+*.toc
+

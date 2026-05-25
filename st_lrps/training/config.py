@@ -136,6 +136,9 @@ class TrainConfig:
 
     # Progress logging → log every N batches; 0 to disable
     log_every: int = 10
+    # "fixed" honors log_every literally; "auto" derives ~10 progress updates
+    # per epoch from the batch count (always logging the first and last batch).
+    log_every_mode: str = "fixed"
 
     # RAM preload → load whole dataset into CPU tensors for better GPU throughput
     # On Windows, HDF5 forces num_workers=0; RAM mode removes that constraint.
@@ -868,7 +871,12 @@ def parse_args() -> TrainConfig:
     # Logging & Quick-check
     group_log = ap.add_argument_group("Logging & Quick-check")
     group_log.add_argument("--log-every", type=int, default=10,
-                           help="Print batch-level progress every N batches (0 to disable).")
+                           help="Print batch-level progress every N batches (0 to disable). "
+                                "Used when --log-every-mode is 'fixed'.")
+    group_log.add_argument("--log-every-mode", choices=["fixed", "auto"], default="fixed",
+                           help="'fixed' uses --log-every literally; 'auto' logs roughly 10 "
+                                "progress updates per epoch (always including the first and "
+                                "last batch).")
     group_log.add_argument("--quick-check", action="store_true", default=False,
                            help="Run 1 epoch with 5 train + 2 val batches to verify the full pipeline.")
     group_log.add_argument("--max-train-batches", type=int, default=None,
@@ -1134,6 +1142,7 @@ def parse_args() -> TrainConfig:
         fourier_sigma=float(a.fourier_sigma),
         fourier_seed=int(a.fourier_seed),
         log_every=max(0, int(a.log_every)),
+        log_every_mode=str(getattr(a, "log_every_mode", "fixed")),
         preload_data=bool(a.preload_data),
         auto_preload_mb=float(a.auto_preload_mb) if not getattr(a, "no_auto_preload", False) else 0.0,
         preload_policy=("never" if getattr(a, "no_auto_preload", False) else str(a.preload_policy)),

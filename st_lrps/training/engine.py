@@ -445,6 +445,11 @@ class STLRPSTrainer:
         if max_batches is not None:
             total_batches_est = min(total_batches_est, int(max_batches))
 
+        # Auto logging frequency: ~10 progress updates per epoch, derived from the
+        # batch count. The first and last batch are always logged below.
+        if str(getattr(self.cfg, "log_every_mode", "fixed")).lower() == "auto":
+            log_every = max(1, math.ceil(total_batches_est / 10))
+
         logger.info(f"Starting epoch {epoch + 1} {'train' if is_train else 'validation'} phase...")
         phase_t0 = time.perf_counter()
 
@@ -714,7 +719,11 @@ class STLRPSTrainer:
                 n_batches += 1
                 last_stats = stats
 
-                if log_every > 0 and (n_batches % log_every == 0 or n_batches == total_batches_est):
+                if log_every > 0 and (
+                    n_batches == 1
+                    or n_batches % log_every == 0
+                    or n_batches == total_batches_est
+                ):
                     elapsed = time.perf_counter() - phase_t0
                     spb = elapsed / max(1, n_batches)
                     eta = max(0.0, spb * (total_batches_est - n_batches))

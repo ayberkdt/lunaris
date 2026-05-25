@@ -229,6 +229,7 @@ try:
         StructuredLogView,
     )
     from st_lrps.ui.training_metrics import (
+        EpochGuard,
         ETAEstimator,
         TrainingLogParser,
         TrainingMetricsStore,
@@ -2087,6 +2088,7 @@ class ProcessPane(QWidget):
             None
         )
         self._stop_hint: str = ""
+        self._raw_log_container: Optional[QWidget] = None
 
         self.status = QLabel("Hazır")
         self.status.setTextInteractionFlags(
@@ -2157,6 +2159,33 @@ class ProcessPane(QWidget):
         self.btn_clear.clicked.connect(self.log.clear)
         self.btn_stop.clicked.connect(self.stop)
         self.btn_open_folder.clicked.connect(self._open_output_folder)
+
+    def raw_log_widget(self) -> QWidget:
+        """Return a standalone widget holding ONLY the raw log text plus a
+        minimal toolbar (status + auto-scroll toggle + clear).
+
+        Process controls (start/stop/progress/open-folder) are intentionally
+        excluded so they can live in a dedicated training control bar. The
+        widgets are re-parented out of this ProcessPane's own layout, so the
+        pane itself should not be displayed once this is used."""
+        if self._raw_log_container is not None:
+            return self._raw_log_container
+        container = QWidget()
+        lo = QVBoxLayout()
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(6)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(8)
+        bar.addWidget(self.status)
+        bar.addStretch(1)
+        bar.addWidget(self._auto_scroll)
+        bar.addWidget(self.btn_clear)
+        lo.addLayout(bar)
+        lo.addWidget(self.log, 1)
+        container.setLayout(lo)
+        self._raw_log_container = container
+        return container
 
     def set_output_dir(self, path: str) -> None:
         self._output_dir = path
@@ -2468,6 +2497,7 @@ class TrainingQueue(QWidget):
         lo.addWidget(self._list, 1)
         lo.addLayout(btn_row)
         self.setLayout(lo)
+        self._update_status()
 
     # --- Public API (called by STLRPSTrainTab) ---
 
@@ -2630,7 +2660,9 @@ class TrainingQueue(QWidget):
                 f"Toplam: {total}  |  Tamamlanan: {done}  |  Bekleyen: {pending}"
             )
         else:
-            self._status_lbl.setText("")
+            self._status_lbl.setText(
+                "No queued runs — add the current profile to batch-train multiple experiments."
+            )
 
 
 # =============================================================================
@@ -3352,10 +3384,19 @@ class STLRPSTrainTab(QWidget):
         self.device_hint.setCurrentText("auto")
         self.device_hint.setToolTip("Cihaz ipucu. cpu/mps → AMP otomatik kapatılır.")
         self.device_hint.currentTextChanged.connect(self._on_device_hint_changed)
+        self.log_every_mode = QComboBox()
+        self.log_every_mode.addItem("auto", "auto")
+        self.log_every_mode.addItem("fixed", "fixed")
+        self.log_every_mode.setCurrentIndex(0)  # auto by default
+        self.log_every_mode.setToolTip(
+            "Auto logs roughly 10 progress updates per epoch (always including the "
+            "first and last batch). Fixed uses the batch interval below."
+        )
+        self.log_every_mode.currentIndexChanged.connect(self._on_log_every_mode_changed)
         self.log_every = QSpinBox()
         self.log_every.setRange(0, 10000)
         self.log_every.setValue(10)
-        self.log_every.setToolTip("Her N batch'te bir ilerleme yaz. 0 → devre dışı.")
+        self.log_every.setToolTip("Her N batch'te bir ilerleme yaz. 0 → devre dışı. (Fixed modunda kullanılır.)")
         self.preload_data = QCheckBox("RAM'e Önceden Yükle")
         self.preload_data.setChecked(False)
         self.preload_data.setToolTip(
@@ -3440,6 +3481,7 @@ class STLRPSTrainTab(QWidget):
         form_adv.addRow("Scaler Örneklem Satırı", self.fit_rows)
         form_adv.addRow("Rastgele Tohum (Seed)", self.seed)
         form_adv.addRow("Bölme Tohumu (Split Seed)", self.split_seed)
+        form_adv.addRow("Log Frekans Modu", self.log_every_mode)
         form_adv.addRow("Batch Log Sıklığı", self.log_every)
         form_adv.addRow(self.preload_data)
         form_adv.addRow("Oto-RAM Yükleme Limiti (MB)", self.auto_preload_mb)
@@ -3470,6 +3512,72 @@ class STLRPSTrainTab(QWidget):
         self.advanced_section.set_content_layout(adv_wrapper)
 
         # =====================================================================
+        # MODEL REPRESENTATION (input encoding preset + manual ablation flags)
+        # =====================================================================
+        # The model_preset combo itself lives in the top toolbar (compact).
+        # This group exposes the manual encoding flags and physical-radial-decay
+        # options that only apply when model_preset == "custom".
+        self.model_preset = QComboBox()
+        for _val, _label in (
+            ("baseline_raw", "Baseline · raw coordinates"),
+            ("recommended_physical_radial_decay", "Recommended · physical radial decay"),
+            ("ablation_radial_separation", "Ablation · radial separation"),
+            ("ablation_radial_decay_scaled", "Ablation · radial decay (scaled)"),
+            ("ablation_real_sh_low_degree", "Ablation · real SH (low degree)"),
+            ("custom", "Custom · manual encoding flags"),
+        ):
+            self.model_preset.addItem(_label, _val)
+        _mp_default = self.model_preset.findData("recommended_physical_radial_decay")
+        self.model_preset.setCurrentIndex(_mp_default if _mp_default >= 0 else 0)
+        self.model_preset.setToolTip(
+            "Input-encoding representation preset.\n"
+            "Non-custom presets fully control the representation; the manual flags\n"
+            "below are only used when 'Custom' is selected."
+        )
+        self.model_preset.currentIndexChanged.connect(self._on_model_preset_changed)
+
+        grp_model_repr = QGroupBox("Model Representation (manual encoding — Custom only)")
+        form_model_repr = QFormLayout()
+        _tune_form(form_model_repr)
+
+        self.model_preset_note = QLabel("")
+        self.model_preset_note.setWordWrap(True)
+        self.model_preset_note.setStyleSheet("color: #fbbf24; font-size: 11px;")
+
+        self.use_radial_separation = QCheckBox("Radial separation encoding [r, ux, uy, uz]")
+        self.use_radial_decay_encoding = QCheckBox("Radial decay encoding (scaled inverse-radius)")
+        self.use_physical_radial_decay_encoding = QCheckBox("Physical radial decay encoding (R_ref/r)")
+        self.use_real_sh_basis = QCheckBox("Real spherical-harmonic basis")
+        for _cb in (
+            self.use_radial_separation, self.use_radial_decay_encoding,
+            self.use_physical_radial_decay_encoding, self.use_real_sh_basis,
+        ):
+            _cb.toggled.connect(self._refresh_command_preview)
+
+        self.physical_radial_decay_max_power = QSpinBox()
+        self.physical_radial_decay_max_power.setRange(1, 16)
+        self.physical_radial_decay_max_power.setValue(4)
+        self.physical_radial_decay_max_power.setToolTip("Highest power of R_ref/r used in the physical decay encoding.")
+        self.physical_radial_decay_append_raw = QCheckBox("Append raw coordinates")
+        self.physical_radial_decay_append_raw.setChecked(True)
+        self.physical_radial_decay_include_unit = QCheckBox("Include unit direction vector")
+        self.physical_radial_decay_include_unit.setChecked(True)
+        self.physical_radial_decay_include_r_scaled = QCheckBox("Include scaled radius (r/R_ref)")
+        self.physical_radial_decay_include_r_scaled.setChecked(True)
+
+        form_model_repr.addRow("", self.model_preset_note)
+        form_model_repr.addRow(self.use_radial_separation)
+        form_model_repr.addRow(self.use_radial_decay_encoding)
+        form_model_repr.addRow(self.use_physical_radial_decay_encoding)
+        form_model_repr.addRow("Phys. decay max power", self.physical_radial_decay_max_power)
+        form_model_repr.addRow(self.physical_radial_decay_append_raw)
+        form_model_repr.addRow(self.physical_radial_decay_include_unit)
+        form_model_repr.addRow(self.physical_radial_decay_include_r_scaled)
+        form_model_repr.addRow(self.use_real_sh_basis)
+        grp_model_repr.setLayout(form_model_repr)
+        self._grp_model_repr = grp_model_repr
+
+        # =====================================================================
         # EXTRA CLI ARGS
         # =====================================================================
         self.extra_args = QLineEdit("")
@@ -3491,6 +3599,7 @@ class STLRPSTrainTab(QWidget):
         grid.addWidget(self._dir_loss_section, 4, 0, 1, 2)
         grid.addWidget(self._field_loss_section, 5, 0, 1, 2)
         grid.addWidget(self.advanced_section, 6, 0, 1, 2)
+        grid.addWidget(grp_model_repr, 7, 0, 1, 2)
 
         extra_row_layout = QFormLayout()
         _tune_form(extra_row_layout)
@@ -3521,7 +3630,7 @@ class STLRPSTrainTab(QWidget):
         extra_row_layout.addRow("", self.command_warning)
         extra_w = QWidget()
         extra_w.setLayout(extra_row_layout)
-        grid.addWidget(extra_w, 7, 0, 1, 2)
+        grid.addWidget(extra_w, 8, 0, 1, 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
 
@@ -3537,6 +3646,8 @@ class STLRPSTrainTab(QWidget):
         self.runner.btn_start.clicked.connect(self._start)
         self.runner.set_progress_parser(self._parse_progress)
         self.runner.set_finished_hook(self._on_train_finished)
+        self._user_stopped = False  # set when the user clicks Stop (→ INTERRUPTED)
+        self._device_badge: Optional[str] = None
 
         # --- Live Loss Plot (Feature #13) ---
         self._live_plot = LiveLossPlot()
@@ -3551,6 +3662,7 @@ class STLRPSTrainTab(QWidget):
             self._kpi_strip = KPIStrip()
             self._structured_log = StructuredLogView()
             self._eta_estimator = ETAEstimator()
+            self._epoch_guard = EpochGuard()
             self._log_parser = TrainingLogParser()
             self._metrics_store = TrainingMetricsStore()
             self._eta_update_timer = QTimer(self)
@@ -3560,6 +3672,7 @@ class STLRPSTrainTab(QWidget):
             self._kpi_strip = None
             self._structured_log = None
             self._eta_estimator = None
+            self._epoch_guard = None
             self._log_parser = None
             self._metrics_store = None
 
@@ -3574,7 +3687,25 @@ class STLRPSTrainTab(QWidget):
         self._queue = TrainingQueue()
         self._queue.job_started.connect(self._on_queue_job_started)
 
-        # --- Controls bar (pinned above scroll area — always visible) ---
+        # =====================================================================
+        # PHASE 3: professional training-console layout.
+        #
+        #   1. compact experiment toolbar (workflow · profile · model preset)
+        #   2. training control bar (Start/Stop/Queue + progress + run info)
+        #   3. KPI status strip
+        #   4. main workspace splitter (charts dominant | structured progress)
+        #   5. lower tabs (Configuration form · Queue)
+        # =====================================================================
+
+        # ── 1. Compact experiment toolbar (pinned) ───────────────────────
+        model_repr_bar = QHBoxLayout()
+        model_repr_bar.setContentsMargins(4, 2, 4, 2)
+        model_repr_bar.setSpacing(8)
+        mdl_lbl = QLabel("Model:")
+        mdl_lbl.setStyleSheet("font-weight: 600; color: #6ee7b7; font-size: 13px;")
+        model_repr_bar.addWidget(mdl_lbl)
+        model_repr_bar.addWidget(self.model_preset, 1)
+
         controls_bar = QFrame()
         controls_bar.setObjectName("trainControlsBar")
         controls_bar.setStyleSheet(
@@ -3588,10 +3719,14 @@ class STLRPSTrainTab(QWidget):
         ctrl_lo.setContentsMargins(10, 8, 10, 8)
         ctrl_lo.setSpacing(6)
         ctrl_lo.addLayout(workflow_bar)
+        ctrl_lo.addLayout(model_repr_bar)
         ctrl_lo.addLayout(preset_bar)
         controls_bar.setLayout(ctrl_lo)
 
-        # --- Scrollable parameters ---
+        # ── 2. Training control bar (Start/Stop/Progress always visible) ──
+        train_ctrl_bar = self._build_training_control_bar()
+
+        # ── 4/5. Build the scrollable Configuration form ─────────────────
         top = QWidget()
         top_l = QVBoxLayout()
         top_l.setContentsMargins(6, 6, 6, 6)
@@ -3600,52 +3735,46 @@ class STLRPSTrainTab(QWidget):
         top_l.addLayout(grid)
         top.setLayout(top_l)
 
-        # --- Bottom execution area ---
-        # Phase 5: charts get 65% width, log panel gets 35%
-        runner_and_plot = QSplitter(Qt.Orientation.Horizontal)
+        # ── 4. Main workspace: charts (dominant) | structured progress ───
+        workspace_splitter = QSplitter(Qt.Orientation.Horizontal)
         if _HAS_DASHBOARD_V2 and self._structured_log is not None:
-            # Wrap the raw ProcessPane log into the structured log view tabs
-            self._structured_log.set_raw_log_widget(self.runner)
-            runner_and_plot.addWidget(self._live_plot)
-            runner_and_plot.addWidget(self._structured_log)
+            # Phase 1: the Raw Log tab receives ONLY the raw log widget,
+            # never the whole ProcessPane (process controls live in the bar).
+            self._structured_log.set_raw_log_widget(self.runner.raw_log_widget())
+            workspace_splitter.addWidget(self._live_plot)
+            workspace_splitter.addWidget(self._structured_log)
         else:
-            runner_and_plot.addWidget(self.runner)
-            runner_and_plot.addWidget(self._live_plot)
-        runner_and_plot.setStretchFactor(0, 2)   # charts: 65%
-        runner_and_plot.setStretchFactor(1, 1)   # log: 35%
-        runner_and_plot.setSizes([550, 300])
+            workspace_splitter.addWidget(self._live_plot)
+            workspace_splitter.addWidget(self.runner)
+        workspace_splitter.setStretchFactor(0, 7)   # charts dominant (~70%)
+        workspace_splitter.setStretchFactor(1, 3)   # structured progress (~30%)
+        workspace_splitter.setSizes([720, 320])
+        self._live_plot.setMinimumHeight(420)
+        self._live_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        enqueue_row = QHBoxLayout()
-        enqueue_row.setContentsMargins(0, 0, 0, 0)
-        enqueue_row.addStretch(1)
-        enqueue_row.addWidget(self.btn_enqueue)
+        # ── 5. Lower tabs: Configuration form + Queue (secondary) ────────
+        lower_tabs = QTabWidget()
+        lower_tabs.setDocumentMode(True)
+        lower_tabs.addTab(_scroll_wrap(top), "Configuration")
+        lower_tabs.addTab(self._queue, "Queue")
+        self._lower_tabs = lower_tabs
 
-        bottom = QWidget()
-        bottom_l = QVBoxLayout()
-        bottom_l.setContentsMargins(0, 0, 0, 0)
-        bottom_l.setSpacing(6)
-        bottom_l.addLayout(enqueue_row)
-        # Phase 4: KPI strip above the main workspace
-        if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
-            bottom_l.addWidget(self._kpi_strip)
-        bottom_l.addWidget(runner_and_plot, 3)
-        bottom_l.addWidget(self._queue, 1)
-        bottom.setLayout(bottom_l)
-
-
-        # --- Vertical splitter: scrollable params vs execution panel ---
-        params_splitter = QSplitter(Qt.Orientation.Vertical)
-        params_splitter.addWidget(_scroll_wrap(top))
-        params_splitter.addWidget(bottom)
-        params_splitter.setStretchFactor(0, 0)
-        params_splitter.setStretchFactor(1, 1)
-        params_splitter.setSizes([340, 450])
+        # ── Vertical splitter: workspace (dominant) over lower tabs ──────
+        main_splitter = QSplitter(Qt.Orientation.Vertical)
+        main_splitter.addWidget(workspace_splitter)
+        main_splitter.addWidget(lower_tabs)
+        main_splitter.setStretchFactor(0, 3)
+        main_splitter.setStretchFactor(1, 1)
+        main_splitter.setSizes([560, 240])
 
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
         layout.addWidget(controls_bar)
-        layout.addWidget(params_splitter, 1)
+        layout.addWidget(train_ctrl_bar)
+        if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
+            layout.addWidget(self._kpi_strip)   # Phase 4: top-level status strip
+        layout.addWidget(main_splitter, 1)
         self.setLayout(layout)
 
         self._epochs_max = int(self.epochs.value())
@@ -3663,6 +3792,8 @@ class STLRPSTrainTab(QWidget):
         self._on_device_hint_changed(self.device_hint.currentText())
         self._on_resume_toggled(self.resume_enabled.isChecked())
         self._on_workflow_mode_changed()
+        self._on_model_preset_changed()
+        self._on_log_every_mode_changed()
         self._refresh_command_preview()
         self._refresh_checklist()
 
@@ -3775,6 +3906,159 @@ class STLRPSTrainTab(QWidget):
         else:
             self.no_amp.setEnabled(True)
 
+    # -----------------------------------------------------------------
+    # Phase 2: Training control bar (Start/Stop/Progress always visible)
+    # -----------------------------------------------------------------
+    def _build_training_control_bar(self) -> QFrame:
+        """Compose the always-visible training control bar.
+
+        Re-parents the ProcessPane's primary controls (start/stop/progress)
+        into this bar so the existing enable/disable + subprocess logic keeps
+        working, and adds secondary/ghost actions next to them."""
+        bar = QFrame()
+        bar.setObjectName("trainRunBar")
+        bar.setStyleSheet(
+            "QFrame#trainRunBar {"
+            "  background: rgba(11, 16, 32, 0.80);"
+            "  border: 1px solid rgba(124, 92, 255, 0.22);"
+            "  border-radius: 10px;"
+            "}"
+        )
+
+        # Flag a user-requested stop so the finish hook can show INTERRUPTED.
+        self.runner.btn_stop.clicked.connect(
+            lambda: setattr(self, "_user_stopped", True)
+        )
+
+        # Compact progress bar (re-parented from the ProcessPane).
+        self.runner.progress.setMaximumHeight(22)
+        self.runner.progress.setMinimumWidth(160)
+        self.runner.progress.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+
+        # Ghost / secondary actions that drive the same slots.
+        self.btn_clear_log = QPushButton("Clear Log")
+        self.btn_clear_log.setProperty("kind", "ghost")
+        self.btn_clear_log.clicked.connect(self._clear_logs)
+        self.btn_open_run = QPushButton("Open Run Folder")
+        self.btn_open_run.setProperty("kind", "ghost")
+        self.btn_open_run.clicked.connect(self._open_run_folder)
+        self.btn_preview_cmd = QPushButton("Preview Command")
+        self.btn_preview_cmd.setProperty("kind", "ghost")
+        self.btn_preview_cmd.clicked.connect(self._preview_command_popup)
+        self.btn_copy_cmd = QPushButton("Copy Command")
+        self.btn_copy_cmd.setProperty("kind", "ghost")
+        self.btn_copy_cmd.clicked.connect(self._copy_command_preview)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(8)
+        top_row.addWidget(self.runner.btn_start)      # primary
+        top_row.addWidget(self.runner.btn_stop)       # danger
+        top_row.addWidget(self.runner.progress, 1)    # compact, expanding
+        top_row.addWidget(self.btn_enqueue)           # secondary (Add to Queue)
+        top_row.addWidget(self.btn_clear_log)
+        top_row.addWidget(self.btn_open_run)
+        top_row.addWidget(self.btn_preview_cmd)
+        top_row.addWidget(self.btn_copy_cmd)
+
+        # Run/output info row.
+        self._run_dir_label = QLabel("Output: (auto-timestamped run folder)")
+        self._run_dir_label.setStyleSheet("color: #7f91ac; font-size: 11px;")
+        self._run_dir_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self._workflow_label = QLabel("")
+        self._workflow_label.setStyleSheet(
+            "color: #8b7cff; font-size: 11px; font-weight: 600;"
+        )
+        info_row = QHBoxLayout()
+        info_row.setContentsMargins(2, 0, 2, 0)
+        info_row.setSpacing(12)
+        info_row.addWidget(self._run_dir_label, 1)
+        info_row.addWidget(self._workflow_label)
+
+        lo = QVBoxLayout()
+        lo.setContentsMargins(10, 8, 10, 8)
+        lo.setSpacing(6)
+        lo.addLayout(top_row)
+        lo.addLayout(info_row)
+        bar.setLayout(lo)
+        return bar
+
+    def _on_model_preset_changed(self, *_args) -> None:
+        """Enable manual encoding controls only in Custom preset mode."""
+        preset = self.model_preset.currentData() or "custom"
+        is_custom = preset == "custom"
+        if hasattr(self, "_grp_model_repr"):
+            for w in (
+                self.use_radial_separation, self.use_radial_decay_encoding,
+                self.use_physical_radial_decay_encoding, self.use_real_sh_basis,
+                self.physical_radial_decay_max_power,
+                self.physical_radial_decay_append_raw,
+                self.physical_radial_decay_include_unit,
+                self.physical_radial_decay_include_r_scaled,
+            ):
+                w.setEnabled(is_custom)
+            if is_custom:
+                self.model_preset_note.setText(
+                    "Custom mode: input encoding is controlled by the manual flags below."
+                )
+            else:
+                self.model_preset_note.setText(
+                    f"Preset '{preset}' controls the input representation. "
+                    "Switch to Custom to edit the manual encoding flags."
+                )
+        self._refresh_command_preview()
+
+    def _on_log_every_mode_changed(self, *_args) -> None:
+        """Disable the fixed-interval spinbox when auto logging is selected."""
+        mode = self.log_every_mode.currentData() or "auto"
+        if hasattr(self, "log_every"):
+            self.log_every.setEnabled(mode == "fixed")
+        self._refresh_command_preview()
+
+    def _clear_logs(self) -> None:
+        """Clear the raw log text and the structured progress table."""
+        if hasattr(self, "runner"):
+            self.runner.log.clear()
+        if _HAS_DASHBOARD_V2 and self._structured_log is not None:
+            self._structured_log.clear()
+
+    def _open_run_folder(self) -> None:
+        """Open the most recent output/run directory in the file browser."""
+        run_dir = (
+            (self.runner._output_dir if hasattr(self, "runner") else "")
+            or self.out_dir.text().strip()
+        )
+        if run_dir and Path(run_dir).is_dir():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(run_dir))
+        else:
+            QMessageBox.information(
+                self, "No run folder",
+                "No output folder is available yet. It is created when training starts "
+                "or can be set explicitly in the Configuration tab.",
+            )
+
+    def _preview_command_popup(self) -> None:
+        """Build the command and show it (also fills the Configuration preview)."""
+        self._refresh_command_preview()
+        text = self.command_preview.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(
+                self, "Command unavailable",
+                self.command_warning.text() or "The current configuration is incomplete.",
+            )
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Generated Command")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText("The training command for the current configuration:")
+        box.setDetailedText(text)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
+
     def _on_workflow_mode_changed(self) -> None:
         mode = self.workflow_mode.currentData() or "train_then_eval"
         is_quick = mode == "quick_check"
@@ -3783,16 +4067,19 @@ class STLRPSTrainTab(QWidget):
         elif self.workflow_mode.currentData() != "quick_check":
             # don't un-check if user manually set it
             pass
+        labels = {
+            "train_only":      "Eğitimi Başlat",
+            "eval_only":       "Değerlendirmeyi Başlat",
+            "train_then_eval": "Eğit + Değerlendir",
+            "quick_check":     "Quick Check Başlat",
+            "queue":           "Kuyruğu Başlat",
+        }
         # Update start button label
         if hasattr(self, "runner"):
-            labels = {
-                "train_only":      "Eğitimi Başlat",
-                "eval_only":       "Değerlendirmeyi Başlat",
-                "train_then_eval": "Eğit + Değerlendir",
-                "quick_check":     "Quick Check Başlat",
-                "queue":           "Kuyruğu Başlat",
-            }
             self.runner.btn_start.setText(labels.get(mode, "Başlat"))
+        # Update the control-bar workflow label
+        if hasattr(self, "_workflow_label"):
+            self._workflow_label.setText(f"Mode: {labels.get(mode, mode)}")
         self._refresh_checklist()
 
     def sync_from_cloud(
@@ -3974,6 +4261,7 @@ class STLRPSTrainTab(QWidget):
             "seed": self.seed.value(),
             "split_seed": self.split_seed.value(),
             "log_every": self.log_every.value(),
+            "log_every_mode": self.log_every_mode.currentData() or "auto",
             "preload_data": self.preload_data.isChecked(),
             "auto_preload_mb": self.auto_preload_mb.value(),
             "pin_memory": self.pin_memory.isChecked(),
@@ -3985,6 +4273,16 @@ class STLRPSTrainTab(QWidget):
             "n_bands": self.n_bands.value(),
             "grad_accumulation_steps": self.grad_accumulation_steps.value(),
             "n_hutchinson_samples": self.n_hutchinson_samples.value(),
+            # Model representation (input encoding)
+            "model_preset": self.model_preset.currentData() or "custom",
+            "use_radial_separation": self.use_radial_separation.isChecked(),
+            "use_radial_decay_encoding": self.use_radial_decay_encoding.isChecked(),
+            "use_physical_radial_decay_encoding": self.use_physical_radial_decay_encoding.isChecked(),
+            "use_real_sh_basis": self.use_real_sh_basis.isChecked(),
+            "physical_radial_decay_max_power": self.physical_radial_decay_max_power.value(),
+            "physical_radial_decay_append_raw": self.physical_radial_decay_append_raw.isChecked(),
+            "physical_radial_decay_include_unit": self.physical_radial_decay_include_unit.isChecked(),
+            "physical_radial_decay_include_r_scaled": self.physical_radial_decay_include_r_scaled.isChecked(),
             # Workflow
             "workflow_mode": self.workflow_mode.currentData() or "train_then_eval",
             "extra_args": self.extra_args.text(),
@@ -4072,6 +4370,32 @@ class STLRPSTrainTab(QWidget):
             self.use_laplacian_regularization.setChecked(bool(cfg["use_laplacian_regularization"]))
         if "use_residual_blocks" in cfg:
             self.use_residual_blocks.setChecked(bool(cfg["use_residual_blocks"]))
+        # Model representation (input encoding) — backward compatible: old
+        # profiles without these keys keep the current widget values.
+        for key, widget in (
+            ("use_radial_separation", self.use_radial_separation),
+            ("use_radial_decay_encoding", self.use_radial_decay_encoding),
+            ("use_physical_radial_decay_encoding", self.use_physical_radial_decay_encoding),
+            ("use_real_sh_basis", self.use_real_sh_basis),
+            ("physical_radial_decay_append_raw", self.physical_radial_decay_append_raw),
+            ("physical_radial_decay_include_unit", self.physical_radial_decay_include_unit),
+            ("physical_radial_decay_include_r_scaled", self.physical_radial_decay_include_r_scaled),
+        ):
+            if key in cfg:
+                widget.setChecked(bool(cfg[key]))
+        if "physical_radial_decay_max_power" in cfg:
+            try:
+                self.physical_radial_decay_max_power.setValue(int(cfg["physical_radial_decay_max_power"]))
+            except Exception:
+                pass
+        if "model_preset" in cfg:
+            idx = self.model_preset.findData(str(cfg["model_preset"]))
+            if idx >= 0:
+                self.model_preset.setCurrentIndex(idx)
+        if "log_every_mode" in cfg:
+            idx = self.log_every_mode.findData(str(cfg["log_every_mode"]))
+            if idx >= 0:
+                self.log_every_mode.setCurrentIndex(idx)
         if "resume_enabled" in cfg:
             self.resume_enabled.setChecked(bool(cfg["resume_enabled"]))
         if "resume_nonstrict" in cfg:
@@ -4121,6 +4445,10 @@ class STLRPSTrainTab(QWidget):
         self._on_dataset_mode_changed()
         self._on_resume_toggled(self.resume_enabled.isChecked())
         self._on_loss_feature_toggled()
+        if hasattr(self, "model_preset"):
+            self._on_model_preset_changed()
+        if hasattr(self, "log_every_mode"):
+            self._on_log_every_mode_changed()
 
     def _load_preset(self) -> None:
         key = self._current_preset_key()
@@ -4253,6 +4581,11 @@ class STLRPSTrainTab(QWidget):
                 "use_altitude_balanced_loss", "use_radial_cross_loss",
                 "use_laplacian_regularization", "use_residual_blocks",
                 "resume_enabled", "resume_nonstrict",
+                "use_radial_separation", "use_radial_decay_encoding",
+                "use_physical_radial_decay_encoding", "use_real_sh_basis",
+                "physical_radial_decay_append_raw",
+                "physical_radial_decay_include_unit",
+                "physical_radial_decay_include_r_scaled",
             }
             _int_keys = {
                 "hidden", "depth", "epochs", "batch_size", "t_max",
@@ -4266,6 +4599,7 @@ class STLRPSTrainTab(QWidget):
                 "laplacian_subset_size",
                 "n_bands", "grad_accumulation_steps", "n_hutchinson_samples",
                 "max_train_batches", "max_val_batches",
+                "physical_radial_decay_max_power",
             }
             _float_keys = {
                 "dropout", "lr", "weight_decay", "output_head_lr_mult",
@@ -4384,14 +4718,57 @@ class STLRPSTrainTab(QWidget):
         args += ["--w0-first", str(self.w0_first.value())]
         args += ["--w0-hidden", str(self.w0_hidden.value())]
         args += ["--dropout", str(self.dropout.value())]
-        if act != "sine" and self.use_fourier.isChecked():
-            args += ["--use-fourier"]
-            args += ["--fourier-n", str(self.fourier_n.value())]
-            args += ["--fourier-sigma", str(self.fourier_sigma.value())]
-            if self.fourier_append_raw.isChecked():
-                args += ["--fourier-append-raw"]
+
+        # Model representation / input encoding (Phase 10).
+        # Non-custom presets fully define the representation: emit only
+        # --model-preset and force fourier off (the backend's apply_model_preset
+        # raises if a non-custom preset is combined with active manual encodings).
+        preset = self.model_preset.currentData() or "custom"
+        args += ["--model-preset", preset]
+        if preset == "custom":
+            if act != "sine" and self.use_fourier.isChecked():
+                args += ["--use-fourier"]
+                args += ["--fourier-n", str(self.fourier_n.value())]
+                args += ["--fourier-sigma", str(self.fourier_sigma.value())]
+                if self.fourier_append_raw.isChecked():
+                    args += ["--fourier-append-raw"]
+                else:
+                    args += ["--no-fourier-append-raw"]
             else:
-                args += ["--no-fourier-append-raw"]
+                args += ["--no-fourier"]
+            args += (
+                ["--use-radial-separation"] if self.use_radial_separation.isChecked()
+                else ["--no-radial-separation"]
+            )
+            args += (
+                ["--use-radial-decay-encoding"] if self.use_radial_decay_encoding.isChecked()
+                else ["--no-radial-decay-encoding"]
+            )
+            if self.use_physical_radial_decay_encoding.isChecked():
+                args += ["--use-physical-radial-decay-encoding"]
+                args += ["--physical-radial-decay-max-power",
+                         str(self.physical_radial_decay_max_power.value())]
+                args += (
+                    ["--physical-radial-decay-append-raw"]
+                    if self.physical_radial_decay_append_raw.isChecked()
+                    else ["--no-physical-radial-decay-append-raw"]
+                )
+                args += (
+                    ["--physical-radial-decay-include-unit"]
+                    if self.physical_radial_decay_include_unit.isChecked()
+                    else ["--no-physical-radial-decay-include-unit"]
+                )
+                args += (
+                    ["--physical-radial-decay-include-r-scaled"]
+                    if self.physical_radial_decay_include_r_scaled.isChecked()
+                    else ["--no-physical-radial-decay-include-r-scaled"]
+                )
+            else:
+                args += ["--no-physical-radial-decay-encoding"]
+            args += (
+                ["--use-real-sh-basis"] if self.use_real_sh_basis.isChecked()
+                else ["--no-real-sh-basis"]
+            )
         else:
             args += ["--no-fourier"]
 
@@ -4457,6 +4834,8 @@ class STLRPSTrainTab(QWidget):
         args += ["--cache-rows", str(self.cache_rows.value())]
         args += ["--fit-rows", str(self.fit_rows.value())]
         args += ["--seed", str(self.seed.value())]
+        log_mode = self.log_every_mode.currentData() or "auto"
+        args += ["--log-every-mode", log_mode]
         args += ["--log-every", str(self.log_every.value())]
         if self.preload_data.isChecked():
             args += ["--preload-data"]
@@ -4622,12 +5001,15 @@ class STLRPSTrainTab(QWidget):
         self._live_plot.clear()
         self.runner.set_output_dir(out_dir if out_dir else "")
         self._set_history_poll_dir(out_dir)
+        self._update_run_dir_label(out_dir)
         self._save_settings()
         # Dashboard v2: start ETA tracking and reset dashboard
         if _HAS_DASHBOARD_V2:
             if self._eta_estimator is not None:
                 self._eta_estimator.set_total_epochs(int(self.epochs.value()))
                 self._eta_estimator.on_training_start()
+            if self._epoch_guard is not None:
+                self._epoch_guard.reset()        # Phase 8: reset ETA epoch guards
             if self._eta_update_timer is not None:
                 self._eta_update_timer.start()
             if self._metrics_store is not None:
@@ -4636,9 +5018,9 @@ class STLRPSTrainTab(QWidget):
                 self._structured_log.clear()
             if self._kpi_strip is not None:
                 self._kpi_strip.reset()
-            main_win = self.window()
-            if hasattr(main_win, '_experiment_header'):
-                main_win._experiment_header.set_status("TRAINING")
+                self._kpi_strip.epoch.set_value(f"0 / {int(self.epochs.value())}")
+                self._kpi_strip.phase.set_value("Starting", state="normal")
+            self._update_header_lifecycle("TRAINING")
 
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
@@ -4667,9 +5049,29 @@ class STLRPSTrainTab(QWidget):
         self.runner.progress.setRange(0, self._epochs_max)
         self.runner.progress.setValue(0)
         self.runner.progress.setFormat("Epoch %v / %m  [Kuyruk]")
+        queue_out = self._arg_value(args, "--out") or ""
         self.runner.set_output_dir("")
-        self._set_history_poll_dir(self._arg_value(args, "--out") or "")
-        self.runner.set_stop_hint(self._resume_stop_hint(self._arg_value(args, "--out") or self._arg_value(args, "--resume-from") or ""))
+        self._set_history_poll_dir(queue_out)
+        self._update_run_dir_label(queue_out)
+        self.runner.set_stop_hint(self._resume_stop_hint(queue_out or self._arg_value(args, "--resume-from") or ""))
+        # Reset the live dashboard for each queued job.
+        if _HAS_DASHBOARD_V2:
+            if self._eta_estimator is not None:
+                self._eta_estimator.set_total_epochs(int(self.epochs.value()))
+                self._eta_estimator.on_training_start()
+            if self._epoch_guard is not None:
+                self._epoch_guard.reset()
+            if self._eta_update_timer is not None:
+                self._eta_update_timer.start()
+            if self._metrics_store is not None:
+                self._metrics_store.clear()
+            if self._structured_log is not None:
+                self._structured_log.clear()
+            if self._kpi_strip is not None:
+                self._kpi_strip.reset()
+                self._kpi_strip.phase.set_value("Starting", state="normal")
+            self._update_header_lifecycle("TRAINING")
+        self._user_stopped = False
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     def _arg_value(self, args: List[str], flag: str) -> Optional[str]:
@@ -4735,19 +5137,26 @@ class STLRPSTrainTab(QWidget):
     def _on_train_finished(
         self, exit_code: int, exit_status: QProcess.ExitStatus
     ) -> None:
+        # Determine lifecycle status (distinguish a user-requested stop).
+        ok = exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
+        if ok:
+            status = "COMPLETED"
+        elif getattr(self, "_user_stopped", False):
+            status = "INTERRUPTED"
+        else:
+            status = "FAILED"
+
         # Dashboard v2: stop ETA timer and update status
         if _HAS_DASHBOARD_V2:
             if self._eta_update_timer is not None:
                 self._eta_update_timer.stop()
-            main_win = self.window()
-            if hasattr(main_win, '_experiment_header'):
-                status = "COMPLETED" if exit_code == 0 else "FAILED"
-                main_win._experiment_header.set_status(status)
+            self._update_header_lifecycle(status)
             if self._kpi_strip is not None:
-                self._kpi_strip.phase.set_value(
-                    "Completed" if exit_code == 0 else "Failed",
-                    state="success" if exit_code == 0 else "danger",
-                )
+                phase_state = {
+                    "COMPLETED": "success", "FAILED": "danger", "INTERRUPTED": "warning",
+                }.get(status, "normal")
+                self._kpi_strip.phase.set_value(status.capitalize(), state=phase_state)
+        self._user_stopped = False
 
         self._poll_training_history()
         self._history_poll_timer.stop()
@@ -4774,6 +5183,7 @@ class STLRPSTrainTab(QWidget):
                         break
 
         run_dir = self.runner._output_dir or self.out_dir.text().strip()
+        self._update_run_dir_label(run_dir)
 
         # --- Notify the queue so it can advance ---
         if self._queue.is_running():
@@ -4919,21 +5329,89 @@ class STLRPSTrainTab(QWidget):
             hdr.set_remaining(self._eta_estimator.format_remaining())
             hdr.set_finish(self._eta_estimator.format_finish())
 
+    def _update_kpi_phase(self, rec) -> None:
+        """Phase 4: reflect the live record's phase in the KPI strip."""
+        if not _HAS_DASHBOARD_V2 or self._kpi_strip is None:
+            return
+        if rec.event == "batch" and rec.phase == "train":
+            if rec.total_batches > 0:
+                self._kpi_strip.phase.set_value(
+                    f"Train {rec.batch}/{rec.total_batches}", state="normal"
+                )
+            else:
+                self._kpi_strip.phase.set_value("Training", state="normal")
+        elif rec.event == "val_summary":
+            self._kpi_strip.phase.set_value("Validating", state="normal")
+        elif rec.event == "best_updated":
+            self._kpi_strip.phase.set_value("Best checkpoint", state="success")
+
+    def _update_run_dir_label(self, path: str) -> None:
+        """Update the control-bar output/run directory label."""
+        if not hasattr(self, "_run_dir_label"):
+            return
+        path = (path or "").strip()
+        self._run_dir_label.setText(
+            f"Output: {path}" if path else "Output: (auto-timestamped run folder)"
+        )
+
+    def _detect_device_badge(self) -> str:
+        """Detect the training device once and cache it (avoid repeated torch imports)."""
+        if getattr(self, "_device_badge", None):
+            return self._device_badge
+        badge = "CPU"
+        hint = self.device_hint.currentText() if hasattr(self, "device_hint") else "auto"
+        if hint != "cpu":
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    mem = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+                    badge = f"CUDA · {mem:.1f} GB"
+            except Exception:
+                badge = "CPU"
+        self._device_badge = badge
+        return badge
+
+    def _update_header_lifecycle(self, status: str) -> None:
+        """Phase 11: reflect real training state in the experiment header."""
+        main_win = self.window()
+        hdr = getattr(main_win, "_experiment_header", None)
+        if hdr is None or not hasattr(hdr, "set_status"):
+            return
+        hdr.set_status(status)
+        if status == "TRAINING":
+            hdr.set_elapsed("00:00:00")
+            hdr.set_remaining("Estimating…")
+            hdr.set_finish("Estimating…")
+            hdr.set_device(self._detect_device_badge())
 
     # -----------------------------------------------------------------
     # Progress parsing (+ live plot feeding)
     # -----------------------------------------------------------------
     def _parse_progress(self, line: str) -> None:
+        # Accept both "Epoch [N/M]" banners and the engine's "epoch=N" kv form.
+        ep: Optional[int] = None
+        total: Optional[int] = None
         m = re.search(r"Epoch\s*(?:\[\s*)?(\d+)\s*/\s*(\d+)(?:\s*\])?", line)
         if m:
             ep = int(m.group(1))
             total = int(m.group(2))
-            self.runner.progress.setRange(0, max(1, total))
-            self.runner.progress.setValue(min(ep if ep >= 1 else ep + 1, total))
-            # Phase 9: ETA estimator tracking
+        else:
+            m_kv = re.search(r"\bepoch\s*=\s*(\d+)", line, re.IGNORECASE)
+            if m_kv:
+                ep = int(m_kv.group(1))
+        if ep is not None:
+            if total is not None:
+                self.runner.progress.setRange(0, max(1, total))
+                self.runner.progress.setValue(min(ep if ep >= 1 else ep + 1, total))
+            else:
+                self.runner.progress.setValue(min(ep, self.runner.progress.maximum()))
+            # Phase 8: only (re)start the epoch timer the FIRST time a new epoch
+            # number appears — many lines repeat the epoch within one epoch.
             if _HAS_DASHBOARD_V2 and self._eta_estimator is not None:
-                self._eta_estimator.set_total_epochs(total)
-                self._eta_estimator.on_epoch_start(ep)
+                if total is not None:
+                    self._eta_estimator.set_total_epochs(total)
+                if self._epoch_guard is not None and self._epoch_guard.should_start(ep):
+                    self._eta_estimator.on_epoch_start(ep)
 
         # Phase 8: feed line to structured log parser + metrics store
         if _HAS_DASHBOARD_V2 and self._log_parser is not None:
@@ -4943,8 +5421,14 @@ class STLRPSTrainTab(QWidget):
                 if self._structured_log is not None:
                     self._structured_log.append_record(rec)
                 self._update_kpi_from_store()
-                # ETA: track epoch ends from validation summaries
-                if rec.event == "val_summary" and self._eta_estimator is not None:
+                self._update_kpi_phase(rec)
+                # ETA: count an epoch's end only once, on its first val summary.
+                if (
+                    rec.event == "val_summary"
+                    and self._eta_estimator is not None
+                    and self._epoch_guard is not None
+                    and self._epoch_guard.should_end(rec.epoch)
+                ):
                     self._eta_estimator.on_epoch_end(rec.epoch)
                 # ETA: track batch progress
                 if rec.batch > 0 and rec.total_batches > 0 and self._eta_estimator is not None:

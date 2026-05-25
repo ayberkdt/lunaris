@@ -49,6 +49,41 @@ def compute_auto_log_interval(
     return max(1, math.ceil(total_batches / target_updates))
 
 
+# ── Phase 8: Epoch guard (debounces repeated "Epoch X/Y" lines) ────────────
+
+class EpochGuard:
+    """Debounce epoch start/end transitions parsed from log lines.
+
+    The training log prints ``Epoch X/Y`` on many lines within the same epoch
+    (epoch banner, every batch row, validation header, summaries). Feeding each
+    occurrence to :class:`ETAEstimator.on_epoch_start` would restart the epoch
+    timer repeatedly and corrupt the ETA. This guard returns ``True`` only on
+    the first transition into a given epoch number.
+    """
+
+    def __init__(self) -> None:
+        self._started: Optional[int] = None
+        self._ended: Optional[int] = None
+
+    def reset(self) -> None:
+        self._started = None
+        self._ended = None
+
+    def should_start(self, epoch: int) -> bool:
+        """True the first time ``epoch`` is seen as a start; False on repeats."""
+        if epoch != self._started:
+            self._started = epoch
+            return True
+        return False
+
+    def should_end(self, epoch: int) -> bool:
+        """True the first time ``epoch`` is seen as an end; False on repeats."""
+        if epoch != self._ended:
+            self._ended = epoch
+            return True
+        return False
+
+
 # ── Phase 9: ETA Estimator ────────────────────────────────────────────────
 
 class ETAEstimator:
@@ -194,6 +229,7 @@ class TrainingRecord:
     phase: str = ""        # "train", "val", "checkpoint", "system"
     batch: int = 0
     total_batches: int = 0
+    progress_pct: Optional[float] = None
     loss_opt: Optional[float] = None
     loss_ref: Optional[float] = None
     loss_u: Optional[float] = None
@@ -227,8 +263,11 @@ class TrainingLogParser:
     _RE_EPOCH = re.compile(
         r"Epoch\s*(?:\[\s*)?(\d+)\s*/\s*(\d+)", re.IGNORECASE
     )
+    # The training engine prints the current epoch in key=value form
+    # (e.g. "[train] epoch=5 batch=12/100"); capture it as a fallback.
+    _RE_EPOCH_KV = re.compile(r"\bepoch\s*=\s*(\d+)", re.IGNORECASE)
     _RE_BATCH = re.compile(
-        r"(?:batch|step)\s*(?:\[\s*)?(\d+)\s*/\s*(\d+)", re.IGNORECASE
+        r"(?:batch|step)\s*[=:]?\s*(?:\[\s*)?(\d+)\s*/\s*(\d+)", re.IGNORECASE
     )
     _RE_TRAIN_LOSSES = re.compile(
         r"\[train\].*?opt[=:]?\s*([\d.eE+-]+).*?ref[=:]?\s*([\d.eE+-]+)",
@@ -244,8 +283,9 @@ class TrainingLogParser:
     _RE_COS_SIM = re.compile(r"cos(?:sim|_sim)?[=:]\s*([\d.eE+-]+)", re.IGNORECASE)
     _RE_ANGULAR = re.compile(r"ang[=:]\s*([\d.eE+-]+)\s*deg", re.IGNORECASE)
     _RE_LR = re.compile(r"lr[=:]\s*([\d.eE+-]+)", re.IGNORECASE)
-    _RE_SAMPLES = re.compile(r"([\d.]+)\s*(?:pts|samples)/s", re.IGNORECASE)
+    _RE_SAMPLES = re.compile(r"([\d.,]+)\s*(?:pts|samples)/s", re.IGNORECASE)
     _RE_ETA = re.compile(r"eta[=:]\s*([\d.]+)\s*s", re.IGNORECASE)
+    _RE_MEMORY = re.compile(r"(cuda_mem=[\d/]+\s*MiB)", re.IGNORECASE)
     _RE_SCORE = re.compile(r"score[=:]\s*([\d.eE+-]+)", re.IGNORECASE)
     _RE_BEST = re.compile(r"best[=:]\s*(YES|no)", re.IGNORECASE)
     _RE_BEST_SCORE = re.compile(
@@ -260,15 +300,23 @@ class TrainingLogParser:
     _RE_CHECKPOINT_TRACK = re.compile(
         r"\[checkpoint\].*tracking\s+starts?\s+at\s+epoch\s+(\d+)", re.IGNORECASE
     )
+    # Warnings: bracketed level tags, the standard "warning:" prefix, and the
+    # common Python *Warning class names. Deliberately avoids a bare "warn".
     _RE_WARNING = re.compile(
-        r"\[(?:WARNING|WARN)\]|Warning|UserWarning|Deprecat", re.IGNORECASE
-    )
-    _RE_ERROR = re.compile(
-        r"\[(?:HATA|ERROR)\]|Error|Exception|Traceback|Failed|Critical|NaN|Inf",
+        r"\[(?:WARNING|WARN|UYARI)\]|warning:|\bUserWarning\b|\w*Warning\b|Deprecat",
         re.IGNORECASE,
     )
-    _RE_VAL_HEADER = re.compile(r"\[val\]", re.IGNORECASE)
-    _RE_TRAIN_HEADER = re.compile(r"\[train\]", re.IGNORECASE)
+    # Errors: bracketed level tags ([ERROR], [HATA], [FATAL ERROR], [CRITICAL]),
+    # Python failure markers, and numeric non-finite values matched with word
+    # boundaries so the substring "Inf" inside "[INFO]" is NOT treated as an error.
+    _RE_ERROR = re.compile(
+        r"\[(?:ERROR|HATA|CRITICAL|FATAL)\b[^\]]*\]"
+        r"|\bTraceback\b|\bException\b|\bFailed\b"
+        r"|\b(?:NaN|Inf(?:inity)?)\b",
+        re.IGNORECASE,
+    )
+    _RE_VAL_HEADER = re.compile(r"\[val\s*\]", re.IGNORECASE)
+    _RE_TRAIN_HEADER = re.compile(r"\[train\s*\]", re.IGNORECASE)
 
     def __init__(self) -> None:
         self._current_epoch: int = 0
@@ -288,6 +336,10 @@ class TrainingLogParser:
         if m_ep:
             self._current_epoch = int(m_ep.group(1))
             self._total_epochs = int(m_ep.group(2))
+        else:
+            m_ep_kv = self._RE_EPOCH_KV.search(line)
+            if m_ep_kv:
+                self._current_epoch = int(m_ep_kv.group(1))
         rec.epoch = self._current_epoch
 
         # ── Error / warning detection (highest priority) ──────────
@@ -339,6 +391,8 @@ class TrainingLogParser:
         if m_batch:
             rec.batch = int(m_batch.group(1))
             rec.total_batches = int(m_batch.group(2))
+            if rec.total_batches > 0 and rec.batch > 0:
+                rec.progress_pct = min(100.0, 100.0 * rec.batch / rec.total_batches)
 
         # ── Loss extraction ───────────────────────────────────────
         m_train_losses = self._RE_TRAIN_LOSSES.search(line)
@@ -375,10 +429,13 @@ class TrainingLogParser:
             rec.lr = _safe_float(m_lr2.group(1))
         m_sp = self._RE_SAMPLES.search(line)
         if m_sp:
-            rec.samples_per_s = _safe_float(m_sp.group(1))
+            rec.samples_per_s = _safe_float(m_sp.group(1).replace(",", ""))
         m_eta = self._RE_ETA.search(line)
         if m_eta:
             rec.eta_s = _safe_float(m_eta.group(1))
+        m_mem = self._RE_MEMORY.search(line)
+        if m_mem:
+            rec.memory = m_mem.group(1).strip()
 
         # ── Score ─────────────────────────────────────────────────
         m_sc = self._RE_SCORE.search(line)

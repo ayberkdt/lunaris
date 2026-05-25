@@ -408,8 +408,10 @@ if _HAS_QT:
     # ═══════════════════════════════════════════════════════════════════════
 
     _PROGRESS_COLUMNS = [
-        "Time", "Epoch", "Phase", "Loss", "Val Loss",
-        "U Loss", "Accel Loss", "LR", "Event",
+        "Time", "Epoch", "Phase", "Batch", "Progress %",
+        "Loss Opt", "Loss Ref", "U Loss", "Accel Loss",
+        "Direction Loss", "Cos Sim", "LR", "Samples/s",
+        "ETA", "Memory", "Event",
     ]
 
     _SEVERITY_COLORS = {
@@ -491,19 +493,35 @@ if _HAS_QT:
                 return str(rec.epoch) if rec.epoch > 0 else ""
             elif col == 2:  # Phase
                 return rec.phase
-            elif col == 3:  # Loss
-                return _fmt_loss(rec.loss_opt) or _fmt_loss(rec.loss_ref) or ""
-            elif col == 4:  # Val Loss
-                if rec.phase == "val":
-                    return _fmt_loss(rec.loss_ref) or ""
+            elif col == 3:  # Batch
+                if rec.total_batches > 0:
+                    return f"{rec.batch}/{rec.total_batches}"
+                return str(rec.batch) if rec.batch > 0 else ""
+            elif col == 4:  # Progress %
+                if rec.progress_pct is not None:
+                    return f"{rec.progress_pct:.0f}%"
                 return ""
-            elif col == 5:  # U Loss
+            elif col == 5:  # Loss Opt
+                return _fmt_loss(rec.loss_opt) or ""
+            elif col == 6:  # Loss Ref
+                return _fmt_loss(rec.loss_ref) or ""
+            elif col == 7:  # U Loss
                 return _fmt_loss(rec.loss_u) or ""
-            elif col == 6:  # Accel Loss
+            elif col == 8:  # Accel Loss
                 return _fmt_loss(rec.loss_a) or ""
-            elif col == 7:  # LR
+            elif col == 9:  # Direction Loss
+                return _fmt_loss(rec.direction_loss) or ""
+            elif col == 10:  # Cos Sim
+                return f"{rec.cos_sim:.4f}" if rec.cos_sim is not None else ""
+            elif col == 11:  # LR
                 return _fmt_loss(rec.lr) or ""
-            elif col == 8:  # Event
+            elif col == 12:  # Samples/s
+                return f"{rec.samples_per_s:,.0f}" if rec.samples_per_s is not None else ""
+            elif col == 13:  # ETA
+                return _fmt_eta(rec.eta_s)
+            elif col == 14:  # Memory
+                return rec.memory or ""
+            elif col == 15:  # Event
                 if rec.event in ("batch", "val_summary"):
                     return rec.phase
                 return rec.event.replace("_", " ")
@@ -515,6 +533,16 @@ if _HAS_QT:
         if abs(v) < 1e-2:
             return f"{v:.3e}"
         return f"{v:.5f}"
+
+    def _fmt_eta(seconds: Optional[float]) -> str:
+        if seconds is None:
+            return ""
+        seconds = max(0, int(round(seconds)))
+        h, rem = divmod(seconds, 3600)
+        m, s = divmod(rem, 60)
+        if h > 0:
+            return f"{h:d}:{m:02d}:{s:02d}"
+        return f"{m:d}:{s:02d}"
 
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -601,9 +629,11 @@ if _HAS_QT:
             self._raw_tab_idx = self._tabs.addTab(widget, "Raw Log")
 
         def append_record(self, record: TrainingRecord) -> None:
-            """Add a record and auto-scroll if needed."""
+            """Add a record and auto-scroll only if the user is at the bottom."""
+            sb = self._table.verticalScrollBar()
+            at_bottom = sb.value() >= sb.maximum() - 2
             self._model.append_record(record)
-            if self._auto_scroll:
+            if self._auto_scroll and at_bottom:
                 self._table.scrollToBottom()
 
         def clear(self) -> None:
