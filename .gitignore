@@ -1,46 +1,70 @@
-# Python
+# Local backups / temporary files
+.gitbackup/
+*.gitbackup
+*backup*/
+*Backup*/
+*.bak
+*.tmp
+*.log
+*.old
+
+# Python caches
 __pycache__/
 *.py[cod]
 *.pyc
 *.pyo
 .pytest_cache/
 .mypy_cache/
+.ipynb_checkpoints/
 *.egg-info/
-
-# Large data files — acquire separately (see README)
-data/
-
-# HDF5 / NumPy binary results
-*.h5
-*.hdf5
-*.npz
-mc_results/
-mission_results/
-results/
-surrogate_gravity_model/runs/
-surrogate_gravity_model/analysis_out/
-
-# Scratch / local experiment files
-deneme.py
-LATEX/
-
-# Decorative / generated assets
-assets/
-
-# PyTorch model checkpoints
-*.pt
-*.pth
-*.onnx
 
 # IDE / OS
 .vscode/
 .idea/
-*.DS_Store
+.DS_Store
 Thumbs.db
 
-# Claude settings (local only)
+# Build artifacts
+build/
+dist/
+*.spec
+
+# Local settings
 .claude/
 CLAUDE.md
+.env
+.env.*
+*.local
 
-# Jupyter
-.ipynb_checkpoints/
+# External data and generated data
+data/
+*.h5
+*.hdf5
+*.npz
+*.npy
+
+# Simulation outputs
+results/
+output/
+outputs/
+reports/
+mc_results/
+mission_results/
+
+# ST-LRPS generated artifacts
+runs/
+checkpoints/
+surrogate_gravity_model/runs/
+surrogate_gravity_model/analysis_out/
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Media / archives
+*.mp4
+*.avi
+*.mov
+*.zip
+*.7z
+*.rar

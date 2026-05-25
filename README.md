@@ -12,7 +12,7 @@ A high-fidelity lunar orbit propagation framework with an integrated neural-netw
 
 LunarSim propagates spacecraft trajectories in lunar orbit with scientific accuracy. The physics engine assembles a Numba-JIT-compiled right-hand-side closure from independent force models, then drives a variable-step DOP853 integrator with event detection. A separate GPU-accelerated path runs large Monte Carlo ensembles in parallel using fixed-step CUDA RK4, enabling statistical impact probability and covariance analysis within practical wall-clock times.
 
-The ST-LRPS (Sobolev-Trained Lunar Residual Potential Surrogate) component replaces classical spherical-harmonic evaluation with a neural network that learns the residual scalar potential ΔU above a low-degree SH baseline. Gradients are obtained by automatic differentiation, so the acceleration is physically consistent without storing coefficient arrays.
+The **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) component replaces classical spherical-harmonic evaluation with a neural network that learns the residual scalar potential $\Delta U$ above a low-degree SH baseline. Gradients are obtained by automatic differentiation, so the acceleration is physically consistent without storing massive coefficient arrays.
 
 ---
 
@@ -20,17 +20,16 @@ The ST-LRPS (Sobolev-Trained Lunar Residual Potential Surrogate) component repla
 
 **Dynamics**
 - Spherical harmonics gravity up to degree/order 1800 (GRAIL/GRGM coefficients)
-- ST-LRPS neural gravity surrogate — learned ΔU via autograd, CPU and GPU inference
+- ST-LRPS neural gravity surrogate — learned $\Delta U$ via autograd, CPU and GPU inference
 - Third-body perturbations: Sun and Earth (differential formulation)
 - Solar radiation pressure with penumbra/umbra shadow detection
-- Lunar albedo and thermal radiation pressure (surface-grid backed)
-- Solid-body tidal dissipation (k₂, k₃)
+- Lunar albedo radiation pressure (surface-grid backed)
 - First-order post-Newtonian (Schwarzschild 1PN) relativistic correction
 - Adaptive SH degree control: finer harmonics near periselene, coarser at apoapsis
 
 **Integration**
 - Primary integrator: DOP853 (8th-order Runge-Kutta), adaptive step
-- Event detection: impact, apsis crossing, SOI transition
+- Event detection: terrain-aware impact detection, apsis crossing, SOI transition
 - Step-size bounded by Nyquist criterion on the active gravity-field degree
 
 **Monte Carlo**
@@ -38,7 +37,7 @@ The ST-LRPS (Sobolev-Trained Lunar Residual Potential Surrogate) component repla
 - CPU path: full-fidelity per-sample propagation reusing all active force models
 - Gaussian initial-state and spacecraft-property perturbations
 - HDF5/NPZ streaming output; impact probability with Wilson confidence intervals
-- Automatic GPU→CPU fallback for unsupported physics (ST-LRPS, albedo, tides)
+- Automatic GPU→CPU fallback for unsupported physics (ST-LRPS, albedo)
 
 **Ephemeris**
 - SPICE kernel integration via SpiceyPy
@@ -56,14 +55,24 @@ The ST-LRPS (Sobolev-Trained Lunar Residual Potential Surrogate) component repla
 
 The codebase follows a strict multi-layer dependency rule: each layer imports only from layers below it.
 
-```text
-Layer 1  common/          Physical constants (SI SSOT), configuration dataclasses
-Layer 2  models/          Numba-JIT force kernels — one file per perturbation
-Layer 3  core/            ODE engine, Monte Carlo propagators, dynamics assembly
-Layer 4  analysis/, etc.  Post-processing, plotting, PDF reports, PySide6 app, visualization
-```
+### Layer 1: Core Definitions
+- `common/`: Physical constants (SI Single Source of Truth), pure math utilities, and configuration dataclasses. `config.py` acts as the global state and configuration SSOT.
 
-All configuration flows through a single frozen `SimConfig` dataclass (`config.py`). CLI overrides are applied in `main.py`; the UI writes to the same dataclass through `apply_args_to_config()`.
+### Layer 2: Force Models
+- `models/`: High-performance Numba-JIT force kernels. Each perturbation (spherical harmonics, solar radiation pressure, third body, relativity, surface albedo) is encapsulated in its own module and exposes an allocation-free function.
+- `surrogate_gravity_model/`: Neural network surrogate models (ST-LRPS), dataset spatial point cloud generators, Sobolev loss formulations, scaling, and training pipelines.
+
+### Layer 3: Dynamics & Propagation
+- `core/dynamics.py`: The equations of motion (RHS) builder. It inspects requested flags, extracts Numba-friendly arrays from high-level models, and constructs a compiled closure for the numerical solver.
+- `core/propagator.py`: The single authoritative entry point for time integration, wrapping SciPy `solve_ivp` and fixed-step solvers, implementing event geometric bounds, step-size limiters (Nyquist), and chunking.
+- `core/monte_carlo_engine.py` & `core/mc_backend_policy.py`: Orchestrates multi-sample runs. It evaluates requested perturbation flags and automatically dispatches to the GPU (CUDA) or falls back to CPU multiprocessors depending on compatibility.
+
+### Layer 4: Application & Analysis
+- `analysis/`: Reusable post-processing, generic metrics extraction, Monte Carlo statistics, reporting, and formatting utilities.
+- `validation/` & `visualization/`: Offline benchmark scripts and orbital animation.
+- `ui_parts/` & `cli/`: PySide6 frontend logic and CLI parsing.
+
+All configuration flows through the frozen `SimConfig` dataclass.
 
 ---
 
@@ -96,7 +105,7 @@ rasterio       # LDEM terrain-based impact detection
 ```bash
 git clone https://github.com/ayberkdt/ST_LRPS.git
 cd ST_LRPS
-pip install -r requirements.txt   # or install the packages above manually
+pip install -r requirements.txt
 ```
 
 SPICE kernels and gravity coefficient files are **not** bundled. Acquire them separately and place them under `data/` as described in the next section.
@@ -111,7 +120,6 @@ SPICE kernels and gravity coefficient files are **not** bundled. Acquire them se
 | `data/gravity_models/` | SH coefficient file, e.g. `jggrx_1800f_sha.tab` | NASA PDS / GRAIL |
 | `data/topography_models/` | Lunar DEM rasters (optional, for terrain-aware impact) | LOLA/LDEM |
 | `data/albedo_models/` | Surface albedo grids (optional) | — |
-| `data/thermal_models/` | Thermal property grids (optional) | — |
 
 ---
 
@@ -208,7 +216,6 @@ Trained run directories must contain `config.json` (including `degree_min`/`degr
 Focused ST-LRPS contract checks:
 
 ```bash
-python -m pytest tests/test_st_lrps_metrics.py -q
 python -m pytest tests/test_surrogate_training_contracts.py -q
 python -m pytest tests/test_surrogate_architecture_upgrades.py -q
 ```
@@ -234,7 +241,7 @@ Key test modules:
 
 ```text
 common/                  Constants, type definitions, unified configuration dataclasses
-models/                  Force kernels: gravity, SRP, third-body, albedo, tides, relativity
+models/                  Force kernels: gravity, SRP, third-body, albedo, relativity
 core/                    Dynamics engine, propagator, Monte Carlo engine and propagators
 analysis/                Post-processing, MC statistics, formatting, and report generation
   ├── reporting/         Report management, styling, and Matplotlib plotting
