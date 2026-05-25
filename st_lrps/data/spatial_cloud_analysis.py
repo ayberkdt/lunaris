@@ -622,7 +622,9 @@ def _autodetect_input(script_dir: Path) -> Path | None:
 def main() -> None:
     args = parse_args()
 
-    script_dir = Path(__file__).resolve().parent
+    # Anchor input auto-detection at the st_lrps package root (one level up from
+    # data/), preserving the pre-reorg search location.
+    script_dir = Path(__file__).resolve().parents[1]
     if args.input is None:
         guess = _autodetect_input(script_dir)
         if guess is None:

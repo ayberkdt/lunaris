@@ -2875,8 +2875,9 @@ def main() -> None:
             model_dir = Path(env_md).resolve()
 
     if model_dir is None:
-        # start search near this script
-        script_dir = Path(__file__).resolve().parent
+        # Search near the st_lrps package root (one level up from evaluation/),
+        # preserving the pre-reorg auto-discovery location where runs/ lived.
+        script_dir = Path(__file__).resolve().parents[1]
         found_md = _auto_find_model_dir(script_dir)
         if found_md is not None:
             model_dir = found_md

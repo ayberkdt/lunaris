@@ -723,7 +723,10 @@ def parse_args() -> TrainConfig:
     a = ap.parse_args()
 
     # 1. Resolve Data Path
-    script_dir = Path(__file__).resolve().parent
+    # Anchor dataset auto-discovery and the default output dir at the st_lrps
+    # package root (one level up from this training/ subpackage), preserving the
+    # pre-reorg behavior where runs/datasets lived under st_lrps/.
+    script_dir = Path(__file__).resolve().parents[1]
     data_path_raw = a.data or os.environ.get("SPATIAL_CLOUD_INPUT") or os.environ.get("DATASET_PATH")
     
     if data_path_raw is None and a.train_data is None:

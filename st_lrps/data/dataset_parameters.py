@@ -46,7 +46,9 @@ try:
 except Exception:  # pragma: no cover
     import sys as _sys
 
-    _REPO_ROOT_FALLBACK = Path(__file__).resolve().parents[1]
+    # This module lives at st_lrps/data/dataset_parameters.py, so the repo root
+    # (which holds common/, loaders/, data/) is three levels up: parents[2].
+    _REPO_ROOT_FALLBACK = Path(__file__).resolve().parents[2]
     if str(_REPO_ROOT_FALLBACK) not in _sys.path:
         _sys.path.insert(0, str(_REPO_ROOT_FALLBACK))
     from common.constants import MU_MOON, R_MOON
@@ -61,7 +63,8 @@ except Exception:  # pragma: no cover
 MU_MOON_SI: float = float(MU_MOON)
 R_MOON_SI: float = float(R_MOON)
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+# Repo root is three levels up from st_lrps/data/dataset_parameters.py.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_LUNAR_GRAVITY_PATH = (
     _REPO_ROOT / "data" / "gravity_models" / "jggrx_1800f_sha.tab.txt"
 )
