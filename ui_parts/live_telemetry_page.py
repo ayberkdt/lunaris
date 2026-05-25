@@ -1,8 +1,8 @@
-# LUNAR_SIMULATION/ui_parts/live_telemetry_page.py
+# ST_LRPS/ui_parts/live_telemetry_page.py
 """
 Live Telemetry Page (UI)
 
-This module defines the **TelemetryPage** used by the Lunar Simulation UI to display
+This module defines the **TelemetryPage** used by the ST-LRPS Studio UI to display
 runtime telemetry in a compact, mission-control style view.
 
 What it provides
@@ -30,7 +30,7 @@ Notes
   Process execution and stdout parsing should be handled in the main UI controller.
 
 Author / Project
-Lunar Simulation Core (LunarSim) - UI components.
+ST_LRPS Core - UI components.
 """
 
 

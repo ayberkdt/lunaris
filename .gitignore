@@ -54,11 +54,15 @@ mission_results/
 # ST-LRPS generated artifacts
 runs/
 artifacts/
+analysis_out/
 st_lrps/**/runs/
 st_lrps/**/results/
 st_lrps/**/artifacts/
 st_lrps/**/outputs/
+st_lrps/**/analysis_out/
 st_lrps/**/gececi_kod/
+st_lrps/**/evals/
+st_lrps/**/provenance/
 **/checkpoints/
 **/evals/
 **/history.jsonl

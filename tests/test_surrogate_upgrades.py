@@ -28,26 +28,26 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from surrogate_gravity_model.st_lrps_data import (
+from st_lrps.st_lrps_data import (
     TensorMemoryDataset,
     collate_h5,
     collate_xyz_u_a,
 )
-from surrogate_gravity_model.st_lrps_config import TrainConfig, parse_args
-from surrogate_gravity_model.st_lrps_engine import _laplacian_requested
-from surrogate_gravity_model.st_lrps_losses import (
+from st_lrps.st_lrps_config import TrainConfig, parse_args
+from st_lrps.st_lrps_engine import _laplacian_requested
+from st_lrps.st_lrps_losses import (
     collocation_laplacian_loss,
     GradNormWeights,
     SobolevLoss,
 )
-from surrogate_gravity_model.st_lrps_models import (
+from st_lrps.st_lrps_models import (
     build_model_from_config,
     compute_architecture_signature,
     RadialDecayEncoding,
     RealSHBasisEncoding,
     _compute_harmonic_w0_bands,
 )
-from surrogate_gravity_model.st_lrps_scaling import IsometricScaleParams, ScalerPack
+from st_lrps.st_lrps_scaling import IsometricScaleParams, ScalerPack
 
 R_REF = 1.737e6
 MU = 4.902800066e12
@@ -172,7 +172,7 @@ def test_no_legacy_defaults_flag_exists(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         parse_args()
     # The helper module must not retain removed preset machinery.
-    import surrogate_gravity_model.st_lrps_config as cfgmod
+    import st_lrps.st_lrps_config as cfgmod
     assert not hasattr(cfgmod, "_LEGACY_DEFAULTS")
     assert not hasattr(cfgmod, "_apply_legacy_defaults")
 
@@ -402,7 +402,7 @@ def test_multiscale_siren_w0_bands_are_persisted():
 # ---------------------------------------------------------------------------
 
 def test_force_model_strict_domain_flag_logic():
-    from surrogate_gravity_model.st_lrps_force_model import SurrogateForceModel
+    from st_lrps.st_lrps_force_model import SurrogateForceModel
 
     scaler = _tiny_scaler_tensors()
     model = build_model_from_config(
@@ -445,7 +445,7 @@ def test_force_model_strict_domain_flag_logic():
 # ---------------------------------------------------------------------------
 
 def test_ablation_command_generation_dry_run(tmp_path):
-    from surrogate_gravity_model import run_ablation_matrix as ram
+    from st_lrps import run_ablation_matrix as ram
 
     out_root = tmp_path / "ablations"
     rc = ram.main([
@@ -486,7 +486,7 @@ def test_ablation_command_generation_dry_run(tmp_path):
 
 
 def test_ablation_matrix_contains_radial_decay_and_real_sh(tmp_path):
-    from surrogate_gravity_model import run_ablation_matrix as ram
+    from st_lrps import run_ablation_matrix as ram
 
     out_root = tmp_path / "ablations2"
     rc = ram.main(["--train-data", "train.h5", "--out-root", str(out_root), "--dry-run"])
@@ -506,7 +506,7 @@ def test_ablation_matrix_contains_radial_decay_and_real_sh(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_residual_mag_streaming_sampling(monkeypatch):
-    import surrogate_gravity_model.spatial_cloud_generator as scg
+    import st_lrps.spatial_cloud_generator as scg
 
     def _fake_sample(cnt, lo, hi, rng):
         r = rng.uniform(lo, hi, (cnt, 1))

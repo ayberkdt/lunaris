@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-PySide6 desktop interface for Lunar Mission Studio.
+PySide6 desktop interface for ST-LRPS Studio.
 
 This module hosts the main application window and wires the modular page widgets
 from `ui_parts/` into a single desktop workflow.
@@ -172,7 +172,7 @@ def _make_lbl(text: str, style: str = "") -> QtWidgets.QLabel:
 
 class MainWindow(QtWidgets.QMainWindow):
     """
-    Main application window for the modular Lunar Mission Studio UI.
+    Main application window for the modular ST-LRPS Studio UI.
 
     The window now acts primarily as an orchestration layer: individual pages
     own their widgets and page-local state, while the main window coordinates
@@ -202,7 +202,7 @@ class MainWindow(QtWidgets.QMainWindow):
         
         # Session Persistence
         app_data_loc = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.AppDataLocation)
-        self.app_data_dir = Path(app_data_loc) / "LunarMissionStudio" if app_data_loc else Path.home() / ".lunarmission"
+        self.app_data_dir = Path(app_data_loc) / "STLRPSStudio" if app_data_loc else Path.home() / ".stlrps_studio"
         self.app_data_dir.mkdir(parents=True, exist_ok=True)
         
         self.session_path = self.app_data_dir / "studio_session.json"
@@ -1133,14 +1133,6 @@ class MainWindow(QtWidgets.QMainWindow):
         page.copy_preview_requested.connect(self._copy_command_preview)
 
         self.page_output = page
-
-        # Legacy aliases kept only so the remaining orchestration helpers can
-        # transition gradually to the page-owned API.
-        self.ent_out_dir = page.ent_out_dir
-        self.toggle_anim3d = page.toggle_anim3d
-        self.spin_downsample_3d = page.spin_downsample_3d
-        self.txt_preview = page.txt_preview
-        self.ent_downsample_3d = page.spin_downsample_3d
         return page
     
     def _build_page_telemetry(self) -> QtWidgets.QWidget:
@@ -2010,7 +2002,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             out_dir = Path(out_dir_txt)
             out_dir.mkdir(parents=True, exist_ok=True)
-            stop_path = out_dir / ".lunarsim_stop"
+            stop_path = out_dir / ".stlrps_stop"
             if stop_path.exists():
                 stop_path.unlink()
         except Exception as e:
@@ -2054,7 +2046,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             out_dir = Path(self.page_output.get_state().output_dir.strip())
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / ".lunarsim_stop").touch()
+            (out_dir / ".stlrps_stop").touch()
         except Exception as e:
             self._log_message(f"[Warning] Could not create stop file: {e}", severity="warning")
         
@@ -2646,8 +2638,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         try:
             # Output directory (shortened)
-            if hasattr(self, "page_output") and hasattr(self.page_output, "ent_out_dir"):
-                out_dir = self.page_output.ent_out_dir.text().strip()
+            if hasattr(self, "page_output"):
+                out_dir = self.page_output.get_state().output_dir.strip()
                 if not out_dir:
                     out_text = "Not set"
                 elif len(out_dir) > 30:
@@ -2872,7 +2864,7 @@ def main():
     
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    app.setOrganizationName("LunarSim")
+    app.setOrganizationName("ST_LRPS")
     
     # Load fonts
     font = load_fonts()

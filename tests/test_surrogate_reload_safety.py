@@ -22,18 +22,18 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from surrogate_gravity_model.st_lrps_models import (
+from st_lrps.st_lrps_models import (
     build_model_from_config,
     compute_architecture_signature,
     reconstruct_model_from_artifacts,
 )
-from surrogate_gravity_model.st_lrps_scaling import (
+from st_lrps.st_lrps_scaling import (
     IsometricScaleParams,
     ScalerPack,
     fit_scaler_streaming,
     OnlineIsometricStats,
 )
-from surrogate_gravity_model.st_lrps_evaluate import (
+from st_lrps.st_lrps_evaluate import (
     _StreamingMetrics,
     _TopKErrors,
     _build_eval_warnings,
@@ -202,7 +202,7 @@ def test_evaluator_rejects_config_checkpoint_architecture_mismatch(tmp_path):
 
 
 def test_force_model_rejects_config_checkpoint_architecture_mismatch(tmp_path):
-    from surrogate_gravity_model.st_lrps_force_model import load_surrogate_force_model
+    from st_lrps.st_lrps_force_model import load_surrogate_force_model
 
     model_ref = build_model_from_config(_base_cfg(n_bands=2, degree_min=15, degree_max=150))
     cfg = _base_cfg(n_bands=2, degree_min=15, degree_max=150, w0_bands=list(model_ref.w0_bands))
@@ -342,7 +342,7 @@ def test_topk_errors_include_angle_and_cosine():
 # ---------------------------------------------------------------------------
 
 def _gradnorm_setup():
-    from surrogate_gravity_model.st_lrps_losses import GradNormWeights
+    from st_lrps.st_lrps_losses import GradNormWeights
     p = torch.nn.Parameter(torch.randn(8, 4))
     return GradNormWeights(mode="ntk_init", w_a=1.0, w_a_min=0.35, w_a_max=4.0), p
 
@@ -405,7 +405,7 @@ def _write_scaler_h5(tmp_path: Path, *, outlier: bool) -> Path:
 
 
 def test_scaler_hybrid_less_sensitive_to_outlier_than_max(tmp_path):
-    from surrogate_gravity_model.st_lrps_data import DatasetMeta
+    from st_lrps.st_lrps_data import DatasetMeta
     p = _write_scaler_h5(tmp_path, outlier=True)
     meta = DatasetMeta.from_h5(p)
     sc_max = fit_scaler_streaming(p, "data", meta, use_si=False, mu_si=MU, a_sign=1.0,
@@ -420,7 +420,7 @@ def test_scaler_hybrid_less_sensitive_to_outlier_than_max(tmp_path):
 
 
 def test_scaler_provenance_records_modes(tmp_path):
-    from surrogate_gravity_model.st_lrps_data import DatasetMeta
+    from st_lrps.st_lrps_data import DatasetMeta
     p = _write_scaler_h5(tmp_path, outlier=False)
     meta = DatasetMeta.from_h5(p)
     sc = fit_scaler_streaming(p, "data", meta, use_si=False, mu_si=MU, a_sign=1.0,
@@ -433,7 +433,7 @@ def test_scaler_provenance_records_modes(tmp_path):
 
 
 def test_fit_scaler_streaming_uses_requested_scale_modes(tmp_path):
-    from surrogate_gravity_model.st_lrps_data import DatasetMeta
+    from st_lrps.st_lrps_data import DatasetMeta
     p = _write_scaler_h5(tmp_path, outlier=True)
     meta = DatasetMeta.from_h5(p)
     sc_rms = fit_scaler_streaming(p, "data", meta, use_si=False, mu_si=MU, a_sign=1.0,
@@ -471,7 +471,7 @@ def _write_conv_h5(tmp_path, *, deriv_conv, degree_min=20, degree_max=100, name=
 
 
 def test_missing_derivative_convention_raises(tmp_path):
-    from surrogate_gravity_model.st_lrps_data import (
+    from st_lrps.st_lrps_data import (
         DatasetMeta, validate_training_dataset_convention,
     )
     p = _write_conv_h5(tmp_path, deriv_conv=None)
@@ -481,7 +481,7 @@ def test_missing_derivative_convention_raises(tmp_path):
 
 
 def test_wrong_derivative_convention_raises(tmp_path):
-    from surrogate_gravity_model.st_lrps_data import (
+    from st_lrps.st_lrps_data import (
         DatasetMeta, validate_training_dataset_convention,
     )
     p = _write_conv_h5(tmp_path, deriv_conv="legacy_v0")
@@ -491,7 +491,7 @@ def test_wrong_derivative_convention_raises(tmp_path):
 
 
 def test_allow_legacy_derivative_convention_only_with_flag(tmp_path):
-    from surrogate_gravity_model.st_lrps_data import (
+    from st_lrps.st_lrps_data import (
         DatasetMeta, validate_training_dataset_convention,
     )
     p = _write_conv_h5(tmp_path, deriv_conv=None)
@@ -506,7 +506,7 @@ def test_allow_legacy_derivative_convention_only_with_flag(tmp_path):
 
 def test_degree_zero_parse_does_not_become_silent_none(tmp_path):
     import h5py
-    from surrogate_gravity_model.st_lrps_data import DatasetMeta
+    from st_lrps.st_lrps_data import DatasetMeta
     p = tmp_path / "deg0.h5"
     with h5py.File(p, "w") as hf:
         hf.create_dataset("data", data=np.zeros((4, 7), dtype=np.float32))
@@ -519,7 +519,7 @@ def test_degree_zero_parse_does_not_become_silent_none(tmp_path):
 
 
 def test_degree_max_not_greater_than_min_raises(tmp_path):
-    from surrogate_gravity_model.st_lrps_data import (
+    from st_lrps.st_lrps_data import (
         DatasetMeta, validate_training_dataset_convention,
     )
     p = _write_conv_h5(tmp_path, deriv_conv="dP_dphi_corrected_v1",
@@ -544,7 +544,7 @@ def test_report_warns_when_magnitude_good_but_direction_bad():
 
 def test_evaluation_report_contains_architecture_and_metric_blocks(tmp_path):
     import h5py
-    from surrogate_gravity_model.st_lrps_evaluate import evaluate
+    from st_lrps.st_lrps_evaluate import evaluate
     # tiny single-scale residual run + matching tiny dataset
     cfg = _base_cfg(n_bands=1, degree_min=10, degree_max=60)
     run_dir = _make_run_dir(tmp_path, cfg)
@@ -592,9 +592,9 @@ def test_evaluation_report_contains_architecture_and_metric_blocks(tmp_path):
 # ---------------------------------------------------------------------------
 
 def _make_lap_trainer(mode):
-    from surrogate_gravity_model.st_lrps_engine import STLRPSTrainer
-    from surrogate_gravity_model.st_lrps_config import TrainConfig
-    from surrogate_gravity_model.st_lrps_losses import SobolevLoss, GradNormWeights
+    from st_lrps.st_lrps_engine import STLRPSTrainer
+    from st_lrps.st_lrps_config import TrainConfig
+    from st_lrps.st_lrps_losses import SobolevLoss, GradNormWeights
     sp = _tiny_scaler().to_tensors(torch.device("cpu"), torch.float32)
     model = torch.nn.Sequential(torch.nn.Linear(3, 8), torch.nn.Tanh(), torch.nn.Linear(8, 1))
     cfg = TrainConfig(data="/tmp/x.h5", out="/tmp/o", epochs=1, batch_size=8,
@@ -618,7 +618,7 @@ def _lap_loader():
 
 
 def test_collocation_laplacian_failure_count_recorded(monkeypatch):
-    import surrogate_gravity_model.st_lrps_engine as eng
+    import st_lrps.st_lrps_engine as eng
 
     def _boom(*args, **kwargs):
         raise RuntimeError("synthetic collocation failure")
@@ -632,7 +632,7 @@ def test_collocation_laplacian_failure_count_recorded(monkeypatch):
 
 
 def test_laplacian_train_mode_failure_raises(monkeypatch):
-    import surrogate_gravity_model.st_lrps_engine as eng
+    import st_lrps.st_lrps_engine as eng
 
     def _boom(*args, **kwargs):
         raise RuntimeError("synthetic collocation failure")
@@ -688,7 +688,7 @@ class _AP:
 
 
 def test_active_refinement_requires_altitude_bounds(tmp_path):
-    from surrogate_gravity_model.spatial_cloud_generator import _run_active_refinement
+    from st_lrps.spatial_cloud_generator import _run_active_refinement
     ns = _active_ns(tmp_path, active_reject_outside_alt_range=True)  # no alt bounds anywhere
     with pytest.raises(ValueError, match="altitude"):
         _run_active_refinement(ns, _AP())
@@ -696,7 +696,7 @@ def test_active_refinement_requires_altitude_bounds(tmp_path):
 
 def test_active_refinement_uses_dataset_altitude_metadata(tmp_path):
     import h5py
-    from surrogate_gravity_model.spatial_cloud_generator import _resolve_active_alt_bounds
+    from st_lrps.spatial_cloud_generator import _resolve_active_alt_bounds
     src = tmp_path / "src.h5"
     with h5py.File(src, "w") as hf:
         hf.create_dataset("data", data=np.zeros((4, 7), dtype=np.float32))
@@ -712,7 +712,7 @@ def test_active_refinement_uses_dataset_altitude_metadata(tmp_path):
 
 def test_active_refinement_rejects_out_of_shell_points(tmp_path):
     # With explicit bounds + reject, the saved positions must lie inside the shell.
-    from surrogate_gravity_model.spatial_cloud_generator import _run_active_refinement
+    from st_lrps.spatial_cloud_generator import _run_active_refinement
     ns = _active_ns(
         tmp_path,
         active_reject_outside_alt_range=True,

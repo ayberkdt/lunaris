@@ -7,7 +7,7 @@ Configuration SSOT for the surrogate gravity point-cloud generator.
 
 This module stores *sampling* and *output* choices only. Physical constants
 (lunar GM, reference radius, gravity model path) live in
-:mod:`surrogate_gravity_model.dataset_parameters`.
+:mod:`st_lrps.dataset_parameters`.
 """
 
 from __future__ import annotations
@@ -19,16 +19,7 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
-try:
-    from .dataset_parameters import DEFAULT_DATASET_CONFIG
-except Exception:  # pragma: no cover
-    import sys as _sys
-    from pathlib import Path as _Path
-
-    _HERE = _Path(__file__).resolve().parent
-    if str(_HERE) not in _sys.path:
-        _sys.path.insert(0, str(_HERE))
-    from dataset_parameters import DEFAULT_DATASET_CONFIG  # type: ignore
+from st_lrps.data.dataset_parameters import DEFAULT_DATASET_CONFIG
 
 
 # =============================================================================
@@ -81,7 +72,7 @@ class SpatialCloudConfig:
 
     Generates ``[x, y, z, ΔU, Δax, Δay, Δaz]`` residual clouds for SH degrees
     in the range ``(degree_min, degree_max]``.  Physical constants and the GFC
-    model path are inherited from :mod:`surrogate_gravity_model.dataset_parameters`.
+    model path are inherited from :mod:`st_lrps.dataset_parameters`.
     """
 
     # ----------------------------
@@ -316,7 +307,7 @@ class CloudSuiteConfig:
     - manifest.json
 
     Physical constants and the GFC model path are inherited from
-    :mod:`surrogate_gravity_model.dataset_parameters`.
+    :mod:`st_lrps.dataset_parameters`.
     """
 
     # ----------------------------

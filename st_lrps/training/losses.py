@@ -11,16 +11,8 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 
-try:
-    from .dataset_parameters import MU_MOON_SI, R_MOON_SI, is_lunar_body_signature
-except ImportError:  # pragma: no cover - script execution fallback
-    from dataset_parameters import MU_MOON_SI, R_MOON_SI, is_lunar_body_signature
-
-
-try:
-    from .st_lrps_scaling import ScalerPack, compute_base_accel, compute_base_potential
-except ImportError:  # pragma: no cover
-    from st_lrps_scaling import ScalerPack, compute_base_accel, compute_base_potential
+from st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI, is_lunar_body_signature
+from st_lrps.shared.scaling import ScalerPack, compute_base_accel, compute_base_potential
 
 logger = logging.getLogger(__name__)
 

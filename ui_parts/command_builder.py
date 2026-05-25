@@ -1,7 +1,7 @@
-# LUNAR_SIMULATION/ui_parts/command_builder.py
+# ST_LRPS/ui_parts/command_builder.py
 # -*- coding: utf-8 -*-
 """
-UI -> CLI bridge helpers for Lunar Mission Studio.
+UI -> CLI bridge helpers for ST-LRPS Studio.
 
 This module centralizes the translation between page-owned UI state and the
 strict command-line interface exposed by `main.py`. Keeping the mapping in one

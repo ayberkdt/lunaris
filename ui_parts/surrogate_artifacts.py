@@ -1,18 +1,25 @@
-﻿# LUNAR_SIMULATION/ui_parts/surrogate_artifacts.py
+﻿# ST_LRPS/ui_parts/surrogate_artifacts.py
 # -*- coding: utf-8 -*-
 """
-Shared surrogate gravity run artifact resolver.
+Shared ST-LRPS surrogate gravity run artifact resolver.
 
-All UI components that need to validate or locate a surrogate gravity run
-should go through this module.  It keeps the acceptance policy in one place
-so preflight, force-models dialog, and MC page all agree on what constitutes
-a valid run.
+All UI components that need to locate or normalize a surrogate gravity run
+should go through this module.  It is the UI-friendly *resolver* that maps any
+of the accepted path forms onto a canonical run directory and surfaces
+human-readable warnings.
+
+The authoritative pass/fail policy for a runnable ST-LRPS directory lives in
+``common.montecarlo_defs.validate_st_lrps_model_dir`` (the same gate the
+backend uses).  ``validate_surrogate_run_preflight`` defers to it so the UI can
+never green-light a run that the backend would reject.
 
 Design rules
 ------------
 - Filesystem + JSON only.  No PyTorch, no checkpoint weight loading.
-- ckpt_last.pt is accepted when ckpt_best.pt is absent (emit a warning).
-- config.json absence is a warning, not an error (checkpoint may be self-contained).
+- ckpt_last.pt is accepted when ckpt_best.pt is absent (emit a warning).  The
+  runtime helper accepts it too, so this stays a warning.
+- config.json is required by the runtime helper, so a missing config.json fails
+  preflight (it is not a warning-only condition).
 - scaler.json absence is a warning (backend may embed scaler in checkpoint).
 - Run directory can be supplied as:
     1. The run directory itself.
@@ -201,6 +208,11 @@ def validate_surrogate_run_preflight(
     """
     Full preflight check suitable for ``PreFlightWorker``.
 
+    The UI resolver normalizes the path form and collects warnings, then the
+    canonical runtime helper (``validate_st_lrps_model_dir``) is used as the
+    authoritative gate.  This guarantees the UI and the backend agree on the
+    minimum required ST-LRPS run artifacts (e.g. config.json is mandatory).
+
     Returns
     -------
     (ok, summary_message, warnings)
@@ -217,6 +229,16 @@ def validate_surrogate_run_preflight(
         return False, "\n".join(errors), []
 
     assert artifacts is not None
+
+    # Authoritative runtime gate — the backend uses the same validator, so the
+    # UI must not report a run as valid that the backend would reject.
+    from common.montecarlo_defs import validate_st_lrps_model_dir
+
+    try:
+        validate_st_lrps_model_dir(artifacts.run_dir)
+    except ValueError as exc:
+        return False, str(exc), []
+
     return (
         True,
         f"Surrogate gravity run validated: {artifacts.run_dir.name} "

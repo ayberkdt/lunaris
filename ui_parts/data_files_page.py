@@ -1,9 +1,9 @@
-# LUNAR_SIMULATION/ui_parts/data_files_page.py
+# ST_LRPS/ui_parts/data_files_page.py
 """
 Data & Files Page (UI)
 
 This module defines the **DataPage** (and its lightweight state container) used by the
-Lunar Simulation UI to configure external data sources required by the simulation.
+ST-LRPS Studio UI to configure external data sources required by the simulation.
 
 Typical responsibilities
 - Select and validate filesystem paths for:
@@ -31,7 +31,7 @@ Design notes
   - `create_card` factory for consistent card styling
 
 Project
-Lunar Simulation Core (LunarSim) – UI components.
+ST_LRPS Core – UI components.
 """
 
 # =============================================================================

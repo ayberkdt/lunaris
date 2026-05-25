@@ -1,8 +1,8 @@
-# LUNAR_SIMULATION/ui_parts/orbit_config_page.py
+# ST_LRPS/ui_parts/orbit_config_page.py
 # -*- coding: utf-8 -*-
 
 """
-Orbit Configuration & Visualization Module for Lunar Mission Studio.
+Orbit Configuration & Visualization Module for ST-LRPS Studio.
 
 This module manages the user interface for defining the Initial State Vector 
 of the spacecraft using Keplerian elements. It integrates real-time mathematical 

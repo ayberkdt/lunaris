@@ -1,8 +1,8 @@
-﻿# LUNAR_SIMULATION/ui_parts/force_models_page.py
+﻿# ST_LRPS/ui_parts/force_models_page.py
 # -*- coding: utf-8 -*-
 
 """
-Force Models Page (UI Part) for Lunar Mission Studio.
+Force Models Page (UI Part) for ST-LRPS Studio.
 
 This module defines the Force Models configuration page that lives inside the
 MainWindow's page stack (e.g., Page 2). The page owns all force-model widgets
@@ -672,7 +672,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(
                 self,
                 "Surrogate Gravity",
-                "No lunar-compatible surrogate gravity run was found under surrogate_gravity_model/runs.",
+                "No lunar-compatible surrogate gravity run was found under st_lrps/runs.",
             )
             return
 

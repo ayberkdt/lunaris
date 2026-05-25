@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/ui_parts/surrogate_studio_page.py
+# ST_LRPS/ui_parts/surrogate_studio_page.py
 # -*- coding: utf-8 -*-
 """
 Surrogate Studio Page (UI Part)
@@ -12,7 +12,7 @@ Responsibilities
 2. Render parsed metadata (config.json) and evaluation artifacts
    (eval_report.json + plot files) for the currently selected run.
 3. Provide a training command preview builder against
-   ``surrogate_gravity_model/st_lrps_train.py``.
+   ``st_lrps/st_lrps_train.py``.
 4. Emit a ``model_selected`` signal so the host window can apply the
    currently selected run as the active ST-LRPS surrogate gravity model.
 
@@ -57,8 +57,8 @@ except ImportError:
 
 
 PROJECT_ROOT = find_project_root()
-DEFAULT_RUNS_ROOT = PROJECT_ROOT / "surrogate_gravity_model" / "runs"
-TRAIN_SCRIPT_REL = "surrogate_gravity_model/st_lrps_train.py"
+DEFAULT_RUNS_ROOT = PROJECT_ROOT / "st_lrps" / "runs"
+TRAIN_SCRIPT_REL = "st_lrps/st_lrps_train.py"
 
 
 # =============================================================================
@@ -638,14 +638,14 @@ class SurrogateStudioPage(QtWidgets.QWidget):
         try:
             base = PROJECT_ROOT
             for sub in [
-                base / "surrogate_gravity_model" / "runs",
+                base / "st_lrps" / "runs",
                 base / "runs",
                 base,
             ]:
                 if sub.is_dir():
                     candidate_roots.append(sub)
             # Also walk shallowly looking for runs/ directories containing st_lrps_*
-            for root_dir in [base / "surrogate_gravity_model", base]:
+            for root_dir in [base / "st_lrps", base]:
                 if not root_dir.is_dir():
                     continue
                 try:

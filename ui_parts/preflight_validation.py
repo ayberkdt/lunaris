@@ -1,4 +1,4 @@
-﻿# LUNAR_SIMULATION/ui_parts/preflight_validation.py
+﻿# ST_LRPS/ui_parts/preflight_validation.py
 # -*- coding: utf-8 -*-
 """
 Asynchronous pre-flight validation helpers for the desktop UI.

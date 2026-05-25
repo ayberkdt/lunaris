@@ -17,12 +17,12 @@ from pathlib import Path
 
 from common.constants import MU_MOON, R_MOON
 from models.surrogate_gravity import discover_st_lrps_model_dirs
-from surrogate_gravity_model.dataset_parameters import (
+from st_lrps.dataset_parameters import (
     DEFAULT_DATASET_CONFIG,
     is_lunar_body_signature,
     looks_like_lunar_run_config,
 )
-from surrogate_gravity_model.spatial_cloud_parameters import (
+from st_lrps.spatial_cloud_parameters import (
     DEFAULT_SPATIAL_CLOUD_CONFIG,
     PRESETS,
 )

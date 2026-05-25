@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/ui_parts/mission_propagation_page.py
+# ST_LRPS/ui_parts/mission_propagation_page.py
 """
 Mission Propagation Page (Page 3)
 - Mission Timeline (epoch + duration)

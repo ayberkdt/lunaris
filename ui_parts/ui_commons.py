@@ -1,12 +1,12 @@
-# LUNAR_SIMULATION/ui_parts/ui_commons.py
+# ST_LRPS/ui_parts/ui_commons.py
 
 """
-Core UI Utilities and Shared Resources for Lunar Mission Studio.
+Core UI Utilities and Shared Resources for ST-LRPS Studio.
 
 This module serves as the foundational layer for the user interface, providing
 centralized access to:
 
-1. Global Constants: Application-wide paths, physics constants (e.g., R_MOON),
+1. Global Constants: Application-wide paths, physics constants (e.g., R_MOON_KM),
    and visual theme definitions (color palettes, window settings).
    
 2. Utility Functions: Robust helpers for asset loading (fonts, icons), path 
@@ -45,9 +45,6 @@ except ImportError:
     R_MOON_KM = 1737.4
     MU_MOON_KM3_S2 = 4902.8695
 
-# Backward-compat alias — kept so old callers that import R_MOON from here still work.
-R_MOON = R_MOON_KM
-
 # Modern Icon Library
 try:
     import qtawesome as qta
@@ -66,7 +63,7 @@ except ImportError:
 # Application metadata is centralized here so wrapper entry points and saved
 # session metadata still share one authoritative version value, while the live
 # UI can choose whether or not to display it.
-APP_NAME = "Lunar Mission Studio"
+APP_NAME = "ST-LRPS Studio"
 APP_VERSION = "13.0"
 
 
@@ -153,12 +150,12 @@ def find_project_root() -> Path:
 
     Strategy
     --------
-    1) If env var LUNARSIM_PROJECT_ROOT is set and valid -> use it.
+    1) If env var STLRPS_PROJECT_ROOT is set and valid -> use it.
     2) Walk up from this file's directory, checking for common root markers.
     3) Fallback to the parent of this file.
     """
     # 1) Environment override
-    env = os.environ.get("LUNARSIM_PROJECT_ROOT", "").strip()
+    env = os.environ.get("STLRPS_PROJECT_ROOT", "").strip()
     if env:
         p = Path(env).expanduser().resolve()
         if p.exists():

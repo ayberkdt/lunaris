@@ -5,7 +5,7 @@ Lunar Surrogate Dataset Parameters
 =================================
 
 This module is the Single Source of Truth (SSOT) for the experimental
-``surrogate_gravity_model`` pipeline. The rest of the project already uses the
+``st_lrps`` pipeline. The rest of the project already uses the
 Moon as the primary central body, so the ST-LRPS tooling must follow the same rule:
 
 - dataset generation must sample the lunar gravity field

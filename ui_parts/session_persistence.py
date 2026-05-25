@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/ui_parts/session_persistence.py
+# ST_LRPS/ui_parts/session_persistence.py
 # -*- coding: utf-8 -*-
 """
 Session capture, restore, and data-path auto-detection helpers.
@@ -11,7 +11,9 @@ page-level APIs (`get_data`, `to_dict`, `get_state`, `apply_state`, etc.).
 Design goals
 ------------
 1. Keep serialization rules in one place.
-2. Preserve backward compatibility with previously saved mission profile files.
+2. Upgrade older saved profiles through a single migration boundary
+   (`migrate_session_payload`) so the restore path can assume the canonical
+   schema instead of scattering legacy handling everywhere.
 3. Keep path auto-detection testable and repository-aware.
 """
 
@@ -21,6 +23,74 @@ import dataclasses
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+# Canonical session schema. Bump SESSION_SCHEMA_VERSION whenever the on-disk
+# layout changes in a way that requires migration in migrate_session_payload().
+SESSION_SCHEMA_VERSION = 2
+SESSION_APP_NAME = "ST-LRPS Studio"
+
+
+def migrate_session_payload(
+    payload: dict[str, Any],
+    *,
+    log_warning: Optional[Callable[[str], None]] = None,
+) -> dict[str, Any]:
+    """
+    Upgrade any saved session payload to the current canonical schema.
+
+    This is the single, explicit migration boundary for session files. All
+    backward-compatibility handling for older saves lives here so the rest of
+    :func:`apply_session_snapshot` can operate on the canonical schema.
+
+    Parameters
+    ----------
+    payload:
+        Parsed JSON-like dict loaded from disk.
+    log_warning:
+        Optional callback invoked once when a legacy payload is migrated.
+
+    Returns
+    -------
+    dict
+        A new dict guaranteed to carry ``meta.schema_version`` ==
+        :data:`SESSION_SCHEMA_VERSION` and ``meta.app`` ==
+        :data:`SESSION_APP_NAME`.
+    """
+
+    if not isinstance(payload, dict):
+        return {
+            "meta": {
+                "schema_version": SESSION_SCHEMA_VERSION,
+                "app": SESSION_APP_NAME,
+            }
+        }
+
+    migrated = dict(payload)
+    meta = dict(migrated.get("meta", {}) or {})
+    try:
+        schema_version = int(meta.get("schema_version", 1) or 1)
+    except (TypeError, ValueError):
+        schema_version = 1
+
+    if schema_version < SESSION_SCHEMA_VERSION and log_warning is not None:
+        log_warning(
+            f"[Session] Migrating legacy session (schema v{schema_version}) "
+            f"to v{SESSION_SCHEMA_VERSION}."
+        )
+
+    # Legacy saves stored advanced gravity settings only at the top level
+    # (`gravity_config`).  Fold them into the forces payload so the restore path
+    # sees one canonical shape.  Idempotent: only injects when absent.
+    forces_payload = dict(migrated.get("forces", {}) or {})
+    gravity_payload = migrated.get("gravity_config", {}) or {}
+    if gravity_payload and "gravity" not in forces_payload:
+        forces_payload["gravity"] = {"enabled": True, "config": gravity_payload}
+        migrated["forces"] = forces_payload
+
+    meta["schema_version"] = SESSION_SCHEMA_VERSION
+    meta.setdefault("app", SESSION_APP_NAME)
+    migrated["meta"] = meta
+    return migrated
 
 from loaders.io_helpers import (
     DataRootHints,
@@ -95,9 +165,10 @@ def collect_session_snapshot(
     """
     Collect a full UI session payload suitable for JSON persistence.
 
-    The output schema intentionally mirrors earlier project saves where
-    possible. That keeps older user profiles loadable while allowing the newer,
-    more modular UI pages to own their state internally.
+    The payload is written in the canonical schema (``meta.schema_version`` ==
+    :data:`SESSION_SCHEMA_VERSION`, ``meta.app`` == :data:`SESSION_APP_NAME`).
+    Older saved profiles remain loadable because :func:`apply_session_snapshot`
+    runs them through :func:`migrate_session_payload` first.
     """
 
     orbit_payload = _safe_call(
@@ -126,6 +197,8 @@ def collect_session_snapshot(
 
     return {
         "meta": {
+            "schema_version": SESSION_SCHEMA_VERSION,
+            "app": SESSION_APP_NAME,
             "version": app_version,
             "timestamp": datetime.now().isoformat(timespec="seconds"),
         },
@@ -212,6 +285,9 @@ def apply_session_snapshot(
         if log_warning is not None:
             log_warning(message)
 
+    # Single migration boundary: everything below assumes the canonical schema.
+    payload = migrate_session_payload(payload, log_warning=log_warning)
+
     orbit_payload = payload.get("orbit", {}) or {}
     if orbit_payload:
         try:
@@ -240,15 +316,9 @@ def apply_session_snapshot(
     except Exception as exc:
         warn(f"[Warning] Propagation page restore failed: {exc}")
 
+    # migrate_session_payload() has already folded any legacy top-level
+    # gravity_config into forces["gravity"], so we can read it directly here.
     forces_payload = payload.get("forces", {}) or {}
-    gravity_payload = payload.get("gravity_config", {}) or {}
-    if gravity_payload and "gravity" not in forces_payload:
-        forces_payload = dict(forces_payload)
-        forces_payload["gravity"] = {
-            "enabled": True,
-            "config": gravity_payload,
-        }
-
     if forces_payload:
         try:
             force_page.load_data(forces_payload)

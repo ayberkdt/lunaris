@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/ui_parts/solver_policy.py
+# ST_LRPS/ui_parts/solver_policy.py
 # -*- coding: utf-8 -*-
 """
 Shared solver-default and normalization policy for the desktop UI.

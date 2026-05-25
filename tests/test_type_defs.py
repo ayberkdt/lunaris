@@ -122,7 +122,7 @@ def test_gravity_config_accepts_valid():
         file_path="gravity.gfc",
         degree=120,
         backend="st_lrps",
-        st_lrps_model_dir="surrogate_gravity_model/runs/example_run",
+        st_lrps_model_dir="st_lrps/runs/example_run",
     )
 
 

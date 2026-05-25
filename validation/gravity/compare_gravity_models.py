@@ -4097,7 +4097,7 @@ def main() -> None:
             if args.require_st_lrps:
                 raise FileNotFoundError("ST-LRPS requested but no valid model dir found.")
             print("WARNING: 'st_lrps' requested but no valid model dir found in "
-                  "surrogate_gravity_model/runs/. Removing st_lrps from comparison.",
+                  "st_lrps/runs/. Removing st_lrps from comparison.",
                   flush=True)
             models_raw = [m for m in models_raw if m != "st_lrps"]
             gpu_models_raw = [m for m in gpu_models_raw if m != "st_lrps"]

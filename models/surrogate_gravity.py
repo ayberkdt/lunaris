@@ -3,11 +3,11 @@ Surrogate Gravity Runtime
 =========================
 
 Runtime helpers for neural-network gravity surrogates stored under
-``surrogate_gravity_model/``.
+``st_lrps/``.
 
 Why this module exists
 ----------------------
-The training / evaluation scripts in ``surrogate_gravity_model/`` are valuable
+The training / evaluation scripts in ``st_lrps/`` are valuable
 for experimentation, but they are not a safe runtime dependency for the main
 simulation loop:
 
@@ -52,7 +52,7 @@ import numpy as np
 from common.constants import MU_MOON, R_MOON
 from models.spherical_harmonics import GravityModel
 from models.torch_spherical_harmonics import TorchSHGravityEvaluator
-from surrogate_gravity_model.dataset_parameters import (
+from st_lrps.dataset_parameters import (
     DEFAULT_DATASET_CONFIG,
     looks_like_lunar_run_config,
     resolve_lunar_gravity_path,
@@ -76,7 +76,7 @@ else:  # pragma: no cover - trivial branch
 # =============================================================================
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ST_LRPS_RUNS_DIR = _REPO_ROOT / "surrogate_gravity_model" / "runs"
+DEFAULT_ST_LRPS_RUNS_DIR = _REPO_ROOT / "st_lrps" / "runs"
 
 
 def _is_valid_surrogate_run(path: Path) -> bool:
@@ -123,7 +123,7 @@ def _extract_degree_metadata(config: Dict[str, Any]) -> tuple:
     """
     Resolve ``degree_min`` and ``degree_max`` from a run ``config.json``.
 
-    Resolution order (mirrors ``surrogate_gravity_model/st_lrps_evaluate.py``):
+    Resolution order (mirrors ``st_lrps/st_lrps_evaluate.py``):
     1. Top-level ``degree_min`` / ``degree_max`` keys.
     2. ``dataset_meta.degree_min`` / ``dataset_meta.degree_max`` fallback.
     3. ``dataset_meta.requested_degree`` as a last resort for ``degree_max``.
@@ -470,7 +470,7 @@ def _build_model_from_config(cfg: Dict[str, Any]) -> nn.Module:
     if cfg.get("architecture") in ("MultiScale", "Residual") or int(cfg.get("n_bands", 1)) > 1:
         raise ValueError(
             "This legacy surrogate provider does not support MultiScale or advanced Residual models. "
-            "Please use the surrogate_gravity_model module."
+            "Please use the st_lrps module."
         )
 
     activation = str(cfg.get("activation", "sine")).strip().lower()

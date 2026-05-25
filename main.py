@@ -329,7 +329,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     g_grav.add_argument(
         "--surrogate-gravity-model-dir",
         type=str,
-        help="Trained ST-LRPS gravity run directory containing config.json and checkpoints/ckpt_best.pt",
+        help="Trained ST-LRPS gravity run directory (config.json + a checkpoint under checkpoints/)",
     )
     g_grav.add_argument("--degree", type=int, help="Max SH degree (Nmax)")
     g_grav.add_argument("--adaptive-enabled", type=str2bool, help="Enable adaptive SH degree (on/off)")
@@ -473,7 +473,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         # the run was trained on a lunar gravity config. Not covered by the
         # artifact helper, so it is kept here and clearly separated.
         try:
-            from surrogate_gravity_model.dataset_parameters import looks_like_lunar_run_config
+            from st_lrps.dataset_parameters import looks_like_lunar_run_config
         except ImportError:
             looks_like_lunar_run_config = None
         if looks_like_lunar_run_config is not None:

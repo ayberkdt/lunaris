@@ -126,6 +126,14 @@ from analysis.postprocess import (  # type: ignore
     extract_events,
 )
 
+from analysis.formatting import (
+    format_days,
+    format_duration,
+    format_count,
+    format_km,
+    format_sci_or_na,
+)
+
 # --- Plotting API (hard dependency) ---
 from .plotting import (  # type: ignore
     # --- Public Figures ---

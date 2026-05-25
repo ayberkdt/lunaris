@@ -21,16 +21,16 @@ import pytest
 
 from common.constants import MU_MOON, R_MOON
 from models.surrogate_gravity import _build_model_from_config
-from surrogate_gravity_model import spatial_cloud_generator as scg
-from surrogate_gravity_model.st_lrps_evaluate import _build_ood_region_masks, compute_metrics, evaluate
-from surrogate_gravity_model.st_lrps_train import (
+from st_lrps import spatial_cloud_generator as scg
+from st_lrps.st_lrps_evaluate import _build_ood_region_masks, compute_metrics, evaluate
+from st_lrps.st_lrps_train import (
     LossCurriculum,
     _build_train_val_indices,
     _find_latest_dataset,
     _resolve_loader_worker_count,
     parse_args,
 )
-from surrogate_gravity_model.spatial_cloud_analysis import _apply_region_filter
+from st_lrps.spatial_cloud_analysis import _apply_region_filter
 
 
 def _write_cloud(path: Path, *, body: str, mu_si: float, r_ref_m: float) -> None:
@@ -266,7 +266,7 @@ def test_evaluate_rejects_degree_max_mismatch_early(tmp_path: Path, monkeypatch:
     class _DummyScaler:
         pass
 
-    monkeypatch.setattr("surrogate_gravity_model.st_lrps_evaluate.ScalerPack.load", lambda *args, **kwargs: _DummyScaler())
+    monkeypatch.setattr("st_lrps.st_lrps_evaluate.ScalerPack.load", lambda *args, **kwargs: _DummyScaler())
 
     with pytest.raises(ValueError, match="degree_max"):
         evaluate(

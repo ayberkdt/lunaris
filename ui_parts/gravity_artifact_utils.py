@@ -1,4 +1,4 @@
-﻿# LUNAR_SIMULATION/ui_parts/gravity_artifact_utils.py
+﻿# ST_LRPS/ui_parts/gravity_artifact_utils.py
 # -*- coding: utf-8 -*-
 """
 Pure gravity artifact helper functions for UI modules.
@@ -30,7 +30,7 @@ except ImportError:
 
 
 PROJECT_ROOT = find_project_root()
-ST_LRPS_RUNS_DIR = PROJECT_ROOT / "surrogate_gravity_model" / "runs"
+ST_LRPS_RUNS_DIR = PROJECT_ROOT / "st_lrps" / "runs"
 
 GRAVITY_EXTENSIONS = (".shbdr", ".dat", ".txt", ".tab", ".gfc")
 
@@ -74,7 +74,7 @@ def find_best_gravity_file(
 
     candidates = []
 
-    for env_var in ["LUNARSIM_GRAVITY_PATH", "LUNARSIM_SHBDR"]:
+    for env_var in ["STLRPS_GRAVITY_PATH", "STLRPS_SHBDR"]:
         env_val = os.environ.get(env_var)
         if env_val and Path(env_val).is_file():
             return normalize_path(env_val)

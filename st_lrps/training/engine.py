@@ -2267,7 +2267,7 @@ def train(cfg: TrainConfig) -> None:
     )
 
     eval_suggestion = (
-        f"python surrogate_gravity_model/st_lrps_evaluate.py --model-dir {outdir} "
+        f"python -m st_lrps.st_lrps_evaluate --model-dir {outdir} "
         f"--data {cfg.test_data or cfg.val_data or cfg.data} --out {outdir / 'evals' / 'publication_eval'}"
     )
     _log_section(
