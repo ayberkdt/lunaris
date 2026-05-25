@@ -3439,6 +3439,10 @@ class STLRPSTrainTab(QWidget):
 
     def _update_header_lifecycle(self, status: str) -> None:
         """Phase 6/11: reflect real training state in the experiment header."""
+        if getattr(self, "_kpi_strip", None) is not None and hasattr(self._kpi_strip, "set_device"):
+            if status == "TRAINING":
+                self._kpi_strip.set_device(self._detect_device_badge())
+                
         main_win = self.window()
         hdr = getattr(main_win, "_experiment_header", None)
         if hdr is None or not hasattr(hdr, "set_status"):
@@ -3446,8 +3450,8 @@ class STLRPSTrainTab(QWidget):
         hdr.set_status(status)
         if status == "TRAINING":
             hdr.set_elapsed("00:00:00")
-            hdr.set_remaining("Estimating…")
-            hdr.set_finish("Estimating…")
+            hdr.set_remaining("Estimating...")
+            hdr.set_finish("Estimating...")
             hdr.set_device(self._detect_device_badge())
             # Context badges from the current configuration.
             run = (self.runner._output_dir or self.out_dir.text().strip())
@@ -3460,9 +3464,6 @@ class STLRPSTrainTab(QWidget):
                 _p = self.model_preset.currentData() or "custom"
                 hdr.set_preset(_PRESET_SHORT.get(_p, _p))
 
-    # -----------------------------------------------------------------
-    # Progress parsing (+ live plot feeding)
-    # -----------------------------------------------------------------
     def _parse_progress(self, line: str) -> None:
         # Accept both "Epoch [N/M]" banners and the engine's "epoch=N" kv form.
         ep: Optional[int] = None
