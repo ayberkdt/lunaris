@@ -380,7 +380,7 @@ _TC_DEFAULTS: dict = {
 
 def _default_outdir(base: Path) -> Path:
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    return base / "runs" / f"st_lrps_train_{ts}"
+    return base / "outputs" / "training" / f"st_lrps_train_{ts}"
 
 
 def parse_args() -> TrainConfig:
@@ -992,10 +992,10 @@ def parse_args() -> TrainConfig:
         print(f"[RESUME] Resuming run: {resume_run_dir}  (prefer={a.resume_checkpoint})")
 
     # 1. Resolve Data Path
-    # Anchor dataset auto-discovery and the default output dir at the st_lrps
-    # package root (one level up from this training/ subpackage), preserving the
-    # pre-reorg behavior where runs/datasets lived under st_lrps/.
+    # Anchor dataset auto-discovery at the st_lrps package root, but place new
+    # generated training runs under the repository-level outputs/ convention.
     script_dir = Path(__file__).resolve().parents[1]
+    repo_root = Path(__file__).resolve().parents[2]
     data_path_raw = a.data or os.environ.get("SPATIAL_CLOUD_INPUT") or os.environ.get("DATASET_PATH")
     
     if data_path_raw is None and a.train_data is None:
@@ -1011,7 +1011,7 @@ def parse_args() -> TrainConfig:
         data_path = Path(data_path_raw) if data_path_raw is not None else Path(a.train_data)
 
     # 2. Resolve Output Directory
-    out_dir = Path(a.out) if a.out else _default_outdir(script_dir)
+    out_dir = Path(a.out) if a.out else _default_outdir(repo_root)
     if not a.out:
         print(f"[AUTO] Using default output directory: {out_dir}")
 

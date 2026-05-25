@@ -1043,7 +1043,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--alt-min-km", type=float, default=100.0)
     parser.add_argument("--alt-max-km", type=float, default=2000.0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--out-dir", default="results/profiling/st_lrps_runtime")
+    parser.add_argument(
+        "--out-dir",
+        default=None,
+        help="Output directory. Default: outputs/runtime_performance/<model>_<timestamp>.",
+    )
     parser.add_argument("--compare-classic-sh", action="store_true")
     parser.add_argument("--classic-sh-degree", type=int, default=60)
     parser.add_argument("--json-only", action="store_true")
@@ -1056,6 +1060,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parser.parse_args(argv)
     if args.input_source == "dataset" and not args.data:
         parser.error("--input-source dataset requires --data PATH")
+    if args.out_dir is None:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_slug = Path(str(args.model_dir)).stem or "st_lrps_runtime"
+        model_slug = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in model_slug).strip("._-") or "st_lrps_runtime"
+        args.out_dir = str(Path("outputs") / "runtime_performance" / f"{model_slug}_{stamp}")
 
     report = profile_surrogate_runtime(
         args.model_dir,

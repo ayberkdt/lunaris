@@ -151,11 +151,11 @@ Runtime profiling:
 
 ```bash
 python -m st_lrps.runtime.profiling \
-    --model-dir runs/st_lrps_train_xxx \
+    --model-dir outputs/training/st_lrps_train_xxx \
     --batch-sizes 1,16,128,1024,8192 \
     --n-warmup 10 \
     --n-repeat 50 \
-    --out-dir results/profiling/st_lrps_runtime
+    --out-dir outputs/runtime_performance/st_lrps_runtime_xxx
 ```
 
 See `docs/profiling.md` for synthetic and dataset-backed profiling, CPU/CUDA timing, chunk-size sensitivity, and output interpretation.
@@ -167,7 +167,7 @@ python -m st_lrps.evaluation.runtime_benchmark --help
 python -m st_lrps.evaluation.orbit_benchmark --help
 ```
 
-Training and evaluation outputs should be written to user-selected output directories such as top-level `runs/`, `artifacts/`, `outputs/`, or a scratch location outside the repository. Do not place generated runs inside source package directories.
+Generated outputs use the repository-level `outputs/` convention by default. Do not place generated runs inside source package directories.
 
 ## Resuming ST-LRPS Training
 
@@ -175,7 +175,7 @@ Training is checkpointed every epoch. If a run stops (Ctrl+C, machine shutdown),
 
 ```bash
 python -m st_lrps.training.cli \
-    --resume-from runs/st_lrps_train_YYYYMMDD_HHMMSS \
+    --resume-from outputs/training/st_lrps_train_YYYYMMDD_HHMMSS \
     --epochs 300
 ```
 
@@ -195,7 +195,7 @@ Resuming from a specific checkpoint file:
 
 ```bash
 python -m st_lrps.training.cli \
-    --resume-from runs/st_lrps_train_YYYYMMDD_HHMMSS/checkpoints/ckpt_last.pt \
+    --resume-from outputs/training/st_lrps_train_YYYYMMDD_HHMMSS/checkpoints/ckpt_last.pt \
     --epochs 300
 ```
 
@@ -258,14 +258,32 @@ Large LOLA grids can be memory-heavy. Use `--stride-2d`, `--stride-3d`, or `--st
 
 ## Generated Output Policy
 
-Generated outputs should not be committed. Keep run products in ignored top-level output directories or external scratch storage.
+Generated outputs should not be committed. New tools should write generated products under `outputs/` unless the user explicitly chooses an external scratch directory.
+
+Canonical generated-output layout:
+
+```text
+outputs/
+  training/             ST-LRPS training run directories
+    st_lrps_train_<timestamp>/
+      checkpoints/      model checkpoints for that run
+      plots/            training curves and diagnostics
+      evals/            evaluations attached to that trained run
+      provenance/       run metadata and dataset snapshots
+  evaluations/          standalone evaluation reports not attached to a run
+  runtime_performance/  ST-LRPS runtime profiling and benchmark reports
+  dataset_reports/      generated cloud/dataset analysis reports
+  datasets/
+    cloud_suites/       generated train/val/test/OOD dataset suites
+  validation/           validation harness outputs
+  visualization/        standalone visualization outputs
+```
+
+The `evals/` directory is intentionally run-local: if an evaluation is launched for a selected training run and no output directory is provided, it is written below that run so the model artifact and quality report travel together.
 
 Examples of generated paths and files:
 
 ```text
-runs/
-results/
-artifacts/
 outputs/
 checkpoints/
 evals/

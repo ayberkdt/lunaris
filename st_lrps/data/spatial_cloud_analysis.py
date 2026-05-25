@@ -29,6 +29,7 @@ import argparse
 import json
 import math
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
@@ -498,7 +499,7 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--no-plots", action="store_true", help="Do not create plots.")
     p.add_argument("--scatter-n", type=int, default=50_000, help="How many points to draw in the 3D scatter plot.")
-    p.add_argument("--outdir", type=str, default=None, help="Output folder for plots / summary.json. If omitted, defaults to a sibling of ./data next to this script: <script_dir>/analysis_out.")
+    p.add_argument("--outdir", type=str, default=None, help="Output folder for plots / summary.json. If omitted, defaults to outputs/dataset_reports/<dataset>_<timestamp>.")
     p.add_argument("--dump-json", action="store_true", help="Write summary.json into outdir.")
     return p.parse_args()
 
@@ -641,13 +642,19 @@ def main() -> None:
     if not in_path.exists():
         raise FileNotFoundError(str(in_path))
 
-    # Default output directory: <script_dir>/analysis_out (sibling of ./data)
+    # Default output directory: repository-level generated-output convention.
     if args.outdir is None or str(args.outdir).strip() == "":
-        outdir = (script_dir / "analysis_out").resolve()
+        repo_root = script_dir.parent
+        dataset_slug = "".join(
+            ch if ch.isalnum() or ch in "._-" else "_" for ch in in_path.stem
+        ).strip("._-") or "dataset"
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        outdir = (repo_root / "outputs" / "dataset_reports" / f"{dataset_slug}_{stamp}").resolve()
     else:
+        repo_root = script_dir.parent
         p_out = Path(args.outdir).expanduser()
-        # If relative, place next to this script (same level as ./data)
-        outdir = (p_out if p_out.is_absolute() else (script_dir / p_out)).resolve()
+        # If relative, interpret against the repository root so outputs/ stays top-level.
+        outdir = (p_out if p_out.is_absolute() else (repo_root / p_out)).resolve()
 
     # Load + sample
     ext = in_path.suffix.lower()
