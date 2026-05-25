@@ -327,7 +327,15 @@ from st_lrps.networks.models import (
     compute_architecture_signature, reconstruct_model_from_artifacts,
 )
 from st_lrps.data.datasets import DatasetMeta
-from st_lrps.shared.scaling import IsometricScaleParams, ScalerPack, compute_base_accel, compute_base_potential
+from st_lrps.shared.contracts import TargetContract
+from st_lrps.shared.scaling import (
+    IsometricScaleParams,
+    ScalerPack,
+    compute_base_accel,
+    compute_base_accel_from_contract,
+    compute_base_potential,
+    compute_base_potential_from_contract,
+)
 
 
 def infer_r_ref_m_from_dataset(path: Path, dataset_name: str = "data") -> Optional[float]:
@@ -514,6 +522,7 @@ def predict_u_and_a(
     a_sign: float = 1.0,
     mu_si: float = MU_MOON_SI,
     degree_min: int = -1,
+    target_contract: Optional[TargetContract | dict] = None,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Predict total U and a via hierarchical residual superposition.
 
@@ -521,8 +530,17 @@ def predict_u_and_a(
       U_total = U_base + unscale(ΔU_scaled)
       a_total = a_base + a_sign · ∇(ΔU_scaled) · (u_scale/x_scale)
     """
-    u_base = compute_base_potential(x_phys, mu_si, a_sign, degree_min)   # (B,1)
-    a_base = compute_base_accel(x_phys, mu_si, degree_min)               # (B,3)
+    if target_contract is not None:
+        contract = (
+            TargetContract.from_dict(target_contract)
+            if isinstance(target_contract, dict)
+            else target_contract
+        )
+        u_base = compute_base_potential_from_contract(x_phys, contract)  # (B,1)
+        a_base = compute_base_accel_from_contract(x_phys, contract)      # (B,3)
+    else:
+        u_base = compute_base_potential(x_phys, mu_si, a_sign, degree_min)   # (B,1)
+        a_base = compute_base_accel(x_phys, mu_si, degree_min)               # (B,3)
 
     x_scaled = scaler.scale_x(x_phys).requires_grad_(True)   # (B,3)
     delta_u_scaled = model(x_scaled)                          # (B,1)
@@ -1270,6 +1288,14 @@ def evaluate(
     if a_sign_resolved != a_sign:
         print(f"[INFO] Overriding CLI a_sign={a_sign} with config.json resolved_a_sign={a_sign_resolved}")
         a_sign = a_sign_resolved
+    target_contract = None
+    if isinstance(cfg.get("target_contract"), dict):
+        target_contract = TargetContract.from_dict(cfg["target_contract"])
+        print(
+            "[info] Target contract: "
+            f"mode={target_contract.target_mode} baseline={target_contract.baseline_kind} "
+            f"base_degree={target_contract.base_degree} target_degree={target_contract.target_degree}"
+        )
 
     # Training altitude range - used to build OOD metric table
     _dm_meta_block = cfg.get("dataset_meta") or {}
@@ -1468,7 +1494,15 @@ def evaluate(
             x, u_true, a_true = _canonical_to_si_batch(x, u_true, a_true, ds_DU_m, ds_TU_s, ds_VU_m_s)
 
         xb = torch.from_numpy(x).to(device=device, dtype=torch.float32)
-        u_pred_t, a_pred_t = predict_u_and_a(model, scaler, xb, a_sign=a_sign, mu_si=mu_si, degree_min=degree_min)
+        u_pred_t, a_pred_t = predict_u_and_a(
+            model,
+            scaler,
+            xb,
+            a_sign=a_sign,
+            mu_si=mu_si,
+            degree_min=degree_min,
+            target_contract=target_contract,
+        )
 
         u_pred = u_pred_t.detach().cpu().numpy()
         a_pred = a_pred_t.detach().cpu().numpy()

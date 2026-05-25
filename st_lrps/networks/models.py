@@ -653,6 +653,74 @@ class RadialDecayEncoding(nn.Module):
         return torch.cat(feats, dim=-1)
 
 
+class PhysicalRadialDecayEncoding(nn.Module):
+    """
+    Physical radial-decay features using true ``rho = R_ref / r_phys``.
+
+    The network still receives scaled coordinates ``x_scaled``.  This encoding
+    reconstructs the physical radius through ``r_phys = ||x_scaled|| *
+    x_scale_m`` and then emits differentiable torch-native features:
+
+        [r_scaled? , unit? , rho, rho^2, ..., rho^max_power, raw x_scaled?]
+    """
+
+    def __init__(
+        self,
+        *,
+        x_scale_m: float,
+        r_ref_m: float,
+        max_power: int = 4,
+        append_raw: bool = True,
+        include_r_scaled: bool = True,
+        include_unit: bool = True,
+        eps: float = 1e-9,
+    ) -> None:
+        super().__init__()
+        self.x_scale_m = float(x_scale_m)
+        self.r_ref_m = float(r_ref_m)
+        self.max_power = int(max_power)
+        self.append_raw = bool(append_raw)
+        self.include_r_scaled = bool(include_r_scaled)
+        self.include_unit = bool(include_unit)
+        self.eps = float(eps)
+        if self.x_scale_m <= 0.0:
+            raise ValueError(f"PhysicalRadialDecayEncoding x_scale_m must be positive, got {self.x_scale_m}")
+        if self.r_ref_m <= 0.0:
+            raise ValueError(f"PhysicalRadialDecayEncoding r_ref_m must be positive, got {self.r_ref_m}")
+        if self.max_power < 1:
+            raise ValueError(
+                f"PhysicalRadialDecayEncoding max_power must be >= 1, got {self.max_power}"
+            )
+
+    @property
+    def out_dim(self) -> int:
+        return (
+            (1 if self.include_r_scaled else 0)
+            + (3 if self.include_unit else 0)
+            + self.max_power
+            + (3 if self.append_raw else 0)
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        r_scaled = torch.norm(x, dim=-1, keepdim=True).clamp_min(self.eps)
+        r_phys = r_scaled * x.new_tensor(float(self.x_scale_m))
+        rho = x.new_tensor(float(self.r_ref_m)) / r_phys.clamp_min(self.eps)
+
+        feats: List[torch.Tensor] = []
+        if self.include_r_scaled:
+            feats.append(r_scaled)
+        if self.include_unit:
+            feats.append(x / r_scaled)
+        rho_power = rho
+        feats.append(rho_power)
+        for _ in range(2, self.max_power + 1):
+            rho_power = rho_power * rho
+            feats.append(rho_power)
+        if self.append_raw:
+            feats.append(x)
+        return torch.cat(feats, dim=-1)
+
+
 # ---------------------------------------------------------------------------
 # Real spherical-harmonic angular basis (experimental)
 # ---------------------------------------------------------------------------
@@ -809,6 +877,56 @@ def _cfg_value(cfg: Any, key: str, default: Any = None) -> Any:
     return getattr(cfg, key, default)
 
 
+def _encoding_flags_from_preset(cfg: Any) -> Dict[str, bool]:
+    """Return effective encoding flags after applying a named preset.
+
+    Missing ``model_preset`` means old artifact/config behavior: respect the
+    explicit flags exactly.
+    """
+
+    flags = {
+        "use_fourier": bool(_cfg_value(cfg, "use_fourier", False)),
+        "use_sh_encoding": bool(_cfg_value(cfg, "use_sh_encoding", False)),
+        "use_radial_separation": bool(_cfg_value(cfg, "use_radial_separation", False)),
+        "use_radial_decay_encoding": bool(_cfg_value(cfg, "use_radial_decay_encoding", False)),
+        "use_physical_radial_decay_encoding": bool(
+            _cfg_value(cfg, "use_physical_radial_decay_encoding", False)
+        ),
+        "use_real_sh_basis": bool(_cfg_value(cfg, "use_real_sh_basis", False)),
+    }
+    preset_raw = _cfg_value(cfg, "model_preset", None)
+    if preset_raw is None:
+        return flags
+    preset = str(preset_raw or "custom").strip().lower()
+    if preset == "custom":
+        return flags
+    implied = {name: False for name in flags}
+    if preset == "baseline_raw":
+        pass
+    elif preset == "recommended_physical_radial_decay":
+        implied["use_physical_radial_decay_encoding"] = True
+    elif preset == "ablation_radial_separation":
+        implied["use_radial_separation"] = True
+    elif preset == "ablation_radial_decay_scaled":
+        implied["use_radial_decay_encoding"] = True
+    elif preset == "ablation_real_sh_low_degree":
+        implied["use_real_sh_basis"] = True
+    else:
+        raise ValueError(
+            "model_preset must be one of baseline_raw, recommended_physical_radial_decay, "
+            "ablation_radial_separation, ablation_radial_decay_scaled, "
+            f"ablation_real_sh_low_degree, or custom; got {preset!r}."
+        )
+    active = {name for name, value in flags.items() if value}
+    implied_active = {name for name, value in implied.items() if value}
+    if active and active != implied_active:
+        raise ValueError(
+            f"model_preset={preset!r} conflicts with manual encoding flags {sorted(active)}. "
+            "Use model_preset='custom' for manual ablations."
+        )
+    return implied
+
+
 # ---------------------------------------------------------------------------
 # Model factory
 # ---------------------------------------------------------------------------
@@ -838,7 +956,8 @@ def build_model_from_config(
         Random Fourier Feature embedding (only with non-SIREN activations).
     """
     activation = str(_cfg_value(cfg, "activation", "sine")).lower()
-    use_fourier = bool(_cfg_value(cfg, "use_fourier", False))
+    encoding_flags = _encoding_flags_from_preset(cfg)
+    use_fourier = bool(encoding_flags["use_fourier"])
     if activation == "sine" and use_fourier:
         raise ValueError(
             "activation='sine' (SIREN) and use_fourier=True are mutually exclusive. "
@@ -846,10 +965,11 @@ def build_model_from_config(
         )
 
     # Optional alternative input encodings. At most one may be active.
-    use_sh = bool(_cfg_value(cfg, "use_sh_encoding", False))
-    use_radial = bool(_cfg_value(cfg, "use_radial_separation", False))
-    use_radial_decay = bool(_cfg_value(cfg, "use_radial_decay_encoding", False))
-    use_real_sh = bool(_cfg_value(cfg, "use_real_sh_basis", False))
+    use_sh = bool(encoding_flags["use_sh_encoding"])
+    use_radial = bool(encoding_flags["use_radial_separation"])
+    use_radial_decay = bool(encoding_flags["use_radial_decay_encoding"])
+    use_physical_radial_decay = bool(encoding_flags["use_physical_radial_decay_encoding"])
+    use_real_sh = bool(encoding_flags["use_real_sh_basis"])
     sh_degree = int(_cfg_value(cfg, "sh_encoding_degree", 6))
     sh_append_raw = bool(_cfg_value(cfg, "sh_append_raw", True))
     radial_append_raw = bool(_cfg_value(cfg, "radial_append_raw", False))
@@ -860,6 +980,7 @@ def build_model_from_config(
             ("use_sh_encoding", use_sh),
             ("use_radial_separation", use_radial),
             ("use_radial_decay_encoding", use_radial_decay),
+            ("use_physical_radial_decay_encoding", use_physical_radial_decay),
             ("use_real_sh_basis", use_real_sh),
         ) if flag
     ]
@@ -903,6 +1024,23 @@ def build_model_from_config(
         embedding = RadialDecayEncoding(
             max_power=int(_cfg_value(cfg, "radial_decay_max_power", 4)),
             append_raw=bool(_cfg_value(cfg, "radial_decay_append_raw", True)),
+        )
+        backbone_in_dim = int(embedding.out_dim)
+    elif use_physical_radial_decay:
+        x_scale_m = _cfg_value(cfg, "x_scale_m", None)
+        r_ref_m = _cfg_value(cfg, "resolved_r_ref_m", _cfg_value(cfg, "r_ref_m", None))
+        if x_scale_m is None or r_ref_m is None:
+            raise ValueError(
+                "PhysicalRadialDecayEncoding requires x_scale_m and resolved_r_ref_m/r_ref_m "
+                "in the config. The training engine injects these from the scaler and dataset."
+            )
+        embedding = PhysicalRadialDecayEncoding(
+            x_scale_m=float(x_scale_m),
+            r_ref_m=float(r_ref_m),
+            max_power=int(_cfg_value(cfg, "physical_radial_decay_max_power", 4)),
+            append_raw=bool(_cfg_value(cfg, "physical_radial_decay_append_raw", True)),
+            include_unit=bool(_cfg_value(cfg, "physical_radial_decay_include_unit", True)),
+            include_r_scaled=bool(_cfg_value(cfg, "physical_radial_decay_include_r_scaled", True)),
         )
         backbone_in_dim = int(embedding.out_dim)
     elif use_real_sh:
@@ -1012,6 +1150,8 @@ def build_model_from_config(
         _emb_type = "radial_separation"
     elif use_radial_decay:
         _emb_type = "radial_decay"
+    elif use_physical_radial_decay:
+        _emb_type = "physical_radial_decay"
     elif use_real_sh:
         _emb_type = "real_sh"
     elif use_fourier:
@@ -1041,11 +1181,15 @@ MODEL_BUILDER_VERSION: str = "v3"
 # models. Used to detect config/checkpoint drift on reload.
 ARCH_SIGNATURE_FIELDS = (
     "activation", "hidden", "depth", "dropout",
+    "model_preset", "runtime_model_kind",
     "use_residual_blocks", "n_bands", "multiscale_mode",
     "degree_min", "degree_max", "w0_bands",
     "use_sh_encoding", "sh_encoding_degree", "sh_append_raw",
     "use_radial_separation", "radial_append_raw",
     "use_radial_decay_encoding", "radial_decay_max_power", "radial_decay_append_raw",
+    "use_physical_radial_decay_encoding", "physical_radial_decay_max_power",
+    "physical_radial_decay_append_raw", "physical_radial_decay_include_unit",
+    "physical_radial_decay_include_r_scaled", "x_scale_m", "resolved_r_ref_m",
     "use_real_sh_basis", "real_sh_degree", "real_sh_append_raw", "real_sh_include_radial",
     "use_fourier", "fourier_n_features", "fourier_sigma", "fourier_seed",
     "fourier_append_raw",
@@ -1064,12 +1208,13 @@ def _normalize_signature_value(key: str, value: Any) -> Any:
             return value
     if key in ("hidden", "depth", "n_bands", "degree_min", "degree_max",
                "sh_encoding_degree", "fourier_n_features", "fourier_seed",
-               "input_feature_dim", "radial_decay_max_power", "real_sh_degree"):
+               "input_feature_dim", "radial_decay_max_power", "real_sh_degree",
+               "physical_radial_decay_max_power"):
         try:
             return int(value)
         except (TypeError, ValueError):
             return value
-    if key in ("dropout", "fourier_sigma"):
+    if key in ("dropout", "fourier_sigma", "x_scale_m", "resolved_r_ref_m"):
         try:
             return round(float(value), 6)
         except (TypeError, ValueError):
@@ -1077,6 +1222,8 @@ def _normalize_signature_value(key: str, value: Any) -> Any:
     if key in ("use_residual_blocks", "use_sh_encoding", "sh_append_raw",
                "use_radial_separation", "radial_append_raw", "use_fourier",
                "fourier_append_raw", "use_radial_decay_encoding", "radial_decay_append_raw",
+               "use_physical_radial_decay_encoding", "physical_radial_decay_append_raw",
+               "physical_radial_decay_include_unit", "physical_radial_decay_include_r_scaled",
                "use_real_sh_basis", "real_sh_append_raw", "real_sh_include_radial"):
         return bool(value)
     return str(value)
@@ -1265,6 +1412,7 @@ __all__ = [
     "RadialSeparationEncoding",
     "SHInspiredAngularEncoding",
     "RadialDecayEncoding",
+    "PhysicalRadialDecayEncoding",
     "RealSHBasisEncoding",
     "PhysicsNet",
     "siren_init_first_",

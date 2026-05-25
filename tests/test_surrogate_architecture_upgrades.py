@@ -34,6 +34,7 @@ from st_lrps.training.losses import (
     collocation_laplacian_loss,
 )
 from st_lrps.networks.models import (
+    PhysicalRadialDecayEncoding,
     RadialDecayEncoding,
     RealSHBasisEncoding,
     build_model_from_config,
@@ -124,6 +125,7 @@ def test_current_defaults_are_single_source_of_truth(tmp_path, monkeypatch):
     assert cfg.preload_policy == "auto"
     assert cfg.auto_preload_mb == pytest.approx(2048.0)
     assert cfg.use_radial_decay_encoding is False
+    assert cfg.model_preset == "baseline_raw"
     assert cfg.use_real_sh_basis is False
     assert cfg.multiscale_mode == "concat_shared"
     removed_attr = "dynamic" + "_weights"
@@ -241,6 +243,89 @@ def test_radial_decay_encoding_registered_in_architecture_signature():
     assert sig4 != sig_noraw
 
 
+def test_physical_radial_decay_encoding_uses_true_radius_and_gradients():
+    x_scale_m = 2.0e6
+    r_ref_m = R_REF
+    x_scaled = torch.tensor([[0.5, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=torch.float64, requires_grad=True)
+    enc = PhysicalRadialDecayEncoding(
+        x_scale_m=x_scale_m,
+        r_ref_m=r_ref_m,
+        max_power=3,
+        append_raw=True,
+        include_unit=True,
+        include_r_scaled=True,
+    )
+    y = enc(x_scaled)
+    assert tuple(y.shape) == (2, 1 + 3 + 3 + 3)
+    rho_col = y[:, 4]
+    expected = torch.tensor([r_ref_m / (0.5 * x_scale_m), r_ref_m / x_scale_m], dtype=torch.float64)
+    assert torch.allclose(rho_col, expected, rtol=1e-12, atol=1e-12)
+    y.sum().backward()
+    assert x_scaled.grad is not None
+    assert torch.isfinite(x_scaled.grad).all()
+
+
+def test_physical_radial_decay_signature_and_build_requires_metadata():
+    base = {
+        "activation": "sine", "hidden": 16, "depth": 3, "n_bands": 1,
+        "use_physical_radial_decay_encoding": True,
+        "physical_radial_decay_max_power": 4,
+        "physical_radial_decay_append_raw": True,
+        "physical_radial_decay_include_unit": True,
+        "physical_radial_decay_include_r_scaled": True,
+        "x_scale_m": 2.0e6,
+        "resolved_r_ref_m": R_REF,
+    }
+    model = build_model_from_config(base)
+    assert model.embedding_type == "physical_radial_decay"
+    assert model.input_feature_dim == 1 + 3 + 4 + 3
+    sig4 = compute_architecture_signature(base)
+    sig3 = compute_architecture_signature({**base, "physical_radial_decay_max_power": 3})
+    assert sig4 != sig3
+    with pytest.raises(ValueError, match="x_scale_m"):
+        build_model_from_config({k: v for k, v in base.items() if k != "x_scale_m"})
+
+
+def test_model_presets_select_expected_encodings():
+    common = {"activation": "sine", "hidden": 8, "depth": 2, "n_bands": 1}
+    raw = build_model_from_config({**common, "model_preset": "baseline_raw"})
+    assert raw.embedding_type == "raw"
+    rec = build_model_from_config({
+        **common,
+        "model_preset": "recommended_physical_radial_decay",
+        "x_scale_m": 2.0e6,
+        "resolved_r_ref_m": R_REF,
+    })
+    assert rec.embedding_type == "physical_radial_decay"
+    with pytest.raises(ValueError, match="conflicts"):
+        build_model_from_config({
+            **common,
+            "model_preset": "baseline_raw",
+            "use_radial_decay_encoding": True,
+        })
+
+
+def test_cli_manual_encoding_defaults_to_custom_preset(tmp_path, monkeypatch):
+    data = tmp_path / "cloud.h5"
+    _write_tiny_cloud(data)
+    out = tmp_path / "run"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "st_lrps_train.py",
+            "--data",
+            str(data),
+            "--out",
+            str(out),
+            "--use-radial-decay-encoding",
+        ],
+    )
+    cfg = parse_args()
+    assert cfg.model_preset == "custom"
+    assert cfg.use_radial_decay_encoding is True
+
+
 # ---------------------------------------------------------------------------
 # 4.8 — RealSHBasisEncoding shape + finiteness (incl. poles)
 # ---------------------------------------------------------------------------
@@ -311,6 +396,14 @@ def test_encoding_mutual_exclusion():
         build_model_from_config({
             "activation": "sine", "hidden": 8, "depth": 2, "n_bands": 1,
             "use_radial_decay_encoding": True, "use_real_sh_basis": True,
+        })
+    with pytest.raises(ValueError, match="one input encoding"):
+        build_model_from_config({
+            "activation": "sine", "hidden": 8, "depth": 2, "n_bands": 1,
+            "use_physical_radial_decay_encoding": True,
+            "use_radial_decay_encoding": True,
+            "x_scale_m": 2.0e6,
+            "resolved_r_ref_m": R_REF,
         })
     # SIREN + Fourier remains a hard error.
     with pytest.raises(ValueError):

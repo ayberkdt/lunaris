@@ -41,6 +41,8 @@ CRITICAL_CONFIG_FIELDS: Tuple[str, ...] = (
     "hidden",
     "depth",
     "dropout",
+    "model_preset",
+    "runtime_model_kind",
     "n_bands",
     "w0_bands",
     "use_residual_blocks",
@@ -54,6 +56,15 @@ CRITICAL_CONFIG_FIELDS: Tuple[str, ...] = (
     "sh_append_raw",
     "use_radial_separation",
     "radial_append_raw",
+    "use_radial_decay_encoding",
+    "radial_decay_max_power",
+    "radial_decay_append_raw",
+    "use_physical_radial_decay_encoding",
+    "physical_radial_decay_max_power",
+    "physical_radial_decay_append_raw",
+    "physical_radial_decay_include_unit",
+    "physical_radial_decay_include_r_scaled",
+    "x_scale_m",
     "input_feature_dim",
     "embedding_type",
     "model_builder_version",
@@ -943,6 +954,30 @@ def build_resolved_config(
     cfg_dict["sh_append_raw"] = bool(cfg_dict.get("sh_append_raw", True))
     cfg_dict["use_radial_separation"] = bool(cfg_dict.get("use_radial_separation", False))
     cfg_dict["radial_append_raw"] = bool(cfg_dict.get("radial_append_raw", False))
+    cfg_dict["use_radial_decay_encoding"] = bool(cfg_dict.get("use_radial_decay_encoding", False))
+    cfg_dict["radial_decay_max_power"] = _coerce_int(cfg_dict.get("radial_decay_max_power", 4), default=4)
+    cfg_dict["radial_decay_append_raw"] = bool(cfg_dict.get("radial_decay_append_raw", True))
+    cfg_dict["use_physical_radial_decay_encoding"] = bool(
+        cfg_dict.get("use_physical_radial_decay_encoding", False)
+    )
+    cfg_dict["physical_radial_decay_max_power"] = _coerce_int(
+        cfg_dict.get("physical_radial_decay_max_power", 4),
+        default=4,
+    )
+    cfg_dict["physical_radial_decay_append_raw"] = bool(
+        cfg_dict.get("physical_radial_decay_append_raw", True)
+    )
+    cfg_dict["physical_radial_decay_include_unit"] = bool(
+        cfg_dict.get("physical_radial_decay_include_unit", True)
+    )
+    cfg_dict["physical_radial_decay_include_r_scaled"] = bool(
+        cfg_dict.get("physical_radial_decay_include_r_scaled", True)
+    )
+    cfg_dict["x_scale_m"] = float(
+        cfg_dict.get("x_scale_m", (scaler_payload.get("x") or {}).get("scale", 0.0)) or 0.0
+    )
+    cfg_dict["model_preset"] = str(cfg_dict.get("model_preset", "custom"))
+    cfg_dict["runtime_model_kind"] = str(cfg_dict.get("runtime_model_kind", "potential_autograd"))
     cfg_dict["n_bands"] = _coerce_int(cfg_dict.get("n_bands", 1), default=1)
     cfg_dict["degree_min"] = _coerce_int(cfg_dict.get("degree_min", ds_meta.get("degree_min", -1)), default=-1)
     cfg_dict["degree_max"] = _coerce_int(cfg_dict.get("degree_max", ds_meta.get("degree_max", -1)), default=-1)
@@ -1011,6 +1046,7 @@ def build_checkpoint_payload(
             "alt_max_km": _coerce_float_or_none((dataset_meta or {}).get("alt_max_km")),
             "derivative_convention_version": _coerce_str_or_none((dataset_meta or {}).get("derivative_convention_version")),
             "a_sign_convention": _coerce_str_or_none((dataset_meta or {}).get("a_sign_convention")),
+            "target_contract": cfg_dict.get("target_contract"),
         }
     )
 

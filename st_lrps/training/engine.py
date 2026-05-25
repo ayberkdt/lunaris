@@ -38,7 +38,8 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
 
 from st_lrps.data.dataset_parameters import R_MOON_SI
-from st_lrps.training.config import TrainConfig
+from st_lrps.training.config import TrainConfig, apply_model_preset
+from st_lrps.training.config_summary import build_experiment_feature_summary
 from st_lrps.data.datasets import (
     DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
     _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
@@ -84,6 +85,7 @@ from st_lrps.networks.models import (
     MODEL_BUILDER_VERSION, compute_architecture_signature,
 )
 from st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming
+from st_lrps.shared.contracts import TargetContract
 
 logger = logging.getLogger(__name__)
 
@@ -1105,6 +1107,12 @@ def train(cfg: TrainConfig) -> None:
     """
 
     # 1. Initialization
+    apply_model_preset(cfg)
+    if str(getattr(cfg, "runtime_model_kind", "potential_autograd")) == "force_direct":
+        raise NotImplementedError(
+            "runtime_model_kind='force_direct' is a future distilled acceleration "
+            "runtime and is not supported by the current scalar-potential training path."
+        )
     set_seed(
         cfg.seed,
         deterministic=bool(getattr(cfg, "deterministic", True)),
@@ -1511,6 +1519,7 @@ def train(cfg: TrainConfig) -> None:
     logger.info(f"{'model.activation':24s}: {cfg.activation}")
     logger.info(f"{'model.hidden':24s}: {cfg.hidden}")
     logger.info(f"{'model.depth':24s}: {cfg.depth}")
+    logger.info(f"{'model.preset':24s}: {getattr(cfg, 'model_preset', 'custom')}")
     logger.info(f"{'model.n_bands':24s}: {_n_bands_log}")
     logger.info(f"{'model.w0_first':24s}: {cfg.w0_first}")
     logger.info(f"{'model.w0_hidden':24s}: {cfg.w0_hidden}")
@@ -1614,6 +1623,23 @@ def train(cfg: TrainConfig) -> None:
     else:
         a_sign = float(cfg.a_sign)
 
+    target_contract = TargetContract.from_dataset_meta(
+        meta,
+        resolved_mu_si=float(resolved_mu_si),
+        resolved_r_ref_m=float(resolved_r_ref_m),
+        a_sign=float(a_sign),
+        allow_inferred_target_mode=bool(getattr(cfg, "allow_legacy_target_mode_inference", False)),
+        allow_legacy_derivative_convention=bool(
+            getattr(cfg, "allow_legacy_derivative_convention", False)
+        ),
+    )
+    logger.info(
+        "Target contract: "
+        f"mode={target_contract.target_mode}, baseline={target_contract.baseline_kind}, "
+        f"base_degree={target_contract.base_degree}, target_degree={target_contract.target_degree}, "
+        f"frame={target_contract.frame}"
+    )
+
     # 7. Fit isometric scalers on residuals
     scaler_path = layout.scaler_json
     scaler_hash_info: Dict[str, Any]
@@ -1636,6 +1662,7 @@ def train(cfg: TrainConfig) -> None:
             u_scale_mode=str(getattr(cfg, "u_scale_mode", "hybrid")),
             a_scale_mode=str(getattr(cfg, "a_scale_mode", "hybrid")),
             target_scale_multiplier=float(getattr(cfg, "target_scale_multiplier", 6.0)),
+            target_contract=target_contract,
         )
         scaler_hash_info = write_scaler_json(layout, scaler)
     logger.info(f"[artifacts] scaler_hash={scaler_hash_info['scaler_hash']}")
@@ -1817,6 +1844,8 @@ def train(cfg: TrainConfig) -> None:
     )
     cfg.degree_min = int(degree_min_val)
     cfg.degree_max = int(degree_max_val)
+    cfg.resolved_r_ref_m = float(resolved_r_ref_m)
+    cfg.x_scale_m = float(scaler.x.scale)
     if cfg.activation.lower() == "sine" and int(getattr(cfg, "n_bands", 1)) > 1:
         if cfg.degree_max <= 0:
             raise ValueError(
@@ -1926,9 +1955,10 @@ def train(cfg: TrainConfig) -> None:
         mu_si=mu_val,
         r_ref_m=resolved_r_ref_m,
         degree_min=degree_min_val,
+        degree_max=degree_max_val,
+        target_contract=target_contract,
     ).to(device=device, dtype=DTYPE)
-    logger.info(f"Residual baseline: degree_min={degree_min_val} "
-                f"({'point-mass subtraction disabled; dataset already contains residual' if degree_min_val >= 0 else 'subtracting point-mass monopole'})")
+    logger.info(f"Residual baseline: {target_contract.baseline_description}")
 
     head_params = _get_output_head_params(model)
     head_param_ids = {id(param) for param in head_params}
@@ -1994,7 +2024,10 @@ def train(cfg: TrainConfig) -> None:
         resolved_mu_si=resolved_mu_si,
         resolved_r_ref_m=resolved_r_ref_m,
     )
+    dataset_snapshot["target_contract"] = target_contract.to_dict()
     atomic_write_json(layout.provenance_dir / "dataset_meta.json", dataset_snapshot)
+    feature_summary = build_experiment_feature_summary(cfg, target_contract, model)
+    atomic_write_json(layout.provenance_dir / "feature_summary.json", feature_summary)
 
     suite_manifest_path = str(getattr(cfg, "suite_manifest", "") or "").strip()
     suite_manifest: Dict[str, Any] = {}
@@ -2071,6 +2104,11 @@ def train(cfg: TrainConfig) -> None:
             "degree_min": int(degree_min_val),
             "degree_max": int(degree_max_val),
             "target_mode": _effective_target,
+            "target_contract": target_contract.to_dict(),
+            "baseline_kind": target_contract.baseline_kind,
+            "base_degree": int(target_contract.base_degree),
+            "target_degree": int(target_contract.target_degree),
+            "runtime_model_kind": str(getattr(cfg, "runtime_model_kind", "potential_autograd")),
             "residual_mode": _is_residual,
             "unit_system": meta.unit_system,
             "central_body": dataset_body_name,
@@ -2108,9 +2146,11 @@ def train(cfg: TrainConfig) -> None:
             "model_builder_version": MODEL_BUILDER_VERSION,
             "embedding_type": _emb_type_built,
             "input_feature_dim": int(_in_fdim_built),
+            "x_scale_m": float(scaler.x.scale),
             "total_params": int(_total_params),
             "w0_bands": list(cfg.w0_bands) if cfg.w0_bands is not None else None,
             "dataset_meta": dataset_snapshot,
+            "feature_summary": feature_summary,
         }
     )
     if suite_manifest:
@@ -2168,11 +2208,15 @@ def train(cfg: TrainConfig) -> None:
                 "w0_bands",
                 "embedding_type",
                 "input_feature_dim",
+                "model_preset",
+                "runtime_model_kind",
                 "architecture_signature",
                 "degree_min",
                 "degree_max",
                 "target_mode",
+                "target_contract",
             )},
+            "feature_summary_path": str(layout.provenance_dir / "feature_summary.json"),
             "architecture_signature": _arch_signature,
             "w0_bands": payload.get("w0_bands"),
             "status": "running",

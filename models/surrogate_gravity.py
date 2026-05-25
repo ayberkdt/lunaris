@@ -579,6 +579,7 @@ class SurrogateGravityModel:
         config: Dict[str, Any],
         baseline_gravity_model: Optional[Any] = None,
         baseline_gravity_path: Optional[Path] = None,
+        force_runtime: Optional[Any] = None,
     ) -> None:
         self.model_dir = Path(model_dir).resolve()
         self.model = model
@@ -593,6 +594,7 @@ class SurrogateGravityModel:
         self.config = dict(config)
         self.baseline_gravity_model = baseline_gravity_model
         self.baseline_gravity_path = str(baseline_gravity_path) if baseline_gravity_path is not None else None
+        self._force_runtime = force_runtime
         self._baseline_torch_evaluator: Optional[Any] = None
         self._baseline_torch_signature: Optional[tuple[str, str, int]] = None
 
@@ -702,9 +704,26 @@ class SurrogateGravityModel:
         if r_ref_guess is None:
             r_ref_guess = r_ref_override if r_ref_override is not None else R_MOON
 
-        model = _build_model_from_config(config).to(device=device, dtype=torch.float32)
-        model.load_state_dict(_extract_state_dict(checkpoint_obj), strict=True)
-        model.eval()
+        force_runtime = None
+        try:
+            from st_lrps.runtime.force_model import load_surrogate_force_model
+
+            force_runtime = load_surrogate_force_model(
+                run_dir,
+                device=str(device),
+                chunk_size=8192,
+            )
+            model = force_runtime.model
+            logger.info("models.surrogate_gravity delegated neural inference to st_lrps.runtime.force_model.")
+        except Exception as exc:
+            logger.warning(
+                "Could not initialize canonical st_lrps.runtime.force_model adapter; "
+                "falling back to the legacy local runtime path: %s",
+                exc,
+            )
+            model = _build_model_from_config(config).to(device=device, dtype=torch.float32)
+            model.load_state_dict(_extract_state_dict(checkpoint_obj), strict=True)
+            model.eval()
 
         baseline_model = None
         baseline_path = None
@@ -734,6 +753,7 @@ class SurrogateGravityModel:
             config=config,
             baseline_gravity_model=baseline_model,
             baseline_gravity_path=baseline_path,
+            force_runtime=force_runtime,
         )
 
     @staticmethod
@@ -872,6 +892,18 @@ class SurrogateGravityModel:
             raise ValueError(f"positions_m must be shape (3,) or (N,3), got {pos.shape}")
 
         x_phys = torch.as_tensor(pos, device=self.device, dtype=torch.float32)
+        if self._force_runtime is not None:
+            delta_u_np = np.asarray(self._force_runtime.predict_residual_potential(pos), dtype=np.float64).reshape(-1, 1)
+            delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
+            potential = torch.as_tensor(delta_u_np, device=self.device, dtype=torch.float32)
+            accel = torch.as_tensor(delta_a_np, device=self.device, dtype=torch.float32)
+            if self.training_mode == "residual_potential":
+                accel = accel + self._base_acceleration(x_phys)
+                potential = potential + self._base_potential(x_phys)
+            return (
+                potential.detach().cpu().numpy().astype(np.float64, copy=False),
+                accel.detach().cpu().numpy().astype(np.float64, copy=False),
+            )
         with torch.enable_grad():
             x_scaled = self._scale_x(x_phys).requires_grad_(True)
             u_scaled = self.model(x_scaled)

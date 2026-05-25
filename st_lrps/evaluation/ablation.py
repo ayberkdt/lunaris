@@ -71,14 +71,20 @@ ABLATION_REGISTRY: List[AblationSpec] = [
     AblationSpec(
         name="radial_decay_encoding",
         description="Scaled inverse-radius decay features inspired by R/r radial decay.",
-        cli_overrides=["--use-radial-decay-encoding", "--radial-decay-max-power", "4", "--radial-decay-append-raw", "--use-residual-blocks", "--n-bands", "3"],
+        cli_overrides=["--model-preset", "custom", "--use-radial-decay-encoding", "--radial-decay-max-power", "4", "--radial-decay-append-raw", "--use-residual-blocks", "--n-bands", "3"],
         expected_purpose="Test the experimental scaled inverse-radius input encoding.",
         experimental=True,
     ),
     AblationSpec(
+        name="physical_radial_decay_recommended",
+        description="Physical radial-decay features using true R_ref/r_phys.",
+        cli_overrides=["--model-preset", "recommended_physical_radial_decay", "--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Benchmark the physically informed recommended input representation.",
+    ),
+    AblationSpec(
         name="real_sh_basis_encoding_optional",
         description="Torch-native real spherical-harmonic basis encoding.",
-        cli_overrides=["--use-real-sh-basis", "--real-sh-degree", "4", "--real-sh-append-raw", "--real-sh-include-radial", "--use-residual-blocks", "--n-bands", "3"],
+        cli_overrides=["--model-preset", "custom", "--use-real-sh-basis", "--real-sh-degree", "4", "--real-sh-append-raw", "--real-sh-include-radial", "--use-residual-blocks", "--n-bands", "3"],
         expected_purpose="Test the experimental angular SH basis encoding.",
         experimental=True,
     ),

@@ -37,6 +37,7 @@ from st_lrps.artifacts.manager import (
     resolve_run_dir as resolve_run_dir_from_artifacts,
 )
 from st_lrps.shared.scaling import ScalerPack, compute_base_accel, compute_base_potential
+from st_lrps.shared.contracts import TargetContract
 from st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 
 
@@ -70,7 +71,41 @@ def _to_tensor(x: Union[np.ndarray, torch.Tensor], device: torch.device) -> torc
     return t
 
 
-class SurrogateForceModel:
+class BaseSurrogateRuntime:
+    """Runtime contract for current and future ST-LRPS surrogate kinds."""
+
+    runtime_model_kind = "base"
+
+    def predict_residual_potential(self, x_m):  # pragma: no cover - interface
+        raise NotImplementedError
+
+    def predict_residual_accel(self, x_m):  # pragma: no cover - interface
+        raise NotImplementedError
+
+    def predict_total_accel(self, x_m, base_accel_fn: Optional[Callable] = None):  # pragma: no cover
+        raise NotImplementedError
+
+
+class PotentialAutogradRuntime(BaseSurrogateRuntime):
+    """Reference ST-LRPS runtime: scalar potential with autograd acceleration."""
+
+    runtime_model_kind = "potential_autograd"
+
+
+class DirectForceRuntime(BaseSurrogateRuntime):
+    """Placeholder for future distilled direct-force models."""
+
+    runtime_model_kind = "force_direct"
+
+    def __init__(self, *args, **kwargs) -> None:
+        raise NotImplementedError(
+            "runtime_model_kind='force_direct' is reserved for a future distilled "
+            "model where Delta_a_force(x) approximates grad(DeltaU_potential(x)). "
+            "Current ST-LRPS artifacts use runtime_model_kind='potential_autograd'."
+        )
+
+
+class SurrogateForceModel(PotentialAutogradRuntime):
     """
     Loaded surrogate gravity force model for propagator integration.
 
@@ -122,7 +157,15 @@ class SurrogateForceModel:
         self.mu_si = float(cfg.get("resolved_mu_si", MU_MOON_SI))
         self.a_sign = float(cfg.get("resolved_a_sign", 1.0))
         self.degree_min = int(cfg.get("degree_min", -1))
+        self.degree_max = int(cfg.get("degree_max", cfg.get("target_degree", -1)))
         self.r_ref_m = float(cfg.get("resolved_r_ref_m", R_MOON_SI))
+        self.runtime_model_kind = str(cfg.get("runtime_model_kind", "potential_autograd"))
+        self.target_contract = TargetContract.from_legacy_config(
+            cfg,
+            resolved_mu_si=self.mu_si,
+            resolved_r_ref_m=self.r_ref_m,
+            a_sign=self.a_sign,
+        )
 
         # Training altitude bounds: resolved from 3 sources in priority order.
         # Priority 1: explicit top-level config fields
@@ -398,7 +441,15 @@ class SurrogateForceModel:
                     f"base_accel_fn must return shape (N,3), got {a_base.shape}. "
                     f"N={x_arr.shape[0]}"
                 )
-        elif self.degree_min < 0:
+        elif (
+            self.target_contract.target_mode == "full"
+            and self.target_contract.baseline_kind == "none"
+        ):
+            a_base = np.zeros_like(da, dtype=np.float64)
+        elif (
+            self.target_contract.baseline_kind == "point_mass"
+            or int(self.target_contract.base_degree) <= 0
+        ):
             # Point-mass approximation: a = -mu * r / |r|^3
             r_norm = np.linalg.norm(x_arr, axis=1, keepdims=True)
             r_norm = np.maximum(r_norm, 1.0)
@@ -468,6 +519,14 @@ def load_surrogate_force_model(
         prefer="best",
         allow_config_mismatch=allow_config_mismatch,
     )
+    runtime_kind = str(cfg.get("runtime_model_kind", "potential_autograd") or "potential_autograd")
+    if runtime_kind != "potential_autograd":
+        if runtime_kind == "force_direct":
+            DirectForceRuntime()
+        raise ValueError(
+            f"Unsupported ST-LRPS runtime_model_kind={runtime_kind!r}. "
+            "Only 'potential_autograd' artifacts are currently implemented."
+        )
     return SurrogateForceModel(
         model=model,
         scaler=scaler,
@@ -482,7 +541,13 @@ def load_surrogate_force_model(
     )
 
 
-__all__ = ["SurrogateForceModel", "load_surrogate_force_model"]
+__all__ = [
+    "BaseSurrogateRuntime",
+    "PotentialAutogradRuntime",
+    "DirectForceRuntime",
+    "SurrogateForceModel",
+    "load_surrogate_force_model",
+]
 
 
 if __name__ == "__main__":

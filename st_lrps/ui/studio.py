@@ -152,6 +152,25 @@ except Exception:  # pragma: no cover - UI remains usable without artifact deps
     read_run_manifest = None  # type: ignore[assignment]
     resolve_artifact_run_dir = None  # type: ignore[assignment]
 
+# Dashboard widgets and training metrics (Phase 1-8 redesign)
+try:
+    from st_lrps.ui.dashboard_widgets import (
+        ExperimentHeader,
+        KPIStrip,
+        MetricCard,
+        StructuredLogView,
+    )
+    from st_lrps.ui.training_metrics import (
+        ETAEstimator,
+        TrainingLogParser,
+        TrainingMetricsStore,
+        compute_auto_log_interval,
+    )
+    _HAS_DASHBOARD_V2 = True
+except Exception:  # pragma: no cover
+    _HAS_DASHBOARD_V2 = False
+
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 _PRESETS_DIR = SCRIPT_DIR / "presets"
@@ -3431,6 +3450,24 @@ class STLRPSTrainTab(QWidget):
         self._history_poll_path: Optional[Path] = None
         self._history_poll_mtime: float = 0.0
 
+        # --- Dashboard v2: KPI strip, structured log, ETA, parser ---
+        if _HAS_DASHBOARD_V2:
+            self._kpi_strip = KPIStrip()
+            self._structured_log = StructuredLogView()
+            self._eta_estimator = ETAEstimator()
+            self._log_parser = TrainingLogParser()
+            self._metrics_store = TrainingMetricsStore()
+            self._eta_update_timer = QTimer(self)
+            self._eta_update_timer.setInterval(1000)
+            self._eta_update_timer.timeout.connect(self._update_eta_display)
+        else:
+            self._kpi_strip = None
+            self._structured_log = None
+            self._eta_estimator = None
+            self._log_parser = None
+            self._metrics_store = None
+
+
         # --- "Add to Queue" button (Feature #15) ---
         self.btn_enqueue = QPushButton("Kuyruğa Ekle")
         self.btn_enqueue.setToolTip("Mevcut ayarları eğitim kuyruğuna ekler.")
@@ -3468,12 +3505,19 @@ class STLRPSTrainTab(QWidget):
         top.setLayout(top_l)
 
         # --- Bottom execution area ---
+        # Phase 5: charts get 65% width, log panel gets 35%
         runner_and_plot = QSplitter(Qt.Orientation.Horizontal)
-        runner_and_plot.addWidget(self.runner)
-        runner_and_plot.addWidget(self._live_plot)
-        runner_and_plot.setStretchFactor(0, 1)
-        runner_and_plot.setStretchFactor(1, 1)
-        runner_and_plot.setSizes([420, 380])
+        if _HAS_DASHBOARD_V2 and self._structured_log is not None:
+            # Wrap the raw ProcessPane log into the structured log view tabs
+            self._structured_log.set_raw_log_widget(self.runner)
+            runner_and_plot.addWidget(self._live_plot)
+            runner_and_plot.addWidget(self._structured_log)
+        else:
+            runner_and_plot.addWidget(self.runner)
+            runner_and_plot.addWidget(self._live_plot)
+        runner_and_plot.setStretchFactor(0, 2)   # charts: 65%
+        runner_and_plot.setStretchFactor(1, 1)   # log: 35%
+        runner_and_plot.setSizes([550, 300])
 
         enqueue_row = QHBoxLayout()
         enqueue_row.setContentsMargins(0, 0, 0, 0)
@@ -3485,9 +3529,13 @@ class STLRPSTrainTab(QWidget):
         bottom_l.setContentsMargins(0, 0, 0, 0)
         bottom_l.setSpacing(6)
         bottom_l.addLayout(enqueue_row)
+        # Phase 4: KPI strip above the main workspace
+        if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
+            bottom_l.addWidget(self._kpi_strip)
         bottom_l.addWidget(runner_and_plot, 3)
         bottom_l.addWidget(self._queue, 1)
         bottom.setLayout(bottom_l)
+
 
         # --- Vertical splitter: scrollable params vs execution panel ---
         params_splitter = QSplitter(Qt.Orientation.Vertical)
@@ -4479,6 +4527,23 @@ class STLRPSTrainTab(QWidget):
         self.runner.set_output_dir(out_dir if out_dir else "")
         self._set_history_poll_dir(out_dir)
         self._save_settings()
+        # Dashboard v2: start ETA tracking and reset dashboard
+        if _HAS_DASHBOARD_V2:
+            if self._eta_estimator is not None:
+                self._eta_estimator.set_total_epochs(int(self.epochs.value()))
+                self._eta_estimator.on_training_start()
+            if self._eta_update_timer is not None:
+                self._eta_update_timer.start()
+            if self._metrics_store is not None:
+                self._metrics_store.clear()
+            if self._structured_log is not None:
+                self._structured_log.clear()
+            if self._kpi_strip is not None:
+                self._kpi_strip.reset()
+            main_win = self.window()
+            if hasattr(main_win, '_experiment_header'):
+                main_win._experiment_header.set_status("TRAINING")
+
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     # -----------------------------------------------------------------
@@ -4574,6 +4639,20 @@ class STLRPSTrainTab(QWidget):
     def _on_train_finished(
         self, exit_code: int, exit_status: QProcess.ExitStatus
     ) -> None:
+        # Dashboard v2: stop ETA timer and update status
+        if _HAS_DASHBOARD_V2:
+            if self._eta_update_timer is not None:
+                self._eta_update_timer.stop()
+            main_win = self.window()
+            if hasattr(main_win, '_experiment_header'):
+                status = "COMPLETED" if exit_code == 0 else "FAILED"
+                main_win._experiment_header.set_status(status)
+            if self._kpi_strip is not None:
+                self._kpi_strip.phase.set_value(
+                    "Completed" if exit_code == 0 else "Failed",
+                    state="success" if exit_code == 0 else "danger",
+                )
+
         self._poll_training_history()
         self._history_poll_timer.stop()
         training_ok = (
@@ -4687,6 +4766,64 @@ class STLRPSTrainTab(QWidget):
                 f"[UI] Auto-evaluation exited with code {exit_code}."
             )
 
+
+    # -----------------------------------------------------------------
+    # Dashboard v2: KPI update and ETA display
+    # -----------------------------------------------------------------
+    def _update_kpi_from_store(self) -> None:
+        """Push latest metrics from TrainingMetricsStore into KPI cards."""
+        if not _HAS_DASHBOARD_V2 or self._kpi_strip is None:
+            return
+        store = self._metrics_store
+        kpi = self._kpi_strip
+
+        epoch = store.latest_epoch()
+        total = int(self.epochs.value())
+        kpi.epoch.set_value(f"{epoch} / {total}")
+
+        tl = store.latest_train_loss()
+        if tl is not None:
+            kpi.train_loss.set_value(f"{tl:.3e}")
+
+        vl = store.latest_val_loss()
+        if vl is not None:
+            kpi.val_loss.set_value(f"{vl:.3e}")
+
+        lr = store.latest_lr()
+        if lr is not None:
+            kpi.lr.set_value(f"{lr:.2e}")
+
+        best = store.latest_best_score()
+        if best is not None:
+            best_ep = store.latest_best_epoch()
+            kpi.best_score.set_value(
+                f"{best:.3e}",
+                subtitle=f"epoch {best_ep}" if best_ep else None,
+                state="success",
+            )
+
+        # Direction metric
+        cos = store.latest("train_cos_sim")
+        if cos is not None:
+            kpi.direction.set_value(f"cos={cos:.4f}")
+
+    def _update_eta_display(self) -> None:
+        """Timer-driven update of ETA displays in KPI strip and header."""
+        if not _HAS_DASHBOARD_V2 or self._eta_estimator is None:
+            return
+        kpi = self._kpi_strip
+        if kpi is not None:
+            kpi.eta.set_value(self._eta_estimator.format_remaining())
+
+        # Update experiment header if available
+        main_win = self.window()
+        if hasattr(main_win, '_experiment_header'):
+            hdr = main_win._experiment_header
+            hdr.set_elapsed(self._eta_estimator.format_elapsed())
+            hdr.set_remaining(self._eta_estimator.format_remaining())
+            hdr.set_finish(self._eta_estimator.format_finish())
+
+
     # -----------------------------------------------------------------
     # Progress parsing (+ live plot feeding)
     # -----------------------------------------------------------------
@@ -4697,8 +4834,27 @@ class STLRPSTrainTab(QWidget):
             total = int(m.group(2))
             self.runner.progress.setRange(0, max(1, total))
             self.runner.progress.setValue(min(ep if ep >= 1 else ep + 1, total))
+            # Phase 9: ETA estimator tracking
+            if _HAS_DASHBOARD_V2 and self._eta_estimator is not None:
+                self._eta_estimator.set_total_epochs(total)
+                self._eta_estimator.on_epoch_start(ep)
 
-        # Feature #13: feed line to the live loss plot
+        # Phase 8: feed line to structured log parser + metrics store
+        if _HAS_DASHBOARD_V2 and self._log_parser is not None:
+            rec = self._log_parser.parse_line(line)
+            if rec is not None:
+                self._metrics_store.append(rec)
+                if self._structured_log is not None:
+                    self._structured_log.append_record(rec)
+                self._update_kpi_from_store()
+                # ETA: track epoch ends from validation summaries
+                if rec.event == "val_summary" and self._eta_estimator is not None:
+                    self._eta_estimator.on_epoch_end(rec.epoch)
+                # ETA: track batch progress
+                if rec.batch > 0 and rec.total_batches > 0 and self._eta_estimator is not None:
+                    self._eta_estimator.on_batch_progress(rec.batch, rec.total_batches)
+
+        # Feature #13: feed line to the live loss plot (existing)
         self._live_plot.parse_line(line)
 
         # Try to capture output dir
@@ -4708,6 +4864,7 @@ class STLRPSTrainTab(QWidget):
                 candidate = m2.group(1).strip().strip("'\"")
                 if Path(candidate).is_dir():
                     self.runner.set_output_dir(candidate)
+
                     self._set_history_poll_dir(candidate)
 
 
@@ -7541,53 +7698,56 @@ class MainWindow(QMainWindow):
         if not _HAS_H5PY:
             dep_info.append("h5py yüklü değil (dataset ön izleme devre dışı)")
 
-        # --- Header card ---
-        header_card = QFrame()
-        header_card.setObjectName("appHeaderCard")
-        header_card.setStyleSheet(
-            "QFrame#appHeaderCard {"
-            "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
-            "    stop:0 rgba(30, 20, 72, 0.80), stop:0.5 rgba(16, 24, 52, 0.75),"
-            "    stop:1 rgba(10, 18, 46, 0.80));"
-            "  border: 1px solid rgba(124, 92, 255, 0.24);"
-            "  border-radius: 14px;"
-            "}"
-        )
-        header_lo = QHBoxLayout()
-        header_lo.setContentsMargins(18, 10, 18, 10)
-        header_lo.setSpacing(16)
-
-        title_col = QVBoxLayout()
-        title_col.setContentsMargins(0, 0, 0, 0)
-        title_col.setSpacing(3)
-        lbl_title = QLabel("Lunar Potential Surrogate Dashboard")
-        lbl_title.setStyleSheet(
-            "color: #e8ecf8; font-size: 15px; font-weight: 700;"
-            " letter-spacing: 0.3px; background: transparent; border: none;"
-        )
-        lbl_subtitle = QLabel(
-            "Veri: Üretim + Analiz  ·  Model: Eğitim + Profiling + Değerlendirme"
-            "<span style='color:#6f7ca8; font-size:11px;'>"
-            "  —  dU artık potansiyeli; ivme grad(dU) ile elde edilir</span>"
-        )
-        lbl_subtitle.setStyleSheet(
-            "color: #8892b0; font-size: 12px; background: transparent; border: none;"
-        )
-        title_col.addWidget(lbl_title)
-        title_col.addWidget(lbl_subtitle)
-        header_lo.addLayout(title_col, 1)
-
-        if dep_info:
-            warn_lbl = QLabel("⚠  " + "  ·  ".join(dep_info))
-            warn_lbl.setStyleSheet(
-                "color: #fbbf24; font-size: 11px; font-style: italic;"
-                " background: rgba(251, 191, 36, 0.08);"
-                " border: 1px solid rgba(251, 191, 36, 0.22);"
-                " border-radius: 8px; padding: 5px 10px;"
+        # --- Header card (Phase 2: professional experiment header) ---
+        if _HAS_DASHBOARD_V2:
+            self._experiment_header = ExperimentHeader()
+            header_card = self._experiment_header
+            # Detect device
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    dev_name = torch.cuda.get_device_name(0)
+                    mem_total = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+                    self._experiment_header.set_device(f"CUDA \u00b7 {mem_total:.1f} GB")
+                else:
+                    self._experiment_header.set_device("CPU")
+            except Exception:
+                self._experiment_header.set_device("CPU")
+        else:
+            header_card = QFrame()
+            header_card.setObjectName("appHeaderCard")
+            header_card.setStyleSheet(
+                "QFrame#appHeaderCard {"
+                "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
+                "    stop:0 rgba(30, 20, 72, 0.80), stop:0.5 rgba(16, 24, 52, 0.75),"
+                "    stop:1 rgba(10, 18, 46, 0.80));"
+                "  border: 1px solid rgba(124, 92, 255, 0.24);"
+                "  border-radius: 14px;"
+                "}"
             )
-            header_lo.addWidget(warn_lbl, 0)
+            header_lo = QHBoxLayout()
+            header_lo.setContentsMargins(18, 10, 18, 10)
+            header_lo.setSpacing(16)
 
-        header_card.setLayout(header_lo)
+            title_col = QVBoxLayout()
+            title_col.setContentsMargins(0, 0, 0, 0)
+            title_col.setSpacing(3)
+            lbl_title = QLabel("ST-LRPS Surrogate Console")
+            lbl_title.setStyleSheet(
+                "color: #e8ecf8; font-size: 15px; font-weight: 700;"
+                " letter-spacing: 0.3px; background: transparent; border: none;"
+            )
+            lbl_subtitle = QLabel(
+                "Sobolev-trained lunar residual potential models"
+            )
+            lbl_subtitle.setStyleSheet(
+                "color: #8892b0; font-size: 12px; background: transparent; border: none;"
+            )
+            title_col.addWidget(lbl_title)
+            title_col.addWidget(lbl_subtitle)
+            header_lo.addLayout(title_col, 1)
+            header_card.setLayout(header_lo)
+
 
         # --- Sidebar navigation ---
         self._nav_buttons: List[QPushButton] = []

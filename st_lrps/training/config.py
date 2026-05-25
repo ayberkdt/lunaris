@@ -119,6 +119,13 @@ class TrainConfig:
 
     amp: bool = False
 
+    # Architecture preset layer. "baseline_raw" keeps all input encodings off
+    # and is the control representation. "recommended_physical_radial_decay"
+    # enables the physically scaled R_ref/r encoding. "custom" preserves manual
+    # flag-level control for ablations and old configs.
+    model_preset: str = "baseline_raw"
+    runtime_model_kind: str = "potential_autograd"
+
     # Fourier/RFF embedding → only for non-sine MLPs (activation="silu"/"tanh"/"softplus").
     # MUST NOT be combined with activation="sine" (SIREN): train() raises ValueError.
     use_fourier: bool = False
@@ -222,6 +229,17 @@ class TrainConfig:
     radial_decay_max_power: int = 4
     radial_decay_append_raw: bool = True
 
+    # Physical radial-decay encoding: computes true rho = R_ref / r_phys using
+    # scaler metadata. This is separate from the older scaled-coordinate
+    # RadialDecayEncoding and is the physically informed recommended option.
+    use_physical_radial_decay_encoding: bool = False
+    physical_radial_decay_max_power: int = 4
+    physical_radial_decay_append_raw: bool = True
+    physical_radial_decay_include_unit: bool = True
+    physical_radial_decay_include_r_scaled: bool = True
+    x_scale_m: Optional[float] = None
+    resolved_r_ref_m: Optional[float] = None
+
     # Real spherical-harmonic angular basis (experimental). Genuine real SH up to
     # real_sh_degree (orthonormal recurrence). See RealSHBasisEncoding.
     use_real_sh_basis: bool = False
@@ -264,6 +282,7 @@ class TrainConfig:
     # have sign-flipped latitude acceleration; training on them is silently
     # wrong. By default such datasets are rejected; set True only for inspection.
     allow_legacy_derivative_convention: bool = False
+    allow_legacy_target_mode_inference: bool = False
 
     # Determinism / cuDNN. Defaults preserve prior behavior.
     deterministic: bool = True
@@ -282,6 +301,71 @@ class TrainConfig:
     resume_strict: bool = True               # fail on architecture/dataset/scaler-critical mismatch
     resume_allow_longer_epochs: bool = True  # allow extending the epoch target on resume
     resume_append_history: bool = True       # preserve/append previous history by default
+
+
+MODEL_PRESETS = (
+    "baseline_raw",
+    "recommended_physical_radial_decay",
+    "ablation_radial_separation",
+    "ablation_radial_decay_scaled",
+    "ablation_real_sh_low_degree",
+    "custom",
+)
+
+
+_ENCODING_FLAGS = (
+    "use_fourier",
+    "use_sh_encoding",
+    "use_radial_separation",
+    "use_radial_decay_encoding",
+    "use_physical_radial_decay_encoding",
+    "use_real_sh_basis",
+)
+
+
+def apply_model_preset(cfg: TrainConfig) -> TrainConfig:
+    """Apply named architecture presets in-place and return ``cfg``.
+
+    Non-custom presets define the input encoding. If a caller also sets manual
+    encoding flags that conflict with the preset, fail loudly so ablations are
+    not mislabeled.
+    """
+
+    preset = str(getattr(cfg, "model_preset", "custom") or "custom").strip().lower()
+    if preset not in MODEL_PRESETS:
+        raise ValueError(f"Unknown model_preset={preset!r}; expected one of {MODEL_PRESETS}.")
+    if preset == "custom":
+        return cfg
+
+    implied: dict[str, bool] = {name: False for name in _ENCODING_FLAGS}
+    if preset == "recommended_physical_radial_decay":
+        implied["use_physical_radial_decay_encoding"] = True
+        cfg.physical_radial_decay_max_power = 4
+        cfg.physical_radial_decay_append_raw = True
+        cfg.physical_radial_decay_include_unit = True
+        cfg.physical_radial_decay_include_r_scaled = True
+    elif preset == "ablation_radial_separation":
+        implied["use_radial_separation"] = True
+    elif preset == "ablation_radial_decay_scaled":
+        implied["use_radial_decay_encoding"] = True
+    elif preset == "ablation_real_sh_low_degree":
+        implied["use_real_sh_basis"] = True
+        cfg.real_sh_degree = min(int(getattr(cfg, "real_sh_degree", 4)), 4)
+
+    active = {name for name in _ENCODING_FLAGS if bool(getattr(cfg, name, False))}
+    implied_active = {name for name, value in implied.items() if value}
+    if active and active != implied_active:
+        if not bool(getattr(cfg, "_model_preset_explicit", False)):
+            cfg.model_preset = "custom"
+            return cfg
+        raise ValueError(
+            f"model_preset={preset!r} conflicts with manual encoding flags {sorted(active)}. "
+            "Use --model-preset custom for manual encoding ablations."
+        )
+    for name, value in implied.items():
+        setattr(cfg, name, bool(value))
+    return cfg
+
 
 import dataclasses as _dataclasses
 _TC_DEFAULTS: dict = {
@@ -331,6 +415,22 @@ def parse_args() -> TrainConfig:
     group_arch.add_argument("--activation", type=str, default="sine",
                             choices=["sine", "silu", "tanh", "softplus"],
                             help="Activation function. 'sine' = SIREN.")
+    group_arch.add_argument(
+        "--model-preset",
+        choices=MODEL_PRESETS,
+        default=_TC_DEFAULTS.get("model_preset", "baseline_raw"),
+        help=(
+            "Named architecture preset. baseline_raw keeps raw xyz as the control; "
+            "recommended_physical_radial_decay enables true R_ref/r radial features; "
+            "custom respects manual encoding flags."
+        ),
+    )
+    group_arch.add_argument(
+        "--runtime-model-kind",
+        choices=["potential_autograd", "force_direct"],
+        default=_TC_DEFAULTS.get("runtime_model_kind", "potential_autograd"),
+        help="Runtime model contract. force_direct is a future placeholder and is not trainable here.",
+    )
     group_arch.add_argument("--w0-first", type=float, default=None,
                             help="SIREN w0 for first layer (default: auto-derived from dataset degree_max).")
     group_arch.add_argument("--w0-hidden", type=float, default=None,
@@ -600,6 +700,67 @@ def parse_args() -> TrainConfig:
         help="Do not append raw xyz to radial decay encoding.",
     )
 
+    # Physical radial decay encoding (true R_ref / r_phys).
+    pdec_group = group_enc.add_mutually_exclusive_group()
+    pdec_group.add_argument(
+        "--use-physical-radial-decay-encoding",
+        action="store_true",
+        dest="use_physical_radial_decay_encoding",
+        help="Use PhysicalRadialDecayEncoding with true rho=R_ref/r_phys. "
+             "Mutually exclusive with the other encodings.",
+    )
+    pdec_group.add_argument(
+        "--no-physical-radial-decay-encoding",
+        action="store_false",
+        dest="use_physical_radial_decay_encoding",
+        help="Disable physical radial decay encoding.",
+    )
+    group_enc.add_argument(
+        "--physical-radial-decay-max-power",
+        type=int,
+        default=_TC_DEFAULTS.get("physical_radial_decay_max_power", 4),
+        help="Highest power of true rho=R_ref/r_phys for PhysicalRadialDecayEncoding.",
+    )
+    pdec_raw_group = group_enc.add_mutually_exclusive_group()
+    pdec_raw_group.add_argument(
+        "--physical-radial-decay-append-raw",
+        action="store_true",
+        dest="physical_radial_decay_append_raw",
+        help="Append raw scaled xyz to physical radial decay features (default).",
+    )
+    pdec_raw_group.add_argument(
+        "--no-physical-radial-decay-append-raw",
+        action="store_false",
+        dest="physical_radial_decay_append_raw",
+        help="Do not append raw scaled xyz to physical radial decay features.",
+    )
+    pdec_unit_group = group_enc.add_mutually_exclusive_group()
+    pdec_unit_group.add_argument(
+        "--physical-radial-decay-include-unit",
+        action="store_true",
+        dest="physical_radial_decay_include_unit",
+        help="Include unit direction vector in physical radial decay features (default).",
+    )
+    pdec_unit_group.add_argument(
+        "--no-physical-radial-decay-include-unit",
+        action="store_false",
+        dest="physical_radial_decay_include_unit",
+        help="Omit unit direction vector from physical radial decay features.",
+    )
+    pdec_r_group = group_enc.add_mutually_exclusive_group()
+    pdec_r_group.add_argument(
+        "--physical-radial-decay-include-r-scaled",
+        action="store_true",
+        dest="physical_radial_decay_include_r_scaled",
+        help="Include scaled radius ||x_scaled|| in physical radial decay features (default).",
+    )
+    pdec_r_group.add_argument(
+        "--no-physical-radial-decay-include-r-scaled",
+        action="store_false",
+        dest="physical_radial_decay_include_r_scaled",
+        help="Omit scaled radius from physical radial decay features.",
+    )
+
     # Real spherical-harmonic angular basis (experimental).
     rsh_group = group_enc.add_mutually_exclusive_group()
     rsh_group.add_argument(
@@ -640,6 +801,10 @@ def parse_args() -> TrainConfig:
         use_radial_separation=False, radial_append_raw=False,
         use_radial_decay_encoding=False,
         radial_decay_append_raw=_TC_DEFAULTS.get("radial_decay_append_raw", True),
+        use_physical_radial_decay_encoding=False,
+        physical_radial_decay_append_raw=_TC_DEFAULTS.get("physical_radial_decay_append_raw", True),
+        physical_radial_decay_include_unit=_TC_DEFAULTS.get("physical_radial_decay_include_unit", True),
+        physical_radial_decay_include_r_scaled=_TC_DEFAULTS.get("physical_radial_decay_include_r_scaled", True),
         use_real_sh_basis=False,
         real_sh_append_raw=_TC_DEFAULTS.get("real_sh_append_raw", True),
         real_sh_include_radial=_TC_DEFAULTS.get("real_sh_include_radial", True),
@@ -687,6 +852,10 @@ def parse_args() -> TrainConfig:
                               default=False,
                               help="Permit training on datasets generated before the dP_dphi "
                                    "sign fix (sign-flipped latitude acceleration). Inspection only.")
+    group_safety.add_argument("--allow-legacy-target-mode-inference", action="store_true",
+                              default=False,
+                              help="Permit old datasets without explicit target_mode by inferring "
+                                   "residual/full from degree_min. Prefer regenerating metadata.")
     det_group = group_safety.add_mutually_exclusive_group()
     det_group.add_argument("--deterministic", action="store_true", dest="deterministic",
                            help="Set deterministic cuDNN (default: True).")
@@ -763,6 +932,29 @@ def parse_args() -> TrainConfig:
     # ---------------------------------------------------------------------------
 
     a = ap.parse_args()
+
+    # Backward-compatible CLI behavior: older commands that directly selected
+    # an encoding flag should continue to work without also adding
+    # ``--model-preset custom``. If the preset was not explicitly supplied,
+    # positive manual encoding flags switch the config to custom.
+    argv_tokens = list(sys.argv[1:])
+    preset_explicit = any(
+        tok == "--model-preset" or tok.startswith("--model-preset=")
+        for tok in argv_tokens
+    )
+    manual_encoding_requested = any(
+        tok in {
+            "--use-fourier",
+            "--use-sh-encoding",
+            "--use-radial-separation",
+            "--use-radial-decay-encoding",
+            "--use-physical-radial-decay-encoding",
+            "--use-real-sh-basis",
+        }
+        for tok in argv_tokens
+    )
+    if manual_encoding_requested and not preset_explicit:
+        a.model_preset = "custom"
 
     # 0. Resume pre-resolution.
     # When --resume-from is given, default --data/--out from the previous run so
@@ -890,7 +1082,7 @@ def parse_args() -> TrainConfig:
             print(f"Error: --a-sign must be 'auto', '1.0', or '-1.0'. Got: {a.a_sign}")
             sys.exit(1)
 
-    return TrainConfig(
+    cfg = TrainConfig(
         data=str(data_path),
         train_data=a.train_data,
         val_data=a.val_data,
@@ -934,6 +1126,8 @@ def parse_args() -> TrainConfig:
         prefetch_factor=(int(a.prefetch_factor) if a.prefetch_factor is not None else None),
         fit_rows=a.fit_rows,
         amp=bool(a.amp),
+        model_preset=str(a.model_preset),
+        runtime_model_kind=str(a.runtime_model_kind),
         use_fourier=bool(a.use_fourier),
         fourier_append_raw=bool(a.fourier_append_raw),
         fourier_n_features=int(a.fourier_n),
@@ -972,6 +1166,11 @@ def parse_args() -> TrainConfig:
         use_radial_decay_encoding=bool(a.use_radial_decay_encoding),
         radial_decay_max_power=max(1, int(a.radial_decay_max_power)),
         radial_decay_append_raw=bool(a.radial_decay_append_raw),
+        use_physical_radial_decay_encoding=bool(a.use_physical_radial_decay_encoding),
+        physical_radial_decay_max_power=max(1, int(a.physical_radial_decay_max_power)),
+        physical_radial_decay_append_raw=bool(a.physical_radial_decay_append_raw),
+        physical_radial_decay_include_unit=bool(a.physical_radial_decay_include_unit),
+        physical_radial_decay_include_r_scaled=bool(a.physical_radial_decay_include_r_scaled),
         use_real_sh_basis=bool(a.use_real_sh_basis),
         real_sh_degree=max(0, min(8, int(a.real_sh_degree))),
         real_sh_append_raw=bool(a.real_sh_append_raw),
@@ -988,6 +1187,7 @@ def parse_args() -> TrainConfig:
         a_scale_mode=str(a.a_scale_mode),
         target_scale_multiplier=float(a.target_scale_multiplier),
         allow_legacy_derivative_convention=bool(a.allow_legacy_derivative_convention),
+        allow_legacy_target_mode_inference=bool(a.allow_legacy_target_mode_inference),
         deterministic=bool(a.deterministic),
         benchmark_cudnn=bool(a.benchmark_cudnn),
         laplacian_mode=str(a.laplacian_mode),
@@ -1003,6 +1203,8 @@ def parse_args() -> TrainConfig:
         resume_allow_longer_epochs=True,
         resume_append_history=bool(getattr(a, "resume_append_history", True)),
     )
+    setattr(cfg, "_model_preset_explicit", bool(preset_explicit))
+    return apply_model_preset(cfg)
 
 
 # =============================================================================

@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 from st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI, is_lunar_body_signature
+from st_lrps.shared.contracts import TargetContract
 
 
 logger = logging.getLogger(__name__)
@@ -208,6 +209,53 @@ def compute_base_accel(x_phys: torch.Tensor, mu: float, degree_min: int = -1) ->
     return -mu * x_phys / (r_norm ** 3)
 
 
+def compute_base_potential_from_contract(
+    x_phys: torch.Tensor,
+    contract: TargetContract,
+) -> torch.Tensor:
+    """Return the scaler/loss baseline potential dictated by ``contract``.
+
+    For residual datasets, labels already contain the high-degree-minus-baseline
+    residual, so the target baseline in this layer is zero even when the
+    runtime total-field model later needs an SH baseline. Full-field point-mass
+    contracts subtract the monopole. Full-field SH baselines require an SH
+    evaluator and are not silently approximated here.
+    """
+
+    if contract.target_mode == "residual" or contract.baseline_kind == "none":
+        return torch.zeros((x_phys.shape[0], 1), device=x_phys.device, dtype=x_phys.dtype)
+    if contract.baseline_kind == "point_mass":
+        r_norm = torch.norm(x_phys, dim=1, keepdim=True).clamp(min=1.0)
+        return float(contract.a_sign) * (float(contract.mu_si) / r_norm)
+    if contract.baseline_kind == "spherical_harmonics":
+        raise NotImplementedError(
+            "TargetContract requests a spherical-harmonics full-field baseline, "
+            "but st_lrps.shared.scaling has no SH evaluator. Provide residual "
+            "labels or subtract the SH baseline in the caller."
+        )
+    raise ValueError(f"Unsupported baseline_kind={contract.baseline_kind!r}")
+
+
+def compute_base_accel_from_contract(
+    x_phys: torch.Tensor,
+    contract: TargetContract,
+) -> torch.Tensor:
+    """Return the scaler/loss baseline acceleration dictated by ``contract``."""
+
+    if contract.target_mode == "residual" or contract.baseline_kind == "none":
+        return torch.zeros((x_phys.shape[0], 3), device=x_phys.device, dtype=x_phys.dtype)
+    if contract.baseline_kind == "point_mass":
+        r_norm = torch.norm(x_phys, dim=1, keepdim=True).clamp(min=1.0)
+        return -float(contract.mu_si) * x_phys / (r_norm ** 3)
+    if contract.baseline_kind == "spherical_harmonics":
+        raise NotImplementedError(
+            "TargetContract requests a spherical-harmonics full-field baseline, "
+            "but st_lrps.shared.scaling has no SH evaluator. Provide residual "
+            "labels or subtract the SH baseline in the caller."
+        )
+    raise ValueError(f"Unsupported baseline_kind={contract.baseline_kind!r}")
+
+
 # --- GradNorm loss balancing (Chen et al. 2018) ---
 # Equalises ‖∂L_U/∂W‖ and ‖∂L_a/∂W‖ at the last hidden layer.
 # Amortised: expensive autograd only every update_interval steps.
@@ -228,6 +276,7 @@ def fit_scaler_streaming(
     u_scale_mode: str = "hybrid",
     a_scale_mode: str = "hybrid",
     target_scale_multiplier: float = 6.0,
+    target_contract: Optional[TargetContract] = None,
 ) -> "ScalerPack":
     """Stream-fit isometric scalers on residuals ΔU/Δa (baseline already subtracted).
 
@@ -246,8 +295,24 @@ def fit_scaler_streaming(
         RMS expansion factor used by the ``"rms"``/``"hybrid"`` target modes.
     """
     logger.info(f"Fitting isometric scaler on {n_fit:,} rows from '{h5_path.name}'...")
+    contract = target_contract
+    if contract is None:
+        contract = TargetContract.from_legacy_config(
+            {
+                "target_mode": target_mode,
+                "degree_min": degree_min,
+                "degree_max": degree_max,
+                "unit_system": getattr(meta, "unit_system", "unknown"),
+                "central_body": getattr(meta, "central_body", "moon") or "moon",
+                "derivative_convention_version": getattr(meta, "derivative_convention_version", None),
+            },
+            resolved_mu_si=float(mu_si),
+            resolved_r_ref_m=float(getattr(meta, "r_ref_m", None) or R_MOON_SI),
+            a_sign=float(a_sign),
+        )
     logger.info(
-        f"  Residual mode: subtracting point-mass baseline (mu_si={mu_si:.6e}, a_sign={a_sign:+.1f}); "
+        f"  Target contract: mode={contract.target_mode}, baseline={contract.baseline_kind}, "
+        f"base_degree={contract.base_degree}, target_degree={contract.target_degree}; "
         f"u_scale_mode={u_scale_mode}, a_scale_mode={a_scale_mode}, mult={target_scale_multiplier}"
     )
     rng = np.random.default_rng(seed)
@@ -284,8 +349,8 @@ def fit_scaler_streaming(
 
             # Subtract baseline so scaler is fitted on residuals
             x_t = torch.as_tensor(x, dtype=torch.float64)
-            u_base = compute_base_potential(x_t, mu_si, a_sign, degree_min).numpy()   # (B, 1)
-            a_base = compute_base_accel(x_t, mu_si, degree_min).numpy()              # (B, 3)
+            u_base = compute_base_potential_from_contract(x_t, contract).numpy()   # (B, 1)
+            a_base = compute_base_accel_from_contract(x_t, contract).numpy()       # (B, 3)
 
             delta_u = u - u_base    # residual potential
             delta_a = a - a_base    # residual acceleration
@@ -339,6 +404,10 @@ def fit_scaler_streaming(
         "target_mode": str(target_mode) if target_mode is not None else None,
         "degree_min": int(degree_min),
         "degree_max": int(degree_max) if degree_max is not None else None,
+        "target_contract": contract.to_dict(),
+        "baseline_kind": contract.baseline_kind,
+        "base_degree": int(contract.base_degree),
+        "target_degree": int(contract.target_degree),
         "u_scale_mode": str(u_scale_mode),
         "a_scale_mode": str(a_scale_mode),
         "target_scale_multiplier": float(target_scale_multiplier),
@@ -353,5 +422,7 @@ def fit_scaler_streaming(
 
 __all__ = [
     'IsometricScaleParams', 'ScalerPack', 'OnlineIsometricStats',
-    'compute_base_potential', 'compute_base_accel', 'fit_scaler_streaming',
+    'compute_base_potential', 'compute_base_accel',
+    'compute_base_potential_from_contract', 'compute_base_accel_from_contract',
+    'fit_scaler_streaming',
 ]

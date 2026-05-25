@@ -12,7 +12,12 @@ import torch
 import torch.nn as nn
 
 from st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI, is_lunar_body_signature
-from st_lrps.shared.scaling import ScalerPack, compute_base_accel, compute_base_potential
+from st_lrps.shared.contracts import TargetContract
+from st_lrps.shared.scaling import (
+    ScalerPack,
+    compute_base_accel_from_contract,
+    compute_base_potential_from_contract,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -391,12 +396,31 @@ class SobolevLoss(nn.Module):
         mu_si: float = MU_MOON_SI,
         degree_min: int = -1,
         r_ref_m: float = R_MOON_SI,
+        target_contract: Optional[TargetContract | dict] = None,
+        target_mode: Optional[str] = None,
+        degree_max: Optional[int] = None,
     ):
         super().__init__()
         self.a_sign = float(a_sign)
         self.mu_si = float(mu_si)
         self.degree_min = int(degree_min)
         self.r_ref_m = float(r_ref_m)
+        if isinstance(target_contract, dict):
+            self.target_contract = TargetContract.from_dict(target_contract)
+        elif isinstance(target_contract, TargetContract):
+            self.target_contract = target_contract
+        else:
+            self.target_contract = TargetContract.from_legacy_config(
+                {
+                    "target_mode": target_mode,
+                    "degree_min": degree_min,
+                    "degree_max": degree_max if degree_max is not None else max(int(degree_min) + 1, 0),
+                    "central_body": "moon",
+                },
+                resolved_mu_si=self.mu_si,
+                resolved_r_ref_m=self.r_ref_m,
+                a_sign=self.a_sign,
+            )
 
         self.register_buffer("x_mean", torch.tensor(scaler.x.mean))
         self.register_buffer("x_scale", torch.tensor([scaler.x.scale]))
@@ -576,9 +600,11 @@ class SobolevLoss(nn.Module):
         is therefore safe to use for validation reporting and checkpoint
         selection.
         """
-        # Analytical base (zero when degree_min >= 0; dataset already residual)
-        u_base = compute_base_potential(x_phys, self.mu_si, self.a_sign, self.degree_min)   # (B,1)
-        a_base = compute_base_accel(x_phys, self.mu_si, self.degree_min)                   # (B,3)
+        # Analytical base from explicit target semantics. Residual datasets
+        # already store residual labels, so base subtraction is zero even when
+        # the runtime total field later needs an SH baseline.
+        u_base = compute_base_potential_from_contract(x_phys, self.target_contract)   # (B,1)
+        a_base = compute_base_accel_from_contract(x_phys, self.target_contract)       # (B,3)
 
         # Residual targets (what the network must learn)
         delta_u_true = u_phys - u_base   # (B,1)
@@ -737,6 +763,10 @@ class SobolevLoss(nn.Module):
             "laplacian_mode": (_lap_mode if laplacian_applied else "off"),
             "laplacian_applied": bool(laplacian_applied),
             "altitude_balanced": float(bool(use_altitude_balanced_loss)),
+            "target_mode": self.target_contract.target_mode,
+            "baseline_kind": self.target_contract.baseline_kind,
+            "base_degree": int(self.target_contract.base_degree),
+            "target_degree": int(self.target_contract.target_degree),
         }
         return loss_opt, stats
 

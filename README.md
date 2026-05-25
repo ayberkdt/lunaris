@@ -127,6 +127,26 @@ Runtime import example:
 from st_lrps.runtime.force_model import load_surrogate_force_model
 ```
 
+Model target semantics are recorded explicitly through a `target_contract` in
+new configs/checkpoints. The contract distinguishes residual labels from
+full-field labels, records the baseline degree/kind, and keeps the runtime path
+aligned with the scaler and loss.
+
+Model presets:
+
+```text
+baseline_raw                         raw xyz control representation
+recommended_physical_radial_decay    physically informed R_ref/r radial decay encoding
+ablation_radial_separation           radial/direction feature ablation
+ablation_radial_decay_scaled         legacy scaled inverse-radius ablation
+ablation_real_sh_low_degree          real spherical-harmonic basis ablation
+custom                               manual encoding flags
+```
+
+Raw xyz remains the baseline. The physical radial-decay preset is intended for
+benchmarking as a recommended representation, not as an automatic performance
+claim.
+
 Runtime profiling:
 
 ```bash
@@ -139,6 +159,13 @@ python -m st_lrps.runtime.profiling \
 ```
 
 See `docs/profiling.md` for synthetic and dataset-backed profiling, CPU/CUDA timing, chunk-size sensitivity, and output interpretation.
+
+Lightweight benchmark scaffolds:
+
+```bash
+python -m st_lrps.evaluation.runtime_benchmark --help
+python -m st_lrps.evaluation.orbit_benchmark --help
+```
 
 Training and evaluation outputs should be written to user-selected output directories such as top-level `runs/`, `artifacts/`, `outputs/`, or a scratch location outside the repository. Do not place generated runs inside source package directories.
 
