@@ -227,6 +227,7 @@ try:
         KPIStrip,
         MetricCard,
         StructuredLogView,
+        TimeMetricsStrip,
     )
     from st_lrps.ui.training_metrics import (
         EpochGuard,
@@ -250,6 +251,16 @@ _PRESETS_DIR = SCRIPT_DIR / "presets"
 _REPO_ROOT = SCRIPT_DIR.parents[1]
 TRAIN_CLI_MODULE = "st_lrps.training.cli"
 EVAL_CLI_MODULE = "st_lrps.evaluation.cli"
+
+# Short, header-friendly labels for the model-representation presets.
+_PRESET_SHORT = {
+    "baseline_raw": "baseline",
+    "recommended_physical_radial_decay": "phys-radial",
+    "ablation_radial_separation": "abl:radial-sep",
+    "ablation_radial_decay_scaled": "abl:radial-decay",
+    "ablation_real_sh_low_degree": "abl:real-sh",
+    "custom": "custom",
+}
 PROFILE_CLI_MODULE = "st_lrps.runtime.profiling"
 # Filesystem locations are used only for preflight existence checks; launching
 # always goes through ``-m`` so package-relative imports resolve correctly.
@@ -1029,7 +1040,10 @@ class LiveLossPlot(QWidget):
         self._lbl_score = self._metric_label("Checkpoint Score", "...")
         self._lbl_formula = self._metric_label("Formula", "N/A")
 
-        metrics_row = QHBoxLayout()
+        # Metric chips are wrapped in containers so they can be hidden in
+        # compact mode (when an external KPI strip already shows these values).
+        self._metrics_row1 = QWidget()
+        metrics_row = QHBoxLayout(self._metrics_row1)
         metrics_row.setContentsMargins(0, 0, 0, 0)
         metrics_row.setSpacing(6)
         for w in (
@@ -1037,25 +1051,26 @@ class LiveLossPlot(QWidget):
             self._lbl_best_epoch, self._lbl_no_improve, self._lbl_lam_dir, self._lbl_lr,
         ):
             metrics_row.addWidget(w, 1)
-        card_layout.addLayout(metrics_row)
+        card_layout.addWidget(self._metrics_row1)
 
-        metrics_row2 = QHBoxLayout()
+        self._metrics_row2 = QWidget()
+        metrics_row2 = QHBoxLayout(self._metrics_row2)
         metrics_row2.setContentsMargins(0, 0, 0, 0)
         metrics_row2.setSpacing(6)
         metrics_row2.addWidget(self._lbl_score, 1)
         metrics_row2.addWidget(self._lbl_formula, 3)
-        card_layout.addLayout(metrics_row2)
+        card_layout.addWidget(self._metrics_row2)
 
-        help_label = QLabel(
+        self._help_label = QLabel(
             "Best metric selects ckpt_best.pt. Hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
         )
-        help_label.setWordWrap(True)
-        help_label.setStyleSheet("color: #7f8ab0; font-size: 10px;")
-        help_label.setToolTip(
+        self._help_label.setWordWrap(True)
+        self._help_label.setStyleSheet("color: #7f8ab0; font-size: 10px;")
+        self._help_label.setToolTip(
             "Best metric is the scalar score used to select ckpt_best.pt. "
             "For hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
         )
-        card_layout.addWidget(help_label)
+        card_layout.addWidget(self._help_label)
 
         # durum etiketi (altta ortalanmış)
         self._lbl_status = QLabel("Eğitim bekleniyor…")
@@ -1258,6 +1273,24 @@ class LiveLossPlot(QWidget):
         self._re_ckpt_last = re.compile(r"\[checkpoint\].*last saved.*epoch\s*[:=]\s*(\d+)", re.IGNORECASE)
 
         self._refresh_metric_labels()
+
+    def set_compact(self, compact: bool = True) -> None:
+        """Compact mode hides the in-card metric chips/help (shown elsewhere by
+        the KPI/time strips) so the plot itself gets the vertical space."""
+        for w in (self._metrics_row1, self._metrics_row2, self._help_label):
+            w.setVisible(not compact)
+        if compact:
+            # Let the chart shrink/grow freely instead of forcing a tall card.
+            if getattr(self, "_plot_tabs", None) is not None:
+                self._plot_tabs.setMinimumHeight(260)
+            for plot in (
+                getattr(self, "_plot_widget", None),
+                getattr(self, "_direction_plot", None),
+                getattr(self, "_direction_quality_plot", None),
+                getattr(self, "_checkpoint_plot", None),
+            ):
+                if plot is not None:
+                    plot.setMinimumHeight(180)
 
     def _metric_label(self, name: str, value: str = "—") -> QLabel:
         lbl = QLabel(f"<span style='color:#7480a8;font-size:10px'>{name}</span><br>"
@@ -2706,14 +2739,12 @@ class STLRPSTrainTab(QWidget):
         self.workflow_mode.addItem("🚂  Train only",              "train_only")
         self.workflow_mode.addItem("📊  Evaluate only",           "eval_only")
         self.workflow_mode.addItem("🚀  Train then evaluate",     "train_then_eval")
-        self.workflow_mode.addItem("⚡  Quick check",             "quick_check")
         self.workflow_mode.addItem("📋  Queue training runs",     "queue")
         self.workflow_mode.setCurrentIndex(2)  # default: Train then evaluate
         self.workflow_mode.setToolTip(
             f"Train only:         Runs python -m {TRAIN_CLI_MODULE}.\n"
             f"Evaluate only:      Runs python -m {EVAL_CLI_MODULE} (existing model folder required).\n"
-            "Train then eval:    Eğitim biter biter otomatik olarak değerlendirme başlatılır.\n"
-            "Quick check:        quick_check=True ile 1 epoch (pipeline doğrulaması).\n"
+            "Train then eval:    Eğitim biter bitmez otomatik olarak değerlendirme başlatılır.\n"
             "Queue:              Kuyruktaki tüm işler sırayla çalıştırılır."
         )
         self.workflow_mode.currentIndexChanged.connect(self._on_workflow_mode_changed)
@@ -3486,9 +3517,12 @@ class STLRPSTrainTab(QWidget):
         form_adv.addRow(self.preload_data)
         form_adv.addRow("Oto-RAM Yükleme Limiti (MB)", self.auto_preload_mb)
         form_adv.addRow(self.pin_memory)
-        form_adv.addRow(self.quick_check)
-        form_adv.addRow("Max Train Batch/Epoch", self.max_train_batches)
-        form_adv.addRow("Max Val Batch/Epoch", self.max_val_batches)
+        # quick_check / max_train_batches / max_val_batches are dev-only debug
+        # controls — kept as hidden widgets (for config/profile compatibility)
+        # but intentionally NOT shown in the normal Studio workflow.
+        self.quick_check.setVisible(False)
+        self.max_train_batches.setVisible(False)
+        self.max_val_batches.setVisible(False)
         _adv_sep = QLabel("  PINN Mimarisi")
         _adv_sep.setStyleSheet(
             "color: #9aa7ff; font-size: 11px; font-weight: 600;"
@@ -3660,6 +3694,7 @@ class STLRPSTrainTab(QWidget):
         # --- Dashboard v2: KPI strip, structured log, ETA, parser ---
         if _HAS_DASHBOARD_V2:
             self._kpi_strip = KPIStrip()
+            self._time_strip = TimeMetricsStrip()
             self._structured_log = StructuredLogView()
             self._eta_estimator = ETAEstimator()
             self._epoch_guard = EpochGuard()
@@ -3670,6 +3705,7 @@ class STLRPSTrainTab(QWidget):
             self._eta_update_timer.timeout.connect(self._update_eta_display)
         else:
             self._kpi_strip = None
+            self._time_strip = None
             self._structured_log = None
             self._eta_estimator = None
             self._epoch_guard = None
@@ -3726,7 +3762,7 @@ class STLRPSTrainTab(QWidget):
         # ── 2. Training control bar (Start/Stop/Progress always visible) ──
         train_ctrl_bar = self._build_training_control_bar()
 
-        # ── 4/5. Build the scrollable Configuration form ─────────────────
+        # ── PARAMETERS tab: the scrollable configuration form ────────────
         top = QWidget()
         top_l = QVBoxLayout()
         top_l.setContentsMargins(6, 6, 6, 6)
@@ -3734,8 +3770,15 @@ class STLRPSTrainTab(QWidget):
         top_l.addWidget(self._checklist_label)
         top_l.addLayout(grid)
         top.setLayout(top_l)
+        params_page = _scroll_wrap(top)
 
-        # ── 4. Main workspace: charts (dominant) | structured progress ───
+        # ── LIVE MONITOR tab: charts (dominant) + structured progress ────
+        # The chart card runs in compact mode: its redundant in-card metric
+        # chips are hidden (the KPI/time strips above already show them), so the
+        # actual plot fills the available height.
+        if _HAS_DASHBOARD_V2:
+            self._live_plot.set_compact(True)
+
         workspace_splitter = QSplitter(Qt.Orientation.Horizontal)
         if _HAS_DASHBOARD_V2 and self._structured_log is not None:
             # Phase 1: the Raw Log tab receives ONLY the raw log widget,
@@ -3748,33 +3791,51 @@ class STLRPSTrainTab(QWidget):
             workspace_splitter.addWidget(self.runner)
         workspace_splitter.setStretchFactor(0, 7)   # charts dominant (~70%)
         workspace_splitter.setStretchFactor(1, 3)   # structured progress (~30%)
-        workspace_splitter.setSizes([720, 320])
-        self._live_plot.setMinimumHeight(420)
+        workspace_splitter.setSizes([820, 360])
+        self._live_plot.setMinimumHeight(300)
         self._live_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # ── 5. Lower tabs: Configuration form + Queue (secondary) ────────
-        lower_tabs = QTabWidget()
-        lower_tabs.setDocumentMode(True)
-        lower_tabs.addTab(_scroll_wrap(top), "Configuration")
-        lower_tabs.addTab(self._queue, "Queue")
-        self._lower_tabs = lower_tabs
+        # Keep the status strips compact so the workspace gets the vertical room.
+        if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
+            self._kpi_strip.setMaximumHeight(92)
+            self._kpi_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        if _HAS_DASHBOARD_V2 and self._time_strip is not None:
+            self._time_strip.setMaximumHeight(92)
+            self._time_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        # ── Vertical splitter: workspace (dominant) over lower tabs ──────
-        main_splitter = QSplitter(Qt.Orientation.Vertical)
-        main_splitter.addWidget(workspace_splitter)
-        main_splitter.addWidget(lower_tabs)
-        main_splitter.setStretchFactor(0, 3)
-        main_splitter.setStretchFactor(1, 1)
-        main_splitter.setSizes([560, 240])
+        monitor_page = QWidget()
+        monitor_l = QVBoxLayout()
+        monitor_l.setContentsMargins(4, 4, 4, 4)
+        monitor_l.setSpacing(8)
+        if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
+            monitor_l.addWidget(self._kpi_strip)        # Phase 4: KPI status strip
+        if _HAS_DASHBOARD_V2 and self._time_strip is not None:
+            monitor_l.addWidget(self._time_strip)       # Phase 7: time metrics
+        monitor_l.addWidget(workspace_splitter, 1)      # charts/log fill the page
+        monitor_page.setLayout(monitor_l)
+
+        # ── Queue tab: its own roomy page (no longer crammed into Monitor) ──
+        queue_page = QWidget()
+        queue_l = QVBoxLayout()
+        queue_l.setContentsMargins(4, 4, 4, 4)
+        queue_l.setSpacing(8)
+        queue_l.addWidget(self._queue, 1)
+        queue_page.setLayout(queue_l)
+
+        # ── Phase 3: Parameters | Live Monitor | Queue sub-tabs ──────────
+        self._page_tabs = QTabWidget()
+        self._page_tabs.setDocumentMode(True)
+        self._params_tab_idx = self._page_tabs.addTab(params_page, "Parameters")
+        self._monitor_tab_idx = self._page_tabs.addTab(monitor_page, "Live Monitor")
+        self._queue_tab_idx = self._page_tabs.addTab(queue_page, "Queue")
+        self._page_tabs.setCurrentIndex(self._params_tab_idx)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(8)
         layout.addWidget(controls_bar)
         layout.addWidget(train_ctrl_bar)
-        if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
-            layout.addWidget(self._kpi_strip)   # Phase 4: top-level status strip
-        layout.addWidget(main_splitter, 1)
+        layout.addWidget(self._page_tabs, 1)
         self.setLayout(layout)
 
         self._epochs_max = int(self.epochs.value())
@@ -4061,17 +4122,10 @@ class STLRPSTrainTab(QWidget):
 
     def _on_workflow_mode_changed(self) -> None:
         mode = self.workflow_mode.currentData() or "train_then_eval"
-        is_quick = mode == "quick_check"
-        if is_quick:
-            self.quick_check.setChecked(True)
-        elif self.workflow_mode.currentData() != "quick_check":
-            # don't un-check if user manually set it
-            pass
         labels = {
             "train_only":      "Eğitimi Başlat",
             "eval_only":       "Değerlendirmeyi Başlat",
             "train_then_eval": "Eğit + Değerlendir",
-            "quick_check":     "Quick Check Başlat",
             "queue":           "Kuyruğu Başlat",
         }
         # Update start button label
@@ -4844,14 +4898,9 @@ class STLRPSTrainTab(QWidget):
             args += ["--pin-memory"]
         else:
             args += ["--no-pin-memory"]
-        if self.quick_check.isChecked():
-            args += ["--quick-check"]
-        mtb = self.max_train_batches.value()
-        if mtb > 0:
-            args += ["--max-train-batches", str(mtb)]
-        mvb = self.max_val_batches.value()
-        if mvb > 0:
-            args += ["--max-val-batches", str(mvb)]
+        # NOTE: --quick-check / --max-train-batches / --max-val-batches are
+        # developer-only debug flags and are intentionally NOT emitted by the
+        # normal Studio workflow.
 
         # PINN architecture
         if self.use_residual_blocks.isChecked():
@@ -4982,10 +5031,6 @@ class STLRPSTrainTab(QWidget):
                 self._queue._start_queue()
             return
 
-        # Quick check: force quick_check flag
-        if mode == "quick_check":
-            self.quick_check.setChecked(True)
-
         args = self._build_args()
         if args is None:
             return
@@ -5020,7 +5065,13 @@ class STLRPSTrainTab(QWidget):
                 self._kpi_strip.reset()
                 self._kpi_strip.epoch.set_value(f"0 / {int(self.epochs.value())}")
                 self._kpi_strip.phase.set_value("Starting", state="normal")
+            if self._time_strip is not None:
+                self._time_strip.reset()
             self._update_header_lifecycle("TRAINING")
+
+        # Phase 3: jump to Live Monitor so the user sees charts immediately.
+        if hasattr(self, "_page_tabs"):
+            self._page_tabs.setCurrentIndex(self._monitor_tab_idx)
 
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
@@ -5070,8 +5121,12 @@ class STLRPSTrainTab(QWidget):
             if self._kpi_strip is not None:
                 self._kpi_strip.reset()
                 self._kpi_strip.phase.set_value("Starting", state="normal")
+            if self._time_strip is not None:
+                self._time_strip.reset()
             self._update_header_lifecycle("TRAINING")
         self._user_stopped = False
+        if hasattr(self, "_page_tabs"):
+            self._page_tabs.setCurrentIndex(self._monitor_tab_idx)
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     def _arg_value(self, args: List[str], flag: str) -> Optional[str]:
@@ -5156,6 +5211,12 @@ class STLRPSTrainTab(QWidget):
                     "COMPLETED": "success", "FAILED": "danger", "INTERRUPTED": "warning",
                 }.get(status, "normal")
                 self._kpi_strip.phase.set_value(status.capitalize(), state=phase_state)
+            # Phase 7: finalize time metrics — ETA = Done, finish = actual time.
+            if self._time_strip is not None:
+                from datetime import datetime as _dt
+                self._time_strip.set_done(_dt.now().strftime("%H:%M"))
+                if self._eta_estimator is not None:
+                    self._time_strip.elapsed.set_value(self._eta_estimator.format_elapsed())
         self._user_stopped = False
 
         self._poll_training_history()
@@ -5314,20 +5375,37 @@ class STLRPSTrainTab(QWidget):
             kpi.direction.set_value(f"cos={cos:.4f}")
 
     def _update_eta_display(self) -> None:
-        """Timer-driven update of ETA displays in KPI strip and header."""
+        """Timer-driven update of time metrics in KPI strip, time strip, header."""
         if not _HAS_DASHBOARD_V2 or self._eta_estimator is None:
             return
+        est = self._eta_estimator
+        elapsed = est.format_elapsed()
+        remaining = est.format_remaining()
+        finish = est.format_finish()
+
         kpi = self._kpi_strip
         if kpi is not None:
-            kpi.eta.set_value(self._eta_estimator.format_remaining())
+            kpi.eta.set_value(remaining)
 
-        # Update experiment header if available
+        # Phase 7: full time-metric cards on the Live Monitor.
+        ts = self._time_strip
+        if ts is not None:
+            ts.elapsed.set_value(elapsed)
+            ts.eta.set_value(remaining)
+            ts.finish.set_value(finish)
+            ts.epoch_duration.set_value(est.format_current_epoch())
+            ts.avg_epoch.set_value(est.format_avg_epoch())
+            sps = self._metrics_store.latest("samples_per_s") if self._metrics_store else None
+            if sps is not None:
+                ts.samples_per_s.set_value(f"{sps:,.0f}")
+
+        # Compact time badges on the experiment header.
         main_win = self.window()
         if hasattr(main_win, '_experiment_header'):
             hdr = main_win._experiment_header
-            hdr.set_elapsed(self._eta_estimator.format_elapsed())
-            hdr.set_remaining(self._eta_estimator.format_remaining())
-            hdr.set_finish(self._eta_estimator.format_finish())
+            hdr.set_elapsed(elapsed)
+            hdr.set_remaining(remaining)
+            hdr.set_finish(finish)
 
     def _update_kpi_phase(self, rec) -> None:
         """Phase 4: reflect the live record's phase in the KPI strip."""
@@ -5372,7 +5450,7 @@ class STLRPSTrainTab(QWidget):
         return badge
 
     def _update_header_lifecycle(self, status: str) -> None:
-        """Phase 11: reflect real training state in the experiment header."""
+        """Phase 6/11: reflect real training state in the experiment header."""
         main_win = self.window()
         hdr = getattr(main_win, "_experiment_header", None)
         if hdr is None or not hasattr(hdr, "set_status"):
@@ -5383,6 +5461,16 @@ class STLRPSTrainTab(QWidget):
             hdr.set_remaining("Estimating…")
             hdr.set_finish("Estimating…")
             hdr.set_device(self._detect_device_badge())
+            # Context badges from the current configuration.
+            run = (self.runner._output_dir or self.out_dir.text().strip())
+            if hasattr(hdr, "set_run"):
+                hdr.set_run(Path(run).name if run else "auto")
+            ds = self.data.text().strip() or self.train_data.text().strip()
+            if hasattr(hdr, "set_dataset"):
+                hdr.set_dataset(Path(ds).name if ds else "auto")
+            if hasattr(hdr, "set_preset"):
+                _p = self.model_preset.currentData() or "custom"
+                hdr.set_preset(_PRESET_SHORT.get(_p, _p))
 
     # -----------------------------------------------------------------
     # Progress parsing (+ live plot feeding)
@@ -8243,6 +8331,403 @@ class CloudAnalysisTab(QWidget):
 
 
 # =============================================================================
+# 13b. DATA PAGE  (dataset readiness)
+# =============================================================================
+
+
+def _attr_lookup(attrs: Dict[str, Any], *keys: str) -> Any:
+    """Return the first present attribute among ``keys`` (case-insensitive)."""
+    if not isinstance(attrs, dict):
+        return None
+    lower = {str(k).lower(): v for k, v in attrs.items()}
+    for k in keys:
+        if k in attrs:
+            return attrs[k]
+        if k.lower() in lower:
+            return lower[k.lower()]
+    return None
+
+
+class DatasetInspectionPanel(QWidget):
+    """Dataset readiness panel: pick an HDF5 dataset, inspect metadata, validate."""
+
+    send_to_training = pyqtSignal(str)
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+
+        title = QLabel("Dataset Readiness")
+        title.setStyleSheet("font-size: 15px; font-weight: 700; color: #e6edf7;")
+        subtitle = QLabel(
+            "Inspect an HDF5 cloud and confirm it is suitable for ST-LRPS training."
+        )
+        subtitle.setStyleSheet("color: #7f91ac; font-size: 12px;")
+
+        self.path_edit = ValidatedPathEdit(
+            placeholder="Select an HDF5 dataset (.h5) to inspect", check_file=True
+        )
+        btn_browse = QPushButton("Select...")
+        btn_browse.clicked.connect(self._pick)
+        self.btn_validate = QPushButton("Validate Dataset")
+        self.btn_validate.setProperty("kind", "primary")
+        self.btn_validate.clicked.connect(self._validate)
+        self.btn_send = QPushButton("Send to Training")
+        self.btn_send.setProperty("kind", "ghost")
+        self.btn_send.clicked.connect(self._send)
+        path_row = QHBoxLayout()
+        path_row.setContentsMargins(0, 0, 0, 0)
+        path_row.setSpacing(8)
+        path_row.addWidget(self.path_edit, 1)
+        path_row.addWidget(btn_browse)
+        path_row.addWidget(self.btn_validate)
+        path_row.addWidget(self.btn_send)
+
+        self.status_label = QLabel("UNKNOWN")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._set_status("unknown", "Select a dataset to inspect metadata.")
+
+        # Metadata summary card
+        self._summary = QLabel("Select a dataset to inspect metadata.")
+        self._summary.setWordWrap(True)
+        self._summary.setTextFormat(Qt.TextFormat.RichText)
+        self._summary.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._summary.setStyleSheet(
+            "background: rgba(13, 22, 38, 0.85); border: 1px solid #26364f;"
+            " border-radius: 10px; padding: 12px; color: #cdd9ee; font-size: 12px;"
+        )
+        self._summary.setMinimumHeight(220)
+
+        # Raw metadata panel
+        self._raw = QPlainTextEdit()
+        self._raw.setReadOnly(True)
+        self._raw.setFont(_mono_font())
+        self._raw.setPlaceholderText("Raw metadata/attributes will appear here.")
+        self._raw.setMinimumHeight(180)
+
+        meta_split = QSplitter(Qt.Orientation.Horizontal)
+        sl = QWidget(); slo = QVBoxLayout(); slo.setContentsMargins(0, 0, 0, 0)
+        slo.addWidget(QLabel("Metadata summary")); slo.addWidget(self._summary, 1); sl.setLayout(slo)
+        sr = QWidget(); sro = QVBoxLayout(); sro.setContentsMargins(0, 0, 0, 0)
+        sro.addWidget(QLabel("Raw attributes")); sro.addWidget(self._raw, 1); sr.setLayout(sro)
+        meta_split.addWidget(sl)
+        meta_split.addWidget(sr)
+        meta_split.setSizes([520, 420])
+
+        backend_note = QLabel(
+            "Full dataset convention validation is performed by the training backend "
+            "before training starts."
+        )
+        backend_note.setWordWrap(True)
+        backend_note.setStyleSheet("color: #7f91ac; font-size: 11px;")
+
+        lo = QVBoxLayout()
+        lo.setContentsMargins(12, 12, 12, 12)
+        lo.setSpacing(10)
+        lo.addWidget(title)
+        lo.addWidget(subtitle)
+        lo.addLayout(path_row)
+        lo.addWidget(self.status_label)
+        lo.addWidget(meta_split, 1)
+        lo.addWidget(backend_note)
+        self.setLayout(lo)
+
+    # -- helpers --
+    def _pick(self) -> None:
+        start = self.path_edit.text().strip() or str(_REPO_ROOT)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select dataset", start, "HDF5 (*.h5 *.hdf5);;All files (*)"
+        )
+        if path:
+            self.path_edit.setText(path)
+            self._validate()
+
+    def _set_status(self, level: str, text: str) -> None:
+        colors = {
+            "ready":   ("#2dd4bf", "rgba(45, 212, 191, 0.12)", "Ready"),
+            "warning": ("#f6c177", "rgba(246, 193, 119, 0.12)", "Warning"),
+            "error":   ("#ff6b7a", "rgba(255, 107, 122, 0.14)", "Error"),
+            "unknown": ("#7f91ac", "rgba(127, 145, 172, 0.12)", "Unknown"),
+        }
+        color, bg, label = colors.get(level, colors["unknown"])
+        self.status_label.setText(f"{label} — {text}")
+        self.status_label.setStyleSheet(
+            f"color: {color}; background: {bg}; border: 1px solid {color};"
+            " border-radius: 8px; padding: 6px 10px; font-weight: 600; font-size: 12px;"
+        )
+
+    def _send(self) -> None:
+        path = self.path_edit.text().strip()
+        if path and Path(path).exists():
+            self.send_to_training.emit(path)
+        else:
+            QMessageBox.information(self, "No dataset", "Select a valid dataset file first.")
+
+    def _validate(self) -> None:
+        path = self.path_edit.text().strip()
+        if not path or not Path(path).exists():
+            self._set_status("error", "File not found.")
+            self._summary.setText("Select a dataset to inspect metadata.")
+            self._raw.clear()
+            return
+        if not _HAS_H5PY:
+            self._set_status(
+                "unknown",
+                "h5py is not installed; metadata preview is unavailable.",
+            )
+            return
+        info = _introspect_h5(path)
+        if info is None:
+            self._set_status("error", "Could not read the HDF5 file.")
+            self._summary.setText("Could not read the HDF5 file.")
+            self._raw.clear()
+            return
+
+        attrs = info.get("attrs", {})
+        rows = info.get("rows")
+        unit_system = _attr_lookup(attrs, "unit_system", "units")
+        degree_max = _attr_lookup(attrs, "degree_max", "requested_degree", "max_degree")
+        degree_min = _attr_lookup(attrs, "degree_min", "min_degree")
+
+        fields = [
+            ("File", Path(path).name),
+            ("Path", str(path)),
+            ("Rows", f"{rows:,}" if isinstance(rows, int) else rows),
+            ("Columns", info.get("cols")),
+            ("Dataset name", info.get("dataset_name")),
+            ("Unit system", unit_system),
+            ("Central body", _attr_lookup(attrs, "central_body", "body")),
+            ("Target mode", _attr_lookup(attrs, "target_mode")),
+            ("Degree min", degree_min),
+            ("Degree max", degree_max),
+            ("Altitude min (km)", _attr_lookup(attrs, "alt_min_km", "altitude_min_km", "alt_min")),
+            ("Altitude max (km)", _attr_lookup(attrs, "alt_max_km", "altitude_max_km", "alt_max")),
+            ("Derivative convention", _attr_lookup(attrs, "derivative_convention_version", "derivative_convention")),
+            ("Gravity model", _attr_lookup(attrs, "gravity_model_path", "gfc_path", "gravity_model")),
+            ("Include potential", _attr_lookup(attrs, "include_potential")),
+            ("DU_m", _attr_lookup(attrs, "DU_m", "du_m")),
+            ("TU_s", _attr_lookup(attrs, "TU_s", "tu_s")),
+            ("VU_m_s", _attr_lookup(attrs, "VU_m_s", "vu_m_s")),
+        ]
+        html_rows = []
+        for label, value in fields:
+            shown = "—" if value is None else str(value)
+            html_rows.append(
+                f"<tr><td style='color:#7f91ac;padding:2px 14px 2px 0;'>{label}</td>"
+                f"<td style='color:#e6edf7;font-family:Consolas,monospace;'>{shown}</td></tr>"
+            )
+        self._summary.setText("<table>" + "".join(html_rows) + "</table>")
+
+        import json as _json
+        try:
+            self._raw.setPlainText(_json.dumps(attrs, indent=2, default=str))
+        except Exception:
+            self._raw.setPlainText(str(attrs))
+
+        # Validation verdict
+        if not isinstance(rows, int) or rows <= 0:
+            self._set_status("error", "Dataset has no rows.")
+        elif unit_system and (degree_max is not None):
+            self._set_status(
+                "ready",
+                "Metadata present. Backend performs full convention checks at launch.",
+            )
+        else:
+            self._set_status(
+                "warning",
+                "Some expected metadata is missing; backend will re-validate at launch.",
+            )
+
+
+class DataPage(QWidget):
+    """Stage 1 — Data: dataset readiness, generation, and analysis."""
+
+    def __init__(self, cloud_tab: QWidget, analysis_tab: QWidget,
+                 parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.inspect_panel = DatasetInspectionPanel()
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.addTab(self.inspect_panel, "Dataset")
+        tabs.addTab(cloud_tab, "Generate")
+        tabs.addTab(analysis_tab, "Analyze")
+        self._tabs = tabs
+        lo = QVBoxLayout()
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.addWidget(tabs)
+        self.setLayout(lo)
+
+
+# =============================================================================
+# 13c. EVALUATION PAGE  (model report + runtime performance + accuracy)
+# =============================================================================
+
+
+class ModelReportPanel(QWidget):
+    """Read-only artifact report for a trained ST-LRPS run directory."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+
+        title = QLabel("Model Report")
+        title.setStyleSheet("font-size: 15px; font-weight: 700; color: #e6edf7;")
+
+        self.run_edit = ValidatedPathEdit(
+            placeholder="Select a trained run directory", check_file=False
+        )
+        btn_browse = QPushButton("Select...")
+        btn_browse.clicked.connect(self._pick)
+        btn_refresh = QPushButton("Refresh Report")
+        btn_refresh.setProperty("kind", "primary")
+        btn_refresh.clicked.connect(self._refresh)
+        path_row = QHBoxLayout()
+        path_row.setContentsMargins(0, 0, 0, 0)
+        path_row.setSpacing(8)
+        path_row.addWidget(self.run_edit, 1)
+        path_row.addWidget(btn_browse)
+        path_row.addWidget(btn_refresh)
+
+        self._report = QPlainTextEdit()
+        self._report.setReadOnly(True)
+        self._report.setFont(_mono_font())
+        self._report.setPlaceholderText("Select a run directory to inspect model artifacts.")
+        self._report.setMinimumHeight(320)
+
+        # Open-file buttons
+        open_row = QHBoxLayout()
+        open_row.setContentsMargins(0, 0, 0, 0)
+        open_row.setSpacing(8)
+        self._open_buttons = {}
+        for label, fname in (
+            ("Open run folder", ""),
+            ("config.json", "config.json"),
+            ("history.csv", "history.csv"),
+            ("history.jsonl", "history.jsonl"),
+            ("train.log", "train.log"),
+        ):
+            b = QPushButton(label)
+            b.setProperty("kind", "ghost")
+            b.clicked.connect(lambda _c=False, f=fname: self._open(f))
+            self._open_buttons[label] = b
+            open_row.addWidget(b)
+        open_row.addStretch(1)
+
+        lo = QVBoxLayout()
+        lo.setContentsMargins(12, 12, 12, 12)
+        lo.setSpacing(10)
+        lo.addWidget(title)
+        lo.addLayout(path_row)
+        lo.addLayout(open_row)
+        lo.addWidget(self._report, 1)
+        self.setLayout(lo)
+
+    def _pick(self) -> None:
+        start = self.run_edit.text().strip() or str(_REPO_ROOT)
+        path = QFileDialog.getExistingDirectory(self, "Select run directory", start)
+        if path:
+            self.run_edit.setText(path)
+            self._refresh()
+
+    def _open(self, fname: str) -> None:
+        run_dir = self.run_edit.text().strip()
+        if not run_dir or not Path(run_dir).is_dir():
+            QMessageBox.information(self, "No run", "Select a run directory first.")
+            return
+        target = Path(run_dir) if not fname else (Path(run_dir) / fname)
+        if not target.exists():
+            QMessageBox.information(self, "Not available", f"{target.name} not found in this run.")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+
+    def _refresh(self) -> None:
+        run_dir = self.run_edit.text().strip()
+        if not run_dir or not Path(run_dir).is_dir():
+            self._report.setPlainText("Select a run directory to inspect model artifacts.")
+            return
+        root = Path(run_dir)
+        cfg = _read_json_if_exists(root / "config.json")
+        manifest = _read_json_if_exists(root / "run_manifest.json")
+        scaler = _read_json_if_exists(root / "scaler.json")
+        feat = _read_json_if_exists(root / "provenance" / "feature_summary.json")
+        dsm = _read_json_if_exists(root / "provenance" / "dataset_meta.json")
+        status = _inspect_run_artifacts(run_dir)
+
+        def g(*keys, src=cfg, default="not available"):
+            for k in keys:
+                if isinstance(src, dict) and k in src and src[k] is not None:
+                    return src[k]
+            return default
+
+        lines: List[str] = []
+        lines.append(f"Run directory : {root}")
+        lines.append(f"Run status    : {manifest.get('status', 'not available') if manifest else 'not available'}")
+        lines.append("")
+        lines.append("── Architecture ──")
+        lines.append(f"model_preset     : {g('model_preset')}")
+        lines.append(f"hidden / depth   : {g('hidden')} / {g('depth')}")
+        lines.append(f"n_bands          : {g('n_bands')}")
+        lines.append(f"activation       : {g('activation')}")
+        lines.append(f"degree_min/max   : {g('degree_min')} / {g('degree_max', 'requested_degree')}")
+        lines.append(f"embedding_type   : {g('embedding_type', src=feat) if feat else g('embedding_type')}")
+        lines.append(f"input_feature_dim: {g('input_feature_dim', src=feat) if feat else g('input_feature_dim')}")
+        lines.append(f"arch signature   : {status.get('architecture_signature') or 'not available'}")
+        lines.append("")
+        lines.append("── Checkpoint ──")
+        lines.append(f"checkpoint     : {status.get('checkpoint_path') or 'not available'}")
+        lines.append(f"schema version : {status.get('checkpoint_schema_version') or 'not available'}")
+        lines.append(f"best epoch     : {status.get('best_epoch') if status.get('best_epoch') is not None else 'not available'}")
+        lines.append(f"best score     : {status.get('best_score') if status.get('best_score') is not None else 'not available'}")
+        lines.append(f"scaler status  : {status.get('scaler_status')}")
+        if scaler:
+            lines.append(f"scaler keys    : {', '.join(list(scaler.keys())[:8])}")
+        lines.append("")
+        lines.append("── Target contract ──")
+        tc = cfg.get("target_contract") if isinstance(cfg, dict) else None
+        if isinstance(tc, dict):
+            for k, v in tc.items():
+                lines.append(f"  {k}: {v}")
+        else:
+            lines.append("  not available")
+        if dsm:
+            lines.append("")
+            lines.append("── Dataset meta (provenance) ──")
+            for k in ("unit_system", "central_body", "target_mode", "degree_min", "degree_max"):
+                if k in dsm:
+                    lines.append(f"  {k}: {dsm[k]}")
+        if status.get("warnings"):
+            lines.append("")
+            lines.append("── Warnings ──")
+            for w in status["warnings"]:
+                lines.append(f"  ! {w}")
+
+        # Disable open buttons for missing files
+        self._open_buttons["config.json"].setEnabled((root / "config.json").exists())
+        self._open_buttons["history.csv"].setEnabled((root / "history.csv").exists())
+        self._open_buttons["history.jsonl"].setEnabled((root / "history.jsonl").exists())
+        self._open_buttons["train.log"].setEnabled((root / "train.log").exists())
+
+        self._report.setPlainText("\n".join(lines))
+
+
+class EvaluationPage(QWidget):
+    """Stage 3 — Evaluation: model report, accuracy, runtime performance."""
+
+    def __init__(self, eval_tab: QWidget, profile_tab: QWidget,
+                 parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.report_panel = ModelReportPanel()
+        tabs = QTabWidget()
+        tabs.setDocumentMode(True)
+        tabs.addTab(self.report_panel, "Model Report")
+        tabs.addTab(eval_tab, "Accuracy Evaluation")
+        tabs.addTab(profile_tab, "Performance Analysis")
+        self._tabs = tabs
+        lo = QVBoxLayout()
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.addWidget(tabs)
+        self.setLayout(lo)
+
+
+# =============================================================================
 # 14. MAIN WINDOW
 # =============================================================================
 
@@ -8250,11 +8735,11 @@ class CloudAnalysisTab(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lunar Potential Surrogate Dashboard")
-        self.resize(1280, 820)
+        self.setWindowTitle("ST-LRPS Studio")
+        self.resize(1320, 860)
         self.setMinimumSize(1024, 680)
 
-        # --- Page widgets with inter-widget wiring ---
+        # --- Underlying tab widgets (preserved, re-homed into the 3 stages) ---
         self._cloud_tab    = CloudGenTab()
         self._train_tab    = STLRPSTrainTab()
         self._profile_tab  = STLRPSProfilingTab()
@@ -8264,13 +8749,16 @@ class MainWindow(QMainWindow):
         self._cloud_tab.set_train_tab(self._train_tab)
         self._cloud_tab.cloud_params_changed.connect(self._train_tab.sync_from_cloud)
 
-        # --- Content stack (replaces nested QTabWidgets) ---
+        # --- Three workflow stages: Data → Training → Evaluation ---
+        self._data_page = DataPage(self._cloud_tab, self._analysis_tab)
+        self._eval_page = EvaluationPage(self._eval_tab, self._profile_tab)
+        self._data_page.inspect_panel.send_to_training.connect(self._on_dataset_to_training)
+
         self._stack = QStackedWidget()
-        self._stack.addWidget(self._cloud_tab)     # index 0
-        self._stack.addWidget(self._analysis_tab)  # index 1
-        self._stack.addWidget(self._train_tab)     # index 2
-        self._stack.addWidget(self._profile_tab)   # index 3
-        self._stack.addWidget(self._eval_tab)      # index 4
+        self._stack.addWidget(self._data_page)   # index 0: Data
+        self._stack.addWidget(self._train_tab)   # index 1: Training
+        self._stack.addWidget(self._eval_page)   # index 2: Evaluation
+        self._page_titles = ["Data", "Training", "Evaluation"]
 
         dep_info = []
         if not _HAS_PYQTGRAPH:
@@ -8372,6 +8860,19 @@ class MainWindow(QMainWindow):
         ):
             _apply_status_tips(tab)
 
+        # --- Header context badges: keep preset/dataset in sync while idle ---
+        hdr = getattr(self, "_experiment_header", None)
+        if hdr is not None and hasattr(hdr, "set_preset"):
+            def _sync_preset():
+                _p = self._train_tab.model_preset.currentData() or "custom"
+                hdr.set_preset(_PRESET_SHORT.get(_p, _p))
+            self._train_tab.model_preset.currentIndexChanged.connect(lambda *_: _sync_preset())
+            _sync_preset()
+            self._train_tab.data.textChanged.connect(
+                lambda *_: hdr.set_dataset(Path(self._train_tab.data.text().strip()).name
+                                           if self._train_tab.data.text().strip() else "—")
+            )
+
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("navSidebar")
@@ -8421,14 +8922,10 @@ class MainWindow(QMainWindow):
         lo = QVBoxLayout()
         lo.setContentsMargins(0, 8, 0, 14)
         lo.setSpacing(1)
-        lo.addWidget(_section_lbl("VERİ"))
-        lo.addWidget(_nav_btn("Veri Üretimi", 0))
-        lo.addWidget(_nav_btn("Veri Analizi", 1))
-        lo.addSpacing(4)
-        lo.addWidget(_section_lbl("MODEL"))
-        lo.addWidget(_nav_btn("Eğitim", 2))
-        lo.addWidget(_nav_btn("Runtime Profiling", 3))
-        lo.addWidget(_nav_btn("Değerlendirme", 4))
+        lo.addWidget(_section_lbl("WORKFLOW"))
+        lo.addWidget(_nav_btn("1 · Data", 0))
+        lo.addWidget(_nav_btn("2 · Training", 1))
+        lo.addWidget(_nav_btn("3 · Evaluation", 2))
         lo.addStretch(1)
         sidebar.setLayout(lo)
 
@@ -8439,6 +8936,23 @@ class MainWindow(QMainWindow):
         self._stack.setCurrentIndex(page_idx)
         for i, btn in enumerate(self._nav_buttons):
             btn.setChecked(i == page_idx)
+        # Reflect the active page in the header.
+        hdr = getattr(self, "_experiment_header", None)
+        if hdr is not None and hasattr(hdr, "set_page"):
+            titles = getattr(self, "_page_titles", [])
+            if 0 <= page_idx < len(titles):
+                hdr.set_page(titles[page_idx])
+
+    def _on_dataset_to_training(self, path: str) -> None:
+        """Data page → Training: load the chosen dataset and switch pages."""
+        try:
+            idx = self._train_tab.dataset_mode.findData("single")
+            if idx >= 0:
+                self._train_tab.dataset_mode.setCurrentIndex(idx)
+            self._train_tab.data.setText(path)
+        except Exception:
+            pass
+        self._navigate(1)
 
 
 # =============================================================================

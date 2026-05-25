@@ -67,6 +67,50 @@ def test_train_tab_builds_resume_training_args(qapp, tmp_path):
     tab.deleteLater()
 
 
+def test_train_tab_omits_debug_flags(qapp):
+    """Normal Studio command generation must not emit dev/debug flags."""
+    tab = STLRPSTrainTab()
+    _set_combo_data(tab.workflow_mode, "train_then_eval")
+    _set_combo_data(tab.dataset_mode, "single")
+    tab.data.setText("")
+    tab.out_dir.setText("")
+
+    args = tab._build_args(show_errors=False)
+    assert args is not None
+    for forbidden in ("--quick-check", "--max-train-batches", "--max-val-batches"):
+        assert forbidden not in args, f"{forbidden} should not be emitted"
+    # The normal workflow still carries the supported model/logging flags.
+    assert "--model-preset" in args
+    assert "--log-every-mode" in args
+    tab.deleteLater()
+
+
+def test_workflow_selector_has_no_quick_check(qapp):
+    tab = STLRPSTrainTab()
+    values = {tab.workflow_mode.itemData(i) for i in range(tab.workflow_mode.count())}
+    assert "quick_check" not in values
+    assert values == {"train_only", "eval_only", "train_then_eval", "queue"}
+    tab.deleteLater()
+
+
+def test_old_profile_with_debug_fields_loads(qapp):
+    """Backward compatibility: profiles carrying removed debug fields still load."""
+    tab = STLRPSTrainTab()
+    legacy = {
+        "hidden": 256, "depth": 4, "epochs": 12,
+        "quick_check": True,          # removed-from-UI debug field
+        "max_train_batches": 5,       # removed-from-UI debug field
+        "max_val_batches": 2,         # removed-from-UI debug field
+        "obsolete_field_xyz": 123,    # unknown field must be ignored
+    }
+    tab._apply_config(legacy)  # must not raise
+    assert tab.hidden.value() == 256
+    assert tab.depth.value() == 4
+    # Debug controls remain hidden regardless of the loaded value.
+    assert not tab.quick_check.isVisible()
+    tab.deleteLater()
+
+
 def test_profiling_tab_builds_runtime_profile_args(qapp, tmp_path):
     model_dir = tmp_path / "model_run"
     model_dir.mkdir()

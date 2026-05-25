@@ -186,6 +186,16 @@ class ETAEstimator:
             return None
         return datetime.now() + timedelta(seconds=rem)
 
+    def current_epoch_seconds(self) -> Optional[float]:
+        """Wall-clock seconds spent in the current (in-progress) epoch."""
+        if self._epoch_start is None:
+            return None
+        return max(0.0, time.monotonic() - self._epoch_start)
+
+    def average_epoch_seconds(self) -> Optional[float]:
+        """Smoothed average epoch duration (EMA), or None before any epoch ends."""
+        return self._ema_epoch_s
+
     def format_elapsed(self) -> str:
         e = self.elapsed_seconds()
         if e is None:
@@ -198,17 +208,34 @@ class ETAEstimator:
             return "Estimating…"
         return _fmt_duration(r)
 
+    def format_current_epoch(self) -> str:
+        c = self.current_epoch_seconds()
+        if c is None:
+            return "--:--:--"
+        return _fmt_duration(c)
+
+    def format_avg_epoch(self) -> str:
+        a = self.average_epoch_seconds()
+        if a is None:
+            return "Estimating…"
+        return _fmt_duration(a)
+
     def format_finish(self) -> str:
         ft = self.estimated_finish_time()
         if ft is None:
-            return "—"
-        now = datetime.now()
-        if ft.date() == now.date():
-            return ft.strftime("%H:%M")
-        elif ft.date() == (now + timedelta(days=1)).date():
-            return "Tomorrow " + ft.strftime("%H:%M")
-        else:
-            return ft.strftime("%d/%m %H:%M")
+            return "Estimating…"
+        return format_finish_time(ft)
+
+
+def format_finish_time(ft: datetime, now: Optional[datetime] = None) -> str:
+    """Format an estimated finish datetime.
+
+    HH:MM when the finish is today, otherwise YYYY-MM-DD HH:MM.
+    """
+    now = now or datetime.now()
+    if ft.date() == now.date():
+        return ft.strftime("%H:%M")
+    return ft.strftime("%Y-%m-%d %H:%M")
 
 
 def _fmt_duration(seconds: float) -> str:
@@ -569,6 +596,8 @@ class TrainingMetricsStore:
             self._latest["lr"] = rec.lr
         if rec.score is not None:
             self._latest["score"] = rec.score
+        if rec.samples_per_s is not None:
+            self._latest["samples_per_s"] = rec.samples_per_s
 
         if rec.event == "best_updated":
             if rec.score is not None:

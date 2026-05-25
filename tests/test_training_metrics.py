@@ -124,8 +124,9 @@ class TestETAEstimator:
         assert est.format_elapsed() == "--:--:--"
 
     def test_format_finish_no_data(self):
+        # Phase 7: an unknown finish time reads "Estimating…" (was "—").
         est = ETAEstimator()
-        assert est.format_finish() == "—"
+        assert est.format_finish() == "Estimating…"
 
     def test_batch_progress_eta_during_first_epoch(self):
         est = ETAEstimator()
@@ -485,3 +486,48 @@ class TestAutoLogIntervalEngineRule:
 
     def test_small(self):
         assert compute_auto_log_interval(5) == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phase 7: estimated finish-time formatting + epoch-duration helpers
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestFinishTimeFormatting:
+    def test_today_is_hh_mm(self):
+        from datetime import datetime
+        from st_lrps.ui.training_metrics import format_finish_time
+        now = datetime(2026, 5, 25, 9, 0, 0)
+        ft = datetime(2026, 5, 25, 18, 30, 0)
+        assert format_finish_time(ft, now) == "18:30"
+
+    def test_other_day_is_full_date(self):
+        from datetime import datetime
+        from st_lrps.ui.training_metrics import format_finish_time
+        now = datetime(2026, 5, 25, 23, 0, 0)
+        ft = datetime(2026, 5, 27, 4, 15, 0)
+        assert format_finish_time(ft, now) == "2026-05-27 04:15"
+
+
+class TestEpochDurationHelpers:
+    def test_current_epoch_none_before_start(self):
+        est = ETAEstimator()
+        assert est.current_epoch_seconds() is None
+        assert est.format_current_epoch() == "--:--:--"
+
+    def test_avg_epoch_estimating_before_any_epoch(self):
+        est = ETAEstimator()
+        est.set_total_epochs(5)
+        est.on_training_start()
+        est.on_epoch_start(1)
+        assert est.average_epoch_seconds() is None
+        assert est.format_avg_epoch() == "Estimating…"
+
+    def test_avg_epoch_finite_after_epoch(self):
+        est = ETAEstimator()
+        est.set_total_epochs(5)
+        est.on_training_start()
+        est.on_epoch_start(1)
+        time.sleep(0.03)  # exceed the monotonic clock tick so duration > 0
+        est.on_epoch_end(1)
+        assert est.average_epoch_seconds() is not None
+        assert est.average_epoch_seconds() >= 0.0

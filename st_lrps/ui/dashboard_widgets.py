@@ -181,85 +181,119 @@ if _HAS_QT:
     # ExperimentHeader
     # ═══════════════════════════════════════════════════════════════════════
 
+    def _short(text: str, n: int = 20) -> str:
+        """Compact a label for a header badge (keeps the trailing part of paths)."""
+        text = (text or "").strip()
+        if not text:
+            return "—"
+        if len(text) <= n:
+            return text
+        return "…" + text[-(n - 1):]
+
     class ExperimentHeader(QFrame):
-        """Professional experiment header bar with status and live metrics."""
+        """Compact, restrained application header for ST-LRPS Studio."""
 
         def __init__(self, parent: Optional[QWidget] = None):
             super().__init__(parent)
             self.setObjectName("experimentHeader")
+            # Restrained dark panel — no large decorative gradients.
             self.setStyleSheet(
                 "QFrame#experimentHeader {"
-                "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
-                "    stop:0 rgba(30, 20, 72, 0.82), stop:0.5 rgba(16, 24, 52, 0.78),"
-                "    stop:1 rgba(10, 18, 46, 0.82));"
-                "  border: 1px solid rgba(124, 92, 255, 0.24);"
-                "  border-radius: 14px;"
+                f"  background: {_COLORS['panel_bg']};"
+                f"  border: 1px solid {_COLORS['border']};"
+                "  border-radius: 10px;"
                 "}"
             )
 
             main_layout = QHBoxLayout()
-            main_layout.setContentsMargins(20, 10, 20, 10)
-            main_layout.setSpacing(16)
+            main_layout.setContentsMargins(16, 8, 16, 8)
+            main_layout.setSpacing(14)
 
-            # ── Left: title + subtitle + status pill ──
+            # ── Left: title + status pill + subtitle ──
             left_col = QVBoxLayout()
             left_col.setContentsMargins(0, 0, 0, 0)
-            left_col.setSpacing(3)
+            left_col.setSpacing(2)
 
             title_row = QHBoxLayout()
             title_row.setContentsMargins(0, 0, 0, 0)
-            title_row.setSpacing(12)
+            title_row.setSpacing(10)
 
-            self._title = QLabel("ST-LRPS Surrogate Console")
+            self._title = QLabel("ST-LRPS Studio")
             self._title.setStyleSheet(
                 f"color: {_COLORS['text_main']}; font-size: 15px; font-weight: 700;"
-                " letter-spacing: 0.3px; background: transparent; border: none;"
+                " letter-spacing: 0.2px; background: transparent; border: none;"
             )
             title_row.addWidget(self._title)
-
             self._status_pill = StatusPill("IDLE")
             title_row.addWidget(self._status_pill)
             title_row.addStretch(1)
 
             self._subtitle = QLabel(
-                "Sobolev-trained lunar residual potential models  ·  "
-                "<span style='color:#6f7ca8; font-size:11px;'>"
-                "dU residual potential; acceleration via grad(dU)</span>"
+                "Lunar residual-potential surrogate training and evaluation"
             )
             self._subtitle.setStyleSheet(
-                f"color: {_COLORS['text_secondary']}; font-size: 12px;"
+                f"color: {_COLORS['text_muted']}; font-size: 11px;"
                 " background: transparent; border: none;"
             )
 
             left_col.addLayout(title_row)
             left_col.addWidget(self._subtitle)
-            main_layout.addLayout(left_col, 1)
+            main_layout.addLayout(left_col)
+            main_layout.addStretch(1)
 
-            # ── Separator ──
+            # ── Right: compact context + time badges ──
+            self._page = HeaderMetric("PAGE", "—")
+            self._run = HeaderMetric("RUN", "—")
+            self._dataset = HeaderMetric("DATASET", "—")
+            self._preset = HeaderMetric("PRESET", "—")
+            self._device = HeaderMetric("DEVICE", "CPU")
+            self._checkpoint = HeaderMetric("CKPT", "—")
+
+            self._elapsed = HeaderMetric("ELAPSED", "--:--:--")
+            self._remaining = HeaderMetric("ETA", "—")
+            self._finish = HeaderMetric("FINISH", "—")
+
+            badges = QHBoxLayout()
+            badges.setContentsMargins(0, 0, 0, 0)
+            badges.setSpacing(4)
+            for m in (self._page, self._run, self._dataset, self._preset,
+                      self._device, self._checkpoint):
+                badges.addWidget(m)
+
             sep = QFrame()
             sep.setFrameShape(QFrame.Shape.VLine)
-            sep.setStyleSheet("color: rgba(124, 92, 255, 0.18);")
-            main_layout.addWidget(sep)
+            sep.setStyleSheet(f"color: {_COLORS['border_soft']};")
+            badges.addWidget(sep)
 
-            # ── Right: live metrics ──
-            self._elapsed = HeaderMetric("ELAPSED", "--:--:--")
-            self._remaining = HeaderMetric("REMAINING", "—")
-            self._finish = HeaderMetric("FINISH", "—")
-            self._device = HeaderMetric("DEVICE", "CPU")
+            for m in (self._elapsed, self._remaining, self._finish):
+                badges.addWidget(m)
 
-            metrics_layout = QHBoxLayout()
-            metrics_layout.setContentsMargins(0, 0, 0, 0)
-            metrics_layout.setSpacing(4)
-            for m in (self._elapsed, self._remaining, self._finish, self._device):
-                metrics_layout.addWidget(m)
-
-            main_layout.addLayout(metrics_layout)
+            main_layout.addLayout(badges)
             self.setLayout(main_layout)
 
         # ── Public API ──
 
         def set_status(self, status: str) -> None:
             self._status_pill.set_status(status)
+
+        def set_page(self, text: str) -> None:
+            self._page.set_value(text or "—")
+
+        def set_run(self, text: str) -> None:
+            self._run.set_value(_short(text))
+
+        def set_dataset(self, text: str) -> None:
+            self._dataset.set_value(_short(text, 16))
+
+        def set_preset(self, text: str) -> None:
+            # Preset names are most recognizable by their leading words.
+            text = (text or "").strip() or "—"
+            if len(text) > 18:
+                text = text[:17] + "…"
+            self._preset.set_value(text)
+
+        def set_checkpoint(self, text: str) -> None:
+            self._checkpoint.set_value(text or "—")
 
         def set_elapsed(self, text: str) -> None:
             self._elapsed.set_value(text)
@@ -402,6 +436,47 @@ if _HAS_QT:
             self.lr.set_value("—")
             self.direction.set_value("—")
             self.eta.set_value("—")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # TimeMetricsStrip (Phase 7: training time observability)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    class TimeMetricsStrip(QWidget):
+        """Horizontal strip of time-oriented MetricCards for the Live Monitor."""
+
+        def __init__(self, parent: Optional[QWidget] = None):
+            super().__init__(parent)
+            layout = QHBoxLayout()
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(8)
+
+            self.elapsed = MetricCard("Elapsed", "--:--:--")
+            self.eta = MetricCard("ETA Remaining", "—")
+            self.finish = MetricCard("Est. Finish", "—")
+            self.epoch_duration = MetricCard("Epoch Duration", "--:--:--")
+            self.avg_epoch = MetricCard("Avg Epoch", "—")
+            self.samples_per_s = MetricCard("Samples/s", "—")
+
+            for card in (
+                self.elapsed, self.eta, self.finish,
+                self.epoch_duration, self.avg_epoch, self.samples_per_s,
+            ):
+                layout.addWidget(card, 1)
+            self.setLayout(layout)
+
+        def reset(self) -> None:
+            self.elapsed.set_value("--:--:--")
+            self.eta.set_value("Estimating…")
+            self.finish.set_value("Estimating…")
+            self.epoch_duration.set_value("--:--:--")
+            self.avg_epoch.set_value("Estimating…")
+            self.samples_per_s.set_value("—")
+
+        def set_done(self, finish_text: str = "") -> None:
+            """Final state when training stops: ETA = Done, finish = actual time."""
+            self.eta.set_value("Done", state="success")
+            if finish_text:
+                self.finish.set_value(finish_text, state="success")
 
     # ═══════════════════════════════════════════════════════════════════════
     # ProgressTableModel
