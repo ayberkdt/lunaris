@@ -705,12 +705,12 @@ class CollapsibleSection(QWidget):
         self._toggle_btn.setProperty("kind", "ghost")
         self._toggle_btn.setStyleSheet(
             "QPushButton { text-align: left; padding: 8px 14px; font-weight: 600; "
-            "color: #9aa7ff; border: 1px solid transparent; border-radius: 8px; "
-            "background: rgba(124, 92, 255, 0.05); }"
-            "QPushButton:hover { color: #c4ccff; background: rgba(124, 92, 255, 0.10); "
-            "border-color: rgba(124, 92, 255, 0.20); }"
-            "QPushButton:checked { color: #c4ccff; background: rgba(124, 92, 255, 0.12); "
-            "border-color: rgba(124, 92, 255, 0.22); }"
+            "color: #8fb9d4; border: 1px solid transparent; border-radius: 8px; "
+            "background: rgba(53, 208, 255, 0.04); }"
+            "QPushButton:hover { color: #d7e1f7; background: rgba(53, 208, 255, 0.08); "
+            "border-color: rgba(53, 208, 255, 0.18); }"
+            "QPushButton:checked { color: #e8ecf8; background: rgba(53, 208, 255, 0.10); "
+            "border-color: rgba(53, 208, 255, 0.22); }"
         )
         self._toggle_btn.clicked.connect(self._on_toggle)
         self._content = QWidget()
@@ -2704,6 +2704,8 @@ class TrainingQueue(QWidget):
 
 
 class STLRPSTrainTab(QWidget):
+    navigate_monitor_requested = pyqtSignal()
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
 
@@ -2736,10 +2738,10 @@ class STLRPSTrainTab(QWidget):
 
         # ── Workflow Mode ──────────────────────────────────────────────
         self.workflow_mode = QComboBox()
-        self.workflow_mode.addItem("🚂  Train only",              "train_only")
-        self.workflow_mode.addItem("📊  Evaluate only",           "eval_only")
-        self.workflow_mode.addItem("🚀  Train then evaluate",     "train_then_eval")
-        self.workflow_mode.addItem("📋  Queue training runs",     "queue")
+        self.workflow_mode.addItem("Train only",              "train_only")
+        self.workflow_mode.addItem("Evaluate only",           "eval_only")
+        self.workflow_mode.addItem("Train then evaluate",     "train_then_eval")
+        self.workflow_mode.addItem("Queue training runs",     "queue")
         self.workflow_mode.setCurrentIndex(2)  # default: Train then evaluate
         self.workflow_mode.setToolTip(
             f"Train only:         Runs python -m {TRAIN_CLI_MODULE}.\n"
@@ -3611,6 +3613,18 @@ class STLRPSTrainTab(QWidget):
         grp_model_repr.setLayout(form_model_repr)
         self._grp_model_repr = grp_model_repr
 
+        self._loss_physics_section = CollapsibleSection("Loss / Physics Options")
+        loss_physics_wrap = QVBoxLayout()
+        loss_physics_wrap.setContentsMargins(0, 0, 0, 0)
+        loss_physics_wrap.addWidget(grp_phys)
+        self._loss_physics_section.set_content_layout(loss_physics_wrap)
+
+        self._model_repr_section = CollapsibleSection("Manual Encoding / Ablations")
+        model_repr_wrap = QVBoxLayout()
+        model_repr_wrap.setContentsMargins(0, 0, 0, 0)
+        model_repr_wrap.addWidget(grp_model_repr)
+        self._model_repr_section.set_content_layout(model_repr_wrap)
+
         # =====================================================================
         # EXTRA CLI ARGS
         # =====================================================================
@@ -3628,12 +3642,12 @@ class STLRPSTrainTab(QWidget):
         grid.addWidget(self.resume_section, 0, 1)
         grid.addWidget(grp_arch, 1, 0)
         grid.addWidget(grp_optim, 1, 1)
-        grid.addWidget(grp_phys, 2, 0, 1, 2)
+        grid.addWidget(self._loss_physics_section, 2, 0, 1, 2)
         grid.addWidget(self._fourier_section, 3, 0, 1, 2)
         grid.addWidget(self._dir_loss_section, 4, 0, 1, 2)
         grid.addWidget(self._field_loss_section, 5, 0, 1, 2)
         grid.addWidget(self.advanced_section, 6, 0, 1, 2)
-        grid.addWidget(grp_model_repr, 7, 0, 1, 2)
+        grid.addWidget(self._model_repr_section, 7, 0, 1, 2)
 
         extra_row_layout = QFormLayout()
         _tune_form(extra_row_layout)
@@ -3671,6 +3685,8 @@ class STLRPSTrainTab(QWidget):
         for grp in (grp_data, grp_arch, grp_optim, grp_phys):
             _tune_inputs(grp)
         _tune_inputs(self.resume_section)
+        _tune_inputs(self._loss_physics_section)
+        _tune_inputs(self._model_repr_section)
         _tune_inputs(self._dir_loss_section)
         _tune_inputs(self._field_loss_section)
 
@@ -3718,6 +3734,12 @@ class STLRPSTrainTab(QWidget):
         self.btn_enqueue.setToolTip("Mevcut ayarları eğitim kuyruğuna ekler.")
         self.btn_enqueue.setProperty("kind", "ghost")
         self.btn_enqueue.clicked.connect(self._enqueue_current)
+        self.btn_start_setup = QPushButton("Start Training")
+        self.btn_start_setup.setToolTip(
+            "Start the current training workflow and open the Training Monitor page."
+        )
+        self.btn_start_setup.setProperty("kind", "primary")
+        self.btn_start_setup.clicked.connect(self._start)
 
         # --- Training Queue (Feature #15) ---
         self._queue = TrainingQueue()
@@ -3779,7 +3801,7 @@ class STLRPSTrainTab(QWidget):
         if _HAS_DASHBOARD_V2:
             self._live_plot.set_compact(True)
 
-        workspace_splitter = QSplitter(Qt.Orientation.Horizontal)
+        workspace_splitter = QSplitter(Qt.Orientation.Vertical)
         if _HAS_DASHBOARD_V2 and self._structured_log is not None:
             # Phase 1: the Raw Log tab receives ONLY the raw log widget,
             # never the whole ProcessPane (process controls live in the bar).
@@ -3789,10 +3811,10 @@ class STLRPSTrainTab(QWidget):
         else:
             workspace_splitter.addWidget(self._live_plot)
             workspace_splitter.addWidget(self.runner)
-        workspace_splitter.setStretchFactor(0, 7)   # charts dominant (~70%)
-        workspace_splitter.setStretchFactor(1, 3)   # structured progress (~30%)
-        workspace_splitter.setSizes([820, 360])
-        self._live_plot.setMinimumHeight(300)
+        workspace_splitter.setStretchFactor(0, 5)   # charts dominate the dashboard
+        workspace_splitter.setStretchFactor(1, 2)   # structured progress sits below
+        workspace_splitter.setSizes([620, 220])
+        self._live_plot.setMinimumHeight(430)
         self._live_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
         # Keep the status strips compact so the workspace gets the vertical room.
@@ -3822,21 +3844,84 @@ class STLRPSTrainTab(QWidget):
         queue_l.addWidget(self._queue, 1)
         queue_page.setLayout(queue_l)
 
-        # ── Phase 3: Parameters | Live Monitor | Queue sub-tabs ──────────
-        self._page_tabs = QTabWidget()
-        self._page_tabs.setDocumentMode(True)
-        self._params_tab_idx = self._page_tabs.addTab(params_page, "Parameters")
-        self._monitor_tab_idx = self._page_tabs.addTab(monitor_page, "Live Monitor")
-        self._queue_tab_idx = self._page_tabs.addTab(queue_page, "Queue")
-        self._page_tabs.setCurrentIndex(self._params_tab_idx)
+        # Legacy nested training tabs are disabled; setup/monitor are top-level pages.
+        self._page_tabs = None
+        self._params_tab_idx = 0
+        self._monitor_tab_idx = 0
+        self._queue_tab_idx = 0
 
         layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-        layout.addWidget(controls_bar)
-        layout.addWidget(train_ctrl_bar)
-        layout.addWidget(self._page_tabs, 1)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.setLayout(layout)
+
+        # New top-level pages used by MainWindow. The nested training tab
+        # architecture is no longer exposed or constructed.
+        self.setup_page = QWidget()
+        setup_l = QVBoxLayout()
+        setup_l.setContentsMargins(22, 20, 22, 20)
+        setup_l.setSpacing(16)
+        setup_title = QLabel("Training Setup")
+        setup_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
+        setup_subtitle = QLabel(
+            "Configure datasets, model representation, optimization, resume behavior, and launch commands."
+        )
+        setup_subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        setup_l.addWidget(setup_title)
+        setup_l.addWidget(setup_subtitle)
+        setup_l.addWidget(controls_bar)
+        setup_l.addWidget(params_page, 1)
+
+        setup_actions = QFrame()
+        setup_actions.setObjectName("setupActionCard")
+        setup_actions.setStyleSheet(
+            "QFrame#setupActionCard {"
+            "  background: rgba(11, 16, 32, 0.86);"
+            "  border: 1px solid rgba(185, 194, 221, 0.14);"
+            "  border-radius: 12px;"
+            "}"
+        )
+        action_l = QHBoxLayout()
+        action_l.setContentsMargins(16, 12, 16, 12)
+        action_l.setSpacing(10)
+        action_l.addWidget(self.btn_start_setup)
+        action_l.addWidget(self.btn_enqueue)
+        action_l.addStretch(1)
+        action_l.addWidget(self.btn_preview_cmd)
+        action_l.addWidget(self.btn_copy_cmd)
+        setup_actions.setLayout(action_l)
+        setup_l.addWidget(setup_actions)
+        self.setup_page.setLayout(setup_l)
+
+        self.monitor_page = QWidget()
+        monitor_shell_l = QVBoxLayout()
+        monitor_shell_l.setContentsMargins(22, 20, 22, 20)
+        monitor_shell_l.setSpacing(14)
+        monitor_title = QLabel("Training Monitor")
+        monitor_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
+        monitor_subtitle = QLabel(
+            "Live experiment dashboard: status, ETA, losses, checkpoints, queue, and logs."
+        )
+        monitor_subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        monitor_shell_l.addWidget(monitor_title)
+        monitor_shell_l.addWidget(monitor_subtitle)
+        monitor_shell_l.addWidget(train_ctrl_bar)
+
+        monitor_split = QSplitter(Qt.Orientation.Vertical)
+        monitor_split.addWidget(monitor_page)
+        queue_box = QGroupBox("Queue Status")
+        queue_box_l = QVBoxLayout()
+        queue_box_l.setContentsMargins(10, 10, 10, 10)
+        queue_box_l.addWidget(queue_page, 1)
+        queue_box.setLayout(queue_box_l)
+        monitor_split.addWidget(queue_box)
+        monitor_split.setStretchFactor(0, 4)
+        monitor_split.setStretchFactor(1, 1)
+        monitor_split.setSizes([650, 170])
+        monitor_shell_l.addWidget(monitor_split, 1)
+        self.monitor_page.setLayout(monitor_shell_l)
+        self._live_plot.setMinimumHeight(460)
+        layout.addWidget(self.setup_page, 1)
 
         self._epochs_max = int(self.epochs.value())
         self.runner.progress.setRange(0, self._epochs_max)
@@ -4123,14 +4208,16 @@ class STLRPSTrainTab(QWidget):
     def _on_workflow_mode_changed(self) -> None:
         mode = self.workflow_mode.currentData() or "train_then_eval"
         labels = {
-            "train_only":      "Eğitimi Başlat",
-            "eval_only":       "Değerlendirmeyi Başlat",
-            "train_then_eval": "Eğit + Değerlendir",
-            "queue":           "Kuyruğu Başlat",
+            "train_only":      "Start Training",
+            "eval_only":       "Start Evaluation",
+            "train_then_eval": "Train then Evaluate",
+            "queue":           "Start Queue",
         }
         # Update start button label
         if hasattr(self, "runner"):
             self.runner.btn_start.setText(labels.get(mode, "Başlat"))
+        if hasattr(self, "btn_start_setup"):
+            self.btn_start_setup.setText(labels.get(mode, "Start Training"))
         # Update the control-bar workflow label
         if hasattr(self, "_workflow_label"):
             self._workflow_label.setText(f"Mode: {labels.get(mode, mode)}")
@@ -4218,6 +4305,8 @@ class STLRPSTrainTab(QWidget):
         # Enable/disable start button based on hard requirements
         if hasattr(self, "runner"):
             self.runner.btn_start.setEnabled(ok)
+        if hasattr(self, "btn_start_setup"):
+            self.btn_start_setup.setEnabled(ok)
 
     # -----------------------------------------------------------------
     # Preset System
@@ -4225,6 +4314,8 @@ class STLRPSTrainTab(QWidget):
     def _refresh_preset_list(self) -> None:
         self._preset_combo.clear()
         for name in _BUILTIN_PRESETS:
+            if str(name).lower().startswith("quick"):
+                continue
             self._preset_combo.addItem(f"⚙  {name}", name)
         user = _load_user_presets()
         if user:
@@ -4992,6 +5083,15 @@ class STLRPSTrainTab(QWidget):
             self._refresh_command_preview()
         QGuiApplication.clipboard().setText(self.command_preview.toPlainText())
 
+    def _show_monitor_page(self) -> None:
+        """Open the full Training Monitor page in the main Studio shell."""
+        try:
+            if hasattr(self, "_page_tabs"):
+                self._page_tabs.setCurrentIndex(self._monitor_tab_idx)
+        except Exception:
+            pass
+        self.navigate_monitor_requested.emit()
+
     # -----------------------------------------------------------------
     # Start Training (single run)
     # -----------------------------------------------------------------
@@ -5029,6 +5129,7 @@ class STLRPSTrainTab(QWidget):
         if mode == "queue":
             if not self._queue.is_running():
                 self._queue._start_queue()
+                self._show_monitor_page()
             return
 
         args = self._build_args()
@@ -5069,9 +5170,10 @@ class STLRPSTrainTab(QWidget):
                 self._time_strip.reset()
             self._update_header_lifecycle("TRAINING")
 
-        # Phase 3: jump to Live Monitor so the user sees charts immediately.
-        if hasattr(self, "_page_tabs"):
-            self._page_tabs.setCurrentIndex(self._monitor_tab_idx)
+        # Jump to the full Training Monitor page so the user sees charts immediately.
+        self._show_monitor_page()
+        if hasattr(self, "btn_start_setup"):
+            self.btn_start_setup.setEnabled(False)
 
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
@@ -5125,8 +5227,9 @@ class STLRPSTrainTab(QWidget):
                 self._time_strip.reset()
             self._update_header_lifecycle("TRAINING")
         self._user_stopped = False
-        if hasattr(self, "_page_tabs"):
-            self._page_tabs.setCurrentIndex(self._monitor_tab_idx)
+        self._show_monitor_page()
+        if hasattr(self, "btn_start_setup"):
+            self.btn_start_setup.setEnabled(False)
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     def _arg_value(self, args: List[str], flag: str) -> Optional[str]:
@@ -5200,6 +5303,8 @@ class STLRPSTrainTab(QWidget):
             status = "INTERRUPTED"
         else:
             status = "FAILED"
+        if hasattr(self, "btn_start_setup"):
+            self.btn_start_setup.setEnabled(True)
 
         # Dashboard v2: stop ETA timer and update status
         if _HAS_DASHBOARD_V2:
@@ -8539,7 +8644,7 @@ class DatasetInspectionPanel(QWidget):
 
 
 class DataPage(QWidget):
-    """Stage 1 — Data: dataset readiness, generation, and analysis."""
+    """Data workspace: dataset readiness, generation, and analysis."""
 
     def __init__(self, cloud_tab: QWidget, analysis_tab: QWidget,
                  parent: Optional[QWidget] = None):
@@ -8552,8 +8657,15 @@ class DataPage(QWidget):
         tabs.addTab(analysis_tab, "Analyze")
         self._tabs = tabs
         lo = QVBoxLayout()
-        lo.setContentsMargins(0, 0, 0, 0)
-        lo.addWidget(tabs)
+        lo.setContentsMargins(22, 20, 22, 20)
+        lo.setSpacing(14)
+        title = QLabel("Data")
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
+        subtitle = QLabel("Prepare and inspect lunar gravity clouds for ST-LRPS training.")
+        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        lo.addWidget(title)
+        lo.addWidget(subtitle)
+        lo.addWidget(tabs, 1)
         self.setLayout(lo)
 
 
@@ -8709,21 +8821,46 @@ class ModelReportPanel(QWidget):
 
 
 class EvaluationPage(QWidget):
-    """Stage 3 — Evaluation: model report, accuracy, runtime performance."""
+    """Evaluation workspace: model quality and reporting."""
 
-    def __init__(self, eval_tab: QWidget, profile_tab: QWidget,
-                 parent: Optional[QWidget] = None):
+    def __init__(self, eval_tab: QWidget, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.report_panel = ModelReportPanel()
         tabs = QTabWidget()
         tabs.setDocumentMode(True)
         tabs.addTab(self.report_panel, "Model Report")
         tabs.addTab(eval_tab, "Accuracy Evaluation")
-        tabs.addTab(profile_tab, "Performance Analysis")
         self._tabs = tabs
         lo = QVBoxLayout()
-        lo.setContentsMargins(0, 0, 0, 0)
-        lo.addWidget(tabs)
+        lo.setContentsMargins(22, 20, 22, 20)
+        lo.setSpacing(14)
+        title = QLabel("Evaluation")
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
+        subtitle = QLabel("Inspect artifacts and evaluate pointwise surrogate accuracy.")
+        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        lo.addWidget(title)
+        lo.addWidget(subtitle)
+        lo.addWidget(tabs, 1)
+        self.setLayout(lo)
+
+
+class RuntimePerformancePage(QWidget):
+    """Runtime inference performance workspace."""
+
+    def __init__(self, profile_tab: QWidget, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        lo = QVBoxLayout()
+        lo.setContentsMargins(22, 20, 22, 20)
+        lo.setSpacing(14)
+        title = QLabel("Runtime Performance")
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
+        subtitle = QLabel(
+            "Runtime inference performance: loading, latency, throughput, batches, chunks, and device effects."
+        )
+        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        lo.addWidget(title)
+        lo.addWidget(subtitle)
+        lo.addWidget(profile_tab, 1)
         self.setLayout(lo)
 
 
@@ -8739,7 +8876,7 @@ class MainWindow(QMainWindow):
         self.resize(1320, 860)
         self.setMinimumSize(1024, 680)
 
-        # --- Underlying tab widgets (preserved, re-homed into the 3 stages) ---
+        # --- Underlying workflow widgets (logic preserved, pages re-homed) ---
         self._cloud_tab    = CloudGenTab()
         self._train_tab    = STLRPSTrainTab()
         self._profile_tab  = STLRPSProfilingTab()
@@ -8749,16 +8886,28 @@ class MainWindow(QMainWindow):
         self._cloud_tab.set_train_tab(self._train_tab)
         self._cloud_tab.cloud_params_changed.connect(self._train_tab.sync_from_cloud)
 
-        # --- Three workflow stages: Data → Training → Evaluation ---
+        # --- Top-level workspace pages ---
         self._data_page = DataPage(self._cloud_tab, self._analysis_tab)
-        self._eval_page = EvaluationPage(self._eval_tab, self._profile_tab)
+        self._train_setup_page = self._train_tab.setup_page
+        self._train_monitor_page = self._train_tab.monitor_page
+        self._eval_page = EvaluationPage(self._eval_tab)
+        self._runtime_page = RuntimePerformancePage(self._profile_tab)
         self._data_page.inspect_panel.send_to_training.connect(self._on_dataset_to_training)
+        self._train_tab.navigate_monitor_requested.connect(lambda: self._navigate(2))
 
         self._stack = QStackedWidget()
-        self._stack.addWidget(self._data_page)   # index 0: Data
-        self._stack.addWidget(self._train_tab)   # index 1: Training
-        self._stack.addWidget(self._eval_page)   # index 2: Evaluation
-        self._page_titles = ["Data", "Training", "Evaluation"]
+        self._stack.addWidget(self._data_page)              # index 0: Data
+        self._stack.addWidget(self._train_setup_page)       # index 1: Training Setup
+        self._stack.addWidget(self._train_monitor_page)     # index 2: Training Monitor
+        self._stack.addWidget(self._eval_page)              # index 3: Evaluation
+        self._stack.addWidget(self._runtime_page)           # index 4: Runtime Performance
+        self._page_titles = [
+            "Data",
+            "Training Setup",
+            "Training Monitor",
+            "Evaluation",
+            "Runtime Performance",
+        ]
 
         dep_info = []
         if not _HAS_PYQTGRAPH:
@@ -8786,11 +8935,9 @@ class MainWindow(QMainWindow):
             header_card.setObjectName("appHeaderCard")
             header_card.setStyleSheet(
                 "QFrame#appHeaderCard {"
-                "  background: qlineargradient(x1:0, y1:0, x2:1, y2:0,"
-                "    stop:0 rgba(30, 20, 72, 0.80), stop:0.5 rgba(16, 24, 52, 0.75),"
-                "    stop:1 rgba(10, 18, 46, 0.80));"
-                "  border: 1px solid rgba(124, 92, 255, 0.24);"
-                "  border-radius: 14px;"
+                "  background: #101A2B;"
+                "  border: 1px solid #26364F;"
+                "  border-radius: 10px;"
                 "}"
             )
             header_lo = QHBoxLayout()
@@ -8800,13 +8947,13 @@ class MainWindow(QMainWindow):
             title_col = QVBoxLayout()
             title_col.setContentsMargins(0, 0, 0, 0)
             title_col.setSpacing(3)
-            lbl_title = QLabel("ST-LRPS Surrogate Console")
+            lbl_title = QLabel("ST-LRPS Studio")
             lbl_title.setStyleSheet(
                 "color: #e8ecf8; font-size: 15px; font-weight: 700;"
                 " letter-spacing: 0.3px; background: transparent; border: none;"
             )
             lbl_subtitle = QLabel(
-                "Sobolev-trained lunar residual potential models"
+                "Lunar residual-potential surrogate training and evaluation"
             )
             lbl_subtitle.setStyleSheet(
                 "color: #8892b0; font-size: 12px; background: transparent; border: none;"
@@ -8876,29 +9023,31 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("navSidebar")
-        sidebar.setFixedWidth(192)
+        sidebar.setFixedWidth(238)
         sidebar.setStyleSheet(
             "QFrame#navSidebar {"
-            "  background: rgba(9, 13, 26, 0.88);"
-            "  border: 1px solid rgba(185, 194, 221, 0.11);"
-            "  border-radius: 14px;"
+            "  background: #0b1220;"
+            "  border: none;"
+            "  border-right: 1px solid rgba(185, 194, 221, 0.12);"
+            "  border-radius: 0;"
             "}"
         )
 
         _NAV_BTN_STYLE = (
             "QPushButton {"
-            "  text-align: left; padding: 9px 12px 9px 16px;"
+            "  text-align: left; padding: 12px 14px 12px 18px;"
             "  border: none; border-left: 3px solid transparent;"
-            "  border-radius: 0; font-size: 13px; font-weight: 500;"
-            "  color: #7480a8; background: transparent;"
+            "  border-radius: 0; font-size: 13px; font-weight: 600;"
+            "  min-height: 40px;"
+            "  color: #8a98b8; background: transparent;"
             "}"
             "QPushButton:hover {"
-            "  color: #c4ccff; background: rgba(124, 92, 255, 0.09);"
+            "  color: #d7e1f7; background: rgba(53, 208, 255, 0.06);"
             "}"
             "QPushButton:checked {"
-            "  color: #e8ecf8; font-weight: 600;"
-            "  background: rgba(124, 92, 255, 0.16);"
-            "  border-left: 3px solid rgba(124, 92, 255, 0.90);"
+            "  color: #f2f6ff; font-weight: 700;"
+            "  background: rgba(53, 208, 255, 0.12);"
+            "  border-left: 3px solid rgba(53, 208, 255, 0.85);"
             "}"
         )
 
@@ -8920,12 +9069,13 @@ class MainWindow(QMainWindow):
             return btn
 
         lo = QVBoxLayout()
-        lo.setContentsMargins(0, 8, 0, 14)
-        lo.setSpacing(1)
-        lo.addWidget(_section_lbl("WORKFLOW"))
-        lo.addWidget(_nav_btn("1 · Data", 0))
-        lo.addWidget(_nav_btn("2 · Training", 1))
-        lo.addWidget(_nav_btn("3 · Evaluation", 2))
+        lo.setContentsMargins(0, 18, 0, 18)
+        lo.setSpacing(6)
+        lo.addWidget(_nav_btn("Data", 0))
+        lo.addWidget(_nav_btn("Training Setup", 1))
+        lo.addWidget(_nav_btn("Training Monitor", 2))
+        lo.addWidget(_nav_btn("Evaluation", 3))
+        lo.addWidget(_nav_btn("Runtime Performance", 4))
         lo.addStretch(1)
         sidebar.setLayout(lo)
 
@@ -8962,6 +9112,7 @@ class MainWindow(QMainWindow):
 
 def apply_premium_dark_theme(app: QApplication) -> None:
     app.setStyle("Fusion")
+    app.setFont(QFont("Segoe UI", 10))
     pal = QPalette()
     pal.setColor(QPalette.ColorRole.Window, QColor("#0b1020"))
     pal.setColor(QPalette.ColorRole.WindowText, QColor("#e8ecf8"))
@@ -8972,42 +9123,42 @@ def apply_premium_dark_theme(app: QApplication) -> None:
     pal.setColor(QPalette.ColorRole.ButtonText, QColor("#e8ecf8"))
     pal.setColor(QPalette.ColorRole.ToolTipBase, QColor("#141e3a"))
     pal.setColor(QPalette.ColorRole.ToolTipText, QColor("#e8ecf8"))
-    pal.setColor(QPalette.ColorRole.Highlight, QColor("#7c5cff"))
+    pal.setColor(QPalette.ColorRole.Highlight, QColor("#35d0ff"))
     pal.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-    pal.setColor(QPalette.ColorRole.Link, QColor("#9aa7ff"))
+    pal.setColor(QPalette.ColorRole.Link, QColor("#35d0ff"))
     app.setPalette(pal)
 
     app.setStyleSheet("""
-        QWidget { font-size: 13px; color: #e8ecf8; }
+        QWidget { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #e8ecf8; }
         QMainWindow, QWidget {
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                 stop:0 #0b1020, stop:1 #070a12);
         }
         QToolTip {
             background-color: #141e3a; color: #e8ecf8;
-            border: 1px solid rgba(124, 92, 255, 0.45);
+            border: 1px solid rgba(53, 208, 255, 0.35);
             border-radius: 8px; padding: 8px 10px; font-size: 12px;
         }
         QGroupBox {
             background-color: rgba(16, 24, 48, 0.72);
-            border: 1px solid rgba(120, 92, 255, 0.22);
-            border-radius: 14px; margin-top: 18px; padding-top: 10px;
+            border: 1px solid rgba(185, 194, 221, 0.14);
+            border-radius: 10px; margin-top: 16px; padding-top: 10px;
         }
         QGroupBox::title {
             subcontrol-origin: margin; left: 14px; padding: 3px 14px;
-            color: #c4ccff; font-weight: 600; font-size: 13px;
+            color: #d8e1f7; font-weight: 600; font-size: 13px;
             background-color: rgba(16, 24, 58, 0.98);
-            border: 1px solid rgba(120, 92, 255, 0.26);
-            border-radius: 8px;
+            border: 1px solid rgba(185, 194, 221, 0.16);
+            border-radius: 7px;
         }
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
             background-color: rgba(7, 11, 20, 0.92);
             border: 1px solid rgba(185, 194, 221, 0.22);
             border-radius: 10px; padding: 0px 12px;
-            min-height: 38px; selection-background-color: #7c5cff;
+            min-height: 38px; selection-background-color: #35d0ff;
         }
         QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
-            border: 1px solid rgba(124, 92, 255, 0.85);
+            border: 1px solid rgba(53, 208, 255, 0.75);
         }
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled {
             color: rgba(185, 194, 221, 0.35); background-color: rgba(12, 16, 30, 0.6);
@@ -9024,7 +9175,7 @@ def apply_premium_dark_theme(app: QApplication) -> None:
             background-color: rgba(7, 11, 20, 0.92);
             border: 1px solid rgba(185, 194, 221, 0.22);
             border-radius: 12px; padding: 10px 12px;
-            selection-background-color: #7c5cff;
+            selection-background-color: #35d0ff;
         }
         QTabWidget::pane {
             border: 1px solid rgba(185, 194, 221, 0.18);
@@ -9043,11 +9194,11 @@ def apply_premium_dark_theme(app: QApplication) -> None:
         }
         QTabBar::tab:selected {
             background: rgba(15, 24, 48, 0.95);
-            border-color: rgba(124, 92, 255, 0.50);
-            border-top: 2px solid rgba(124, 92, 255, 0.80);
+            border-color: rgba(53, 208, 255, 0.38);
+            border-top: 2px solid rgba(53, 208, 255, 0.75);
             color: #e8ecf8; font-weight: 600;
         }
-        QTabBar::tab:hover:!selected { color: #c4ccff; background: rgba(20, 30, 58, 0.8); }
+        QTabBar::tab:hover:!selected { color: #d7e1f7; background: rgba(20, 30, 58, 0.8); }
         QTabBar::scroller { width: 24px; }
         QTabBar QToolButton {
             background: rgba(16, 24, 48, 0.8);
@@ -9061,7 +9212,7 @@ def apply_premium_dark_theme(app: QApplication) -> None:
             border-radius: 9px; height: 18px; text-align: center; font-size: 11px;
         }
         QProgressBar::chunk {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #7c5cff, stop:1 #38bdf8);
+            background: #35d0ff;
             border-radius: 9px;
         }
         QPushButton {
@@ -9073,14 +9224,13 @@ def apply_premium_dark_theme(app: QApplication) -> None:
         QPushButton:pressed { background-color: rgba(14, 20, 40, 0.95); }
         QPushButton:disabled { color: rgba(232, 236, 248, 0.35); background-color: rgba(16, 24, 48, 0.35); }
         QPushButton[kind="primary"] {
-            border: 1px solid rgba(124, 92, 255, 0.55);
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 rgba(124, 92, 255, 0.95), stop:1 rgba(56, 189, 248, 0.85));
-            color: #fff; font-weight: 600;
+            border: 1px solid rgba(53, 208, 255, 0.48);
+            background: rgba(53, 208, 255, 0.18);
+            color: #effbff; font-weight: 700;
         }
         QPushButton[kind="primary"]:hover {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                stop:0 rgba(134, 102, 255, 1.0), stop:1 rgba(66, 199, 255, 0.95));
+            background: rgba(53, 208, 255, 0.26);
+            border-color: rgba(53, 208, 255, 0.72);
         }
         QPushButton[kind="danger"] {
             border: 1px solid rgba(248, 113, 113, 0.50);
@@ -9098,7 +9248,7 @@ def apply_premium_dark_theme(app: QApplication) -> None:
         }
         QPushButton[kind="ghost"]:hover {
             background-color: rgba(26, 36, 70, 0.55);
-            color: #c4ccff;
+            color: #d7e1f7;
             border-color: rgba(185, 194, 221, 0.22);
         }
         QCheckBox { spacing: 10px; }
@@ -9107,10 +9257,10 @@ def apply_premium_dark_theme(app: QApplication) -> None:
             border: 1px solid rgba(185, 194, 221, 0.22);
             background: rgba(7, 11, 20, 0.92);
         }
-        QCheckBox::indicator:hover { border-color: rgba(124, 92, 255, 0.55); }
+        QCheckBox::indicator:hover { border-color: rgba(53, 208, 255, 0.55); }
         QCheckBox::indicator:checked {
-            background: rgba(124, 92, 255, 0.9);
-            border-color: rgba(124, 92, 255, 0.92);
+            background: rgba(53, 208, 255, 0.75);
+            border-color: rgba(53, 208, 255, 0.92);
         }
         QCheckBox:disabled { color: rgba(185, 194, 221, 0.35); }
         QLabel { color: #b9c2dd; font-size: 12px; }
@@ -9124,7 +9274,7 @@ def apply_premium_dark_theme(app: QApplication) -> None:
         QSplitter::handle { background: rgba(185, 194, 221, 0.07); }
         QSplitter::handle:horizontal { width: 5px; }
         QSplitter::handle:vertical   { height: 5px; }
-        QSplitter::handle:hover      { background: rgba(124, 92, 255, 0.20); }
+        QSplitter::handle:hover      { background: rgba(53, 208, 255, 0.18); }
         QListWidget {
             background-color: rgba(7, 11, 20, 0.92);
             border: 1px solid rgba(185, 194, 221, 0.18);
@@ -9132,9 +9282,9 @@ def apply_premium_dark_theme(app: QApplication) -> None:
         }
         QListWidget::item { padding: 7px 10px; border-radius: 7px; }
         QListWidget::item:selected {
-            background-color: rgba(124, 92, 255, 0.26); color: #ffffff;
+            background-color: rgba(53, 208, 255, 0.18); color: #ffffff;
         }
-        QListWidget::item:hover:!selected { background-color: rgba(124, 92, 255, 0.10); }
+        QListWidget::item:hover:!selected { background-color: rgba(53, 208, 255, 0.08); }
         QStatusBar {
             background: rgba(7, 11, 20, 0.95);
             border-top: 1px solid rgba(185, 194, 221, 0.10);

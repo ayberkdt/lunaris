@@ -151,28 +151,38 @@ if _HAS_QT:
             parent: Optional[QWidget] = None,
         ):
             super().__init__(parent)
-            layout = QVBoxLayout()
-            layout.setContentsMargins(8, 2, 8, 2)
-            layout.setSpacing(1)
+            layout = QHBoxLayout()
+            layout.setContentsMargins(9, 3, 9, 3)
+            layout.setSpacing(6)
 
             self._label = QLabel(label.upper())
             self._label.setStyleSheet(
-                f"color: {_COLORS['text_muted']}; font-size: 10px; font-weight: 600;"
-                " letter-spacing: 1px; background: transparent; border: none;"
+                f"color: {_COLORS['text_muted']}; font-size: 9px; font-weight: 700;"
+                " letter-spacing: 0.8px; background: transparent; border: none;"
             )
-            self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
             self._value = QLabel(initial_value)
             self._value.setStyleSheet(
-                f"color: {_COLORS['text_main']}; font-size: 14px; font-weight: 600;"
-                " font-family: Consolas, 'Courier New', monospace;"
+                f"color: {_COLORS['text_main']}; font-size: 11px; font-weight: 600;"
+                " font-family: 'Segoe UI', Arial, sans-serif;"
                 " background: transparent; border: none;"
             )
-            self._value.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._value.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
             layout.addWidget(self._label)
             layout.addWidget(self._value)
             self.setLayout(layout)
+            self.setMaximumHeight(28)
+            self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+            self.setStyleSheet(
+                "QWidget {"
+                "  background: rgba(255, 255, 255, 0.035);"
+                "  border: 1px solid rgba(185, 194, 221, 0.10);"
+                "  border-radius: 7px;"
+                "}"
+                "QLabel { background: transparent; border: none; }"
+            )
 
         def set_value(self, value: str) -> None:
             self._value.setText(value)
@@ -199,15 +209,17 @@ if _HAS_QT:
             # Restrained dark panel — no large decorative gradients.
             self.setStyleSheet(
                 "QFrame#experimentHeader {"
-                f"  background: {_COLORS['panel_bg']};"
-                f"  border: 1px solid {_COLORS['border']};"
-                "  border-radius: 10px;"
+                "  background: #0f1726;"
+                "  border: 1px solid rgba(185, 194, 221, 0.12);"
+                "  border-radius: 8px;"
                 "}"
             )
+            self.setMinimumHeight(56)
+            self.setMaximumHeight(64)
 
             main_layout = QHBoxLayout()
-            main_layout.setContentsMargins(16, 8, 16, 8)
-            main_layout.setSpacing(14)
+            main_layout.setContentsMargins(14, 6, 14, 6)
+            main_layout.setSpacing(12)
 
             # ── Left: title + status pill + subtitle ──
             left_col = QVBoxLayout()
@@ -220,8 +232,8 @@ if _HAS_QT:
 
             self._title = QLabel("ST-LRPS Studio")
             self._title.setStyleSheet(
-                f"color: {_COLORS['text_main']}; font-size: 15px; font-weight: 700;"
-                " letter-spacing: 0.2px; background: transparent; border: none;"
+                f"color: {_COLORS['text_main']}; font-size: 14px; font-weight: 700;"
+                " letter-spacing: 0; background: transparent; border: none;"
             )
             title_row.addWidget(self._title)
             self._status_pill = StatusPill("IDLE")
@@ -232,7 +244,7 @@ if _HAS_QT:
                 "Lunar residual-potential surrogate training and evaluation"
             )
             self._subtitle.setStyleSheet(
-                f"color: {_COLORS['text_muted']}; font-size: 11px;"
+                f"color: {_COLORS['text_muted']}; font-size: 10px;"
                 " background: transparent; border: none;"
             )
 
@@ -253,19 +265,14 @@ if _HAS_QT:
             self._remaining = HeaderMetric("ETA", "—")
             self._finish = HeaderMetric("FINISH", "—")
 
+            for hidden_metric in (self._checkpoint, self._elapsed, self._finish):
+                hidden_metric.setVisible(False)
+
             badges = QHBoxLayout()
             badges.setContentsMargins(0, 0, 0, 0)
-            badges.setSpacing(4)
+            badges.setSpacing(6)
             for m in (self._page, self._run, self._dataset, self._preset,
-                      self._device, self._checkpoint):
-                badges.addWidget(m)
-
-            sep = QFrame()
-            sep.setFrameShape(QFrame.Shape.VLine)
-            sep.setStyleSheet(f"color: {_COLORS['border_soft']};")
-            badges.addWidget(sep)
-
-            for m in (self._elapsed, self._remaining, self._finish):
+                      self._device, self._remaining):
                 badges.addWidget(m)
 
             main_layout.addLayout(badges)
