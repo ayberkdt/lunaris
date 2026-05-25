@@ -265,16 +265,18 @@ if _HAS_QT:
             self._remaining = HeaderMetric("ETA", "—")
             self._finish = HeaderMetric("FINISH", "—")
 
-            for hidden_metric in (self._checkpoint, self._elapsed, self._finish):
+            for hidden_metric in (self._dataset, self._preset, self._checkpoint, self._elapsed, self._finish):
                 hidden_metric.setVisible(False)
 
             badges = QHBoxLayout()
             badges.setContentsMargins(0, 0, 0, 0)
             badges.setSpacing(6)
-            for m in (self._page, self._run, self._dataset, self._preset,
-                      self._device, self._remaining):
+            for m in (
+                self._page, self._run, self._dataset, self._preset, 
+                self._device, self._checkpoint, self._elapsed, 
+                self._remaining, self._finish
+            ):
                 badges.addWidget(m)
-
             main_layout.addLayout(badges)
             self.setLayout(main_layout)
 
@@ -690,7 +692,7 @@ if _HAS_QT:
             # ── Tab 2: Raw Log (placeholder - the actual QPlainTextEdit
             #    is injected by STLRPSTrainTab via set_raw_log_widget) ──
             self._raw_log_placeholder = QLabel(
-                "Raw log will appear here during training."
+                "Waiting for training logs...\nMetrics will appear after the first parsed training line."
             )
             self._raw_log_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._raw_log_placeholder.setStyleSheet(
