@@ -53,9 +53,31 @@ mission_results/
 
 # ST-LRPS generated artifacts
 runs/
-checkpoints/
-surrogate_gravity_model/runs/
-surrogate_gravity_model/analysis_out/
+artifacts/
+st_lrps/**/runs/
+st_lrps/**/results/
+st_lrps/**/artifacts/
+st_lrps/**/outputs/
+st_lrps/**/gececi_kod/
+**/checkpoints/
+**/evals/
+**/history.jsonl
+**/run_manifest.json
+**/command.txt
+**/scaler.json
+**/eval_report.json
+**/eval_manifest.json
+**/evaluate_metrics.json
+**/evaluate_summary.txt
+**/metrics_summary.csv
+**/ood_metrics.csv
+**/topk_worst.csv
+**/altitude_binned_metrics.csv
+**/angular_error_by_altitude.csv
+**/angular_error_by_accel_norm.csv
+**/spatial_rmse_*.csv
+**/spatial_mape_*.csv
+**/acceleration_decomposition.csv
 *.pt
 *.pth
 *.ckpt
