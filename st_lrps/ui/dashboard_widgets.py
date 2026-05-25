@@ -15,6 +15,8 @@ Components:
 
 from __future__ import annotations
 
+import csv
+import json
 import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -461,13 +463,14 @@ if _HAS_QT:
 
             self.elapsed = MetricCard("Elapsed", "--:--:--")
             self.eta = MetricCard("ETA Remaining", "—")
+            self.finish = MetricCard("Est. Finish", "—")
             self.started = MetricCard("Started At", "—")
             self.epoch_duration = MetricCard("Epoch Duration", "--:--:--")
             self.avg_epoch = MetricCard("Avg Epoch", "—")
             self.samples_per_s = MetricCard("Samples/s", "—")
 
             for card in (
-                self.elapsed, self.eta, self.started,
+                self.elapsed, self.eta, self.finish, self.started,
                 self.epoch_duration, self.avg_epoch, self.samples_per_s,
             ):
                 layout.addWidget(card, 1)
@@ -476,6 +479,7 @@ if _HAS_QT:
         def reset(self) -> None:
             self.elapsed.set_value("--:--:--")
             self.eta.set_value("Estimating…")
+            self.finish.set_value("Estimating…")
             self.started.set_value("—")
             self.epoch_duration.set_value("--:--:--")
             self.avg_epoch.set_value("Estimating…")
@@ -484,7 +488,8 @@ if _HAS_QT:
         def set_done(self, finish_text: str = "") -> None:
             """Final state when training stops: ETA = Done, finish = actual time."""
             self.eta.set_value("Done", state="success")
-            
+            if finish_text:
+                self.finish.set_value(finish_text, state="success")
 
     # ═══════════════════════════════════════════════════════════════════════
     # ProgressTableModel
@@ -629,6 +634,137 @@ if _HAS_QT:
 
 
     # ═══════════════════════════════════════════════════════════════════════
+    # EpochHistoryModel — per-epoch training history as an aligned table
+    # ═══════════════════════════════════════════════════════════════════════
+
+    # (display label, candidate source keys, format kind). Candidates cover both
+    # the flat CSV schema and the (flattened) nested JSONL schema.
+    _HISTORY_COLUMNS = [
+        ("Epoch",     ["epoch_display", "epoch"],                          "int"),
+        ("Train Loss", ["train_loss_total"],                               "sci"),
+        ("Val Loss",  ["val_loss_total"],                                  "sci"),
+        ("Train U",   ["train_loss_u"],                                    "sci"),
+        ("Val U",     ["val_loss_u"],                                      "sci"),
+        ("Train a",   ["train_loss_a"],                                    "sci"),
+        ("Val a",     ["val_loss_a"],                                      "sci"),
+        ("Train dir", ["train_loss_dir"],                                  "sci"),
+        ("Val dir",   ["val_loss_dir"],                                    "sci"),
+        ("Val score", ["val_checkpoint_score", "checkpoint_score"],        "sci"),
+        ("Train cos", ["train_cos_sim", "train_mean_cossim"],              "f4"),
+        ("Val cos",   ["val_cos_sim", "val_mean_cossim"],                  "f4"),
+        ("Val ang°",  ["val_angular_mean_deg", "val_ang_deg"],             "f2"),
+        ("LR",        ["lr"],                                              "sci"),
+    ]
+
+    def _flatten_history_row(d: Dict[str, Any]) -> Dict[str, Any]:
+        """Flatten one level of nested dicts into ``parent_child`` keys.
+
+        Flat CSV rows pass through unchanged; nested JSONL rows
+        (``{"train": {"loss_total": ...}}``) become ``train_loss_total``.
+        """
+        out: Dict[str, Any] = {}
+        for k, v in d.items():
+            if isinstance(v, dict):
+                for k2, v2 in v.items():
+                    if not isinstance(v2, (dict, list)):
+                        out[f"{k}_{k2}"] = v2
+            elif not isinstance(v, list):
+                out[k] = v
+        return out
+
+    def _hist_fmt(value: Any, kind: str) -> str:
+        if value is None or value == "":
+            return ""
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return str(value)
+        if not (f == f):  # NaN
+            return ""
+        if kind == "int":
+            return str(int(round(f)))
+        if kind == "f4":
+            return f"{f:.4f}"
+        if kind == "f2":
+            return f"{f:.2f}"
+        # scientific for losses
+        return f"{f:.3e}"
+
+    def load_history_rows(path: str) -> List[Dict[str, Any]]:
+        """Load per-epoch history rows from a .csv or .jsonl history file."""
+        rows: List[Dict[str, Any]] = []
+        try:
+            p = str(path)
+            if p.lower().endswith(".jsonl"):
+                with open(p, "r", encoding="utf-8") as fh:
+                    for line in fh:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                            if isinstance(obj, dict):
+                                rows.append(_flatten_history_row(obj))
+                        except Exception:
+                            continue
+            else:  # treat as CSV
+                with open(p, "r", encoding="utf-8", newline="") as fh:
+                    reader = csv.DictReader(fh)
+                    for r in reader:
+                        rows.append(_flatten_history_row(dict(r)))
+        except Exception:
+            return rows
+        return rows
+
+    class EpochHistoryModel(QAbstractTableModel):
+        """Table model rendering the curated per-epoch training history."""
+
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self._rows: List[Dict[str, Any]] = []
+            self._cols = _HISTORY_COLUMNS
+
+        def rowCount(self, parent=QModelIndex()):
+            return len(self._rows)
+
+        def columnCount(self, parent=QModelIndex()):
+            return len(self._cols)
+
+        def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+            if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
+                if 0 <= section < len(self._cols):
+                    return self._cols[section][0]
+            return None
+
+        def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+            if not index.isValid():
+                return None
+            row, col = index.row(), index.column()
+            if row < 0 or row >= len(self._rows):
+                return None
+            label, keys, kind = self._cols[col]
+            rec = self._rows[row]
+            value = None
+            for k in keys:
+                if k in rec and rec[k] not in (None, ""):
+                    value = rec[k]
+                    break
+            if role == Qt.ItemDataRole.DisplayRole:
+                return _hist_fmt(value, kind)
+            if role == Qt.ItemDataRole.TextAlignmentRole:
+                return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            return None
+
+        def set_rows(self, rows: List[Dict[str, Any]]) -> None:
+            self.beginResetModel()
+            self._rows = list(rows)
+            self.endResetModel()
+
+        def row_count(self) -> int:
+            return len(self._rows)
+
+
+    # ═══════════════════════════════════════════════════════════════════════
     # StructuredLogView
     # ═══════════════════════════════════════════════════════════════════════
 
@@ -686,6 +822,38 @@ if _HAS_QT:
 
             self._auto_scroll = True
 
+            # ── Tab 0: Training History (per-epoch, pandas-style aligned) ──
+            self._history_model = EpochHistoryModel()
+            self._history_table = QTableView()
+            self._history_table.setModel(self._history_model)
+            self._history_table.setAlternatingRowColors(True)
+            self._history_table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+            self._history_table.verticalHeader().setVisible(False)
+            self._history_table.setShowGrid(False)
+            self._history_table.setStyleSheet(self._table.styleSheet())
+            h_header = self._history_table.horizontalHeader()
+            h_header.setStretchLastSection(True)
+            h_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+            self._history_table.verticalHeader().setDefaultSectionSize(26)
+            self._history_auto_scroll = True
+
+            # Empty-state placeholder shown until the first history rows arrive.
+            self._history_placeholder = QLabel(
+                "Training history will appear here per epoch,\n"
+                "aligned like a table — as soon as the first epoch completes."
+            )
+            self._history_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._history_placeholder.setStyleSheet(
+                f"color: {_COLORS['text_muted']}; font-size: 12px;"
+            )
+            self._history_stack = QWidget()
+            _hist_l = QVBoxLayout(self._history_stack)
+            _hist_l.setContentsMargins(0, 0, 0, 0)
+            _hist_l.addWidget(self._history_placeholder)
+            _hist_l.addWidget(self._history_table)
+            self._history_table.setVisible(False)
+
+            self._tabs.addTab(self._history_stack, "History")
             self._tabs.addTab(self._table, "Progress")
 
             # ── Tab 2: Raw Log (placeholder - the actual QPlainTextEdit
@@ -719,8 +887,25 @@ if _HAS_QT:
             if self._auto_scroll and at_bottom:
                 self._table.scrollToBottom()
 
+        def load_history_file(self, path: str) -> None:
+            """Load the per-epoch training history table from a csv/jsonl file."""
+            rows = load_history_rows(path)
+            if not rows:
+                return
+            sb = self._history_table.verticalScrollBar()
+            at_bottom = sb.value() >= sb.maximum() - 2
+            self._history_model.set_rows(rows)
+            self._history_placeholder.setVisible(False)
+            self._history_table.setVisible(True)
+            if self._history_auto_scroll and at_bottom:
+                self._history_table.scrollToBottom()
+
         def clear(self) -> None:
             self._model.clear_records()
+            if hasattr(self, "_history_model"):
+                self._history_model.set_rows([])
+                self._history_table.setVisible(False)
+                self._history_placeholder.setVisible(True)
 
         def set_auto_scroll(self, enabled: bool) -> None:
             self._auto_scroll = enabled

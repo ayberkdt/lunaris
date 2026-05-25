@@ -117,11 +117,23 @@ class ETAEstimator:
     def set_total_epochs(self, n: int) -> None:
         self._total_epochs = max(0, n)
 
-    def on_training_start(self) -> None:
+    def on_training_start(self, start_epoch: int = 0) -> None:
+        """Begin a fresh timing session.
+
+        ``start_epoch`` is the number of epochs already completed before this
+        session (0 for a fresh run, the last completed epoch when resuming).
+        Resetting ``_current_epoch``/``_batch_progress`` here is essential:
+        otherwise stale values from a previous run (e.g. a completed run left
+        ``_current_epoch`` at the total and ``_batch_progress`` at 1.0) make the
+        remaining-time estimate nonsensical until the first epoch line arrives —
+        which is exactly the "ETA goes crazy on resume" bug.
+        """
         self._training_start = time.monotonic()
         self._epoch_start = time.monotonic()
         self._completed_epochs = 0
         self._ema_epoch_s = None
+        self._current_epoch = max(0, int(start_epoch))
+        self._batch_progress = 0.0
 
     def on_epoch_start(self, epoch: int) -> None:
         self._current_epoch = epoch
@@ -292,12 +304,12 @@ class TrainingLogParser:
     )
     # The training engine prints the current epoch in key=value form
     # (e.g. "[train] epoch=5 batch=12/100"); capture it as a fallback.
-    _RE_EPOCH_KV = re.compile(r"\bepoch\s*=\s*(\d+)", re.IGNORECASE)
+    _RE_EPOCH_KV = re.compile(r"\b(?:epoch|ep)\s*[=:]\s*(\d+)", re.IGNORECASE)
     _RE_BATCH = re.compile(
-        r"(?:batch|step)\s*[=:]?\s*(?:\[\s*)?(\d+)\s*/\s*(\d+)", re.IGNORECASE
+        r"(?:batch|step|b)\s*[=:]?\s*(?:\[\s*)?(\d+)\s*/\s*(\d+)", re.IGNORECASE
     )
     _RE_TRAIN_LOSSES = re.compile(
-        r"\[train\].*?opt[=:]?\s*([\d.eE+-]+).*?ref[=:]?\s*([\d.eE+-]+)",
+        r"\[\s*train\s*\].*?opt[=:]?\s*([\d.eE+-]+).*?ref[=:]?\s*([\d.eE+-]+)",
         re.IGNORECASE,
     )
     _RE_LOSS_OPT = re.compile(r"loss_opt[=:]\s*([\d.eE+-]+)", re.IGNORECASE)
@@ -310,7 +322,7 @@ class TrainingLogParser:
     _RE_COS_SIM = re.compile(r"cos(?:sim|_sim)?[=:]\s*([\d.eE+-]+)", re.IGNORECASE)
     _RE_ANGULAR = re.compile(r"ang[=:]\s*([\d.eE+-]+)\s*deg", re.IGNORECASE)
     _RE_LR = re.compile(r"lr[=:]\s*([\d.eE+-]+)", re.IGNORECASE)
-    _RE_SAMPLES = re.compile(r"([\d.,]+)\s*(?:pts|samples)/s", re.IGNORECASE)
+    _RE_SAMPLES = re.compile(r"([\d.,]+)\s*(?:pts|samples|spl)/s", re.IGNORECASE)
     _RE_ETA = re.compile(r"eta[=:]\s*([\d.]+)\s*s", re.IGNORECASE)
     _RE_MEMORY = re.compile(r"(cuda_mem=[\d/]+\s*MiB)", re.IGNORECASE)
     _RE_SCORE = re.compile(r"score[=:]\s*([\d.eE+-]+)", re.IGNORECASE)
@@ -342,8 +354,8 @@ class TrainingLogParser:
         r"|\b(?:NaN|Inf(?:inity)?)\b",
         re.IGNORECASE,
     )
-    _RE_VAL_HEADER = re.compile(r"\[val\s*\]", re.IGNORECASE)
-    _RE_TRAIN_HEADER = re.compile(r"\[train\s*\]", re.IGNORECASE)
+    _RE_VAL_HEADER = re.compile(r"\[\s*val\s*\]", re.IGNORECASE)
+    _RE_TRAIN_HEADER = re.compile(r"\[\s*train\s*\]", re.IGNORECASE)
 
     def __init__(self) -> None:
         self._current_epoch: int = 0

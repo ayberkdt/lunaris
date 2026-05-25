@@ -72,6 +72,20 @@ try:
 except ImportError:
     _HAS_PYQTGRAPH = False
 
+if _HAS_PYQTGRAPH:
+    class _CleanLogAxis(pg.AxisItem):
+        """Log axis that shows only decade (power-of-ten) ticks.
+
+        pyqtgraph's default log axis draws cramped sub-decade minor ticks
+        (…2,3,4,…9) that overlap badly on short plots. Keeping only the major
+        decade level makes the value range readable (1e-1, 1e-2, 1e-3, …)."""
+
+        def tickValues(self, minVal, maxVal, size):
+            ticks = super().tickValues(minVal, maxVal, size)
+            if getattr(self, "logMode", False) and len(ticks) > 1:
+                return ticks[:1]
+            return ticks
+
 # h5py — optional, for dataset introspection
 try:
     import h5py
@@ -778,35 +792,27 @@ class LiveLossPlot(QWidget):
         if _HAS_PYQTGRAPH:
             pg.setConfigOptions(antialias=True, background=None, foreground="#b9c2dd")
 
-            self._plot_widget = pg.PlotWidget()
+            self._plot_widget = pg.PlotWidget(axisItems={"left": _CleanLogAxis(orientation="left")})
             self._plot_widget.setMinimumHeight(360)
-            self._plot_widget.setStyleSheet(
-                """
-                PlotWidget {
-                    background-color: rgba(4, 8, 18, 0.72);
-                    border: 1px solid rgba(185, 194, 221, 0.11);
-                    border-radius: 14px;
-                }
-                """
-            )
-            self._plot_widget.setBackground("#050915")
+            self._plot_widget.setBackground("#0a1120")
             self._plot_widget.setMenuEnabled(False)
-            self._plot_widget.showGrid(x=True, y=True, alpha=0.18)
-            self._plot_widget.setLabel("left", "Loss", color="#aeb8d8", size="10pt")
-            self._plot_widget.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
+            self._plot_widget.showGrid(x=True, y=True, alpha=0.10)
+            # Cell titles above each plot describe the y-axis, so keep axes clean.
+            self._plot_widget.setLabel("bottom", "Epoch", color="#6f7d9c", size="9pt")
             self._plot_widget.setLogMode(x=False, y=True)
 
             plot_item = self._plot_widget.getPlotItem()
-            plot_item.setContentsMargins(8, 10, 12, 8)
+            plot_item.setContentsMargins(6, 6, 10, 6)
             plot_item.hideButtons()
             for axis_name in ("left", "bottom"):
                 axis = self._plot_widget.getAxis(axis_name)
-                axis.setTextPen(pg.mkPen("#aeb8d8"))
-                axis.setPen(pg.mkPen("#3c4664"))
+                axis.setTextPen(pg.mkPen("#7f8ca8"))
+                axis.setPen(pg.mkPen("#2a3550"))
                 axis.setStyle(
                     tickFont=QFont("Consolas", 8),
                     autoExpandTextSpace=True,
-                    tickTextOffset=8,
+                    tickTextOffset=6,
+                    tickLength=4,
                 )
 
             self._pen_train = pg.mkPen(color="#8b5cf6", width=2.6)
@@ -865,29 +871,27 @@ class LiveLossPlot(QWidget):
                 # Older pyqtgraph versions do not support all styling kwargs.
                 self._legend = plot_item.addLegend(offset=(12, 12))
 
-            self._direction_plot = pg.PlotWidget()
+            self._direction_plot = pg.PlotWidget(axisItems={"left": _CleanLogAxis(orientation="left")})
             self._direction_plot.setMinimumHeight(230)
-            self._direction_plot.setBackground("#050915")
+            self._direction_plot.setBackground("#0a1120")
             self._direction_plot.setMenuEnabled(False)
-            self._direction_plot.showGrid(x=True, y=True, alpha=0.18)
-            self._direction_plot.setLabel("left", "Loss", color="#aeb8d8", size="10pt")
-            self._direction_plot.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
+            self._direction_plot.showGrid(x=True, y=True, alpha=0.10)
+            self._direction_plot.setLabel("bottom", "Epoch", color="#6f7d9c", size="9pt")
             self._direction_plot.setLogMode(x=False, y=True)
-            self._curve_train_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#34d399", width=2.1), name="train_a")
-            self._curve_val_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#10b981", width=2.4), name="val_a")
-            self._curve_train_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#fbbf24", width=2.1), name="train_direction")
-            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#f59e0b", width=2.4), name="val_direction")
+            self._curve_train_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#34d399", width=2.1), name="train a")
+            self._curve_val_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#10b981", width=2.4), name="val a")
+            self._curve_train_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#fbbf24", width=2.1), name="train dir")
+            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#f59e0b", width=2.4), name="val dir")
 
             self._direction_quality_plot = pg.PlotWidget()
             self._direction_quality_plot.setMinimumHeight(180)
-            self._direction_quality_plot.setBackground("#050915")
+            self._direction_quality_plot.setBackground("#0a1120")
             self._direction_quality_plot.setMenuEnabled(False)
-            self._direction_quality_plot.showGrid(x=True, y=True, alpha=0.18)
-            self._direction_quality_plot.setLabel("left", "Quality", color="#aeb8d8", size="10pt")
-            self._direction_quality_plot.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
-            self._curve_val_angular = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#3b82f6", width=2.4), name="val_angular_deg")
-            self._curve_train_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#c084fc", width=2.1), name="train_cos_sim")
-            self._curve_val_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#8b5cf6", width=2.4), name="val_cos_sim")
+            self._direction_quality_plot.showGrid(x=True, y=True, alpha=0.10)
+            self._direction_quality_plot.setLabel("bottom", "Epoch", color="#6f7d9c", size="9pt")
+            self._curve_val_angular = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#3b82f6", width=2.4), name="val ang°")
+            self._curve_train_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#c084fc", width=2.1), name="train cos")
+            self._curve_val_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#8b5cf6", width=2.4), name="val cos")
 
             self._direction_tab = QWidget()
             direction_layout = QVBoxLayout()
@@ -897,24 +901,82 @@ class LiveLossPlot(QWidget):
             direction_layout.addWidget(self._direction_quality_plot, 2)
             self._direction_tab.setLayout(direction_layout)
 
-            self._checkpoint_plot = pg.PlotWidget()
+            self._checkpoint_plot = pg.PlotWidget(axisItems={"left": _CleanLogAxis(orientation="left")})
             self._checkpoint_plot.setMinimumHeight(360)
-            self._checkpoint_plot.setBackground("#050915")
+            self._checkpoint_plot.setBackground("#0a1120")
             self._checkpoint_plot.setMenuEnabled(False)
-            self._checkpoint_plot.showGrid(x=True, y=True, alpha=0.18)
-            self._checkpoint_plot.setLabel("left", "Checkpoint score", color="#aeb8d8", size="10pt")
-            self._checkpoint_plot.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
+            self._checkpoint_plot.showGrid(x=True, y=True, alpha=0.10)
+            self._checkpoint_plot.setLabel("bottom", "Epoch", color="#6f7d9c", size="9pt")
             self._checkpoint_plot.setLogMode(x=False, y=True)
-            self._curve_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#34d399", width=2.6), name="Score")
-            self._curve_best_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#f472b6", width=2.2, style=pg_QtCore.Qt.PenStyle.DashLine), name="Best")
+            self._curve_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#34d399", width=2.6), name="score")
+            self._curve_best_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#f472b6", width=2.2, style=pg_QtCore.Qt.PenStyle.DashLine), name="best")
 
-            self._plot_tabs = QTabWidget()
-            self._plot_tabs.setDocumentMode(True)
-            self._plot_tabs.setMinimumHeight(430)
-            self._plot_tabs.addTab(self._plot_widget, "Loss overview")
-            self._plot_tabs.addTab(self._direction_tab, "Acceleration / direction")
-            self._plot_tabs.addTab(self._checkpoint_plot, "Checkpoint score")
-            card_layout.addWidget(self._plot_tabs, 1)
+            # Consistent clean axes + a compact legend on every companion plot.
+            for _p in (self._direction_plot, self._direction_quality_plot, self._checkpoint_plot):
+                _pi = _p.getPlotItem()
+                _pi.setContentsMargins(6, 6, 10, 6)
+                _pi.hideButtons()
+                for _axis_name in ("left", "bottom"):
+                    _ax = _p.getAxis(_axis_name)
+                    _ax.setTextPen(pg.mkPen("#7f8ca8"))
+                    _ax.setPen(pg.mkPen("#2a3550"))
+                    _ax.setStyle(tickFont=QFont("Consolas", 8), tickTextOffset=6, tickLength=4)
+                try:
+                    _pi.addLegend(offset=(8, 8), labelTextSize="8pt",
+                                  labelTextColor="#cdd9ee",
+                                  brush=pg.mkBrush(8, 12, 26, 170),
+                                  pen=pg.mkPen(124, 92, 255, 70))
+                except TypeError:
+                    _pi.addLegend(offset=(8, 8))
+
+            # ── Dashboard grid: all charts visible at once (no hidden tabs) ──
+            # A dominant Loss panel on top, with Acceleration/Direction and
+            # Direction-quality side by side, and Checkpoint score full width.
+            def _titled(title: str, widget, minh: int):
+                box = QFrame()
+                box.setObjectName("plotCell")
+                box.setStyleSheet(
+                    "QFrame#plotCell { background: transparent; border: none; }"
+                )
+                v = QVBoxLayout(box)
+                v.setContentsMargins(0, 0, 0, 0)
+                v.setSpacing(3)
+                lbl = QLabel(title)
+                lbl.setStyleSheet(
+                    "color: #8ea3c8; font-size: 11px; font-weight: 700;"
+                    " letter-spacing: 0.4px; background: transparent; border: none;"
+                    " padding-left: 4px;"
+                )
+                widget.setMinimumHeight(minh)
+                v.addWidget(lbl)
+                v.addWidget(widget, 1)
+                return box
+
+            # The direction-quality plot used to live inside _direction_tab; it is
+            # now a standalone cell, so reparent it cleanly.
+            self._direction_quality_plot.setParent(None)
+
+            # 2×2 dashboard: Loss (primary, top-left) plus three companions.
+            # A 2×2 layout is far more compact than stacked rows, leaving room
+            # for the per-epoch History table below the chart card.
+            self._plots_container = QWidget()
+            plots_grid = QGridLayout(self._plots_container)
+            plots_grid.setContentsMargins(0, 0, 0, 0)
+            plots_grid.setSpacing(10)
+            plots_grid.addWidget(_titled("Loss · train / validation", self._plot_widget, 150), 0, 0)
+            plots_grid.addWidget(_titled("Acceleration / direction loss", self._direction_plot, 150), 0, 1)
+            plots_grid.addWidget(_titled("Direction quality · cos / angular", self._direction_quality_plot, 150), 1, 0)
+            plots_grid.addWidget(_titled("Checkpoint score", self._checkpoint_plot, 150), 1, 1)
+            plots_grid.setRowStretch(0, 1)
+            plots_grid.setRowStretch(1, 1)
+            plots_grid.setColumnStretch(0, 1)
+            plots_grid.setColumnStretch(1, 1)
+            self._plots_container.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+            )
+            # Kept for backwards compatibility with set_compact()/references.
+            self._plot_tabs = None
+            card_layout.addWidget(self._plots_container, 1)
         else:
             self._plot_widget = None
             self._direction_plot = None
@@ -971,21 +1033,19 @@ class LiveLossPlot(QWidget):
 
     def set_compact(self, compact: bool = True) -> None:
         """Compact mode hides the in-card metric chips/help (shown elsewhere by
-        the KPI/time strips) so the plot itself gets the vertical space."""
+        the KPI/time strips) so the plot grid itself gets the vertical space."""
         for w in (self._metrics_row1, self._metrics_row2, self._help_label):
             w.setVisible(not compact)
         if compact:
-            # Let the chart shrink/grow freely instead of forcing a tall card.
-            if getattr(self, "_plot_tabs", None) is not None:
-                self._plot_tabs.setMinimumHeight(260)
-            for plot in (
-                getattr(self, "_plot_widget", None),
-                getattr(self, "_direction_plot", None),
-                getattr(self, "_direction_quality_plot", None),
-                getattr(self, "_checkpoint_plot", None),
+            # Uniform, small per-plot minimums so the 2×2 dashboard stays
+            # compact and leaves vertical room for the History table below.
+            for attr in (
+                "_plot_widget", "_direction_plot",
+                "_direction_quality_plot", "_checkpoint_plot",
             ):
+                plot = getattr(self, attr, None)
                 if plot is not None:
-                    plot.setMinimumHeight(180)
+                    plot.setMinimumHeight(140)
 
     def _metric_label(self, name: str, value: str = "—") -> QLabel:
         lbl = QLabel(f"<span style='color:#7480a8;font-size:10px'>{name}</span><br>"

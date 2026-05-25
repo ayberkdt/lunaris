@@ -763,7 +763,14 @@ class STLRPSTrainTab(QWidget):
         self.resume_section._toggle_btn.setChecked(True)
         self.resume_section._on_toggle(True)
         self.resume_enabled.toggled.connect(self._on_resume_toggled)
+        # Autoload only on the genuine user toggle signal (NOT when _apply_config
+        # re-invokes _on_resume_toggled directly, which would clobber a profile).
+        self.resume_enabled.toggled.connect(
+            lambda checked: self._autoload_resume_config() if checked else None
+        )
         self.resume_from.textChanged.connect(self._refresh_checklist)
+        # When a resume source is typed/pasted, mirror its architecture into the UI.
+        self.resume_from.editingFinished.connect(self._autoload_resume_config)
 
         # =====================================================================
         # GROUP 2: Model Architecture
@@ -1524,6 +1531,11 @@ class STLRPSTrainTab(QWidget):
         self.runner.set_finished_hook(self._on_train_finished)
         self._user_stopped = False  # set when the user clicks Stop (→ INTERRUPTED)
         self._device_badge: Optional[str] = None
+        # The experiment header lives on the MainWindow. Because this tab's
+        # setup_page/monitor_page are re-homed into the page stack (this tab
+        # itself is not in the widget tree), self.window() does NOT reach it —
+        # MainWindow injects a direct reference via set_experiment_header().
+        self._hdr_ref = None
 
         # --- Live Loss Plot (Feature #13) ---
         self._live_plot = LiveLossPlot()
@@ -1635,15 +1647,19 @@ class STLRPSTrainTab(QWidget):
         workspace_grid.setContentsMargins(0, 0, 0, 0)
         workspace_grid.setSpacing(16)
         
-        workspace_grid.addWidget(grp_data, 0, 0)
-        workspace_grid.addWidget(grp_arch, 0, 1)
-        workspace_grid.addWidget(grp_optim, 1, 0)
-        workspace_grid.addWidget(self._loss_physics_section, 1, 1)
-        workspace_grid.addWidget(self._fourier_section, 2, 0, 1, 2)
-        workspace_grid.addWidget(self._dir_loss_section, 3, 0, 1, 2)
-        workspace_grid.addWidget(self._field_loss_section, 4, 0, 1, 2)
-        workspace_grid.addWidget(self.advanced_section, 5, 0, 1, 2)
-        workspace_grid.addWidget(self._model_repr_section, 6, 0, 1, 2)
+        # Resume / continue-from-checkpoint sits at the very top of the config
+        # so it is the first thing visible (it was previously attached to an
+        # unused layout and never displayed at all).
+        workspace_grid.addWidget(self.resume_section, 0, 0, 1, 2)
+        workspace_grid.addWidget(grp_data, 1, 0)
+        workspace_grid.addWidget(grp_arch, 1, 1)
+        workspace_grid.addWidget(grp_optim, 2, 0)
+        workspace_grid.addWidget(self._loss_physics_section, 2, 1)
+        workspace_grid.addWidget(self._fourier_section, 3, 0, 1, 2)
+        workspace_grid.addWidget(self._dir_loss_section, 4, 0, 1, 2)
+        workspace_grid.addWidget(self._field_loss_section, 5, 0, 1, 2)
+        workspace_grid.addWidget(self.advanced_section, 6, 0, 1, 2)
+        workspace_grid.addWidget(self._model_repr_section, 7, 0, 1, 2)
 
         # ── 5. Command & Launch collapsible section ──
         cmd_section = CollapsibleSection("Command Preview & CLI Arguments")
@@ -1678,8 +1694,8 @@ class STLRPSTrainTab(QWidget):
         cmd_section.set_content_layout(cmd_vbox)
 
         # Add both to the bottom of the grid layout
-        workspace_grid.addWidget(saved_profiles_section, 7, 0, 1, 2)
-        workspace_grid.addWidget(cmd_section, 8, 0, 1, 2)
+        workspace_grid.addWidget(saved_profiles_section, 8, 0, 1, 2)
+        workspace_grid.addWidget(cmd_section, 9, 0, 1, 2)
 
         workspace_inner = QWidget()
         workspace_inner.setLayout(workspace_grid)
@@ -1705,88 +1721,67 @@ class STLRPSTrainTab(QWidget):
         
         self.setup_page.setLayout(setup_l)
 
-        # ── 7. Training Monitor (Dashboard v2) ──
+        # ── 7. Training Monitor (single scrollable column — no nested
+        #       splitters, so the History/Progress/Raw table can no longer be
+        #       clipped behind the chart card). ──
         train_ctrl_bar = self._build_training_control_bar()
-        
+
         if _HAS_DASHBOARD_V2:
             self._live_plot.set_compact(True)
+            if self._structured_log is not None:
+                self._structured_log.set_raw_log_widget(self.runner.raw_log_widget())
 
-        workspace_splitter = QSplitter(Qt.Orientation.Vertical)
-        if _HAS_DASHBOARD_V2 and self._structured_log is not None:
-            self._structured_log.set_raw_log_widget(self.runner.raw_log_widget())
-            workspace_splitter.addWidget(self._live_plot)
-            workspace_splitter.addWidget(self._structured_log)
-        else:
-            workspace_splitter.addWidget(self._live_plot)
-            workspace_splitter.addWidget(self.runner)
-            
-        workspace_splitter.setStretchFactor(0, 7)
-        workspace_splitter.setStretchFactor(1, 2)
-        workspace_splitter.setSizes([700, 160])
-        self._live_plot.setMinimumHeight(460)
-        self._live_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-
+        # Compact status strips.
         if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
-            self._kpi_strip.setMaximumHeight(92)
+            self._kpi_strip.setMaximumHeight(96)
             self._kpi_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         if _HAS_DASHBOARD_V2 and self._time_strip is not None:
-            self._time_strip.setMaximumHeight(92)
+            self._time_strip.setMaximumHeight(96)
             self._time_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        self.monitor_page = QWidget()
-        monitor_shell_l = QVBoxLayout()
-        monitor_shell_l.setContentsMargins(22, 20, 22, 20)
-        monitor_shell_l.setSpacing(14)
-        monitor_title = QLabel("Training Monitor")
-        monitor_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
-        monitor_subtitle = QLabel(
-            "Live experiment dashboard: status, ETA, losses, checkpoints, queue, and logs."
-        )
-        monitor_subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
-        monitor_shell_l.addWidget(monitor_title)
-        monitor_shell_l.addWidget(monitor_subtitle)
-        
-        monitor_inner = QWidget()
-        monitor_l = QVBoxLayout()
-        monitor_l.setContentsMargins(4, 4, 4, 4)
-        monitor_l.setSpacing(8)
-        if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
-            monitor_l.addWidget(self._kpi_strip)
-        if _HAS_DASHBOARD_V2 and self._time_strip is not None:
-            monitor_l.addWidget(self._time_strip)
-        monitor_l.addWidget(workspace_splitter, 1)
-        monitor_inner.setLayout(monitor_l)
+        # Chart card + structured log get generous fixed heights in the column.
+        self._live_plot.setMinimumHeight(440)
+        self._live_plot.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        if _HAS_DASHBOARD_V2 and self._structured_log is not None:
+            self._structured_log.setMinimumHeight(280)
+            self._structured_log.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-        monitor_split = QSplitter(Qt.Orientation.Vertical)
-        monitor_split.addWidget(monitor_inner)
-
-        # ── 8. Queue tab ──
-        queue_page = QWidget()
-        queue_l = QVBoxLayout()
-        queue_l.setContentsMargins(4, 4, 4, 4)
-        queue_l.setSpacing(8)
-        queue_l.addWidget(self._queue, 1)
-        queue_page.setLayout(queue_l)
-
+        # Queue (collapsible, secondary).
         queue_box = QGroupBox("Queue Status")
         queue_box_l = QVBoxLayout()
         queue_box_l.setContentsMargins(10, 10, 10, 10)
-        queue_box_l.addWidget(queue_page, 1)
+        queue_box_l.addWidget(self._queue, 1)
         queue_box.setLayout(queue_box_l)
-
         queue_collapsible = CollapsibleSection("Execution Queue Status")
         queue_collapsible_l = QVBoxLayout()
         queue_collapsible_l.setContentsMargins(0, 0, 0, 0)
         queue_collapsible_l.addWidget(queue_box)
         queue_collapsible.set_content_layout(queue_collapsible_l)
 
-        monitor_split.addWidget(queue_collapsible)
-        monitor_split.setStretchFactor(0, 7)
-        monitor_split.setStretchFactor(1, 1)
-        monitor_split.setSizes([740, 80])
-        monitor_shell_l.addWidget(monitor_split, 1)
-        monitor_shell_l.addWidget(train_ctrl_bar)
-        self.monitor_page.setLayout(monitor_shell_l)
+        # Single-column scrollable content. The control bar sits at the top,
+        # just above the KPI/Phase cards (request: not a separate pinned widget).
+        monitor_content = QWidget()
+        mc_l = QVBoxLayout(monitor_content)
+        mc_l.setContentsMargins(0, 0, 0, 0)
+        mc_l.setSpacing(12)
+        mc_l.addWidget(train_ctrl_bar)
+        if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
+            mc_l.addWidget(self._kpi_strip)
+        if _HAS_DASHBOARD_V2 and self._time_strip is not None:
+            mc_l.addWidget(self._time_strip)
+        mc_l.addWidget(self._live_plot)
+        if _HAS_DASHBOARD_V2 and self._structured_log is not None:
+            mc_l.addWidget(self._structured_log)
+        else:
+            mc_l.addWidget(self.runner)
+        mc_l.addWidget(queue_collapsible)
+        mc_l.addStretch(0)
+
+        self.monitor_page = QWidget()
+        monitor_shell_l = QVBoxLayout(self.monitor_page)
+        monitor_shell_l.setContentsMargins(18, 16, 18, 16)
+        monitor_shell_l.setSpacing(10)
+        monitor_shell_l.addWidget(_scroll_wrap(monitor_content), 1)
 
         # ── 9. Final Setup ──
         self._page_tabs = None
@@ -2555,6 +2550,148 @@ class STLRPSTrainTab(QWidget):
         if d:
             self.out_dir.setText(_norm_path(d))
 
+    def _resolve_resume_run_dir(self) -> Optional[Path]:
+        """Resolve the run directory from the resume source (run dir / checkpoints/ / .pt)."""
+        src = self.resume_from.text().strip()
+        if not src:
+            return None
+        try:
+            if resolve_artifact_run_dir is not None:
+                return Path(resolve_artifact_run_dir(Path(src).expanduser()))
+            p = Path(src).expanduser()
+            if p.is_file():               # .../checkpoints/ckpt_last.pt
+                return p.parent.parent if p.parent.name == "checkpoints" else p.parent
+            if p.name == "checkpoints":
+                return p.parent
+            return p
+        except Exception:
+            return None
+
+    def _resume_baseline_epoch(self) -> int:
+        """Best-effort last-completed epoch of the resumed run.
+
+        Used to seed the ETA estimator so remaining time = total - resumed
+        epoch (instead of treating resume as starting from epoch 0)."""
+        run_dir = self._resolve_resume_run_dir()
+        if run_dir is None:
+            return 0
+        best = 0
+        for name in ("history.jsonl", "history.csv"):
+            p = Path(run_dir) / name
+            if not p.exists():
+                continue
+            try:
+                if name.endswith(".jsonl"):
+                    with open(p, "r", encoding="utf-8") as fh:
+                        for line in fh:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                e = int(json.loads(line).get("epoch", -1))
+                                best = max(best, e + 1)  # 0-based → completed count
+                            except Exception:
+                                continue
+                else:
+                    import csv as _csv
+                    with open(p, "r", encoding="utf-8", newline="") as fh:
+                        for row in _csv.DictReader(fh):
+                            try:
+                                e = int(float(row.get("epoch", -1)))
+                                best = max(best, e + 1)
+                            except Exception:
+                                continue
+            except Exception:
+                pass
+            if best:
+                break
+        total = int(self.epochs.value())
+        return max(0, min(best, max(0, total - 1)))
+
+    def _autoload_resume_config(self) -> None:
+        """Mirror the checkpoint run's architecture into the UI on resume.
+
+        Resume requires the rebuilt network to match the checkpoint exactly;
+        loading the previous run's config.json into the architecture/encoding
+        fields prevents strict-resume mismatches."""
+        if not self.resume_enabled.isChecked():
+            return
+        run_dir = self._resolve_resume_run_dir()
+        if run_dir is None:
+            return
+        cfg = _read_json_if_exists(Path(run_dir) / "config.json")
+        if not cfg:
+            return
+
+        def _set_int(widget, *keys):
+            for k in keys:
+                if cfg.get(k) is not None:
+                    try:
+                        widget.setValue(int(cfg[k])); return
+                    except Exception:
+                        pass
+
+        def _set_float(widget, *keys):
+            for k in keys:
+                if cfg.get(k) is not None:
+                    try:
+                        widget.setValue(float(cfg[k])); return
+                    except Exception:
+                        pass
+
+        def _set_bool(widget, *keys):
+            for k in keys:
+                if cfg.get(k) is not None:
+                    widget.setChecked(bool(cfg[k])); return
+
+        # Core architecture (config.json uses TrainConfig field names).
+        _set_int(self.hidden, "hidden")
+        _set_int(self.depth, "depth")
+        _set_float(self.dropout, "dropout")
+        _set_float(self.w0_first, "w0_first")
+        _set_float(self.w0_hidden, "w0_hidden")
+        _set_int(self.n_bands, "n_bands")
+        if hasattr(self, "use_residual_blocks"):
+            _set_bool(self.use_residual_blocks, "use_residual_blocks")
+        if cfg.get("activation"):
+            self.activation.setCurrentText(str(cfg["activation"]))
+        if cfg.get("model_preset") and hasattr(self, "model_preset"):
+            idx = self.model_preset.findData(str(cfg["model_preset"]))
+            if idx >= 0:
+                self.model_preset.setCurrentIndex(idx)
+
+        # Input encoding / Fourier.
+        if hasattr(self, "use_fourier"):
+            _set_bool(self.use_fourier, "use_fourier")
+        _set_int(self.fourier_n, "fourier_n_features", "fourier_n")
+        _set_float(self.fourier_sigma, "fourier_sigma")
+        if hasattr(self, "fourier_append_raw"):
+            _set_bool(self.fourier_append_raw, "fourier_append_raw")
+        for attr, key in (
+            ("use_radial_separation", "use_radial_separation"),
+            ("use_radial_decay_encoding", "use_radial_decay_encoding"),
+            ("use_physical_radial_decay_encoding", "use_physical_radial_decay_encoding"),
+            ("use_real_sh_basis", "use_real_sh_basis"),
+            ("physical_radial_decay_append_raw", "physical_radial_decay_append_raw"),
+            ("physical_radial_decay_include_unit", "physical_radial_decay_include_unit"),
+            ("physical_radial_decay_include_r_scaled", "physical_radial_decay_include_r_scaled"),
+        ):
+            if hasattr(self, attr):
+                _set_bool(getattr(self, attr), key)
+        if hasattr(self, "physical_radial_decay_max_power"):
+            _set_int(self.physical_radial_decay_max_power, "physical_radial_decay_max_power")
+
+        # Refresh dependent enable-states + command preview.
+        if hasattr(self, "_on_model_preset_changed"):
+            self._on_model_preset_changed()
+        self._on_activation_changed(self.activation.currentText())
+        self._refresh_command_preview()
+        if hasattr(self, "runner"):
+            self.runner.append(
+                f"[UI] Resume: rebuilt network architecture from {Path(run_dir).name}/config.json "
+                "(hidden/depth/activation/encoding locked to the checkpoint)."
+            )
+
     def _pick_resume_run(self) -> None:
         d = QFileDialog.getExistingDirectory(
             self,
@@ -2563,6 +2700,7 @@ class STLRPSTrainTab(QWidget):
         )
         if d:
             self.resume_from.setText(_norm_path(d))
+            self._autoload_resume_config()
 
     def _pick_resume_checkpoint(self) -> None:
         fn, _ = QFileDialog.getOpenFileName(
@@ -2573,6 +2711,7 @@ class STLRPSTrainTab(QWidget):
         )
         if fn:
             self.resume_from.setText(_norm_path(fn))
+            self._autoload_resume_config()
 
     # -----------------------------------------------------------------
     # QSettings
@@ -3039,7 +3178,13 @@ class STLRPSTrainTab(QWidget):
         if _HAS_DASHBOARD_V2:
             if self._eta_estimator is not None:
                 self._eta_estimator.set_total_epochs(int(self.epochs.value()))
-                self._eta_estimator.on_training_start()
+                # On resume, seed the last completed epoch so the ETA reflects
+                # that we are continuing mid-run (remaining = total - resumed).
+                resume_baseline = (
+                    self._resume_baseline_epoch()
+                    if self.resume_enabled.isChecked() else 0
+                )
+                self._eta_estimator.on_training_start(start_epoch=resume_baseline)
             if self._epoch_guard is not None:
                 self._epoch_guard.reset()        # Phase 8: reset ETA epoch guards
             if self._eta_update_timer is not None:
@@ -3174,6 +3319,12 @@ class STLRPSTrainTab(QWidget):
         self._history_poll_path = path
         self._history_poll_mtime = mtime
         self._live_plot.load_history_file(str(path))
+        # Feed the same per-epoch history into the structured History table.
+        if _HAS_DASHBOARD_V2 and self._structured_log is not None:
+            try:
+                self._structured_log.load_history_file(str(path))
+            except Exception:
+                pass
 
     # -----------------------------------------------------------------
     # Post-run hook
@@ -3346,19 +3497,6 @@ class STLRPSTrainTab(QWidget):
         vl = store.latest_val_loss()
         if vl is not None:
             kpi.val_loss.set_value(f"{vl:.3e}")
-            
-        lr = store.latest_lr()
-        if lr is not None:
-            kpi.lr.set_value(f"{lr:.2e}")
-            
-        b_score = store.latest_best_score()
-        if b_score is not None:
-            kpi.best_score.set_value(f"{b_score:.3e}")
-            
-        if store.val_history and 'val_loss_dir' in store.val_history[-1]:
-            d_loss = store.val_history[-1]['val_loss_dir']
-            if d_loss is not None:
-                kpi.direction.set_value(f"{d_loss:.3e}")
 
         lr = store.latest_lr()
         if lr is not None:
@@ -3373,7 +3511,7 @@ class STLRPSTrainTab(QWidget):
                 state="success",
             )
 
-        # Direction metric
+        # Direction metric (cosine similarity of predicted vs. reference accel)
         cos = store.latest("train_cos_sim")
         if cos is not None:
             kpi.direction.set_value(f"cos={cos:.4f}")
@@ -3388,15 +3526,17 @@ class STLRPSTrainTab(QWidget):
         finish = est.format_finish()
 
         kpi = self._kpi_strip
-        if kpi is not None:
-            kpi.eta.set_value(remaining)
+        # ETA lives on the TimeMetricsStrip now; keep KPI device badge fresh.
+        if kpi is not None and hasattr(kpi, "device"):
+            kpi.device.set_value(self._detect_device_badge())
 
         # Phase 7: full time-metric cards on the Live Monitor.
         ts = self._time_strip
         if ts is not None:
             ts.elapsed.set_value(elapsed)
             ts.eta.set_value(remaining)
-            pass  # finish is now started
+            if hasattr(ts, "finish"):
+                ts.finish.set_value(finish)
             ts.epoch_duration.set_value(est.format_current_epoch())
             ts.avg_epoch.set_value(est.format_avg_epoch())
             sps = self._metrics_store.latest("samples_per_s") if self._metrics_store else None
@@ -3404,9 +3544,8 @@ class STLRPSTrainTab(QWidget):
                 ts.samples_per_s.set_value(f"{sps:,.0f}")
 
         # Compact time badges on the experiment header.
-        main_win = self.window()
-        if hasattr(main_win, '_experiment_header'):
-            hdr = main_win._experiment_header
+        hdr = self._header()
+        if hdr is not None and hasattr(hdr, "set_elapsed"):
             hdr.set_elapsed(elapsed)
             hdr.set_remaining(remaining)
             hdr.set_finish(finish)
@@ -3453,14 +3592,29 @@ class STLRPSTrainTab(QWidget):
         self._device_badge = badge
         return badge
 
+    def set_experiment_header(self, header) -> None:
+        """Wire the MainWindow's experiment header so lifecycle/ETA updates reach it."""
+        self._hdr_ref = header
+
+    def _header(self):
+        """Return the experiment header (injected ref, else via window())."""
+        h = getattr(self, "_hdr_ref", None)
+        if h is not None:
+            return h
+        win = self.window()
+        return getattr(win, "_experiment_header", None)
+
     def _update_header_lifecycle(self, status: str) -> None:
         """Phase 6/11: reflect real training state in the experiment header."""
-        if getattr(self, "_kpi_strip", None) is not None and hasattr(self._kpi_strip, "set_device"):
-            if status == "TRAINING":
-                self._kpi_strip.set_device(self._detect_device_badge())
-                
-        main_win = self.window()
-        hdr = getattr(main_win, "_experiment_header", None)
+        if status == "TRAINING":
+            kpi = getattr(self, "_kpi_strip", None)
+            if kpi is not None and hasattr(kpi, "device"):
+                kpi.device.set_value(self._detect_device_badge())
+            ts = getattr(self, "_time_strip", None)
+            if ts is not None and hasattr(ts, "started"):
+                ts.started.set_value(datetime.now().strftime("%H:%M:%S"))
+
+        hdr = self._header()
         if hdr is None or not hasattr(hdr, "set_status"):
             return
         hdr.set_status(status)

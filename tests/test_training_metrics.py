@@ -119,6 +119,39 @@ class TestETAEstimator:
         rem = est.remaining_seconds()
         assert rem == 0.0
 
+    def test_on_training_start_clears_stale_epoch_state(self):
+        # Resume bug: a previous completed run left current_epoch at the total
+        # and batch_progress at 1.0; a new on_training_start() must clear them
+        # so the ETA is not computed against stale state.
+        est = ETAEstimator()
+        est.set_total_epochs(200)
+        est.on_training_start()
+        for ep in range(1, 201):
+            est.on_epoch_start(ep)
+            est.on_epoch_end(ep)
+        assert est._current_epoch == 200
+        # New session (e.g. resume) — stale state must be reset.
+        est.on_training_start()
+        assert est._current_epoch == 0
+        assert est._batch_progress == 0.0
+        # No epochs seen yet in the new session → insufficient data, not 0/garbage.
+        assert est.remaining_seconds() is None
+
+    def test_on_training_start_seeds_resume_epoch(self):
+        # Seeding the resumed epoch makes remaining reflect the continuation.
+        est = ETAEstimator()
+        est.set_total_epochs(200)
+        est.on_training_start(start_epoch=150)
+        assert est._current_epoch == 150
+        # Complete one resumed epoch; remaining should be ~ (200-151) epochs.
+        est.on_epoch_start(151)
+        time.sleep(0.02)
+        est.on_epoch_end(151)
+        rem = est.remaining_seconds()
+        assert rem is not None and rem >= 0.0
+        # Far smaller than a from-scratch 200-epoch estimate.
+        assert rem < est._ema_epoch_s * 60
+
     def test_format_elapsed_before_start(self):
         est = ETAEstimator()
         assert est.format_elapsed() == "--:--:--"
@@ -355,6 +388,12 @@ class TestParserFieldExtraction:
                 "dir=5.67e-06 | 12,345 samples/s | eta=120s cuda_mem=1234/2345MiB "
                 "peak=3000/4000MiB total=8000MiB")
 
+    def _batch_line_new(self):
+        return ("2026-05-25 12:00:01,1 [INFO] [ train ] ep: 5  b: 12/100 | "
+                "opt: 1.234e-01 ref: 2.345e-01 U: 3.45e-02 a: 4.56e-02 lr: 1.00e-04 | "
+                "dir: 5.67e-06 | 12,345 spl/s | eta: 120s cuda_mem=1234/2345MiB "
+                "peak=3000/4000MiB total=8000MiB")
+
     def test_kv_epoch_extracted(self):
         rec = self.parser.parse_line(self._batch_line())
         assert rec.epoch == 5
@@ -388,6 +427,17 @@ class TestParserFieldExtraction:
         rec = self.parser.parse_line(self._batch_line())
         assert rec.eta_s == pytest.approx(120.0)
         assert "cuda_mem=1234/2345MiB" in rec.memory
+
+    def test_new_format_extracted(self):
+        rec = self.parser.parse_line(self._batch_line_new())
+        assert rec.epoch == 5
+        assert rec.batch == 12
+        assert rec.total_batches == 100
+        assert rec.progress_pct == pytest.approx(12.0)
+        assert rec.loss_opt == pytest.approx(1.234e-01, rel=1e-3)
+        assert rec.loss_ref == pytest.approx(2.345e-01, rel=1e-3)
+        assert rec.samples_per_s == pytest.approx(12345.0)
+        assert rec.eta_s == pytest.approx(120.0)
 
     def test_val_summary_trailing_space_header(self):
         # The engine prints validation summaries as "[val ]" (trailing space).

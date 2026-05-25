@@ -290,6 +290,11 @@ class MainWindow(QMainWindow):
             header_card.setLayout(header_lo)
 
 
+        # The train tab is not in the widget tree (only its pages are), so give
+        # it a direct reference to the header for lifecycle/ETA updates.
+        if hasattr(self._train_tab, "set_experiment_header"):
+            self._train_tab.set_experiment_header(getattr(self, "_experiment_header", None))
+
         # --- Sidebar navigation ---
         self._nav_buttons: List[QPushButton] = []
         sidebar = self._build_sidebar()
@@ -394,14 +399,43 @@ class MainWindow(QMainWindow):
             self._nav_buttons.append(btn)
             return btn
 
+        def _group_box() -> "QFrame":
+            box = QFrame()
+            box.setObjectName("navGroup")
+            box.setStyleSheet(
+                "QFrame#navGroup {"
+                "  background: rgba(53, 208, 255, 0.045);"
+                "  border: 1px solid rgba(53, 208, 255, 0.16);"
+                "  border-radius: 10px;"
+                "}"
+            )
+            gl = QVBoxLayout(box)
+            gl.setContentsMargins(4, 4, 4, 4)
+            gl.setSpacing(2)
+            return box, gl
+
         lo = QVBoxLayout()
-        lo.setContentsMargins(0, 18, 0, 18)
-        lo.setSpacing(6)
+        lo.setContentsMargins(10, 16, 10, 16)
+        lo.setSpacing(4)
+
+        # ── DATA ──
+        lo.addWidget(_section_lbl("DATA"))
         lo.addWidget(_nav_btn("Data", 0))
-        lo.addWidget(_nav_btn("Training Setup", 1))
-        lo.addWidget(_nav_btn("Training Monitor", 2))
-        lo.addWidget(_nav_btn("Evaluation", 3))
-        lo.addWidget(_nav_btn("Runtime Performance", 4))
+
+        # ── TRAINING (Setup + Monitor are one category, boxed together) ──
+        lo.addWidget(_section_lbl("TRAINING"))
+        train_box, train_l = _group_box()
+        train_l.addWidget(_nav_btn("Training Setup", 1))
+        train_l.addWidget(_nav_btn("Training Monitor", 2))
+        lo.addWidget(train_box)
+
+        # ── ANALYSIS ──
+        lo.addWidget(_section_lbl("ANALYSIS"))
+        analysis_box, analysis_l = _group_box()
+        analysis_l.addWidget(_nav_btn("Evaluation", 3))
+        analysis_l.addWidget(_nav_btn("Runtime Performance", 4))
+        lo.addWidget(analysis_box)
+
         lo.addStretch(1)
         sidebar.setLayout(lo)
 
