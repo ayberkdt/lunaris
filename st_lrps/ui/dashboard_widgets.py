@@ -425,11 +425,11 @@ if _HAS_QT:
             self.best_score = MetricCard("Best Score", "—")
             self.lr = MetricCard("Learning Rate", "—")
             self.direction = MetricCard("Direction", "—")
-            self.eta = MetricCard("ETA", "—")
+            self.device = MetricCard("Device", "CPU")
 
             for card in (
                 self.epoch, self.phase, self.train_loss, self.val_loss,
-                self.best_score, self.lr, self.direction, self.eta,
+                self.best_score, self.lr, self.direction, self.device,
             ):
                 layout.addWidget(card, 1)
 
@@ -444,7 +444,7 @@ if _HAS_QT:
             self.best_score.set_value("—", state="normal")
             self.lr.set_value("—")
             self.direction.set_value("—")
-            self.eta.set_value("—")
+            self.device.set_value("—")
 
     # ═══════════════════════════════════════════════════════════════════════
     # TimeMetricsStrip (Phase 7: training time observability)
@@ -461,13 +461,13 @@ if _HAS_QT:
 
             self.elapsed = MetricCard("Elapsed", "--:--:--")
             self.eta = MetricCard("ETA Remaining", "—")
-            self.finish = MetricCard("Est. Finish", "—")
+            self.started = MetricCard("Started At", "—")
             self.epoch_duration = MetricCard("Epoch Duration", "--:--:--")
             self.avg_epoch = MetricCard("Avg Epoch", "—")
             self.samples_per_s = MetricCard("Samples/s", "—")
 
             for card in (
-                self.elapsed, self.eta, self.finish,
+                self.elapsed, self.device, self.started,
                 self.epoch_duration, self.avg_epoch, self.samples_per_s,
             ):
                 layout.addWidget(card, 1)
@@ -476,7 +476,7 @@ if _HAS_QT:
         def reset(self) -> None:
             self.elapsed.set_value("--:--:--")
             self.eta.set_value("Estimating…")
-            self.finish.set_value("Estimating…")
+            self.started.set_value("—")
             self.epoch_duration.set_value("--:--:--")
             self.avg_epoch.set_value("Estimating…")
             self.samples_per_s.set_value("—")
@@ -484,8 +484,7 @@ if _HAS_QT:
         def set_done(self, finish_text: str = "") -> None:
             """Final state when training stops: ETA = Done, finish = actual time."""
             self.eta.set_value("Done", state="success")
-            if finish_text:
-                self.finish.set_value(finish_text, state="success")
+            
 
     # ═══════════════════════════════════════════════════════════════════════
     # ProgressTableModel

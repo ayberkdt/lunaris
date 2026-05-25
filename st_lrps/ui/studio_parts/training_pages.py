@@ -61,6 +61,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import sys
 
 from .qt_common import *
+from .qt_common import NoScrollComboBox
 from .qt_common import _USE_PYSIDE
 
 
@@ -534,7 +535,7 @@ class STLRPSTrainTab(QWidget):
         # =====================================================================
         # PRESET BAR
         # =====================================================================
-        self._preset_combo = QComboBox()
+        self._preset_combo = NoScrollComboBox()
         self._preset_combo.setMinimumWidth(200)
         self._preset_combo.setToolTip("Kaydedilmiş hiperparametre profilleri.")
         self._refresh_preset_list()
@@ -559,7 +560,7 @@ class STLRPSTrainTab(QWidget):
         preset_bar.addWidget(btn_del_preset)
 
         # ── Workflow Mode ──────────────────────────────────────────────
-        self.workflow_mode = QComboBox()
+        self.workflow_mode = NoScrollComboBox()
         self.workflow_mode.addItem("Train only",              "train_only")
         self.workflow_mode.addItem("Evaluate only",           "eval_only")
         self.workflow_mode.addItem("Train then evaluate",     "train_then_eval")
@@ -596,7 +597,7 @@ class STLRPSTrainTab(QWidget):
         form_data = QFormLayout()
         _tune_form(form_data)
 
-        self.dataset_mode = QComboBox()
+        self.dataset_mode = NoScrollComboBox()
         self.dataset_mode.addItem("Single dataset + internal split", "single")
         self.dataset_mode.addItem("Independent train/val/test/OOD datasets", "independent")
         self.dataset_mode.setToolTip(
@@ -725,7 +726,7 @@ class STLRPSTrainTab(QWidget):
         resume_path_widget.setLayout(resume_path_row)
         self._resume_path_buttons = (btn_resume_run, btn_resume_ckpt)
 
-        self.resume_checkpoint = QComboBox()
+        self.resume_checkpoint = NoScrollComboBox()
         self.resume_checkpoint.addItem("last", "last")
         self.resume_checkpoint.addItem("best", "best")
         self.resume_checkpoint.setCurrentIndex(0)
@@ -733,7 +734,7 @@ class STLRPSTrainTab(QWidget):
         self.resume_nonstrict = QCheckBox("Allow non-critical config differences")
         self.resume_nonstrict.setChecked(False)
 
-        self.resume_history_mode = QComboBox()
+        self.resume_history_mode = NoScrollComboBox()
         self.resume_history_mode.addItem("append previous history", "append")
         self.resume_history_mode.addItem("overwrite history", "overwrite")
         self.resume_history_mode.setCurrentIndex(0)
@@ -759,6 +760,8 @@ class STLRPSTrainTab(QWidget):
         resume_vbox.setContentsMargins(0, 0, 0, 0)
         resume_vbox.addWidget(resume_inner)
         self.resume_section.set_content_layout(resume_vbox)
+        self.resume_section._toggle_btn.setChecked(True)
+        self.resume_section._on_toggle(True)
         self.resume_enabled.toggled.connect(self._on_resume_toggled)
         self.resume_from.textChanged.connect(self._refresh_checklist)
 
@@ -785,7 +788,7 @@ class STLRPSTrainTab(QWidget):
             "Çok derin ağlar (>6) SIREN'de gradyan kaybolmasına yol açabilir.\n"
             "Önerilen: 3–5."
         )
-        self.activation = QComboBox()
+        self.activation = NoScrollComboBox()
         self.activation.addItems(["sine", "silu", "tanh", "softplus"])
         self.activation.setCurrentText("sine")
         self.activation.setToolTip(
@@ -985,7 +988,7 @@ class STLRPSTrainTab(QWidget):
         self.w_a.setSingleStep(0.1)
         self.w_a.setToolTip("İvme (a) kayıp ağırlığı (fixed/ntk_init modlarında).")
 
-        self.gradnorm_mode = QComboBox()
+        self.gradnorm_mode = NoScrollComboBox()
         self.gradnorm_mode.addItems(["ntk_init", "fixed", "dynamic"])
         self.gradnorm_mode.setCurrentText("ntk_init")
         self.gradnorm_mode.setToolTip(
@@ -1029,12 +1032,12 @@ class STLRPSTrainTab(QWidget):
             "Türev alanının sürüklenmesini önler."
         )
 
-        self.a_sign = QComboBox()
+        self.a_sign = NoScrollComboBox()
         self.a_sign.addItems(["auto", "+1", "-1"])
         self.a_sign.setCurrentText("auto")
         self.a_sign.setToolTip("İvme işareti: auto | +1 Jeodezi | -1 Newton")
 
-        self.use_si = QComboBox()
+        self.use_si = NoScrollComboBox()
         self.use_si.addItems(["SI Birimleri (Önerilen)", "Orijinal (Dönüşüm Yok)"])
         self.use_si.setCurrentIndex(0)
         self.use_si.setToolTip("Kanonik → SI dönüşümü.")
@@ -1236,12 +1239,12 @@ class STLRPSTrainTab(QWidget):
         self.split_seed.setRange(0, 2_147_483_647)
         self.split_seed.setValue(42)
         self.split_seed.setToolTip("Train/val ayrımı için ayrı tohum (None → seed ile aynı).")
-        self.device_hint = QComboBox()
+        self.device_hint = NoScrollComboBox()
         self.device_hint.addItems(["auto", "cpu", "cuda", "mps"])
         self.device_hint.setCurrentText("auto")
         self.device_hint.setToolTip("Cihaz ipucu. cpu/mps → AMP otomatik kapatılır.")
         self.device_hint.currentTextChanged.connect(self._on_device_hint_changed)
-        self.log_every_mode = QComboBox()
+        self.log_every_mode = NoScrollComboBox()
         self.log_every_mode.addItem("auto", "auto")
         self.log_every_mode.addItem("fixed", "fixed")
         self.log_every_mode.setCurrentIndex(0)  # auto by default
@@ -1377,7 +1380,7 @@ class STLRPSTrainTab(QWidget):
         # The model_preset combo itself lives in the top toolbar (compact).
         # This group exposes the manual encoding flags and physical-radial-decay
         # options that only apply when model_preset == "custom".
-        self.model_preset = QComboBox()
+        self.model_preset = NoScrollComboBox()
         for _val, _label in (
             ("baseline_raw", "Baseline · raw coordinates"),
             ("recommended_physical_radial_decay", "Recommended · physical radial decay"),
@@ -3343,6 +3346,19 @@ class STLRPSTrainTab(QWidget):
         vl = store.latest_val_loss()
         if vl is not None:
             kpi.val_loss.set_value(f"{vl:.3e}")
+            
+        lr = store.latest_lr()
+        if lr is not None:
+            kpi.lr.set_value(f"{lr:.2e}")
+            
+        b_score = store.latest_best_score()
+        if b_score is not None:
+            kpi.best_score.set_value(f"{b_score:.3e}")
+            
+        if store.val_history and 'val_loss_dir' in store.val_history[-1]:
+            d_loss = store.val_history[-1]['val_loss_dir']
+            if d_loss is not None:
+                kpi.direction.set_value(f"{d_loss:.3e}")
 
         lr = store.latest_lr()
         if lr is not None:
@@ -3380,7 +3396,7 @@ class STLRPSTrainTab(QWidget):
         if ts is not None:
             ts.elapsed.set_value(elapsed)
             ts.eta.set_value(remaining)
-            ts.finish.set_value(finish)
+            pass  # finish is now started
             ts.epoch_duration.set_value(est.format_current_epoch())
             ts.avg_epoch.set_value(est.format_avg_epoch())
             sps = self._metrics_store.latest("samples_per_s") if self._metrics_store else None

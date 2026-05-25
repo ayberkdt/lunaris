@@ -125,3 +125,7 @@ except ImportError:
         QWidget,
     )
 
+
+class NoScrollComboBox(QComboBox):
+    def wheelEvent(self, e):
+        e.ignore()
