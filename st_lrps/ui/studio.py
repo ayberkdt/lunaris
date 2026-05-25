@@ -11,8 +11,11 @@ lunar residual potential surrogate, not a classical q,p state-space model.
 What you can do from the UI
 ---------------------------
 - Train a potential surrogate   (runs `python -m st_lrps.training.cli` as a subprocess)
+- Resume an interrupted training run
 - Evaluate a surrogate run      (runs `python -m st_lrps.evaluation.cli` as a subprocess)
+- Profile ST-LRPS runtime inference (runs `python -m st_lrps.runtime.profiling`)
 - Browse evaluation plots inline (post-processing dashboard)
+- Inspect runtime profiling summaries and plots
 - Watch live loss curves during training (pyqtgraph)
 - Queue multiple training runs for overnight execution
 
@@ -159,10 +162,12 @@ _PRESETS_DIR = SCRIPT_DIR / "presets"
 _REPO_ROOT = SCRIPT_DIR.parents[1]
 TRAIN_CLI_MODULE = "st_lrps.training.cli"
 EVAL_CLI_MODULE = "st_lrps.evaluation.cli"
+PROFILE_CLI_MODULE = "st_lrps.runtime.profiling"
 # Filesystem locations are used only for preflight existence checks; launching
 # always goes through ``-m`` so package-relative imports resolve correctly.
 TRAIN_CLI_PATH = _REPO_ROOT / "st_lrps" / "training" / "cli.py"
 EVAL_CLI_PATH = _REPO_ROOT / "st_lrps" / "evaluation" / "cli.py"
+PROFILE_CLI_PATH = _REPO_ROOT / "st_lrps" / "runtime" / "profiling.py"
 
 # UI defaults are intentionally read from the generator configuration module.
 # This keeps the dashboard from drifting away from the command-line SSOT when
@@ -1656,6 +1661,7 @@ class ProcessPane(QWidget):
         self._on_finished_hook: Optional[Callable[[int, QProcess.ExitStatus], None]] = (
             None
         )
+        self._stop_hint: str = ""
 
         self.status = QLabel("Hazır")
         self.status.setTextInteractionFlags(
@@ -1738,6 +1744,9 @@ class ProcessPane(QWidget):
     ) -> None:
         self._on_finished_hook = fn
 
+    def set_stop_hint(self, text: str = "") -> None:
+        self._stop_hint = text.strip()
+
     def append(self, text: str) -> None:
         self.log.appendPlainText(text.rstrip("\n"))
         if self._auto_scroll.isChecked():
@@ -1785,6 +1794,8 @@ class ProcessPane(QWidget):
         if not self.proc or self.proc.state() == QProcess.ProcessState.NotRunning:
             return
         self.append("\n[UI] Durdurma istendi...\n")
+        if self._stop_hint:
+            self.append(self._stop_hint + "\n")
         self.status.setText("Durduruluyor...")
 
         # On Windows, kill the entire process tree (includes grandchild workers)
@@ -1869,6 +1880,9 @@ def _base_preset(**overrides) -> Dict[str, Any]:
         "altitude_bin_width_km": 50.0,
         "altitude_min_km": _cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_min_km", 200.0),
         "altitude_max_km": _cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_max_km", 600.0),
+        "resume_enabled": False, "resume_from": "",
+        "resume_checkpoint": "last", "resume_nonstrict": False,
+        "resume_history_mode": "append",
         "use_radial_cross_loss": False,
         "radial_loss_weight": 0.0,
         "cross_loss_weight": 0.0,
@@ -2239,8 +2253,8 @@ class STLRPSTrainTab(QWidget):
         self.workflow_mode.addItem("📋  Queue training runs",     "queue")
         self.workflow_mode.setCurrentIndex(2)  # default: Train then evaluate
         self.workflow_mode.setToolTip(
-            "Train only:         Sadece st_lrps_train.py çalıştırılır.\n"
-            "Evaluate only:      Sadece st_lrps_evaluate.py çalıştırılır (mevcut model klasörü gerekli).\n"
+            f"Train only:         Runs python -m {TRAIN_CLI_MODULE}.\n"
+            f"Evaluate only:      Runs python -m {EVAL_CLI_MODULE} (existing model folder required).\n"
             "Train then eval:    Eğitim biter biter otomatik olarak değerlendirme başlatılır.\n"
             "Quick check:        quick_check=True ile 1 epoch (pipeline doğrulaması).\n"
             "Queue:              Kuyruktaki tüm işler sırayla çalıştırılır."
@@ -2274,7 +2288,7 @@ class STLRPSTrainTab(QWidget):
         self.dataset_mode.addItem("Single dataset + internal split", "single")
         self.dataset_mode.addItem("Independent train/val/test/OOD datasets", "independent")
         self.dataset_mode.setToolTip(
-            "Single mode passes --data and lets st_lrps_train.py split train/val. "
+            f"Single mode passes --data and lets python -m {TRAIN_CLI_MODULE} split train/val. "
             "Independent mode passes --train-data and --val-data explicitly."
         )
 
@@ -2372,6 +2386,69 @@ class STLRPSTrainTab(QWidget):
         self.dataset_mode.currentIndexChanged.connect(self._on_dataset_mode_changed)
 
         # =====================================================================
+        # GROUP 1B: Resume Training
+        # =====================================================================
+        self.resume_section = CollapsibleSection("Resume Training")
+        form_resume = QFormLayout()
+        _tune_form(form_resume)
+
+        self.resume_enabled = QCheckBox("Resume existing run")
+        self.resume_from = ValidatedPathEdit(
+            placeholder="Run directory, checkpoints/ directory, or .pt checkpoint",
+            check_file=False,
+        )
+        btn_resume_run = QPushButton("Select Run...")
+        btn_resume_run.clicked.connect(self._pick_resume_run)
+        btn_resume_ckpt = QPushButton("Select Checkpoint...")
+        btn_resume_ckpt.clicked.connect(self._pick_resume_checkpoint)
+        resume_path_row = QHBoxLayout()
+        resume_path_row.setContentsMargins(0, 0, 0, 0)
+        resume_path_row.setSpacing(6)
+        resume_path_row.addWidget(self.resume_from, 1)
+        resume_path_row.addWidget(btn_resume_run)
+        resume_path_row.addWidget(btn_resume_ckpt)
+        resume_path_widget = QWidget()
+        resume_path_widget.setLayout(resume_path_row)
+        self._resume_path_buttons = (btn_resume_run, btn_resume_ckpt)
+
+        self.resume_checkpoint = QComboBox()
+        self.resume_checkpoint.addItem("last", "last")
+        self.resume_checkpoint.addItem("best", "best")
+        self.resume_checkpoint.setCurrentIndex(0)
+
+        self.resume_nonstrict = QCheckBox("Allow non-critical config differences")
+        self.resume_nonstrict.setChecked(False)
+
+        self.resume_history_mode = QComboBox()
+        self.resume_history_mode.addItem("append previous history", "append")
+        self.resume_history_mode.addItem("overwrite history", "overwrite")
+        self.resume_history_mode.setCurrentIndex(0)
+
+        resume_help = QLabel(
+            "Resume defaults to ckpt_last.pt. --epochs is the total target epoch count, "
+            "not additional epochs. Resume is epoch-level; if interrupted mid-epoch, "
+            "training resumes from the last completed checkpoint."
+        )
+        resume_help.setWordWrap(True)
+        resume_help.setStyleSheet("color: #94a3b8; font-size: 11px;")
+
+        form_resume.addRow(self.resume_enabled)
+        form_resume.addRow("Resume From", resume_path_widget)
+        form_resume.addRow("Checkpoint", self.resume_checkpoint)
+        form_resume.addRow(self.resume_nonstrict)
+        form_resume.addRow("History", self.resume_history_mode)
+        form_resume.addRow("", resume_help)
+        resume_inner = QWidget()
+        resume_inner.setLayout(form_resume)
+        _tune_inputs(resume_inner)
+        resume_vbox = QVBoxLayout()
+        resume_vbox.setContentsMargins(0, 0, 0, 0)
+        resume_vbox.addWidget(resume_inner)
+        self.resume_section.set_content_layout(resume_vbox)
+        self.resume_enabled.toggled.connect(self._on_resume_toggled)
+        self.resume_from.textChanged.connect(self._refresh_checklist)
+
+        # =====================================================================
         # GROUP 2: Model Architecture
         # =====================================================================
         grp_arch = QGroupBox("Model Mimarisi")
@@ -2425,7 +2502,7 @@ class STLRPSTrainTab(QWidget):
         self.w0_first.setToolTip(
             "SIREN ilk katman frekans çarpanı (ω₀).\n"
             "İlk katmanın sinüs fonksiyonu bu değerle ölçeklenir: sin(ω₀·Wx+b).\n"
-            "Varsayılan: 30. Eğer boş bırakılırsa st_lrps_train.py, veri setinden otomatik hesaplar."
+            f"Varsayılan: 30. Eğer boş bırakılırsa python -m {TRAIN_CLI_MODULE}, veri setinden otomatik hesaplar."
         )
         self.w0_hidden = QDoubleSpinBox()
         self.w0_hidden.setDecimals(1)
@@ -2972,7 +3049,7 @@ class STLRPSTrainTab(QWidget):
         # =====================================================================
         self.extra_args = QLineEdit("")
         self.extra_args.setPlaceholderText("Ek CLI argümanları (opsiyonel)")
-        self.extra_args.setToolTip("Doğrudan st_lrps_train.py'ye iletilecek ek argümanlar.")
+        self.extra_args.setToolTip(f"Doğrudan python -m {TRAIN_CLI_MODULE} komutuna iletilecek ek argümanlar.")
 
         # =====================================================================
         # LAYOUT ASSEMBLY
@@ -2981,13 +3058,14 @@ class STLRPSTrainTab(QWidget):
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(12)
         grid.addWidget(grp_data, 0, 0)
-        grid.addWidget(grp_arch, 0, 1)
-        grid.addWidget(grp_optim, 1, 0)
-        grid.addWidget(grp_phys, 1, 1)
-        grid.addWidget(self._fourier_section, 2, 0, 1, 2)
-        grid.addWidget(self._dir_loss_section, 3, 0, 1, 2)
-        grid.addWidget(self._field_loss_section, 4, 0, 1, 2)
-        grid.addWidget(self.advanced_section, 5, 0, 1, 2)
+        grid.addWidget(self.resume_section, 0, 1)
+        grid.addWidget(grp_arch, 1, 0)
+        grid.addWidget(grp_optim, 1, 1)
+        grid.addWidget(grp_phys, 2, 0, 1, 2)
+        grid.addWidget(self._fourier_section, 3, 0, 1, 2)
+        grid.addWidget(self._dir_loss_section, 4, 0, 1, 2)
+        grid.addWidget(self._field_loss_section, 5, 0, 1, 2)
+        grid.addWidget(self.advanced_section, 6, 0, 1, 2)
 
         extra_row_layout = QFormLayout()
         _tune_form(extra_row_layout)
@@ -2996,7 +3074,9 @@ class STLRPSTrainTab(QWidget):
         self.command_preview.setReadOnly(True)
         self.command_preview.setFont(_mono_font())
         self.command_preview.setMinimumHeight(78)
-        self.command_preview.setPlaceholderText("Click Preview Command to see the exact st_lrps_train.py command.")
+        self.command_preview.setPlaceholderText(
+            f"Click Preview Command to see the exact python -m {TRAIN_CLI_MODULE} command."
+        )
         self.command_warning = QLabel("")
         self.command_warning.setWordWrap(True)
         self.command_warning.setStyleSheet("color: #fbbf24; font-size: 11px;")
@@ -3016,12 +3096,13 @@ class STLRPSTrainTab(QWidget):
         extra_row_layout.addRow("", self.command_warning)
         extra_w = QWidget()
         extra_w.setLayout(extra_row_layout)
-        grid.addWidget(extra_w, 6, 0, 1, 2)
+        grid.addWidget(extra_w, 7, 0, 1, 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
 
         for grp in (grp_data, grp_arch, grp_optim, grp_phys):
             _tune_inputs(grp)
+        _tune_inputs(self.resume_section)
         _tune_inputs(self._dir_loss_section)
         _tune_inputs(self._field_loss_section)
 
@@ -3126,6 +3207,7 @@ class STLRPSTrainTab(QWidget):
         self._on_activation_changed(self.activation.currentText())
         self._on_gradnorm_mode_changed(self.gradnorm_mode.currentText())
         self._on_device_hint_changed(self.device_hint.currentText())
+        self._on_resume_toggled(self.resume_enabled.isChecked())
         self._on_workflow_mode_changed()
         self._refresh_command_preview()
         self._refresh_checklist()
@@ -3184,6 +3266,20 @@ class STLRPSTrainTab(QWidget):
             if independent
             else "Validation fraction in single-dataset mode. 0.1 -> 10% val, 90% train."
         )
+        self._refresh_checklist()
+
+    def _on_resume_toggled(self, enabled: bool) -> None:
+        widgets = [
+            self.resume_from,
+            self.resume_checkpoint,
+            self.resume_nonstrict,
+            self.resume_history_mode,
+            *self._resume_path_buttons,
+        ]
+        for widget in widgets:
+            widget.setEnabled(enabled)
+        self._refresh_command_preview()
+        self._refresh_checklist()
 
     def _on_loss_feature_toggled(self, *_args) -> None:
         altitude_enabled = self.use_altitude_balanced_loss.isChecked()
@@ -3286,7 +3382,19 @@ class STLRPSTrainTab(QWidget):
 
         dataset_mode = self.dataset_mode.currentData() if hasattr(self, "dataset_mode") else "single"
         if mode != "eval_only":
-            if dataset_mode == "single":
+            resume_active = bool(
+                hasattr(self, "resume_enabled") and self.resume_enabled.isChecked()
+            )
+            if resume_active:
+                rp = self.resume_from.text().strip() if hasattr(self, "resume_from") else ""
+                if rp:
+                    check(Path(rp).exists(), f"Resume source exists: {Path(rp).name}", hard=True)
+                else:
+                    check(False, "Resume source is required", hard=True)
+                items.append(
+                    '<span style="color:#7c8dc7">ℹ Resume mode: dataset/output may be inferred from previous run config</span>'
+                )
+            elif dataset_mode == "single":
                 dp = self.data.text().strip() if hasattr(self, "data") else ""
                 if dp:
                     check(Path(dp).is_file(), f"Dataset exists: {Path(dp).name}")
@@ -3299,7 +3407,7 @@ class STLRPSTrainTab(QWidget):
                 check(bool(vp) and Path(vp).is_file(), "Val dataset exists", hard=True)
 
         if mode in ("eval_only",):
-            md = self.model_dir.text().strip() if hasattr(self, "model_dir") else ""
+            md = self.out_dir.text().strip() if hasattr(self, "out_dir") else ""
             check(bool(md) and Path(md).is_dir(), "Model dir exists (eval only)", hard=True)
 
         if not hasattr(self, "_checklist_label"):
@@ -3345,6 +3453,12 @@ class STLRPSTrainTab(QWidget):
             "out_dir": self.out_dir.text(),
             "dataset_name": self.dataset_name.text(),
             "val_ratio": self.val_ratio.value(),
+            # Resume
+            "resume_enabled": self.resume_enabled.isChecked(),
+            "resume_from": self.resume_from.text(),
+            "resume_checkpoint": self.resume_checkpoint.currentData() or "last",
+            "resume_nonstrict": self.resume_nonstrict.isChecked(),
+            "resume_history_mode": self.resume_history_mode.currentData() or "append",
             # Architecture
             "hidden": self.hidden.value(),
             "depth": self.depth.value(),
@@ -3504,10 +3618,22 @@ class STLRPSTrainTab(QWidget):
             self.use_laplacian_regularization.setChecked(bool(cfg["use_laplacian_regularization"]))
         if "use_residual_blocks" in cfg:
             self.use_residual_blocks.setChecked(bool(cfg["use_residual_blocks"]))
+        if "resume_enabled" in cfg:
+            self.resume_enabled.setChecked(bool(cfg["resume_enabled"]))
+        if "resume_nonstrict" in cfg:
+            self.resume_nonstrict.setChecked(bool(cfg["resume_nonstrict"]))
         if "a_sign" in cfg:
             self.a_sign.setCurrentText(str(cfg["a_sign"]))
         if "use_si_index" in cfg:
             self.use_si.setCurrentIndex(int(cfg["use_si_index"]))
+        if "resume_checkpoint" in cfg:
+            idx = self.resume_checkpoint.findData(str(cfg["resume_checkpoint"]))
+            if idx >= 0:
+                self.resume_checkpoint.setCurrentIndex(idx)
+        if "resume_history_mode" in cfg:
+            idx = self.resume_history_mode.findData(str(cfg["resume_history_mode"]))
+            if idx >= 0:
+                self.resume_history_mode.setCurrentIndex(idx)
         if "workflow_mode" in cfg:
             idx = self.workflow_mode.findData(str(cfg["workflow_mode"]))
             if idx >= 0:
@@ -3525,6 +3651,7 @@ class STLRPSTrainTab(QWidget):
             ("ood_data", self.ood_data),
             ("out_dir", self.out_dir),
             ("dataset_name", self.dataset_name),
+            ("resume_from", self.resume_from),
             ("extra_args", self.extra_args),
         ):
             if key in cfg:
@@ -3538,6 +3665,7 @@ class STLRPSTrainTab(QWidget):
                 self._suite_manifest_label.setText("(no suite applied)")
                 self._suite_manifest_label.setStyleSheet("color: #94a3b8; font-size: 10px;")
         self._on_dataset_mode_changed()
+        self._on_resume_toggled(self.resume_enabled.isChecked())
         self._on_loss_feature_toggled()
 
     def _load_preset(self) -> None:
@@ -3614,6 +3742,25 @@ class STLRPSTrainTab(QWidget):
         if d:
             self.out_dir.setText(_norm_path(d))
 
+    def _pick_resume_run(self) -> None:
+        d = QFileDialog.getExistingDirectory(
+            self,
+            "Resume Run Directory",
+            self.resume_from.text() or self.out_dir.text() or str(SCRIPT_DIR),
+        )
+        if d:
+            self.resume_from.setText(_norm_path(d))
+
+    def _pick_resume_checkpoint(self) -> None:
+        fn, _ = QFileDialog.getOpenFileName(
+            self,
+            "Resume Checkpoint",
+            self.resume_from.text() or self.out_dir.text() or str(SCRIPT_DIR),
+            "PyTorch checkpoints (*.pt);;All (*.*)",
+        )
+        if fn:
+            self.resume_from.setText(_norm_path(fn))
+
     # -----------------------------------------------------------------
     # QSettings
     # -----------------------------------------------------------------
@@ -3651,6 +3798,7 @@ class STLRPSTrainTab(QWidget):
                 "preload_data", "pin_memory", "quick_check",
                 "use_altitude_balanced_loss", "use_radial_cross_loss",
                 "use_laplacian_regularization", "use_residual_blocks",
+                "resume_enabled", "resume_nonstrict",
             }
             _int_keys = {
                 "hidden", "depth", "epochs", "batch_size", "t_max",
@@ -3714,19 +3862,42 @@ class STLRPSTrainTab(QWidget):
             return fail("Missing script", "st_lrps/training/cli.py not found in the repository.")
 
         args = ["-u", "-m", TRAIN_CLI_MODULE]
+        resume_active = self.resume_enabled.isChecked()
+        if resume_active:
+            resume_path = self.resume_from.text().strip()
+            if not resume_path:
+                return fail(
+                    "Missing resume source",
+                    "Resume mode requires --resume-from. Select a run directory, checkpoints directory, or .pt checkpoint.",
+                )
+            if not Path(resume_path).exists():
+                return fail("Missing resume source", f"Resume source not found:\n{resume_path}")
+            args += ["--resume-from", resume_path]
+            args += ["--resume-checkpoint", self.resume_checkpoint.currentData() or "last"]
+            if self.resume_nonstrict.isChecked():
+                args += ["--resume-nonstrict"]
+            history_mode = self.resume_history_mode.currentData() or "append"
+            if history_mode == "overwrite":
+                args += ["--resume-overwrite-history"]
+            else:
+                args += ["--resume-append-history"]
+
         dataset_mode = self.dataset_mode.currentData() or "single"
         if dataset_mode == "independent":
             train_path = self.train_data.text().strip()
             val_path = self.val_data.text().strip()
-            if not train_path or not val_path:
+            if not resume_active and (not train_path or not val_path):
                 return fail(
                     "Missing dataset",
                     "Independent mode requires both --train-data and --val-data.",
                 )
             for label, path in (("Train dataset", train_path), ("Validation dataset", val_path)):
-                if not Path(path).exists():
+                if path and not Path(path).exists():
                     return fail("Missing dataset", f"{label} not found:\n{path}")
-            args += ["--train-data", train_path, "--val-data", val_path]
+            if train_path:
+                args += ["--train-data", train_path]
+            if val_path:
+                args += ["--val-data", val_path]
             for flag, path in (
                 ("--test-data", self.test_data.text().strip()),
                 ("--ood-data", self.ood_data.text().strip()),
@@ -3868,6 +4039,18 @@ class STLRPSTrainTab(QWidget):
             extra_args, err = _split_cli_args(extra)
             if err:
                 return fail("Invalid extra CLI arguments", err)
+            if resume_active:
+                resume_flags = {
+                    "--resume-from",
+                    "--resume-checkpoint",
+                    "--resume-nonstrict",
+                    "--resume-append-history",
+                    "--resume-overwrite-history",
+                }
+                if any(flag in resume_flags for flag in (extra_args or [])):
+                    self.command_warning.setText(
+                        "Extra args include resume flags; they are appended last and may override UI resume settings."
+                    )
             args += extra_args or []
         return args
 
@@ -3933,7 +4116,7 @@ class STLRPSTrainTab(QWidget):
     def _start(self) -> None:
         mode = self.workflow_mode.currentData() or "train_then_eval"
 
-        # Evaluate-only: delegate directly to st_lrps_evaluate.py
+        # Evaluate-only: delegate directly to the canonical evaluation module.
         if mode == "eval_only":
             run_dir = self.out_dir.text().strip()
             if not run_dir or not Path(run_dir).is_dir():
@@ -3951,11 +4134,12 @@ class STLRPSTrainTab(QWidget):
                 use_config_datasets=True,
             )
             if eval_args is None:
-                QMessageBox.critical(self, "Missing script", "st_lrps_evaluate.py not found.")
+                QMessageBox.critical(self, "Missing script", "st_lrps/evaluation/cli.py not found.")
                 return
             self._save_settings()
             self.runner.progress.setRange(0, 0)
             self.runner.set_output_dir(run_dir)
+            self.runner.set_stop_hint("")
             self.runner.start(sys.executable, eval_args, workdir=str(_REPO_ROOT))
             return
 
@@ -3974,6 +4158,8 @@ class STLRPSTrainTab(QWidget):
             return
 
         out_dir = self.out_dir.text().strip()
+        resume_source = out_dir or self.resume_from.text().strip()
+        self.runner.set_stop_hint(self._resume_stop_hint(resume_source))
         self._epochs_max = int(self.epochs.value())
         self.runner.progress.setRange(0, self._epochs_max)
         self.runner.progress.setValue(0)
@@ -4012,6 +4198,7 @@ class STLRPSTrainTab(QWidget):
         self.runner.progress.setFormat("Epoch %v / %m  [Kuyruk]")
         self.runner.set_output_dir("")
         self._set_history_poll_dir(self._arg_value(args, "--out") or "")
+        self.runner.set_stop_hint(self._resume_stop_hint(self._arg_value(args, "--out") or self._arg_value(args, "--resume-from") or ""))
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     def _arg_value(self, args: List[str], flag: str) -> Optional[str]:
@@ -4022,6 +4209,19 @@ class STLRPSTrainTab(QWidget):
         except ValueError:
             pass
         return None
+
+    def _resume_stop_hint(self, run_dir: str) -> str:
+        lines = [
+            "[UI] Training can usually be resumed from the last completed epoch.",
+            "[UI] Resume is epoch-level; an interrupted mid-epoch batch restarts from the last checkpoint.",
+        ]
+        run_dir = str(run_dir or "").strip()
+        if run_dir:
+            lines.append(
+                f"[UI] Suggested resume command: {sys.executable} -m {TRAIN_CLI_MODULE} "
+                f"--resume-from {run_dir} --epochs {self.epochs.value()}"
+            )
+        return "\n".join(lines)
 
     def _set_history_poll_dir(self, run_dir: str) -> None:
         run_dir = str(run_dir or "").strip()
@@ -5760,7 +5960,473 @@ class CloudGenTab(QWidget):
 
 
 # =============================================================================
-# 12. ST-LRPS EVALUATE TAB (retained from v2 with minor polish)
+# 12. ST-LRPS RUNTIME PROFILING TAB
+# =============================================================================
+
+
+class STLRPSProfilingTab(QWidget):
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+
+        grp_model = QGroupBox("Model / Run")
+        form_model = QFormLayout()
+        _tune_form(form_model)
+
+        self.profile_model_dir = ValidatedPathEdit(
+            placeholder="Trained run directory or checkpoint", check_file=False
+        )
+        btn_model_dir = QPushButton("Browse Run...")
+        btn_model_dir.clicked.connect(self._pick_profile_model_dir)
+        btn_model_ckpt = QPushButton("Browse Checkpoint...")
+        btn_model_ckpt.clicked.connect(self._pick_profile_checkpoint)
+        model_row = QHBoxLayout()
+        model_row.setContentsMargins(0, 0, 0, 0)
+        model_row.setSpacing(6)
+        model_row.addWidget(self.profile_model_dir, 1)
+        model_row.addWidget(btn_model_dir)
+        model_row.addWidget(btn_model_ckpt)
+        model_widget = QWidget()
+        model_widget.setLayout(model_row)
+        form_model.addRow("Model/run directory", model_widget)
+        grp_model.setLayout(form_model)
+
+        grp_runtime = QGroupBox("Runtime Sweep")
+        form_runtime = QFormLayout()
+        _tune_form(form_runtime)
+        self.profile_device = QComboBox()
+        self.profile_device.addItems(["auto", "cpu", "cuda"])
+        self.profile_batch_sizes = QLineEdit("1,16,128,1024,8192")
+        self.profile_chunk_sizes = QLineEdit("none,512,1024,4096,8192")
+        self.profile_n_warmup = QSpinBox()
+        self.profile_n_warmup.setRange(0, 100000)
+        self.profile_n_warmup.setValue(10)
+        self.profile_n_repeat = QSpinBox()
+        self.profile_n_repeat.setRange(1, 100000)
+        self.profile_n_repeat.setValue(50)
+        self.profile_seed = QSpinBox()
+        self.profile_seed.setRange(0, 2_147_483_647)
+        self.profile_seed.setValue(42)
+        form_runtime.addRow("Device", self.profile_device)
+        form_runtime.addRow("Batch sizes", self.profile_batch_sizes)
+        form_runtime.addRow("Chunk sizes", self.profile_chunk_sizes)
+        form_runtime.addRow("Warmup calls", self.profile_n_warmup)
+        form_runtime.addRow("Repeat calls", self.profile_n_repeat)
+        form_runtime.addRow("Seed", self.profile_seed)
+        grp_runtime.setLayout(form_runtime)
+
+        grp_input = QGroupBox("Input Queries")
+        form_input = QFormLayout()
+        _tune_form(form_input)
+        self.profile_input_source = QComboBox()
+        self.profile_input_source.addItem("synthetic", "synthetic")
+        self.profile_input_source.addItem("dataset", "dataset")
+        self.profile_data = ValidatedPathEdit(placeholder="HDF5 dataset path", check_file=True)
+        btn_data = QPushButton("Browse...")
+        btn_data.clicked.connect(self._pick_profile_data)
+        self.profile_dataset_name = QLineEdit("data")
+        self.profile_alt_min_km = QDoubleSpinBox()
+        self.profile_alt_min_km.setDecimals(2)
+        self.profile_alt_min_km.setRange(-10000.0, 1_000_000.0)
+        self.profile_alt_min_km.setValue(100.0)
+        self.profile_alt_max_km = QDoubleSpinBox()
+        self.profile_alt_max_km.setDecimals(2)
+        self.profile_alt_max_km.setRange(-10000.0, 1_000_000.0)
+        self.profile_alt_max_km.setValue(2000.0)
+        form_input.addRow("Input source", self.profile_input_source)
+        form_input.addRow("Dataset", _row_lineedit_with_button(self.profile_data, btn_data))
+        form_input.addRow("Dataset name", self.profile_dataset_name)
+        form_input.addRow("Altitude min (km)", self.profile_alt_min_km)
+        form_input.addRow("Altitude max (km)", self.profile_alt_max_km)
+        grp_input.setLayout(form_input)
+
+        grp_output = QGroupBox("Output / Options")
+        form_output = QFormLayout()
+        _tune_form(form_output)
+        self.profile_out_dir = ValidatedPathEdit(
+            placeholder="results/profiling/st_lrps_runtime", check_file=False
+        )
+        self.profile_out_dir.setText("results/profiling/st_lrps_runtime")
+        btn_out = QPushButton("Browse...")
+        btn_out.clicked.connect(self._pick_profile_out_dir)
+        self.profile_compare_classic_sh = QCheckBox("Compare classic SH")
+        self.profile_classic_sh_degree = QSpinBox()
+        self.profile_classic_sh_degree.setRange(1, 10000)
+        self.profile_classic_sh_degree.setValue(60)
+        self.profile_json_only = QCheckBox("JSON only")
+        self.profile_verbose = QCheckBox("Verbose output")
+        self.profile_extra_args = QLineEdit("")
+        self.profile_extra_args.setPlaceholderText("Extra profiling CLI arguments")
+        form_output.addRow("Output directory", _row_lineedit_with_button(self.profile_out_dir, btn_out))
+        form_output.addRow(self.profile_compare_classic_sh)
+        form_output.addRow("Classic SH degree", self.profile_classic_sh_degree)
+        form_output.addRow(self.profile_json_only)
+        form_output.addRow(self.profile_verbose)
+        form_output.addRow("Extra profiling args", self.profile_extra_args)
+        grp_output.setLayout(form_output)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(12)
+        grid.addWidget(grp_model, 0, 0, 1, 2)
+        grid.addWidget(grp_runtime, 1, 0)
+        grid.addWidget(grp_input, 1, 1)
+        grid.addWidget(grp_output, 2, 0, 1, 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        for group in (grp_model, grp_runtime, grp_input, grp_output):
+            _tune_inputs(group)
+
+        self.command_preview = QPlainTextEdit()
+        self.command_preview.setReadOnly(True)
+        self.command_preview.setFont(_mono_font())
+        self.command_preview.setMinimumHeight(76)
+        self.command_preview.setPlaceholderText(
+            f"Click Preview Command to see the exact python -m {PROFILE_CLI_MODULE} command."
+        )
+        self.command_warning = QLabel("")
+        self.command_warning.setWordWrap(True)
+        self.command_warning.setStyleSheet("color: #fbbf24; font-size: 11px;")
+        btn_preview = QPushButton("Preview Command")
+        btn_preview.clicked.connect(self._refresh_profile_preview)
+        btn_copy = QPushButton("Copy Command")
+        btn_copy.clicked.connect(self._copy_profile_command)
+        preview_buttons = QHBoxLayout()
+        preview_buttons.setContentsMargins(0, 0, 0, 0)
+        preview_buttons.addWidget(btn_preview)
+        preview_buttons.addWidget(btn_copy)
+        preview_buttons.addStretch(1)
+
+        preview_form = QFormLayout()
+        _tune_form(preview_form)
+        preview_buttons_widget = QWidget()
+        preview_buttons_widget.setLayout(preview_buttons)
+        preview_form.addRow("", preview_buttons_widget)
+        preview_form.addRow("Generated Command", self.command_preview)
+        preview_form.addRow("", self.command_warning)
+
+        top = QWidget()
+        top_l = QVBoxLayout()
+        top_l.setContentsMargins(8, 8, 8, 8)
+        top_l.setSpacing(8)
+        top_l.addLayout(grid)
+        top_l.addLayout(preview_form)
+        top.setLayout(top_l)
+
+        self.runner = ProcessPane()
+        self.runner.btn_start.setText("Run Profiling")
+        self.runner.btn_start.clicked.connect(self._start)
+        self.runner.set_finished_hook(self._on_profile_finished)
+        self.runner.set_stop_hint("")
+
+        self.profile_summary = QPlainTextEdit()
+        self.profile_summary.setReadOnly(True)
+        self.profile_summary.setFont(_mono_font())
+        self.profile_summary.setPlaceholderText("runtime_profile_summary.md will appear here after profiling.")
+        self._gallery = ImageGallery()
+        self._gallery._placeholder.setText("Runtime profile plots will appear here.")
+
+        output_splitter = QSplitter(Qt.Orientation.Horizontal)
+        output_splitter.addWidget(self.profile_summary)
+        output_splitter.addWidget(self._gallery)
+        output_splitter.setStretchFactor(0, 1)
+        output_splitter.setStretchFactor(1, 1)
+
+        bottom = QWidget()
+        bottom_l = QVBoxLayout()
+        bottom_l.setContentsMargins(0, 0, 0, 0)
+        bottom_l.setSpacing(8)
+        bottom_l.addWidget(self.runner, 2)
+        bottom_l.addWidget(output_splitter, 1)
+        bottom.setLayout(bottom_l)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(_scroll_wrap(top))
+        splitter.addWidget(bottom)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([360, 560])
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(splitter, 1)
+        self.setLayout(layout)
+
+        self._effective_out_dir = ""
+        self.profile_input_source.currentIndexChanged.connect(self._on_input_source_changed)
+        self._restore_settings()
+        self._on_input_source_changed()
+        self._refresh_profile_preview()
+
+    def _pick_profile_model_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(
+            self, "Model/run directory", self.profile_model_dir.text() or str(_REPO_ROOT)
+        )
+        if d:
+            self.profile_model_dir.setText(_norm_path(d))
+
+    def _pick_profile_checkpoint(self) -> None:
+        fn, _ = QFileDialog.getOpenFileName(
+            self,
+            "Model checkpoint",
+            self.profile_model_dir.text() or str(_REPO_ROOT),
+            "PyTorch checkpoints (*.pt);;All (*.*)",
+        )
+        if fn:
+            self.profile_model_dir.setText(_norm_path(fn))
+
+    def _pick_profile_data(self) -> None:
+        fn, _ = QFileDialog.getOpenFileName(
+            self,
+            "Profiling dataset",
+            self.profile_data.text() or str(_REPO_ROOT),
+            "HDF5 (*.h5 *.hdf5);;All (*.*)",
+        )
+        if fn:
+            self.profile_data.setText(_norm_path(fn))
+
+    def _pick_profile_out_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(
+            self,
+            "Profiling output directory",
+            self.profile_out_dir.text() or str(_REPO_ROOT / "results" / "profiling"),
+        )
+        if d:
+            self.profile_out_dir.setText(_norm_path(d))
+
+    def _on_input_source_changed(self, *_args) -> None:
+        is_dataset = self.profile_input_source.currentData() == "dataset"
+        self.profile_data.setEnabled(is_dataset)
+        self._refresh_profile_preview()
+
+    def _save_settings(self) -> None:
+        s = _settings()
+        s.beginGroup("profiling")
+        s.setValue("profile_model_dir", self.profile_model_dir.text())
+        s.setValue("profile_device", self.profile_device.currentText())
+        s.setValue("profile_batch_sizes", self.profile_batch_sizes.text())
+        s.setValue("profile_chunk_sizes", self.profile_chunk_sizes.text())
+        s.setValue("profile_n_warmup", self.profile_n_warmup.value())
+        s.setValue("profile_n_repeat", self.profile_n_repeat.value())
+        s.setValue("profile_seed", self.profile_seed.value())
+        s.setValue("profile_input_source", self.profile_input_source.currentData() or "synthetic")
+        s.setValue("profile_data", self.profile_data.text())
+        s.setValue("profile_dataset_name", self.profile_dataset_name.text())
+        s.setValue("profile_alt_min_km", self.profile_alt_min_km.value())
+        s.setValue("profile_alt_max_km", self.profile_alt_max_km.value())
+        s.setValue("profile_out_dir", self.profile_out_dir.text())
+        s.setValue("profile_compare_classic_sh", self.profile_compare_classic_sh.isChecked())
+        s.setValue("profile_classic_sh_degree", self.profile_classic_sh_degree.value())
+        s.setValue("profile_json_only", self.profile_json_only.isChecked())
+        s.setValue("profile_verbose", self.profile_verbose.isChecked())
+        s.setValue("profile_extra_args", self.profile_extra_args.text())
+        s.endGroup()
+        s.sync()
+
+    def _restore_settings(self) -> None:
+        s = _settings()
+        s.beginGroup("profiling")
+
+        def _st(key: str, default: str = "") -> str:
+            return str(s.value(key, default)) if s.contains(key) else default
+
+        def _i(key: str, default: int) -> int:
+            try:
+                return int(s.value(key, default))
+            except Exception:
+                return default
+
+        def _f(key: str, default: float) -> float:
+            try:
+                return float(s.value(key, default))
+            except Exception:
+                return default
+
+        def _b(key: str, default: bool = False) -> bool:
+            return str(s.value(key, str(default).lower())).lower() == "true"
+
+        self.profile_model_dir.setText(_st("profile_model_dir", ""))
+        self.profile_device.setCurrentText(_st("profile_device", "auto"))
+        self.profile_batch_sizes.setText(_st("profile_batch_sizes", "1,16,128,1024,8192"))
+        self.profile_chunk_sizes.setText(_st("profile_chunk_sizes", "none,512,1024,4096,8192"))
+        self.profile_n_warmup.setValue(_i("profile_n_warmup", 10))
+        self.profile_n_repeat.setValue(_i("profile_n_repeat", 50))
+        self.profile_seed.setValue(_i("profile_seed", 42))
+        source = _st("profile_input_source", "synthetic")
+        idx = self.profile_input_source.findData(source)
+        if idx >= 0:
+            self.profile_input_source.setCurrentIndex(idx)
+        self.profile_data.setText(_st("profile_data", ""))
+        self.profile_dataset_name.setText(_st("profile_dataset_name", "data"))
+        self.profile_alt_min_km.setValue(_f("profile_alt_min_km", 100.0))
+        self.profile_alt_max_km.setValue(_f("profile_alt_max_km", 2000.0))
+        self.profile_out_dir.setText(_st("profile_out_dir", "results/profiling/st_lrps_runtime"))
+        self.profile_compare_classic_sh.setChecked(_b("profile_compare_classic_sh", False))
+        self.profile_classic_sh_degree.setValue(_i("profile_classic_sh_degree", 60))
+        self.profile_json_only.setChecked(_b("profile_json_only", False))
+        self.profile_verbose.setChecked(_b("profile_verbose", False))
+        self.profile_extra_args.setText(_st("profile_extra_args", ""))
+        s.endGroup()
+
+    def _build_profile_args(self, show_errors: bool = True) -> Optional[List[str]]:
+        def fail(title: str, message: str) -> Optional[List[str]]:
+            if show_errors:
+                QMessageBox.critical(self, title, message)
+            else:
+                self.command_warning.setText(message)
+            return None
+
+        if not show_errors:
+            self.command_warning.setText("")
+
+        if not PROFILE_CLI_PATH.exists():
+            return fail("Missing script", "st_lrps/runtime/profiling.py not found in the repository.")
+
+        model_dir = self.profile_model_dir.text().strip()
+        if not model_dir:
+            return fail("Missing model", "Runtime profiling requires --model-dir.")
+        if not Path(model_dir).exists():
+            return fail("Missing model", f"Model/run path not found:\n{model_dir}")
+
+        batch_sizes = self.profile_batch_sizes.text().strip()
+        chunk_sizes = self.profile_chunk_sizes.text().strip()
+        if not batch_sizes:
+            return fail("Missing batch sizes", "Batch sizes must be a comma-separated list.")
+        if not chunk_sizes:
+            return fail("Missing chunk sizes", "Chunk sizes must be a comma-separated list, e.g. none,512,1024.")
+
+        input_source = self.profile_input_source.currentData() or "synthetic"
+        out_dir = self.profile_out_dir.text().strip() or "results/profiling/st_lrps_runtime"
+
+        args = [
+            "-u",
+            "-m",
+            PROFILE_CLI_MODULE,
+            "--model-dir",
+            model_dir,
+            "--device",
+            self.profile_device.currentText(),
+            "--batch-sizes",
+            batch_sizes,
+            "--chunk-sizes",
+            chunk_sizes,
+            "--n-warmup",
+            str(self.profile_n_warmup.value()),
+            "--n-repeat",
+            str(self.profile_n_repeat.value()),
+            "--input-source",
+            input_source,
+            "--dataset-name",
+            self.profile_dataset_name.text().strip() or "data",
+            "--alt-min-km",
+            str(self.profile_alt_min_km.value()),
+            "--alt-max-km",
+            str(self.profile_alt_max_km.value()),
+            "--seed",
+            str(self.profile_seed.value()),
+            "--out-dir",
+            out_dir,
+            "--classic-sh-degree",
+            str(self.profile_classic_sh_degree.value()),
+        ]
+
+        if input_source == "dataset":
+            data_path = self.profile_data.text().strip()
+            if not data_path:
+                return fail("Missing dataset", "Dataset input mode requires --data.")
+            if not Path(data_path).is_file():
+                return fail("Missing dataset", f"Dataset not found:\n{data_path}")
+            args += ["--data", data_path]
+
+        if self.profile_compare_classic_sh.isChecked():
+            args += ["--compare-classic-sh"]
+        if self.profile_json_only.isChecked():
+            args += ["--json-only"]
+        if self.profile_verbose.isChecked():
+            args += ["--verbose"]
+
+        extra = self.profile_extra_args.text().strip()
+        if extra:
+            extra_args, err = _split_cli_args(extra)
+            if err:
+                return fail("Invalid extra CLI arguments", err)
+            args += extra_args or []
+        return args
+
+    def _refresh_profile_preview(self) -> None:
+        args = self._build_profile_args(show_errors=False)
+        if args is None:
+            self.command_preview.clear()
+            return
+        self.command_preview.setPlainText(_format_command(sys.executable, args))
+        if not self.command_warning.text():
+            self.command_warning.setText("Command is valid for the current UI fields.")
+
+    def _copy_profile_command(self) -> None:
+        if not self.command_preview.toPlainText().strip():
+            self._refresh_profile_preview()
+        QGuiApplication.clipboard().setText(self.command_preview.toPlainText())
+
+    def _resolved_out_dir(self) -> Path:
+        out_text = self._effective_out_dir or self.profile_out_dir.text().strip() or "results/profiling/st_lrps_runtime"
+        p = Path(out_text)
+        return p if p.is_absolute() else _REPO_ROOT / p
+
+    def _start(self) -> None:
+        args = self._build_profile_args()
+        if args is None:
+            return
+        self._save_settings()
+        self._effective_out_dir = self.profile_out_dir.text().strip() or "results/profiling/st_lrps_runtime"
+        out_path = self._resolved_out_dir()
+        self.profile_summary.clear()
+        self._gallery.clear_gallery()
+        self._gallery._placeholder.setText("Runtime profile plots will appear here.")
+        self.runner.progress.setRange(0, 0)
+        self.runner.set_output_dir(str(out_path))
+        self.runner.set_stop_hint("")
+        self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
+
+    def _on_profile_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        out_path = self._resolved_out_dir()
+        if exit_status != QProcess.ExitStatus.NormalExit:
+            return
+        summary_path = out_path / "runtime_profile_summary.md"
+        json_path = out_path / "runtime_profile.json"
+        csv_path = out_path / "runtime_profile.csv"
+        if summary_path.is_file():
+            try:
+                self.profile_summary.setPlainText(summary_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                self.profile_summary.setPlainText(f"Could not read {summary_path}: {exc}")
+        else:
+            present = [p.name for p in (json_path, csv_path) if p.is_file()]
+            if present:
+                self.profile_summary.setPlainText(
+                    "Markdown summary was not generated.\nFound: " + ", ".join(present)
+                )
+            else:
+                self.profile_summary.setPlainText(
+                    "No profiling output files found yet. Check the process log for CLI errors."
+                )
+                self.runner.append(f"[UI] Profiling outputs not found in: {out_path}")
+
+        images = [
+            out_path / "runtime_profile_latency.png",
+            out_path / "runtime_profile_throughput.png",
+        ]
+        loaded = self._gallery.load_images([p for p in images if p.is_file()])
+        if loaded:
+            self.runner.append(f"[UI] Loaded {loaded} profiling plot(s): {out_path}")
+        else:
+            self._gallery._placeholder.setText("No runtime profile plots found.")
+            self.runner.append("[UI] No profiling PNG plots found. This is OK when matplotlib is unavailable or --json-only is set.")
+        if out_path.is_dir():
+            self.runner.set_output_dir(str(out_path))
+            self.runner.btn_open_folder.setVisible(True)
+
+
+# =============================================================================
+# 13. ST-LRPS EVALUATE TAB (retained from v2 with minor polish)
 # =============================================================================
 
 
@@ -6543,6 +7209,7 @@ class MainWindow(QMainWindow):
         # --- Page widgets with inter-widget wiring ---
         self._cloud_tab    = CloudGenTab()
         self._train_tab    = STLRPSTrainTab()
+        self._profile_tab  = STLRPSProfilingTab()
         self._eval_tab     = STLRPSEvalTab()
         self._analysis_tab = CloudAnalysisTab()
 
@@ -6554,7 +7221,8 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._cloud_tab)     # index 0
         self._stack.addWidget(self._analysis_tab)  # index 1
         self._stack.addWidget(self._train_tab)     # index 2
-        self._stack.addWidget(self._eval_tab)      # index 3
+        self._stack.addWidget(self._profile_tab)   # index 3
+        self._stack.addWidget(self._eval_tab)      # index 4
 
         dep_info = []
         if not _HAS_PYQTGRAPH:
@@ -6587,7 +7255,7 @@ class MainWindow(QMainWindow):
             " letter-spacing: 0.3px; background: transparent; border: none;"
         )
         lbl_subtitle = QLabel(
-            "Veri: Üretim + Analiz  ·  Model: Eğitim + Değerlendirme"
+            "Veri: Üretim + Analiz  ·  Model: Eğitim + Profiling + Değerlendirme"
             "<span style='color:#6f7ca8; font-size:11px;'>"
             "  —  dU artık potansiyeli; ivme grad(dU) ile elde edilir</span>"
         )
@@ -6649,7 +7317,7 @@ class MainWindow(QMainWindow):
         # Tüm sayfalardaki input widget'larının tooltip'ini status bar'a bağla
         for tab in (
             self._cloud_tab, self._analysis_tab,
-            self._train_tab, self._eval_tab,
+            self._train_tab, self._profile_tab, self._eval_tab,
         ):
             _apply_status_tips(tab)
 
@@ -6708,7 +7376,8 @@ class MainWindow(QMainWindow):
         lo.addSpacing(4)
         lo.addWidget(_section_lbl("MODEL"))
         lo.addWidget(_nav_btn("Eğitim", 2))
-        lo.addWidget(_nav_btn("Değerlendirme", 3))
+        lo.addWidget(_nav_btn("Runtime Profiling", 3))
+        lo.addWidget(_nav_btn("Değerlendirme", 4))
         lo.addStretch(1)
         sidebar.setLayout(lo)
 
