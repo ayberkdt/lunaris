@@ -1,9 +1,0 @@
-dataset=C:\Users\ayber\Desktop\LUNAR_SIMULATION\surrogate_gravity_model\data\cloud_suites\second_run_100_1000km_10Mp_20260520_203208\ood_combined_1000k.h5
-checkpoint=C:\Users\ayber\Desktop\LUNAR_SIMULATION\surrogate_gravity_model\gececi_kod\checkpoints\ckpt_best.pt
-schema=st_lrps_checkpoint_v2
-kind=best
-epoch=163
-target_mode=residual
-u_rmse=1.9010541101387246
-a_vec_rmse=0.00011909633758477867
-ang_mean_deg=51.227789656565854

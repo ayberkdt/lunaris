@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/ui_parts/monte_carlo_page.py
+# ST_LRPS/ui_parts/monte_carlo_page.py
 # -*- coding: utf-8 -*-
 """
 Monte Carlo Analysis Page (Page 7)
@@ -148,12 +148,7 @@ def _preferred_output_suffix(fmt: str) -> str:
 def _normalize_output_path_for_format(path_text: str, fmt: str) -> str:
     """
     Keep the visible output path aligned with the chosen archive format.
-
-    Users often switch the combo box after accepting the default path.  Updating
-    the suffix here avoids confusing cases like selecting ``npz`` while still
-    writing to an ``.h5``-looking filename.
     """
-
     raw = str(path_text).strip()
     suffix = _preferred_output_suffix(fmt)
     if not raw:
@@ -161,10 +156,14 @@ def _normalize_output_path_for_format(path_text: str, fmt: str) -> str:
 
     current = Path(raw)
     lower_name = current.name.lower()
-    if lower_name.endswith((".h5", ".hdf5", ".npz")):
-        if lower_name.endswith(".hdf5"):
-            return str(current.with_name(current.name[: -len(".hdf5")] + suffix))
-        return str(current.with_suffix(suffix))
+    
+    for known in (".h5", ".hdf5", ".npz"):
+        if lower_name.endswith(known):
+            if known == ".hdf5" and str(fmt).strip().lower() == "hdf5":
+                return raw
+            base = current.name[:-len(known)]
+            return str(current.with_name(base + suffix))
+            
     return raw
 
 def _card(title: str) -> QtWidgets.QGroupBox:
@@ -258,6 +257,8 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.mc_cfg = mc_cfg
         self._last_progress_payload: Dict[str, Any] = {}
         self._build_ui()
+        self._setup_validation_signals()
+        self._update_validation()
 
     # -------------------------------------------------------------------------
     # UI construction
@@ -557,6 +558,8 @@ class MonteCarloPage(QtWidgets.QWidget):
         else:
             rendered = shlex.join(cmd)
 
+        rendered = f"# {meta.get('name', 'Preview')} Command\n" + rendered
+
         self.txt_backend_compare_cmd.setPlainText(rendered)
 
         try:
@@ -608,7 +611,7 @@ class MonteCarloPage(QtWidgets.QWidget):
                 rendered = subprocess.list2cmdline(cmd)
             else:
                 rendered = shlex.join(cmd)
-            all_cmds.append(f"# {meta.get('name', '?')}\n{rendered}")
+            all_cmds.append(f"# --- {meta.get('name', '?')} ---\n{rendered}")
         joined = "\n\n".join(all_cmds)
         try:
             QtWidgets.QApplication.clipboard().setText(joined)
@@ -814,7 +817,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         )
         self.ent_mc_st_lrps_model_dir.setToolTip(
             "Path to a trained ST-LRPS run directory. Usually one folder under "
-            "surrogate_gravity_model/runs."
+            "st_lrps/runs."
         )
         btn_st_lrps_browse = QtWidgets.QPushButton("Browse...")
         btn_st_lrps_browse.setIcon(get_icon("fa6s.folder-open", THEME["fg_muted"]))
@@ -873,9 +876,9 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         # GPU-only warning banner
         warn_lbl = _label(
-            "Classic-SH GPU: uses Numba CUDA, supports SH ≤ 24, Sun/Earth, Earth J2, SRP, and relativity. "
-            "ST-LRPS GPU: uses PyTorch CUDA (TorchBatchPropagator) — gravity only (point-mass + neural residual). "
-            "Surface-lighting, tides, and non-gravity perturbations force CPU fallback on the ST-LRPS path.",
+            "• Classic-SH GPU uses Numba CUDA and is limited to SH degree ≤ 24.\n"
+            "• ST-LRPS GPU uses PyTorch CUDA and is gravity-only.\n"
+            "• Full-fidelity non-gravity perturbations can force CPU fallback depending on selected physics.",
             muted=True,
         )
         warn_lbl.setWordWrap(True)
@@ -891,8 +894,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         # CPU hint
         self.cpu_hint = _label(
-            "CPU path uses the full-fidelity propagator (all physics flags).\n"
-            "It mirrors the main mission-analysis physics contract for accuracy-first runs.",
+            "• CPU mode is slower but uses the full-fidelity propagation path.",
             muted=True,
         )
         self.cpu_hint.setWordWrap(True)
@@ -1092,6 +1094,12 @@ class MonteCarloPage(QtWidgets.QWidget):
         layout.setContentsMargins(16, 20, 16, 16)
         layout.setSpacing(10)
 
+        # Status validation label
+        self.lbl_validation = _label("Configuration looks ready.")
+        self.lbl_validation.setStyleSheet(f"color: {THEME['success']}; font-weight: 600;")
+        self.lbl_validation.setWordWrap(True)
+        layout.addWidget(self.lbl_validation)
+
         # Status badge row
         status_row = QtWidgets.QHBoxLayout()
         self.badge_mc = QtWidgets.QLabel("IDLE")
@@ -1274,6 +1282,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             self.lbl_progress_summary.setText("Preparing Monte Carlo ensemble")
             self.lbl_progress_meta.setText(f"0 / {total} scenarios | Waiting for backend")
         else:
+            self._update_validation()
             if self.progress_mc.maximum() == 0:
                 self.progress_mc.setRange(0, 1000)
 
@@ -1575,6 +1584,128 @@ class MonteCarloPage(QtWidgets.QWidget):
             return int(float(text))
         except Exception:
             return default
+
+    def validate_page_inputs(self) -> tuple[bool, List[str], List[str]]:
+        ok = True
+        errors: List[str] = []
+        warnings: List[str] = []
+        
+        # 1. Ensemble
+        n_samples = self._parse_int(self.ent_n_samples.text(), 0)
+        seed = self._parse_int(self.ent_seed.text(), -1)
+        
+        if n_samples < 2:
+            errors.append("Ensemble must have at least 2 samples.")
+            ok = False
+        if seed < 0:
+            errors.append("Random seed must be non-negative.")
+            ok = False
+            
+        # 2. State uncertainty
+        sigma_r = self._parse_float(self.ent_sigma_r.text(), -1.0)
+        sigma_v = self._parse_float(self.ent_sigma_v.text(), -1.0)
+        
+        if sigma_r < 0:
+            errors.append("Position uncertainty (σ_r) must be non-negative.")
+            ok = False
+        if sigma_v < 0:
+            errors.append("Velocity uncertainty (σ_v) must be non-negative.")
+            ok = False
+            
+        # 3. Spacecraft uncertainty
+        sigma_mass = self._parse_float(self.ent_sigma_mass.text(), -1.0)
+        sigma_area = self._parse_float(self.ent_sigma_area.text(), -1.0)
+        sigma_cd = self._parse_float(self.ent_sigma_cd.text(), -1.0)
+        sigma_cr = self._parse_float(self.ent_sigma_cr.text(), -1.0)
+        
+        if any(v < 0 for v in (sigma_mass, sigma_area, sigma_cd, sigma_cr)):
+            errors.append("Spacecraft property uncertainties must be non-negative.")
+            ok = False
+            
+        # 4. Backend
+        gpu_enabled = self.toggle_gpu.isChecked()
+        gravity_mode = self.cb_mc_gravity_mode.currentData() or "follow_mission"
+        st_lrps_dir = self.ent_mc_st_lrps_model_dir.text().strip()
+        
+        if gpu_enabled and gravity_mode == "classic_sh":
+            sh_deg = self._parse_int(self.ent_gpu_sh.text(), 0)
+            if sh_deg > 24:
+                errors.append("Classic-SH GPU mode only supports SH degree <= 24.")
+                ok = False
+                
+        if not gpu_enabled:
+            warnings.append("GPU disabled: CPU full-fidelity mode may be slower.")
+            
+        if gravity_mode == "st_lrps" and not st_lrps_dir:
+            warnings.append("ST-LRPS model dir is blank. MC will fall back to main Force Models setting.")
+            
+        # 5. Integration
+        dt_s = self._parse_float(self.ent_dt.text(), 0.0)
+        if dt_s <= 0:
+            errors.append("Integration step size (dt) must be positive.")
+            ok = False
+        elif dt_s > 300:
+            warnings.append("Large dt (> 300s) may reduce accuracy or cause numerical instability.")
+        elif dt_s < 1:
+            warnings.append("Small dt (< 1s) will produce heavy output and increase runtime.")
+            
+        # 6. Output
+        out_path = self.ent_output.text().strip()
+        fmt = self.cb_format.currentText()
+        
+        if not out_path:
+            errors.append("Output path must not be empty.")
+            ok = False
+        if fmt not in ("hdf5", "npz"):
+            errors.append(f"Invalid output format selected: {fmt}")
+            ok = False
+        else:
+            suffix = _preferred_output_suffix(fmt)
+            lower_name = Path(out_path).name.lower()
+            if not lower_name.endswith(suffix):
+                if fmt == "hdf5" and (lower_name.endswith(".h5") or lower_name.endswith(".hdf5")):
+                    pass
+                elif not lower_name.endswith((".h5", ".hdf5", ".npz")):
+                    pass
+                else:
+                    warnings.append(f"Output path suffix does not match selected format '{fmt}'.")
+            
+        return ok, errors, warnings
+
+    def _setup_validation_signals(self) -> None:
+        def trigger(*args):
+            self._update_validation()
+
+        self.ent_n_samples.textChanged.connect(trigger)
+        self.ent_seed.textChanged.connect(trigger)
+        self.ent_sigma_r.textChanged.connect(trigger)
+        self.ent_sigma_v.textChanged.connect(trigger)
+        self.ent_sigma_mass.textChanged.connect(trigger)
+        self.ent_sigma_area.textChanged.connect(trigger)
+        self.ent_sigma_cd.textChanged.connect(trigger)
+        self.ent_sigma_cr.textChanged.connect(trigger)
+        self.toggle_gpu.toggled.connect(trigger)
+        self.cb_mc_gravity_mode.currentIndexChanged.connect(trigger)
+        self.ent_mc_st_lrps_model_dir.textChanged.connect(trigger)
+        self.ent_gpu_sh.textChanged.connect(trigger)
+        self.ent_dt.textChanged.connect(trigger)
+        self.ent_output.textChanged.connect(trigger)
+        self.cb_format.currentIndexChanged.connect(trigger)
+
+    def _update_validation(self) -> None:
+        ok, errors, warnings = self.validate_page_inputs()
+        if not ok:
+            self.lbl_validation.setText(f"⚠ Errors:\n" + "\n".join(errors))
+            self.lbl_validation.setStyleSheet(f"color: {THEME['error']}; font-weight: 600; font-size: 9pt;")
+            self.btn_run_mc.setEnabled(False)
+        elif warnings:
+            self.lbl_validation.setText(f"⚠ Warnings:\n" + "\n".join(warnings))
+            self.lbl_validation.setStyleSheet(f"color: {THEME['warning']}; font-weight: 600; font-size: 9pt;")
+            self.btn_run_mc.setEnabled(True)
+        else:
+            self.lbl_validation.setText("Configuration looks ready.")
+            self.lbl_validation.setStyleSheet(f"color: {THEME['success']}; font-weight: 600; font-size: 9pt;")
+            self.btn_run_mc.setEnabled(True)
 
 
 # =============================================================================

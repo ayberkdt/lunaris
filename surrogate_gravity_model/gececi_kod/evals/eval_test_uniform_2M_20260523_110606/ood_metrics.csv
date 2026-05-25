@@ -1,4 +1,0 @@
-region,N,RMSE_U,MAE_U,RMSE_accel_norm,MAE_accel_norm,robust_rel_accel_mean_pct,robust_rel_accel_p90_pct,angular_error_mean_deg,angular_error_p90_deg
-lower_ood,0,,,,,,,,
-100.0-1000.0 km,2000000,0.020467425198171376,0.012131356990136427,3.8600738233244824e-07,1.7649416301616017e-07,24.721570079815255,70.19124385895013,34.138557608934235,104.77506763611223
-upper_ood,0,,,,,,,,
