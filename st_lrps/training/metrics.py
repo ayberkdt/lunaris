@@ -326,21 +326,21 @@ def format_epoch_summary(row: Mapping[str, Any], *, total_epochs: Optional[int] 
     epoch_display = int(row.get("epoch_display", int(row.get("epoch", 0)) + 1))
     total = int(total_epochs) if total_epochs is not None else None
     epoch_text = f"{epoch_display:03d}/{total:03d}" if total else f"{epoch_display:03d}"
-    best_text = "YES" if row.get("is_best_update") else "no"
-    eligible = "eligible" if row.get("is_best_eligible") else "wait"
+    best_text = "YES" if row.get("is_best_update") else "no "
+    eligible = "eligible" if row.get("is_best_eligible") else "wait    "
     best_epoch = row.get("best_epoch")
-    best_epoch_text = str(best_epoch) if best_epoch not in (None, "") else "-"
+    best_epoch_text = f"{str(best_epoch):>3}" if best_epoch not in (None, "") else "  -"
     formula = str(row.get("checkpoint_formula") or "")
     metric = str(row.get("best_metric") or "")
     score = _fmt(row.get("checkpoint_score"))
     return (
-        f"Epoch {epoch_text} | "
-        f"train opt={_fmt(row.get('train_loss_objective'))} ref={_fmt(row.get('train_loss_total'))} | "
-        f"val total={_fmt(row.get('val_loss_total'))} base={_fmt(row.get('val_loss_base'))} "
-        f"dir={_fmt(row.get('val_loss_dir'))} | "
-        f"score={score} [{metric}: {formula}] {eligible} | "
-        f"best={best_text} epoch={best_epoch_text} score={_fmt(row.get('best_score'))} | "
-        f"lr={_fmt(row.get('lr'))} | {float(row.get('epoch_time_s') or 0.0):.1f}s"
+        f"Epoch {epoch_text:^7} | "
+        f"train opt: {_fmt(row.get('train_loss_objective')):>9}  ref: {_fmt(row.get('train_loss_total')):>9} | "
+        f"val tot: {_fmt(row.get('val_loss_total')):>9}  base: {_fmt(row.get('val_loss_base')):>9}  "
+        f"dir: {_fmt(row.get('val_loss_dir')):>9} | "
+        f"score: {score:>9} [{metric}: {formula}] {eligible} | "
+        f"best: {best_text}  ep: {best_epoch_text}  score: {_fmt(row.get('best_score')):>9} | "
+        f"lr: {_fmt(row.get('lr')):>9} | {float(row.get('epoch_time_s') or 0.0):6.1f}s"
     )
 
 
@@ -363,18 +363,18 @@ def format_batch_summary(
     """Return a compact one-line batch progress summary."""
     extras = []
     if loss_dir is not None:
-        extras.append(f"dir={loss_dir:.2e}")
+        extras.append(f"dir: {loss_dir:9.2e}")
     if samples_per_s is not None:
-        extras.append(f"{samples_per_s:,.0f} samples/s")
+        extras.append(f"{samples_per_s:7,.0f} spl/s")
     if eta_s is not None:
-        extras.append(f"eta={eta_s:.0f}s")
+        extras.append(f"eta: {eta_s:5.0f}s")
     if memory:
         extras.append(memory.strip())
     suffix = " | " + " | ".join(extras) if extras else ""
     return (
-        f"[{phase}] epoch={epoch} batch={batch}/{total_batches} | "
-        f"opt={loss_opt:.3e} ref={loss_ref:.3e} U={loss_u:.2e} a={loss_a:.2e} "
-        f"lr={lr:.2e}{suffix}"
+        f"[{phase:^5}] ep: {epoch:3d}  b: {batch:4d}/{total_batches:<4d} | "
+        f"opt: {loss_opt:9.3e} | ref: {loss_ref:9.3e} | U: {loss_u:9.2e} | a: {loss_a:9.2e} | "
+        f"lr: {lr:9.2e}{suffix}"
     )
 
 

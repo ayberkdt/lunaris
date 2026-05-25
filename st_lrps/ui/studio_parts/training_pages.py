@@ -1742,7 +1742,6 @@ class STLRPSTrainTab(QWidget):
         monitor_subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
         monitor_shell_l.addWidget(monitor_title)
         monitor_shell_l.addWidget(monitor_subtitle)
-        monitor_shell_l.addWidget(train_ctrl_bar)
         
         monitor_inner = QWidget()
         monitor_l = QVBoxLayout()
@@ -1783,6 +1782,7 @@ class STLRPSTrainTab(QWidget):
         monitor_split.setStretchFactor(1, 1)
         monitor_split.setSizes([740, 80])
         monitor_shell_l.addWidget(monitor_split, 1)
+        monitor_shell_l.addWidget(train_ctrl_bar)
         self.monitor_page.setLayout(monitor_shell_l)
 
         # ── 9. Final Setup ──
