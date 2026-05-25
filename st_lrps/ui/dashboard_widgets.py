@@ -467,7 +467,7 @@ if _HAS_QT:
             self.samples_per_s = MetricCard("Samples/s", "—")
 
             for card in (
-                self.elapsed, self.device, self.started,
+                self.elapsed, self.eta, self.started,
                 self.epoch_duration, self.avg_epoch, self.samples_per_s,
             ):
                 layout.addWidget(card, 1)
