@@ -55,6 +55,14 @@ python -m st_lrps.runtime.profiling \
 
 Use `--device cpu`, `--device cuda`, or `--device auto`. CUDA timings synchronize before and after measured calls so asynchronous kernels are not underreported. Warmup calls are excluded from steady-state statistics.
 
+## Interpreting CUDA Memory Logs
+
+Training logs report PyTorch allocator memory, not full `nvidia-smi` process memory. `cuda_mem=a/bMiB` means current allocated/current reserved memory. `peak=c/dMiB` means peak allocated/peak reserved memory since the current train or validation phase started. `total=eMiB` is physical GPU VRAM. Use `nvidia-smi -l 1` to inspect utilization and full process memory; low current allocation after a batch does not necessarily mean the GPU was idle.
+
+## Interpreting Studio Live Loss Plots
+
+The Studio live loss plots can use log-y scale for positive loss curves. Smoothing is display-only and never changes history files or training metrics. Auxiliary physics terms are shown separately from the main loss overview when present, and missing metrics are expected early in training or when a feature is disabled.
+
 ## Batch And Chunk Effects
 
 Batch size 1 measures latency. Large batch sizes measure throughput. Use `--chunk-sizes` to understand whether runtime chunking is limiting throughput or reducing memory pressure:

@@ -146,13 +146,47 @@ def _format_seconds(seconds: float) -> str:
     h, m = divmod(m, 60)
     return f"{int(h)}h{int(m):02d}m{int(s):02d}s"
 
+def _format_cuda_memory_mib(
+    allocated_mib: int,
+    reserved_mib: int,
+    peak_allocated_mib: int,
+    peak_reserved_mib: int,
+    total_vram_mib: int,
+) -> str:
+    return (
+        f" cuda_mem={allocated_mib}/{reserved_mib}MiB"
+        f" peak={peak_allocated_mib}/{peak_reserved_mib}MiB"
+        f" total={total_vram_mib}MiB"
+    )
+
+
 def _cuda_memory_string(device: torch.device) -> str:
-    """Return a compact CUDA memory string, or empty string if not CUDA."""
+    """Return compact PyTorch CUDA allocator memory diagnostics.
+
+    ``allocated`` and ``reserved`` are PyTorch allocator values, not total
+    physical GPU VRAM and not the same accounting shown by ``nvidia-smi``.
+    ``peak`` values are the allocator maxima since peak stats were last reset,
+    which makes them more useful for batch-size decisions than the current
+    post-batch allocation alone.
+    """
     if device.type != "cuda":
         return ""
-    alloc_mb = torch.cuda.memory_allocated(device) // (1024 * 1024)
-    reserved_mb = torch.cuda.memory_reserved(device) // (1024 * 1024)
-    return f" cuda_mem={alloc_mb}/{reserved_mb}MiB"
+    try:
+        mib = 1024 * 1024
+        alloc_mib = int(torch.cuda.memory_allocated(device) // mib)
+        reserved_mib = int(torch.cuda.memory_reserved(device) // mib)
+        peak_alloc_mib = int(torch.cuda.max_memory_allocated(device) // mib)
+        peak_reserved_mib = int(torch.cuda.max_memory_reserved(device) // mib)
+        total_mib = int(torch.cuda.get_device_properties(device).total_memory // mib)
+    except Exception:
+        return ""
+    return _format_cuda_memory_mib(
+        alloc_mib,
+        reserved_mib,
+        peak_alloc_mib,
+        peak_reserved_mib,
+        total_mib,
+    )
 
 
 def _available_ram_mb() -> Optional[float]:
@@ -378,6 +412,11 @@ class STLRPSTrainer:
             loader.sampler.set_epoch(epoch)
 
         self.model.train(is_train)
+        if self.device.type == "cuda":
+            try:
+                torch.cuda.reset_peak_memory_stats(self.device)
+            except Exception:
+                pass
         accel_factor = self.curriculum.accel_factor(epoch) if is_train else 1.0
 
         total_loss = total_opt_loss = total_u = total_a = total_grad_norm = 0.0
@@ -893,30 +932,101 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
     outdir = Path(outdir) / "plots" / "training"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    epochs = [int(item["epoch"]) + 1 for item in history]
+    try:
+        epochs = np.asarray([int(item["epoch"]) + 1 for item in history], dtype=float)
+    except Exception as exc:
+        logger.warning(f"training-history plots skipped because epoch values could not be read: {exc}")
+        return
 
-    def _plot_series(path: Path, title: str, y_label: str, series: List[Tuple[str, List[float]]], *, logy: bool = False) -> None:
-        fig, ax = plt.subplots(figsize=(8.5, 4.8), constrained_layout=True)
-        for label, values in series:
-            ax.plot(epochs, values, label=label, linewidth=2.0)
-        ax.set_title(title)
-        ax.set_xlabel("Epoch")
-        ax.set_ylabel(y_label)
+    def _series(key: str, default: float = float("nan")) -> List[float]:
+        values: List[float] = []
+        for item in history:
+            try:
+                value = float(item.get(key, default))
+            except Exception:
+                value = float("nan")
+            values.append(value if math.isfinite(value) else float("nan"))
+        return values
+
+    def _robust_ylim(series_values: List[np.ndarray], *, logy: bool) -> Optional[Tuple[float, float]]:
+        valid: List[np.ndarray] = []
+        for arr in series_values:
+            finite = arr[np.isfinite(arr)]
+            if logy:
+                finite = finite[finite > 0.0]
+            if finite.size:
+                valid.append(finite)
+        if not valid:
+            return None
+        merged = np.concatenate(valid)
+        if merged.size == 1:
+            value = float(merged[0])
+            if logy:
+                return max(value / 2.0, 1e-30), value * 2.0
+            margin = abs(value) * 0.1 + 1e-12
+            return value - margin, value + margin
+        lo, hi = np.nanpercentile(merged, [1.0, 99.0])
+        lo = float(lo)
+        hi = float(hi)
+        if not math.isfinite(lo) or not math.isfinite(hi):
+            return None
         if logy:
-            ax.set_yscale("log")
-        ax.grid(True, alpha=0.25)
-        if len(series) > 1:
-            ax.legend()
-        fig.savefig(path, dpi=180)
-        plt.close(fig)
+            lo = max(lo, 1e-30)
+            hi = max(hi, lo * 1.01)
+            return lo / 1.25, hi * 1.25
+        if hi <= lo:
+            margin = abs(hi) * 0.1 + 1e-12
+            return lo - margin, hi + margin
+        margin = (hi - lo) * 0.08
+        return lo - margin, hi + margin
+
+    def _plot_series(
+        path: Path,
+        title: str,
+        y_label: str,
+        series: List[Tuple[str, List[float]]],
+        *,
+        logy: bool = False,
+        y_bounds: Optional[Tuple[float, float]] = None,
+    ) -> None:
+        try:
+            fig, ax = plt.subplots(figsize=(9.2, 5.2), constrained_layout=True)
+            plotted_arrays: List[np.ndarray] = []
+            for label, values in series:
+                arr = np.asarray(values, dtype=float)
+                arr[~np.isfinite(arr)] = np.nan
+                if logy:
+                    arr[arr <= 0.0] = np.nan
+                mask = np.isfinite(arr)
+                if not np.any(mask):
+                    continue
+                plotted_arrays.append(arr)
+                ax.plot(epochs[mask], arr[mask], label=label, linewidth=2.0)
+            if not plotted_arrays:
+                plt.close(fig)
+                return
+            ax.set_title(title)
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel(y_label)
+            if logy:
+                ax.set_yscale("log")
+            ylim = y_bounds or _robust_ylim(plotted_arrays, logy=logy)
+            if ylim is not None:
+                ax.set_ylim(*ylim)
+            ax.grid(True, which="both", alpha=0.25)
+            ax.legend(loc="best")
+            fig.savefig(path, dpi=180)
+            plt.close(fig)
+        except Exception as exc:
+            logger.warning(f"training plot {path.name} could not be written: {exc}")
 
     _plot_series(
         outdir / "loss_total.png",
         "Total Loss",
         "Loss",
         [
-            ("Train", [float(item["train_loss_total"]) for item in history]),
-            ("Validation", [float(item["val_loss_total"]) for item in history]),
+            ("train_total", _series("train_loss_total")),
+            ("val_total", _series("val_loss_total")),
         ],
         logy=True,
     )
@@ -925,8 +1035,8 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
         "Potential Loss",
         "MSE",
         [
-            ("Train", [float(item["train_loss_u"]) for item in history]),
-            ("Validation", [float(item["val_loss_u"]) for item in history]),
+            ("train_U", _series("train_loss_u")),
+            ("val_U", _series("val_loss_u")),
         ],
         logy=True,
     )
@@ -935,8 +1045,8 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
         "Acceleration Loss",
         "MSE",
         [
-            ("Train", [float(item["train_loss_a"]) for item in history]),
-            ("Validation", [float(item["val_loss_a"]) for item in history]),
+            ("train_a", _series("train_loss_a")),
+            ("val_a", _series("val_loss_a")),
         ],
         logy=True,
     )
@@ -944,7 +1054,7 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
         outdir / "lr_schedule.png",
         "Learning Rate Schedule",
         "Learning Rate",
-        [("LR", [float(item["lr"]) for item in history])],
+        [("lr", _series("lr"))],
         logy=True,
     )
     _plot_series(
@@ -952,21 +1062,24 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
         "Sobolev Loss Weights",
         "Weight",
         [
-            ("w_U", [float(item["w_u"]) for item in history]),
-            ("w_a_raw", [float(item["w_a_raw"]) for item in history]),
-            ("w_a_eff", [float(item["w_a_eff"]) for item in history]),
+            ("w_U", _series("w_u")),
+            ("w_a_raw", _series("w_a_raw")),
+            ("w_a_eff", _series("w_a_eff")),
         ],
         logy=False,
     )
     # Only plot direction loss if it was ever non-zero
-    if any(float(item.get("train_loss_dir", 0.0)) > 0.0 for item in history):
+    if any(
+        math.isfinite(v) and v > 0.0
+        for v in _series("train_loss_dir", 0.0)
+    ):
         _plot_series(
             outdir / "loss_dir.png",
             "Direction Loss (1 - cos_sim)",
             "Loss",
             [
-                ("Train", [float(item.get("train_loss_dir", 0.0)) for item in history]),
-                ("Validation", [float(item.get("val_loss_dir", 0.0)) for item in history]),
+                ("train_direction", _series("train_loss_dir", 0.0)),
+                ("val_direction", _series("val_loss_dir", 0.0)),
             ],
             logy=True,
         )
@@ -975,10 +1088,11 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
             "Mean Cosine Similarity (a_pred vs a_true)",
             "cos_sim",
             [
-                ("Train", [float(item.get("train_mean_cossim", 1.0)) for item in history]),
-                ("Validation", [float(item.get("val_mean_cossim", 1.0)) for item in history]),
+                ("train_cos_sim", _series("train_mean_cossim", 1.0)),
+                ("val_cos_sim", _series("val_mean_cossim", 1.0)),
             ],
             logy=False,
+            y_bounds=(-1.05, 1.05),
         )
 
 def train(cfg: TrainConfig) -> None:
@@ -1124,6 +1238,12 @@ def train(cfg: TrainConfig) -> None:
         },
     )
     _warn_batch_size_for_vram(device, cfg)
+    if device.type == "cuda":
+        logger.info(
+            "CUDA memory log format: cuda_mem=current_allocated/current_reserved MiB, "
+            "peak=peak_allocated/peak_reserved MiB since phase start, total=physical VRAM. "
+            "Values are PyTorch allocator memory, not nvidia-smi process memory."
+        )
 
     # Effective configuration summary (so the active feature set is unambiguous in
     # the log, especially now that several features default ON).

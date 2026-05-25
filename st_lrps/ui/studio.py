@@ -757,9 +757,14 @@ class LiveLossPlot(QWidget):
         self._train_loss: List[float] = []
         self._val_loss: List[float] = []
         self._train_opt_loss: List[float] = []
+        self._train_loss_u: List[float] = []
+        self._val_loss_u: List[float] = []
+        self._train_loss_a: List[float] = []
         self._val_base_loss: List[float] = []
+        self._train_loss_dir: List[float] = []
         self._val_dir_loss: List[float] = []
         self._val_loss_a: List[float] = []
+        self._train_cos_sim: List[float] = []
         self._val_angular_mean_deg: List[float] = []
         self._val_cos_sim: List[float] = []
         self._checkpoint_scores: List[float] = []
@@ -807,8 +812,9 @@ class LiveLossPlot(QWidget):
                 background-color: rgba(255, 255, 255, 0.05);
                 border: 1px solid rgba(185, 194, 221, 0.13);
                 border-radius: 10px;
-                padding: 7px 10px;
-                min-width: 90px;
+                padding: 5px 8px;
+                min-width: 82px;
+                max-height: 46px;
                 font-family: Consolas, 'Courier New', monospace;
                 font-size: 11px;
             }
@@ -864,6 +870,20 @@ class LiveLossPlot(QWidget):
         )
         self._chk_log_y.toggled.connect(self._on_log_toggle)
         top_row.addWidget(self._chk_log_y)
+
+        self._chk_smooth = QCheckBox("Smooth")
+        self._chk_smooth.setChecked(False)
+        self._chk_smooth.setToolTip("Display-only moving-average smoothing. History files and metrics are unchanged.")
+        self._chk_smooth.toggled.connect(lambda _checked: self._update_plot())
+        top_row.addWidget(self._chk_smooth)
+
+        self._smooth_window = QSpinBox()
+        self._smooth_window.setRange(2, 101)
+        self._smooth_window.setValue(5)
+        self._smooth_window.setMaximumWidth(70)
+        self._smooth_window.setToolTip("Smoothing window in plotted points.")
+        self._smooth_window.valueChanged.connect(lambda _value: self._update_plot())
+        top_row.addWidget(self._smooth_window)
 
         self._btn_fit = QPushButton("Otomatik Ölçek")
         self._btn_fit.setProperty("plotControl", True)
@@ -933,7 +953,7 @@ class LiveLossPlot(QWidget):
             pg.setConfigOptions(antialias=True, background=None, foreground="#b9c2dd")
 
             self._plot_widget = pg.PlotWidget()
-            self._plot_widget.setMinimumHeight(260)
+            self._plot_widget.setMinimumHeight(360)
             self._plot_widget.setStyleSheet(
                 """
                 PlotWidget {
@@ -977,7 +997,7 @@ class LiveLossPlot(QWidget):
                 symbolSize=5,
                 symbolBrush=pg.mkBrush("#8b5cf6"),
                 symbolPen=pg.mkPen("#1b1035"),
-                name="Train",
+                name="train_total",
             )
             self._curve_val = self._plot_widget.plot(
                 [], [],
@@ -986,7 +1006,17 @@ class LiveLossPlot(QWidget):
                 symbolSize=5,
                 symbolBrush=pg.mkBrush("#22d3ee"),
                 symbolPen=pg.mkPen("#06202a"),
-                name="Validation",
+                name="val_total",
+            )
+            self._curve_train_opt = self._plot_widget.plot(
+                [], [],
+                pen=pg.mkPen(color="#a78bfa", width=1.8, style=Qt.PenStyle.DashLine),
+                name="train_objective",
+            )
+            self._curve_val_base = self._plot_widget.plot(
+                [], [],
+                pen=pg.mkPen(color="#67e8f9", width=1.8, style=Qt.PenStyle.DashLine),
+                name="val_base",
             )
 
             self._best_line = pg.InfiniteLine(
@@ -1010,20 +1040,39 @@ class LiveLossPlot(QWidget):
                 self._legend = plot_item.addLegend(offset=(12, 12))
 
             self._direction_plot = pg.PlotWidget()
-            self._direction_plot.setMinimumHeight(260)
+            self._direction_plot.setMinimumHeight(230)
             self._direction_plot.setBackground("#050915")
             self._direction_plot.setMenuEnabled(False)
             self._direction_plot.showGrid(x=True, y=True, alpha=0.18)
-            self._direction_plot.setLabel("left", "Direction / accel", color="#aeb8d8", size="10pt")
+            self._direction_plot.setLabel("left", "Loss", color="#aeb8d8", size="10pt")
             self._direction_plot.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
             self._direction_plot.setLogMode(x=False, y=True)
-            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#f59e0b", width=2.4), name="Val dir loss")
-            self._curve_val_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#10b981", width=2.4), name="Val loss_a")
-            self._curve_val_angular = self._direction_plot.plot([], [], pen=pg.mkPen(color="#3b82f6", width=2.4), name="Val angular (deg)")
-            self._curve_val_cossim = self._direction_plot.plot([], [], pen=pg.mkPen(color="#8b5cf6", width=2.4), name="Val cos_sim")
+            self._curve_train_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#34d399", width=2.1), name="train_a")
+            self._curve_val_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#10b981", width=2.4), name="val_a")
+            self._curve_train_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#fbbf24", width=2.1), name="train_direction")
+            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#f59e0b", width=2.4), name="val_direction")
+
+            self._direction_quality_plot = pg.PlotWidget()
+            self._direction_quality_plot.setMinimumHeight(180)
+            self._direction_quality_plot.setBackground("#050915")
+            self._direction_quality_plot.setMenuEnabled(False)
+            self._direction_quality_plot.showGrid(x=True, y=True, alpha=0.18)
+            self._direction_quality_plot.setLabel("left", "Quality", color="#aeb8d8", size="10pt")
+            self._direction_quality_plot.setLabel("bottom", "Epoch", color="#aeb8d8", size="10pt")
+            self._curve_val_angular = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#3b82f6", width=2.4), name="val_angular_deg")
+            self._curve_train_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#c084fc", width=2.1), name="train_cos_sim")
+            self._curve_val_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#8b5cf6", width=2.4), name="val_cos_sim")
+
+            self._direction_tab = QWidget()
+            direction_layout = QVBoxLayout()
+            direction_layout.setContentsMargins(0, 0, 0, 0)
+            direction_layout.setSpacing(6)
+            direction_layout.addWidget(self._direction_plot, 3)
+            direction_layout.addWidget(self._direction_quality_plot, 2)
+            self._direction_tab.setLayout(direction_layout)
 
             self._checkpoint_plot = pg.PlotWidget()
-            self._checkpoint_plot.setMinimumHeight(260)
+            self._checkpoint_plot.setMinimumHeight(360)
             self._checkpoint_plot.setBackground("#050915")
             self._checkpoint_plot.setMenuEnabled(False)
             self._checkpoint_plot.showGrid(x=True, y=True, alpha=0.18)
@@ -1035,8 +1084,9 @@ class LiveLossPlot(QWidget):
 
             self._plot_tabs = QTabWidget()
             self._plot_tabs.setDocumentMode(True)
+            self._plot_tabs.setMinimumHeight(430)
             self._plot_tabs.addTab(self._plot_widget, "Loss overview")
-            self._plot_tabs.addTab(self._direction_plot, "Acceleration / direction")
+            self._plot_tabs.addTab(self._direction_tab, "Acceleration / direction")
             self._plot_tabs.addTab(self._checkpoint_plot, "Checkpoint score")
             card_layout.addWidget(self._plot_tabs, 1)
         else:
@@ -1068,6 +1118,10 @@ class LiveLossPlot(QWidget):
         self._re_val_total = re.compile(rf"\bval\s+total\s*[:=]\s*({_num})", re.IGNORECASE)
         self._re_val_base = re.compile(rf"\bbase\s*[:=]\s*({_num})", re.IGNORECASE)
         self._re_val_dir = re.compile(rf"\bdir\s*[:=]\s*({_num})", re.IGNORECASE)
+        self._re_loss_u = re.compile(rf"\bU\s*[:=]\s*({_num})")
+        self._re_loss_a = re.compile(rf"\ba\s*[:=]\s*({_num})")
+        self._re_cossim = re.compile(rf"\bcossim\s*[:=]\s*({_num})", re.IGNORECASE)
+        self._re_angular = re.compile(rf"\bang\s*[:=]\s*({_num})\s*deg", re.IGNORECASE)
         self._re_score = re.compile(rf"\bscore\s*[:=]\s*({_num})", re.IGNORECASE)
         self._re_best_score = re.compile(rf"\bbest\s*=\s*(?:YES|no).*?\bscore\s*[:=]\s*({_num})", re.IGNORECASE)
         self._re_best_formula = re.compile(r"\[([^:\]]+):\s*([^\]]+)\]")
@@ -1133,9 +1187,17 @@ class LiveLossPlot(QWidget):
 
         train_opt: Optional[float] = None
         train_ref: Optional[float] = None
+        train_u: Optional[float] = None
+        train_a: Optional[float] = None
+        train_dir: Optional[float] = None
+        train_cos: Optional[float] = None
         val_ref: Optional[float] = None
+        val_u: Optional[float] = None
+        val_a: Optional[float] = None
         val_base: Optional[float] = None
         val_dir: Optional[float] = None
+        val_cos: Optional[float] = None
+        val_angular: Optional[float] = None
         checkpoint_score: Optional[float] = None
         best_score: Optional[float] = None
 
@@ -1155,7 +1217,31 @@ class LiveLossPlot(QWidget):
             val_base = float(m_val_base.group(1))
         m_val_dir = self._re_val_dir.search(line)
         if m_val_dir:
-            val_dir = float(m_val_dir.group(1))
+            if is_train_phase:
+                train_dir = float(m_val_dir.group(1))
+            else:
+                val_dir = float(m_val_dir.group(1))
+        m_loss_u = self._re_loss_u.search(line)
+        if m_loss_u:
+            if is_train_phase:
+                train_u = float(m_loss_u.group(1))
+            elif is_val_phase:
+                val_u = float(m_loss_u.group(1))
+        m_loss_a = self._re_loss_a.search(line)
+        if m_loss_a:
+            if is_train_phase:
+                train_a = float(m_loss_a.group(1))
+            elif is_val_phase:
+                val_a = float(m_loss_a.group(1))
+        m_cos = self._re_cossim.search(line)
+        if m_cos:
+            if is_train_phase:
+                train_cos = float(m_cos.group(1))
+            elif is_val_phase:
+                val_cos = float(m_cos.group(1))
+        m_ang = self._re_angular.search(line)
+        if m_ang and is_val_phase:
+            val_angular = float(m_ang.group(1))
         m_score = self._re_score.search(line)
         if m_score:
             checkpoint_score = float(m_score.group(1))
@@ -1202,6 +1288,8 @@ class LiveLossPlot(QWidget):
 
         if (
             train_ref is None and val_ref is None and train_opt is None
+            and train_u is None and train_a is None and train_dir is None and train_cos is None
+            and val_u is None and val_a is None and val_dir is None and val_cos is None and val_angular is None
             and checkpoint_score is None and val_base is None and val_dir is None
             and not m_lr and not m_lam
         ):
@@ -1216,12 +1304,28 @@ class LiveLossPlot(QWidget):
                 self._train_loss[idx] = train_ref
             if train_opt is not None:
                 self._train_opt_loss[idx] = train_opt
+            if train_u is not None:
+                self._train_loss_u[idx] = train_u
+            if train_a is not None:
+                self._train_loss_a[idx] = train_a
+            if train_dir is not None:
+                self._train_loss_dir[idx] = train_dir
+            if train_cos is not None:
+                self._train_cos_sim[idx] = train_cos
             if val_ref is not None:
                 self._val_loss[idx] = val_ref
+            if val_u is not None:
+                self._val_loss_u[idx] = val_u
+            if val_a is not None:
+                self._val_loss_a[idx] = val_a
             if val_base is not None:
                 self._val_base_loss[idx] = val_base
             if val_dir is not None:
                 self._val_dir_loss[idx] = val_dir
+            if val_cos is not None:
+                self._val_cos_sim[idx] = val_cos
+            if val_angular is not None:
+                self._val_angular_mean_deg[idx] = val_angular
             if checkpoint_score is not None:
                 self._checkpoint_scores[idx] = checkpoint_score
             if best_score is not None:
@@ -1232,9 +1336,17 @@ class LiveLossPlot(QWidget):
             self._epochs.append(epoch)
             self._train_loss.append(train_ref if train_ref is not None else float("nan"))
             self._train_opt_loss.append(train_opt if train_opt is not None else float("nan"))
+            self._train_loss_u.append(train_u if train_u is not None else float("nan"))
+            self._train_loss_a.append(train_a if train_a is not None else float("nan"))
+            self._train_loss_dir.append(train_dir if train_dir is not None else float("nan"))
+            self._train_cos_sim.append(train_cos if train_cos is not None else float("nan"))
             self._val_loss.append(val_ref if val_ref is not None else float("nan"))
+            self._val_loss_u.append(val_u if val_u is not None else float("nan"))
             self._val_base_loss.append(val_base if val_base is not None else float("nan"))
             self._val_dir_loss.append(val_dir if val_dir is not None else float("nan"))
+            self._val_loss_a.append(val_a if val_a is not None else float("nan"))
+            self._val_angular_mean_deg.append(val_angular if val_angular is not None else float("nan"))
+            self._val_cos_sim.append(val_cos if val_cos is not None else float("nan"))
             self._checkpoint_scores.append(checkpoint_score if checkpoint_score is not None else float("nan"))
             self._best_scores.append(best_score if best_score is not None else float("nan"))
             self._lr_values.append(lr_val)
@@ -1278,21 +1390,40 @@ class LiveLossPlot(QWidget):
                     rows.extend(dict(row) for row in _csv.DictReader(handle))
             else:
                 return
-            self.clear()
+            rows_by_epoch: Dict[int, Dict[str, Any]] = {}
             for row in rows:
-                epoch = int(float(row.get("epoch_display") or (float(row.get("epoch", 0)) + 1)))
+                try:
+                    epoch = int(float(row.get("epoch_display") or (float(row.get("epoch", 0)) + 1)))
+                except Exception:
+                    continue
+                rows_by_epoch[epoch] = row
+
+            def _row_float(row: Dict[str, Any], key: str, default: str = "nan") -> float:
+                try:
+                    value = float(row.get(key, default))
+                except Exception:
+                    value = float("nan")
+                return value if math.isfinite(value) else float("nan")
+
+            self.clear()
+            for epoch, row in sorted(rows_by_epoch.items()):
                 self._epochs.append(epoch)
-                self._train_loss.append(float(row.get("train_loss_total", "nan")))
-                self._train_opt_loss.append(float(row.get("train_loss_objective", "nan")))
-                self._val_loss.append(float(row.get("val_loss_total", "nan")))
-                self._val_base_loss.append(float(row.get("val_loss_base", "nan")))
-                self._val_dir_loss.append(float(row.get("val_loss_dir", "nan")))
-                self._val_loss_a.append(float(row.get("val_loss_a", "nan")))
-                self._val_angular_mean_deg.append(float(row.get("val_angular_mean_deg", "nan")))
-                self._val_cos_sim.append(float(row.get("val_cos_sim", "nan")))
-                self._checkpoint_scores.append(float(row.get("checkpoint_score", row.get("val_checkpoint_score", "nan"))))
-                self._best_scores.append(float(row.get("best_score", "nan")))
-                self._lr_values.append(float(row.get("lr", "nan")))
+                self._train_loss.append(_row_float(row, "train_loss_total"))
+                self._train_opt_loss.append(_row_float(row, "train_loss_objective"))
+                self._train_loss_u.append(_row_float(row, "train_loss_u"))
+                self._train_loss_a.append(_row_float(row, "train_loss_a"))
+                self._train_loss_dir.append(_row_float(row, "train_loss_dir"))
+                self._train_cos_sim.append(_row_float(row, "train_cos_sim", row.get("train_mean_cossim", "nan")))
+                self._val_loss.append(_row_float(row, "val_loss_total"))
+                self._val_loss_u.append(_row_float(row, "val_loss_u"))
+                self._val_base_loss.append(_row_float(row, "val_loss_base"))
+                self._val_dir_loss.append(_row_float(row, "val_loss_dir"))
+                self._val_loss_a.append(_row_float(row, "val_loss_a"))
+                self._val_angular_mean_deg.append(_row_float(row, "val_angular_mean_deg"))
+                self._val_cos_sim.append(_row_float(row, "val_cos_sim", row.get("val_mean_cossim", "nan")))
+                self._checkpoint_scores.append(_row_float(row, "checkpoint_score", row.get("val_checkpoint_score", "nan")))
+                self._best_scores.append(_row_float(row, "best_score"))
+                self._lr_values.append(_row_float(row, "lr"))
                 if row.get("best_metric"):
                     self._best_metric_name = str(row.get("best_metric"))
                 if row.get("checkpoint_formula"):
@@ -1337,7 +1468,41 @@ class LiveLossPlot(QWidget):
         if "[checkpoint]" in line.lower() and "tracking" in line.lower():
             self._checkpoint_status = "Tracking best model"
 
-    def _valid_xy(self, values: List[float]) -> Tuple[List[int], List[float]]:
+    @staticmethod
+    def _percentile(values: List[float], pct: float) -> float:
+        if not values:
+            return float("nan")
+        ordered = sorted(values)
+        if len(ordered) == 1:
+            return float(ordered[0])
+        pos = (len(ordered) - 1) * pct / 100.0
+        lo = int(math.floor(pos))
+        hi = int(math.ceil(pos))
+        if lo == hi:
+            return float(ordered[lo])
+        weight = pos - lo
+        return float(ordered[lo] * (1.0 - weight) + ordered[hi] * weight)
+
+    def _smooth_plot_values(self, values: List[float]) -> List[float]:
+        if not self._chk_smooth.isChecked() or len(values) < 3:
+            return values
+        window = max(2, int(self._smooth_window.value()))
+        smoothed: List[float] = []
+        for idx in range(len(values)):
+            start = max(0, idx - window + 1)
+            chunk = values[start : idx + 1]
+            smoothed.append(sum(chunk) / max(1, len(chunk)))
+        return smoothed
+
+    def _valid_xy(
+        self,
+        values: List[float],
+        *,
+        log_y: Optional[bool] = None,
+        smooth: bool = True,
+    ) -> Tuple[List[int], List[float]]:
+        if log_y is None:
+            log_y = self._chk_log_y.isChecked()
         xs: List[int] = []
         ys: List[float] = []
         for e, v in zip(self._epochs, values):
@@ -1345,35 +1510,146 @@ class LiveLossPlot(QWidget):
                 finite = math.isfinite(v)
             except Exception:
                 finite = False
-            if finite and (not self._chk_log_y.isChecked() or float(v) > 0.0):
+            if finite and (not log_y or float(v) > 0.0):
                 xs.append(int(e))
                 ys.append(float(v))
+        if smooth:
+            ys = self._smooth_plot_values(ys)
         return xs, ys
+
+    def _set_group_title(self, plot: Any, title: str, has_data: bool) -> None:
+        if not plot:
+            return
+        if has_data:
+            plot.setTitle(title, color="#dbe4ff", size="10pt")
+        else:
+            message = "Waiting for history/log data..." if not self._epochs else "No data for this metric yet."
+            plot.setTitle(message, color="#7f8ab0", size="10pt")
+
+    def _range_for_values(
+        self,
+        series_values: List[List[float]],
+        *,
+        log_y: bool,
+        y_bounds: Optional[Tuple[float, float]] = None,
+    ) -> Optional[Tuple[float, float]]:
+        if y_bounds is not None:
+            return y_bounds
+        valid: List[float] = []
+        for values in series_values:
+            for value in values:
+                try:
+                    v = float(value)
+                except Exception:
+                    continue
+                if not math.isfinite(v):
+                    continue
+                if log_y and v <= 0.0:
+                    continue
+                valid.append(v)
+        if not valid:
+            return None
+        lo = self._percentile(valid, 1.0)
+        hi = self._percentile(valid, 99.0)
+        if not math.isfinite(lo) or not math.isfinite(hi):
+            return None
+        if log_y:
+            lo = max(lo, 1e-30)
+            hi = max(hi, lo * 1.01)
+            return lo / 1.35, hi * 1.35
+        if hi <= lo:
+            margin = abs(hi) * 0.1 + 1e-12
+            return lo - margin, hi + margin
+        margin = (hi - lo) * 0.08
+        return lo - margin, hi + margin
+
+    def _set_plot_range(
+        self,
+        plot: Any,
+        series_values: List[List[float]],
+        *,
+        log_y: bool,
+        y_bounds: Optional[Tuple[float, float]] = None,
+    ) -> None:
+        if not plot:
+            return
+        if self._epochs:
+            xmin = max(0, min(self._epochs) - 1)
+            xmax = max(self._epochs) + 1
+            plot.setXRange(xmin, xmax, padding=0.02)
+        yr = self._range_for_values(series_values, log_y=log_y, y_bounds=y_bounds)
+        if yr is None:
+            return
+        ymin, ymax = yr
+        if log_y:
+            ymin = math.log10(max(ymin, 1e-30))
+            ymax = math.log10(max(ymax, 1e-30))
+        plot.setYRange(ymin, ymax, padding=0.02)
+
+    def _apply_plot_ranges(self) -> None:
+        loss_log = self._chk_log_y.isChecked()
+        self._set_plot_range(
+            self._plot_widget,
+            [self._train_loss, self._train_opt_loss, self._val_loss, self._val_base_loss],
+            log_y=loss_log,
+        )
+        self._set_plot_range(
+            self._direction_plot,
+            [self._train_loss_a, self._val_loss_a, self._train_loss_dir, self._val_dir_loss],
+            log_y=loss_log,
+        )
+        if getattr(self, "_direction_quality_plot", None) is not None:
+            self._set_plot_range(
+                self._direction_quality_plot,
+                [self._train_cos_sim, self._val_cos_sim, self._val_angular_mean_deg],
+                log_y=False,
+            )
+        self._set_plot_range(
+            self._checkpoint_plot,
+            [self._checkpoint_scores, self._best_scores],
+            log_y=loss_log,
+        )
 
     def _update_plot(self) -> None:
         self._refresh_metric_labels()
         if not self._plot_widget or not _HAS_PYQTGRAPH:
             return
 
-        t_ep, t_val = self._valid_xy(self._train_loss)
-        v_ep, v_val = self._valid_xy(self._val_loss)
-        dir_ep, dir_val = self._valid_xy(self._val_dir_loss)
-        a_ep, a_val = self._valid_xy(self._val_loss_a)
-        ang_ep, ang_val = self._valid_xy(self._val_angular_mean_deg)
-        cos_ep, cos_val = self._valid_xy(self._val_cos_sim)
-        score_ep, score_val = self._valid_xy(self._checkpoint_scores)
-        best_ep, best_val = self._valid_xy(self._best_scores)
+        loss_log = self._chk_log_y.isChecked()
+        t_ep, t_val = self._valid_xy(self._train_loss, log_y=loss_log)
+        to_ep, to_val = self._valid_xy(self._train_opt_loss, log_y=loss_log)
+        v_ep, v_val = self._valid_xy(self._val_loss, log_y=loss_log)
+        vb_ep, vb_val = self._valid_xy(self._val_base_loss, log_y=loss_log)
+        tr_a_ep, tr_a_val = self._valid_xy(self._train_loss_a, log_y=loss_log)
+        a_ep, a_val = self._valid_xy(self._val_loss_a, log_y=loss_log)
+        tr_dir_ep, tr_dir_val = self._valid_xy(self._train_loss_dir, log_y=loss_log)
+        dir_ep, dir_val = self._valid_xy(self._val_dir_loss, log_y=loss_log)
+        tr_cos_ep, tr_cos_val = self._valid_xy(self._train_cos_sim, log_y=False)
+        ang_ep, ang_val = self._valid_xy(self._val_angular_mean_deg, log_y=False)
+        cos_ep, cos_val = self._valid_xy(self._val_cos_sim, log_y=False)
+        score_ep, score_val = self._valid_xy(self._checkpoint_scores, log_y=loss_log)
+        best_ep, best_val = self._valid_xy(self._best_scores, log_y=loss_log)
 
         self._curve_train.setData(t_ep, t_val)
         self._curve_train_shadow.setData(t_ep, t_val)
         self._curve_val.setData(v_ep, v_val)
         self._curve_val_shadow.setData(v_ep, v_val)
+        if getattr(self, "_curve_train_opt", None) is not None:
+            self._curve_train_opt.setData(to_ep, to_val)
+        if getattr(self, "_curve_val_base", None) is not None:
+            self._curve_val_base.setData(vb_ep, vb_val)
+        if getattr(self, "_curve_train_loss_a", None) is not None:
+            self._curve_train_loss_a.setData(tr_a_ep, tr_a_val)
         if getattr(self, "_curve_val_dir", None) is not None:
             self._curve_val_dir.setData(dir_ep, dir_val)
         if getattr(self, "_curve_val_loss_a", None) is not None:
             self._curve_val_loss_a.setData(a_ep, a_val)
+        if getattr(self, "_curve_train_dir", None) is not None:
+            self._curve_train_dir.setData(tr_dir_ep, tr_dir_val)
         if getattr(self, "_curve_val_angular", None) is not None:
             self._curve_val_angular.setData(ang_ep, ang_val)
+        if getattr(self, "_curve_train_cossim", None) is not None:
+            self._curve_train_cossim.setData(tr_cos_ep, tr_cos_val)
         if getattr(self, "_curve_val_cossim", None) is not None:
             self._curve_val_cossim.setData(cos_ep, cos_val)
         if getattr(self, "_curve_score", None) is not None:
@@ -1382,19 +1658,24 @@ class LiveLossPlot(QWidget):
             self._curve_best_score.setData(best_ep, best_val)
 
         if self._best_val is not None and math.isfinite(self._best_val) and self._best_val > 0:
-            self._best_line.setValue(float(self._best_val))
+            line_value = math.log10(float(self._best_val)) if loss_log else float(self._best_val)
+            self._best_line.setValue(line_value)
             self._best_line.setVisible(True)
         else:
             self._best_line.setVisible(False)
 
-        if len(self._epochs) >= 2:
-            self._plot_widget.setXRange(max(0, min(self._epochs) - 1), max(self._epochs) + 1, padding=0.02)
+        self._set_group_title(self._plot_widget, "Loss overview", bool(t_val or to_val or v_val or vb_val))
+        self._set_group_title(self._direction_plot, "Acceleration and direction losses", bool(tr_a_val or a_val or tr_dir_val or dir_val))
+        if getattr(self, "_direction_quality_plot", None) is not None:
+            self._set_group_title(self._direction_quality_plot, "Direction quality", bool(tr_cos_val or cos_val or ang_val))
+        self._set_group_title(self._checkpoint_plot, "Checkpoint score", bool(score_val or best_val))
+        self._apply_plot_ranges()
         if self._epochs:
             self._lbl_status.setText(
                 f"Epoch {self._latest_epoch or self._epochs[-1]}  ·  {self._checkpoint_status}"
             )
         else:
-            self._lbl_status.setText(self._checkpoint_status or "Eğitim bekleniyor…")
+            self._lbl_status.setText("Waiting for history/log data…")
 
     def _refresh_metric_labels(self) -> None:
         latest_train = next((v for v in reversed(self._train_loss) if math.isfinite(v)), None)
@@ -1438,6 +1719,8 @@ class LiveLossPlot(QWidget):
             self._plot_widget.setLogMode(x=False, y=checked)
             if getattr(self, "_direction_plot", None) is not None:
                 self._direction_plot.setLogMode(x=False, y=checked)
+            if getattr(self, "_direction_quality_plot", None) is not None:
+                self._direction_quality_plot.setLogMode(x=False, y=False)
             if getattr(self, "_checkpoint_plot", None) is not None:
                 self._checkpoint_plot.setLogMode(x=False, y=checked)
             self._plot_widget.setLabel(
@@ -1446,21 +1729,33 @@ class LiveLossPlot(QWidget):
                 color="#aeb8d8",
                 size="10pt",
             )
+            if getattr(self, "_direction_plot", None) is not None:
+                self._direction_plot.setLabel(
+                    "left",
+                    "Loss (log)" if checked else "Loss",
+                    color="#aeb8d8",
+                    size="10pt",
+                )
             self._update_plot()
             self._auto_range()
 
     def _auto_range(self) -> None:
         if self._plot_widget and _HAS_PYQTGRAPH:
-            self._plot_widget.autoRange(padding=0.12)
+            self._apply_plot_ranges()
 
     def clear(self) -> None:
         self._epochs.clear()
         self._train_loss.clear()
         self._val_loss.clear()
         self._train_opt_loss.clear()
+        self._train_loss_u.clear()
+        self._val_loss_u.clear()
+        self._train_loss_a.clear()
         self._val_base_loss.clear()
+        self._train_loss_dir.clear()
         self._val_dir_loss.clear()
         self._val_loss_a.clear()
+        self._train_cos_sim.clear()
         self._val_angular_mean_deg.clear()
         self._val_cos_sim.clear()
         self._checkpoint_scores.clear()
@@ -1483,12 +1778,22 @@ class LiveLossPlot(QWidget):
             self._curve_train_shadow.setData([], [])
             self._curve_val.setData([], [])
             self._curve_val_shadow.setData([], [])
+            if getattr(self, "_curve_train_opt", None) is not None:
+                self._curve_train_opt.setData([], [])
+            if getattr(self, "_curve_val_base", None) is not None:
+                self._curve_val_base.setData([], [])
+            if getattr(self, "_curve_train_loss_a", None) is not None:
+                self._curve_train_loss_a.setData([], [])
+            if getattr(self, "_curve_train_dir", None) is not None:
+                self._curve_train_dir.setData([], [])
             if getattr(self, "_curve_val_dir", None) is not None:
                 self._curve_val_dir.setData([], [])
             if getattr(self, "_curve_val_loss_a", None) is not None:
                 self._curve_val_loss_a.setData([], [])
             if getattr(self, "_curve_val_angular", None) is not None:
                 self._curve_val_angular.setData([], [])
+            if getattr(self, "_curve_train_cossim", None) is not None:
+                self._curve_train_cossim.setData([], [])
             if getattr(self, "_curve_val_cossim", None) is not None:
                 self._curve_val_cossim.setData([], [])
             if getattr(self, "_curve_score", None) is not None:
@@ -1496,7 +1801,12 @@ class LiveLossPlot(QWidget):
             if getattr(self, "_curve_best_score", None) is not None:
                 self._curve_best_score.setData([], [])
             self._best_line.setVisible(False)
-        self._lbl_status.setText("Eğitim bekleniyor…")
+            self._set_group_title(self._plot_widget, "Loss overview", False)
+            self._set_group_title(self._direction_plot, "Acceleration and direction losses", False)
+            if getattr(self, "_direction_quality_plot", None) is not None:
+                self._set_group_title(self._direction_quality_plot, "Direction quality", False)
+            self._set_group_title(self._checkpoint_plot, "Checkpoint score", False)
+        self._lbl_status.setText("Waiting for history/log data…")
         self._refresh_metric_labels()
 
     def get_final_losses(self) -> Dict[str, Any]:
@@ -5967,6 +6277,7 @@ class CloudGenTab(QWidget):
 class STLRPSProfilingTab(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self.setMinimumHeight(520)
 
         grp_model = QGroupBox("Model / Run")
         form_model = QFormLayout()
