@@ -1,269 +1,228 @@
-# ST-LRPS
+# ST-LRPS: Sobolev-Trained Lunar Residual Potential Surrogate
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](#testing)
 
-A lunar residual-potential surrogate gravity framework with propagation, validation, Monte Carlo, and UI tooling.
-
----
+ST-LRPS is a lunar gravity modeling and propagation framework centered on a Sobolev-trained residual-potential surrogate model. The repository includes spherical-harmonic gravity modeling, ST-LRPS training/evaluation/runtime inference, orbit propagation, Monte Carlo analysis, validation tools, visualization tools, and a desktop UI.
 
 ## Overview
 
-ST-LRPS propagates spacecraft trajectories in lunar orbit with scientific accuracy. The physics engine assembles a Numba-JIT-compiled right-hand-side closure from independent force models, then drives a variable-step DOP853 integrator with event detection. A separate GPU-accelerated path runs large Monte Carlo ensembles in parallel using fixed-step CUDA RK4, enabling statistical impact probability and covariance analysis within practical wall-clock times.
+The framework supports lunar-orbit propagation with configurable physical force models, spherical-harmonic lunar gravity, optional ST-LRPS residual-potential inference, Monte Carlo workflows, validation harnesses, report generation, and PySide6-based desktop workflows. ST-LRPS is designed to learn a residual scalar potential above a lower-degree spherical-harmonic baseline; runtime acceleration can then be obtained from the learned potential gradient and combined with the baseline gravity model.
 
-The **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) component replaces classical spherical-harmonic evaluation with a neural network that learns the residual scalar potential $\Delta U$ above a low-degree SH baseline. Gradients are obtained by automatic differentiation, so the acceleration is physically consistent without storing massive coefficient arrays.
+Accuracy, runtime, and stability depend on the selected data, force-model configuration, trained artifacts, and validation scenario. Treat validation outputs as run-specific evidence rather than a blanket guarantee.
 
----
+## Repository Architecture
 
-## Features
+The current repository uses the Part 2 ST-LRPS package layout.
 
-**Dynamics**
-- Spherical harmonics gravity up to degree/order 1800 (GRAIL/GRGM coefficients)
-- ST-LRPS neural gravity surrogate — learned $\Delta U$ via autograd, CPU and GPU inference
-- Third-body perturbations: Sun and Earth (differential formulation)
-- Solar radiation pressure with penumbra/umbra shadow detection
-- Lunar albedo radiation pressure (surface-grid backed)
-- First-order post-Newtonian (Schwarzschild 1PN) relativistic correction
-- Adaptive SH degree control: finer harmonics near periselene, coarser at apoapsis
+```text
+st_lrps/
+  data/          dataset definitions, spatial cloud generation, dataset loading
+  training/      ST-LRPS training config, CLI, engine, losses, metrics
+  networks/      neural network architecture definitions
+  artifacts/     run layout, checkpoints, manifests, artifact validation
+  evaluation/    trained-model evaluation and ablation CLI
+  runtime/       propagator-facing ST-LRPS force model API
+  shared/        shared scaling utilities
+  ui/            ST-LRPS-specific UI components
 
-**Integration**
-- Primary integrator: DOP853 (8th-order Runge-Kutta), adaptive step
-- Event detection: terrain-aware impact detection, apsis crossing, SOI transition
-- Step-size bounded by Nyquist criterion on the active gravity-field degree
+core/             dynamics, state conversion, propagation, Monte Carlo backend
+models/           physical/environment models and adapters
+loaders/          gravity/topography/ephemeris/data loading
+common/           shared constants, dataclasses, validation helpers
+analysis/         post-processing, reports, Monte Carlo analysis
+  postprocess.py
+  formatting.py
+  reporting/
+    manager.py
+    plotting.py
+    styling.py
+  monte_carlo/
+    statistics.py
+    plotting.py
+validation/       independent physics/orbit/gravity validation harnesses
+  gravity/
+    compare_gravity_models.py
+visualization/    standalone visualization tools
+  orbit_animation.py
+  surface_explorer.py
+ui_parts/         desktop UI page components
+cli/              shared CLI argument helpers
+tests/            unit and regression tests
+data/             local input data such as SPICE kernels, gravity, topography
+```
 
-**Monte Carlo**
-- GPU path: CUDA RK4 with per-thread SH workspace (degree ≤ 24), Sun/Earth third-body, SRP, 1PN
-- CPU path: full-fidelity per-sample propagation reusing all active force models
-- Gaussian initial-state and spacecraft-property perturbations
-- HDF5/NPZ streaming output; impact probability with Wilson confidence intervals
-- Automatic GPU→CPU fallback for unsupported physics (ST-LRPS, albedo)
+Top-level entry points:
 
-**Ephemeris**
-- SPICE kernel integration via SpiceyPy
-- Pre-tabulated Sun/Earth position vectors and Moon-fixed attitude quaternions
-
-**Analysis & UI**
-- Post-processing: osculating elements, RAAN/argument-of-periapsis drift, energy invariants
-- Matplotlib output: altitude, ground track, 3-D orbit, phase space, acceleration budget
-- PDF mission report via ReportLab
-- PySide6 desktop application with live telemetry, page-based configuration, and embedded analysis panels
-
----
-
-## Architecture
-
-The codebase follows a strict multi-layer dependency rule: each layer imports only from layers below it.
-
-### Layer 1: Core Definitions
-- `common/`: Physical constants (SI Single Source of Truth), pure math utilities, and configuration dataclasses. `config.py` acts as the global state and configuration SSOT.
-
-### Layer 2: Force Models
-- `models/`: High-performance Numba-JIT force kernels. Each perturbation (spherical harmonics, solar radiation pressure, third body, relativity, surface albedo) is encapsulated in its own module and exposes an allocation-free function.
-- `st_lrps/`: ST-LRPS training, evaluation, and runtime package. Neural network surrogate models (ST-LRPS), dataset spatial point cloud generators, Sobolev loss formulations, scaling, and training pipelines.
-
-### Layer 3: Dynamics & Propagation
-- `core/dynamics.py`: The equations of motion (RHS) builder. It inspects requested flags, extracts Numba-friendly arrays from high-level models, and constructs a compiled closure for the numerical solver.
-- `core/propagator.py`: The single authoritative entry point for time integration, wrapping SciPy `solve_ivp` and fixed-step solvers, implementing event geometric bounds, step-size limiters (Nyquist), and chunking.
-- `core/monte_carlo_engine.py` & `core/mc_backend_policy.py`: Orchestrates multi-sample runs. It evaluates requested perturbation flags and automatically dispatches to the GPU (CUDA) or falls back to CPU multiprocessors depending on compatibility.
-
-### Layer 4: Application & Analysis
-- `analysis/`: Reusable post-processing, generic metrics extraction, Monte Carlo statistics, reporting, and formatting utilities.
-- `validation/` & `visualization/`: Offline benchmark scripts and orbital animation.
-- `ui_parts/` & `cli/`: PySide6 frontend logic and CLI parsing.
-
-All configuration flows through the frozen `SimConfig` dataclass.
-
----
+```text
+main.py           single-run propagation CLI entry point
+mc_runner.py      Monte Carlo CLI entry point
+ui.py             desktop application entry point
+config.py         application configuration dataclasses and defaults
+```
 
 ## Installation
 
-**Runtime dependencies**
-
-```
-python >= 3.9
-numpy
-scipy
-numba
-torch          # ST-LRPS inference
-spiceypy       # SPICE ephemeris
-PySide6        # desktop UI
-h5py           # HDF5 output
-matplotlib
-reportlab
-```
-
-**Optional**
-
-```
-numba[cuda]    # GPU Monte Carlo (requires CUDA toolkit)
-rasterio       # LDEM terrain-based impact detection
-```
-
-**Steps**
+Install the Python dependencies from the repository root:
 
 ```bash
-git clone https://github.com/ayberkdt/ST_LRPS.git
-cd ST_LRPS
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-SPICE kernels and gravity coefficient files are **not** bundled. Acquire them separately and place them under `data/` as described in the next section.
+Large mission data files are not bundled. Place local SPICE kernels, gravity coefficient files, topography grids, and albedo grids under `data/` or another local path configured at runtime.
 
----
+Common data locations:
 
-## Data Requirements
+| Directory | Contents |
+|-----------|----------|
+| `data/ephemeris_models/` | SPICE leap-second, planetary, constants, and lunar orientation kernels |
+| `data/gravity_models/` | Lunar spherical-harmonic coefficient files |
+| `data/topography_models/` | LOLA/LDEM topography rasters |
+| `data/albedo_models/` | Optional lunar albedo grids |
 
-| Directory | Contents | Source |
-|-----------|----------|--------|
-| `data/ephemeris_models/` | Leap-second `.tls`, planetary `.bsp`, constants `.tpc`, lunar orientation `.bpc` | NAIF/SPICE |
-| `data/gravity_models/` | SH coefficient file, e.g. `jggrx_1800f_sha.tab` | NASA PDS / GRAIL |
-| `data/topography_models/` | Lunar DEM rasters (optional, for terrain-aware impact) | LOLA/LDEM |
-| `data/albedo_models/` | Surface albedo grids (optional) | — |
+## Quickstart
 
----
-
-## Quick Start
-
-**Single propagation (CLI)**
+These checks do not require private local datasets.
 
 ```bash
-python main.py \
-    --start-date 2025-06-01T00:00:00 \
-    --days 7 \
-    --hp-km 100 --ha-km 500 \
-    --inc-deg 90 \
-    --enable-sh true --enable-srp true \
-    --out-dir output/polar_run
+python -m pip install -r requirements.txt
+python -c "import st_lrps; print(st_lrps.__version__)"
+python -m st_lrps.training.cli --help
+python -m st_lrps.evaluation.cli --help
+python -m validation.gravity.compare_gravity_models --help
+python -m visualization.surface_explorer --help
 ```
 
-**Monte Carlo (CLI)**
+Data-dependent examples such as full propagation, ST-LRPS training, gravity validation runs, and topography plots require local gravity, SPICE, or LOLA files.
+
+## ST-LRPS Commands
+
+Spatial cloud generation:
 
 ```bash
-python mc_runner.py \
-    --start-date 2025-06-01T00:00:00 \
-    --days 30 \
-    --alt-km 100 --inc-deg 90 \
-    --n-samples 500 \
-    --sigma-r-m 500 --sigma-v-m-s 0.5 \
-    --use-gpu on \
-    --mc-output-path results/mc_run.h5
+python -m st_lrps.data.spatial_cloud_generator --help
 ```
 
-**Desktop UI**
+Training:
 
 ```bash
-python ui.py
+python -m st_lrps.training.cli --help
 ```
 
-**Python API**
+Evaluation:
+
+```bash
+python -m st_lrps.evaluation.cli --help
+```
+
+Ablation:
+
+```bash
+python -m st_lrps.evaluation.ablation --help
+```
+
+Runtime import example:
 
 ```python
-from config import load_default_config
-from main import apply_args_to_config
-from core.propagator import propagate
-
-cfg = load_default_config()
-# adjust cfg fields or call apply_args_to_config(cfg, args)
-result = propagate(dynamics=..., y0=..., cfg=cfg.propagator, time_cfg=cfg.time)
+from st_lrps.runtime.force_model import load_surrogate_force_model
 ```
 
----
+Training and evaluation outputs should be written to user-selected output directories such as top-level `runs/`, `artifacts/`, `outputs/`, or a scratch location outside the repository. Do not place generated runs inside source package directories.
 
-## ST-LRPS: Neural Gravity Surrogate
+## Propagation And Analysis
 
-ST-LRPS learns the residual scalar gravitational potential above a baseline SH model:
-
-```
-a_total = a_SH(degree_min) + ∇ΔU_STLRPS(x)
-```
-
-The network is trained on spatial point clouds generated by `st_lrps/spatial_cloud_generator.py` using the full GFC model. Training uses a Sobolev loss that penalises both potential and gradient error, which makes the learned acceleration physically consistent by construction.
-
-**Generate a training dataset**
+Single-run propagation is driven by `main.py`; Monte Carlo workflows are driven by `mc_runner.py`. These commands are data-dependent and should be configured with local input files and output paths:
 
 ```bash
-python -m st_lrps.spatial_cloud_generator \
-    --degree-min 10 --degree-max 50 \
-    --n-samples 250000 \
-    --alt-range 30 120 \
-    --format h5
+python main.py --help
+python mc_runner.py --help
 ```
 
-**Train**
+Canonical analysis modules:
+
+| Purpose | Module |
+|---------|--------|
+| Post-processing | `analysis.postprocess` |
+| Report management | `analysis.reporting.manager` |
+| Report plotting | `analysis.reporting.plotting` |
+| Report styling | `analysis.reporting.styling` |
+| Monte Carlo statistics | `analysis.monte_carlo.statistics` |
+| Monte Carlo plotting | `analysis.monte_carlo.plotting` |
+
+## Validation
+
+The validation layer is for independent physics, orbit, and cross-model checks. The current gravity validation harness is:
 
 ```bash
-python -m st_lrps.st_lrps_train \
-    --data <dataset.h5> \
-    --out runs/st_lrps_train_<timestamp>
+python -m validation.gravity.compare_gravity_models --help
 ```
 
-**Use in propagation**
+Gravity validation commonly uses a high-degree spherical-harmonic model such as SH200 as the truth/reference, lower-degree spherical-harmonic models as baselines, and optional ST-LRPS comparison when a trained artifact directory is supplied. See `validation/README.md` and `validation/gravity/README.md` for details.
+
+## Visualization
+
+Standalone visualization tools live under `visualization/`.
+
+| Purpose | Module |
+|---------|--------|
+| Orbit animation and trajectory visualization | `visualization.orbit_animation.render_orbit_animation` |
+| Topography and albedo exploration | `visualization.surface_explorer` |
+
+Surface explorer help:
 
 ```bash
-python main.py \
-    --gravity-backend st_lrps \
-    --surrogate-gravity-model-dir runs/st_lrps_train_<timestamp>/ \
-    ...
+python -m visualization.surface_explorer --help
 ```
 
-Trained run directories must contain `config.json` (including `degree_min`/`degree_max`), `scaler.json`, and `checkpoints/ckpt_best.pt`. If only `ckpt_last.pt` is present the model loads with a warning.
+Example topography render:
 
----
+```bash
+python -m visualization.surface_explorer \
+    --topo-label data/topography_models/ldem_64_float.lbl \
+    --topo-img data/topography_models/ldem_64_float.img \
+    --out-dir outputs/surface_explorer \
+    --plot-2d --plot-3d
+```
+
+Large LOLA grids can be memory-heavy. Use `--stride-2d`, `--stride-3d`, or `--stride-albedo` for quick previews.
+
+## Generated Output Policy
+
+Generated outputs should not be committed. Keep run products in ignored top-level output directories or external scratch storage.
+
+Examples of generated paths and files:
+
+```text
+runs/
+results/
+artifacts/
+outputs/
+checkpoints/
+evals/
+history.jsonl
+run_manifest.json
+metrics_summary.csv
+topk_worst.csv
+ood_metrics.csv
+```
+
+Source packages such as `st_lrps/`, `analysis/`, `validation/`, and `visualization/` should contain source code and documentation, not generated run artifacts, checkpoints, plots, or evaluation tables.
 
 ## Testing
 
-Focused ST-LRPS contract checks:
+Run lightweight documentation and visualization checks:
 
 ```bash
-python -m pytest tests/test_surrogate_training_contracts.py -q
-python -m pytest tests/test_surrogate_architecture_upgrades.py -q
+pytest tests/test_repo_hygiene.py
+pytest tests/test_validation_docs.py
+pytest tests/test_surface_explorer_visualization.py
 ```
+
+Run the full test suite when making code changes:
 
 ```bash
 pytest tests/
 ```
-
-Key test modules:
-
-| Module | Coverage |
-|--------|----------|
-| `test_surrogate_gravity.py` | ST-LRPS metadata contract, ckpt fallback, propagator compatibility |
-| `test_mc_gpu_policy.py` | Backend selection, GPU→CPU fallback rules |
-| `test_dynamics.py` | Force model assembly, RHS evaluation |
-| `test_spherical_harmonics.py` | SH acceleration kernels |
-| `test_surrogate_training_contracts.py` | Training pipeline contracts |
-| `test_surrogate_architecture_upgrades.py` | ST-LRPS architecture cleanup contracts |
-
----
-
-## Project Structure
-
-```text
-common/                  Constants, type definitions, unified configuration dataclasses
-models/                  Force kernels: gravity, SRP, third-body, albedo, relativity
-core/                    Dynamics engine, propagator, Monte Carlo engine and propagators
-analysis/                Post-processing, MC statistics, formatting, and report generation
-  ├── reporting/         Report management, styling, and Matplotlib plotting
-  └── monte_carlo/       Monte Carlo statistics and ensemble plotting
-loaders/                 Asset loaders: gravity files, SPICE, surface grids
-validation/              Validation and benchmark scripts
-  └── gravity/           Gravity model comparison and benchmarks
-visualization/           Interactive visualization and animation tools
-st_lrps/                 ST-LRPS data generation, training, evaluation, inference API
-ui_parts/                PySide6 page widgets and helpers
-cli/                     Command-line interface helpers
-tests/                   Unit and integration tests for all packages
-data/                    Local storage for SPICE kernels, topography, and SH coefficients
-results/                 Default output directory for single-run reports and telemetry
-mc_results/              Default output directory for Monte Carlo run outputs
-config.py                SimConfig Single Source of Truth
-main.py                  Single-run CLI entry point
-mc_runner.py             Monte Carlo CLI entry point
-ui.py                    Desktop application entry point
-```
-
----
 
 ## License
 

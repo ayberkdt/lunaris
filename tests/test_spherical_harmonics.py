@@ -510,6 +510,78 @@ def test_adaptive_blend_boundaries_and_continuity(sh, constants):
     assert max_jump < 1e-8, f"Discontinuity detected (max |Δa|={max_jump:.3e})"
 
 
+def _py_func(f):
+    return f.py_func if hasattr(f, "py_func") else f
+
+
+def test_legendre_derivative_matches_finite_difference(sh):
+    """
+    Directly test the internal Legendre derivative table `dP` against a finite-difference derivative of `P`.
+    """
+    max_degree = 40
+    delta = 1e-7
+
+    diag, subdiag, A, B, scale_m = sh.build_legendre_coeffs(max_degree)
+
+    P0 = np.zeros((max_degree + 1, max_degree + 1))
+    dP0 = np.zeros_like(P0)
+
+    Pm = np.zeros_like(P0)
+    dPm = np.zeros_like(P0)
+
+    Pp = np.zeros_like(P0)
+    dPp = np.zeros_like(P0)
+
+    compute_stable_m = _py_func(sh._compute_stable_m_limit)
+    compute_legendre = _py_func(sh._compute_legendre_polynomials_inplace)
+
+    test_phis = [-0.9, -0.3, 0.3, 0.7]
+
+    for phi in test_phis:
+        # P, dP @ phi
+        sin_phi = math.sin(phi)
+        cos_phi = math.cos(phi)
+        stable_m0 = compute_stable_m(cos_phi, max_degree)
+        compute_legendre(
+            sin_phi, cos_phi, max_degree, max_degree, stable_m0,
+            diag, subdiag, A, B, scale_m, P0, dP0
+        )
+
+        # P @ phi-delta
+        sin_m = math.sin(phi - delta)
+        cos_m = math.cos(phi - delta)
+        stable_m_m = compute_stable_m(cos_m, max_degree)
+        compute_legendre(
+            sin_m, cos_m, max_degree, max_degree, stable_m_m,
+            diag, subdiag, A, B, scale_m, Pm, dPm
+        )
+
+        # P @ phi+delta
+        sin_p = math.sin(phi + delta)
+        cos_p = math.cos(phi + delta)
+        stable_m_p = compute_stable_m(cos_p, max_degree)
+        compute_legendre(
+            sin_p, cos_p, max_degree, max_degree, stable_m_p,
+            diag, subdiag, A, B, scale_m, Pp, dPp
+        )
+
+        # Finite difference
+        dP_fd = (Pp - Pm) / (2.0 * delta)
+
+        # We only check m=0 initially as per instructions.
+        m = 0
+        mask = np.abs(dP_fd[:, m]) > 1e-10
+
+        if np.any(mask):
+            np.testing.assert_allclose(
+                dP0[mask, m],
+                dP_fd[mask, m],
+                rtol=1e-5,
+                atol=1e-7,
+                err_msg=f"Legendre derivative mismatch at phi={phi}"
+            )
+
+
 if __name__ == "__main__":
     print("This is a pytest test module. Run it with:")
     print("  python -m pytest -vv -rA --durations=10 tests/test_spherical_harmonics.py")

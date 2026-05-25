@@ -1,0 +1,360 @@
+% $ biblatex auxiliary file $
+% $ biblatex bbl format version 3.2 $
+% Do not modify the above lines!
+%
+% This is an auxiliary file used by the 'biblatex' package.
+% This file may safely be deleted. It will be recreated by
+% biber as required.
+%
+\begingroup
+\makeatletter
+\@ifundefined{ver@biblatex.sty}
+  {\@latex@error
+     {Missing 'biblatex' package}
+     {The bibliography requires the 'biblatex' package.}
+      \aftergroup\endinput}
+  {}
+\endgroup
+
+
+\refsection{0}
+  \datalist[entry]{none/global//global/global}
+    \entry{vallado}{book}{}
+      \name{author}{1}{}{%
+        {{hash=5ce77d9d427077b0792c85535de9fc7e}{%
+           family={Vallado},
+           familyi={V\bibinitperiod},
+           given={David\bibnamedelima A.},
+           giveni={D\bibinitperiod\bibinitdelim A\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {Microcosm Press}%
+      }
+      \strng{namehash}{5ce77d9d427077b0792c85535de9fc7e}
+      \strng{fullhash}{5ce77d9d427077b0792c85535de9fc7e}
+      \strng{bibnamehash}{5ce77d9d427077b0792c85535de9fc7e}
+      \strng{authorbibnamehash}{5ce77d9d427077b0792c85535de9fc7e}
+      \strng{authornamehash}{5ce77d9d427077b0792c85535de9fc7e}
+      \strng{authorfullhash}{5ce77d9d427077b0792c85535de9fc7e}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{edition}{4}
+      \field{title}{Fundamentals of Astrodynamics and Applications}
+      \field{year}{2013}
+    \endentry
+    \entry{Pavlis2008}{article}{}
+      \name{author}{4}{}{%
+        {{hash=a67fb25bc1f00cf772327228d066cd75}{%
+           family={Pavlis},
+           familyi={P\bibinitperiod},
+           given={Nikolaos\bibnamedelima K.},
+           giveni={N\bibinitperiod\bibinitdelim K\bibinitperiod}}}%
+        {{hash=5a7412643c7e1d827f9eaefe017919bf}{%
+           family={Holmes},
+           familyi={H\bibinitperiod},
+           given={Simon\bibnamedelima A.},
+           giveni={S\bibinitperiod\bibinitdelim A\bibinitperiod}}}%
+        {{hash=9871e21bbfee94d4d5662db6b228ff1f}{%
+           family={Kenyon},
+           familyi={K\bibinitperiod},
+           given={Steve\bibnamedelima C.},
+           giveni={S\bibinitperiod\bibinitdelim C\bibinitperiod}}}%
+        {{hash=b3279b68e6d831a6f91d7128b03f1cc2}{%
+           family={Factor},
+           familyi={F\bibinitperiod},
+           given={John\bibnamedelima K.},
+           giveni={J\bibinitperiod\bibinitdelim K\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {American Geophysical Union}%
+      }
+      \strng{namehash}{968a246d6a4625cbb0d155cbf91d3165}
+      \strng{fullhash}{8ff29073994c70e6bd230b717c959a5d}
+      \strng{bibnamehash}{968a246d6a4625cbb0d155cbf91d3165}
+      \strng{authorbibnamehash}{968a246d6a4625cbb0d155cbf91d3165}
+      \strng{authornamehash}{968a246d6a4625cbb0d155cbf91d3165}
+      \strng{authorfullhash}{8ff29073994c70e6bd230b717c959a5d}
+      \field{sortinit}{4}
+      \field{sortinithash}{9381316451d1b9788675a07e972a12a7}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Journal of Geophysical Research: Solid Earth}
+      \field{number}{B4}
+      \field{title}{The development and evaluation of the {E}arth {G}ravitational {M}odel 2008 ({EGM2008})}
+      \field{volume}{117}
+      \field{year}{2012}
+      \field{pages}{B04406}
+      \range{pages}{-1}
+      \verb{doi}
+      \verb 10.1029/2011JB008916
+      \endverb
+    \endentry
+    \entry{curtis2020orbital}{book}{}
+      \name{author}{1}{}{%
+        {{hash=55a7280b2d9a909f02706fed0fe1f209}{%
+           family={Curtis},
+           familyi={C\bibinitperiod},
+           given={Howard\bibnamedelima D.},
+           giveni={H\bibinitperiod\bibinitdelim D\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Oxford}%
+      }
+      \list{publisher}{1}{%
+        {Butterworth-Heinemann}%
+      }
+      \strng{namehash}{55a7280b2d9a909f02706fed0fe1f209}
+      \strng{fullhash}{55a7280b2d9a909f02706fed0fe1f209}
+      \strng{bibnamehash}{55a7280b2d9a909f02706fed0fe1f209}
+      \strng{authorbibnamehash}{55a7280b2d9a909f02706fed0fe1f209}
+      \strng{authornamehash}{55a7280b2d9a909f02706fed0fe1f209}
+      \strng{authorfullhash}{55a7280b2d9a909f02706fed0fe1f209}
+      \field{sortinit}{5}
+      \field{sortinithash}{20e9b4b0b173788c5dace24730f47d8c}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{edition}{4}
+      \field{isbn}{978-0081021330}
+      \field{title}{Orbital Mechanics for Engineering Students}
+      \field{year}{2020}
+    \endentry
+    \entry{Muller1968}{article}{}
+      \name{author}{2}{}{%
+        {{hash=c9d4a583fac0edc78be38994cb83bc93}{%
+           family={Muller},
+           familyi={M\bibinitperiod},
+           given={P.\bibnamedelimi M.},
+           giveni={P\bibinitperiod\bibinitdelim M\bibinitperiod}}}%
+        {{hash=a636a72bacc10059ca0627d203777026}{%
+           family={Sjogren},
+           familyi={S\bibinitperiod},
+           given={W.\bibnamedelimi L.},
+           giveni={W\bibinitperiod\bibinitdelim L\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {American Association for the Advancement of Science}%
+      }
+      \strng{namehash}{dab06709e1bd27893630656fb9d9ba62}
+      \strng{fullhash}{dab06709e1bd27893630656fb9d9ba62}
+      \strng{bibnamehash}{dab06709e1bd27893630656fb9d9ba62}
+      \strng{authorbibnamehash}{dab06709e1bd27893630656fb9d9ba62}
+      \strng{authornamehash}{dab06709e1bd27893630656fb9d9ba62}
+      \strng{authorfullhash}{dab06709e1bd27893630656fb9d9ba62}
+      \field{sortinit}{9}
+      \field{sortinithash}{0a5ebc79d83c96b6579069544c73c7d4}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Science}
+      \field{number}{3842}
+      \field{title}{Mascons: Lunar Mass Concentrations}
+      \field{volume}{161}
+      \field{year}{1968}
+      \field{pages}{680\bibrangedash 684}
+      \range{pages}{5}
+    \endentry
+    \entry{Konopliv2001}{article}{}
+      \name{author}{5}{}{%
+        {{hash=910ca5724d57df2f883cd016ff744923}{%
+           family={Konopliv},
+           familyi={K\bibinitperiod},
+           given={Alex\bibnamedelima S.},
+           giveni={A\bibinitperiod\bibinitdelim S\bibinitperiod}}}%
+        {{hash=0dc66e308b9261403ce379ba2b491fa0}{%
+           family={Asmar},
+           familyi={A\bibinitperiod},
+           given={Sami\bibnamedelima W.},
+           giveni={S\bibinitperiod\bibinitdelim W\bibinitperiod}}}%
+        {{hash=479ed7c5c7f9ed7e446fbf4b27b3e059}{%
+           family={Carranza},
+           familyi={C\bibinitperiod},
+           given={Eric},
+           giveni={E\bibinitperiod}}}%
+        {{hash=9996c4a561540dd251889c1cb9c02f86}{%
+           family={Sjogren},
+           familyi={S\bibinitperiod},
+           given={William\bibnamedelima L.},
+           giveni={W\bibinitperiod\bibinitdelim L\bibinitperiod}}}%
+        {{hash=9e000b6c0a26c57d4450b7f596d3feac}{%
+           family={Yuan},
+           familyi={Y\bibinitperiod},
+           given={Dah-Ning},
+           giveni={D\bibinithyphendelim N\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {Elsevier}%
+      }
+      \strng{namehash}{3f58c55ce0bf66335032a498805b6e0f}
+      \strng{fullhash}{0171fdefb256977db701ec6160c2fb95}
+      \strng{bibnamehash}{3f58c55ce0bf66335032a498805b6e0f}
+      \strng{authorbibnamehash}{3f58c55ce0bf66335032a498805b6e0f}
+      \strng{authornamehash}{3f58c55ce0bf66335032a498805b6e0f}
+      \strng{authorfullhash}{0171fdefb256977db701ec6160c2fb95}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Icarus}
+      \field{note}{Dosya: Recent Gravity Models as a Result of the Lunar Prospector Mission (Konopliv 2001).pdf}
+      \field{number}{1}
+      \field{title}{Recent Gravity Models as a Result of the Lunar Prospector Mission}
+      \field{volume}{150}
+      \field{year}{2001}
+      \field{pages}{1\bibrangedash 18}
+      \range{pages}{18}
+      \verb{doi}
+      \verb 10.1006/icar.2000.6573
+      \endverb
+    \endentry
+    \entry{Zuber2013}{article}{}
+      \name{author}{17}{}{%
+        {{hash=aee124d2a8754a371875da24dadd5a43}{%
+           family={Zuber},
+           familyi={Z\bibinitperiod},
+           given={Maria\bibnamedelima T.},
+           giveni={M\bibinitperiod\bibinitdelim T\bibinitperiod}}}%
+        {{hash=854bfc9a154ba4ad7d10085620e5abe3}{%
+           family={Smith},
+           familyi={S\bibinitperiod},
+           given={David\bibnamedelima E.},
+           giveni={D\bibinitperiod\bibinitdelim E\bibinitperiod}}}%
+        {{hash=9a489ccca79cb88f04b0f40fe0f7ba7a}{%
+           family={Watkins},
+           familyi={W\bibinitperiod},
+           given={Michael\bibnamedelima M.},
+           giveni={M\bibinitperiod\bibinitdelim M\bibinitperiod}}}%
+        {{hash=0dc66e308b9261403ce379ba2b491fa0}{%
+           family={Asmar},
+           familyi={A\bibinitperiod},
+           given={Sami\bibnamedelima W.},
+           giveni={S\bibinitperiod\bibinitdelim W\bibinitperiod}}}%
+        {{hash=d688103cd5df3b9ec1489653e4cc96c7}{%
+           family={Konopliv},
+           familyi={K\bibinitperiod},
+           given={Alexander\bibnamedelima S.},
+           giveni={A\bibinitperiod\bibinitdelim S\bibinitperiod}}}%
+        {{hash=2095d968873efb449d1cf5dce7d63dbb}{%
+           family={Lemoine},
+           familyi={L\bibinitperiod},
+           given={Frank\bibnamedelima G.},
+           giveni={F\bibinitperiod\bibinitdelim G\bibinitperiod}}}%
+        {{hash=5181d48d16b2451399a25c27ad4a7409}{%
+           family={Melosh},
+           familyi={M\bibinitperiod},
+           given={H.\bibnamedelimi Jay},
+           giveni={H\bibinitperiod\bibinitdelim J\bibinitperiod}}}%
+        {{hash=3635ee781646e2b221b7845a6ab72d50}{%
+           family={Neumann},
+           familyi={N\bibinitperiod},
+           given={Gregory\bibnamedelima A.},
+           giveni={G\bibinitperiod\bibinitdelim A\bibinitperiod}}}%
+        {{hash=c0191bac940bdcedd804fa1ee6b8fed8}{%
+           family={Phillips},
+           familyi={P\bibinitperiod},
+           given={Roger\bibnamedelima J.},
+           giveni={R\bibinitperiod\bibinitdelim J\bibinitperiod}}}%
+        {{hash=7a9acad92b4429c40d345b08409a1be5}{%
+           family={Solomon},
+           familyi={S\bibinitperiod},
+           given={Sean\bibnamedelima C.},
+           giveni={S\bibinitperiod\bibinitdelim C\bibinitperiod}}}%
+        {{hash=16aacced75175b1ea433b193c16f03e2}{%
+           family={Wieczorek},
+           familyi={W\bibinitperiod},
+           given={Mark\bibnamedelima A.},
+           giveni={M\bibinitperiod\bibinitdelim A\bibinitperiod}}}%
+        {{hash=b96163b60e610b12c3e00e9412c85e65}{%
+           family={Williams},
+           familyi={W\bibinitperiod},
+           given={James\bibnamedelima G.},
+           giveni={J\bibinitperiod\bibinitdelim G\bibinitperiod}}}%
+        {{hash=54a460f7815ecc653061adf85467354d}{%
+           family={Goossens},
+           familyi={G\bibinitperiod},
+           given={Sander\bibnamedelima J.},
+           giveni={S\bibinitperiod\bibinitdelim J\bibinitperiod}}}%
+        {{hash=5153036c43cf46094029397168eb7fd2}{%
+           family={Kruizinga},
+           familyi={K\bibinitperiod},
+           given={Gerhard},
+           giveni={G\bibinitperiod}}}%
+        {{hash=6fdde1060bdc77909d2637b0651ef3a5}{%
+           family={Mazarico},
+           familyi={M\bibinitperiod},
+           given={Erwan},
+           giveni={E\bibinitperiod}}}%
+        {{hash=7f3ae4bcb77b51443d4214760ec9ed9a}{%
+           family={Park},
+           familyi={P\bibinitperiod},
+           given={Ryan\bibnamedelima S.},
+           giveni={R\bibinitperiod\bibinitdelim S\bibinitperiod}}}%
+        {{hash=9e000b6c0a26c57d4450b7f596d3feac}{%
+           family={Yuan},
+           familyi={Y\bibinitperiod},
+           given={Dah-Ning},
+           giveni={D\bibinithyphendelim N\bibinitperiod}}}%
+      }
+      \list{publisher}{1}{%
+        {American Association for the Advancement of Science}%
+      }
+      \strng{namehash}{bef4b7735ebe34914349e0712b54df62}
+      \strng{fullhash}{e96c8a57d5c76e734afe4a94a6844d75}
+      \strng{bibnamehash}{bef4b7735ebe34914349e0712b54df62}
+      \strng{authorbibnamehash}{bef4b7735ebe34914349e0712b54df62}
+      \strng{authornamehash}{bef4b7735ebe34914349e0712b54df62}
+      \strng{authorfullhash}{e96c8a57d5c76e734afe4a94a6844d75}
+      \field{sortinit}{1}
+      \field{sortinithash}{4f6aaa89bab872aa0999fec09ff8e98a}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{journaltitle}{Science}
+      \field{number}{6120}
+      \field{title}{Gravity Field of the Moon from the Gravity Recovery and Interior Laboratory ({GRAIL}) Mission}
+      \field{volume}{339}
+      \field{year}{2013}
+      \field{pages}{668\bibrangedash 671}
+      \range{pages}{4}
+      \verb{doi}
+      \verb 10.1126/science.1231507
+      \endverb
+    \endentry
+    \entry{Folta2006}{inproceedings}{}
+      \name{author}{2}{}{%
+        {{hash=65877aa719369572e84c102dd7b92ab7}{%
+           family={Folta},
+           familyi={F\bibinitperiod},
+           given={David},
+           giveni={D\bibinitperiod}}}%
+        {{hash=77ba06826947d625855d5c1c5e8c6a18}{%
+           family={Quinn},
+           familyi={Q\bibinitperiod},
+           given={David},
+           giveni={D\bibinitperiod}}}%
+      }
+      \list{location}{1}{%
+        {Keystone, Colorado}%
+      }
+      \list{publisher}{1}{%
+        {AIAA}%
+      }
+      \strng{namehash}{d02f99d56a2ff8f3abc6244ddc62e43e}
+      \strng{fullhash}{d02f99d56a2ff8f3abc6244ddc62e43e}
+      \strng{bibnamehash}{d02f99d56a2ff8f3abc6244ddc62e43e}
+      \strng{authorbibnamehash}{d02f99d56a2ff8f3abc6244ddc62e43e}
+      \strng{authornamehash}{d02f99d56a2ff8f3abc6244ddc62e43e}
+      \strng{authorfullhash}{d02f99d56a2ff8f3abc6244ddc62e43e}
+      \field{sortinit}{3}
+      \field{sortinithash}{ad6fe7482ffbd7b9f99c9e8b5dccd3d7}
+      \field{labelnamesource}{author}
+      \field{labeltitlesource}{title}
+      \field{booktitle}{AIAA/AAS Astrodynamics Specialist Conference and Exhibit}
+      \field{month}{8}
+      \field{note}{Dosya: Lunar Frozen Orbits (NASA - 20).pdf}
+      \field{title}{Lunar Frozen Orbits}
+      \field{year}{2006}
+    \endentry
+  \enddatalist
+\endrefsection
+\endinput
+

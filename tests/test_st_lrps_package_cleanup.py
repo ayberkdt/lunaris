@@ -170,7 +170,7 @@ def test_no_committed_generated_artifacts_under_st_lrps() -> None:
 # 4) Module help smoke tests
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("module", ["st_lrps.st_lrps_train", "st_lrps.st_lrps_evaluate"])
+@pytest.mark.parametrize("module", ["st_lrps.training.cli", "st_lrps.evaluation.cli"])
 def test_module_help_exits_zero(module: str) -> None:
     pytest.importorskip("torch")
     proc = subprocess.run(
@@ -189,5 +189,5 @@ def test_module_help_exits_zero(module: str) -> None:
 
 def test_ui_surrogate_studio_uses_new_package_path() -> None:
     src = (REPO_ROOT / "ui_parts" / "surrogate_studio_page.py").read_text(encoding="utf-8")
-    assert "st_lrps/st_lrps_train.py" in src
+    assert "st_lrps.training.cli" in src
     assert OLD_PKG not in src.replace(ALLOWED_CLI_ARG, "")

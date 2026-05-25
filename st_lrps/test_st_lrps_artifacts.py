@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import torch
 
-from st_lrps.st_lrps_artifacts import (
+from st_lrps.artifacts.manager import (
     CHECKPOINT_SCHEMA_VERSION,
     CRITICAL_CONFIG_FIELDS,
     atomic_write_json,
@@ -29,13 +29,13 @@ from st_lrps.st_lrps_artifacts import (
     write_run_manifest,
     write_scaler_json,
 )
-from st_lrps.st_lrps_evaluate import evaluate, predict_residual_u_a
-from st_lrps.st_lrps_force_model import load_surrogate_force_model
-from st_lrps.st_lrps_models import (
+from st_lrps.evaluation.cli import evaluate, predict_residual_u_a
+from st_lrps.runtime.force_model import load_surrogate_force_model
+from st_lrps.networks.models import (
     build_model_from_config,
     compute_architecture_signature,
 )
-from st_lrps.st_lrps_scaling import IsometricScaleParams, ScalerPack
+from st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
 
 def _make_scaler() -> ScalerPack:
@@ -297,7 +297,7 @@ def test_config_json_and_checkpoint_config_critical_fields_match(canonical_run: 
 
 def test_evaluator_and_force_model_use_same_artifact_loader(canonical_run: dict) -> None:
     run_dir = canonical_run["run_dir"]
-    from st_lrps.st_lrps_artifacts import reload_model_from_run_dir
+    from st_lrps.artifacts.manager import reload_model_from_run_dir
 
     model, scaler, cfg, report = reload_model_from_run_dir(run_dir, torch.device("cpu"))
     force_model = load_surrogate_force_model(run_dir, device="cpu")
@@ -328,7 +328,7 @@ def test_checkpoint_rejects_wrong_w0_bands_after_reload(canonical_run: dict) -> 
     broken = json.loads(layout.config_json.read_text(encoding="utf-8"))
     broken["w0_bands"] = [99.0, 33.0]
     atomic_write_json(layout.config_json, broken)
-    from st_lrps.st_lrps_artifacts import reload_model_from_run_dir
+    from st_lrps.artifacts.manager import reload_model_from_run_dir
 
     with pytest.raises(RuntimeError, match="architecture-critical fields|w0_bands"):
         reload_model_from_run_dir(layout.run_dir, torch.device("cpu"))
@@ -385,7 +385,7 @@ def test_no_silent_strict_false_load_for_architecture_mismatch(canonical_run: di
     broken = json.loads(layout.config_json.read_text(encoding="utf-8"))
     broken["hidden"] = int(broken["hidden"]) + 4
     atomic_write_json(layout.config_json, broken)
-    from st_lrps.st_lrps_artifacts import reload_model_from_run_dir
+    from st_lrps.artifacts.manager import reload_model_from_run_dir
 
     with pytest.raises(RuntimeError, match="architecture-critical fields|disagree"):
         reload_model_from_run_dir(layout.run_dir, torch.device("cpu"))

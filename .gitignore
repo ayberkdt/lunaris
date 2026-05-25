@@ -37,7 +37,10 @@ CLAUDE.md
 *.local
 
 # External data and generated data
-data/
+# Anchored to the repo root so the ST-LRPS *source* subpackage st_lrps/data/ is NOT ignored.
+/data/
+# Generated dataset suites that land inside the data subpackage during local runs:
+st_lrps/data/cloud_suites/
 *.h5
 *.hdf5
 *.npz
@@ -53,11 +56,12 @@ mission_results/
 
 # ST-LRPS generated artifacts
 runs/
-artifacts/
+# Anchored to repo root so the ST-LRPS *source* subpackage st_lrps/artifacts/ is NOT
+# ignored; generated artifacts live under runs/ (already ignored above).
+/artifacts/
 analysis_out/
 st_lrps/**/runs/
 st_lrps/**/results/
-st_lrps/**/artifacts/
 st_lrps/**/outputs/
 st_lrps/**/analysis_out/
 st_lrps/**/gececi_kod/

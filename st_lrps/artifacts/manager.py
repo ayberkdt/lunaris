@@ -17,22 +17,13 @@ from typing import Any, Dict, Iterable, Literal, Mapping, MutableMapping, Option
 
 import torch
 
-try:
-    from .st_lrps_models import (
-        ARCH_SIGNATURE_FIELDS,
-        MODEL_BUILDER_VERSION,
-        compute_architecture_signature,
-        reconstruct_model_from_artifacts,
-    )
-    from .st_lrps_scaling import IsometricScaleParams, ScalerPack
-except ImportError:  # pragma: no cover
-    from st_lrps_models import (  # type: ignore
-        ARCH_SIGNATURE_FIELDS,
-        MODEL_BUILDER_VERSION,
-        compute_architecture_signature,
-        reconstruct_model_from_artifacts,
-    )
-    from st_lrps_scaling import IsometricScaleParams, ScalerPack  # type: ignore
+from st_lrps.networks.models import (
+    ARCH_SIGNATURE_FIELDS,
+    MODEL_BUILDER_VERSION,
+    compute_architecture_signature,
+    reconstruct_model_from_artifacts,
+)
+from st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
 
 CHECKPOINT_SCHEMA_VERSION = "st_lrps_checkpoint_v2"

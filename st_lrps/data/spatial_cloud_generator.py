@@ -38,49 +38,23 @@ except Exception as e:  # pragma: no cover
     raise RuntimeError("Numba is required for this script. Install: pip install numba") from e
 
 # ---- Physics SSOT (local lunar dataset parameters) ----
-try:
-    # Preferred when this folder is a package and you run with: python -m <pkg>.spatial_cloud_generator
-    from .dataset_parameters import (
-        DEFAULT_DATASET_CONFIG,
-        MU_MOON_SI,
-        R_MOON_SI,
-        canonical_scales,
-        is_lunar_body_signature,
-        load_icgem_gfc,
-    )
-except Exception:  # pragma: no cover
-    # Fallback: allow `python spatial_cloud_generator.py` from this folder
-    import sys as _sys
-    from pathlib import Path as _Path
-    _HERE = _Path(__file__).resolve().parent
-    if str(_HERE) not in _sys.path:
-        _sys.path.insert(0, str(_HERE))
-    from dataset_parameters import (  # type: ignore
-        DEFAULT_DATASET_CONFIG,
-        MU_MOON_SI,
-        R_MOON_SI,
-        canonical_scales,
-        is_lunar_body_signature,
-        load_icgem_gfc,
-    )
+from st_lrps.data.dataset_parameters import (
+    DEFAULT_DATASET_CONFIG,
+    MU_MOON_SI,
+    R_MOON_SI,
+    canonical_scales,
+    is_lunar_body_signature,
+    load_icgem_gfc,
+)
 
 # ---- Cloud-parameter SSOT ----
-try:
-    from .spatial_cloud_parameters import (
-        SpatialCloudConfig,
-        DEFAULT_SPATIAL_CLOUD_CONFIG,
-        SamplingStrategy,
-        CloudSuiteConfig,
-        DEFAULT_CLOUD_SUITE_CONFIG,
-    )
-except Exception:  # pragma: no cover
-    from spatial_cloud_parameters import (  # type: ignore
-        SpatialCloudConfig,
-        DEFAULT_SPATIAL_CLOUD_CONFIG,
-        SamplingStrategy,
-        CloudSuiteConfig,
-        DEFAULT_CLOUD_SUITE_CONFIG,
-    )
+from st_lrps.data.spatial_cloud_parameters import (
+    SpatialCloudConfig,
+    DEFAULT_SPATIAL_CLOUD_CONFIG,
+    SamplingStrategy,
+    CloudSuiteConfig,
+    DEFAULT_CLOUD_SUITE_CONFIG,
+)
 
 # =============================================================================
 # Utilities

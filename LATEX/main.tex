@@ -1,0 +1,125 @@
+\documentclass[12pt, a4paper]{book} 
+
+\input{preamble.tex} 
+
+\author{Ayberk Demirkanat} 
+\title{\textbf{Küresel Harmonikler}} 
+\date{} 
+
+\begin{document}
+
+\begin{titlepage}
+    % Arka plan resmi
+    \CoverBackground
+
+    % Üstten itibaren yüksekliği elle ayarla (0.8 -> sayfanın %80'i)
+    \vspace*{0.92\textheight}
+
+    % Aşağı ORTADA, beyazımsı renkte not
+    \begin{center}
+        {\textcolor{white!80!yellow!10}{\large Ayberk Demirkanat \\ Not Serisi}}
+    \end{center}
+
+\end{titlepage}
+
+\ClearShipoutPictureBG
+
+
+
+\begin{abstract}
+Bu çalışma, yerçekimi alanlarının küresel harmonikler kullanılarak modellenmesini ve bu
+modellerin yörünge dinamiği ile uzay görevi tasarımı üzerindeki etkilerinin bütüncül bir
+çerçevede incelenmesini amaçlamaktadır.
+
+\paragraph{İlk Bölümde} küresel harmonik açılımın matematiksel temelini oluşturan Legendre
+polinomlarının ortaya çıkışı ele alınmış; bu polinomların Legendre diferansiyel denklemi ile
+ilişkisi, ortonormallik özellikleri ve seri açılım katsayılarının projeksiyon temelli yöntemlerle
+nasıl elde edildiği ayrıntılı olarak açıklanmıştır. Bu bölüm, potansiyel teorisinden enlem ve
+boylam bağımlılığı içeren küresel harmonik gösterime geçiş için gerekli kuramsal altyapıyı
+oluşturmaktadır.
+
+\paragraph{İkinci Bölümde} Dünya’nın mükemmel küre varsayımından sapmasının neden olduğu
+yerçekimi alanı düzensizlikleri incelenmiştir. Özellikle Dünya’nın basıklığı ve kütle
+dağılımındaki bölgesel farklılıkların yerçekimi potansiyeline ek terimler olarak nasıl yansıdığı
+gösterilmiş; zonal, tesseral ve sektörel harmonik bileşenlerin fiziksel anlamları üzerinden bu
+katsayıların yörünge elemanlarında zamana bağlı pertürbasyonlara nasıl yol açtığı
+tartışılmıştır. Ayrıca, farklı görev profilleri için gravite modeli derece ve mertebe seçiminde
+doğruluk, kararlılık ve hesaplama maliyeti arasındaki denge değerlendirilmiştir.
+
+\paragraph{Üçüncü Bölümde} Ay çevresinde gözlenen belirgin yerçekimi anomalilerinin, özellikle
+mascon yapılarının, kökeni ve bu anomalilerin uzay görevleri üzerindeki etkileri ele alınmıştır.
+Ay yerçekimi alanının ölçülmesinde kullanılan başlıca yöntemler özetlenmiş; Ay görevleri için
+uygun gravite modelinin seçiminde dikkate alınması gereken irtifa, hassasiyet ve uzun süreli
+yörünge kararlılığı gibi kriterler tartışılmıştır. Ayrıca, seçilen gravite modellerinin dinamik
+tutarlılığının test edilmesi amacıyla yörünge propagasyonu, artık hata analizi ve karşılaştırmalı
+senaryolar gibi doğrulama yaklaşımları sunulmuştur.
+
+\paragraph{Dördüncü Bölümde} kuramsal gravite modellemesinin mühendislik uygulamasına
+aktarımı hedeflenerek sayısal hesaplama ve simülasyon akışı ele alınmıştır: Cowell yöntemi ile
+hareket denklemlerinin doğrudan entegrasyonu, senaryoya uygun integratör seçimi (örn. RK45,
+yüksek mertebeli DOP853/RK89 ve uzun süreli kararlılık için simplektik yaklaşımlar) ve hata
+toleransı ayarları tartışılmıştır. Ayrıca, görev tasarımında standart prosedür kapsamında gravite katsayılarının yüklenmesi, propagasyonun yürütülmesi, çıktıların
+yörünge elemanlarına dönüştürülmesi ve modelin doğrulanması/karşılaştırılması (V\&V) adımları; enerji/yarı-büyük eksen davranışı ve analitik $J_2$ sağlama kontrolleri gibi pratik
+kriterlerle birlikte sunulmuştur.
+
+\paragraph{Beşinci Bölümde}, Python ile geliştirilen Ay simülasyon projesinde 
+fiziksel sadakati artırmaya yönelik ileri pertürbasyonlar ve çevresel etkileşimler 
+ele alınmıştır. Bu kapsamda, NASA SPICE efemerisleri kullanılarak Güneş/Dünya üçüncü 
+cisim etkileri modele entegre edilmiş; SRP hesaplarında Ay’ın gölge konisi (umbra/penumbra) 
+konik geometriyle hassas biçimde modellenmiş; Ay kaynaklı Albedo ve Termal IR itkilerinin 
+dinamiğe katkısı incelenmiştir. Ayrıca milimetre ölçeğinde doğruluk için 1PN genel görelilik 
+düzeltmeleri ve solid-body tides gibi yüksek sadakatli bileşenlerin matematiksel altyapısı sunulmuştur. 
+Görev emniyeti açısından kritik olan impact detection sürecinde ise, yüzey teması basit bir referans küre 
+yerine LRO/LOLA sayısal yükseklik modeli (DEM) üzerinden arazi duyarlı şekilde tespit edilmiş ve büyük veri 
+setleri mmap yöntemiyle bellek verimli biçimde yönetilmiştir. Bölüm sonunda, tüm bu etkilerin yörünge 
+kararlılığı, yer izi ve görev ömrü üzerindeki kümülatif sonuçları otomatik post-process, profesyonel PDF 
+raporlama ve yüksek çözünürlüklü 3D animasyon çıktılarıyla değerlendirilmiştir.
+
+\medskip
+Bu yönüyle çalışma, Dünya ve Ay için gravite modellemesi ile yörünge analizi arasında doğrudan bir mühendislik 
+bağı kurmayı hedeflemektedir. İdealize edilmiş iki-cisim yaklaşımından uzaklaşarak; Ay’ın mascon kaynaklı 
+heterojen kütle dağılımını, NASA SPICE tabanlı hassas efemeris verilerini ve gerçek topografik verileri aynı 
+dinamik çerçevede birleştirmektedir. Geliştirilen bu yüksek sadakatli (high-fidelity) simülasyon altyapısı, kuramsal 
+geopotansiyel teorisinin operasyonel görev tasarım süreçlerine hatasız bir şekilde entegre edilmesini sağlayarak, 
+doğrulanabilir, performans odaklı ve akademik derinliği haiz bir yörünge analiz platformu sunmaktadır.
+\end{abstract}
+
+
+\cleardoublepage
+
+% =========== Notasyon ==========
+\include{chapters/Notasyon}
+
+% ======= İçindekiler ========
+\tableofcontents
+
+
+% ============ Legendre Polinomları ============
+\include{chapters/Legendre_Polinomları}
+
+% ============ Dünya Modeli ===========
+\include{chapters/Dünya_Modeli}
+
+% ============= Ay Modeli =============
+\include{chapters/Ay_Modeli}
+
+% ============ Simülasyon Fazı ==============
+\include{chapters/Sayısal_Hesaplama}
+
+% ============= Lunar Simulation =========
+\include{chapters/Lunar_Simulation}
+
+% ============= Doğrulama ve Operasyonel Güvenilirlik =========
+\include{chapters/Dogrulama_Guvenilirlik_Operasyonel_Kullanim}
+
+% ============ Sonuçlar ve Yorumlaması =======
+\include{chapters/Results}
+
+
+\cleardoublepage
+\phantomsection
+\addcontentsline{toc}{chapter}{Kaynakça}
+\printbibliography[title={Kaynakça}]
+
+
+\end{document}

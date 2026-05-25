@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ui_st_lrps.py  -  v3
+st_lrps.ui.studio  -  v3
 
 PyQt6 dashboard for the lunar scalar potential surrogate codebase.
 
@@ -10,8 +10,8 @@ lunar residual potential surrogate, not a classical q,p state-space model.
 
 What you can do from the UI
 ---------------------------
-- Train a potential surrogate   (runs st_lrps_train.py as a subprocess)
-- Evaluate a surrogate run      (runs st_lrps_evaluate.py as a subprocess)
+- Train a potential surrogate   (runs `python -m st_lrps.training.cli` as a subprocess)
+- Evaluate a surrogate run      (runs `python -m st_lrps.evaluation.cli` as a subprocess)
 - Browse evaluation plots inline (post-processing dashboard)
 - Watch live loss curves during training (pyqtgraph)
 - Queue multiple training runs for overnight execution
@@ -32,7 +32,7 @@ UX Architecture (v3 → new)
 
 Run
 ---
-  python ui_st_lrps.py
+  python -m st_lrps.ui.studio
 """
 
 # =============================================================================
@@ -131,7 +131,7 @@ except ImportError:
     _HAS_H5PY = False
 
 try:
-    from .st_lrps_artifacts import (
+    from st_lrps.artifacts.manager import (
         CHECKPOINT_SCHEMA_VERSION,
         CRITICAL_CONFIG_FIELDS,
         compute_payload_sha256,
@@ -140,35 +140,35 @@ try:
         read_run_manifest,
         resolve_run_dir as resolve_artifact_run_dir,
     )
-except Exception:
-    try:
-        from st_lrps_artifacts import (  # type: ignore
-            CHECKPOINT_SCHEMA_VERSION,
-            CRITICAL_CONFIG_FIELDS,
-            compute_payload_sha256,
-            load_checkpoint as load_artifact_checkpoint,
-            make_run_layout,
-            read_run_manifest,
-            resolve_run_dir as resolve_artifact_run_dir,
-        )
-    except Exception:
-        CHECKPOINT_SCHEMA_VERSION = "st_lrps_checkpoint_v2"  # type: ignore[assignment]
-        CRITICAL_CONFIG_FIELDS = tuple()  # type: ignore[assignment]
-        compute_payload_sha256 = None  # type: ignore[assignment]
-        load_artifact_checkpoint = None  # type: ignore[assignment]
-        make_run_layout = None  # type: ignore[assignment]
-        read_run_manifest = None  # type: ignore[assignment]
-        resolve_artifact_run_dir = None  # type: ignore[assignment]
+except Exception:  # pragma: no cover - UI remains usable without artifact deps
+    CHECKPOINT_SCHEMA_VERSION = "st_lrps_checkpoint_v2"  # type: ignore[assignment]
+    CRITICAL_CONFIG_FIELDS = tuple()  # type: ignore[assignment]
+    compute_payload_sha256 = None  # type: ignore[assignment]
+    load_artifact_checkpoint = None  # type: ignore[assignment]
+    make_run_layout = None  # type: ignore[assignment]
+    read_run_manifest = None  # type: ignore[assignment]
+    resolve_artifact_run_dir = None  # type: ignore[assignment]
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 _PRESETS_DIR = SCRIPT_DIR / "presets"
 
+# The training/evaluation entry points are now subpackage modules launched via
+# ``python -m``. Module execution requires the repo root (which contains the
+# importable ``st_lrps`` package) as the subprocess working directory.
+_REPO_ROOT = SCRIPT_DIR.parents[1]
+TRAIN_CLI_MODULE = "st_lrps.training.cli"
+EVAL_CLI_MODULE = "st_lrps.evaluation.cli"
+# Filesystem locations are used only for preflight existence checks; launching
+# always goes through ``-m`` so package-relative imports resolve correctly.
+TRAIN_CLI_PATH = _REPO_ROOT / "st_lrps" / "training" / "cli.py"
+EVAL_CLI_PATH = _REPO_ROOT / "st_lrps" / "evaluation" / "cli.py"
+
 # UI defaults are intentionally read from the generator configuration module.
 # This keeps the dashboard from drifting away from the command-line SSOT when
 # dataset-suite sizes, altitude ranges, seeds, or sampling knobs are tuned.
 try:
-    from spatial_cloud_parameters import (
+    from st_lrps.data.spatial_cloud_parameters import (
         DEFAULT_CLOUD_SUITE_CONFIG,
         DEFAULT_SPATIAL_CLOUD_CONFIG,
         SUITE_PRESETS,
@@ -3267,8 +3267,8 @@ class STLRPSTrainTab(QWidget):
         items = []
         ok = True
 
-        script_train = SCRIPT_DIR / "st_lrps_train.py"
-        script_eval  = SCRIPT_DIR / "st_lrps_evaluate.py"
+        script_train = TRAIN_CLI_PATH
+        script_eval  = EVAL_CLI_PATH
         mode = self.workflow_mode.currentData() if hasattr(self, "workflow_mode") else "train_then_eval"
 
         def check(cond: bool, text: str, hard: bool = True) -> None:
@@ -3280,9 +3280,9 @@ class STLRPSTrainTab(QWidget):
                 ok = False
 
         if mode in ("train_only", "train_then_eval", "quick_check", "queue"):
-            check(script_train.exists(), "st_lrps_train.py found")
+            check(script_train.exists(), "st_lrps.training.cli found")
         if mode in ("eval_only", "train_then_eval"):
-            check(script_eval.exists(), "st_lrps_evaluate.py found")
+            check(script_eval.exists(), "st_lrps.evaluation.cli found")
 
         dataset_mode = self.dataset_mode.currentData() if hasattr(self, "dataset_mode") else "single"
         if mode != "eval_only":
@@ -3710,11 +3710,10 @@ class STLRPSTrainTab(QWidget):
         if not show_errors:
             self.command_warning.setText("")
 
-        script = SCRIPT_DIR / "st_lrps_train.py"
-        if not script.exists():
-            return fail("Missing script", "st_lrps_train.py must be in the same folder as this UI.")
+        if not TRAIN_CLI_PATH.exists():
+            return fail("Missing script", "st_lrps/training/cli.py not found in the repository.")
 
-        args = ["-u", str(script)]
+        args = ["-u", "-m", TRAIN_CLI_MODULE]
         dataset_mode = self.dataset_mode.currentData() or "single"
         if dataset_mode == "independent":
             train_path = self.train_data.text().strip()
@@ -3882,11 +3881,10 @@ class STLRPSTrainTab(QWidget):
         use_config_datasets: bool = False,
         out_dir: Optional[str] = None,
     ) -> Optional[List[str]]:
-        """Build CLI argument list for st_lrps_evaluate.py."""
-        script = SCRIPT_DIR / "st_lrps_evaluate.py"
-        if not script.exists():
+        """Build CLI argument list for the evaluation module (st_lrps.evaluation.cli)."""
+        if not EVAL_CLI_PATH.exists():
             return None
-        args = ["-u", str(script)]
+        args = ["-u", "-m", EVAL_CLI_MODULE]
         if model_dir:
             args += ["--model-dir", model_dir]
         primary_data = data_path or test_data
@@ -3958,7 +3956,7 @@ class STLRPSTrainTab(QWidget):
             self._save_settings()
             self.runner.progress.setRange(0, 0)
             self.runner.set_output_dir(run_dir)
-            self.runner.start(sys.executable, eval_args, workdir=str(SCRIPT_DIR))
+            self.runner.start(sys.executable, eval_args, workdir=str(_REPO_ROOT))
             return
 
         # Queue mode: run queue
@@ -3985,7 +3983,7 @@ class STLRPSTrainTab(QWidget):
         self.runner.set_output_dir(out_dir if out_dir else "")
         self._set_history_poll_dir(out_dir)
         self._save_settings()
-        self.runner.start(sys.executable, args, workdir=str(SCRIPT_DIR))
+        self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     # -----------------------------------------------------------------
     # Queue System (Feature #15)
@@ -4014,7 +4012,7 @@ class STLRPSTrainTab(QWidget):
         self.runner.progress.setFormat("Epoch %v / %m  [Kuyruk]")
         self.runner.set_output_dir("")
         self._set_history_poll_dir(self._arg_value(args, "--out") or "")
-        self.runner.start(sys.executable, args, workdir=str(SCRIPT_DIR))
+        self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     def _arg_value(self, args: List[str], flag: str) -> Optional[str]:
         try:
@@ -4144,7 +4142,7 @@ class STLRPSTrainTab(QWidget):
             ),
         )
         if eval_args is None:
-            self.runner.append("[UI] st_lrps_evaluate.py not found — skipping auto-eval.")
+            self.runner.append("[UI] st_lrps.evaluation.cli not available — skipping auto-eval.")
             return
 
         self.runner.append(
@@ -4154,7 +4152,7 @@ class STLRPSTrainTab(QWidget):
         self._eval_runner = QProcess(self)
         env = QProcessEnvironment.systemEnvironment()
         self._eval_runner.setProcessEnvironment(env)
-        self._eval_runner.setWorkingDirectory(str(SCRIPT_DIR))
+        self._eval_runner.setWorkingDirectory(str(_REPO_ROOT))
         self._eval_runner.readyReadStandardOutput.connect(
             lambda: self._on_eval_stdout(self._eval_runner)
         )
@@ -5527,7 +5525,7 @@ class CloudGenTab(QWidget):
         self._sync_banner.setVisible(False)
         self._save_settings()
         self.runner.progress.setRange(0, 0)
-        self.runner.start(sys.executable, args, workdir=str(SCRIPT_DIR))
+        self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
         ok = exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
@@ -6075,11 +6073,10 @@ class STLRPSEvalTab(QWidget):
         s.endGroup()
 
     def _start(self):
-        script = SCRIPT_DIR / "st_lrps_evaluate.py"
-        if not script.exists():
-            QMessageBox.critical(self, "Bulunamadı", "st_lrps_evaluate.py gerekli.")
+        if not EVAL_CLI_PATH.exists():
+            QMessageBox.critical(self, "Bulunamadı", "st_lrps/evaluation/cli.py gerekli.")
             return
-        args = ["-u", str(script)]
+        args = ["-u", "-m", EVAL_CLI_MODULE]
         md = self.model_dir.text().strip()
         if md:
             if not Path(md).exists():
@@ -6136,7 +6133,7 @@ class STLRPSEvalTab(QWidget):
         self.runner.set_output_dir(od)
         self._gallery.clear_gallery()
         self._save_settings()
-        self.runner.start(sys.executable, args, workdir=str(SCRIPT_DIR))
+        self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     def _on_eval_finished(self, exit_code, exit_status):
         if exit_status != QProcess.ExitStatus.NormalExit:
@@ -6508,7 +6505,7 @@ class CloudAnalysisTab(QWidget):
         self._gallery.clear_gallery()
         self._save_settings()
         args = self._build_args()
-        self.runner.start(sys.executable, args, workdir=str(SCRIPT_DIR))
+        self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     def _on_finished(self, exit_code: int):
         if exit_code == 0 and self._effective_out_dir:

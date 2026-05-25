@@ -12,7 +12,7 @@ Responsibilities
 2. Render parsed metadata (config.json) and evaluation artifacts
    (eval_report.json + plot files) for the currently selected run.
 3. Provide a training command preview builder against
-   ``st_lrps/st_lrps_train.py``.
+   ``python -m st_lrps.training.cli``.
 4. Emit a ``model_selected`` signal so the host window can apply the
    currently selected run as the active ST-LRPS surrogate gravity model.
 
@@ -58,7 +58,7 @@ except ImportError:
 
 PROJECT_ROOT = find_project_root()
 DEFAULT_RUNS_ROOT = PROJECT_ROOT / "st_lrps" / "runs"
-TRAIN_SCRIPT_REL = "st_lrps/st_lrps_train.py"
+TRAIN_MODULE = "st_lrps.training.cli"
 
 
 # =============================================================================
@@ -418,7 +418,7 @@ class SurrogateStudioPage(QtWidgets.QWidget):
         layout.addLayout(btn_row)
 
         self.lbl_eval_empty = QtWidgets.QLabel(
-            "No evaluation artifacts found. Run st_lrps_evaluate.py first."
+            "No evaluation artifacts found. Run st_lrps.evaluation.cli first."
         )
         self.lbl_eval_empty.setStyleSheet(
             f"color: {THEME['fg_muted']}; font-style: italic;"
@@ -1062,8 +1062,7 @@ class SurrogateStudioPage(QtWidgets.QWidget):
             pass
 
     def _build_training_command(self) -> List[str]:
-        train_script = str((PROJECT_ROOT / TRAIN_SCRIPT_REL).resolve())
-        cmd: List[str] = [sys.executable, train_script]
+        cmd: List[str] = [sys.executable, "-m", TRAIN_MODULE]
 
         data_path = self.ent_train_data.text().strip()
         if data_path:

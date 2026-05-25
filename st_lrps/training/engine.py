@@ -37,94 +37,49 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
 
-try:
-    from .dataset_parameters import R_MOON_SI
-    from .st_lrps_config import TrainConfig
-    from .st_lrps_data import (
-        DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
-        _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
-        _resolve_lunar_dataset_contract, collate_xyz_u_a, infer_a_sign_from_data,
-        validate_training_dataset_convention,
-    )
-    from .st_lrps_artifacts import (
-        atomic_write_json,
-        append_run_evaluation,
-        build_checkpoint_payload,
-        build_resolved_config,
-        capture_environment_snapshot,
-        compute_file_sha256,
-        compute_payload_sha256,
-        ensure_run_layout,
-        update_run_manifest,
-        save_checkpoint,
-        verify_critical_config_fields_match,
-        write_command_txt,
-        write_scaler_json,
-        write_run_manifest,
-    )
-    from .st_lrps_losses import (
-        GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
-        collocation_laplacian_loss,
-    )
-    from .st_lrps_metrics import (
-        HISTORY_FIELDNAMES,
-        checkpoint_selection_block,
-        compute_checkpoint_score,
-        flatten_epoch_metrics,
-        format_batch_summary,
-        format_epoch_summary,
-        normalize_best_metric,
-    )
-    from .st_lrps_models import (
-        FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
-        _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
-        MODEL_BUILDER_VERSION, compute_architecture_signature,
-    )
-    from .st_lrps_scaling import ScalerPack, fit_scaler_streaming
-except ImportError:  # pragma: no cover
-    from dataset_parameters import R_MOON_SI
-    from st_lrps_config import TrainConfig
-    from st_lrps_data import (
-        DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
-        _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
-        _resolve_lunar_dataset_contract, collate_xyz_u_a, infer_a_sign_from_data,
-        validate_training_dataset_convention,
-    )
-    from st_lrps_artifacts import (  # type: ignore
-        atomic_write_json,
-        append_run_evaluation,
-        build_checkpoint_payload,
-        build_resolved_config,
-        capture_environment_snapshot,
-        compute_file_sha256,
-        compute_payload_sha256,
-        ensure_run_layout,
-        update_run_manifest,
-        save_checkpoint,
-        verify_critical_config_fields_match,
-        write_command_txt,
-        write_scaler_json,
-        write_run_manifest,
-    )
-    from st_lrps_losses import (
-        GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
-        collocation_laplacian_loss,
-    )
-    from st_lrps_metrics import (  # type: ignore
-        HISTORY_FIELDNAMES,
-        checkpoint_selection_block,
-        compute_checkpoint_score,
-        flatten_epoch_metrics,
-        format_batch_summary,
-        format_epoch_summary,
-        normalize_best_metric,
-    )
-    from st_lrps_models import (
-        FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
-        _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
-        MODEL_BUILDER_VERSION, compute_architecture_signature,
-    )
-    from st_lrps_scaling import ScalerPack, fit_scaler_streaming
+from st_lrps.data.dataset_parameters import R_MOON_SI
+from st_lrps.training.config import TrainConfig
+from st_lrps.data.datasets import (
+    DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
+    _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
+    _resolve_lunar_dataset_contract, collate_xyz_u_a, infer_a_sign_from_data,
+    validate_training_dataset_convention,
+)
+from st_lrps.artifacts.manager import (
+    atomic_write_json,
+    append_run_evaluation,
+    build_checkpoint_payload,
+    build_resolved_config,
+    capture_environment_snapshot,
+    compute_file_sha256,
+    compute_payload_sha256,
+    ensure_run_layout,
+    update_run_manifest,
+    save_checkpoint,
+    verify_critical_config_fields_match,
+    write_command_txt,
+    write_scaler_json,
+    write_run_manifest,
+)
+from st_lrps.training.losses import (
+    GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
+    collocation_laplacian_loss,
+)
+from st_lrps.training.metrics import (
+    HISTORY_FIELDNAMES,
+    checkpoint_selection_block,
+    compute_checkpoint_score,
+    flatten_epoch_metrics,
+    format_batch_summary,
+    format_epoch_summary,
+    normalize_best_metric,
+)
+from st_lrps.networks.models import (
+    FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
+    _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
+    MODEL_BUILDER_VERSION, compute_architecture_signature,
+)
+from st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming
 
 logger = logging.getLogger(__name__)
 
@@ -2267,7 +2222,7 @@ def train(cfg: TrainConfig) -> None:
     )
 
     eval_suggestion = (
-        f"python -m st_lrps.st_lrps_evaluate --model-dir {outdir} "
+        f"python -m st_lrps.evaluation.cli --model-dir {outdir} "
         f"--data {cfg.test_data or cfg.val_data or cfg.data} --out {outdir / 'evals' / 'publication_eval'}"
     )
     _log_section(

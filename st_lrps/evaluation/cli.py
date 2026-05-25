@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-st_lrps_evaluate.py  –  Evaluate a trained residual gravity model from st_lrps_train.py.
+st_lrps.evaluation.cli  –  Evaluate a trained residual gravity model from st_lrps.training.cli.
 
 Required artifacts in --model-dir:
   config.json   – architecture, resolved_mu_si, resolved_a_sign, degree_min
@@ -264,26 +264,12 @@ class _TopKErrors:
                   "abs_a_error,rel_a_error,altitude_km,cos_sim,angular_deg")
         np.savetxt(str(path), arr, delimiter=",", header=header, comments="")
 
-try:
-    from .dataset_parameters import (
-        MU_MOON_SI,
-        R_MOON_SI,
-        is_lunar_body_signature,
-        looks_like_lunar_run_config,
-    )
-except Exception:  # pragma: no cover
-    import sys as _sys
-    from pathlib import Path as _Path
-
-    _HERE = _Path(__file__).resolve().parent
-    if str(_HERE) not in _sys.path:
-        _sys.path.insert(0, str(_HERE))
-    from dataset_parameters import (  # type: ignore
-        MU_MOON_SI,
-        R_MOON_SI,
-        is_lunar_body_signature,
-        looks_like_lunar_run_config,
-    )
+from st_lrps.data.dataset_parameters import (
+    MU_MOON_SI,
+    R_MOON_SI,
+    is_lunar_body_signature,
+    looks_like_lunar_run_config,
+)
 
 
 # -----------------------------
@@ -322,48 +308,26 @@ def _sync(device: torch.device) -> None:
 
 
 # --- Shared model/scaler implementation ---
-try:
-    from .st_lrps_artifacts import (
-        append_run_evaluation,
-        default_eval_output_dir,
-        load_best_or_last,
-        load_checkpoint,
-        make_run_layout,
-        read_run_manifest,
-        reload_model_from_run_dir as reload_model_from_artifact_run_dir,
-        resolve_run_dir,
-        update_run_manifest,
-        write_eval_manifest,
-        write_evaluate_summary,
-    )
-    from .st_lrps_models import (
-        FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP, build_model_from_config,
-        ARCH_SIGNATURE_FIELDS, MODEL_BUILDER_VERSION, architecture_mismatch_fields,
-        compute_architecture_signature, reconstruct_model_from_artifacts,
-    )
-    from .st_lrps_data import DatasetMeta
-    from .st_lrps_scaling import IsometricScaleParams, ScalerPack, compute_base_accel, compute_base_potential
-except ImportError:  # pragma: no cover - script execution fallback
-    from st_lrps_artifacts import (  # type: ignore
-        append_run_evaluation,
-        default_eval_output_dir,
-        load_best_or_last,
-        load_checkpoint,
-        make_run_layout,
-        read_run_manifest,
-        reload_model_from_run_dir as reload_model_from_artifact_run_dir,
-        resolve_run_dir,
-        update_run_manifest,
-        write_eval_manifest,
-        write_evaluate_summary,
-    )
-    from st_lrps_models import (
-        FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP, build_model_from_config,
-        ARCH_SIGNATURE_FIELDS, MODEL_BUILDER_VERSION, architecture_mismatch_fields,
-        compute_architecture_signature, reconstruct_model_from_artifacts,
-    )
-    from st_lrps_data import DatasetMeta
-    from st_lrps_scaling import IsometricScaleParams, ScalerPack, compute_base_accel, compute_base_potential
+from st_lrps.artifacts.manager import (
+    append_run_evaluation,
+    default_eval_output_dir,
+    load_best_or_last,
+    load_checkpoint,
+    make_run_layout,
+    read_run_manifest,
+    reload_model_from_run_dir as reload_model_from_artifact_run_dir,
+    resolve_run_dir,
+    update_run_manifest,
+    write_eval_manifest,
+    write_evaluate_summary,
+)
+from st_lrps.networks.models import (
+    FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP, build_model_from_config,
+    ARCH_SIGNATURE_FIELDS, MODEL_BUILDER_VERSION, architecture_mismatch_fields,
+    compute_architecture_signature, reconstruct_model_from_artifacts,
+)
+from st_lrps.data.datasets import DatasetMeta
+from st_lrps.shared.scaling import IsometricScaleParams, ScalerPack, compute_base_accel, compute_base_potential
 
 
 def infer_r_ref_m_from_dataset(path: Path, dataset_name: str = "data") -> Optional[float]:
@@ -2922,7 +2886,7 @@ def main() -> None:
         raise SystemExit(
             "Missing --model-dir and auto-detect failed."
             "Fix:"
-            "  python st_lrps_evaluate.py --model-dir path\to\run_dir [--data path\to\test.h5]"
+            "  python -m st_lrps.evaluation.cli --model-dir path\to\run_dir [--data path\to\test.h5]"
             "or set env var (PowerShell):"
             "  $env:ST_LRPS_MODEL_DIR='C:\\path\\to\\run_dir'"
         )

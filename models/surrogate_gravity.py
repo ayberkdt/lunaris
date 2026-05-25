@@ -52,7 +52,7 @@ import numpy as np
 from common.constants import MU_MOON, R_MOON
 from models.spherical_harmonics import GravityModel
 from models.torch_spherical_harmonics import TorchSHGravityEvaluator
-from st_lrps.dataset_parameters import (
+from st_lrps.data.dataset_parameters import (
     DEFAULT_DATASET_CONFIG,
     looks_like_lunar_run_config,
     resolve_lunar_gravity_path,
@@ -123,7 +123,7 @@ def _extract_degree_metadata(config: Dict[str, Any]) -> tuple:
     """
     Resolve ``degree_min`` and ``degree_max`` from a run ``config.json``.
 
-    Resolution order (mirrors ``st_lrps/st_lrps_evaluate.py``):
+    Resolution order (mirrors ``st_lrps/evaluation/cli.py``):
     1. Top-level ``degree_min`` / ``degree_max`` keys.
     2. ``dataset_meta.degree_min`` / ``dataset_meta.degree_max`` fallback.
     3. ``dataset_meta.requested_degree`` as a last resort for ``degree_max``.

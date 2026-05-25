@@ -7,14 +7,45 @@ import pytest
 def get_project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
-# Dynamically construct banned words so this file doesn't fail its own tests
+# Dynamically construct banned words so this file doesn't fail its own tests.
 BANNED_PROJECT_NAMES = [
     "Lunar" + "Sim",
     "LUNAR" + "_SIMULATION",
-    "LUNARSIM" + "_"
+    "LUNARSIM" + "_",
+    "gececi" + "_kod",
 ]
 
 OLD_PACKAGE_PATH = "surrogate" + "_gravity" + "_model"
+
+def iter_doc_files(root: Path):
+    """Yield documentation files covered by repository hygiene checks."""
+    doc_roots = [
+        root / "docs",
+        root / "validation",
+        root / "analysis",
+        root / "st_lrps",
+    ]
+    explicit_docs = [
+        root / "README.md",
+        root / "visualization" / "README.md",
+    ]
+
+    seen = set()
+    for path in explicit_docs:
+        if path.exists() and path.suffix == ".md":
+            resolved = path.resolve()
+            seen.add(resolved)
+            yield path
+
+    for doc_root in doc_roots:
+        if not doc_root.exists():
+            continue
+        for path in doc_root.rglob("*.md"):
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            yield path
 
 def iter_source_files(root: Path):
     exclude_dirs = {
@@ -62,7 +93,7 @@ def test_no_stale_project_identity():
     root = get_project_root()
     found_issues = []
     
-    for filepath in iter_source_files(root):
+    for filepath in iter_doc_files(root):
         try:
             content = filepath.read_text(encoding='utf-8')
             for banned in BANNED_PROJECT_NAMES:
@@ -81,7 +112,7 @@ def test_no_old_surrogate_package_path():
     root = get_project_root()
     found_issues = []
     
-    for filepath in iter_source_files(root):
+    for filepath in iter_doc_files(root):
         try:
             content = filepath.read_text(encoding='utf-8')
             if OLD_PACKAGE_PATH in content:
@@ -162,10 +193,16 @@ def test_readme_sanity():
     
     content = readme_path.read_text(encoding='utf-8')
     
-    assert "ST-LRPS" in content or "ST_LRPS" in content, "README title must contain ST-LRPS or ST_LRPS"
+    assert "ST-LRPS" in content, "README title must contain ST-LRPS"
     
-    # We only check for old package path if the refactor HAS landed.
-    if not (root / OLD_PACKAGE_PATH).exists():
-        assert OLD_PACKAGE_PATH not in content, "README must not contain old package path"
-        
-    assert "gececi" + "_kod" not in content, "README must not contain banned string 'gececi_kod'"
+    for banned in [*BANNED_PROJECT_NAMES, OLD_PACKAGE_PATH]:
+        assert banned not in content, "README must not contain stale project identity or package paths"
+
+    if (root / "st_lrps" / "training" / "cli.py").exists():
+        assert "python -m st_lrps.training.cli" in content
+    else:
+        legacy_train_cmd = "python -m st_lrps." + "st_lrps_train"
+        assert legacy_train_cmd in content
+
+    assert "validation.gravity.compare_gravity_models" in content
+    assert "visualization.surface_explorer" in content

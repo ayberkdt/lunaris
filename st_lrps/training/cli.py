@@ -1,32 +1,33 @@
 ﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-st_lrps_train
-=========
+st_lrps.training.cli
+====================
 
 Thin CLI entry point for the lunar scalar potential surrogate trainer.
+Canonical invocation: ``python -m st_lrps.training.cli``.
 
 This file intentionally stays small. The project no longer implements the
-training stack here; it re-exports the public symbols that older scripts import
+training stack here; it re-exports the public symbols that callers import
 while delegating real work to the focused modules below:
 
-``st_lrps_config``
+``st_lrps.training.config``
     Owns ``TrainConfig`` and the command-line interface.
 
-``st_lrps_models``
+``st_lrps.networks.models``
     Owns SIREN/MLP/Fourier model construction.
 
-``st_lrps_scaling``
+``st_lrps.shared.scaling``
     Owns origin-fixed coordinate scaling and target normalization.
 
-``st_lrps_data``
+``st_lrps.data.datasets``
     Owns HDF5 loading, splits, and strict lunar metadata validation.
 
-``st_lrps_losses``
+``st_lrps.training.losses``
     Owns Sobolev, direction, radial/cross, altitude-balanced, and sparse
     Laplacian losses.
 
-``st_lrps_engine``
+``st_lrps.training.engine``
     Owns the training loop, checkpoints, metrics, and history plots.
 
 Physics convention
@@ -41,38 +42,21 @@ from __future__ import annotations
 
 import sys
 
-try:
-    from .st_lrps_config import TrainConfig, parse_args
-    from .st_lrps_data import (
-        BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
-        collate_h5, _build_train_val_indices, _find_latest_dataset,
-        _resolve_loader_worker_count, _resolve_lunar_dataset_contract,
-    )
-    from .st_lrps_engine import STLRPSTrainer, train
-    from .st_lrps_losses import GradNormWeights, LossCurriculum, SobolevLoss
-    from .st_lrps_models import (
-        FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP,
-        build_model_from_config,
-    )
-    from .st_lrps_scaling import (
-        IsometricScaleParams, OnlineIsometricStats, ScalerPack, fit_scaler_streaming,
-    )
-except ImportError:  # pragma: no cover - direct script execution
-    from st_lrps_config import TrainConfig, parse_args
-    from st_lrps_data import (
-        BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
-        collate_h5, _build_train_val_indices, _find_latest_dataset,
-        _resolve_loader_worker_count, _resolve_lunar_dataset_contract,
-    )
-    from st_lrps_engine import STLRPSTrainer, train
-    from st_lrps_losses import GradNormWeights, LossCurriculum, SobolevLoss
-    from st_lrps_models import (
-        FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP,
-        build_model_from_config,
-    )
-    from st_lrps_scaling import (
-        IsometricScaleParams, OnlineIsometricStats, ScalerPack, fit_scaler_streaming,
-    )
+from st_lrps.training.config import TrainConfig, parse_args
+from st_lrps.data.datasets import (
+    BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
+    collate_h5, _build_train_val_indices, _find_latest_dataset,
+    _resolve_loader_worker_count, _resolve_lunar_dataset_contract,
+)
+from st_lrps.training.engine import STLRPSTrainer, train
+from st_lrps.training.losses import GradNormWeights, LossCurriculum, SobolevLoss
+from st_lrps.networks.models import (
+    FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP,
+    build_model_from_config,
+)
+from st_lrps.shared.scaling import (
+    IsometricScaleParams, OnlineIsometricStats, ScalerPack, fit_scaler_streaming,
+)
 
 __all__ = [
     'TrainConfig', 'parse_args', 'train', 'STLRPSTrainer',

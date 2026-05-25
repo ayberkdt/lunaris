@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_TRAIN_SCRIPT = _SCRIPT_DIR / "st_lrps_train.py"
-_EVALUATE_SCRIPT = _SCRIPT_DIR / "st_lrps_evaluate.py"
+# Repo root holds the importable ``st_lrps`` package; subprocesses are launched
+# from here with ``python -m`` so module resolution does not depend on CWD.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_TRAIN_MODULE = "st_lrps.training.cli"
+_EVALUATE_MODULE = "st_lrps.evaluation.cli"
 
 
 @dataclass(frozen=True)
@@ -172,7 +175,7 @@ def build_matrix(args: argparse.Namespace) -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     for spec in _selected_specs(args):
         run_dir = out_root / spec.name
-        cmd: List[str] = [sys.executable, str(_TRAIN_SCRIPT)]
+        cmd: List[str] = [sys.executable, "-m", _TRAIN_MODULE]
         cmd += base_data
         cmd += ["--out", str(run_dir), "--seed", str(int(args.seed))]
         if args.epochs is not None:
@@ -180,7 +183,7 @@ def build_matrix(args: argparse.Namespace) -> List[Dict[str, Any]]:
         cmd += list(spec.cli_overrides)
         eval_cmds = []
         if args.run_eval_after_training:
-            base_eval = [sys.executable, str(_EVALUATE_SCRIPT), "--model-dir", str(run_dir)]
+            base_eval = [sys.executable, "-m", _EVALUATE_MODULE, "--model-dir", str(run_dir)]
             if args.eval_streaming:
                 base_eval.append("--streaming")
             if args.test_data:
@@ -372,14 +375,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "ablation_spec.json").write_text(json.dumps(entry, indent=2), encoding="utf-8")
         print(f"[ablation] RUN  {entry['name']} -> {run_dir}")
-        result = subprocess.run(entry["command"])
+        result = subprocess.run(entry["command"], cwd=str(_REPO_ROOT))
         if result.returncode != 0:
             failures += 1
             print(f"[ablation] FAILED {entry['name']} (exit {result.returncode}).", file=sys.stderr)
         else:
             for ecmd in entry.get("eval_commands", []):
                 print(f"[ablation] EVAL {entry['name']} -> {ecmd[-1]}")
-                eres = subprocess.run(ecmd)
+                eres = subprocess.run(ecmd, cwd=str(_REPO_ROOT))
                 if eres.returncode != 0:
                     failures += 1
                     print(f"[ablation] EVAL FAILED {entry['name']} (exit {eres.returncode}).", file=sys.stderr)

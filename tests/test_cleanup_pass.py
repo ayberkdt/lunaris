@@ -1,7 +1,7 @@
 import argparse
 import pytest
 from unittest.mock import patch
-from st_lrps.run_ablation_matrix import parse_args, build_matrix
+from st_lrps.evaluation.ablation import parse_args, build_matrix
 
 def test_ablation_run_eval_flags():
     """Verify that --run-eval-after-training and --eval-streaming flags are parsed."""
@@ -41,6 +41,6 @@ def test_ablation_eval_commands_generation():
 def test_ui_import_safety():
     """Verify ui_st_lrps can be imported without PySide6 immediately failing (using try-except logic)."""
     try:
-        import st_lrps.ui_st_lrps
+        import st_lrps.ui.studio
     except ImportError:
         pytest.fail("ui_st_lrps should handle missing PySide6 gracefully or import successfully.")

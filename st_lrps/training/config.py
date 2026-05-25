@@ -3,17 +3,18 @@
 Configuration and CLI parsing for the lunar potential surrogate trainer.
 
 This module is the single source of truth for training CLI defaults. The PyQt
-dashboard builds commands against these names, and ``st_lrps_train.py`` delegates
-all argument parsing here. Defaults that describe generated cloud geometry
-(altitude range in particular) are pulled from ``spatial_cloud_parameters`` so
-the generator and trainer do not drift apart.
+dashboard builds commands against these names, and ``st_lrps.training.cli``
+delegates all argument parsing here. Defaults that describe generated cloud
+geometry (altitude range in particular) are pulled from
+``st_lrps.data.spatial_cloud_parameters`` so the generator and trainer do not
+drift apart.
 
 Configuration policy
 --------------------
 * ``TrainConfig`` defaults ARE the recommended production/research configuration.
   There is no alternate default mode. Older configurations are reproduced by passing
   the corresponding CLI flags explicitly (e.g. ``--no-residual-blocks --n-bands 1``)
-  or via ``run_ablation_matrix.py``.
+  or via ``st_lrps.evaluation.ablation``.
 * The word "legacy" elsewhere refers only to loading older checkpoints/datasets
   (e.g. ``--allow-legacy-derivative-convention``), not to a default-config mode.
 * Experimental input encodings (off by default): ``--use-radial-decay-encoding``
@@ -35,20 +36,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
 
-try:
-    from .st_lrps_data import DatasetMeta, _find_latest_dataset
-except ImportError:  # pragma: no cover
-    from st_lrps_data import DatasetMeta, _find_latest_dataset
+from st_lrps.data.datasets import DatasetMeta, _find_latest_dataset
 
 # Pull altitude defaults from the cloud-generation SSOT so both modules
 # always agree on the training envelope without manual synchronisation.
 try:
-    from .spatial_cloud_parameters import DEFAULT_SPATIAL_CLOUD_CONFIG as _CLOUD_CFG
-except ImportError:  # pragma: no cover
-    try:
-        from spatial_cloud_parameters import DEFAULT_SPATIAL_CLOUD_CONFIG as _CLOUD_CFG  # type: ignore
-    except ImportError:
-        _CLOUD_CFG = None  # type: ignore
+    from st_lrps.data.spatial_cloud_parameters import DEFAULT_SPATIAL_CLOUD_CONFIG as _CLOUD_CFG
+except ImportError:  # pragma: no cover - cloud-param defaults are optional
+    _CLOUD_CFG = None  # type: ignore
 
 _DEFAULT_ALT_MIN_KM: float = float(getattr(_CLOUD_CFG, "alt_min_km", 200.0))
 _DEFAULT_ALT_MAX_KM: float = float(getattr(_CLOUD_CFG, "alt_max_km", 600.0))
@@ -705,11 +700,11 @@ def parse_args() -> TrainConfig:
     # TrainConfig is the single source of truth for the recommended configuration.
     # There is no alternate default mode: the dataclass defaults ARE the recommended
     # production/research architecture. Any older configuration is reproduced by
-    # passing the corresponding CLI flags explicitly (or via run_ablation_matrix.py).
+    # passing the corresponding CLI flags explicitly (or via st_lrps.evaluation.ablation).
     #
     # The minimal recommended run is simply:
     #
-    #   python st_lrps_train.py --data path/to/train.h5 --epochs 250
+    #   python -m st_lrps.training.cli --data path/to/train.h5 --epochs 250
     #
     # Notes:
     #   - n_bands=3 (multi-scale SIREN) REQUIRES degree_max in the dataset metadata.
@@ -936,8 +931,8 @@ def parse_args() -> TrainConfig:
 # =============================================================================
 # DEBUG ENTRY POINT
 # =============================================================================
-# st_lrps_config.py is a configuration module, NOT a training entry point.
-# Launch training via:  python st_lrps_train.py [--data ...] [--out ...]
+# st_lrps.training.config is a configuration module, NOT a training entry point.
+# Launch training via:  python -m st_lrps.training.cli [--data ...] [--out ...]
 
 if __name__ == "__main__":
     import json as _json

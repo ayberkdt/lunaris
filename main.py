@@ -473,7 +473,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         # the run was trained on a lunar gravity config. Not covered by the
         # artifact helper, so it is kept here and clearly separated.
         try:
-            from st_lrps.dataset_parameters import looks_like_lunar_run_config
+            from st_lrps.data.dataset_parameters import looks_like_lunar_run_config
         except ImportError:
             looks_like_lunar_run_config = None
         if looks_like_lunar_run_config is not None:

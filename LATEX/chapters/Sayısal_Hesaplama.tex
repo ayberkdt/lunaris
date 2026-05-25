@@ -1,0 +1,1337 @@
+\chapter{Sayısal Hesaplama ve Simülasyon}
+
+\section{Giriş}
+Bu bölümde, önceki bölümlerde analitik olarak elde edilen yerçekimi modelleri, mascon/SH temsilleri ve donmuş
+yörünge koşullarının, sayısal simülasyon ortamına nasıl aktarıldığı açıklanmaktadır. Özellikle Ay çevresinde
+yüksek dereceli harmonik içerik ve yerel anomalilerin (mascon etkilerinin) belirgin olması nedeniyle, analitik
+yaklaşımların geçerlilik sınırları ve sayısal entegrasyonda ortaya çıkan hata kaynakları (adım-boyu seçimi,
+toleranslar, kuvvet modeli tutarlılığı ve başlangıç koşullarının duyarlılığı) kritik hale gelmektedir.
+Bu nedenle burada, (i) kullanılan dinamik modelin hangi bileşenlerden oluştuğu, (ii) entegrasyon yönteminin
+seçimi ve uygulanışı, (iii) doğrulama/karşılaştırma kriterleri ve (iv) sonuçların fiziksel yorumlanmasında
+dikkat edilmesi gereken noktalar sistematik biçimde ele alınacaktır.
+
+
+
+
+% ================== Cowell Yöntemi =================
+\newpage
+\section{Cowell Yöntemi: Doğrudan Sayısal Entegrasyon}
+
+Yörünge mekaniğinde ``Özel Pertürbasyon'' (\textit{Special Perturbation}) yaklaşımlarının en temel örneklerinden biri
+Cowell yöntemidir. Bu yöntemde hareket denklemleri, etkiyen tüm ivmelerin Kartezyen koordinatlardaki vektörel toplamı
+üzerinden yazılır ve durum vektörü $\mathbf{x}=[\mathbf{r}\ \mathbf{v}]^{\mathsf T}$ doğrudan sayısal olarak entegre edilir.
+Analitik çözümlerin zorlaştığı (yüksek dereceli yerçekimi alanları, yerel anomaliler, çok-cisim pertürbasyonları vb.)
+durumlarda kuvvet modelinin ayrıntısı doğrudan dinamiğe yansıtılabildiği için Cowell yöntemi günümüzde yaygın bir
+referans yörünge ilerletme yaklaşımıdır. Pratikte yöntem, kuvvet modelini modüler biçimde genişletmeye elverişlidir;
+örneğin merkezî çekim yanında yüksek dereceli küresel harmonikler, üçüncü-cisim çekimi ve diğer küçük etkiler aynı çerçevede toplanabilir. Özellikle düşük irtifalarda model ayrıntısı arttıkça, integratör toleransları ve adım-boyu seçimi sonuçların güvenilirliğinde belirleyici hale gelir.
+
+
+\begin{tcolorbox}[
+  colback=gray!10!white,
+  colframe=black!75!black,
+  title=\textbf{Tarihçe: Halley Kuyruklu Yıldızı ve Cowell'ın Yaklaşımı}
+]
+Cowell yöntemi adını İngiliz astronom \textbf{Philip Herbert Cowell} (1870--1949)'dan alır. Cowell ve A.\ C.\ D.\ Crommelin,
+\textbf{Halley Kuyruklu Yıldızı'nın 1910 geçişini} öngörmek için Jüpiter ve Satürn başta olmak üzere gezegen pertürbasyonlarını
+hesaba katarak adım-adım sayısal entegrasyon uygulamış, günberi zamanını yaklaşık \textbf{3 günlük bir farkla} yakalayabilmiştir.
+Bu sonuca, dönemin koşullarında \textbf{yaklaşık üç yıl} süren yoğun el hesabı ve tablo çalışmasıyla ulaşılmıştır. Bu çalışma,
+``doğrudan entegrasyon'' fikrinin yalnızca teorik bir seçenek olmadığını, yeterli emek ve dikkatli kuvvet modeliyle
+yüksek doğruluğa ulaşabildiğini göstermesi bakımından dönüm noktasıdır.
+
+\medskip
+Yöntem aslında oldukça yüksek doğruluk vaat etse de, o dönemde hesaplamaların büyük kısmı elle yapıldığı için
+\textbf{hesaplama maliyeti} çok yüksekti ve bu da yaygın kullanımını uzun süre sınırladı. Elektronik hesap makineleri ve
+modern sayısal integratörler geliştikçe Cowell yaklaşımı yeniden pratik hale geldi ve bugün yörünge propagasyonunda
+en sık kullanılan yöntemlerden biri olarak yerini aldı.
+
+\end{tcolorbox}
+
+\subsection{Alternatif Bir Yaklaşım: Encke Yöntemi}
+
+Cowell yöntemi toplam ivmeyi entegre ederken, \textbf{Encke yöntemi} referans bir yörünge (genellikle Kepler yörüngesi)
+ile gerçek yörünge arasındaki farkı ($\delta\mathbf{r}$) entegre eder. Temel fikir, ``küçük'' farkların sayısal olarak
+daha kararlı ve hataya daha az duyarlı biçimde izlenebilmesidir. Basit gösterimle:
+\begin{equation}
+\delta \ddot{\mathbf{r}}
+= \mathbf{a}_{\text{total}}(\mathbf{r}_{\text{ref}}+\delta\mathbf{r},t) - \mathbf{a}_{\text{ref}}(\mathbf{r}_{\text{ref}},t),
+\end{equation}
+burada $\mathbf{a}_{\text{ref}}$ referans (Kepler) yörüngesine ait ivmeyi temsil eder. Bu yaklaşımda $\delta\mathbf{r}$
+küçük kaldığı sürece, çözümü doğrudan ``tam'' vektörler üzerinde taşımak yerine yörüngeyi referansa göre küçük bir düzeltme
+olarak takip etmek, yuvarlama hatalarının birikimini azaltabilir.
+
+
+\smallskip
+Encke yöntemi, bilgisayarların sınırlı olduğu dönemlerde yuvarlama hatalarını azaltma açısından cazipti; ancak referans
+yörüngenin periyodik güncellenmesi (\emph{rectification}) gerekliliği ve uygulama karmaşıklığı nedeniyle, modern integratörler ve işlem gücüyle birlikte pratikte çoğu senaryoda Cowell yaklaşımı daha tercih edilir hale gelmiştir.
+
+
+
+
+
+% ================ Cowell Yönteminin Türetilmesi ==============
+\subsection{Cowell Yönteminin Matematiksel Formülasyonu}
+\label{subsec:cowell_math}
+
+Cowell yöntemi, Newton hareket yasalarının yörünge problemine en doğrudan uygulanışıdır:
+uydunun konumu ve hızı Kartezyen uzayda taşınır ve her entegrasyon adımında, seçilen kuvvet modelinden elde edilen
+\textbf{toplam ivme} doğrudan kullanılır. Eylemsiz bir referans çerçevesinde (ör.\ J2000 benzeri) hareket denklemi
+genel olarak
+\begin{equation}
+\label{eq:cowell_basic}
+\ddot{\mathbf r}(t)=\mathbf a_{\text{total}}(\mathbf r,\mathbf v,t)
+= -\frac{\mu}{r^{3}}\mathbf r \;+\;\mathbf a_{\text{pert}}(\mathbf r,\mathbf v,t)
+\end{equation}
+şeklinde yazılır. Burada $\mu$ merkezi cismin standart çekim parametresi, $\mathbf r=[x\ y\ z]^{\mathsf T}$ konum vektörü
+ve $r=\|\mathbf r\|$ büyüklüğüdür. $\mathbf a_{\text{pert}}$ ise merkezî iki-cisim teriminin dışında kalan tüm bozucu
+ivmelerin toplamını temsil eder.
+
+Ay çevresi gibi yüksek dereceli yerçekimi içeriğinin önemli olduğu problemlerde $\mathbf a_{\text{pert}}$ tipik olarak
+aşağıdaki bileşenlerden oluşur:
+\begin{equation}
+\label{eq:apert_components}
+\mathbf a_{\text{pert}}
+= \mathbf a_{\text{asph}}
++ \mathbf a_{\text{3rd}}
++ \mathbf a_{\text{SRP}}
++ \mathbf a_{\text{tidal}}
++ \dots
+\end{equation}
+Bu çalışmada dinamiği belirleyen ana bileşen $\mathbf a_{\text{asph}}$ olup, küresel harmonik katsayılarından türetilen
+(asferik) yerçekimi ivmesini ve dolaylı olarak mascon kaynaklı kısa dalga boylu anomalileri içerir. Üçüncü-cisim terimi
+$\mathbf a_{\text{3rd}}$ genellikle Dünya ve Güneş gibi pertürbatörlerin çekimini; $\mathbf a_{\text{SRP}}$ güneş radyasyon
+basıncını temsil eder. Kullanım senaryosuna bağlı olarak gelgit/şekil değişimi gibi ek terimler de modele eklenebilir.
+
+\subsubsection{Birinci Dereceden Denklem Sistemine İndirgeme}
+\label{subsubsec:first_order_reduction}
+
+Sayısal entegratörlerin büyük kısmı birinci dereceden sistemler üzerinden çalıştığı için
+\eqref{eq:cowell_basic} denklemi durum-uzayı biçimine dönüştürülür. Durum vektörü
+\begin{equation}
+\mathbf X(t)=
+\begin{bmatrix}
+\mathbf r(t)\\
+\mathbf v(t)
+\end{bmatrix}
+=
+\begin{bmatrix}
+x\\y\\z\\\dot x\\\dot y\\\dot z
+\end{bmatrix}
+\end{equation}
+olarak tanımlanırsa, sistemin türevi
+\begin{equation}
+\label{eq:state_space}
+\dot{\mathbf X}(t)=
+\begin{bmatrix}
+\dot{\mathbf r}(t)\\
+\dot{\mathbf v}(t)
+\end{bmatrix}
+=
+\begin{bmatrix}
+\mathbf v(t)\\
+\mathbf a_{\text{total}}(\mathbf r,\mathbf v,t)
+\end{bmatrix}
+=
+\begin{bmatrix}
+\dot x\\ \dot y\\ \dot z\\
+-\dfrac{\mu}{r^3}x + a_{\text{pert},x}\\
+-\dfrac{\mu}{r^3}y + a_{\text{pert},y}\\
+-\dfrac{\mu}{r^3}z + a_{\text{pert},z}
+\end{bmatrix}
+\end{equation}
+şeklini alır. Böylece problem, $\mathbf X(t_0)$ başlangıç koşulundan başlayarak $\dot{\mathbf X}=f(t,\mathbf X)$ formunda
+doğrudan propagasyona indirgenmiş olur.
+
+
+% =============== Referans Dönüşümleri ======================
+\section{Referans Çerçevesi Dönüşümleri ve Zaman Ölçekleri}
+\label{sec:frame_transforms}
+
+Küresel harmonik yerçekimi katsayıları pratikte \textbf{cisme bağlı} (\emph{body-fixed}) bir çerçevede tanımlanır;
+çünkü asferik alan, cismin dönmesiyle birlikte uzayda ``döner''. Buna karşılık Cowell yörünge ilerletimi,
+hesap kolaylığı ve dış pertürbasyonların (3.\ cisim, SRP vb.) tutarlı ifadesi nedeniyle çoğunlukla \textbf{eylemsiz}
+bir çerçevede yürütülür. Bu yüzden yüksek doğruluk için her ivme değerlendirmesinde (i) konumu body-fixed çerçeveye
+taşımak, (ii) ivmeyi bu çerçevede hesaplamak ve (iii) ivmeyi tekrar eylemsiz çerçeveye geri döndürmek gerekir.
+
+% ------------------------------------------------------------
+\subsection{Eylemsiz ve Body-Fixed Çerçeveler}
+\label{subsec:inertial_bodyfixed}
+
+Yörünge dinamiğinde referans çerçevesi seçimi, hangi eksen takımının ``sabit'' kabul edildiğini belirler.
+\textbf{Eylemsiz (inertial) çerçeve} dış torkların ihmal edilebilir olduğu ölçekte Newton yasalarının en sade biçimde
+yazılabildiği eksen takımıdır. Uygulamada tam anlamıyla eylemsiz bir çerçeve yoktur; ancak GCRF/J2000 gibi astronomik
+referanslara bağlanan çerçeveler, tipik görev sürelerinde eylemsiz kabul edilerek entegrasyon için doğal bir seçim sağlar.
+
+\medskip
+\textbf{Body-fixed (cisme bağlı) çerçeve} ise cismin gövdesiyle birlikte dönen eksen takımıdır. Dünya için Earth-fixed
+çerçevede topoğrafya ve yerçekimi katsayılarının tanımlı olduğu boylam/enlem sistemi, Dünya ile birlikte döner.
+Ay için de Moon-fixed bir çerçeve aynı mantıkla tanımlanır: topoğrafya, mascon yapıları ve küresel harmonik katsayıları
+bu dönen çerçevede sabittir. Dolayısıyla küresel harmoniklerden ivme hesaplamak en doğal biçimde body-fixed eksenlerde yapılır.
+
+Bu bölüm boyunca aşağıdai iki çerçeve kullanılacaktır:
+\begin{itemize}
+\item $\mathcal I$: Eylemsiz çerçeve (örn.\ J2000/GCRF benzeri).
+\item $\mathcal B$: Body-fixed çerçeve (Ay için ``Moon-fixed'', Dünya için ``Earth-fixed'' benzeri).
+\end{itemize}
+
+% ------------------------------------------------------------
+\subsubsection{Yön kosinüs matrisi (DCM) nedir?}
+\label{subsubsec:dcm_intro}
+
+İki referans çerçevesi arasında vektör bileşenlerini dönüştürmenin en standart yolu \textbf{yön kosinüs matrisi}
+(\emph{Direction Cosine Matrix}, DCM) kullanmaktır. DCM, iki eksen takımının birbirine göre yönelimini kodlayan,
+\textbf{$3\times3$} boyutlu saf bir \textbf{dönme} matrisidir.
+
+$\mathcal I$ çerçevesinin birim eksenleri
+$\{\hat{\mathbf i}_1,\hat{\mathbf i}_2,\hat{\mathbf i}_3\}$, $\mathcal B$ çerçevesinin birim eksenleri ise
+$\{\hat{\mathbf b}_1,\hat{\mathbf b}_2,\hat{\mathbf b}_3\}$ olsun. O zaman
+$\mathbf C_{\mathcal B\leftarrow\mathcal I}$ matrisinin elemanları
+\begin{equation}
+\label{eq:dcm_elements}
+\big[\mathbf C_{\mathcal B\leftarrow\mathcal I}\big]_{jk}
+=\hat{\mathbf b}_j \cdot \hat{\mathbf i}_k
+\end{equation}
+şeklinde tanımlanır; yani her eleman iki eksenin yaptığı açının kosinüsüdür.
+
+Bu tanımı açık matris biçiminde de yazabiliriz:
+\begin{equation}
+\label{eq:dcm_matrix}
+\mathbf C_{\mathcal B\leftarrow\mathcal I}=
+\begin{bmatrix}
+\hat{\mathbf b}_1\!\cdot\!\hat{\mathbf i}_1 & \hat{\mathbf b}_1\!\cdot\!\hat{\mathbf i}_2 & \hat{\mathbf b}_1\!\cdot\!\hat{\mathbf i}_3\\
+\hat{\mathbf b}_2\!\cdot\!\hat{\mathbf i}_1 & \hat{\mathbf b}_2\!\cdot\!\hat{\mathbf i}_2 & \hat{\mathbf b}_2\!\cdot\!\hat{\mathbf i}_3\\
+\hat{\mathbf b}_3\!\cdot\!\hat{\mathbf i}_1 & \hat{\mathbf b}_3\!\cdot\!\hat{\mathbf i}_2 & \hat{\mathbf b}_3\!\cdot\!\hat{\mathbf i}_3
+\end{bmatrix}.
+\end{equation}
+
+DCM saf bir dönme olduğu için iki temel özelliğe sahiptir:
+\begin{equation}
+\label{eq:dcm_orthonormal}
+\mathbf C_{\mathcal B\leftarrow\mathcal I}\,\mathbf C_{\mathcal B\leftarrow\mathcal I}^{\mathsf T}
+=\mathbf I,
+\qquad
+\mathbf C_{\mathcal B\leftarrow\mathcal I}^{-1}
+=\mathbf C_{\mathcal B\leftarrow\mathcal I}^{\mathsf T}.
+\end{equation}
+Yani matris ortonormâldir; uzunlukları korur ve ters dönüşüm transpoz ile yapılır.
+
+% ------------------------------------------------------------
+\subsubsection{Vektör dönüşümü nasıl okunur?}
+\label{subsubsec:vector_transform_read}
+
+Aynı geometrik vektör, farklı çerçevelerde farklı bileşenlerle temsil edilir. Örneğin uzay aracının konumu
+$\mathbf r$ olsun; bu vektörün bileşenleri eylemsiz çerçevede $\mathbf r_{\mathcal I}$,
+body-fixed çerçevede ise $\mathbf r_{\mathcal B}$ ile gösterilsin. DCM ile dönüşüm
+\begin{equation}
+\label{eq:ri_to_rb}
+\mathbf r_{\mathcal B}(t)=\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)\,\mathbf r_{\mathcal I}(t)
+\end{equation}
+şeklindedir. Bu ifade, ``eylemsizde bilinen bileşenleri o anki yönelime göre body-fixed eksenlere projekte et'' diye okunur.
+
+İvme gibi bir vektörü body-fixed çerçevede hesapladıktan sonra, Cowell entegrasyonuna geri beslemek için eylemsize dönmek gerekir:
+\begin{equation}
+\label{eq:ab_to_ai}
+\mathbf a_{\mathcal I}(t)=\mathbf C_{\mathcal B\leftarrow\mathcal I}^{\mathsf T}(t)\,\mathbf a_{\mathcal B}(t).
+\end{equation}
+
+\subsubsection{Neden bu dönüşüm şart?}
+\label{subsubsec:why_transform}
+
+Küresel harmonik katsayıları $\bar C_{\ell,m},\bar S_{\ell,m}$ belirli boylam/enlem yapılarıyla ilişkilidir ve bu yapı
+cismin dönmesiyle birlikte uzayda döner. Eğer konumu eylemsiz çerçevede bırakıp bu dönmeyi ``yok sayarsanız'',
+özellikle $m\neq0$ (tesseral/sectoral) terimlerin fazı yanlış olur. Bu tür bir faz hatası, alçak irtifada ve
+rezonans bölgelerinde zamanla birikerek yapay sürüklenmelere ve konum hatalarına yol açabilir.
+Bu yüzden yüksek doğruluk hedefleniyorsa ivme hesabı doğru çerçevede yapılmalı ve sonuç doğru çerçevede entegratöre verilmelidir.
+
+% ------------------------------------------------------------
+\subsection{Zaman ölçekleri: aynı $t$ ile her şeyi tutarlı yapmak}
+\label{subsec:time_scales}
+
+Çerçeve dönüşümünün doğruluğu yalnızca matrisin biçimine değil, \textbf{zaman argümanının hangi ölçeğe göre tanımlandığına}
+da bağlıdır. Pratikte dört zaman ölçeği öne çıkar:
+\begin{itemize}
+\item \textbf{UTC:} Takvim zamanı (artık saniye içerir). Veri etiketleme ve raporlama için uygundur.
+\item \textbf{UT1:} Dünya'nın gerçek dönmesini izler. Dünya için dönme açısı (ERA/GST benzeri) UT1'e bağlıdır.
+\item \textbf{TAI/TT:} Düzgün (uniform) zaman ölçekleri. TT, birçok astronomik modelin doğal zaman argümanıdır.
+\item \textbf{TDB (ET):} Efemeris zaman ölçeği. Birçok efemeris altyapısı (örn.\ SPICE) dönüşümleri TDB/ET ile verir.
+\end{itemize}
+
+Temel kural şudur: entegratörün kullandığı zaman değişkeni ile (i) body orientation (yönelim) fonksiyonları,
+(ii) üçüncü-cisim konumları ve (iii) dönme açısı aynı ``mutlak zaman'' tanımıyla beslenmelidir.
+Ay uygulamalarında yönelim/librasyon modelleri çoğu zaman TT veya TDB tabanlı verildiği için,
+en güvenli yaklaşım dinamik hesabı TT/TDB ekseninde yürütmek ve yalnızca çıktı aşamasında UTC'ye dönmektir.
+
+% ------------------------------------------------------------
+\subsection{Dönüşüm matrisi $\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)$ nasıl üretilir?}
+\label{subsec:how_to_get_C}
+
+$\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)$, cismin uzaydaki yönelimini temsil eder. Basit modellerde bu yönelim
+tek bir dönme açısı ile yaklaşık olarak temsil edilebilir; ancak Ay gibi cisimlerde librasyonlar ve küçük yönelim
+varyasyonları nedeniyle yüksek doğruluk için daha tam bir yönelim modeli gerekir.
+
+\subsubsection{Basit model: tek eksen etrafında dönme }
+Body-fixed çerçevenin, eylemsiz çerçeveye göre yalnızca $z$ ekseni etrafında $\theta(t)$ kadar döndüğü varsayılırsa
+\begin{equation}
+\label{eq:R3_theta_simple}
+\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)=\mathbf R_3\!\big(\theta(t)\big)=
+\begin{bmatrix}
+\cos\theta & \sin\theta & 0\\
+-\sin\theta & \cos\theta & 0\\
+0 & 0 & 1
+\end{bmatrix}.
+\end{equation}
+Bu yaklaşım, faz mantığını göstermek için yararlıdır; ancak Ay librasyonları ve yüksek hassasiyetli faz kontrolü için tek başına yeterli değildir.
+
+\subsubsection{Standart yönelim modeli: IAU biçimi}
+Birçok cisim için yönelim, kuzey kutbunun eylemsiz çerçevede doğrultusu (sağ açıklık $\alpha(t)$, dik açıklık $\delta(t)$)
+ve asal meridyen açısı $W(t)$ ile verilir. Bu üçlüden DCM yaygın olarak
+\begin{equation}
+\label{eq:iau_dcm}
+\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)
+=
+\mathbf R_3\!\big(W(t)\big)\,
+\mathbf R_1\!\big(90^\circ-\delta(t)\big)\,
+\mathbf R_3\!\big(90^\circ+\alpha(t)\big)
+\end{equation}
+şeklinde kurulur. Burada $\mathbf R_1(\phi)$ $x$ ekseni etrafında dönme matrisidir:
+\[
+\mathbf R_1(\phi)=
+\begin{bmatrix}
+1 & 0 & 0\\
+0 & \cos\phi & \sin\phi\\
+0 & -\sin\phi & \cos\phi
+\end{bmatrix}.
+\]
+Sezgisel olarak önce dönme eksenini hizalarsınız ($\alpha,\delta$), ardından boylam fazını $W(t)$ ile uygularsınız.
+
+\subsubsection{Efemeris/çekirdek altyapısı }
+Uygulamada en güvenilir yol, $\alpha(t)$, $\delta(t)$, $W(t)$ fonksiyonlarını veya doğrudan
+$\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)$ matrisini bir efemeris altyapısından almaktır.
+Ay için librasyonların etkisi nedeniyle bu tercih, faz hatasını belirgin biçimde azaltır.
+Kritik nokta şudur: seçilen yönelim verisi hangi zaman ölçeğini istiyorsa, entegrasyon zamanı onunla tutarlı yürütülmelidir.
+
+\newpage
+% ------------------------------------------------------------
+\subsection{Asferik ivmenin doğru fazda hesaplanması}
+\label{subsec:asph_acc_pipeline}
+
+Küresel harmonik ivme, potansiyelin gradyanı olarak \textbf{body-fixed} çerçevede hesaplanır:
+\begin{equation}
+\label{eq:a_asph_bodyfixed}
+\mathbf a_{\text{asph},\mathcal B}(t)= -\nabla_{\mathcal B}\,
+U_{\text{SH}}\!\big(\mathbf r_{\mathcal B}(t)\big).
+\end{equation}
+
+Burada yapılan işlem, dinamik denklemleri dönen çerçevede yazmak değildir; alanı doğru çerçevede hesaplayıp ivmenin
+\emph{bileşenlerini} eylemsiz çerçeveye taşımaktır. Bu nedenle ayrıca Coriolis/merkezkaç terimleri eklenmez;
+yalnızca vektör bileşen dönüşümü uygulanır:
+\begin{equation}
+\label{eq:ab_to_ai_asph}
+\mathbf a_{\text{asph},\mathcal I}(t)=
+\mathbf C_{\mathcal B\leftarrow\mathcal I}^{\mathsf T}(t)\,
+\mathbf a_{\text{asph},\mathcal B}(t).
+\end{equation}
+
+Özellikle $m\neq 0$ (tesseral/sectoral) terimler kullanıldığında bu zincir zorunludur; aksi halde cismin dönmesi modele
+yanlış fazda girer ve zamanla biriken yapay sürüklenmeler ortaya çıkar. Yalnızca zonal (boylamdan bağımsız) terimlerle
+sınırlı bir kesme yapılıyorsa dönüşüm hassasiyeti görece azalır; ancak yüksek dereceli tam modellerde
+\eqref{eq:ri_to_rb} ve \eqref{eq:ab_to_ai_asph} akışı temel gerekliliktir.
+
+\paragraph{Önerilen hesap akışı (tek ivme çağrısı).}
+Cowell entegratörünün her ivme değerlendirmesinde çerçeve-faz tutarlılığı aşağıdaki adımlarla korunur:
+\begin{enumerate}
+\item Entegratörden $\mathbf r_{\mathcal I}(t)$ ve zaman $t$ alınır (seçilen zaman ölçeği ile tutarlı).
+\item Yönelim modeli/efemeris ile $\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)$ üretilir.
+\item Konum body-fixed’e taşınır: $\mathbf r_{\mathcal B}(t)=\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)\,\mathbf r_{\mathcal I}(t)$.
+\item $U_{\text{SH}}$ ve gradyanı ile $\mathbf a_{\text{asph},\mathcal B}(t)$ hesaplanır.
+\item İvme eylemsize döndürülür: $\mathbf a_{\text{asph},\mathcal I}(t)=\mathbf C_{\mathcal B\leftarrow\mathcal I}^{\mathsf T}(t)\,\mathbf a_{\text{asph},\mathcal B}(t)$.
+\item Toplam ivmeye eklenir ve entegratöre verilir (merkezî terim ve diğer pertürbasyonlar eylemsiz çerçevede).
+\end{enumerate}
+
+
+% ------------------------------------------------------------
+\section{Bozucu ivmenin uygun forma getirilmesi}
+\label{sec:perturbing_accel_frames}
+
+Bu bölümde aynı $\mathbf a_{\text{pert}}$ vektörünün,
+(i) Cowell için \textbf{Kartezyen} bileşenlerde,
+(ii) Gauss için \textbf{RTN} bileşenlerinde
+nasıl üretileceği tek bir akış üzerinden özetlenir.
+
+\subsection{Cowell için: Kartezyen ivme vektörü}
+\label{subsec:cowell_cart}
+
+Cowell propagasyonunda \eqref{eq:cowell_basic} içine doğrudan
+\[
+\mathbf a_{\text{pert}}\equiv \mathbf a_{\text{pert},\mathcal I}
+\]
+konur. Asferik ivme $\mathbf a_{\text{asph},\mathcal I}$,
+\eqref{eq:ri_to_rb}--\eqref{eq:ab_to_ai} zinciriyle elde edilir; üçüncü-cisim ve SRP gibi terimler de aynı eylemsiz çerçevede
+hesaplanarak toplam ivmeye eklenir. Böylece integratörün gördüğü dinamik,
+\eqref{eq:state_space}’teki $\mathbf a_{\text{total}}$ çağrısı içinde tutarlı biçimde toplanmış olur.
+
+\subsection{Gauss için: RTN birim vektörleri ve projeksiyon}
+\label{subsec:rtn_projection}
+
+Gauss denklemleri için $\mathbf a_{\text{pert}}$ vektörünün RTN bileşenleri gerekir.
+Anlık durumdan (eylemsiz çerçevede) RTN birim vektörleri
+\begin{equation}
+\hat{\mathbf R}=\frac{\mathbf r}{r},\qquad
+\hat{\mathbf N}=\frac{\mathbf h}{h},\ \ \mathbf h=\mathbf r\times\mathbf v,\qquad
+\hat{\mathbf T}=\hat{\mathbf N}\times\hat{\mathbf R}
+\label{eq:rtn_basis}
+\end{equation}
+şeklinde tanımlanır. Buna karşılık
+\begin{equation}
+a_R=\mathbf a_{\text{pert}}\cdot \hat{\mathbf R},\qquad
+a_T=\mathbf a_{\text{pert}}\cdot \hat{\mathbf T},\qquad
+a_N=\mathbf a_{\text{pert}}\cdot \hat{\mathbf N}
+\label{eq:rtn_components}
+\end{equation}
+ile Gauss denklemlerine girecek bileşenler elde edilir.
+Bu projeksiyonun avantajı, bozucu ivmenin yörünge düzlemi içi/dışı etkilerinin fiziksel olarak daha doğrudan yorumlanabilmesidir.
+
+\subsection{Özet algoritma: SH ivmeden Cowell ve Gauss’a}
+\label{subsec:algo_summary}
+
+Aşağıdaki akış, her iki yöntem için ortak bir ``ivme üretim çekirdeği'' tanımlar:
+\begin{enumerate}
+\item Entegrasyon durumundan $\mathbf r_{\mathcal I},\mathbf v_{\mathcal I}$ al.
+\item Dönüşüm matrisiyle $\mathbf r_{\mathcal B}=\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)\mathbf r_{\mathcal I}$ hesapla.
+\item $\mathbf a_{\text{asph},\mathcal B}=-\nabla_{\mathcal B}U_{\text{SH}}(\mathbf r_{\mathcal B})$ ile asferik ivmeyi üret.
+\item $\mathbf a_{\text{asph},\mathcal I}=\mathbf C_{\mathcal B\leftarrow\mathcal I}^{\mathsf T}(t)\mathbf a_{\text{asph},\mathcal B}$ ile eylemsize döndür.
+\item Diğer pertürbasyonları (3.\ cisim, SRP, vb.) eylemsiz çerçevede hesapla ve $\mathbf a_{\text{pert},\mathcal I}$ içinde topla.
+\item Cowell: \eqref{eq:state_space} içinde $\mathbf a_{\text{total}}=-\mu r^{-3}\mathbf r + \mathbf a_{\text{pert},\mathcal I}$ kullan.
+\item Gauss: \eqref{eq:rtn_basis}--\eqref{eq:rtn_components} ile $(a_R,a_T,a_N)$ üret ve Gauss denklemlerini entegre et.
+\end{enumerate}
+
+% ------------ Uygulamada Dikkat Edilmesi Gerekenler ---------
+\subsection{Uygulamada Dikkat Edilmesi Gereken Hususlar}
+\label{subsec:cowell_practical}
+
+Cowell propagasyonunun güvenilir olması, yalnızca entegratör mertebesine değil, kuvvet modelinin ve sayısal ayarların
+birbiriyle tutarlı seçilmesine de bağlıdır. Bu nedenle uygulamada aşağıdaki noktalar özellikle önemlidir:
+
+\begin{enumerate}
+\item \textbf{Kartezyen durum ile tekilliklerden kaçınma.}
+Cowell yöntemi doğası gereği $\mathbf r$ ve $\mathbf v$ üzerinden çalışır.
+Bu tercih, yörünge elemanlarında $e\approx 0$ (dairesel) veya $i\approx 0$ (ekvatoryal) durumlarında ortaya çıkan
+tekilliklerden kaçınmayı sağlar. Dolayısıyla aynı propagasyon çekirdeği, çok farklı yörünge geometrileri için
+ek özel durum kodu gerektirmeden kullanılabilir.
+
+\item \textbf{Dönüşüm maliyeti ve doğruluk.}
+Yüksek dereceli asferik ivme hesabında her adımda \eqref{eq:ri_to_rb}--\eqref{eq:ab_to_ai} dönüşümleri yapılır.
+Bu dönüşümlerin doğruluğu, özellikle $m\neq 0$ terimlerin fazını belirlediği için sonuç üzerinde doğrudan etkilidir.
+Dolayısıyla ``yaklaşık'' bir dönme açısı kullanmak yerine, seçilen yönelim modelinin/efemerisin simülasyonla tutarlı olması
+yüksek doğruluğun ön koşuludur.
+
+\item \textbf{Adım-boyu ve toleranslar.}
+Ay gibi yerel anomalilerin belirgin olduğu cisimlerde ivme alanı kısa mesafelerde değişebilir.
+Bu nedenle adaptif adımlı integratörlerde (\texttt{DOP853} vb.) \texttt{RelTol}/\texttt{AbsTol} değerleri,
+perilune civarındaki hızlı değişimleri yakalayacak kadar sıkı seçilmeli; seçimin sonuçlara etkisi de yakınsama testiyle
+(doğruluğu artırılmış ikinci bir koşu ile) kontrol edilmelidir.
+
+\item \textbf{Sayısal hassasiyet ve ölçekleme.}
+Merkezî ivme ile asferik/diğer pertürbasyonlar genellikle farklı mertebelerdedir; bu da yuvarlama hatalarının birikimini
+hızlandırabilir. Çift hassasiyet (64-bit) çoğu mühendislik uygulaması için yeterli olsa da, çok sıkı toleranslarda veya çok
+uzun süreli propagasyonlarda ölçekleme/nondimensionalization ve gerekirse daha yüksek hassasiyetli aritmetik seçenekleri
+değerlendirilmelidir.
+\end{enumerate}
+
+
+% =============== İntegratör Seçimleri ===============
+\newpage
+\section{Sayısal Entegratör Seçimi ve Algoritmalar}
+
+Cowell yöntemi gibi doğrudan ilerletim (propagasyon) formülasyonlarında hareket denklemleri,
+çoğu zaman analitik kapalı-form çözümü olmayan, kuvvet modele bağlı \textbf{lineer olmayan} diferansiyel denklemlerdir.
+Bu nedenle yörüngeyi zaman içinde elde etmek için sayısal entegrasyon zorunludur. Ancak ``hangi entegratör?''
+sorusu yalnızca yöntemin mertebesiyle yanıtlanmaz; seçilen algoritma, hatayı nasıl denetlediğinizi,
+hesabı ne kadar pahalıya getirdiğinizi ve uzun vadede fiziksel korunum davranışını doğrudan belirler.
+Bu bölümde entegratör seçimini belirleyen temel ölçütler aşağıdaki gibi özetlenebilir:
+
+\begin{itemize}
+    \item \textbf{Hata kontrolü ve hassasiyet:} Yerel kesme hatasının (local truncation error) toleranslara göre
+    denetlenmesi; $\texttt{rtol}$ ve $\texttt{atol}$ seçiminin doğruluk üzerindeki etkisi.
+    \item \textbf{Hesaplama maliyeti:} Bir adımda kaç kez kuvvet/ivme hesabı gerektiği; özellikle küresel harmonik gibi
+    pahalı kuvvet modellerinde adım sayısı ve fonksiyon çağrısı sayısının belirleyici olması.
+    \item \textbf{Adım-boyu stratejisi:} Sabit adımın (fixed step) verimlilik sınırları ve adaptif adım-boyunun
+    (variable/adaptive step) hızlı değişen dinamiklerde (perilune/perigee geçişi gibi) sağladığı avantaj.
+    \item \textbf{Uzun dönem kararlılık ve korunum:} Yıllar ölçeğinde enerji/açısal momentum drift’i; korunumlu
+    sistemlerde simplektik yöntemlerin avantajı ve Runge--Kutta ailesinde drift riskinin yönetimi.
+    \item \textbf{Yöntemin geometrik özellikleri:} Hamiltonyen/faz-uzayı yapısını ne ölçüde koruduğu; özellikle
+    ``niteliksel doğruluk'' (qualitative fidelity) gerektiren uzun süreli analizlerde önem kazanması.
+\end{itemize}
+
+
+\subsection{Geleneksel (Sabit Adımlı) Yöntemler}
+Sabit adımlı (fixed step-size) klasik entegratörler, modern \emph{hassas} astrodinamikte çoğu zaman birincil tercih değildir.
+Bunun temel nedeni, yörünge dinamiğinin her noktada aynı “zorlukta” olmamasıdır: araç periapsis (perigee/perilune) civarında
+hızlı hareket eder ve ivme vektörü daha hızlı değişir; apoapsis civarında ise değişimler daha yavaştır.
+Sabit adımlı bir yöntem, periapsis bölgesini yakalayacak kadar küçük bir adım seçildiğinde apoapsiste gereksiz hesap yükü doğurur;
+apoapsise göre seçildiğinde ise periapsiste hata büyür ve faz/enerji sapması hızla birikebilir.
+
+Buna rağmen bu yöntemler iki açıdan önemlidir: (i) hata mertebelerini ve sayısal drift mekanizmasını sezgisel biçimde öğretir,
+(ii) daha gelişmiş adaptif veya geometrik entegratörlerle kıyaslama yapılırken “taban çizgisi” (baseline) sağlar.
+Aşağıdaki yöntemler, Taylor açılımından türetilen klasik şemaların temsilî örnekleridir.
+
+\begin{itemize}
+    \item \textbf{Euler Yöntemi (1.\ mertebe):}
+    En basit açık (explicit) yöntemdir. Taylor açılımında yalnızca birinci türev terimini tutar ve türevi adım boyunca sabit kabul eder.
+    Küresel (global) hata mertebesi $\mathcal{O}(h)$ olduğundan, hata her adımda hızlı birikme eğilimindedir.
+    Özellikle yörünge gibi korunumlu (conservative) sistemlerde enerji ve açısal momentumda belirgin \emph{seküler drift} üretir;
+    pratikte yörüngeyi yapay biçimde “şişirme” veya “sönümleme” davranışı gösterebilir. Bu nedenle hassas yörünge ilerletiminde
+    (propagasyonda) genellikle yalnızca örnek olarak kullanılır.
+
+    \item \textbf{Klasik Runge--Kutta 4 (RK4, 4.\ mertebe):}
+    Mühendislik uygulamalarında en yaygın sabit adımlı yüksek mertebe yöntemlerden biridir. Her adımda türevi dört farklı noktada
+    değerlendirerek dördüncü mertebeden bir yaklaşım üretir; küresel hata mertebesi yaklaşık $\mathcal{O}(h^{4})$’tür.
+    Uygun bir adım seçimiyle kısa--orta süreli propagasyonlarda güvenilir sonuçlar verebilir ve Euler’e göre çok daha kararlıdır.
+    Ancak RK4, \textbf{adaptif hata kontrolü} içermez: dinamiğin hızlandığı bölgelerde (periapsis) hatayı sınırlamak için
+    adımı küçültmek gerekirken, aynı küçük adım apoapsis civarında gereksiz maliyet doğurur.
+    Ayrıca RK4 \textbf{simplektik değildir}; bu yüzden uzun süreli integrasyonlarda (özellikle yalnızca konservatif kuvvetler varken)
+    enerji drift’i oluşabilir. Bu drift her zaman büyük olmayabilir, fakat “yıllar ölçeğinde kararlılık” gibi hedeflerde
+    yöntem seçimini doğrudan etkiler.
+\end{itemize}
+
+\noindent
+Özetle, sabit adımlı klasik yöntemler güçlü bir kavramsal temel ve hızlı bir karşılaştırma aracı sunar; ancak yüksek dereceli
+gravite modelleri, düşük irtifa geçişleri veya uzun süreli kararlılık analizlerinde genellikle adaptif adımlı ve/veya
+geometrik (simplektik) yöntemler daha uygun hale gelir.
+
+% ---------------- Değişken Adımlı Yöntemler ---------
+\subsection{Değişken Adımlı (Adaptif) Yöntemler ve RK45 Sınıfı}
+Astrodinamik problemlerinde sabit adım kullanımı çoğu zaman verimsizdir; çünkü yörünge boyunca dinamiğin “zaman ölçeği”
+sabit kalmaz. Örneğin dışmerkezliği yüksek bir yörüngede uzay aracı perilune/perigee civarında çok hızlı hareket eder,
+ivme yönü ve büyüklüğü kısa zaman aralıklarında belirgin biçimde değişir; burada küçük adımlar gerekir. Buna karşılık
+aposelene/apogee civarında hareket yavaşlar ve ivme daha “yumuşak” değişir; aynı küçük adımı sürdürmek, aynı doğruluk
+hedefi için gereksiz hesap yükü doğurur. Adaptif yöntemler bu farkı otomatik yöneterek, “zor” bölgelerde sık örnekleyip
+“kolay” bölgelerde adımı büyütür.
+
+Pratikte \textbf{RK45} ifadesi, gömülü iki çözüm üreten adaptif Runge--Kutta çiftlerinin genel adıdır
+(yaygın örnekler: Fehlberg 4(5) veya Dormand--Prince 5(4)). Bu yöntemler, her adımda hem çözümü hem de hatayı birlikte
+üretir; dolayısıyla adım boyu seçimi kullanıcının elle ayarladığı bir parametre olmaktan çıkar ve toleranslarla kontrol edilir.
+Temel mekanizma şöyledir:
+\begin{enumerate}
+    \item Her adımda iki farklı mertebeden (örn.\ 4.\ ve 5.\ mertebe) çözüm hesaplanır.
+    \item İki çözüm arasındaki fark, yerel hata kestirimi (\emph{local error estimate}) olarak kullanılır.
+    \item Kestirilen hata, kullanıcının \textbf{bağıl} (\texttt{RelTol}) ve \textbf{mutlak} (\texttt{AbsTol}) toleranslarına göre
+    bileşen bazında ölçeklenerek tek bir kabul/red ölçütüne dönüştürülür.
+    \item Hata büyükse adım küçültülür ve aynı zaman aralığı yeniden denenir; hata yeterince küçükse adım kabul edilir ve
+    bir sonraki adım için $h$ büyütülerek verim artırılır.
+\end{enumerate}
+
+\noindent
+Bu sınıf yöntemlerin iki pratik avantajı vardır. Birincisi, kullanıcı doğrudan “istenen hata düzeyi”ni (toleransları) tanımlar;
+yöntem, adımı buna göre kendisi ayarlar. İkincisi, çıktılar genellikle \emph{zamanda uniform} değildir: entegratör,
+ihtiyaç duyduğu anlarda daha sık örnek ürettiğinden, özellikle periapsis geçişlerini yakalamada verimli olur.
+Bununla birlikte tolerans seçimi, yalnızca “daha küçük daha iyi” şeklinde düşünülmemelidir: çok sıkı toleranslar,
+özellikle kuvvet modeli pahalıysa (yüksek dereceli SH, üçüncü-cisim, SRP vb.), hesap süresini dramatik artırabilir.
+Bu nedenle RK45 pratikte çoğunlukla \emph{orta hassasiyetli} görev analizi, hızlı prototipleme ve model karşılaştırma
+çalışmalarında “az ayarla güvenilir sonuç” veren bir varsayılan seçenek olarak öne çıkar.
+
+\noindent
+Son olarak, değişken adımlı yöntemlerin doğal bir yan ürünü olarak “adım reddi” (step rejection) ve buna bağlı
+hesap yükü artışı görülebilir. Bu durum genellikle dinamiğin keskinleştiği bölgelerde ortaya çıkar ve doğru ayarlanmış
+toleranslarla yönetilebilir; gerekiyorsa maksimum/minimum adım sınırları ile de pratik kontrol sağlanır.
+
+
+% ------------ Yüksek Hassasiyet --------------
+\subsection{Yüksek Hassasiyet: \texorpdfstring{DOP853}{DOP853} (Dormand--Prince, 8.\ Mertebe)}
+Hassasiyet gereksinimi çok yükseldiğinde (örn.\ $10^{-12}$ ve daha sıkı toleranslar, uzun süreli alçak irtifa yörünge
+ilerletimi veya yüksek dereceli gravite modelleri), 4--5.\ mertebe adaptif yöntemler hedef doğruluğa ulaşmak için
+adımı aşırı küçültme eğilimindedir. Bunun sonucu olarak hem adım sayısı büyür hem de her adımda pahalı olan kuvvet modeli
+(özellikle tam küresel harmonik ivme) daha fazla çağrılır. Bu tür senaryolarda \textbf{DOP853} gibi \textbf{yüksek mertebeli}
+açık Runge--Kutta yöntemleri pratikte daha verimli hâle gelebilir.
+
+\textbf{DOP853} (Dormand--Prince 8(5,3)), adından da anlaşılacağı gibi yüksek mertebeli bir çözüm üretirken
+aynı adım içinde daha düşük mertebeden \emph{gömülü} çözümlerle hata kestirimi de yapar. Böylece yöntem,
+\emph{“her adımda yüksek mertebe çöz, hatayı aynı adımda tahmin et, adım boyunu otomatik ayarla”} akışıyla çalışır.
+DOP853'ün burada kritik avantajı şudur: aynı tolerans hedefi için, yüksek mertebe sayesinde genellikle
+\textbf{daha büyük adımlarla} ilerleyebilir; dolayısıyla toplamda \textbf{daha az adım} ve \textbf{daha az kuvvet çağrısı}
+ile benzer (veya daha iyi) doğruluk elde edilebilir.
+
+\paragraph{Neden özellikle Ay alçak irtifada iş görür?}
+Ay yerçekimi alanında mascon kaynaklı yerel anomaliler, ivme alanında kısa dalga boylu ve yer yer keskin değişimler üretir.
+Alçak irtifada bu değişimler “hızlı dinamik” bölgeler oluşturarak adaptif entegratörün adımı küçültmesine neden olur.
+DOP853, hata kontrolünü sıkı tutarken bile yüksek mertebe avantajıyla bu bölgelerde gerekli çözünürlüğü daha verimli sağlayabilir.
+Burada altını çizmek gereken nokta şudur: DOP853 “mucize” değildir; başarısı büyük ölçüde
+(i) tolerans seçimi, (ii) minimum/maksimum adım sınırları, (iii) kuvvet modelinin sayısal kararlılığı ve
+(iv) çerçeve--zaman tutarlılığı (body-fixed$\leftrightarrow$inertial dönüşümleri) gibi ayrıntılara bağlıdır.
+
+\paragraph{Toleransların pratik yorumu (RelTol/AbsTol).}
+DOP853'te adım kabul/red kararı, hata vektörünün \texttt{AbsTol} ve \texttt{RelTol} ile ölçeklenmiş normu üzerinden verilir.
+Bu, “konum bileşenlerinde metre düzeyi, hız bileşenlerinde m/s düzeyi” gibi farklı büyüklükteki durum değişkenlerinin
+tek bir hata ölçütünde dengeli değerlendirilmesini sağlar. Bu yüzden yüksek hassasiyet koşularında yalnızca
+\texttt{RelTol} küçültmek yerine, \texttt{AbsTol}'ün de durum vektörünün ölçeğine uygun seçilmesi gerekir
+(aksi hâlde bir bileşen grubu gereksiz yere adımı domine edebilir).
+
+\paragraph{Adım-boyu kontrolü ve reddedilen adımlar.}
+Yüksek dereceli gravite alanında, bazı zaman aralıklarında hata kestirimi hızla büyüyebilir ve entegratör adımı reddedip
+aynı aralığı daha küçük $h$ ile tekrar deneyebilir. Bu davranış normaldir ve adaptif kontrolün bir parçasıdır;
+ancak \emph{çok sık} görülüyorsa genellikle şu sorunlara işaret eder:
+\begin{itemize}
+    \item Toleransların gereğinden sıkı seçilmesi,
+    \item Kuvvet modelinde sayısal gürültü (ör.\ Legendre/SH hesabında kararsızlık, normalizasyon uyumsuzluğu),
+    \item Çerçeve dönüşümü veya zaman ölçeğinde faz hatası (özellikle $m\neq0$ terimlerde),
+    \item Çok büyük maksimum adım sınırı veya zayıf başlangıç adımı seçimi.
+\end{itemize}
+Bu nedenle DOP853 ile birlikte pratikte \textbf{maksimum adım}, \textbf{minimum adım} ve gerekirse
+\textbf{olay (event) tabanlı} kontrol (örn.\ perilune geçişlerinde daha sık örnekleme) gibi sınırlamalar kullanmak,
+hem kararlılığı hem de tekrarlanabilirliği artırır.
+
+\paragraph{Ne zaman DOP853 tercih edilmelidir?}
+Özetle DOP853, aşağıdaki koşullarda güçlü bir adaydır:
+\begin{itemize}
+    \item \textbf{Kuvvet modeli pahalı ve hassasiyet yüksekse:} tam SH, çoklu pertürbasyonlar, hassas çerçeve dönüşümleri.
+    \item \textbf{Alçak irtifada hızlı değişen ivme alanı varsa:} mascon geçişleri, kısa dalga boylu yerel anomaliler.
+    \item \textbf{Uzun süreli analizde faz hatası birikimi kritikse:} küçük ivme farklarının zamanla konum hatasına büyümesi.
+\end{itemize}
+Buna karşılık \emph{çok uzun dönemli konservatif} problemlerde (enerji davranışı kritikse) simplektik yöntemler daha uygun
+olabilir; DOP853 ise çoğu “yüksek doğruluklu görev analizi” koşusunda, adaptif kontrol + yüksek mertebe verimliliğiyle
+güçlü bir referans entegratör olarak öne çıkar.
+
+
+% --------------- Simplektik İntegratörler ------------
+\subsection{Uzun Süreli Kararlılık: Simplektik (Symplectic) Entegratörler}
+
+Runge--Kutta ailesi yöntemler, yerel hatayı (\emph{local truncation error}) etkin biçimde kontrol etseler bile
+çok uzun zaman ölçeklerinde (binlerce--milyonlarca adım) enerji ve açısal momentum gibi korunum büyüklüklerinde
+seküler drift üretme eğilimindedir. Bunun temel nedeni, standart RK yöntemlerinin Hamiltonyen dinamiğin geometrik
+yapısını (simplektik iki-formu ve faz uzayı hacmini) genel olarak korumamasıdır. Özellikle korunumlu bir problemde
+(baskın biçimde yerçekimi) küçük fakat sistematik sayısal hatalar, uzun vadede ``yapay sönüm'' veya ``yapay enerji artışı''
+gibi fiziksel olmayan birikimli etkiler doğurabilir.
+
+\textbf{Simplektik integratörler}, Hamiltonyen sistemlerin bu geometrik yapısını koruyacak şekilde tasarlanır.
+Hamiltonyen formda
+\[
+\dot{\mathbf{q}}=\frac{\partial H}{\partial \mathbf{p}},\qquad
+\dot{\mathbf{p}}=-\frac{\partial H}{\partial \mathbf{q}}
+\]
+ile tanımlanan bir sistemde, simplektik integratörün ayırt edici özelliği, adım adım uygulanan sayısal dönüşümün
+(\emph{map}) simplektik olmasıdır; yani faz uzayında hacim korunur (Liouville teoremi ile tutarlı) ve sistemin
+kanonik yapısı bozulmaz. Bu nedenle simplektik yöntemler, hatayı her adımda ``en küçük'' yapmaya çalışmak yerine,
+hatanın \emph{sınırlı bir bant içinde salınmasını} hedefler. Pratik sonuç şudur: enerji tam olarak sabit kalmasa da,
+uzun süreli propagasyonda enerji hatası genellikle \emph{seküler olarak büyümek yerine} sınırlı bir aralıkta dalgalanır.
+
+Astrodinamikte yaygın bir örnek \textbf{Velocity Verlet} (veya ``leapfrog'') şemasıdır. Merkezî çekim gibi
+potansiyel--kinetik ayrışması yapılabilen sistemlerde
+$H(\mathbf{q},\mathbf{p})=T(\mathbf{p})+V(\mathbf{q})$ yazılabildiğinde,
+simplektik yöntemler çoğunlukla ``\textit{drift--kick--drift}'' veya ``\textit{kick--drift--kick}'' biçiminde
+uygulanır: önce konumlar yarım adım güncellenir, sonra ivmeye bağlı hız güncellemesi yapılır, ardından konumlar
+tamamlanır. Daha yüksek mertebeli simplektik şemalar (\textbf{Yoshida} gibi) ise bu temel adımı belirli katsayılarla
+ardışık kompozisyonlar halinde birleştirerek mertebeyi artırır ve yine simplektik yapıyı korur.
+
+\medskip
+\noindent\textbf{Ne zaman avantajlı?}
+Simplektik entegratörler özellikle \emph{uzun dönemli} (yıllar--yüzyıllar) ve \emph{korunumlu} (konservatif)
+problemlerde (Güneş Sistemi dinamiği, uzun süreli yörünge kararlılığı, rezonans analizi vb.) öne çıkar.
+
+\medskip
+\noindent\textbf{Sınırları:}
+Basınç/sürüklenme, itki, empirik kuvvetler veya sık manevra gibi \emph{korunumlu olmayan} etkiler baskınsa,
+``enerji koruma'' hedefi zaten fiziksel olarak geçerli değildir; bu durumda simplektik avantaj azalır ve adaptif adım-boylu,
+hata kontrollü RK türleri daha pratik olabilir. Ayrıca klasik simplektik yöntemler çoğunlukla sabit adımlıdır; dinamiğin
+çok sertleştiği bölgelerde (örn.\ çok alçak perilune) adım seçimi yine kritik hale gelir.
+
+% ------------------ Nyquist Critical Frequency --------------
+\newpage
+\subsection{Adım-boyu ve Nyquist Ölçütü}
+\label{subsec:nyquist_stepsize}
+
+Yüksek dereceli bir gravite modeli, uzaysal olarak daha kısa dalga boylu (yani daha “ince ölçekli”) bileşenler içerir.
+Bir \(N\times N\) küresel harmonik kesmesinde en yüksek derecenin temsil ettiği tipik uzaysal ölçek,
+yaklaşık olarak
+\begin{equation}
+\lambda_N \;\approx\; \frac{2\pi R}{N}
+\end{equation}
+ile ifade edilebilir (\(R\): cismin yarıçapı). Uzay aracı body-fixed çerçevede yüzey üzerinde yaklaşık
+\(v_{\text{rel}}\) göreli hızıyla ilerliyorsa, bu uzaysal dalga boyu zamansal bir ölçeğe dönüşür:
+\begin{equation}
+T_{\lambda}\;\approx\;\frac{\lambda_N}{v_{\text{rel}}}.
+\end{equation}
+
+\textbf{Nyquist mantığı} şunu söyler: bir dalga bileşeninin “yanlış frekansa katlanmaması” (aliasing) için periyot başına
+en az iki örnek gerekir. Bu, adım-boyu için en kaba sınırı
+\begin{equation}
+\Delta t_{\text{Nyq}} \;\lesssim\; \frac{\lambda_N}{2\,v_{\text{rel}}}
+\;=\; \frac{\pi R}{N\,v_{\text{rel}}}
+\end{equation}
+şeklinde verir. Ancak yörünge propagasyonu yalnızca bir sinyali “örnekleme” problemi değildir; entegratör aynı zamanda
+dinamiği \emph{integral} olarak biriktirir. Bu nedenle pratikte hedef, Nyquist sınırında “zar zor yakalamak” değil,
+kısa dalga boyunu \textbf{yeterli çözünürlükle izlemek} olmalıdır. Mühendislikte yaygın yaklaşım, dalga boyu başına
+\(M\) örnek almaktır:
+\begin{equation}
+\Delta t \;\lesssim\; \frac{\lambda_N}{M\,v_{\text{rel}}},
+\qquad
+(M \approx 10\text{--}20 \;\;\text{tipik}).
+\end{equation}
+
+Burada
+\begin{equation}
+v_{\text{rel}}\approx \|\mathbf v_{\mathcal I}-\boldsymbol{\omega}\times\mathbf r\|
+\end{equation}
+yaklaşımı, body-fixed çerçevede “zemin üzerinden akış” hızını kabaca temsil eder. Ay’da \(\|\boldsymbol{\omega}\times\mathbf r\|\)
+küçük olduğundan alçak irtifada çoğu durumda \(v_{\text{rel}}\simeq \|\mathbf v\|\) kabulü iyi çalışır; Dünya’da ise UT1’e bağlı
+dönme hızı ve enlem etkileri daha belirgin olabilir.
+
+\paragraph{Neden kritik?}
+Yanlış adım-boyu yüksek dereceyi boşa çıkarabilir. Eğer \(\Delta t\) büyük seçilirse, modelin en değerli kısmı olan
+kısa dalga boylu bileşenler yeterince örneklenemez; bu durumda
+(i) yüksek dereceli terimler \emph{yanlış fazda} temsil edilebilir (aliasing),
+(ii) ivme alanındaki keskin değişimler “yumuşatılmış” gibi görünür,
+(iii) sonuçta yörüngede yapay drift veya beklenmedik rezonans benzeri davranışlar ortaya çıkabilir.
+Bu açıdan bakıldığında, aşırı büyük adım-boyu kullanmak \(N\)’yi artırarak elde edilmek istenen kazanımı fiilen “heba eder”.
+Dolayısıyla adaptif entegratör kullanılsa bile, \textbf{\texttt{max\_step}} için Nyquist tabanlı bir üst sınır belirlemek
+yüksek dereceli propagasyonda koruyucu bir önlemdir.
+
+\paragraph{Sayısal örnek (Ay, dairesel \(h=40\,\mathrm{km}\)).}
+Fikir vermesi için \(R_{\text{Moon}}=1737.4\,\mathrm{km}\) ve \(h=40\,\mathrm{km}\) dairesel yörüngede
+\(v_{\text{rel}}\approx 1.66\,\mathrm{km/s}\) alınarak, farklı \(N\) değerleri için karakteristik ölçekler ve
+adım-boyu sınırları Tablo~\ref{tab:nyquist_moon_steps}’te verilmiştir.
+Tablodaki \(\Delta t_{20}\) sütunu, adaptif yöntemlerde \texttt{max\_step} için iyi bir başlangıç rehberi olarak okunabilir.
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{c c c c c}
+\hline
+\textbf{Derece \(N\)} &
+\(\boldsymbol{\lambda_N}\) \textbf{(km)} &
+\(\boldsymbol{T_{\lambda}}\) \textbf{(s)} &
+\(\boldsymbol{\Delta t_{\text{Nyq}}}\) \textbf{(s)} &
+\(\boldsymbol{\Delta t_{20}}\) \textbf{(s)} \\ \hline
+10  & 1091.6 & 657.1 & 328.6 & 32.9 \\
+20  & 545.8  & 328.6 & 164.3 & 16.4 \\
+50  & 218.3  & 131.4 & 65.7  & 6.6 \\
+120 & 91.0   & 54.8  & 27.4  & 2.7 \\
+150 & 72.8   & 43.8  & 21.9  & 2.2 \\
+180 & 60.6   & 36.5  & 18.3  & 1.8 \\
+\hline
+\end{tabular}
+\caption{Ay için örnek adım-boyu ölçekleri (dairesel \(h=40\,\mathrm{km}\), \(v_{\text{rel}}\approx 1.66\,\mathrm{km/s}\)).
+\(\Delta t_{\text{Nyq}}\): Nyquist alt sınırı (\(M=2\)). \(\Delta t_{20}\): dalga boyu başına 20 örnek (\(M=20\)) önerisi.
+Görev hassasiyetine göre \(M=10\text{--}20\) aralığı pratik bir başlangıçtır.}
+\label{tab:nyquist_moon_steps}
+\end{table}
+
+
+% ------------ Senaryoya Göre İntegratör Önerisi -----------
+\newpage
+\subsection{Senaryoya Göre Entegratör Seçimi}
+Aşağıdaki tablo, tipik senaryolar için pratik bir başlangıç rehberidir; kesin bir kural olarak değil,
+\emph{ilk seçim + doğrulama testi} (yakınsama/tolerans taraması) çerçevesinde okunmalıdır.
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{|p{4cm}|p{4cm}|p{6cm}|}
+\hline
+\textbf{Görev senaryosu} & \textbf{Önerilen entegratör} & \textbf{Gerekçe} \\ \hline
+
+\textbf{LEO (kısa süreli):} \newline Günler--haftalar; basit \(J_2\) ve sınırlı pertürbasyonlar. &
+\textbf{RK45 (adaptif)} \newline (hızlı prototipte RK4) &
+Adaptif adım, dinamik değişimleri verimli izler. RK4 daha çok hızlı deneme/karşılaştırma içindir. \\ \hline
+
+\textbf{Ay/gezegen (yüksek dereceli gravite):} \newline Örn.\ \(N\ge 100\), alçak irtifa uçuş. &
+\textbf{DOP853} \newline (8.\ mertebe, adaptif) &
+Yüksek mertebe, aynı hedef tolerans için adım sayısını azaltabilir; mascon geçişlerinde yerel hata daha sıkı tutulur.
+Nyquist tabanlı \texttt{max\_step} ile kısa dalga boyu “kaçırılmaz”. \\ \hline
+
+\textbf{Yüksek dışmerkezlik:} \newline Molniya, GTO, kuyruklu yıldız benzeri. &
+\textbf{Adaptif adımlı RK} &
+Perilune/perigee civarında adım küçülür, apogee civarında büyür; verim sağlar ve yerel hatayı sınırlar. \\ \hline
+
+\textbf{Uzun dönem (korunumlu):} \newline Yıllar--yüzyıllar; konservatif kuvvet modeli. &
+\textbf{Simplektik} \newline (Verlet, Yoshida vb.) &
+Geometrik yapıyı koruyarak enerji/açısal momentum drift’ini sınırlı tutar; uzun dönem kararlılık analizi için uygundur. \\ \hline
+
+\end{tabular}
+\caption{Astrodinamik senaryoları için entegratör seçim rehberi (özet).}
+\label{tab:integrator_selection}
+\end{table}
+
+Bu çalışma kapsamında, Ay’ın karmaşık kütle çekim alanı (yüksek dereceli küresel harmonikler) ve yüzeye yakın uçuş dinamiği
+nedeniyle, yüksek mertebeli ve adaptif adımlı \textbf{DOP853} yöntemi tercih edilmiştir. Uygulamada seçilen
+\texttt{RelTol}/\texttt{AbsTol} değerlerinin ve \texttt{max\_step} kısıtının sonuçlara etkisi, aynı senaryonun daha sıkı toleranslar
+ve daha küçük \texttt{max\_step} ile tekrarlanması (yakınsama testi) üzerinden doğrulanmalıdır.
+
+
+
+% ================== Doğrulama Adımı ==================
+\newpage
+\section{Model Doğrulama ve Tutarlılık Analizleri}
+
+Geliştirilen bir yörünge simülasyonunun güvenilirliği, yalnızca kodun çalışıyor olmasına değil, üretilen sonuçların
+(i) fiziksel yasalarla tutarlı olmasına, (ii) kullanılan kuvvet modellerinin doğru uygulanmasına ve (iii) sayısal
+entegrasyonun hedef doğrulukta yakınsak davranmasına bağlıdır. Bu nedenle doğrulama (\textit{verification/validation})
+adımı, propagasyon sonuçlarının ``model içeriği'' mi yoksa ``sayısal ayarlar'' mı tarafından belirlendiğini ayırt etmek için
+zorunludur. Bu bölümde doğrulama iki seviyede ele alınır: (a) yörüngeye çıkmadan önce alan seviyesinde
+(\textit{statik}) kontrol ve (b) aynı başlangıç koşullarında propagasyon yaparak görev seviyesinde (\textit{dinamik}) kontrol.
+Amaç, kuvvet modeli, çerçeve dönüşümleri, normalizasyon ve integratör toleranslarının birbirleriyle uyumlu çalıştığını
+kanıtlamaktır.
+
+\subsection{Alan Düzeyi Karşılaştırma: Potansiyel ve İvme Farkları}
+Yörünge propagasyonuna başlamadan önce, seçilen gravite modelinin ürettiği ivmenin \emph{alan düzeyinde} tutarlı olup olmadığını
+kontrol etmek gerekir. Bu adımın nedeni şudur: Eylemsiz--body-fixed dönüşümündeki faz hatası, katsayı normalizasyonu hatası,
+derece/sıra kesmesi veya yanlış referans yarıçapı/GM kullanımı, yörüngeye geçmeden önce bile ``ivme alanında'' kendini belli eder.
+Dolayısıyla önce ivmenin kendisi doğrulanır; böylece dinamik testlerde görülen farkların kaynağı daha net ayrıştırılır.
+
+Bu amaçla aynı irtifa küresi üzerinde iki model karşılaştırılır (ör.\ $120\times120$ ile $50\times50$ veya bir ``referans'' SH
+modeli ile). İvme farkı
+\begin{equation}
+\Delta \mathbf{a}(\mathbf{r}) = \mathbf{a}_{\text{Model}}(\mathbf{r}) - \mathbf{a}_{\text{Ref}}(\mathbf{r})
+\end{equation}
+şeklinde tanımlanır. Uygulamada bu işlem şu şekilde yapılır:
+(i) seçilen irtifa için bir küre üzerinde $S$ adet nokta örneklenir (ör.\ enlem-boylam grid'i veya Fibonacci küre örneklemesi),
+(ii) her noktada iki modelden $\mathbf a(\mathbf r_k)$ hesaplanır, (iii) fark normu
+$||\Delta \mathbf a(\mathbf r_k)||$ haritalanır ve özet istatistikler çıkarılır.
+
+Küresel ölçekte tek bir sayı ile kıyaslamak için RMS metriği kullanılır:
+\begin{equation}
+RMS_{\Delta a}=\sqrt{\frac{1}{S}\sum_{k=1}^{S}\left\|\Delta\mathbf a(\mathbf r_k)\right\|^{2}}.
+\end{equation}
+RMS, genel büyüklüğü verir; ancak tek başına yeterli değildir. Bu nedenle raporlama sırasında
+\emph{maksimum} değer ($\max_k ||\Delta\mathbf a||$) ve mümkünse bileşen bazında (radial/tangential/normal) farklar da
+incelenmelidir. Eğer yüksek dereceli model, fiziksel olmayan ``spike'' benzeri sivri uçlar veya lokal patlamalar gösteriyorsa,
+bu durum çoğunlukla (a) aşırı yüksek derece bandında gürültü/overfitting, (b) yanlış normalizasyon, (c) sayısal instabilite
+veya (d) dönüşüm fazı hatası gibi kök nedenlere işaret eder. Böyle bir anomali dinamik teste geçmeden önce giderilmelidir.
+
+\newpage
+\subsection{Görev Düzeyi Karşılaştırma: Farkların Birikimi (Dinamik Doğrulama)}
+Alan düzeyindeki küçük farklar, propagasyon sırasında entegre edilerek konum/hız farklarına dönüşür.
+Bu nedenle ikinci adım, aynı başlangıç koşullarından başlatılan iki koşunun zaman içinde nasıl ayrıştığını ölçmektir.
+Bu testin amacı, beklenen davranışın \emph{model kaynaklı} mı yoksa \emph{sayısal hata kaynaklı} mı olduğunu anlamaktır.
+
+İki farklı model (ör.\ $50\times50$ ve $120\times120$) aynı $\mathbf r(t_0),\mathbf v(t_0)$ ile başlatıldığında,
+konum sapması
+\begin{equation}
+\left\|\Delta \mathbf{r}(t)\right\|
+= \left\|\mathbf{r}_{120}(t)-\mathbf{r}_{50}(t)\right\|
+\end{equation}
+olarak izlenir (benzer şekilde $\|\Delta\mathbf v(t)\|$). Pratikte bu test şu şekilde yürütülür:
+\begin{enumerate}
+\item Aynı integratör ve aynı toleranslarla iki koşu yapılır (yalnızca gravite modeli farklı).
+\item $\|\Delta\mathbf r(t)\|$ ve $\|\Delta\mathbf v(t)\|$ zaman serileri kaydedilir.
+\item Ayrışmanın karakteri değerlendirilir: periyodik mi, yavaş seküler mi, yoksa yüksek frekanslı ``tırtıklı'' bir gürültü mü?
+\end{enumerate}
+Beklenti, model farklarının genellikle belirli bir ölçüde \emph{düzenli} (seküler veya periyodik) bir ayrışma üretmesidir.
+Buna karşılık ayrışma sinyali tamamen rastgele ve adım-boyuna aşırı hassassa, asıl baskın etkenin sayısal hata
+(\textit{numerical noise}) olması mümkündür. Bu ayrımı yapmak için en kritik kontrol,
+\textbf{yakınsama testi}dir: aynı senaryo daha sıkı toleranslarla yeniden çalıştırılır ve $\|\Delta\mathbf r(t)\|$ eğrisinin
+şekli anlamlı biçimde değişiyorsa sorun integratör/ayar kaynaklı olabilir. Tolerans sıkılaştırıldığında sonuçlar birbirine
+yakınsıyorsa, ayrışma daha güvenle ``model farkı'' olarak yorumlanabilir.
+
+\subsection{Veri Uyum Ölçütleri ve Aşırı Uyum (Overfitting) Riski}
+Küresel harmonik gravite modelleri, uydu izleme verilerinden (Doppler, KBR, SLR vb.) ters çözümle elde edilir ve derece $N$
+arttıkça çözünürlük yükselir. Ancak veri kapsaması zayıf veya gürültü seviyesi yüksek bölgelerde, yüksek derece terimler
+fiziksel sinyal yerine ölçüm gürültüsünü de açıklamaya başlayabilir; bu durum \textit{overfitting} olarak bilinir.
+Simülasyon açısından overfitting kritik bir problemdir; çünkü yüksek derecelerdeki küçük katsayı hataları, alçak irtifada
+ivme alanında yapay yüksek frekanslı yapılar üreterek yörüngeyi gerçekçi olmayan şekilde bozabilir.
+
+Bu risk pratikte iki tür kontrolle yönetilir:
+\begin{itemize}
+\item \textbf{Artık (residual) davranışı:} Eğer referans efemeris veya gözlem tabanlı bir karşılaştırma mevcutsa,
+artıkların ortalaması sıfıra yakın olmalı ve belirgin sistematik (trend/periodiklik) taşımamalıdır.
+Sistematik bir yapı, modelin eksik fizik içerdiğine veya çerçeve/zaman ölçeği tutarsızlığına işaret edebilir.
+\item \textbf{Spektral tutarlılık (Kaula benzeri ölçek):} SH katsayılarının derece arttıkça beklenen bir zarf altında
+azalması beklenir. Yüksek derecelerde katsayıların aniden büyümesi veya zarfı ihlal etmesi, gürültü baskın terimlere,
+yetersiz regularization'a veya sayısal instabiliteye işaret eder. Bu kontrol, ``alan düzeyi spike'' problemleriyle doğrudan
+ilişkilidir ve gerektiğinde derece bandı sınırlandırma, filtreleme veya regularization parametrelerinin yeniden seçilmesi
+ile giderilir.
+\end{itemize}
+
+\subsection{Özel Yörüngeler Üzerinde Dinamik Doğrulama}
+Alan ve görev düzeyi testler genel bir doğrulama sağlar; ancak simülasyonun ``doğru fiziği doğru yerde'' ürettiğini
+göstermenin en pedagojik yolu, analitik davranışı iyi bilinen özel yörüngeleri \emph{birim test} gibi kullanmaktır.
+Bu testlerde beklenen çıktı doğrudan bir teorik sonuca bağlanabildiği için, hata kaynağı daha hızlı izole edilir.
+
+\subsubsection{Dünya İçin: Molniya ve Kritik Eğim}
+Dünya çevresinde $J_2$ etkisi, $\omega$'nun seküler ilerlemesine neden olur; ancak kritik eğimde
+($i\simeq 63.4^\circ$) bu seküler terim teorik olarak sıfırlanır.
+\begin{itemize}
+\item \textbf{Neden yapılır?} $J_2$ ivmesinin doğru uygulanıp uygulanmadığını ve entegrasyonun seküler terimleri doğru
+yakalamadığını test eder.
+\item \textbf{Nasıl yapılır?} Uydu $i=63.4^\circ$ ve yüksek $e$ ile başlatılır; yalnız $J_2$ içeren bir propagasyon koşulur.
+\item \textbf{Kriter:} $\omega(t)$ zaman serisinde belirgin seküler drift görülmemeli, yalnız kısa-periyotlu salınımlar kalmalıdır.
+Drift varsa, çoğunlukla (i) $J_2$ formülasyonu/işareti, (ii) çerçeve tanımı veya (iii) tolerans/adım-boyu yetersizliği incelenir.
+\end{itemize}
+
+\subsubsection{Ay İçin: Donmuş (Frozen) Yörüngeler}
+Ay çevresinde mascon kaynaklı kısa dalga boylu yapı, alçak yörüngelerde $e$ artışına ve perilune düşüşüne yol açabilir.
+Buna karşın belirli $(a,e,i,\omega)$ kombinasyonlarında seküler etkiler kısmen dengelenir ve donmuş davranış gözlenir.
+\begin{itemize}
+\item \textbf{Neden yapılır?} Yüksek dereceli yerçekimi ivmesinin ve body-fixed$\leftrightarrow$eylemsiz dönüşümünün doğru fazda
+çalıştığını; ayrıca integratörün alçak irtifadaki ``sert'' dinamiği sayısal gürültüye boğmadan izleyebildiğini test eder.
+\item \textbf{Nasıl yapılır?} Literatürde kullanılan tipik bir donmuş-yörünge başlangıcı seçilir
+(örn.\ $i=90^\circ$, $\omega=270^\circ$, $e\simeq 0.02$, perilune 20--60 km bandında). Aynı senaryo farklı derece bandlarıyla
+($N=50$ vs $N=120$ gibi) koşturularak duyarlılık ölçülür.
+\item \textbf{Kriter:} $e(t)$ ve $h_p(t)$ kısa-periyotlu salınımlar yapmalı, uzun dönem ortalamasında belirgin bir kaçış
+(drft) göstermemelidir; $\omega(t)$ için de seküler sürüklenme küçük kalmalıdır. Gözlenen davranış, derece bandı arttıkça
+makul biçimde değişiyor ancak tolerans sıkılaştırınca yakınsıyorsa, test ``başarılı'' kabul edilir.
+\end{itemize}
+
+\newpage
+\subsection{Matematiksel Tutarlılık ve Korunum Kontrolleri}
+Son aşamada, modelin yalnızca belirli senaryolarda değil, en temel fizik/matematik özellikleri açısından da tutarlı olduğu
+kontrol edilir. Bu testler ``neden'' önemlidir? Çünkü bazı hatalar (yanlış normalizasyon, yanlış $GM$, yanlış referans yarıçapı,
+çerçeve karışıklığı) belirli bir yörüngede fark edilmeyebilir; ancak genel tutarlılık testlerinde ortaya çıkar.
+
+\begin{enumerate}
+\item \textbf{Laplace koşulu ($\nabla^2 U = 0$):}
+Kütlesiz dış uzayda gravite potansiyeli Laplace denklemini sağlar.
+Küresel harmonik açılımı teorik olarak bu özelliğe sahiptir; bu nedenle seçilen katsayı setiyle hesaplanan potansiyelin
+sayısal uygulamada beklenmedik sapmalar göstermemesi gerekir.
+\emph{Nasıl yapılır?} Pratikte doğrudan $\nabla^2 U$ hesaplamak yerine,
+alan düzeyinde tutarlılık (spike yokluğu), derece bandına göre enerji spektrumu ve ivme sürekliliği kontrolleriyle
+birlikte değerlendirilir; gerekiyorsa sınırlı sayıda noktada sayısal türevle ikinci türev kontrolü yapılabilir.
+
+\item \textbf{Mekanik enerji takibi (korunumlu durumda):}
+Atmosferik sürüklenme, itki veya diğer dissipatif terimler yoksa sistem konservatif kabul edilir ve toplam mekanik enerji
+sayısal çözümde yaklaşık korunmalıdır. İki-cisim için özgül enerji
+\[
+\varepsilon=\frac{v^2}{2}-\frac{\mu}{r}
+\]
+olup, ek potansiyel terimler kullanılıyorsa model tutarlılığı açısından enerji tanımı buna göre genişletilir.
+\emph{Nasıl yapılır?} Simülasyon boyunca göreli enerji hatası
+\begin{equation}
+\frac{\Delta \varepsilon(t)}{\varepsilon(t_0)}
+= \frac{\varepsilon(t)-\varepsilon(t_0)}{\varepsilon(t_0)}
+\end{equation}
+izlenir. Sıkı toleranslarda enerji hatasının seküler olarak büyümesi, çoğunlukla adım-boyu/tolerans yetersizliği veya
+kuvvet modelinin (özellikle çerçeve dönüşümü ve zaman parametreleri) tutarsız uygulanmasıyla ilişkilidir.
+Not olarak, asferik alan kullanıldığında enerji hatasının büyüklüğü kullanılan entegratör sınıfına göre değişir;
+simplektik yöntemlerde hata bant içinde kalma eğilimindeyken, adaptif RK yöntemlerinde hata kontrolü toleranslara duyarlıdır.
+\end{enumerate}
+
+
+% -------------- Uygulamada Protokol -------------------------
+\subsection{Uygulamada Önerilen Doğrulama Protokolü}
+\label{subsec:validation_protocol}
+
+Model karşılaştırmalarında amaç, gözlenen farkların \emph{gerçekten} model içeriğinden (derece bandı, regularization,
+yerellik vb.) kaynaklandığını; entegrasyon ayarları, çerçeve/zaman tutarsızlıkları veya ek pertürbasyonlardan
+doğmadığını göstermektir. Bu nedenle aşağıdaki kontroller, ``adil'' ve tekrarlanabilir bir kıyas için önerilir:
+
+\paragraph{1) Yakınsama (tolerans/step-size) testi.}
+Aynı kuvvet modeli ile, entegratör toleransları sistematik olarak sıkılaştırılarak (örn.\ \texttt{RelTol/AbsTol}
+bir dekad azaltılarak) propagasyon tekrarlanır. Tolerans sıkılaştıkça metrikler (örn.\ $\|\Delta\mathbf r\|$,
+enerji hatası, $\dot{\omega}_{\text{sec}}$) kararlı bir sınıra yakınsamıyorsa, gözlenen ayrışmanın önemli bir kısmı
+model farkından ziyade entegrasyon kaynaklı olabilir. Bu testte yalnızca adım sayısına değil, çıktının \emph{yakınsama
+davranışına} odaklanmak gerekir.
+
+\paragraph{2) Entegratör bağımsızlık kontrolü.}
+Ana propagasyon aracı simplektik bir yöntem olsa bile, kısa bir referans koşusu yüksek mertebeli adaptif bir RK ailesiyle
+(örn.\ \texttt{DOP853}) yürütülerek sonuçların tutarlılığı kontrol edilir. Amaç iki yöntemin her ayrıntıda aynı sonucu
+vermesi değil; temel büyüklüklerin (seküler eğilimler, enerji davranışı, ayrışmanın mertebesi) aynı fiziksel yorumu
+desteklemesidir. Belirgin çelişki varsa, tolerans/step-size ayarları ve özellikle çerçeve dönüşüm zinciri yeniden incelenmelidir.
+
+\paragraph{3) Adil kuvvet modeli (fair comparison).}
+İki gravite modeli kıyaslanırken, üçüncü-cisim etkileri, SRP, gelgit vb.\ tüm ek pertürbasyonlar ya tamamen kapatılmalı
+ya da her koşuda \emph{birebir aynı} uygulanmalıdır. Aynı şekilde, merkezî terim ($GM$), referans yarıçapı, dönüş hızı ve
+kullanılan zaman ölçeği gibi sabitler koşular arasında değişmemelidir. Aksi halde farkın kaynağı karışır ve sonuç
+``model farkı'' gibi yanlış etiketlenebilir.
+
+\paragraph{4) Metrik setini birlikte raporlama.}
+Tek bir çıktı yerine, en azından eleman--durum--ivme seviyelerini kapsayan tamamlayıcı bir metrik seti birlikte verilmelidir:
+(i) belirli irtifada $\|\Delta\mathbf a\|$ ve/veya $RMS_{\Delta a}(h)$,
+(ii) $\Delta\mathbf r(t)$ ve $\Delta\mathbf v(t)$ zaman serileri,
+(iii) seçili elemanlar için seküler sürüklenme hızları,
+(iv) küresel ve bölgesel (ROI) özet istatistikler. Bu yaklaşım, farkın hem dinamik etkisini hem de uzaysal kökenini görünür kılar.
+
+
+% ------------------------------------------------------------
+\subsection{Raporlanacak Metrikler ve Önerilen Tablo Şablonu}
+\label{subsec:report_metrics}
+
+Model karşılaştırmalarında yalnızca Kepler elemanlarına bakmak, özellikle mascon kaynaklı kısa dalga boylu etkilerin
+durum/ivme düzeyinde ürettiği ayrışmayı kaçırabilir. Bu nedenle değerlendirme; \emph{eleman}, \emph{durum} ve
+\emph{ivme} seviyelerinde tamamlayıcı metriklerle raporlanmalıdır. Aşağıdaki metrik seti, hem fiziksel yorumlanabilirliği
+korur hem de ``model farkı'' ile ``sayısal fark'' ayrımını nicel olarak destekler:
+
+\begin{itemize}
+\item \textbf{Eleman temelli:}
+$\Delta e(t)$, $\Delta\omega(t)$, $\Delta\Omega(t)$; ayrıca seçilen pencere boyunca seküler sürüklenme hızları
+(örn.\ $\dot{\omega}_{\text{sec}}$, $\dot{\Omega}_{\text{sec}}$; doğrusal regresyon ile).
+\item \textbf{Durum temelli:}
+$\|\Delta\mathbf r(t)\|$, $\|\Delta\mathbf v(t)\|$ zaman serileri ve özet istatistikler
+(RMS, maksimum, yüzdelikler).
+\item \textbf{İvme temelli:}
+aynı noktada $\|\Delta\mathbf a\|$; ayrıca seçilen irtifa küresi üzerinde $RMS_{\Delta a}(h)$ ve mümkünse enlem--boylam
+haritaları (alan düzeyi tutarlılık için).
+\end{itemize}
+
+\paragraph{Önerilen özet tablo.}
+Aşağıdaki şablon, iki farklı derece bandının (örn.\ $50\times50$ ve $120\times120$) aynı senaryoda ürettiği ayrışmayı,
+opsiyonel olarak mascon-dominant bir alt senaryo/bölge metriği ile birlikte tek tabloda özetler. Buradaki
+``mascon-dominant'' sütunu, örneğin Imbrium/Serenitatis çevresinde tanımlanan bir ROI üzerinde hesaplanan RMS değerleri
+veya seçili düşük irtifa geçiş penceresindeki metrikler olarak yorumlanabilir.
+
+\begin{table}[h]
+\centering
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabular}{|p{5.0cm}|p{3.3cm}|p{3.3cm}|p{3.3cm}|}
+\hline
+\textbf{Ölçüt (metrik)} &
+\textbf{$50\times50$} &
+\textbf{$120\times120$} &
+\textbf{Mascon-dominant\footnotesize\ (ROI/pencere)} \\ \hline
+
+$\max|\Delta e|$ \newline (pencere: $[t_0,t_f]$) &  &  &  \\ \hline
+$\dot{\omega}_{\text{sec}}$ \newline (deg/gün) &  &  &  \\ \hline
+$\dot{\Omega}_{\text{sec}}$ \newline (deg/gün) &  &  &  \\ \hline
+Perilune sürüklenmesi \newline (m/gün; $\mathrm{d}r_p/\mathrm{d}t$) &  &  &  \\ \hline
+Yörünge ömrü \newline (gün; $h_p<h_{\min}$ eşiği) &  &  &  \\ \hline
+$\|\Delta \mathbf r\|_{\text{RMS}}$ \newline (m) &  &  &  \\ \hline
+$\|\Delta \mathbf v\|_{\text{RMS}}$ \newline (m/s) &  &  &  \\ \hline
+$\|\Delta \mathbf a\|_{\text{RMS}}$ \newline (m/s$^{2}$) &  &  &  \\ \hline
+Enerji hatası \newline ($\max|\Delta\varepsilon/\varepsilon_0|$ veya drift var/yok) &  &  &  \\ \hline
+
+\end{tabular}
+\caption{Model/derece bandı karşılaştırmalarında eleman, durum ve ivme seviyesinde önerilen özet metrikler.}
+\label{tab:report_metrics_template}
+\end{table}
+
+\noindent
+Bu tablo, hangi modelin hangi rejimde yetersiz kaldığını nicel olarak görünür kılar. Yorumlamada unutulmaması gereken nokta:
+\emph{en küçük fark her zaman ``en iyi'' anlamına gelmez.} Seçim, görev gereksiniminin kritik kıldığı metriklere göre yapılmalı;
+örneğin alçak irtifada güvenli perilune yüksekliği kritikse \emph{perilune sürüklenmesi} ve \emph{yörünge ömrü} metrikleri
+önceliklendirilmelidir.
+
+
+
+
+
+% ================== Prosedür ==================
+\newpage
+\section{Görev Tasarımında Uygulama Akışı ve Standart Prosedür}
+\label{sec:workflow_procedure}
+
+Yüksek sadakatli bir astrodinamik simülasyonda amaç yalnızca ``yörüngeyi ilerletmek'' değil; seçilen fizik modelinin,
+referans çerçevelerinin, zaman ölçeklerinin ve sayısal entegrasyon ayarlarının \emph{birbiriyle tutarlı} bir zincir halinde
+çalıştığını göstermektir. Bu nedenle uygulama akışı, gereksinimlerin tanımlanmasından başlayarak (konfigürasyon),
+kuvvet modelinin kurulması, propagasyon, sonuçların yorumlanabilir büyüklüklere dönüştürülmesi ve V\&V kontrolleriyle
+tamamlanan izlenebilir bir prosedür olarak ele alınmalıdır. Aşağıda Cowell propagasyonu ve küresel harmonik tabanlı
+yüksek dereceli gravite modeliyle yürütülen bir analiz için önerilen standart iş akışı verilmiştir.
+
+\subsection{Adım 0: Girdi Sözleşmesi ve Simülasyon Parametrelerinin Tespiti}
+Kodlamaya geçmeden önce simülasyonun ``girdi sözleşmesi'' netleştirilir. Bu adımın amacı, ileride ortaya çıkabilecek
+uyumsuzlukları (birim hatası, yanlış $GM$, farklı zaman ölçekleri, çerçeve karışıklığı vb.) daha en başta engellemektir.
+Tipik olarak aşağıdaki seçimler açıkça dokümante edilir:
+\begin{itemize}
+    \item \textbf{Referans çerçeveleri ve zaman ölçeği:} Propagasyon çerçevesi (eylemsiz $\mathcal I$), gravite katsayılarının
+    tanımlı olduğu body-fixed çerçeve ($\mathcal B$) ve kullanılan zaman ölçeği (örn.\ UTC/TT/TDB) belirlenir.
+    Dönüşüm matrisi $\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)$ üretim yöntemi bu noktada seçilir
+    (bkz.\ Bölüm~\ref{sec:frame_transforms}).
+
+    \item \textbf{Dinamik model kapsamı:} Yalnız gravite mi, yoksa 3.\ cisim, SRP, gelgit vb.\ terimler de var mı netleştirilir.
+    Her ek terim, hem fiziksel varsayımları hem de gerekli ek girdileri (ephemeris, alan/oran parametreleri vb.) beraberinde getirir.
+
+    \item \textbf{Model çözünürlüğü ($N\times N$) ve irtifa ilişkisi:} Küresel harmonik terimlerin etkisi kabaca
+    $(R/r)^{n+1}$ ile sönümlendiği için, yüksek dereceli terimler alçak irtifada kritik hale gelir.
+    Bu nedenle $N$ seçimi; irtifa bandı, hedef doğruluk ve hesaplama bütçesi birlikte düşünülerek yapılır.
+
+    \item \textbf{Entegratör ve toleranslar:} Adaptif adımlı entegratör için \texttt{RelTol}/\texttt{AbsTol} birlikte tanımlanır.
+    \texttt{AbsTol} bileşen ölçekleriyle (konum~m, hız~m/s) uyumlu seçilmezse, toleranslar pratikte anlamsızlaşabilir.
+    Yüksek dereceli gravite ve alçak irtifa senaryolarında \texttt{DOP853} gibi yüksek mertebeli adaptif yöntemler tercih edilir.
+
+    \item \textbf{Sabitler ve birimler:} $GM$, referans yarıçapı $R$, normalizasyon türü, birim sistemi (SI) ve
+    çıktı örnekleme aralığı (log step) tek bir yerde tanımlanır ve konfigürasyon dosyasında saklanır.
+\end{itemize}
+
+\subsection{Adım 1: Gravite Katsayılarının Yüklenmesi ve Ön Kontrol}
+Kuvvet modelinin temel girdisi olan SH katsayıları ($C_{nm},S_{nm}$) güvenilir biçimde okunur ve \emph{metaverisiyle birlikte}
+doğrulanır. Bu adımın nedeni şudur: SH dosyalarında katsayıların normalizasyonu, referans yarıçapı, $GM$ ve maksimum derece
+gibi bilgiler değişebilir; bu bilgiler tutarsız kullanılırsa ivme alanı ``doğru görünüp'' yanlış ölçeklenebilir.
+
+\begin{itemize}
+    \item Katsayı dosyası okunur ve maksimum derece/sıra, $GM$ ve referans yarıçapı gibi alanlar kaydedilir.
+    \item \textbf{Normalizasyon kontrolü:} Katsayıların (tam/yarı) normalize edilip edilmediği belirlenir ve kullanılan
+    ilişkili Legendre fonksiyonlarının tanımıyla (normalize/unnormalized) \emph{uyumlu} hale getirilir.
+    \item \textbf{Hızlı alan testi:} Seçilen bir irtifada (örn.\ $h=40$ km) örnek noktalar üzerinde
+    $\|\mathbf a_{\text{asph}}\|$ büyüklüğünün makul aralıkta olduğuna ve ``spike'' benzeri sayısal patlama içermediğine bakılır.
+\end{itemize}
+
+\subsection{Adım 2: Cowell Propagasyonu (Ana Çalıştırma Döngüsü)}
+Bu aşamada durum vektörü $\mathbf X=[\mathbf r\ \mathbf v]^{\mathsf T}$, Cowell formülasyonuyla doğrudan entegre edilir.
+Algoritmik akış, her entegrasyon çağrısında kuvvet modelinin \emph{tutarlı çerçevede} üretilmesini zorunlu kılar:
+\begin{enumerate}
+    \item Başlangıç koşulu $\mathbf X_0=[\mathbf r_0\ \mathbf v_0]^{\mathsf T}$ ve zaman $t_0$ tanımlanır.
+    \item Entegratör, her iç adımda $\mathbf r_{\mathcal I}(t)$ durumunu ister.
+    \item \textbf{Çerçeve dönüşümü:} $\mathbf r_{\mathcal B}(t)=\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)\mathbf r_{\mathcal I}(t)$
+    ile konum body-fixed çerçeveye alınır (bkz.\ Bölüm~\ref{sec:frame_transforms}).
+    \item \textbf{Asferik ivme hesabı:} Seçilen $N\times N$ derece bandıyla $\mathbf a_{\text{asph},\mathcal B}(t)$ hesaplanır.
+    \item \textbf{Geri dönüşüm:} $\mathbf a_{\text{asph},\mathcal I}(t)=\mathbf C_{\mathcal B\leftarrow\mathcal I}^{\mathsf T}(t)\mathbf a_{\text{asph},\mathcal B}(t)$.
+    \item Diğer pertürbasyonlar (3.\ cisim, SRP, vb.) eylemsiz çerçevede üretilir ve
+    $\mathbf a_{\text{total}}=-\mu r^{-3}\mathbf r + \mathbf a_{\text{pert},\mathcal I}$ olarak toplanır.
+    \item Entegratör bir sonraki adımı üretir; çıktı, seçilen örnekleme aralığında (her iç adım değil) kaydedilir.
+\end{enumerate}
+Bu akışta kritik nokta şudur: özellikle $m\neq 0$ terimler kullanılıyorsa, $\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)$
+doğru fazı belirler. Dönüşümün ihmal edilmesi veya zaman ölçeğiyle tutarsız uygulanması, ``model hatası'' gibi görünen fakat
+aslında geometrik tutarsızlıktan kaynaklanan seküler sapmalara yol açar.
+
+\subsection{Adım 3: Osilatör Eleman Analizi ve (Gerekirse) GVE Tabanlı Türevler}
+Cowell propagasyonu Kartezyen durumda çalışır; ancak görev yorumları çoğunlukla yörünge elemanları üzerinden yapılır.
+Bu nedenle ham $\mathbf r(t),\mathbf v(t)$ çıktısı, osilatör Kepler elemanlarına dönüştürülür:
+\begin{itemize}
+    \item Her örnekleme anında RV$\rightarrow$COE dönüşümüyle $a,e,i,\Omega,\omega,\nu$ elde edilir.
+    \item Dairesel/ekvatoryal yakınında tekillik riski varsa, raporlamada yardımcı elemanlar
+    (örn.\ eş-eksensel / equinoctial türü) veya doğrudan vektörel büyüklükler ($\mathbf h,\mathbf e$) tercih edilir.
+    \item Eleman türevlerini fiziksel olarak ayırmak istenirse, $\mathbf a_{\text{pert}}$ RTN tabanına projekte edilerek
+    Gauss Varyasyonel Eşitlikleri üzerinden $da/dt,\,de/dt,\dots$ türetilebilir (bkz.\ Bölüm~\ref{sec:perturbing_accel_frames}).
+\end{itemize}
+
+\subsection{Adım 4: Doğrulama ve Karşılaştırma (V\&V)}
+Bu adımın amacı ``çıktı var mı?'' değil; ``çıktı doğru mu, hangi hata kaynağı baskın?'' sorusunu cevaplamaktır.
+Minimum V\&V seti aşağıdaki kontrolleri içerir:
+\begin{itemize}
+    \item \textbf{Yakınsama (tolerans) testi:} Aynı senaryo daha sıkı \texttt{RelTol}/\texttt{AbsTol} ile tekrarlanır.
+    Eleman zaman serileri ve enerji metriği anlamlı biçimde değişmiyorsa çözüm yakınsamıştır; değişiyorsa sayısal hata baskındır.
+    \item \textbf{Enerji/korunum kontrolü (konservatif modelde):} Yalnız gravite varsa $a$ ortalamada sabit kalmalı ve enerji
+    hatası seküler olarak büyümemelidir. Sürekli drift çoğunlukla tolerans/adım-boyu veya çerçeve dönüşümü tutarsızlığına işaret eder.
+    \item \textbf{Analitik kıyas (basitleştirilmiş modelde):} Yalnız $J_2$ gibi düşük dereceli bir modelle koşulan testte,
+    $\dot{\Omega}$ ve $\dot{\omega}$ analitik formüllerle kıyaslanır. Bu test ``yüksek dereceli'' koşunun kendisini değil,
+    \emph{uygulama zincirini} (işaretler, birimler, ölçekler) doğrulamak için kullanılır.
+    \item \textbf{Referans yazılım/efemeris kıyası (varsa):} Aynı başlangıç koşullarıyla bağımsız bir propagatör veya referans
+    efemeris üzerinden $\Delta\mathbf r(t),\Delta\mathbf v(t)$ kıyaslanır; farkın karakteri (seküler/periyodik/gürültü) yorumlanır.
+\end{itemize}
+
+\subsection{Özet Uygulama Tablosu}
+Aşağıdaki tablo, uygulama zincirinin izlenebilir bir kontrol listesi olarak nasıl organize edileceğini özetler:
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.25}
+\small
+\begin{tabular}{|c|l|p{7.2cm}|l|}
+\hline
+\textbf{\#} & \textbf{İşlem Adımı} & \textbf{Detay ve Dikkat Edilecekler} & \textbf{Kritik Çıktı} \\ \hline
+\textbf{0} & \textbf{Konfigürasyon} &
+Çerçeveler ($\mathcal I/\mathcal B$), zaman ölçeği, sabitler ($GM,R$), entegratör ve toleranslar tanımlanır. &
+\texttt{config.yaml} \\ \hline
+\textbf{1} & \textbf{Model Yükleme} &
+$C_{nm},S_{nm}$ okunur; normalizasyon, $GM$, $R$ ve $N_{\max}$ doğrulanır; hızlı alan testi yapılır. &
+Katsayı seti + metaveri \\ \hline
+\textbf{2} & \textbf{Propagasyon} &
+Cowell: $\dot{\mathbf X}=[\mathbf v\;\;\mathbf a_{\text{total}}]^{\mathsf T}$.
+Her adımda $\mathbf C_{\mathcal B\leftarrow\mathcal I}(t)$ ile dönüşüm ve SH ivme hesabı. &
+\texttt{state\_vectors.csv} \\ \hline
+\textbf{3} & \textbf{Post-Process} &
+RV$\rightarrow$COE (osilatör elemanlar); gerekirse RTN projeksiyon ve GVE türevleri. &
+$a(t),e(t),i(t),\dots$ \\ \hline
+\textbf{4} & \textbf{V\&V Kontrolleri} &
+Yakınsama testi, enerji/korunum takibi, basit modelde analitik kıyas, varsa bağımsız referansla fark analizi. &
+Hata raporu / metrikler \\ \hline
+\end{tabular}
+\caption{Yüksek sadakatli yörünge simülasyonu için standart işlem akışı ve kontrol listesi.}
+\label{tab:workflow_summary}
+\end{table}
+
+\vspace{0.6cm}
+
+\begin{tcolorbox}[
+  colback=blue!5!white,
+  colframe=blue!75!black,
+  title=\textbf{Örnek Tasarım Senaryosu: Molniya Yörüngesi ile Zincir Doğrulama}
+]
+\textbf{Amaç:} Uygulama zincirinin (kuvvet modeli + entegratör + çıktı analizi) doğru kurulduğunu,
+analitik beklentisi bilinen bir senaryo üzerinde hızlıca doğrulamak.
+
+\begin{itemize}
+    \item \textbf{Konfigürasyon:} Yüksek dışmerkezlik ($e\approx0.7$) nedeniyle perigee civarında dinamik sertleşir; bu yüzden
+    adaptif adımlı bir yöntem seçilir (\texttt{RK45} veya daha sıkı hedef doğruluk için \texttt{DOP853}).
+    \item \textbf{Kuvvet modeli:} Zincir doğrulaması için önce yalnız $J_2$ içeren düşük dereceli bir model koşulur.
+    Böylece işaret/birim/ölçek hataları hızlı yakalanır.
+    \item \textbf{Başlangıç:} Kritik eğim ($i\simeq63.4^\circ$) seçilerek $\dot{\omega}$'nın teorik olarak sıfırlanması hedeflenir.
+    \item \textbf{Kriter:} $\omega(t)$ zaman serisinde seküler drift gözlenmemeli; tolerans sıkılaştırıldığında sonuçlar yakınsamaya
+    gitmelidir. Drift varsa, önce $J_2$ formülasyonu ve birimler; sonra tolerans/adım-boyu ve çerçeve tanımı kontrol edilir.
+\end{itemize}
+\end{tcolorbox}
+
+
+
+
+% ============= Ay Özelinde Simülasyon Kodları ============
+\newpage
+\section{Ay Yörünge Simülasyonu ve Görev Tasarımı: Uygulama Esasları}
+
+Ay yörüngesi simülasyonu, Dünya yörüngesine kıyasla çok daha hassas dinamik zorluklar içerir. Ay'ın homojen olmayan kütle dağılımı (Mascon yapıları) ve Dünya'ya kütleçekimsel kilidi, simülasyon mimarisinde özel düzenlemeler gerektirir. Bu bölümde, yüksek sadakatli ($120 \times 120$) bir Ay görevi simülasyonu geliştirilirken izlenmesi gereken teknik yol haritası ve kritik dikkat noktaları sunulmuştur.
+
+\subsection{Ay Simülasyonu İçin Tasarım Akışı}
+
+Ay çevresinde güvenilir bir yörünge kestirimi (Orbit Determination) ve propagasyon yapabilmek için aşağıdaki 5 adımlı prosedür uygulanmalıdır:
+
+\subsubsection{Adım 1: Referans Sistemlerinin Yönetimi (MCI vs. MCMF)}
+Dünya simülasyonlarında ECI/ECEF dönüşümü kullanılırken, Ay için MCI (Moon-Centered Inertial) ve MCMF (Moon-Centered Moon-Fixed) dönüşümü hayati önem taşır.
+\begin{itemize}
+    \item \textbf{Dönüşüm Matrisi:} Ay, Dünya'ya kütleçekimsel olarak kilitli olduğu için kendi ekseni etrafındaki dönüşü ile Dünya etrafındaki dolanımı senkronizedir (Senkron Dönüş). Ancak librasyon hareketleri nedeniyle bu dönüşüm sabit hızlı basit bir matris ($R_z(\theta)$) ile ifade edilemez. Yüksek hassasiyet için IAU (Uluslararası Astronomi Birliği) librasyon modelleri kullanılmalıdır.
+    \item \textbf{Selenografik Koordinatlar:} $120 \times 120$ gravite katsayıları, Ay'a yapışık (Selenografik) sistemde tanımlıdır. Entegrasyon ise eylemsizlik sisteminde (MCI) yapılır.
+\end{itemize}
+
+\subsubsection{Adım 2: Gravite Modelinin Seçimi ve Yüklenmesi}
+Ay'ın yakın yüzü (Nearside) ve uzak yüzü (Farside) arasındaki veri kalitesi farkı tarihsel bir sorundu, ancak GRAIL görevi ile bu sorun aşılmıştır.
+\begin{itemize}
+    \item \textbf{Model Seçimi:} Modern analizler için \texttt{GRGM1200A} veya \texttt{LP150Q} modelleri endüstri standardıdır.
+    \item \textbf{Derece ($N$) Kararı:}
+    \begin{itemize}
+        \item \textbf{$50 \times 50$:} Konsept tasarımlar ve yüksek irtifa uçuşları için yeterlidir.
+        \item \textbf{$120 \times 120$:} Yüzeye yakın (Low Lunar Orbit - LLO) operasyonlar, iniş senaryoları ve uzun süreli kararlılık analizleri için zorunludur. Mascon kaynaklı yerel ivme değişimlerini ancak bu çözünürlük yakalayabilir.
+    \end{itemize}
+\end{itemize}
+
+\subsubsection{Adım 3: Sayısal Kararlılık ve Algoritma}
+Yüksek dereceli harmoniklerin hesaplanması sırasında standart Legendre formülleri ($P_{nm}$) faktöriyel büyümesi nedeniyle bilgisayarda taşma (overflow) hatası verir.
+\begin{itemize}
+    \item \textbf{Rekürsif Yöntem:} $N > 50$ için \textit{Pines} veya \textit{Holmes-Featherstone} gibi normalize edilmiş rekürsif algoritmalar kullanılmalıdır.
+    \item \textbf{İntegratör:} Mascon geçişlerinde ivme çok sert değiştiği için \texttt{RK45} yerine \texttt{DOP853} (8. Mertebe) ve sıkı tolerans ($10^{-12}$) kullanılmalıdır.
+\end{itemize}
+
+\subsection{Kritik Dikkat Noktaları ve Mascon Etkisi}
+
+Ay yörünge tasarımcısı, Dünya'daki sezgilerinin aksine şu fenomenlere hazırlıklı olmalıdır:
+
+\begin{enumerate}
+    \item \textbf{Yörünge Bozunumu (Orbital Decay):} 
+    Atmosfer olmamasına rağmen, Mascon'lar (kütle yoğunlaşmaları) alçak yörüngedeki uyduların eksantrisitesini ($e$) sürekli pompalar. Dairesel başlayan bir yörünge kısa sürede eliptikleşerek yüzeye çarpabilir. Bu "beklenmedik" pertürbasyonlar, Mascon yaklaşımının temel motivasyonudur.
+    
+    \item \textbf{Donmuş Yörünge (Frozen Orbit) İhtiyacı:}
+    Yakıt harcamadan yörüngede kalmak (station-keeping) için özel başlangıç koşulları seçilmelidir. Ay için teorik donmuş yörünge parametreleri:
+    \begin{equation}
+        i \approx 90^\circ, \quad \omega \approx 270^\circ, \quad e \approx 0.02 - 0.05
+    \end{equation}
+    Bu parametreler, Mascon etkilerinin ortalamada birbirini sönümlediği kararlı ceplerdir.
+
+    \item \textbf{3. Cisim Etkileri:}
+    Dünya ve Güneş'in çekim etkisi, Ay yörüngelerinde (özellikle yüksek irtifada) baskın hale gelir. $120 \times 120$ gravite modeline ek olarak, Dünya ve Güneş'in noktasal kütle etkileri simülasyona mutlaka eklenmelidir.
+\end{enumerate}
+
+\subsection{Özet: Ay Simülasyon Kontrol Listesi}
+
+Aşağıdaki tablo, bir Ay görevi simülasyonu koşturulurken yapılması gereken nihai kontrolleri özetler.
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{|l|p{5cm}|p{6cm}|}
+\hline
+\textbf{Parametre} & \textbf{Önerilen Ayar} & \textbf{Gerekçe} \\ \hline
+\textbf{Gravite Modeli} & GRGM1200A ($120 \times 120$) & Yüzey anomalilerini ve Mascon etkilerini yakalamak için. \\ \hline
+\textbf{Koordinat Sistemi} & MCI $\leftrightarrow$ MCMF (Selenografik) & Ay'ın librasyon hareketi ve senkron dönüşü. \\ \hline
+\textbf{İntegratör} & DOP853 (Tolerans $10^{-12}$) & Mascon üzerindeki ani ivme sıçramalarını (spikes) yönetmek için. \\ \hline
+\textbf{Başlangıç Koşulu} & Frozen ($i=90^\circ, \omega=270^\circ$) & Pasif yörünge ömrünü uzatmak ve çarpışmayı önlemek için. \\ \hline
+\textbf{Algoritma} & Normalized Recursive Legendre & $N=120$ için sayısal taşmayı (overflow) önlemek. \\ \hline
+\end{tabular}
+\caption{Yüksek sadakatli Ay yörünge simülasyonu tasarım parametreleri.}
+\label{tab:lunar_sim_checklist}
+\end{table}
+
+Bu çalışma ile ortaya konan simülasyon altyapısı; hem statik alan doğrulaması (ivme haritaları) hem de dinamik görev testleri (Frozen yörünge analizi) ile doğrulanmış, Ay görevleri için güvenilir bir analiz aracı olarak kurgulanmıştır.
+
+
+
+
+% ============================================================
+\section{Ay Görevlerinde Model Derecesi Seçimi}
+% ============================================================
+
+Ay yerçekimi alanı için sferik harmonik modeller, pratikte maksimum derece ve mertebe
+($n_{\max}=m_{\max}$) ile özetlenir. Ancak ``kaçıncı derece yeter?'' sorusunun tek bir cevabı yoktur:
+seçim, irtifa kadar görev süresi, istenen çıktının türü (konum mu, hız mı, faz mı?),
+hata bütçesi ve modelin belirsizliğinin dinamiğe nasıl yansıdığı gibi ölçütlere dayanır.
+
+
+\paragraph{Derece neyi temsil eder?}
+$n_{\max}$ büyüdükçe modelin taşıdığı uzaysal ayrıntı artar; fakat aynı anda iki şey de artar:
+(i) hesap yükü (özellikle uzun süreli entegrasyonlarda toplam maliyet),
+(ii) yüksek derecelerde katsayı belirsizliğinin veya model uyumsuzluğunun çözümü bozma riski.
+Bu nedenle seçim, sadece ``en yüksek derecede almak'' değildir; gereken ayrıntıyı hedefleyip
+gereksiz parametreyi sisteme sokmamaktır.
+
+\paragraph{Seçimi belirleyen pratik sorular (rapor için kullanılabilir kontrol listesi).}
+Bir model derecesi seçmeden önce şu dört soruyu açık yazmak seçim kalitesini artırır:
+(i) Hedeflenen metrik nedir: km düzeyi konum mu, m düzeyi iniş hassasiyeti mi, yoksa uzun dönem faz/argüman hatası mı?
+(ii) Propagasyon penceresi nedir: saatler mi, günler mi, aylar mı?
+(iii) Yörünge rejimi nedir: yüzeye yakın mı, orta irtifa mı, yoksa NRHO gibi çok cisim etkilerinin baskın olduğu bir rejim mi?
+(iv) Kullanılan gravite modelinin kaynağı ve belirsizliği nedir: ``statik, iyi kalibre'' bir model mi, yoksa görev-özel/yerel çözüm mü?
+
+\paragraph{50$\times$50 ne zaman mantıklıdır?}
+50$\times$50 (yaklaşık ``orta derece'') modeller, genellikle \emph{görev taslağı} ve \emph{konsept seviyesinde}
+yeterli olabilir. Burada amaç, mascon kaynaklı kısa dalga boyu ayrıntıları yakalamaktan çok,
+yörüngenin genel karakterini ve operasyonel trendleri doğru yakalamaktır. Özellikle
+(i) orta--yüksek irtifa rejimi, (ii) kısa/orta süreli propagasyon, (iii) metre-altı hassasiyet zorunluluğunun olmadığı
+senaryolarda 50$\times$50 sınıfı modeller, maliyet/yarar açısından iyi bir başlangıçtır.
+Ayrıca hızlı parametre taraması (çok sayıda simülasyon) gereken tasarım çalışmalarında,
+daha yüksek dereceye çıkmak toplam simülasyon bütçesini hızla şişirebilir.
+
+\paragraph{120$\times$120 ne zaman gerekçelidir?}
+120$\times$120 sınıfı modeller, \emph{yüzeye yakın operasyonlar} ve \emph{uzun süreli} görevlerde anlamlı fark yaratır.
+Bu seviyede kazanım, yalnızca ``daha çok detay'' değil; yörünge hatasının büyümesine sebep olan yerel gravite yapılarını
+daha doğru temsil ederek tahmin edilen drift'in ve faz hatasının gerçekçi hale gelmesidir.
+Özellikle düşük irtifada çalışan bilim görevleri, düşük irtifa haritalama senaryoları ve hassas navigasyon/iniş analizleri
+için 50$\times$50 çoğu zaman ``iyimser'' kalır; yani yörünge bozulumunu sistematik olarak küçük tahmin edebilir.
+Bu durumda 120$\times$120, pratikte daha güvenli bir taban sağlar.
+
+\paragraph{İniş ve yerel hassasiyet: küresel derece tek başına yeterli olmayabilir.}
+İniş/iniş öncesi terminal faz gibi durumlarda hata bütçesi çok sıkıdır ve yerel gravite detayları daha kritiktir.
+Bu tür analizlerde tek bir $n_{\max}$ yükseltmek yerine, sık kullanılan yaklaşım:
+(i) küresel bir sferik harmonik model ile ``arka plan'' alanı temsil etmek,
+(ii) kritik bölge için daha yerel bir düzeltme (yerel mascon/patch modeli veya bölgesel çözüm)
+kullanmaktır. Bu, hem hesap maliyetini kontrol eder hem de yerel hatayı daha doğrudan hedefler.
+
+\paragraph{NRHO ve cislunar görevler: hassasiyet ``uzun zaman ölçeği'' üzerinden gelir.}
+NRHO gibi rejimlerde küçük gravite hataları kısa vadede küçük görünse bile,
+uzun zaman ölçeklerinde faz kaymasına ve düzeltme manevrası maliyetine dönüşebilir.
+Bu nedenle burada seçim, yalnızca derece artırmak değil, aynı zamanda kullanılan modelin
+\emph{kararlılığı ve tutarlılığı} (iyi regularize edilmiş ve görev geometrisiyle uyumlu olması)
+üzerinden yapılmalıdır. Pratikte 120$\times$120 ve üzeri modeller veya görev-özel mascon çözümleri
+bu sebeple tercih edilebilir.
+
+\paragraph{Uygulanabilir seçim özeti.}
+\emph{Konsept ve hızlı tasarım için 50$\times$50 iyi bir başlangıçtır; yüzeye yakın/uzun süreli/hassas senaryolarda 120$\times$120 sınıfına çıkmak genellikle gerekçelidir; iniş gibi yerel hassasiyet isteyen durumlarda ise derece artırma tek başına değil, küresel+yerel hibrit temsil daha doğru bir stratejidir.}
+
+
+
+
+
+% ------------------------------------------------------------
+\subsection{Gerçek Uçuş Verisi Olmadan Tutarlılık Nasıl Teyit Edilir?}
+
+Uçuş verisi yoksa hedef ``mutlak doğrulama'' değil,
+modelin fiziksel ve matematiksel tutarlılığını sistematik biçimde sınamaktır.
+
+\paragraph{1) Dış bölgede Laplace davranışı.}
+Ay dışında potansiyel Laplace denklemini sağlamalıdır ($\nabla^2 V=0$).
+Sferik harmonik temsiller bunu yapısal olarak sağlar;
+mascon/hibrit temsillerde ise potansiyel sürekliliği ve türev davranışı ayrıca izlenmelidir.
+
+\paragraph{2) Katsayı spektrumu: dereceye göre güç dağılımı.}
+Yüksek derecelerde beklenmedik ``güç patlaması'',
+gürültü veya regularization yetersizliği işareti olabilir.
+Bu analiz, özellikle 120$\times$120 ve üzeri çözümlerde kritiktir.
+
+\paragraph{3) Bağımsız jeofizik çapraz kontrol.}
+Büyük havzalar/mare alanları üzerinde beklenen mascon imzasının görünmesi,
+modelin fiziksel anlam taşıdığını destekler.
+Topografya ile gravite anomalilerinin korelasyonu gibi kontroller,
+özellikle mascon temsillerinde yorum gücünü artırır.
+
+\paragraph{4) Kapalı-çevrim (synthetic truth) testi.}
+Güvenilir bir referans modelle sentetik izleme verisi üretilir
+(Doppler, menzil, menzil-hızı vb.), aynı ters çözüm zinciriyle katsayılar geri kazanılır.
+Referans ile geri-kazanım farkı,
+veri geometrisinin ve regularization'ın hangi derece bandında bilgi kaybı ürettiğini somut biçimde gösterir.
+
+% ------------------------------------------------------------
+\subsection{Genel Sonuç}
+
+Ay gravite modeli seçimi ``en yüksek derece her zaman en iyidir'' mantığıyla güvenle yapılamaz.
+Sağlam bir seçim için:
+(i) frozen yörünge tabanlı uzun süreli dinamik testler,
+(ii) potansiyel/ivme/durum düzeyinde metrikler,
+(iii) sayısal yakınsama ve adil kuvvet modeli kontrolleri,
+(iv) uçuş verisi yoksa Laplace-sınıfı, spektral sağlık ve kapalı-çevrim testleri
+bir arada kullanılmalıdır.
+Bu çerçeve, 50$\times$50 ile 120$\times$120 arasındaki ``yeterlilik'' farkını görev bağlamında görünür kılar
+ve mascon temsillerinin hangi rejimlerde avantaj sağladığını netleştirir.

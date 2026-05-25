@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-st_lrps_force_model.py - Propagator-ready inference API for the lunar residual potential surrogate.
+force_model.py - Propagator-ready inference API for the lunar residual potential surrogate.
 
 Usage:
-    from st_lrps_force_model import load_surrogate_force_model
+    from st_lrps.runtime.force_model import load_surrogate_force_model
 
     fm = load_surrogate_force_model("runs/st_lrps_train_20240101_120000")
     delta_u = fm.predict_residual_potential(x_m)   # DeltaU in m^2/s^2
@@ -29,26 +29,15 @@ import torch.nn as nn
 
 logger = logging.getLogger(__name__)
 
-try:
-    from .st_lrps_artifacts import (
-        load_best_or_last,
-        make_run_layout,
-        read_run_manifest,
-        reload_model_from_run_dir as reload_model_from_artifact_run_dir,
-        resolve_run_dir as resolve_run_dir_from_artifacts,
-    )
-    from .st_lrps_scaling import ScalerPack, compute_base_accel, compute_base_potential
-    from .dataset_parameters import MU_MOON_SI, R_MOON_SI
-except ImportError:
-    from st_lrps_artifacts import (  # type: ignore
-        load_best_or_last,
-        make_run_layout,
-        read_run_manifest,
-        reload_model_from_run_dir as reload_model_from_artifact_run_dir,
-        resolve_run_dir as resolve_run_dir_from_artifacts,
-    )
-    from st_lrps_scaling import ScalerPack, compute_base_accel, compute_base_potential
-    from dataset_parameters import MU_MOON_SI, R_MOON_SI
+from st_lrps.artifacts.manager import (
+    load_best_or_last,
+    make_run_layout,
+    read_run_manifest,
+    reload_model_from_run_dir as reload_model_from_artifact_run_dir,
+    resolve_run_dir as resolve_run_dir_from_artifacts,
+)
+from st_lrps.shared.scaling import ScalerPack, compute_base_accel, compute_base_potential
+from st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 
 
 def _resolve_run_dir(model_dir: Union[str, Path]) -> Path:
@@ -500,7 +489,7 @@ if __name__ == "__main__":
     import argparse
     import sys
 
-    ap = argparse.ArgumentParser(description="Smoke-test st_lrps_force_model.py")
+    ap = argparse.ArgumentParser(description="Smoke-test st_lrps.runtime.force_model")
     ap.add_argument("model_dir", help="Run dir, checkpoint dir, or .pt file")
     ap.add_argument("--device", default="auto")
     ap.add_argument("--n", type=int, default=10)
@@ -510,10 +499,7 @@ if __name__ == "__main__":
     print(f"Loaded: degree_min={fm.degree_min}, mu_si={fm.mu_si:.4e}, a_sign={fm.a_sign:+.1f}")
     print("Frame warning: input must be Moon-centred inertial frame matching SH dataset generation.")
 
-    try:
-        from dataset_parameters import R_MOON_SI as _R_REF
-    except ImportError:
-        _R_REF = 1.7374e6
+    from st_lrps.data.dataset_parameters import R_MOON_SI as _R_REF
 
     rng = np.random.default_rng(0)
     r = _R_REF + rng.uniform(30e3, 120e3, (args.n, 1))

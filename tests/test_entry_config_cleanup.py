@@ -160,7 +160,7 @@ def test_validate_args_uses_canonical_st_lrps_helper(monkeypatch, tmp_path: Path
 
     monkeypatch.setattr("common.montecarlo_defs.validate_st_lrps_model_dir", _spy)
     monkeypatch.setattr(
-        "st_lrps.dataset_parameters.looks_like_lunar_run_config",
+        "st_lrps.data.dataset_parameters.looks_like_lunar_run_config",
         lambda cfg: True,
     )
 
@@ -180,7 +180,7 @@ def test_validate_args_accepts_ckpt_last_via_canonical_helper(monkeypatch, tmp_p
     (model_dir / "checkpoints" / "ckpt_last.pt").write_bytes(b"")
 
     monkeypatch.setattr(
-        "st_lrps.dataset_parameters.looks_like_lunar_run_config",
+        "st_lrps.data.dataset_parameters.looks_like_lunar_run_config",
         lambda cfg: True,
     )
 
