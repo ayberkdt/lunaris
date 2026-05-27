@@ -73,6 +73,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sys
 import time
 import traceback
@@ -2370,58 +2371,260 @@ def select_median_difficulty_scenario(
 # Plotting helpers
 # =============================================================================
 
+# =============================================================================
+# Publication-grade plotting style (visualization only; no numeric impact)
+# =============================================================================
+# Consistent, professional styling shared by every Orbit-Level Benchmark figure:
+#   * ST-LRPS uses a single distinctive accent colour + star marker and a heavier
+#     line so it always stands out.
+#   * Spherical-harmonic baselines share a degree-ordered colour family that runs
+#     warm (low degree) -> cool/dark (high degree), so SH20 and SH200 are easy to
+#     tell apart and the ordering reads naturally.
+#   * Helpers pick a sensible display unit (km/m/cm) and never leave a blank plot.
+
+_ST_LRPS_COLOR = "#8E2DC4"   # deep violet accent — ST-LRPS stands out
+_TRUTH_COLOR = "#15202B"     # near-black reference
+_FALLBACK_COLOR = "#7A8699"
+
+# Degree -> colour anchors (interpolated in RGB for arbitrary degrees).
+_SH_DEGREE_ANCHORS = [
+    (20,  "#D1495B"),  # muted red
+    (30,  "#E8833A"),  # warm amber
+    (60,  "#C9A227"),  # gold
+    (80,  "#6C8EBF"),  # blue-gray
+    (100, "#3D5A80"),  # slate blue
+    (120, "#33518A"),  # deeper slate
+    (160, "#23386B"),  # dark blue
+    (200, "#1B2A41"),  # charcoal navy
+]
+_KNOWN_DEGREE_ORDER = [20, 30, 60, 80, 100, 120, 160, 200]
+_SH_MARKERS = ["o", "s", "^", "D", "v", "P", "X", "<", ">"]
+_SH_DEGREE_RE = re.compile(r"SH(\d+)")
+
+# Legacy override table (kept for the older CPU-mode plots / batch-rk4 panels).
 MODEL_COLORS = {
-    "sh20": "#e74c3c", "sh80": "#e67e22", "sh120": "#f1c40f",
-    "sh160": "#2ecc71", "sh200": "#3498db", "st_lrps": "#9b59b6",
-    "st_lrps_batch_rk4": "#c39bd3", "sh200_rk4": "#85c1e9",
-    "GPU_SH200_RK4": "#222222", "GPU_SH160_RK4": "#1f77b4",
-    "GPU_SH120_RK4": "#17becf", "GPU_SH60_RK4": "#ff7f0e",
-    "GPU_SH20_RK4": "#d62728", "GPU_ST_LRPS_RK4": "#9467bd",
+    "st_lrps_batch_rk4": _ST_LRPS_COLOR, "sh200_rk4": "#1B2A41",
 }
 
-def _color(m: str) -> str:
-    return MODEL_COLORS.get(m, MODEL_COLORS.get(m.lower(), "#777777"))
+
+def _hex_to_rgb(h: str) -> Tuple[float, float, float]:
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))  # type: ignore[return-value]
+
+
+def _rgb_to_hex(rgb: Tuple[float, float, float]) -> str:
+    return "#%02x%02x%02x" % tuple(int(round(max(0.0, min(1.0, c)) * 255)) for c in rgb)
+
+
+def _model_degree(model: str) -> Optional[int]:
+    m = str(model).upper()
+    if "ST_LRPS" in m or "ST-LRPS" in m:
+        return None
+    found = _SH_DEGREE_RE.search(m)
+    return int(found.group(1)) if found else None
+
+
+def _is_stlrps(model: str) -> bool:
+    m = str(model).upper()
+    return "ST_LRPS" in m or "ST-LRPS" in m
+
+
+def _sh_degree_color(deg: int) -> str:
+    anchors = _SH_DEGREE_ANCHORS
+    if deg <= anchors[0][0]:
+        return anchors[0][1]
+    if deg >= anchors[-1][0]:
+        return anchors[-1][1]
+    for (d0, c0), (d1, c1) in zip(anchors, anchors[1:]):
+        if d0 <= deg <= d1:
+            f = (deg - d0) / (d1 - d0) if d1 > d0 else 0.0
+            r0, r1 = _hex_to_rgb(c0), _hex_to_rgb(c1)
+            return _rgb_to_hex(tuple(a + (b - a) * f for a, b in zip(r0, r1)))
+    return anchors[-1][1]
+
+
+def model_color(model: str) -> str:
+    """Consistent colour for a model across every figure."""
+    if _is_stlrps(model):
+        return _ST_LRPS_COLOR
+    deg = _model_degree(model)
+    if deg is not None:
+        return _sh_degree_color(deg)
+    return MODEL_COLORS.get(str(model), MODEL_COLORS.get(str(model).lower(), _FALLBACK_COLOR))
+
+
+def _color(m: str) -> str:  # backwards-compatible alias
+    return model_color(m)
+
+
+def model_marker(model: str) -> str:
+    if _is_stlrps(model):
+        return "*"
+    deg = _model_degree(model)
+    if deg is None:
+        return "o"
+    if deg in _KNOWN_DEGREE_ORDER:
+        return _SH_MARKERS[_KNOWN_DEGREE_ORDER.index(deg) % len(_SH_MARKERS)]
+    return _SH_MARKERS[deg % len(_SH_MARKERS)]
+
+
+def model_linewidth(model: str) -> float:
+    return 2.8 if _is_stlrps(model) else 1.6
+
+
+def model_marker_size(model: str) -> float:
+    return 210.0 if _is_stlrps(model) else 90.0
+
+
+def model_zorder(model: str) -> int:
+    return 7 if _is_stlrps(model) else 3
+
+
+def display_label(model: str) -> str:
+    """Human label, e.g. GPU_SH20_RK4 -> SH20, GPU_ST_LRPS_RK4 -> ST-LRPS."""
+    if _is_stlrps(model):
+        return "ST-LRPS"
+    m = str(model).replace("GPU_", "").replace("_RK4", "")
+    return m.upper()
+
+
+def select_length_unit(max_km: float) -> Tuple[str, float]:
+    """Pick a readable display unit for a length given the largest value in km.
+
+    Returns ``(unit_label, multiplier)`` where ``display = value_km * multiplier``.
+    CSV/metric units are never changed — this only affects plotting.
+    """
+    try:
+        v = float(max_km)
+    except (TypeError, ValueError):
+        return ("km", 1.0)
+    if not math.isfinite(v) or v <= 0.0:
+        return ("km", 1.0)
+    if v < 1.0e-3:
+        return ("cm", 1.0e5)   # 1 km = 1e5 cm
+    if v < 1.0e-2:
+        return ("m", 1.0e3)    # 1 km = 1e3 m
+    return ("km", 1.0)
+
+
+def _finite_positive(values: Sequence[float]) -> List[float]:
+    out = []
+    for v in values:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(f) and f > 0.0:
+            out.append(f)
+    return out
+
+
+def _should_log(values: Sequence[float], ratio: float = 50.0) -> bool:
+    """True when positive values span more than ``ratio`` orders-of-magnitude."""
+    pos = _finite_positive(values)
+    return len(pos) >= 2 and (max(pos) / min(pos)) > ratio
+
+
+# Theme palettes (used by figure styling helpers + rcParams).
+_PLOT_THEMES = {
+    "report_light": dict(bg="#FFFFFF", ax_bg="#FFFFFF", text="#1A1F29",
+                         grid="#D7DEE8", edge="#3A4452", muted="#5A6675", accent="#2A9D8F"),
+    "technical_dark": dict(bg="#0E1116", ax_bg="#11151C", text="#E8ECF8",
+                           grid="#2A3340", edge="#8A98AD", muted="#9AA7C7", accent="#35D0FF"),
+}
+_ACTIVE_PLOT_THEME = _PLOT_THEMES["report_light"]
 
 
 def apply_plot_theme(theme: str) -> None:
-    """Central plotting style for validation figures."""
-
-    if theme == "technical_dark":
-        plt.style.use("dark_background")
-        plt.rcParams.update({
-            "figure.dpi": 160,
-            "savefig.dpi": 220,
-            "font.size": 11,
-            "axes.grid": True,
-            "grid.alpha": 0.25,
-        })
-        return
-
-    plt.style.use("default")
+    """Central publication-grade plotting style for validation figures."""
+    global _ACTIVE_PLOT_THEME
+    th = _PLOT_THEMES.get(str(theme), _PLOT_THEMES["report_light"])
+    _ACTIVE_PLOT_THEME = th
+    plt.style.use("dark_background" if theme == "technical_dark" else "default")
     plt.rcParams.update({
-        "figure.facecolor": "white",
-        "axes.facecolor": "white",
-        "savefig.facecolor": "white",
-        "text.color": "#202020",
-        "axes.labelcolor": "#202020",
-        "axes.edgecolor": "#444444",
-        "xtick.color": "#202020",
-        "ytick.color": "#202020",
-        "figure.dpi": 160,
-        "savefig.dpi": 240,
+        "figure.facecolor": th["bg"],
+        "axes.facecolor": th["ax_bg"],
+        "savefig.facecolor": th["bg"],
+        "text.color": th["text"],
+        "axes.labelcolor": th["text"],
+        "axes.edgecolor": th["edge"],
+        "axes.linewidth": 0.9,
+        "xtick.color": th["text"],
+        "ytick.color": th["text"],
+        "figure.dpi": 120,
+        "savefig.dpi": 220,
         "font.size": 11,
-        "axes.titlesize": 15,
+        "axes.titlesize": 14,
+        "axes.titleweight": "bold",
         "axes.labelsize": 12,
-        "legend.fontsize": 9,
+        "legend.fontsize": 9.5,
+        "xtick.labelsize": 10,
+        "ytick.labelsize": 10,
         "axes.grid": True,
-        "grid.color": "#d0d0d0",
-        "grid.alpha": 0.45,
-        "grid.linewidth": 0.8,
+        "grid.color": th["grid"],
+        "grid.alpha": 0.55 if theme == "technical_dark" else 0.9,
+        "grid.linewidth": 0.7,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "lines.linewidth": 1.8,
+        "legend.frameon": False,
     })
 
 
-def _legend_outside(ax: Any) -> None:
-    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False)
+def _style_ax(ax: Any, *, title: Optional[str] = None, xlabel: Optional[str] = None,
+              ylabel: Optional[str] = None, subtitle: Optional[str] = None) -> None:
+    th = _ACTIVE_PLOT_THEME
+    if title:
+        ax.set_title(title, color=th["text"], pad=30 if subtitle else 8)
+    if subtitle:
+        ax.text(0.0, 1.015, subtitle, transform=ax.transAxes, fontsize=9,
+                color=th["muted"], va="bottom", ha="left")
+    if xlabel:
+        ax.set_xlabel(xlabel)
+    if ylabel:
+        ax.set_ylabel(ylabel)
+    ax.grid(True, alpha=0.5, linewidth=0.7)
+    for spine in ("top", "right"):
+        if spine in ax.spines:
+            ax.spines[spine].set_visible(False)
+
+
+def _legend(ax: Any, *, outside: bool = False, loc: str = "best", ncol: int = 1) -> Any:
+    th = _ACTIVE_PLOT_THEME
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return None
+    if outside:
+        return ax.legend(handles, labels, loc="center left", bbox_to_anchor=(1.02, 0.5),
+                         frameon=False, ncol=ncol)
+    leg = ax.legend(handles, labels, loc=loc, frameon=True, framealpha=0.9, ncol=ncol)
+    if leg is not None:
+        leg.get_frame().set_edgecolor(th["grid"])
+        leg.get_frame().set_facecolor(th["ax_bg"])
+        leg.get_frame().set_linewidth(0.6)
+    return leg
+
+
+def _legend_outside(ax: Any) -> None:  # backwards-compatible alias
+    _legend(ax, outside=True)
+
+
+def _empty_note(ax: Any, text: str) -> None:
+    """Stamp an explanatory note on an otherwise-blank plot."""
+    ax.text(0.5, 0.5, text, ha="center", va="center", transform=ax.transAxes,
+            fontsize=11, color=_ACTIVE_PLOT_THEME["muted"], style="italic", wrap=True)
+
+
+def _highlight_ticklabels(ax: Any, labels: Sequence[str], axis: str = "y") -> None:
+    """Bold + accent the ST-LRPS tick label on a category axis."""
+    th = _ACTIVE_PLOT_THEME
+    ticklabels = ax.get_yticklabels() if axis == "y" else ax.get_xticklabels()
+    for lbl, text in zip(ticklabels, labels):
+        if _is_stlrps(text):
+            lbl.set_color(_ST_LRPS_COLOR)
+            lbl.set_fontweight("bold")
+        else:
+            lbl.set_color(th["text"])
 
 
 def _model_sort_key(model: str) -> Tuple[int, int]:
@@ -2873,138 +3076,319 @@ def plot_gpu_batch_report_figures(
     plots_dir: Path,
     args: argparse.Namespace,
 ) -> List[Path]:
-    """Create clean report figures for the GPU batch comparison."""
+    """Create publication-grade report figures for the GPU batch comparison.
+
+    Visualization only — no metric value is recomputed here. CSV units stay in
+    km; figures pick a readable display unit (km/m/cm) per axis.
+    """
 
     plots_dir.mkdir(parents=True, exist_ok=True)
-    apply_plot_theme(args.plot_theme)
+    apply_plot_theme(getattr(args, "plot_theme", "report_light"))
+    th = _ACTIVE_PLOT_THEME
     saved: List[Path] = []
     agg_by_model = {r["model"]: r for r in aggregate_rows}
     runtime_by_model = {r["model"]: r for r in runtime_rows}
-    models = sorted(agg_by_model.keys(), key=_model_sort_key)
 
-    # 1. Accuracy ranking
-    fig, ax = plt.subplots(figsize=(10, 5.6))
-    med = [agg_by_model[m]["median_rms_pos_err_km"] for m in models]
-    p95 = [agg_by_model[m]["p95_rms_pos_err_km"] for m in models]
-    colors = [_color(m) for m in models]
-    bars = ax.bar(models, med, color=colors, alpha=0.88)
-    ax.scatter(models, p95, color="#222222", marker="D", s=36, label="P95 RMS")
-    for b, val in zip(bars, med):
-        ax.text(b.get_x() + b.get_width() / 2, b.get_height(), f"{val:.3g}",
-                ha="center", va="bottom", fontsize=9)
-    ax.set_ylabel("Median RMS Position Error [km]")
-    ax.set_title("GPU RK4 Accuracy Ranking vs SH200 DOP853")
-    ax.tick_params(axis="x", rotation=25)
-    ax.legend(frameon=False)
-    fig.tight_layout()
-    p = plots_dir / "gpu_accuracy_ranking_bar.png"
-    fig.savefig(p, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    truth_integrator = str(getattr(args, "truth_integrator", "DOP853"))
+    truth_label = f"{str(args.truth).upper()} {truth_integrator}"
+    n_scn = len(scenarios)
+    duration = float(getattr(args, "duration_days", 0.0) or 0.0)
+    ctx = f"N = {n_scn} scenarios  ·  {duration:g} d  ·  errors vs {truth_label}"
 
-    # 2. Runtime vs accuracy
-    fig, ax = plt.subplots(figsize=(8.5, 5.6))
-    for m in models:
-        x = runtime_by_model.get(m, {}).get("total_runtime_s", np.nan)
-        y = agg_by_model[m].get("median_rms_pos_err_km", np.nan)
-        ax.scatter(x, y, color=_color(m), s=(160 if "ST_LRPS" in m else 95), edgecolor="#222222", linewidth=0.6)
-        ax.annotate(m.replace("GPU_", "").replace("_RK4", ""), (x, y), xytext=(7, 5),
-                    textcoords="offset points", fontsize=9)
-    ax.set_xlabel("Total GPU Runtime [s]")
-    ax.set_ylabel("Median RMS Position Error [km]")
-    ax.set_title("Runtime vs Accuracy")
-    fig.tight_layout()
-    p = plots_dir / "gpu_runtime_vs_accuracy.png"
-    fig.savefig(p, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    def _safe(x: Any, default: float = float("inf")) -> float:
+        try:
+            v = float(x)
+        except (TypeError, ValueError):
+            return default
+        return v if math.isfinite(v) else default
 
-    # 3. Boxplot
-    data = [
-        [float(r["rms_pos_err_km"]) for r in metrics_rows if r.get("model") == m and r.get("status") in {"ok", "warning_negative_altitude"}]
-        for m in models
-    ]
-    fig, ax = plt.subplots(figsize=(10, 5.7))
-    try:
-        bp = ax.boxplot(data, tick_labels=models, patch_artist=True, showfliers=False)
-    except TypeError:  # Matplotlib < 3.9
-        bp = ax.boxplot(data, labels=models, patch_artist=True, showfliers=False)
-    for patch, m in zip(bp["boxes"], models):
-        patch.set_facecolor(_color(m)); patch.set_alpha(0.75)
-    if args.plot_error_logscale:
-        ax.set_yscale("log")
-    ax.set_ylabel("RMS Position Error [km]")
-    ax.set_title("RMS Error Distribution Across Scenarios")
-    ax.tick_params(axis="x", rotation=25)
+    def _fmt(v: float) -> str:
+        return f"{v:.3g}"
+
+    def _model_vals(m: str, key: str = "rms_pos_err_km") -> List[float]:
+        out = []
+        for r in metrics_rows:
+            if r.get("model") != m or r.get("status") not in {"ok", "warning_negative_altitude"}:
+                continue
+            v = _safe(r.get(key), default=float("nan"))
+            if math.isfinite(v):
+                out.append(v)
+        return out
+
+    # Best (lowest median RMS) first.
+    models = sorted(agg_by_model.keys(),
+                    key=lambda m: _safe(agg_by_model[m].get("median_rms_pos_err_km")))
+    counts = [len(_model_vals(m)) for m in models]
+    n_dist = max(counts) if counts else 0
+    small_n = 0 < n_dist < 8
+
+    # ----- 1. Accuracy ranking (horizontal lollipop) ---------------------
+    if models:
+        med_km = [_safe(agg_by_model[m].get("median_rms_pos_err_km"), 0.0) for m in models]
+        p95_km = [_safe(agg_by_model[m].get("p95_rms_pos_err_km"), 0.0) for m in models]
+        unit, mult = select_length_unit(max(_finite_positive(med_km + p95_km) or [0.0]))
+        med = [v * mult for v in med_km]
+        p95 = [v * mult for v in p95_km]
+        labels = [display_label(m) for m in models]
+        logx = _should_log(med_km + p95_km)
+        y = np.arange(len(models))
+
+        fig, ax = plt.subplots(figsize=(9.5, max(3.2, 0.62 * len(models) + 1.6)))
+        x0 = min(_finite_positive(med + p95) or [0.0]) * 0.5 if logx else 0.0
+        for yi, m, mv, pv in zip(y, models, med, p95):
+            c = model_color(m)
+            ax.hlines(yi, x0, mv, color=c, lw=2.6, alpha=0.45, zorder=2)
+            ax.scatter(mv, yi, color=c, marker=model_marker(m),
+                       s=150 if _is_stlrps(m) else 80,
+                       edgecolor=th["edge"], linewidth=0.6, zorder=model_zorder(m))
+            ax.scatter(pv, yi, facecolors="none", edgecolors=c, marker="D",
+                       s=46, linewidth=1.3, zorder=4)
+            anchor = max(mv, pv)
+            xt = anchor * 1.10 if logx else anchor + 0.02 * max(med + p95 + [1e-9])
+            ax.text(xt, yi, _fmt(mv), va="center", ha="left", fontsize=9, color=th["text"])
+        ax.set_yticks(y)
+        ax.set_yticklabels(labels)
+        ax.invert_yaxis()  # best at top
+        if logx:
+            ax.set_xscale("log")
+        ax.margins(x=0.16)  # headroom for end-of-bar value labels
+        from matplotlib.lines import Line2D
+        proxies = [
+            Line2D([0], [0], marker="o", color=th["muted"], ls="none", label="Median RMS"),
+            Line2D([0], [0], marker="D", markerfacecolor="none", markeredgecolor=th["muted"],
+                   color=th["muted"], ls="none", label="P95 RMS"),
+        ]
+        ax.legend(handles=proxies, loc="upper right", frameon=False)
+        _style_ax(ax, title="GPU RK4 Accuracy Ranking",
+                  xlabel=f"RMS Position Error [{unit}]",
+                  subtitle=f"Lower is better.  {ctx}")
+        ax.grid(True, axis="y", alpha=0.0)
+        _highlight_ticklabels(ax, labels, axis="y")
+        fig.tight_layout()
+        p = plots_dir / "gpu_accuracy_ranking_bar.png"
+        fig.savefig(p); plt.close(fig); saved.append(p)
+
+    # ----- 2. Runtime vs accuracy ----------------------------------------
+    if models:
+        pts = []
+        for m in models:
+            x = _safe(runtime_by_model.get(m, {}).get("total_runtime_s"), default=float("nan"))
+            yk = _safe(agg_by_model[m].get("median_rms_pos_err_km"), default=float("nan"))
+            if math.isfinite(x) and math.isfinite(yk):
+                pts.append((x, yk, m))
+        unit, mult = select_length_unit(max(_finite_positive([p[1] for p in pts]) or [0.0]))
+        logy = _should_log([p[1] for p in pts])
+        fig, ax = plt.subplots(figsize=(8.6, 5.8))
+        if pts:
+            # Pareto frontier (lower-left): cheapest run achieving each new best error.
+            front = []
+            best = float("inf")
+            for x, yk, m in sorted(pts, key=lambda t: t[0]):
+                if yk < best - 1e-30:
+                    best = yk
+                    front.append((x, yk * mult))
+            if len(front) >= 2:
+                ax.step([f[0] for f in front], [f[1] for f in front], where="post",
+                        ls="--", lw=1.2, color=th["muted"], alpha=0.7, zorder=1,
+                        label="Pareto front")
+            for x, yk, m in pts:
+                ax.scatter(x, yk * mult, color=model_color(m), marker=model_marker(m),
+                           s=model_marker_size(m), edgecolor=th["edge"],
+                           linewidth=1.0 if _is_stlrps(m) else 0.6, zorder=model_zorder(m))
+                ax.annotate(display_label(m), (x, yk * mult), xytext=(8, 5),
+                            textcoords="offset points", fontsize=9.5 if _is_stlrps(m) else 9,
+                            fontweight="bold" if _is_stlrps(m) else "normal",
+                            color=model_color(m) if _is_stlrps(m) else th["text"])
+            if logy:
+                ax.set_yscale("log")
+            _legend(ax, loc="upper right")
+        else:
+            _empty_note(ax, "No runtime/accuracy data available.")
+        _style_ax(ax, title="Runtime vs Accuracy",
+                  xlabel="Total GPU Runtime [s]",
+                  ylabel=f"Median RMS Position Error [{unit}]",
+                  subtitle=f"Lower-left is better (faster + more accurate).  {ctx}")
+        fig.tight_layout()
+        p = plots_dir / "gpu_runtime_vs_accuracy.png"
+        fig.savefig(p); plt.close(fig); saved.append(p)
+
+    # ----- 3. RMS error distribution -------------------------------------
+    data = [_model_vals(m) for m in models]
+    all_vals = [v for d in data for v in d]
+    unit, mult = select_length_unit(max(_finite_positive(all_vals) or [0.0]))
+    fig, ax = plt.subplots(figsize=(9.5, max(3.2, 0.62 * len(models) + 1.8)))
+    if any(data):
+        y = np.arange(len(models))
+        logx = _should_log(all_vals)
+        if small_n:
+            rng = np.random.default_rng(0)
+            for yi, m, vals in zip(y, models, data):
+                if not vals:
+                    continue
+                vv = np.asarray(vals) * mult
+                jitter = (rng.random(len(vv)) - 0.5) * 0.28
+                ax.scatter(vv, np.full_like(vv, yi) + jitter, color=model_color(m),
+                           marker=model_marker(m), s=70 if _is_stlrps(m) else 42,
+                           alpha=0.85, edgecolor=th["edge"], linewidth=0.4,
+                           zorder=model_zorder(m))
+                ax.scatter(np.median(vv), yi, color=th["text"], marker="|", s=420,
+                           linewidth=2.2, zorder=6)
+            subtitle = f"N={n_dist} is small — strip plot is diagnostic, not statistical.  {ctx}"
+        else:
+            box = ax.boxplot(
+                [np.asarray(d) * mult for d in data], vert=False, patch_artist=True,
+                showfliers=False, widths=0.6, positions=y,
+                medianprops=dict(color=th["text"], lw=1.8),
+            )
+            for patch, m in zip(box["boxes"], models):
+                patch.set_facecolor(model_color(m))
+                patch.set_alpha(0.45 if not _is_stlrps(m) else 0.65)
+                patch.set_edgecolor(model_color(m))
+            subtitle = ctx
+        if logx:
+            ax.set_xscale("log")
+        ax.set_yticks(y)
+        ax.set_yticklabels([display_label(m) for m in models])
+        ax.invert_yaxis()
+        _style_ax(ax, title="RMS Position Error Distribution",
+                  xlabel=f"RMS Position Error [{unit}]", subtitle=subtitle)
+        ax.grid(True, axis="y", alpha=0.0)
+        _highlight_ticklabels(ax, [display_label(m) for m in models], axis="y")
+    else:
+        _empty_note(ax, "Errors are below plotting threshold for this short run.")
+        _style_ax(ax, title="RMS Position Error Distribution", subtitle=ctx)
     fig.tight_layout()
     p = plots_dir / "gpu_rms_error_distribution_boxplot.png"
-    fig.savefig(p, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p); plt.close(fig); saved.append(p)
 
-    # 4. Histograms
-    fig, axes = plt.subplots(len(models), 1, figsize=(9, max(5, 1.35 * len(models))), sharex=True)
-    if len(models) == 1:
-        axes = [axes]
-    for ax, m, vals in zip(axes, models, data):
-        ax.hist(vals, bins=18, color=_color(m), alpha=0.78)
-        ax.set_ylabel(m.replace("GPU_", "").replace("_RK4", ""), rotation=0, ha="right", va="center")
-        ax.grid(True, alpha=0.35)
-    axes[-1].set_xlabel("RMS Position Error [km]")
-    axes[0].set_title("RMS Error Histograms")
-    fig.tight_layout()
-    p = plots_dir / "gpu_rms_error_histograms.png"
-    fig.savefig(p, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    # ----- 4. Histograms --------------------------------------------------
+    if models:
+        fig, axes = plt.subplots(len(models), 1,
+                                 figsize=(9, max(4.2, 1.4 * len(models))), sharex=True)
+        if len(models) == 1:
+            axes = [axes]
+        for ax, m, vals in zip(axes, models, data):
+            if vals:
+                ax.hist(np.asarray(vals) * mult, bins=min(24, max(6, n_dist)),
+                        color=model_color(m), alpha=0.85, edgecolor=th["bg"], linewidth=0.4)
+            else:
+                _empty_note(ax, "no data")
+            ax.set_ylabel(display_label(m), rotation=0, ha="right", va="center",
+                          fontsize=9, color=(_ST_LRPS_COLOR if _is_stlrps(m) else th["text"]),
+                          fontweight="bold" if _is_stlrps(m) else "normal")
+            ax.grid(True, alpha=0.4)
+            for spine in ("top", "right"):
+                ax.spines[spine].set_visible(False)
+        axes[-1].set_xlabel(f"RMS Position Error [{unit}]")
+        axes[0].set_title("RMS Error Histograms per Model")
+        fig.tight_layout()
+        p = plots_dir / "gpu_rms_error_histograms.png"
+        fig.savefig(p); plt.close(fig); saved.append(p)
 
-    # 5. Equivalent SH degree
+    # ----- 5. ST-LRPS equivalent SH degree -------------------------------
     sh_points = []
     for m in models:
-        if m.startswith("GPU_SH") and m.endswith("_RK4"):
-            deg = int(m.replace("GPU_SH", "").replace("_RK4", ""))
-            sh_points.append((deg, agg_by_model[m]["median_rms_pos_err_km"], agg_by_model[m]["p95_rms_pos_err_km"]))
+        deg = _model_degree(m)
+        if deg is not None and m.upper().startswith("GPU_SH"):
+            sh_points.append((deg, _safe(agg_by_model[m].get("median_rms_pos_err_km")),
+                              _safe(agg_by_model[m].get("p95_rms_pos_err_km"))))
     sh_points.sort()
-    fig, ax = plt.subplots(figsize=(8.5, 5.2))
+    st = agg_by_model.get("GPU_ST_LRPS_RK4")
+    st_med_km = _safe(st.get("median_rms_pos_err_km")) if st else float("nan")
+    st_p95_km = _safe(st.get("p95_rms_pos_err_km")) if st else float("nan")
+    fig, ax = plt.subplots(figsize=(8.8, 5.4))
+    span_km = [p[1] for p in sh_points] + [p[2] for p in sh_points]
+    if math.isfinite(st_med_km):
+        span_km.append(st_med_km)
+    unit, mult = select_length_unit(max(_finite_positive(span_km) or [0.0]))
     if sh_points:
         degs = [p[0] for p in sh_points]
-        medv = [p[1] for p in sh_points]
-        p95v = [p[2] for p in sh_points]
-        ax.plot(degs, medv, marker="o", color="#1f77b4", label="SH median RMS")
-        ax.plot(degs, p95v, marker="s", color="#17becf", label="SH P95 RMS")
-    st = agg_by_model.get("GPU_ST_LRPS_RK4")
-    if st:
-        ax.axhline(st["median_rms_pos_err_km"], color=_color("GPU_ST_LRPS_RK4"),
-                   lw=2.0, ls="--", label="ST-LRPS median RMS")
-    ax.set_xlabel("Spherical Harmonic Degree")
-    ax.set_ylabel("RMS Position Error [km]")
-    ax.set_title("ST-LRPS Equivalent SH Degree")
-    ax.legend(frameon=False)
+        ax.plot(degs, [p[1] * mult for p in sh_points], marker="o", color="#3D5A80",
+                lw=2.0, label="SH median RMS", zorder=3)
+        ax.plot(degs, [p[2] * mult for p in sh_points], marker="s", ls="--", color="#6C8EBF",
+                lw=1.6, label="SH P95 RMS", zorder=3)
+        if math.isfinite(st_med_km):
+            ax.axhline(st_med_km * mult, color=_ST_LRPS_COLOR, lw=2.6, ls="-",
+                       label="ST-LRPS median RMS", zorder=4)
+        if math.isfinite(st_p95_km):
+            ax.axhline(st_p95_km * mult, color=_ST_LRPS_COLOR, lw=1.6, ls=":",
+                       alpha=0.8, label="ST-LRPS P95 RMS", zorder=4)
+        # Annotate the equivalent-degree estimate, if available.
+        med_eq = equivalent.get("median_rms", {}) if isinstance(equivalent, dict) else {}
+        eq_txt = None
+        if med_eq.get("equivalent_degree") is not None:
+            eq_deg = float(med_eq["equivalent_degree"])
+            eq_txt = f"≈ SH{eq_deg:.0f}"
+            ax.axvline(eq_deg, color=_ST_LRPS_COLOR, lw=1.0, ls=":", alpha=0.6)
+        else:
+            status_map = {
+                "worse_than_sh20": "below SH20",
+                "better_than_sh200": "above SH200",
+            }
+            raw = str(med_eq.get("equivalent_degree_status", ""))
+            eq_txt = status_map.get(raw)
+            if eq_txt is None and raw.startswith("better_than_sh"):
+                eq_txt = f"above {raw.replace('better_than_', '').upper()}"
+        if eq_txt and math.isfinite(st_med_km):
+            ax.annotate(f"ST-LRPS {eq_txt}", xy=(degs[len(degs) // 2], st_med_km * mult),
+                        xytext=(0, 8), textcoords="offset points", color=_ST_LRPS_COLOR,
+                        fontweight="bold", fontsize=10, ha="center")
+        if _should_log(span_km):
+            ax.set_yscale("log")
+        _legend(ax, loc="best")
+    else:
+        _empty_note(ax, "No spherical-harmonic baselines available for comparison.")
+    _style_ax(ax, title="ST-LRPS Equivalent Spherical-Harmonic Degree",
+              xlabel="Spherical Harmonic Degree",
+              ylabel=f"RMS Position Error [{unit}]",
+              subtitle=f"Where ST-LRPS sits on the SH error ladder.  {ctx}")
     fig.tight_layout()
     p = plots_dir / "stlrps_equivalent_sh_degree.png"
-    fig.savefig(p, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p); plt.close(fig); saved.append(p)
 
-    # 6-7. Error vs inclination / altitude
+    # ----- 6-7. Error vs inclination / altitude --------------------------
     for xkey, xlabel, fname in [
         ("inc_deg", "Inclination [deg]", "gpu_error_vs_inclination_all_models.png"),
         ("hp_km", "Periselene Altitude [km]", "gpu_error_vs_altitude_all_models.png"),
     ]:
-        fig, ax = plt.subplots(figsize=(9, 5.5))
+        all_y = [v for m in models for v in _model_vals(m)]
+        unit, mult = select_length_unit(max(_finite_positive(all_y) or [0.0]))
+        fig, ax = plt.subplots(figsize=(9, 5.4))
+        plotted = False
         for m in models:
-            rows = [r for r in metrics_rows if r.get("model") == m and r.get("status") in {"ok", "warning_negative_altitude"}]
-            ax.scatter([r[xkey] for r in rows], [r["rms_pos_err_km"] for r in rows],
-                       color=_color(m), s=24, alpha=0.78, label=m.replace("GPU_", "").replace("_RK4", ""))
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel("RMS Position Error [km]")
-        ax.set_title(f"Error vs {xlabel.split()[0]}")
-        _legend_outside(ax)
+            rows = [r for r in metrics_rows
+                    if r.get("model") == m and r.get("status") in {"ok", "warning_negative_altitude"}]
+            xs = [_safe(r.get(xkey), float("nan")) for r in rows]
+            ys = [_safe(r.get("rms_pos_err_km"), float("nan")) * mult for r in rows]
+            if rows:
+                ax.scatter(xs, ys, color=model_color(m), marker=model_marker(m),
+                           s=70 if _is_stlrps(m) else 26, alpha=0.85,
+                           edgecolor=th["edge"], linewidth=0.3,
+                           zorder=model_zorder(m), label=display_label(m))
+                plotted = True
+        if plotted:
+            if _should_log(all_y):
+                ax.set_yscale("log")
+            _legend(ax, outside=True)
+        else:
+            _empty_note(ax, "Errors are below plotting threshold for this short run.")
+        _style_ax(ax, title=f"Error vs {xlabel.split()[0]}", xlabel=xlabel,
+                  ylabel=f"RMS Position Error [{unit}]", subtitle=ctx)
         fig.tight_layout()
         p = plots_dir / fname
-        fig.savefig(p, bbox_inches="tight"); plt.close(fig); saved.append(p)
+        fig.savefig(p); plt.close(fig); saved.append(p)
 
-    # Ensemble curves
+    # ----- Ensemble time-series ------------------------------------------
     if scenarios and truth.t_by_scenario:
         common_t = next(iter(truth.t_by_scenario.values()))
-        t_days = common_t / 86400.0
-        fig, ax = plt.subplots(figsize=(10, 5.8))
-        fig_ric, axes_ric = plt.subplots(3, 1, figsize=(10, 8.5), sharex=True)
+        t_days = np.asarray(common_t) / 86400.0
+        med_by_model: Dict[str, np.ndarray] = {}
+        band_by_model: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+        ric_by_model: Dict[str, np.ndarray] = {}
         for result in results:
             if result.status != "ok":
                 continue
-            pos_err = []
-            ric_err = []
+            pos_err, ric_err = [], []
             for i, sc in enumerate(scenarios):
                 if sc.scenario_id not in truth.t_by_scenario:
                     continue
@@ -3015,34 +3399,58 @@ def plot_gpu_batch_report_figures(
             if not pos_err:
                 continue
             pos_arr = np.asarray(pos_err)
-            med_curve = np.median(pos_arr, axis=0)
-            p25 = np.percentile(pos_arr, 25, axis=0)
-            p75 = np.percentile(pos_arr, 75, axis=0)
-            label = result.display_name.replace("GPU_", "").replace("_RK4", "")
-            ax.plot(t_days, med_curve, color=_color(result.display_name), lw=(2.6 if "ST_LRPS" in result.display_name else 1.6), label=label)
-            ax.fill_between(t_days, p25, p75, color=_color(result.display_name), alpha=0.10)
-            ric_arr = np.asarray(ric_err)
-            for k, lbl in enumerate(["Radial", "Along-track", "Cross-track"]):
-                axes_ric[k].plot(t_days, np.sqrt(np.mean(ric_arr[:, :, k] ** 2, axis=0)),
-                                 color=_color(result.display_name), lw=1.5, label=label)
-                axes_ric[k].set_ylabel(f"{lbl} RMS [km]")
-                axes_ric[k].grid(True, alpha=0.35)
-        ax.set_xlabel("Time [days]")
-        ax.set_ylabel("Median Position Error [km]")
-        ax.set_title("Ensemble Position Error vs Time")
-        _legend_outside(ax)
+            med_by_model[result.display_name] = np.median(pos_arr, axis=0)
+            band_by_model[result.display_name] = (np.percentile(pos_arr, 25, axis=0),
+                                                  np.percentile(pos_arr, 75, axis=0))
+            ric_by_model[result.display_name] = np.asarray(ric_err)
+
+        pos_max_km = max(_finite_positive([float(np.max(v)) for v in med_by_model.values()]) or [0.0])
+        unit, mult = select_length_unit(pos_max_km)
+
+        fig, ax = plt.subplots(figsize=(10, 5.6))
+        if med_by_model and pos_max_km > 1e-12:
+            for name, curve in med_by_model.items():
+                lo, hi = band_by_model[name]
+                ax.plot(t_days, curve * mult, color=model_color(name),
+                        lw=model_linewidth(name), label=display_label(name),
+                        zorder=model_zorder(name))
+                ax.fill_between(t_days, lo * mult, hi * mult, color=model_color(name), alpha=0.10)
+            _legend(ax, outside=True)
+        else:
+            _empty_note(ax, "Errors are below plotting threshold for this short run.")
+        _style_ax(ax, title="Ensemble Position Error vs Time",
+                  xlabel="Time [days]", ylabel=f"Median Position Error [{unit}]",
+                  subtitle=f"Median across scenarios; shaded band = 25–75%.  {ctx}")
         fig.tight_layout()
         p = plots_dir / "ensemble_mean_position_error_vs_time.png"
-        fig.savefig(p, bbox_inches="tight"); plt.close(fig); saved.append(p)
+        fig.savefig(p); plt.close(fig); saved.append(p)
+
+        ric_curves = {name: np.sqrt(np.mean(arr ** 2, axis=0)) for name, arr in ric_by_model.items()}
+        ric_max_km = max(_finite_positive(
+            [float(np.max(c)) for c in ric_curves.values()]) or [0.0])
+        runit, rmult = select_length_unit(ric_max_km)
+        fig_ric, axes_ric = plt.subplots(3, 1, figsize=(10, 8.2), sharex=True)
+        for k, lbl in enumerate(["Radial", "Along-track", "Cross-track"]):
+            if ric_curves and ric_max_km > 1e-12:
+                for name, c in ric_curves.items():
+                    axes_ric[k].plot(t_days, c[:, k] * rmult, color=model_color(name),
+                                     lw=model_linewidth(name), label=display_label(name),
+                                     zorder=model_zorder(name))
+            else:
+                _empty_note(axes_ric[k], "below plotting threshold")
+            axes_ric[k].set_ylabel(f"{lbl} RMS [{runit}]")
+            axes_ric[k].grid(True, alpha=0.45)
+            for spine in ("top", "right"):
+                axes_ric[k].spines[spine].set_visible(False)
         axes_ric[-1].set_xlabel("Time [days]")
         axes_ric[0].set_title("Ensemble RIC RMS Error vs Time")
-        _legend_outside(axes_ric[0])
+        if ric_curves and ric_max_km > 1e-12:
+            _legend(axes_ric[0], outside=True)
         fig_ric.tight_layout()
         p = plots_dir / "ensemble_ric_rms_vs_time.png"
-        fig_ric.savefig(p, bbox_inches="tight"); plt.close(fig_ric); saved.append(p)
+        fig_ric.savefig(p); plt.close(fig_ric); saved.append(p)
 
-    # Selected ST-LRPS cases
-    result_by_name = {r.display_name: r for r in results}
+    # ----- Selected ST-LRPS scenarios ------------------------------------
     scenario_by_id = {s.scenario_id: s for s in scenarios}
     for label in ("best", "representative", "worst"):
         item = selected.get(label)
@@ -3055,67 +3463,103 @@ def plot_gpu_batch_report_figures(
         idx = scenarios.index(sc)
         t_truth = truth.t_by_scenario[sid]
         y_truth = truth.y_by_scenario[sid]
-        t_days = t_truth / 86400.0
+        t_days = np.asarray(t_truth) / 86400.0
 
-        fig_pos, ax_pos = plt.subplots(figsize=(10, 5.6))
-        fig_alt, ax_alt = plt.subplots(figsize=(10, 5.3))
-        fig_ric_sel, axes_sel = plt.subplots(3, 1, figsize=(10, 8.5), sharex=True)
-        fig_3d = None
-        ax_3d = None
-        if args.plot_3d:
-            fig_3d = plt.figure(figsize=(8, 7))
-            ax_3d = fig_3d.add_subplot(111, projection="3d")
-            rk = y_truth[:, :3] / 1000.0
-            ax_3d.plot(rk[:, 0], rk[:, 1], rk[:, 2], color="#111111", lw=2.5, label="SH200 DOP853")
-
+        pos_by_model: Dict[str, np.ndarray] = {}
+        alt_by_model: Dict[str, np.ndarray] = {}
+        ric_by_model = {}
         for result in results:
             if result.status != "ok":
                 continue
             y_model = interpolate_state_to_times(result.t, result.y[:, idx, :], t_truth)
-            pos_err = np.linalg.norm(y_model[:, :3] - y_truth[:, :3], axis=1) / 1000.0
-            alt_err = (
-                np.linalg.norm(y_model[:, :3], axis=1)
-                - np.linalg.norm(y_truth[:, :3], axis=1)
-            ) / 1000.0
-            ric = compute_ric_errors(y_truth[:, :3], y_truth[:, 3:], y_model[:, :3]) / 1000.0
-            name = result.display_name
-            line_w = 2.8 if "ST_LRPS" in name else 1.5
-            label_name = name.replace("GPU_", "").replace("_RK4", "")
-            ax_pos.plot(t_days, np.maximum(pos_err, 1e-12), color=_color(name), lw=line_w, label=label_name)
-            ax_alt.plot(t_days, alt_err, color=_color(name), lw=line_w, label=label_name)
-            for k in range(3):
-                axes_sel[k].plot(t_days, ric[:, k], color=_color(name), lw=line_w, label=label_name)
-            if ax_3d is not None:
-                rk = y_model[:, :3] / 1000.0
-                ax_3d.plot(rk[:, 0], rk[:, 1], rk[:, 2], color=_color(name), lw=line_w, label=label_name)
+            pos_by_model[result.display_name] = (
+                np.linalg.norm(y_model[:, :3] - y_truth[:, :3], axis=1) / 1000.0)
+            alt_by_model[result.display_name] = (
+                np.linalg.norm(y_model[:, :3], axis=1) - np.linalg.norm(y_truth[:, :3], axis=1)) / 1000.0
+            ric_by_model[result.display_name] = (
+                compute_ric_errors(y_truth[:, :3], y_truth[:, 3:], y_model[:, :3]) / 1000.0)
 
-        ax_pos.set_title(f"{label.title()} ST-LRPS Scenario {sid}: Position Error")
-        ax_pos.set_xlabel("Time [days]"); ax_pos.set_ylabel("Position Error [km]")
-        if args.plot_error_logscale:
-            ax_pos.set_yscale("log")
-        _legend_outside(ax_pos)
+        pos_max_km = max(_finite_positive([float(np.max(v)) for v in pos_by_model.values()]) or [0.0])
+        unit, mult = select_length_unit(pos_max_km)
+        sub = f"Scenario {sid}: hp={sc.hp_km:.0f} km, i={sc.inc_deg:.1f}°.  vs {truth_label}"
+
+        # Position error
+        fig_pos, ax_pos = plt.subplots(figsize=(10, 5.4))
+        if pos_by_model and pos_max_km > 1e-12:
+            use_log = bool(getattr(args, "plot_error_logscale", False)) or _should_log(
+                [float(np.max(v)) for v in pos_by_model.values()])
+            for name, curve in pos_by_model.items():
+                ax_pos.plot(t_days, np.maximum(curve * mult, 1e-12 if use_log else 0.0),
+                            color=model_color(name), lw=model_linewidth(name),
+                            label=display_label(name), zorder=model_zorder(name))
+            if use_log:
+                ax_pos.set_yscale("log")
+            _legend(ax_pos, outside=True)
+        else:
+            _empty_note(ax_pos, "Errors are below plotting threshold for this short run.")
+        _style_ax(ax_pos, title=f"{label.title()} ST-LRPS Scenario: Position Error",
+                  xlabel="Time [days]", ylabel=f"Position Error [{unit}]", subtitle=sub)
         fig_pos.tight_layout()
         p = plots_dir / f"selected_{label}_position_error_all_models.png"
-        fig_pos.savefig(p, bbox_inches="tight"); plt.close(fig_pos); saved.append(p)
+        fig_pos.savefig(p); plt.close(fig_pos); saved.append(p)
 
-        ax_alt.set_title(f"{label.title()} ST-LRPS Scenario {sid}: Altitude Error")
-        ax_alt.set_xlabel("Time [days]"); ax_alt.set_ylabel("Altitude Error [km]")
-        _legend_outside(ax_alt)
+        # Altitude error
+        alt_max_km = max(_finite_positive(
+            [float(np.max(np.abs(v))) for v in alt_by_model.values()]) or [0.0])
+        aunit, amult = select_length_unit(alt_max_km)
+        fig_alt, ax_alt = plt.subplots(figsize=(10, 5.0))
+        if alt_by_model and alt_max_km > 1e-12:
+            for name, curve in alt_by_model.items():
+                ax_alt.plot(t_days, curve * amult, color=model_color(name),
+                            lw=model_linewidth(name), label=display_label(name),
+                            zorder=model_zorder(name))
+            _legend(ax_alt, outside=True)
+        else:
+            _empty_note(ax_alt, "Errors are below plotting threshold for this short run.")
+        _style_ax(ax_alt, title=f"{label.title()} ST-LRPS Scenario: Altitude Error",
+                  xlabel="Time [days]", ylabel=f"Altitude Error [{aunit}]", subtitle=sub)
         fig_alt.tight_layout()
         p = plots_dir / f"selected_{label}_altitude_error_all_models.png"
-        fig_alt.savefig(p, bbox_inches="tight"); plt.close(fig_alt); saved.append(p)
+        fig_alt.savefig(p); plt.close(fig_alt); saved.append(p)
 
+        # RIC error
+        ric_max_km = max(_finite_positive(
+            [float(np.max(np.abs(v))) for v in ric_by_model.values()]) or [0.0])
+        runit, rmult = select_length_unit(ric_max_km)
+        fig_ric_sel, axes_sel = plt.subplots(3, 1, figsize=(10, 8.2), sharex=True)
         for k, lbl in enumerate(["Radial", "Along-track", "Cross-track"]):
-            axes_sel[k].set_ylabel(f"{lbl} [km]")
-            axes_sel[k].grid(True, alpha=0.35)
+            if ric_by_model and ric_max_km > 1e-12:
+                for name, curve in ric_by_model.items():
+                    axes_sel[k].plot(t_days, curve[:, k] * rmult, color=model_color(name),
+                                     lw=model_linewidth(name), label=display_label(name),
+                                     zorder=model_zorder(name))
+            else:
+                _empty_note(axes_sel[k], "below plotting threshold")
+            axes_sel[k].set_ylabel(f"{lbl} [{runit}]")
+            axes_sel[k].grid(True, alpha=0.45)
+            for spine in ("top", "right"):
+                axes_sel[k].spines[spine].set_visible(False)
         axes_sel[0].set_title(f"{label.title()} ST-LRPS Scenario {sid}: RIC Error")
         axes_sel[-1].set_xlabel("Time [days]")
-        _legend_outside(axes_sel[0])
+        if ric_by_model and ric_max_km > 1e-12:
+            _legend(axes_sel[0], outside=True)
         fig_ric_sel.tight_layout()
         p = plots_dir / f"selected_{label}_ric_error_all_models.png"
-        fig_ric_sel.savefig(p, bbox_inches="tight"); plt.close(fig_ric_sel); saved.append(p)
+        fig_ric_sel.savefig(p); plt.close(fig_ric_sel); saved.append(p)
 
-        if fig_3d is not None and ax_3d is not None:
+        # 3D trajectory (optional)
+        if getattr(args, "plot_3d", False):
+            fig_3d = plt.figure(figsize=(8, 7))
+            ax_3d = fig_3d.add_subplot(111, projection="3d")
+            rk = y_truth[:, :3] / 1000.0
+            ax_3d.plot(rk[:, 0], rk[:, 1], rk[:, 2], color=_TRUTH_COLOR, lw=2.5, label=truth_label)
+            for result in results:
+                if result.status != "ok":
+                    continue
+                y_model = interpolate_state_to_times(result.t, result.y[:, idx, :], t_truth)
+                rk = y_model[:, :3] / 1000.0
+                ax_3d.plot(rk[:, 0], rk[:, 1], rk[:, 2], color=model_color(result.display_name),
+                           lw=model_linewidth(result.display_name), label=display_label(result.display_name))
             ax_3d.set_title(f"{label.title()} ST-LRPS Scenario {sid}: 3D Trajectory")
             ax_3d.set_xlabel("X [km]"); ax_3d.set_ylabel("Y [km]"); ax_3d.set_zlabel("Z [km]")
             ax_3d.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), frameon=False)
@@ -4247,15 +4691,29 @@ class _ReportPager:
         if not Path(image_path).exists():
             return False
         fig = self._blank()
-        ax = self._chrome(fig, heading)
+        self._chrome(fig, heading)
         img = plt.imread(str(image_path))
-        # Centered image area below the heading, above any caption.
-        img_ax = fig.add_axes([0.08, 0.16, 0.84, 0.70])
+        h = int(img.shape[0]) or 1
+        w = int(img.shape[1]) or 1
+        img_aspect = w / h
+        page_w, page_h = _REPORT_PAGE_SIZE
+        # Size the image box so the figure fills the page width (preserving its
+        # aspect) and sits just under the heading — no tiny plot floating in a
+        # large blank page.
+        bw, x0, y_top = 0.88, 0.06, 0.90
+        bh = bw * page_w / (img_aspect * page_h)
+        max_bh = 0.74
+        if bh > max_bh:
+            bh = max_bh
+            bw = min(0.88, bh * img_aspect * page_h / page_w)
+            x0 = (1.0 - bw) / 2.0
+        y0 = y_top - bh
+        img_ax = fig.add_axes([x0, y0, bw, bh])
         img_ax.imshow(img)
         img_ax.axis("off")
         if caption:
-            fig.text(0.08, 0.115, caption, color=_REPORT_THEME["muted"], fontsize=9,
-                     va="top", wrap=True)
+            fig.text(0.06, max(0.07, y0 - 0.022), caption, color=_REPORT_THEME["muted"],
+                     fontsize=9, va="top", wrap=True)
         self._save(fig)
         return True
 
@@ -4471,19 +4929,36 @@ def write_gpu_batch_report_pdf(
                 intro="Wall-clock runtime and throughput for the GPU fixed-step propagation.",
             )
 
+        # Shared context appended to each caption (N, duration, truth, unit note).
+        ctx = (f"N = {args.random_scenarios} scenarios over {args.duration_days:g} day(s); "
+               f"errors are relative to the {args.truth.upper()} {truth_integ} reference. "
+               f"Axes auto-select display units (km/m/cm); CSV metrics remain in km.")
+        small_n_note = (" For small N, distribution panels are diagnostic rather than "
+                        "statistical." if int(args.random_scenarios) < 8 else "")
         figure_specs = [
-            ("gpu_runtime_vs_accuracy.png", "Runtime vs accuracy tradeoff across GPU models."),
-            ("gpu_accuracy_ranking_bar.png", "Median and P95 RMS position error per model."),
-            ("stlrps_equivalent_sh_degree.png", "ST-LRPS accuracy vs the spherical-harmonic degree ladder."),
-            ("gpu_rms_error_distribution_boxplot.png", "RMS error distribution across scenarios."),
-            ("ensemble_mean_position_error_vs_time.png", "Ensemble median position error vs time."),
-            ("ensemble_ric_rms_vs_time.png", "Ensemble RIC RMS error vs time."),
+            ("gpu_runtime_vs_accuracy.png",
+             "Runtime–accuracy tradeoff across GPU models. Lower-left is better "
+             "(faster and more accurate); the dashed line marks the Pareto front. " + ctx),
+            ("gpu_accuracy_ranking_bar.png",
+             "Per-model accuracy ranking (lollipops = median RMS, open diamonds = P95 RMS), "
+             "sorted best-to-worst; ST-LRPS is highlighted. Lower is better. " + ctx),
+            ("stlrps_equivalent_sh_degree.png",
+             "ST-LRPS equivalent SH-degree estimate by interpolating median RMS error "
+             "across the spherical-harmonic baselines. " + ctx),
+            ("gpu_rms_error_distribution_boxplot.png",
+             "Distribution of per-scenario RMS position error per model." + small_n_note + " " + ctx),
+            ("ensemble_mean_position_error_vs_time.png",
+             "Ensemble median position error vs time (shaded band = 25–75% across scenarios). " + ctx),
+            ("ensemble_ric_rms_vs_time.png",
+             "Ensemble radial/along-track/cross-track RMS error vs time. " + ctx),
             ("selected_representative_position_error_all_models.png",
-             "Representative scenario: position error vs time."),
+             "Representative scenario: position error vs time. " + ctx),
             ("selected_representative_ric_error_all_models.png",
-             "Representative scenario: RIC error vs time."),
-            ("selected_worst_position_error_all_models.png", "Worst scenario: position error vs time."),
-            ("selected_worst_ric_error_all_models.png", "Worst scenario: RIC error vs time."),
+             "Representative scenario: radial/along-track/cross-track error vs time. " + ctx),
+            ("selected_worst_position_error_all_models.png",
+             "Worst-case scenario: position error vs time. " + ctx),
+            ("selected_worst_ric_error_all_models.png",
+             "Worst-case scenario: radial/along-track/cross-track error vs time. " + ctx),
         ]
         for png_name, caption in figure_specs:
             pager.figure_page("Figure", plots_dir / png_name, caption)
