@@ -76,6 +76,8 @@ def test_benchmark_tab_dop853_mode_args(qapp):
     assert "--rtol" in args and "--atol" in args
     assert "--sampling-method" not in args
     assert "--inclination-sampling" not in args
+    assert "--cache-trajectories" in args
+    assert "--reuse-cache" in args
     tab.deleteLater()
 
 
@@ -95,6 +97,8 @@ def test_benchmark_tab_gpu_rk4_mode_args(qapp):
     assert "--torch-dtype" in args
     assert "--integrator" not in args
     assert "--models" not in args
+    assert "--cache-trajectories" in args
+    assert "--reuse-cache" in args
     tab.deleteLater()
 
 
@@ -208,6 +212,12 @@ def test_harness_parses_new_flags(monkeypatch):
         "--workers", "4",
         "--sampling-method", "sobol_scrambled",
         "--inclination-sampling", "uniform_cos",
+        "--cache-trajectories",
+        "--reuse-cache",
+        "--append-scenarios", "12",
+        "--rebuild-metrics",
+        "--strict-complete",
+        "--allow-lhs-append",
     ]
     monkeypatch.setattr(_sys, "argv", argv)
     args = cgm.parse_args()
@@ -216,6 +226,12 @@ def test_harness_parses_new_flags(monkeypatch):
     assert args.workers == 4
     assert args.sampling_method == "sobol_scrambled"
     assert args.inclination_sampling == "uniform_cos"
+    assert args.cache_trajectories is True
+    assert args.reuse_cache is True
+    assert args.append_scenarios == 12
+    assert args.rebuild_metrics is True
+    assert args.strict_complete is True
+    assert args.allow_lhs_append is True
 
 
 def test_cfg_with_integrator_overrides_method():
@@ -336,6 +352,33 @@ def test_ui_accumulate_toggle_emits_resume(qapp):
     tab.deleteLater()
 
 
+def test_ui_cache_resume_flags(qapp, tmp_path):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    cache_dir = tmp_path / "cache"
+    tab.accumulate.setChecked(True)
+    tab.append_scenarios.setValue(25)
+    tab.rebuild_metrics.setChecked(True)
+    tab.strict_complete.setChecked(True)
+    tab.cache_dir.setText(str(cache_dir))
+    args = tab._build_args(show_errors=False)
+    assert "--cache-trajectories" in args
+    assert "--reuse-cache" in args
+    assert "--resume" in args
+    assert args[args.index("--append-scenarios") + 1] == "25"
+    assert "--rebuild-metrics" in args
+    assert "--strict-complete" in args
+    assert args[args.index("--cache-dir") + 1] == str(cache_dir)
+
+    tab.cache_trajectories.setChecked(False)
+    tab.reuse_cache.setChecked(False)
+    args2 = tab._build_args(show_errors=False)
+    assert "--cache-trajectories" not in args2
+    assert "--reuse-cache" not in args2
+    tab.deleteLater()
+
+
 def test_ui_qsettings_persists_sampling(qapp):
     from st_lrps.ui.studio import OrbitBenchmarkTab
     from st_lrps.ui.studio_parts.common_widgets import _settings
@@ -350,6 +393,13 @@ def test_ui_qsettings_persists_sampling(qapp):
     tab.sampling_method.setCurrentIndex(tab.sampling_method.findData("lhs"))
     tab.inclination_sampling.setCurrentIndex(tab.inclination_sampling.findData("uniform_cos"))
     tab.truth_workers.setValue(6)
+    tab.cache_trajectories.setChecked(False)
+    tab.reuse_cache.setChecked(False)
+    tab.accumulate.setChecked(True)
+    tab.append_scenarios.setValue(9)
+    tab.rebuild_metrics.setChecked(True)
+    tab.strict_complete.setChecked(True)
+    tab.cache_dir.setText(str(ROOT / "tmp_cache"))
     tab._save_settings()
     tab.deleteLater()
 
@@ -357,6 +407,13 @@ def test_ui_qsettings_persists_sampling(qapp):
     assert restored.sampling_method.currentData() == "lhs"
     assert restored.inclination_sampling.currentData() == "uniform_cos"
     assert restored.truth_workers.value() == 6
+    assert restored.cache_trajectories.isChecked() is False
+    assert restored.reuse_cache.isChecked() is False
+    assert restored.accumulate.isChecked() is True
+    assert restored.append_scenarios.value() == 9
+    assert restored.rebuild_metrics.isChecked() is True
+    assert restored.strict_complete.isChecked() is True
+    assert restored.cache_dir.text() == str(ROOT / "tmp_cache")
     restored.deleteLater()
 
     settings.beginGroup("orbit_benchmark")
@@ -389,6 +446,32 @@ def _sampling_args(**overrides):
         ta_max_deg=360.0,
         scenario_limit=None,
         resume=False,
+        truth="sh200",
+        truth_integrator="DOP853",
+        duration_days=0.01,
+        dt_out=60.0,
+        rk4_dt_s=10.0,
+        st_lrps_rk4_dt=30.0,
+        gpu_integrator="medium",
+        torch_dtype="float64",
+        batch_frame_mode="match_dynamics_engine",
+        st_lrps_model_dir=None,
+        models="sh20",
+        gpu_models="sh20",
+        cache_trajectories=True,
+        reuse_cache=True,
+        cache_dir=None,
+        append_scenarios=0,
+        rebuild_metrics=False,
+        strict_complete=False,
+        allow_lhs_append=False,
+        plot_theme="report_light",
+        plot_error_logscale=False,
+        plot_3d=False,
+        plot_best_scenario_id=None,
+        plot_worst_scenario_id=None,
+        plot_representative_scenario_id=None,
+        plot_scenario_id=None,
     )
     data.update(overrides)
     return argparse.Namespace(**data)
@@ -483,6 +566,192 @@ def test_backend_manifest_written_json_safe_and_resume_conflict(tmp_path):
     bad_args = _sampling_args(sampling_method="lhs", random_scenarios=5, resume=True)
     with pytest.raises(ValueError, match="sampling_method=sobol_scrambled"):
         cgm.prepare_scenarios(bad_args, tmp_path)
+
+
+def test_backend_sobol_manifest_extends_with_stable_prefix(tmp_path):
+    pytest.importorskip("scipy.stats.qmc")
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    args4 = _sampling_args(sampling_method="sobol_scrambled", random_scenarios=4)
+    first = cgm.prepare_scenarios(args4, tmp_path)
+    args8 = _sampling_args(
+        sampling_method="sobol_scrambled",
+        random_scenarios=8,
+        resume=True,
+    )
+    extended = cgm.prepare_scenarios(args8, tmp_path)
+    assert len(extended) == 8
+    assert [s.scenario_id for s in extended] == list(range(8))
+    assert [round(s.hp_km, 12) for s in extended[:4]] == [round(s.hp_km, 12) for s in first]
+    manifest = json.loads((tmp_path / "scenario_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["metadata"]["scenario_count"] == 8
+
+
+def test_backend_rebuild_metrics_uses_existing_manifest_count(tmp_path):
+    pytest.importorskip("scipy.stats.qmc")
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    args4 = _sampling_args(sampling_method="sobol_scrambled", random_scenarios=4)
+    cgm.prepare_scenarios(args4, tmp_path)
+    rebuild = _sampling_args(
+        sampling_method="sobol_scrambled",
+        random_scenarios=8,
+        rebuild_metrics=True,
+    )
+    scenarios = cgm.prepare_scenarios(rebuild, tmp_path)
+    assert len(scenarios) == 4
+    manifest = json.loads((tmp_path / "scenario_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["metadata"]["scenario_count"] == 4
+
+
+def test_backend_lhs_extension_requires_explicit_blockwise_opt_in(tmp_path):
+    pytest.importorskip("scipy.stats.qmc")
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    args4 = _sampling_args(sampling_method="lhs", random_scenarios=4)
+    cgm.prepare_scenarios(args4, tmp_path)
+
+    args8 = _sampling_args(sampling_method="lhs", random_scenarios=8, resume=True)
+    with pytest.raises(ValueError, match="LHS is not naturally nested"):
+        cgm.prepare_scenarios(args8, tmp_path)
+
+    allowed = _sampling_args(
+        sampling_method="lhs",
+        random_scenarios=8,
+        resume=True,
+        allow_lhs_append=True,
+    )
+    extended = cgm.prepare_scenarios(allowed, tmp_path)
+    assert len(extended) == 8
+    manifest = json.loads((tmp_path / "scenario_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["metadata"]["lhs_append_mode"] == "blockwise"
+
+
+def test_backend_atomic_cache_save_load_and_corrupt_recompute_detection(tmp_path):
+    import numpy as np
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = _sampling_args(random_scenarios=1)
+    scenario = cgm.generate_validation_scenarios(args)[0]
+    cache_dir = tmp_path / "benchmark_cache"
+    t = np.array([0.0, 60.0])
+    y = np.array([
+        scenario.initial_state,
+        scenario.initial_state + np.array([1.0, 2.0, 3.0, 0.1, 0.2, 0.3]),
+    ])
+
+    path = cgm._save_cached_trajectory(
+        cache_dir, scenario, "sh200_dop853", "truth", t, y, args,
+        runtime_s=0.5, integrator="DOP853", dtype="float64",
+        device="cpu", backend="cpu_truth", truth_model="sh200",
+    )
+    assert path.exists()
+    assert not path.with_name(path.name + ".tmp").exists()
+    loaded = cgm._load_cached_trajectory(path)
+    assert loaded is not None
+    assert loaded.runtime_s == 0.5
+    assert np.allclose(loaded.t, t)
+    assert np.allclose(loaded.y, y)
+
+    corrupt = cache_dir / "truth" / "sh200_dop853" / "scenario_000099.npz"
+    corrupt.write_bytes(b"not a zip")
+    assert cgm._load_cached_trajectory(corrupt) is None
+
+
+def test_backend_truth_and_model_cache_completion_counts(tmp_path):
+    import numpy as np
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = _sampling_args(random_scenarios=2)
+    scenarios = cgm.generate_validation_scenarios(args)
+    cache_dir = tmp_path / "benchmark_cache"
+    t = np.array([0.0, 60.0])
+    y = np.vstack([scenarios[0].initial_state, scenarios[0].initial_state])
+
+    cgm._save_cached_trajectory(
+        cache_dir, scenarios[0], cgm._truth_cache_name(args), "truth", t, y, args,
+        runtime_s=0.1, integrator="DOP853", dtype="float64",
+        device="cpu", backend="cpu_truth", truth_model="sh200",
+    )
+    cgm._save_cached_trajectory(
+        cache_dir, scenarios[0], "sh20", "comparison_model", t, y, args,
+        runtime_s=0.2, integrator="DOP853", dtype="float64",
+        device="cpu", backend="cpu_adaptive", truth_model="sh200",
+    )
+
+    truth_complete, truth_missing = cgm._truth_cache_completion(cache_dir, args, scenarios)
+    model_complete, model_missing = cgm._model_cache_completion(cache_dir, "sh20", scenarios)
+    assert truth_complete == 1 and [s.scenario_id for s in truth_missing] == [1]
+    assert model_complete == 1 and [s.scenario_id for s in model_missing] == [1]
+
+
+def test_backend_cache_duration_mismatch_rejects_reuse(tmp_path):
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = _sampling_args(random_scenarios=1)
+    scenarios = cgm.generate_validation_scenarios(args)
+    cache_dir = tmp_path / "benchmark_cache"
+    cgm._write_cache_manifest(args, cache_dir, scenarios, ["sh20"])
+    bad = _sampling_args(random_scenarios=1, duration_days=0.02)
+    with pytest.raises(ValueError, match="duration_days"):
+        cgm._validate_cache_compatibility(bad, cache_dir)
+
+
+def test_backend_rebuild_gpu_metrics_from_cached_trajectories(tmp_path):
+    import numpy as np
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = _sampling_args(random_scenarios=1, strict_complete=True)
+    scenario = cgm.generate_validation_scenarios(args)[0]
+    cache_dir = tmp_path / "benchmark_cache"
+    metrics_dir = tmp_path / "metrics"
+    plots_dir = tmp_path / "plots"
+    reports_dir = tmp_path / "reports"
+    t = np.array([0.0, 60.0])
+    y = np.vstack([scenario.initial_state, scenario.initial_state])
+    cgm._save_cached_trajectory(
+        cache_dir, scenario, cgm._truth_cache_name(args), "truth", t, y, args,
+        runtime_s=0.1, integrator="DOP853", dtype="float64",
+        device="cpu", backend="cpu_truth", truth_model="sh200",
+    )
+    cgm._save_cached_trajectory(
+        cache_dir, scenario, "sh20", "comparison_model", t, y, args,
+        runtime_s=0.2, integrator="medium", rk4_dt_s=10.0,
+        dtype="float64", device="cpu", backend="gpu_batch", truth_model="sh200",
+    )
+
+    cgm.rebuild_gpu_batch_metrics_from_cache(
+        args, [scenario], cache_dir, ["sh20"], metrics_dir, plots_dir, reports_dir
+    )
+    per = metrics_dir / "gpu_batch_per_scenario_metrics.csv"
+    agg = metrics_dir / "gpu_batch_aggregate_metrics.csv"
+    assert per.exists()
+    assert agg.exists()
+    assert "GPU_SH20_RK4" in per.read_text(encoding="utf-8")
+    assert (cache_dir / "metrics" / "per_model_scenario_metrics.csv").exists()
+    assert (cache_dir / "metrics" / "aggregate_metrics.csv").exists()
+
+
+def test_backend_strict_complete_rejects_missing_model_cache(tmp_path):
+    import numpy as np
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = _sampling_args(random_scenarios=1, strict_complete=True)
+    scenario = cgm.generate_validation_scenarios(args)[0]
+    cache_dir = tmp_path / "benchmark_cache"
+    t = np.array([0.0, 60.0])
+    y = np.vstack([scenario.initial_state, scenario.initial_state])
+    cgm._save_cached_trajectory(
+        cache_dir, scenario, cgm._truth_cache_name(args), "truth", t, y, args,
+        runtime_s=0.1, integrator="DOP853", dtype="float64",
+        device="cpu", backend="cpu_truth", truth_model="sh200",
+    )
+
+    with pytest.raises(RuntimeError, match="missing 1 cached scenario"):
+        cgm.rebuild_gpu_batch_metrics_from_cache(
+            args, [scenario], cache_dir, ["sh20"],
+            tmp_path / "metrics", tmp_path / "plots", tmp_path / "reports",
+        )
 
 
 # ---------------------------------------------------------------------------

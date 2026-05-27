@@ -25,6 +25,8 @@ from typing import List, Optional
 from .qt_common import *
 from .qt_common import NoScrollComboBox
 
+from st_lrps.evaluation import progress as _progress
+
 from .common_widgets import (
     CollapsibleSection,
     ImageGallery,
@@ -93,12 +95,11 @@ class OrbitBenchmarkTab(QWidget):
             self.truth.addItem(t.upper(), t)
         self.truth.setCurrentIndex(_TRUTH_CHOICES.index("sh200"))
         self.truth.setToolTip("High-degree spherical-harmonic ground-truth model.")
-        self.accumulate = QCheckBox("Accumulate previous results (resume)")
+        self.accumulate = QCheckBox("Resume / extend benchmark")
         self.accumulate.setChecked(False)
         self.accumulate.setToolTip(
             "Reuse the SAME output dir and SAME scenario settings. Existing scenario "
-            "manifests are checked before resume, and already-computed scenarios are "
-            "skipped. Works in both CPU and GPU modes."
+            "manifests and trajectory cache are checked before completed work is reused."
         )
         # Ground-truth integrator (applies in both modes).
         self.truth_integrator = NoScrollComboBox()
@@ -211,6 +212,52 @@ class OrbitBenchmarkTab(QWidget):
         form_scn.addRow("Duration (days)", self.duration_days)
         form_scn.addRow("Output dt (s)", self.dt_out)
         grp_scn.setLayout(form_scn)
+
+        # -- Persistent cache / resume ------------------------------------
+        grp_cache = QGroupBox("Caching / Resume")
+        form_cache = QFormLayout()
+        _tune_form(form_cache)
+        self.cache_trajectories = QCheckBox("Cache all trajectories")
+        self.cache_trajectories.setChecked(True)
+        self.cache_trajectories.setToolTip(
+            "Save each completed truth/model trajectory under benchmark_cache."
+        )
+        self.reuse_cache = QCheckBox("Reuse existing cache")
+        self.reuse_cache.setChecked(True)
+        self.reuse_cache.setToolTip(
+            "Skip compatible cached truth/model trajectories and compute only missing files."
+        )
+        self.append_scenarios = QSpinBox()
+        self.append_scenarios.setRange(0, 1_000_000)
+        self.append_scenarios.setValue(0)
+        self.append_scenarios.setToolTip(
+            "Append this many new scenarios after the existing manifest. 0 uses the "
+            "scenario count as the target total."
+        )
+        self.rebuild_metrics = QCheckBox("Rebuild metrics from cache")
+        self.rebuild_metrics.setChecked(False)
+        self.rebuild_metrics.setToolTip(
+            "Load cached trajectories and regenerate metrics/reports without propagating."
+        )
+        self.strict_complete = QCheckBox("Require complete model set")
+        self.strict_complete.setChecked(False)
+        self.strict_complete.setToolTip(
+            "Fail if selected models are missing cached trajectories during metric rebuild."
+        )
+        self.cache_dir = ValidatedPathEdit(
+            placeholder="Empty -> output_dir/benchmark_cache", check_file=False
+        )
+        btn_cache = QPushButton("Select...")
+        btn_cache.clicked.connect(self._pick_cache_dir)
+        cache_row = _row_lineedit_with_button(self.cache_dir, btn_cache)
+        form_cache.addRow(self.cache_trajectories)
+        form_cache.addRow(self.reuse_cache)
+        form_cache.addRow(self.accumulate)
+        form_cache.addRow("Append scenarios", self.append_scenarios)
+        form_cache.addRow(self.rebuild_metrics)
+        form_cache.addRow(self.strict_complete)
+        form_cache.addRow("Cache dir", cache_row)
+        grp_cache.setLayout(form_cache)
 
         # -- Mode-specific numerics ----------------------------------------
         grp_cpu = QGroupBox("CPU DOP853 Settings")
@@ -359,18 +406,21 @@ class OrbitBenchmarkTab(QWidget):
         grid.addWidget(grp_models, 0, 1)
         grid.addWidget(grp_scn, 1, 0)
         grid.addWidget(mode_settings_w, 1, 1)
-        grid.addWidget(self._tol_section, 2, 0, 1, 2)
-        grid.addWidget(grp_paths, 3, 0, 1, 2)
-        grid.addWidget(extra_w, 4, 0, 1, 2)
+        grid.addWidget(grp_cache, 2, 0, 1, 2)
+        grid.addWidget(self._tol_section, 3, 0, 1, 2)
+        grid.addWidget(grp_paths, 4, 0, 1, 2)
+        grid.addWidget(extra_w, 5, 0, 1, 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        for g in (grp_mode, grp_models, grp_scn, grp_cpu, grp_gpu, grp_paths):
+        for g in (grp_mode, grp_models, grp_scn, grp_cache, grp_cpu, grp_gpu, grp_paths):
             _tune_inputs(g)
 
         self.runner = ProcessPane()
         self.runner.btn_start.setText("Run Benchmark")
         self.runner.btn_start.clicked.connect(self._start)
         self.runner.set_finished_hook(self._on_finished)
+        self.runner.set_progress_parser(self._parse_progress)
+        self._status_strip = self._build_status_strip()
         self._gallery = ImageGallery()
         self._effective_out_dir = ""
 
@@ -384,6 +434,7 @@ class OrbitBenchmarkTab(QWidget):
         bl = QVBoxLayout()
         bl.setContentsMargins(0, 0, 0, 0)
         bl.setSpacing(8)
+        bl.addWidget(self._status_strip)
         bl.addWidget(self.runner, 1)
         bl.addWidget(self._gallery, 1)
         bottom.setLayout(bl)
@@ -411,14 +462,19 @@ class OrbitBenchmarkTab(QWidget):
         for w in (
             self.random_scenarios, self.scenario_seed, self.alt_min, self.alt_max,
             self.duration_days, self.dt_out, self.rk4_dt, self.max_step,
-            self.cpu_workers, self.truth_workers,
+            self.cpu_workers, self.truth_workers, self.append_scenarios,
         ):
             w.valueChanged.connect(self._refresh_command_preview)
         self.accumulate.toggled.connect(self._refresh_command_preview)
+        self.cache_trajectories.toggled.connect(self._refresh_command_preview)
+        self.reuse_cache.toggled.connect(self._refresh_command_preview)
+        self.rebuild_metrics.toggled.connect(self._refresh_command_preview)
+        self.strict_complete.toggled.connect(self._refresh_command_preview)
         self.rtol.textChanged.connect(self._refresh_command_preview)
         self.atol.textChanged.connect(self._refresh_command_preview)
         self.st_lrps_dir.textChanged.connect(self._refresh_command_preview)
         self.out_dir.textChanged.connect(self._refresh_command_preview)
+        self.cache_dir.textChanged.connect(self._refresh_command_preview)
         self.extra_args.textChanged.connect(self._refresh_command_preview)
 
         self._grp_cpu_settings = grp_cpu
@@ -439,6 +495,99 @@ class OrbitBenchmarkTab(QWidget):
         # Truth integrator applies in both modes — always enabled.
         self.truth_integrator.setEnabled(True)
         self._refresh_command_preview()
+
+    # ------------------------------------------------------------------
+    # Progress status strip
+    # ------------------------------------------------------------------
+    def _build_status_strip(self) -> QWidget:
+        """Compact one-line strip showing phase / model / progress / ETA."""
+        strip = QFrame()
+        strip.setObjectName("benchStatusStrip")
+        strip.setStyleSheet(
+            "#benchStatusStrip { background: rgba(16,24,48,0.55); "
+            "border: 1px solid rgba(185,194,221,0.14); border-radius: 8px; }"
+        )
+        lo = QHBoxLayout()
+        lo.setContentsMargins(12, 6, 12, 6)
+        lo.setSpacing(18)
+
+        def _metric(caption: str) -> QLabel:
+            cell = QVBoxLayout()
+            cell.setContentsMargins(0, 0, 0, 0)
+            cell.setSpacing(0)
+            cap = QLabel(caption)
+            cap.setStyleSheet("color:#6f7ca8; font-size:10px; font-weight:600;")
+            val = QLabel("-")
+            val.setStyleSheet("color:#d8e1f7; font-size:13px; font-weight:600;")
+            cell.addWidget(cap)
+            cell.addWidget(val)
+            holder = QWidget()
+            holder.setLayout(cell)
+            lo.addWidget(holder)
+            return val
+
+        self._st_phase = _metric("Phase")
+        self._st_model = _metric("Model")
+        self._st_phase_pct = _metric("Phase %")
+        self._st_overall_pct = _metric("Overall %")
+        self._st_elapsed = _metric("Elapsed")
+        self._st_eta = _metric("ETA")
+        self._st_steps = _metric("steps/s")
+        lo.addStretch(1)
+        strip.setLayout(lo)
+        return strip
+
+    def _reset_status_strip(self) -> None:
+        for lbl in (
+            self._st_phase, self._st_model, self._st_phase_pct,
+            self._st_overall_pct, self._st_elapsed, self._st_eta, self._st_steps,
+        ):
+            lbl.setText("-")
+        self._st_phase.setText("starting")
+
+    def _parse_progress(self, line: str) -> None:
+        """Parse a harness ``[progress]`` / ``[progress_total]`` line.
+
+        Never raises into the ProcessPane: unparseable or non-progress lines are
+        ignored so plain logs keep flowing.
+        """
+        try:
+            info = _progress.parse_progress_line(line)
+        except Exception:
+            info = None
+        if not info:
+            return
+
+        model = info.get("model")
+        if model:
+            self._st_model.setText(str(model))
+
+        if info.get("kind") == "progress_total":
+            pct = info.get("percent")
+            if pct is not None:
+                clamped = int(round(min(100.0, max(0.0, float(pct)))))
+                self.runner.progress.setRange(0, 100)
+                self.runner.progress.setValue(clamped)
+                self._st_overall_pct.setText(f"{float(pct):.1f}%")
+            elapsed = info.get("elapsed_s")
+            if elapsed is not None:
+                self._st_elapsed.setText(_progress.format_duration(float(elapsed)))
+            eta = info.get("eta_s")
+            self._st_eta.setText(
+                _progress.format_eta(float(eta)) if eta is not None else "-"
+            )
+            return
+
+        # Per-phase progress line.
+        phase = info.get("phase")
+        if phase:
+            self._st_phase.setText(str(phase))
+        pct = info.get("percent")
+        if pct is not None:
+            self._st_phase_pct.setText(f"{float(pct):.1f}%")
+        steps_per_s = info.get("steps_per_s")
+        if steps_per_s is not None:
+            self._st_steps.setText(f"{float(steps_per_s):.1f}")
 
     # ------------------------------------------------------------------
     # Model selection (with custom additions)
@@ -505,6 +654,13 @@ class OrbitBenchmarkTab(QWidget):
         )
         if d:
             self.out_dir.setText(_norm_path(d))
+
+    def _pick_cache_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(
+            self, "Benchmark cache dir", self.cache_dir.text() or str(BENCHMARK_OUTPUT_ROOT)
+        )
+        if d:
+            self.cache_dir.setText(_norm_path(d))
 
     # ------------------------------------------------------------------
     # Command construction
@@ -588,6 +744,19 @@ class OrbitBenchmarkTab(QWidget):
         args += ["--output-dir", out_dir]
         if self.accumulate.isChecked():
             args += ["--resume"]
+        if self.cache_trajectories.isChecked():
+            args += ["--cache-trajectories"]
+        if self.reuse_cache.isChecked():
+            args += ["--reuse-cache"]
+        if self.append_scenarios.value() > 0:
+            args += ["--append-scenarios", str(self.append_scenarios.value())]
+        if self.rebuild_metrics.isChecked():
+            args += ["--rebuild-metrics"]
+        if self.strict_complete.isChecked():
+            args += ["--strict-complete"]
+        cache_dir = self.cache_dir.text().strip()
+        if cache_dir:
+            args += ["--cache-dir", cache_dir]
 
         extra = self.extra_args.text().strip()
         if extra:
@@ -625,6 +794,7 @@ class OrbitBenchmarkTab(QWidget):
         self._effective_out_dir = out_dir
         self.runner.set_output_dir(out_dir)
         self.runner.progress.setRange(0, 0)
+        self._reset_status_strip()
         self._gallery.clear_gallery()
         self._save_settings()
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
@@ -657,6 +827,13 @@ class OrbitBenchmarkTab(QWidget):
         s.setValue("truth", self.truth.currentData())
         s.setValue("truth_integrator", self.truth_integrator.currentData())
         s.setValue("accumulate", self.accumulate.isChecked())
+        s.setValue("resume_benchmark", self.accumulate.isChecked())
+        s.setValue("cache_trajectories", self.cache_trajectories.isChecked())
+        s.setValue("reuse_cache", self.reuse_cache.isChecked())
+        s.setValue("append_scenarios", self.append_scenarios.value())
+        s.setValue("rebuild_metrics", self.rebuild_metrics.isChecked())
+        s.setValue("strict_complete", self.strict_complete.isChecked())
+        s.setValue("cache_dir", self.cache_dir.text())
         s.setValue("models", ",".join(self._selected_models()))
         s.setValue("custom_models", ",".join(self._custom_models))
         s.setValue("random_scenarios", self.random_scenarios.value())
@@ -696,8 +873,17 @@ class OrbitBenchmarkTab(QWidget):
         _combo(self.run_mode, "run_mode")
         _combo(self.truth, "truth")
         _combo(self.truth_integrator, "truth_integrator")
-        if s.contains("accumulate"):
-            self.accumulate.setChecked(str(s.value("accumulate", "false")).lower() == "true")
+        resume_key = "resume_benchmark" if s.contains("resume_benchmark") else "accumulate"
+        if s.contains(resume_key):
+            self.accumulate.setChecked(str(s.value(resume_key, "false")).lower() == "true")
+        for key, cb in (
+            ("cache_trajectories", self.cache_trajectories),
+            ("reuse_cache", self.reuse_cache),
+            ("rebuild_metrics", self.rebuild_metrics),
+            ("strict_complete", self.strict_complete),
+        ):
+            if s.contains(key):
+                cb.setChecked(str(s.value(key, "false")).lower() == "true")
         # Recreate custom models before applying the saved checked set.
         if s.contains("custom_models"):
             for name in str(s.value("custom_models", "")).split(","):
@@ -715,6 +901,7 @@ class OrbitBenchmarkTab(QWidget):
             ("scenario_seed", self.scenario_seed),
             ("cpu_workers", self.cpu_workers),
             ("truth_workers", self.truth_workers),
+            ("append_scenarios", self.append_scenarios),
         ):
             if s.contains(key):
                 try:
@@ -747,6 +934,8 @@ class OrbitBenchmarkTab(QWidget):
             self.st_lrps_dir.setText(str(s.value("st_lrps_dir", "")))
         if s.contains("out_dir"):
             self.out_dir.setText(str(s.value("out_dir", "")))
+        if s.contains("cache_dir"):
+            self.cache_dir.setText(str(s.value("cache_dir", "")))
         s.endGroup()
 
 

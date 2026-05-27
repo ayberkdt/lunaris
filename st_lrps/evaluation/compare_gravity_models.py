@@ -69,8 +69,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
+import os
 import sys
 import time
 import traceback
@@ -107,6 +109,7 @@ except ImportError as exc:
     print(f"CRITICAL: Must run from ST_LRPS root. Missing: {exc}", file=sys.stderr)
     sys.exit(1)
 
+from st_lrps.evaluation import progress
 from dataclasses import replace
 
 
@@ -170,6 +173,14 @@ class TruthTrajectorySet:
         return float(np.mean(list(self.runtime_by_scenario.values())))
 
 
+@dataclass
+class CachedTrajectory:
+    t: np.ndarray
+    y: np.ndarray
+    runtime_s: float = float("nan")
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 _METRICS_FIELDNAMES = [
     "scenario_id", "model",
     "runtime_s", "runtime_rel_to_truth",
@@ -207,6 +218,7 @@ INCLINATION_SAMPLING_METHODS = ("uniform_deg", "uniform_cos")
 SCENARIO_UNIT_DIM = 6
 SCENARIO_MANIFEST_CSV = "scenario_manifest.csv"
 SCENARIO_MANIFEST_JSON = "scenario_manifest.json"
+BENCHMARK_CACHE_SCHEMA_VERSION = 1
 
 
 # =============================================================================
@@ -295,6 +307,21 @@ def parse_args() -> argparse.Namespace:
                    help="Save SH200 DOP853 truth trajectories under output_dir/truth")
     p.add_argument("--reuse-truth-cache", action="store_true",
                    help="Reuse valid truth cache if metadata matches the current run")
+    p.add_argument("--cache-trajectories", action="store_true",
+                   help="Persist per-scenario truth and comparison-model trajectories "
+                        "under benchmark_cache")
+    p.add_argument("--reuse-cache", action="store_true",
+                   help="Reuse compatible per-scenario benchmark_cache trajectories")
+    p.add_argument("--cache-dir", type=str, default=None,
+                   help="Optional benchmark cache directory. Default: output_dir/benchmark_cache")
+    p.add_argument("--append-scenarios", type=int, default=0,
+                   help="Append N new scenarios to an existing manifest")
+    p.add_argument("--rebuild-metrics", action="store_true",
+                   help="Rebuild metrics/reports from cached trajectories without propagation")
+    p.add_argument("--strict-complete", action="store_true",
+                   help="Fail metric rebuild if any selected model is missing scenarios")
+    p.add_argument("--allow-lhs-append", action="store_true",
+                   help="Allow blockwise LHS append; not equivalent to one global LHS design")
     p.add_argument("--require-st-lrps", action="store_true",
                    help="Fail if ST-LRPS is requested but no valid model directory is found")
     p.add_argument("--plot-theme", choices=["report_light", "technical_dark"], default="report_light")
@@ -830,11 +857,17 @@ def propagate_gpu_batch_model(
     dtype_name: str,
     frame_mode: str,
     gpu_integrator: str = "medium",
+    progress_cb: Optional[Any] = None,
 ) -> BatchModelResult:
     """Propagate one model for all scenarios using a fixed-step torch integrator.
 
     ``gpu_integrator`` selects the fidelity tier (light/medium/robust); see
     :func:`gpu_fixed_step_advance`.
+
+    ``progress_cb`` (optional) is invoked as ``cb(current_step, total_steps,
+    elapsed_s)`` at step 0, on a throttled cadence during integration, and once
+    more on successful completion. It is logging-only and never affects the
+    numerical result.
     """
 
     import torch
@@ -874,20 +907,37 @@ def propagate_gpu_batch_model(
         a_i = frame.fixed_to_inertial(t_s, a_f)
         return torch.cat((v_i, a_i), dim=1)
 
+    total_steps = int(n_snaps * steps_per_snap)
+    throttle = progress.StepThrottle(total_steps)
+
+    def _emit_progress(step: int, elapsed: float) -> None:
+        if progress_cb is None:
+            return
+        try:
+            progress_cb(int(step), total_steps, float(elapsed))
+        except Exception:
+            pass
+
     if str(device).startswith("cuda"):
         torch.cuda.synchronize()
     t0 = time.perf_counter()
     t_curr = 0.0
     status = "ok"
     failure_reason = ""
+    step_count = 0
+    _emit_progress(0, 0.0)
 
     try:
         for snap_idx in range(n_snaps):
             for _ in range(steps_per_snap):
                 state = gpu_fixed_step_advance(_rhs, t_curr, state, dt_eff, gpu_integrator)
                 t_curr += dt_eff
+                step_count += 1
                 if not torch.isfinite(state).all():
                     raise FloatingPointError(f"non-finite state in {model_name}")
+                now = time.perf_counter()
+                if throttle.update(step_count, now):
+                    _emit_progress(step_count, now - t0)
             y_out[snap_idx + 1] = state.detach().cpu().numpy().astype(np.float64)
     except Exception as exc:
         status = "failed"
@@ -898,6 +948,8 @@ def propagate_gpu_batch_model(
         torch.cuda.synchronize()
     runtime_s = time.perf_counter() - t0
     n_steps = n_snaps * steps_per_snap
+    if status == "ok":
+        _emit_progress(total_steps, runtime_s)
     return BatchModelResult(
         model_name=str(model_name).lower(),
         display_name=_model_display_name(model_name),
@@ -1946,6 +1998,176 @@ def aggregate_gpu_batch_metrics(rows: List[Dict[str, Any]]) -> List[Dict[str, An
     return sorted(out, key=lambda r: r.get("median_rms_pos_err_km", np.inf))
 
 
+def load_cached_truth_set(
+    args: argparse.Namespace,
+    scenarios: List[Scenario],
+    cache_dir: Path,
+    *,
+    strict: bool = False,
+) -> TruthTrajectorySet:
+    t_by: Dict[int, np.ndarray] = {}
+    y_by: Dict[int, np.ndarray] = {}
+    rt_by: Dict[int, float] = {}
+    missing: List[int] = []
+    for scenario in scenarios:
+        cached = _load_cached_trajectory(_cached_truth_path(cache_dir, args, scenario.scenario_id))
+        if cached is None:
+            missing.append(int(scenario.scenario_id))
+            continue
+        t_by[scenario.scenario_id] = cached.t
+        y_by[scenario.scenario_id] = cached.y
+        rt_by[scenario.scenario_id] = float(cached.runtime_s)
+    if missing and strict:
+        raise RuntimeError(f"Truth cache missing {len(missing)} scenarios: {missing[:8]}")
+    return TruthTrajectorySet(_truth_cache_name(args), t_by, y_by, rt_by)
+
+
+def _cached_gpu_runtime_rows(
+    args: argparse.Namespace,
+    models: List[str],
+    scenarios: List[Scenario],
+    cache_dir: Path,
+    truth: TruthTrajectorySet,
+) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    for model in models:
+        runtime = 0.0
+        n = 0
+        steps = 0
+        device = ""
+        backend = ""
+        for scenario in scenarios:
+            cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
+            if cached is None:
+                continue
+            if np.isfinite(cached.runtime_s):
+                runtime += float(cached.runtime_s)
+            n += 1
+            steps += max(0, int(cached.t.shape[0] - 1))
+            device = str(cached.metadata.get("device", device))
+            backend = str(cached.metadata.get("backend", backend))
+        if n == 0:
+            continue
+        rows.append({
+            "model": _model_display_name(model),
+            "backend": backend,
+            "device": device,
+            "dtype": str(getattr(args, "torch_dtype", "")),
+            "n_scenarios": n,
+            "n_steps": steps,
+            "n_saved_outputs": "",
+            "total_runtime_s": runtime,
+            "runtime_per_scenario_s": runtime / max(n, 1),
+            "trajectory_steps_per_second": n * steps / max(runtime, 1e-9),
+            "truth_total_runtime_s": truth.total_runtime_s,
+            "truth_mean_runtime_per_scenario_s": truth.mean_runtime_s,
+            "speedup_vs_truth_total": truth.total_runtime_s / max(runtime, 1e-9),
+            "speedup_vs_truth_per_scenario": truth.mean_runtime_s / max(runtime / max(n, 1), 1e-9),
+            "status": "cached",
+        })
+    return sorted(rows, key=lambda r: r.get("total_runtime_s", np.inf))
+
+
+def rebuild_gpu_batch_metrics_from_cache(
+    args: argparse.Namespace,
+    scenarios: List[Scenario],
+    cache_dir: Path,
+    gpu_models: List[str],
+    metrics_dir: Path,
+    plots_dir: Path,
+    reports_dir: Path,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    print("[cache] Rebuilding metrics from cached trajectories.", flush=True)
+    truth = load_cached_truth_set(args, scenarios, cache_dir, strict=True)
+    all_rows: List[Dict[str, Any]] = []
+    for model in gpu_models:
+        complete, missing = _model_cache_completion(cache_dir, model, scenarios)
+        print(f"[cache] Model {model}: {complete}/{len(scenarios)} complete.", flush=True)
+        if missing and getattr(args, "strict_complete", False):
+            raise RuntimeError(
+                f"Model {model} is missing {len(missing)} cached scenario trajectories."
+            )
+        for scenario in scenarios:
+            cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
+            if cached is None:
+                continue
+            result = BatchModelResult(
+                model_name=model,
+                display_name=_model_display_name(model),
+                backend=str(cached.metadata.get("backend", "cached")),
+                device=str(cached.metadata.get("device", "")),
+                dtype=str(cached.metadata.get("dtype", "")),
+                t=cached.t,
+                y=cached.y[:, None, :],
+                runtime_s=float(cached.runtime_s),
+                n_steps=max(0, int(cached.t.shape[0] - 1)),
+                n_scenarios=1,
+                rk4_dt_s=float(
+                    cached.metadata.get(
+                        "rk4_dt_s",
+                        args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt,
+                    )
+                ),
+                output_dt_s=float(args.dt_out),
+                status="ok",
+            )
+            all_rows.extend(compute_gpu_batch_metrics_for_model(
+                result, truth, [scenario], args.duration_days
+            ))
+
+    aggregate_rows = aggregate_gpu_batch_metrics(all_rows)
+    runtime_rows = _cached_gpu_runtime_rows(args, gpu_models, scenarios, cache_dir, truth)
+    ranking_rows = build_gpu_model_ranking(aggregate_rows)
+    equivalent = estimate_stlrps_equivalent_sh_degree(aggregate_rows)
+    selected = select_stlrps_scenarios(all_rows, {s.scenario_id: s for s in scenarios}, args)
+
+    _write_csv(all_rows, metrics_dir / "gpu_batch_per_scenario_metrics.csv")
+    _write_csv(aggregate_rows, metrics_dir / "gpu_batch_aggregate_metrics.csv")
+    _write_csv(runtime_rows, metrics_dir / "gpu_batch_runtime_metrics.csv")
+    _write_csv(ranking_rows, metrics_dir / "gpu_batch_model_ranking.csv")
+    (metrics_dir / "stlrps_selected_scenarios.json").write_text(
+        json.dumps(selected, indent=4, default=str), encoding="utf-8"
+    )
+    summary = {
+        "truth": _truth_cache_name(args),
+        "gpu_models": gpu_models,
+        "n_scenarios_total": len(scenarios),
+        "n_scenarios_new_this_run": 0,
+        "accumulated": bool(args.resume),
+        "rebuilt_from_cache": True,
+        "sampling": _sampling_metadata(args, len(scenarios)),
+        "truth_workers": int(getattr(args, "workers", 1)),
+        "gpu_integrator": str(getattr(args, "gpu_integrator", "medium")),
+        "frame_mode": args.batch_frame_mode,
+        "truth_total_runtime_s": truth.total_runtime_s,
+        "truth_mean_runtime_per_scenario_s": truth.mean_runtime_s,
+        "equivalent_sh_degree": equivalent,
+        "selected_stlrps_scenarios": selected,
+        "aggregate": aggregate_rows,
+        "runtime": runtime_rows,
+    }
+    (metrics_dir / "gpu_batch_summary.json").write_text(
+        json.dumps(summary, indent=4, default=str), encoding="utf-8"
+    )
+    cache_metrics_dir = cache_dir / "metrics"
+    if cache_metrics_dir != metrics_dir:
+        _write_csv(all_rows, cache_metrics_dir / "per_model_scenario_metrics.csv")
+        _write_csv(aggregate_rows, cache_metrics_dir / "aggregate_metrics.csv")
+        _write_csv(runtime_rows, cache_metrics_dir / "runtime_metrics.csv")
+        _write_csv(ranking_rows, cache_metrics_dir / "model_ranking.csv")
+        cache_metrics_dir.mkdir(parents=True, exist_ok=True)
+        (cache_metrics_dir / "summary.json").write_text(
+            json.dumps(summary, indent=4, default=str), encoding="utf-8"
+        )
+    if aggregate_rows:
+        plot_gpu_batch_report_figures(
+            aggregate_rows, runtime_rows, all_rows, [], truth, scenarios,
+            selected, equivalent, plots_dir, args
+        )
+        write_gpu_batch_report_pdf(args, aggregate_rows, runtime_rows, equivalent, selected, plots_dir, reports_dir)
+    return aggregate_rows, runtime_rows, equivalent, selected
+
+
 def build_gpu_runtime_metrics(
     results: List[BatchModelResult],
     truth: TruthTrajectorySet,
@@ -2979,7 +3201,45 @@ def _sampling_metadata(args: argparse.Namespace, scenario_count: Optional[int] =
         "module_name": __name__,
         "code_path": str(Path(__file__).resolve()),
         "sampling_note": note,
+        "lhs_append_mode": (
+            "blockwise" if method == "lhs" and bool(getattr(args, "allow_lhs_append", False))
+            else None
+        ),
+        "warning": (
+            "Blockwise LHS append is not equivalent to a single global LHS design."
+            if method == "lhs" and bool(getattr(args, "allow_lhs_append", False))
+            else ""
+        ),
     }
+
+
+def _scenario_generation_args(args: argparse.Namespace, n: int) -> argparse.Namespace:
+    child = argparse.Namespace(**vars(args))
+    child.random_scenarios = int(n)
+    child.scenario_limit = None
+    return child
+
+
+def _scenario_numeric_tuple(s: Scenario) -> Tuple[float, ...]:
+    return (
+        float(s.hp_km), float(s.ha_km), float(s.a_km), float(s.e),
+        float(s.inc_deg), float(s.raan_deg), float(s.argp_deg), float(s.ta_deg),
+    )
+
+
+def _scenarios_match(a: Scenario, b: Scenario, atol: float = 1e-9) -> bool:
+    if int(a.scenario_id) != int(b.scenario_id):
+        return False
+    av = _scenario_numeric_tuple(a)
+    bv = _scenario_numeric_tuple(b)
+    return all(math.isclose(x, y, rel_tol=0.0, abs_tol=atol) for x, y in zip(av, bv))
+
+
+def _renumber_scenarios(scenarios: List[Scenario], start_id: int) -> List[Scenario]:
+    out: List[Scenario] = []
+    for offset, scenario in enumerate(scenarios):
+        out.append(replace(scenario, scenario_id=int(start_id + offset)))
+    return out
 
 
 def _json_safe(value: Any) -> Any:
@@ -3080,15 +3340,14 @@ def _manifest_values_equal(old: Any, new: Any) -> bool:
 def _verify_scenario_manifest_matches(
     manifest: Dict[str, Any],
     args: argparse.Namespace,
+    *,
+    require_count: bool = True,
 ) -> None:
     metadata = manifest.get("metadata", {}) if isinstance(manifest, dict) else {}
     expected = _sampling_metadata(args)
     fields = [
         "sampling_method",
         "scenario_seed",
-        "scenario_count",
-        "requested_random_scenarios",
-        "scenario_limit",
         "scenario_mode",
         "inclination_sampling",
         "altitude_min_km",
@@ -3104,6 +3363,8 @@ def _verify_scenario_manifest_matches(
         "ta_min_deg",
         "ta_max_deg",
     ]
+    if require_count:
+        fields[2:2] = ["scenario_count", "requested_random_scenarios", "scenario_limit"]
     for field in fields:
         old = metadata.get(field)
         new = expected.get(field)
@@ -3146,14 +3407,16 @@ def _scenario_from_manifest_row(row: Dict[str, Any]) -> Scenario:
 def _load_scenarios_from_manifest(
     manifest_path: Path,
     args: argparse.Namespace,
+    *,
+    require_count: bool = True,
 ) -> List[Scenario]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    _verify_scenario_manifest_matches(manifest, args)
+    _verify_scenario_manifest_matches(manifest, args, require_count=require_count)
     rows = manifest.get("scenarios", [])
     if not isinstance(rows, list):
         raise ValueError("Existing scenario_manifest has invalid scenarios payload.")
     scenarios = [_scenario_from_manifest_row(row) for row in rows]
-    if len(scenarios) != _scenario_count_for_args(args):
+    if require_count and len(scenarios) != _scenario_count_for_args(args):
         raise ValueError(
             "Existing scenario_manifest uses scenario_count="
             f"{len(scenarios)} but current request uses {_scenario_count_for_args(args)}."
@@ -3163,6 +3426,67 @@ def _load_scenarios_from_manifest(
 
 def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> List[Scenario]:
     manifest_path = out_dir / SCENARIO_MANIFEST_JSON
+    use_existing = (
+        bool(getattr(args, "resume", False))
+        or bool(getattr(args, "reuse_cache", False))
+        or bool(getattr(args, "rebuild_metrics", False))
+        or int(getattr(args, "append_scenarios", 0) or 0) > 0
+    )
+    if use_existing and manifest_path.exists():
+        existing = _load_scenarios_from_manifest(manifest_path, args, require_count=False)
+        existing_count = len(existing)
+        append_count = max(0, int(getattr(args, "append_scenarios", 0) or 0))
+        if append_count > 0:
+            target_count = existing_count + append_count
+        elif bool(getattr(args, "rebuild_metrics", False)):
+            target_count = existing_count
+        else:
+            target_count = int(args.random_scenarios)
+
+        if target_count < existing_count:
+            raise ValueError(
+                "Existing scenario_manifest uses scenario_count="
+                f"{existing_count} but current request targets {target_count}. "
+                "Use a new output directory or request at least the existing count."
+            )
+        if target_count == existing_count:
+            scenarios = existing
+            _write_scenarios_csv(scenarios, out_dir)
+            print(f"[cache] Scenario manifest found: {len(scenarios)} scenarios.", flush=True)
+            return scenarios
+
+        method = str(getattr(args, "sampling_method", "random"))
+        if method == "lhs" and not bool(getattr(args, "allow_lhs_append", False)):
+            raise ValueError(
+                f"Existing LHS manifest has {existing_count} scenarios. "
+                "LHS is not naturally nested. Use Sobol/Sobol-scrambled for "
+                "extendable benchmark sets, or rerun a fresh benchmark. "
+                "Use --allow-lhs-append for explicit blockwise LHS append."
+            )
+
+        if method == "lhs":
+            block_args = _scenario_generation_args(args, append_count or (target_count - existing_count))
+            block_args.scenario_seed = int(args.scenario_seed) + existing_count
+            new_block = generate_validation_scenarios(block_args)
+            scenarios = existing + _renumber_scenarios(new_block, existing_count)
+            print("[cache] WARNING: blockwise LHS append is not equivalent to a single "
+                  "global LHS design.", flush=True)
+        else:
+            generated = generate_validation_scenarios(_scenario_generation_args(args, target_count))
+            for old, new in zip(existing, generated[:existing_count]):
+                if not _scenarios_match(old, new):
+                    raise ValueError(
+                        "Existing scenario_manifest is incompatible with regenerated "
+                        f"{method} sequence at scenario_id={old.scenario_id}."
+                    )
+            scenarios = generated
+
+        print(f"[cache] Extending scenario manifest: {existing_count} -> {len(scenarios)}.",
+              flush=True)
+        _write_scenarios_csv(scenarios, out_dir)
+        _write_scenario_manifest(scenarios, args, out_dir)
+        return scenarios
+
     if bool(getattr(args, "resume", False)) and manifest_path.exists():
         scenarios = _load_scenarios_from_manifest(manifest_path, args)
         _write_scenarios_csv(scenarios, out_dir)
@@ -3199,6 +3523,264 @@ def _write_csv(rows: List[Dict], path: Path) -> None:
         w = csv.DictWriter(f, fieldnames=keys, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
+
+
+def _cache_requested(args: argparse.Namespace) -> bool:
+    return bool(
+        getattr(args, "cache_trajectories", False)
+        or getattr(args, "reuse_cache", False)
+        or getattr(args, "rebuild_metrics", False)
+        or getattr(args, "resume", False)
+        or int(getattr(args, "append_scenarios", 0) or 0) > 0
+    )
+
+
+def _benchmark_cache_dir(args: argparse.Namespace, out_dir: Path) -> Path:
+    raw = getattr(args, "cache_dir", None)
+    return Path(raw) if raw else out_dir / "benchmark_cache"
+
+
+def _safe_cache_name(name: str) -> str:
+    clean = str(name).strip().lower().replace("gpu_", "").replace("_rk4", "")
+    clean = clean.replace(" ", "_").replace("/", "_").replace("\\", "_")
+    return clean or "unknown"
+
+
+def _truth_cache_name(args: argparse.Namespace) -> str:
+    return f"{str(args.truth).lower()}_{str(getattr(args, 'truth_integrator', 'DOP853')).lower()}"
+
+
+def _trajectory_cache_path(
+    cache_dir: Path,
+    model_type: str,
+    model_name: str,
+    scenario_id: int,
+    args: Optional[argparse.Namespace] = None,
+) -> Path:
+    if model_type == "truth":
+        group = cache_dir / "truth" / _safe_cache_name(model_name)
+    else:
+        group = cache_dir / "models" / _safe_cache_name(model_name)
+    return group / f"scenario_{int(scenario_id):06d}.npz"
+
+
+def _file_sha256(path: Optional[str]) -> Optional[str]:
+    if not path:
+        return None
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        return None
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _cache_metadata(args: argparse.Namespace) -> Dict[str, Any]:
+    weight_file = _find_st_lrps_weight_file(getattr(args, "st_lrps_model_dir", None))
+    return {
+        "cache_schema_version": BENCHMARK_CACHE_SCHEMA_VERSION,
+        "truth": str(args.truth).lower(),
+        "truth_integrator": str(getattr(args, "truth_integrator", "DOP853")),
+        "duration_days": float(args.duration_days),
+        "dt_out": float(args.dt_out),
+        "rk4_dt_s": (
+            None if getattr(args, "rk4_dt_s", None) is None
+            else float(args.rk4_dt_s)
+        ),
+        "st_lrps_rk4_dt": float(getattr(args, "st_lrps_rk4_dt", 30.0)),
+        "gpu_integrator": str(getattr(args, "gpu_integrator", "medium")),
+        "torch_dtype": str(getattr(args, "torch_dtype", "float64")),
+        "batch_frame_mode": str(getattr(args, "batch_frame_mode", "match_dynamics_engine")),
+        "st_lrps_model_dir": getattr(args, "st_lrps_model_dir", None),
+        "st_lrps_weight_file": weight_file,
+        "st_lrps_weight_sha256": _file_sha256(weight_file),
+    }
+
+
+def _write_cache_manifest(
+    args: argparse.Namespace,
+    cache_dir: Path,
+    scenarios: List[Scenario],
+    selected_models: Optional[List[str]] = None,
+) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "cache_schema_version": BENCHMARK_CACHE_SCHEMA_VERSION,
+        "metadata": _cache_metadata(args),
+        "scenario_count": len(scenarios),
+        "scenario_ids": [int(s.scenario_id) for s in scenarios],
+        "selected_models": selected_models or [],
+        "updated_utc_s": time.time(),
+    }
+    path = cache_dir / "cache_manifest.json"
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(_json_safe(payload), indent=4), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _validate_cache_compatibility(args: argparse.Namespace, cache_dir: Path) -> None:
+    path = cache_dir / "cache_manifest.json"
+    if not path.exists():
+        return
+    try:
+        old = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"Existing benchmark cache manifest is unreadable: {exc}") from exc
+    old_meta = old.get("metadata", {})
+    new_meta = _cache_metadata(args)
+    fields = [
+        "cache_schema_version", "truth", "truth_integrator", "duration_days", "dt_out",
+        "rk4_dt_s", "st_lrps_rk4_dt", "gpu_integrator", "torch_dtype",
+        "batch_frame_mode",
+    ]
+    for field in fields:
+        old_value = old_meta.get(field)
+        new_value = new_meta.get(field)
+        if not _manifest_values_equal(old_value, new_value):
+            raise ValueError(
+                "Existing benchmark cache uses "
+                f"{field}={_manifest_value_text(old_value)} but current request uses "
+                f"{_manifest_value_text(new_value)}. Refusing to reuse cached trajectories."
+            )
+    if "st_lrps" in str(getattr(args, "models", "")) or "st_lrps" in str(getattr(args, "gpu_models", "")):
+        for field in ("st_lrps_model_dir", "st_lrps_weight_file", "st_lrps_weight_sha256"):
+            old_value = old_meta.get(field)
+            new_value = new_meta.get(field)
+            if old_value and new_value and old_value != new_value:
+                raise ValueError(
+                    "Existing benchmark cache uses "
+                    f"{field}={_manifest_value_text(old_value)} but current request uses "
+                    f"{_manifest_value_text(new_value)}. Refusing to reuse ST-LRPS trajectories."
+                )
+
+
+def _save_cached_trajectory(
+    cache_dir: Path,
+    scenario: Scenario,
+    model_name: str,
+    model_type: str,
+    t: np.ndarray,
+    y: np.ndarray,
+    args: argparse.Namespace,
+    *,
+    runtime_s: float = float("nan"),
+    integrator: str = "",
+    rk4_dt_s: Optional[float] = None,
+    dtype: str = "",
+    device: str = "",
+    backend: str = "",
+    truth_model: str = "",
+) -> Path:
+    path = _trajectory_cache_path(cache_dir, model_type, model_name, scenario.scenario_id, args)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    payload = {
+        "cache_schema_version": np.asarray(BENCHMARK_CACHE_SCHEMA_VERSION, dtype=np.int64),
+        "scenario_id": np.asarray(int(scenario.scenario_id), dtype=np.int64),
+        "model_name": np.asarray(str(model_name)),
+        "model_type": np.asarray(str(model_type)),
+        "integrator": np.asarray(str(integrator)),
+        "t": np.asarray(t, dtype=np.float64),
+        "state": np.asarray(y, dtype=np.float64),
+        "position": np.asarray(y, dtype=np.float64)[:, :3],
+        "velocity": np.asarray(y, dtype=np.float64)[:, 3:],
+        "duration_days": np.asarray(float(args.duration_days), dtype=np.float64),
+        "dt_out": np.asarray(float(args.dt_out), dtype=np.float64),
+        "rk4_dt_s": np.asarray(float("nan") if rk4_dt_s is None else float(rk4_dt_s), dtype=np.float64),
+        "dtype": np.asarray(str(dtype)),
+        "device": np.asarray(str(device)),
+        "backend": np.asarray(str(backend)),
+        "truth_model": np.asarray(str(truth_model)),
+        "runtime_s": np.asarray(float(runtime_s), dtype=np.float64),
+        "hp_km": np.asarray(float(scenario.hp_km), dtype=np.float64),
+        "ha_km": np.asarray(float(scenario.ha_km), dtype=np.float64),
+        "a_km": np.asarray(float(scenario.a_km), dtype=np.float64),
+        "e": np.asarray(float(scenario.e), dtype=np.float64),
+        "inc_deg": np.asarray(float(scenario.inc_deg), dtype=np.float64),
+        "raan_deg": np.asarray(float(scenario.raan_deg), dtype=np.float64),
+        "argp_deg": np.asarray(float(scenario.argp_deg), dtype=np.float64),
+        "ta_deg": np.asarray(float(scenario.ta_deg), dtype=np.float64),
+        "frame_mode": np.asarray(str(getattr(args, "batch_frame_mode", ""))),
+        "gpu_integrator": np.asarray(str(getattr(args, "gpu_integrator", ""))),
+    }
+    try:
+        with open(tmp, "wb") as f:
+            np.savez_compressed(f, **payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    print(f"[cache] Saved model={model_name} scenario={scenario.scenario_id:06d} file={path}",
+          flush=True)
+    return path
+
+
+def _load_cached_trajectory(path: Path) -> Optional[CachedTrajectory]:
+    if path.suffix != ".npz" or not path.exists() or path.name.endswith(".tmp"):
+        return None
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            version = int(np.asarray(data["cache_schema_version"]).item())
+            if version != BENCHMARK_CACHE_SCHEMA_VERSION:
+                return None
+            t = np.asarray(data["t"], dtype=np.float64)
+            y = np.asarray(data["state"], dtype=np.float64)
+            if t.ndim != 1 or y.ndim != 2 or y.shape[1] != 6 or y.shape[0] != t.shape[0]:
+                return None
+            if not np.isfinite(t).all() or not np.isfinite(y).all():
+                return None
+            metadata = {k: data[k].tolist() for k in data.files if k not in {"t", "state", "position", "velocity"}}
+            runtime = float(np.asarray(data["runtime_s"]).item()) if "runtime_s" in data.files else float("nan")
+            return CachedTrajectory(t=t, y=y, runtime_s=runtime, metadata=metadata)
+    except Exception:
+        return None
+
+
+def _cached_truth_path(cache_dir: Path, args: argparse.Namespace, scenario_id: int) -> Path:
+    return _trajectory_cache_path(cache_dir, "truth", _truth_cache_name(args), scenario_id, args)
+
+
+def _cached_model_path(cache_dir: Path, model_name: str, scenario_id: int) -> Path:
+    return _trajectory_cache_path(cache_dir, "comparison_model", model_name, scenario_id)
+
+
+def _truth_cache_completion(
+    cache_dir: Path,
+    args: argparse.Namespace,
+    scenarios: List[Scenario],
+) -> Tuple[int, List[Scenario]]:
+    complete = 0
+    missing: List[Scenario] = []
+    for scenario in scenarios:
+        path = _cached_truth_path(cache_dir, args, scenario.scenario_id)
+        if _load_cached_trajectory(path) is not None:
+            complete += 1
+        else:
+            missing.append(scenario)
+    return complete, missing
+
+
+def _model_cache_completion(
+    cache_dir: Path,
+    model_name: str,
+    scenarios: List[Scenario],
+) -> Tuple[int, List[Scenario]]:
+    complete = 0
+    missing: List[Scenario] = []
+    for scenario in scenarios:
+        path = _cached_model_path(cache_dir, model_name, scenario.scenario_id)
+        if _load_cached_trajectory(path) is not None:
+            complete += 1
+        else:
+            missing.append(scenario)
+    return complete, missing
 
 
 # String-valued metric columns that must not be coerced to float on reload.
@@ -3291,6 +3873,13 @@ def _write_run_metadata(
         "gpu_fallback": str(args.gpu_fallback),
         "torch_dtype": str(args.torch_dtype),
         "force_batch_size": int(args.force_batch_size),
+        "cache_trajectories": bool(getattr(args, "cache_trajectories", False)),
+        "reuse_cache": bool(getattr(args, "reuse_cache", False)),
+        "cache_dir": getattr(args, "cache_dir", None),
+        "append_scenarios": int(getattr(args, "append_scenarios", 0) or 0),
+        "rebuild_metrics": bool(getattr(args, "rebuild_metrics", False)),
+        "strict_complete": bool(getattr(args, "strict_complete", False)),
+        "allow_lhs_append": bool(getattr(args, "allow_lhs_append", False)),
     }
     meta["sampling"] = _sampling_metadata(args, scenario_count)
     p = out_dir / "run_metadata.json"
@@ -3327,6 +3916,24 @@ def _truth_cache_metadata(args: argparse.Namespace, scenarios: List[Scenario]) -
         "max_step_s": float(args.max_step),
         "scenario_ids": [int(s.scenario_id) for s in scenarios],
     }
+
+
+def _truth_cache_available(cache_dir: Path, args: argparse.Namespace, scenarios: List[Scenario]) -> bool:
+    """Cheap predicate: would ``_load_truth_cache`` produce a valid hit?
+
+    Checks file presence + metadata equality without loading the (large) NPZ.
+    Used only to decide the overall-progress weighting (truth weight collapses
+    when truth is served from cache).
+    """
+    meta_path = cache_dir / "truth_metadata.json"
+    npz_path = cache_dir / "sh200_dop853_trajectories.npz"
+    if not meta_path.exists() or not npz_path.exists():
+        return False
+    try:
+        old_meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return old_meta == _truth_cache_metadata(args, scenarios)
+    except Exception:
+        return False
 
 
 def _load_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: List[Scenario]) -> Optional[TruthTrajectorySet]:
@@ -3371,14 +3978,31 @@ def build_truth_trajectory_set(
     ephem: Any,
     model_cache: GravityModelCache,
     truth_dir: Path,
+    on_progress: Optional[Any] = None,
 ) -> TruthTrajectorySet:
-    """Generate or load SH200 DOP853 truth trajectories for all scenarios."""
+    """Generate or load SH200 DOP853 truth trajectories for all scenarios.
+
+    ``on_progress`` (optional) is invoked as ``cb(completed, total, elapsed_s,
+    eta_s)`` after each scenario finishes; it is logging-only.
+    """
+
+    def _report(completed: int, total: int, elapsed_s: float) -> None:
+        if on_progress is None:
+            return
+        rate = completed / max(elapsed_s, 1e-9)
+        eta = (total - completed) / max(rate, 1e-9)
+        try:
+            on_progress(int(completed), int(total), float(elapsed_s), float(eta))
+        except Exception:
+            pass
 
     if args.reuse_truth_cache:
         cached = _load_truth_cache(truth_dir, args, scenarios)
         if cached is not None:
             return cached
 
+    cache_enabled = _cache_requested(args) or bool(getattr(args, "cache_truth", False))
+    cache_dir = _benchmark_cache_dir(args, Path(args.output_dir))
     t_by: Dict[int, np.ndarray] = {}
     y_by: Dict[int, np.ndarray] = {}
     rt_by: Dict[int, float] = {}
@@ -3386,17 +4010,30 @@ def build_truth_trajectory_set(
     truth_integrator = str(getattr(args, "truth_integrator", "DOP853"))
     truth_cfg = _cfg_with_integrator(cfg_base, truth_integrator)
     workers = max(1, int(getattr(args, "workers", 1) or 1))
+    pending_scenarios = list(scenarios)
+    if cache_enabled:
+        complete, pending_scenarios = _truth_cache_completion(cache_dir, args, scenarios)
+        print(f"[cache] Truth cache {_truth_cache_name(args)}: {complete}/{len(scenarios)} complete.",
+              flush=True)
+        for scenario in scenarios:
+            cached = _load_cached_trajectory(_cached_truth_path(cache_dir, args, scenario.scenario_id))
+            if cached is None:
+                continue
+            t_by[scenario.scenario_id] = cached.t
+            y_by[scenario.scenario_id] = cached.y
+            rt_by[scenario.scenario_id] = cached.runtime_s
     print(f"[truth] Building {truth_model.upper()} {truth_integrator} reference "
-          f"for {len(scenarios)} scenarios.", flush=True)
+          f"for {len(pending_scenarios)} missing of {len(scenarios)} scenarios.", flush=True)
     t_truth_start = time.perf_counter()
-    if workers > 1 and len(scenarios) > 1:
+    if workers > 1 and len(pending_scenarios) > 1:
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
-        worker_count = min(workers, len(scenarios))
+        worker_count = min(workers, len(pending_scenarios))
         print(f"[truth] CPU parallel truth generation: {worker_count} workers "
               f"(integrator={truth_integrator}).", flush=True)
-        payloads = [(scenario, truth_model) for scenario in scenarios]
+        payloads = [(scenario, truth_model) for scenario in pending_scenarios]
         completed = 0
+        scenario_by_id = {s.scenario_id: s for s in pending_scenarios}
         with ProcessPoolExecutor(
             max_workers=worker_count,
             initializer=_parallel_worker_init,
@@ -3426,18 +4063,26 @@ def build_truth_trajectory_set(
                 t_by[sid] = np.asarray(result["t"], dtype=np.float64)
                 y_by[sid] = np.asarray(result["y"], dtype=np.float64)
                 rt_by[sid] = float(result["truth_rt"])
+                if cache_enabled and not result.get("saved_to_cache"):
+                    _save_cached_trajectory(
+                        cache_dir, scenario_by_id[sid], _truth_cache_name(args), "truth",
+                        t_by[sid], y_by[sid], args,
+                        runtime_s=rt_by[sid], integrator=truth_integrator,
+                        dtype="float64", device="cpu", truth_model=truth_model,
+                    )
                 elapsed = time.perf_counter() - t_truth_start
                 rate = completed / max(elapsed, 1e-9)
-                remaining = (len(scenarios) - completed) / max(rate, 1e-9)
+                remaining = (len(pending_scenarios) - completed) / max(rate, 1e-9)
                 mm, ss = divmod(int(remaining), 60)
                 hh, mm = divmod(mm, 60)
-                print(f"[truth] Scenario {completed:03d}/{len(scenarios)} done "
+                print(f"[truth] Scenario {completed:03d}/{len(pending_scenarios)} done "
                       f"| id={sid} | runtime={rt_by[sid]:.2f}s "
                       f"| ETA {hh:02d}:{mm:02d}:{ss:02d} "
                       f"| elapsed {elapsed/60.0:.1f} min", flush=True)
+                _report(completed, len(pending_scenarios), elapsed)
     else:
-        for idx, scenario in enumerate(scenarios, 1):
-            print(f"\n[truth] Scenario {idx:03d}/{len(scenarios)} | id={scenario.scenario_id} "
+        for idx, scenario in enumerate(pending_scenarios, 1):
+            print(f"\n[truth] Scenario {idx:03d}/{len(pending_scenarios)} | id={scenario.scenario_id} "
                   f"| hp={scenario.hp_km:.0f} km  ha={scenario.ha_km:.0f} km  "
                   f"i={scenario.inc_deg:.1f} deg", flush=True)
             res, runtime = propagate_for_scenario(
@@ -3452,14 +4097,22 @@ def build_truth_trajectory_set(
             t_by[scenario.scenario_id] = np.asarray(res.t, dtype=np.float64)
             y_by[scenario.scenario_id] = np.asarray(res.y, dtype=np.float64)
             rt_by[scenario.scenario_id] = float(runtime)
+            if cache_enabled:
+                _save_cached_trajectory(
+                    cache_dir, scenario, _truth_cache_name(args), "truth",
+                    t_by[scenario.scenario_id], y_by[scenario.scenario_id], args,
+                    runtime_s=float(runtime), integrator=truth_integrator,
+                    dtype="float64", device="cpu", truth_model=truth_model,
+                )
             elapsed = time.perf_counter() - t_truth_start
             rate = idx / max(elapsed, 1e-9)
-            remaining = (len(scenarios) - idx) / max(rate, 1e-9)
+            remaining = (len(pending_scenarios) - idx) / max(rate, 1e-9)
             mm, ss = divmod(int(remaining), 60)
             hh, mm = divmod(mm, 60)
-            print(f"[truth] Scenario {idx:03d}/{len(scenarios)} done in {runtime:.2f}s "
+            print(f"[truth] Scenario {idx:03d}/{len(pending_scenarios)} done in {runtime:.2f}s "
                   f"| ETA {hh:02d}:{mm:02d}:{ss:02d} "
                   f"| elapsed {elapsed/60.0:.1f} min", flush=True)
+            _report(idx, len(pending_scenarios), elapsed)
 
     truth = TruthTrajectorySet(f"{truth_model}_{truth_integrator.lower()}", t_by, y_by, rt_by)
     if args.cache_truth and len(t_by) == len(scenarios):
@@ -4306,6 +4959,10 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
 
     scenarios = prepare_scenarios(args, out_dir)
     _write_run_metadata(args, out_dir, scenarios)
+    progress.emit_progress(
+        "scenario", current=len(scenarios), total=len(scenarios),
+        percent=100.0, message="Scenarios ready",
+    )
 
     gpu_models = _parse_model_list_csv(args.gpu_models)
     if args.truth.lower() not in {"sh200"}:
@@ -4326,6 +4983,21 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
             print("[gpu-batch] WARNING: ST-LRPS model missing; removing st_lrps from --gpu-models.",
                   flush=True)
             gpu_models = [m for m in gpu_models if m != "st_lrps"]
+
+    cache_enabled = _cache_requested(args) or bool(getattr(args, "cache_trajectories", False))
+    cache_dir = _benchmark_cache_dir(args, out_dir)
+    if cache_enabled:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[cache] Enabled trajectory cache: {cache_dir}", flush=True)
+        _validate_cache_compatibility(args, cache_dir)
+        _write_cache_manifest(args, cache_dir, scenarios, gpu_models)
+
+    if getattr(args, "rebuild_metrics", False):
+        aggregate_rows, runtime_rows, equivalent, selected = rebuild_gpu_batch_metrics_from_cache(
+            args, scenarios, cache_dir, gpu_models, metrics_dir, plots_dir, reports_dir
+        )
+        _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected)
+        return
 
     try:
         import torch
@@ -4365,6 +5037,10 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         print(f"[gpu-batch] resume: {len(completed_ids)} scenarios already complete for all "
               f"requested models; {len(existing_rows)} stored metric rows loaded.", flush=True)
 
+    if cache_enabled:
+        completed_ids = set()
+        existing_rows = []
+
     run_scenarios = [s for s in scenarios if s.scenario_id not in completed_ids]
     if args.resume and not run_scenarios:
         print("[gpu-batch] resume: no new scenarios to compute; re-aggregating stored results.",
@@ -4372,15 +5048,43 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
 
     model_cache = GravityModelCache(cfg_base, args)
     _truth_name = f"{str(args.truth).lower()}_{str(getattr(args, 'truth_integrator', 'DOP853')).lower()}"
+
+    # Weighted overall progress. When truth is served from cache its weight
+    # collapses so the GPU comparison phase dominates the bar.
+    truth_cached = bool(
+        run_scenarios
+        and getattr(args, "reuse_truth_cache", False)
+        and _truth_cache_available(truth_dir, args, run_scenarios)
+    )
+    overall_weights = (
+        {"gpu": 0.50, "report": 0.10}
+        if truth_cached
+        else {"truth": 0.40, "gpu": 0.50, "report": 0.10}
+    )
+    overall = progress.OverallProgress(overall_weights)
+    n_gpu_models = max(1, len(gpu_models))
+
+    def _on_truth_progress(completed: int, total: int, elapsed_s: float, eta_s: float) -> None:
+        pct = 100.0 * completed / max(1, total)
+        progress.emit_progress(
+            "truth", current=completed, total=total, percent=pct,
+            elapsed_s=elapsed_s, eta_s=eta_s, message="SH200 DOP853 truth",
+        )
+        ov = overall.update("truth", completed / max(1, total))
+        progress.emit_progress_total(
+            ov, "truth", elapsed_s=overall.elapsed_s(), eta_s=overall.eta_s()
+        )
+
     if run_scenarios:
-        truth = build_truth_trajectory_set(args, run_scenarios, cfg_base, ephem, model_cache, truth_dir)
+        truth = build_truth_trajectory_set(
+            args, run_scenarios, cfg_base, ephem, model_cache, truth_dir,
+            on_progress=_on_truth_progress,
+        )
         if not truth.t_by_scenario:
             raise RuntimeError("No truth trajectories were generated.")
     else:
         truth = TruthTrajectorySet(_truth_name, {}, {}, {})
 
-    y0_batch = (np.asarray([s.initial_state for s in run_scenarios], dtype=np.float64)
-                if run_scenarios else np.empty((0, 6), dtype=np.float64))
     duration_s = float(args.duration_days) * 86400.0
     rk4_dt = float(args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt)
 
@@ -4388,8 +5092,49 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     t_gpu_start = time.perf_counter()
     completed_gpu = 0
     for model_idx, model_name in enumerate(gpu_models if run_scenarios else [], 1):
+        model_scenarios = list(run_scenarios)
+        if cache_enabled:
+            complete, missing = _model_cache_completion(cache_dir, model_name, scenarios)
+            print(f"[cache] Model {model_name}: {complete}/{len(scenarios)} complete."
+                  + (f" Recomputing {len(missing)} missing." if missing else ""),
+                  flush=True)
+            model_scenarios = missing
+            if not model_scenarios:
+                continue
+
         print(f"\n[gpu-batch] Model {model_idx:02d}/{len(gpu_models)} | "
-              f"{model_name.upper()} RK4 starting ...", flush=True)
+              f"{model_name.upper()} RK4 starting for {len(model_scenarios)} scenario(s) ...",
+              flush=True)
+        y0_batch = np.asarray([s.initial_state for s in model_scenarios], dtype=np.float64)
+
+        def _gpu_progress_cb(
+            current_step: int, total_steps: int, elapsed_s: float,
+            _name: str = model_name, _idx: int = model_idx,
+        ) -> None:
+            stats = progress.compute_step_stats(current_step, total_steps, elapsed_s)
+            print(
+                f"[gpu-batch][{_name}] step {stats['current_step']}/{stats['total_steps']} "
+                f"| {stats['percent']:.1f}% | elapsed {progress.format_duration(elapsed_s)} "
+                f"| ETA {progress.format_eta(stats['eta_s'])} "
+                f"| {stats['steps_per_s']:.1f} steps/s",
+                flush=True,
+            )
+            progress.emit_progress(
+                "gpu_model", model=_name,
+                current_step=stats["current_step"], total_steps=stats["total_steps"],
+                percent=stats["percent"], elapsed_s=elapsed_s,
+                eta_s=stats["eta_s"], steps_per_s=stats["steps_per_s"],
+                device=str(device), dtype=str(args.torch_dtype),
+                n_scenarios=len(model_scenarios),
+            )
+            model_frac = stats["current_step"] / max(1, stats["total_steps"])
+            gpu_frac = ((_idx - 1) + model_frac) / n_gpu_models
+            ov = overall.update("gpu", gpu_frac)
+            progress.emit_progress_total(
+                ov, "gpu_model", model=_name,
+                elapsed_s=overall.elapsed_s(), eta_s=overall.eta_s(),
+            )
+
         try:
             gravity = model_cache.get(model_name)
             result = propagate_gpu_batch_model(
@@ -4405,6 +5150,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 dtype_name=args.torch_dtype,
                 frame_mode=args.batch_frame_mode,
                 gpu_integrator=str(getattr(args, "gpu_integrator", "medium")),
+                progress_cb=_gpu_progress_cb,
             )
             completed_gpu += 1
             elapsed_gpu = time.perf_counter() - t_gpu_start
@@ -4416,6 +5162,20 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                   f"{result.display_name}: {result.runtime_s:.2f}s "
                   f"backend={result.backend} status={result.status} "
                   f"| ETA {hh:02d}:{mm:02d}:{ss:02d}", flush=True)
+            if cache_enabled and result.status == "ok":
+                per_scenario_runtime = result.runtime_s / max(1, len(model_scenarios))
+                for scenario_idx, scenario in enumerate(model_scenarios):
+                    _save_cached_trajectory(
+                        cache_dir, scenario, model_name, "comparison_model",
+                        result.t, result.y[:, scenario_idx, :], args,
+                        runtime_s=per_scenario_runtime,
+                        integrator="gpu_rk4",
+                        rk4_dt_s=result.rk4_dt_s,
+                        dtype=result.dtype,
+                        device=result.device,
+                        backend=result.backend,
+                        truth_model=_truth_name,
+                    )
             results.append(result)
         except Exception as exc:
             print(f"[gpu-batch] ERROR {model_name}: {exc}", flush=True)
@@ -4429,15 +5189,40 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 device=str(device),
                 dtype=args.torch_dtype,
                 t=np.array([], dtype=np.float64),
-                y=np.empty((0, len(run_scenarios), 6), dtype=np.float64),
+                y=np.empty((0, len(model_scenarios), 6), dtype=np.float64),
                 runtime_s=float("nan"),
                 n_steps=0,
-                n_scenarios=len(run_scenarios),
+                n_scenarios=len(model_scenarios),
                 rk4_dt_s=rk4_dt,
                 output_dt_s=float(args.dt_out),
                 status="failed",
                 failure_reason=str(exc),
             ))
+
+    if cache_enabled:
+        _write_cache_manifest(args, cache_dir, scenarios, gpu_models)
+        aggregate_rows, runtime_rows, equivalent, selected = rebuild_gpu_batch_metrics_from_cache(
+            args, scenarios, cache_dir, gpu_models, metrics_dir, plots_dir, reports_dir
+        )
+        _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected)
+        print(f"\n[gpu-batch] Complete -> {out_dir}", flush=True)
+        print("  benchmark_cache/")
+        print("  metrics/gpu_batch_per_scenario_metrics.csv")
+        print("  metrics/gpu_batch_aggregate_metrics.csv")
+        print("  metrics/gpu_batch_runtime_metrics.csv")
+        print("  metrics/gpu_batch_model_ranking.csv")
+        print("  metrics/gpu_batch_summary.json")
+        print("  plots/")
+        print("  reports/gpu_batch_validation_report.pdf")
+        return
+
+    progress.emit_progress(
+        "aggregate", current=1, total=1, percent=100.0, message="Writing metrics"
+    )
+    _ov_agg = overall.update("report", 0.5)
+    progress.emit_progress_total(
+        _ov_agg, "aggregate", elapsed_s=overall.elapsed_s(), eta_s=overall.eta_s()
+    )
 
     new_rows: List[Dict[str, Any]] = []
     for result in results:
@@ -4485,6 +5270,15 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     if sh200_row and sh200_row.get("median_rms_pos_err_km", 0.0) > 10.0:
         print("[gpu-batch] WARNING: GPU SH200 RK4 vs SH200 DOP853 error is high. "
               "Check RK4 dt, frame mode, and rotation consistency.", flush=True)
+
+    progress.emit_progress(
+        "report", current=1, total=1, percent=100.0,
+        message="Generating plots/report",
+    )
+    _ov_report = overall.update("report", 1.0)
+    progress.emit_progress_total(
+        _ov_report, "report", elapsed_s=overall.elapsed_s(), eta_s=overall.eta_s()
+    )
 
     plot_gpu_batch_report_figures(
         aggregate_rows, runtime_rows, all_rows, results, truth, run_scenarios,
@@ -4543,12 +5337,31 @@ def _parallel_worker_truth(payload: Tuple[Scenario, str]) -> Dict[str, Any]:
             "truth_failed": True,
             "truth_rt": None,
         }
+    saved = False
+    if _cache_requested(args) or bool(getattr(args, "cache_truth", False)):
+        try:
+            cache_dir = _benchmark_cache_dir(args, Path(args.output_dir))
+            _save_cached_trajectory(
+                cache_dir, scenario, _truth_cache_name(args), "truth",
+                np.asarray(truth_res.t, dtype=np.float64),
+                np.asarray(truth_res.y, dtype=np.float64),
+                args,
+                runtime_s=float(truth_rt),
+                integrator=str(getattr(args, "truth_integrator", "DOP853")),
+                dtype="float64",
+                device="cpu",
+                truth_model=truth_model,
+            )
+            saved = True
+        except Exception:
+            saved = False
     return {
         "scenario_id": scenario.scenario_id,
         "truth_failed": False,
         "truth_rt": float(truth_rt),
         "t": np.asarray(truth_res.t, dtype=np.float64),
         "y": np.asarray(truth_res.y, dtype=np.float64),
+        "saved_to_cache": saved,
     }
 
 
@@ -4631,13 +5444,64 @@ def run_random_scenario_mode(
 
     _write_run_metadata(args, out_dir, scenarios)
     scenarios_by_id = {s.scenario_id: s for s in scenarios}
+    progress.emit_progress(
+        "scenario", current=len(scenarios), total=len(scenarios),
+        percent=100.0, message="Scenarios ready",
+    )
+    overall_cpu = progress.OverallProgress({"sweep": 0.90, "report": 0.10})
+
+    def _report_sweep(done: int, total: int, elapsed_s: float, eta_s: float) -> None:
+        pct = 100.0 * done / max(1, total)
+        progress.emit_progress(
+            "sweep", current=done, total=total, percent=pct,
+            elapsed_s=elapsed_s, eta_s=eta_s, message="CPU adaptive sweep",
+        )
+        ov = overall_cpu.update("sweep", done / max(1, total))
+        progress.emit_progress_total(
+            ov, "sweep", elapsed_s=overall_cpu.elapsed_s(), eta_s=overall_cpu.eta_s()
+        )
+
+    cache_enabled = _cache_requested(args) or bool(getattr(args, "cache_trajectories", False))
+    cache_dir = _benchmark_cache_dir(args, out_dir)
+    model_missing_by_name: Dict[str, List[Scenario]] = {}
+    if cache_enabled:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[cache] Enabled trajectory cache: {cache_dir}", flush=True)
+        _validate_cache_compatibility(args, cache_dir)
+        _write_cache_manifest(args, cache_dir, scenarios, compare_models)
+        truth_complete, truth_missing = _truth_cache_completion(cache_dir, args, scenarios)
+        print(f"[cache] Truth {_truth_cache_name(args)}: {truth_complete}/{len(scenarios)} complete.",
+              flush=True)
+        for model in dop853_compare_models:
+            complete, missing = _model_cache_completion(cache_dir, model, scenarios)
+            model_missing_by_name[model] = missing
+            print(f"[cache] Model {model}: {complete}/{len(scenarios)} complete.",
+                  flush=True)
+        if getattr(args, "rebuild_metrics", False):
+            print("[cache] Rebuilding metrics from cached trajectories.", flush=True)
+            if getattr(args, "strict_complete", False):
+                if truth_missing:
+                    raise RuntimeError(
+                        f"--strict-complete requested but truth cache is missing "
+                        f"{len(truth_missing)} scenario(s)."
+                    )
+                missing_models = {
+                    m: len(missing)
+                    for m, missing in model_missing_by_name.items()
+                    if missing
+                }
+                if missing_models:
+                    raise RuntimeError(
+                        "--strict-complete requested but model cache is incomplete: "
+                        + ", ".join(f"{m}={n}" for m, n in missing_models.items())
+                    )
 
     # Resume support: load old rows into all_metrics
     metrics_path   = out_dir / "per_scenario_metrics.csv"
     completed_ids: set = set()
     all_metrics: List[Dict] = []
 
-    if args.resume and metrics_path.exists():
+    if args.resume and metrics_path.exists() and not cache_enabled:
         try:
             with open(metrics_path, newline="") as f:
                 reader = csv.DictReader(f)
@@ -4662,7 +5526,7 @@ def run_random_scenario_mode(
         except Exception as exc:
             print(f"[resume] WARNING: could not load old metrics: {exc}", flush=True)
 
-    if not args.resume and metrics_path.exists():
+    if metrics_path.exists() and (cache_enabled or not args.resume):
         metrics_path.unlink()
 
     truth_runtimes: List[float] = []
@@ -4678,11 +5542,16 @@ def run_random_scenario_mode(
     truth_integrator = str(getattr(args, "truth_integrator", "DOP853"))
     truth_cfg = _cfg_with_integrator(cfg_base, truth_integrator)
 
-    pending = [s for s in scenarios if s.scenario_id not in completed_ids]
+    pending = scenarios if cache_enabled else [s for s in scenarios if s.scenario_id not in completed_ids]
     workers = max(1, int(getattr(args, "workers", 1) or 1))
     # CPU parallelism applies to the per-model adaptive sweep only. batch-RK4
     # needs full truth trajectories in-process, so it stays sequential.
-    parallel = workers > 1 and not bool(args.batch_rk4) and bool(dop853_compare_models)
+    parallel = (
+        workers > 1
+        and not bool(args.batch_rk4)
+        and bool(dop853_compare_models)
+        and not cache_enabled
+    )
 
     if parallel:
         from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -4727,12 +5596,15 @@ def run_random_scenario_mode(
                 hh, mm = divmod(mm, 60)
                 print(f"  [{n_done:03d}/{n_total}] scenario {result['scenario_id']} done "
                       f"| ETA {hh:02d}:{mm:02d}:{ss:02d}", flush=True)
+                _report_sweep(n_done, n_total, elapsed, remaining)
     else:
         if workers > 1:
-            print("[harness] --workers>1 ignored (batch-RK4 or no adaptive compare models); "
-                  "running sequentially.", flush=True)
+            reason = "trajectory cache requires per-file checkpointing" if cache_enabled else \
+                "batch-RK4 or no adaptive compare models"
+            print(f"[harness] --workers>1 ignored ({reason}); running sequentially.",
+                  flush=True)
         for sc_i, scenario in enumerate(scenarios):
-            if scenario.scenario_id in completed_ids:
+            if scenario.scenario_id in completed_ids and not cache_enabled:
                 continue
 
             print(f"\nScenario {sc_i+1:03d}/{n_total} | id={scenario.scenario_id} "
@@ -4742,39 +5614,94 @@ def run_random_scenario_mode(
             y0 = scenario.initial_state
 
             # Truth propagation (uses the selected ground-truth integrator).
-            print(f"  {truth_model.upper()} {truth_integrator} | running ...", flush=True)
-            truth_res, truth_rt = propagate_for_scenario(
-                truth_model, y0, args, truth_cfg, ephem, model_cache
-            )
+            truth_res = None
+            truth_rt = float("nan")
+            if cache_enabled:
+                cached_truth = _load_cached_trajectory(
+                    _cached_truth_path(cache_dir, args, scenario.scenario_id)
+                )
+                if cached_truth is not None:
+                    truth_res = cached_truth
+                    truth_rt = cached_truth.runtime_s
+                    print(f"  {truth_model.upper()} {truth_integrator} | cache hit", flush=True)
+                elif getattr(args, "rebuild_metrics", False):
+                    msg = (
+                        f"missing cached truth for scenario {scenario.scenario_id:06d}; "
+                        "skipping scenario."
+                    )
+                    if getattr(args, "strict_complete", False):
+                        raise RuntimeError(msg)
+                    print(f"  [cache] {msg}", flush=True)
+                    n_done += 1
+                    continue
+
+            if truth_res is None:
+                print(f"  {truth_model.upper()} {truth_integrator} | running ...", flush=True)
+                truth_res, truth_rt = propagate_for_scenario(
+                    truth_model, y0, args, truth_cfg, ephem, model_cache
+                )
             if truth_res is None:
                 print("  FAILED: truth model", flush=True)
                 if args.fail_fast:
                     sys.exit(1)
                 n_done += 1
                 continue
+            if cache_enabled and not getattr(args, "rebuild_metrics", False):
+                _save_cached_trajectory(
+                    cache_dir, scenario, _truth_cache_name(args), "truth",
+                    truth_res.t, truth_res.y, args,
+                    runtime_s=truth_rt,
+                    integrator=truth_integrator,
+                    dtype="float64",
+                    device="cpu",
+                    backend="cpu_truth",
+                    truth_model=truth_model,
+                )
 
-            print(f"  {truth_model.upper()} | done {truth_rt:.2f}s", flush=True)
+            if np.isfinite(truth_rt):
+                print(f"  {truth_model.upper()} | done {truth_rt:.2f}s", flush=True)
             truth_runtimes.append(truth_rt)
             truth_results_all[scenario.scenario_id] = truth_res
 
             # Compare models
             for model in dop853_compare_models:
-                print(f"  {model.upper()} | running ...", end=" ", flush=True)
-                try:
-                    res, rt = propagate_for_scenario(
-                        model, y0, args, cfg_base, ephem, model_cache
+                res = None
+                rt = float("nan")
+                if cache_enabled:
+                    cached_model = _load_cached_trajectory(
+                        _cached_model_path(cache_dir, model, scenario.scenario_id)
                     )
-                except Exception as exc:
-                    print(f"EXCEPTION: {exc}", flush=True)
-                    traceback.print_exc()
-                    if args.fail_fast:
-                        sys.exit(1)
-                    failed_row = {f: None for f in _METRICS_FIELDNAMES}
-                    failed_row.update({"scenario_id": scenario.scenario_id,
-                                       "model": model, "status": "exception"})
-                    _append_metrics_csv(failed_row, metrics_path, not header_written)
-                    header_written = True
-                    continue
+                    if cached_model is not None:
+                        res = cached_model
+                        rt = cached_model.runtime_s
+                        print(f"  {model.upper()} | cache hit", flush=True)
+                    elif getattr(args, "rebuild_metrics", False):
+                        msg = (
+                            f"missing cached model={model} scenario="
+                            f"{scenario.scenario_id:06d}; skipping row."
+                        )
+                        if getattr(args, "strict_complete", False):
+                            raise RuntimeError(msg)
+                        print(f"  [cache] {msg}", flush=True)
+                        continue
+
+                if res is None:
+                    print(f"  {model.upper()} | running ...", end=" ", flush=True)
+                    try:
+                        res, rt = propagate_for_scenario(
+                            model, y0, args, cfg_base, ephem, model_cache
+                        )
+                    except Exception as exc:
+                        print(f"EXCEPTION: {exc}", flush=True)
+                        traceback.print_exc()
+                        if args.fail_fast:
+                            sys.exit(1)
+                        failed_row = {f: None for f in _METRICS_FIELDNAMES}
+                        failed_row.update({"scenario_id": scenario.scenario_id,
+                                           "model": model, "status": "exception"})
+                        _append_metrics_csv(failed_row, metrics_path, not header_written)
+                        header_written = True
+                        continue
 
                 if res is None:
                     print("FAILED", flush=True)
@@ -4786,6 +5713,17 @@ def run_random_scenario_mode(
                     _append_metrics_csv(failed_row, metrics_path, not header_written)
                     header_written = True
                     continue
+                if cache_enabled and not getattr(args, "rebuild_metrics", False):
+                    _save_cached_trajectory(
+                        cache_dir, scenario, model, "comparison_model",
+                        res.t, res.y, args,
+                        runtime_s=rt,
+                        integrator=str(getattr(args, "integrator", "DOP853")),
+                        dtype="float64",
+                        device="cpu",
+                        backend="cpu_adaptive",
+                        truth_model=truth_model,
+                    )
 
                 metrics = compute_trajectory_metrics(
                     model, scenario, truth_res, res, rt, truth_rt
@@ -4804,9 +5742,19 @@ def run_random_scenario_mode(
             hh, mm  = divmod(mm, 60)
             print(f"  ETA: {hh:02d}:{mm:02d}:{ss:02d} remaining  ({n_done}/{n_total} done)",
                   flush=True)
+            _report_sweep(n_done, n_total, elapsed, remaining)
 
     # Aggregate statistics
     print("\n[harness] Computing aggregate statistics ...", flush=True)
+    progress.emit_progress(
+        "report", current=1, total=1, percent=100.0,
+        message="Aggregating metrics and generating plots",
+    )
+    _ov_cpu_report = overall_cpu.update("report", 1.0)
+    progress.emit_progress_total(
+        _ov_cpu_report, "report",
+        elapsed_s=overall_cpu.elapsed_s(), eta_s=overall_cpu.eta_s(),
+    )
     truth_runtime_mean = float(np.mean(truth_runtimes)) if truth_runtimes else 1.0
     agg      = aggregate_metrics(all_metrics, truth_runtime_mean)
     rankings = build_rankings(agg)
@@ -4816,6 +5764,11 @@ def run_random_scenario_mode(
     _write_csv(rankings, out_dir / "ranking_summary.csv")
     agg_rows = [{"model": m, **stats} for m, stats in agg.items()]
     _write_csv(agg_rows, out_dir / "aggregate_summary.csv")
+    if cache_enabled:
+        cache_metrics_dir = cache_dir / "metrics"
+        _write_csv(all_metrics, cache_metrics_dir / "per_model_scenario_metrics.csv")
+        _write_csv(agg_rows, cache_metrics_dir / "aggregate_metrics.csv")
+        _write_csv(rankings, cache_metrics_dir / "ranking_summary.csv")
 
     worst_cases = find_worst_cases(all_metrics, scenarios_by_id)
     _write_csv(worst_cases, out_dir / "worst_cases_by_model.csv")
@@ -4839,6 +5792,18 @@ def run_random_scenario_mode(
         traj: Dict[str, Any] = {}
         y0 = selected_sc.initial_state
         for m in [truth_model] + dop853_compare_models:
+            if cache_enabled:
+                cache_path = (
+                    _cached_truth_path(cache_dir, args, selected_sc.scenario_id)
+                    if m == truth_model
+                    else _cached_model_path(cache_dir, m, selected_sc.scenario_id)
+                )
+                cached = _load_cached_trajectory(cache_path)
+                if cached is not None:
+                    traj[m] = cached
+                    continue
+                if getattr(args, "rebuild_metrics", False):
+                    continue
             _m_cfg = truth_cfg if m == truth_model else cfg_base
             res, _ = propagate_for_scenario(m, y0, args, _m_cfg, ephem, model_cache)
             if res is not None:
@@ -4868,6 +5833,18 @@ def run_random_scenario_mode(
                 traj_w: Dict[str, Any] = {}
                 y0w = worst_sc.initial_state
                 for m in [truth_model] + dop853_compare_models:
+                    if cache_enabled:
+                        cache_path = (
+                            _cached_truth_path(cache_dir, args, worst_sc.scenario_id)
+                            if m == truth_model
+                            else _cached_model_path(cache_dir, m, worst_sc.scenario_id)
+                        )
+                        cached = _load_cached_trajectory(cache_path)
+                        if cached is not None:
+                            traj_w[m] = cached
+                            continue
+                        if getattr(args, "rebuild_metrics", False):
+                            continue
                     _m_cfg = truth_cfg if m == truth_model else cfg_base
                     res, _ = propagate_for_scenario(m, y0w, args, _m_cfg, ephem, model_cache)
                     if res is not None:
@@ -4890,7 +5867,7 @@ def run_random_scenario_mode(
     model_rows:  List[Dict] = []
     integr_rows: List[Dict] = []
 
-    if args.batch_rk4 and "st_lrps" in compare_models:
+    if args.batch_rk4 and "st_lrps" in compare_models and not getattr(args, "rebuild_metrics", False):
         print("\n[batch-rk4] Starting batched RK4 propagation ...", flush=True)
 
         rk4_dt = args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt
@@ -5053,6 +6030,10 @@ def run_random_scenario_mode(
 
             # Print summary
             _print_batch_summary(batch_result, total_rows, model_rows, integr_rows, args)
+
+    elif args.batch_rk4 and getattr(args, "rebuild_metrics", False):
+        print("[batch-rk4] Skipping batch RK4 propagation during --rebuild-metrics.",
+              flush=True)
 
     elif args.batch_rk4 and "st_lrps" not in compare_models:
         print("[batch-rk4] WARNING: --batch-rk4 requires st_lrps in --models. Skipped.",
