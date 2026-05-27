@@ -239,10 +239,19 @@ def parse_args() -> argparse.Namespace:
     # --- Propagation ---
     p.add_argument("--duration-days", type=float, default=1.0)
     p.add_argument("--dt-out", type=float, default=60.0)
-    p.add_argument("--integrator", type=str, default="DOP853")
+    p.add_argument("--integrator", type=str, default="DOP853",
+                   help="Adaptive integrator for the compared models in per-model "
+                        "CPU mode (e.g. DOP853, RK45).")
+    p.add_argument("--truth-integrator", choices=["RK45", "DOP853"], default="DOP853",
+                   help="Adaptive integrator used to build the ground-truth "
+                        "reference trajectories (default: DOP853).")
     p.add_argument("--rtol", type=float, default=1e-10)
     p.add_argument("--atol", type=float, default=1e-12)
     p.add_argument("--max-step", type=float, default=30.0)
+    p.add_argument("--workers", type=int, default=1,
+                   help="CPU worker processes for the per-model adaptive (DOP853/RK45) "
+                        "scenario sweep. 1 = sequential. Each worker rebuilds its own "
+                        "ephemeris + gravity caches. Ignored for GPU batch / batch-RK4 modes.")
 
     # --- Models ---
     p.add_argument("--models", type=str, default="sh20,sh80,sh120,sh160,st_lrps")
@@ -257,7 +266,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gpu-batch-compare", action="store_true",
                    help="Compare GPU RK4 SH/ST-LRPS models against SH200 DOP853 truth")
     p.add_argument("--gpu-models", type=str, default="sh200,sh160,sh120,sh60,sh20,st_lrps",
-                   help="Comma-separated GPU RK4 model list")
+                   help="Comma-separated GPU fixed-step model list")
+    p.add_argument("--gpu-integrator", choices=list(GPU_INTEGRATORS), default="medium",
+                   help="GPU fixed-step integrator tier: light (RK2 midpoint), "
+                        "medium (classic RK4, default), or robust (RK4 + Richardson "
+                        "extrapolation).")
     p.add_argument("--batch-frame-mode",
                    choices=["match_dynamics_engine", "inertial_fixed_legacy"],
                    default="match_dynamics_engine",
@@ -333,6 +346,15 @@ def build_base_config(args: argparse.Namespace) -> SimConfig:
         enable_earth_j2=False,
     )
     return replace(cfg, time=new_time, propagator=new_prop, flags=new_flags)
+
+
+def _cfg_with_integrator(cfg: SimConfig, integrator: str) -> SimConfig:
+    """Return a copy of ``cfg`` whose propagator uses ``integrator`` (e.g. RK45/DOP853).
+
+    Used to let the ground-truth reference run a different adaptive integrator
+    from the compared models without mutating the shared base config.
+    """
+    return replace(cfg, propagator=replace(cfg.propagator, method=str(integrator)))
 
 
 # =============================================================================
@@ -737,6 +759,47 @@ def _make_gpu_accelerator(model_name: str, gravity_model: Any, *, device: Any, d
     raise ValueError(f"Unsupported GPU batch model: {model_name!r}")
 
 
+# GPU fixed-step integrators. The GPU batch path must use fixed-step schemes
+# (no adaptive error control on-device), so three fidelity tiers are offered:
+#   light  -> RK2 midpoint           (order 2, 2 RHS evals/step, cheapest)
+#   medium -> classic RK4            (order 4, 4 RHS evals/step, default)
+#   robust -> RK4 + Richardson       (local order ~6, 12 RHS evals/step, accurate)
+# The helpers only use +, *, / and the rhs callable, so they are backend-agnostic
+# (work on torch tensors or numpy arrays) and unit-testable without CUDA.
+GPU_INTEGRATORS = ("light", "medium", "robust")
+
+
+def _rk4_step(rhs, t, state, dt):
+    """One classic fourth-order Runge-Kutta step."""
+    k1 = rhs(t, state)
+    k2 = rhs(t + 0.5 * dt, state + 0.5 * dt * k1)
+    k3 = rhs(t + 0.5 * dt, state + 0.5 * dt * k2)
+    k4 = rhs(t + dt, state + dt * k3)
+    return state + (dt / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+
+def gpu_fixed_step_advance(rhs, t, state, dt, method: str = "medium"):
+    """Advance ``state`` by one ``dt`` using the selected fixed-step method.
+
+    ``method`` is one of :data:`GPU_INTEGRATORS`. Unknown values fall back to the
+    medium (classic RK4) scheme. The integrator advances by exactly ``dt`` per
+    call; ``robust`` performs internal half-steps and Richardson extrapolation
+    but still represents a single output step.
+    """
+    m = str(method).lower()
+    if m == "light":  # midpoint RK2
+        k1 = rhs(t, state)
+        k2 = rhs(t + 0.5 * dt, state + 0.5 * dt * k1)
+        return state + dt * k2
+    if m == "robust":  # RK4 with one level of Richardson extrapolation
+        full = _rk4_step(rhs, t, state, dt)
+        half = _rk4_step(rhs, t, state, 0.5 * dt)
+        half2 = _rk4_step(rhs, t + 0.5 * dt, half, 0.5 * dt)
+        return (16.0 * half2 - full) / 15.0
+    # medium / default: classic RK4
+    return _rk4_step(rhs, t, state, dt)
+
+
 def propagate_gpu_batch_model(
     model_name: str,
     gravity_model: Any,
@@ -750,8 +813,13 @@ def propagate_gpu_batch_model(
     dtype: Any,
     dtype_name: str,
     frame_mode: str,
+    gpu_integrator: str = "medium",
 ) -> BatchModelResult:
-    """Propagate one model for all scenarios using fixed-step torch RK4."""
+    """Propagate one model for all scenarios using a fixed-step torch integrator.
+
+    ``gpu_integrator`` selects the fidelity tier (light/medium/robust); see
+    :func:`gpu_fixed_step_advance`.
+    """
 
     import torch
 
@@ -800,11 +868,7 @@ def propagate_gpu_batch_model(
     try:
         for snap_idx in range(n_snaps):
             for _ in range(steps_per_snap):
-                k1 = _rhs(t_curr, state)
-                k2 = _rhs(t_curr + 0.5 * dt_eff, state + 0.5 * dt_eff * k1)
-                k3 = _rhs(t_curr + 0.5 * dt_eff, state + 0.5 * dt_eff * k2)
-                k4 = _rhs(t_curr + dt_eff, state + dt_eff * k3)
-                state = state + (dt_eff / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+                state = gpu_fixed_step_advance(_rhs, t_curr, state, dt_eff, gpu_integrator)
                 t_curr += dt_eff
                 if not torch.isfinite(state).all():
                     raise FloatingPointError(f"non-finite state in {model_name}")
@@ -2786,15 +2850,17 @@ def build_truth_trajectory_set(
     y_by: Dict[int, np.ndarray] = {}
     rt_by: Dict[int, float] = {}
     truth_model = str(args.truth).lower()
-    print(f"[truth] Building {truth_model.upper()} DOP853 reference for {len(scenarios)} scenarios.",
-          flush=True)
+    truth_integrator = str(getattr(args, "truth_integrator", "DOP853"))
+    truth_cfg = _cfg_with_integrator(cfg_base, truth_integrator)
+    print(f"[truth] Building {truth_model.upper()} {truth_integrator} reference "
+          f"for {len(scenarios)} scenarios.", flush=True)
     t_truth_start = time.perf_counter()
     for idx, scenario in enumerate(scenarios, 1):
         print(f"\n[truth] Scenario {idx:03d}/{len(scenarios)} | id={scenario.scenario_id} "
               f"| hp={scenario.hp_km:.0f} km  ha={scenario.ha_km:.0f} km  "
               f"i={scenario.inc_deg:.1f} deg", flush=True)
         res, runtime = propagate_for_scenario(
-            truth_model, scenario.initial_state, args, cfg_base, ephem, model_cache
+            truth_model, scenario.initial_state, args, truth_cfg, ephem, model_cache
         )
         if res is None:
             if args.fail_fast:
@@ -2814,7 +2880,7 @@ def build_truth_trajectory_set(
               f"| ETA {hh:02d}:{mm:02d}:{ss:02d} "
               f"| elapsed {elapsed/60.0:.1f} min", flush=True)
 
-    truth = TruthTrajectorySet("sh200_dop853", t_by, y_by, rt_by)
+    truth = TruthTrajectorySet(f"{truth_model}_{truth_integrator.lower()}", t_by, y_by, rt_by)
     if args.cache_truth and len(t_by) == len(scenarios):
         _save_truth_cache(truth_dir, args, scenarios, truth)
     return truth
@@ -3504,7 +3570,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     dtype = _torch_dtype_from_name(args.torch_dtype)
 
     print(f"\n[gpu-batch] models={gpu_models} device={device} dtype={args.torch_dtype} "
-          f"frame={args.batch_frame_mode}", flush=True)
+          f"frame={args.batch_frame_mode} gpu_integrator={getattr(args, 'gpu_integrator', 'medium')}",
+          flush=True)
 
     model_cache = GravityModelCache(cfg_base, args)
     truth = build_truth_trajectory_set(args, scenarios, cfg_base, ephem, model_cache, truth_dir)
@@ -3535,6 +3602,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 dtype=dtype,
                 dtype_name=args.torch_dtype,
                 frame_mode=args.batch_frame_mode,
+                gpu_integrator=str(getattr(args, "gpu_integrator", "medium")),
             )
             completed_gpu += 1
             elapsed_gpu = time.perf_counter() - t_gpu_start
@@ -3627,6 +3695,71 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
 
 
 # =============================================================================
+# CPU parallel scenario workers
+# =============================================================================
+# Per-process state, populated once by the pool initializer so the heavy
+# ephemeris + gravity caches are built a single time per worker rather than
+# pickled per task.
+_PARALLEL_STATE: Dict[str, Any] = {}
+
+
+def _parallel_worker_init(args: argparse.Namespace, cfg_base: SimConfig) -> None:
+    """ProcessPool initializer: build per-worker ephemeris + gravity caches once."""
+    ephem = EphemerisManager.from_time_and_spice(cfg_base.time, cfg_base.spice)
+    _PARALLEL_STATE["args"] = args
+    _PARALLEL_STATE["cfg_base"] = cfg_base
+    _PARALLEL_STATE["truth_cfg"] = _cfg_with_integrator(
+        cfg_base, str(getattr(args, "truth_integrator", "DOP853"))
+    )
+    _PARALLEL_STATE["ephem"] = ephem
+    _PARALLEL_STATE["cache"] = GravityModelCache(cfg_base, args)
+
+
+def _parallel_worker_scenario(payload: Tuple[Scenario, str, List[str]]) -> Dict[str, Any]:
+    """Propagate truth + compared models for one scenario inside a worker.
+
+    Only lightweight metric rows (not full trajectories) are returned so the
+    inter-process payload stays small.
+    """
+    scenario, truth_model, compare_models = payload
+    st = _PARALLEL_STATE
+    args = st["args"]
+    cfg_base = st["cfg_base"]
+    truth_cfg = st["truth_cfg"]
+    ephem = st["ephem"]
+    cache = st["cache"]
+
+    y0 = scenario.initial_state
+    truth_res, truth_rt = propagate_for_scenario(truth_model, y0, args, truth_cfg, ephem, cache)
+    if truth_res is None:
+        return {"scenario_id": scenario.scenario_id, "truth_failed": True, "truth_rt": None, "rows": []}
+
+    rows: List[Dict[str, Any]] = []
+    for model in compare_models:
+        try:
+            res, rt = propagate_for_scenario(model, y0, args, cfg_base, ephem, cache)
+        except Exception as exc:  # pragma: no cover - defensive (worker side)
+            failed = {f: None for f in _METRICS_FIELDNAMES}
+            failed.update({"scenario_id": scenario.scenario_id, "model": model,
+                           "status": "exception", "failure_reason": str(exc)})
+            rows.append(failed)
+            continue
+        if res is None:
+            failed = {f: None for f in _METRICS_FIELDNAMES}
+            failed.update({"scenario_id": scenario.scenario_id, "model": model, "status": "failed"})
+            rows.append(failed)
+            continue
+        rows.append(compute_trajectory_metrics(model, scenario, truth_res, res, rt, truth_rt))
+
+    return {
+        "scenario_id": scenario.scenario_id,
+        "truth_failed": False,
+        "truth_rt": float(truth_rt),
+        "rows": rows,
+    }
+
+
+# =============================================================================
 # Random scenario validation mode
 # =============================================================================
 
@@ -3707,79 +3840,136 @@ def run_random_scenario_mode(
     n_done  = sum(1 for s in scenarios if s.scenario_id in completed_ids)
     model_cache = GravityModelCache(cfg_base, args)
 
-    for sc_i, scenario in enumerate(scenarios):
-        if scenario.scenario_id in completed_ids:
-            continue
+    # Ground-truth integrator may differ from the compared-model integrator.
+    truth_integrator = str(getattr(args, "truth_integrator", "DOP853"))
+    truth_cfg = _cfg_with_integrator(cfg_base, truth_integrator)
 
-        print(f"\nScenario {sc_i+1:03d}/{n_total} | id={scenario.scenario_id} "
-              f"| hp={scenario.hp_km:.0f} km  ha={scenario.ha_km:.0f} km  "
-              f"i={scenario.inc_deg:.1f} deg", flush=True)
+    pending = [s for s in scenarios if s.scenario_id not in completed_ids]
+    workers = max(1, int(getattr(args, "workers", 1) or 1))
+    # CPU parallelism applies to the per-model adaptive sweep only. batch-RK4
+    # needs full truth trajectories in-process, so it stays sequential.
+    parallel = workers > 1 and not bool(args.batch_rk4) and bool(dop853_compare_models)
 
-        y0 = scenario.initial_state
-
-        # Truth propagation
-        print(f"  {truth_model.upper()} | running ...", flush=True)
-        truth_res, truth_rt = propagate_for_scenario(
-            truth_model, y0, args, cfg_base, ephem, model_cache
-        )
-        if truth_res is None:
-            print("  FAILED: truth model", flush=True)
-            if args.fail_fast:
-                sys.exit(1)
-            n_done += 1
-            continue
-
-        print(f"  {truth_model.upper()} | done {truth_rt:.2f}s", flush=True)
-        truth_runtimes.append(truth_rt)
-        truth_results_all[scenario.scenario_id] = truth_res
-
-        # Compare models
-        for model in dop853_compare_models:
-            print(f"  {model.upper()} | running ...", end=" ", flush=True)
-            try:
-                res, rt = propagate_for_scenario(
-                    model, y0, args, cfg_base, ephem, model_cache
-                )
-            except Exception as exc:
-                print(f"EXCEPTION: {exc}", flush=True)
-                traceback.print_exc()
-                if args.fail_fast:
-                    sys.exit(1)
-                failed_row = {f: None for f in _METRICS_FIELDNAMES}
-                failed_row.update({"scenario_id": scenario.scenario_id,
-                                   "model": model, "status": "exception"})
-                _append_metrics_csv(failed_row, metrics_path, not header_written)
-                header_written = True
+    if parallel:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        print(f"\n[harness] CPU parallel sweep: {len(pending)} scenarios across "
+              f"{workers} workers (truth integrator={truth_integrator}).", flush=True)
+        payloads = [(s, truth_model, dop853_compare_models) for s in pending]
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_parallel_worker_init,
+            initargs=(args, cfg_base),
+        ) as executor:
+            futures = {executor.submit(_parallel_worker_scenario, p): p[0] for p in payloads}
+            for future in as_completed(futures):
+                scenario = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    print(f"[harness] worker failed for scenario {scenario.scenario_id}: {exc}",
+                          flush=True)
+                    if args.fail_fast:
+                        raise
+                    n_done += 1
+                    continue
+                if result.get("truth_failed"):
+                    print(f"  FAILED: truth model (scenario {result['scenario_id']})", flush=True)
+                    if args.fail_fast:
+                        sys.exit(1)
+                    n_done += 1
+                    continue
+                if result.get("truth_rt") is not None:
+                    truth_runtimes.append(float(result["truth_rt"]))
+                for row in result.get("rows", []):
+                    if row.get("status") == "ok":
+                        all_metrics.append(row)
+                    _append_metrics_csv(row, metrics_path, not header_written)
+                    header_written = True
+                n_done += 1
+                elapsed = time.perf_counter() - t_start
+                rate = n_done / max(elapsed, 1e-9)
+                remaining = (n_total - n_done) / max(rate, 1e-9)
+                mm, ss = divmod(int(remaining), 60)
+                hh, mm = divmod(mm, 60)
+                print(f"  [{n_done:03d}/{n_total}] scenario {result['scenario_id']} done "
+                      f"| ETA {hh:02d}:{mm:02d}:{ss:02d}", flush=True)
+    else:
+        if workers > 1:
+            print("[harness] --workers>1 ignored (batch-RK4 or no adaptive compare models); "
+                  "running sequentially.", flush=True)
+        for sc_i, scenario in enumerate(scenarios):
+            if scenario.scenario_id in completed_ids:
                 continue
 
-            if res is None:
-                print("FAILED", flush=True)
-                if args.fail_fast:
-                    sys.exit(1)
-                failed_row = {f: None for f in _METRICS_FIELDNAMES}
-                failed_row.update({"scenario_id": scenario.scenario_id,
-                                   "model": model, "status": "failed"})
-                _append_metrics_csv(failed_row, metrics_path, not header_written)
-                header_written = True
-                continue
+            print(f"\nScenario {sc_i+1:03d}/{n_total} | id={scenario.scenario_id} "
+                  f"| hp={scenario.hp_km:.0f} km  ha={scenario.ha_km:.0f} km  "
+                  f"i={scenario.inc_deg:.1f} deg", flush=True)
 
-            metrics = compute_trajectory_metrics(
-                model, scenario, truth_res, res, rt, truth_rt
+            y0 = scenario.initial_state
+
+            # Truth propagation (uses the selected ground-truth integrator).
+            print(f"  {truth_model.upper()} {truth_integrator} | running ...", flush=True)
+            truth_res, truth_rt = propagate_for_scenario(
+                truth_model, y0, args, truth_cfg, ephem, model_cache
             )
-            all_metrics.append(metrics)
-            _append_metrics_csv(metrics, metrics_path, not header_written)
-            header_written = True
-            print(f"done {rt:.2f}s | RMS pos err: {metrics.get('rms_pos_err_km', 0):.4f} km",
-                  flush=True)
+            if truth_res is None:
+                print("  FAILED: truth model", flush=True)
+                if args.fail_fast:
+                    sys.exit(1)
+                n_done += 1
+                continue
 
-        n_done += 1
-        elapsed = time.perf_counter() - t_start
-        rate    = n_done / max(elapsed, 1e-9)
-        remaining = (n_total - n_done) / max(rate, 1e-9)
-        mm, ss  = divmod(int(remaining), 60)
-        hh, mm  = divmod(mm, 60)
-        print(f"  ETA: {hh:02d}:{mm:02d}:{ss:02d} remaining  ({n_done}/{n_total} done)",
-              flush=True)
+            print(f"  {truth_model.upper()} | done {truth_rt:.2f}s", flush=True)
+            truth_runtimes.append(truth_rt)
+            truth_results_all[scenario.scenario_id] = truth_res
+
+            # Compare models
+            for model in dop853_compare_models:
+                print(f"  {model.upper()} | running ...", end=" ", flush=True)
+                try:
+                    res, rt = propagate_for_scenario(
+                        model, y0, args, cfg_base, ephem, model_cache
+                    )
+                except Exception as exc:
+                    print(f"EXCEPTION: {exc}", flush=True)
+                    traceback.print_exc()
+                    if args.fail_fast:
+                        sys.exit(1)
+                    failed_row = {f: None for f in _METRICS_FIELDNAMES}
+                    failed_row.update({"scenario_id": scenario.scenario_id,
+                                       "model": model, "status": "exception"})
+                    _append_metrics_csv(failed_row, metrics_path, not header_written)
+                    header_written = True
+                    continue
+
+                if res is None:
+                    print("FAILED", flush=True)
+                    if args.fail_fast:
+                        sys.exit(1)
+                    failed_row = {f: None for f in _METRICS_FIELDNAMES}
+                    failed_row.update({"scenario_id": scenario.scenario_id,
+                                       "model": model, "status": "failed"})
+                    _append_metrics_csv(failed_row, metrics_path, not header_written)
+                    header_written = True
+                    continue
+
+                metrics = compute_trajectory_metrics(
+                    model, scenario, truth_res, res, rt, truth_rt
+                )
+                all_metrics.append(metrics)
+                _append_metrics_csv(metrics, metrics_path, not header_written)
+                header_written = True
+                print(f"done {rt:.2f}s | RMS pos err: {metrics.get('rms_pos_err_km', 0):.4f} km",
+                      flush=True)
+
+            n_done += 1
+            elapsed = time.perf_counter() - t_start
+            rate    = n_done / max(elapsed, 1e-9)
+            remaining = (n_total - n_done) / max(rate, 1e-9)
+            mm, ss  = divmod(int(remaining), 60)
+            hh, mm  = divmod(mm, 60)
+            print(f"  ETA: {hh:02d}:{mm:02d}:{ss:02d} remaining  ({n_done}/{n_total} done)",
+                  flush=True)
 
     # Aggregate statistics
     print("\n[harness] Computing aggregate statistics ...", flush=True)
@@ -3815,7 +4005,8 @@ def run_random_scenario_mode(
         traj: Dict[str, Any] = {}
         y0 = selected_sc.initial_state
         for m in [truth_model] + dop853_compare_models:
-            res, _ = propagate_for_scenario(m, y0, args, cfg_base, ephem, model_cache)
+            _m_cfg = truth_cfg if m == truth_model else cfg_base
+            res, _ = propagate_for_scenario(m, y0, args, _m_cfg, ephem, model_cache)
             if res is not None:
                 traj[m] = res
         npz_path = out_dir / "trajectories_selected_scenario.npz"
@@ -3843,7 +4034,8 @@ def run_random_scenario_mode(
                 traj_w: Dict[str, Any] = {}
                 y0w = worst_sc.initial_state
                 for m in [truth_model] + dop853_compare_models:
-                    res, _ = propagate_for_scenario(m, y0w, args, cfg_base, ephem, model_cache)
+                    _m_cfg = truth_cfg if m == truth_model else cfg_base
+                    res, _ = propagate_for_scenario(m, y0w, args, _m_cfg, ephem, model_cache)
                     if res is not None:
                         traj_w[m] = res
                 npz_path_w = out_dir / "trajectories_worst_case.npz"
@@ -3878,7 +4070,7 @@ def run_random_scenario_mode(
                   flush=True)
             for idx, sc in enumerate(missing_truth, 1):
                 truth_res, truth_rt = propagate_for_scenario(
-                    truth_model, sc.initial_state, args, cfg_base, ephem, model_cache
+                    truth_model, sc.initial_state, args, truth_cfg, ephem, model_cache
                 )
                 if truth_res is not None:
                     truth_results_all[sc.scenario_id] = truth_res

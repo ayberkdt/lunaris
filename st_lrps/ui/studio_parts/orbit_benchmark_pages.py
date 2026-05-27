@@ -17,6 +17,7 @@ The page only builds and launches a command; the harness owns all physics.
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -51,6 +52,20 @@ BENCHMARK_OUTPUT_ROOT = _REPO_ROOT / "outputs" / "gravity_benchmark"
 _COMPARISON_MODELS = ("sh20", "sh60", "sh80", "sh120", "sh160", "st_lrps")
 _DEFAULT_CHECKED = {"sh20", "sh80", "sh160", "st_lrps"}
 _TRUTH_CHOICES = ("sh120", "sh160", "sh200")
+_TRUTH_INTEGRATORS = ("DOP853", "RK45")
+_GPU_INTEGRATORS = ("light", "medium", "robust")
+
+_MODEL_NAME_RE = re.compile(r"^sh\d{1,4}$")
+
+
+def _valid_model_name(name: str) -> bool:
+    """A model is either 'st_lrps' or a spherical-harmonic degree like 'sh80'."""
+    name = str(name).strip().lower()
+    if name == "st_lrps":
+        return True
+    if not _MODEL_NAME_RE.match(name):
+        return False
+    return 1 <= int(name[2:]) <= 1800
 
 
 class OrbitBenchmarkTab(QWidget):
@@ -86,23 +101,38 @@ class OrbitBenchmarkTab(QWidget):
         grp_models = QGroupBox("Models to Run")
         models_lo = QVBoxLayout()
         self._model_checks: dict[str, QCheckBox] = {}
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        for i, name in enumerate(_COMPARISON_MODELS):
-            cb = QCheckBox(name.upper() if name.startswith("sh") else "ST-LRPS")
-            cb.setChecked(name in _DEFAULT_CHECKED)
-            cb.toggled.connect(self._refresh_command_preview)
-            self._model_checks[name] = cb
-            row.addWidget(cb)
-            if (i + 1) % 3 == 0:
-                models_lo.addLayout(row)
-                row = QHBoxLayout()
-                row.setContentsMargins(0, 0, 0, 0)
-        if row.count():
-            models_lo.addLayout(row)
+        self._custom_models: List[str] = []
+        self._models_grid = QGridLayout()
+        self._models_grid.setContentsMargins(0, 0, 0, 0)
+        self._model_grid_count = 0
+        for name in _COMPARISON_MODELS:
+            self._add_model_checkbox(name, checked=(name in _DEFAULT_CHECKED))
+        models_grid_w = QWidget()
+        models_grid_w.setLayout(self._models_grid)
+        models_lo.addWidget(models_grid_w)
+
+        # Create/add a custom comparison model (another SH degree, e.g. sh45 / sh250).
+        add_row = QHBoxLayout()
+        add_row.setContentsMargins(0, 0, 0, 0)
+        self.new_model_edit = QLineEdit()
+        self.new_model_edit.setPlaceholderText("Add model, e.g. sh45")
+        self.new_model_edit.setToolTip(
+            "Create a new comparison model and add it to the list above. "
+            "Use a spherical-harmonic degree like sh45 (sh1..sh1800)."
+        )
+        self.new_model_edit.returnPressed.connect(self._on_add_model)
+        btn_add_model = QPushButton("Add model")
+        btn_add_model.clicked.connect(self._on_add_model)
+        add_row.addWidget(self.new_model_edit, 1)
+        add_row.addWidget(btn_add_model)
+        add_row_w = QWidget()
+        add_row_w.setLayout(add_row)
+        models_lo.addWidget(add_row_w)
+
         models_hint = QLabel(
-            "Selected models are compared against the truth model above. ST-LRPS "
-            "requires a trained run directory (auto-detected if left empty)."
+            "Selected models are compared against the truth model above. Add custom "
+            "spherical-harmonic degrees as shNN. ST-LRPS requires a trained run "
+            "directory (auto-detected if left empty)."
         )
         models_hint.setWordWrap(True)
         models_hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
@@ -151,23 +181,53 @@ class OrbitBenchmarkTab(QWidget):
         grp_integ = QGroupBox("Integrator")
         form_integ = QFormLayout()
         _tune_form(form_integ)
+        # Ground-truth integrator (applies in both modes).
+        self.truth_integrator = NoScrollComboBox()
+        for ti in _TRUTH_INTEGRATORS:
+            self.truth_integrator.addItem(ti + (" (RK8)" if ti == "DOP853" else ""), ti)
+        self.truth_integrator.setCurrentIndex(0)
+        self.truth_integrator.setToolTip(
+            "Adaptive integrator used to build the ground-truth reference trajectories."
+        )
+        # Per-model adaptive integrator (CPU / DOP853 mode).
         self.integrator = NoScrollComboBox()
         self.integrator.addItem("DOP853 (RK8)", "DOP853")
         self.integrator.addItem("RK45", "RK45")
         self.integrator.setCurrentIndex(0)
-        self.integrator.setToolTip("Adaptive integrator for per-model DOP853 mode.")
+        self.integrator.setToolTip("Adaptive integrator for the compared models (CPU mode).")
+        # CPU parallelism (CPU / DOP853 mode).
+        self.cpu_workers = QSpinBox()
+        self.cpu_workers.setRange(1, 256)
+        self.cpu_workers.setValue(1)
+        self.cpu_workers.setToolTip(
+            "CPU worker processes for the per-model adaptive sweep. 1 = sequential. "
+            "Each worker builds its own ephemeris + gravity caches."
+        )
+        # GPU fixed-step method (GPU mode).
+        self.gpu_integrator = NoScrollComboBox()
+        self.gpu_integrator.addItem("light (RK2 midpoint)", "light")
+        self.gpu_integrator.addItem("medium (classic RK4)", "medium")
+        self.gpu_integrator.addItem("robust (RK4 + Richardson)", "robust")
+        self.gpu_integrator.setCurrentIndex(1)
+        self.gpu_integrator.setToolTip(
+            "GPU fixed-step fidelity: light=RK2 (cheap), medium=RK4 (standard), "
+            "robust=RK4 with Richardson extrapolation (most accurate)."
+        )
         self.rk4_dt = QDoubleSpinBox()
         self.rk4_dt.setDecimals(3)
         self.rk4_dt.setRange(0.001, 600.0)
         self.rk4_dt.setValue(10.0)
-        self.rk4_dt.setToolTip("Fixed RK4 step size (seconds) for GPU batch mode.")
+        self.rk4_dt.setToolTip("Fixed step size (seconds) for the GPU integrator.")
         self.torch_dtype = NoScrollComboBox()
         self.torch_dtype.addItems(["float64", "float32"])
         self.gpu_fallback = NoScrollComboBox()
         self.gpu_fallback.addItem("error (require CUDA)", "error")
         self.gpu_fallback.addItem("cpu (fallback)", "cpu")
-        form_integ.addRow("DOP853 integrator", self.integrator)
-        form_integ.addRow("RK4 step (s)", self.rk4_dt)
+        form_integ.addRow("Truth integrator", self.truth_integrator)
+        form_integ.addRow("Compare integrator (CPU)", self.integrator)
+        form_integ.addRow("CPU workers", self.cpu_workers)
+        form_integ.addRow("GPU method", self.gpu_integrator)
+        form_integ.addRow("Fixed step (s)", self.rk4_dt)
         form_integ.addRow("Torch dtype", self.torch_dtype)
         form_integ.addRow("GPU fallback", self.gpu_fallback)
         grp_integ.setLayout(form_integ)
@@ -297,13 +357,14 @@ class OrbitBenchmarkTab(QWidget):
         # Wiring
         self.run_mode.currentIndexChanged.connect(self._on_mode_changed)
         for w in (
-            self.truth, self.scenario_mode, self.integrator,
-            self.torch_dtype, self.gpu_fallback,
+            self.truth, self.truth_integrator, self.scenario_mode, self.integrator,
+            self.gpu_integrator, self.torch_dtype, self.gpu_fallback,
         ):
             w.currentIndexChanged.connect(self._refresh_command_preview)
         for w in (
             self.random_scenarios, self.scenario_seed, self.alt_min, self.alt_max,
             self.duration_days, self.dt_out, self.rk4_dt, self.max_step,
+            self.cpu_workers,
         ):
             w.valueChanged.connect(self._refresh_command_preview)
         self.rtol.textChanged.connect(self._refresh_command_preview)
@@ -322,11 +383,66 @@ class OrbitBenchmarkTab(QWidget):
     def _on_mode_changed(self, *_a) -> None:
         mode = self.run_mode.currentData() or "dop853"
         is_gpu = mode == "gpu_rk4"
+        # CPU / adaptive (DOP853) controls.
         self.integrator.setEnabled(not is_gpu)
+        self.cpu_workers.setEnabled(not is_gpu)
+        # GPU fixed-step controls.
+        self.gpu_integrator.setEnabled(is_gpu)
         self.rk4_dt.setEnabled(is_gpu)
         self.torch_dtype.setEnabled(is_gpu)
         self.gpu_fallback.setEnabled(is_gpu)
         self._tol_section.setEnabled(not is_gpu)
+        # Truth integrator applies in both modes — always enabled.
+        self.truth_integrator.setEnabled(True)
+        self._refresh_command_preview()
+
+    # ------------------------------------------------------------------
+    # Model selection (with custom additions)
+    # ------------------------------------------------------------------
+    def _add_model_checkbox(self, name: str, checked: bool = True) -> bool:
+        """Add a model checkbox to the grid. Returns False if name is empty/duplicate."""
+        name = str(name).strip().lower()
+        if not name or name in self._model_checks:
+            return False
+        label = "ST-LRPS" if name == "st_lrps" else name.upper()
+        cb = QCheckBox(label)
+        cb.setChecked(checked)
+        cb.toggled.connect(self._refresh_command_preview)
+        self._model_checks[name] = cb
+        r, c = divmod(self._model_grid_count, 3)
+        self._models_grid.addWidget(cb, r, c)
+        self._model_grid_count += 1
+        return True
+
+    def _try_add_model(self, raw: str) -> tuple[bool, str]:
+        """Validate and add a model. Returns (ok, error_message). No UI dialogs.
+
+        Kept dialog-free so it is unit-testable headlessly.
+        """
+        raw = str(raw).strip().lower()
+        if not raw:
+            return False, ""
+        if not _valid_model_name(raw):
+            return False, (
+                "Model must be 'st_lrps' or a spherical-harmonic degree like 'sh80' "
+                "(sh1..sh1800)."
+            )
+        if raw in self._model_checks:
+            self._model_checks[raw].setChecked(True)
+            return True, ""
+        if self._add_model_checkbox(raw, checked=True):
+            if raw not in self._custom_models:
+                self._custom_models.append(raw)
+            return True, ""
+        return False, "Could not add model."
+
+    def _on_add_model(self) -> None:
+        ok, err = self._try_add_model(self.new_model_edit.text())
+        if not ok:
+            if err:
+                QMessageBox.warning(self, "Invalid model", err)
+            return
+        self.new_model_edit.clear()
         self._refresh_command_preview()
 
     # ------------------------------------------------------------------
@@ -383,16 +499,19 @@ class OrbitBenchmarkTab(QWidget):
         args += ["--duration-days", str(self.duration_days.value())]
         args += ["--dt-out", str(self.dt_out.value())]
         args += ["--truth", truth]
+        args += ["--truth-integrator", self.truth_integrator.currentData() or "DOP853"]
 
         if mode == "gpu_rk4":
             args += ["--gpu-batch-compare"]
             args += ["--gpu-models", ",".join(models)]
+            args += ["--gpu-integrator", self.gpu_integrator.currentData() or "medium"]
             args += ["--rk4-dt-s", str(self.rk4_dt.value())]
             args += ["--torch-dtype", self.torch_dtype.currentText()]
             args += ["--gpu-fallback", self.gpu_fallback.currentData() or "error"]
         else:
             args += ["--models", ",".join(models)]
             args += ["--integrator", self.integrator.currentData() or "DOP853"]
+            args += ["--workers", str(self.cpu_workers.value())]
             rtol = self.rtol.text().strip()
             atol = self.atol.text().strip()
             for label, value in (("rtol", rtol), ("atol", atol)):
@@ -483,7 +602,9 @@ class OrbitBenchmarkTab(QWidget):
         s.beginGroup("orbit_benchmark")
         s.setValue("run_mode", self.run_mode.currentData())
         s.setValue("truth", self.truth.currentData())
+        s.setValue("truth_integrator", self.truth_integrator.currentData())
         s.setValue("models", ",".join(self._selected_models()))
+        s.setValue("custom_models", ",".join(self._custom_models))
         s.setValue("random_scenarios", self.random_scenarios.value())
         s.setValue("scenario_seed", self.scenario_seed.value())
         s.setValue("scenario_mode", self.scenario_mode.currentData())
@@ -492,6 +613,8 @@ class OrbitBenchmarkTab(QWidget):
         s.setValue("duration_days", self.duration_days.value())
         s.setValue("dt_out", self.dt_out.value())
         s.setValue("integrator", self.integrator.currentData())
+        s.setValue("cpu_workers", self.cpu_workers.value())
+        s.setValue("gpu_integrator", self.gpu_integrator.currentData())
         s.setValue("rk4_dt", self.rk4_dt.value())
         s.setValue("torch_dtype", self.torch_dtype.currentText())
         s.setValue("gpu_fallback", self.gpu_fallback.currentData())
@@ -515,6 +638,14 @@ class OrbitBenchmarkTab(QWidget):
 
         _combo(self.run_mode, "run_mode")
         _combo(self.truth, "truth")
+        _combo(self.truth_integrator, "truth_integrator")
+        # Recreate custom models before applying the saved checked set.
+        if s.contains("custom_models"):
+            for name in str(s.value("custom_models", "")).split(","):
+                name = name.strip().lower()
+                if name and _valid_model_name(name) and name not in self._model_checks:
+                    if self._add_model_checkbox(name, checked=False):
+                        self._custom_models.append(name)
         if s.contains("models"):
             wanted = {m for m in str(s.value("models", "")).split(",") if m}
             if wanted:
@@ -523,6 +654,7 @@ class OrbitBenchmarkTab(QWidget):
         for key, spin in (
             ("random_scenarios", self.random_scenarios),
             ("scenario_seed", self.scenario_seed),
+            ("cpu_workers", self.cpu_workers),
         ):
             if s.contains(key):
                 try:
@@ -541,6 +673,7 @@ class OrbitBenchmarkTab(QWidget):
                     pass
         _combo(self.scenario_mode, "scenario_mode")
         _combo(self.integrator, "integrator")
+        _combo(self.gpu_integrator, "gpu_integrator")
         _combo(self.gpu_fallback, "gpu_fallback")
         if s.contains("torch_dtype"):
             self.torch_dtype.setCurrentText(str(s.value("torch_dtype", "float64")))

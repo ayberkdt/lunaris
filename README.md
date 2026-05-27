@@ -21,7 +21,7 @@ st_lrps/
   training/      ST-LRPS training config, CLI, engine, losses, metrics
   networks/      neural network architecture definitions
   artifacts/     run layout, checkpoints, manifests, artifact validation
-  evaluation/    trained-model evaluation and ablation CLI
+  evaluation/    trained-model evaluation, ablation, and orbit-level gravity benchmark CLIs
   runtime/       propagator-facing ST-LRPS force model API
   shared/        shared scaling utilities
   ui/            ST-LRPS-specific UI components
@@ -40,9 +40,10 @@ analysis/         post-processing, reports, Monte Carlo analysis
   monte_carlo/
     statistics.py
     plotting.py
-validation/       independent physics/orbit/gravity validation harnesses
-  gravity/
-    compare_gravity_models.py
+validation/       independent physics/orbit/gravity validation docs and schemas
+  gravity/         (harness moved to st_lrps/evaluation/compare_gravity_models.py)
+    README.md
+    output_schema.md
 visualization/    standalone visualization tools
   orbit_animation.py
   surface_explorer.py
@@ -63,11 +64,13 @@ config.py         application configuration dataclasses and defaults
 
 ## Installation
 
-Install the Python dependencies from the repository root:
+Install the standard Python dependencies from the repository root:
 
 ```bash
 python -m pip install -r requirements.txt
 ```
+
+**For HPC and Cluster Deployments**, you should exclude GUI dependencies. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for Conda (`environment.yml`), Headless CLI `requirements_hpc.txt`, and Slurm templates (`slurm_examples/`).
 
 Large mission data files are not bundled. Place local SPICE kernels, gravity coefficient files, topography grids, and albedo grids under `data/` or another local path configured at runtime.
 
