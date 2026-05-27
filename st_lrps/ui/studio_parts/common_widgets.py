@@ -444,6 +444,11 @@ class CollapsibleSection(QWidget):
     def set_content_layout(self, content_layout) -> None:
         self._content.setLayout(content_layout)
 
+    def set_expanded(self, expanded: bool) -> None:
+        """Programmatically expand/collapse the section."""
+        self._toggle_btn.setChecked(bool(expanded))
+        self._on_toggle(bool(expanded))
+
     def _on_toggle(self, checked: bool) -> None:
         self._content.setVisible(checked)
         arrow = "▾" if checked else "▸"
@@ -1862,6 +1867,7 @@ class ProcessPane(QWidget):
         super().__init__(parent)
         self.proc: Optional[QProcess] = None
         self._on_parse_progress: Optional[Callable[[str], None]] = None
+        self._display_filter: Optional[Callable[[str], bool]] = None
         self._on_finished_hook: Optional[Callable[[int, QProcess.ExitStatus], None]] = (
             None
         )
@@ -1971,6 +1977,15 @@ class ProcessPane(QWidget):
     def set_progress_parser(self, fn: Optional[Callable[[str], None]]) -> None:
         self._on_parse_progress = fn
 
+    def set_display_filter(self, fn: Optional[Callable[[str], bool]]) -> None:
+        """Install a predicate deciding whether a line is shown in the log.
+
+        The progress parser still receives every line; only the visible log is
+        filtered. ``fn`` returning False hides the line. A None/raising filter
+        shows everything (fail-open).
+        """
+        self._display_filter = fn
+
     def set_finished_hook(
         self, fn: Optional[Callable[[int, QProcess.ExitStatus], None]]
     ) -> None:
@@ -1980,10 +1995,17 @@ class ProcessPane(QWidget):
         self._stop_hint = text.strip()
 
     def append(self, text: str) -> None:
-        self.log.appendPlainText(text.rstrip("\n"))
-        if self._auto_scroll.isChecked():
-            sb = self.log.verticalScrollBar()
-            sb.setValue(sb.maximum())
+        show = True
+        if self._display_filter is not None:
+            try:
+                show = bool(self._display_filter(text))
+            except Exception:
+                show = True  # fail-open: never hide on filter error
+        if show:
+            self.log.appendPlainText(text.rstrip("\n"))
+            if self._auto_scroll.isChecked():
+                sb = self.log.verticalScrollBar()
+                sb.setValue(sb.maximum())
         if self._on_parse_progress:
             try:
                 self._on_parse_progress(text)

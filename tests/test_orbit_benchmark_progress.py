@@ -241,14 +241,14 @@ def test_studio_strip_updates_from_progress_lines(tab):
     for ln in lines:
         tab.runner.append(ln)
 
-    assert tab._st_phase.text() == "gpu_model"
-    assert tab._st_model.text() == "sh20"
+    assert tab._st_phase.text() == "GPU model"   # humanized phase label
+    assert tab._st_model.text() == "SH20"        # humanized model label
     assert tab._st_phase_pct.text() == "10.0%"
     assert tab._st_overall_pct.text() == "63.4%"
     assert tab._st_steps.text() == "5.8"
-    # progress_total flips the bar to determinate 0..100.
-    assert tab.runner.progress.maximum() == 100
-    assert tab.runner.progress.value() == 63
+    # progress_total flips the overall bar to determinate 0..100.
+    assert tab.overall_bar.maximum() == 100
+    assert tab.overall_bar.value() == 63
 
 
 def test_studio_strip_ignores_plain_logs(tab):

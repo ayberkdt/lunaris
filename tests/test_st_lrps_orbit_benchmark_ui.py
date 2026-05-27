@@ -846,3 +846,194 @@ def test_report_pager_renders_pdf(tmp_path):
     assert p.returncode == 0, (p.stdout + p.stderr)
     assert "REPORT_OK" in p.stdout
     assert pdf_path.exists()
+
+
+# ---------------------------------------------------------------------------
+# Run-monitor dashboard: status parser, pipeline state machine, telemetry
+# ---------------------------------------------------------------------------
+_TELEMETRY_LINE = '{"t_s":21600.0,"alt_km":120.0,"v_km_s":1.6,"ecc":0.001}'
+
+
+def test_dashboard_parses_progress_phase_line(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20"])
+    tab.runner.append(
+        "[progress] phase=gpu_model model=sh20 current_step=433 total_steps=14400 "
+        "percent=3.0 elapsed_s=96 eta_s=3082 steps_per_s=4.53 device=cuda:0 "
+        "dtype=float64 n_scenarios=4"
+    )
+    assert tab._st_phase.text() == "GPU model"
+    assert tab._st_model.text() == "SH20"
+    assert tab._st_phase_pct.text() == "3.0%"
+    assert tab._st_steps.text() == "4.5"
+    assert tab._st_scn.text() == "4"
+    assert tab.phase_bar.maximum() == 100 and tab.phase_bar.value() == 3
+    assert "433" in tab._phase_detail.text()
+    tab.deleteLater()
+
+
+def test_dashboard_parses_progress_total_line(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20"])
+    tab.runner.append(
+        "[progress_total] percent=40.4 phase=gpu_model model=sh20 elapsed_s=400 eta_s=591"
+    )
+    assert tab._st_overall_pct.text() == "40.4%"
+    assert tab.overall_bar.maximum() == 100 and tab.overall_bar.value() == 40
+    assert tab._st_eta.text() != "-"
+    tab.deleteLater()
+
+
+def test_dashboard_cache_line_marks_truth_cached(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20"])
+    tab.runner.append("[cache] Truth cache sh200_dop853: 4/4 complete.")
+    assert tab._model_status["truth"] == "cached"
+    tab.deleteLater()
+
+
+def test_dashboard_cache_line_marks_model_cached(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20", "sh80"])
+    tab.runner.append("[cache] Model sh80: 4/4 complete.")
+    assert tab._model_status["sh80"] == "cached"
+    tab.deleteLater()
+
+
+def test_dashboard_partial_cache_keeps_model_queued(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20"])
+    tab.runner.append("[cache] Model sh20: 0/4 complete. Recomputing 4 missing.")
+    assert tab._model_status["sh20"] == "queued"
+    tab.deleteLater()
+
+
+def test_dashboard_gpu_start_marks_running(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20", "sh80"])
+    tab.runner.append("[gpu-batch] Model 01/2 | SH20 RK4 starting for 4 scenario(s) ...")
+    assert tab._model_status["sh20"] == "running"
+    tab.deleteLater()
+
+
+def test_dashboard_gpu_done_marks_completed(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20"])
+    tab.runner.append("[gpu-batch] Model 01/1 | SH20 RK4 starting for 4 scenario(s) ...")
+    tab.runner.append(
+        "[gpu-batch] Model 01/1 done | GPU_SH20_RK4: 9.9s backend=torch_sh status=ok | ETA 00:00:10"
+    )
+    assert tab._model_status["sh20"] == "completed"
+    tab.deleteLater()
+
+
+def test_dashboard_gpu_error_marks_failed(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20", "st_lrps"])
+    tab.runner.append("[gpu-batch] ERROR st_lrps: CUDA out of memory")
+    assert tab._model_status["st_lrps"] == "failed"
+    tab.deleteLater()
+
+
+def test_dashboard_next_model_completes_previous(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20", "sh80"])
+    tab.runner.append("[gpu-batch] Model 01/2 | SH20 RK4 starting for 4 scenario(s) ...")
+    tab.runner.append("[gpu-batch] Model 02/2 | SH80 RK4 starting for 4 scenario(s) ...")
+    assert tab._model_status["sh20"] == "completed"
+    assert tab._model_status["sh80"] == "running"
+    tab.deleteLater()
+
+
+def test_dashboard_telemetry_hidden_by_default(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    assert tab.show_telemetry.isChecked() is False
+    tab.runner.append(_TELEMETRY_LINE)
+    assert "t_s" not in tab.runner.log.toPlainText()
+    assert "Telemetry lines hidden" in tab._telemetry_note.text()
+    tab.deleteLater()
+
+
+def test_dashboard_telemetry_shown_when_enabled(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab.show_telemetry.setChecked(True)
+    tab.runner.append(_TELEMETRY_LINE)
+    assert "21600" in tab.runner.log.toPlainText()
+    tab.deleteLater()
+
+
+def test_dashboard_normal_lines_always_shown(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab.runner.append("[gpu-batch] Model 01/2 | SH20 RK4 starting for 4 scenario(s) ...")
+    assert "RK4 starting" in tab.runner.log.toPlainText()
+    tab.deleteLater()
+
+
+def test_dashboard_unknown_lines_do_not_crash(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20"])
+    for line in (
+        "totally unstructured output",
+        "[progress]",
+        "[progress_total]",
+        "{not really json",
+        "",
+        "[gpu-batch] Model weird line",
+    ):
+        tab.runner.append(line)  # must not raise
+    tab.runner.append("[progress_total] percent=12.5 phase=truth elapsed_s=10 eta_s=70")
+    assert tab._st_overall_pct.text() == "12.5%"
+    tab.deleteLater()
+
+
+def test_dashboard_pipeline_order_follows_selection(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh160", "sh20", "st_lrps"])
+    assert tab._pipeline_order == ["truth", "sh160", "sh20", "st_lrps", "report"]
+    assert tab._model_status["sh160"] == "queued"
+    assert tab._model_status["truth"] == "pending"
+    assert tab._model_status["report"] == "pending"
+    tab.deleteLater()
+
+
+def test_dashboard_finish_finalizes_pipeline(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from st_lrps.ui.studio_parts.qt_common import QProcess
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20", "st_lrps"])
+    tab.runner.append("[gpu-batch] Model 01/2 | SH20 RK4 starting for 4 scenario(s) ...")
+    tab._on_finished(0, QProcess.ExitStatus.NormalExit)
+    assert tab._model_status["sh20"] == "completed"
+    assert tab._model_status["report"] == "completed"
+    assert tab._status_badge.text() == "Completed"
+    assert tab.overall_bar.value() == 100
+    tab.deleteLater()

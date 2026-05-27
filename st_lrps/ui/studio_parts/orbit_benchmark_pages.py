@@ -70,6 +70,56 @@ def _valid_model_name(name: str) -> bool:
     return 1 <= int(name[2:]) <= 1800
 
 
+# Pipeline chip status -> (glyph, label, text-color, fill, border).
+_STATUS_STYLE = {
+    "pending":   ("○", "Pending",  "#6f7ca8", "rgba(111,124,168,0.10)", "rgba(111,124,168,0.28)"),
+    "queued":    ("○", "Queued",   "#9aa7c7", "rgba(154,167,199,0.10)", "rgba(154,167,199,0.30)"),
+    "running":   ("●", "Running",  "#f59e0b", "rgba(245,158,11,0.16)",  "rgba(245,158,11,0.60)"),
+    "completed": ("✓", "Done",     "#34d399", "rgba(52,211,153,0.16)",  "rgba(52,211,153,0.55)"),
+    "cached":    ("✓", "Cached",   "#34d399", "rgba(52,211,153,0.10)",  "rgba(52,211,153,0.42)"),
+    "failed":    ("✕", "Failed",   "#f87171", "rgba(248,113,113,0.18)", "rgba(248,113,113,0.60)"),
+    "skipped":   ("–", "Skipped",  "#6f7ca8", "rgba(111,124,168,0.06)", "rgba(111,124,168,0.20)"),
+}
+
+# Run-status badge -> (text, text-color, fill).
+_BADGE_STYLE = {
+    "idle":      ("Idle",      "#9aa7c7", "rgba(154,167,199,0.12)"),
+    "running":   ("Running",   "#f59e0b", "rgba(245,158,11,0.16)"),
+    "completed": ("Completed", "#34d399", "rgba(52,211,153,0.16)"),
+    "failed":    ("Failed",    "#f87171", "rgba(248,113,113,0.18)"),
+}
+
+# Phase keys (from [progress] phase=...) -> human label.
+_PHASE_LABELS = {
+    "scenario": "Scenario setup",
+    "truth": "Truth (DOP853)",
+    "gpu_model": "GPU model",
+    "sweep": "CPU sweep",
+    "aggregate": "Aggregation",
+    "report": "Report",
+}
+
+
+def _chip_label(key: str) -> str:
+    """Display label for a pipeline node key."""
+    k = str(key).strip().lower()
+    if k == "truth":
+        return "Truth"
+    if k == "report":
+        return "Report"
+    if k == "st_lrps":
+        return "ST-LRPS"
+    return k.upper()
+
+
+def _is_telemetry_line(line: str) -> bool:
+    """True for per-step JSON telemetry lines (hidden in the log by default)."""
+    s = str(line).lstrip()
+    if not s.startswith("{"):
+        return False
+    return any(k in s for k in ('"t_s"', '"alt_km"', '"v_km_s"', '"ecc"'))
+
+
 class OrbitBenchmarkTab(QWidget):
     """Configure and launch the orbit-level gravity benchmark harness."""
 
@@ -416,13 +466,27 @@ class OrbitBenchmarkTab(QWidget):
             _tune_inputs(g)
 
         self.runner = ProcessPane()
-        self.runner.btn_start.setText("Run Benchmark")
         self.runner.btn_start.clicked.connect(self._start)
         self.runner.set_finished_hook(self._on_finished)
         self.runner.set_progress_parser(self._parse_progress)
-        self._status_strip = self._build_status_strip()
         self._gallery = ImageGallery()
         self._effective_out_dir = ""
+
+        # -- Run-monitor dashboard state ----------------------------------
+        self._model_status: dict[str, str] = {}
+        self._pipeline_order: List[str] = []
+        self._chips: dict[str, dict] = {}
+        self._current_model: Optional[str] = None
+        self._hidden_telemetry = 0
+
+        # Dashboard cards. Built here because some reuse ProcessPane widgets
+        # (run/stop buttons, the log view, the auto-scroll toggle).
+        self._control_header = self._build_control_header()
+        self._metrics_card = self._build_metrics_card()
+        self._pipeline_card = self._build_pipeline_card()
+        self._progress_card = self._build_progress_card()
+        self._logs_section = self._build_logs_section()
+        self.runner.set_display_filter(self._display_filter_line)
 
         top = QWidget()
         top_l = QVBoxLayout()
@@ -433,18 +497,21 @@ class OrbitBenchmarkTab(QWidget):
         bottom = QWidget()
         bl = QVBoxLayout()
         bl.setContentsMargins(0, 0, 0, 0)
-        bl.setSpacing(8)
-        bl.addWidget(self._status_strip)
-        bl.addWidget(self.runner, 1)
+        bl.setSpacing(10)
+        bl.addWidget(self._control_header)
+        bl.addWidget(self._metrics_card)
+        bl.addWidget(self._pipeline_card)
+        bl.addWidget(self._progress_card)
+        bl.addWidget(self._logs_section)
         bl.addWidget(self._gallery, 1)
         bottom.setLayout(bl)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(_scroll_wrap(top))
-        splitter.addWidget(bottom)
+        splitter.addWidget(_scroll_wrap(bottom))
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([440, 520])
+        splitter.setSizes([400, 580])
 
         layout = QVBoxLayout()
         layout.setContentsMargins(10, 10, 10, 10)
@@ -481,6 +548,7 @@ class OrbitBenchmarkTab(QWidget):
         self._grp_gpu_settings = grp_gpu
         self._restore_settings()
         self._on_mode_changed()
+        self._reset_dashboard()
 
     # ------------------------------------------------------------------
     # Mode dependence
@@ -497,28 +565,49 @@ class OrbitBenchmarkTab(QWidget):
         self._refresh_command_preview()
 
     # ------------------------------------------------------------------
-    # Progress status strip
+    # Run-monitor dashboard — builders
     # ------------------------------------------------------------------
-    def _build_status_strip(self) -> QWidget:
-        """Compact one-line strip showing phase / model / progress / ETA."""
-        strip = QFrame()
-        strip.setObjectName("benchStatusStrip")
-        strip.setStyleSheet(
-            "#benchStatusStrip { background: rgba(16,24,48,0.55); "
-            "border: 1px solid rgba(185,194,221,0.14); border-radius: 8px; }"
+    @staticmethod
+    def _card(object_name: str) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName(object_name)
+        frame.setStyleSheet(
+            f"#{object_name} {{ background: rgba(16,24,48,0.55); "
+            "border: 1px solid rgba(185,194,221,0.14); border-radius: 10px; }"
         )
+        return frame
+
+    def _build_control_header(self) -> QWidget:
+        """Run / Stop / Open-folder controls plus a run-status badge."""
+        frame = self._card("benchHeader")
         lo = QHBoxLayout()
-        lo.setContentsMargins(12, 6, 12, 6)
-        lo.setSpacing(18)
+        lo.setContentsMargins(14, 10, 14, 10)
+        lo.setSpacing(10)
+        self.runner.btn_start.setText("Run Benchmark")
+        lo.addWidget(self.runner.btn_start)
+        lo.addWidget(self.runner.btn_stop)
+        lo.addWidget(self.runner.btn_open_folder)
+        lo.addStretch(1)
+        self._status_badge = QLabel()
+        lo.addWidget(self._status_badge)
+        frame.setLayout(lo)
+        return frame
+
+    def _build_metrics_card(self) -> QWidget:
+        """Top status dashboard: the key run metrics at a glance."""
+        frame = self._card("benchMetrics")
+        lo = QHBoxLayout()
+        lo.setContentsMargins(14, 10, 14, 10)
+        lo.setSpacing(20)
 
         def _metric(caption: str) -> QLabel:
             cell = QVBoxLayout()
             cell.setContentsMargins(0, 0, 0, 0)
-            cell.setSpacing(0)
+            cell.setSpacing(1)
             cap = QLabel(caption)
             cap.setStyleSheet("color:#6f7ca8; font-size:10px; font-weight:600;")
             val = QLabel("-")
-            val.setStyleSheet("color:#d8e1f7; font-size:13px; font-weight:600;")
+            val.setStyleSheet("color:#e8ecf8; font-size:14px; font-weight:700;")
             cell.addWidget(cap)
             cell.addWidget(val)
             holder = QWidget()
@@ -526,49 +615,291 @@ class OrbitBenchmarkTab(QWidget):
             lo.addWidget(holder)
             return val
 
+        self._st_overall_pct = _metric("Overall")
         self._st_phase = _metric("Phase")
-        self._st_model = _metric("Model")
+        self._st_model = _metric("Current model")
         self._st_phase_pct = _metric("Phase %")
-        self._st_overall_pct = _metric("Overall %")
-        self._st_elapsed = _metric("Elapsed")
         self._st_eta = _metric("ETA")
+        self._st_elapsed = _metric("Elapsed")
         self._st_steps = _metric("steps/s")
+        self._st_scn = _metric("Scenarios")
         lo.addStretch(1)
-        strip.setLayout(lo)
-        return strip
+        frame.setLayout(lo)
+        return frame
 
-    def _reset_status_strip(self) -> None:
+    def _build_pipeline_card(self) -> QWidget:
+        """Horizontal model pipeline / queue tracker."""
+        frame = self._card("benchPipeline")
+        outer = QVBoxLayout()
+        outer.setContentsMargins(14, 8, 14, 10)
+        outer.setSpacing(6)
+        cap = QLabel("Model Pipeline")
+        cap.setStyleSheet("color:#6f7ca8; font-size:10px; font-weight:600;")
+        outer.addWidget(cap)
+
+        self._pipeline_host = QWidget()
+        self._pipeline_layout = QHBoxLayout()
+        self._pipeline_layout.setContentsMargins(0, 0, 0, 0)
+        self._pipeline_layout.setSpacing(8)
+        self._pipeline_host.setLayout(self._pipeline_layout)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setFixedHeight(62)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        scroll.setWidget(self._pipeline_host)
+        outer.addWidget(scroll)
+        frame.setLayout(outer)
+        return frame
+
+    def _build_progress_card(self) -> QWidget:
+        """Compact overall + current-phase progress bars and telemetry toggle."""
+        frame = self._card("benchProgress")
+        v = QVBoxLayout()
+        v.setContentsMargins(14, 12, 14, 12)
+        v.setSpacing(7)
+
+        slim = (
+            "QProgressBar { background: rgba(7,11,20,0.85); "
+            "border: 1px solid rgba(185,194,221,0.18); border-radius: 5px; height: 10px; }"
+            "QProgressBar::chunk { border-radius: 5px; background: %s; }"
+        )
+
+        cap1 = QLabel("Overall Progress")
+        cap1.setStyleSheet("color:#9aa7c7; font-size:11px; font-weight:600;")
+        self._overall_value = QLabel("-")
+        self._overall_value.setStyleSheet("color:#34d399; font-size:11px; font-weight:700;")
+        row1 = QHBoxLayout()
+        row1.setContentsMargins(0, 0, 0, 0)
+        row1.addWidget(cap1)
+        row1.addStretch(1)
+        row1.addWidget(self._overall_value)
+        v.addLayout(row1)
+        self.overall_bar = QProgressBar()
+        self.overall_bar.setTextVisible(False)
+        self.overall_bar.setFixedHeight(10)
+        self.overall_bar.setStyleSheet(slim % "#34d399")
+        v.addWidget(self.overall_bar)
+
+        self._phase_caption = QLabel("Current Phase: -")
+        self._phase_caption.setStyleSheet("color:#9aa7c7; font-size:11px; font-weight:600;")
+        self._phase_value = QLabel("-")
+        self._phase_value.setStyleSheet("color:#35d0ff; font-size:11px; font-weight:700;")
+        row2 = QHBoxLayout()
+        row2.setContentsMargins(0, 0, 0, 0)
+        row2.addWidget(self._phase_caption)
+        row2.addStretch(1)
+        row2.addWidget(self._phase_value)
+        v.addLayout(row2)
+        self.phase_bar = QProgressBar()
+        self.phase_bar.setTextVisible(False)
+        self.phase_bar.setFixedHeight(10)
+        self.phase_bar.setStyleSheet(slim % "#35d0ff")
+        v.addWidget(self.phase_bar)
+
+        self._phase_detail = QLabel("")
+        self._phase_detail.setStyleSheet("color:#6f7ca8; font-size:10px;")
+        v.addWidget(self._phase_detail)
+
+        self.show_telemetry = QCheckBox("Show raw telemetry lines")
+        self.show_telemetry.setChecked(False)
+        self.show_telemetry.setToolTip(
+            "Per-step JSON telemetry lines are hidden from the log by default. "
+            "Enable to show them (applies to new lines)."
+        )
+        self.show_telemetry.toggled.connect(self._on_telemetry_toggled)
+        self._telemetry_note = QLabel("")
+        self._telemetry_note.setStyleSheet("color:#6f7ca8; font-size:10px;")
+        trow = QHBoxLayout()
+        trow.setContentsMargins(0, 0, 0, 0)
+        trow.addWidget(self.show_telemetry)
+        trow.addStretch(1)
+        trow.addWidget(self._telemetry_note)
+        v.addLayout(trow)
+        frame.setLayout(v)
+        return frame
+
+    def _build_logs_section(self) -> CollapsibleSection:
+        """Collapsible logs / diagnostics panel reusing the ProcessPane log."""
+        sec = CollapsibleSection("Logs / Diagnostics")
+        inner = QVBoxLayout()
+        inner.setContentsMargins(0, 6, 0, 0)
+        inner.setSpacing(6)
+
+        bar = QHBoxLayout()
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(8)
+        self.runner._auto_scroll.setText("Auto-scroll")
+        bar.addWidget(self.runner._auto_scroll)
+        bar.addStretch(1)
+        btn_copy = QPushButton("Copy logs")
+        btn_copy.setProperty("kind", "ghost")
+        btn_copy.clicked.connect(self._copy_logs)
+        btn_clear = QPushButton("Clear view")
+        btn_clear.setProperty("kind", "ghost")
+        btn_clear.setToolTip("Clear the log view only (does not delete output files).")
+        btn_clear.clicked.connect(self.runner.log.clear)
+        bar.addWidget(btn_copy)
+        bar.addWidget(btn_clear)
+        inner.addLayout(bar)
+
+        self.runner.log.setMaximumHeight(240)
+        inner.addWidget(self.runner.log)
+        sec.set_content_layout(inner)
+        sec.set_expanded(True)
+        return sec
+
+    # ------------------------------------------------------------------
+    # Run-monitor dashboard — state helpers
+    # ------------------------------------------------------------------
+    def _set_badge(self, state: str) -> None:
+        text, fg, bg = _BADGE_STYLE.get(state, _BADGE_STYLE["idle"])
+        self._status_badge.setText(text)
+        self._status_badge.setStyleSheet(
+            f"color:{fg}; background:{bg}; border-radius:9px; "
+            "padding:3px 12px; font-size:11px; font-weight:700;"
+        )
+
+    def _reset_dashboard(self) -> None:
         for lbl in (
-            self._st_phase, self._st_model, self._st_phase_pct,
-            self._st_overall_pct, self._st_elapsed, self._st_eta, self._st_steps,
+            self._st_overall_pct, self._st_phase, self._st_model, self._st_phase_pct,
+            self._st_eta, self._st_elapsed, self._st_steps, self._st_scn,
         ):
             lbl.setText("-")
-        self._st_phase.setText("starting")
+        self._overall_value.setText("-")
+        self._phase_value.setText("-")
+        self._phase_caption.setText("Current Phase: -")
+        self._phase_detail.setText("")
+        for bar in (self.overall_bar, self.phase_bar):
+            bar.setRange(0, 0)  # indeterminate until first progress line
+        self._hidden_telemetry = 0
+        self._telemetry_note.setText("")
+        self._current_model = None
+        self._set_badge("idle")
+        self._rebuild_pipeline(self._selected_models())
 
+    # ------------------------------------------------------------------
+    # Model pipeline chips
+    # ------------------------------------------------------------------
+    def _rebuild_pipeline(self, models: List[str]) -> None:
+        while self._pipeline_layout.count():
+            item = self._pipeline_layout.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        self._chips = {}
+        self._model_status = {}
+        order = ["truth"] + [str(m).lower() for m in models] + ["report"]
+        self._pipeline_order = order
+        for i, key in enumerate(order):
+            if i > 0:
+                sep = QLabel("›")
+                sep.setStyleSheet("color:#48526f; font-size:15px; font-weight:700;")
+                self._pipeline_layout.addWidget(sep)
+            self._pipeline_layout.addWidget(self._make_chip(key))
+        self._pipeline_layout.addStretch(1)
+        self._set_chip_status("truth", "pending")
+        for m in order[1:-1]:
+            self._set_chip_status(m, "queued")
+        self._set_chip_status("report", "pending")
+
+    def _make_chip(self, key: str) -> QWidget:
+        frame = QFrame()
+        v = QVBoxLayout()
+        v.setContentsMargins(11, 5, 11, 5)
+        v.setSpacing(1)
+        name = QLabel(_chip_label(key))
+        name.setStyleSheet(
+            "color:#d8e1f7; font-size:12px; font-weight:700; "
+            "background:transparent; border:none;"
+        )
+        status = QLabel("○ Pending")
+        v.addWidget(name)
+        v.addWidget(status)
+        frame.setLayout(v)
+        self._chips[key] = {"frame": frame, "name": name, "status": status}
+        return frame
+
+    def _set_chip_status(self, key: str, status: str) -> None:
+        key = str(key).lower()
+        chip = self._chips.get(key)
+        if chip is None:
+            return
+        self._model_status[key] = status
+        glyph, label, fg, bg, border = _STATUS_STYLE.get(status, _STATUS_STYLE["queued"])
+        chip["frame"].setStyleSheet(
+            f"QFrame {{ background:{bg}; border:1px solid {border}; border-radius:8px; }}"
+            "QLabel { background: transparent; border: none; }"
+        )
+        chip["status"].setText(f"{glyph} {label}")
+        chip["status"].setStyleSheet(
+            f"color:{fg}; font-size:11px; font-weight:600; "
+            "background:transparent; border:none;"
+        )
+
+    # ------------------------------------------------------------------
+    # Log filtering / tools
+    # ------------------------------------------------------------------
+    def _display_filter_line(self, text: str) -> bool:
+        if _is_telemetry_line(text):
+            cb = getattr(self, "show_telemetry", None)
+            if cb is not None and cb.isChecked():
+                return True
+            self._hidden_telemetry += 1
+            self._telemetry_note.setText(
+                f"Telemetry lines hidden: {self._hidden_telemetry}"
+            )
+            return False
+        return True
+
+    def _on_telemetry_toggled(self, checked: bool) -> None:
+        if checked:
+            self._telemetry_note.setText("Showing raw telemetry")
+        elif self._hidden_telemetry:
+            self._telemetry_note.setText(
+                f"Telemetry lines hidden: {self._hidden_telemetry}"
+            )
+        else:
+            self._telemetry_note.setText("")
+
+    def _copy_logs(self) -> None:
+        QGuiApplication.clipboard().setText(self.runner.log.toPlainText())
+
+    # ------------------------------------------------------------------
+    # Progress / status line parsing (UI-side only; never crashes the UI)
+    # ------------------------------------------------------------------
     def _parse_progress(self, line: str) -> None:
-        """Parse a harness ``[progress]`` / ``[progress_total]`` line.
-
-        Never raises into the ProcessPane: unparseable or non-progress lines are
-        ignored so plain logs keep flowing.
-        """
         try:
-            info = _progress.parse_progress_line(line)
+            self._update_from_line(line)
+        except Exception:
+            pass  # a single log line must never break the monitor
+
+    def _update_from_line(self, line: str) -> None:
+        text = str(line).strip()
+        if not text:
+            return
+        info = None
+        try:
+            info = _progress.parse_progress_line(text)
         except Exception:
             info = None
-        if not info:
-            return
+        if info:
+            self._apply_structured(info)
+        # Human-readable cache / gpu-batch lines are complementary signals.
+        self._apply_human(text)
 
+    def _apply_structured(self, info: dict) -> None:
         model = info.get("model")
         if model:
-            self._st_model.setText(str(model))
+            self._st_model.setText(_chip_label(str(model)))
 
         if info.get("kind") == "progress_total":
             pct = info.get("percent")
             if pct is not None:
-                clamped = int(round(min(100.0, max(0.0, float(pct)))))
-                self.runner.progress.setRange(0, 100)
-                self.runner.progress.setValue(clamped)
-                self._st_overall_pct.setText(f"{float(pct):.1f}%")
+                self._set_overall(float(pct))
             elapsed = info.get("elapsed_s")
             if elapsed is not None:
                 self._st_elapsed.setText(_progress.format_duration(float(elapsed)))
@@ -578,16 +909,141 @@ class OrbitBenchmarkTab(QWidget):
             )
             return
 
-        # Per-phase progress line.
         phase = info.get("phase")
         if phase:
-            self._st_phase.setText(str(phase))
+            label = _PHASE_LABELS.get(str(phase), str(phase))
+            self._st_phase.setText(label)
+            cap = f"Current Phase: {label}"
+            if model:
+                cap += f" — {_chip_label(str(model))}"
+            self._phase_caption.setText(cap)
+            self._on_phase(str(phase), str(model).lower() if model else None)
+
         pct = info.get("percent")
         if pct is not None:
+            self._set_phase(float(pct))
             self._st_phase_pct.setText(f"{float(pct):.1f}%")
-        steps_per_s = info.get("steps_per_s")
-        if steps_per_s is not None:
-            self._st_steps.setText(f"{float(steps_per_s):.1f}")
+        sps = info.get("steps_per_s")
+        if sps is not None:
+            self._st_steps.setText(f"{float(sps):.1f}")
+        n_scn = info.get("n_scenarios")
+        if n_scn is not None:
+            self._st_scn.setText(str(int(n_scn)))
+        cs, ts = info.get("current_step"), info.get("total_steps")
+        if cs is not None and ts is not None:
+            self._phase_detail.setText(f"{int(cs)} / {int(ts)} steps")
+
+    def _apply_human(self, text: str) -> None:
+        low = text.lower()
+
+        m = re.match(r"\[cache\]\s+truth(?:\s+cache)?\s+\S+:\s*(\d+)\s*/\s*(\d+)\s+complete",
+                     low)
+        if m:
+            done, total = int(m.group(1)), int(m.group(2))
+            if total > 0 and done >= total:
+                self._set_chip_status("truth", "cached")
+            return
+
+        m = re.match(r"\[cache\]\s+model\s+(\S+):\s*(\d+)\s*/\s*(\d+)\s+complete", low)
+        if m:
+            name, done, total = m.group(1), int(m.group(2)), int(m.group(3))
+            if total > 0 and done >= total and "recomput" not in low:
+                self._set_chip_status(name, "cached")
+            return
+
+        if re.match(r"\[truth\]\s+building", low):
+            self._mark_truth_running()
+            return
+        if re.match(r"\[truth\]\s+reused cache", low):
+            self._set_chip_status("truth", "cached")
+            return
+
+        m = re.search(r"\[gpu-batch\]\s+model\s+\d+/\d+\s+\|\s+(\S+)\s+rk4\s+starting", low)
+        if m:
+            self._mark_model_running(m.group(1))
+            return
+        if re.search(r"\[gpu-batch\]\s+model\s+\d+/\d+\s+done", low):
+            if self._current_model:
+                self._set_chip_status(self._current_model, "completed")
+            return
+        m = re.search(r"\[gpu-batch\]\s+error\s+(\S+)", low)
+        if m:
+            self._set_chip_status(m.group(1).rstrip(":"), "failed")
+            return
+        m = re.match(r"\[gpu-batch\]\s+(\S+)\s+failed:", low)
+        if m:
+            self._set_chip_status(m.group(1), "failed")
+            return
+
+        if re.match(r"\[harness\]\s+(computing aggregate|generating|writing)", low):
+            self._mark_report_running()
+            return
+
+    # ------------------------------------------------------------------
+    # Pipeline state transitions
+    # ------------------------------------------------------------------
+    def _on_phase(self, phase: str, model: Optional[str]) -> None:
+        """Map a structured phase signal onto pipeline chip transitions."""
+        if phase == "truth":
+            self._mark_truth_running()
+        elif phase == "gpu_model" and model:
+            self._mark_model_running(model)
+        elif phase in ("report", "aggregate"):
+            self._mark_report_running()
+        # "scenario" / "sweep" carry no per-model identity -> no chip change.
+
+    def _mark_truth_running(self) -> None:
+        if self._model_status.get("truth") not in ("completed", "cached"):
+            self._set_chip_status("truth", "running")
+
+    def _mark_model_running(self, model: str) -> None:
+        model = str(model).lower()
+        if model not in self._chips:
+            return
+        # Truth precedes the model sweep.
+        if self._model_status.get("truth") in ("running", "pending", None):
+            self._set_chip_status("truth", "completed")
+        # Any other model still shown as running has finished.
+        for key, status in list(self._model_status.items()):
+            if key not in ("truth", "report") and key != model and status == "running":
+                self._set_chip_status(key, "completed")
+        if self._model_status.get(model) not in ("failed", "cached"):
+            self._set_chip_status(model, "running")
+        self._current_model = model
+
+    def _mark_report_running(self) -> None:
+        if self._model_status.get("truth") in ("running", "pending", None):
+            self._set_chip_status("truth", "completed")
+        for key, status in list(self._model_status.items()):
+            if key not in ("truth", "report") and status == "running":
+                self._set_chip_status(key, "completed")
+        if self._model_status.get("report") != "completed":
+            self._set_chip_status("report", "running")
+
+    def _finalize_pipeline(self, ok: bool) -> None:
+        if ok:
+            for key in self._pipeline_order:
+                if key == "report":
+                    self._set_chip_status("report", "completed")
+                elif self._model_status.get(key) in ("running", "queued", "pending", None):
+                    self._set_chip_status(key, "completed")
+        else:
+            for key in self._pipeline_order:
+                if self._model_status.get(key) == "running":
+                    self._set_chip_status(key, "failed")
+
+    def _set_overall(self, pct: float) -> None:
+        v = int(round(min(100.0, max(0.0, pct))))
+        self.overall_bar.setRange(0, 100)
+        self.overall_bar.setValue(v)
+        self._overall_value.setText(f"{pct:.1f}%")
+        self._st_overall_pct.setText(f"{pct:.1f}%")
+
+    def _set_phase(self, pct: float) -> None:
+        v = int(round(min(100.0, max(0.0, pct))))
+        self.phase_bar.setRange(0, 100)
+        self.phase_bar.setValue(v)
+        self._phase_value.setText(f"{pct:.1f}%")
 
     # ------------------------------------------------------------------
     # Model selection (with custom additions)
@@ -793,13 +1249,19 @@ class OrbitBenchmarkTab(QWidget):
             return
         self._effective_out_dir = out_dir
         self.runner.set_output_dir(out_dir)
-        self.runner.progress.setRange(0, 0)
-        self._reset_status_strip()
+        self._reset_dashboard()
+        self._set_badge("running")
+        self._st_phase.setText("starting")
         self._gallery.clear_gallery()
         self._save_settings()
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
     def _on_finished(self, exit_code, exit_status) -> None:
+        ok = (exit_status == QProcess.ExitStatus.NormalExit) and (int(exit_code) == 0)
+        self._finalize_pipeline(ok)
+        self._set_badge("completed" if ok else "failed")
+        if ok:
+            self._set_overall(100.0)
         out_dir = self._effective_out_dir
         if not out_dir or not Path(out_dir).is_dir():
             return
