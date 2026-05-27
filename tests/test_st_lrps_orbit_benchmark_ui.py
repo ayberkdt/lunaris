@@ -85,11 +85,13 @@ def test_benchmark_tab_gpu_rk4_mode_args(qapp):
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
     tab.rk4_dt.setValue(10.0)
+    tab.truth_workers.setValue(3)
     args = tab._build_args(show_errors=False)
     assert args is not None
     assert "--gpu-batch-compare" in args
     assert "--gpu-models" in args
     assert "--rk4-dt-s" in args and args[args.index("--rk4-dt-s") + 1] == "10.0"
+    assert "--workers" in args and args[args.index("--workers") + 1] == "3"
     assert "--torch-dtype" in args
     assert "--integrator" not in args
     assert "--models" not in args
@@ -255,7 +257,28 @@ def test_ui_gpu_mode_emits_gpu_integrator(qapp):
     assert "--gpu-integrator" in args
     assert args[args.index("--gpu-integrator") + 1] == "robust"
     assert "--truth-integrator" in args
-    assert "--workers" not in args
+    assert "--workers" in args
+    tab.deleteLater()
+
+
+def test_ui_gpu_mode_shows_selectable_gpu_settings(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    assert tab.run_mode.currentData() == "dop853"
+    assert not tab._grp_cpu_settings.isHidden()
+    assert tab._grp_gpu_settings.isHidden()
+
+    tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
+    assert tab._grp_cpu_settings.isHidden()
+    assert not tab._grp_gpu_settings.isHidden()
+    assert tab.gpu_integrator.isEnabled()
+    assert tab.truth_workers.isEnabled()
+    tab.gpu_integrator.setCurrentIndex(tab.gpu_integrator.findData("robust"))
+    tab.truth_workers.setValue(5)
+    args = tab._build_args(show_errors=False)
+    assert args[args.index("--gpu-integrator") + 1] == "robust"
+    assert args[args.index("--workers") + 1] == "5"
     tab.deleteLater()
 
 
@@ -326,12 +349,14 @@ def test_ui_qsettings_persists_sampling(qapp):
     tab = OrbitBenchmarkTab()
     tab.sampling_method.setCurrentIndex(tab.sampling_method.findData("lhs"))
     tab.inclination_sampling.setCurrentIndex(tab.inclination_sampling.findData("uniform_cos"))
+    tab.truth_workers.setValue(6)
     tab._save_settings()
     tab.deleteLater()
 
     restored = OrbitBenchmarkTab()
     assert restored.sampling_method.currentData() == "lhs"
     assert restored.inclination_sampling.currentData() == "uniform_cos"
+    assert restored.truth_workers.value() == 6
     restored.deleteLater()
 
     settings.beginGroup("orbit_benchmark")

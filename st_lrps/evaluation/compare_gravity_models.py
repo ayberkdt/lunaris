@@ -263,9 +263,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--atol", type=float, default=1e-12)
     p.add_argument("--max-step", type=float, default=30.0)
     p.add_argument("--workers", type=int, default=1,
-                   help="CPU worker processes for the per-model adaptive (DOP853/RK45) "
-                        "scenario sweep. 1 = sequential. Each worker rebuilds its own "
-                        "ephemeris + gravity caches. Ignored for GPU batch / batch-RK4 modes.")
+                   help="CPU worker processes for adaptive DOP853/RK45 work. In CPU "
+                        "mode this parallelizes truth + compared-model scenario sweeps; "
+                        "in GPU batch mode this parallelizes CPU truth generation. "
+                        "1 = sequential. Each worker rebuilds its own ephemeris + "
+                        "gravity caches.")
 
     # --- Models ---
     p.add_argument("--models", type=str, default="sh20,sh80,sh120,sh160,st_lrps")
@@ -3276,6 +3278,7 @@ def _write_run_metadata(
         "duration_days": float(args.duration_days),
         "dt_out_s": float(args.dt_out),
         "integrator": str(args.integrator),
+        "workers": int(getattr(args, "workers", 1)),
         "rtol": float(args.rtol),
         "atol": float(args.atol),
         "max_step_s": float(args.max_step),
@@ -3382,33 +3385,81 @@ def build_truth_trajectory_set(
     truth_model = str(args.truth).lower()
     truth_integrator = str(getattr(args, "truth_integrator", "DOP853"))
     truth_cfg = _cfg_with_integrator(cfg_base, truth_integrator)
+    workers = max(1, int(getattr(args, "workers", 1) or 1))
     print(f"[truth] Building {truth_model.upper()} {truth_integrator} reference "
           f"for {len(scenarios)} scenarios.", flush=True)
     t_truth_start = time.perf_counter()
-    for idx, scenario in enumerate(scenarios, 1):
-        print(f"\n[truth] Scenario {idx:03d}/{len(scenarios)} | id={scenario.scenario_id} "
-              f"| hp={scenario.hp_km:.0f} km  ha={scenario.ha_km:.0f} km  "
-              f"i={scenario.inc_deg:.1f} deg", flush=True)
-        res, runtime = propagate_for_scenario(
-            truth_model, scenario.initial_state, args, truth_cfg, ephem, model_cache
-        )
-        if res is None:
-            if args.fail_fast:
-                raise RuntimeError(f"truth propagation failed for scenario {scenario.scenario_id}")
-            print(f"[truth] WARNING: scenario {scenario.scenario_id} failed; omitted from metrics.",
-                  flush=True)
-            continue
-        t_by[scenario.scenario_id] = np.asarray(res.t, dtype=np.float64)
-        y_by[scenario.scenario_id] = np.asarray(res.y, dtype=np.float64)
-        rt_by[scenario.scenario_id] = float(runtime)
-        elapsed = time.perf_counter() - t_truth_start
-        rate = idx / max(elapsed, 1e-9)
-        remaining = (len(scenarios) - idx) / max(rate, 1e-9)
-        mm, ss = divmod(int(remaining), 60)
-        hh, mm = divmod(mm, 60)
-        print(f"[truth] Scenario {idx:03d}/{len(scenarios)} done in {runtime:.2f}s "
-              f"| ETA {hh:02d}:{mm:02d}:{ss:02d} "
-              f"| elapsed {elapsed/60.0:.1f} min", flush=True)
+    if workers > 1 and len(scenarios) > 1:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+
+        worker_count = min(workers, len(scenarios))
+        print(f"[truth] CPU parallel truth generation: {worker_count} workers "
+              f"(integrator={truth_integrator}).", flush=True)
+        payloads = [(scenario, truth_model) for scenario in scenarios]
+        completed = 0
+        with ProcessPoolExecutor(
+            max_workers=worker_count,
+            initializer=_parallel_worker_init,
+            initargs=(args, cfg_base),
+        ) as executor:
+            futures = {executor.submit(_parallel_worker_truth, p): p[0] for p in payloads}
+            for future in as_completed(futures):
+                scenario = futures[future]
+                completed += 1
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    if args.fail_fast:
+                        raise RuntimeError(
+                            f"truth propagation failed for scenario {scenario.scenario_id}: {exc}"
+                        ) from exc
+                    print(f"[truth] WARNING: scenario {scenario.scenario_id} failed: {exc}",
+                          flush=True)
+                    continue
+                if result.get("truth_failed"):
+                    if args.fail_fast:
+                        raise RuntimeError(f"truth propagation failed for scenario {scenario.scenario_id}")
+                    print(f"[truth] WARNING: scenario {scenario.scenario_id} failed; "
+                          "omitted from metrics.", flush=True)
+                    continue
+                sid = int(result["scenario_id"])
+                t_by[sid] = np.asarray(result["t"], dtype=np.float64)
+                y_by[sid] = np.asarray(result["y"], dtype=np.float64)
+                rt_by[sid] = float(result["truth_rt"])
+                elapsed = time.perf_counter() - t_truth_start
+                rate = completed / max(elapsed, 1e-9)
+                remaining = (len(scenarios) - completed) / max(rate, 1e-9)
+                mm, ss = divmod(int(remaining), 60)
+                hh, mm = divmod(mm, 60)
+                print(f"[truth] Scenario {completed:03d}/{len(scenarios)} done "
+                      f"| id={sid} | runtime={rt_by[sid]:.2f}s "
+                      f"| ETA {hh:02d}:{mm:02d}:{ss:02d} "
+                      f"| elapsed {elapsed/60.0:.1f} min", flush=True)
+    else:
+        for idx, scenario in enumerate(scenarios, 1):
+            print(f"\n[truth] Scenario {idx:03d}/{len(scenarios)} | id={scenario.scenario_id} "
+                  f"| hp={scenario.hp_km:.0f} km  ha={scenario.ha_km:.0f} km  "
+                  f"i={scenario.inc_deg:.1f} deg", flush=True)
+            res, runtime = propagate_for_scenario(
+                truth_model, scenario.initial_state, args, truth_cfg, ephem, model_cache
+            )
+            if res is None:
+                if args.fail_fast:
+                    raise RuntimeError(f"truth propagation failed for scenario {scenario.scenario_id}")
+                print(f"[truth] WARNING: scenario {scenario.scenario_id} failed; omitted from metrics.",
+                      flush=True)
+                continue
+            t_by[scenario.scenario_id] = np.asarray(res.t, dtype=np.float64)
+            y_by[scenario.scenario_id] = np.asarray(res.y, dtype=np.float64)
+            rt_by[scenario.scenario_id] = float(runtime)
+            elapsed = time.perf_counter() - t_truth_start
+            rate = idx / max(elapsed, 1e-9)
+            remaining = (len(scenarios) - idx) / max(rate, 1e-9)
+            mm, ss = divmod(int(remaining), 60)
+            hh, mm = divmod(mm, 60)
+            print(f"[truth] Scenario {idx:03d}/{len(scenarios)} done in {runtime:.2f}s "
+                  f"| ETA {hh:02d}:{mm:02d}:{ss:02d} "
+                  f"| elapsed {elapsed/60.0:.1f} min", flush=True)
 
     truth = TruthTrajectorySet(f"{truth_model}_{truth_integrator.lower()}", t_by, y_by, rt_by)
     if args.cache_truth and len(t_by) == len(scenarios):
@@ -3622,6 +3673,7 @@ def write_report_pdf(
                 ("Truth model", f"{args.truth.upper()} ({truth_integ})"),
                 ("Compared models", str(args.models)),
                 ("Integrator", str(args.integrator)),
+                ("CPU workers", str(getattr(args, "workers", 1))),
             ],
             note=("Reference note: the truth model is a high-accuracy numerical "
                   "reference, not physical ground truth. Reported errors are "
@@ -3701,6 +3753,7 @@ def write_gpu_batch_report_pdf(
                 ("Altitude range", f"{args.altitude_min_km:.0f} - {args.altitude_max_km:.0f} km"),
                 ("Duration", f"{args.duration_days:g} days"),
                 ("GPU integrator", f"{gpu_integ} (fixed step {rk4_dt:g} s)"),
+                ("Truth workers", str(getattr(args, "workers", 1))),
                 ("Output cadence", f"{args.dt_out:g} s"),
                 ("Precision", str(args.torch_dtype)),
                 ("Truth", f"{args.truth.upper()} {truth_integ}"),
@@ -4127,6 +4180,7 @@ def _print_final_validation_summary(
     print(f"Scenarios:       {args.random_scenarios}")
     print(f"Sampling:        {getattr(args, 'sampling_method', 'random')}")
     print(f"Inclination:     {getattr(args, 'inclination_sampling', 'uniform_deg')}")
+    print(f"CPU workers:     {getattr(args, 'workers', 1)}")
     print(f"Altitude range:  {args.altitude_min_km:.0f}-{args.altitude_max_km:.0f} km")
     print(f"Duration:        {args.duration_days:g} day(s)")
 
@@ -4195,6 +4249,7 @@ def _print_gpu_batch_summary(
     print(f"Scenarios:{args.random_scenarios}")
     print(f"Sampling: {getattr(args, 'sampling_method', 'random')}")
     print(f"Inc mode: {getattr(args, 'inclination_sampling', 'uniform_deg')}")
+    print(f"Truth workers: {getattr(args, 'workers', 1)}")
     print(f"Duration: {args.duration_days:g} days")
     print(f"RK4 dt:   {args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt:g} s")
     print(f"Dtype:    {args.torch_dtype}")
@@ -4410,6 +4465,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         "n_scenarios_new_this_run": len(run_scenarios),
         "accumulated": bool(args.resume),
         "sampling": _sampling_metadata(args, len(scenarios)),
+        "truth_workers": int(getattr(args, "workers", 1)),
         "gpu_integrator": str(getattr(args, "gpu_integrator", "medium")),
         "frame_mode": args.batch_frame_mode,
         "uses_lunar_rotation": args.batch_frame_mode == "match_dynamics_engine",
@@ -4467,6 +4523,33 @@ def _parallel_worker_init(args: argparse.Namespace, cfg_base: SimConfig) -> None
     )
     _PARALLEL_STATE["ephem"] = ephem
     _PARALLEL_STATE["cache"] = GravityModelCache(cfg_base, args)
+
+
+def _parallel_worker_truth(payload: Tuple[Scenario, str]) -> Dict[str, Any]:
+    """Propagate only the adaptive truth trajectory for one scenario."""
+
+    scenario, truth_model = payload
+    st = _PARALLEL_STATE
+    args = st["args"]
+    truth_cfg = st["truth_cfg"]
+    ephem = st["ephem"]
+    cache = st["cache"]
+    truth_res, truth_rt = propagate_for_scenario(
+        truth_model, scenario.initial_state, args, truth_cfg, ephem, cache
+    )
+    if truth_res is None:
+        return {
+            "scenario_id": scenario.scenario_id,
+            "truth_failed": True,
+            "truth_rt": None,
+        }
+    return {
+        "scenario_id": scenario.scenario_id,
+        "truth_failed": False,
+        "truth_rt": float(truth_rt),
+        "t": np.asarray(truth_res.t, dtype=np.float64),
+        "y": np.asarray(truth_res.y, dtype=np.float64),
+    }
 
 
 def _parallel_worker_scenario(payload: Tuple[Scenario, str, List[str]]) -> Dict[str, Any]:

@@ -79,8 +79,8 @@ class OrbitBenchmarkTab(QWidget):
         form_mode = QFormLayout()
         _tune_form(form_mode)
         self.run_mode = NoScrollComboBox()
-        self.run_mode.addItem("Per-model DOP853 (RK8) vs truth", "dop853")
-        self.run_mode.addItem("GPU batch RK4 vs DOP853 truth", "gpu_rk4")
+        self.run_mode.addItem("CPU adaptive sweep vs truth", "dop853")
+        self.run_mode.addItem("GPU batch RK4 vs CPU truth", "gpu_rk4")
         self.run_mode.setCurrentIndex(0)
         self.run_mode.setToolTip(
             "DOP853 (RK8): each model is propagated with the adaptive 8th-order "
@@ -100,8 +100,17 @@ class OrbitBenchmarkTab(QWidget):
             "manifests are checked before resume, and already-computed scenarios are "
             "skipped. Works in both CPU and GPU modes."
         )
+        # Ground-truth integrator (applies in both modes).
+        self.truth_integrator = NoScrollComboBox()
+        for ti in _TRUTH_INTEGRATORS:
+            self.truth_integrator.addItem(ti + (" (RK8)" if ti == "DOP853" else ""), ti)
+        self.truth_integrator.setCurrentIndex(0)
+        self.truth_integrator.setToolTip(
+            "Adaptive integrator used to build the ground-truth reference trajectories."
+        )
         form_mode.addRow("Mode", self.run_mode)
         form_mode.addRow("Truth model", self.truth)
+        form_mode.addRow("Truth integrator", self.truth_integrator)
         form_mode.addRow(self.accumulate)
         grp_mode.setLayout(form_mode)
 
@@ -160,35 +169,6 @@ class OrbitBenchmarkTab(QWidget):
         self.scenario_mode = NoScrollComboBox()
         self.scenario_mode.addItem("near_circular_altitude", "near_circular_altitude")
         self.scenario_mode.addItem("bounded_keplerian", "bounded_keplerian")
-        self.alt_min = QDoubleSpinBox()
-        self.alt_min.setDecimals(1)
-        self.alt_min.setRange(1.0, 100_000.0)
-        self.alt_min.setValue(200.0)
-        self.alt_max = QDoubleSpinBox()
-        self.alt_max.setDecimals(1)
-        self.alt_max.setRange(1.0, 100_000.0)
-        self.alt_max.setValue(400.0)
-        self.duration_days = QDoubleSpinBox()
-        self.duration_days.setDecimals(4)
-        self.duration_days.setRange(0.0001, 3650.0)
-        self.duration_days.setValue(1.0)
-        self.dt_out = QDoubleSpinBox()
-        self.dt_out.setDecimals(2)
-        self.dt_out.setRange(0.01, 86400.0)
-        self.dt_out.setValue(60.0)
-        form_scn.addRow("Random scenarios", self.random_scenarios)
-        form_scn.addRow("Scenario seed", self.scenario_seed)
-        form_scn.addRow("Scenario mode", self.scenario_mode)
-        form_scn.addRow("Altitude min (km)", self.alt_min)
-        form_scn.addRow("Altitude max (km)", self.alt_max)
-        form_scn.addRow("Duration (days)", self.duration_days)
-        form_scn.addRow("Output cadence dt (s)", self.dt_out)
-        grp_scn.setLayout(form_scn)
-
-        # -- Sampling ------------------------------------------------------
-        grp_sampling = QGroupBox("Sampling")
-        form_sampling = QFormLayout()
-        _tune_form(form_sampling)
         self.sampling_method = NoScrollComboBox()
         self.sampling_method.addItem("Random / legacy", "random")
         self.sampling_method.addItem("Latin Hypercube", "lhs")
@@ -205,22 +185,37 @@ class OrbitBenchmarkTab(QWidget):
         self.inclination_sampling.setToolTip(
             "uniform_deg preserves the legacy inclination distribution."
         )
-        form_sampling.addRow("Method", self.sampling_method)
-        form_sampling.addRow("Inclination", self.inclination_sampling)
-        grp_sampling.setLayout(form_sampling)
+        self.alt_min = QDoubleSpinBox()
+        self.alt_min.setDecimals(1)
+        self.alt_min.setRange(1.0, 100_000.0)
+        self.alt_min.setValue(200.0)
+        self.alt_max = QDoubleSpinBox()
+        self.alt_max.setDecimals(1)
+        self.alt_max.setRange(1.0, 100_000.0)
+        self.alt_max.setValue(400.0)
+        self.duration_days = QDoubleSpinBox()
+        self.duration_days.setDecimals(4)
+        self.duration_days.setRange(0.0001, 3650.0)
+        self.duration_days.setValue(1.0)
+        self.dt_out = QDoubleSpinBox()
+        self.dt_out.setDecimals(2)
+        self.dt_out.setRange(0.01, 86400.0)
+        self.dt_out.setValue(60.0)
+        form_scn.addRow("Scenario count", self.random_scenarios)
+        form_scn.addRow("Seed", self.scenario_seed)
+        form_scn.addRow("Orbit mode", self.scenario_mode)
+        form_scn.addRow("Sampling", self.sampling_method)
+        form_scn.addRow("Inclination draw", self.inclination_sampling)
+        form_scn.addRow("Altitude min (km)", self.alt_min)
+        form_scn.addRow("Altitude max (km)", self.alt_max)
+        form_scn.addRow("Duration (days)", self.duration_days)
+        form_scn.addRow("Output dt (s)", self.dt_out)
+        grp_scn.setLayout(form_scn)
 
-        # -- Integrator (mode-dependent) -----------------------------------
-        grp_integ = QGroupBox("Integrator")
-        form_integ = QFormLayout()
-        _tune_form(form_integ)
-        # Ground-truth integrator (applies in both modes).
-        self.truth_integrator = NoScrollComboBox()
-        for ti in _TRUTH_INTEGRATORS:
-            self.truth_integrator.addItem(ti + (" (RK8)" if ti == "DOP853" else ""), ti)
-        self.truth_integrator.setCurrentIndex(0)
-        self.truth_integrator.setToolTip(
-            "Adaptive integrator used to build the ground-truth reference trajectories."
-        )
+        # -- Mode-specific numerics ----------------------------------------
+        grp_cpu = QGroupBox("CPU DOP853 Settings")
+        form_cpu = QFormLayout()
+        _tune_form(form_cpu)
         # Per-model adaptive integrator (CPU / DOP853 mode).
         self.integrator = NoScrollComboBox()
         self.integrator.addItem("DOP853 (RK8)", "DOP853")
@@ -235,6 +230,13 @@ class OrbitBenchmarkTab(QWidget):
             "CPU worker processes for the per-model adaptive sweep. 1 = sequential. "
             "Each worker builds its own ephemeris + gravity caches."
         )
+        form_cpu.addRow("Compare integrator", self.integrator)
+        form_cpu.addRow("CPU workers", self.cpu_workers)
+        grp_cpu.setLayout(form_cpu)
+
+        grp_gpu = QGroupBox("GPU RK4 Settings")
+        form_gpu = QFormLayout()
+        _tune_form(form_gpu)
         # GPU fixed-step method (GPU mode).
         self.gpu_integrator = NoScrollComboBox()
         self.gpu_integrator.addItem("light (RK2 midpoint)", "light")
@@ -255,14 +257,26 @@ class OrbitBenchmarkTab(QWidget):
         self.gpu_fallback = NoScrollComboBox()
         self.gpu_fallback.addItem("error (require CUDA)", "error")
         self.gpu_fallback.addItem("cpu (fallback)", "cpu")
-        form_integ.addRow("Truth integrator", self.truth_integrator)
-        form_integ.addRow("Compare integrator (CPU)", self.integrator)
-        form_integ.addRow("CPU workers", self.cpu_workers)
-        form_integ.addRow("GPU method", self.gpu_integrator)
-        form_integ.addRow("Fixed step (s)", self.rk4_dt)
-        form_integ.addRow("Torch dtype", self.torch_dtype)
-        form_integ.addRow("GPU fallback", self.gpu_fallback)
-        grp_integ.setLayout(form_integ)
+        self.truth_workers = QSpinBox()
+        self.truth_workers.setRange(1, 256)
+        self.truth_workers.setValue(1)
+        self.truth_workers.setToolTip(
+            "CPU worker processes for DOP853 truth generation before GPU RK4 comparison."
+        )
+        form_gpu.addRow("RK method", self.gpu_integrator)
+        form_gpu.addRow("Fixed step (s)", self.rk4_dt)
+        form_gpu.addRow("Truth workers", self.truth_workers)
+        form_gpu.addRow("Torch dtype", self.torch_dtype)
+        form_gpu.addRow("Fallback", self.gpu_fallback)
+        grp_gpu.setLayout(form_gpu)
+
+        mode_settings_w = QWidget()
+        mode_settings_l = QVBoxLayout()
+        mode_settings_l.setContentsMargins(0, 0, 0, 0)
+        mode_settings_l.setSpacing(8)
+        mode_settings_l.addWidget(grp_cpu)
+        mode_settings_l.addWidget(grp_gpu)
+        mode_settings_w.setLayout(mode_settings_l)
 
         # -- DOP853 tolerances (advanced) ----------------------------------
         form_tol = QFormLayout()
@@ -344,14 +358,13 @@ class OrbitBenchmarkTab(QWidget):
         grid.addWidget(grp_mode, 0, 0)
         grid.addWidget(grp_models, 0, 1)
         grid.addWidget(grp_scn, 1, 0)
-        grid.addWidget(grp_integ, 1, 1)
-        grid.addWidget(grp_sampling, 2, 0, 1, 2)
-        grid.addWidget(self._tol_section, 3, 0, 1, 2)
-        grid.addWidget(grp_paths, 4, 0, 1, 2)
-        grid.addWidget(extra_w, 5, 0, 1, 2)
+        grid.addWidget(mode_settings_w, 1, 1)
+        grid.addWidget(self._tol_section, 2, 0, 1, 2)
+        grid.addWidget(grp_paths, 3, 0, 1, 2)
+        grid.addWidget(extra_w, 4, 0, 1, 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        for g in (grp_mode, grp_models, grp_scn, grp_sampling, grp_integ, grp_paths):
+        for g in (grp_mode, grp_models, grp_scn, grp_cpu, grp_gpu, grp_paths):
             _tune_inputs(g)
 
         self.runner = ProcessPane()
@@ -398,7 +411,7 @@ class OrbitBenchmarkTab(QWidget):
         for w in (
             self.random_scenarios, self.scenario_seed, self.alt_min, self.alt_max,
             self.duration_days, self.dt_out, self.rk4_dt, self.max_step,
-            self.cpu_workers,
+            self.cpu_workers, self.truth_workers,
         ):
             w.valueChanged.connect(self._refresh_command_preview)
         self.accumulate.toggled.connect(self._refresh_command_preview)
@@ -408,7 +421,8 @@ class OrbitBenchmarkTab(QWidget):
         self.out_dir.textChanged.connect(self._refresh_command_preview)
         self.extra_args.textChanged.connect(self._refresh_command_preview)
 
-        self._grp_integ = grp_integ
+        self._grp_cpu_settings = grp_cpu
+        self._grp_gpu_settings = grp_gpu
         self._restore_settings()
         self._on_mode_changed()
 
@@ -418,15 +432,10 @@ class OrbitBenchmarkTab(QWidget):
     def _on_mode_changed(self, *_a) -> None:
         mode = self.run_mode.currentData() or "dop853"
         is_gpu = mode == "gpu_rk4"
-        # CPU / adaptive (DOP853) controls.
-        self.integrator.setEnabled(not is_gpu)
-        self.cpu_workers.setEnabled(not is_gpu)
-        # GPU fixed-step controls.
-        self.gpu_integrator.setEnabled(is_gpu)
-        self.rk4_dt.setEnabled(is_gpu)
-        self.torch_dtype.setEnabled(is_gpu)
-        self.gpu_fallback.setEnabled(is_gpu)
-        self._tol_section.setEnabled(not is_gpu)
+        # Show only the numerics panel that belongs to the selected run mode.
+        self._grp_cpu_settings.setVisible(not is_gpu)
+        self._grp_gpu_settings.setVisible(is_gpu)
+        self._tol_section.setVisible(not is_gpu)
         # Truth integrator applies in both modes — always enabled.
         self.truth_integrator.setEnabled(True)
         self._refresh_command_preview()
@@ -547,6 +556,7 @@ class OrbitBenchmarkTab(QWidget):
             args += ["--gpu-models", ",".join(models)]
             args += ["--gpu-integrator", self.gpu_integrator.currentData() or "medium"]
             args += ["--rk4-dt-s", str(self.rk4_dt.value())]
+            args += ["--workers", str(self.truth_workers.value())]
             args += ["--torch-dtype", self.torch_dtype.currentText()]
             args += ["--gpu-fallback", self.gpu_fallback.currentData() or "error"]
         else:
@@ -660,6 +670,7 @@ class OrbitBenchmarkTab(QWidget):
         s.setValue("dt_out", self.dt_out.value())
         s.setValue("integrator", self.integrator.currentData())
         s.setValue("cpu_workers", self.cpu_workers.value())
+        s.setValue("truth_workers", self.truth_workers.value())
         s.setValue("gpu_integrator", self.gpu_integrator.currentData())
         s.setValue("rk4_dt", self.rk4_dt.value())
         s.setValue("torch_dtype", self.torch_dtype.currentText())
@@ -703,6 +714,7 @@ class OrbitBenchmarkTab(QWidget):
             ("random_scenarios", self.random_scenarios),
             ("scenario_seed", self.scenario_seed),
             ("cpu_workers", self.cpu_workers),
+            ("truth_workers", self.truth_workers),
         ):
             if s.contains(key):
                 try:
