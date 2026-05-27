@@ -10,7 +10,7 @@ the parameters most useful for orbit-level validation:
   fixed-step RK4 vs a DOP853 truth;
 * which models to run (SH20..SH160, ST-LRPS) and which truth model;
 * the RK4 fixed step (GPU mode) and DOP853 tolerances (RK8 mode);
-* random-scenario count/seed/mode, altitude band, duration, output cadence.
+* scenario count/seed/mode/sampling, altitude band, duration, output cadence.
 
 The page only builds and launches a command; the harness owns all physics.
 """
@@ -93,8 +93,16 @@ class OrbitBenchmarkTab(QWidget):
             self.truth.addItem(t.upper(), t)
         self.truth.setCurrentIndex(_TRUTH_CHOICES.index("sh200"))
         self.truth.setToolTip("High-degree spherical-harmonic ground-truth model.")
+        self.accumulate = QCheckBox("Accumulate previous results (resume)")
+        self.accumulate.setChecked(False)
+        self.accumulate.setToolTip(
+            "Reuse the SAME output dir and SAME scenario settings. Existing scenario "
+            "manifests are checked before resume, and already-computed scenarios are "
+            "skipped. Works in both CPU and GPU modes."
+        )
         form_mode.addRow("Mode", self.run_mode)
         form_mode.addRow("Truth model", self.truth)
+        form_mode.addRow(self.accumulate)
         grp_mode.setLayout(form_mode)
 
         # -- Models --------------------------------------------------------
@@ -176,6 +184,30 @@ class OrbitBenchmarkTab(QWidget):
         form_scn.addRow("Duration (days)", self.duration_days)
         form_scn.addRow("Output cadence dt (s)", self.dt_out)
         grp_scn.setLayout(form_scn)
+
+        # -- Sampling ------------------------------------------------------
+        grp_sampling = QGroupBox("Sampling")
+        form_sampling = QFormLayout()
+        _tune_form(form_sampling)
+        self.sampling_method = NoScrollComboBox()
+        self.sampling_method.addItem("Random / legacy", "random")
+        self.sampling_method.addItem("Latin Hypercube", "lhs")
+        self.sampling_method.addItem("Sobol deterministic", "sobol")
+        self.sampling_method.addItem("Sobol scrambled", "sobol_scrambled")
+        self.sampling_method.setCurrentIndex(0)
+        self.sampling_method.setToolTip(
+            "Opt-in deterministic scenario coverage. Random preserves the legacy generator."
+        )
+        self.inclination_sampling = NoScrollComboBox()
+        self.inclination_sampling.addItem("uniform_deg", "uniform_deg")
+        self.inclination_sampling.addItem("uniform_cos", "uniform_cos")
+        self.inclination_sampling.setCurrentIndex(0)
+        self.inclination_sampling.setToolTip(
+            "uniform_deg preserves the legacy inclination distribution."
+        )
+        form_sampling.addRow("Method", self.sampling_method)
+        form_sampling.addRow("Inclination", self.inclination_sampling)
+        grp_sampling.setLayout(form_sampling)
 
         # -- Integrator (mode-dependent) -----------------------------------
         grp_integ = QGroupBox("Integrator")
@@ -313,12 +345,13 @@ class OrbitBenchmarkTab(QWidget):
         grid.addWidget(grp_models, 0, 1)
         grid.addWidget(grp_scn, 1, 0)
         grid.addWidget(grp_integ, 1, 1)
-        grid.addWidget(self._tol_section, 2, 0, 1, 2)
-        grid.addWidget(grp_paths, 3, 0, 1, 2)
-        grid.addWidget(extra_w, 4, 0, 1, 2)
+        grid.addWidget(grp_sampling, 2, 0, 1, 2)
+        grid.addWidget(self._tol_section, 3, 0, 1, 2)
+        grid.addWidget(grp_paths, 4, 0, 1, 2)
+        grid.addWidget(extra_w, 5, 0, 1, 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        for g in (grp_mode, grp_models, grp_scn, grp_integ, grp_paths):
+        for g in (grp_mode, grp_models, grp_scn, grp_sampling, grp_integ, grp_paths):
             _tune_inputs(g)
 
         self.runner = ProcessPane()
@@ -358,6 +391,7 @@ class OrbitBenchmarkTab(QWidget):
         self.run_mode.currentIndexChanged.connect(self._on_mode_changed)
         for w in (
             self.truth, self.truth_integrator, self.scenario_mode, self.integrator,
+            self.sampling_method, self.inclination_sampling,
             self.gpu_integrator, self.torch_dtype, self.gpu_fallback,
         ):
             w.currentIndexChanged.connect(self._refresh_command_preview)
@@ -367,6 +401,7 @@ class OrbitBenchmarkTab(QWidget):
             self.cpu_workers,
         ):
             w.valueChanged.connect(self._refresh_command_preview)
+        self.accumulate.toggled.connect(self._refresh_command_preview)
         self.rtol.textChanged.connect(self._refresh_command_preview)
         self.atol.textChanged.connect(self._refresh_command_preview)
         self.st_lrps_dir.textChanged.connect(self._refresh_command_preview)
@@ -494,6 +529,12 @@ class OrbitBenchmarkTab(QWidget):
         args += ["--random-scenarios", str(self.random_scenarios.value())]
         args += ["--scenario-seed", str(self.scenario_seed.value())]
         args += ["--scenario-mode", self.scenario_mode.currentData() or "near_circular_altitude"]
+        sampling_method = self.sampling_method.currentData() or "random"
+        inclination_sampling = self.inclination_sampling.currentData() or "uniform_deg"
+        if sampling_method != "random":
+            args += ["--sampling-method", sampling_method]
+        if inclination_sampling != "uniform_deg":
+            args += ["--inclination-sampling", inclination_sampling]
         args += ["--altitude-min-km", str(self.alt_min.value())]
         args += ["--altitude-max-km", str(self.alt_max.value())]
         args += ["--duration-days", str(self.duration_days.value())]
@@ -535,6 +576,8 @@ class OrbitBenchmarkTab(QWidget):
 
         out_dir = self.out_dir.text().strip() or str(BENCHMARK_OUTPUT_ROOT)
         args += ["--output-dir", out_dir]
+        if self.accumulate.isChecked():
+            args += ["--resume"]
 
         extra = self.extra_args.text().strip()
         if extra:
@@ -603,11 +646,14 @@ class OrbitBenchmarkTab(QWidget):
         s.setValue("run_mode", self.run_mode.currentData())
         s.setValue("truth", self.truth.currentData())
         s.setValue("truth_integrator", self.truth_integrator.currentData())
+        s.setValue("accumulate", self.accumulate.isChecked())
         s.setValue("models", ",".join(self._selected_models()))
         s.setValue("custom_models", ",".join(self._custom_models))
         s.setValue("random_scenarios", self.random_scenarios.value())
         s.setValue("scenario_seed", self.scenario_seed.value())
         s.setValue("scenario_mode", self.scenario_mode.currentData())
+        s.setValue("sampling_method", self.sampling_method.currentData())
+        s.setValue("inclination_sampling", self.inclination_sampling.currentData())
         s.setValue("alt_min", self.alt_min.value())
         s.setValue("alt_max", self.alt_max.value())
         s.setValue("duration_days", self.duration_days.value())
@@ -639,6 +685,8 @@ class OrbitBenchmarkTab(QWidget):
         _combo(self.run_mode, "run_mode")
         _combo(self.truth, "truth")
         _combo(self.truth_integrator, "truth_integrator")
+        if s.contains("accumulate"):
+            self.accumulate.setChecked(str(s.value("accumulate", "false")).lower() == "true")
         # Recreate custom models before applying the saved checked set.
         if s.contains("custom_models"):
             for name in str(s.value("custom_models", "")).split(","):
@@ -672,6 +720,8 @@ class OrbitBenchmarkTab(QWidget):
                 except (TypeError, ValueError):
                     pass
         _combo(self.scenario_mode, "scenario_mode")
+        _combo(self.sampling_method, "sampling_method")
+        _combo(self.inclination_sampling, "inclination_sampling")
         _combo(self.integrator, "integrator")
         _combo(self.gpu_integrator, "gpu_integrator")
         _combo(self.gpu_fallback, "gpu_fallback")

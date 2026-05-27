@@ -126,6 +126,8 @@ class Scenario:
     argp_deg: float
     ta_deg: float
     initial_state: np.ndarray = field(repr=False)
+    raw_unit_sample: Optional[List[float]] = None
+    sampling_method: str = "random"
 
 
 @dataclass
@@ -200,6 +202,12 @@ _GPU_BATCH_METRICS_FIELDNAMES = [
     "min_alt_model_km", "min_alt_truth_km", "status", "failure_reason",
 ]
 
+SAMPLING_METHODS = ("random", "lhs", "sobol", "sobol_scrambled")
+INCLINATION_SAMPLING_METHODS = ("uniform_deg", "uniform_cos")
+SCENARIO_UNIT_DIM = 6
+SCENARIO_MANIFEST_CSV = "scenario_manifest.csv"
+SCENARIO_MANIFEST_JSON = "scenario_manifest.json"
+
 
 # =============================================================================
 # CLI
@@ -211,12 +219,18 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
-    # --- Random scenario mode ---
-    p.add_argument("--random-scenarios", type=int, default=100)
+    # --- Random / sampled scenario mode ---
+    p.add_argument("--random-scenarios", type=int, default=100,
+                   help="Number of validation scenarios, used by all sampling methods")
     p.add_argument("--scenario-seed", type=int, default=42)
     p.add_argument("--scenario-mode",
                    choices=["bounded_keplerian", "near_circular_altitude"],
                    default="near_circular_altitude")
+    p.add_argument("--sampling-method", choices=SAMPLING_METHODS, default="random",
+                   help="Scenario sampler. 'random' preserves the legacy generator.")
+    p.add_argument("--inclination-sampling", choices=INCLINATION_SAMPLING_METHODS,
+                   default="uniform_deg",
+                   help="Sample inclination uniformly in degrees or uniformly in cos(i).")
     p.add_argument("--altitude-min-km", type=float, default=200.0)
     p.add_argument("--altitude-max-km", type=float, default=400.0)
     p.add_argument("--ecc-min", type=float, default=0.0)
@@ -904,6 +918,191 @@ def propagate_gpu_batch_model(
 # Scenario generation
 # =============================================================================
 
+def _is_power_of_two(n: int) -> bool:
+    return n > 0 and (n & (n - 1)) == 0
+
+
+def _next_power_of_two(n: int) -> int:
+    if n <= 1:
+        return 1
+    return 1 << (int(n) - 1).bit_length()
+
+
+def _sobol_note(method: str, n: int) -> str:
+    if str(method).startswith("sobol") and n > 0 and not _is_power_of_two(int(n)):
+        return ("Sobol sequences have their strongest balance properties when "
+                "the scenario count is a power of two; this run generated the "
+                "next power-of-two sequence and truncated to the requested count.")
+    return ""
+
+
+def _require_qmc():
+    try:
+        from scipy.stats import qmc
+    except Exception as exc:
+        raise ImportError("scipy.stats.qmc is required for LHS/Sobol sampling.") from exc
+    return qmc
+
+
+def generate_unit_samples(
+    n: int,
+    dim: int,
+    method: str,
+    seed: int,
+) -> np.ndarray:
+    """Generate unit-hypercube samples for scenario construction."""
+
+    n = int(n)
+    dim = int(dim)
+    method = str(method)
+    if n < 0:
+        raise ValueError("n must be non-negative")
+    if dim <= 0:
+        raise ValueError("dim must be positive")
+    if n == 0:
+        return np.empty((0, dim), dtype=np.float64)
+    if method not in SAMPLING_METHODS:
+        raise ValueError(f"Unknown sampling method: {method}")
+
+    if method == "random":
+        return np.asarray(np.random.default_rng(int(seed)).random((n, dim)), dtype=np.float64)
+
+    qmc = _require_qmc()
+    if method == "lhs":
+        sampler = qmc.LatinHypercube(d=dim, seed=int(seed))
+        return np.asarray(sampler.random(n), dtype=np.float64)
+
+    scramble = method == "sobol_scrambled"
+    sampler = qmc.Sobol(d=dim, scramble=scramble, seed=int(seed) if scramble else None)
+    if _is_power_of_two(n):
+        m = int(math.log2(n))
+        samples = sampler.random_base2(m=m)
+    else:
+        # Generate a balanced Sobol block and truncate so arbitrary N is allowed
+        # without changing the requested scenario count.
+        m = int(math.log2(_next_power_of_two(n)))
+        samples = sampler.random_base2(m=m)[:n]
+    return np.asarray(samples, dtype=np.float64)
+
+
+def _map_unit_linear(u: float, lo: float, hi: float) -> float:
+    return float(lo + float(u) * (hi - lo))
+
+
+def _map_inclination_deg(u: float, args: argparse.Namespace) -> float:
+    inc_min = float(args.inc_min_deg)
+    inc_max = float(args.inc_max_deg)
+    if str(getattr(args, "inclination_sampling", "uniform_deg")) == "uniform_cos":
+        cos_i_min = math.cos(math.radians(inc_max))
+        cos_i_max = math.cos(math.radians(inc_min))
+        cos_i = _map_unit_linear(float(u), cos_i_min, cos_i_max)
+        cos_i = max(-1.0, min(1.0, cos_i))
+        return float(math.degrees(math.acos(cos_i)))
+    return _map_unit_linear(float(u), inc_min, inc_max)
+
+
+def _validate_sampling_bounds(args: argparse.Namespace) -> None:
+    if float(args.altitude_min_km) > float(args.altitude_max_km):
+        raise ValueError("--altitude-min-km must be <= --altitude-max-km")
+    if float(args.inc_min_deg) > float(args.inc_max_deg):
+        raise ValueError("--inc-min-deg must be <= --inc-max-deg")
+    if str(args.scenario_mode) == "near_circular_altitude":
+        if float(args.ecc_min) < 0.0 or float(args.ecc_max) >= 1.0:
+            raise ValueError("near_circular_altitude requires 0 <= --ecc-min <= --ecc-max < 1")
+        if float(args.ecc_min) > float(args.ecc_max):
+            raise ValueError("--ecc-min must be <= --ecc-max")
+
+
+def _state_from_elements(
+    a_m: float,
+    e: float,
+    inc_deg: float,
+    raan_deg: float,
+    argp_deg: float,
+    ta_deg: float,
+) -> np.ndarray:
+    return create_state_from_keplerian(
+        semi_major_axis=float(a_m),
+        eccentricity=float(e),
+        inclination=math.radians(float(inc_deg)),
+        raan=math.radians(float(raan_deg)),
+        argp=math.radians(float(argp_deg)),
+        true_anomaly=math.radians(float(ta_deg)),
+        mu=MU_MOON,
+    ).y
+
+
+def generate_scenarios_from_samples(
+    samples: np.ndarray,
+    args: argparse.Namespace,
+) -> List[Scenario]:
+    """Map unit-hypercube samples into validation scenarios without propagation."""
+
+    _validate_sampling_bounds(args)
+    samples = np.asarray(samples, dtype=np.float64)
+    if samples.ndim != 2:
+        raise ValueError("samples must be a 2D array")
+    if samples.shape[1] < SCENARIO_UNIT_DIM:
+        raise ValueError(f"samples must have at least {SCENARIO_UNIT_DIM} columns")
+
+    scenarios: List[Scenario] = []
+    moon_r_km = float(R_MOON) / 1_000.0
+    for sid, u in enumerate(samples):
+        raw = [float(x) for x in u[:SCENARIO_UNIT_DIM]]
+        if str(args.scenario_mode) == "bounded_keplerian":
+            raw_alt_1 = _map_unit_linear(raw[0], float(args.altitude_min_km), float(args.altitude_max_km))
+            raw_alt_2 = _map_unit_linear(raw[1], float(args.altitude_min_km), float(args.altitude_max_km))
+            hp_km = min(raw_alt_1, raw_alt_2)
+            ha_km = max(raw_alt_1, raw_alt_2)
+            rp_km = moon_r_km + hp_km
+            ra_km = moon_r_km + ha_km
+            a_km = 0.5 * (rp_km + ra_km)
+            e = (ra_km - rp_km) / (ra_km + rp_km)
+            inc_u, raan_u, argp_u, ta_u = raw[2], raw[3], raw[4], raw[5]
+        else:
+            alt_km = _map_unit_linear(raw[0], float(args.altitude_min_km), float(args.altitude_max_km))
+            e = _map_unit_linear(raw[1], float(args.ecc_min), float(args.ecc_max))
+            a_km = moon_r_km + alt_km
+            if abs(e) <= 1e-15:
+                hp_km = alt_km
+                ha_km = alt_km
+            else:
+                hp_km = a_km * (1.0 - e) - moon_r_km
+                ha_km = a_km * (1.0 + e) - moon_r_km
+            inc_u, raan_u, argp_u, ta_u = raw[2], raw[3], raw[4], raw[5]
+
+        if hp_km > ha_km:
+            hp_km, ha_km = ha_km, hp_km
+        if e < 0.0 or e >= 1.0:
+            raise ValueError(f"Generated invalid eccentricity for scenario {sid}: {e}")
+        if a_km <= moon_r_km:
+            raise ValueError(f"Generated invalid semi-major axis for scenario {sid}: {a_km} km")
+
+        inc_deg = _map_inclination_deg(inc_u, args)
+        raan_deg = _map_unit_linear(raan_u, float(args.raan_min_deg), float(args.raan_max_deg))
+        argp_deg = _map_unit_linear(argp_u, float(args.argp_min_deg), float(args.argp_max_deg))
+        ta_deg = _map_unit_linear(ta_u, float(args.ta_min_deg), float(args.ta_max_deg))
+        state = _state_from_elements(a_km * 1_000.0, e, inc_deg, raan_deg, argp_deg, ta_deg)
+        if not np.isfinite(state).all():
+            raise ValueError(f"Generated non-finite initial state for scenario {sid}")
+
+        scenarios.append(Scenario(
+            scenario_id=sid,
+            hp_km=float(hp_km),
+            ha_km=float(ha_km),
+            a_km=float(a_km),
+            e=float(e),
+            inc_deg=float(inc_deg),
+            raan_deg=float(raan_deg),
+            argp_deg=float(argp_deg),
+            ta_deg=float(ta_deg),
+            initial_state=state,
+            raw_unit_sample=raw,
+            sampling_method=str(getattr(args, "sampling_method", "random")),
+        ))
+    return scenarios
+
+
 def generate_random_scenarios(
     args: argparse.Namespace,
     rng: np.random.Generator,
@@ -943,20 +1142,15 @@ def generate_random_scenarios(
             if a_m <= R_MOON:
                 continue
 
-            inc_deg  = float(math.degrees(rng.uniform(inc_min, inc_max)))
+            if str(getattr(args, "inclination_sampling", "uniform_deg")) == "uniform_cos":
+                inc_deg = _map_inclination_deg(float(rng.random()), args)
+            else:
+                inc_deg  = float(math.degrees(rng.uniform(inc_min, inc_max)))
             raan_deg = float(rng.uniform(args.raan_min_deg, args.raan_max_deg))
             argp_deg = float(rng.uniform(args.argp_min_deg, args.argp_max_deg))
             ta_deg   = float(rng.uniform(args.ta_min_deg, args.ta_max_deg))
 
-            state = create_state_from_keplerian(
-                semi_major_axis=a_m,
-                eccentricity=e,
-                inclination=math.radians(inc_deg),
-                raan=math.radians(raan_deg),
-                argp=math.radians(argp_deg),
-                true_anomaly=math.radians(ta_deg),
-                mu=MU_MOON,
-            ).y
+            state = _state_from_elements(a_m, e, inc_deg, raan_deg, argp_deg, ta_deg)
 
             if not np.isfinite(state).all():
                 continue
@@ -972,6 +1166,7 @@ def generate_random_scenarios(
                 argp_deg=argp_deg,
                 ta_deg=ta_deg,
                 initial_state=state,
+                sampling_method="random",
             ))
         except Exception:
             continue
@@ -981,6 +1176,20 @@ def generate_random_scenarios(
               f"after {attempts} attempts")
 
     return scenarios
+
+
+def generate_validation_scenarios(args: argparse.Namespace) -> List[Scenario]:
+    method = str(getattr(args, "sampling_method", "random"))
+    if method == "random":
+        rng = np.random.default_rng(args.scenario_seed)
+        return generate_random_scenarios(args, rng)
+    samples = generate_unit_samples(
+        int(args.random_scenarios),
+        SCENARIO_UNIT_DIM,
+        method,
+        int(args.scenario_seed),
+    )
+    return generate_scenarios_from_samples(samples, args)
 
 
 # =============================================================================
@@ -2713,6 +2922,263 @@ def _write_scenarios_csv(scenarios: List[Scenario], out_dir: Path) -> None:
             w.writerow({k: getattr(s, k) for k in fieldnames})
 
 
+def _scenario_count_for_args(args: argparse.Namespace) -> int:
+    count = max(0, int(args.random_scenarios))
+    limit = getattr(args, "scenario_limit", None)
+    if limit is not None:
+        count = min(count, max(0, int(limit)))
+    return count
+
+
+def _sampling_metadata(args: argparse.Namespace, scenario_count: Optional[int] = None) -> Dict[str, Any]:
+    count = _scenario_count_for_args(args) if scenario_count is None else int(scenario_count)
+    method = str(getattr(args, "sampling_method", "random"))
+    note = _sobol_note(method, int(args.random_scenarios))
+    return {
+        "scenario_count": count,
+        "requested_random_scenarios": int(args.random_scenarios),
+        "scenario_limit": (
+            None if getattr(args, "scenario_limit", None) is None
+            else int(args.scenario_limit)
+        ),
+        "sampling_method": method,
+        "scenario_seed": int(args.scenario_seed),
+        "scenario_mode": str(args.scenario_mode),
+        "inclination_sampling": str(getattr(args, "inclination_sampling", "uniform_deg")),
+        "altitude_min_km": float(args.altitude_min_km),
+        "altitude_max_km": float(args.altitude_max_km),
+        "ecc_min": float(args.ecc_min),
+        "ecc_max": float(args.ecc_max),
+        "inc_min_deg": float(args.inc_min_deg),
+        "inc_max_deg": float(args.inc_max_deg),
+        "raan_min_deg": float(args.raan_min_deg),
+        "raan_max_deg": float(args.raan_max_deg),
+        "argp_min_deg": float(args.argp_min_deg),
+        "argp_max_deg": float(args.argp_max_deg),
+        "ta_min_deg": float(args.ta_min_deg),
+        "ta_max_deg": float(args.ta_max_deg),
+        "altitude_bounds_km": {
+            "min": float(args.altitude_min_km),
+            "max": float(args.altitude_max_km),
+        },
+        "eccentricity_bounds": {
+            "min": float(args.ecc_min),
+            "max": float(args.ecc_max),
+        },
+        "inclination_bounds_deg": {
+            "min": float(args.inc_min_deg),
+            "max": float(args.inc_max_deg),
+        },
+        "angular_bounds_deg": {
+            "raan": {"min": float(args.raan_min_deg), "max": float(args.raan_max_deg)},
+            "argp": {"min": float(args.argp_min_deg), "max": float(args.argp_max_deg)},
+            "ta": {"min": float(args.ta_min_deg), "max": float(args.ta_max_deg)},
+        },
+        "module_name": __name__,
+        "code_path": str(Path(__file__).resolve()),
+        "sampling_note": note,
+    }
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, np.ndarray):
+        return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, Path):
+        return str(value)
+    return value
+
+
+def _scenario_manifest_row(
+    scenario: Scenario,
+    args: argparse.Namespace,
+    csv_mode: bool = False,
+) -> Dict[str, Any]:
+    raw = scenario.raw_unit_sample
+    raw_list = None if raw is None else [float(x) for x in raw]
+    row: Dict[str, Any] = {
+        "scenario_id": int(scenario.scenario_id),
+        "sampling_method": str(getattr(scenario, "sampling_method", getattr(args, "sampling_method", "random"))),
+        "scenario_seed": int(args.scenario_seed),
+        "scenario_mode": str(args.scenario_mode),
+        "inclination_sampling": str(getattr(args, "inclination_sampling", "uniform_deg")),
+        "raw_unit_sample": raw_list,
+        "hp_km": float(scenario.hp_km),
+        "ha_km": float(scenario.ha_km),
+        "a_km": float(scenario.a_km),
+        "e": float(scenario.e),
+        "inc_deg": float(scenario.inc_deg),
+        "raan_deg": float(scenario.raan_deg),
+        "argp_deg": float(scenario.argp_deg),
+        "ta_deg": float(scenario.ta_deg),
+    }
+    for i in range(SCENARIO_UNIT_DIM):
+        row[f"unit_u{i}"] = "" if raw_list is None or i >= len(raw_list) else float(raw_list[i])
+    if csv_mode:
+        row["raw_unit_sample"] = "" if raw_list is None else json.dumps(raw_list, separators=(",", ":"))
+    return row
+
+
+def _write_scenario_manifest(
+    scenarios: List[Scenario],
+    args: argparse.Namespace,
+    out_dir: Path,
+) -> None:
+    metadata = _sampling_metadata(args, len(scenarios))
+    rows = [_scenario_manifest_row(s, args, csv_mode=False) for s in scenarios]
+    payload = {
+        "metadata": metadata,
+        "scenarios": rows,
+    }
+
+    json_path = out_dir / SCENARIO_MANIFEST_JSON
+    _ensure_dir(json_path)
+    json_path.write_text(
+        json.dumps(_json_safe(payload), indent=4),
+        encoding="utf-8",
+    )
+
+    csv_path = out_dir / SCENARIO_MANIFEST_CSV
+    csv_rows = [_scenario_manifest_row(s, args, csv_mode=True) for s in scenarios]
+    fieldnames = [
+        "scenario_id", "sampling_method", "scenario_seed", "scenario_mode",
+        "inclination_sampling", "raw_unit_sample",
+        "unit_u0", "unit_u1", "unit_u2", "unit_u3", "unit_u4", "unit_u5",
+        "hp_km", "ha_km", "a_km", "e",
+        "inc_deg", "raan_deg", "argp_deg", "ta_deg",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        w.writeheader()
+        w.writerows(csv_rows)
+
+
+def _manifest_value_text(value: Any) -> str:
+    if value is None:
+        return "<missing>"
+    return str(value)
+
+
+def _manifest_values_equal(old: Any, new: Any) -> bool:
+    if old is None:
+        return new is None
+    if isinstance(new, float):
+        try:
+            return math.isclose(float(old), float(new), rel_tol=0.0, abs_tol=1e-12)
+        except (TypeError, ValueError):
+            return False
+    return old == new
+
+
+def _verify_scenario_manifest_matches(
+    manifest: Dict[str, Any],
+    args: argparse.Namespace,
+) -> None:
+    metadata = manifest.get("metadata", {}) if isinstance(manifest, dict) else {}
+    expected = _sampling_metadata(args)
+    fields = [
+        "sampling_method",
+        "scenario_seed",
+        "scenario_count",
+        "requested_random_scenarios",
+        "scenario_limit",
+        "scenario_mode",
+        "inclination_sampling",
+        "altitude_min_km",
+        "altitude_max_km",
+        "ecc_min",
+        "ecc_max",
+        "inc_min_deg",
+        "inc_max_deg",
+        "raan_min_deg",
+        "raan_max_deg",
+        "argp_min_deg",
+        "argp_max_deg",
+        "ta_min_deg",
+        "ta_max_deg",
+    ]
+    for field in fields:
+        old = metadata.get(field)
+        new = expected.get(field)
+        if not _manifest_values_equal(old, new):
+            raise ValueError(
+                "Existing scenario_manifest uses "
+                f"{field}={_manifest_value_text(old)} but current request uses "
+                f"{_manifest_value_text(new)}."
+            )
+
+
+def _scenario_from_manifest_row(row: Dict[str, Any]) -> Scenario:
+    raw = row.get("raw_unit_sample")
+    raw_list = None
+    if isinstance(raw, list):
+        raw_list = [float(x) for x in raw]
+    a_km = float(row["a_km"])
+    e = float(row["e"])
+    inc_deg = float(row["inc_deg"])
+    raan_deg = float(row["raan_deg"])
+    argp_deg = float(row["argp_deg"])
+    ta_deg = float(row["ta_deg"])
+    state = _state_from_elements(a_km * 1_000.0, e, inc_deg, raan_deg, argp_deg, ta_deg)
+    return Scenario(
+        scenario_id=int(row["scenario_id"]),
+        hp_km=float(row["hp_km"]),
+        ha_km=float(row["ha_km"]),
+        a_km=a_km,
+        e=e,
+        inc_deg=inc_deg,
+        raan_deg=raan_deg,
+        argp_deg=argp_deg,
+        ta_deg=ta_deg,
+        initial_state=state,
+        raw_unit_sample=raw_list,
+        sampling_method=str(row.get("sampling_method", "random")),
+    )
+
+
+def _load_scenarios_from_manifest(
+    manifest_path: Path,
+    args: argparse.Namespace,
+) -> List[Scenario]:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    _verify_scenario_manifest_matches(manifest, args)
+    rows = manifest.get("scenarios", [])
+    if not isinstance(rows, list):
+        raise ValueError("Existing scenario_manifest has invalid scenarios payload.")
+    scenarios = [_scenario_from_manifest_row(row) for row in rows]
+    if len(scenarios) != _scenario_count_for_args(args):
+        raise ValueError(
+            "Existing scenario_manifest uses scenario_count="
+            f"{len(scenarios)} but current request uses {_scenario_count_for_args(args)}."
+        )
+    return scenarios
+
+
+def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> List[Scenario]:
+    manifest_path = out_dir / SCENARIO_MANIFEST_JSON
+    if bool(getattr(args, "resume", False)) and manifest_path.exists():
+        scenarios = _load_scenarios_from_manifest(manifest_path, args)
+        _write_scenarios_csv(scenarios, out_dir)
+        print(f"[scenarios] resume: loaded {len(scenarios)} scenarios from {manifest_path}",
+              flush=True)
+        return scenarios
+
+    scenarios = generate_validation_scenarios(args)
+    if getattr(args, "scenario_limit", None) is not None:
+        scenarios = scenarios[:int(args.scenario_limit)]
+    note = _sobol_note(str(getattr(args, "sampling_method", "random")), int(args.random_scenarios))
+    if note:
+        print(f"[scenarios] NOTE: {note}", flush=True)
+    _write_scenarios_csv(scenarios, out_dir)
+    _write_scenario_manifest(scenarios, args, out_dir)
+    return scenarios
+
+
 def _append_metrics_csv(metrics: Dict, path: Path, write_header: bool) -> None:
     _ensure_dir(path)
     with open(path, "a", newline="") as f:
@@ -2733,6 +3199,39 @@ def _write_csv(rows: List[Dict], path: Path) -> None:
         w.writerows(rows)
 
 
+# String-valued metric columns that must not be coerced to float on reload.
+_METRIC_STRING_KEYS = {"model", "reference", "status", "backend", "device", "failure_reason"}
+
+
+def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
+    """Read a metrics CSV into a list of string-valued dict rows (empty if absent)."""
+    if not path.exists():
+        return []
+    with open(path, "r", newline="", encoding="utf-8") as f:
+        return [dict(row) for row in csv.DictReader(f)]
+
+
+def _coerce_numeric_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Coerce CSV string values to float where possible for aggregation.
+
+    Non-numeric / blank values become NaN (so finite-guards skip them); known
+    string columns are preserved verbatim.
+    """
+    out: Dict[str, Any] = {}
+    for key, value in row.items():
+        if key in _METRIC_STRING_KEYS:
+            out[key] = value
+            continue
+        if value in (None, "", "None", "nan", "NaN"):
+            out[key] = float("nan")
+            continue
+        try:
+            out[key] = float(value)
+        except (TypeError, ValueError):
+            out[key] = value
+    return out
+
+
 def _find_st_lrps_weight_file(model_dir: Optional[str]) -> Optional[str]:
     """Return the checkpoint path used by the ST-LRPS runtime, if available."""
 
@@ -2744,18 +3243,36 @@ def _find_st_lrps_weight_file(model_dir: Optional[str]) -> Optional[str]:
         return None
 
 
-def _write_run_metadata(args: argparse.Namespace, out_dir: Path) -> None:
+def _write_run_metadata(
+    args: argparse.Namespace,
+    out_dir: Path,
+    scenarios: Optional[List[Scenario]] = None,
+) -> None:
     """Persist reproducibility metadata for the validation run."""
 
     weight_file = _find_st_lrps_weight_file(getattr(args, "st_lrps_model_dir", None))
+    scenario_count = len(scenarios) if scenarios is not None else _scenario_count_for_args(args)
     meta = {
         "models": [m.strip().lower() for m in str(args.models).split(",") if m.strip()],
         "truth": str(args.truth).lower(),
         "random_scenarios": int(args.random_scenarios),
+        "scenario_count": int(scenario_count),
         "scenario_seed": int(args.scenario_seed),
         "scenario_mode": str(args.scenario_mode),
+        "sampling_method": str(getattr(args, "sampling_method", "random")),
+        "inclination_sampling": str(getattr(args, "inclination_sampling", "uniform_deg")),
         "altitude_min_km": float(args.altitude_min_km),
         "altitude_max_km": float(args.altitude_max_km),
+        "ecc_min": float(args.ecc_min),
+        "ecc_max": float(args.ecc_max),
+        "inc_min_deg": float(args.inc_min_deg),
+        "inc_max_deg": float(args.inc_max_deg),
+        "raan_min_deg": float(args.raan_min_deg),
+        "raan_max_deg": float(args.raan_max_deg),
+        "argp_min_deg": float(args.argp_min_deg),
+        "argp_max_deg": float(args.argp_max_deg),
+        "ta_min_deg": float(args.ta_min_deg),
+        "ta_max_deg": float(args.ta_max_deg),
         "duration_days": float(args.duration_days),
         "dt_out_s": float(args.dt_out),
         "integrator": str(args.integrator),
@@ -2772,6 +3289,7 @@ def _write_run_metadata(args: argparse.Namespace, out_dir: Path) -> None:
         "torch_dtype": str(args.torch_dtype),
         "force_batch_size": int(args.force_batch_size),
     }
+    meta["sampling"] = _sampling_metadata(args, scenario_count)
     p = out_dir / "run_metadata.json"
     _ensure_dir(p)
     with open(p, "w", encoding="utf-8") as f:
@@ -2784,8 +3302,20 @@ def _truth_cache_metadata(args: argparse.Namespace, scenarios: List[Scenario]) -
         "random_scenarios": int(len(scenarios)),
         "scenario_seed": int(args.scenario_seed),
         "scenario_mode": str(args.scenario_mode),
+        "sampling_method": str(getattr(args, "sampling_method", "random")),
+        "inclination_sampling": str(getattr(args, "inclination_sampling", "uniform_deg")),
         "altitude_min_km": float(args.altitude_min_km),
         "altitude_max_km": float(args.altitude_max_km),
+        "ecc_min": float(args.ecc_min),
+        "ecc_max": float(args.ecc_max),
+        "inc_min_deg": float(args.inc_min_deg),
+        "inc_max_deg": float(args.inc_max_deg),
+        "raan_min_deg": float(args.raan_min_deg),
+        "raan_max_deg": float(args.raan_max_deg),
+        "argp_min_deg": float(args.argp_min_deg),
+        "argp_max_deg": float(args.argp_max_deg),
+        "ta_min_deg": float(args.ta_min_deg),
+        "ta_max_deg": float(args.ta_max_deg),
         "duration_days": float(args.duration_days),
         "dt_out_s": float(args.dt_out),
         "integrator": str(args.integrator),
@@ -2887,8 +3417,180 @@ def build_truth_trajectory_set(
 
 
 # =============================================================================
-# PDF report
+# PDF report — professional template
 # =============================================================================
+# A small, dependency-free (matplotlib-only) report toolkit that gives the
+# generated PDFs a consistent, publication-grade look: a title cover page, a
+# navy header band + accent rule, a footer with page numbers and timestamp,
+# cleanly styled tables, and captioned figure pages. The numeric content is
+# unchanged — only the presentation is upgraded.
+
+_REPORT_THEME = {
+    "navy": "#16314F",
+    "navy_soft": "#1F4068",
+    "accent": "#2A9D8F",
+    "ink": "#1A1F29",
+    "muted": "#5A6675",
+    "rule": "#C9D2DE",
+    "row_alt": "#EEF2F7",
+    "highlight": "#E3F2EE",
+    "page": "#FFFFFF",
+}
+_REPORT_PAGE_SIZE = (8.5, 11.0)  # US Letter, portrait
+
+
+class _ReportPager:
+    """Builds a multi-page PDF with a consistent header/footer and styled pages."""
+
+    def __init__(self, pdf: PdfPages, title: str, subtitle: str) -> None:
+        self.pdf = pdf
+        self.title = title
+        self.subtitle = subtitle
+        self.page_no = 0
+        self.generated = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime())
+
+    # -- low-level page scaffolding ------------------------------------
+    def _blank(self):
+        fig = plt.figure(figsize=_REPORT_PAGE_SIZE)
+        fig.patch.set_facecolor(_REPORT_THEME["page"])
+        return fig
+
+    def _chrome(self, fig, heading: Optional[str]) -> Any:
+        """Draw header band + footer; return a content axes (0..1)."""
+        from matplotlib.patches import Rectangle
+        from matplotlib.lines import Line2D
+        self.page_no += 1
+        t = _REPORT_THEME
+        # Header band
+        fig.add_artist(Rectangle((0, 0.945), 1, 0.055, transform=fig.transFigure,
+                                 facecolor=t["navy"], edgecolor="none", zorder=0))
+        fig.add_artist(Rectangle((0, 0.941), 1, 0.004, transform=fig.transFigure,
+                                 facecolor=t["accent"], edgecolor="none", zorder=0))
+        fig.text(0.06, 0.973, self.title, color="white", fontsize=13,
+                 fontweight="bold", va="center")
+        fig.text(0.06, 0.954, self.subtitle, color="#A9C0D6", fontsize=8.5, va="center")
+        # Footer
+        fig.add_artist(Line2D([0.06, 0.94], [0.052, 0.052], color=t["rule"],
+                              lw=0.8, transform=fig.transFigure))
+        fig.text(0.06, 0.034, "ST-LRPS · Lunar Gravity Model Validation",
+                 color=t["muted"], fontsize=8, va="center")
+        fig.text(0.50, 0.034, self.generated, color=t["muted"], fontsize=8,
+                 ha="center", va="center")
+        fig.text(0.94, 0.034, f"Page {self.page_no}", color=t["muted"], fontsize=8,
+                 ha="right", va="center")
+        ax = fig.add_axes([0.06, 0.075, 0.88, 0.85])
+        ax.axis("off")
+        if heading:
+            ax.text(0.0, 1.0, heading, transform=ax.transAxes, fontsize=15,
+                    fontweight="bold", color=t["navy"], va="top")
+        return ax
+
+    def _save(self, fig) -> None:
+        self.pdf.savefig(fig, facecolor=_REPORT_THEME["page"])
+        plt.close(fig)
+
+    # -- public page builders ------------------------------------------
+    def cover(self, meta: List[Tuple[str, str]], note: str) -> None:
+        from matplotlib.patches import Rectangle
+        from matplotlib.lines import Line2D
+        t = _REPORT_THEME
+        self.page_no += 1
+        fig = self._blank()
+        # Full-bleed navy banner
+        fig.add_artist(Rectangle((0, 0.62), 1, 0.38, transform=fig.transFigure,
+                                 facecolor=t["navy"], edgecolor="none", zorder=0))
+        fig.add_artist(Rectangle((0, 0.612), 1, 0.008, transform=fig.transFigure,
+                                 facecolor=t["accent"], edgecolor="none", zorder=0))
+        fig.text(0.08, 0.86, self.title, color="white", fontsize=26, fontweight="bold", va="center")
+        fig.text(0.08, 0.80, self.subtitle, color="#A9C0D6", fontsize=13, va="center")
+        fig.text(0.08, 0.665, self.generated, color="#7FA8C9", fontsize=10, va="center")
+        # Metadata table area
+        ax = fig.add_axes([0.08, 0.16, 0.84, 0.40])
+        ax.axis("off")
+        rows = [[k, v] for k, v in meta]
+        if rows:
+            tbl = ax.table(cellText=rows, colLabels=["Parameter", "Value"],
+                           cellLoc="left", loc="upper left", bbox=[0, 0, 1, 1])
+            _style_table(tbl, n_body=len(rows), first_col_left=True)
+        # Disclaimer note
+        fig.add_artist(Line2D([0.08, 0.92], [0.12, 0.12], color=t["rule"], lw=0.8,
+                              transform=fig.transFigure))
+        fig.text(0.08, 0.085, note, color=t["muted"], fontsize=9, va="center", wrap=True)
+        fig.text(0.08, 0.045, "Generated by st_lrps.evaluation.compare_gravity_models",
+                 color=t["muted"], fontsize=8, va="center")
+        self._save(fig)
+
+    def table_page(self, heading: str, col_labels: List[str], rows: List[List[str]],
+                   *, highlight_row: Optional[int] = None, intro: Optional[str] = None) -> None:
+        fig = self._blank()
+        ax = self._chrome(fig, heading)  # content axes, axis off, coords 0..1
+        top = 0.90
+        if intro:
+            ax.text(0.0, top, intro, transform=ax.transAxes, fontsize=9.5,
+                    color=_REPORT_THEME["muted"], va="top", wrap=True)
+            top -= 0.06
+        # Bound the table to a sensible region under the heading (axes-relative).
+        n = max(1, len(rows))
+        tbl_h = min(top - 0.02, 0.05 * (n + 1))
+        sub = ax.inset_axes([0.0, max(0.0, top - tbl_h), 1.0, tbl_h])
+        sub.axis("off")
+        tbl = sub.table(cellText=rows, colLabels=col_labels, cellLoc="center",
+                        loc="upper center", bbox=[0, 0, 1, 1])
+        _style_table(tbl, n_body=n, first_col_left=True, highlight_row=highlight_row)
+        self._save(fig)
+
+    def figure_page(self, heading: str, image_path: Path, caption: str = "") -> bool:
+        if not Path(image_path).exists():
+            return False
+        fig = self._blank()
+        ax = self._chrome(fig, heading)
+        img = plt.imread(str(image_path))
+        # Centered image area below the heading, above any caption.
+        img_ax = fig.add_axes([0.08, 0.16, 0.84, 0.70])
+        img_ax.imshow(img)
+        img_ax.axis("off")
+        if caption:
+            fig.text(0.08, 0.115, caption, color=_REPORT_THEME["muted"], fontsize=9,
+                     va="top", wrap=True)
+        self._save(fig)
+        return True
+
+    def text_page(self, heading: str, paragraphs: List[str]) -> None:
+        fig = self._blank()
+        ax = self._chrome(fig, heading)
+        y = 0.92
+        for para in paragraphs:
+            ax.text(0.0, y, para, transform=ax.transAxes, fontsize=10,
+                    color=_REPORT_THEME["ink"], va="top", wrap=True)
+            y -= 0.035 + 0.02 * para.count("\n")
+        self._save(fig)
+
+
+def _style_table(tbl, *, n_body: int, first_col_left: bool = False,
+                 highlight_row: Optional[int] = None) -> None:
+    """Apply the professional table style to a matplotlib table in place."""
+    t = _REPORT_THEME
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    for (r, c), cell in tbl.get_celld().items():
+        cell.set_edgecolor(t["rule"])
+        cell.set_linewidth(0.6)
+        if r == 0:
+            cell.set_facecolor(t["navy"])
+            cell.set_text_props(color="white", fontweight="bold")
+            cell.set_height(cell.get_height() * 1.5)
+        else:
+            if highlight_row is not None and (r - 1) == highlight_row:
+                cell.set_facecolor(t["highlight"])
+                cell.set_text_props(color=t["ink"], fontweight="bold")
+            else:
+                cell.set_facecolor("#FFFFFF" if (r % 2 == 1) else t["row_alt"])
+                cell.set_text_props(color=t["ink"])
+            cell.set_height(cell.get_height() * 1.25)
+        if first_col_left and c == 0:
+            cell.get_text().set_horizontalalignment("left")
+            cell.PAD = 0.04
+
 
 def write_report_pdf(
     args: argparse.Namespace,
@@ -2901,64 +3603,66 @@ def write_report_pdf(
 ) -> None:
     pdf_path = out_dir / "gravity_random_validation_report.pdf"
     _ensure_dir(pdf_path)
+    truth_integ = str(getattr(args, "truth_integrator", args.integrator))
     with PdfPages(pdf_path) as pdf:
-        # Cover page
-        fig, ax = plt.subplots(figsize=(10, 7))
-        ax.axis("off")
-        lines = [
-            "Lunar Gravity Model Validation Report",
-            "",
-            f"Scenarios: {args.random_scenarios}   Seed: {args.scenario_seed}",
-            f"Mode: {args.scenario_mode}",
-            f"Altitude range: {args.altitude_min_km}-{args.altitude_max_km} km",
-            f"Duration: {args.duration_days} days",
-            f"Truth model: {args.truth.upper()}",
-            f"Models compared: {args.models}",
-            "",
-            "NOTE: SH200 is the reference, not physical ground truth.",
-        ]
-        ax.text(0.5, 0.5, "\n".join(lines), transform=ax.transAxes,
-                ha="center", va="center", fontsize=11, family="monospace",
-                bbox=dict(boxstyle="round", facecolor="#111111", alpha=0.8))
-        pdf.savefig(fig); plt.close(fig)
+        pager = _ReportPager(
+            pdf,
+            title="Lunar Gravity Model Validation",
+            subtitle="Orbit-level comparison vs a high-degree reference",
+        )
+        pager.cover(
+            meta=[
+                ("Scenarios", str(args.random_scenarios)),
+                ("Sampling method", str(getattr(args, "sampling_method", "random"))),
+                ("Scenario seed", str(args.scenario_seed)),
+                ("Scenario mode", str(args.scenario_mode)),
+                ("Inclination sampling", str(getattr(args, "inclination_sampling", "uniform_deg"))),
+                ("Altitude range", f"{args.altitude_min_km:g} - {args.altitude_max_km:g} km"),
+                ("Duration", f"{args.duration_days:g} days"),
+                ("Truth model", f"{args.truth.upper()} ({truth_integ})"),
+                ("Compared models", str(args.models)),
+                ("Integrator", str(args.integrator)),
+            ],
+            note=("Reference note: the truth model is a high-accuracy numerical "
+                  "reference, not physical ground truth. Reported errors are "
+                  "relative to that reference."),
+        )
 
-        # Ranking table
         if rankings:
-            fig, ax = plt.subplots(figsize=(12, max(3, len(rankings) * 0.6 + 2)))
-            ax.axis("off")
-            cols = ["model", "rank_median_rms", "median_rms_pos_err_km",
-                    "p95_rms_pos_err_km", "max_pos_err_km__mean", "runtime_s__mean"]
-            col_labels = ["Model", "Rank\n(median RMS)", "Median RMS\n[km]",
-                          "P95 RMS\n[km]", "Mean Max\n[km]", "Mean\nRuntime [s]"]
-            table_data = [[
+            best_idx = 0
+            for i, r in enumerate(rankings):
+                if r.get("rank_median_rms") in (1, "1"):
+                    best_idx = i
+                    break
+            rows = [[
                 r.get("model", "").upper(),
-                r.get("rank_median_rms", ""),
+                str(r.get("rank_median_rms", "")),
                 f"{r.get('median_rms_pos_err_km', 0):.4f}",
                 f"{r.get('p95_rms_pos_err_km', 0):.4f}",
                 f"{r.get('max_pos_err_km__mean', 0):.4f}",
                 f"{r.get('runtime_s__mean', 0):.2f}",
             ] for r in rankings]
-            t = ax.table(cellText=table_data, colLabels=col_labels, loc="center", cellLoc="center")
-            t.auto_set_font_size(False); t.set_fontsize(10); t.scale(1, 1.5)
-            ax.set_title("Model Rankings (DOP853)", fontsize=13, pad=20)
-            pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
+            pager.table_page(
+                "Model Accuracy Ranking",
+                ["Model", "Rank", "Median RMS [km]", "P95 RMS [km]",
+                 "Mean Max [km]", "Mean Runtime [s]"],
+                rows,
+                highlight_row=best_idx,
+                intro="Ranked by median RMS position error across all scenarios "
+                      "(lower is better).",
+            )
 
-        # Embed plots
-        for png_name in [
-            "aggregate_boxplot_rms_error.png", "aggregate_p95_error_bar.png",
-            "runtime_vs_accuracy.png", "selected_orbit_3d.png",
-            "selected_position_error.png", "selected_ric_error.png",
-            "batch_runtime_vs_accuracy.png", "batch_rms_error_distribution.png",
-            "batch_error_decomposition_bar.png", "batch_selected_position_error.png",
-            "batch_selected_ric_error.png",
-        ]:
-            for search_dir in [plots_dir, out_dir]:
-                pth = search_dir / png_name
-                if pth.exists():
-                    img = plt.imread(str(pth))
-                    fig, ax = plt.subplots(figsize=(10, 7))
-                    ax.imshow(img); ax.axis("off")
-                    pdf.savefig(fig, bbox_inches="tight"); plt.close(fig)
+        figure_specs = [
+            ("aggregate_boxplot_rms_error.png", "RMS position-error distribution across scenarios."),
+            ("aggregate_p95_error_bar.png", "Per-model 95th-percentile RMS position error."),
+            ("runtime_vs_accuracy.png", "Runtime vs accuracy tradeoff."),
+            ("selected_position_error.png", "Selected scenario: position error vs time."),
+            ("selected_ric_error.png", "Selected scenario: radial/in-track/cross-track error."),
+            ("selected_orbit_3d.png", "Selected scenario: 3-D trajectory overlay."),
+        ]
+        for png_name, caption in figure_specs:
+            for search_dir in (plots_dir, out_dir):
+                if pager.figure_page("Figure", search_dir / png_name, caption):
                     break
 
     print(f"  [report] PDF saved: {pdf_path}", flush=True)
@@ -2973,109 +3677,122 @@ def write_gpu_batch_report_pdf(
     plots_dir: Path,
     reports_dir: Path,
 ) -> None:
-    """Write the GPU batch validation report PDF."""
+    """Write the GPU batch validation report PDF (professional template)."""
 
     reports_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = reports_dir / "gpu_batch_validation_report.pdf"
-    apply_plot_theme(args.plot_theme)
-
-    def _add_text_page(pdf: PdfPages, title: str, lines: List[str]) -> None:
-        fig, ax = plt.subplots(figsize=(11, 8.5))
-        ax.axis("off")
-        ax.text(0.04, 0.94, title, transform=ax.transAxes, fontsize=18,
-                fontweight="bold", va="top")
-        ax.text(0.04, 0.86, "\n".join(lines), transform=ax.transAxes,
-                fontsize=11, va="top", family="monospace")
-        pdf.savefig(fig, bbox_inches="tight")
-        plt.close(fig)
+    rk4_dt = args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt
+    truth_integ = str(getattr(args, "truth_integrator", "DOP853"))
+    gpu_integ = str(getattr(args, "gpu_integrator", "medium"))
 
     with PdfPages(pdf_path) as pdf:
-        _add_text_page(pdf, "GPU Batch Lunar Gravity Validation", [
-            f"Scenarios      : {args.random_scenarios}",
-            f"Seed           : {args.scenario_seed}",
-            f"Altitude range : {args.altitude_min_km:.0f}-{args.altitude_max_km:.0f} km",
-            f"Duration       : {args.duration_days:g} days",
-            f"RK4 dt         : {args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt:g} s",
-            f"Output dt      : {args.dt_out:g} s",
-            f"Dtype          : {args.torch_dtype}",
-            f"Truth          : {args.truth.upper()} DOP853",
-            f"GPU models     : {args.gpu_models}",
-            f"Frame mode     : {args.batch_frame_mode}",
-            "",
-            "SH200 DOP853 is the numerical reference, not physical truth.",
-            "GPU SH200 RK4 quantifies fixed-step/framework error against that reference.",
-        ])
+        pager = _ReportPager(
+            pdf,
+            title="GPU Batch Lunar Gravity Validation",
+            subtitle="Fixed-step GPU propagation vs an adaptive reference",
+        )
+        pager.cover(
+            meta=[
+                ("Scenarios", str(args.random_scenarios)),
+                ("Sampling method", str(getattr(args, "sampling_method", "random"))),
+                ("Scenario seed", str(args.scenario_seed)),
+                ("Scenario mode", str(getattr(args, "scenario_mode", "near_circular_altitude"))),
+                ("Inclination sampling", str(getattr(args, "inclination_sampling", "uniform_deg"))),
+                ("Altitude range", f"{args.altitude_min_km:.0f} - {args.altitude_max_km:.0f} km"),
+                ("Duration", f"{args.duration_days:g} days"),
+                ("GPU integrator", f"{gpu_integ} (fixed step {rk4_dt:g} s)"),
+                ("Output cadence", f"{args.dt_out:g} s"),
+                ("Precision", str(args.torch_dtype)),
+                ("Truth", f"{args.truth.upper()} {truth_integ}"),
+                ("GPU models", str(args.gpu_models)),
+                ("Frame mode", str(args.batch_frame_mode)),
+            ],
+            note=("Reference note: the truth trajectories are a high-accuracy "
+                  "adaptive numerical reference, not physical ground truth. GPU "
+                  "fixed-step models carry both model and integration error."),
+        )
 
+        # Executive summary as a styled key/value table.
         med_eq = equivalent.get("median_rms", {}) if isinstance(equivalent, dict) else {}
         p95_eq = equivalent.get("p95_rms", {}) if isinstance(equivalent, dict) else {}
         fastest = min(runtime_rows, key=lambda r: r.get("total_runtime_s", np.inf)) if runtime_rows else {}
         most_acc = min(aggregate_rows, key=lambda r: r.get("median_rms_pos_err_km", np.inf)) if aggregate_rows else {}
-        _add_text_page(pdf, "Executive Summary", [
-            f"Most accurate GPU model : {most_acc.get('model', 'n/a')}",
-            f"Fastest GPU model       : {fastest.get('model', 'n/a')}",
-            f"ST-LRPS closest by median RMS : {med_eq.get('closest_model', 'n/a')}",
-            f"ST-LRPS median-equivalent status: {med_eq.get('equivalent_degree_status', med_eq.get('status', 'n/a'))}",
-            f"ST-LRPS closest by P95 RMS    : {p95_eq.get('closest_model', 'n/a')}",
-            "",
-            f"Best ST-LRPS scenario          : {selected.get('best', {}).get('scenario_id', 'n/a')}",
-            f"Representative ST-LRPS scenario: {selected.get('representative', {}).get('scenario_id', 'n/a')}",
-            f"Worst ST-LRPS scenario         : {selected.get('worst', {}).get('scenario_id', 'n/a')}",
-        ])
+        pager.table_page(
+            "Executive Summary",
+            ["Metric", "Value"],
+            [
+                ["Most accurate GPU model", str(most_acc.get("model", "n/a"))],
+                ["Fastest GPU model", str(fastest.get("model", "n/a"))],
+                ["ST-LRPS closest by median RMS", str(med_eq.get("closest_model", "n/a"))],
+                ["ST-LRPS median-equivalent status",
+                 str(med_eq.get("equivalent_degree_status", med_eq.get("status", "n/a")))],
+                ["ST-LRPS closest by P95 RMS", str(p95_eq.get("closest_model", "n/a"))],
+                ["Best ST-LRPS scenario", str(selected.get("best", {}).get("scenario_id", "n/a"))],
+                ["Representative ST-LRPS scenario",
+                 str(selected.get("representative", {}).get("scenario_id", "n/a"))],
+                ["Worst ST-LRPS scenario", str(selected.get("worst", {}).get("scenario_id", "n/a"))],
+            ],
+        )
 
-        # Tables as text keep the report robust even when row counts change.
-        acc_lines = ["Model                         Median RMS   P95 RMS   Max RMS   Median Along"]
-        for r in aggregate_rows:
-            acc_lines.append(
-                f"{r['model']:<30} {r.get('median_rms_pos_err_km', np.nan):>10.4f} "
-                f"{r.get('p95_rms_pos_err_km', np.nan):>9.4f} "
-                f"{r.get('max_rms_pos_err_km', np.nan):>9.4f} "
-                f"{r.get('median_along_rms_km', np.nan):>12.4f}"
+        if aggregate_rows:
+            acc_rows = [[
+                str(r.get("model", "")),
+                f"{r.get('median_rms_pos_err_km', float('nan')):.4f}",
+                f"{r.get('p95_rms_pos_err_km', float('nan')):.4f}",
+                f"{r.get('max_rms_pos_err_km', float('nan')):.4f}",
+                f"{r.get('median_along_rms_km', float('nan')):.4f}",
+            ] for r in aggregate_rows]
+            pager.table_page(
+                "Accuracy Ranking",
+                ["Model", "Median RMS [km]", "P95 RMS [km]", "Max RMS [km]", "Median Along [km]"],
+                acc_rows,
+                highlight_row=0,
+                intro="Sorted best-to-worst by median RMS position error.",
             )
-        _add_text_page(pdf, "Accuracy Ranking Table", acc_lines)
 
-        run_lines = ["Model                         Runtime s  Runtime/sc  Traj-steps/s  Speedup truth"]
-        for r in runtime_rows:
-            run_lines.append(
-                f"{r['model']:<30} {r.get('total_runtime_s', np.nan):>9.3f} "
-                f"{r.get('runtime_per_scenario_s', np.nan):>11.5f} "
-                f"{r.get('trajectory_steps_per_second', np.nan):>13.1f} "
-                f"{r.get('speedup_vs_truth_total', np.nan):>13.2f}"
+        if runtime_rows:
+            run_rows = [[
+                str(r.get("model", "")),
+                f"{r.get('total_runtime_s', float('nan')):.3f}",
+                f"{r.get('runtime_per_scenario_s', float('nan')):.5f}",
+                f"{r.get('trajectory_steps_per_second', float('nan')):.1f}",
+                f"{r.get('speedup_vs_truth_total', float('nan')):.2f}",
+            ] for r in runtime_rows]
+            pager.table_page(
+                "Runtime",
+                ["Model", "Total [s]", "Per scenario [s]", "Steps/s", "Speedup vs truth"],
+                run_rows,
+                intro="Wall-clock runtime and throughput for the GPU fixed-step propagation.",
             )
-        _add_text_page(pdf, "Runtime Table", run_lines)
 
-        for png_name in [
-            "gpu_runtime_vs_accuracy.png",
-            "gpu_accuracy_ranking_bar.png",
-            "stlrps_equivalent_sh_degree.png",
-            "gpu_rms_error_distribution_boxplot.png",
-            "ensemble_mean_position_error_vs_time.png",
-            "ensemble_ric_rms_vs_time.png",
-            "selected_representative_position_error_all_models.png",
-            "selected_representative_ric_error_all_models.png",
-            "selected_worst_position_error_all_models.png",
-            "selected_worst_ric_error_all_models.png",
-        ]:
-            p = plots_dir / png_name
-            if not p.exists():
-                continue
-            img = plt.imread(str(p))
-            fig, ax = plt.subplots(figsize=(11, 8.0))
-            ax.imshow(img)
-            ax.axis("off")
-            pdf.savefig(fig, bbox_inches="tight")
-            plt.close(fig)
+        figure_specs = [
+            ("gpu_runtime_vs_accuracy.png", "Runtime vs accuracy tradeoff across GPU models."),
+            ("gpu_accuracy_ranking_bar.png", "Median and P95 RMS position error per model."),
+            ("stlrps_equivalent_sh_degree.png", "ST-LRPS accuracy vs the spherical-harmonic degree ladder."),
+            ("gpu_rms_error_distribution_boxplot.png", "RMS error distribution across scenarios."),
+            ("ensemble_mean_position_error_vs_time.png", "Ensemble median position error vs time."),
+            ("ensemble_ric_rms_vs_time.png", "Ensemble RIC RMS error vs time."),
+            ("selected_representative_position_error_all_models.png",
+             "Representative scenario: position error vs time."),
+            ("selected_representative_ric_error_all_models.png",
+             "Representative scenario: RIC error vs time."),
+            ("selected_worst_position_error_all_models.png", "Worst scenario: position error vs time."),
+            ("selected_worst_ric_error_all_models.png", "Worst scenario: RIC error vs time."),
+        ]
+        for png_name, caption in figure_specs:
+            pager.figure_page("Figure", plots_dir / png_name, caption)
 
-        warning_lines = [
-            "Notes / warnings:",
-            "- SH200 DOP853 is a high-accuracy numerical reference, not physical ground truth.",
-            "- GPU SH200 RK4 vs SH200 DOP853 estimates fixed-step RK4 and framework error.",
-            "- Lower-degree GPU SH models include both truncation and RK4/framework error.",
-            "- ST-LRPS includes surrogate-model error plus RK4/framework error.",
-            f"- Frame mode: {args.batch_frame_mode}",
+        notes = [
+            "- The truth trajectories are a high-accuracy adaptive numerical reference, "
+            "not physical ground truth.",
+            "- GPU fixed-step SH models include both spherical-harmonic truncation error "
+            "and integration error.",
+            "- ST-LRPS includes surrogate-model error plus integration error.",
+            f"- Frame mode: {args.batch_frame_mode}.",
         ]
         if args.batch_frame_mode == "inertial_fixed_legacy":
-            warning_lines.append("- Legacy frame mode is approximate and should not be used for final claims.")
-        _add_text_page(pdf, "Notes", warning_lines)
+            notes.append("- Legacy frame mode is approximate and should not be used for final claims.")
+        pager.text_page("Notes & Caveats", notes)
 
     print(f"  [report] GPU batch PDF saved: {pdf_path}", flush=True)
 
@@ -3408,6 +4125,8 @@ def _print_final_validation_summary(
     print(sep)
     print(f"Truth reference: {args.truth.upper()} DOP853")
     print(f"Scenarios:       {args.random_scenarios}")
+    print(f"Sampling:        {getattr(args, 'sampling_method', 'random')}")
+    print(f"Inclination:     {getattr(args, 'inclination_sampling', 'uniform_deg')}")
     print(f"Altitude range:  {args.altitude_min_km:.0f}-{args.altitude_max_km:.0f} km")
     print(f"Duration:        {args.duration_days:g} day(s)")
 
@@ -3474,6 +4193,8 @@ def _print_gpu_batch_summary(
     print(sep)
     print(f"Truth:    {args.truth.upper()} DOP853")
     print(f"Scenarios:{args.random_scenarios}")
+    print(f"Sampling: {getattr(args, 'sampling_method', 'random')}")
+    print(f"Inc mode: {getattr(args, 'inclination_sampling', 'uniform_deg')}")
     print(f"Duration: {args.duration_days:g} days")
     print(f"RK4 dt:   {args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt:g} s")
     print(f"Dtype:    {args.torch_dtype}")
@@ -3528,12 +4249,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     for d in (truth_dir, metrics_dir, plots_dir, reports_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    rng = np.random.default_rng(args.scenario_seed)
-    scenarios = generate_random_scenarios(args, rng)
-    if args.scenario_limit:
-        scenarios = scenarios[:args.scenario_limit]
-    _write_scenarios_csv(scenarios, out_dir)
-    _write_run_metadata(args, out_dir)
+    scenarios = prepare_scenarios(args, out_dir)
+    _write_run_metadata(args, out_dir, scenarios)
 
     gpu_models = _parse_model_list_csv(args.gpu_models)
     if args.truth.lower() not in {"sh200"}:
@@ -3573,19 +4290,49 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
           f"frame={args.batch_frame_mode} gpu_integrator={getattr(args, 'gpu_integrator', 'medium')}",
           flush=True)
 
-    model_cache = GravityModelCache(cfg_base, args)
-    truth = build_truth_trajectory_set(args, scenarios, cfg_base, ephem, model_cache, truth_dir)
-    if not truth.t_by_scenario:
-        raise RuntimeError("No truth trajectories were generated.")
+    # Accumulation / resume: skip scenarios already computed for every requested
+    # model so a later run (same seed, larger --random-scenarios) only computes
+    # the new orbits and the aggregate covers the cumulative set.
+    per_scenario_csv = metrics_dir / "gpu_batch_per_scenario_metrics.csv"
+    existing_rows: List[Dict[str, Any]] = []
+    completed_ids: set = set()
+    if args.resume and per_scenario_csv.exists():
+        existing_rows = [_coerce_numeric_row(r) for r in _read_csv_rows(per_scenario_csv)]
+        needed_models = {_model_display_name(m) for m in gpu_models}
+        by_id: Dict[int, set] = {}
+        for r in existing_rows:
+            try:
+                sid = int(float(r.get("scenario_id")))
+            except (TypeError, ValueError):
+                continue
+            by_id.setdefault(sid, set()).add(str(r.get("model", "")))
+        completed_ids = {sid for sid, mods in by_id.items() if needed_models.issubset(mods)}
+        print(f"[gpu-batch] resume: {len(completed_ids)} scenarios already complete for all "
+              f"requested models; {len(existing_rows)} stored metric rows loaded.", flush=True)
 
-    y0_batch = np.asarray([s.initial_state for s in scenarios], dtype=np.float64)
+    run_scenarios = [s for s in scenarios if s.scenario_id not in completed_ids]
+    if args.resume and not run_scenarios:
+        print("[gpu-batch] resume: no new scenarios to compute; re-aggregating stored results.",
+              flush=True)
+
+    model_cache = GravityModelCache(cfg_base, args)
+    _truth_name = f"{str(args.truth).lower()}_{str(getattr(args, 'truth_integrator', 'DOP853')).lower()}"
+    if run_scenarios:
+        truth = build_truth_trajectory_set(args, run_scenarios, cfg_base, ephem, model_cache, truth_dir)
+        if not truth.t_by_scenario:
+            raise RuntimeError("No truth trajectories were generated.")
+    else:
+        truth = TruthTrajectorySet(_truth_name, {}, {}, {})
+
+    y0_batch = (np.asarray([s.initial_state for s in run_scenarios], dtype=np.float64)
+                if run_scenarios else np.empty((0, 6), dtype=np.float64))
     duration_s = float(args.duration_days) * 86400.0
     rk4_dt = float(args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt)
 
     results: List[BatchModelResult] = []
     t_gpu_start = time.perf_counter()
     completed_gpu = 0
-    for model_idx, model_name in enumerate(gpu_models, 1):
+    for model_idx, model_name in enumerate(gpu_models if run_scenarios else [], 1):
         print(f"\n[gpu-batch] Model {model_idx:02d}/{len(gpu_models)} | "
               f"{model_name.upper()} RK4 starting ...", flush=True)
         try:
@@ -3627,19 +4374,21 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 device=str(device),
                 dtype=args.torch_dtype,
                 t=np.array([], dtype=np.float64),
-                y=np.empty((0, len(scenarios), 6), dtype=np.float64),
+                y=np.empty((0, len(run_scenarios), 6), dtype=np.float64),
                 runtime_s=float("nan"),
                 n_steps=0,
-                n_scenarios=len(scenarios),
+                n_scenarios=len(run_scenarios),
                 rk4_dt_s=rk4_dt,
                 output_dt_s=float(args.dt_out),
                 status="failed",
                 failure_reason=str(exc),
             ))
 
-    all_rows: List[Dict[str, Any]] = []
+    new_rows: List[Dict[str, Any]] = []
     for result in results:
-        all_rows.extend(compute_gpu_batch_metrics_for_model(result, truth, scenarios, args.duration_days))
+        new_rows.extend(compute_gpu_batch_metrics_for_model(result, truth, run_scenarios, args.duration_days))
+    # Cumulative union: previously-stored rows + newly-computed rows.
+    all_rows: List[Dict[str, Any]] = list(existing_rows) + new_rows
 
     aggregate_rows = aggregate_gpu_batch_metrics(all_rows)
     runtime_rows = build_gpu_runtime_metrics(results, truth)
@@ -3647,7 +4396,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     equivalent = estimate_stlrps_equivalent_sh_degree(aggregate_rows)
     selected = select_stlrps_scenarios(all_rows, {s.scenario_id: s for s in scenarios}, args)
 
-    _write_csv(all_rows, metrics_dir / "gpu_batch_per_scenario_metrics.csv")
+    _write_csv(all_rows, per_scenario_csv)
     _write_csv(aggregate_rows, metrics_dir / "gpu_batch_aggregate_metrics.csv")
     _write_csv(runtime_rows, metrics_dir / "gpu_batch_runtime_metrics.csv")
     _write_csv(ranking_rows, metrics_dir / "gpu_batch_model_ranking.csv")
@@ -3655,8 +4404,13 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         json.dumps(selected, indent=4, default=str), encoding="utf-8"
     )
     summary = {
-        "truth": "sh200_dop853",
+        "truth": _truth_name,
         "gpu_models": gpu_models,
+        "n_scenarios_total": len(scenarios),
+        "n_scenarios_new_this_run": len(run_scenarios),
+        "accumulated": bool(args.resume),
+        "sampling": _sampling_metadata(args, len(scenarios)),
+        "gpu_integrator": str(getattr(args, "gpu_integrator", "medium")),
         "frame_mode": args.batch_frame_mode,
         "uses_lunar_rotation": args.batch_frame_mode == "match_dynamics_engine",
         "matches_dynamics_engine_frame": args.batch_frame_mode == "match_dynamics_engine",
@@ -3677,7 +4431,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
               "Check RK4 dt, frame mode, and rotation consistency.", flush=True)
 
     plot_gpu_batch_report_figures(
-        aggregate_rows, runtime_rows, all_rows, results, truth, scenarios,
+        aggregate_rows, runtime_rows, all_rows, results, truth, run_scenarios,
         selected, equivalent, plots_dir, args
     )
     write_gpu_batch_report_pdf(args, aggregate_rows, runtime_rows, equivalent, selected, plots_dir, reports_dir)
@@ -3787,15 +4541,12 @@ def run_random_scenario_mode(
               "--batch-rk4 with --st-lrps-mode gpu_rk4 was requested.",
               flush=True)
 
-    rng       = np.random.default_rng(args.scenario_seed)
-    scenarios = generate_random_scenarios(args, rng)
-    if args.scenario_limit:
-        scenarios = scenarios[:args.scenario_limit]
+    scenarios = prepare_scenarios(args, out_dir)
 
     print(f"\n[harness] {len(scenarios)} scenarios  truth={truth_model.upper()}  "
           f"models={[m.upper() for m in compare_models]}", flush=True)
 
-    _write_scenarios_csv(scenarios, out_dir)
+    _write_run_metadata(args, out_dir, scenarios)
     scenarios_by_id = {s.scenario_id: s for s in scenarios}
 
     # Resume support: load old rows into all_metrics

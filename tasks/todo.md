@@ -84,3 +84,68 @@ Done:
 
 Validation: full suite 673 passed, 2 pre-existing skips. Harness runs at new
 path (`python -m st_lrps.evaluation.compare_gravity_models --help`).
+
+---
+
+# Orbit-Level Benchmark — enhancements
+
+User asks: (1) create/add custom comparison models in the UI; (2) selectable
+ground-truth integrator RK45/DOP853; (3) CPU parallel processing; (4) GPU
+fixed-step light/medium/robust method choice.
+
+Harness (st_lrps/evaluation/compare_gravity_models.py):
+- GPU fixed-step integrator dispatch: light=RK2 midpoint, medium=RK4 classic,
+  robust=RK4+Richardson extrapolation (backend-agnostic gpu_fixed_step_advance);
+  --gpu-integrator {light,medium,robust}. Verified orders 2/4/5.
+- --truth-integrator {RK45,DOP853} via _cfg_with_integrator; applied to truth in
+  both modes (GPU build_truth_trajectory_set + CPU run_random_scenario_mode +
+  selected/worst plotting + batch-RK4 truth rebuild).
+- --workers N: ProcessPoolExecutor with per-worker initializer rebuilding
+  ephemeris + gravity caches; parallelizes the per-model adaptive CPU sweep
+  (sequential fallback for workers<=1 / batch-RK4). Verified end-to-end (2 workers).
+
+UI (orbit_benchmark_pages.py):
+- "Add model" field+button -> custom shNN models (validated, persisted), dynamic grid.
+- Truth integrator combo (always), Compare integrator (CPU), CPU workers spin,
+  GPU method combo (light/medium/robust); mode-dependent enable; flags emitted
+  per mode; persistence extended. _try_add_model is dialog-free for testability.
+
+Tests: extended tests/test_st_lrps_orbit_benchmark_ui.py (15 total) — integrator
+order/accuracy, fallback, CLI parse, _cfg_with_integrator, UI flags, custom-model
+add/reject. Full suite: 681 passed, 2 skips. Tiny real CPU-parallel run verified.
+
+---
+
+# Accumulation + AIAA relocation + professional PDF report
+
+Decisions: accumulate via resume toggle + total N (both modes); move AIAA code ->
+evaluation and outputs -> outputs/ (gitignored); professional PDF template.
+
+Done:
+- GPU-mode accumulation/resume in run_gpu_batch_compare_mode: load stored
+  per-scenario metrics, skip scenarios already done for all requested models,
+  build truth + propagate only NEW scenarios, merge+write the union, aggregate
+  over all. Plotting receives only newly-run scenarios (index-safe); aggregate
+  tables/bars cover the cumulative set. Helpers _read_csv_rows/_coerce_numeric_row.
+  CPU mode already accumulates via --resume (same seed, larger N).
+- Studio "Accumulate previous results (resume)" checkbox -> emits --resume; persisted.
+- AIAA: ported generate_publication_plots_v2 -> st_lrps/evaluation/publication_plots.py
+  (argparse paths --run/--stlrps-run/--multi-run/--out-dir). Moved the whole
+  "AIAA SciTech/" (15 MB, 79 tracked files: scripts + figures + run dirs) to
+  outputs/aiaa_scitech/ (gitignored) and git rm'd from the index. README tree updated.
+- Professional PDF report: _ReportPager toolkit (cover page, navy header band +
+  accent rule, footer w/ page numbers + timestamp, styled tables w/ header shading
+  + zebra rows + highlight, captioned figure pages, notes page). Rewrote
+  write_report_pdf + write_gpu_batch_report_pdf; numeric content unchanged.
+
+Validation:
+- Real CPU-forced GPU-batch accumulation smoke: 2 -> resume -> 4 scenarios,
+  aggregate n_ok=4, summary total=4/new=2.
+- PDF reports render (valid PdfPages, ~74-84 KB).
+- Full suite: 685 passed, 2 skipped (deterministic across 2 runs).
+
+Note: the torch Laplacian double-backward tests in
+test_surrogate_architecture_upgrades.py are natively fragile under full-suite
+co-execution (MKL/OpenMP threading vs torch double-backward). The pandas-importing
+publication test and the matplotlib PdfPages report test now run in isolated
+subprocesses so they don't perturb that shared-process native state.
