@@ -1184,6 +1184,7 @@ def evaluate(
     save_error_points: Optional[Path] = None,
     plot_sample_limit: int = 500_000,
     allow_config_mismatch: bool = False,
+    prefer: str = "best",
 ) -> None:
     model_dir = resolve_run_dir(model_dir)
     layout = make_run_layout(model_dir)
@@ -1244,7 +1245,9 @@ def evaluate(
         if isinstance(cfg_preflight, Mapping):
             _validate_degree_max_compat(cfg_preflight, ds_meta)
 
-    _prefer = "best"
+    _prefer = str(prefer or "best").strip().lower()
+    if _prefer not in ("best", "last"):
+        _prefer = "best"
     ckpt_path, _ckpt_full = load_best_or_last(layout, prefer=_prefer, device=device)
     model, scaler, cfg, _recon_report = reload_model_from_artifact_run_dir(
         model_dir,
@@ -2616,6 +2619,13 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--alt-bin-km", type=float, default=50.0, help="Altitude bin size for spatial RMSE breakdown (km).")
     ap.add_argument("--start", type=int, default=0, help="Start row for evaluation.")
     ap.add_argument("--end", type=int, default=None, help="End row (exclusive) for evaluation.")
+    ap.add_argument("--max-samples", type=int, default=None,
+                    help="Evaluate at most this many rows starting from --start (a lightweight "
+                         "alternative to --end; ignored when --end is set). Used by periodic "
+                         "evaluation during training.")
+    ap.add_argument("--checkpoint-prefer", choices=["best", "last"], default="best",
+                    help="Which checkpoint to evaluate when both exist (default: best). "
+                         "Periodic evaluation during training uses 'last'.")
     ap.add_argument("--max-points-for-plots", type=int, default=500_000, help="Cap number of points kept for plots.")
     ap.add_argument("--streaming", action="store_true", default=False,
                     help="Use streaming (online) evaluation mode. Does not accumulate full arrays in memory. "
@@ -2962,6 +2972,12 @@ def main() -> None:
     out_root = Path(args.out).resolve() if args.out else None
     device = get_device(args.device)
 
+    # --max-samples is a lightweight alternative to --end: evaluate at most N rows
+    # starting from --start. Explicit --end wins when both are provided.
+    resolved_end: Optional[int] = int(args.end) if args.end is not None else None
+    if resolved_end is None and getattr(args, "max_samples", None) is not None:
+        resolved_end = int(args.start) + int(args.max_samples)
+
     eval_timestamp = time.strftime("%Y%m%d_%H%M%S")
     def _job_out(label: str, path: Path, *, primary: bool = False) -> Path:
         if out_root is None:
@@ -3007,13 +3023,14 @@ def main() -> None:
             alt_bin_km=float(args.alt_bin_km),
             dataset_name=str(args.dataset_name),
             start=int(args.start),
-            end=(int(args.end) if args.end is not None else None),
+            end=resolved_end,
             max_points_for_plots=int(args.max_points_for_plots),
             streaming=bool(getattr(args, "streaming", False)),
             topk_errors=int(getattr(args, "topk_errors", 0)),
             save_error_points=(Path(args.save_error_points) if getattr(args, "save_error_points", None) else None),
             plot_sample_limit=int(getattr(args, "plot_sample_limit", 500_000)),
             allow_config_mismatch=bool(getattr(args, "allow_config_mismatch", False)),
+            prefer=str(getattr(args, "checkpoint_prefer", "best")),
         )
         completed_jobs.append((label, job_data_path, job_out_dir))
 

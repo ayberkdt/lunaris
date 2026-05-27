@@ -305,6 +305,23 @@ class TrainConfig:
     resume_allow_longer_epochs: bool = True  # allow extending the epoch target on resume
     resume_append_history: bool = True       # preserve/append previous history by default
 
+    # Periodic Evaluation During Training (monitoring only; OFF by default).
+    # At selected epochs, AFTER the epoch's validation and ckpt_last save, the
+    # evaluation CLI is run as a subprocess on the current checkpoint to produce
+    # field-level diagnostics (parity, acceleration/potential/angular metrics).
+    # This NEVER feeds back into the optimizer, scheduler, GradNorm, checkpoint
+    # selection, gradients, RNG, or model weights. periodic_eval_count and
+    # periodic_eval_every_epochs are mutually exclusive; both None = disabled.
+    periodic_eval_count: Optional[int] = None          # run N evals across the full horizon
+    periodic_eval_every_epochs: Optional[int] = None   # alternative: run every K epochs
+    periodic_eval_dataset: str = "val"                 # "val" | "test" | "ood"
+    periodic_eval_max_samples: int = 200_000           # keep monitoring eval lightweight
+    periodic_eval_batch_size: Optional[int] = None     # None = reuse training batch_size
+    periodic_eval_device: str = "auto"                 # "auto" | "cpu" | "cuda" | "mps"
+    periodic_eval_prefer_checkpoint: str = "last"      # "last" (default) | "best"
+    periodic_eval_timeout_sec: Optional[int] = None    # per-eval subprocess timeout
+    periodic_eval_continue_on_fail: bool = True        # failure must not abort training
+
 
 MODEL_PRESETS = (
     "baseline_raw",
@@ -915,6 +932,57 @@ def parse_args() -> TrainConfig:
     )
     ap.set_defaults(resume_append_history=True)
 
+    # Periodic Evaluation During Training (monitoring only; OFF by default)
+    group_peval = ap.add_argument_group("Periodic Evaluation During Training (monitoring only)")
+    peval_mode_group = group_peval.add_mutually_exclusive_group()
+    peval_mode_group.add_argument(
+        "--periodic-eval-count", type=int, default=None,
+        help="Run periodic evaluation N times spread across the full --epochs horizon "
+             "(e.g. --epochs 400 --periodic-eval-count 10 -> epochs 40,80,...,400). "
+             "Mutually exclusive with --periodic-eval-every-epochs. Disabled by default.",
+    )
+    peval_mode_group.add_argument(
+        "--periodic-eval-every-epochs", type=int, default=None,
+        help="Run periodic evaluation every K epochs (e.g. 25 -> 25,50,75,...). "
+             "Mutually exclusive with --periodic-eval-count. Disabled by default.",
+    )
+    group_peval.add_argument(
+        "--periodic-eval-dataset", choices=["val", "test", "ood"], default="val",
+        help="Dataset used for periodic evaluation (default: val). val falls back to "
+             "--data for single-dataset runs.",
+    )
+    group_peval.add_argument(
+        "--periodic-eval-max-samples", type=int, default=200_000,
+        help="Cap rows evaluated per periodic evaluation to keep it lightweight (default: 200000).",
+    )
+    group_peval.add_argument(
+        "--periodic-eval-batch-size", type=int, default=None,
+        help="Batch size for periodic evaluation (default: reuse the training batch size).",
+    )
+    group_peval.add_argument(
+        "--periodic-eval-device", choices=["auto", "cpu", "cuda", "mps"], default="auto",
+        help="Device for the periodic evaluation subprocess (default: auto).",
+    )
+    group_peval.add_argument(
+        "--periodic-eval-prefer-checkpoint", choices=["last", "best"], default="last",
+        help="Which checkpoint periodic evaluation should use (default: last — ckpt_best "
+             "may not be active during early training).",
+    )
+    group_peval.add_argument(
+        "--periodic-eval-timeout-sec", type=int, default=None,
+        help="Optional per-evaluation subprocess timeout in seconds (default: no timeout).",
+    )
+    peval_fail_group = group_peval.add_mutually_exclusive_group()
+    peval_fail_group.add_argument(
+        "--periodic-eval-continue-on-fail", action="store_true", dest="periodic_eval_continue_on_fail",
+        help="A failed periodic evaluation does not abort training (default).",
+    )
+    peval_fail_group.add_argument(
+        "--periodic-eval-fail-fast", action="store_false", dest="periodic_eval_continue_on_fail",
+        help="Abort training if a periodic evaluation fails.",
+    )
+    ap.set_defaults(periodic_eval_continue_on_fail=True)
+
     # ---------------------------------------------------------------------------
     # TrainConfig is the single source of truth for the recommended configuration.
     # There is no alternate default mode: the dataclass defaults ARE the recommended
@@ -1211,7 +1279,30 @@ def parse_args() -> TrainConfig:
         resume_strict=(not bool(getattr(a, "resume_nonstrict", False))),
         resume_allow_longer_epochs=True,
         resume_append_history=bool(getattr(a, "resume_append_history", True)),
+        periodic_eval_count=(int(a.periodic_eval_count) if a.periodic_eval_count is not None else None),
+        periodic_eval_every_epochs=(
+            int(a.periodic_eval_every_epochs) if a.periodic_eval_every_epochs is not None else None
+        ),
+        periodic_eval_dataset=str(a.periodic_eval_dataset),
+        periodic_eval_max_samples=max(1, int(a.periodic_eval_max_samples)),
+        periodic_eval_batch_size=(
+            int(a.periodic_eval_batch_size) if a.periodic_eval_batch_size is not None else None
+        ),
+        periodic_eval_device=str(a.periodic_eval_device),
+        periodic_eval_prefer_checkpoint=str(a.periodic_eval_prefer_checkpoint),
+        periodic_eval_timeout_sec=(
+            int(a.periodic_eval_timeout_sec) if a.periodic_eval_timeout_sec is not None else None
+        ),
+        periodic_eval_continue_on_fail=bool(a.periodic_eval_continue_on_fail),
     )
+    # Mutual-exclusivity is enforced by the argparse group, but guard explicitly
+    # in case TrainConfig is constructed programmatically.
+    if cfg.periodic_eval_count is not None and cfg.periodic_eval_every_epochs is not None:
+        print(
+            "Error: --periodic-eval-count and --periodic-eval-every-epochs are mutually "
+            "exclusive. Set at most one."
+        )
+        sys.exit(1)
     setattr(cfg, "_model_preset_explicit", bool(preset_explicit))
     return apply_model_preset(cfg)
 

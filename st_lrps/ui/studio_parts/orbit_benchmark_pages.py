@@ -1,0 +1,579 @@
+# -*- coding: utf-8 -*-
+"""
+st_lrps.ui.studio_parts.orbit_benchmark_pages
+
+Studio page for the orbit-level lunar gravity benchmark. It drives the relocated
+harness ``st_lrps.evaluation.compare_gravity_models`` as a subprocess, exposing
+the parameters most useful for orbit-level validation:
+
+* run mode — per-model DOP853 (RK8) vs a high-degree truth, OR GPU batch
+  fixed-step RK4 vs a DOP853 truth;
+* which models to run (SH20..SH160, ST-LRPS) and which truth model;
+* the RK4 fixed step (GPU mode) and DOP853 tolerances (RK8 mode);
+* random-scenario count/seed/mode, altitude band, duration, output cadence.
+
+The page only builds and launches a command; the harness owns all physics.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+from typing import List, Optional
+
+from .qt_common import *
+from .qt_common import NoScrollComboBox
+
+from .common_widgets import (
+    CollapsibleSection,
+    ImageGallery,
+    ProcessPane,
+    ValidatedPathEdit,
+    _format_command,
+    _mono_font,
+    _norm_path,
+    _row_lineedit_with_button,
+    _scroll_wrap,
+    _settings,
+    _split_cli_args,
+    _tune_form,
+    _tune_inputs,
+)
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = SCRIPT_DIR.parents[2]
+
+BENCHMARK_CLI_MODULE = "st_lrps.evaluation.compare_gravity_models"
+BENCHMARK_CLI_PATH = _REPO_ROOT / "st_lrps" / "evaluation" / "compare_gravity_models.py"
+BENCHMARK_OUTPUT_ROOT = _REPO_ROOT / "outputs" / "gravity_benchmark"
+
+# Comparison models offered as checkboxes (truth is selected separately).
+_COMPARISON_MODELS = ("sh20", "sh60", "sh80", "sh120", "sh160", "st_lrps")
+_DEFAULT_CHECKED = {"sh20", "sh80", "sh160", "st_lrps"}
+_TRUTH_CHOICES = ("sh120", "sh160", "sh200")
+
+
+class OrbitBenchmarkTab(QWidget):
+    """Configure and launch the orbit-level gravity benchmark harness."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+
+        # -- Run mode ------------------------------------------------------
+        grp_mode = QGroupBox("Run Mode")
+        form_mode = QFormLayout()
+        _tune_form(form_mode)
+        self.run_mode = NoScrollComboBox()
+        self.run_mode.addItem("Per-model DOP853 (RK8) vs truth", "dop853")
+        self.run_mode.addItem("GPU batch RK4 vs DOP853 truth", "gpu_rk4")
+        self.run_mode.setCurrentIndex(0)
+        self.run_mode.setToolTip(
+            "DOP853 (RK8): each model is propagated with the adaptive 8th-order "
+            "integrator and compared to the high-degree truth.\n"
+            "GPU batch RK4: all scenarios are propagated together with a fixed-step "
+            "RK4 kernel on the GPU and compared to a DOP853 truth."
+        )
+        self.truth = NoScrollComboBox()
+        for t in _TRUTH_CHOICES:
+            self.truth.addItem(t.upper(), t)
+        self.truth.setCurrentIndex(_TRUTH_CHOICES.index("sh200"))
+        self.truth.setToolTip("High-degree spherical-harmonic ground-truth model.")
+        form_mode.addRow("Mode", self.run_mode)
+        form_mode.addRow("Truth model", self.truth)
+        grp_mode.setLayout(form_mode)
+
+        # -- Models --------------------------------------------------------
+        grp_models = QGroupBox("Models to Run")
+        models_lo = QVBoxLayout()
+        self._model_checks: dict[str, QCheckBox] = {}
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        for i, name in enumerate(_COMPARISON_MODELS):
+            cb = QCheckBox(name.upper() if name.startswith("sh") else "ST-LRPS")
+            cb.setChecked(name in _DEFAULT_CHECKED)
+            cb.toggled.connect(self._refresh_command_preview)
+            self._model_checks[name] = cb
+            row.addWidget(cb)
+            if (i + 1) % 3 == 0:
+                models_lo.addLayout(row)
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+        if row.count():
+            models_lo.addLayout(row)
+        models_hint = QLabel(
+            "Selected models are compared against the truth model above. ST-LRPS "
+            "requires a trained run directory (auto-detected if left empty)."
+        )
+        models_hint.setWordWrap(True)
+        models_hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        models_lo.addWidget(models_hint)
+        grp_models.setLayout(models_lo)
+
+        # -- Scenarios -----------------------------------------------------
+        grp_scn = QGroupBox("Scenarios")
+        form_scn = QFormLayout()
+        _tune_form(form_scn)
+        self.random_scenarios = QSpinBox()
+        self.random_scenarios.setRange(1, 1_000_000)
+        self.random_scenarios.setValue(100)
+        self.scenario_seed = QSpinBox()
+        self.scenario_seed.setRange(0, 2_147_483_647)
+        self.scenario_seed.setValue(42)
+        self.scenario_mode = NoScrollComboBox()
+        self.scenario_mode.addItem("near_circular_altitude", "near_circular_altitude")
+        self.scenario_mode.addItem("bounded_keplerian", "bounded_keplerian")
+        self.alt_min = QDoubleSpinBox()
+        self.alt_min.setDecimals(1)
+        self.alt_min.setRange(1.0, 100_000.0)
+        self.alt_min.setValue(200.0)
+        self.alt_max = QDoubleSpinBox()
+        self.alt_max.setDecimals(1)
+        self.alt_max.setRange(1.0, 100_000.0)
+        self.alt_max.setValue(400.0)
+        self.duration_days = QDoubleSpinBox()
+        self.duration_days.setDecimals(4)
+        self.duration_days.setRange(0.0001, 3650.0)
+        self.duration_days.setValue(1.0)
+        self.dt_out = QDoubleSpinBox()
+        self.dt_out.setDecimals(2)
+        self.dt_out.setRange(0.01, 86400.0)
+        self.dt_out.setValue(60.0)
+        form_scn.addRow("Random scenarios", self.random_scenarios)
+        form_scn.addRow("Scenario seed", self.scenario_seed)
+        form_scn.addRow("Scenario mode", self.scenario_mode)
+        form_scn.addRow("Altitude min (km)", self.alt_min)
+        form_scn.addRow("Altitude max (km)", self.alt_max)
+        form_scn.addRow("Duration (days)", self.duration_days)
+        form_scn.addRow("Output cadence dt (s)", self.dt_out)
+        grp_scn.setLayout(form_scn)
+
+        # -- Integrator (mode-dependent) -----------------------------------
+        grp_integ = QGroupBox("Integrator")
+        form_integ = QFormLayout()
+        _tune_form(form_integ)
+        self.integrator = NoScrollComboBox()
+        self.integrator.addItem("DOP853 (RK8)", "DOP853")
+        self.integrator.addItem("RK45", "RK45")
+        self.integrator.setCurrentIndex(0)
+        self.integrator.setToolTip("Adaptive integrator for per-model DOP853 mode.")
+        self.rk4_dt = QDoubleSpinBox()
+        self.rk4_dt.setDecimals(3)
+        self.rk4_dt.setRange(0.001, 600.0)
+        self.rk4_dt.setValue(10.0)
+        self.rk4_dt.setToolTip("Fixed RK4 step size (seconds) for GPU batch mode.")
+        self.torch_dtype = NoScrollComboBox()
+        self.torch_dtype.addItems(["float64", "float32"])
+        self.gpu_fallback = NoScrollComboBox()
+        self.gpu_fallback.addItem("error (require CUDA)", "error")
+        self.gpu_fallback.addItem("cpu (fallback)", "cpu")
+        form_integ.addRow("DOP853 integrator", self.integrator)
+        form_integ.addRow("RK4 step (s)", self.rk4_dt)
+        form_integ.addRow("Torch dtype", self.torch_dtype)
+        form_integ.addRow("GPU fallback", self.gpu_fallback)
+        grp_integ.setLayout(form_integ)
+
+        # -- DOP853 tolerances (advanced) ----------------------------------
+        form_tol = QFormLayout()
+        _tune_form(form_tol)
+        self.rtol = QLineEdit("1e-10")
+        self.atol = QLineEdit("1e-12")
+        self.max_step = QDoubleSpinBox()
+        self.max_step.setDecimals(2)
+        self.max_step.setRange(0.0, 100_000.0)
+        self.max_step.setValue(30.0)
+        self.max_step.setToolTip("Maximum DOP853 step (s); 0 disables the user cap.")
+        form_tol.addRow("rtol", self.rtol)
+        form_tol.addRow("atol", self.atol)
+        form_tol.addRow("max step (s)", self.max_step)
+        tol_inner = QWidget()
+        tol_inner.setLayout(form_tol)
+        self._tol_section = CollapsibleSection("DOP853 Tolerances (advanced)")
+        tol_wrap = QVBoxLayout()
+        tol_wrap.setContentsMargins(0, 0, 0, 0)
+        tol_wrap.addWidget(tol_inner)
+        self._tol_section.set_content_layout(tol_wrap)
+
+        # -- Paths ---------------------------------------------------------
+        grp_paths = QGroupBox("ST-LRPS & Output")
+        form_paths = QFormLayout()
+        _tune_form(form_paths)
+        self.st_lrps_dir = ValidatedPathEdit(
+            placeholder="Empty -> auto-detect newest ST-LRPS run", check_file=False
+        )
+        btn_stl = QPushButton("Select...")
+        btn_stl.clicked.connect(self._pick_st_lrps_dir)
+        stl_row = _row_lineedit_with_button(self.st_lrps_dir, btn_stl)
+        self.out_dir = ValidatedPathEdit(
+            placeholder=f"Empty -> {BENCHMARK_OUTPUT_ROOT}", check_file=False
+        )
+        btn_out = QPushButton("Select...")
+        btn_out.clicked.connect(self._pick_out_dir)
+        out_row = _row_lineedit_with_button(self.out_dir, btn_out)
+        form_paths.addRow("ST-LRPS model dir", stl_row)
+        form_paths.addRow("Output dir", out_row)
+        grp_paths.setLayout(form_paths)
+
+        # -- Extra args + command preview ----------------------------------
+        self.extra_args = QLineEdit("")
+        self.extra_args.setPlaceholderText("Extra CLI arguments (optional)")
+        self.command_preview = QPlainTextEdit()
+        self.command_preview.setReadOnly(True)
+        self.command_preview.setFont(_mono_font())
+        self.command_preview.setMinimumHeight(60)
+        self.command_preview.setMaximumHeight(96)
+        self.command_warning = QLabel("")
+        self.command_warning.setWordWrap(True)
+        self.command_warning.setStyleSheet("color: #fbbf24; font-size: 11px;")
+        btn_preview = QPushButton("Preview Command")
+        btn_preview.clicked.connect(self._refresh_command_preview)
+        btn_copy = QPushButton("Copy Command")
+        btn_copy.clicked.connect(self._copy_command_preview)
+        preview_btns = QHBoxLayout()
+        preview_btns.setContentsMargins(0, 0, 0, 0)
+        preview_btns.addWidget(btn_preview)
+        preview_btns.addWidget(btn_copy)
+        preview_btns.addStretch(1)
+        preview_btns_w = QWidget()
+        preview_btns_w.setLayout(preview_btns)
+
+        form_extra = QFormLayout()
+        _tune_form(form_extra)
+        form_extra.addRow("Extra CLI args", self.extra_args)
+        form_extra.addRow("", preview_btns_w)
+        form_extra.addRow("Generated Command", self.command_preview)
+        form_extra.addRow("", self.command_warning)
+        extra_w = QWidget()
+        extra_w.setLayout(form_extra)
+
+        # -- Layout assembly ----------------------------------------------
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(12)
+        grid.addWidget(grp_mode, 0, 0)
+        grid.addWidget(grp_models, 0, 1)
+        grid.addWidget(grp_scn, 1, 0)
+        grid.addWidget(grp_integ, 1, 1)
+        grid.addWidget(self._tol_section, 2, 0, 1, 2)
+        grid.addWidget(grp_paths, 3, 0, 1, 2)
+        grid.addWidget(extra_w, 4, 0, 1, 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        for g in (grp_mode, grp_models, grp_scn, grp_integ, grp_paths):
+            _tune_inputs(g)
+
+        self.runner = ProcessPane()
+        self.runner.btn_start.setText("Run Benchmark")
+        self.runner.btn_start.clicked.connect(self._start)
+        self.runner.set_finished_hook(self._on_finished)
+        self._gallery = ImageGallery()
+        self._effective_out_dir = ""
+
+        top = QWidget()
+        top_l = QVBoxLayout()
+        top_l.setContentsMargins(8, 8, 8, 8)
+        top_l.addLayout(grid)
+        top.setLayout(top_l)
+
+        bottom = QWidget()
+        bl = QVBoxLayout()
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(8)
+        bl.addWidget(self.runner, 1)
+        bl.addWidget(self._gallery, 1)
+        bottom.setLayout(bl)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(_scroll_wrap(top))
+        splitter.addWidget(bottom)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([440, 520])
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(splitter, 1)
+        self.setLayout(layout)
+
+        # Wiring
+        self.run_mode.currentIndexChanged.connect(self._on_mode_changed)
+        for w in (
+            self.truth, self.scenario_mode, self.integrator,
+            self.torch_dtype, self.gpu_fallback,
+        ):
+            w.currentIndexChanged.connect(self._refresh_command_preview)
+        for w in (
+            self.random_scenarios, self.scenario_seed, self.alt_min, self.alt_max,
+            self.duration_days, self.dt_out, self.rk4_dt, self.max_step,
+        ):
+            w.valueChanged.connect(self._refresh_command_preview)
+        self.rtol.textChanged.connect(self._refresh_command_preview)
+        self.atol.textChanged.connect(self._refresh_command_preview)
+        self.st_lrps_dir.textChanged.connect(self._refresh_command_preview)
+        self.out_dir.textChanged.connect(self._refresh_command_preview)
+        self.extra_args.textChanged.connect(self._refresh_command_preview)
+
+        self._grp_integ = grp_integ
+        self._restore_settings()
+        self._on_mode_changed()
+
+    # ------------------------------------------------------------------
+    # Mode dependence
+    # ------------------------------------------------------------------
+    def _on_mode_changed(self, *_a) -> None:
+        mode = self.run_mode.currentData() or "dop853"
+        is_gpu = mode == "gpu_rk4"
+        self.integrator.setEnabled(not is_gpu)
+        self.rk4_dt.setEnabled(is_gpu)
+        self.torch_dtype.setEnabled(is_gpu)
+        self.gpu_fallback.setEnabled(is_gpu)
+        self._tol_section.setEnabled(not is_gpu)
+        self._refresh_command_preview()
+
+    # ------------------------------------------------------------------
+    # File pickers
+    # ------------------------------------------------------------------
+    def _pick_st_lrps_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(
+            self, "ST-LRPS model dir", self.st_lrps_dir.text() or str(SCRIPT_DIR)
+        )
+        if d:
+            self.st_lrps_dir.setText(_norm_path(d))
+
+    def _pick_out_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(
+            self, "Output dir", self.out_dir.text() or str(BENCHMARK_OUTPUT_ROOT)
+        )
+        if d:
+            self.out_dir.setText(_norm_path(d))
+
+    # ------------------------------------------------------------------
+    # Command construction
+    # ------------------------------------------------------------------
+    def _selected_models(self) -> List[str]:
+        return [name for name, cb in self._model_checks.items() if cb.isChecked()]
+
+    def _build_args(self, show_errors: bool = True) -> Optional[List[str]]:
+        def fail(title: str, message: str) -> Optional[List[str]]:
+            if show_errors:
+                QMessageBox.critical(self, title, message)
+            else:
+                self.command_warning.setText(message)
+            return None
+
+        if not show_errors:
+            self.command_warning.setText("")
+
+        if not BENCHMARK_CLI_PATH.exists():
+            return fail("Missing script", "st_lrps/evaluation/compare_gravity_models.py not found.")
+
+        models = self._selected_models()
+        if not models:
+            return fail("No models", "Select at least one model to run.")
+
+        mode = self.run_mode.currentData() or "dop853"
+        truth = self.truth.currentData() or "sh200"
+
+        args = ["-u", "-m", BENCHMARK_CLI_MODULE]
+        # Common scenario settings.
+        args += ["--random-scenarios", str(self.random_scenarios.value())]
+        args += ["--scenario-seed", str(self.scenario_seed.value())]
+        args += ["--scenario-mode", self.scenario_mode.currentData() or "near_circular_altitude"]
+        args += ["--altitude-min-km", str(self.alt_min.value())]
+        args += ["--altitude-max-km", str(self.alt_max.value())]
+        args += ["--duration-days", str(self.duration_days.value())]
+        args += ["--dt-out", str(self.dt_out.value())]
+        args += ["--truth", truth]
+
+        if mode == "gpu_rk4":
+            args += ["--gpu-batch-compare"]
+            args += ["--gpu-models", ",".join(models)]
+            args += ["--rk4-dt-s", str(self.rk4_dt.value())]
+            args += ["--torch-dtype", self.torch_dtype.currentText()]
+            args += ["--gpu-fallback", self.gpu_fallback.currentData() or "error"]
+        else:
+            args += ["--models", ",".join(models)]
+            args += ["--integrator", self.integrator.currentData() or "DOP853"]
+            rtol = self.rtol.text().strip()
+            atol = self.atol.text().strip()
+            for label, value in (("rtol", rtol), ("atol", atol)):
+                if value:
+                    try:
+                        float(value)
+                    except ValueError:
+                        return fail("Invalid tolerance", f"{label} must be a number, got {value!r}.")
+            if rtol:
+                args += ["--rtol", rtol]
+            if atol:
+                args += ["--atol", atol]
+            args += ["--max-step", str(self.max_step.value())]
+
+        if "st_lrps" in models:
+            stl = self.st_lrps_dir.text().strip()
+            if stl:
+                if not Path(stl).exists():
+                    return fail("Missing ST-LRPS dir", f"ST-LRPS model dir not found:\n{stl}")
+                args += ["--st-lrps-model-dir", stl]
+
+        out_dir = self.out_dir.text().strip() or str(BENCHMARK_OUTPUT_ROOT)
+        args += ["--output-dir", out_dir]
+
+        extra = self.extra_args.text().strip()
+        if extra:
+            extra_args, err = _split_cli_args(extra)
+            if err:
+                return fail("Invalid extra CLI arguments", err)
+            args += extra_args or []
+        return args
+
+    def _refresh_command_preview(self, *_a) -> None:
+        args = self._build_args(show_errors=False)
+        if not args:
+            self.command_preview.clear()
+            return
+        self.command_preview.setPlainText(_format_command(sys.executable, args))
+
+    def _copy_command_preview(self) -> None:
+        if not self.command_preview.toPlainText().strip():
+            self._refresh_command_preview()
+        QGuiApplication.clipboard().setText(self.command_preview.toPlainText())
+
+    # ------------------------------------------------------------------
+    # Run
+    # ------------------------------------------------------------------
+    def _start(self) -> None:
+        args = self._build_args(show_errors=True)
+        if not args:
+            return
+        out_dir = self.out_dir.text().strip() or str(BENCHMARK_OUTPUT_ROOT)
+        try:
+            Path(out_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "Output dir", f"Could not create output dir:\n{exc}")
+            return
+        self._effective_out_dir = out_dir
+        self.runner.set_output_dir(out_dir)
+        self.runner.progress.setRange(0, 0)
+        self._gallery.clear_gallery()
+        self._save_settings()
+        self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
+
+    def _on_finished(self, exit_code, exit_status) -> None:
+        out_dir = self._effective_out_dir
+        if not out_dir or not Path(out_dir).is_dir():
+            return
+        imgs: List[Path] = []
+        base = Path(out_dir)
+        imgs += list(base.glob("*.png")) + list(base.glob("*.jpg"))
+        for sub in base.glob("*/"):
+            if sub.is_dir():
+                imgs += list(sub.glob("*.png")) + list(sub.glob("*.jpg"))
+        imgs = sorted(set(imgs))
+        if imgs:
+            cnt = self._gallery.load_images(imgs)
+            if cnt:
+                self.runner.append(f"\n[UI] {cnt} plot(s) loaded: {out_dir}")
+        self.runner.set_output_dir(out_dir)
+        self.runner.btn_open_folder.setVisible(True)
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+    def _save_settings(self) -> None:
+        s = _settings()
+        s.beginGroup("orbit_benchmark")
+        s.setValue("run_mode", self.run_mode.currentData())
+        s.setValue("truth", self.truth.currentData())
+        s.setValue("models", ",".join(self._selected_models()))
+        s.setValue("random_scenarios", self.random_scenarios.value())
+        s.setValue("scenario_seed", self.scenario_seed.value())
+        s.setValue("scenario_mode", self.scenario_mode.currentData())
+        s.setValue("alt_min", self.alt_min.value())
+        s.setValue("alt_max", self.alt_max.value())
+        s.setValue("duration_days", self.duration_days.value())
+        s.setValue("dt_out", self.dt_out.value())
+        s.setValue("integrator", self.integrator.currentData())
+        s.setValue("rk4_dt", self.rk4_dt.value())
+        s.setValue("torch_dtype", self.torch_dtype.currentText())
+        s.setValue("gpu_fallback", self.gpu_fallback.currentData())
+        s.setValue("rtol", self.rtol.text())
+        s.setValue("atol", self.atol.text())
+        s.setValue("max_step", self.max_step.value())
+        s.setValue("st_lrps_dir", self.st_lrps_dir.text())
+        s.setValue("out_dir", self.out_dir.text())
+        s.endGroup()
+        s.sync()
+
+    def _restore_settings(self) -> None:
+        s = _settings()
+        s.beginGroup("orbit_benchmark")
+
+        def _combo(combo, key):
+            if s.contains(key):
+                idx = combo.findData(str(s.value(key)))
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+
+        _combo(self.run_mode, "run_mode")
+        _combo(self.truth, "truth")
+        if s.contains("models"):
+            wanted = {m for m in str(s.value("models", "")).split(",") if m}
+            if wanted:
+                for name, cb in self._model_checks.items():
+                    cb.setChecked(name in wanted)
+        for key, spin in (
+            ("random_scenarios", self.random_scenarios),
+            ("scenario_seed", self.scenario_seed),
+        ):
+            if s.contains(key):
+                try:
+                    spin.setValue(int(s.value(key)))
+                except (TypeError, ValueError):
+                    pass
+        for key, spin in (
+            ("alt_min", self.alt_min), ("alt_max", self.alt_max),
+            ("duration_days", self.duration_days), ("dt_out", self.dt_out),
+            ("rk4_dt", self.rk4_dt), ("max_step", self.max_step),
+        ):
+            if s.contains(key):
+                try:
+                    spin.setValue(float(s.value(key)))
+                except (TypeError, ValueError):
+                    pass
+        _combo(self.scenario_mode, "scenario_mode")
+        _combo(self.integrator, "integrator")
+        _combo(self.gpu_fallback, "gpu_fallback")
+        if s.contains("torch_dtype"):
+            self.torch_dtype.setCurrentText(str(s.value("torch_dtype", "float64")))
+        if s.contains("rtol"):
+            self.rtol.setText(str(s.value("rtol", "1e-10")))
+        if s.contains("atol"):
+            self.atol.setText(str(s.value("atol", "1e-12")))
+        if s.contains("st_lrps_dir"):
+            self.st_lrps_dir.setText(str(s.value("st_lrps_dir", "")))
+        if s.contains("out_dir"):
+            self.out_dir.setText(str(s.value("out_dir", "")))
+        s.endGroup()
+
+
+class OrbitBenchmarkPage(QWidget):
+    """Analysis workspace page: orbit-level gravity model benchmark."""
+
+    def __init__(self, benchmark_tab: QWidget, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        lo = QVBoxLayout()
+        lo.setContentsMargins(22, 20, 22, 20)
+        lo.setSpacing(14)
+        title = QLabel("Orbit-Level Benchmark")
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
+        subtitle = QLabel(
+            "Propagate full orbits and compare gravity models (SH / ST-LRPS) "
+            "against a high-degree truth — DOP853 (RK8) or GPU fixed-step RK4."
+        )
+        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        lo.addWidget(title)
+        lo.addWidget(subtitle)
+        lo.addWidget(benchmark_tab, 1)
+        self.setLayout(lo)
+
+
+__all__ = ["OrbitBenchmarkTab", "OrbitBenchmarkPage", "BENCHMARK_CLI_MODULE"]

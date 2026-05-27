@@ -89,7 +89,7 @@ python -m pip install -r requirements.txt
 python -c "import st_lrps; print(st_lrps.__version__)"
 python -m st_lrps.training.cli --help
 python -m st_lrps.evaluation.cli --help
-python -m validation.gravity.compare_gravity_models --help
+python -m st_lrps.evaluation.compare_gravity_models --help
 python -m visualization.surface_explorer --help
 ```
 
@@ -224,7 +224,7 @@ Canonical analysis modules:
 The validation layer is for independent physics, orbit, and cross-model checks. The current gravity validation harness is:
 
 ```bash
-python -m validation.gravity.compare_gravity_models --help
+python -m st_lrps.evaluation.compare_gravity_models --help
 ```
 
 Gravity validation commonly uses a high-degree spherical-harmonic model such as SH200 as the truth/reference, lower-degree spherical-harmonic models as baselines, and optional ST-LRPS comparison when a trained artifact directory is supplied. See `validation/README.md` and `validation/gravity/README.md` for details.

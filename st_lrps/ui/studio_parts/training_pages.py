@@ -1460,6 +1460,123 @@ class STLRPSTrainTab(QWidget):
         self._model_repr_section.set_content_layout(model_repr_wrap)
 
         # =====================================================================
+        # GROUP: Periodic Evaluation During Training (monitoring only)
+        # Optional, collapsed, and disabled by default. Runs the evaluation CLI
+        # as a subprocess at selected epochs to watch field-level diagnostics.
+        # Never affects optimizer / scheduler / GradNorm / checkpoint selection.
+        # =====================================================================
+        grp_periodic = QGroupBox("Periodic Evaluation (monitoring)")
+        form_periodic = QFormLayout()
+        _tune_form(form_periodic)
+
+        self.periodic_eval_enabled = QCheckBox("Enable periodic evaluation")
+        self.periodic_eval_enabled.setChecked(False)
+        self.periodic_eval_enabled.setToolTip(
+            "Run the evaluation pipeline (parity, acceleration/potential/angular metrics) "
+            "at selected epochs during training, on ckpt_last. Monitoring only — it does "
+            "NOT change training, the optimizer, the scheduler, or checkpoint selection."
+        )
+
+        self.periodic_eval_mode = NoScrollComboBox()
+        self.periodic_eval_mode.addItem("Count over full training", "count")
+        self.periodic_eval_mode.addItem("Every K epochs", "every")
+        self.periodic_eval_mode.setCurrentIndex(0)
+        self.periodic_eval_mode.setToolTip(
+            "Count: spread N evaluations evenly across --epochs (e.g. 10 over 400 -> "
+            "40,80,...,400). Every: run every K epochs."
+        )
+
+        self.periodic_eval_count = QSpinBox()
+        self.periodic_eval_count.setRange(1, 100000)
+        self.periodic_eval_count.setValue(10)
+        self.periodic_eval_count.setToolTip("How many evaluations to run across the full training horizon.")
+
+        self.periodic_eval_every = QSpinBox()
+        self.periodic_eval_every.setRange(1, 100000)
+        self.periodic_eval_every.setValue(25)
+        self.periodic_eval_every.setToolTip("Run a periodic evaluation every K epochs.")
+
+        self.periodic_eval_dataset = NoScrollComboBox()
+        self.periodic_eval_dataset.addItem("val", "val")
+        self.periodic_eval_dataset.addItem("test", "test")
+        self.periodic_eval_dataset.addItem("ood", "ood")
+        self.periodic_eval_dataset.setCurrentIndex(0)
+        self.periodic_eval_dataset.setToolTip(
+            "Dataset used for monitoring evaluation. val falls back to --data for "
+            "single-dataset runs. Missing datasets are skipped with a warning."
+        )
+
+        self.periodic_eval_max_samples = QSpinBox()
+        self.periodic_eval_max_samples.setRange(1, 1_000_000_000)
+        self.periodic_eval_max_samples.setSingleStep(10000)
+        self.periodic_eval_max_samples.setValue(200000)
+        self.periodic_eval_max_samples.setToolTip(
+            "Cap rows evaluated per run to keep monitoring lightweight (default 200000). "
+            "Do not run full validation/OOD here unless you intend to."
+        )
+
+        self.periodic_eval_batch_size = QSpinBox()
+        self.periodic_eval_batch_size.setRange(0, 4_000_000)
+        self.periodic_eval_batch_size.setSingleStep(1024)
+        self.periodic_eval_batch_size.setValue(0)
+        self.periodic_eval_batch_size.setSpecialValueText("auto (training batch size)")
+        self.periodic_eval_batch_size.setToolTip("Evaluation batch size. 0 = reuse the training batch size.")
+
+        self.periodic_eval_device = NoScrollComboBox()
+        self.periodic_eval_device.addItems(["auto", "cpu", "cuda", "mps"])
+        self.periodic_eval_device.setCurrentText("auto")
+        self.periodic_eval_device.setToolTip("Device for the evaluation subprocess.")
+
+        self.periodic_eval_continue_on_fail = QCheckBox("Continue training if an evaluation fails")
+        self.periodic_eval_continue_on_fail.setChecked(True)
+        self.periodic_eval_continue_on_fail.setToolTip(
+            "When checked (default), a failed periodic evaluation is logged and recorded but "
+            "does not stop training. Uncheck to abort training on evaluation failure."
+        )
+
+        periodic_help = QLabel(
+            "Outputs: <run_dir>/periodic_evals/epoch_XXXX/  (history: periodic_eval_history.jsonl). "
+            "Monitoring only — does not affect weights, optimizer, scheduler, GradNorm, RNG, or "
+            "best-checkpoint selection. On resume, already-completed evaluations are skipped."
+        )
+        periodic_help.setWordWrap(True)
+        periodic_help.setStyleSheet("color: #94a3b8; font-size: 11px;")
+
+        form_periodic.addRow(self.periodic_eval_enabled)
+        form_periodic.addRow("Mode", self.periodic_eval_mode)
+        form_periodic.addRow("Count (N)", self.periodic_eval_count)
+        form_periodic.addRow("Every (K epochs)", self.periodic_eval_every)
+        form_periodic.addRow("Dataset", self.periodic_eval_dataset)
+        form_periodic.addRow("Max samples", self.periodic_eval_max_samples)
+        form_periodic.addRow("Batch size", self.periodic_eval_batch_size)
+        form_periodic.addRow("Device", self.periodic_eval_device)
+        form_periodic.addRow(self.periodic_eval_continue_on_fail)
+        form_periodic.addRow("", periodic_help)
+        grp_periodic.setLayout(form_periodic)
+        self._grp_periodic = grp_periodic
+
+        self._periodic_eval_section = CollapsibleSection("Periodic Evaluation")
+        periodic_wrap = QVBoxLayout()
+        periodic_wrap.setContentsMargins(0, 0, 0, 0)
+        periodic_wrap.addWidget(grp_periodic)
+        self._periodic_eval_section.set_content_layout(periodic_wrap)
+
+        # Enable-state + command preview wiring.
+        self.periodic_eval_enabled.toggled.connect(self._on_periodic_eval_toggled)
+        self.periodic_eval_mode.currentIndexChanged.connect(self._on_periodic_eval_toggled)
+        self.periodic_eval_enabled.toggled.connect(self._refresh_command_preview)
+        self.periodic_eval_mode.currentIndexChanged.connect(self._refresh_command_preview)
+        self.periodic_eval_continue_on_fail.toggled.connect(self._refresh_command_preview)
+        for _sp in (
+            self.periodic_eval_count, self.periodic_eval_every,
+            self.periodic_eval_max_samples, self.periodic_eval_batch_size,
+        ):
+            _sp.valueChanged.connect(self._refresh_command_preview)
+        self.periodic_eval_dataset.currentIndexChanged.connect(self._refresh_command_preview)
+        self.periodic_eval_device.currentIndexChanged.connect(self._refresh_command_preview)
+        self._on_periodic_eval_toggled()
+
+        # =====================================================================
         # EXTRA CLI ARGS
         # =====================================================================
         self.extra_args = QLineEdit("")
@@ -1482,6 +1599,7 @@ class STLRPSTrainTab(QWidget):
         grid.addWidget(self._field_loss_section, 5, 0, 1, 2)
         grid.addWidget(self.advanced_section, 6, 0, 1, 2)
         grid.addWidget(self._model_repr_section, 7, 0, 1, 2)
+        grid.addWidget(self._periodic_eval_section, 8, 0, 1, 2)
 
         extra_row_layout = QFormLayout()
         _tune_form(extra_row_layout)
@@ -1522,6 +1640,7 @@ class STLRPSTrainTab(QWidget):
         _tune_inputs(self._model_repr_section)
         _tune_inputs(self._dir_loss_section)
         _tune_inputs(self._field_loss_section)
+        _tune_inputs(self._periodic_eval_section)
 
         # --- ProcessPane ---
         self.runner = ProcessPane()
@@ -1884,6 +2003,25 @@ class STLRPSTrainTab(QWidget):
             widget.setEnabled(enabled)
         self._refresh_command_preview()
         self._refresh_checklist()
+
+    def _on_periodic_eval_toggled(self, *_args) -> None:
+        """Enable/disable periodic-eval controls based on the enable checkbox and mode."""
+        enabled = self.periodic_eval_enabled.isChecked()
+        mode = self.periodic_eval_mode.currentData() or "count"
+        for widget in (
+            self.periodic_eval_mode,
+            self.periodic_eval_count,
+            self.periodic_eval_every,
+            self.periodic_eval_dataset,
+            self.periodic_eval_max_samples,
+            self.periodic_eval_batch_size,
+            self.periodic_eval_device,
+            self.periodic_eval_continue_on_fail,
+        ):
+            widget.setEnabled(enabled)
+        # Only the active mode's spin box is editable.
+        self.periodic_eval_count.setEnabled(enabled and mode == "count")
+        self.periodic_eval_every.setEnabled(enabled and mode == "every")
 
     def _on_loss_feature_toggled(self, *_args) -> None:
         altitude_enabled = self.use_altitude_balanced_loss.isChecked()
@@ -2309,6 +2447,16 @@ class STLRPSTrainTab(QWidget):
             "physical_radial_decay_append_raw": self.physical_radial_decay_append_raw.isChecked(),
             "physical_radial_decay_include_unit": self.physical_radial_decay_include_unit.isChecked(),
             "physical_radial_decay_include_r_scaled": self.physical_radial_decay_include_r_scaled.isChecked(),
+            # Periodic evaluation (monitoring only)
+            "periodic_eval_enabled": self.periodic_eval_enabled.isChecked(),
+            "periodic_eval_mode": self.periodic_eval_mode.currentData() or "count",
+            "periodic_eval_count": self.periodic_eval_count.value(),
+            "periodic_eval_every": self.periodic_eval_every.value(),
+            "periodic_eval_dataset": self.periodic_eval_dataset.currentData() or "val",
+            "periodic_eval_max_samples": self.periodic_eval_max_samples.value(),
+            "periodic_eval_batch_size": self.periodic_eval_batch_size.value(),
+            "periodic_eval_device": self.periodic_eval_device.currentText(),
+            "periodic_eval_continue_on_fail": self.periodic_eval_continue_on_fail.isChecked(),
             # Workflow
             "workflow_mode": self.workflow_mode.currentData() or "train_then_eval",
             "extra_args": self.extra_args.text(),
@@ -2468,9 +2616,38 @@ class STLRPSTrainTab(QWidget):
             else:
                 self._suite_manifest_label.setText("(no suite applied)")
                 self._suite_manifest_label.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        # Periodic evaluation (monitoring only) — backward compatible: old profiles
+        # without these keys keep the current (disabled) widget values.
+        for _pk, _spin in (
+            ("periodic_eval_count", self.periodic_eval_count),
+            ("periodic_eval_every", self.periodic_eval_every),
+            ("periodic_eval_max_samples", self.periodic_eval_max_samples),
+            ("periodic_eval_batch_size", self.periodic_eval_batch_size),
+        ):
+            if _pk in cfg:
+                try:
+                    _spin.setValue(int(cfg[_pk]))
+                except Exception:
+                    pass
+        if "periodic_eval_enabled" in cfg:
+            self.periodic_eval_enabled.setChecked(bool(cfg["periodic_eval_enabled"]))
+        if "periodic_eval_continue_on_fail" in cfg:
+            self.periodic_eval_continue_on_fail.setChecked(bool(cfg["periodic_eval_continue_on_fail"]))
+        if "periodic_eval_mode" in cfg:
+            idx = self.periodic_eval_mode.findData(str(cfg["periodic_eval_mode"]))
+            if idx >= 0:
+                self.periodic_eval_mode.setCurrentIndex(idx)
+        if "periodic_eval_dataset" in cfg:
+            idx = self.periodic_eval_dataset.findData(str(cfg["periodic_eval_dataset"]))
+            if idx >= 0:
+                self.periodic_eval_dataset.setCurrentIndex(idx)
+        if "periodic_eval_device" in cfg:
+            self.periodic_eval_device.setCurrentText(str(cfg["periodic_eval_device"]))
+
         self._on_dataset_mode_changed()
         self._on_resume_toggled(self.resume_enabled.isChecked())
         self._on_loss_feature_toggled()
+        self._on_periodic_eval_toggled()
         if hasattr(self, "model_preset"):
             self._on_model_preset_changed()
         if hasattr(self, "log_every_mode"):
@@ -3026,6 +3203,23 @@ class STLRPSTrainTab(QWidget):
         args += ["--n-bands", str(self.n_bands.value())]
         args += ["--grad-accumulation-steps", str(self.grad_accumulation_steps.value())]
         args += ["--n-hutchinson-samples", str(self.n_hutchinson_samples.value())]
+
+        # Periodic Evaluation During Training (monitoring only).
+        # Emit flags ONLY when explicitly enabled, so default commands are unchanged.
+        if self.periodic_eval_enabled.isChecked():
+            mode = self.periodic_eval_mode.currentData() or "count"
+            if mode == "every":
+                args += ["--periodic-eval-every-epochs", str(self.periodic_eval_every.value())]
+            else:
+                args += ["--periodic-eval-count", str(self.periodic_eval_count.value())]
+            args += ["--periodic-eval-dataset", self.periodic_eval_dataset.currentData() or "val"]
+            args += ["--periodic-eval-max-samples", str(self.periodic_eval_max_samples.value())]
+            _pe_bs = self.periodic_eval_batch_size.value()
+            if _pe_bs > 0:
+                args += ["--periodic-eval-batch-size", str(_pe_bs)]
+            args += ["--periodic-eval-device", self.periodic_eval_device.currentText()]
+            if not self.periodic_eval_continue_on_fail.isChecked():
+                args += ["--periodic-eval-fail-fast"]
 
         # Suite manifest provenance (set when a dataset suite is applied)
         _sm = getattr(self, "applied_suite_manifest_path", "") or ""

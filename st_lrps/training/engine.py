@@ -70,6 +70,11 @@ from st_lrps.training.losses import (
     GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
     collocation_laplacian_loss,
 )
+from st_lrps.training.periodic_eval import (
+    completed_periodic_eval_epochs,
+    resolve_periodic_eval_plan,
+    run_periodic_eval,
+)
 from st_lrps.training.metrics import (
     HISTORY_FIELDNAMES,
     checkpoint_selection_block,
@@ -2358,6 +2363,25 @@ def train(cfg: TrainConfig) -> None:
         if log_path.exists():
             log_path.unlink()
 
+    # Periodic Evaluation During Training (monitoring only; OFF by default).
+    # Schedule is resolved from the first epoch that will actually run, so a
+    # resume drops already-passed scheduled epochs. Evaluation runs in a separate
+    # process after ckpt_last is saved and cannot affect training state.
+    periodic_plan = resolve_periodic_eval_plan(cfg, start_epoch=int(start_epoch) + 1)
+    _periodic_completed: set = set()
+    if periodic_plan.enabled:
+        _periodic_completed = completed_periodic_eval_epochs(outdir)
+        logger.info(
+            f"[periodic-eval] scheduled epochs: {','.join(str(e) for e in periodic_plan.epochs)} "
+            f"| dataset={periodic_plan.dataset} checkpoint={periodic_plan.prefer_checkpoint} "
+            f"max_samples={periodic_plan.max_samples} device={periodic_plan.device} "
+            f"continue_on_fail={periodic_plan.continue_on_fail}"
+        )
+        if _periodic_completed:
+            _already = sorted(e for e in _periodic_completed if e in periodic_plan.epochs_set)
+            if _already:
+                logger.info(f"[periodic-eval] already recorded (resume) — will skip: {_already}")
+
     # Graceful, epoch-level interruption. A single Ctrl+C (SIGINT) sets a flag;
     # the loop finishes the current epoch, saves ckpt_last, marks the manifest
     # "interrupted", and exits. A second Ctrl+C restores default handling for a
@@ -2620,6 +2644,44 @@ def train(cfg: TrainConfig) -> None:
             jsonl_row["checkpoint_report"] = dict(checkpoint_report)
             logf.write(json.dumps(jsonl_row, sort_keys=True, default=str) + "\n")
             logf.flush()
+
+            # Periodic evaluation (monitoring only). Runs AFTER ckpt_last is saved
+            # and the history row is written. It is a fully isolated subprocess and
+            # cannot change optimizer/scheduler/GradNorm/RNG/model/checkpoint state.
+            if periodic_plan.enabled:
+                _epoch_1based = int(epoch) + 1
+                if (
+                    _epoch_1based in periodic_plan.epochs_set
+                    and _epoch_1based not in _periodic_completed
+                ):
+                    _peval_ok = True
+                    try:
+                        _peval_ok = run_periodic_eval(
+                            cfg, outdir, _epoch_1based, periodic_plan,
+                            log=logger, dataset_name=dset_name,
+                        )
+                    except Exception as _peval_exc:  # pragma: no cover - defensive
+                        _peval_ok = False
+                        logger.warning(f"[periodic-eval] epoch={_epoch_1based} unexpected error: {_peval_exc}")
+                    _periodic_completed.add(_epoch_1based)
+                    if not _peval_ok and not periodic_plan.continue_on_fail:
+                        run_status = "failed"
+                        logger.error(
+                            f"[periodic-eval] aborting training at epoch {_epoch_1based} "
+                            "because continue_on_fail is disabled."
+                        )
+                        update_run_manifest(
+                            layout,
+                            {
+                                "status": "failed",
+                                "latest_epoch": int(epoch + 1),
+                                "notes": [
+                                    f"Training stopped: periodic evaluation failed at epoch {_epoch_1based} "
+                                    "with --periodic-eval-fail-fast."
+                                ],
+                            },
+                        )
+                        break
 
             _lde = float(tr.get("lambda_dir_eff", 0.0))
             _dir_log = (

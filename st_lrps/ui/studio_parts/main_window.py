@@ -67,6 +67,7 @@ from .data_pages import CloudGenTab, CloudAnalysisTab, DataPage
 from .training_pages import STLRPSTrainTab
 from .evaluation_pages import STLRPSEvalTab, EvaluationPage
 from .runtime_pages import STLRPSProfilingTab, RuntimePerformancePage
+from .orbit_benchmark_pages import OrbitBenchmarkTab, OrbitBenchmarkPage
 
 
 # pyqtgraph — optional, graceful fallback
@@ -208,6 +209,7 @@ class MainWindow(QMainWindow):
         self._profile_tab  = STLRPSProfilingTab()
         self._eval_tab     = STLRPSEvalTab()
         self._analysis_tab = CloudAnalysisTab()
+        self._orbit_benchmark_tab = OrbitBenchmarkTab()
 
         self._cloud_tab.set_train_tab(self._train_tab)
         self._cloud_tab.cloud_params_changed.connect(self._train_tab.sync_from_cloud)
@@ -218,6 +220,7 @@ class MainWindow(QMainWindow):
         self._train_monitor_page = self._train_tab.monitor_page
         self._eval_page = EvaluationPage(self._eval_tab)
         self._runtime_page = RuntimePerformancePage(self._profile_tab)
+        self._orbit_benchmark_page = OrbitBenchmarkPage(self._orbit_benchmark_tab)
         self._data_page.inspect_panel.send_to_training.connect(self._on_dataset_to_training)
         self._train_tab.navigate_monitor_requested.connect(lambda: self._navigate(2))
 
@@ -227,12 +230,14 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._train_monitor_page)     # index 2: Training Monitor
         self._stack.addWidget(self._eval_page)              # index 3: Evaluation
         self._stack.addWidget(self._runtime_page)           # index 4: Runtime Performance
+        self._stack.addWidget(self._orbit_benchmark_page)   # index 5: Orbit-Level Benchmark
         self._page_titles = [
             "Data",
             "Training Setup",
             "Training Monitor",
             "Evaluation",
             "Runtime Performance",
+            "Orbit-Level Benchmark",
         ]
 
         dep_info = []
@@ -335,6 +340,7 @@ class MainWindow(QMainWindow):
         for tab in (
             self._cloud_tab, self._analysis_tab,
             self._train_tab, self._profile_tab, self._eval_tab,
+            self._orbit_benchmark_tab,
         ):
             _apply_status_tips(tab)
 
@@ -434,6 +440,7 @@ class MainWindow(QMainWindow):
         analysis_box, analysis_l = _group_box()
         analysis_l.addWidget(_nav_btn("Evaluation", 3))
         analysis_l.addWidget(_nav_btn("Runtime Performance", 4))
+        analysis_l.addWidget(_nav_btn("Orbit-Level Benchmark", 5))
         lo.addWidget(analysis_box)
 
         lo.addStretch(1)
