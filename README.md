@@ -237,11 +237,19 @@ Gravity validation commonly uses a high-degree spherical-harmonic model such as 
 A comprehensive physical validation benchmark of the **ST-LRPS neural surrogate** against classical Spherical Harmonic (SH) baselines over **128 randomized orbits** has been completed on a consumer laptop workstation (Intel CPU + GTX 1660 Ti):
 
 * **The Accuracy Victory:** ST-LRPS outperformed all classical baselines in median trajectory accuracy, achieving a median RMS position error of **1.106 km** over a total traveled distance of **704,160 km** (a relative error of only **0.00015%**!).
-* **Meter-Level Orbit Control:** The directional error decomposition (RIC) shows that uydunun orbital path has been maintained with **Radial (Altitude) error of only 41 meters** and **Cross-Track (Plane tilt) error of only 6 meters** after 5 days of unguided propagation!
+* **Meter-Level Orbit Control:** Radial (Altitude) error of only **41 meters** and Cross-Track (Plane tilt) error of only **6 meters** after 5 days of unguided propagation!
 * **The Computational Speedup:** 
   * ST-LRPS is **nearly 2x faster than SH50** (3,377 seconds vs. 6,620 seconds), while delivering far superior physical accuracy.
   * ST-LRPS adds only **6% computational overhead** compared to the extremely lightweight `SH20` baseline model.
   * It achieves a **9.55x wall-clock speedup** compared to the high-fidelity sequential CPU truth reference.
+
+### ⚡ 1-Day High-Degree Spherical Harmonic Benchmark (100 Scenarios, 1-Day Propagation)
+
+A validation comparing ST-LRPS directly against classical high-degree Spherical Harmonics (`SH100` and `SH200`) under general eliptic orbits ($100\text{ km}$ to $1000\text{ km}$ altitude):
+
+* **High-Degree Accuracy Parity:** ST-LRPS achieved a median RMS position error of only **0.626 km**, outperforming `SH30` (**1.450 km**) and `SH20` (**18.217 km**), while closely matching the accuracy of `SH100` (**0.461 km**) and `SH200` (**0.461 km**).
+* **29x Baseline Correction:** Sitting on a lightweight `SH20` baseline, ST-LRPS corrected the error by a factor of **29.1x** (from 18.217 km down to 0.626 km) using Sobolev neural residuals.
+* **Massive GPU Speedup:** ST-LRPS executed **8.32x faster than SH200** (665s vs 5,540s) and **3.64x faster than SH100** (665s vs 2,423s), proving high-degree potential surrogate efficiency.
 
 ### 🎯 Ultra-Precision 1-Day Near-Circular Gravity Benchmark (100 Scenarios, 1-Day Propagation)
 
@@ -253,18 +261,19 @@ A specialized benchmark focusing on dense low-lunar mapping envelopes ($200\text
 
 ### 🔄 Side-by-Side Performance Comparison
 
-The table below demonstrates how adjusting numerical precision (`float64`), integration step size ($\Delta t = 10.0\text{ s}$), and focusing on low-altitude circular mapping orbits pushes the ST-LRPS surrogate from kilometer-level long-term stability down into the **centimeter-level precision envelope**:
+The table below demonstrates how adjusting numerical precision (`float64`), integration step size ($\Delta t$), and focusing on specific orbit envelopes showcases different performance and accuracy regimes of the ST-LRPS surrogate:
 
-| Kriter / Metrik | 5-Günlük Genel Kararlılık Testi | 1-Günlük Ultra Hassas Kıyaslama |
-| :--- | :---: | :---: |
-| **Yörünge Tipi** | Bounded Keplerian (Circular/Eccentric) | Near-Circular (Dairesel Alçak Yörünge) |
-| **Sayısal Hassasiyet (Dtype)** | Single-Precision `float32` | Double-Precision `float64` |
-| **Entegrasyon Adımı ($\Delta t$)** | $30.0\text{ saniye}$ | $10.0\text{ saniye}$ |
-| **Median RMS Pozisyon Hatası** | **1.106 km** | **15.83 cm** |
-| **Radial (İrtifa) Median RMS** | **41 metre** | **4.58 cm** |
-| **Cross-Track (Eğiklik) Median RMS**| **6 metre** | **2.00 cm** |
-| **Along-Track (Faz) Median RMS** | **1.102 km** | **15.03 cm** |
-| **GPU Hızlanma Oranı** | **9.55x** speedup | **2.25x** speedup |
+| Kriter / Metrik | 5-Günlük Genel Kararlılık Testi | 1-Günlük Yüksek Derece Karşılaştırma | 1-Günlük Ultra Hassas Kıyaslama |
+| :--- | :---: | :---: | :---: |
+| **Yörünge Tipi** | Bounded Keplerian (Circular/Eliptic) | Bounded Keplerian (Circular/Eliptic) | Near-Circular (Dairesel Alçak Yörünge) |
+| **Sayısal Hassasiyet (Dtype)** | Single-Precision `float32` | Double-Precision `float64` | Double-Precision `float64` |
+| **Entegrasyon Adımı ($\Delta t$)** | $30.0\text{ saniye}$ | $30.0\text{ saniye}$ | $10.0\text{ saniye}$ |
+| **ST-LRPS Median RMS Pozisyon Hatası** | **1.106 km** | **0.626 km** *(626.4 m)* | **15.83 cm** |
+| **SH20 Baseline Median RMS Hatası** | **1.570 km** | **18.217 km** (Fiziksel bozulma) | **1.821 km** (Kararsızlaşmış yörünge) |
+| **Radial (İrtifa) Median RMS** | **41 metre** | **7.20 cm** | **4.58 cm** |
+| **Cross-Track (Eğiklik) Median RMS**| **6 metre** | **4.87 cm** | **2.00 cm** |
+| **Along-Track (Faz) Median RMS** | **1.102 km** | **62.12 cm** | **15.03 cm** |
+| **GPU Hızlanma Oranı (vs. Truth)** | **9.55x** speedup (vs. CPU) | **5.59x** speedup (**8.32x** vs. SH200) | **2.25x** speedup (vs. CPU) |
 
 For the complete benchmark breakdown, tables, physical analyses, and step-by-step instructions on how to reproduce the results via the CLI or the Desktop UI, see the official **[ST-LRPS Gravity Model Benchmark Results](docs/BENCHMARK_RESULTS.md)**.
 
