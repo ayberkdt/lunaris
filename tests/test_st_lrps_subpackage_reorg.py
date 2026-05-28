@@ -4,7 +4,7 @@ Regression tests for the ST-LRPS Part 2 subpackage reorganization.
 
 Guards:
 - the new subpackages import,
-- top-level ``import st_lrps`` stays lightweight (no torch / training engine),
+- top-level ``import lunaris.surrogate.st_lrps`` stays lightweight (no torch / training engine),
 - canonical public imports resolve from their new homes,
 - old flat module imports fail (no compatibility wrappers),
 - old flat module files are gone,
@@ -43,8 +43,8 @@ OLD_FLAT_FILES = tuple(f"{_PKG}/{leaf}.py" for leaf in _OLD_LEAVES) + (
 )
 
 NEW_SUBPACKAGES = (
-    "st_lrps.data", "st_lrps.training", "st_lrps.networks", "st_lrps.artifacts",
-    "st_lrps.evaluation", "st_lrps.runtime", "st_lrps.ui", "st_lrps.shared",
+    "lunaris.surrogate.st_lrps.data", "lunaris.surrogate.st_lrps.training", "lunaris.surrogate.st_lrps.networks", "lunaris.surrogate.st_lrps.artifacts",
+    "lunaris.surrogate.st_lrps.evaluation", "lunaris.surrogate.st_lrps.runtime", "lunaris.surrogate.st_lrps.ui", "lunaris.surrogate.st_lrps.shared",
 )
 
 SKIP_DIR_PARTS = {".git", ".claude", "__pycache__", ".pytest_cache", ".mypy_cache", "node_modules"}
@@ -67,7 +67,7 @@ def _iter_source_files() -> list[Path]:
 # 1) New subpackages import
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("module", ("st_lrps",) + NEW_SUBPACKAGES)
+@pytest.mark.parametrize("module", ("lunaris.surrogate.st_lrps",) + NEW_SUBPACKAGES)
 def test_new_subpackages_import(module: str) -> None:
     assert importlib.import_module(module) is not None
 
@@ -78,10 +78,10 @@ def test_new_subpackages_import(module: str) -> None:
 
 def test_top_level_import_is_lightweight() -> None:
     code = (
-        "import sys, st_lrps; "
+        "import sys, lunaris.surrogate.st_lrps as st_lrps; "
         "heavy = [m for m in ('torch', 'h5py') if m in sys.modules]; "
-        "eng = [m for m in sys.modules if m.startswith('st_lrps.training') "
-        "or m.startswith('st_lrps.networks') or m.startswith('st_lrps.runtime')]; "
+        "eng = [m for m in sys.modules if m.startswith('lunaris.surrogate.st_lrps.training') "
+        "or m.startswith('lunaris.surrogate.st_lrps.networks') or m.startswith('lunaris.surrogate.st_lrps.runtime')]; "
         "print(repr(heavy)); print(repr(eng)); print(st_lrps.__version__)"
     )
     proc = subprocess.run(
@@ -89,8 +89,8 @@ def test_top_level_import_is_lightweight() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.strip().splitlines()
-    assert lines[0] == "[]", f"import st_lrps pulled heavy modules: {lines[0]}"
-    assert lines[1] == "[]", f"import st_lrps imported heavy submodules: {lines[1]}"
+    assert lines[0] == "[]", f"import lunaris.surrogate.st_lrps pulled heavy modules: {lines[0]}"
+    assert lines[1] == "[]", f"import lunaris.surrogate.st_lrps imported heavy submodules: {lines[1]}"
     assert lines[2]
 
 
@@ -99,15 +99,15 @@ def test_top_level_import_is_lightweight() -> None:
 # ---------------------------------------------------------------------------
 
 def test_canonical_public_imports() -> None:
-    from st_lrps.training.config import TrainConfig
-    from st_lrps.training.engine import STLRPSTrainer
-    from st_lrps.training.losses import SobolevLoss
-    from st_lrps.training.metrics import normalize_best_metric
-    from st_lrps.networks.models import PhysicsNet, build_model_from_config
-    from st_lrps.shared.scaling import ScalerPack
-    from st_lrps.artifacts.manager import make_run_layout
-    from st_lrps.data.datasets import DatasetMeta
-    from st_lrps.runtime.force_model import load_surrogate_force_model
+    from lunaris.surrogate.st_lrps.training.config import TrainConfig
+    from lunaris.surrogate.st_lrps.training.engine import STLRPSTrainer
+    from lunaris.surrogate.st_lrps.training.losses import SobolevLoss
+    from lunaris.surrogate.st_lrps.training.metrics import normalize_best_metric
+    from lunaris.surrogate.st_lrps.networks.models import PhysicsNet, build_model_from_config
+    from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
+    from lunaris.surrogate.st_lrps.artifacts.manager import make_run_layout
+    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
+    from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
 
     for obj in (
         TrainConfig, STLRPSTrainer, SobolevLoss, normalize_best_metric,
@@ -120,8 +120,8 @@ def test_canonical_public_imports() -> None:
 def test_runtime_does_not_depend_on_training() -> None:
     """The runtime inference boundary must not pull the training package."""
     code = (
-        "import sys; from st_lrps.runtime.force_model import load_surrogate_force_model; "
-        "bad = [m for m in sys.modules if m.startswith('st_lrps.training')]; "
+        "import sys; from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model; "
+        "bad = [m for m in sys.modules if m.startswith('lunaris.surrogate.st_lrps.training')]; "
         "print(repr(bad))"
     )
     proc = subprocess.run(
@@ -156,7 +156,7 @@ def test_old_flat_files_absent(rel_path: str) -> None:
 
 @pytest.mark.parametrize(
     "module",
-    ["st_lrps.training.cli", "st_lrps.evaluation.cli", "st_lrps.evaluation.ablation"],
+    ["lunaris.surrogate.st_lrps.training.cli", "lunaris.surrogate.st_lrps.evaluation.cli", "lunaris.surrogate.st_lrps.evaluation.ablation"],
 )
 def test_cli_help_exits_zero(module: str) -> None:
     pytest.importorskip("torch")

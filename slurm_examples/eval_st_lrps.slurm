@@ -27,5 +27,5 @@ mkdir -p outputs/slurm_logs
 # Run evaluation
 # Assumes the trained model is located in outputs/training/st_lrps_train_run
 echo "Starting ST-LRPS evaluation at $(date)"
-python -m st_lrps.evaluation.cli --model-dir outputs/training/st_lrps_train_run --out-dir outputs/evaluations/st_lrps_eval_run
+python -m lunaris.surrogate.st_lrps.evaluation.cli --model-dir outputs/training/st_lrps_train_run --out-dir outputs/evaluations/st_lrps_eval_run
 echo "Evaluation completed at $(date)"

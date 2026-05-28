@@ -38,13 +38,13 @@ try:
     from lunar_simulation.common.type_defs import SpacecraftProps  # type: ignore
 except Exception:  # pragma: no cover
     try:
-        from models.solar_effects import (  # type: ignore
+        from lunaris.physics.solar_effects import (  # type: ignore
             compute_srp_accel,
             moon_shadow_factor_conical,
             SRPConfig,
         )
-        from common.constants import AU, R_MOON_MEAN, R_EARTH_MEAN  # type: ignore
-        from common.type_defs import SpacecraftProps  # type: ignore
+        from lunaris.common.constants import AU, R_MOON_MEAN, R_EARTH_MEAN  # type: ignore
+        from lunaris.common.type_defs import SpacecraftProps  # type: ignore
     except Exception as e:  # pragma: no cover
         raise ImportError(
             "Could not import solar_effects. Update the import path in "

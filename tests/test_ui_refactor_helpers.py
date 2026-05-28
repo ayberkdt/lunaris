@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ui_parts.command_builder import build_command, build_mc_command
-from ui_parts.data_files_page import DataFilesState
-from ui_parts.force_models_page import UIGravityConfig
-from ui_parts.result_exports_page import OutputPageState
-from ui_parts.session_persistence import autodetect_data_state
-from loaders.io_surface import _iter_label_candidates
+from lunaris.ui.widgets.command_builder import build_command, build_mc_command
+from lunaris.ui.widgets.data_files_page import DataFilesState
+from lunaris.ui.widgets.force_models_page import UIGravityConfig
+from lunaris.ui.widgets.result_exports_page import OutputPageState
+from lunaris.ui.widgets.session_persistence import autodetect_data_state
+from lunaris.loaders.io_surface import _iter_label_candidates
 
 
 class _DummyGravityConfig:

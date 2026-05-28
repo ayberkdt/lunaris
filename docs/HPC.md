@@ -36,7 +36,7 @@ Instead of using the Studio UI, HPC users must use the headless CLI entry points
 ### 1. Training
 
 ```bash
-python -m st_lrps.training.cli \
+python -m lunaris.surrogate.st_lrps.training.cli \
     --out-dir outputs/training/st_lrps_train_run \
     --epochs 100 \
     --batch-size 8192
@@ -47,7 +47,7 @@ python -m st_lrps.training.cli \
 Evaluations check the quality of a trained model:
 
 ```bash
-python -m st_lrps.evaluation.cli \
+python -m lunaris.surrogate.st_lrps.evaluation.cli \
     --model-dir outputs/training/st_lrps_train_run \
     --out-dir outputs/evaluations/st_lrps_eval_run
 ```
@@ -57,7 +57,7 @@ python -m st_lrps.evaluation.cli \
 For validating orbital propagation across different gravity models and surrogates:
 
 ```bash
-python -m st_lrps.evaluation.compare_gravity_models \
+python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
     --out-dir outputs/validation/orbit_validation_run
 ```
 
@@ -83,4 +83,4 @@ You can submit background jobs using the provided template scripts located in th
 ### Output Policy
 
 All Slurm scripts and headless CLI examples are designed to write outputs into the root `outputs/` or `results/` folders (e.g., `outputs/slurm_logs/`).
-Please do not modify scripts to write output files inside the source code directories (like `st_lrps/` or `core/`).
+Please do not modify scripts to write output files inside source code directories such as `src/lunaris/surrogate/st_lrps/` or `src/lunaris/core/`.

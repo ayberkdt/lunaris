@@ -32,11 +32,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # ---------------------------------------------------------------------------
 
 def _make_min_run(run_dir: Path):
-    from st_lrps.training.config import TrainConfig
-    from st_lrps.training.losses import GradNormWeights
-    from st_lrps.networks.models import build_model_from_config, compute_architecture_signature
-    from st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
-    from st_lrps.artifacts.manager import (
+    from lunaris.surrogate.st_lrps.training.config import TrainConfig
+    from lunaris.surrogate.st_lrps.training.losses import GradNormWeights
+    from lunaris.surrogate.st_lrps.networks.models import build_model_from_config, compute_architecture_signature
+    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
+    from lunaris.surrogate.st_lrps.artifacts.manager import (
         ensure_run_layout,
         build_resolved_config,
         build_checkpoint_payload,
@@ -96,7 +96,7 @@ def _make_min_run(run_dir: Path):
 # ---------------------------------------------------------------------------
 
 def test_resolve_resume_checkpoint_from_run_dir_defaults_to_last(tmp_path):
-    from st_lrps.artifacts.manager import resolve_resume_checkpoint
+    from lunaris.surrogate.st_lrps.artifacts.manager import resolve_resume_checkpoint
 
     layout, _ = _make_min_run(tmp_path / "runs" / "r1")
     res_layout, ckpt_path, payload = resolve_resume_checkpoint(layout.run_dir)
@@ -106,7 +106,7 @@ def test_resolve_resume_checkpoint_from_run_dir_defaults_to_last(tmp_path):
 
 
 def test_resolve_resume_checkpoint_from_checkpoints_dir(tmp_path):
-    from st_lrps.artifacts.manager import resolve_resume_checkpoint
+    from lunaris.surrogate.st_lrps.artifacts.manager import resolve_resume_checkpoint
 
     layout, _ = _make_min_run(tmp_path / "runs" / "r2")
     _, ckpt_path, _ = resolve_resume_checkpoint(layout.checkpoints_dir)
@@ -114,7 +114,7 @@ def test_resolve_resume_checkpoint_from_checkpoints_dir(tmp_path):
 
 
 def test_resolve_resume_checkpoint_from_pt_file(tmp_path):
-    from st_lrps.artifacts.manager import resolve_resume_checkpoint
+    from lunaris.surrogate.st_lrps.artifacts.manager import resolve_resume_checkpoint
 
     layout, _ = _make_min_run(tmp_path / "runs" / "r3")
     res_layout, ckpt_path, _ = resolve_resume_checkpoint(layout.ckpt_best)
@@ -123,7 +123,7 @@ def test_resolve_resume_checkpoint_from_pt_file(tmp_path):
 
 
 def test_resolve_resume_checkpoint_prefer_best(tmp_path):
-    from st_lrps.artifacts.manager import resolve_resume_checkpoint
+    from lunaris.surrogate.st_lrps.artifacts.manager import resolve_resume_checkpoint
 
     layout, _ = _make_min_run(tmp_path / "runs" / "r4")
     _, ckpt_path, _ = resolve_resume_checkpoint(layout.run_dir, prefer="best")
@@ -131,7 +131,7 @@ def test_resolve_resume_checkpoint_prefer_best(tmp_path):
 
 
 def test_resolve_resume_checkpoint_missing_path_raises(tmp_path):
-    from st_lrps.artifacts.manager import resolve_resume_checkpoint
+    from lunaris.surrogate.st_lrps.artifacts.manager import resolve_resume_checkpoint
 
     with pytest.raises(FileNotFoundError):
         resolve_resume_checkpoint(tmp_path / "does_not_exist")
@@ -160,7 +160,7 @@ def test_checkpoint_payload_contains_resume_state(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_gradnorm_state_roundtrip():
-    from st_lrps.training.losses import GradNormWeights
+    from lunaris.surrogate.st_lrps.training.losses import GradNormWeights
 
     g = GradNormWeights(w_u=1.0, w_a=1.0, mode="ntk_init")
     g.w_a = 2.5
@@ -189,7 +189,7 @@ def test_gradnorm_state_roundtrip():
 # ---------------------------------------------------------------------------
 
 def test_rng_state_helpers_roundtrip():
-    from st_lrps.artifacts.manager import capture_rng_state, restore_rng_state
+    from lunaris.surrogate.st_lrps.artifacts.manager import capture_rng_state, restore_rng_state
 
     state = capture_rng_state()
     assert {"python", "numpy", "torch_cpu"}.issubset(set(state.keys()))
@@ -239,7 +239,7 @@ def _write_tiny_training_h5(path: Path) -> bool:
 
 
 def _train_cmd(*extra: str) -> list[str]:
-    return [sys.executable, "-m", "st_lrps.training.cli", *extra]
+    return [sys.executable, "-m", "lunaris.surrogate.st_lrps.training.cli", *extra]
 
 
 def test_engine_resume_smoke(tmp_path):
@@ -297,7 +297,7 @@ def test_uses_canonical_cli_only():
     # Note: "st_lrps_train_<ts>" is the run-DIRECTORY naming convention, not the
     # old module; guard against the old MODULE/path forms specifically.
     src = Path(__file__).read_text(encoding="utf-8")
-    assert "st_lrps.training.cli" in src
+    assert "lunaris.surrogate.st_lrps.training.cli" in src
     old_module = "st_lrps" + ".st_lrps_train"
     old_path = "st_lrps" + "/st_lrps_train.py"
     assert old_module not in src

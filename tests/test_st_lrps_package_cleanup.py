@@ -3,7 +3,7 @@
 Regression tests for the ST-LRPS package rename + artifact cleanup (Part 1).
 
 Guards:
-- ``import st_lrps`` stays lightweight (no torch / training side-effects),
+- ``import lunaris.surrogate.st_lrps`` stays lightweight (no torch / training side-effects),
 - the old ``surrogate_gravity_model`` package path is gone everywhere,
 - generated run/eval artifacts (gececi_kod, eval CSVs, manifests, ...) are not
   committed back into the source tree,
@@ -88,9 +88,9 @@ def _tracked_files(pathspec: str) -> list[str]:
 def test_import_st_lrps_is_lightweight() -> None:
     """Importing the package must not pull torch/h5py or training modules."""
     code = (
-        "import sys, st_lrps; "
+        "import sys, lunaris.surrogate.st_lrps as st_lrps; "
         "heavy = [m for m in ('torch', 'h5py') if m in sys.modules]; "
-        "sub = [m for m in sys.modules if m.startswith('st_lrps.')]; "
+        "sub = [m for m in sys.modules if m.startswith('lunaris.surrogate.st_lrps.')]; "
         "print(repr(heavy)); print(repr(sub)); print(st_lrps.__version__)"
     )
     proc = subprocess.run(
@@ -101,13 +101,13 @@ def test_import_st_lrps_is_lightweight() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     lines = proc.stdout.strip().splitlines()
-    assert lines[0] == "[]", f"import st_lrps pulled heavy modules: {lines[0]}"
-    assert lines[1] == "[]", f"import st_lrps imported submodules: {lines[1]}"
+    assert lines[0] == "[]", f"import lunaris.surrogate.st_lrps pulled heavy modules: {lines[0]}"
+    assert lines[1] == "[]", f"import lunaris.surrogate.st_lrps imported submodules: {lines[1]}"
     assert lines[2]  # __version__ is truthy
 
 
 def test_st_lrps_all_is_minimal_and_truthful() -> None:
-    import st_lrps
+    import lunaris.surrogate.st_lrps as st_lrps
 
     assert st_lrps.__all__ == ["__version__"]
     for name in st_lrps.__all__:
@@ -121,8 +121,9 @@ def test_st_lrps_all_is_minimal_and_truthful() -> None:
 
 def test_old_package_directory_is_gone() -> None:
     assert not (REPO_ROOT / OLD_PKG).exists(), f"{OLD_PKG}/ directory must not exist"
-    assert (REPO_ROOT / "st_lrps").is_dir(), "st_lrps/ package must exist"
-    assert (REPO_ROOT / "st_lrps" / "__init__.py").is_file()
+    pkg = REPO_ROOT / "src" / "lunaris" / "surrogate" / "st_lrps"
+    assert pkg.is_dir(), "lunaris.surrogate.st_lrps package must exist"
+    assert (pkg / "__init__.py").is_file()
 
 
 def test_old_package_name_absent_from_sources() -> None:
@@ -152,7 +153,7 @@ def test_no_gececi_kod_directory_anywhere() -> None:
 
 def test_no_committed_generated_artifacts_under_st_lrps() -> None:
     offenders: list[str] = []
-    for rel_path in _tracked_files("st_lrps"):
+    for rel_path in _tracked_files("src/lunaris/surrogate/st_lrps"):
         norm = rel_path.replace("\\", "/")
         if any(norm.startswith(prefix) for prefix in FIXTURE_PREFIXES):
             continue
@@ -163,14 +164,14 @@ def test_no_committed_generated_artifacts_under_st_lrps() -> None:
             offenders.append(rel_path)
         elif any(fnmatch.fnmatch(name, g) for g in ARTIFACT_GLOBS):
             offenders.append(rel_path)
-    assert not offenders, f"Generated artifacts committed under st_lrps/: {offenders}"
+    assert not offenders, f"Generated artifacts committed under lunaris.surrogate.st_lrps: {offenders}"
 
 
 # ---------------------------------------------------------------------------
 # 4) Module help smoke tests
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("module", ["st_lrps.training.cli", "st_lrps.evaluation.cli"])
+@pytest.mark.parametrize("module", ["lunaris.surrogate.st_lrps.training.cli", "lunaris.surrogate.st_lrps.evaluation.cli"])
 def test_module_help_exits_zero(module: str) -> None:
     pytest.importorskip("torch")
     proc = subprocess.run(
@@ -188,6 +189,6 @@ def test_module_help_exits_zero(module: str) -> None:
 # ---------------------------------------------------------------------------
 
 def test_ui_surrogate_studio_uses_new_package_path() -> None:
-    src = (REPO_ROOT / "ui_parts" / "surrogate_studio_page.py").read_text(encoding="utf-8")
-    assert "st_lrps.training.cli" in src
+    src = (REPO_ROOT / "src" / "lunaris" / "ui" / "widgets" / "surrogate_studio_page.py").read_text(encoding="utf-8")
+    assert "lunaris.surrogate.st_lrps.training.cli" in src
     assert OLD_PKG not in src.replace(ALLOWED_CLI_ARG, "")

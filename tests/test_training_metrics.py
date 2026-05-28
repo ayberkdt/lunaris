@@ -18,7 +18,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from st_lrps.ui.training_metrics import (
+from lunaris.surrogate.st_lrps.ui.training_metrics import (
 
     EpochGuard,
     ETAEstimator,
@@ -496,7 +496,7 @@ class TestEpochGuard:
 class TestCLILogEveryMode:
     def _parse(self, argv):
         import sys as _sys
-        from st_lrps.training.config import parse_args
+        from lunaris.surrogate.st_lrps.training.config import parse_args
         old = _sys.argv
         _sys.argv = ["prog"] + argv
         try:
@@ -545,14 +545,14 @@ class TestAutoLogIntervalEngineRule:
 class TestFinishTimeFormatting:
     def test_today_is_hh_mm(self):
         from datetime import datetime
-        from st_lrps.ui.training_metrics import format_finish_time
+        from lunaris.surrogate.st_lrps.ui.training_metrics import format_finish_time
         now = datetime(2026, 5, 25, 9, 0, 0)
         ft = datetime(2026, 5, 25, 18, 30, 0)
         assert format_finish_time(ft, now) == "18:30"
 
     def test_other_day_is_full_date(self):
         from datetime import datetime
-        from st_lrps.ui.training_metrics import format_finish_time
+        from lunaris.surrogate.st_lrps.ui.training_metrics import format_finish_time
         now = datetime(2026, 5, 25, 23, 0, 0)
         ft = datetime(2026, 5, 27, 4, 15, 0)
         assert format_finish_time(ft, now) == "2026-05-27 04:15"

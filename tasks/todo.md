@@ -83,7 +83,7 @@ Done:
   modes + nav registration.
 
 Validation: full suite 673 passed, 2 pre-existing skips. Harness runs at new
-path (`python -m st_lrps.evaluation.compare_gravity_models --help`).
+path (`python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help`).
 
 ---
 

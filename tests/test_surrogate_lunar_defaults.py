@@ -15,14 +15,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from common.constants import MU_MOON, R_MOON
-from models.surrogate_gravity import discover_st_lrps_model_dirs
-from st_lrps.data.dataset_parameters import (
+from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.physics.surrogate_gravity import discover_st_lrps_model_dirs
+from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     DEFAULT_DATASET_CONFIG,
     is_lunar_body_signature,
     looks_like_lunar_run_config,
 )
-from st_lrps.data.spatial_cloud_parameters import (
+from lunaris.surrogate.st_lrps.data.spatial_cloud_parameters import (
     DEFAULT_SPATIAL_CLOUD_CONFIG,
     PRESETS,
 )

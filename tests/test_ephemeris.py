@@ -39,7 +39,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 
-from models.ephemeris import (
+from lunaris.physics.ephemeris import (
     EphemerisTables,
     EphemerisManager,
     get_ephem_state,

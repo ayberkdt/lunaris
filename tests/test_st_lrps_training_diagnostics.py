@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from st_lrps.training.engine import _cuda_memory_string, _format_cuda_memory_mib
+from lunaris.surrogate.st_lrps.training.engine import _cuda_memory_string, _format_cuda_memory_mib
 
 
 def test_cuda_memory_string_is_empty_for_cpu() -> None:

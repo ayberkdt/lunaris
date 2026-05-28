@@ -26,5 +26,5 @@ mkdir -p outputs/slurm_logs
 
 # Run orbit validation / compare gravity models
 echo "Starting Orbit Validation at $(date)"
-python -m st_lrps.evaluation.compare_gravity_models --out-dir outputs/validation/orbit_validation_run
+python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --out-dir outputs/validation/orbit_validation_run
 echo "Orbit Validation completed at $(date)"

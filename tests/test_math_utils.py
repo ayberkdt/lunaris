@@ -34,7 +34,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 try:
-    from common import math_utils  # project layout: <root>/common/math_utils.py
+    from lunaris.common import math_utils  # project layout: <root>/common/math_utils.py
 except Exception as e:  # pragma: no cover
     raise RuntimeError(
         "Could not import 'common.math_utils'. "
@@ -49,7 +49,7 @@ except Exception as e:  # pragma: no cover
 # common.constants to keep a single source of truth.
 
 try:
-    from common import constants as C
+    from lunaris.common import constants as C
 except Exception:  # pragma: no cover
     C = None
 

@@ -20,7 +20,7 @@ if __name__ == "__main__":
         sys.path.insert(0, str(project_root))
 
     print("\n=== Starting Surface Effects Smoke Test ===")
-    print("  Mode: python -m models.surface_effects")
+    print("  Mode: python -m lunaris.physics.surface_effects")
     print(f"  Project root: {project_root}\n")
 
     # ------------------------------------------------------------

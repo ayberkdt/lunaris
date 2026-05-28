@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-import st_lrps.training.metrics as metrics_mod
-from st_lrps.training.metrics import (
+import lunaris.surrogate.st_lrps.training.metrics as metrics_mod
+from lunaris.surrogate.st_lrps.training.metrics import (
     LOWER_IS_BETTER,
     compute_checkpoint_score,
     flatten_epoch_metrics,
@@ -107,7 +107,7 @@ def test_flatten_epoch_metrics_stable_keys_and_optional_missing():
 
 
 def test_publication_eval_suite_outputs_summary_files(tmp_path):
-    from st_lrps.evaluation.cli import _write_publication_eval_suite
+    from lunaris.surrogate.st_lrps.evaluation.cli import _write_publication_eval_suite
 
     eval_dir = tmp_path / "eval" / "test"
     eval_dir.mkdir(parents=True)

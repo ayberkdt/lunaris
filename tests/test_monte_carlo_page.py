@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 
 try:
-    from ui_parts.monte_carlo_page import (
+    from lunaris.ui.widgets.monte_carlo_page import (
         _normalize_output_path_for_format,
         _format_clock_span,
         MonteCarloPage,
@@ -24,7 +24,7 @@ def qapp():
 
 def test_normalize_output_path():
     if not HAS_PYSIDE:
-        pytest.skip("ui_parts not available")
+        pytest.skip("lunaris.ui.widgets not available")
     def norm(s, fmt):
         return _normalize_output_path_for_format(s, fmt).replace("\\", "/")
     assert norm("", "hdf5") == "mc_results/mc_output.h5"
@@ -36,7 +36,7 @@ def test_normalize_output_path():
 
 def test_format_clock_span():
     if not HAS_PYSIDE:
-        pytest.skip("ui_parts not available")
+        pytest.skip("lunaris.ui.widgets not available")
     assert _format_clock_span(None) == "—"
     assert _format_clock_span(-1.0) == "—"
     assert _format_clock_span(59) == "00:59"
@@ -89,7 +89,7 @@ def test_validate_page_inputs_warnings(mc_page):
     assert any("ST-LRPS model dir is blank" in w for w in warnings)
 
 def test_stale_identity_not_present():
-    page_path = Path(__file__).parent.parent / "ui_parts" / "monte_carlo_page.py"
+    page_path = Path(__file__).parent.parent / "src" / "lunaris" / "ui" / "widgets" / "monte_carlo_page.py"
     if page_path.exists():
         content = page_path.read_text(encoding="utf-8")
         assert "LUNAR_SIMULATION" not in content, "Stale LUNAR_SIMULATION identity found in monte_carlo_page.py"

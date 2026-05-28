@@ -27,8 +27,8 @@ def get_required_fields():
 
 def get_boundary_layers():
     return [
-        "analysis/",
-        "st_lrps/evaluation/",
+        "src/lunaris/analysis/",
+        "src/lunaris/surrogate/st_lrps/evaluation/",
         "validation/"
     ]
 
@@ -62,14 +62,14 @@ def test_gravity_readme_command_sanity(doc_paths):
     """Assert the gravity README points at the relocated harness module path.
 
     The harness was moved into the ST-LRPS package
-    (``st_lrps/evaluation/compare_gravity_models.py``); the README must document
-    the canonical ``python -m st_lrps.evaluation.compare_gravity_models`` command.
+    (``src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py``); the README must document
+    the canonical ``python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models`` command.
     """
     gravity_readme = doc_paths[1]
     if os.path.exists(gravity_readme):
         with open(gravity_readme, "r", encoding="utf-8") as f:
             content = f.read()
-            assert "python -m st_lrps.evaluation.compare_gravity_models" in content, "Missing expected command in gravity README"
+            assert "python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models" in content, "Missing expected command in gravity README"
 
 def test_output_schema_field_sanity(doc_paths):
     """Assert output_schema.md contains key fields."""

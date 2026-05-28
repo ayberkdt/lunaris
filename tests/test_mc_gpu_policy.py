@@ -24,10 +24,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from common.montecarlo_defs import MonteCarloConfig
-from common.type_defs import PerturbationFlags
-from core.mc_propagator import _sanitize_gpu_threads_per_block, gpu_unsupported_features
-from core.monte_carlo_engine import MonteCarloEngine
+from lunaris.common.montecarlo_defs import MonteCarloConfig
+from lunaris.common.type_defs import PerturbationFlags
+from lunaris.core.mc_propagator import _sanitize_gpu_threads_per_block, gpu_unsupported_features
+from lunaris.core.monte_carlo_engine import MonteCarloEngine
 
 
 # =============================================================================
@@ -56,8 +56,8 @@ def test_sanitize_gpu_threads_per_block_aligns_and_clamps() -> None:
 
 
 def test_engine_falls_back_to_cpu_when_gpu_requested_with_unsupported_physics(monkeypatch) -> None:
-    import core.mc_propagator as mc_prop
-    import core.mc_backend_policy as policy_mod
+    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.core.mc_backend_policy as policy_mod
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -98,8 +98,8 @@ def test_engine_falls_back_to_cpu_when_gpu_requested_with_unsupported_physics(mo
 
 
 def test_engine_keeps_gpu_path_for_supported_earth_j2_runs(monkeypatch) -> None:
-    import core.mc_propagator as mc_prop
-    import core.mc_backend_policy as policy_mod
+    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.core.mc_backend_policy as policy_mod
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -139,8 +139,8 @@ def test_engine_falls_back_to_cpu_when_surrogate_gravity_is_requested_and_torch_
     monkeypatch,
 ) -> None:
     """ST-LRPS + torch CUDA unavailable → CPU fallback."""
-    import core.mc_propagator as mc_prop
-    import core.mc_backend_policy as policy_mod
+    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.core.mc_backend_policy as policy_mod
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -200,8 +200,8 @@ test_engine_falls_back_to_cpu_when_surrogate_gravity_is_requested = (
 
 def test_policy_cpu_explicit(monkeypatch) -> None:
     """use_gpu=False always → CPU regardless of CUDA."""
-    import core.mc_backend_policy as policy_mod
-    from core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
@@ -218,8 +218,8 @@ def test_policy_cpu_explicit(monkeypatch) -> None:
 
 def test_policy_st_lrps_torch_cuda_true(monkeypatch) -> None:
     """ST-LRPS + torch CUDA available + no extra perturbations → GPU_ST_LRPS."""
-    import core.mc_backend_policy as policy_mod
-    from core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
@@ -239,8 +239,8 @@ def test_policy_st_lrps_torch_cuda_true(monkeypatch) -> None:
 
 def test_policy_st_lrps_torch_cuda_false_falls_back(monkeypatch) -> None:
     """ST-LRPS + torch CUDA unavailable → CPU."""
-    import core.mc_backend_policy as policy_mod
-    from core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
@@ -259,8 +259,8 @@ def test_policy_st_lrps_torch_cuda_false_falls_back(monkeypatch) -> None:
 
 def test_policy_st_lrps_gpu_with_third_body_falls_back(monkeypatch) -> None:
     """ST-LRPS + torch CUDA + third-body enabled → CPU (unsupported on torch path)."""
-    import core.mc_backend_policy as policy_mod
-    from core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
@@ -277,8 +277,8 @@ def test_policy_st_lrps_gpu_with_third_body_falls_back(monkeypatch) -> None:
 
 def test_policy_classic_sh_numba_cuda_true(monkeypatch) -> None:
     """Classic SH + Numba CUDA available → GPU_CLASSIC_SH."""
-    import core.mc_backend_policy as policy_mod
-    from core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
 
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
@@ -295,8 +295,8 @@ def test_policy_classic_sh_numba_cuda_true(monkeypatch) -> None:
 
 def test_policy_classic_sh_numba_cuda_false(monkeypatch) -> None:
     """Classic SH + Numba CUDA unavailable → CPU."""
-    import core.mc_backend_policy as policy_mod
-    from core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
 
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
@@ -313,8 +313,8 @@ def test_policy_classic_sh_numba_cuda_false(monkeypatch) -> None:
 
 def test_policy_no_contradictory_command_args_st_lrps_gpu(monkeypatch) -> None:
     """GPU_ST_LRPS plan emits use_gpu=True, gravity_backend='st_lrps'."""
-    import core.mc_backend_policy as policy_mod
-    from core.mc_backend_policy import resolve_mc_backend_policy
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import resolve_mc_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
@@ -331,8 +331,8 @@ def test_policy_no_contradictory_command_args_st_lrps_gpu(monkeypatch) -> None:
 
 def test_policy_no_contradictory_command_args_cpu_fallback(monkeypatch) -> None:
     """CPU fallback plan emits use_gpu=False regardless of request."""
-    import core.mc_backend_policy as policy_mod
-    from core.mc_backend_policy import resolve_mc_backend_policy
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import resolve_mc_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
@@ -355,8 +355,8 @@ torch = pytest.importorskip("torch")
 
 def _make_tiny_surrogate(tmp_path: Path) -> "Any":  # noqa: F821
     """Create a minimal SurrogateGravityModel on CPU for inference tests."""
-    from common.constants import MU_MOON, R_MOON
-    from models.surrogate_gravity import SurrogateGravityModel, _build_model_from_config
+    from lunaris.common.constants import MU_MOON, R_MOON
+    from lunaris.physics.surrogate_gravity import SurrogateGravityModel, _build_model_from_config
 
     config = {
         "hidden": 8,
@@ -424,7 +424,7 @@ def test_predict_total_accel_torch_shape(tmp_path: Path) -> None:
 
 def test_predict_total_accel_torch_zero_net_matches_point_mass(tmp_path: Path) -> None:
     """Zero-weight network → total acceleration equals point-mass (residual mode)."""
-    from common.constants import MU_MOON
+    from lunaris.common.constants import MU_MOON
     model = _make_tiny_surrogate(tmp_path)
 
     r = 1_838_000.0
@@ -468,8 +468,8 @@ def test_torch_batch_propagator_cpu_smoke(tmp_path: Path, monkeypatch) -> None:
     - impact_flags and t_impact have correct shapes
     """
     import torch as _torch
-    from core.torch_batch_propagator import TorchBatchPropagator
-    from common.constants import R_MOON
+    from lunaris.core.torch_batch_propagator import TorchBatchPropagator
+    from lunaris.common.constants import R_MOON
 
     model = _make_tiny_surrogate(tmp_path)
     # Ensure model tensors are on CPU (they already are; explicit for clarity)
@@ -518,8 +518,8 @@ def test_torch_batch_propagator_cpu_smoke(tmp_path: Path, monkeypatch) -> None:
 
 def test_engine_selects_torch_gpu_when_st_lrps_and_torch_cuda_available(monkeypatch) -> None:
     """ST-LRPS + torch CUDA available + no extra perturbations → TorchBatchPropagator."""
-    import core.mc_propagator as mc_prop
-    import core.mc_backend_policy as policy_mod
+    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.core.mc_backend_policy as policy_mod
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -539,7 +539,7 @@ def test_engine_selects_torch_gpu_when_st_lrps_and_torch_cuda_available(monkeypa
     monkeypatch.setattr(mc_prop, "GPUBatchPropagator", DummyGPU)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
-    monkeypatch.setattr("core.torch_batch_propagator.TorchBatchPropagator", DummyTorchGPU)
+    monkeypatch.setattr("lunaris.core.torch_batch_propagator.TorchBatchPropagator", DummyTorchGPU)
 
     # Fake surrogate model with model_kind and degree metadata
     fake_grav = SimpleNamespace(

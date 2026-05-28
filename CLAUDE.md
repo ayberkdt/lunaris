@@ -87,11 +87,11 @@ Optional (needed only when corresponding flags are enabled):
 ### Quick start
 
 ```python
-from config import load_default_config
-from common.montecarlo_defs import MonteCarloConfig, StateUncertainty
-from core.monte_carlo_engine import MonteCarloEngine
-from analysis.monte_carlo.statistics import compute_mc_statistics
-from analysis.monte_carlo.plotting import plot_mc_report
+from lunaris.core.config import load_default_config
+from lunaris.common.montecarlo_defs import MonteCarloConfig, StateUncertainty
+from lunaris.core.monte_carlo_engine import MonteCarloEngine
+from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
+from lunaris.analysis.monte_carlo.plotting import plot_mc_report
 
 sim_cfg = load_default_config()
 mc_cfg  = MonteCarloConfig(
@@ -127,7 +127,7 @@ figs     = plot_mc_report(result, mc_stats, output_path="mc_results/report.pdf")
 - HDF5 (default): streaming writes via `h5py`; extendable datasets for `t` and `Y`.
 - NPZ: accumulates in RAM, writes on completion; suitable for small N.
 - Saved arrays: `t (T,)`, `Y (T, N, 6)`, `sc_samples (N, 4)`, `impact_flags (N,)`, `t_impact (N,)`.
-- Reload with `from core.monte_carlo_engine import load_mc_result`.
+- Reload with `from lunaris.core.monte_carlo_engine import load_mc_result`.
 
 ### Performance Notes
 
@@ -152,7 +152,7 @@ Because the surrogate operates as a residual network over a base low-degree grav
 **Example generation (50x50 target, residual above 10x10):**
 
 ```bash
-python -m st_lrps.data.spatial_cloud_generator \
+python -m lunaris.surrogate.st_lrps.data.spatial_cloud_generator \
     --degree-max 50 \
     --degree-min 10 \
     --n-samples 250000 \

@@ -5,14 +5,14 @@ This module validates lunar gravity models by comparing lower-fidelity models an
 ## Current Harness
 
 The CLI harness now lives inside the ST-LRPS package at:
-`st_lrps/evaluation/compare_gravity_models.py`
+`src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py`
 
 It is also wired into the ST-LRPS Studio under **Analysis → Orbit-Level Benchmark**.
 
 Run it as:
 
 ```bash
-python -m st_lrps.evaluation.compare_gravity_models --help
+python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
 ```
 
 ## Reference Hierarchy
@@ -58,7 +58,7 @@ Current and expected metrics for gravity validation runs:
 
 CPU smoke:
 ```bash
-python -m st_lrps.evaluation.compare_gravity_models \
+python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
     --random-scenarios 3 --duration-days 0.01 \
     --models sh20,sh80 --truth sh200 \
     --output-dir results/smoke_cpu
@@ -66,7 +66,7 @@ python -m st_lrps.evaluation.compare_gravity_models \
 
 GPU batch smoke:
 ```bash
-python -m st_lrps.evaluation.compare_gravity_models \
+python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
     --random-scenarios 5 --duration-days 0.05 \
     --truth sh200 \
     --gpu-models sh200,sh60,sh20,st_lrps \
@@ -84,11 +84,11 @@ Validation outputs should be written under ignored output locations such as `res
 
 ## Future Refactor Target
 
-An intended future split of `st_lrps/evaluation/compare_gravity_models.py` includes:
-- `st_lrps/evaluation/orbit_benchmark/scenarios.py`
-- `st_lrps/evaluation/orbit_benchmark/metrics.py`
-- `st_lrps/evaluation/orbit_benchmark/runners.py`
-- `st_lrps/evaluation/orbit_benchmark/reports.py`
-- `st_lrps/evaluation/orbit_benchmark/schemas.py`
+An intended future split of `src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py` includes:
+- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/scenarios.py`
+- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/metrics.py`
+- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/runners.py`
+- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/reports.py`
+- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/schemas.py`
 
 (This is a future plan, not current implementation.)

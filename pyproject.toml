@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lunaris"
+version = "0.1.0"
+description = "Lunar orbit propagation and ST-LRPS surrogate gravity modeling tools"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "ST_LRPS contributors" }
+]
+keywords = ["lunar", "orbit", "propagation", "gravity", "surrogate-model", "st-lrps"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Astronomy",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+  "numpy>=1.20.0",
+  "numba>=0.55.0",
+  "scipy>=1.8.0",
+  "pandas>=1.3.0",
+  "matplotlib>=3.5.0",
+  "spiceypy>=5.0.0",
+  "tqdm>=4.60.0",
+]
+
+[project.optional-dependencies]
+core = [
+  "numpy>=1.20.0",
+  "numba>=0.55.0",
+  "scipy>=1.8.0",
+  "pandas>=1.3.0",
+  "matplotlib>=3.5.0",
+  "spiceypy>=5.0.0",
+  "tqdm>=4.60.0",
+]
+ml = [
+  "torch>=2.0.0",
+  "h5py>=3.0.0",
+]
+hpc = [
+  "torch>=2.0.0",
+  "h5py>=3.0.0",
+]
+ui = [
+  "PySide6>=6.0.0",
+  "PyQt6>=6.0.0",
+  "pyqtgraph>=0.13.0",
+]
+reports = [
+  "reportlab>=4.0.0",
+]
+dev = [
+  "pytest>=7.0.0",
+]
+all = [
+  "torch>=2.0.0",
+  "h5py>=3.0.0",
+  "PySide6>=6.0.0",
+  "PyQt6>=6.0.0",
+  "pyqtgraph>=0.13.0",
+  "reportlab>=4.0.0",
+  "pytest>=7.0.0",
+]
+
+[project.scripts]
+lunaris = "lunaris.cli.main:main_entry"
+lunaris-ui = "lunaris.ui.app:main"
+lunaris-studio = "lunaris.surrogate.st_lrps.ui.studio:main"
+lunaris-mc = "lunaris.core.monte_carlo_engine:mc_entry"
+lunaris-train = "lunaris.surrogate.st_lrps.training.cli:main"
+lunaris-eval = "lunaris.surrogate.st_lrps.evaluation.cli:main"
+lunaris-benchmark = "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["lunaris*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

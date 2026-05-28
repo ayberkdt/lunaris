@@ -222,11 +222,11 @@ def test_readme_sanity():
     for banned in [*BANNED_PROJECT_NAMES, OLD_PACKAGE_PATH]:
         assert banned not in content, "README must not contain stale project identity or package paths"
 
-    if (root / "st_lrps" / "training" / "cli.py").exists():
-        assert "python -m st_lrps.training.cli" in content
+    if (root / "src" / "lunaris" / "surrogate" / "st_lrps" / "training" / "cli.py").exists():
+        assert "python -m lunaris.surrogate.st_lrps.training.cli" in content
     else:
-        legacy_train_cmd = "python -m st_lrps." + "st_lrps_train"
+        legacy_train_cmd = "python -m lunaris.surrogate.st_lrps." + "st_lrps_train"
         assert legacy_train_cmd in content
 
-    assert "st_lrps.evaluation.compare_gravity_models" in content
-    assert "visualization.surface_explorer" in content
+    assert "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models" in content
+    assert "lunaris.visualization.surface_explorer" in content

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from st_lrps.evaluation import compare_gravity_models as cgm  # noqa: E402
+from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +338,7 @@ def test_frame_cache_out_of_range_holds_last_quaternion():
 def _run_two_modes(integrator, dtype_name, monkeypatch):
     """Propagate a deterministic point-mass system in both frame modes."""
     torch = pytest.importorskip("torch")
-    from common.constants import MU_MOON
+    from lunaris.common.constants import MU_MOON
 
     # Replace the SH/ST-LRPS accelerator with a cheap, deterministic point mass
     # so the test needs no gravity data or checkpoint.
@@ -394,7 +394,7 @@ def test_precomputed_cuda_smoke(monkeypatch):
     torch = pytest.importorskip("torch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
-    from common.constants import MU_MOON
+    from lunaris.common.constants import MU_MOON
 
     def _fake_accel(model_name, gravity_model, *, device, dtype):
         mu = torch.tensor(float(MU_MOON), device=device, dtype=dtype)

@@ -30,5 +30,5 @@ mkdir -p outputs/slurm_logs
 # Run training
 # Note: Outputs are directed to the outputs/ directory, NOT inside st_lrps/.
 echo "Starting ST-LRPS training job at $(date)"
-python -m st_lrps.training.cli --out-dir outputs/training/st_lrps_train_run
+python -m lunaris.surrogate.st_lrps.training.cli --out-dir outputs/training/st_lrps_train_run
 echo "Training job completed at $(date)"

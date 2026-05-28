@@ -1,8 +1,8 @@
 import pytest
 from pathlib import Path
 
-from common import GravityConfig
-from common.montecarlo_defs import MonteCarloConfig, validate_st_lrps_model_dir
+from lunaris.common import GravityConfig
+from lunaris.common.montecarlo_defs import MonteCarloConfig, validate_st_lrps_model_dir
 
 
 def test_gravity_config_backend_aware():
@@ -66,12 +66,12 @@ def test_validate_st_lrps_model_dir(tmp_path: Path):
 
 
 def test_lazy_imports():
-    import common
+    import lunaris.common as common
     assert hasattr(common, "math_utils")
     assert hasattr(common, "time_utils")
     
     # Accessing them triggers the lazy import
-    from common import math_utils, time_utils
+    from lunaris.common import math_utils, time_utils
     assert math_utils is not None
     assert time_utils is not None
     

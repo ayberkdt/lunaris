@@ -205,7 +205,7 @@ You can reproduce these results using either the command line or the desktop UI.
 Run the following command from the repository root:
 
 ```bash
-python -m st_lrps.evaluation.compare_gravity_models \
+python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
     --random-scenarios 128 \
     --scenario-seed 42 \
     --scenario-mode bounded_keplerian \

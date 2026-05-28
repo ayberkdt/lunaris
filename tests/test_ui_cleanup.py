@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Regression tests for the UI-layer cleanup (ui.py + ui_parts/).
+Regression tests for the UI-layer cleanup (root launcher + lunaris.ui.widgets).
 
 These guard the UI public contract after the ST-LRPS rebrand and policy
 consolidation:
@@ -39,8 +39,8 @@ STALE_TOKENS = (
 
 
 def _ui_source_files() -> list[Path]:
-    files = [REPO_ROOT / "ui.py"]
-    files.extend(sorted((REPO_ROOT / "ui_parts").glob("*.py")))
+    files = [REPO_ROOT / "ui.py", REPO_ROOT / "src" / "lunaris" / "ui" / "app.py"]
+    files.extend(sorted((REPO_ROOT / "src" / "lunaris" / "ui" / "widgets").glob("*.py")))
     return files
 
 
@@ -60,13 +60,13 @@ def test_no_stale_ui_names(source_file: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_app_name_is_canonical() -> None:
-    from ui_parts.ui_commons import APP_NAME
+    from lunaris.ui.widgets.ui_commons import APP_NAME
 
     assert APP_NAME == "ST-LRPS Studio"
 
 
 def test_project_root_env_var_is_canonical(monkeypatch, tmp_path: Path) -> None:
-    from ui_parts import ui_commons
+    from lunaris.ui.widgets import ui_commons
 
     monkeypatch.setenv("STLRPS_PROJECT_ROOT", str(tmp_path))
     monkeypatch.delenv("LUNARSIM_PROJECT_ROOT", raising=False)
@@ -75,7 +75,7 @@ def test_project_root_env_var_is_canonical(monkeypatch, tmp_path: Path) -> None:
     assert resolved == tmp_path.expanduser().resolve()
 
     # Source-level guarantee that the legacy variable is no longer consulted.
-    src = (REPO_ROOT / "ui_parts" / "ui_commons.py").read_text(encoding="utf-8")
+    src = (REPO_ROOT / "src" / "lunaris" / "ui" / "widgets" / "ui_commons.py").read_text(encoding="utf-8")
     assert "STLRPS_PROJECT_ROOT" in src
     assert "LUNARSIM_PROJECT_ROOT" not in src
 
@@ -134,7 +134,7 @@ def _data_files() -> SimpleNamespace:
 
 
 def test_build_command_targets_main_with_canonical_flags() -> None:
-    from ui_parts.command_builder import build_command, build_command_preview
+    from lunaris.ui.widgets.command_builder import build_command, build_command_preview
 
     cmd = build_command(
         python_executable="python",
@@ -161,7 +161,7 @@ def test_build_command_targets_main_with_canonical_flags() -> None:
 
 
 def test_build_mc_command_targets_runner_with_canonical_flags() -> None:
-    from ui_parts.command_builder import build_mc_command, build_command_preview
+    from lunaris.ui.widgets.command_builder import build_mc_command, build_command_preview
 
     cmd = build_mc_command(
         python_executable="python",
@@ -201,7 +201,7 @@ def _make_run(run_dir: Path, *, config: bool, ckpt: str | None) -> Path:
 
 
 def _runtime_accepts(run_dir: Path) -> bool:
-    from common.montecarlo_defs import validate_st_lrps_model_dir
+    from lunaris.common.montecarlo_defs import validate_st_lrps_model_dir
 
     try:
         validate_st_lrps_model_dir(run_dir)
@@ -221,7 +221,7 @@ def _runtime_accepts(run_dir: Path) -> bool:
     ],
 )
 def test_surrogate_preflight_matches_runtime(tmp_path, config, ckpt, expect_ok) -> None:
-    from ui_parts.surrogate_artifacts import validate_surrogate_run_preflight
+    from lunaris.ui.widgets.surrogate_artifacts import validate_surrogate_run_preflight
 
     run_dir = tmp_path / "run"
     if config or ckpt:
@@ -237,7 +237,7 @@ def test_surrogate_preflight_matches_runtime(tmp_path, config, ckpt, expect_ok) 
 
 
 def test_surrogate_preflight_ckpt_last_emits_warning(tmp_path) -> None:
-    from ui_parts.surrogate_artifacts import validate_surrogate_run_preflight
+    from lunaris.ui.widgets.surrogate_artifacts import validate_surrogate_run_preflight
 
     run_dir = _make_run(tmp_path / "run", config=True, ckpt="ckpt_last.pt")
     ok, _summary, warnings = validate_surrogate_run_preflight(str(run_dir))
@@ -255,7 +255,7 @@ class _MiniCfg:
 
 
 def test_collect_session_snapshot_writes_canonical_meta() -> None:
-    from ui_parts.session_persistence import collect_session_snapshot
+    from lunaris.ui.widgets.session_persistence import collect_session_snapshot
 
     snapshot = collect_session_snapshot(
         orbit_page=object(),
@@ -275,7 +275,7 @@ def test_collect_session_snapshot_writes_canonical_meta() -> None:
 
 
 def test_migrate_session_payload_upgrades_legacy() -> None:
-    from ui_parts.session_persistence import (
+    from lunaris.ui.widgets.session_persistence import (
         SESSION_APP_NAME,
         SESSION_SCHEMA_VERSION,
         migrate_session_payload,
@@ -299,7 +299,7 @@ def test_migrate_session_payload_upgrades_legacy() -> None:
 
 
 def test_migrate_session_payload_is_idempotent_for_canonical() -> None:
-    from ui_parts.session_persistence import migrate_session_payload
+    from lunaris.ui.widgets.session_persistence import migrate_session_payload
 
     warnings: list[str] = []
     canonical = {"meta": {"schema_version": 2, "app": "ST-LRPS Studio"}}

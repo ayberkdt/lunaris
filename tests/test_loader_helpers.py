@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from loaders.io_helpers import (
+from lunaris.loaders.io_helpers import (
     DataRootHints,
     autodetect_repository_data_roots,
     find_lunar_map_path,
 )
-from loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_kernel_paths
+from lunaris.loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_kernel_paths
 
 
 def test_autodetect_repository_data_roots_prefers_split_albedo_layout(tmp_path: Path) -> None:

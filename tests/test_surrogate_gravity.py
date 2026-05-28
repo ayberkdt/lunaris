@@ -18,8 +18,8 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from common.constants import MU_MOON, R_MOON
-from models.surrogate_gravity import (
+from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.physics.surrogate_gravity import (
     SurrogateGravityModel,
     _build_model_from_config,
     _extract_degree_metadata,
@@ -290,7 +290,7 @@ class TestCkptLastFallback:
 
 def test_no_hnn_naming_in_surrogate_gravity_module() -> None:
     """ST-LRPS module must not re-export HNN names in runtime paths."""
-    import models.surrogate_gravity as sgm_mod
+    import lunaris.physics.surrogate_gravity as sgm_mod
     public_names = [n for n in dir(sgm_mod) if not n.startswith("_")]
     hnn_names = [n for n in public_names if "hnn" in n.lower()]
     assert hnn_names == [], f"HNN names found in models.surrogate_gravity: {hnn_names}"

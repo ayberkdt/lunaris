@@ -12,7 +12,7 @@ Run:
 
 Optional:
     # Force a specific module path:
-    export LUNAR_SH_MODULE=models.spherical_harmonics
+    export LUNAR_SH_MODULE=lunaris.physics.spherical_harmonics
     pytest -q
 """
 
@@ -72,7 +72,7 @@ def _import_sh_module():
        Example:
            export LUNAR_SH_MODULE=models.spherical_harmonics
            pytest -q
-    2) Otherwise, try common module paths.
+    2) Otherwise, try current and legacy module paths.
     3) Otherwise, try importing by file path from likely locations inside the repo.
     """
     _ensure_repo_on_syspath()
@@ -82,6 +82,7 @@ def _import_sh_module():
         return importlib.import_module(env_name)
 
     candidates = (
+        "lunaris.physics.spherical_harmonics",
         "models.spherical_harmonics",
         "models.spherical_harmonics_v2",
         "core.spherical_harmonics",
@@ -99,6 +100,7 @@ def _import_sh_module():
     # Path-based fallback (no package install needed)
     root = _repo_root_from_this_file()
     path_candidates = [
+        root / "src" / "lunaris" / "physics" / "spherical_harmonics.py",
         root / "models" / "spherical_harmonics.py",
         root / "models" / "spherical_harmonics_v2.py",
         root / "models" / "spherical_harmonics_fixed.py",

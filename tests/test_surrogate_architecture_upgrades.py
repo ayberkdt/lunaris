@@ -26,21 +26,21 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from st_lrps.training.config import TrainConfig, parse_args
-from st_lrps.training.engine import _laplacian_requested
-from st_lrps.training.losses import (
+from lunaris.surrogate.st_lrps.training.config import TrainConfig, parse_args
+from lunaris.surrogate.st_lrps.training.engine import _laplacian_requested
+from lunaris.surrogate.st_lrps.training.losses import (
     GradNormWeights,
     SobolevLoss,
     collocation_laplacian_loss,
 )
-from st_lrps.networks.models import (
+from lunaris.surrogate.st_lrps.networks.models import (
     PhysicalRadialDecayEncoding,
     RadialDecayEncoding,
     RealSHBasisEncoding,
     build_model_from_config,
     compute_architecture_signature,
 )
-from st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
+from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
 R_REF = 1.737e6
 MU = 4.902800066e12
@@ -446,7 +446,7 @@ def test_additive_multiband_forward_shape():
 # ---------------------------------------------------------------------------
 
 def test_ablation_matrix_contains_new_experimental_architectures(tmp_path):
-    from st_lrps.evaluation import ablation as ram
+    from lunaris.surrogate.st_lrps.evaluation import ablation as ram
 
     names = [a["name"] for a in ram.ABLATIONS]
     for required in ("radial_decay_encoding", "real_sh_basis_encoding_optional", "additive_multiband"):

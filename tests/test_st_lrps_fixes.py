@@ -10,16 +10,16 @@ import torch
 import torch.nn as nn
 import h5py
 
-from st_lrps.networks.models import (
+from lunaris.surrogate.st_lrps.networks.models import (
     SHInspiredAngularEncoding,
     RadialSeparationEncoding,
     PhysicsNet,
     build_model_from_config
 )
-from st_lrps.runtime.force_model import SurrogateForceModel, ScalerPack
-from st_lrps.data.spatial_cloud_generator import _run_active_refinement, _sh_potential_accel_batch_serial
-from st_lrps.training.engine import TrainConfig
-from st_lrps.evaluation.cli import evaluate
+from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel, ScalerPack
+from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _run_active_refinement, _sh_potential_accel_batch_serial
+from lunaris.surrogate.st_lrps.training.engine import TrainConfig
+from lunaris.surrogate.st_lrps.evaluation.cli import evaluate
 
 # ==============================================================================
 # TESTS FOR TASK 1: ACTIVE REFINEMENT SH LABELING
@@ -189,7 +189,7 @@ def test_sh_encoded_model_predicts_accel_with_autograd():
     loss.backward()
     assert x.grad is not None
 
-from st_lrps.shared.scaling import ScalerPack, IsometricScaleParams
+from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, IsometricScaleParams
 
 def mock_scaler():
     return ScalerPack(
@@ -380,7 +380,7 @@ def test_predict_residual_potential_valid_input_unchanged():
 
 def test_sh_inspired_angular_encoding_in_all():
     """Task 6: SHInspiredAngularEncoding must be exported from __all__."""
-    import st_lrps.networks.models as _m
+    import lunaris.surrogate.st_lrps.networks.models as _m
     assert "SHInspiredAngularEncoding" in _m.__all__, (
         "SHInspiredAngularEncoding must be in st_lrps_models.__all__"
     )
@@ -392,7 +392,7 @@ def test_sh_inspired_angular_encoding_in_all():
 
 def test_train_config_has_encoding_fields():
     """Task 1 & 8: TrainConfig must have all 5 encoding fields with correct defaults."""
-    from st_lrps.training.config import TrainConfig
+    from lunaris.surrogate.st_lrps.training.config import TrainConfig
     import dataclasses as _dc
     field_names = {f.name for f in _dc.fields(TrainConfig)}
     for field in ("use_sh_encoding", "sh_encoding_degree", "sh_append_raw",
@@ -411,7 +411,7 @@ def test_train_config_has_encoding_fields():
 def test_sh_encoding_config_written_to_json():
     """Task 2: config.json must contain encoding fields when SH encoding is active."""
     import dataclasses
-    from st_lrps.training.config import TrainConfig
+    from lunaris.surrogate.st_lrps.training.config import TrainConfig
     cfg = TrainConfig(data="/dev/null", out="/tmp", use_sh_encoding=True, sh_encoding_degree=3)
     payload = dataclasses.asdict(cfg)
     assert "use_sh_encoding" in payload
@@ -520,7 +520,7 @@ def _make_encoded_force_model_checkpoint(tmp_path, use_sh=False, use_radial=Fals
 def test_force_model_loads_sh_encoded_checkpoint(tmp_path):
     """Task 2 & 7: SurrogateForceModel must load an SH-encoded checkpoint and produce finite output."""
     model_dir, _ = _make_encoded_force_model_checkpoint(tmp_path, use_sh=True)
-    from st_lrps.runtime.force_model import load_surrogate_force_model
+    from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
     fm = load_surrogate_force_model(str(model_dir), device="cpu")
     x = np.array([[1.8e6, 0.0, 0.0], [0.0, 1.8e6, 0.0]])
     out = fm.predict_residual_potential(x)
@@ -530,7 +530,7 @@ def test_force_model_loads_sh_encoded_checkpoint(tmp_path):
 def test_force_model_loads_radial_encoded_checkpoint(tmp_path):
     """Task 2 & 7: SurrogateForceModel must load a radial-encoded checkpoint and produce finite output."""
     model_dir, _ = _make_encoded_force_model_checkpoint(tmp_path, use_radial=True)
-    from st_lrps.runtime.force_model import load_surrogate_force_model
+    from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
     fm = load_surrogate_force_model(str(model_dir), device="cpu")
     x = np.array([[1.8e6, 0.0, 0.0], [0.0, 1.8e6, 0.0]])
     out = fm.predict_residual_potential(x)
@@ -591,13 +591,13 @@ def test_old_raw_checkpoint_strict_reload(tmp_path):
 
 def test_active_refinement_uses_mu_si_and_r_ref_m_keys(tmp_path, monkeypatch):
     """Task 3: _run_active_refinement must read mu_si and r_ref_m (not earth_gravity_constant/radius)."""
-    import st_lrps.data.spatial_cloud_generator as scg
+    import lunaris.surrogate.st_lrps.data.spatial_cloud_generator as scg
 
     captured_keys = {}
 
     def fake_load_icgem_gfc(file_path, max_degree, **kw):
         # Return normalized keys (what load_icgem_gfc actually provides)
-        from st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+        from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
         gmeta = {
             "mu_si": MU_MOON_SI,
             "r_ref_m": R_MOON_SI,
@@ -616,7 +616,7 @@ def test_active_refinement_uses_mu_si_and_r_ref_m_keys(tmp_path, monkeypatch):
 
     # Create dummy error points CSV
     err_csv = tmp_path / "errors.csv"
-    from st_lrps.data.dataset_parameters import R_MOON_SI
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
     r0 = R_MOON_SI + 300e3
     cols = ["x","y","z","u_true","u_pred","ax_true","ay_true","az_true","ax_pred","ay_pred","az_pred","abs_a_error","rel_a_error","altitude_km"]
     header = ",".join(cols)
@@ -654,7 +654,7 @@ def test_active_refinement_uses_mu_si_and_r_ref_m_keys(tmp_path, monkeypatch):
     with h5py.File(str(out_h5), "r") as hf:
         mu_written = float(hf.attrs["mu_si"])
         r_ref_written = float(hf.attrs["r_ref_m"])
-    from st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
     assert abs(mu_written - MU_MOON_SI) < 1e6, (
         f"Active refinement wrote wrong mu_si={mu_written}, expected ~{MU_MOON_SI}"
     )
@@ -665,8 +665,8 @@ def test_active_refinement_uses_mu_si_and_r_ref_m_keys(tmp_path, monkeypatch):
 
 def test_active_refinement_degree_min_zero_preserved(tmp_path, monkeypatch):
     """Task 3: degree_min=0 must not be overwritten to -1 by the falsy `or` bug."""
-    import st_lrps.data.spatial_cloud_generator as scg
-    from st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+    import lunaris.surrogate.st_lrps.data.spatial_cloud_generator as scg
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 
     def fake_load_icgem_gfc(file_path, max_degree, **kw):
         n = max_degree + 1
@@ -719,7 +719,7 @@ def test_active_refinement_degree_min_zero_preserved(tmp_path, monkeypatch):
 
 def _make_small_h5(path: Path, n: int = 150):
     """Create a minimal valid HDF5 file for evaluator smoke tests."""
-    from st_lrps.data.dataset_parameters import R_MOON_SI, MU_MOON_SI
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI, MU_MOON_SI
     rng = np.random.default_rng(7)
     r = R_MOON_SI + rng.uniform(200e3, 500e3, n)
     theta = rng.uniform(0, np.pi, n)
@@ -747,7 +747,7 @@ def _make_small_h5(path: Path, n: int = 150):
 
 def _make_minimal_run_dir(tmp_path: Path):
     """Create a minimal model run dir (config.json + scaler.json + checkpoint) for evaluator."""
-    from st_lrps.data.dataset_parameters import R_MOON_SI, MU_MOON_SI
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI, MU_MOON_SI
     cfg_dict = {
         "activation": "sine", "hidden": 16, "depth": 2,
         "w0_first": 30.0, "w0_hidden": 30.0, "dropout": 0.0,

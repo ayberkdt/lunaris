@@ -3,15 +3,15 @@ from pathlib import Path
 
 import pytest
 
-from loaders.io_helpers import (
+from lunaris.loaders.io_helpers import (
     project_root_from_path,
     autodetect_repository_data_roots,
     DataRootHints,
     CANONICAL_PROJECT_MARKERS,
     LEGACY_PROJECT_MARKERS,
 )
-from loaders.io_surface import InMemorySurfaceProvider, FileBackedSurfaceProvider
-from loaders.spice_builder import resolve_kernel_paths
+from lunaris.loaders.io_surface import InMemorySurfaceProvider, FileBackedSurfaceProvider
+from lunaris.loaders.spice_builder import resolve_kernel_paths
 
 
 def test_project_root_discovery(tmp_path):

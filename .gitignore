@@ -37,8 +37,9 @@ CLAUDE.md
 *.local
 
 # External data and generated data
-# Anchored to the repo root so the ST-LRPS *source* subpackage st_lrps/data/ is NOT ignored.
-/data/
+# Anchored to the repo root; keep only the placement README tracked.
+/data/*
+!/data/README.md
 # Generated dataset suites that land inside the data subpackage during local runs:
 st_lrps/data/cloud_suites/
 *.h5
@@ -119,4 +120,3 @@ LATEX/
 *.run.xml
 *.synctex.gz
 *.toc
-

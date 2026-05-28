@@ -18,7 +18,7 @@ pytest.importorskip("PyQt6")
 
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
-from st_lrps.ui.studio import (  # noqa: E402
+from lunaris.surrogate.st_lrps.ui.studio import (  # noqa: E402
     PROFILE_CLI_MODULE,
     STLRPSProfilingTab,
     STLRPSTrainTab,

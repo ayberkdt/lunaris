@@ -1,6 +1,6 @@
 """test_third_body_effects_v2.py
 
-Pytest smoke/regression tests for `models.third_body_effects`.
+Pytest smoke/regression tests for `lunaris.physics.third_body_effects`.
 
 These tests are intentionally lightweight:
 - They validate sign/direction and a 1D closed-form case for differential 3rd-body gravity.
@@ -25,9 +25,9 @@ import pytest
 # Import helpers
 # -----------------------------------------------------------------------------
 def _import_third_body_module():
-    """Import `models.third_body_effects` with a small fallback list."""
+    """Import `lunaris.physics.third_body_effects` with a small fallback list."""
     last_err: Exception | None = None
-    for modname in ("models.third_body_effects", "third_body_effects"):
+    for modname in ("lunaris.physics.third_body_effects", "models.third_body_effects", "third_body_effects"):
         try:
             return importlib.import_module(modname)
         except Exception as e:  # pragma: no cover
@@ -66,20 +66,20 @@ def constants() -> Tuple[float, float, float, float]:
     R_EARTH_EQ = 6_378_137.0            # [m] WGS-84 equatorial radius
 
     try:  # Prefer project SSOT if available
-        from common.constants import MU_EARTH as _MU_EARTH  # type: ignore
-        from common.constants import MU_SUN as _MU_SUN      # type: ignore
+        from lunaris.common.constants import MU_EARTH as _MU_EARTH  # type: ignore
+        from lunaris.common.constants import MU_SUN as _MU_SUN      # type: ignore
         # Moon radius name varies a bit across codebases
         try:
-            from common.constants import R_MOON_MEAN as _R_MOON  # type: ignore
+            from lunaris.common.constants import R_MOON_MEAN as _R_MOON  # type: ignore
         except Exception:  # pragma: no cover
-            from common.constants import R_MOON_MEAN_M as _R_MOON  # type: ignore
+            from lunaris.common.constants import R_MOON_MEAN_M as _R_MOON  # type: ignore
         try:
-            from common.constants import R_EARTH_EQUATORIAL as _R_EARTH_EQ  # type: ignore
+            from lunaris.common.constants import R_EARTH_EQUATORIAL as _R_EARTH_EQ  # type: ignore
         except Exception:  # pragma: no cover
             try:
-                from common.constants import R_EARTH_EQ as _R_EARTH_EQ  # type: ignore
+                from lunaris.common.constants import R_EARTH_EQ as _R_EARTH_EQ  # type: ignore
             except Exception:  # pragma: no cover
-                from common.constants import R_EARTH_MEAN as _R_EARTH_EQ  # type: ignore
+                from lunaris.common.constants import R_EARTH_MEAN as _R_EARTH_EQ  # type: ignore
 
         MU_EARTH = float(_MU_EARTH)
         MU_SUN = float(_MU_SUN)

@@ -4,7 +4,7 @@ import numpy as np
 
 # 1. Import safety
 try:
-    from visualization import surface_explorer
+    from lunaris.visualization import surface_explorer
     import_safe = True
 except ImportError:
     import_safe = False
@@ -50,7 +50,7 @@ def test_old_path_removed():
 
 # 6. Visualization README
 def test_visualization_readme():
-    readme_p = Path(__file__).parent.parent / "visualization" / "README.md"
+    readme_p = Path(__file__).parent.parent / "src" / "lunaris" / "visualization" / "README.md"
     assert readme_p.exists()
     content = readme_p.read_text(encoding="utf-8")
     assert "surface_explorer" in content

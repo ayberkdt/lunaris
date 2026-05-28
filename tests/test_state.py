@@ -28,7 +28,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 
 # Import the module under test
-from core.state import (
+from lunaris.core.state import (
     # Constants
     STATE_SIZE,
     

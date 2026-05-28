@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from st_lrps.evaluation import progress as P  # noqa: E402
+from lunaris.surrogate.st_lrps.evaluation import progress as P  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 @pytest.fixture(scope="module")
 def qapp():
     try:
-        from st_lrps.ui.studio_parts.qt_common import QApplication
+        from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import QApplication
     except Exception:  # pragma: no cover - no Qt binding present
         pytest.skip("No Qt binding available")
     return QApplication.instance() or QApplication([])
@@ -242,7 +242,7 @@ def qapp():
 
 @pytest.fixture()
 def tab(qapp):
-    from st_lrps.ui.studio_parts.orbit_benchmark_pages import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio_parts.orbit_benchmark_pages import OrbitBenchmarkTab
     t = OrbitBenchmarkTab()
     yield t
     t.deleteLater()

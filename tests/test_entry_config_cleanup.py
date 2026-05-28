@@ -2,7 +2,7 @@
 """
 Regression tests for the top-level entry/config layer cleanup.
 
-Covers config.py / main.py / mc_runner.py and the shared cli.common_args
+Covers lunaris.core.config / launchers and the shared lunaris.cli.common_args
 package. These guard the public CLI/config contract:
 
 - importing the entrypoints must NOT eagerly load the default configuration,
@@ -23,7 +23,13 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ENTRY_FILES = ("config.py", "main.py", "mc_runner.py")
+ENTRY_FILES = (
+    "src/lunaris/core/config.py",
+    "main.py",
+    "mc_runner.py",
+    "src/lunaris/cli/main.py",
+    "src/lunaris/core/mc_runner.py",
+)
 STALE_NAMES = ("LUNAR_SIMULATION", "LUNAR SIMULATION", "LunarSim")
 
 
@@ -49,9 +55,9 @@ def _load_module_by_path(unique_name: str, file_name: str):
 # ---------------------------------------------------------------------------
 
 def test_importing_config_does_not_warn_or_load(tmp_path: Path) -> None:
-    """`import config` must be side-effect free (no asset discovery / warning)."""
+    """Importing config must be side-effect free (no asset discovery / warning)."""
     proc = subprocess.run(
-        [sys.executable, "-c", "import config; print('OK')"],
+        [sys.executable, "-c", "import lunaris.core.config as config; print('OK')"],
         cwd=str(REPO_ROOT),
         capture_output=True,
         text=True,
@@ -65,14 +71,14 @@ def test_importing_config_does_not_warn_or_load(tmp_path: Path) -> None:
 
 
 def test_config_has_no_module_level_default_instance() -> None:
-    import config
+    import lunaris.core.config as config
 
     assert not hasattr(config, "cfg"), "config must not expose an eager default instance"
 
 
 def test_entrypoints_do_not_call_load_default_config_at_import(monkeypatch) -> None:
     """Sabotage load_default_config; importing the entrypoints must still work."""
-    import config
+    import lunaris.core.config as config
 
     def _boom(*args, **kwargs):
         raise RuntimeError("load_default_config must not run at import time")
@@ -93,7 +99,7 @@ def test_entrypoints_do_not_call_load_default_config_at_import(monkeypatch) -> N
 # ---------------------------------------------------------------------------
 
 def test_config_all_names_exist_and_cfg_not_exported() -> None:
-    import config
+    import lunaris.core.config as config
 
     for name in config.__all__:
         assert hasattr(config, name), f"config.__all__ lists missing name: {name}"
@@ -132,7 +138,7 @@ def test_mc_runner_does_not_depend_on_main_private_helpers() -> None:
 
 def test_no_duplicate_st_lrps_artifact_checks_in_main() -> None:
     """Artifact checks must be delegated, not reimplemented in main.py."""
-    source = _read_source("main.py")
+    source = _read_source("src/lunaris/cli/main.py")
     # Canonical helper must be referenced.
     assert "validate_st_lrps_model_dir" in source
     # Old manual artifact-validation logic / messages must be gone.
@@ -146,7 +152,7 @@ def test_no_duplicate_st_lrps_artifact_checks_in_main() -> None:
 # ---------------------------------------------------------------------------
 
 def test_validate_args_uses_canonical_st_lrps_helper(monkeypatch, tmp_path: Path) -> None:
-    import main
+    import lunaris.cli.main as main
 
     model_dir = tmp_path / "run"
     model_dir.mkdir()
@@ -158,9 +164,9 @@ def test_validate_args_uses_canonical_st_lrps_helper(monkeypatch, tmp_path: Path
         calls.append(str(path))
         return model_dir
 
-    monkeypatch.setattr("common.montecarlo_defs.validate_st_lrps_model_dir", _spy)
+    monkeypatch.setattr("lunaris.common.montecarlo_defs.validate_st_lrps_model_dir", _spy)
     monkeypatch.setattr(
-        "st_lrps.data.dataset_parameters.looks_like_lunar_run_config",
+        "lunaris.surrogate.st_lrps.data.dataset_parameters.looks_like_lunar_run_config",
         lambda cfg: True,
     )
 
@@ -172,7 +178,7 @@ def test_validate_args_uses_canonical_st_lrps_helper(monkeypatch, tmp_path: Path
 
 def test_validate_args_accepts_ckpt_last_via_canonical_helper(monkeypatch, tmp_path: Path) -> None:
     """A run with only ckpt_last.pt (no ckpt_best.pt) must be accepted."""
-    import main
+    import lunaris.cli.main as main
 
     model_dir = tmp_path / "run"
     (model_dir / "checkpoints").mkdir(parents=True)
@@ -180,7 +186,7 @@ def test_validate_args_accepts_ckpt_last_via_canonical_helper(monkeypatch, tmp_p
     (model_dir / "checkpoints" / "ckpt_last.pt").write_bytes(b"")
 
     monkeypatch.setattr(
-        "st_lrps.data.dataset_parameters.looks_like_lunar_run_config",
+        "lunaris.surrogate.st_lrps.data.dataset_parameters.looks_like_lunar_run_config",
         lambda cfg: True,
     )
 
@@ -190,7 +196,7 @@ def test_validate_args_accepts_ckpt_last_via_canonical_helper(monkeypatch, tmp_p
 
 
 def test_validate_args_rejects_invalid_st_lrps_dir(tmp_path: Path) -> None:
-    import main
+    import lunaris.cli.main as main
 
     missing = tmp_path / "does_not_exist"
     with pytest.raises(SystemExit):
@@ -202,9 +208,9 @@ def test_validate_args_rejects_invalid_st_lrps_dir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_entrypoints_import_shared_helpers_from_cli() -> None:
-    import cli.common_args as ca
-    import main
-    import mc_runner
+    import lunaris.cli.common_args as ca
+    import lunaris.cli.main as main
+    import lunaris.core.mc_runner as mc_runner
 
     # main re-exports the moved helpers from the neutral module (identity check).
     assert main.str2bool is ca.str2bool
@@ -225,7 +231,7 @@ def test_entrypoints_import_shared_helpers_from_cli() -> None:
 def test_cli_common_args_is_lightweight() -> None:
     """Importing cli.common_args must not pull in heavy runtime deps."""
     code = (
-        "import sys, cli.common_args; "
+        "import sys, lunaris.cli.common_args; "
         "heavy = [m for m in ('numba', 'torch', 'spiceypy', 'scipy') if m in sys.modules]; "
         "print(','.join(heavy))"
     )

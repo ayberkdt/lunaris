@@ -1,6 +1,6 @@
 # ST-LRPS: Sobolev-Trained Lunar Residual Potential Surrogate
 
-[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ST-LRPS is a lunar gravity modeling and propagation framework centered on a Sobolev-trained residual-potential surrogate model. The repository includes spherical-harmonic gravity modeling, ST-LRPS training/evaluation/runtime inference, orbit propagation, Monte Carlo analysis, validation tools, visualization tools, and a desktop UI.
@@ -13,53 +13,44 @@ Accuracy, runtime, and stability depend on the selected data, force-model config
 
 ## Repository Architecture
 
-The current repository uses the Part 2 ST-LRPS package layout.
+The current repository uses a `src/` package layout. The installable package is
+`lunaris`; ST-LRPS remains a named surrogate family under
+`lunaris.surrogate.st_lrps`.
 
 ```text
-st_lrps/
-  data/          dataset definitions, spatial cloud generation, dataset loading
-  training/      ST-LRPS training config, CLI, engine, losses, metrics
-  networks/      neural network architecture definitions
-  artifacts/     run layout, checkpoints, manifests, artifact validation
-  evaluation/    trained-model evaluation, ablation, and orbit-level gravity benchmark CLIs
-  runtime/       propagator-facing ST-LRPS force model API
-  shared/        shared scaling utilities
-  ui/            ST-LRPS-specific UI components
-
-core/             dynamics, state conversion, propagation, Monte Carlo backend
-models/           physical/environment models and adapters
-loaders/          gravity/topography/ephemeris/data loading
-common/           shared constants, dataclasses, validation helpers
-analysis/         post-processing, reports, Monte Carlo analysis
-  postprocess.py
-  formatting.py
-  reporting/
-    manager.py
-    plotting.py
-    styling.py
-  monte_carlo/
-    statistics.py
-    plotting.py
-validation/       independent physics/orbit/gravity validation docs and schemas
-  gravity/         (harness moved to st_lrps/evaluation/compare_gravity_models.py)
-    README.md
-    output_schema.md
-visualization/    standalone visualization tools
-  orbit_animation.py
-  surface_explorer.py
-ui_parts/         desktop UI page components
-cli/              shared CLI argument helpers
-tests/            unit and regression tests
-data/             local input data such as SPICE kernels, gravity, topography
+src/lunaris/
+  common/          shared constants, dataclasses, validation helpers
+  loaders/         gravity/topography/ephemeris/data loading
+  physics/         physical/environment models and adapters
+  core/            dynamics, propagation, Monte Carlo backend, configuration
+  analysis/        post-processing, reports, Monte Carlo analysis
+  visualization/   standalone visualization tools
+  cli/             shared CLI argument helpers and main launcher
+  ui/              general Lunar Orbit Simulator desktop UI
+    widgets/       desktop UI page components
+  surrogate/
+    st_lrps/       Sobolev-Trained Lunar Residual Potential Surrogate package
+      data/        dataset definitions, spatial cloud generation, dataset loading
+      training/    ST-LRPS training config, CLI, engine, losses, metrics
+      networks/    neural network architecture definitions
+      artifacts/   run layout, checkpoints, manifests, artifact validation
+      evaluation/  trained-model evaluation, ablation, and orbit-level benchmark CLIs
+      runtime/     propagator-facing ST-LRPS force model API
+      shared/      shared scaling utilities
+      ui/          ST-LRPS Studio desktop UI
+validation/        independent physics/orbit/gravity validation docs and schemas
+tests/             unit and regression tests
+data/              local input data such as SPICE kernels, gravity, topography
+hpc/               example Slurm templates for cluster use
 ```
 
 Top-level entry points:
 
 ```text
-main.py           single-run propagation CLI entry point
-mc_runner.py      Monte Carlo CLI entry point
-ui.py             desktop application entry point
-config.py         application configuration dataclasses and defaults
+main.py           compatibility launcher for `lunaris`
+mc_runner.py      compatibility launcher for `lunaris-mc`
+ui.py             compatibility launcher for `lunaris-ui`
+studio.py         compatibility launcher for `lunaris-studio`
 ```
 
 ## Installation
@@ -88,12 +79,16 @@ Common data locations:
 These checks do not require private local datasets.
 
 ```bash
-python -m pip install -r requirements.txt
-python -c "import st_lrps; print(st_lrps.__version__)"
-python -m st_lrps.training.cli --help
-python -m st_lrps.evaluation.cli --help
-python -m st_lrps.evaluation.compare_gravity_models --help
-python -m visualization.surface_explorer --help
+python -m pip install -e ".[hpc]"
+python -c "import lunaris; print(lunaris.__version__)"
+lunaris-train --help
+lunaris-eval --help
+lunaris-benchmark --help
+lunaris-mc --help
+python -m lunaris.surrogate.st_lrps.training.cli --help
+python -m lunaris.surrogate.st_lrps.evaluation.cli --help
+python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
+python -m lunaris.visualization.surface_explorer --help
 ```
 
 Data-dependent examples such as full propagation, ST-LRPS training, gravity validation runs, and topography plots require local gravity, SPICE, or LOLA files.
@@ -103,31 +98,31 @@ Data-dependent examples such as full propagation, ST-LRPS training, gravity vali
 Spatial cloud generation:
 
 ```bash
-python -m st_lrps.data.spatial_cloud_generator --help
+python -m lunaris.surrogate.st_lrps.data.spatial_cloud_generator --help
 ```
 
 Training:
 
 ```bash
-python -m st_lrps.training.cli --help
+python -m lunaris.surrogate.st_lrps.training.cli --help
 ```
 
 Evaluation:
 
 ```bash
-python -m st_lrps.evaluation.cli --help
+python -m lunaris.surrogate.st_lrps.evaluation.cli --help
 ```
 
 Ablation:
 
 ```bash
-python -m st_lrps.evaluation.ablation --help
+python -m lunaris.surrogate.st_lrps.evaluation.ablation --help
 ```
 
 Runtime import example:
 
 ```python
-from st_lrps.runtime.force_model import load_surrogate_force_model
+from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
 ```
 
 Model target semantics are recorded explicitly through a `target_contract` in
@@ -153,7 +148,7 @@ claim.
 Runtime profiling:
 
 ```bash
-python -m st_lrps.runtime.profiling \
+python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --model-dir outputs/training/st_lrps_train_xxx \
     --batch-sizes 1,16,128,1024,8192 \
     --n-warmup 10 \
@@ -166,8 +161,8 @@ See `docs/profiling.md` for synthetic and dataset-backed profiling, CPU/CUDA tim
 Lightweight benchmark scaffolds:
 
 ```bash
-python -m st_lrps.evaluation.runtime_benchmark --help
-python -m st_lrps.evaluation.orbit_benchmark --help
+python -m lunaris.surrogate.st_lrps.evaluation.runtime_benchmark --help
+python -m lunaris.surrogate.st_lrps.evaluation.orbit_benchmark --help
 ```
 
 Generated outputs use the repository-level `outputs/` convention by default. Do not place generated runs inside source package directories.
@@ -177,7 +172,7 @@ Generated outputs use the repository-level `outputs/` convention by default. Do 
 Training is checkpointed every epoch. If a run stops (Ctrl+C, machine shutdown), continue it from the last completed epoch instead of restarting:
 
 ```bash
-python -m st_lrps.training.cli \
+python -m lunaris.surrogate.st_lrps.training.cli \
     --resume-from outputs/training/st_lrps_train_YYYYMMDD_HHMMSS \
     --epochs 300
 ```
@@ -197,7 +192,7 @@ Key points:
 Resuming from a specific checkpoint file:
 
 ```bash
-python -m st_lrps.training.cli \
+python -m lunaris.surrogate.st_lrps.training.cli \
     --resume-from outputs/training/st_lrps_train_YYYYMMDD_HHMMSS/checkpoints/ckpt_last.pt \
     --epochs 300
 ```
@@ -227,7 +222,7 @@ Canonical analysis modules:
 The validation layer is for independent physics, orbit, and cross-model checks. The current gravity validation harness is:
 
 ```bash
-python -m st_lrps.evaluation.compare_gravity_models --help
+python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
 ```
 
 Gravity validation commonly uses a high-degree spherical-harmonic model such as SH200 as the truth/reference, lower-degree spherical-harmonic models as baselines, and optional ST-LRPS comparison when a trained artifact directory is supplied. See [validation/README.md](validation/README.md) and [validation/gravity/README.md](validation/gravity/README.md) for details.
@@ -280,23 +275,23 @@ For the complete benchmark breakdown, tables, physical analyses, and step-by-ste
 
 ## Visualization
 
-Standalone visualization tools live under `visualization/`.
+Standalone visualization tools live under `src/lunaris/visualization/`.
 
 | Purpose | Module |
 |---------|--------|
-| Orbit animation and trajectory visualization | `visualization.orbit_animation.render_orbit_animation` |
-| Topography and albedo exploration | `visualization.surface_explorer` |
+| Orbit animation and trajectory visualization | `lunaris.visualization.orbit_animation.render_orbit_animation` |
+| Topography and albedo exploration | `lunaris.visualization.surface_explorer` |
 
 Surface explorer help:
 
 ```bash
-python -m visualization.surface_explorer --help
+python -m lunaris.visualization.surface_explorer --help
 ```
 
 Example topography render:
 
 ```bash
-python -m visualization.surface_explorer \
+python -m lunaris.visualization.surface_explorer \
     --topo-label data/topography_models/ldem_64_float.lbl \
     --topo-img data/topography_models/ldem_64_float.img \
     --out-dir outputs/surface_explorer \
@@ -343,7 +338,7 @@ topk_worst.csv
 ood_metrics.csv
 ```
 
-Source packages such as `st_lrps/`, `analysis/`, `validation/`, and `visualization/` should contain source code and documentation, not generated run artifacts, checkpoints, plots, or evaluation tables.
+Source packages such as `src/lunaris/surrogate/st_lrps/`, `src/lunaris/analysis/`, `validation/`, and `src/lunaris/visualization/` should contain source code and documentation, not generated run artifacts, checkpoints, plots, or evaluation tables.
 
 ## Testing
 

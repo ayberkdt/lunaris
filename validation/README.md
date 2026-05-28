@@ -4,10 +4,10 @@ The validation layer contains independent physics, orbit, and cross-model valida
 
 ## Package Boundaries
 
-- `analysis/`:
+- `src/lunaris/analysis/`:
   post-processing and plotting of already generated simulation outputs.
 
-- `st_lrps/evaluation/`:
+- `src/lunaris/surrogate/st_lrps/evaluation/`:
   dataset-level and artifact-level evaluation of trained ST-LRPS models.
 
 - `validation/`:
@@ -18,13 +18,13 @@ The validation layer contains independent physics, orbit, and cross-model valida
 - `validation/gravity/`
   documentation and output schema for lunar gravity model validation. The
   executable harness itself now lives in the ST-LRPS package at
-  `st_lrps/evaluation/compare_gravity_models.py` and is wired into the ST-LRPS
+  `src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py` and is wired into the ST-LRPS
   Studio under **Analysis → Orbit-Level Benchmark**.
 
 Current gravity validation command:
 
 ```bash
-python -m st_lrps.evaluation.compare_gravity_models --help
+python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
 ```
 
 ## Future Expected Submodules
@@ -40,4 +40,4 @@ Do not place generated outputs, run artifacts, checkpoints, or trained models un
 
 ## Current status
 
-The current gravity validation harness is still monolithic in `st_lrps/evaluation/compare_gravity_models.py`; future refactors may split it into scenarios, metrics, runners, reports, and schemas.
+The current gravity validation harness is still monolithic in `src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py`; future refactors may split it into scenarios, metrics, runners, reports, and schemas.

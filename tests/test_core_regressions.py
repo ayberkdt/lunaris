@@ -17,11 +17,11 @@ from pathlib import Path
 
 import numpy as np
 
-from common.montecarlo_defs import MonteCarloConfig
-from common.type_defs import EventConfig, PropagationResult, PropagatorConfig, TimeConfig
-from core.mc_propagator import CPUBatchPropagator
-from core.monte_carlo_engine import _NPZWriter, load_mc_result
-from core.propagator import _build_r_i_to_bf_from_rot_table
+from lunaris.common.montecarlo_defs import MonteCarloConfig
+from lunaris.common.type_defs import EventConfig, PropagationResult, PropagatorConfig, TimeConfig
+from lunaris.core.mc_propagator import CPUBatchPropagator
+from lunaris.core.monte_carlo_engine import _NPZWriter, load_mc_result
+from lunaris.core.propagator import _build_r_i_to_bf_from_rot_table
 
 
 def test_single_sample_quaternion_table_still_builds_fixed_frame_mapper() -> None:
@@ -93,7 +93,7 @@ def test_cpu_batch_propagator_preserves_precise_impact_times(monkeypatch) -> Non
             t_impact_s=7.5,
         )
 
-    monkeypatch.setattr("core.propagator.propagate", fake_propagate)
+    monkeypatch.setattr("lunaris.core.propagator.propagate", fake_propagate)
 
     t_out, Y_out, impact_flags, t_impact = batch.propagate(
         Y0=np.asarray([[1.0, 0.0, 0.0, 0.0, 1.0, 0.0]], dtype=np.float64),

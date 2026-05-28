@@ -1,14 +1,14 @@
 import pytest
 import numpy as np
 
-from core.state import create_state_from_keplerian
-from core.monte_carlo_engine import MonteCarloEngine
-from core.mc_backend_policy import resolve_mc_backend_policy
-from core.dynamics import extract_surface_provider_strict, DynamicsEngine
-from common.type_defs import SpacecraftProps, PerturbationFlags
+from lunaris.core.state import create_state_from_keplerian
+from lunaris.core.monte_carlo_engine import MonteCarloEngine
+from lunaris.core.mc_backend_policy import resolve_mc_backend_policy
+from lunaris.core.dynamics import extract_surface_provider_strict, DynamicsEngine
+from lunaris.common.type_defs import SpacecraftProps, PerturbationFlags
 
 def test_no_legacy_exports():
-    import core
+    import lunaris.core as core
     assert not hasattr(core, "create_state_from_coe")
     assert not hasattr(core, "ae_from_rp_ra")
     assert hasattr(core, "create_state_from_keplerian")
@@ -41,7 +41,7 @@ def test_extract_surface_provider_strict_fail():
         extract_surface_provider_strict(BadProvider())
 
 def test_mc_sample_failure_fast_fail():
-    from common.montecarlo_defs import MonteCarloConfig
+    from lunaris.common.montecarlo_defs import MonteCarloConfig
 
     mc_cfg = MonteCarloConfig(
         n_samples=2,

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from st_lrps.runtime import profiling
+from lunaris.surrogate.st_lrps.runtime import profiling
 
 
 def test_import_safety():
@@ -106,7 +106,7 @@ def test_report_json_and_csv_serialization(tmp_path):
 
 def test_cli_help():
     result = subprocess.run(
-        [sys.executable, "-m", "st_lrps.runtime.profiling", "--help"],
+        [sys.executable, "-m", "lunaris.surrogate.st_lrps.runtime.profiling", "--help"],
         capture_output=True,
         text=True,
         check=False,

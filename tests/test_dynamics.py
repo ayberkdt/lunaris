@@ -14,12 +14,12 @@ import pytest
 # Imports (skip cleanly if the package layout isn't available in this context)
 # -----------------------------------------------------------------------------
 try:
-    from core.dynamics import DynamicsEngine, extract_ephem_tables_strict
+    from lunaris.core.dynamics import DynamicsEngine, extract_ephem_tables_strict
 except Exception as e:  # pragma: no cover
     pytest.skip(f"core.dynamics not importable: {e}", allow_module_level=True)
 
 try:
-    from common.type_defs import SpacecraftProps, PerturbationFlags
+    from lunaris.common.type_defs import SpacecraftProps, PerturbationFlags
 except Exception as e:  # pragma: no cover
     pytest.skip(f"common.type_defs not importable: {e}", allow_module_level=True)
 

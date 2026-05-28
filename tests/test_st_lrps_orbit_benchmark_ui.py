@@ -2,7 +2,7 @@
 
 Covers:
 - the gravity benchmark harness is importable at its new package path
-  (``st_lrps.evaluation.compare_gravity_models``) and no longer at the old
+  (``lunaris.surrogate.st_lrps.evaluation.compare_gravity_models``) and no longer at the old
   ``validation.gravity`` path;
 - the Studio benchmark tab builds correct command-line arguments for both run
   modes (per-model DOP853/RK8 and GPU batch RK4);
@@ -31,13 +31,15 @@ if str(ROOT) not in sys.path:
 # Harness relocation
 # ---------------------------------------------------------------------------
 def test_harness_lives_in_st_lrps_evaluation():
-    mod = importlib.import_module("st_lrps.evaluation.compare_gravity_models")
+    mod = importlib.import_module("lunaris.surrogate.st_lrps.evaluation.compare_gravity_models")
     assert hasattr(mod, "main")
     assert hasattr(mod, "parse_args")
 
 
 def test_harness_file_moved_on_disk():
-    assert (ROOT / "st_lrps" / "evaluation" / "compare_gravity_models.py").is_file()
+    assert (
+        ROOT / "src" / "lunaris" / "surrogate" / "st_lrps" / "evaluation" / "compare_gravity_models.py"
+    ).is_file()
     assert not (ROOT / "validation" / "gravity" / "compare_gravity_models.py").exists()
 
 
@@ -57,7 +59,7 @@ def qapp():
     from PyQt6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
-    from st_lrps.ui.studio_parts.common_widgets import _settings
+    from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import _settings
 
     settings = _settings()
     settings.beginGroup("orbit_benchmark")
@@ -68,7 +70,7 @@ def qapp():
 
 
 def test_benchmark_tab_dop853_mode_args(qapp):
-    from st_lrps.ui.studio import BENCHMARK_CLI_MODULE, OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import BENCHMARK_CLI_MODULE, OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("dop853"))
@@ -88,7 +90,7 @@ def test_benchmark_tab_dop853_mode_args(qapp):
 
 
 def test_benchmark_tab_gpu_rk4_mode_args(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
@@ -109,7 +111,7 @@ def test_benchmark_tab_gpu_rk4_mode_args(qapp):
 
 
 def test_benchmark_tab_uses_laptop_friendly_defaults(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     assert tab.alt_min.value() == 100.0
@@ -134,7 +136,7 @@ def test_benchmark_tab_uses_laptop_friendly_defaults(qapp):
 
 
 def test_benchmark_tab_requires_at_least_one_model(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     for cb in tab._model_checks.values():
@@ -144,7 +146,7 @@ def test_benchmark_tab_requires_at_least_one_model(qapp):
 
 
 def test_benchmark_tab_st_lrps_dir_emitted_when_set(qapp, tmp_path):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("dop853"))
@@ -159,7 +161,7 @@ def test_benchmark_tab_st_lrps_dir_emitted_when_set(qapp, tmp_path):
 
 
 def test_benchmark_page_registered_in_nav(qapp):
-    from st_lrps.ui.studio_parts.main_window import MainWindow
+    from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import MainWindow
 
     w = MainWindow()
     assert w._stack.count() == 7
@@ -179,7 +181,7 @@ def test_gpu_fixed_step_integrators_converge_by_order():
     """
     import numpy as np
 
-    from st_lrps.evaluation.compare_gravity_models import (
+    from lunaris.surrogate.st_lrps.evaluation.compare_gravity_models import (
         GPU_INTEGRATORS,
         gpu_fixed_step_advance,
     )
@@ -218,7 +220,7 @@ def test_gpu_fixed_step_integrators_converge_by_order():
 def test_unknown_gpu_method_falls_back_to_rk4():
     import numpy as np
 
-    from st_lrps.evaluation.compare_gravity_models import gpu_fixed_step_advance
+    from lunaris.surrogate.st_lrps.evaluation.compare_gravity_models import gpu_fixed_step_advance
 
     def rhs(t, s):
         return -s
@@ -232,7 +234,7 @@ def test_unknown_gpu_method_falls_back_to_rk4():
 def test_gpu_batch_propagator_avoids_per_step_host_syncs():
     import inspect
 
-    from st_lrps.evaluation.compare_gravity_models import (
+    from lunaris.surrogate.st_lrps.evaluation.compare_gravity_models import (
         TorchFrameProvider,
         propagate_gpu_batch_model,
     )
@@ -254,7 +256,7 @@ def test_gpu_batch_propagator_avoids_per_step_host_syncs():
 def test_harness_parses_new_flags(monkeypatch):
     import sys as _sys
 
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     argv = [
         "compare_gravity_models",
@@ -290,7 +292,7 @@ def test_harness_parses_new_flags(monkeypatch):
 def test_harness_laptop_friendly_cli_defaults(monkeypatch):
     import sys as _sys
 
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     monkeypatch.setattr(_sys, "argv", ["compare_gravity_models"])
     args = cgm.parse_args()
@@ -303,7 +305,7 @@ def test_harness_laptop_friendly_cli_defaults(monkeypatch):
 
 
 def test_gpu_rk4_dt_variants_build_distinct_cache_and_display_names():
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = argparse.Namespace(gpu_rk4_dt_s_list="10,30", rk4_dt_s=None, st_lrps_rk4_dt=30.0)
     tasks = cgm._build_gpu_batch_tasks(["sh20"], args)
@@ -313,8 +315,8 @@ def test_gpu_rk4_dt_variants_build_distinct_cache_and_display_names():
 
 
 def test_cfg_with_integrator_overrides_method():
-    from config import load_default_config
-    from st_lrps.evaluation.compare_gravity_models import _cfg_with_integrator
+    from lunaris.core.config import load_default_config
+    from lunaris.surrogate.st_lrps.evaluation.compare_gravity_models import _cfg_with_integrator
 
     cfg = load_default_config()
     out = _cfg_with_integrator(cfg, "RK45")
@@ -327,7 +329,7 @@ def test_cfg_with_integrator_overrides_method():
 # UI: new controls / flags
 # ---------------------------------------------------------------------------
 def test_ui_dop853_mode_emits_truth_integrator_and_workers(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("dop853"))
@@ -342,7 +344,7 @@ def test_ui_dop853_mode_emits_truth_integrator_and_workers(qapp):
 
 
 def test_ui_gpu_mode_emits_gpu_integrator(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
@@ -359,7 +361,7 @@ def test_ui_gpu_mode_emits_gpu_integrator(qapp):
 
 
 def test_ui_gpu_mode_shows_selectable_gpu_settings(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     assert tab.run_mode.currentData() == "dop853"
@@ -380,7 +382,7 @@ def test_ui_gpu_mode_shows_selectable_gpu_settings(qapp):
 
 
 def test_ui_sampling_flags_emitted_when_selected(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.sampling_method.setCurrentIndex(tab.sampling_method.findData("sobol_scrambled"))
@@ -394,7 +396,7 @@ def test_ui_sampling_flags_emitted_when_selected(qapp):
 
 
 def test_ui_add_custom_model(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     ok, err = tab._try_add_model("sh100")
@@ -412,7 +414,7 @@ def test_ui_add_custom_model(qapp):
 
 
 def test_ui_rejects_invalid_custom_model(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     ok, err = tab._try_add_model("garbage")
@@ -424,7 +426,7 @@ def test_ui_rejects_invalid_custom_model(qapp):
 
 
 def test_ui_accumulate_toggle_emits_resume(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     assert "--resume" not in (tab._build_args(show_errors=False) or [])
@@ -434,7 +436,7 @@ def test_ui_accumulate_toggle_emits_resume(qapp):
 
 
 def test_ui_cache_resume_flags(qapp, tmp_path):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     cache_dir = tmp_path / "cache"
@@ -461,8 +463,8 @@ def test_ui_cache_resume_flags(qapp, tmp_path):
 
 
 def test_ui_qsettings_persists_sampling(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
-    from st_lrps.ui.studio_parts.common_widgets import _settings
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import _settings
 
     settings = _settings()
     settings.beginGroup("orbit_benchmark")
@@ -571,7 +573,7 @@ def _assert_valid_scenarios(scenarios, args):
 
 
 def test_backend_random_sampling_remains_valid_within_bounds():
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(sampling_method="random")
     scenarios = cgm.generate_validation_scenarios(args)
@@ -582,7 +584,7 @@ def test_backend_random_sampling_remains_valid_within_bounds():
 @pytest.mark.parametrize("method", ["lhs", "sobol"])
 def test_backend_space_filling_sampling_generates_valid_scenarios(method):
     pytest.importorskip("scipy.stats.qmc")
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(sampling_method=method, random_scenarios=7)
     scenarios = cgm.generate_validation_scenarios(args)
@@ -592,7 +594,7 @@ def test_backend_space_filling_sampling_generates_valid_scenarios(method):
 
 def test_backend_sobol_scrambled_seed_determinism():
     pytest.importorskip("scipy.stats.qmc")
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     a = cgm.generate_unit_samples(5, 6, "sobol_scrambled", 42)
     b = cgm.generate_unit_samples(5, 6, "sobol_scrambled", 42)
@@ -604,7 +606,7 @@ def test_backend_sobol_scrambled_seed_determinism():
 
 def test_backend_lhs_near_circular_and_uniform_cos_stay_in_bounds():
     pytest.importorskip("scipy.stats.qmc")
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(
         sampling_method="lhs",
@@ -625,7 +627,7 @@ def test_backend_lhs_near_circular_and_uniform_cos_stay_in_bounds():
 
 def test_backend_manifest_written_json_safe_and_resume_conflict(tmp_path):
     pytest.importorskip("scipy.stats.qmc")
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(sampling_method="sobol_scrambled", random_scenarios=5)
     scenarios = cgm.prepare_scenarios(args, tmp_path)
@@ -653,7 +655,7 @@ def test_backend_manifest_written_json_safe_and_resume_conflict(tmp_path):
 
 def test_backend_sobol_manifest_extends_with_stable_prefix(tmp_path):
     pytest.importorskip("scipy.stats.qmc")
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args4 = _sampling_args(sampling_method="sobol_scrambled", random_scenarios=4)
     first = cgm.prepare_scenarios(args4, tmp_path)
@@ -672,7 +674,7 @@ def test_backend_sobol_manifest_extends_with_stable_prefix(tmp_path):
 
 def test_backend_rebuild_metrics_uses_existing_manifest_count(tmp_path):
     pytest.importorskip("scipy.stats.qmc")
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args4 = _sampling_args(sampling_method="sobol_scrambled", random_scenarios=4)
     cgm.prepare_scenarios(args4, tmp_path)
@@ -689,7 +691,7 @@ def test_backend_rebuild_metrics_uses_existing_manifest_count(tmp_path):
 
 def test_backend_lhs_extension_requires_explicit_blockwise_opt_in(tmp_path):
     pytest.importorskip("scipy.stats.qmc")
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args4 = _sampling_args(sampling_method="lhs", random_scenarios=4)
     cgm.prepare_scenarios(args4, tmp_path)
@@ -712,7 +714,7 @@ def test_backend_lhs_extension_requires_explicit_blockwise_opt_in(tmp_path):
 
 def test_backend_atomic_cache_save_load_and_corrupt_recompute_detection(tmp_path):
     import numpy as np
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=1)
     scenario = cgm.generate_validation_scenarios(args)[0]
@@ -743,7 +745,7 @@ def test_backend_atomic_cache_save_load_and_corrupt_recompute_detection(tmp_path
 
 def test_backend_truth_and_model_cache_completion_counts(tmp_path):
     import numpy as np
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=2)
     scenarios = cgm.generate_validation_scenarios(args)
@@ -769,7 +771,7 @@ def test_backend_truth_and_model_cache_completion_counts(tmp_path):
 
 
 def test_backend_cache_duration_mismatch_rejects_reuse(tmp_path):
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=1)
     scenarios = cgm.generate_validation_scenarios(args)
@@ -782,7 +784,7 @@ def test_backend_cache_duration_mismatch_rejects_reuse(tmp_path):
 
 def test_backend_rebuild_gpu_metrics_from_cached_trajectories(tmp_path):
     import numpy as np
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=1, strict_complete=True)
     scenario = cgm.generate_validation_scenarios(args)[0]
@@ -819,7 +821,7 @@ def test_backend_rebuild_gpu_metrics_from_cached_trajectories(tmp_path):
 
 def test_backend_strict_complete_rejects_missing_model_cache(tmp_path):
     import numpy as np
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=1, strict_complete=True)
     scenario = cgm.generate_validation_scenarios(args)[0]
@@ -843,7 +845,7 @@ def test_backend_strict_complete_rejects_missing_model_cache(tmp_path):
 # Accumulation helpers (CSV reload / numeric coercion)
 # ---------------------------------------------------------------------------
 def test_metric_row_coercion_and_read(tmp_path):
-    from st_lrps.evaluation.compare_gravity_models import _coerce_numeric_row, _read_csv_rows
+    from lunaris.surrogate.st_lrps.evaluation.compare_gravity_models import _coerce_numeric_row, _read_csv_rows
 
     coerced = _coerce_numeric_row({
         "scenario_id": "3", "model": "GPU_SH20_RK4", "status": "ok",
@@ -877,7 +879,7 @@ def test_metric_row_coercion_and_read(tmp_path):
 def test_publication_plots_importable_and_parses():
     # --help imports the module (and pandas) then exits 0; no args -> SystemExit.
     help_p = subprocess.run(
-        [sys.executable, "-m", "st_lrps.evaluation.publication_plots", "--help"],
+        [sys.executable, "-m", "lunaris.surrogate.st_lrps.evaluation.publication_plots", "--help"],
         cwd=str(ROOT), capture_output=True, text=True, timeout=180,
     )
     combined = (help_p.stdout + help_p.stderr).lower()
@@ -887,7 +889,7 @@ def test_publication_plots_importable_and_parses():
     assert "publication" in combined or "compare_gravity_models" in combined
 
     noargs_p = subprocess.run(
-        [sys.executable, "-m", "st_lrps.evaluation.publication_plots"],
+        [sys.executable, "-m", "lunaris.surrogate.st_lrps.evaluation.publication_plots"],
         cwd=str(ROOT), capture_output=True, text=True, timeout=180,
     )
     assert noargs_p.returncode != 0  # clean SystemExit ("Provide --run ..."), not a crash
@@ -906,7 +908,7 @@ def test_report_pager_renders_pdf(tmp_path):
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         from matplotlib.backends.backend_pdf import PdfPages
-        from st_lrps.evaluation.compare_gravity_models import _ReportPager
+        from lunaris.surrogate.st_lrps.evaluation.compare_gravity_models import _ReportPager
 
         out = Path(sys.argv[1])
         fig, ax = plt.subplots(figsize=(3, 2)); ax.plot([0, 1], [0, 1])
@@ -940,7 +942,7 @@ _TELEMETRY_LINE = '{"t_s":21600.0,"alt_km":120.0,"v_km_s":1.6,"ecc":0.001}'
 
 
 def test_dashboard_parses_progress_phase_line(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
@@ -960,7 +962,7 @@ def test_dashboard_parses_progress_phase_line(qapp):
 
 
 def test_dashboard_parses_progress_total_line(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
@@ -974,7 +976,7 @@ def test_dashboard_parses_progress_total_line(qapp):
 
 
 def test_dashboard_cache_line_marks_truth_cached(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
@@ -984,7 +986,7 @@ def test_dashboard_cache_line_marks_truth_cached(qapp):
 
 
 def test_dashboard_cache_line_marks_model_cached(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "sh80"])
@@ -994,7 +996,7 @@ def test_dashboard_cache_line_marks_model_cached(qapp):
 
 
 def test_dashboard_partial_cache_keeps_model_queued(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
@@ -1004,7 +1006,7 @@ def test_dashboard_partial_cache_keeps_model_queued(qapp):
 
 
 def test_dashboard_gpu_start_marks_running_live(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "sh80"])
@@ -1015,7 +1017,7 @@ def test_dashboard_gpu_start_marks_running_live(qapp):
 
 
 def test_dashboard_gpu_done_marks_completed(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
@@ -1028,7 +1030,7 @@ def test_dashboard_gpu_done_marks_completed(qapp):
 
 
 def test_dashboard_gpu_error_marks_failed(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "st_lrps"])
@@ -1040,7 +1042,7 @@ def test_dashboard_gpu_error_marks_failed(qapp):
 
 
 def test_dashboard_next_model_completes_previous(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "sh80"])
@@ -1053,7 +1055,7 @@ def test_dashboard_next_model_completes_previous(qapp):
 
 def test_dashboard_pipeline_adds_step_variants_in_order(qapp):
     """Δt (step-size) variants are added as separate chips, live and in order."""
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
@@ -1067,7 +1069,7 @@ def test_dashboard_pipeline_adds_step_variants_in_order(qapp):
 
 
 def test_dashboard_hides_machine_progress_lines(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
@@ -1081,7 +1083,7 @@ def test_dashboard_hides_machine_progress_lines(qapp):
 
 
 def test_dashboard_telemetry_hidden_by_default(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     assert tab.show_telemetry.isChecked() is False
@@ -1092,7 +1094,7 @@ def test_dashboard_telemetry_hidden_by_default(qapp):
 
 
 def test_dashboard_telemetry_shown_when_enabled(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.show_telemetry.setChecked(True)
@@ -1102,7 +1104,7 @@ def test_dashboard_telemetry_shown_when_enabled(qapp):
 
 
 def test_dashboard_normal_lines_always_shown(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.runner.append("[gpu-batch] Model 01/2 | GPU_SH20_RK4 starting for 4 scenario(s) ...")
@@ -1111,7 +1113,7 @@ def test_dashboard_normal_lines_always_shown(qapp):
 
 
 def test_dashboard_unknown_lines_do_not_crash(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
@@ -1130,7 +1132,7 @@ def test_dashboard_unknown_lines_do_not_crash(qapp):
 
 
 def test_dashboard_pipeline_order_follows_selection(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh160", "sh20", "st_lrps"])
@@ -1142,8 +1144,8 @@ def test_dashboard_pipeline_order_follows_selection(qapp):
 
 
 def test_dashboard_finish_finalizes_pipeline(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
-    from st_lrps.ui.studio_parts.qt_common import QProcess
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import QProcess
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "st_lrps"])
@@ -1167,8 +1169,8 @@ def test_no_secondary_plot_page(qapp):
     switching plots; that is not a navigation sub-page, so we only assert the
     absence of a splitter / bottom pane here.)
     """
-    from st_lrps.ui.studio import OrbitBenchmarkTab
-    from st_lrps.ui.studio_parts.qt_common import QSplitter
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import QSplitter
 
     tab = OrbitBenchmarkTab()
     assert tab.findChildren(QSplitter) == []
@@ -1178,8 +1180,8 @@ def test_no_secondary_plot_page(qapp):
 
 
 def test_results_section_present_on_same_page(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
-    from st_lrps.ui.studio_parts.common_widgets import CollapsibleSection, ImageGallery
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import CollapsibleSection, ImageGallery
 
     tab = OrbitBenchmarkTab()
     assert isinstance(tab._results_section, CollapsibleSection)
@@ -1194,7 +1196,7 @@ def test_results_section_present_on_same_page(qapp):
 
 
 def test_results_section_collapse_expand(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     # Starts collapsed (minimal vertical space until a run produces plots).
@@ -1210,7 +1212,7 @@ def test_results_section_collapse_expand(qapp):
 
 def test_gallery_persistent_across_toggle(qapp):
     """The gallery is created once and only shown/hidden, never recreated."""
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     gallery_id = id(tab._gallery)
@@ -1225,7 +1227,7 @@ def test_gallery_persistent_across_toggle(qapp):
 
 def test_refresh_results_loads_plots_in_place(qapp, tmp_path):
     """Refresh re-scans the output dir and expands the in-place section."""
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     # Write a tiny valid PNG into the output dir.
     import base64
@@ -1247,7 +1249,7 @@ def test_refresh_results_loads_plots_in_place(qapp, tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_plots_page_registered_and_separate(qapp):
-    from st_lrps.ui.studio_parts.main_window import MainWindow
+    from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import MainWindow
 
     w = MainWindow()
     assert "Gravity Plots" in w._page_titles
@@ -1256,13 +1258,44 @@ def test_plots_page_registered_and_separate(qapp):
     w.deleteLater()
 
 
-def test_plots_page_builds_cache_only_command(qapp, tmp_path):
-    from st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+def _write_fake_benchmark_cache(out_dir, models, *, truth="sh200",
+                                integrator="DOP853", rk4_dt=10.0, dt_list=None):
+    """Create a minimal benchmark_cache (model folders + manifest) under out_dir.
 
+    Mirrors the on-disk layout the harness writes so the Gravity Plots page can
+    discover models from the folder and auto-detect truth / step size.
+    """
+    cache = Path(out_dir) / "benchmark_cache"
+    (cache / "truth" / f"{truth}_{integrator.lower()}").mkdir(parents=True, exist_ok=True)
+    for m in models:
+        d = cache / "models" / m
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "scenario_000000.npz").write_bytes(b"")
+    manifest = {
+        "cache_schema_version": 1,
+        "metadata": {
+            "truth": truth,
+            "truth_integrator": integrator,
+            "rk4_dt_s": rk4_dt,
+            "gpu_rk4_dt_s_list": list(dt_list or []),
+        },
+        "selected_models": list(models),
+    }
+    (cache / "cache_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return cache
+
+
+def test_plots_page_builds_cache_only_command(qapp, tmp_path):
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+
+    _write_fake_benchmark_cache(tmp_path, ["sh20", "sh80", "st_lrps"])
     tab = OrbitBenchmarkPlotsTab()
+    tab.out_dir.setText(str(tmp_path))
+    tab._scan_and_populate()
+    # Folder-first: the models are discovered from the chosen folder's cache.
+    assert set(tab._model_checks) == {"sh20", "sh80", "st_lrps"}
     for n, cb in tab._model_checks.items():
         cb.setChecked(n in ("sh20", "sh80", "st_lrps"))
-    tab.out_dir.setText(str(tmp_path))
     args = tab._build_args(show_errors=False)
     assert args is not None
     # Cache-only rebuild — never propagates or trains.
@@ -1278,20 +1311,45 @@ def test_plots_page_builds_cache_only_command(qapp, tmp_path):
 
 
 def test_plots_page_emits_step_variant_list(qapp, tmp_path):
-    from st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
 
+    _write_fake_benchmark_cache(tmp_path, ["sh20"])
     tab = OrbitBenchmarkPlotsTab()
+    tab.out_dir.setText(str(tmp_path))
+    tab._scan_and_populate()
     for n, cb in tab._model_checks.items():
         cb.setChecked(n == "sh20")
-    tab.out_dir.setText(str(tmp_path))
     tab.rk4_dt_list.setText("10,5")
     args = tab._build_args(show_errors=False)
     assert args[args.index("--gpu-rk4-dt-s-list") + 1] == "10,5"
     tab.deleteLater()
 
 
+def test_plots_page_lists_models_from_folder_and_autodetects(qapp, tmp_path):
+    """Folder-first flow: pick a folder, its cached models are listed, and the
+    truth model / step size are auto-detected from the cache manifest."""
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+
+    _write_fake_benchmark_cache(
+        tmp_path, ["sh80", "sh20", "st_lrps"],
+        truth="sh160", integrator="DOP853", rk4_dt=5.0,
+    )
+    tab = OrbitBenchmarkPlotsTab()
+    # Nothing is listed before a folder is chosen.
+    assert tab._model_checks == {}
+    tab.out_dir.setText(str(tmp_path))
+    tab._scan_and_populate()
+    # Discovered and sorted (SH by degree, ST-LRPS last); all checked by default.
+    assert list(tab._model_checks) == ["sh20", "sh80", "st_lrps"]
+    assert all(cb.isChecked() for cb in tab._model_checks.values())
+    # Truth model + fixed step auto-filled from the manifest.
+    assert tab.truth.currentData() == "sh160"
+    assert tab.rk4_dt.value() == 5.0
+    tab.deleteLater()
+
+
 def test_plots_page_requires_output_dir_and_models(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
 
     tab = OrbitBenchmarkPlotsTab()
     tab.out_dir.setText("")
@@ -1309,7 +1367,7 @@ def test_plots_page_requires_output_dir_and_models(qapp):
 
 def test_cli_accepts_precomputed_slerp_frame_mode(monkeypatch):
     import sys as _sys
-    from st_lrps.evaluation import compare_gravity_models as cgm
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     monkeypatch.setattr(_sys, "argv", [
         "compare_gravity_models", "--batch-frame-mode", "precomputed_slerp",
@@ -1319,7 +1377,7 @@ def test_cli_accepts_precomputed_slerp_frame_mode(monkeypatch):
 
 
 def test_ui_gpu_mode_emits_frame_mode(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
@@ -1334,7 +1392,7 @@ def test_ui_gpu_mode_emits_frame_mode(qapp):
 
 
 def test_ui_cpu_mode_omits_frame_mode(qapp):
-    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("dop853"))

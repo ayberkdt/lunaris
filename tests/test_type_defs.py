@@ -29,7 +29,7 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 try:
-    from common.type_defs import (
+    from lunaris.common.type_defs import (
         SpacecraftProps,
         AdaptiveDegreeConfig,
         GravityConfig,
@@ -41,7 +41,7 @@ try:
         SimulationHistory,
         PropagationResult,
     )
-    from common.constants import DAY_S, R_MOON_MEAN
+    from lunaris.common.constants import DAY_S, R_MOON_MEAN
 except Exception as e:  # pragma: no cover
     raise RuntimeError(
         "Could not import 'common.type_defs'. "

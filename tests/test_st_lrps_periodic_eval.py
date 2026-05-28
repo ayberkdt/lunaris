@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from st_lrps.training.periodic_eval import (
+from lunaris.surrogate.st_lrps.training.periodic_eval import (
     PeriodicEvalPlan,
     build_periodic_eval_command,
     completed_periodic_eval_epochs,
@@ -143,7 +143,7 @@ def test_command_builder_emits_supported_flags():
         device="cuda",
         python_exe="python",
     )
-    assert cmd[:4] == ["python", "-u", "-m", "st_lrps.evaluation.cli"]
+    assert cmd[:4] == ["python", "-u", "-m", "lunaris.surrogate.st_lrps.evaluation.cli"]
     for flag, value in (
         ("--model-dir", "runs/r"),
         ("--data", "v.h5"),
@@ -288,7 +288,7 @@ def qapp():
 
 
 def test_ui_disabled_emits_no_periodic_flags(qapp):
-    from st_lrps.ui.studio import STLRPSTrainTab
+    from lunaris.surrogate.st_lrps.ui.studio import STLRPSTrainTab
 
     tab = STLRPSTrainTab()
     args = tab._build_args(show_errors=False)
@@ -298,7 +298,7 @@ def test_ui_disabled_emits_no_periodic_flags(qapp):
 
 
 def test_ui_count_mode_emits_count_flag(qapp):
-    from st_lrps.ui.studio import STLRPSTrainTab
+    from lunaris.surrogate.st_lrps.ui.studio import STLRPSTrainTab
 
     tab = STLRPSTrainTab()
     tab.periodic_eval_enabled.setChecked(True)
@@ -313,7 +313,7 @@ def test_ui_count_mode_emits_count_flag(qapp):
 
 
 def test_ui_every_mode_emits_every_flag(qapp):
-    from st_lrps.ui.studio import STLRPSTrainTab
+    from lunaris.surrogate.st_lrps.ui.studio import STLRPSTrainTab
 
     tab = STLRPSTrainTab()
     tab.periodic_eval_enabled.setChecked(True)

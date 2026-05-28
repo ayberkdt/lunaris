@@ -1,0 +1,8 @@
+cff-version: 1.2.0
+title: "Lunaris / ST-LRPS"
+message: "If you use Lunaris or ST-LRPS in scientific work, please cite the repository and associated publications."
+type: software
+authors:
+  - name: "ST_LRPS contributors"
+version: "0.1.0"
+license: "MIT"

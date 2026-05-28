@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from common.type_defs import PerturbationFlags, TimeConfig
-from models.ephemeris import SpiceBuildConfig
+from lunaris.common.type_defs import PerturbationFlags, TimeConfig
+from lunaris.physics.ephemeris import SpiceBuildConfig
 
-from config import load_default_config
+from lunaris.core.config import load_default_config
 import main
 
 
@@ -45,7 +45,7 @@ def test_init_ephemeris_disables_third_body_sampling_for_q_only_runs(monkeypatch
         return "mock-ephem"
 
     monkeypatch.setattr(
-        "models.ephemeris.EphemerisManager.from_time_and_spice",
+        "lunaris.physics.ephemeris.EphemerisManager.from_time_and_spice",
         _fake_from_time_and_spice,
     )
 
@@ -80,7 +80,7 @@ def test_init_ephemeris_keeps_third_body_sampling_when_sun_vector_is_needed(monk
         return "mock-ephem"
 
     monkeypatch.setattr(
-        "models.ephemeris.EphemerisManager.from_time_and_spice",
+        "lunaris.physics.ephemeris.EphemerisManager.from_time_and_spice",
         _fake_from_time_and_spice,
     )
 

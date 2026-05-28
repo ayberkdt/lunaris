@@ -20,9 +20,9 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 try:  # studio.py was refactored into studio_parts/ — import from the new home.
-    from st_lrps.ui.studio_parts.common_widgets import LiveLossPlot  # noqa: E402
+    from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import LiveLossPlot  # noqa: E402
 except Exception:  # pragma: no cover - fallback for the legacy monolith layout
-    from st_lrps.ui.studio import LiveLossPlot  # noqa: E402
+    from lunaris.surrogate.st_lrps.ui.studio import LiveLossPlot  # noqa: E402
 
 
 @pytest.fixture(scope="session")

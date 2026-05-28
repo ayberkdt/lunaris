@@ -16,7 +16,7 @@ The profiler measures:
 ## Recommended Command
 
 ```bash
-python -m st_lrps.runtime.profiling \
+python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --model-dir outputs/training/st_lrps_train_xxx \
     --batch-sizes 1,16,128,1024,8192 \
     --n-warmup 10 \
@@ -29,7 +29,7 @@ python -m st_lrps.runtime.profiling \
 Synthetic mode is the default and does not require dataset files. It samples random Moon-centered positions in SI meters with uniformly distributed directions and uniformly sampled altitude:
 
 ```bash
-python -m st_lrps.runtime.profiling \
+python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --model-dir outputs/training/st_lrps_train_xxx \
     --input-source synthetic \
     --alt-min-km 100 \
@@ -42,7 +42,7 @@ python -m st_lrps.runtime.profiling \
 Dataset mode samples the first three columns as `x,y,z` positions from an HDF5 dataset without loading the full file:
 
 ```bash
-python -m st_lrps.runtime.profiling \
+python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --model-dir outputs/training/st_lrps_train_xxx \
     --input-source dataset \
     --data data/spatial_cloud_train.h5 \
@@ -68,7 +68,7 @@ The Studio live loss plots can use log-y scale for positive loss curves. Smoothi
 Batch size 1 measures latency. Large batch sizes measure throughput. Use `--chunk-sizes` to understand whether runtime chunking is limiting throughput or reducing memory pressure:
 
 ```bash
-python -m st_lrps.runtime.profiling \
+python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --model-dir outputs/training/st_lrps_train_xxx \
     --batch-sizes 1024,8192,32768 \
     --chunk-sizes none,512,1024,4096 \
@@ -82,7 +82,7 @@ Monte Carlo workflows should prefer batched force evaluation when throughput imp
 Classic spherical-harmonic timing is optional:
 
 ```bash
-python -m st_lrps.runtime.profiling \
+python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --model-dir outputs/training/st_lrps_train_xxx \
     --compare-classic-sh \
     --classic-sh-degree 60 \

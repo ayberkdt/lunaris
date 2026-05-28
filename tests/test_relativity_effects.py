@@ -34,7 +34,7 @@ try:
     )
 except Exception:  # pragma: no cover
     try:
-        from models.relativity_effects import (  # type: ignore
+        from lunaris.physics.relativity_effects import (  # type: ignore
             calc_schwarzschild_accel,
             MU_MOON,
             C_SQ,

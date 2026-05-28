@@ -28,26 +28,26 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from st_lrps.data.datasets import (
+from lunaris.surrogate.st_lrps.data.datasets import (
     TensorMemoryDataset,
     collate_h5,
     collate_xyz_u_a,
 )
-from st_lrps.training.config import TrainConfig, parse_args
-from st_lrps.training.engine import _laplacian_requested
-from st_lrps.training.losses import (
+from lunaris.surrogate.st_lrps.training.config import TrainConfig, parse_args
+from lunaris.surrogate.st_lrps.training.engine import _laplacian_requested
+from lunaris.surrogate.st_lrps.training.losses import (
     collocation_laplacian_loss,
     GradNormWeights,
     SobolevLoss,
 )
-from st_lrps.networks.models import (
+from lunaris.surrogate.st_lrps.networks.models import (
     build_model_from_config,
     compute_architecture_signature,
     RadialDecayEncoding,
     RealSHBasisEncoding,
     _compute_harmonic_w0_bands,
 )
-from st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
+from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
 R_REF = 1.737e6
 MU = 4.902800066e12
@@ -172,7 +172,7 @@ def test_no_legacy_defaults_flag_exists(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         parse_args()
     # The helper module must not retain removed preset machinery.
-    import st_lrps.training.config as cfgmod
+    import lunaris.surrogate.st_lrps.training.config as cfgmod
     assert not hasattr(cfgmod, "_LEGACY_DEFAULTS")
     assert not hasattr(cfgmod, "_apply_legacy_defaults")
 
@@ -402,7 +402,7 @@ def test_multiscale_siren_w0_bands_are_persisted():
 # ---------------------------------------------------------------------------
 
 def test_force_model_strict_domain_flag_logic():
-    from st_lrps.runtime.force_model import SurrogateForceModel
+    from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
 
     scaler = _tiny_scaler_tensors()
     model = build_model_from_config(
@@ -445,7 +445,7 @@ def test_force_model_strict_domain_flag_logic():
 # ---------------------------------------------------------------------------
 
 def test_ablation_command_generation_dry_run(tmp_path):
-    from st_lrps.evaluation import ablation as ram
+    from lunaris.surrogate.st_lrps.evaluation import ablation as ram
 
     out_root = tmp_path / "ablations"
     rc = ram.main([
@@ -487,7 +487,7 @@ def test_ablation_command_generation_dry_run(tmp_path):
 
 
 def test_ablation_matrix_contains_radial_decay_and_real_sh(tmp_path):
-    from st_lrps.evaluation import ablation as ram
+    from lunaris.surrogate.st_lrps.evaluation import ablation as ram
 
     out_root = tmp_path / "ablations2"
     rc = ram.main(["--train-data", "train.h5", "--out-root", str(out_root), "--dry-run"])
@@ -507,7 +507,7 @@ def test_ablation_matrix_contains_radial_decay_and_real_sh(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_residual_mag_streaming_sampling(monkeypatch):
-    import st_lrps.data.spatial_cloud_generator as scg
+    import lunaris.surrogate.st_lrps.data.spatial_cloud_generator as scg
 
     def _fake_sample(cnt, lo, hi, rng):
         r = rng.uniform(lo, hi, (cnt, 1))
