@@ -395,7 +395,7 @@ class OrbitBenchmarkTab(QWidget):
         self.gpu_frame_mode = NoScrollComboBox()
         self.gpu_frame_mode.addItem("dynamic (per-step)", "match_dynamics_engine")
         self.gpu_frame_mode.addItem("precomputed SLERP (faster)", "precomputed_slerp")
-        self.gpu_frame_mode.setCurrentIndex(0)
+        self.gpu_frame_mode.setCurrentIndex(1)  # Default to precomputed SLERP
         self.gpu_frame_mode.setToolTip(
             "Frame rotation strategy for the GPU integrator.\n"
             "dynamic: interpolate the body-fixed quaternion on every RHS call.\n"

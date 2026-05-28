@@ -44,6 +44,12 @@ def test_harness_file_moved_on_disk():
 # ---------------------------------------------------------------------------
 # UI command builders (skipped without PyQt6)
 # ---------------------------------------------------------------------------
+@pytest.fixture(autouse=True)
+def _clear_settings():
+    from PyQt6.QtCore import QSettings
+    QSettings("ST_LRPS_Project", "ST_LRPS_Dashboard").clear()
+
+
 @pytest.fixture(scope="module")
 def qapp():
     pytest.importorskip("PyQt6")
@@ -531,7 +537,7 @@ def _sampling_args(**overrides):
         st_lrps_rk4_dt=30.0,
         gpu_integrator="medium",
         torch_dtype="float64",
-        batch_frame_mode="match_dynamics_engine",
+        batch_frame_mode="precomputed_slerp",
         st_lrps_model_dir=None,
         models="sh20",
         gpu_models="sh20",
@@ -1317,13 +1323,13 @@ def test_ui_gpu_mode_emits_frame_mode(qapp):
 
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
-    # Default is the conservative dynamic path.
-    args = tab._build_args(show_errors=False)
-    assert args[args.index("--batch-frame-mode") + 1] == "match_dynamics_engine"
-    # User can switch to the precomputed optimization.
-    tab.gpu_frame_mode.setCurrentIndex(tab.gpu_frame_mode.findData("precomputed_slerp"))
+    # Default is now the optimized precomputed path.
     args = tab._build_args(show_errors=False)
     assert args[args.index("--batch-frame-mode") + 1] == "precomputed_slerp"
+    # User can switch to the conservative dynamic path.
+    tab.gpu_frame_mode.setCurrentIndex(tab.gpu_frame_mode.findData("match_dynamics_engine"))
+    args = tab._build_args(show_errors=False)
+    assert args[args.index("--batch-frame-mode") + 1] == "match_dynamics_engine"
     tab.deleteLater()
 
 
