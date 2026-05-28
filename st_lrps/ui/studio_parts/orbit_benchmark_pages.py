@@ -239,11 +239,11 @@ class OrbitBenchmarkTab(QWidget):
         self.alt_min = QDoubleSpinBox()
         self.alt_min.setDecimals(1)
         self.alt_min.setRange(1.0, 100_000.0)
-        self.alt_min.setValue(200.0)
+        self.alt_min.setValue(100.0)
         self.alt_max = QDoubleSpinBox()
         self.alt_max.setDecimals(1)
         self.alt_max.setRange(1.0, 100_000.0)
-        self.alt_max.setValue(400.0)
+        self.alt_max.setValue(1000.0)
         self.duration_days = QDoubleSpinBox()
         self.duration_days.setDecimals(4)
         self.duration_days.setRange(0.0001, 3650.0)
@@ -322,7 +322,7 @@ class OrbitBenchmarkTab(QWidget):
         # CPU parallelism (CPU / DOP853 mode).
         self.cpu_workers = QSpinBox()
         self.cpu_workers.setRange(1, 256)
-        self.cpu_workers.setValue(1)
+        self.cpu_workers.setValue(4)
         self.cpu_workers.setToolTip(
             "CPU worker processes for the per-model adaptive sweep. 1 = sequential. "
             "Each worker builds its own ephemeris + gravity caches."
@@ -347,21 +347,33 @@ class OrbitBenchmarkTab(QWidget):
         self.rk4_dt = QDoubleSpinBox()
         self.rk4_dt.setDecimals(3)
         self.rk4_dt.setRange(0.001, 600.0)
-        self.rk4_dt.setValue(10.0)
+        self.rk4_dt.setValue(30.0)
         self.rk4_dt.setToolTip("Fixed step size (seconds) for the GPU integrator.")
+        self.rk4_dt_list = QLineEdit("")
+        self.rk4_dt_list.setPlaceholderText("Optional, e.g. 10,30")
+        self.rk4_dt_list.setToolTip(
+            "Optional comma-separated RK4 step sizes. When set, each selected model "
+            "is compared once per step size, e.g. SH20 dt10 vs SH20 dt30."
+        )
         self.torch_dtype = NoScrollComboBox()
-        self.torch_dtype.addItems(["float64", "float32"])
+        self.torch_dtype.addItem("float32", "float32")
+        self.torch_dtype.addItem("float64 (not recommended on laptops)", "float64")
+        self.torch_dtype.setToolTip(
+            "float32 is the default throughput setting. float64 is available for "
+            "precision-sensitive checks, but is usually much slower on laptop GPUs."
+        )
         self.gpu_fallback = NoScrollComboBox()
         self.gpu_fallback.addItem("error (require CUDA)", "error")
         self.gpu_fallback.addItem("cpu (fallback)", "cpu")
         self.truth_workers = QSpinBox()
         self.truth_workers.setRange(1, 256)
-        self.truth_workers.setValue(1)
+        self.truth_workers.setValue(4)
         self.truth_workers.setToolTip(
             "CPU worker processes for DOP853 truth generation before GPU RK4 comparison."
         )
         form_gpu.addRow("RK method", self.gpu_integrator)
         form_gpu.addRow("Fixed step (s)", self.rk4_dt)
+        form_gpu.addRow("Compare dt list", self.rk4_dt_list)
         form_gpu.addRow("Truth workers", self.truth_workers)
         form_gpu.addRow("Torch dtype", self.torch_dtype)
         form_gpu.addRow("Fallback", self.gpu_fallback)
@@ -486,36 +498,30 @@ class OrbitBenchmarkTab(QWidget):
         self._pipeline_card = self._build_pipeline_card()
         self._progress_card = self._build_progress_card()
         self._logs_section = self._build_logs_section()
+        self._results_section = self._build_results_section()
         self.runner.set_display_filter(self._display_filter_line)
 
-        top = QWidget()
-        top_l = QVBoxLayout()
-        top_l.setContentsMargins(8, 8, 8, 8)
-        top_l.addLayout(grid)
-        top.setLayout(top_l)
-
-        bottom = QWidget()
-        bl = QVBoxLayout()
-        bl.setContentsMargins(0, 0, 0, 0)
-        bl.setSpacing(10)
-        bl.addWidget(self._control_header)
-        bl.addWidget(self._metrics_card)
-        bl.addWidget(self._pipeline_card)
-        bl.addWidget(self._progress_card)
-        bl.addWidget(self._logs_section)
-        bl.addWidget(self._gallery, 1)
-        bottom.setLayout(bl)
-
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(_scroll_wrap(top))
-        splitter.addWidget(_scroll_wrap(bottom))
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([400, 580])
+        # -- Single-page vertical layout ----------------------------------
+        # Everything (configuration, run controls, logs and results/plots)
+        # lives on ONE page. The log and results areas are in-place
+        # collapsible sections — there is no secondary/bottom plot page.
+        content = QWidget()
+        col = QVBoxLayout()
+        col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(12)
+        col.addLayout(grid)
+        col.addWidget(self._control_header)
+        col.addWidget(self._metrics_card)
+        col.addWidget(self._pipeline_card)
+        col.addWidget(self._progress_card)
+        col.addWidget(self._logs_section)
+        col.addWidget(self._results_section)
+        col.addStretch(1)
+        content.setLayout(col)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.addWidget(splitter, 1)
+        layout.addWidget(_scroll_wrap(content), 1)
         self.setLayout(layout)
 
         # Wiring
@@ -539,6 +545,7 @@ class OrbitBenchmarkTab(QWidget):
         self.strict_complete.toggled.connect(self._refresh_command_preview)
         self.rtol.textChanged.connect(self._refresh_command_preview)
         self.atol.textChanged.connect(self._refresh_command_preview)
+        self.rk4_dt_list.textChanged.connect(self._refresh_command_preview)
         self.st_lrps_dir.textChanged.connect(self._refresh_command_preview)
         self.out_dir.textChanged.connect(self._refresh_command_preview)
         self.cache_dir.textChanged.connect(self._refresh_command_preview)
@@ -750,6 +757,59 @@ class OrbitBenchmarkTab(QWidget):
         sec.set_content_layout(inner)
         sec.set_expanded(True)
         return sec
+
+    def _build_results_section(self) -> CollapsibleSection:
+        """In-place collapsible Results / Plots section (no secondary page).
+
+        Holds the single, persistent ImageGallery — created once and only
+        shown/hidden via the collapsible, never recreated. Starts collapsed so
+        it takes minimal vertical space until a run produces plots.
+        """
+        sec = CollapsibleSection("Results / Plots")
+        inner = QVBoxLayout()
+        inner.setContentsMargins(0, 6, 0, 0)
+        inner.setSpacing(6)
+
+        bar = QHBoxLayout()
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(8)
+        btn_refresh = QPushButton("Refresh results")
+        btn_refresh.setProperty("kind", "ghost")
+        btn_refresh.setToolTip("Re-scan the output directory for plots.")
+        btn_refresh.clicked.connect(self._refresh_results)
+        bar.addWidget(btn_refresh)
+        bar.addStretch(1)
+        inner.addLayout(bar)
+
+        # Roomy when expanded so plots are not squeezed.
+        self._gallery.setMinimumHeight(540)
+        inner.addWidget(self._gallery, 1)
+        sec.set_content_layout(inner)
+        sec.set_expanded(False)
+        return sec
+
+    def _discover_result_images(self, out_dir: str) -> List[Path]:
+        """Collect plot images from the output dir and its immediate subdirs."""
+        base = Path(out_dir)
+        if not base.is_dir():
+            return []
+        imgs: List[Path] = list(base.glob("*.png")) + list(base.glob("*.jpg"))
+        for sub in base.glob("*/"):
+            if sub.is_dir():
+                imgs += list(sub.glob("*.png")) + list(sub.glob("*.jpg"))
+        return sorted(set(imgs))
+
+    def _refresh_results(self) -> None:
+        """Re-scan the output directory and (re)load the gallery in place."""
+        out_dir = self._effective_out_dir or self.out_dir.text().strip() or str(BENCHMARK_OUTPUT_ROOT)
+        if not out_dir or not Path(out_dir).is_dir():
+            return
+        imgs = self._discover_result_images(out_dir)
+        if imgs:
+            self._gallery.load_images(imgs)
+            self._results_section.set_expanded(True)
+            self.runner.set_output_dir(out_dir)
+            self.runner.btn_open_folder.setVisible(True)
 
     # ------------------------------------------------------------------
     # Run-monitor dashboard — state helpers
@@ -1168,8 +1228,11 @@ class OrbitBenchmarkTab(QWidget):
             args += ["--gpu-models", ",".join(models)]
             args += ["--gpu-integrator", self.gpu_integrator.currentData() or "medium"]
             args += ["--rk4-dt-s", str(self.rk4_dt.value())]
+            dt_list = self.rk4_dt_list.text().strip()
+            if dt_list:
+                args += ["--gpu-rk4-dt-s-list", dt_list]
             args += ["--workers", str(self.truth_workers.value())]
-            args += ["--torch-dtype", self.torch_dtype.currentText()]
+            args += ["--torch-dtype", self.torch_dtype.currentData() or "float32"]
             args += ["--gpu-fallback", self.gpu_fallback.currentData() or "error"]
         else:
             args += ["--models", ",".join(models)]
@@ -1265,17 +1328,13 @@ class OrbitBenchmarkTab(QWidget):
         out_dir = self._effective_out_dir
         if not out_dir or not Path(out_dir).is_dir():
             return
-        imgs: List[Path] = []
-        base = Path(out_dir)
-        imgs += list(base.glob("*.png")) + list(base.glob("*.jpg"))
-        for sub in base.glob("*/"):
-            if sub.is_dir():
-                imgs += list(sub.glob("*.png")) + list(sub.glob("*.jpg"))
-        imgs = sorted(set(imgs))
+        imgs = self._discover_result_images(out_dir)
         if imgs:
             cnt = self._gallery.load_images(imgs)
             if cnt:
                 self.runner.append(f"\n[UI] {cnt} plot(s) loaded: {out_dir}")
+                # Reveal the in-place Results / Plots section once plots exist.
+                self._results_section.set_expanded(True)
         self.runner.set_output_dir(out_dir)
         self.runner.btn_open_folder.setVisible(True)
 
@@ -1312,13 +1371,16 @@ class OrbitBenchmarkTab(QWidget):
         s.setValue("truth_workers", self.truth_workers.value())
         s.setValue("gpu_integrator", self.gpu_integrator.currentData())
         s.setValue("rk4_dt", self.rk4_dt.value())
-        s.setValue("torch_dtype", self.torch_dtype.currentText())
+        s.setValue("rk4_dt_list", self.rk4_dt_list.text())
+        s.setValue("torch_dtype", self.torch_dtype.currentData() or "float32")
         s.setValue("gpu_fallback", self.gpu_fallback.currentData())
         s.setValue("rtol", self.rtol.text())
         s.setValue("atol", self.atol.text())
         s.setValue("max_step", self.max_step.value())
         s.setValue("st_lrps_dir", self.st_lrps_dir.text())
         s.setValue("out_dir", self.out_dir.text())
+        s.setValue("logs_expanded", self._logs_section.is_expanded())
+        s.setValue("results_expanded", self._results_section.is_expanded())
         s.endGroup()
         s.sync()
 
@@ -1386,18 +1448,25 @@ class OrbitBenchmarkTab(QWidget):
         _combo(self.integrator, "integrator")
         _combo(self.gpu_integrator, "gpu_integrator")
         _combo(self.gpu_fallback, "gpu_fallback")
-        if s.contains("torch_dtype"):
-            self.torch_dtype.setCurrentText(str(s.value("torch_dtype", "float64")))
+        _combo(self.torch_dtype, "torch_dtype")
         if s.contains("rtol"):
             self.rtol.setText(str(s.value("rtol", "1e-10")))
         if s.contains("atol"):
             self.atol.setText(str(s.value("atol", "1e-12")))
+        if s.contains("rk4_dt_list"):
+            self.rk4_dt_list.setText(str(s.value("rk4_dt_list", "")))
         if s.contains("st_lrps_dir"):
             self.st_lrps_dir.setText(str(s.value("st_lrps_dir", "")))
         if s.contains("out_dir"):
             self.out_dir.setText(str(s.value("out_dir", "")))
         if s.contains("cache_dir"):
             self.cache_dir.setText(str(s.value("cache_dir", "")))
+        if s.contains("logs_expanded"):
+            self._logs_section.set_expanded(
+                str(s.value("logs_expanded", "true")).lower() == "true")
+        if s.contains("results_expanded"):
+            self._results_section.set_expanded(
+                str(s.value("results_expanded", "false")).lower() == "true")
         s.endGroup()
 
 

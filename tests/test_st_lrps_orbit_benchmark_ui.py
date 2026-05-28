@@ -102,6 +102,31 @@ def test_benchmark_tab_gpu_rk4_mode_args(qapp):
     tab.deleteLater()
 
 
+def test_benchmark_tab_uses_laptop_friendly_defaults(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    assert tab.alt_min.value() == 100.0
+    assert tab.alt_max.value() == 1000.0
+    assert tab.cpu_workers.value() == 4
+    assert tab.truth_workers.value() == 4
+    assert tab.rk4_dt.value() == 30.0
+    assert tab.torch_dtype.currentData() == "float32"
+    assert "not recommended on laptops" in tab.torch_dtype.itemText(1)
+
+    args_cpu = tab._build_args(show_errors=False)
+    assert args_cpu[args_cpu.index("--workers") + 1] == "4"
+    assert args_cpu[args_cpu.index("--altitude-min-km") + 1] == "100.0"
+    assert args_cpu[args_cpu.index("--altitude-max-km") + 1] == "1000.0"
+
+    tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
+    args_gpu = tab._build_args(show_errors=False)
+    assert args_gpu[args_gpu.index("--rk4-dt-s") + 1] == "30.0"
+    assert args_gpu[args_gpu.index("--workers") + 1] == "4"
+    assert args_gpu[args_gpu.index("--torch-dtype") + 1] == "float32"
+    tab.deleteLater()
+
+
 def test_benchmark_tab_requires_at_least_one_model(qapp):
     from st_lrps.ui.studio import OrbitBenchmarkTab
 
@@ -197,6 +222,25 @@ def test_unknown_gpu_method_falls_back_to_rk4():
     assert np.allclose(a, b)
 
 
+def test_gpu_batch_propagator_avoids_per_step_host_syncs():
+    import inspect
+
+    from st_lrps.evaluation.compare_gravity_models import (
+        TorchFrameProvider,
+        propagate_gpu_batch_model,
+    )
+
+    source = inspect.getsource(propagate_gpu_batch_model)
+    assert "bad_state.logical_or_" in source
+    assert "if not torch.isfinite(state).all()" not in source
+    assert source.count(".detach().cpu().numpy()") == 1
+    assert "y_gpu" in source
+
+    frame_source = inspect.getsource(TorchFrameProvider.quat_i2f)
+    assert "if dot <" not in frame_source
+    assert "if dot >" not in frame_source
+
+
 # ---------------------------------------------------------------------------
 # Harness: new CLI flags parse
 # ---------------------------------------------------------------------------
@@ -218,6 +262,7 @@ def test_harness_parses_new_flags(monkeypatch):
         "--rebuild-metrics",
         "--strict-complete",
         "--allow-lhs-append",
+        "--gpu-rk4-dt-s-list", "10,30",
     ]
     monkeypatch.setattr(_sys, "argv", argv)
     args = cgm.parse_args()
@@ -232,6 +277,32 @@ def test_harness_parses_new_flags(monkeypatch):
     assert args.rebuild_metrics is True
     assert args.strict_complete is True
     assert args.allow_lhs_append is True
+    assert args.gpu_rk4_dt_s_list == "10,30"
+
+
+def test_harness_laptop_friendly_cli_defaults(monkeypatch):
+    import sys as _sys
+
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    monkeypatch.setattr(_sys, "argv", ["compare_gravity_models"])
+    args = cgm.parse_args()
+    assert args.altitude_min_km == 100.0
+    assert args.altitude_max_km == 1000.0
+    assert args.workers == 4
+    assert args.torch_dtype == "float32"
+    assert args.rk4_dt_s is None
+    assert args.st_lrps_rk4_dt == 30.0
+
+
+def test_gpu_rk4_dt_variants_build_distinct_cache_and_display_names():
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = argparse.Namespace(gpu_rk4_dt_s_list="10,30", rk4_dt_s=None, st_lrps_rk4_dt=30.0)
+    tasks = cgm._build_gpu_batch_tasks(["sh20"], args)
+    assert [t.cache_name for t in tasks] == ["sh20_rk4_dt10", "sh20_rk4_dt30"]
+    assert [t.display_name for t in tasks] == ["GPU_SH20_RK4_DT10", "GPU_SH20_RK4_DT30"]
+    assert cgm.display_label("GPU_SH20_RK4_DT10") == "SH20 dt10"
 
 
 def test_cfg_with_integrator_overrides_method():
@@ -269,9 +340,12 @@ def test_ui_gpu_mode_emits_gpu_integrator(qapp):
     tab = OrbitBenchmarkTab()
     tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
     tab.gpu_integrator.setCurrentIndex(tab.gpu_integrator.findData("robust"))
+    tab.rk4_dt_list.setText("10,30")
     args = tab._build_args(show_errors=False)
     assert "--gpu-integrator" in args
     assert args[args.index("--gpu-integrator") + 1] == "robust"
+    assert "--gpu-rk4-dt-s-list" in args
+    assert args[args.index("--gpu-rk4-dt-s-list") + 1] == "10,30"
     assert "--truth-integrator" in args
     assert "--workers" in args
     tab.deleteLater()
@@ -400,6 +474,7 @@ def test_ui_qsettings_persists_sampling(qapp):
     tab.rebuild_metrics.setChecked(True)
     tab.strict_complete.setChecked(True)
     tab.cache_dir.setText(str(ROOT / "tmp_cache"))
+    tab.rk4_dt_list.setText("10,30")
     tab._save_settings()
     tab.deleteLater()
 
@@ -414,6 +489,7 @@ def test_ui_qsettings_persists_sampling(qapp):
     assert restored.rebuild_metrics.isChecked() is True
     assert restored.strict_complete.isChecked() is True
     assert restored.cache_dir.text() == str(ROOT / "tmp_cache")
+    assert restored.rk4_dt_list.text() == "10,30"
     restored.deleteLater()
 
     settings.beginGroup("orbit_benchmark")
@@ -730,6 +806,8 @@ def test_backend_rebuild_gpu_metrics_from_cached_trajectories(tmp_path):
     assert "GPU_SH20_RK4" in per.read_text(encoding="utf-8")
     assert (cache_dir / "metrics" / "per_model_scenario_metrics.csv").exists()
     assert (cache_dir / "metrics" / "aggregate_metrics.csv").exists()
+    assert (plots_dir / "ensemble_mean_position_error_vs_time.png").exists()
+    assert (plots_dir / "selected_representative_position_error_all_models.png").exists()
 
 
 def test_backend_strict_complete_rejects_missing_model_cache(tmp_path):
@@ -1036,4 +1114,90 @@ def test_dashboard_finish_finalizes_pipeline(qapp):
     assert tab._model_status["report"] == "completed"
     assert tab._status_badge.text() == "Completed"
     assert tab.overall_bar.value() == 100
+    tab.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Single-page layout: in-place collapsible Results/Plots (no secondary page)
+# ---------------------------------------------------------------------------
+
+def test_no_secondary_plot_page(qapp):
+    """The benchmark tab is one page — no QSplitter dividing config from plots.
+
+    (The gallery's own QTabWidget contains a QStackedWidget internally for
+    switching plots; that is not a navigation sub-page, so we only assert the
+    absence of a splitter / bottom pane here.)
+    """
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from st_lrps.ui.studio_parts.qt_common import QSplitter
+
+    tab = OrbitBenchmarkTab()
+    assert tab.findChildren(QSplitter) == []
+    # The plots live inside the in-place Results section, not a separate pane.
+    assert tab._results_section.isAncestorOf(tab._gallery)
+    tab.deleteLater()
+
+
+def test_results_section_present_on_same_page(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+    from st_lrps.ui.studio_parts.common_widgets import CollapsibleSection, ImageGallery
+
+    tab = OrbitBenchmarkTab()
+    assert isinstance(tab._results_section, CollapsibleSection)
+    assert isinstance(tab._logs_section, CollapsibleSection)
+    # The single, persistent gallery lives inside the Results/Plots section.
+    assert isinstance(tab._gallery, ImageGallery)
+    assert tab._results_section.isAncestorOf(tab._gallery)
+    # Both sections share the same parent chain (one page, not a sub-page).
+    assert tab.isAncestorOf(tab._results_section)
+    assert tab.isAncestorOf(tab._logs_section)
+    tab.deleteLater()
+
+
+def test_results_section_collapse_expand(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    # Starts collapsed (minimal vertical space until a run produces plots).
+    assert tab._results_section.is_expanded() is False
+    tab._results_section.set_expanded(True)
+    assert tab._results_section.is_expanded() is True
+    assert tab._gallery.isVisibleTo(tab._results_section) is True
+    tab._results_section.set_expanded(False)
+    assert tab._results_section.is_expanded() is False
+    assert tab._gallery.isVisibleTo(tab._results_section) is False
+    tab.deleteLater()
+
+
+def test_gallery_persistent_across_toggle(qapp):
+    """The gallery is created once and only shown/hidden, never recreated."""
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    gallery_id = id(tab._gallery)
+    for _ in range(3):
+        tab._results_section.set_expanded(True)
+        tab._results_section.set_expanded(False)
+    assert id(tab._gallery) == gallery_id
+    # Roomy when expanded so plots are not squeezed.
+    assert tab._gallery.minimumHeight() >= 500
+    tab.deleteLater()
+
+
+def test_refresh_results_loads_plots_in_place(qapp, tmp_path):
+    """Refresh re-scans the output dir and expands the in-place section."""
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    # Write a tiny valid PNG into the output dir.
+    import base64
+    png = base64.b64decode(
+        b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    (tmp_path / "plot_one.png").write_bytes(png)
+
+    tab = OrbitBenchmarkTab()
+    tab.out_dir.setText(str(tmp_path))
+    tab._effective_out_dir = str(tmp_path)
+    assert tab._results_section.is_expanded() is False
+    tab._refresh_results()
+    assert tab._results_section.is_expanded() is True
     tab.deleteLater()

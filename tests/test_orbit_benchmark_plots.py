@@ -191,7 +191,11 @@ def test_missing_optional_models_do_not_crash(tmp_path):
     # No ST-LRPS at all — only SH baselines.
     ds = _build(n=6, err_scale_km=0.05, models=("GPU_SH20_RK4", "GPU_SH80_RK4"))
     saved, pdf = _run(tmp_path, ds, _make_args(random_scenarios=6, gpu_models="sh20,sh80"))
+    names = {p.name for p in saved}
     assert all(Path(p).exists() for p in saved)
+    assert "ensemble_mean_position_error_vs_time.png" in names
+    assert "selected_representative_position_error_all_models.png" in names
+    assert ds["selected"]["_selection_source"] == "comparison set"
     assert pdf.exists()
 
 

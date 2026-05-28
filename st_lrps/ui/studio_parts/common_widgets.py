@@ -449,6 +449,10 @@ class CollapsibleSection(QWidget):
         self._toggle_btn.setChecked(bool(expanded))
         self._on_toggle(bool(expanded))
 
+    def is_expanded(self) -> bool:
+        """True when the section is currently expanded."""
+        return self._toggle_btn.isChecked()
+
     def _on_toggle(self, checked: bool) -> None:
         self._content.setVisible(checked)
         arrow = "▾" if checked else "▸"

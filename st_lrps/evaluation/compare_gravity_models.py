@@ -182,6 +182,14 @@ class CachedTrajectory:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class GpuBatchTask:
+    model_name: str
+    cache_name: str
+    display_name: str
+    rk4_dt_s: float
+
+
 _METRICS_FIELDNAMES = [
     "scenario_id", "model",
     "runtime_s", "runtime_rel_to_truth",
@@ -244,8 +252,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--inclination-sampling", choices=INCLINATION_SAMPLING_METHODS,
                    default="uniform_deg",
                    help="Sample inclination uniformly in degrees or uniformly in cos(i).")
-    p.add_argument("--altitude-min-km", type=float, default=200.0)
-    p.add_argument("--altitude-max-km", type=float, default=400.0)
+    p.add_argument("--altitude-min-km", type=float, default=100.0)
+    p.add_argument("--altitude-max-km", type=float, default=1000.0)
     p.add_argument("--ecc-min", type=float, default=0.0)
     p.add_argument("--ecc-max", type=float, default=0.0)
     p.add_argument("--inc-min-deg", type=float, default=0.0)
@@ -275,7 +283,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--rtol", type=float, default=1e-10)
     p.add_argument("--atol", type=float, default=1e-12)
     p.add_argument("--max-step", type=float, default=30.0)
-    p.add_argument("--workers", type=int, default=1,
+    p.add_argument("--workers", type=int, default=4,
                    help="CPU worker processes for adaptive DOP853/RK45 work. In CPU "
                         "mode this parallelizes truth + compared-model scenario sweeps; "
                         "in GPU batch mode this parallelizes CPU truth generation. "
@@ -341,9 +349,17 @@ def parse_args() -> argparse.Namespace:
                    help="Reference for batch RK4 error comparison")
     p.add_argument("--rk4-dt-s", type=float, default=None,
                    help="RK4 fixed step size (s). Default: --st-lrps-rk4-dt value.")
+    p.add_argument("--gpu-rk4-dt-s-list", type=str, default=None,
+                   help="Optional comma-separated RK4 step sizes to compare for each "
+                        "GPU model, e.g. '10,30'. When more than one value is "
+                        "provided, each model/step pair is treated as a separate "
+                        "comparison series.")
     p.add_argument("--batch-size", type=int, default=None,
                    help="GPU batch size (scenarios per pass). Default: all scenarios.")
-    p.add_argument("--torch-dtype", choices=["float32", "float64"], default="float64")
+    p.add_argument("--torch-dtype", choices=["float32", "float64"], default="float32",
+                   help="Torch dtype for GPU batch propagation. float32 is the default "
+                        "for laptop/workstation throughput; choose float64 explicitly "
+                        "when precision/runtime tradeoffs justify it.")
     p.add_argument("--gpu-fallback", choices=["error", "cpu"], default="error",
                    help="What to do when CUDA unavailable for batch RK4")
     p.add_argument("--save-batch-trajectories", action="store_true",
@@ -538,15 +554,83 @@ class GravityModelCache:
 
 def _model_display_name(model_name: str) -> str:
     name = str(model_name).lower()
+    base_name, dt_label = _split_gpu_variant_name(name)
+    name = base_name
     if name == "st_lrps":
-        return "GPU_ST_LRPS_RK4"
+        base = "GPU_ST_LRPS_RK4"
+        return f"{base}_DT{dt_label}" if dt_label else base
     if name.startswith("sh"):
-        return f"GPU_{name.upper()}_RK4"
+        base = f"GPU_{name.upper()}_RK4"
+        return f"{base}_DT{dt_label}" if dt_label else base
     return name.upper()
 
 
 def _parse_model_list_csv(value: str) -> List[str]:
     return [m.strip().lower() for m in str(value).split(",") if m.strip()]
+
+
+def _parse_float_list_csv(value: Optional[str]) -> List[float]:
+    if value is None or str(value).strip() == "":
+        return []
+    out: List[float] = []
+    for raw in str(value).split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        val = float(raw)
+        if val <= 0.0:
+            raise ValueError("--gpu-rk4-dt-s-list values must be positive.")
+        out.append(val)
+    return out
+
+
+def _format_rk4_dt_label(dt_s: float) -> str:
+    return f"{float(dt_s):g}"
+
+
+def _format_rk4_dt_token(dt_s: float) -> str:
+    return _format_rk4_dt_label(dt_s).replace("-", "m").replace(".", "p")
+
+
+def _split_gpu_variant_name(model_name: str) -> Tuple[str, Optional[str]]:
+    name = str(model_name).lower()
+    marker = "_rk4_dt"
+    if marker not in name:
+        return name, None
+    base, token = name.split(marker, 1)
+    token = token.strip("_")
+    label = token.replace("m", "-").replace("p", ".")
+    return base, label or None
+
+
+def _gpu_variant_cache_name(model_name: str, rk4_dt_s: float, include_dt: bool) -> str:
+    base = str(model_name).strip().lower()
+    if not include_dt:
+        return base
+    return f"{base}_rk4_dt{_format_rk4_dt_token(rk4_dt_s)}"
+
+
+def _gpu_rk4_dt_values(args: argparse.Namespace) -> List[float]:
+    values = _parse_float_list_csv(getattr(args, "gpu_rk4_dt_s_list", None))
+    if values:
+        return values
+    return [float(args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt)]
+
+
+def _build_gpu_batch_tasks(gpu_models: List[str], args: argparse.Namespace) -> List[GpuBatchTask]:
+    dt_values = _gpu_rk4_dt_values(args)
+    include_dt = bool(str(getattr(args, "gpu_rk4_dt_s_list", "") or "").strip()) or len(dt_values) > 1
+    tasks: List[GpuBatchTask] = []
+    for model in gpu_models:
+        for dt_s in dt_values:
+            cache_name = _gpu_variant_cache_name(model, dt_s, include_dt)
+            tasks.append(GpuBatchTask(
+                model_name=str(model).lower(),
+                cache_name=cache_name,
+                display_name=_model_display_name(cache_name),
+                rk4_dt_s=float(dt_s),
+            ))
+    return tasks
 
 
 def _torch_dtype_from_name(dtype_name: str) -> Any:
@@ -622,19 +706,17 @@ class TorchFrameProvider:
         qa = self.q_tab[i0]
         qb = self.q_tab[i0 + 1]
         dot = torch.dot(qa, qb)
-        if dot < 0.0:
-            qb = -qb
-            dot = -dot
-        dot = torch.clamp(dot, -1.0, 1.0)
-        if dot > 0.9995:
-            q = (1.0 - frac) * qa + frac * qb
-        else:
-            theta_0 = torch.acos(dot)
-            sin_theta_0 = torch.sin(theta_0).clamp_min(1e-30)
-            theta = theta_0 * frac
-            s0 = torch.sin(theta_0 - theta) / sin_theta_0
-            s1 = torch.sin(theta) / sin_theta_0
-            q = s0 * qa + s1 * qb
+        sign = torch.where(dot < 0.0, -torch.ones_like(dot), torch.ones_like(dot))
+        qb = qb * sign
+        dot = torch.clamp(dot * sign, -1.0, 1.0)
+        q_linear = (1.0 - frac) * qa + frac * qb
+        theta_0 = torch.acos(dot)
+        sin_theta_0 = torch.sin(theta_0).clamp_min(1e-30)
+        theta = theta_0 * frac
+        s0 = torch.sin(theta_0 - theta) / sin_theta_0
+        s1 = torch.sin(theta) / sin_theta_0
+        q_slerp = s0 * qa + s1 * qb
+        q = torch.where(dot > 0.9995, q_linear, q_slerp)
         return q / torch.linalg.norm(q).clamp_min(1e-30)
 
     def inertial_to_fixed(self, t_s: float, r_i: Any) -> Any:
@@ -892,13 +974,13 @@ def propagate_gpu_batch_model(
     n_scenarios = int(y0_batch.shape[0])
     n_snaps = max(1, round(duration_s / output_dt_s))
     t_out = np.linspace(0.0, n_snaps * output_dt_s, n_snaps + 1, dtype=np.float64)
-    y_out = np.empty((n_snaps + 1, n_scenarios, 6), dtype=np.float64)
 
     frame = TorchFrameProvider(ephem, device=device, dtype=dtype, mode=frame_mode)
     accel_fixed, backend = _make_gpu_accelerator(model_name, gravity_model, device=device, dtype=dtype)
 
     state = torch.as_tensor(y0_batch, device=device, dtype=dtype)
-    y_out[0] = state.detach().cpu().numpy().astype(np.float64)
+    y_gpu = torch.empty((n_snaps + 1, n_scenarios, 6), device=device, dtype=dtype)
+    y_gpu[0].copy_(state)
 
     def _rhs(t_s: float, s: Any) -> Any:
         r_i = s[:, :3]
@@ -926,6 +1008,7 @@ def propagate_gpu_batch_model(
     status = "ok"
     failure_reason = ""
     step_count = 0
+    bad_state = torch.zeros((), device=device, dtype=torch.bool)
     _emit_progress(0, 0.0)
 
     try:
@@ -934,12 +1017,11 @@ def propagate_gpu_batch_model(
                 state = gpu_fixed_step_advance(_rhs, t_curr, state, dt_eff, gpu_integrator)
                 t_curr += dt_eff
                 step_count += 1
-                if not torch.isfinite(state).all():
-                    raise FloatingPointError(f"non-finite state in {model_name}")
+                bad_state.logical_or_(~torch.isfinite(state).all())
                 now = time.perf_counter()
                 if throttle.update(step_count, now):
                     _emit_progress(step_count, now - t0)
-            y_out[snap_idx + 1] = state.detach().cpu().numpy().astype(np.float64)
+            y_gpu[snap_idx + 1].copy_(state)
     except Exception as exc:
         status = "failed"
         failure_reason = str(exc)
@@ -947,6 +1029,11 @@ def propagate_gpu_batch_model(
 
     if str(device).startswith("cuda"):
         torch.cuda.synchronize()
+    if status == "ok" and bool(bad_state.detach().cpu().item()):
+        status = "failed"
+        failure_reason = f"non-finite state in {model_name}"
+        print(f"[gpu-batch] {model_name.upper()} failed: {failure_reason}", flush=True)
+    y_out = y_gpu.detach().cpu().numpy().astype(np.float64, copy=False)
     runtime_s = time.perf_counter() - t0
     n_steps = n_snaps * steps_per_snap
     if status == "ok":
@@ -2069,6 +2156,54 @@ def _cached_gpu_runtime_rows(
     return sorted(rows, key=lambda r: r.get("total_runtime_s", np.inf))
 
 
+def _load_cached_gpu_batch_results(
+    args: argparse.Namespace,
+    scenarios: List[Scenario],
+    cache_dir: Path,
+    models: List[str],
+) -> List[BatchModelResult]:
+    results: List[BatchModelResult] = []
+    for model in models:
+        cached_by_scenario: List[CachedTrajectory] = []
+        complete = True
+        for scenario in scenarios:
+            cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
+            if cached is None:
+                complete = False
+                break
+            cached_by_scenario.append(cached)
+        if not complete or not cached_by_scenario:
+            continue
+        t_ref = cached_by_scenario[0].t
+        if any(c.t.shape != t_ref.shape or np.max(np.abs(c.t - t_ref)) > 1e-9 for c in cached_by_scenario):
+            print(f"[cache] WARNING: cached model {model} has inconsistent time grids; "
+                  "skipping time-series plots for this model.", flush=True)
+            continue
+        y = np.stack([c.y for c in cached_by_scenario], axis=1)
+        meta = cached_by_scenario[0].metadata
+        rk4_dt = float(meta.get(
+            "rk4_dt_s",
+            args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt,
+        ))
+        runtime = float(sum(c.runtime_s for c in cached_by_scenario if np.isfinite(c.runtime_s)))
+        results.append(BatchModelResult(
+            model_name=str(model),
+            display_name=_model_display_name(model),
+            backend=str(meta.get("backend", "cached")),
+            device=str(meta.get("device", "")),
+            dtype=str(meta.get("dtype", "")),
+            t=t_ref,
+            y=y,
+            runtime_s=runtime,
+            n_steps=max(0, int(t_ref.shape[0] - 1)),
+            n_scenarios=len(cached_by_scenario),
+            rk4_dt_s=rk4_dt,
+            output_dt_s=float(args.dt_out),
+            status="ok",
+        ))
+    return results
+
+
 def rebuild_gpu_batch_metrics_from_cache(
     args: argparse.Namespace,
     scenarios: List[Scenario],
@@ -2118,6 +2253,7 @@ def rebuild_gpu_batch_metrics_from_cache(
 
     aggregate_rows = aggregate_gpu_batch_metrics(all_rows)
     runtime_rows = _cached_gpu_runtime_rows(args, gpu_models, scenarios, cache_dir, truth)
+    plot_results = _load_cached_gpu_batch_results(args, scenarios, cache_dir, gpu_models)
     ranking_rows = build_gpu_model_ranking(aggregate_rows)
     equivalent = estimate_stlrps_equivalent_sh_degree(aggregate_rows)
     selected = select_stlrps_scenarios(all_rows, {s.scenario_id: s for s in scenarios}, args)
@@ -2132,6 +2268,7 @@ def rebuild_gpu_batch_metrics_from_cache(
     summary = {
         "truth": _truth_cache_name(args),
         "gpu_models": gpu_models,
+        "gpu_model_variants": [_model_display_name(m) for m in gpu_models],
         "n_scenarios_total": len(scenarios),
         "n_scenarios_new_this_run": 0,
         "accumulated": bool(args.resume),
@@ -2162,7 +2299,7 @@ def rebuild_gpu_batch_metrics_from_cache(
         )
     if aggregate_rows:
         plot_gpu_batch_report_figures(
-            aggregate_rows, runtime_rows, all_rows, [], truth, scenarios,
+            aggregate_rows, runtime_rows, all_rows, plot_results, truth, scenarios,
             selected, equivalent, plots_dir, args
         )
         write_gpu_batch_report_pdf(args, aggregate_rows, runtime_rows, equivalent, selected, plots_dir, reports_dir)
@@ -2482,10 +2619,17 @@ def model_zorder(model: str) -> int:
 
 def display_label(model: str) -> str:
     """Human label, e.g. GPU_SH20_RK4 -> SH20, GPU_ST_LRPS_RK4 -> ST-LRPS."""
-    if _is_stlrps(model):
-        return "ST-LRPS"
-    m = str(model).replace("GPU_", "").replace("_RK4", "")
-    return m.upper()
+    m = str(model)
+    dt_label: Optional[str] = None
+    if "_DT" in m.upper():
+        head, tail = re.split(r"_DT", m, maxsplit=1, flags=re.IGNORECASE)
+        m = head
+        dt_label = tail
+    if _is_stlrps(m):
+        label = "ST-LRPS"
+    else:
+        label = m.replace("GPU_", "").replace("_RK4", "").upper()
+    return f"{label} dt{dt_label}" if dt_label else label
 
 
 def select_length_unit(max_km: float) -> Tuple[str, float]:
@@ -2970,9 +3114,9 @@ def estimate_stlrps_equivalent_sh_degree(aggregate_rows: List[Dict[str, Any]]) -
     def _metric(metric_key: str) -> Dict[str, Any]:
         sh_points = []
         for model, row in by_model.items():
-            if model.startswith("GPU_SH") and model.endswith("_RK4"):
+            deg = _model_degree(model)
+            if model.startswith("GPU_SH") and deg is not None:
                 try:
-                    deg = int(model.replace("GPU_SH", "").replace("_RK4", ""))
                     sh_points.append((deg, float(row[metric_key]), model))
                 except Exception:
                     pass
@@ -3023,12 +3167,36 @@ def select_stlrps_scenarios(rows: List[Dict[str, Any]], scenarios_by_id: Dict[in
                             args: argparse.Namespace) -> Dict[str, Any]:
     st_rows = [
         r for r in rows
-        if str(r.get("model", "")).upper() == "GPU_ST_LRPS_RK4"
+        if str(r.get("model", "")).upper().startswith("GPU_ST_LRPS_RK4")
         and r.get("status") in {"ok", "warning_negative_altitude"}
         and np.isfinite(float(r.get("rms_pos_err_km", np.nan)))
     ]
+    source_label = "ST-LRPS"
     if not st_rows:
-        return {}
+        from collections import defaultdict
+        vals_by_sid: Dict[int, List[float]] = defaultdict(list)
+        base_by_sid: Dict[int, Dict[str, Any]] = {}
+        for r in rows:
+            if r.get("status") not in {"ok", "warning_negative_altitude"}:
+                continue
+            try:
+                sid = int(r["scenario_id"])
+                val = float(r.get("rms_pos_err_km", np.nan))
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(val):
+                continue
+            vals_by_sid[sid].append(val)
+            base_by_sid.setdefault(sid, dict(r))
+        if not vals_by_sid:
+            return {}
+        st_rows = []
+        for sid, vals in vals_by_sid.items():
+            row = dict(base_by_sid[sid])
+            row["model"] = "ALL_GPU_MODELS"
+            row["rms_pos_err_km"] = float(np.mean(vals))
+            st_rows.append(row)
+        source_label = "comparison set"
 
     by_id = {int(r["scenario_id"]): r for r in st_rows}
 
@@ -3047,12 +3215,13 @@ def select_stlrps_scenarios(rows: List[Dict[str, Any]], scenarios_by_id: Dict[in
                 "argp_deg": sc.argp_deg, "ta_deg": sc.ta_deg,
             })
         payload["selection"] = label
+        payload["selection_source"] = source_label
         return payload
 
     vals = np.array([float(r["rms_pos_err_km"]) for r in st_rows], dtype=np.float64)
     median = float(np.median(vals))
     mean = float(np.mean(vals))
-    return {
+    selected = {
         "best": _pick("best", args.plot_best_scenario_id,
                       lambda rr: min(rr, key=lambda r: float(r["rms_pos_err_km"]))),
         "worst": _pick("worst", args.plot_worst_scenario_id,
@@ -3062,6 +3231,8 @@ def select_stlrps_scenarios(rows: List[Dict[str, Any]], scenarios_by_id: Dict[in
         "mean_error": _pick("mean_error", None,
                             lambda rr: min(rr, key=lambda r: abs(float(r["rms_pos_err_km"]) - mean))),
     }
+    selected["_selection_source"] = source_label
+    return selected
 
 
 def plot_gpu_batch_report_figures(
@@ -3452,6 +3623,7 @@ def plot_gpu_batch_report_figures(
 
     # ----- Selected ST-LRPS scenarios ------------------------------------
     scenario_by_id = {s.scenario_id: s for s in scenarios}
+    selection_source = str(selected.get("_selection_source", "ST-LRPS"))
     for label in ("best", "representative", "worst"):
         item = selected.get(label)
         if not item:
@@ -3497,7 +3669,7 @@ def plot_gpu_batch_report_figures(
             _legend(ax_pos, outside=True)
         else:
             _empty_note(ax_pos, "Errors are below plotting threshold for this short run.")
-        _style_ax(ax_pos, title=f"{label.title()} ST-LRPS Scenario: Position Error",
+        _style_ax(ax_pos, title=f"{label.title()} {selection_source} Scenario: Position Error",
                   xlabel="Time [days]", ylabel=f"Position Error [{unit}]", subtitle=sub)
         fig_pos.tight_layout()
         p = plots_dir / f"selected_{label}_position_error_all_models.png"
@@ -3516,7 +3688,7 @@ def plot_gpu_batch_report_figures(
             _legend(ax_alt, outside=True)
         else:
             _empty_note(ax_alt, "Errors are below plotting threshold for this short run.")
-        _style_ax(ax_alt, title=f"{label.title()} ST-LRPS Scenario: Altitude Error",
+        _style_ax(ax_alt, title=f"{label.title()} {selection_source} Scenario: Altitude Error",
                   xlabel="Time [days]", ylabel=f"Altitude Error [{aunit}]", subtitle=sub)
         fig_alt.tight_layout()
         p = plots_dir / f"selected_{label}_altitude_error_all_models.png"
@@ -3539,7 +3711,7 @@ def plot_gpu_batch_report_figures(
             axes_sel[k].grid(True, alpha=0.45)
             for spine in ("top", "right"):
                 axes_sel[k].spines[spine].set_visible(False)
-        axes_sel[0].set_title(f"{label.title()} ST-LRPS Scenario {sid}: RIC Error")
+        axes_sel[0].set_title(f"{label.title()} {selection_source} Scenario {sid}: RIC Error")
         axes_sel[-1].set_xlabel("Time [days]")
         if ric_by_model and ric_max_km > 1e-12:
             _legend(axes_sel[0], outside=True)
@@ -4033,6 +4205,7 @@ def _cache_metadata(args: argparse.Namespace) -> Dict[str, Any]:
             None if getattr(args, "rk4_dt_s", None) is None
             else float(args.rk4_dt_s)
         ),
+        "gpu_rk4_dt_s_list": _parse_float_list_csv(getattr(args, "gpu_rk4_dt_s_list", None)),
         "st_lrps_rk4_dt": float(getattr(args, "st_lrps_rk4_dt", 30.0)),
         "gpu_integrator": str(getattr(args, "gpu_integrator", "medium")),
         "torch_dtype": str(getattr(args, "torch_dtype", "float64")),
@@ -4314,6 +4487,7 @@ def _write_run_metadata(
         "batch_rk4": bool(args.batch_rk4),
         "batch_rk4_reference": str(args.batch_rk4_reference),
         "rk4_dt_s": float(args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt),
+        "gpu_rk4_dt_s_list": _parse_float_list_csv(getattr(args, "gpu_rk4_dt_s_list", None)),
         "gpu_fallback": str(args.gpu_fallback),
         "torch_dtype": str(args.torch_dtype),
         "force_batch_size": int(args.force_batch_size),
@@ -4844,9 +5018,11 @@ def write_gpu_batch_report_pdf(
 
     reports_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = reports_dir / "gpu_batch_validation_report.pdf"
-    rk4_dt = args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt
+    rk4_dt_values = _gpu_rk4_dt_values(args)
+    rk4_dt_text = ", ".join(f"{v:g}" for v in rk4_dt_values)
     truth_integ = str(getattr(args, "truth_integrator", "DOP853"))
     gpu_integ = str(getattr(args, "gpu_integrator", "medium"))
+    selection_source = str(selected.get("_selection_source", "ST-LRPS"))
 
     with PdfPages(pdf_path) as pdf:
         pager = _ReportPager(
@@ -4863,7 +5039,7 @@ def write_gpu_batch_report_pdf(
                 ("Inclination sampling", str(getattr(args, "inclination_sampling", "uniform_deg"))),
                 ("Altitude range", f"{args.altitude_min_km:.0f} - {args.altitude_max_km:.0f} km"),
                 ("Duration", f"{args.duration_days:g} days"),
-                ("GPU integrator", f"{gpu_integ} (fixed step {rk4_dt:g} s)"),
+                ("GPU integrator", f"{gpu_integ} (fixed step {rk4_dt_text} s)"),
                 ("Truth workers", str(getattr(args, "workers", 1))),
                 ("Output cadence", f"{args.dt_out:g} s"),
                 ("Precision", str(args.torch_dtype)),
@@ -4891,10 +5067,10 @@ def write_gpu_batch_report_pdf(
                 ["ST-LRPS median-equivalent status",
                  str(med_eq.get("equivalent_degree_status", med_eq.get("status", "n/a")))],
                 ["ST-LRPS closest by P95 RMS", str(p95_eq.get("closest_model", "n/a"))],
-                ["Best ST-LRPS scenario", str(selected.get("best", {}).get("scenario_id", "n/a"))],
-                ["Representative ST-LRPS scenario",
+                [f"Best {selection_source} scenario", str(selected.get("best", {}).get("scenario_id", "n/a"))],
+                [f"Representative {selection_source} scenario",
                  str(selected.get("representative", {}).get("scenario_id", "n/a"))],
-                ["Worst ST-LRPS scenario", str(selected.get("worst", {}).get("scenario_id", "n/a"))],
+                [f"Worst {selection_source} scenario", str(selected.get("worst", {}).get("scenario_id", "n/a"))],
             ],
         )
 
@@ -5379,7 +5555,8 @@ def _print_gpu_batch_summary(
     print(f"Inc mode: {getattr(args, 'inclination_sampling', 'uniform_deg')}")
     print(f"Truth workers: {getattr(args, 'workers', 1)}")
     print(f"Duration: {args.duration_days:g} days")
-    print(f"RK4 dt:   {args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt:g} s")
+    rk4_values = _gpu_rk4_dt_values(args)
+    print(f"RK4 dt:   {', '.join(f'{v:g}' for v in rk4_values)} s")
     print(f"Dtype:    {args.torch_dtype}")
     print(f"Frame:    {args.batch_frame_mode}")
 
@@ -5458,6 +5635,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
             print("[gpu-batch] WARNING: ST-LRPS model missing; removing st_lrps from --gpu-models.",
                   flush=True)
             gpu_models = [m for m in gpu_models if m != "st_lrps"]
+    gpu_tasks = _build_gpu_batch_tasks(gpu_models, args)
+    gpu_cache_names = [task.cache_name for task in gpu_tasks]
 
     cache_enabled = _cache_requested(args) or bool(getattr(args, "cache_trajectories", False))
     cache_dir = _benchmark_cache_dir(args, out_dir)
@@ -5465,11 +5644,11 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         cache_dir.mkdir(parents=True, exist_ok=True)
         print(f"[cache] Enabled trajectory cache: {cache_dir}", flush=True)
         _validate_cache_compatibility(args, cache_dir)
-        _write_cache_manifest(args, cache_dir, scenarios, gpu_models)
+        _write_cache_manifest(args, cache_dir, scenarios, gpu_cache_names)
 
     if getattr(args, "rebuild_metrics", False):
         aggregate_rows, runtime_rows, equivalent, selected = rebuild_gpu_batch_metrics_from_cache(
-            args, scenarios, cache_dir, gpu_models, metrics_dir, plots_dir, reports_dir
+            args, scenarios, cache_dir, gpu_cache_names, metrics_dir, plots_dir, reports_dir
         )
         _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected)
         return
@@ -5488,7 +5667,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         raise RuntimeError("CUDA unavailable for --gpu-batch-compare. Use --gpu-fallback cpu to continue.")
     dtype = _torch_dtype_from_name(args.torch_dtype)
 
-    print(f"\n[gpu-batch] models={gpu_models} device={device} dtype={args.torch_dtype} "
+    print(f"\n[gpu-batch] models={[task.display_name for task in gpu_tasks]} "
+          f"device={device} dtype={args.torch_dtype} "
           f"frame={args.batch_frame_mode} gpu_integrator={getattr(args, 'gpu_integrator', 'medium')}",
           flush=True)
 
@@ -5500,7 +5680,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     completed_ids: set = set()
     if args.resume and per_scenario_csv.exists():
         existing_rows = [_coerce_numeric_row(r) for r in _read_csv_rows(per_scenario_csv)]
-        needed_models = {_model_display_name(m) for m in gpu_models}
+        needed_models = {task.display_name for task in gpu_tasks}
         by_id: Dict[int, set] = {}
         for r in existing_rows:
             try:
@@ -5537,7 +5717,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         else {"truth": 0.40, "gpu": 0.50, "report": 0.10}
     )
     overall = progress.OverallProgress(overall_weights)
-    n_gpu_models = max(1, len(gpu_models))
+    n_gpu_models = max(1, len(gpu_tasks))
 
     def _on_truth_progress(completed: int, total: int, elapsed_s: float, eta_s: float) -> None:
         pct = 100.0 * completed / max(1, total)
@@ -5561,30 +5741,30 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         truth = TruthTrajectorySet(_truth_name, {}, {}, {})
 
     duration_s = float(args.duration_days) * 86400.0
-    rk4_dt = float(args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt)
-
     results: List[BatchModelResult] = []
     t_gpu_start = time.perf_counter()
     completed_gpu = 0
-    for model_idx, model_name in enumerate(gpu_models if run_scenarios else [], 1):
+    for model_idx, task in enumerate(gpu_tasks if run_scenarios else [], 1):
+        model_name = task.model_name
         model_scenarios = list(run_scenarios)
         if cache_enabled:
-            complete, missing = _model_cache_completion(cache_dir, model_name, scenarios)
-            print(f"[cache] Model {model_name}: {complete}/{len(scenarios)} complete."
+            complete, missing = _model_cache_completion(cache_dir, task.cache_name, scenarios)
+            print(f"[cache] Model {task.display_name}: {complete}/{len(scenarios)} complete."
                   + (f" Recomputing {len(missing)} missing." if missing else ""),
                   flush=True)
             model_scenarios = missing
             if not model_scenarios:
                 continue
 
-        print(f"\n[gpu-batch] Model {model_idx:02d}/{len(gpu_models)} | "
-              f"{model_name.upper()} RK4 starting for {len(model_scenarios)} scenario(s) ...",
+        print(f"\n[gpu-batch] Model {model_idx:02d}/{len(gpu_tasks)} | "
+              f"{task.display_name} starting for {len(model_scenarios)} scenario(s) "
+              f"(rk4_dt={task.rk4_dt_s:g}s) ...",
               flush=True)
         y0_batch = np.asarray([s.initial_state for s in model_scenarios], dtype=np.float64)
 
         def _gpu_progress_cb(
             current_step: int, total_steps: int, elapsed_s: float,
-            _name: str = model_name, _idx: int = model_idx,
+            _name: str = task.display_name, _idx: int = model_idx,
         ) -> None:
             stats = progress.compute_step_stats(current_step, total_steps, elapsed_s)
             print(
@@ -5617,7 +5797,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 gravity,
                 y0_batch,
                 duration_s,
-                rk4_dt,
+                task.rk4_dt_s,
                 float(args.dt_out),
                 ephem,
                 device=device,
@@ -5627,13 +5807,15 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 gpu_integrator=str(getattr(args, "gpu_integrator", "medium")),
                 progress_cb=_gpu_progress_cb,
             )
+            result.display_name = task.display_name
+            result.model_name = task.cache_name
             completed_gpu += 1
             elapsed_gpu = time.perf_counter() - t_gpu_start
             rate_gpu = completed_gpu / max(elapsed_gpu, 1e-9)
-            remaining_gpu = (len(gpu_models) - completed_gpu) / max(rate_gpu, 1e-9)
+            remaining_gpu = (len(gpu_tasks) - completed_gpu) / max(rate_gpu, 1e-9)
             mm, ss = divmod(int(remaining_gpu), 60)
             hh, mm = divmod(mm, 60)
-            print(f"[gpu-batch] Model {model_idx:02d}/{len(gpu_models)} done | "
+            print(f"[gpu-batch] Model {model_idx:02d}/{len(gpu_tasks)} done | "
                   f"{result.display_name}: {result.runtime_s:.2f}s "
                   f"backend={result.backend} status={result.status} "
                   f"| ETA {hh:02d}:{mm:02d}:{ss:02d}", flush=True)
@@ -5641,7 +5823,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 per_scenario_runtime = result.runtime_s / max(1, len(model_scenarios))
                 for scenario_idx, scenario in enumerate(model_scenarios):
                     _save_cached_trajectory(
-                        cache_dir, scenario, model_name, "comparison_model",
+                        cache_dir, scenario, task.cache_name, "comparison_model",
                         result.t, result.y[:, scenario_idx, :], args,
                         runtime_s=per_scenario_runtime,
                         integrator="gpu_rk4",
@@ -5653,13 +5835,13 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                     )
             results.append(result)
         except Exception as exc:
-            print(f"[gpu-batch] ERROR {model_name}: {exc}", flush=True)
+            print(f"[gpu-batch] ERROR {task.display_name}: {exc}", flush=True)
             if args.fail_fast:
                 raise
             completed_gpu += 1
             results.append(BatchModelResult(
-                model_name=model_name,
-                display_name=_model_display_name(model_name),
+                model_name=task.cache_name,
+                display_name=task.display_name,
                 backend="failed",
                 device=str(device),
                 dtype=args.torch_dtype,
@@ -5668,16 +5850,16 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 runtime_s=float("nan"),
                 n_steps=0,
                 n_scenarios=len(model_scenarios),
-                rk4_dt_s=rk4_dt,
+                rk4_dt_s=task.rk4_dt_s,
                 output_dt_s=float(args.dt_out),
                 status="failed",
                 failure_reason=str(exc),
             ))
 
     if cache_enabled:
-        _write_cache_manifest(args, cache_dir, scenarios, gpu_models)
+        _write_cache_manifest(args, cache_dir, scenarios, gpu_cache_names)
         aggregate_rows, runtime_rows, equivalent, selected = rebuild_gpu_batch_metrics_from_cache(
-            args, scenarios, cache_dir, gpu_models, metrics_dir, plots_dir, reports_dir
+            args, scenarios, cache_dir, gpu_cache_names, metrics_dir, plots_dir, reports_dir
         )
         _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected)
         print(f"\n[gpu-batch] Complete -> {out_dir}", flush=True)
@@ -5721,6 +5903,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     summary = {
         "truth": _truth_name,
         "gpu_models": gpu_models,
+        "gpu_model_variants": [task.display_name for task in gpu_tasks],
         "n_scenarios_total": len(scenarios),
         "n_scenarios_new_this_run": len(run_scenarios),
         "accumulated": bool(args.resume),
