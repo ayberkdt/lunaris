@@ -100,16 +100,43 @@ _PHASE_LABELS = {
 }
 
 
-def _chip_label(key: str) -> str:
-    """Display label for a pipeline node key."""
+def _pipeline_key(name: str) -> str:
+    """Canonical pipeline-chip key for a model identity.
+
+    Accepts either a UI base name (``sh20``, ``st_lrps``) or a runtime display
+    name (``GPU_SH20_RK4``, ``GPU_SH20_RK4_DT10``); always lower-cased so chips
+    match the exact identity the harness emits on stdout.
+    """
+    return str(name).strip().lower()
+
+
+def _pipeline_label(key: str) -> str:
+    """Human label for a pipeline node key (base or runtime display name).
+
+    Examples: ``truth`` -> "Truth", ``sh20`` / ``GPU_SH20_RK4`` -> "SH20",
+    ``GPU_ST_LRPS_RK4`` -> "ST-LRPS", ``GPU_SH20_RK4_DT10`` -> "SH20 Δt10s".
+    """
     k = str(key).strip().lower()
     if k == "truth":
         return "Truth"
     if k == "report":
         return "Report"
-    if k == "st_lrps":
-        return "ST-LRPS"
-    return k.upper()
+    if k.startswith("gpu_"):
+        k = k[4:]
+    base, _, rest = k.partition("_rk4")
+    if base == "st_lrps":
+        label = "ST-LRPS"
+    else:
+        label = base.upper()
+    mdt = re.search(r"dt([0-9pmn.]+)", rest)
+    if mdt:
+        dt = mdt.group(1).replace("p", ".").replace("m", "-").rstrip(".")
+        label = f"{label} Δt{dt}s"
+    return label
+
+
+# Back-compat alias.
+_chip_label = _pipeline_label
 
 
 def _is_telemetry_line(line: str) -> bool:
@@ -365,6 +392,17 @@ class OrbitBenchmarkTab(QWidget):
         self.gpu_fallback = NoScrollComboBox()
         self.gpu_fallback.addItem("error (require CUDA)", "error")
         self.gpu_fallback.addItem("cpu (fallback)", "cpu")
+        self.gpu_frame_mode = NoScrollComboBox()
+        self.gpu_frame_mode.addItem("dynamic (per-step)", "match_dynamics_engine")
+        self.gpu_frame_mode.addItem("precomputed SLERP (faster)", "precomputed_slerp")
+        self.gpu_frame_mode.setCurrentIndex(0)
+        self.gpu_frame_mode.setToolTip(
+            "Frame rotation strategy for the GPU integrator.\n"
+            "dynamic: interpolate the body-fixed quaternion on every RHS call.\n"
+            "precomputed SLERP: precompute all fixed-step stage quaternions once "
+            "before the loop (same interpolation, less per-step overhead). "
+            "Numerically equivalent to dynamic within strict tolerance."
+        )
         self.truth_workers = QSpinBox()
         self.truth_workers.setRange(1, 256)
         self.truth_workers.setValue(4)
@@ -377,6 +415,7 @@ class OrbitBenchmarkTab(QWidget):
         form_gpu.addRow("Truth workers", self.truth_workers)
         form_gpu.addRow("Torch dtype", self.torch_dtype)
         form_gpu.addRow("Fallback", self.gpu_fallback)
+        form_gpu.addRow("Frame mode", self.gpu_frame_mode)
         grp_gpu.setLayout(form_gpu)
 
         mode_settings_w = QWidget()
@@ -489,6 +528,7 @@ class OrbitBenchmarkTab(QWidget):
         self._pipeline_order: List[str] = []
         self._chips: dict[str, dict] = {}
         self._current_model: Optional[str] = None
+        self._pipeline_dynamic = False
         self._hidden_telemetry = 0
 
         # Dashboard cards. Built here because some reuse ProcessPane widgets
@@ -529,7 +569,7 @@ class OrbitBenchmarkTab(QWidget):
         for w in (
             self.truth, self.truth_integrator, self.scenario_mode, self.integrator,
             self.sampling_method, self.inclination_sampling,
-            self.gpu_integrator, self.torch_dtype, self.gpu_fallback,
+            self.gpu_integrator, self.torch_dtype, self.gpu_fallback, self.gpu_frame_mode,
         ):
             w.currentIndexChanged.connect(self._refresh_command_preview)
         for w in (
@@ -844,6 +884,13 @@ class OrbitBenchmarkTab(QWidget):
     # Model pipeline chips
     # ------------------------------------------------------------------
     def _rebuild_pipeline(self, models: List[str]) -> None:
+        """(Re)build the chip strip: Truth, a preview of the selected models, Report.
+
+        This is the pre-run preview keyed by UI base names. Once the run starts
+        emitting real model identities, the model chips are replaced live (see
+        :meth:`_ensure_model_chip`) so they update one-by-one and include any
+        step-size (Δt) variants in order.
+        """
         while self._pipeline_layout.count():
             item = self._pipeline_layout.takeAt(0)
             w = item.widget()
@@ -852,13 +899,10 @@ class OrbitBenchmarkTab(QWidget):
                 w.deleteLater()
         self._chips = {}
         self._model_status = {}
-        order = ["truth"] + [str(m).lower() for m in models] + ["report"]
+        self._pipeline_dynamic = False
+        order = ["truth"] + [_pipeline_key(m) for m in models] + ["report"]
         self._pipeline_order = order
-        for i, key in enumerate(order):
-            if i > 0:
-                sep = QLabel("›")
-                sep.setStyleSheet("color:#48526f; font-size:15px; font-weight:700;")
-                self._pipeline_layout.addWidget(sep)
+        for key in order:
             self._pipeline_layout.addWidget(self._make_chip(key))
         self._pipeline_layout.addStretch(1)
         self._set_chip_status("truth", "pending")
@@ -871,7 +915,7 @@ class OrbitBenchmarkTab(QWidget):
         v = QVBoxLayout()
         v.setContentsMargins(11, 5, 11, 5)
         v.setSpacing(1)
-        name = QLabel(_chip_label(key))
+        name = QLabel(_pipeline_label(key))
         name.setStyleSheet(
             "color:#d8e1f7; font-size:12px; font-weight:700; "
             "background:transparent; border:none;"
@@ -880,8 +924,44 @@ class OrbitBenchmarkTab(QWidget):
         v.addWidget(name)
         v.addWidget(status)
         frame.setLayout(v)
-        self._chips[key] = {"frame": frame, "name": name, "status": status}
+        self._chips[_pipeline_key(key)] = {"frame": frame, "name": name, "status": status}
         return frame
+
+    def _clear_model_chips(self) -> None:
+        """Remove every chip except Truth and Report (keeps their widgets)."""
+        for key in [k for k in self._chips if k not in ("truth", "report")]:
+            chip = self._chips.pop(key)
+            self._model_status.pop(key, None)
+            self._pipeline_layout.removeWidget(chip["frame"])
+            chip["frame"].setParent(None)
+            chip["frame"].deleteLater()
+        self._pipeline_order = [k for k in self._pipeline_order if k in ("truth", "report")]
+
+    def _ensure_model_chip(self, key: str) -> str:
+        """Make sure a chip exists for a runtime model identity; return its key.
+
+        On the first runtime identity the base-name preview chips are dropped and
+        the strip switches to live, identity-keyed chips inserted before Report.
+        """
+        key = _pipeline_key(key)
+        if not self._pipeline_dynamic:
+            self._clear_model_chips()
+            self._pipeline_dynamic = True
+        if key in self._chips:
+            return key
+        frame = self._make_chip(key)
+        report_chip = self._chips.get("report")
+        if report_chip is not None:
+            idx = self._pipeline_layout.indexOf(report_chip["frame"])
+            self._pipeline_layout.insertWidget(max(0, idx), frame)
+            ins = (self._pipeline_order.index("report")
+                   if "report" in self._pipeline_order else len(self._pipeline_order))
+            self._pipeline_order.insert(ins, key)
+        else:
+            self._pipeline_layout.addWidget(frame)
+            self._pipeline_order.append(key)
+        self._set_chip_status(key, "queued")
+        return key
 
     def _set_chip_status(self, key: str, status: str) -> None:
         key = str(key).lower()
@@ -904,6 +984,11 @@ class OrbitBenchmarkTab(QWidget):
     # Log filtering / tools
     # ------------------------------------------------------------------
     def _display_filter_line(self, text: str) -> bool:
+        s = str(text).lstrip()
+        # Machine-readable progress lines drive the dashboard but only clutter
+        # the human log — hide them (the parser still receives every line).
+        if s.startswith("[progress]") or s.startswith("[progress_total]"):
+            return False
         if _is_telemetry_line(text):
             cb = getattr(self, "show_telemetry", None)
             if cb is not None and cb.isChecked():
@@ -954,7 +1039,7 @@ class OrbitBenchmarkTab(QWidget):
     def _apply_structured(self, info: dict) -> None:
         model = info.get("model")
         if model:
-            self._st_model.setText(_chip_label(str(model)))
+            self._st_model.setText(_pipeline_label(str(model)))
 
         if info.get("kind") == "progress_total":
             pct = info.get("percent")
@@ -975,9 +1060,9 @@ class OrbitBenchmarkTab(QWidget):
             self._st_phase.setText(label)
             cap = f"Current Phase: {label}"
             if model:
-                cap += f" — {_chip_label(str(model))}"
+                cap += f" — {_pipeline_label(str(model))}"
             self._phase_caption.setText(cap)
-            self._on_phase(str(phase), str(model).lower() if model else None)
+            self._on_phase(str(phase), _pipeline_key(model) if model else None)
 
         pct = info.get("percent")
         if pct is not None:
@@ -1006,9 +1091,10 @@ class OrbitBenchmarkTab(QWidget):
 
         m = re.match(r"\[cache\]\s+model\s+(\S+):\s*(\d+)\s*/\s*(\d+)\s+complete", low)
         if m:
-            name, done, total = m.group(1), int(m.group(2)), int(m.group(3))
+            key = self._ensure_model_chip(m.group(1))
+            done, total = int(m.group(2)), int(m.group(3))
             if total > 0 and done >= total and "recomput" not in low:
-                self._set_chip_status(name, "cached")
+                self._set_chip_status(key, "cached")
             return
 
         if re.match(r"\[truth\]\s+building", low):
@@ -1018,21 +1104,25 @@ class OrbitBenchmarkTab(QWidget):
             self._set_chip_status("truth", "cached")
             return
 
-        m = re.search(r"\[gpu-batch\]\s+model\s+\d+/\d+\s+\|\s+(\S+)\s+rk4\s+starting", low)
+        # Model start: "[gpu-batch] Model 01/4 | GPU_SH20_RK4 starting for ..."
+        m = re.search(r"\[gpu-batch\]\s+model\s+\d+/\d+\s+\|\s+(\S+)\s+starting", low)
         if m:
             self._mark_model_running(m.group(1))
             return
-        if re.search(r"\[gpu-batch\]\s+model\s+\d+/\d+\s+done", low):
-            if self._current_model:
-                self._set_chip_status(self._current_model, "completed")
+        # Model done: "[gpu-batch] Model 01/4 done | GPU_SH20_RK4: ..."
+        m = re.search(r"\[gpu-batch\]\s+model\s+\d+/\d+\s+done\s+\|\s+([^\s:]+)", low)
+        if m:
+            key = self._ensure_model_chip(m.group(1))
+            self._set_chip_status(key, "completed")
             return
+        # Errors carry the base model name, not the display identity.
         m = re.search(r"\[gpu-batch\]\s+error\s+(\S+)", low)
         if m:
-            self._set_chip_status(m.group(1).rstrip(":"), "failed")
+            self._mark_failed_by_base(m.group(1).rstrip(":"))
             return
         m = re.match(r"\[gpu-batch\]\s+(\S+)\s+failed:", low)
         if m:
-            self._set_chip_status(m.group(1), "failed")
+            self._mark_failed_by_base(m.group(1))
             return
 
         if re.match(r"\[harness\]\s+(computing aggregate|generating|writing)", low):
@@ -1057,9 +1147,8 @@ class OrbitBenchmarkTab(QWidget):
             self._set_chip_status("truth", "running")
 
     def _mark_model_running(self, model: str) -> None:
-        model = str(model).lower()
-        if model not in self._chips:
-            return
+        # Insert the chip live (handles single + Δt-variant identities in order).
+        model = self._ensure_model_chip(model)
         # Truth precedes the model sweep.
         if self._model_status.get("truth") in ("running", "pending", None):
             self._set_chip_status("truth", "completed")
@@ -1070,6 +1159,19 @@ class OrbitBenchmarkTab(QWidget):
         if self._model_status.get(model) not in ("failed", "cached"):
             self._set_chip_status(model, "running")
         self._current_model = model
+
+    def _mark_failed_by_base(self, base: str) -> None:
+        """Mark a model failed from a base name (errors omit the Δt identity)."""
+        base = _pipeline_key(base).rstrip(":")
+        if self._current_model and base in self._current_model:
+            self._set_chip_status(self._current_model, "failed")
+            return
+        for key in self._pipeline_order:
+            if key not in ("truth", "report") and base in key:
+                self._set_chip_status(key, "failed")
+                return
+        if self._current_model:
+            self._set_chip_status(self._current_model, "failed")
 
     def _mark_report_running(self) -> None:
         if self._model_status.get("truth") in ("running", "pending", None):
@@ -1234,6 +1336,7 @@ class OrbitBenchmarkTab(QWidget):
             args += ["--workers", str(self.truth_workers.value())]
             args += ["--torch-dtype", self.torch_dtype.currentData() or "float32"]
             args += ["--gpu-fallback", self.gpu_fallback.currentData() or "error"]
+            args += ["--batch-frame-mode", self.gpu_frame_mode.currentData() or "match_dynamics_engine"]
         else:
             args += ["--models", ",".join(models)]
             args += ["--integrator", self.integrator.currentData() or "DOP853"]
@@ -1370,6 +1473,7 @@ class OrbitBenchmarkTab(QWidget):
         s.setValue("cpu_workers", self.cpu_workers.value())
         s.setValue("truth_workers", self.truth_workers.value())
         s.setValue("gpu_integrator", self.gpu_integrator.currentData())
+        s.setValue("gpu_frame_mode", self.gpu_frame_mode.currentData())
         s.setValue("rk4_dt", self.rk4_dt.value())
         s.setValue("rk4_dt_list", self.rk4_dt_list.text())
         s.setValue("torch_dtype", self.torch_dtype.currentData() or "float32")
@@ -1447,6 +1551,7 @@ class OrbitBenchmarkTab(QWidget):
         _combo(self.inclination_sampling, "inclination_sampling")
         _combo(self.integrator, "integrator")
         _combo(self.gpu_integrator, "gpu_integrator")
+        _combo(self.gpu_frame_mode, "gpu_frame_mode")
         _combo(self.gpu_fallback, "gpu_fallback")
         _combo(self.torch_dtype, "torch_dtype")
         if s.contains("rtol"):
@@ -1491,4 +1596,375 @@ class OrbitBenchmarkPage(QWidget):
         self.setLayout(lo)
 
 
-__all__ = ["OrbitBenchmarkTab", "OrbitBenchmarkPage", "BENCHMARK_CLI_MODULE"]
+class OrbitBenchmarkPlotsTab(QWidget):
+    """Cache-only *compare & plot* surface.
+
+    Regenerates the comparison plots/report from **already-computed** benchmark
+    trajectories (``--rebuild-metrics --reuse-cache``). This path returns before
+    any propagation/torch import, so it can never accidentally launch a new
+    benchmark run or training. The user just picks an existing output directory
+    and which models to compare.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+
+        # -- Models to compare --------------------------------------------
+        grp_models = QGroupBox("Models to Compare")
+        models_lo = QVBoxLayout()
+        self._model_checks: dict[str, QCheckBox] = {}
+        self._custom_models: List[str] = []
+        self._models_grid = QGridLayout()
+        self._models_grid.setContentsMargins(0, 0, 0, 0)
+        self._model_grid_count = 0
+        for name in _COMPARISON_MODELS:
+            self._add_model_checkbox(name, checked=(name in _DEFAULT_CHECKED))
+        grid_w = QWidget()
+        grid_w.setLayout(self._models_grid)
+        models_lo.addWidget(grid_w)
+
+        add_row = QHBoxLayout()
+        add_row.setContentsMargins(0, 0, 0, 0)
+        self.new_model_edit = QLineEdit()
+        self.new_model_edit.setPlaceholderText("Add model, e.g. sh45")
+        self.new_model_edit.returnPressed.connect(self._on_add_model)
+        btn_add = QPushButton("Add model")
+        btn_add.clicked.connect(self._on_add_model)
+        add_row.addWidget(self.new_model_edit, 1)
+        add_row.addWidget(btn_add)
+        add_row_w = QWidget()
+        add_row_w.setLayout(add_row)
+        models_lo.addWidget(add_row_w)
+        hint = QLabel(
+            "Only models with cached trajectories in the output directory can be "
+            "plotted. Selecting more is harmless — missing ones are skipped."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#94a3b8; font-size:11px;")
+        models_lo.addWidget(hint)
+        grp_models.setLayout(models_lo)
+
+        # -- Source (existing results) ------------------------------------
+        grp_src = QGroupBox("Source (existing results)")
+        form = QFormLayout()
+        _tune_form(form)
+        self.out_dir = ValidatedPathEdit(
+            placeholder=f"Existing results dir (e.g. {BENCHMARK_OUTPUT_ROOT})", check_file=False
+        )
+        btn_out = QPushButton("Select...")
+        btn_out.clicked.connect(self._pick_out_dir)
+        self.cache_dir = ValidatedPathEdit(
+            placeholder="Empty -> output_dir/benchmark_cache", check_file=False
+        )
+        btn_cache = QPushButton("Select...")
+        btn_cache.clicked.connect(self._pick_cache_dir)
+        self.truth = NoScrollComboBox()
+        for t in _TRUTH_CHOICES:
+            self.truth.addItem(t.upper(), t)
+        self.truth.setCurrentIndex(_TRUTH_CHOICES.index("sh200"))
+        self.truth_integrator = NoScrollComboBox()
+        for ti in _TRUTH_INTEGRATORS:
+            self.truth_integrator.addItem(ti, ti)
+        self.rk4_dt = QDoubleSpinBox()
+        self.rk4_dt.setDecimals(3)
+        self.rk4_dt.setRange(0.001, 600.0)
+        self.rk4_dt.setValue(10.0)
+        self.rk4_dt.setToolTip("Must match the fixed step used when the cache was built.")
+        self.rk4_dt_list = QLineEdit()
+        self.rk4_dt_list.setPlaceholderText("Optional Δt list, e.g. 10,5 (multi-step cache)")
+        form.addRow("Output dir", _row_lineedit_with_button(self.out_dir, btn_out))
+        form.addRow("Cache dir", _row_lineedit_with_button(self.cache_dir, btn_cache))
+        form.addRow("Truth model", self.truth)
+        form.addRow("Truth integrator", self.truth_integrator)
+        form.addRow("RK4 dt (s)", self.rk4_dt)
+        form.addRow("Δt list (s)", self.rk4_dt_list)
+        grp_src.setLayout(form)
+
+        # -- Command preview + actions ------------------------------------
+        self.command_preview = QPlainTextEdit()
+        self.command_preview.setReadOnly(True)
+        self.command_preview.setFont(_mono_font())
+        self.command_preview.setMaximumHeight(80)
+        self.command_warning = QLabel("")
+        self.command_warning.setWordWrap(True)
+        self.command_warning.setStyleSheet("color:#fbbf24; font-size:11px;")
+        safe_note = QLabel(
+            "Plot-only: regenerates plots/report from cached trajectories. "
+            "Does NOT propagate, run a benchmark, or train."
+        )
+        safe_note.setWordWrap(True)
+        safe_note.setStyleSheet("color:#34d399; font-size:11px; font-weight:600;")
+
+        # -- Runner + results ---------------------------------------------
+        self.runner = ProcessPane()
+        self.runner.btn_start.setText("Generate Plots")
+        self.runner.btn_start.clicked.connect(self._start)
+        self.runner.set_finished_hook(self._on_finished)
+        self._gallery = ImageGallery()
+        self._effective_out_dir = ""
+
+        ctrl = QHBoxLayout()
+        ctrl.setContentsMargins(0, 0, 0, 0)
+        ctrl.setSpacing(8)
+        ctrl.addWidget(self.runner.btn_start)
+        ctrl.addWidget(self.runner.btn_stop)
+        ctrl.addWidget(self.runner.btn_open_folder)
+        btn_copy = QPushButton("Copy Command")
+        btn_copy.setProperty("kind", "ghost")
+        btn_copy.clicked.connect(self._copy_command)
+        ctrl.addStretch(1)
+        ctrl.addWidget(btn_copy)
+        ctrl_w = QWidget()
+        ctrl_w.setLayout(ctrl)
+
+        self._logs_section = CollapsibleSection("Logs / Diagnostics")
+        log_inner = QVBoxLayout()
+        log_inner.setContentsMargins(0, 6, 0, 0)
+        self.runner.log.setMaximumHeight(220)
+        log_inner.addWidget(self.runner.log)
+        self._logs_section.set_content_layout(log_inner)
+        self._logs_section.set_expanded(False)
+
+        self._results_section = CollapsibleSection("Results / Plots")
+        res_inner = QVBoxLayout()
+        res_inner.setContentsMargins(0, 6, 0, 0)
+        self._gallery.setMinimumHeight(540)
+        res_inner.addWidget(self._gallery, 1)
+        self._results_section.set_content_layout(res_inner)
+        self._results_section.set_expanded(True)
+
+        content = QWidget()
+        col = QVBoxLayout()
+        col.setContentsMargins(8, 8, 8, 8)
+        col.setSpacing(12)
+        col.addWidget(grp_models)
+        col.addWidget(grp_src)
+        col.addWidget(safe_note)
+        col.addWidget(ctrl_w)
+        col.addWidget(self.command_preview)
+        col.addWidget(self.command_warning)
+        col.addWidget(self._logs_section)
+        col.addWidget(self._results_section)
+        col.addStretch(1)
+        content.setLayout(col)
+        for g in (grp_models, grp_src):
+            _tune_inputs(g)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.addWidget(_scroll_wrap(content), 1)
+        self.setLayout(layout)
+
+        # Wiring
+        for w in (self.truth, self.truth_integrator):
+            w.currentIndexChanged.connect(self._refresh_command_preview)
+        self.rk4_dt.valueChanged.connect(self._refresh_command_preview)
+        for le in (self.out_dir, self.cache_dir, self.rk4_dt_list):
+            le.textChanged.connect(self._refresh_command_preview)
+        self._restore_settings()
+        self._refresh_command_preview()
+
+    # -- model selection ---------------------------------------------------
+    def _add_model_checkbox(self, name: str, checked: bool = True) -> bool:
+        name = str(name).strip().lower()
+        if not name or name in self._model_checks:
+            return False
+        cb = QCheckBox("ST-LRPS" if name == "st_lrps" else name.upper())
+        cb.setChecked(checked)
+        cb.toggled.connect(self._refresh_command_preview)
+        self._model_checks[name] = cb
+        r, c = divmod(self._model_grid_count, 3)
+        self._models_grid.addWidget(cb, r, c)
+        self._model_grid_count += 1
+        return True
+
+    def _on_add_model(self) -> None:
+        raw = str(self.new_model_edit.text()).strip().lower()
+        if not raw:
+            return
+        if not _valid_model_name(raw):
+            QMessageBox.warning(self, "Invalid model",
+                                "Use 'st_lrps' or an SH degree like 'sh80'.")
+            return
+        if raw in self._model_checks:
+            self._model_checks[raw].setChecked(True)
+        elif self._add_model_checkbox(raw, checked=True):
+            self._custom_models.append(raw)
+        self.new_model_edit.clear()
+        self._refresh_command_preview()
+
+    def _selected_models(self) -> List[str]:
+        return [n for n, cb in self._model_checks.items() if cb.isChecked()]
+
+    # -- pickers -----------------------------------------------------------
+    def _pick_out_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(
+            self, "Existing results dir", self.out_dir.text() or str(BENCHMARK_OUTPUT_ROOT))
+        if d:
+            self.out_dir.setText(_norm_path(d))
+
+    def _pick_cache_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(
+            self, "Benchmark cache dir", self.cache_dir.text() or str(BENCHMARK_OUTPUT_ROOT))
+        if d:
+            self.cache_dir.setText(_norm_path(d))
+
+    # -- command -----------------------------------------------------------
+    def _build_args(self, show_errors: bool = True) -> Optional[List[str]]:
+        def fail(title: str, message: str) -> Optional[List[str]]:
+            if show_errors:
+                QMessageBox.critical(self, title, message)
+            else:
+                self.command_warning.setText(message)
+            return None
+
+        if not show_errors:
+            self.command_warning.setText("")
+        models = self._selected_models()
+        if not models:
+            return fail("No models", "Select at least one model to compare.")
+        out_dir = self.out_dir.text().strip()
+        if not out_dir:
+            return fail("Output dir", "Choose the existing results/output directory.")
+
+        args = ["-u", "-m", BENCHMARK_CLI_MODULE,
+                "--gpu-batch-compare", "--rebuild-metrics", "--reuse-cache",
+                "--gpu-models", ",".join(models),
+                "--truth", self.truth.currentData() or "sh200",
+                "--truth-integrator", self.truth_integrator.currentData() or "DOP853",
+                "--rk4-dt-s", str(self.rk4_dt.value())]
+        dt_list = self.rk4_dt_list.text().strip()
+        if dt_list:
+            args += ["--gpu-rk4-dt-s-list", dt_list]
+        args += ["--output-dir", out_dir]
+        cache_dir = self.cache_dir.text().strip()
+        if cache_dir:
+            args += ["--cache-dir", cache_dir]
+        return args
+
+    def _refresh_command_preview(self, *_a) -> None:
+        args = self._build_args(show_errors=False)
+        if not args:
+            self.command_preview.clear()
+            return
+        self.command_preview.setPlainText(_format_command(sys.executable, args))
+
+    def _copy_command(self) -> None:
+        if not self.command_preview.toPlainText().strip():
+            self._refresh_command_preview()
+        QGuiApplication.clipboard().setText(self.command_preview.toPlainText())
+
+    # -- run / results -----------------------------------------------------
+    def _start(self) -> None:
+        args = self._build_args(show_errors=True)
+        if not args:
+            return
+        out_dir = self.out_dir.text().strip()
+        if not Path(out_dir).is_dir():
+            QMessageBox.critical(self, "Output dir",
+                                 f"Output directory does not exist:\n{out_dir}\n\n"
+                                 "Run a benchmark first, then generate plots here.")
+            return
+        self._effective_out_dir = out_dir
+        self.runner.set_output_dir(out_dir)
+        self._gallery.clear_gallery()
+        self._save_settings()
+        self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
+
+    def _discover_result_images(self, out_dir: str) -> List[Path]:
+        base = Path(out_dir)
+        if not base.is_dir():
+            return []
+        imgs: List[Path] = list(base.glob("*.png")) + list(base.glob("*.jpg"))
+        for sub in base.glob("*/"):
+            if sub.is_dir():
+                imgs += list(sub.glob("*.png")) + list(sub.glob("*.jpg"))
+        return sorted(set(imgs))
+
+    def _on_finished(self, exit_code, exit_status) -> None:
+        out_dir = self._effective_out_dir
+        if not out_dir or not Path(out_dir).is_dir():
+            return
+        imgs = self._discover_result_images(out_dir)
+        if imgs:
+            cnt = self._gallery.load_images(imgs)
+            if cnt:
+                self.runner.append(f"\n[UI] {cnt} plot(s) loaded: {out_dir}")
+                self._results_section.set_expanded(True)
+        self.runner.set_output_dir(out_dir)
+        self.runner.btn_open_folder.setVisible(True)
+
+    # -- persistence -------------------------------------------------------
+    def _save_settings(self) -> None:
+        s = _settings()
+        s.beginGroup("orbit_benchmark_plots")
+        s.setValue("models", ",".join(self._selected_models()))
+        s.setValue("custom_models", ",".join(self._custom_models))
+        s.setValue("out_dir", self.out_dir.text())
+        s.setValue("cache_dir", self.cache_dir.text())
+        s.setValue("truth", self.truth.currentData())
+        s.setValue("truth_integrator", self.truth_integrator.currentData())
+        s.setValue("rk4_dt", self.rk4_dt.value())
+        s.setValue("rk4_dt_list", self.rk4_dt_list.text())
+        s.endGroup()
+        s.sync()
+
+    def _restore_settings(self) -> None:
+        s = _settings()
+        s.beginGroup("orbit_benchmark_plots")
+        if s.contains("custom_models"):
+            for name in str(s.value("custom_models", "")).split(","):
+                name = name.strip().lower()
+                if name and _valid_model_name(name) and name not in self._model_checks:
+                    if self._add_model_checkbox(name, checked=False):
+                        self._custom_models.append(name)
+        if s.contains("models"):
+            wanted = {m for m in str(s.value("models", "")).split(",") if m}
+            if wanted:
+                for name, cb in self._model_checks.items():
+                    cb.setChecked(name in wanted)
+        if s.contains("out_dir"):
+            self.out_dir.setText(str(s.value("out_dir", "")))
+        if s.contains("cache_dir"):
+            self.cache_dir.setText(str(s.value("cache_dir", "")))
+        for combo, key in ((self.truth, "truth"), (self.truth_integrator, "truth_integrator")):
+            if s.contains(key):
+                idx = combo.findData(str(s.value(key)))
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+        if s.contains("rk4_dt"):
+            try:
+                self.rk4_dt.setValue(float(s.value("rk4_dt")))
+            except (TypeError, ValueError):
+                pass
+        if s.contains("rk4_dt_list"):
+            self.rk4_dt_list.setText(str(s.value("rk4_dt_list", "")))
+        s.endGroup()
+
+
+class OrbitBenchmarkPlotsPage(QWidget):
+    """Analysis workspace page: regenerate gravity-benchmark plots from cache."""
+
+    def __init__(self, plots_tab: QWidget, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        lo = QVBoxLayout()
+        lo.setContentsMargins(22, 20, 22, 20)
+        lo.setSpacing(14)
+        title = QLabel("Gravity Plots")
+        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
+        subtitle = QLabel(
+            "Pick which models to compare and regenerate the comparison plots from "
+            "previously-cached benchmark results — no new run or training is started."
+        )
+        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        lo.addWidget(title)
+        lo.addWidget(subtitle)
+        lo.addWidget(plots_tab, 1)
+        self.setLayout(lo)
+
+
+__all__ = [
+    "OrbitBenchmarkTab", "OrbitBenchmarkPage",
+    "OrbitBenchmarkPlotsTab", "OrbitBenchmarkPlotsPage",
+    "BENCHMARK_CLI_MODULE",
+]

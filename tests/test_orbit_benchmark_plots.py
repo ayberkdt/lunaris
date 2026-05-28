@@ -148,6 +148,42 @@ def test_should_log_handles_zeros_without_error():
     assert cgm._should_log([]) is False
 
 
+def test_fmt_km_does_not_collapse_tiny_values_to_zero():
+    assert cgm._fmt_km(0.0) == "0"
+    assert cgm._fmt_km(1.2345) == "1.2345"
+    assert cgm._fmt_km(float("nan")) == "n/a"
+    # Sub-metre error: %.4f would render "0.0000"; we keep it visible.
+    tiny = cgm._fmt_km(3e-5)        # 3e-5 km = 3 cm
+    assert tiny != "0.0000" and "e-" in tiny
+
+
+def test_gpu_integrator_eval_counts_match_integrators():
+    assert cgm._gpu_integrator_evals_per_step("light") == 2
+    assert cgm._gpu_integrator_evals_per_step("medium") == 4
+    assert cgm._gpu_integrator_evals_per_step("robust") == 12
+    assert cgm._gpu_integrator_evals_per_step("unknown") == 4
+
+
+def test_runtime_metrics_throughput_and_eval_scaling():
+    import numpy as np
+    T, N = 11, 8
+    res = cgm.BatchModelResult(
+        model_name="sh20", display_name="GPU_SH20_RK4", backend="b", device="cuda:0",
+        dtype="float64", t=np.linspace(0, 600, T), y=np.zeros((T, N, 6)),
+        runtime_s=2.0, n_steps=60, n_scenarios=N, rk4_dt_s=10.0, output_dt_s=60.0,
+        status="ok")
+    truth = cgm.TruthTrajectorySet(
+        "sh200_dop853", {0: np.array([0.0])}, {0: np.zeros((1, 6))}, {0: 5.0})
+
+    rows4 = cgm.build_gpu_runtime_metrics([res], truth, evals_per_step=4)
+    rows2 = cgm.build_gpu_runtime_metrics([res], truth, evals_per_step=2)
+    tps = rows4[0]["trajectory_steps_per_second"]
+    assert abs(tps - N * 60 / 2.0) < 1e-6                       # 8*60/2 = 240
+    # Acceleration-eval throughput scales with the integrator, not a hardcoded 4.
+    assert abs(rows4[0]["acceleration_evaluations_per_second"] - tps * 4) < 1e-6
+    assert abs(rows2[0]["acceleration_evaluations_per_second"] - tps * 2) < 1e-6
+
+
 # ---------------------------------------------------------------------------
 # Figure + PDF generation robustness
 # ---------------------------------------------------------------------------
@@ -221,3 +257,159 @@ def test_both_themes_render(tmp_path):
         saved, pdf = _run(sub, ds, _make_args(random_scenarios=8, plot_theme=theme))
         assert all(Path(p).exists() for p in saved)
         assert pdf.exists()
+
+
+# ---------------------------------------------------------------------------
+# GPU batch frame mode: precomputed_slerp vs dynamic (CPU torch; no SH/SPICE)
+# ---------------------------------------------------------------------------
+
+class _FakeEphem:
+    """Minimal stand-in for EphemerisManager.get_data_provider()."""
+
+    def __init__(self, q_tab, dt_s):
+        self._p = {"q_i2f_tab": q_tab, "dt_s": float(dt_s)}
+
+    def get_data_provider(self):
+        return self._p
+
+
+def _rot_z_quat_table(n: int, max_angle: float = 0.8):
+    """A table of unit quaternions (rotation about +z by an increasing angle)."""
+    ang = np.linspace(0.0, max_angle, n)
+    return np.stack([np.cos(ang / 2), np.zeros(n), np.zeros(n), np.sin(ang / 2)], axis=1)
+
+
+_STAGE_OFFSETS = {
+    "light": [0.0, 0.5],
+    "medium": [0.0, 0.5, 0.5, 1.0],
+    "robust": [0.0, 0.5, 0.5, 1.0, 0.0, 0.25, 0.25, 0.5, 0.5, 0.75, 0.75, 1.0],
+}
+
+
+@pytest.mark.parametrize("integrator", ["light", "medium", "robust"])
+def test_frame_cache_matches_dynamic_quaternions(integrator):
+    torch = pytest.importorskip("torch")
+    eph = _FakeEphem(_rot_z_quat_table(10), dt_s=100.0)
+    dev, dtype = torch.device("cpu"), torch.float64
+    dyn = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="match_dynamics_engine")
+    pre = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="precomputed_slerp")
+
+    dt_eff, total_steps = 10.0, 20
+    cache = pre.precompute_rk_stage_quaternions(total_steps, dt_eff, integrator)
+    offsets = _STAGE_OFFSETS[integrator]
+    assert cache.q_i2f.shape == (total_steps, len(offsets), 4)
+
+    err = 0.0
+    for step in range(total_steps):
+        for si, off in enumerate(offsets):
+            t = step * dt_eff + off * dt_eff
+            err = max(err, float((dyn.quat_i2f(t) - cache.q_i2f[step, si]).abs().max()))
+    assert err < 1e-12, f"{integrator} cache deviates from dynamic quat_i2f: {err}"
+
+
+def test_frame_cache_inverse_is_conjugate():
+    torch = pytest.importorskip("torch")
+    eph = _FakeEphem(_rot_z_quat_table(10), dt_s=100.0)
+    pre = cgm.TorchFrameProvider(eph, device=torch.device("cpu"), dtype=torch.float64,
+                                 mode="precomputed_slerp")
+    cache = pre.precompute_rk_stage_quaternions(8, 10.0, "medium")
+    assert bool((cache.q_f2i[..., 0] == cache.q_i2f[..., 0]).all())
+    assert bool((cache.q_f2i[..., 1:] == -cache.q_i2f[..., 1:]).all())
+
+
+def test_frame_cache_out_of_range_holds_last_quaternion():
+    """Beyond the ephemeris table the cache must hold the last quaternion
+    (like the dynamic path), not extrapolate."""
+    torch = pytest.importorskip("torch")
+    n, dt_s = 10, 100.0
+    eph = _FakeEphem(_rot_z_quat_table(n), dt_s=dt_s)
+    dev, dtype = torch.device("cpu"), torch.float64
+    dyn = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="match_dynamics_engine")
+    pre = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="precomputed_slerp")
+
+    dt_eff = 10.0
+    big_steps = int((n + 3) * dt_s / dt_eff) + 2   # last stage time far beyond the table
+    cache = pre.precompute_rk_stage_quaternions(big_steps, dt_eff, "medium")
+    last_t = (big_steps - 1) * dt_eff + dt_eff
+    assert float((dyn.quat_i2f(last_t) - dyn.q_tab[-1]).abs().max()) < 1e-12
+    assert float((cache.q_i2f[-1, -1] - pre.q_tab[-1]).abs().max()) < 1e-12
+
+
+def _run_two_modes(integrator, dtype_name, monkeypatch):
+    """Propagate a deterministic point-mass system in both frame modes."""
+    torch = pytest.importorskip("torch")
+    from common.constants import MU_MOON
+
+    # Replace the SH/ST-LRPS accelerator with a cheap, deterministic point mass
+    # so the test needs no gravity data or checkpoint.
+    def _fake_accel(model_name, gravity_model, *, device, dtype):
+        mu = torch.tensor(float(MU_MOON), device=device, dtype=dtype)
+
+        def accel(pos_fixed):
+            r = torch.linalg.norm(pos_fixed, dim=1, keepdim=True).clamp_min(1.0)
+            return -mu * pos_fixed / (r ** 3)
+
+        return accel, "fake_pointmass"
+
+    monkeypatch.setattr(cgm, "_make_gpu_accelerator", _fake_accel)
+
+    eph = _FakeEphem(_rot_z_quat_table(40, max_angle=1.2), dt_s=50.0)
+    dtype = torch.float64 if dtype_name == "float64" else torch.float32
+    y0 = np.array([
+        [1.90e6, 0.0, 0.0, 0.0, 1.60e3, 0.0],
+        [0.0, 1.95e6, 0.0, -1.55e3, 0.0, 0.0],
+    ], dtype=np.float64)
+
+    kw = dict(duration_s=600.0, rk4_dt_s=10.0, output_dt_s=60.0, ephem=eph,
+              device=torch.device("cpu"), dtype=dtype, dtype_name=dtype_name,
+              gpu_integrator=integrator)
+    res_dyn = cgm.propagate_gpu_batch_model(
+        "sh20", None, y0, frame_mode="match_dynamics_engine", **kw)
+    res_pre = cgm.propagate_gpu_batch_model(
+        "sh20", None, y0, frame_mode="precomputed_slerp", **kw)
+    assert res_dyn.status == "ok" and res_pre.status == "ok"
+    return res_dyn, res_pre
+
+
+@pytest.mark.parametrize("integrator", ["light", "medium", "robust"])
+def test_precomputed_matches_dynamic_trajectory(integrator, monkeypatch):
+    res_dyn, res_pre = _run_two_modes(integrator, "float64", monkeypatch)
+    assert res_pre.y.shape == res_dyn.y.shape
+    max_abs = float(np.max(np.abs(res_pre.y - res_dyn.y)))
+    # Same quaternions + same RK math + same accel -> equivalent within float64.
+    assert max_abs < 1e-8, f"{integrator}: precomputed vs dynamic diff {max_abs}"
+
+
+def test_precomputed_matches_dynamic_trajectory_float32(monkeypatch):
+    res_dyn, res_pre = _run_two_modes("medium", "float32", monkeypatch)
+    rel = float(np.max(np.abs(res_pre.y - res_dyn.y)) / (np.max(np.abs(res_dyn.y)) + 1e-30))
+    assert rel < 1e-5, f"float32 precomputed vs dynamic rel diff {rel}"
+
+
+@pytest.mark.skipif(
+    not (lambda: __import__("importlib").util.find_spec("torch"))(),
+    reason="torch not installed",
+)
+def test_precomputed_cuda_smoke(monkeypatch):
+    torch = pytest.importorskip("torch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+    from common.constants import MU_MOON
+
+    def _fake_accel(model_name, gravity_model, *, device, dtype):
+        mu = torch.tensor(float(MU_MOON), device=device, dtype=dtype)
+
+        def accel(pos_fixed):
+            r = torch.linalg.norm(pos_fixed, dim=1, keepdim=True).clamp_min(1.0)
+            return -mu * pos_fixed / (r ** 3)
+        return accel, "fake_pointmass"
+
+    monkeypatch.setattr(cgm, "_make_gpu_accelerator", _fake_accel)
+    eph = _FakeEphem(_rot_z_quat_table(40, max_angle=1.2), dt_s=50.0)
+    y0 = np.array([[1.90e6, 0.0, 0.0, 0.0, 1.60e3, 0.0]], dtype=np.float64)
+    res = cgm.propagate_gpu_batch_model(
+        "sh20", None, y0, duration_s=300.0, rk4_dt_s=10.0, output_dt_s=60.0, ephem=eph,
+        device=torch.device("cuda:0"), dtype=torch.float64, dtype_name="float64",
+        frame_mode="precomputed_slerp", gpu_integrator="medium")
+    assert res.status == "ok"
+    assert np.isfinite(res.y).all()

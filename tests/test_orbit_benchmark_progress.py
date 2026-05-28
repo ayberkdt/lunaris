@@ -202,6 +202,26 @@ def test_format_duration():
     assert P.format_duration(45) == "45s"
     assert P.format_duration(744).endswith("min")
     assert P.format_duration(None) == "—"
+    # Long elapsed reads in hours/minutes rather than "120.0 min".
+    assert P.format_duration(3600 + 56 * 60) == "1h 56m"
+    assert P.format_duration(7200) == "2h 00m"
+
+
+def test_windowed_rate_ignores_warmup():
+    # Cumulative says 100 steps / 50 s = 2 steps/s; the recent window did
+    # 90 steps in 9 s = 10 steps/s. Windowed must report the steady-state rate.
+    assert P.windowed_rate(90, 9.0, fallback_cur=100, fallback_elapsed=50.0) == 10.0
+    # Before any window exists, fall back to the cumulative rate.
+    assert P.windowed_rate(0, 0.0, fallback_cur=100, fallback_elapsed=50.0) == 2.0
+    # No data at all -> 0.
+    assert P.windowed_rate(0, 0.0) == 0.0
+
+
+def test_eta_from_rate():
+    assert P.eta_from_rate(900, 10.0) == 90.0
+    assert P.eta_from_rate(0, 10.0) == 0.0
+    assert P.eta_from_rate(900, 0.0) is None
+    assert P.eta_from_rate(900, -1.0) is None
 
 
 # ---------------------------------------------------------------------------

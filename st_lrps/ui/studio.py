@@ -31,6 +31,8 @@ from st_lrps.ui.studio_parts.evaluation_pages import STLRPSEvalTab
 from st_lrps.ui.studio_parts.orbit_benchmark_pages import (
     OrbitBenchmarkTab,
     OrbitBenchmarkPage,
+    OrbitBenchmarkPlotsTab,
+    OrbitBenchmarkPlotsPage,
     BENCHMARK_CLI_MODULE,
 )
 from st_lrps.ui.studio_parts.qt_common import TRAIN_CLI_MODULE, PROFILE_CLI_MODULE

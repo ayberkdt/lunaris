@@ -309,7 +309,7 @@ def parse_args() -> argparse.Namespace:
                         "medium (classic RK4, default), or robust (RK4 + Richardson "
                         "extrapolation).")
     p.add_argument("--batch-frame-mode",
-                   choices=["match_dynamics_engine", "inertial_fixed_legacy"],
+                   choices=["match_dynamics_engine", "inertial_fixed_legacy", "precomputed_slerp"],
                    default="match_dynamics_engine",
                    help="Frame convention for GPU batch RK4")
     p.add_argument("--cache-truth", action="store_true",
@@ -659,6 +659,12 @@ def torch_stack_like(reference: Any, cols: Tuple[Any, Any, Any]) -> Any:
     return torch.stack(cols, dim=1).to(device=reference.device, dtype=reference.dtype)
 
 
+@dataclass
+class TorchFrameCache:
+    q_i2f: Any
+    q_f2i: Any
+
+
 class TorchFrameProvider:
     """
     Torch-side inertial/body-fixed frame provider for the batch RK4 path.
@@ -682,9 +688,9 @@ class TorchFrameProvider:
             self.uses_rotation = False
             return
 
-        if ephem is None:
+        if self.mode in ("match_dynamics_engine", "precomputed_slerp") and ephem is None:
             raise ValueError(
-                "batch-frame-mode=match_dynamics_engine requires an EphemerisManager."
+                f"batch-frame-mode={self.mode} requires an EphemerisManager."
             )
         provider = ephem.get_data_provider()
         q_np = np.asarray(provider["q_i2f_tab"], dtype=np.float64)
@@ -730,6 +736,60 @@ class TorchFrameProvider:
         q = self.quat_i2f(t_s).clone()
         q[1:] = -q[1:]
         return _quat_rotate_torch(q, a_f)
+
+    def precompute_rk_stage_quaternions(self, total_steps: int, dt_eff: float, gpu_integrator: str) -> "TorchFrameCache":
+        import torch
+        if gpu_integrator == "light":
+            rel_t = [0.0, 0.5 * dt_eff]
+        elif gpu_integrator == "robust":
+            rel_t = [0.0, 0.5 * dt_eff, 0.5 * dt_eff, dt_eff,
+                     0.0, 0.25 * dt_eff, 0.25 * dt_eff, 0.5 * dt_eff,
+                     0.5 * dt_eff, 0.75 * dt_eff, 0.75 * dt_eff, dt_eff]
+        else:
+            rel_t = [0.0, 0.5 * dt_eff, 0.5 * dt_eff, dt_eff]
+            
+        t_base = torch.arange(total_steps, dtype=torch.float64, device=self.device) * dt_eff
+        t_rel = torch.tensor(rel_t, dtype=torch.float64, device=self.device)
+        t_all = t_base[:, None] + t_rel[None, :]
+        
+        if self.q_tab.shape[0] <= 1:
+            q_i2f = self.q_tab[0].expand(*t_all.shape, 4).clone()
+        else:
+            u = (t_all / max(self.dt_s, 1e-12)).clamp_min(0.0)
+            i0 = torch.floor(u).long()
+            max_idx = self.q_tab.shape[0] - 2
+            i0 = i0.clamp(max=max_idx)
+
+            # Match the dynamic quat_i2f() out-of-range behaviour: beyond the
+            # final ephemeris interval (u >= N-1) hold the LAST quaternion rather
+            # than extrapolating. Clamping i0 alone would leave frac > 1 and
+            # extrapolate; clamping frac to [0, 1] reproduces the held endpoint.
+            frac = (u - i0).clamp(0.0, 1.0).to(dtype=self.dtype)
+            qa = self.q_tab[i0]
+            qb = self.q_tab[i0 + 1]
+            
+            dot = (qa * qb).sum(dim=-1)
+            sign = torch.where(dot < 0.0, -torch.ones_like(dot), torch.ones_like(dot))
+            qb = qb * sign.unsqueeze(-1)
+            dot = (dot * sign).clamp(-1.0, 1.0)
+            
+            q_linear = (1.0 - frac.unsqueeze(-1)) * qa + frac.unsqueeze(-1) * qb
+            
+            theta_0 = torch.acos(dot)
+            sin_theta_0 = torch.sin(theta_0).clamp_min(1e-30)
+            theta = theta_0 * frac
+            
+            s0 = (torch.sin(theta_0 - theta) / sin_theta_0).unsqueeze(-1)
+            s1 = (torch.sin(theta) / sin_theta_0).unsqueeze(-1)
+            
+            q_slerp = s0 * qa + s1 * qb
+            q_i2f = torch.where((dot > 0.9995).unsqueeze(-1), q_linear, q_slerp)
+            q_i2f = q_i2f / torch.linalg.norm(q_i2f, dim=-1, keepdim=True).clamp_min(1e-30)
+
+        q_f2i = q_i2f.clone()
+        q_f2i[..., 1:] = -q_f2i[..., 1:]
+        
+        return TorchFrameCache(q_i2f=q_i2f, q_f2i=q_f2i)
 
 
 class TorchSHGravityEvaluator:
@@ -992,15 +1052,40 @@ def propagate_gpu_batch_model(
     y_gpu = torch.empty((n_snaps + 1, n_scenarios, 6), device=device, dtype=dtype)
     y_gpu[0].copy_(state)
 
-    def _rhs(t_s: float, s: Any) -> Any:
-        r_i = s[:, :3]
-        v_i = s[:, 3:]
-        r_f = frame.inertial_to_fixed(t_s, r_i)
-        a_f = accel_fixed(r_f)
-        a_i = frame.fixed_to_inertial(t_s, a_f)
-        return torch.cat((v_i, a_i), dim=1)
-
     total_steps = int(n_snaps * steps_per_snap)
+
+    if frame_mode == "precomputed_slerp":
+        frame_cache = frame.precompute_rk_stage_quaternions(total_steps, dt_eff, gpu_integrator)
+        step_idx = 0
+        stage_idx = 0
+        stages_per_step = frame_cache.q_i2f.shape[1]
+        
+        def _rhs(t_s: float, s: Any) -> Any:
+            nonlocal step_idx, stage_idx
+            q_i2f = frame_cache.q_i2f[step_idx, stage_idx]
+            q_f2i = frame_cache.q_f2i[step_idx, stage_idx]
+            
+            r_i = s[:, :3]
+            v_i = s[:, 3:]
+            r_f = _quat_rotate_torch(q_i2f, r_i)
+            a_f = accel_fixed(r_f)
+            a_i = _quat_rotate_torch(q_f2i, a_f)
+            
+            stage_idx += 1
+            if stage_idx == stages_per_step:
+                stage_idx = 0
+                step_idx += 1
+                
+            return torch.cat((v_i, a_i), dim=1)
+    else:
+        def _rhs(t_s: float, s: Any) -> Any:
+            r_i = s[:, :3]
+            v_i = s[:, 3:]
+            r_f = frame.inertial_to_fixed(t_s, r_i)
+            a_f = accel_fixed(r_f)
+            a_i = frame.fixed_to_inertial(t_s, a_f)
+            return torch.cat((v_i, a_i), dim=1)
+
     throttle = progress.StepThrottle(total_steps)
 
     def _emit_progress(step: int, elapsed: float) -> None:

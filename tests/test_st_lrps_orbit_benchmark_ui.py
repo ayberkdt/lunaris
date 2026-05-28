@@ -156,8 +156,9 @@ def test_benchmark_page_registered_in_nav(qapp):
     from st_lrps.ui.studio_parts.main_window import MainWindow
 
     w = MainWindow()
-    assert w._stack.count() == 6
+    assert w._stack.count() == 7
     assert "Orbit-Level Benchmark" in w._page_titles
+    assert "Gravity Plots" in w._page_titles
     w.deleteLater()
 
 
@@ -981,8 +982,8 @@ def test_dashboard_cache_line_marks_model_cached(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "sh80"])
-    tab.runner.append("[cache] Model sh80: 4/4 complete.")
-    assert tab._model_status["sh80"] == "cached"
+    tab.runner.append("[cache] Model GPU_SH80_RK4: 4/4 complete.")
+    assert tab._model_status["gpu_sh80_rk4"] == "cached"
     tab.deleteLater()
 
 
@@ -991,18 +992,19 @@ def test_dashboard_partial_cache_keeps_model_queued(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
-    tab.runner.append("[cache] Model sh20: 0/4 complete. Recomputing 4 missing.")
-    assert tab._model_status["sh20"] == "queued"
+    tab.runner.append("[cache] Model GPU_SH20_RK4: 0/4 complete. Recomputing 4 missing.")
+    assert tab._model_status["gpu_sh20_rk4"] == "queued"
     tab.deleteLater()
 
 
-def test_dashboard_gpu_start_marks_running(qapp):
+def test_dashboard_gpu_start_marks_running_live(qapp):
     from st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "sh80"])
-    tab.runner.append("[gpu-batch] Model 01/2 | SH20 RK4 starting for 4 scenario(s) ...")
-    assert tab._model_status["sh20"] == "running"
+    # Live: marked running on the very first start line (not only at the end).
+    tab.runner.append("[gpu-batch] Model 01/2 | GPU_SH20_RK4 starting for 4 scenario(s) (rk4_dt=10s) ...")
+    assert tab._model_status["gpu_sh20_rk4"] == "running"
     tab.deleteLater()
 
 
@@ -1011,11 +1013,11 @@ def test_dashboard_gpu_done_marks_completed(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
-    tab.runner.append("[gpu-batch] Model 01/1 | SH20 RK4 starting for 4 scenario(s) ...")
+    tab.runner.append("[gpu-batch] Model 01/1 | GPU_SH20_RK4 starting for 4 scenario(s) ...")
     tab.runner.append(
         "[gpu-batch] Model 01/1 done | GPU_SH20_RK4: 9.9s backend=torch_sh status=ok | ETA 00:00:10"
     )
-    assert tab._model_status["sh20"] == "completed"
+    assert tab._model_status["gpu_sh20_rk4"] == "completed"
     tab.deleteLater()
 
 
@@ -1024,8 +1026,10 @@ def test_dashboard_gpu_error_marks_failed(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "st_lrps"])
+    tab.runner.append("[gpu-batch] Model 02/2 | GPU_ST_LRPS_RK4 starting for 4 scenario(s) ...")
+    # Error lines carry the base name; the running variant must be marked failed.
     tab.runner.append("[gpu-batch] ERROR st_lrps: CUDA out of memory")
-    assert tab._model_status["st_lrps"] == "failed"
+    assert tab._model_status["gpu_st_lrps_rk4"] == "failed"
     tab.deleteLater()
 
 
@@ -1034,10 +1038,39 @@ def test_dashboard_next_model_completes_previous(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "sh80"])
-    tab.runner.append("[gpu-batch] Model 01/2 | SH20 RK4 starting for 4 scenario(s) ...")
-    tab.runner.append("[gpu-batch] Model 02/2 | SH80 RK4 starting for 4 scenario(s) ...")
-    assert tab._model_status["sh20"] == "completed"
-    assert tab._model_status["sh80"] == "running"
+    tab.runner.append("[gpu-batch] Model 01/2 | GPU_SH20_RK4 starting for 4 scenario(s) ...")
+    tab.runner.append("[gpu-batch] Model 02/2 | GPU_SH80_RK4 starting for 4 scenario(s) ...")
+    assert tab._model_status["gpu_sh20_rk4"] == "completed"
+    assert tab._model_status["gpu_sh80_rk4"] == "running"
+    tab.deleteLater()
+
+
+def test_dashboard_pipeline_adds_step_variants_in_order(qapp):
+    """Δt (step-size) variants are added as separate chips, live and in order."""
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20"])
+    tab.runner.append("[gpu-batch] Model 01/3 | GPU_SH20_RK4_DT10 starting for 4 scenario(s) (rk4_dt=10s) ...")
+    tab.runner.append("[gpu-batch] Model 01/3 done | GPU_SH20_RK4_DT10: 12s status=ok | ETA 00:00:20")
+    tab.runner.append("[gpu-batch] Model 02/3 | GPU_SH20_RK4_DT5 starting for 4 scenario(s) (rk4_dt=5s) ...")
+    assert tab._pipeline_order == ["truth", "gpu_sh20_rk4_dt10", "gpu_sh20_rk4_dt5", "report"]
+    assert tab._model_status["gpu_sh20_rk4_dt10"] == "completed"
+    assert tab._model_status["gpu_sh20_rk4_dt5"] == "running"
+    tab.deleteLater()
+
+
+def test_dashboard_hides_machine_progress_lines(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab._rebuild_pipeline(["sh20"])
+    tab.runner.append("[progress] phase=gpu_model model=GPU_SH20_RK4 current_step=1 total_steps=10 percent=10.0")
+    tab.runner.append("[progress_total] percent=42.0 phase=gpu_model model=GPU_SH20_RK4 elapsed_s=10 eta_s=10")
+    log = tab.runner.log.toPlainText()
+    assert "[progress]" not in log and "[progress_total]" not in log
+    # ...but the parser still consumed them: the dashboard updated.
+    assert tab._st_overall_pct.text() == "42.0%"
     tab.deleteLater()
 
 
@@ -1066,8 +1099,8 @@ def test_dashboard_normal_lines_always_shown(qapp):
     from st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
-    tab.runner.append("[gpu-batch] Model 01/2 | SH20 RK4 starting for 4 scenario(s) ...")
-    assert "RK4 starting" in tab.runner.log.toPlainText()
+    tab.runner.append("[gpu-batch] Model 01/2 | GPU_SH20_RK4 starting for 4 scenario(s) ...")
+    assert "starting for 4 scenario" in tab.runner.log.toPlainText()
     tab.deleteLater()
 
 
@@ -1108,9 +1141,9 @@ def test_dashboard_finish_finalizes_pipeline(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "st_lrps"])
-    tab.runner.append("[gpu-batch] Model 01/2 | SH20 RK4 starting for 4 scenario(s) ...")
+    tab.runner.append("[gpu-batch] Model 01/2 | GPU_SH20_RK4 starting for 4 scenario(s) ...")
     tab._on_finished(0, QProcess.ExitStatus.NormalExit)
-    assert tab._model_status["sh20"] == "completed"
+    assert tab._model_status["gpu_sh20_rk4"] == "completed"
     assert tab._model_status["report"] == "completed"
     assert tab._status_badge.text() == "Completed"
     assert tab.overall_bar.value() == 100
@@ -1200,4 +1233,105 @@ def test_refresh_results_loads_plots_in_place(qapp, tmp_path):
     assert tab._results_section.is_expanded() is False
     tab._refresh_results()
     assert tab._results_section.is_expanded() is True
+    tab.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Separate cache-only "Gravity Plots" page (no run / no training)
+# ---------------------------------------------------------------------------
+
+def test_plots_page_registered_and_separate(qapp):
+    from st_lrps.ui.studio_parts.main_window import MainWindow
+
+    w = MainWindow()
+    assert "Gravity Plots" in w._page_titles
+    # It is its own top-level page, distinct from the benchmark run page.
+    assert w._orbit_plots_page is not w._orbit_benchmark_page
+    w.deleteLater()
+
+
+def test_plots_page_builds_cache_only_command(qapp, tmp_path):
+    from st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+
+    tab = OrbitBenchmarkPlotsTab()
+    for n, cb in tab._model_checks.items():
+        cb.setChecked(n in ("sh20", "sh80", "st_lrps"))
+    tab.out_dir.setText(str(tmp_path))
+    args = tab._build_args(show_errors=False)
+    assert args is not None
+    # Cache-only rebuild — never propagates or trains.
+    assert "--rebuild-metrics" in args
+    assert "--reuse-cache" in args
+    assert "--gpu-batch-compare" in args
+    assert args[args.index("--gpu-models") + 1] == "sh20,sh80,st_lrps"
+    assert args[args.index("--output-dir") + 1] == str(tmp_path)
+    # Must NOT carry flags that would start a fresh run/sweep.
+    assert "--resume" not in args
+    assert "--cache-trajectories" not in args
+    tab.deleteLater()
+
+
+def test_plots_page_emits_step_variant_list(qapp, tmp_path):
+    from st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+
+    tab = OrbitBenchmarkPlotsTab()
+    for n, cb in tab._model_checks.items():
+        cb.setChecked(n == "sh20")
+    tab.out_dir.setText(str(tmp_path))
+    tab.rk4_dt_list.setText("10,5")
+    args = tab._build_args(show_errors=False)
+    assert args[args.index("--gpu-rk4-dt-s-list") + 1] == "10,5"
+    tab.deleteLater()
+
+
+def test_plots_page_requires_output_dir_and_models(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+
+    tab = OrbitBenchmarkPlotsTab()
+    tab.out_dir.setText("")
+    assert tab._build_args(show_errors=False) is None       # no output dir
+    for cb in tab._model_checks.values():
+        cb.setChecked(False)
+    tab.out_dir.setText("/some/dir")
+    assert tab._build_args(show_errors=False) is None       # no models
+    tab.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# GPU frame mode (dynamic / precomputed_slerp) exposure
+# ---------------------------------------------------------------------------
+
+def test_cli_accepts_precomputed_slerp_frame_mode(monkeypatch):
+    import sys as _sys
+    from st_lrps.evaluation import compare_gravity_models as cgm
+
+    monkeypatch.setattr(_sys, "argv", [
+        "compare_gravity_models", "--batch-frame-mode", "precomputed_slerp",
+    ])
+    args = cgm.parse_args()
+    assert args.batch_frame_mode == "precomputed_slerp"
+
+
+def test_ui_gpu_mode_emits_frame_mode(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
+    # Default is the conservative dynamic path.
+    args = tab._build_args(show_errors=False)
+    assert args[args.index("--batch-frame-mode") + 1] == "match_dynamics_engine"
+    # User can switch to the precomputed optimization.
+    tab.gpu_frame_mode.setCurrentIndex(tab.gpu_frame_mode.findData("precomputed_slerp"))
+    args = tab._build_args(show_errors=False)
+    assert args[args.index("--batch-frame-mode") + 1] == "precomputed_slerp"
+    tab.deleteLater()
+
+
+def test_ui_cpu_mode_omits_frame_mode(qapp):
+    from st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab.run_mode.setCurrentIndex(tab.run_mode.findData("dop853"))
+    args = tab._build_args(show_errors=False)
+    assert "--batch-frame-mode" not in args
     tab.deleteLater()
