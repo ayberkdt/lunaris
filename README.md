@@ -251,6 +251,21 @@ A specialized benchmark focusing on dense low-lunar mapping envelopes ($200\text
 * **Centimeter-Level RIC Control:** Radial (altitude) error was maintained within **4.58 cm** and plane inclination tilt within **2.00 cm** over the entire 1-day period.
 * **GPU Double-Precision Performance:** Even in `float64` double-precision mode on the GPU, ST-LRPS delivered a **2.25x wall-clock speedup** compared to sequential CPU truth generation.
 
+### 🔄 Side-by-Side Performance Comparison
+
+The table below demonstrates how adjusting numerical precision (`float64`), integration step size ($\Delta t = 10.0\text{ s}$), and focusing on low-altitude circular mapping orbits pushes the ST-LRPS surrogate from kilometer-level long-term stability down into the **centimeter-level precision envelope**:
+
+| Kriter / Metrik | 5-Günlük Genel Kararlılık Testi | 1-Günlük Ultra Hassas Kıyaslama |
+| :--- | :---: | :---: |
+| **Yörünge Tipi** | Bounded Keplerian (Circular/Eccentric) | Near-Circular (Dairesel Alçak Yörünge) |
+| **Sayısal Hassasiyet (Dtype)** | Single-Precision `float32` | Double-Precision `float64` |
+| **Entegrasyon Adımı ($\Delta t$)** | $30.0\text{ saniye}$ | $10.0\text{ saniye}$ |
+| **Median RMS Pozisyon Hatası** | **1.106 km** | **15.83 cm** |
+| **Radial (İrtifa) Median RMS** | **41 metre** | **4.58 cm** |
+| **Cross-Track (Eğiklik) Median RMS**| **6 metre** | **2.00 cm** |
+| **Along-Track (Faz) Median RMS** | **1.102 km** | **15.03 cm** |
+| **GPU Hızlanma Oranı** | **9.55x** speedup | **2.25x** speedup |
+
 For the complete benchmark breakdown, tables, physical analyses, and step-by-step instructions on how to reproduce the results via the CLI or the Desktop UI, see the official **[ST-LRPS Gravity Model Benchmark Results](docs/BENCHMARK_RESULTS.md)**.
 
 

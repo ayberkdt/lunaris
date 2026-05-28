@@ -6,6 +6,31 @@ The analysis evaluates physical orbit propagation accuracy, runtime throughput, 
 
 ---
 
+## Side-by-Side Comparison: General Stability vs. Ultra-Precision
+
+The ST-LRPS model exhibits two distinct operating regimes based on step size, numerical precision, and scenario duration. Below is a direct comparison of the general-purpose stability benchmark against the high-precision mapping benchmark:
+
+| Benchmark Parameter | 5-Day General Orbit Stability Benchmark | 1-Day Ultra-Precision Mapping Benchmark |
+| :--- | :---: | :---: |
+| **Primary Objective** | Long-term physical orbit propagation stability | Sub-meter geodetic/mapping accuracy limits |
+| **Scenario Count** | 128 randomized orbits | 100 randomized orbits |
+| **Orbit Types** | Bounded Keplerian (Circular to Highly Eccentric) | Near-Circular (Zero Eccentricity Mapping) |
+| **Altitude Envelope ($h_p$, $h_a$)** | $100\text{ km}$ to $1000\text{ km}$ (Sparse) | $200\text{ km}$ to $400\text{ km}$ (Dense Low-Lunar) |
+| **Propagation Duration** | $5.0\text{ days}$ (~70 full orbits) | $1.0\text{ day}$ (~14 full orbits) |
+| **Numerical Precision** | Single-precision `float32` | Double-precision `float64` |
+| **Integration Step Size ($\Delta t$)** | $30.0\text{ seconds}$ | $10.0\text{ seconds}$ |
+| **Median RMS Position Error** | **1.106 km** *($1.106\times10^0\text{ km}$)* | **15.83 cm** *($1.58\times10^{-4}\text{ km}$)* |
+| **P95 RMS Position Error** | **3.549 km** *($3.549\times10^0\text{ km}$)* | **68.89 cm** *($6.88\times10^{-4}\text{ km}$)* |
+| **Radial (Altitude) Median RMS** | **41 meters** *($0.041\text{ km}$)* | **4.58 cm** *($4.58\times10^{-5}\text{ km}$)* |
+| **Cross-Track (Inclination) Median RMS**| **6 meters** *($0.006\text{ km}$)* | **2.00 cm** *($2.00\times10^{-5}\text{ km}$)* |
+| **Along-Track (Phase) Median RMS** | **1.102 km** *($1.102\text{ km}$)* | **15.03 cm** *($1.50\times10^{-4}\text{ km}$)* |
+| **GPU Acceleration vs. CPU Reference** | **9.55x** speedup | **2.25x** speedup |
+
+> [!IMPORTANT]
+> The comparison highlights the massive impact of numerical precision (`float64`) and step size reduction ($\Delta t = 10.0\text{ s}$) under dairesel orbits. While the `float32` general stability benchmark yields excellent physical conservation after 5 days (meter-level altitude drift), the double-precision mapping configuration pushes ST-LRPS into the **centimeter-level accuracy envelope**, delivering sub-meter trajectory matching over a full day of propagation.
+
+---
+
 ## Benchmark Configuration
 
 The benchmark was executed using the relocated verification harness on a laptop workstation to validate consumer-grade hardware feasibility.
