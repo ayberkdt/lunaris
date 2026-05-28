@@ -230,7 +230,29 @@ The validation layer is for independent physics, orbit, and cross-model checks. 
 python -m st_lrps.evaluation.compare_gravity_models --help
 ```
 
-Gravity validation commonly uses a high-degree spherical-harmonic model such as SH200 as the truth/reference, lower-degree spherical-harmonic models as baselines, and optional ST-LRPS comparison when a trained artifact directory is supplied. See `validation/README.md` and `validation/gravity/README.md` for details.
+Gravity validation commonly uses a high-degree spherical-harmonic model such as SH200 as the truth/reference, lower-degree spherical-harmonic models as baselines, and optional ST-LRPS comparison when a trained artifact directory is supplied. See [validation/README.md](validation/README.md) and [validation/gravity/README.md](validation/gravity/README.md) for details.
+
+### 📊 Orbit-Level Gravity Benchmark Results (128 Scenarios, 5-Day Propagation)
+
+A comprehensive physical validation benchmark of the **ST-LRPS neural surrogate** against classical Spherical Harmonic (SH) baselines over **128 randomized orbits** has been completed on a consumer laptop workstation (Intel CPU + GTX 1660 Ti):
+
+* **The Accuracy Victory:** ST-LRPS outperformed all classical baselines in median trajectory accuracy, achieving a median RMS position error of **1.106 km** over a total traveled distance of **704,160 km** (a relative error of only **0.00015%**!).
+* **Meter-Level Orbit Control:** The directional error decomposition (RIC) shows that uydunun orbital path has been maintained with **Radial (Altitude) error of only 41 meters** and **Cross-Track (Plane tilt) error of only 6 meters** after 5 days of unguided propagation!
+* **The Computational Speedup:** 
+  * ST-LRPS is **nearly 2x faster than SH50** (3,377 seconds vs. 6,620 seconds), while delivering far superior physical accuracy.
+  * ST-LRPS adds only **6% computational overhead** compared to the extremely lightweight `SH20` baseline model.
+  * It achieves a **9.55x wall-clock speedup** compared to the high-fidelity sequential CPU truth reference.
+
+### 🎯 Ultra-Precision 1-Day Near-Circular Gravity Benchmark (100 Scenarios, 1-Day Propagation)
+
+A specialized benchmark focusing on dense low-lunar mapping envelopes ($200\text{ km}$ to $400\text{ km}$ altitude) with double-precision GPU propagation showcases the extreme fidelity limits of ST-LRPS:
+
+* **Sub-Meter Trajectory Accuracy:** ST-LRPS achieved a median RMS position error of only **15.83 cm** over a full day of unguided propagation.
+* **Centimeter-Level RIC Control:** Radial (altitude) error was maintained within **4.58 cm** and plane inclination tilt within **2.00 cm** over the entire 1-day period.
+* **GPU Double-Precision Performance:** Even in `float64` double-precision mode on the GPU, ST-LRPS delivered a **2.25x wall-clock speedup** compared to sequential CPU truth generation.
+
+For the complete benchmark breakdown, tables, physical analyses, and step-by-step instructions on how to reproduce the results via the CLI or the Desktop UI, see the official **[ST-LRPS Gravity Model Benchmark Results](docs/BENCHMARK_RESULTS.md)**.
+
 
 ## Visualization
 

@@ -926,6 +926,16 @@ def gpu_fixed_step_advance(rhs, t, state, dt, method: str = "medium"):
     return _rk4_step(rhs, t, state, dt)
 
 
+def _gpu_integrator_evals_per_step(method: str) -> int:
+    """RHS (acceleration) evaluations per output step for each GPU integrator.
+
+    light = RK2 midpoint (2), medium = classic RK4 (4),
+    robust = RK4 + one Richardson level = 3 RK4 steps (12). Mirrors
+    :func:`gpu_fixed_step_advance` so throughput metrics are not mis-scaled.
+    """
+    return {"light": 2, "medium": 4, "robust": 12}.get(str(method).lower(), 4)
+
+
 def propagate_gpu_batch_model(
     model_name: str,
     gravity_model: Any,
@@ -2146,7 +2156,9 @@ def _cached_gpu_runtime_rows(
             "n_saved_outputs": "",
             "total_runtime_s": runtime,
             "runtime_per_scenario_s": runtime / max(n, 1),
-            "trajectory_steps_per_second": n * steps / max(runtime, 1e-9),
+            # ``steps`` is already the total trajectory-step count summed over all
+            # scenarios, so throughput is steps/runtime (do NOT multiply by n again).
+            "trajectory_steps_per_second": steps / max(runtime, 1e-9),
             "truth_total_runtime_s": truth.total_runtime_s,
             "truth_mean_runtime_per_scenario_s": truth.mean_runtime_s,
             "speedup_vs_truth_total": truth.total_runtime_s / max(runtime, 1e-9),
@@ -2309,13 +2321,20 @@ def rebuild_gpu_batch_metrics_from_cache(
 def build_gpu_runtime_metrics(
     results: List[BatchModelResult],
     truth: TruthTrajectorySet,
+    evals_per_step: int = 4,
 ) -> List[Dict[str, Any]]:
-    """Build per-model runtime and speedup rows."""
+    """Build per-model runtime and speedup rows.
+
+    ``evals_per_step`` is the RHS (acceleration) evaluations per output step for
+    the active GPU integrator (light=2, medium=4, robust=12); it scales the
+    acceleration-evaluation throughput so that figure is not mis-reported.
+    """
 
     base_rows: List[Dict[str, Any]] = []
     by_model: Dict[str, Dict[str, Any]] = {}
     truth_total = truth.total_runtime_s
     truth_mean = truth.mean_runtime_s
+    evals = max(1, int(evals_per_step))
     for result in results:
         n_steps = max(int(result.n_steps), 1)
         n_scenarios = max(int(result.n_scenarios), 1)
@@ -2331,7 +2350,7 @@ def build_gpu_runtime_metrics(
             "total_runtime_s": runtime,
             "runtime_per_scenario_s": runtime / n_scenarios,
             "trajectory_steps_per_second": n_scenarios * n_steps / max(runtime, 1e-9),
-            "acceleration_evaluations_per_second": n_scenarios * n_steps * 4 / max(runtime, 1e-9),
+            "acceleration_evaluations_per_second": n_scenarios * n_steps * evals / max(runtime, 1e-9),
             "truth_total_runtime_s": truth_total,
             "truth_mean_runtime_per_scenario_s": truth_mean,
             "speedup_vs_truth_total": truth_total / max(runtime, 1e-9),
@@ -2649,6 +2668,27 @@ def select_length_unit(max_km: float) -> Tuple[str, float]:
     if v < 1.0e-2:
         return ("m", 1.0e3)    # 1 km = 1e3 m
     return ("km", 1.0)
+
+
+def _fmt_km(value: Any) -> str:
+    """Format a kilometre value for tables/console without collapsing to zero.
+
+    Fixed ``%.4f`` formatting renders any error below 0.5 m as ``"0.0000"``,
+    which misleadingly reads as an exact-zero metric on short/accurate runs.
+    Sub-metre values are shown in scientific notation instead (still in km).
+    """
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return "n/a"
+    if not math.isfinite(x):
+        return "n/a"
+    a = abs(x)
+    if a == 0.0:
+        return "0"
+    if a < 1.0e-3:        # below ~1 m: %.4f would print "0.0000"
+        return f"{x:.3e}"
+    return f"{x:.4f}"
 
 
 def _finite_positive(values: Sequence[float]) -> List[float]:
@@ -5077,10 +5117,10 @@ def write_gpu_batch_report_pdf(
         if aggregate_rows:
             acc_rows = [[
                 str(r.get("model", "")),
-                f"{r.get('median_rms_pos_err_km', float('nan')):.4f}",
-                f"{r.get('p95_rms_pos_err_km', float('nan')):.4f}",
-                f"{r.get('max_rms_pos_err_km', float('nan')):.4f}",
-                f"{r.get('median_along_rms_km', float('nan')):.4f}",
+                _fmt_km(r.get("median_rms_pos_err_km", float("nan"))),
+                _fmt_km(r.get("p95_rms_pos_err_km", float("nan"))),
+                _fmt_km(r.get("max_rms_pos_err_km", float("nan"))),
+                _fmt_km(r.get("median_along_rms_km", float("nan"))),
             ] for r in aggregate_rows]
             pager.table_page(
                 "Accuracy Ranking",
@@ -5564,10 +5604,10 @@ def _print_gpu_batch_summary(
     print(f"{'Model':<22} {'Median RMS km':>14} {'P95 RMS km':>12} "
           f"{'Max RMS km':>12} {'Median Along km':>17}")
     for r in aggregate_rows:
-        print(f"{r['model']:<22} {r.get('median_rms_pos_err_km', np.nan):>14.4f} "
-              f"{r.get('p95_rms_pos_err_km', np.nan):>12.4f} "
-              f"{r.get('max_rms_pos_err_km', np.nan):>12.4f} "
-              f"{r.get('median_along_rms_km', np.nan):>17.4f}")
+        print(f"{r['model']:<22} {_fmt_km(r.get('median_rms_pos_err_km', np.nan)):>14} "
+              f"{_fmt_km(r.get('p95_rms_pos_err_km', np.nan)):>12} "
+              f"{_fmt_km(r.get('max_rms_pos_err_km', np.nan)):>12} "
+              f"{_fmt_km(r.get('median_along_rms_km', np.nan)):>17}")
 
     print("\nRuntime ranking:")
     print(f"{'Model':<22} {'Runtime s':>10} {'Runtime/sc s':>14} "
@@ -5588,7 +5628,7 @@ def _print_gpu_batch_summary(
         speedup_vs_closest = closest_runtime["total_runtime_s"] / max(st_runtime["total_runtime_s"], 1e-9)
     print("\nST-LRPS interpretation:")
     if st_row:
-        print(f"- ST-LRPS median RMS = {st_row.get('median_rms_pos_err_km', np.nan):.4f} km")
+        print(f"- ST-LRPS median RMS = {_fmt_km(st_row.get('median_rms_pos_err_km', np.nan))} km")
     print(f"- Closest classical SH model by median RMS = {closest_model}")
     print(f"- Equivalent-degree status = {med_eq.get('equivalent_degree_status', med_eq.get('status', 'n/a'))}")
     print(f"- ST-LRPS speedup vs closest model = {speedup_vs_closest:.2f}x")
@@ -5762,32 +5802,61 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
               flush=True)
         y0_batch = np.asarray([s.initial_state for s in model_scenarios], dtype=np.float64)
 
+        # Per-model windowed-rate state (fresh dict captured per model iteration).
+        cb_state = {"step": 0, "t": 0.0}
+
         def _gpu_progress_cb(
             current_step: int, total_steps: int, elapsed_s: float,
             _name: str = task.display_name, _idx: int = model_idx,
+            _state: Dict[str, float] = cb_state,
         ) -> None:
             stats = progress.compute_step_stats(current_step, total_steps, elapsed_s)
+            # steps/s over the most recent window (ignores one-off warmup such as
+            # JIT compilation / first CUDA launch) so the rate and ETA are honest.
+            rate = progress.windowed_rate(
+                current_step - int(_state["step"]),
+                elapsed_s - float(_state["t"]),
+                fallback_cur=current_step, fallback_elapsed=elapsed_s,
+            )
+            _state["step"], _state["t"] = current_step, elapsed_s
+            remaining_steps = max(0, stats["total_steps"] - stats["current_step"])
+            model_eta = progress.eta_from_rate(remaining_steps, rate)
             print(
                 f"[gpu-batch][{_name}] step {stats['current_step']}/{stats['total_steps']} "
                 f"| {stats['percent']:.1f}% | elapsed {progress.format_duration(elapsed_s)} "
-                f"| ETA {progress.format_eta(stats['eta_s'])} "
-                f"| {stats['steps_per_s']:.1f} steps/s",
+                f"| ETA {progress.format_eta(model_eta)} "
+                f"| {rate:.1f} steps/s",
                 flush=True,
             )
             progress.emit_progress(
                 "gpu_model", model=_name,
                 current_step=stats["current_step"], total_steps=stats["total_steps"],
                 percent=stats["percent"], elapsed_s=elapsed_s,
-                eta_s=stats["eta_s"], steps_per_s=stats["steps_per_s"],
+                eta_s=model_eta, steps_per_s=rate,
                 device=str(device), dtype=str(args.torch_dtype),
                 n_scenarios=len(model_scenarios),
             )
             model_frac = stats["current_step"] / max(1, stats["total_steps"])
             gpu_frac = ((_idx - 1) + model_frac) / n_gpu_models
             ov = overall.update("gpu", gpu_frac)
+            # Honest, time-based overall ETA: precise remaining-of-current-model
+            # plus the average wall time of finished models for the not-yet-started
+            # ones. Avoids the phase-weight-vs-wall-time mismatch of a linear
+            # extrapolation on the weighted bar percentage.
+            elapsed_gpu = time.perf_counter() - t_gpu_start
+            completed_models = _idx - 1
+            future: Optional[float] = None
+            if completed_models >= 1:
+                avg_done = max(0.0, elapsed_gpu - elapsed_s) / completed_models
+                future = (n_gpu_models - _idx) * avg_done
+            elif model_frac > 1e-3:
+                future = (n_gpu_models - _idx) * (elapsed_s / model_frac)
+            overall_eta = None
+            if model_eta is not None or future is not None:
+                overall_eta = (model_eta or 0.0) + (future or 0.0)
             progress.emit_progress_total(
                 ov, "gpu_model", model=_name,
-                elapsed_s=overall.elapsed_s(), eta_s=overall.eta_s(),
+                elapsed_s=overall.elapsed_s(), eta_s=overall_eta,
             )
 
         try:
@@ -5888,7 +5957,10 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     all_rows: List[Dict[str, Any]] = list(existing_rows) + new_rows
 
     aggregate_rows = aggregate_gpu_batch_metrics(all_rows)
-    runtime_rows = build_gpu_runtime_metrics(results, truth)
+    runtime_rows = build_gpu_runtime_metrics(
+        results, truth,
+        evals_per_step=_gpu_integrator_evals_per_step(getattr(args, "gpu_integrator", "medium")),
+    )
     ranking_rows = build_gpu_model_ranking(aggregate_rows)
     equivalent = estimate_stlrps_equivalent_sh_degree(aggregate_rows)
     selected = select_stlrps_scenarios(all_rows, {s.scenario_id: s for s in scenarios}, args)

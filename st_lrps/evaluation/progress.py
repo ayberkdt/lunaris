@@ -35,6 +35,8 @@ __all__ = [
     "parse_progress_line",
     "compute_eta_s",
     "compute_step_stats",
+    "windowed_rate",
+    "eta_from_rate",
     "gpu_total_steps",
     "format_duration",
     "format_eta",
@@ -217,6 +219,30 @@ def compute_step_stats(
     }
 
 
+def windowed_rate(
+    d_step: int, d_t: float, *, fallback_cur: int = 0, fallback_elapsed: float = 0.0
+) -> float:
+    """Steps/second over a recent window, falling back to the cumulative rate.
+
+    Using the rate over the most recent reporting window (rather than the
+    cumulative rate from step 0) keeps the figure — and any ETA derived from it
+    — from being dragged down by one-off start-up costs such as JIT compilation
+    or the first CUDA kernel launch.
+    """
+    if d_t > 0.0 and d_step > 0:
+        return float(d_step) / float(d_t)
+    if fallback_elapsed > 0.0 and fallback_cur > 0:
+        return float(fallback_cur) / float(fallback_elapsed)
+    return 0.0
+
+
+def eta_from_rate(remaining_steps: float, steps_per_s: float) -> Optional[float]:
+    """Seconds remaining for ``remaining_steps`` at ``steps_per_s`` (None if unknown)."""
+    if steps_per_s <= 0.0:
+        return None
+    return max(0.0, float(remaining_steps)) / float(steps_per_s)
+
+
 def gpu_total_steps(duration_s: float, output_dt_s: float, rk4_dt_s: float) -> int:
     """Total fixed-step RHS-step count for a GPU batch propagation.
 
@@ -232,13 +258,17 @@ def gpu_total_steps(duration_s: float, output_dt_s: float, rk4_dt_s: float) -> i
 
 
 def format_duration(seconds: Optional[float]) -> str:
-    """Human elapsed string, e.g. ``"45s"`` or ``"12.4 min"``."""
+    """Human elapsed string, e.g. ``"45s"``, ``"12.4 min"`` or ``"1h 56m"``."""
     if seconds is None:
         return "—"
     s = max(0.0, float(seconds))
     if s < 60.0:
         return f"{s:.0f}s"
-    return f"{s / 60.0:.1f} min"
+    if s < 3600.0:
+        return f"{s / 60.0:.1f} min"
+    h, rem = divmod(int(round(s)), 3600)
+    m = rem // 60
+    return f"{h}h {m:02d}m"
 
 
 def format_eta(seconds: Optional[float]) -> str:
