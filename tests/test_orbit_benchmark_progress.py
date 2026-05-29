@@ -146,6 +146,35 @@ def test_step_throttle_interval_floored_at_one():
     assert th.step_interval == 1
 
 
+def test_step_throttle_needs_time_check_gates_on_step_interval():
+    # needs_time_check is the cheap step-only gate that lets the GPU loop skip
+    # time.perf_counter() on most steps. It mirrors update()'s step gate but
+    # never emits and never mutates throttle state.
+    th = P.StepThrottle(1000, min_interval_s=5.0)  # step_interval = 10
+
+    # Before the throttle is armed, the first check is True so a follow-up
+    # update() still arms its baseline exactly as before.
+    assert th.needs_time_check(1) is True
+    assert th.needs_time_check(1) is True          # pure: repeat call unchanged
+    assert th.update(1, now=0.0) is False          # arms baseline at (1, 0.0)
+
+    # Inside the step window the cheap gate stays shut -> perf_counter skipped.
+    assert th.needs_time_check(5) is False
+    assert th.needs_time_check(10) is False        # 10 - 1 = 9 < 10
+    # Step interval reached (11 - 1 = 10 >= 10): a wall-clock check is now due.
+    assert th.needs_time_check(11) is True
+
+    # update() declined to emit (time gate 1.0s < 5.0s) and did NOT re-arm, so
+    # the step gate stays open until a real emit advances the baseline.
+    assert th.update(11, now=1.0) is False
+    assert th.needs_time_check(12) is True
+    # Both gates satisfied -> update() emits and re-arms at (20, 6.0).
+    assert th.update(20, now=6.0) is True
+    # Fresh window after the emit: the cheap gate closes again.
+    assert th.needs_time_check(25) is False        # 25 - 20 = 5 < 10
+    assert th.needs_time_check(30) is True         # 30 - 20 = 10 >= 10
+
+
 # ---------------------------------------------------------------------------
 # 3. Overall (weighted, monotonic) progress
 # ---------------------------------------------------------------------------

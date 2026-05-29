@@ -228,14 +228,22 @@ def discover_st_lrps_model_dirs(root: Path | str = DEFAULT_ST_LRPS_RUNS_DIR) -> 
     """
 
     runs_root = Path(root).expanduser().resolve()
-    if not runs_root.is_dir():
-        return []
+    search_dirs = [runs_root]
+    
+    # Also check the newer `outputs/training` directory if using the default root
+    if runs_root == DEFAULT_ST_LRPS_RUNS_DIR.resolve():
+        search_dirs.append((_REPO_ROOT / "outputs" / "training").resolve())
 
-    candidates = [
-        p.resolve()
-        for p in runs_root.iterdir()
-        if _is_valid_surrogate_run(p) and _looks_like_lunar_run(p)
-    ]
+    candidates = []
+    for d in search_dirs:
+        if not d.is_dir():
+            continue
+        candidates.extend([
+            p.resolve()
+            for p in d.iterdir()
+            if _is_valid_surrogate_run(p) and _looks_like_lunar_run(p)
+        ])
+        
     candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
     return candidates
 

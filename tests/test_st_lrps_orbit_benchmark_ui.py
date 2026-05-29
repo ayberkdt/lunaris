@@ -304,6 +304,34 @@ def test_harness_laptop_friendly_cli_defaults(monkeypatch):
     assert args.st_lrps_rk4_dt == 30.0
 
 
+def test_harness_gpu_finite_check_mode_flag(monkeypatch):
+    import sys as _sys
+
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    # Default is the recommended low-overhead benchmark mode.
+    monkeypatch.setattr(_sys, "argv", ["compare_gravity_models"])
+    assert cgm.parse_args().gpu_finite_check_mode == "snapshot"
+
+    # Every documented mode parses.
+    for mode in ("step", "snapshot", "end", "off"):
+        monkeypatch.setattr(
+            _sys, "argv", ["compare_gravity_models", "--gpu-finite-check-mode", mode]
+        )
+        assert cgm.parse_args().gpu_finite_check_mode == mode
+
+
+def test_harness_help_lists_gpu_finite_check_mode():
+    # The CLI --help output must advertise the new finite-check policy flag.
+    proc = subprocess.run(
+        [sys.executable, "-m",
+         "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models", "--help"],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=180,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "--gpu-finite-check-mode" in proc.stdout
+
+
 def test_gpu_rk4_dt_variants_build_distinct_cache_and_display_names():
     from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
@@ -1464,3 +1492,299 @@ def test_ui_cpu_mode_omits_frame_mode(qapp):
     args = tab._build_args(show_errors=False)
     assert "--batch-frame-mode" not in args
     tab.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Reproducibility bookkeeping: manifest fingerprint, stale-cache policy,
+# enriched run_metadata, honest summary scope, and the metadata-refresh path.
+# ---------------------------------------------------------------------------
+def test_harness_parses_metadata_and_stale_cache_flags(monkeypatch):
+    import sys as _sys
+
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    monkeypatch.setattr(_sys, "argv", ["compare_gravity_models"])
+    base = cgm.parse_args()
+    assert base.refresh_metadata is False
+    assert base.allow_stale_cache is False
+
+    monkeypatch.setattr(
+        _sys, "argv",
+        ["compare_gravity_models", "--refresh-metadata", "--allow-stale-cache"],
+    )
+    args = cgm.parse_args()
+    assert args.refresh_metadata is True
+    assert args.allow_stale_cache is True
+
+
+def test_harness_help_lists_metadata_flags():
+    proc = subprocess.run(
+        [sys.executable, "-m",
+         "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models", "--help"],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=180,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "--refresh-metadata" in proc.stdout
+    assert "--allow-stale-cache" in proc.stdout
+
+
+def test_backend_cache_manifest_stamps_config_fingerprint(tmp_path):
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = _sampling_args(random_scenarios=1)
+    scenarios = cgm.generate_validation_scenarios(args)
+    cache_dir = tmp_path / "benchmark_cache"
+    cgm._write_cache_manifest(args, cache_dir, scenarios, ["sh20"])
+
+    manifest = json.loads((cache_dir / "cache_manifest.json").read_text(encoding="utf-8"))
+    fp = manifest["config_fingerprint"]
+    assert isinstance(fp, str) and len(fp) == 64
+    # Fingerprint is deterministic and stays out of the field-by-field metadata.
+    assert fp == cgm._config_fingerprint(args)
+    assert "config_fingerprint" not in manifest["metadata"]
+
+
+def test_backend_fingerprint_mismatch_default_raises_but_allow_stale_warns(tmp_path):
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    # Write a manifest with no explicit step-size list (fingerprint over []).
+    args = _sampling_args(random_scenarios=1)
+    scenarios = cgm.generate_validation_scenarios(args)
+    cache_dir = tmp_path / "benchmark_cache"
+    cgm._write_cache_manifest(args, cache_dir, scenarios, ["sh20"])
+
+    # Change only a fingerprint-relevant field that is NOT in the explicit field
+    # list (gpu_rk4_dt_s_list) so the refusal comes from the fingerprint gate.
+    drift = _sampling_args(random_scenarios=1, gpu_rk4_dt_s_list="10,30")
+    with pytest.raises(ValueError, match="fingerprint"):
+        cgm._validate_cache_compatibility(drift, cache_dir)
+
+    # --allow-stale-cache downgrades the refusal to a warning (no raise).
+    drift_ok = _sampling_args(
+        random_scenarios=1, gpu_rk4_dt_s_list="10,30", allow_stale_cache=True
+    )
+    warnings = cgm._validate_cache_compatibility(drift_ok, cache_dir)
+    assert any("fingerprint" in w for w in warnings)
+    assert any(w.startswith("[allow-stale-cache]") for w in warnings)
+
+
+def test_backend_missing_fingerprint_allows_with_warning(tmp_path):
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    args = _sampling_args(random_scenarios=1)
+    scenarios = cgm.generate_validation_scenarios(args)
+    cache_dir = tmp_path / "benchmark_cache"
+    cgm._write_cache_manifest(args, cache_dir, scenarios, ["sh20"])
+
+    # Simulate a cache written before fingerprints existed.
+    path = cache_dir / "cache_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest.pop("config_fingerprint", None)
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    # Same config => field checks pass; missing fingerprint => allow + warn.
+    warnings = cgm._validate_cache_compatibility(args, cache_dir)
+    assert any("predates config fingerprints" in w for w in warnings)
+
+
+def test_backend_run_metadata_enriched_fields(tmp_path, monkeypatch):
+    import sys as _sys
+
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    # CPU-sweep path keeps the writer hermetic (no torch import/probe).
+    monkeypatch.setattr(_sys, "argv", [
+        "compare_gravity_models",
+        "--output-dir", str(tmp_path),
+        "--random-scenarios", "3",
+        "--gpu-finite-check-mode", "end",
+    ])
+    args = cgm.parse_args()
+    cgm._write_run_metadata(args, tmp_path)
+
+    meta = json.loads((tmp_path / "run_metadata.json").read_text(encoding="utf-8"))
+    assert meta["schema_version"] == cgm.BENCHMARK_METADATA_SCHEMA_VERSION
+    assert isinstance(meta["run_id"], str) and len(meta["run_id"]) == 16
+    assert meta["timestamp_utc"]
+    assert meta["argv"][0] == "compare_gravity_models"
+    assert meta["lunaris_version"]
+    assert meta["mode"] == "cpu_sweep"
+    assert meta["device"]["backend"] == "cpu_sweep"
+    assert isinstance(meta["config_fingerprint"], str) and len(meta["config_fingerprint"]) == 64
+    assert meta["gpu_finite_check_mode"] == "end"
+    # Frame metadata is explicit and never collapses to one field.
+    assert meta["effective_batch_frame_mode"] == meta["requested_batch_frame_mode"]
+    assert meta["truth_frame_mode"] == "match_dynamics_engine"
+    assert "sampling" in meta and meta["sampling"]["scenario_count"] == 3
+
+
+def test_backend_summary_requested_vs_completed_breakdown(monkeypatch):
+    import sys as _sys
+
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    monkeypatch.setattr(_sys, "argv", [
+        "compare_gravity_models", "--gpu-batch-compare",
+        "--batch-frame-mode", "precomputed_slerp",
+    ])
+    args = cgm.parse_args()
+    aggregate_rows = [{"model": "GPU_SH20_RK4", "rms_pos_err_km": 0.1}]
+    requested_display = ["GPU_SH20_RK4", "GPU_SH60_RK4", "GPU_ST_LRPS_RK4"]
+    status_by_model = {
+        "GPU_SH20_RK4": "completed",
+        "GPU_SH60_RK4": "failed",
+        "GPU_ST_LRPS_RK4": "skipped",
+    }
+    cache_prov = cgm._cache_provenance(
+        args, None, enabled=False, truth_counts={}, model_entries={}
+    )
+    summary = cgm._build_gpu_batch_summary(
+        args,
+        aggregate_rows=aggregate_rows,
+        runtime_rows=[],
+        gpu_models=["sh20", "sh60", "st_lrps"],
+        requested_display=requested_display,
+        status_by_model=status_by_model,
+        n_scenarios_total=5,
+        n_scenarios_new_this_run=5,
+        truth_total_runtime_s=1.0,
+        truth_mean_runtime_per_scenario_s=0.2,
+        equivalent={},
+        selected={},
+        cache_provenance=cache_prov,
+        rebuilt_from_cache=False,
+        source="live",
+    )
+    assert summary["requested_models"] == requested_display
+    assert summary["completed_models"] == ["GPU_SH20_RK4"]
+    assert summary["failed_models"] == ["GPU_SH60_RK4"]
+    assert summary["skipped_models"] == ["GPU_ST_LRPS_RK4"]
+    assert summary["models_in_metrics"] == ["GPU_SH20_RK4"]
+    assert summary["summary_scope"] == "completed_models_only"
+    assert "1/3" in summary["summary_note"]
+    # Frame metadata must not collapse to "match_dynamics_engine".
+    assert summary["requested_batch_frame_mode"] == "precomputed_slerp"
+    assert summary["effective_batch_frame_mode"] == "precomputed_slerp"
+    assert summary["truth_frame_mode"] == "match_dynamics_engine"
+    assert summary["matches_dynamics_engine_frame"] is False
+    warns = " ".join(summary["metadata_warnings"])
+    assert "GPU_SH60_RK4" in warns and "GPU_ST_LRPS_RK4" in warns
+
+    # All-completed flips the scope and language.
+    done = cgm._build_gpu_batch_summary(
+        args,
+        aggregate_rows=aggregate_rows,
+        runtime_rows=[],
+        gpu_models=["sh20"],
+        requested_display=["GPU_SH20_RK4"],
+        status_by_model={"GPU_SH20_RK4": "completed"},
+        n_scenarios_total=5,
+        n_scenarios_new_this_run=0,
+        truth_total_runtime_s=None,
+        truth_mean_runtime_per_scenario_s=None,
+        equivalent={},
+        selected={},
+        cache_provenance=cache_prov,
+        rebuilt_from_cache=True,
+        source="rebuild_from_cache",
+    )
+    assert done["summary_scope"] == "all_requested_models"
+
+
+def test_backend_refresh_metadata_rebuilds_bookkeeping_without_torch(tmp_path, monkeypatch):
+    import sys as _sys
+
+    from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
+
+    monkeypatch.setattr(_sys, "argv", [
+        "compare_gravity_models", "--gpu-batch-compare", "--refresh-metadata",
+        "--output-dir", str(tmp_path),
+        "--gpu-models", "sh20",
+        "--random-scenarios", "1",
+    ])
+    args = cgm.parse_args()
+
+    # Lay down the manifest + metrics CSVs a prior run would have produced.
+    cache_dir = tmp_path / "benchmark_cache"
+    scenarios = cgm.generate_validation_scenarios(args)
+    cgm._write_cache_manifest(args, cache_dir, scenarios, ["sh20"])
+    metrics_dir = tmp_path / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    (metrics_dir / "gpu_batch_aggregate_metrics.csv").write_text(
+        "model,rms_pos_err_km\nGPU_SH20_RK4,0.125\n", encoding="utf-8")
+    (metrics_dir / "gpu_batch_runtime_metrics.csv").write_text(
+        "model,truth_total_runtime_s,truth_mean_runtime_per_scenario_s\n"
+        "GPU_SH20_RK4,2.0,2.0\n", encoding="utf-8")
+
+    # Guard: refresh must never import torch.
+    monkeypatch.setitem(_sys.modules, "torch", None)
+    cgm.refresh_benchmark_metadata(args)
+
+    meta = json.loads((tmp_path / "run_metadata.json").read_text(encoding="utf-8"))
+    assert meta["mode"] == "gpu_batch"
+    assert "torch probe skipped" in meta["device"].get("note", "")
+
+    summary = json.loads((metrics_dir / "gpu_batch_summary.json").read_text(encoding="utf-8"))
+    assert summary["source"] == "refresh"
+    assert summary["rebuilt_from_cache"] is True
+    assert summary["completed_models"] == ["GPU_SH20_RK4"]
+    assert summary["summary_scope"] == "all_requested_models"
+    assert any("refreshed from existing metrics" in w for w in summary["metadata_warnings"])
+    # The cache-side copy is written too when a manifest is present.
+    assert (cache_dir / "metrics" / "summary.json").exists()
+
+
+def test_ui_emits_finite_check_and_metadata_flags(qapp, tmp_path):
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
+
+    tab = OrbitBenchmarkTab()
+    tab.run_mode.setCurrentIndex(tab.run_mode.findData("gpu_rk4"))
+    tab.gpu_finite_check_mode.setCurrentIndex(
+        tab.gpu_finite_check_mode.findData("end"))
+    tab.allow_stale_cache.setChecked(True)
+    tab.refresh_metadata.setChecked(True)
+    args = tab._build_args(show_errors=False)
+    assert "--gpu-finite-check-mode" in args
+    assert args[args.index("--gpu-finite-check-mode") + 1] == "end"
+    assert "--allow-stale-cache" in args
+    assert "--refresh-metadata" in args
+
+    # Default GPU finite-check mode is the low-overhead snapshot policy.
+    tab2 = OrbitBenchmarkTab()
+    tab2.run_mode.setCurrentIndex(tab2.run_mode.findData("gpu_rk4"))
+    args2 = tab2._build_args(show_errors=False)
+    assert args2[args2.index("--gpu-finite-check-mode") + 1] == "snapshot"
+    # CPU mode never emits the GPU-only finite-check flag.
+    tab2.run_mode.setCurrentIndex(tab2.run_mode.findData("dop853"))
+    assert "--gpu-finite-check-mode" not in tab2._build_args(show_errors=False)
+    tab.deleteLater()
+    tab2.deleteLater()
+
+
+def test_ui_qsettings_persists_new_controls(qapp):
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
+    from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import _settings
+
+    settings = _settings()
+    settings.beginGroup("orbit_benchmark")
+    settings.remove("")
+    settings.endGroup()
+    settings.sync()
+
+    tab = OrbitBenchmarkTab()
+    tab.gpu_finite_check_mode.setCurrentIndex(tab.gpu_finite_check_mode.findData("off"))
+    tab.allow_stale_cache.setChecked(True)
+    tab.refresh_metadata.setChecked(True)
+    tab._save_settings()
+    tab.deleteLater()
+
+    restored = OrbitBenchmarkTab()
+    assert restored.gpu_finite_check_mode.currentData() == "off"
+    assert restored.allow_stale_cache.isChecked() is True
+    assert restored.refresh_metadata.isChecked() is True
+    restored.deleteLater()
+
+    settings.beginGroup("orbit_benchmark")
+    settings.remove("")
+    settings.endGroup()
+    settings.sync()

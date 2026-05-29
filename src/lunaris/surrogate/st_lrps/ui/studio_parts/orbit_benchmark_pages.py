@@ -326,6 +326,18 @@ class OrbitBenchmarkTab(QWidget):
         self.strict_complete.setToolTip(
             "Fail if selected models are missing cached trajectories during metric rebuild."
         )
+        self.allow_stale_cache = QCheckBox("Allow stale cache")
+        self.allow_stale_cache.setChecked(False)
+        self.allow_stale_cache.setToolTip(
+            "Downgrade cache-compatibility errors (mismatched config fields or fingerprint) "
+            "to warnings and reuse the cache anyway. Off by default so results stay valid."
+        )
+        self.refresh_metadata = QCheckBox("Refresh metadata only")
+        self.refresh_metadata.setChecked(False)
+        self.refresh_metadata.setToolTip(
+            "Rebuild run_metadata.json + gpu_batch_summary.json from existing metrics and the "
+            "cache manifest without propagating or reloading trajectories."
+        )
         self.cache_dir = ValidatedPathEdit(
             placeholder="Empty -> output_dir/benchmark_cache", check_file=False
         )
@@ -338,6 +350,8 @@ class OrbitBenchmarkTab(QWidget):
         form_cache.addRow("Append scenarios", self.append_scenarios)
         form_cache.addRow(self.rebuild_metrics)
         form_cache.addRow(self.strict_complete)
+        form_cache.addRow(self.allow_stale_cache)
+        form_cache.addRow(self.refresh_metadata)
         form_cache.addRow("Cache dir", cache_row)
         grp_cache.setLayout(form_cache)
 
@@ -408,6 +422,19 @@ class OrbitBenchmarkTab(QWidget):
             "before the loop (same interpolation, less per-step overhead). "
             "Numerically equivalent to dynamic within strict tolerance."
         )
+        self.gpu_finite_check_mode = NoScrollComboBox()
+        self.gpu_finite_check_mode.addItem("snapshot (default)", "snapshot")
+        self.gpu_finite_check_mode.addItem("step (per-step)", "step")
+        self.gpu_finite_check_mode.addItem("end (final only)", "end")
+        self.gpu_finite_check_mode.addItem("off", "off")
+        self.gpu_finite_check_mode.setCurrentIndex(0)
+        self.gpu_finite_check_mode.setToolTip(
+            "When to scan GPU batch states for NaN/Inf.\n"
+            "snapshot: check at each saved output step (default).\n"
+            "step: check every integrator step (slowest, strictest).\n"
+            "end: check only the final state.\n"
+            "off: never check (fastest; only for trusted configs)."
+        )
         self.truth_workers = QSpinBox()
         self.truth_workers.setRange(1, 256)
         self.truth_workers.setValue(4)
@@ -421,6 +448,7 @@ class OrbitBenchmarkTab(QWidget):
         form_gpu.addRow("Torch dtype", self.torch_dtype)
         form_gpu.addRow("Fallback", self.gpu_fallback)
         form_gpu.addRow("Frame mode", self.gpu_frame_mode)
+        form_gpu.addRow("Finite check", self.gpu_finite_check_mode)
         grp_gpu.setLayout(form_gpu)
 
         mode_settings_w = QWidget()
@@ -575,6 +603,7 @@ class OrbitBenchmarkTab(QWidget):
             self.truth, self.truth_integrator, self.scenario_mode, self.integrator,
             self.sampling_method, self.inclination_sampling,
             self.gpu_integrator, self.torch_dtype, self.gpu_fallback, self.gpu_frame_mode,
+            self.gpu_finite_check_mode,
         ):
             w.currentIndexChanged.connect(self._refresh_command_preview)
         for w in (
@@ -588,6 +617,8 @@ class OrbitBenchmarkTab(QWidget):
         self.reuse_cache.toggled.connect(self._refresh_command_preview)
         self.rebuild_metrics.toggled.connect(self._refresh_command_preview)
         self.strict_complete.toggled.connect(self._refresh_command_preview)
+        self.allow_stale_cache.toggled.connect(self._refresh_command_preview)
+        self.refresh_metadata.toggled.connect(self._refresh_command_preview)
         self.rtol.textChanged.connect(self._refresh_command_preview)
         self.atol.textChanged.connect(self._refresh_command_preview)
         self.rk4_dt_list.textChanged.connect(self._refresh_command_preview)
@@ -1345,6 +1376,7 @@ class OrbitBenchmarkTab(QWidget):
             args += ["--torch-dtype", self.torch_dtype.currentData() or "float32"]
             args += ["--gpu-fallback", self.gpu_fallback.currentData() or "error"]
             args += ["--batch-frame-mode", self.gpu_frame_mode.currentData() or "match_dynamics_engine"]
+            args += ["--gpu-finite-check-mode", self.gpu_finite_check_mode.currentData() or "snapshot"]
         else:
             args += ["--models", ",".join(models)]
             args += ["--integrator", self.integrator.currentData() or "DOP853"]
@@ -1384,6 +1416,10 @@ class OrbitBenchmarkTab(QWidget):
             args += ["--rebuild-metrics"]
         if self.strict_complete.isChecked():
             args += ["--strict-complete"]
+        if self.allow_stale_cache.isChecked():
+            args += ["--allow-stale-cache"]
+        if self.refresh_metadata.isChecked():
+            args += ["--refresh-metadata"]
         cache_dir = self.cache_dir.text().strip()
         if cache_dir:
             args += ["--cache-dir", cache_dir]
@@ -1465,6 +1501,8 @@ class OrbitBenchmarkTab(QWidget):
         s.setValue("append_scenarios", self.append_scenarios.value())
         s.setValue("rebuild_metrics", self.rebuild_metrics.isChecked())
         s.setValue("strict_complete", self.strict_complete.isChecked())
+        s.setValue("allow_stale_cache", self.allow_stale_cache.isChecked())
+        s.setValue("refresh_metadata", self.refresh_metadata.isChecked())
         s.setValue("cache_dir", self.cache_dir.text())
         s.setValue("models", ",".join(self._selected_models()))
         s.setValue("custom_models", ",".join(self._custom_models))
@@ -1482,6 +1520,7 @@ class OrbitBenchmarkTab(QWidget):
         s.setValue("truth_workers", self.truth_workers.value())
         s.setValue("gpu_integrator", self.gpu_integrator.currentData())
         s.setValue("gpu_frame_mode", self.gpu_frame_mode.currentData())
+        s.setValue("gpu_finite_check_mode", self.gpu_finite_check_mode.currentData())
         s.setValue("rk4_dt", self.rk4_dt.value())
         s.setValue("rk4_dt_list", self.rk4_dt_list.text())
         s.setValue("torch_dtype", self.torch_dtype.currentData() or "float32")
@@ -1517,6 +1556,8 @@ class OrbitBenchmarkTab(QWidget):
             ("reuse_cache", self.reuse_cache),
             ("rebuild_metrics", self.rebuild_metrics),
             ("strict_complete", self.strict_complete),
+            ("allow_stale_cache", self.allow_stale_cache),
+            ("refresh_metadata", self.refresh_metadata),
         ):
             if s.contains(key):
                 cb.setChecked(str(s.value(key, "false")).lower() == "true")
@@ -1560,6 +1601,7 @@ class OrbitBenchmarkTab(QWidget):
         _combo(self.integrator, "integrator")
         _combo(self.gpu_integrator, "gpu_integrator")
         _combo(self.gpu_frame_mode, "gpu_frame_mode")
+        _combo(self.gpu_finite_check_mode, "gpu_finite_check_mode")
         _combo(self.gpu_fallback, "gpu_fallback")
         _combo(self.torch_dtype, "torch_dtype")
         if s.contains("rtol"):
