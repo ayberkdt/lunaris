@@ -38,4 +38,4 @@ python -m lunaris.visualization.surface_explorer \
 
 Large LOLA grids can be memory-heavy. Use `--stride-2d`, `--stride-3d`, and `--stride-albedo` for quick previews.
 
-Generated plots and animations should be written under `outputs/`, `results/`, or another ignored output directory and should not be committed.
+Generated plots and animations should be written under the repository-level `outputs/` directory (for example `outputs/visualization/`) and should not be committed; the `outputs/` tree is git-ignored.

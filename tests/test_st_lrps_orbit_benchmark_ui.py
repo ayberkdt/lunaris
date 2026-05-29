@@ -1361,6 +1361,71 @@ def test_plots_page_requires_output_dir_and_models(qapp):
     tab.deleteLater()
 
 
+def test_plots_page_rejects_malformed_dt_list(qapp, tmp_path):
+    """A bad Δt list is reported, never silently dropped from the command."""
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+
+    _write_fake_benchmark_cache(tmp_path, ["sh20"])
+    tab = OrbitBenchmarkPlotsTab()
+    tab.out_dir.setText(str(tmp_path))
+    tab._scan_and_populate()
+    tab.rk4_dt_list.setText("10,abc")
+    assert tab._build_args(show_errors=False) is None
+    assert tab.command_warning.text()                       # surfaced, not silent
+    tab.rk4_dt_list.setText("10,-5")
+    assert tab._build_args(show_errors=False) is None       # non-positive rejected
+    tab.deleteLater()
+
+
+def test_plots_page_failure_is_not_silent(qapp):
+    """A non-zero / crashed harness exit shows an error banner and opens logs."""
+    from PyQt6.QtCore import QProcess
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+
+    tab = OrbitBenchmarkPlotsTab()
+    tab._effective_out_dir = ""
+    tab._logs_section.set_expanded(False)
+    tab._on_finished(1, QProcess.ExitStatus.NormalExit)
+    assert "failed" in tab._result_banner.text().lower()
+    assert tab._logs_section.is_expanded()                  # log opened for the traceback
+    # A crash (abnormal exit) is treated the same way.
+    tab._on_finished(0, QProcess.ExitStatus.CrashExit)
+    assert "failed" in tab._result_banner.text().lower()
+    tab.deleteLater()
+
+
+def test_plots_page_excludes_stale_images(qapp, tmp_path):
+    """Only figures written by the current run are shown — old plots from a
+    previous (now-failed/partial) run must not resurface."""
+    import time as _time
+    from PyQt6.QtGui import QImage
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
+
+    def _png(p):
+        img = QImage(40, 30, QImage.Format.Format_RGB32)
+        img.fill(0)
+        img.save(str(p), "PNG")
+
+    plots = tmp_path / "plots"
+    plots.mkdir()
+    stale = plots / "old.png"
+    _png(stale)
+    old = _time.time() - 600
+    os.utime(stale, (old, old))
+
+    tab = OrbitBenchmarkPlotsTab()
+    started = _time.time()
+    _time.sleep(0.05)
+    fresh = plots / "gpu_accuracy_ranking_bar.png"
+    _png(fresh)
+
+    imgs = tab._discover_result_images(str(tmp_path), since=started)
+    names = {p.name for p in imgs}
+    assert "gpu_accuracy_ranking_bar.png" in names
+    assert "old.png" not in names
+    tab.deleteLater()
+
+
 # ---------------------------------------------------------------------------
 # GPU frame mode (dynamic / precomputed_slerp) exposure
 # ---------------------------------------------------------------------------

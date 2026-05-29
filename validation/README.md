@@ -36,7 +36,7 @@ These submodules are expected to be implemented in the future:
 
 ## Do not put here
 
-Do not place generated outputs, run artifacts, checkpoints, or trained models under `validation/`. Write validation products under ignored output locations such as `results/`, `outputs/`, `artifacts/`, or external scratch storage.
+Do not place generated outputs, run artifacts, checkpoints, or trained models under `validation/`. Write validation products under the repository-level `outputs/` directory (for example `outputs/gravity_benchmark/`) or an external scratch path. The `outputs/` tree is git-ignored.
 
 ## Current status
 

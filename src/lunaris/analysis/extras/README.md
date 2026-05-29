@@ -5,11 +5,11 @@ development but are not part of the core mission propagation runtime.
 
 Canonical analysis modules live in:
 
-- `analysis.postprocess`
-- `analysis.reporting.manager`
-- `analysis.reporting.plotting`
-- `analysis.reporting.styling`
-- `analysis.monte_carlo.statistics`
-- `analysis.monte_carlo.plotting`
+- `lunaris.analysis.postprocess`
+- `lunaris.analysis.reporting.manager`
+- `lunaris.analysis.reporting.plotting`
+- `lunaris.analysis.reporting.styling`
+- `lunaris.analysis.monte_carlo.statistics`
+- `lunaris.analysis.monte_carlo.plotting`
 
-Surface topography and albedo visualization lives in `visualization.surface_explorer`. Orbit animation lives in `visualization.orbit_animation.render_orbit_animation`. Please see `visualization/README.md` for usage.
+Surface topography and albedo visualization lives in `lunaris.visualization.surface_explorer`. Orbit animation lives in `lunaris.visualization.orbit_animation.render_orbit_animation`. See `src/lunaris/visualization/README.md` for usage.

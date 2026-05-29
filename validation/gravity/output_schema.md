@@ -4,11 +4,10 @@ This file documents the intended output contract for validation runs and should 
 
 ## Output directory
 
-Validation outputs should go under a user-provided output directory, usually under:
-`results/`
-and should not be committed.
+Validation outputs should go under a user-provided output directory, usually the
+repository-level `outputs/gravity_benchmark/`, and should not be committed.
 
-Generated validation outputs may also be written under `outputs/`, `artifacts/`, or external scratch storage. Do not write generated validation products into source package directories.
+Generated validation outputs may also be written under another `outputs/` subdirectory or external scratch storage. Do not write generated validation products into source package directories.
 
 ## Current / Expected Gravity Validation Outputs
 
@@ -42,7 +41,7 @@ Generated training, evaluation, and run artifacts may exist in local run directo
 - `topk_worst.csv`
 - `ood_metrics.csv`
 
-Treat these as non-source run products. Keep them under ignored output locations such as `runs/`, `results/`, `outputs/`, `artifacts/`, or external scratch storage.
+Treat these as non-source run products. Keep them under the repository-level `outputs/` directory or external scratch storage; the `outputs/` tree is git-ignored.
 
 ## `per_scenario_metrics.csv` fields
 

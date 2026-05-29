@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 from lunaris.common.paths import project_root_from_file
@@ -1730,6 +1731,13 @@ class OrbitBenchmarkPlotsTab(QWidget):
         self.runner.set_finished_hook(self._on_finished)
         self._gallery = ImageGallery()
         self._effective_out_dir = ""
+        self._run_started_at = 0.0
+
+        # Outcome banner: always-visible, plain-language result of the last run
+        # so the page can never finish silently (success, empty, or failure).
+        self._result_banner = QLabel("")
+        self._result_banner.setWordWrap(True)
+        self._result_banner.setVisible(False)
 
         ctrl = QHBoxLayout()
         ctrl.setContentsMargins(0, 0, 0, 0)
@@ -1769,6 +1777,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         col.addWidget(grp_models)
         col.addWidget(safe_note)
         col.addWidget(ctrl_w)
+        col.addWidget(self._result_banner)
         col.addWidget(self.command_preview)
         col.addWidget(self.command_warning)
         col.addWidget(self._logs_section)
@@ -1985,12 +1994,28 @@ class OrbitBenchmarkPlotsTab(QWidget):
         if not out_dir:
             return fail("Output dir", "Choose the existing results/output directory.")
 
+        # Optional multi-step cache: rebuild every Δt variant in the list. The
+        # field is only meaningful when the cache was built with several steps;
+        # an unparseable value is reported rather than silently dropped.
+        dt_list_norm = ""
+        dt_list_text = self.rk4_dt_list.text().strip()
+        if dt_list_text:
+            try:
+                vals = [float(x) for x in dt_list_text.replace(";", ",").split(",") if x.strip()]
+            except ValueError:
+                return fail("Δt list", "Δt list must be comma-separated numbers, e.g. 10,5.")
+            if not vals or any(v <= 0 for v in vals):
+                return fail("Δt list", "Δt list values must all be positive, e.g. 10,5.")
+            dt_list_norm = ",".join("%g" % v for v in vals)
+
         args = ["-u", "-m", BENCHMARK_CLI_MODULE,
                 "--gpu-batch-compare", "--rebuild-metrics", "--reuse-cache",
                 "--gpu-models", ",".join(models),
                 "--truth", self.truth.currentData() or "sh200",
                 "--truth-integrator", self.truth_integrator.currentData() or "DOP853",
                 "--rk4-dt-s", str(self.rk4_dt.value())]
+        if dt_list_norm:
+            args += ["--gpu-rk4-dt-s-list", dt_list_norm]
         args += ["--output-dir", out_dir]
         cache_dir = self.cache_dir.text().strip()
         if cache_dir:
@@ -2009,6 +2034,27 @@ class OrbitBenchmarkPlotsTab(QWidget):
             self._refresh_command_preview()
         QGuiApplication.clipboard().setText(self.command_preview.toPlainText())
 
+    # -- outcome banner ----------------------------------------------------
+    _BANNER_STYLES = {
+        "running": ("#9aa7c7", "rgba(154,167,199,0.12)", "rgba(154,167,199,0.30)"),
+        "success": ("#34d399", "rgba(52,211,153,0.14)", "rgba(52,211,153,0.45)"),
+        "warning": ("#fbbf24", "rgba(245,158,11,0.14)", "rgba(245,158,11,0.45)"),
+        "error":   ("#f87171", "rgba(248,113,113,0.16)", "rgba(248,113,113,0.50)"),
+    }
+
+    def _set_banner(self, kind: str, text: str) -> None:
+        """Show a colour-coded, plain-language summary of the last run."""
+        if not text:
+            self._result_banner.setVisible(False)
+            return
+        fg, fill, border = self._BANNER_STYLES.get(kind, self._BANNER_STYLES["running"])
+        self._result_banner.setText(text)
+        self._result_banner.setStyleSheet(
+            f"QLabel {{ color:{fg}; background:{fill}; border:1px solid {border}; "
+            f"border-radius:6px; padding:8px 12px; font-size:12px; font-weight:600; }}"
+        )
+        self._result_banner.setVisible(True)
+
     # -- run / results -----------------------------------------------------
     def _start(self) -> None:
         args = self._build_args(show_errors=True)
@@ -2021,31 +2067,104 @@ class OrbitBenchmarkPlotsTab(QWidget):
                                  "Run a benchmark first, then generate plots here.")
             return
         self._effective_out_dir = out_dir
+        self._run_started_at = time.time()
         self.runner.set_output_dir(out_dir)
         self._gallery.clear_gallery()
+        self._set_banner("running", "Generating plots from the cached trajectories…")
         self._save_settings()
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
-    def _discover_result_images(self, out_dir: str) -> List[Path]:
+    def _discover_result_images(self, out_dir: str, since: Optional[float] = None) -> List[Path]:
+        """Images this run produced, grouped by location priority.
+
+        The harness writes figures to ``<out_dir>/plots`` (and ``reports``), so
+        those are searched first, then the top level, then any other immediate
+        subfolder. When ``since`` is given, only files written at/after that time
+        are returned — this stops a failed or partial re-run from resurfacing a
+        previous run's plots and looking like it succeeded.
+        """
         base = Path(out_dir)
         if not base.is_dir():
             return []
-        imgs: List[Path] = list(base.glob("*.png")) + list(base.glob("*.jpg"))
-        for sub in base.glob("*/"):
-            if sub.is_dir():
-                imgs += list(sub.glob("*.png")) + list(sub.glob("*.jpg"))
-        return sorted(set(imgs))
+        search_dirs: List[Path] = []
+        for name in ("plots", "reports"):
+            d = base / name
+            if d.is_dir():
+                search_dirs.append(d)
+        search_dirs.append(base)
+        for sub in sorted(base.glob("*/")):
+            if sub.is_dir() and sub.name not in ("plots", "reports"):
+                search_dirs.append(sub)
+
+        cutoff = (since - 2.0) if since else None
+        seen: set = set()
+        imgs: List[Path] = []
+        for d in search_dirs:
+            candidates = sorted(
+                list(d.glob("*.png")) + list(d.glob("*.jpg")),
+                key=lambda q: q.name.lower(),
+            )
+            for p in candidates:
+                rp = p.resolve()
+                if rp in seen:
+                    continue
+                if cutoff is not None:
+                    try:
+                        if p.stat().st_mtime < cutoff:
+                            continue
+                    except OSError:
+                        continue
+                seen.add(rp)
+                imgs.append(p)
+        return imgs
 
     def _on_finished(self, exit_code, exit_status) -> None:
         out_dir = self._effective_out_dir
-        if not out_dir or not Path(out_dir).is_dir():
+        crashed = exit_status != QProcess.ExitStatus.NormalExit
+        failed = crashed or int(exit_code) != 0
+
+        # Failure must never be silent: surface it and open the log so the
+        # traceback the harness printed is visible immediately.
+        if failed:
+            reason = "crashed" if crashed else f"exited with code {exit_code}"
+            self._set_banner(
+                "error",
+                f"Plot generation failed — the harness {reason}. "
+                "Open “Logs / Diagnostics” below for the full error.",
+            )
+            self.runner.append(f"\n[UI] FAILED: plot generation {reason}.")
+            self._logs_section.set_expanded(True)
+            if out_dir and Path(out_dir).is_dir():
+                self.runner.set_output_dir(out_dir)
+                self.runner.btn_open_folder.setVisible(True)
             return
-        imgs = self._discover_result_images(out_dir)
-        if imgs:
-            cnt = self._gallery.load_images(imgs)
-            if cnt:
-                self.runner.append(f"\n[UI] {cnt} plot(s) loaded: {out_dir}")
-                self._results_section.set_expanded(True)
+
+        if not out_dir or not Path(out_dir).is_dir():
+            self._set_banner(
+                "warning",
+                "Finished, but the output directory is no longer available — "
+                "nothing to display.",
+            )
+            return
+
+        imgs = self._discover_result_images(out_dir, since=self._run_started_at)
+        cnt = self._gallery.load_images(imgs) if imgs else 0
+        if cnt:
+            self.runner.append(f"\n[UI] {cnt} plot(s) loaded from: {out_dir}")
+            self._set_banner("success", f"Done — {cnt} plot(s) generated. See “Results / Plots” below.")
+            self._results_section.set_expanded(True)
+        else:
+            # Exit code 0 but no fresh figures: still not silent.
+            self._set_banner(
+                "warning",
+                "Finished without errors, but no new plots were written. "
+                "Check the selected models and the cache, then see the log below.",
+            )
+            self.runner.append(
+                "\n[UI] Process finished cleanly but produced no new plot files in "
+                f"{out_dir}."
+            )
+            self._logs_section.set_expanded(True)
         self.runner.set_output_dir(out_dir)
         self.runner.btn_open_folder.setVisible(True)
 
