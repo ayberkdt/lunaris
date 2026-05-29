@@ -74,8 +74,11 @@ import json
 import math
 import os
 import re
+import sys
 import time
 import traceback
+import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -305,6 +308,21 @@ def parse_args() -> argparse.Namespace:
                    help="GPU fixed-step integrator tier: light (RK2 midpoint), "
                         "medium (classic RK4, default), or robust (RK4 + Richardson "
                         "extrapolation).")
+    p.add_argument("--gpu-finite-check-mode",
+                   choices=["step", "snapshot", "end", "off"],
+                   default="snapshot",
+                   help="When the GPU batch path scans for NaN/Inf state during "
+                        "fixed-step propagation. step: after every RK step "
+                        "(safest, highest overhead). snapshot: once per output "
+                        "snapshot (recommended for benchmark speed; still catches "
+                        "non-finite output before results are returned). end: "
+                        "once over the full trajectory (minimal checking "
+                        "overhead). off: skip the check in the hot loop (fastest "
+                        "but does not detect invalid GPU states). snapshot/end "
+                        "reduce CPU-side overhead in GPU batch propagation; the "
+                        "actual speedup depends on model, batch size, device, OS, "
+                        "and integrator settings. Numerical results are identical "
+                        "across modes.")
     p.add_argument("--batch-frame-mode",
                    choices=["match_dynamics_engine", "inertial_fixed_legacy", "precomputed_slerp"],
                    default="match_dynamics_engine",
@@ -324,6 +342,14 @@ def parse_args() -> argparse.Namespace:
                    help="Append N new scenarios to an existing manifest")
     p.add_argument("--rebuild-metrics", action="store_true",
                    help="Rebuild metrics/reports from cached trajectories without propagation")
+    p.add_argument("--refresh-metadata", action="store_true",
+                   help="Rebuild only the bookkeeping JSON (run_metadata.json + "
+                        "gpu_batch_summary.json) from existing metrics CSVs and the cache "
+                        "manifest. Does not import torch, propagate, or reload trajectories.")
+    p.add_argument("--allow-stale-cache", action="store_true",
+                   help="Downgrade cache-compatibility errors (mismatched config fields or "
+                        "fingerprint) to warnings and reuse the cache anyway. Off by default: "
+                        "a mismatched cache is refused so results stay scientifically valid.")
     p.add_argument("--strict-complete", action="store_true",
                    help="Fail metric rebuild if any selected model is missing scenarios")
     p.add_argument("--allow-lhs-append", action="store_true",
@@ -1007,12 +1033,28 @@ def propagate_gpu_batch_model(
     dtype_name: str,
     frame_mode: str,
     gpu_integrator: str = "medium",
+    finite_check_mode: str = "step",
     progress_cb: Optional[Any] = None,
 ) -> BatchModelResult:
     """Propagate one model for all scenarios using a fixed-step torch integrator.
 
     ``gpu_integrator`` selects the fidelity tier (light/medium/robust); see
     :func:`gpu_fixed_step_advance`.
+
+    ``finite_check_mode`` controls how often the batch state is scanned for
+    NaN/Inf. It is a monitoring policy only and never changes the numbers
+    produced — the same trajectory is returned for every mode (modulo whether a
+    non-finite result is reported as a failure):
+
+    * ``step`` — scan after every RK step (safest for debugging, highest
+      CPU-side overhead; the historical behaviour and the function default).
+    * ``snapshot`` — scan once per output snapshot; recommended for benchmark
+      throughput and still catches non-finite output before results are
+      returned.
+    * ``end`` — scan once over the full trajectory after integration; lowest
+      checking overhead while still detecting invalid output.
+    * ``off`` — skip the scan entirely; fastest but will not flag invalid GPU
+      states. Unknown values are treated as ``step`` (fail safe).
 
     ``progress_cb`` (optional) is invoked as ``cb(current_step, total_steps,
     elapsed_s)`` at step 0, on a throttled cadence during integration, and once
@@ -1101,6 +1143,17 @@ def propagate_gpu_batch_model(
     failure_reason = ""
     step_count = 0
     bad_state = torch.zeros((), device=device, dtype=torch.bool)
+
+    finite_mode = str(finite_check_mode).lower()
+    if finite_mode not in ("step", "snapshot", "end", "off"):
+        finite_mode = "step"  # fail safe: unknown policy -> safest behaviour
+
+    def _accumulate_bad_state(tensor: Any) -> None:
+        # OR a non-finite flag into ``bad_state`` without materialising a host
+        # value in the hot path; the single device->host sync happens once after
+        # integration. This monitors the state but never mutates it.
+        bad_state.logical_or_(~torch.isfinite(tensor).all())
+
     _emit_progress(0, 0.0)
 
     try:
@@ -1109,10 +1162,16 @@ def propagate_gpu_batch_model(
                 state = gpu_fixed_step_advance(_rhs, t_curr, state, dt_eff, gpu_integrator)
                 t_curr += dt_eff
                 step_count += 1
-                bad_state.logical_or_(~torch.isfinite(state).all())
-                now = time.perf_counter()
-                if throttle.update(step_count, now):
-                    _emit_progress(step_count, now - t0)
+                if finite_mode == "step":
+                    _accumulate_bad_state(state)
+                # Consult the clock only when the step gate may be due, so
+                # time.perf_counter() stays out of the per-step hot path.
+                if throttle.needs_time_check(step_count):
+                    now = time.perf_counter()
+                    if throttle.update(step_count, now):
+                        _emit_progress(step_count, now - t0)
+            if finite_mode == "snapshot":
+                _accumulate_bad_state(state)
             y_gpu[snap_idx + 1].copy_(state)
     except Exception as exc:
         status = "failed"
@@ -1121,6 +1180,8 @@ def propagate_gpu_batch_model(
 
     if str(device).startswith("cuda"):
         torch.cuda.synchronize()
+    if status == "ok" and finite_mode == "end":
+        _accumulate_bad_state(y_gpu)
     if status == "ok" and bool(bad_state.detach().cpu().item()):
         status = "failed"
         failure_reason = f"non-finite state in {model_name}"
@@ -2306,6 +2367,8 @@ def rebuild_gpu_batch_metrics_from_cache(
     metrics_dir: Path,
     plots_dir: Path,
     reports_dir: Path,
+    *,
+    run_context: Optional[Dict[str, Any]] = None,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
     print("[cache] Rebuilding metrics from cached trajectories.", flush=True)
     manifest_path = cache_dir / "cache_manifest.json"
@@ -2323,7 +2386,12 @@ def rebuild_gpu_batch_metrics_from_cache(
             args.duration_days = float(first_scen[-1]) / 86400.0
             print(f"[cache] Recovered true duration_days = {args.duration_days} from trajectory arrays.", flush=True)
 
+    run_ctx: Dict[str, Any] = dict(run_context or {})
+    failed_models = {str(x) for x in run_ctx.get("failed_models", [])}
+
     all_rows: List[Dict[str, Any]] = []
+    model_entries: Dict[str, Dict[str, Any]] = {}
+    status_by_model: Dict[str, str] = {}
     for model in gpu_models:
         complete, missing = _model_cache_completion(cache_dir, model, scenarios)
         print(f"[cache] Model {model}: {complete}/{len(scenarios)} complete.", flush=True)
@@ -2331,13 +2399,17 @@ def rebuild_gpu_batch_metrics_from_cache(
             raise RuntimeError(
                 f"Model {model} is missing {len(missing)} cached scenario trajectories."
             )
+        disp = _model_display_name(model)
+        sample_meta: Dict[str, Any] = {}
         for scenario in scenarios:
             cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
             if cached is None:
                 continue
+            if not sample_meta:
+                sample_meta = dict(cached.metadata)
             result = BatchModelResult(
                 model_name=model,
-                display_name=_model_display_name(model),
+                display_name=disp,
                 backend=str(cached.metadata.get("backend", "cached")),
                 device=str(cached.metadata.get("device", "")),
                 dtype=str(cached.metadata.get("dtype", "")),
@@ -2358,6 +2430,27 @@ def rebuild_gpu_batch_metrics_from_cache(
             all_rows.extend(compute_gpu_batch_metrics_for_model(
                 result, truth, [scenario], args.duration_days
             ))
+        total = len(scenarios)
+        if total > 0 and complete == total:
+            status = "completed"
+        elif complete == 0:
+            status = "failed" if disp in failed_models else "skipped"
+        else:
+            status = "partial"
+        status_by_model[disp] = status
+        model_entries[disp] = {
+            "cache_name": str(model),
+            "backend": sample_meta.get("backend"),
+            "integrator": sample_meta.get("gpu_integrator") or sample_meta.get("integrator"),
+            "rk4_dt_s": sample_meta.get("rk4_dt_s"),
+            "output_dt_s": sample_meta.get("dt_out"),
+            "dtype": sample_meta.get("dtype"),
+            "device": sample_meta.get("device"),
+            "requested": total,
+            "loaded": int(complete),
+            "missing": int(total - complete),
+            "status": status,
+        }
 
     aggregate_rows = aggregate_gpu_batch_metrics(all_rows)
     runtime_rows = _cached_gpu_runtime_rows(args, gpu_models, scenarios, cache_dir, truth)
@@ -2373,25 +2466,35 @@ def rebuild_gpu_batch_metrics_from_cache(
     (metrics_dir / "stlrps_selected_scenarios.json").write_text(
         json.dumps(selected, indent=4, default=str), encoding="utf-8"
     )
-    summary = {
-        "truth": _truth_cache_name(args),
-        "gpu_models": gpu_models,
-        "gpu_model_variants": [_model_display_name(m) for m in gpu_models],
-        "n_scenarios_total": len(scenarios),
-        "n_scenarios_new_this_run": 0,
-        "accumulated": bool(args.resume),
-        "rebuilt_from_cache": True,
-        "sampling": _sampling_metadata(args, len(scenarios)),
-        "truth_workers": int(getattr(args, "workers", 1)),
-        "gpu_integrator": str(getattr(args, "gpu_integrator", "medium")),
-        "frame_mode": args.batch_frame_mode,
-        "truth_total_runtime_s": truth.total_runtime_s,
-        "truth_mean_runtime_per_scenario_s": truth.mean_runtime_s,
-        "equivalent_sh_degree": equivalent,
-        "selected_stlrps_scenarios": selected,
-        "aggregate": aggregate_rows,
-        "runtime": runtime_rows,
+    truth_complete, truth_missing = _truth_cache_completion(cache_dir, args, scenarios)
+    truth_counts = {
+        "requested": len(scenarios),
+        "loaded": int(truth_complete),
+        "missing": int(len(truth_missing)),
+        "generated_this_run": int(run_ctx.get("truth_generated_this_run", 0) or 0),
     }
+    cache_provenance = _cache_provenance(
+        args, cache_dir, enabled=True,
+        truth_counts=truth_counts, model_entries=model_entries,
+    )
+    summary = _build_gpu_batch_summary(
+        args,
+        aggregate_rows=aggregate_rows,
+        runtime_rows=runtime_rows,
+        gpu_models=gpu_models,
+        requested_display=[_model_display_name(m) for m in gpu_models],
+        status_by_model=status_by_model,
+        n_scenarios_total=len(scenarios),
+        n_scenarios_new_this_run=int(run_ctx.get("n_scenarios_new_this_run", 0) or 0),
+        truth_total_runtime_s=truth.total_runtime_s,
+        truth_mean_runtime_per_scenario_s=truth.mean_runtime_s,
+        equivalent=equivalent,
+        selected=selected,
+        cache_provenance=cache_provenance,
+        rebuilt_from_cache=bool(run_ctx.get("rebuilt_from_cache", True)),
+        source=str(run_ctx.get("source", "rebuild_from_cache")),
+        extra_warnings=run_ctx.get("extra_warnings"),
+    )
     (metrics_dir / "gpu_batch_summary.json").write_text(
         json.dumps(summary, indent=4, default=str), encoding="utf-8"
     )
@@ -4364,6 +4467,9 @@ def _write_cache_manifest(
     payload = {
         "cache_schema_version": BENCHMARK_CACHE_SCHEMA_VERSION,
         "metadata": _cache_metadata(args),
+        # Top-level deterministic fingerprint (Fix 5). Kept outside ``metadata``
+        # so it does not change the cache key or the field-by-field validator.
+        "config_fingerprint": _config_fingerprint(args),
         "scenario_count": len(scenarios),
         "scenario_ids": [int(s.scenario_id) for s in scenarios],
         "selected_models": selected_models or [],
@@ -4375,16 +4481,37 @@ def _write_cache_manifest(
     os.replace(tmp, path)
 
 
-def _validate_cache_compatibility(args: argparse.Namespace, cache_dir: Path) -> None:
+def _validate_cache_compatibility(
+    args: argparse.Namespace, cache_dir: Path
+) -> List[str]:
+    """Field-by-field + fingerprint cache-compatibility gate.
+
+    Returns a list of human-readable warnings (possibly empty). By default any
+    incompatibility raises ``ValueError`` so stale trajectories are never
+    silently reused; ``--allow-stale-cache`` downgrades every refusal to a
+    warning instead. A cache written before fingerprints existed is allowed
+    with a warning (the explicit field checks above still apply).
+    """
+    warnings: List[str] = []
     if getattr(args, "rebuild_metrics", False):
-        return
+        return warnings
     path = cache_dir / "cache_manifest.json"
     if not path.exists():
-        return
+        return warnings
     try:
         old = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
         raise ValueError(f"Existing benchmark cache manifest is unreadable: {exc}") from exc
+
+    allow_stale = bool(getattr(args, "allow_stale_cache", False))
+
+    def _refuse(message: str) -> None:
+        # Default behaviour refuses reuse; --allow-stale-cache downgrades to warn.
+        if allow_stale:
+            warnings.append("[allow-stale-cache] " + message)
+        else:
+            raise ValueError(message)
+
     old_meta = old.get("metadata", {})
     new_meta = _cache_metadata(args)
     fields = [
@@ -4396,7 +4523,7 @@ def _validate_cache_compatibility(args: argparse.Namespace, cache_dir: Path) -> 
         old_value = old_meta.get(field)
         new_value = new_meta.get(field)
         if not _manifest_values_equal(old_value, new_value):
-            raise ValueError(
+            _refuse(
                 "Existing benchmark cache uses "
                 f"{field}={_manifest_value_text(old_value)} but current request uses "
                 f"{_manifest_value_text(new_value)}. Refusing to reuse cached trajectories."
@@ -4406,11 +4533,29 @@ def _validate_cache_compatibility(args: argparse.Namespace, cache_dir: Path) -> 
             old_value = old_meta.get(field)
             new_value = new_meta.get(field)
             if old_value and new_value and old_value != new_value:
-                raise ValueError(
+                _refuse(
                     "Existing benchmark cache uses "
                     f"{field}={_manifest_value_text(old_value)} but current request uses "
                     f"{_manifest_value_text(new_value)}. Refusing to reuse ST-LRPS trajectories."
                 )
+
+    # Deterministic fingerprint guard (Fix 5). Catches drift in cache-relevant
+    # fields that are not in the explicit list above (e.g. gpu_rk4_dt_s_list and
+    # the ST-LRPS weight hash). Missing fingerprint => allow + warn.
+    old_fp = old.get("config_fingerprint")
+    new_fp = _config_fingerprint(args)
+    if not old_fp:
+        warnings.append(
+            "Existing benchmark cache predates config fingerprints; reusing without a "
+            "fingerprint check. Re-run without --reuse-cache to stamp one."
+        )
+    elif str(old_fp) != str(new_fp):
+        _refuse(
+            f"Existing benchmark cache fingerprint {str(old_fp)[:12]} does not match the "
+            f"current configuration fingerprint {str(new_fp)[:12]}. Refusing to reuse cached "
+            "trajectories (pass --allow-stale-cache to override)."
+        )
+    return warnings
 
 
 def _save_cached_trajectory(
@@ -4584,6 +4729,314 @@ def _find_st_lrps_weight_file(model_dir: Optional[str]) -> Optional[str]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# Reproducibility metadata helpers (bookkeeping only; never touch physics).
+# ---------------------------------------------------------------------------
+
+BENCHMARK_METADATA_SCHEMA_VERSION = 2
+
+# Cache-relevant config fields that define a deterministic compatibility key.
+# Mirrors the trajectory cache key so a fingerprint change implies the cached
+# trajectories were produced under a different configuration.
+_FINGERPRINT_FIELDS = (
+    "cache_schema_version", "truth", "truth_integrator", "duration_days", "dt_out",
+    "rk4_dt_s", "gpu_rk4_dt_s_list", "st_lrps_rk4_dt", "gpu_integrator", "torch_dtype",
+    "batch_frame_mode", "st_lrps_weight_sha256",
+)
+
+
+def _ensure_run_id(args: argparse.Namespace) -> str:
+    """Stable per-process run id, shared by run_metadata.json and the summary."""
+    rid = getattr(args, "_run_id", None)
+    if not rid:
+        rid = uuid.uuid4().hex[:16]
+        setattr(args, "_run_id", rid)
+    return str(rid)
+
+
+def _package_version() -> str:
+    """Best-effort lunaris package version; never raises."""
+    try:
+        from lunaris.surrogate.st_lrps import __version__ as _v
+        if _v:
+            return str(_v)
+    except Exception:
+        pass
+    try:
+        from importlib.metadata import version as _pkg_version
+        return str(_pkg_version("lunaris"))
+    except Exception:
+        return "unknown"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _run_mode_label(args: argparse.Namespace) -> str:
+    return "gpu_batch" if bool(getattr(args, "gpu_batch_compare", False)) else "cpu_sweep"
+
+
+def _device_info(args: argparse.Namespace) -> Dict[str, Any]:
+    """Compute-device metadata without forcing a torch import on CPU-only runs.
+
+    For GPU-batch requests this performs a guarded lazy ``torch`` import to read
+    CUDA availability/device; it never raises. CPU-sweep runs report the CPU
+    backend without importing torch.
+    """
+    if not bool(getattr(args, "gpu_batch_compare", False)):
+        return {
+            "backend": "cpu_sweep",
+            "cuda_available": False,
+            "device": "cpu",
+            "device_name": None,
+            "torch_version": None,
+        }
+    info: Dict[str, Any] = {
+        "backend": "gpu_batch",
+        "cuda_available": False,
+        "device": None,
+        "device_name": None,
+        "torch_version": None,
+        "requested_fallback": str(getattr(args, "gpu_fallback", "error")),
+    }
+    # --refresh-metadata must not import torch; report the device as unprobed.
+    if getattr(args, "_no_torch_probe", False):
+        info["note"] = "torch probe skipped (metadata refresh)"
+        return info
+    try:
+        import torch
+        info["torch_version"] = str(getattr(torch, "__version__", ""))
+        cuda = bool(torch.cuda.is_available())
+        info["cuda_available"] = cuda
+        if cuda:
+            info["device"] = "cuda:0"
+            try:
+                info["device_name"] = str(torch.cuda.get_device_name(0))
+            except Exception:
+                info["device_name"] = None
+        elif str(getattr(args, "gpu_fallback", "error")) == "cpu":
+            info["device"] = "cpu"
+    except Exception:
+        pass
+    return info
+
+
+def _config_fingerprint(args: argparse.Namespace) -> str:
+    """Deterministic sha256 over the cache-relevant configuration.
+
+    Used only to gate cache reuse and to stamp metadata — never alters physics.
+    """
+    meta = _cache_metadata(args)
+    canon = {k: meta.get(k) for k in _FINGERPRINT_FIELDS}
+    blob = json.dumps(canon, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _effective_frame_modes(args: argparse.Namespace) -> Dict[str, str]:
+    """Unambiguous frame-mode reporting for the GPU batch path.
+
+    The harness passes ``--batch-frame-mode`` straight to the integrator, so the
+    requested and effective modes are identical; the DOP853 truth always runs in
+    the rotating dynamics-engine frame.
+    """
+    requested = str(getattr(args, "batch_frame_mode", "match_dynamics_engine"))
+    return {
+        "requested_batch_frame_mode": requested,
+        "effective_batch_frame_mode": requested,
+        "gpu_frame_mode": requested,
+        "truth_frame_mode": "match_dynamics_engine",
+    }
+
+
+def _model_status_breakdown(
+    requested_display: List[str],
+    status_by_model: Dict[str, str],
+    aggregate_rows: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Split requested models into completed/failed/partial/skipped buckets.
+
+    ``status_by_model`` maps a display name to ``completed|failed|partial|skipped``.
+    ``models_in_metrics`` is the set of identities that contributed aggregate rows.
+    """
+    in_metrics = sorted({str(r.get("model")) for r in aggregate_rows if r.get("model")})
+    completed: List[str] = []
+    failed: List[str] = []
+    partial: List[str] = []
+    skipped: List[str] = []
+    for name in requested_display:
+        st = str(status_by_model.get(name, "skipped"))
+        if st == "completed":
+            completed.append(name)
+        elif st == "failed":
+            failed.append(name)
+        elif st == "partial":
+            partial.append(name)
+        else:
+            skipped.append(name)
+    return {
+        "requested_models": list(requested_display),
+        "completed_models": completed,
+        "failed_models": failed,
+        "partial_models": partial,
+        "skipped_models": skipped,
+        "models_in_metrics": in_metrics,
+    }
+
+
+def _benchmark_consistency_warnings(
+    breakdown: Dict[str, Any], summary: Dict[str, Any]
+) -> List[str]:
+    """Lightweight end-of-run sanity checks. Returns human warnings (never raises)."""
+    warns: List[str] = []
+    requested = breakdown.get("requested_models", [])
+    in_metrics = set(breakdown.get("models_in_metrics", []))
+    failed = set(breakdown.get("failed_models", []))
+    for name in breakdown.get("failed_models", []):
+        warns.append(f"Model {name} failed and is excluded from accuracy metrics.")
+    for name in breakdown.get("partial_models", []):
+        warns.append(
+            f"Model {name} has partial cache coverage; metrics cover only cached scenarios."
+        )
+    for name in breakdown.get("skipped_models", []):
+        warns.append(f"Model {name} was requested but produced no result (skipped).")
+    for name in requested:
+        if name not in in_metrics and name not in failed:
+            warns.append(f"Requested model {name} produced no aggregate metrics.")
+    if requested and not in_metrics:
+        warns.append("No requested model produced aggregate metrics.")
+    if int(summary.get("n_scenarios_total", 0) or 0) <= 0:
+        warns.append("Scenario count is zero; metrics may be empty.")
+    return warns
+
+
+def _cache_provenance(
+    args: argparse.Namespace,
+    cache_dir: Optional[Path],
+    *,
+    enabled: bool,
+    truth_counts: Dict[str, Any],
+    model_entries: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Assemble the cache-provenance block recorded in the summary (Fix 4)."""
+    return {
+        "enabled": bool(enabled),
+        "cache_dir": (str(cache_dir) if cache_dir is not None else None),
+        "config_fingerprint": _config_fingerprint(args),
+        "truth": {
+            "model": _truth_cache_name(args),
+            "integrator": str(getattr(args, "truth_integrator", "DOP853")),
+            **truth_counts,
+        },
+        "models": model_entries,
+    }
+
+
+def _build_gpu_batch_summary(
+    args: argparse.Namespace,
+    *,
+    aggregate_rows: List[Dict[str, Any]],
+    runtime_rows: List[Dict[str, Any]],
+    gpu_models: List[str],
+    requested_display: List[str],
+    status_by_model: Dict[str, str],
+    n_scenarios_total: int,
+    n_scenarios_new_this_run: int,
+    truth_total_runtime_s: Optional[float],
+    truth_mean_runtime_per_scenario_s: Optional[float],
+    equivalent: Dict[str, Any],
+    selected: Dict[str, Any],
+    cache_provenance: Dict[str, Any],
+    rebuilt_from_cache: bool,
+    source: str,
+    extra_warnings: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Assemble the canonical ``gpu_batch_summary`` payload for every code path.
+
+    Centralising this guarantees the live run, the cache rebuild, and the
+    metadata refresh emit consistent, self-describing bookkeeping (models,
+    frame modes, cache provenance, scope, and warnings).
+    """
+    frame = _effective_frame_modes(args)
+    breakdown = _model_status_breakdown(requested_display, status_by_model, aggregate_rows)
+
+    n_requested = len(breakdown["requested_models"])
+    n_completed = len(breakdown["completed_models"])
+    all_done = (
+        n_requested > 0
+        and n_completed == n_requested
+        and not breakdown["failed_models"]
+        and not breakdown["partial_models"]
+        and not breakdown["skipped_models"]
+    )
+    summary_scope = "all_requested_models" if all_done else "completed_models_only"
+    if all_done:
+        summary_note = f"All {n_requested} requested model(s) completed."
+    elif n_requested == 0:
+        summary_note = "No models were requested."
+    else:
+        bits = [f"{n_completed}/{n_requested} requested model(s) completed"]
+        if breakdown["failed_models"]:
+            bits.append("failed: " + ", ".join(breakdown["failed_models"]))
+        if breakdown["partial_models"]:
+            bits.append("partial: " + ", ".join(breakdown["partial_models"]))
+        if breakdown["skipped_models"]:
+            bits.append("skipped: " + ", ".join(breakdown["skipped_models"]))
+        summary_note = "; ".join(bits) + "."
+
+    summary: Dict[str, Any] = {
+        "schema_version": BENCHMARK_METADATA_SCHEMA_VERSION,
+        "run_id": _ensure_run_id(args),
+        "timestamp_utc": _utc_now_iso(),
+        "source": str(source),
+        "truth": _truth_cache_name(args),
+        "truth_integrator": str(getattr(args, "truth_integrator", "DOP853")),
+        "gpu_models": list(gpu_models),
+        "gpu_model_variants": list(requested_display),
+        "n_scenarios_total": int(n_scenarios_total),
+        "n_scenarios_new_this_run": int(n_scenarios_new_this_run),
+        "accumulated": bool(getattr(args, "resume", False)),
+        "rebuilt_from_cache": bool(rebuilt_from_cache),
+        "sampling": _sampling_metadata(args, n_scenarios_total),
+        "truth_workers": int(getattr(args, "workers", 1)),
+        "gpu_integrator": str(getattr(args, "gpu_integrator", "medium")),
+        "gpu_finite_check_mode": str(getattr(args, "gpu_finite_check_mode", "snapshot")),
+        # Frame metadata (Fix 3): explicit, never collapses to a single field.
+        "frame_mode": frame["effective_batch_frame_mode"],
+        "requested_batch_frame_mode": frame["requested_batch_frame_mode"],
+        "effective_batch_frame_mode": frame["effective_batch_frame_mode"],
+        "gpu_frame_mode": frame["gpu_frame_mode"],
+        "truth_frame_mode": frame["truth_frame_mode"],
+        "uses_lunar_rotation": frame["effective_batch_frame_mode"] == "match_dynamics_engine",
+        "matches_dynamics_engine_frame":
+            frame["effective_batch_frame_mode"] == "match_dynamics_engine",
+        # Model accounting (Fix 2).
+        "requested_models": breakdown["requested_models"],
+        "completed_models": breakdown["completed_models"],
+        "failed_models": breakdown["failed_models"],
+        "partial_models": breakdown["partial_models"],
+        "skipped_models": breakdown["skipped_models"],
+        "models_in_metrics": breakdown["models_in_metrics"],
+        # Cache provenance (Fix 4) + deterministic fingerprint (Fix 5).
+        "cache_provenance": cache_provenance,
+        "config_fingerprint": _config_fingerprint(args),
+        "truth_total_runtime_s": truth_total_runtime_s,
+        "truth_mean_runtime_per_scenario_s": truth_mean_runtime_per_scenario_s,
+        "equivalent_sh_degree": equivalent,
+        "selected_stlrps_scenarios": selected,
+        # Honest scope language (Fix 8).
+        "summary_scope": summary_scope,
+        "summary_note": summary_note,
+        "aggregate": aggregate_rows,
+        "runtime": runtime_rows,
+    }
+    warns = _benchmark_consistency_warnings(breakdown, summary)
+    if extra_warnings:
+        warns = list(extra_warnings) + warns
+    summary["metadata_warnings"] = warns
+    return summary
+
+
 def _write_run_metadata(
     args: argparse.Namespace,
     out_dir: Path,
@@ -4629,6 +5082,7 @@ def _write_run_metadata(
         "rk4_dt_s": float(args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt),
         "gpu_rk4_dt_s_list": _parse_float_list_csv(getattr(args, "gpu_rk4_dt_s_list", None)),
         "gpu_fallback": str(args.gpu_fallback),
+        "gpu_finite_check_mode": str(getattr(args, "gpu_finite_check_mode", "snapshot")),
         "torch_dtype": str(args.torch_dtype),
         "force_batch_size": int(args.force_batch_size),
         "cache_trajectories": bool(getattr(args, "cache_trajectories", False)),
@@ -4639,6 +5093,20 @@ def _write_run_metadata(
         "strict_complete": bool(getattr(args, "strict_complete", False)),
         "allow_lhs_append": bool(getattr(args, "allow_lhs_append", False)),
     }
+    # Reproducibility/bookkeeping (Fix 1): identity, environment, and the
+    # deterministic config fingerprint. All additive — existing keys unchanged.
+    meta["schema_version"] = BENCHMARK_METADATA_SCHEMA_VERSION
+    meta["run_id"] = _ensure_run_id(args)
+    meta["timestamp_utc"] = _utc_now_iso()
+    meta["argv"] = list(sys.argv)
+    meta["lunaris_version"] = _package_version()
+    meta["mode"] = _run_mode_label(args)
+    meta["truth_integrator"] = str(getattr(args, "truth_integrator", "DOP853"))
+    meta["gpu_integrator"] = str(getattr(args, "gpu_integrator", "medium"))
+    meta.update(_effective_frame_modes(args))
+    meta["device"] = _device_info(args)
+    meta["cache_enabled"] = bool(_cache_requested(args))
+    meta["config_fingerprint"] = _config_fingerprint(args)
     meta["sampling"] = _sampling_metadata(args, scenario_count)
     p = out_dir / "run_metadata.json"
     _ensure_dir(p)
@@ -5678,12 +6146,24 @@ def _print_final_validation_summary(
     print(sep)
 
 
+def _load_written_summary(metrics_dir: Path) -> Optional[Dict[str, Any]]:
+    """Best-effort read of the just-written gpu_batch_summary.json (for stdout)."""
+    p = metrics_dir / "gpu_batch_summary.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def _print_gpu_batch_summary(
     args: argparse.Namespace,
     aggregate_rows: List[Dict[str, Any]],
     runtime_rows: List[Dict[str, Any]],
     equivalent: Dict[str, Any],
     selected: Dict[str, Any],
+    summary: Optional[Dict[str, Any]] = None,
 ) -> None:
     sep = "=" * 96
     print(f"\n{sep}")
@@ -5699,6 +6179,21 @@ def _print_gpu_batch_summary(
     print(f"RK4 dt:   {', '.join(f'{v:g}' for v in rk4_values)} s")
     print(f"Dtype:    {args.torch_dtype}")
     print(f"Frame:    {args.batch_frame_mode}")
+
+    # Honest scope (Fix 8): never imply "all models completed" unless true.
+    if summary:
+        scope = str(summary.get("summary_scope", ""))
+        note = str(summary.get("summary_note", ""))
+        if scope == "completed_models_only":
+            print(f"Scope:    completed models only -- {note}")
+        elif note:
+            print(f"Scope:    {note}")
+        for label in ("failed_models", "partial_models", "skipped_models"):
+            names = summary.get(label) or []
+            if names:
+                print(f"  {label.replace('_', ' ')}: {', '.join(map(str, names))}")
+        for warn in (summary.get("metadata_warnings") or []):
+            print(f"  [warn] {warn}")
 
     print("\nAccuracy ranking:")
     print(f"{'Model':<22} {'Median RMS km':>14} {'P95 RMS km':>12} "
@@ -5762,29 +6257,35 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         print(f"[gpu-batch] WARNING: requested truth={args.truth}; expected sh200 for this workflow.",
               flush=True)
 
-    if "st_lrps" in gpu_models and not args.st_lrps_model_dir:
-        auto_dir = _auto_find_st_lrps_dir()
-        if auto_dir:
-            args.st_lrps_model_dir = auto_dir
-            print(f"[auto] ST-LRPS model dir: {auto_dir}", flush=True)
-            weight = _find_st_lrps_weight_file(auto_dir)
-            if weight:
-                print(f"[auto] ST-LRPS weight file: {weight}", flush=True)
-        elif args.require_st_lrps:
-            raise FileNotFoundError("ST-LRPS requested but no valid model dir was found.")
+    if "st_lrps" in gpu_models and not getattr(args, "st_lrps_model_dir", None):
+        if getattr(args, "rebuild_metrics", False):
+            print("[gpu-batch] --rebuild-metrics is active; skipping ST-LRPS model dir lookup.", flush=True)
         else:
-            print("[gpu-batch] WARNING: ST-LRPS model missing; removing st_lrps from --gpu-models.",
-                  flush=True)
-            gpu_models = [m for m in gpu_models if m != "st_lrps"]
+            auto_dir = _auto_find_st_lrps_dir()
+            if auto_dir:
+                args.st_lrps_model_dir = auto_dir
+                print(f"[auto] ST-LRPS model dir: {auto_dir}", flush=True)
+                weight = _find_st_lrps_weight_file(auto_dir)
+                if weight:
+                    print(f"[auto] ST-LRPS weight file: {weight}", flush=True)
+            elif args.require_st_lrps:
+                raise FileNotFoundError("ST-LRPS requested but no valid model dir was found.")
+            else:
+                print("[gpu-batch] WARNING: ST-LRPS model missing; removing st_lrps from --gpu-models.",
+                      flush=True)
+                gpu_models = [m for m in gpu_models if m != "st_lrps"]
     gpu_tasks = _build_gpu_batch_tasks(gpu_models, args)
     gpu_cache_names = [task.cache_name for task in gpu_tasks]
 
     cache_enabled = _cache_requested(args) or bool(getattr(args, "cache_trajectories", False))
     cache_dir = _benchmark_cache_dir(args, out_dir)
+    cache_warnings: List[str] = []
     if cache_enabled:
         cache_dir.mkdir(parents=True, exist_ok=True)
         print(f"[cache] Enabled trajectory cache: {cache_dir}", flush=True)
-        _validate_cache_compatibility(args, cache_dir)
+        cache_warnings = _validate_cache_compatibility(args, cache_dir)
+        for _w in cache_warnings:
+            print(f"[cache] WARNING: {_w}", flush=True)
         if not getattr(args, "rebuild_metrics", False):
             _write_cache_manifest(args, cache_dir, scenarios, gpu_cache_names)
 
@@ -5792,7 +6293,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         aggregate_rows, runtime_rows, equivalent, selected = rebuild_gpu_batch_metrics_from_cache(
             args, scenarios, cache_dir, gpu_cache_names, metrics_dir, plots_dir, reports_dir
         )
-        _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected)
+        _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected,
+                                 _load_written_summary(metrics_dir))
         return
 
     try:
@@ -5976,6 +6478,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 dtype_name=args.torch_dtype,
                 frame_mode=args.batch_frame_mode,
                 gpu_integrator=str(getattr(args, "gpu_integrator", "medium")),
+                finite_check_mode=str(getattr(args, "gpu_finite_check_mode", "snapshot")),
                 progress_cb=_gpu_progress_cb,
             )
             result.display_name = task.display_name
@@ -6029,10 +6532,21 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
 
     if cache_enabled:
         _write_cache_manifest(args, cache_dir, scenarios, gpu_cache_names)
+        live_failed = sorted({r.display_name for r in results if getattr(r, "status", "") == "failed"})
+        run_context = {
+            "source": "live",
+            "rebuilt_from_cache": True,
+            "n_scenarios_new_this_run": len(run_scenarios),
+            "truth_generated_this_run": len(run_scenarios),
+            "failed_models": live_failed,
+            "extra_warnings": cache_warnings,
+        }
         aggregate_rows, runtime_rows, equivalent, selected = rebuild_gpu_batch_metrics_from_cache(
-            args, scenarios, cache_dir, gpu_cache_names, metrics_dir, plots_dir, reports_dir
+            args, scenarios, cache_dir, gpu_cache_names, metrics_dir, plots_dir, reports_dir,
+            run_context=run_context,
         )
-        _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected)
+        _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected,
+                                 _load_written_summary(metrics_dir))
         print(f"\n[gpu-batch] Complete -> {out_dir}", flush=True)
         print("  benchmark_cache/")
         print("  metrics/gpu_batch_per_scenario_metrics.csv")
@@ -6074,26 +6588,49 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     (metrics_dir / "stlrps_selected_scenarios.json").write_text(
         json.dumps(selected, indent=4, default=str), encoding="utf-8"
     )
-    summary = {
-        "truth": _truth_name,
-        "gpu_models": gpu_models,
-        "gpu_model_variants": [task.display_name for task in gpu_tasks],
-        "n_scenarios_total": len(scenarios),
-        "n_scenarios_new_this_run": len(run_scenarios),
-        "accumulated": bool(args.resume),
-        "sampling": _sampling_metadata(args, len(scenarios)),
-        "truth_workers": int(getattr(args, "workers", 1)),
-        "gpu_integrator": str(getattr(args, "gpu_integrator", "medium")),
-        "frame_mode": args.batch_frame_mode,
-        "uses_lunar_rotation": args.batch_frame_mode == "match_dynamics_engine",
-        "matches_dynamics_engine_frame": args.batch_frame_mode == "match_dynamics_engine",
-        "truth_total_runtime_s": truth.total_runtime_s,
-        "truth_mean_runtime_per_scenario_s": truth.mean_runtime_s,
-        "equivalent_sh_degree": equivalent,
-        "selected_stlrps_scenarios": selected,
-        "aggregate": aggregate_rows,
-        "runtime": runtime_rows,
-    }
+    result_status = {r.display_name: getattr(r, "status", "") for r in results}
+    models_in_agg = {str(r.get("model")) for r in aggregate_rows}
+    status_by_model: Dict[str, str] = {}
+    for task in gpu_tasks:
+        disp = task.display_name
+        st = result_status.get(disp)
+        if st == "ok":
+            status_by_model[disp] = "completed"
+        elif st == "failed":
+            status_by_model[disp] = "failed"
+        elif disp in models_in_agg:
+            # resume: no new compute this run, metrics carried from stored rows.
+            status_by_model[disp] = "completed"
+        else:
+            status_by_model[disp] = "skipped"
+    cache_provenance = _cache_provenance(
+        args, cache_dir, enabled=False,
+        truth_counts={
+            "requested": len(scenarios),
+            "loaded": 0,
+            "missing": 0,
+            "generated_this_run": len(run_scenarios),
+        },
+        model_entries={},
+    )
+    summary = _build_gpu_batch_summary(
+        args,
+        aggregate_rows=aggregate_rows,
+        runtime_rows=runtime_rows,
+        gpu_models=gpu_models,
+        requested_display=[task.display_name for task in gpu_tasks],
+        status_by_model=status_by_model,
+        n_scenarios_total=len(scenarios),
+        n_scenarios_new_this_run=len(run_scenarios),
+        truth_total_runtime_s=truth.total_runtime_s,
+        truth_mean_runtime_per_scenario_s=truth.mean_runtime_s,
+        equivalent=equivalent,
+        selected=selected,
+        cache_provenance=cache_provenance,
+        rebuilt_from_cache=False,
+        source="live",
+        extra_warnings=cache_warnings,
+    )
     (metrics_dir / "gpu_batch_summary.json").write_text(
         json.dumps(summary, indent=4, default=str), encoding="utf-8"
     )
@@ -6117,7 +6654,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         selected, equivalent, plots_dir, args
     )
     write_gpu_batch_report_pdf(args, aggregate_rows, runtime_rows, equivalent, selected, plots_dir, reports_dir)
-    _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected)
+    _print_gpu_batch_summary(args, aggregate_rows, runtime_rows, equivalent, selected, summary)
 
     print(f"\n[gpu-batch] Complete -> {out_dir}", flush=True)
     print("  metrics/gpu_batch_per_scenario_metrics.csv")
@@ -6299,7 +6836,8 @@ def run_random_scenario_mode(
     if cache_enabled:
         cache_dir.mkdir(parents=True, exist_ok=True)
         print(f"[cache] Enabled trajectory cache: {cache_dir}", flush=True)
-        _validate_cache_compatibility(args, cache_dir)
+        for _w in _validate_cache_compatibility(args, cache_dir):
+            print(f"[cache] WARNING: {_w}", flush=True)
         _write_cache_manifest(args, cache_dir, scenarios, compare_models)
         truth_complete, truth_missing = _truth_cache_completion(cache_dir, args, scenarios)
         print(f"[cache] Truth {_truth_cache_name(args)}: {truth_complete}/{len(scenarios)} complete.",
@@ -6909,10 +7447,145 @@ def _auto_find_st_lrps_dir() -> Optional[str]:
 # Entry point
 # =============================================================================
 
+def refresh_benchmark_metadata(args: argparse.Namespace) -> None:
+    """Rebuild bookkeeping JSON from existing metrics + manifest (Fix 6).
+
+    Re-emits ``run_metadata.json`` and ``gpu_batch_summary.json`` from the
+    metrics CSVs and the cache manifest already on disk. It never imports torch,
+    propagates, or reloads trajectory NPZ files, so numerical results are left
+    byte-identical — only the lightweight metadata is regenerated.
+    """
+    out_dir = Path(args.output_dir)
+    metrics_dir = out_dir / "metrics"
+    cache_dir = _benchmark_cache_dir(args, out_dir)
+    print(f"[refresh-metadata] Rebuilding bookkeeping for {out_dir}", flush=True)
+
+    # Read the manifest first so we can restore the fingerprint-relevant model
+    # dir (otherwise the recomputed fingerprint would drift from the run that
+    # produced the cache). Never load trajectory NPZ files here.
+    manifest: Dict[str, Any] = {}
+    manifest_path = cache_dir / "cache_manifest.json"
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"[refresh-metadata] WARNING: unreadable cache manifest ({exc}); "
+                  "continuing without it.", flush=True)
+    md = manifest.get("metadata", {}) if isinstance(manifest, dict) else {}
+    if md.get("st_lrps_model_dir") and not getattr(args, "st_lrps_model_dir", None):
+        args.st_lrps_model_dir = md["st_lrps_model_dir"]
+
+    # 1) run_metadata.json — skip the torch device probe (no imports on refresh).
+    setattr(args, "_no_torch_probe", True)
+    _write_run_metadata(args, out_dir)
+    print(f"[refresh-metadata] Wrote {out_dir / 'run_metadata.json'}", flush=True)
+
+    # 2) Existing GPU-batch metrics (string rows -> numeric where possible).
+    aggregate_rows = [
+        _coerce_numeric_row(r)
+        for r in _read_csv_rows(metrics_dir / "gpu_batch_aggregate_metrics.csv")
+    ]
+    runtime_rows = [
+        _coerce_numeric_row(r)
+        for r in _read_csv_rows(metrics_dir / "gpu_batch_runtime_metrics.csv")
+    ]
+    if not aggregate_rows and not runtime_rows:
+        print("[refresh-metadata] No GPU-batch metrics CSVs found; "
+              "run_metadata.json refreshed only.", flush=True)
+        return
+
+    models_in_metrics = {str(r.get("model")) for r in aggregate_rows if r.get("model")}
+    selected_models = list(manifest.get("selected_models", []) or [])
+    if selected_models:
+        requested_display = [_model_display_name(m) for m in selected_models]
+    else:
+        requested_display = sorted(models_in_metrics)
+    status_by_model = {
+        d: ("completed" if d in models_in_metrics else "skipped")
+        for d in requested_display
+    }
+
+    # Scenario count: manifest first, else distinct ids in the per-scenario CSV.
+    n_total = int(manifest.get("scenario_count", 0) or 0)
+    if n_total <= 0:
+        per_rows = _read_csv_rows(metrics_dir / "gpu_batch_per_scenario_metrics.csv")
+        n_total = len({r.get("scenario_id") for r in per_rows if r.get("scenario_id")})
+
+    # Truth runtime carried verbatim from the runtime CSV (already computed).
+    truth_total = runtime_rows[0].get("truth_total_runtime_s") if runtime_rows else None
+    truth_mean = (
+        runtime_rows[0].get("truth_mean_runtime_per_scenario_s") if runtime_rows else None
+    )
+
+    equivalent = estimate_stlrps_equivalent_sh_degree(aggregate_rows)
+    sel_path = metrics_dir / "stlrps_selected_scenarios.json"
+    try:
+        selected = json.loads(sel_path.read_text(encoding="utf-8")) if sel_path.exists() else {}
+    except Exception:
+        selected = {}
+
+    model_entries = {
+        _model_display_name(m): {
+            "cache_name": str(m),
+            "status": status_by_model.get(_model_display_name(m), "skipped"),
+            "in_metrics": _model_display_name(m) in models_in_metrics,
+        }
+        for m in selected_models
+    }
+    cache_provenance = _cache_provenance(
+        args, cache_dir, enabled=bool(manifest),
+        truth_counts={
+            "requested": n_total,
+            "loaded": None,
+            "missing": None,
+            "note": "counts not recomputed during --refresh-metadata",
+        },
+        model_entries=model_entries,
+    )
+
+    summary = _build_gpu_batch_summary(
+        args,
+        aggregate_rows=aggregate_rows,
+        runtime_rows=runtime_rows,
+        gpu_models=selected_models or sorted(models_in_metrics),
+        requested_display=requested_display,
+        status_by_model=status_by_model,
+        n_scenarios_total=n_total,
+        n_scenarios_new_this_run=0,
+        truth_total_runtime_s=truth_total,
+        truth_mean_runtime_per_scenario_s=truth_mean,
+        equivalent=equivalent,
+        selected=selected,
+        cache_provenance=cache_provenance,
+        rebuilt_from_cache=True,
+        source="refresh",
+        extra_warnings=[
+            "Bookkeeping refreshed from existing metrics; trajectories were not recomputed."
+        ],
+    )
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    (metrics_dir / "gpu_batch_summary.json").write_text(
+        json.dumps(summary, indent=4, default=str), encoding="utf-8"
+    )
+    print(f"[refresh-metadata] Wrote {metrics_dir / 'gpu_batch_summary.json'}", flush=True)
+
+    cache_metrics_dir = cache_dir / "metrics"
+    if manifest and cache_metrics_dir != metrics_dir:
+        cache_metrics_dir.mkdir(parents=True, exist_ok=True)
+        (cache_metrics_dir / "summary.json").write_text(
+            json.dumps(summary, indent=4, default=str), encoding="utf-8"
+        )
+        print(f"[refresh-metadata] Wrote {cache_metrics_dir / 'summary.json'}", flush=True)
+
+
 def main() -> None:
     args    = parse_args()
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if getattr(args, "refresh_metadata", False):
+        refresh_benchmark_metadata(args)
+        return
 
     print("Initializing Lunar Gravity Validation ...", flush=True)
 
@@ -6925,23 +7598,26 @@ def main() -> None:
         else ("st_lrps" in models_raw)
     )
     if needs_stlrps and not args.st_lrps_model_dir:
-        auto_dir = _auto_find_st_lrps_dir()
-        if auto_dir:
-            args.st_lrps_model_dir = auto_dir
-            weight = _find_st_lrps_weight_file(auto_dir)
-            print(f"[auto] ST-LRPS model dir: {auto_dir}", flush=True)
-            if weight:
-                print(f"[auto] ST-LRPS weight file: {weight}", flush=True)
+        if getattr(args, "rebuild_metrics", False):
+            print("[auto] Skipping ST-LRPS model dir resolution since --rebuild-metrics is active.", flush=True)
         else:
-            if args.require_st_lrps:
-                raise FileNotFoundError("ST-LRPS requested but no valid model dir found.")
-            print("WARNING: 'st_lrps' requested but no valid model dir found in "
-                  "st_lrps/runs/. Removing st_lrps from comparison.",
-                  flush=True)
-            models_raw = [m for m in models_raw if m != "st_lrps"]
-            gpu_models_raw = [m for m in gpu_models_raw if m != "st_lrps"]
-            args.models = ",".join(models_raw)
-            args.gpu_models = ",".join(gpu_models_raw)
+            auto_dir = _auto_find_st_lrps_dir()
+            if auto_dir:
+                args.st_lrps_model_dir = auto_dir
+                weight = _find_st_lrps_weight_file(auto_dir)
+                print(f"[auto] ST-LRPS model dir: {auto_dir}", flush=True)
+                if weight:
+                    print(f"[auto] ST-LRPS weight file: {weight}", flush=True)
+            else:
+                if args.require_st_lrps:
+                    raise FileNotFoundError("ST-LRPS requested but no valid model dir found.")
+                print("WARNING: 'st_lrps' requested but no valid model dir found in "
+                      "st_lrps/runs/. Removing st_lrps from comparison.",
+                      flush=True)
+                if bool(args.gpu_batch_compare):
+                    args.gpu_models = ",".join([m for m in gpu_models_raw if m != "st_lrps"])
+                else:
+                    args.models = ",".join([m for m in models_raw if m != "st_lrps"])
 
     cfg   = build_base_config(args)
     _write_run_metadata(args, out_dir)

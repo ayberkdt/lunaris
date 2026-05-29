@@ -380,6 +380,21 @@ class StepThrottle:
         self._last_step = 0
         self._last_t: Optional[float] = None
 
+    def needs_time_check(self, current_step: int) -> bool:
+        """Cheap step-only gate: True when a wall-clock check may be due.
+
+        Lets a tight fixed-step loop skip ``time.perf_counter()`` (and the
+        :meth:`update` call) on the vast majority of steps, consulting the clock
+        only once the step-count interval has been reached. Returns True on the
+        very first call so a subsequent :meth:`update` still arms its baseline
+        exactly as before. This method never emits and never mutates throttle
+        state; :meth:`update` remains the sole authority on whether to emit and
+        still enforces both the step and minimum wall-clock interval gates.
+        """
+        if self._last_t is None:
+            return True
+        return (current_step - self._last_step) >= self.step_interval
+
     def update(self, current_step: int, now: float) -> bool:
         """Return True (and arm the next window) when a progress emit is due."""
         if self._last_t is None:
