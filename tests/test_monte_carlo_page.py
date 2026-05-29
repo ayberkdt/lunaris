@@ -27,7 +27,7 @@ def test_normalize_output_path():
         pytest.skip("lunaris.ui.widgets not available")
     def norm(s, fmt):
         return _normalize_output_path_for_format(s, fmt).replace("\\", "/")
-    assert norm("", "hdf5") == "mc_results/mc_output.h5"
+    assert norm("", "hdf5") == "outputs/monte_carlo/mc_output.h5"
     assert norm("foo/bar.npz", "hdf5") == "foo/bar.h5"
     assert norm("foo/bar.h5", "npz") == "foo/bar.npz"
     assert norm("foo/bar.hdf5", "hdf5") == "foo/bar.hdf5"

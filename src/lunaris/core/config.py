@@ -169,7 +169,7 @@ class VisualConfig:
 @dataclass(frozen=True, slots=True)
 class OutputConfig:
     """File output configuration."""
-    out_dir: Path = Path("results")
+    out_dir: Path = Path("outputs/simulations")
     create_if_missing: bool = True
 
     make_3d_plots: bool = True

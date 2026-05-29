@@ -153,7 +153,7 @@ python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --batch-sizes 1,16,128,1024,8192 \
     --n-warmup 10 \
     --n-repeat 50 \
-    --out-dir outputs/runtime_performance/st_lrps_runtime_xxx
+    --out-dir outputs/runtime/st_lrps_runtime_xxx
 ```
 
 See `docs/profiling.md` for synthetic and dataset-backed profiling, CPU/CUDA timing, chunk-size sensitivity, and output interpretation.
@@ -308,6 +308,10 @@ Canonical generated-output layout:
 
 ```text
 outputs/
+  simulations/          core orbit propagation runs (CLI / GUI)
+  monte_carlo/          Monte Carlo batch runs and reports
+  missions/             GUI "mission" propagation outputs
+  gravity_benchmark/    orbit-level gravity-model benchmark (CLI + Studio)
   training/             ST-LRPS training run directories
     st_lrps_train_<timestamp>/
       checkpoints/      model checkpoints for that run
@@ -315,7 +319,7 @@ outputs/
       evals/            evaluations attached to that trained run
       provenance/       run metadata and dataset snapshots
   evaluations/          standalone evaluation reports not attached to a run
-  runtime_performance/  ST-LRPS runtime profiling and benchmark reports
+  runtime/              ST-LRPS runtime profiling and benchmark reports
   dataset_reports/      generated cloud/dataset analysis reports
   datasets/
     cloud_suites/       generated train/val/test/OOD dataset suites

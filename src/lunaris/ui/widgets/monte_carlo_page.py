@@ -101,7 +101,7 @@ class UIMonteCarloConfig:
 
     # Output
     output_format: str = "hdf5"    # "hdf5" or "npz"
-    output_path: str = "mc_results/mc_output.h5"
+    output_path: str = "outputs/monte_carlo/mc_output.h5"
 
     # Impact detection
     impact_alt_km: float = 0.0
@@ -152,7 +152,7 @@ def _normalize_output_path_for_format(path_text: str, fmt: str) -> str:
     raw = str(path_text).strip()
     suffix = _preferred_output_suffix(fmt)
     if not raw:
-        return f"mc_results/mc_output{suffix}"
+        return f"outputs/monte_carlo/mc_output{suffix}"
 
     current = Path(raw)
     lower_name = current.name.lower()
@@ -428,10 +428,10 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.tbl_backend_compare.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
 
         rows = [
-            ("SH-20",    "20",      "classic_sh", "On",  "mc_results/preview_sh20.h5"),
-            ("SH-60",    "60",      "classic_sh", "On",  "mc_results/preview_sh60.h5"),
-            ("SH-100",   "100",     "classic_sh", "Off", "mc_results/preview_sh100.h5"),
-            ("ST-LRPS",  "surrogate", "st_lrps",  "On",  "mc_results/preview_stlrps.h5"),
+            ("SH-20",    "20",      "classic_sh", "On",  "outputs/monte_carlo/preview_sh20.h5"),
+            ("SH-60",    "60",      "classic_sh", "On",  "outputs/monte_carlo/preview_sh60.h5"),
+            ("SH-100",   "100",     "classic_sh", "Off", "outputs/monte_carlo/preview_sh100.h5"),
+            ("ST-LRPS",  "surrogate", "st_lrps",  "On",  "outputs/monte_carlo/preview_stlrps.h5"),
         ]
         self.tbl_backend_compare.setRowCount(len(rows))
         self._backend_compare_meta: List[Dict[str, Any]] = []
@@ -532,7 +532,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         gravity_mode = str(meta.get("mode", "classic_sh"))
         degree = meta.get("degree", "20")
         gpu_on = bool(meta.get("gpu_on", True))
-        out_path = str(meta.get("output_path", "mc_results/backend_compare.h5"))
+        out_path = str(meta.get("output_path", "outputs/monte_carlo/backend_compare.h5"))
 
         n_samples = "100"
         try:
@@ -594,7 +594,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             gravity_mode = str(meta.get("mode", "classic_sh"))
             degree = meta.get("degree", "20")
             gpu_on = bool(meta.get("gpu_on", True))
-            out_path = str(meta.get("output_path", "mc_results/preview.h5"))
+            out_path = str(meta.get("output_path", "outputs/monte_carlo/preview.h5"))
             cmd: List[str] = [python_exec, runner]
             cmd.extend(["--n-samples", n_samples])
             cmd.extend(["--mc-gravity-mode", gravity_mode])
@@ -1028,7 +1028,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             }}
             QLineEdit:focus {{ border-color: {THEME['accent']}; }}
         """)
-        self.ent_output.setPlaceholderText("mc_results/mc_output.h5")
+        self.ent_output.setPlaceholderText("outputs/monte_carlo/mc_output.h5")
         btn_browse = QtWidgets.QPushButton("Browse…")
         btn_browse.setFixedHeight(30)
         btn_browse.clicked.connect(self._browse_output)
@@ -1560,7 +1560,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             self.cb_format.setCurrentIndex(idx)
         self.ent_output.setText(
             _normalize_output_path_for_format(
-                str(data.get("output_path", "mc_results/mc_output.h5")),
+                str(data.get("output_path", "outputs/monte_carlo/mc_output.h5")),
                 fmt,
             )
         )

@@ -522,7 +522,7 @@ def build_mc_command(
     command.extend(["--max-vram-gb",           str(mc_data.get("max_vram_gb", 4.0))])
     command.extend(["--mc-output-format",      str(mc_data.get("output_format", "hdf5"))])
     command.extend(["--mc-output-path",        str(mc_data.get("output_path",
-                                                               "mc_results/mc_output.h5"))])
+                                                               "outputs/monte_carlo/mc_output.h5"))])
     command.extend(["--impact-alt-km",         str(mc_data.get("impact_alt_km", 0.0))])
 
     return [str(item) for item in command]

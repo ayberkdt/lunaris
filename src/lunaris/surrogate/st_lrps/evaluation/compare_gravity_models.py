@@ -294,7 +294,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--st-lrps-model-dir", type=str, default=None)
     p.add_argument("--st-lrps-mode", choices=["cpu_dop853", "gpu_rk4"], default="cpu_dop853")
     p.add_argument("--st-lrps-rk4-dt", type=float, default=30.0)
-    p.add_argument("--output-dir", type=str, default="results/gravity_validation_circular")
+    p.add_argument("--output-dir", type=str, default="outputs/gravity_benchmark")
 
     # --- Full GPU batch comparison ---
     p.add_argument("--gpu-batch-compare", action="store_true",
@@ -2308,7 +2308,21 @@ def rebuild_gpu_batch_metrics_from_cache(
     reports_dir: Path,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
     print("[cache] Rebuilding metrics from cached trajectories.", flush=True)
+    manifest_path = cache_dir / "cache_manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        cache_duration = manifest.get("metadata", {}).get("duration_days")
+        if cache_duration is not None:
+            args.duration_days = float(cache_duration)
+            print(f"[cache] Overriding duration_days to {args.duration_days} from cache manifest.", flush=True)
+
     truth = load_cached_truth_set(args, scenarios, cache_dir, strict=True)
+    if truth.t_by:
+        first_scen = next(iter(truth.t_by.values()))
+        if len(first_scen) > 0:
+            args.duration_days = float(first_scen[-1]) / 86400.0
+            print(f"[cache] Recovered true duration_days = {args.duration_days} from trajectory arrays.", flush=True)
+
     all_rows: List[Dict[str, Any]] = []
     for model in gpu_models:
         complete, missing = _model_cache_completion(cache_dir, model, scenarios)
@@ -4081,6 +4095,8 @@ def _verify_scenario_manifest_matches(
     *,
     require_count: bool = True,
 ) -> None:
+    if getattr(args, "rebuild_metrics", False):
+        return
     metadata = manifest.get("metadata", {}) if isinstance(manifest, dict) else {}
     expected = _sampling_metadata(args)
     fields = [
@@ -4360,6 +4376,8 @@ def _write_cache_manifest(
 
 
 def _validate_cache_compatibility(args: argparse.Namespace, cache_dir: Path) -> None:
+    if getattr(args, "rebuild_metrics", False):
+        return
     path = cache_dir / "cache_manifest.json"
     if not path.exists():
         return
@@ -5732,7 +5750,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         d.mkdir(parents=True, exist_ok=True)
 
     scenarios = prepare_scenarios(args, out_dir)
-    _write_run_metadata(args, out_dir, scenarios)
+    if not getattr(args, "rebuild_metrics", False):
+        _write_run_metadata(args, out_dir, scenarios)
     progress.emit_progress(
         "scenario", current=len(scenarios), total=len(scenarios),
         percent=100.0, message="Scenarios ready",
@@ -5766,7 +5785,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         cache_dir.mkdir(parents=True, exist_ok=True)
         print(f"[cache] Enabled trajectory cache: {cache_dir}", flush=True)
         _validate_cache_compatibility(args, cache_dir)
-        _write_cache_manifest(args, cache_dir, scenarios, gpu_cache_names)
+        if not getattr(args, "rebuild_metrics", False):
+            _write_cache_manifest(args, cache_dir, scenarios, gpu_cache_names)
 
     if getattr(args, "rebuild_metrics", False):
         aggregate_rows, runtime_rows, equivalent, selected = rebuild_gpu_batch_metrics_from_cache(

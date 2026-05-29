@@ -1797,7 +1797,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         name = str(name).strip().lower()
         if not name or name in self._model_checks:
             return False
-        cb = QCheckBox("ST-LRPS" if name == "st_lrps" else name.upper())
+        cb = QCheckBox(_pipeline_label(name))
         cb.setChecked(checked)
         cb.toggled.connect(self._refresh_command_preview)
         self._model_checks[name] = cb
@@ -1819,9 +1819,10 @@ class OrbitBenchmarkPlotsTab(QWidget):
     @staticmethod
     def _model_sort_key(name: str):
         n = str(name).strip().lower()
-        if n.startswith("sh") and n[2:].isdigit():
-            return (0, int(n[2:]), n)
-        if n == "st_lrps":
+        m = re.match(r"^sh(\d+)", n)
+        if m:
+            return (0, int(m.group(1)), n)
+        if n.startswith("st_lrps"):
             return (2, 0, n)
         return (1, 0, n)
 
@@ -1875,7 +1876,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         if root.is_dir():
             for sub in root.iterdir():
                 if sub.is_dir() and any(sub.glob("scenario_*.npz")):
-                    base = re.sub(r"_dt[0-9pmn.]+$", "", sub.name.strip().lower())
+                    base = sub.name.strip().lower()
                     if base:
                         found.add(base)
         return sorted(found, key=self._model_sort_key)
@@ -1990,9 +1991,6 @@ class OrbitBenchmarkPlotsTab(QWidget):
                 "--truth", self.truth.currentData() or "sh200",
                 "--truth-integrator", self.truth_integrator.currentData() or "DOP853",
                 "--rk4-dt-s", str(self.rk4_dt.value())]
-        dt_list = self.rk4_dt_list.text().strip()
-        if dt_list:
-            args += ["--gpu-rk4-dt-s-list", dt_list]
         args += ["--output-dir", out_dir]
         cache_dir = self.cache_dir.text().strip()
         if cache_dir:

@@ -1121,7 +1121,7 @@ class MainWindow(QtWidgets.QMainWindow):
             project_root=PROJECT_ROOT,
             create_card=self._create_card,
             initial_state=OutputPageState(
-                output_dir=str(PROJECT_ROOT / "mission_results"),
+                output_dir=str(PROJECT_ROOT / "outputs" / "missions"),
                 generate_3d_plots=False,
                 downsample_3d=1,
             ),

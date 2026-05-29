@@ -12,7 +12,7 @@ Usage:
     >>> from lunaris.analysis import process_simulation_results
     >>> from lunaris.analysis.reporting.manager import plot_all
     >>> history = process_simulation_results(result, ctx=engine, cfg=config)
-    >>> plot_all(history, out_dir="results/run_01")
+    >>> plot_all(history, out_dir="outputs/simulations/run_01")
 """
 
 from __future__ import annotations

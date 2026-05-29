@@ -104,7 +104,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         self._project_root = Path(project_root)
         self._create_card = create_card
         self._state = initial_state or OutputPageState(
-            output_dir=str(self._project_root / "mission_results"),
+            output_dir=str(self._project_root / "outputs" / "missions"),
             generate_3d_plots=False,
             downsample_3d=1,
         )
@@ -137,7 +137,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         """
 
         self._state = state
-        self.ent_out_dir.setText(state.output_dir or str(self._project_root / "mission_results"))
+        self.ent_out_dir.setText(state.output_dir or str(self._project_root / "outputs" / "missions"))
         self.toggle_anim3d.setChecked(bool(state.generate_3d_plots))
         self.spin_downsample_3d.setValue(max(1, int(state.downsample_3d or 1)))
         self._sync_3d_controls()

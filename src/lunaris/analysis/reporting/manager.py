@@ -65,7 +65,7 @@ Typical batch use::
     from lunaris.analysis.reporting.manager import plot_all
 
     history = process_simulation_results(result, ctx=engine, cfg=config)
-    outputs = plot_all(history, out_dir="results/run_01", ctx=engine)
+    outputs = plot_all(history, out_dir="outputs/simulations/run_01", ctx=engine)
 
 Interactive use (e.g., notebooks) is also supported: call the page builders
 directly and display the returned Matplotlib figures.

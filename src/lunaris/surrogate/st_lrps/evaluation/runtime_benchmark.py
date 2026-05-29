@@ -100,8 +100,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument(
         "--out",
-        default="results/benchmarks/st_lrps_runtime_benchmark.json",
-        help="JSON output path. Defaults under ignored results/.",
+        default="outputs/runtime/st_lrps_runtime_benchmark.json",
+        help="JSON output path. Defaults under ignored outputs/.",
     )
     ap.add_argument("--allow-config-mismatch", action="store_true")
     return ap

@@ -169,7 +169,7 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mc-output-format",      choices=["hdf5", "npz"],
                    default="hdf5")
     g.add_argument("--mc-output-path",        type=str,
-                   default="mc_results/mc_output.h5")
+                   default="outputs/monte_carlo/mc_output.h5")
     g.add_argument("--impact-alt-km",         type=float, default=0.0,
                    help="Impact detection threshold altitude [km]")
 

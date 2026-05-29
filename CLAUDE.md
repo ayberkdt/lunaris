@@ -12,7 +12,7 @@ python main.py --start-date 2025-01-01T00:00:00 --days 1 --alt-km 100
 --hp-km 80 --ha-km 200          # Periselene/aposelene altitudes
 --inc-deg 90                    # Inclination (polar orbit)
 --enable-sh --enable-srp        # Enable physics perturbations
---out-dir mission_results/run1  # Output directory
+--out-dir outputs/missions/run1 # Output directory
 
 # Run GUI
 python ui.py
@@ -100,11 +100,11 @@ mc_cfg  = MonteCarloConfig(
     use_gpu=True,          # requires CUDA + numba.cuda
     gpu_sh_degree=10,      # SH degree evaluated per-thread on GPU (0 = PM only)
     output_format="hdf5",
-    output_path="mc_results/run.h5",
+    output_path="outputs/monte_carlo/run.h5",
 )
 result   = MonteCarloEngine(sim_cfg, mc_cfg).run()   # MCRunResult
 mc_stats = compute_mc_statistics(result)
-figs     = plot_mc_report(result, mc_stats, output_path="mc_results/report.pdf")
+figs     = plot_mc_report(result, mc_stats, output_path="outputs/monte_carlo/report.pdf")
 ```
 
 ### New modules

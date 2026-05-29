@@ -220,7 +220,7 @@ class MonteCarloConfig:
 
     # Output
     output_format: str = "hdf5"     # "hdf5" or "npz"
-    output_path: str = "mc_results/mc_output.h5"
+    output_path: str = "outputs/monte_carlo/mc_output.h5"
     max_vram_gb: float = 4.0        # VRAM budget (caps batch size automatically)
 
     # Statistical analysis

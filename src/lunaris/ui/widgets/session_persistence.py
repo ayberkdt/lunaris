@@ -333,7 +333,7 @@ def apply_session_snapshot(
     output_payload = payload.get("output", {}) or {}
     output_page.apply_state(
         OutputPageState(
-            output_dir=str(output_payload.get("dir", str(project_root / "mission_results"))),
+            output_dir=str(output_payload.get("dir", str(project_root / "outputs" / "missions"))),
             generate_3d_plots=bool(output_payload.get("anim3d", False)),
             downsample_3d=max(1, int(output_payload.get("downsample_3d", 1) or 1)),
         )

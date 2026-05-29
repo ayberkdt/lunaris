@@ -21,7 +21,7 @@ python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --batch-sizes 1,16,128,1024,8192 \
     --n-warmup 10 \
     --n-repeat 50 \
-    --out-dir outputs/runtime_performance/st_lrps_runtime_xxx
+    --out-dir outputs/runtime/st_lrps_runtime_xxx
 ```
 
 ## Synthetic Query Mode
@@ -34,7 +34,7 @@ python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --input-source synthetic \
     --alt-min-km 100 \
     --alt-max-km 2000 \
-    --out-dir outputs/runtime_performance/st_lrps_runtime_xxx
+    --out-dir outputs/runtime/st_lrps_runtime_xxx
 ```
 
 ## Dataset Query Mode
@@ -48,7 +48,7 @@ python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --data data/spatial_cloud_train.h5 \
     --dataset-name data \
     --batch-sizes 1024,8192,32768 \
-    --out-dir outputs/runtime_performance/st_lrps_dataset_runtime_xxx
+    --out-dir outputs/runtime/st_lrps_dataset_runtime_xxx
 ```
 
 ## CPU And CUDA
@@ -72,7 +72,7 @@ python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --model-dir outputs/training/st_lrps_train_xxx \
     --batch-sizes 1024,8192,32768 \
     --chunk-sizes none,512,1024,4096 \
-    --out-dir outputs/runtime_performance/st_lrps_chunks_xxx
+    --out-dir outputs/runtime/st_lrps_chunks_xxx
 ```
 
 Monte Carlo workflows should prefer batched force evaluation when throughput improves at larger batch sizes. If p95 timing is much higher than median timing, runtime jitter or memory pressure may be present.
@@ -86,7 +86,7 @@ python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --model-dir outputs/training/st_lrps_train_xxx \
     --compare-classic-sh \
     --classic-sh-degree 60 \
-    --out-dir outputs/runtime_performance/st_lrps_vs_sh_xxx
+    --out-dir outputs/runtime/st_lrps_vs_sh_xxx
 ```
 
 If the local gravity coefficient file is unavailable, ST-LRPS profiling still runs and the classic SH comparison is skipped with a warning.
@@ -101,4 +101,4 @@ When `--out-dir` is provided, the profiler writes:
 - `runtime_profile_latency.png` if matplotlib is available
 - `runtime_profile_throughput.png` if matplotlib is available
 
-These are generated outputs. The canonical location is `outputs/runtime_performance/<profile_name>/`. External scratch storage is also fine; do not commit generated profiling products.
+These are generated outputs. The canonical location is `outputs/runtime/<profile_name>/`. External scratch storage is also fine; do not commit generated profiling products.

@@ -66,7 +66,7 @@ python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
 Run the Monte Carlo simulator headlessly for batch processing (CPU parallelized or GPU vectorized depending on your configuration):
 
 ```bash
-python mc_runner.py --out-dir outputs/mc_results/mc_run
+python mc_runner.py --out-dir outputs/monte_carlo/mc_run
 ```
 
 ## Using Slurm Job Scripts
@@ -82,5 +82,5 @@ You can submit background jobs using the provided template scripts located in th
 
 ### Output Policy
 
-All Slurm scripts and headless CLI examples are designed to write outputs into the root `outputs/` or `results/` folders (e.g., `outputs/slurm_logs/`).
+All Slurm scripts and headless CLI examples are designed to write outputs into the repository-level `outputs/` folder (e.g., `outputs/slurm_logs/`).
 Please do not modify scripts to write output files inside source code directories such as `src/lunaris/surrogate/st_lrps/` or `src/lunaris/core/`.
