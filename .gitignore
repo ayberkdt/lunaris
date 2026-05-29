@@ -120,3 +120,6 @@ LATEX/
 *.run.xml
 *.synctex.gz
 *.toc
+
+# Tasks
+tasks/
