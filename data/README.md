@@ -10,7 +10,7 @@ same subdirectory layout, for example:
 
 - `ephemeris_models/`
 - `gravity_models/`
-- `topografy_models/`
+- `topography_models/`
 - `albedo_models/`
 - `thermal_models/`
 - `assets/`

@@ -16,7 +16,7 @@ Cluster nodes generally run "headless" (without graphical displays) and may enco
 3. Create and activate the environment:
    ```bash
    conda env create -f environment.yml
-   conda activate st_lrps
+   conda activate lunaris
    ```
 
 ### Option B: Using Pip / Virtual Environment
@@ -24,8 +24,8 @@ Cluster nodes generally run "headless" (without graphical displays) and may enco
 If you prefer pip, use `requirements_hpc.txt` which specifically excludes GUI dependencies:
 
 ```bash
-python -m venv st_lrps_env
-source st_lrps_env/bin/activate
+python -m venv lunaris_env
+source lunaris_env/bin/activate
 pip install -r requirements_hpc.txt
 ```
 

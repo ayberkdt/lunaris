@@ -14,13 +14,13 @@ The ST-LRPS model exhibits distinct operating regimes based on step size, numeri
 | :--- | :---: | :---: | :---: |
 | **Primary Objective** | Long-term physical propagation stability | High-degree potential gradient matching | Sub-meter geodetic/mapping limits |
 | **Scenario Count** | 128 randomized orbits | 100 randomized orbits | 100 randomized orbits |
-| **Orbit Types** | Bounded Keplerian (Circular to Eliptic) | Bounded Keplerian (Circular to Eliptic) | Near-Circular (Zero Eccentricity Mapping) |
+| **Orbit Types** | Bounded Keplerian (Circular to Elliptic) | Bounded Keplerian (Circular to Elliptic) | Near-Circular (Zero Eccentricity Mapping) |
 | **Altitude Envelope** | $100\text{ km}$ to $1000\text{ km}$ (Sparse) | $100\text{ km}$ to $1000\text{ km}$ (Sparse) | $200\text{ km}$ to $400\text{ km}$ (Dense Low-Lunar) |
 | **Numerical Precision** | Single-precision `float32` | Double-precision `float64` | Double-precision `float64` |
 | **Integration Step Size ($\Delta t$)** | $30.0\text{ seconds}$ | $30.0\text{ seconds}$ | $10.0\text{ seconds}$ |
 | **ST-LRPS Median RMS Error** | **1.106 km** | **0.626 km** *($626.4\text{ m}$)* | **15.83 cm** *($1.58\times10^{-4}\text{ km}$)* |
 | **ST-LRPS P95 RMS Error** | **3.549 km** | **1.397 km** *($1397.3\text{ m}$)* | **68.89 cm** *($6.88\times10^{-4}\text{ km}$)* |
-| **SH20 Baseline Median RMS** | **1.570 km** | **18.217 km** (Severe physical decay) | **1.821 km** (Deteoriated circular orbit) |
+| **SH20 Baseline Median RMS** | **1.570 km** | **18.217 km** (Severe physical decay) | **1.821 km** (Deteriorated circular orbit) |
 | **Radial (Altitude) Median RMS** | **41 meters** *($0.041\text{ km}$)* | **7.20 cm** *($7.20\times10^{-5}\text{ km}$)* | **4.58 cm** *($4.58\times10^{-5}\text{ km}$)* |
 | **Cross-Track Median RMS**| **6 meters** *($0.006\text{ km}$)* | **4.87 cm** *($4.87\times10^{-5}\text{ km}$)* | **2.00 cm** *($2.00\times10^{-5}\text{ km}$)* |
 | **Along-Track Median RMS** | **1.102 km** *($1.102\text{ km}$)* | **62.12 cm** *($6.21\times10^{-4}\text{ km}$)* | **15.03 cm** *($1.50\times10^{-4}\text{ km}$)* |
@@ -28,8 +28,8 @@ The ST-LRPS model exhibits distinct operating regimes based on step size, numeri
 
 > [!IMPORTANT]
 > The comparison highlights two critical aspects of ST-LRPS:
-> 1. **Accuracy Enhancement:** ST-LRPS corrects the lightweight `SH20` baseline model by a massive factor of **29.1x** in eliptic orbits (from 18.217 km down to 0.626 km) and delivers accuracies comparable to high-degree classical models (`SH100` and `SH200`) at a fraction of their computational cost.
-> 2. **Hiz-Hassasiyet Dengesi:** Even with double-precision `float64` overhead, ST-LRPS achieves an **8.32x execution speedup** relative to `SH200` while preserving sub-meter/centimeter-level physical orbit alignment.
+> 1. **Accuracy Enhancement:** ST-LRPS corrects the lightweight `SH20` baseline model by a massive factor of **29.1x** in elliptic orbits (from 18.217 km down to 0.626 km) and delivers accuracies comparable to high-degree classical models (`SH100` and `SH200`) at a fraction of their computational cost.
+> 2. **Speed-Accuracy Trade-off:** Even with double-precision `float64` overhead, ST-LRPS achieves an **8.32x execution speedup** relative to `SH200` while preserving sub-meter/centimeter-level physical orbit alignment.
 
 ---
 
@@ -84,7 +84,7 @@ The **ST-LRPS model outperformed all Spherical Harmonic baselines** in median tr
 * **Negligible Overhead over SH20:** ST-LRPS adds only **6% runtime overhead** compared to the extremely lightweight `SH20` baseline (3377s vs 3172s), proving that neural surrogate potential evaluations on PyTorch CUDA are highly efficient.
 * **Massive CPU Savings:** The high-fidelity CPU-side sequential truth generation took a cumulative **9.0 hours** (`32,249` seconds) of compute time. ST-LRPS on a consumer laptop GPU achieved a **9.5x wall-clock speedup** relative to the sequential reference.
 
-### 3. Physical Realism: Directional Hata Decompositions (RIC)
+### 3. Physical Realism: Directional Error Decompositions (RIC)
 Analyzing the error in the **Radial-Along-Cross (RIC)** coordinate frame reveals excellent physical alignment:
 * **Radial (Altitude) Median RMS Error:** **Only 41 meters** (`0.041 km`).
 * **Cross-Track (Plane Inclination) Median RMS Error:** **Only 6 meters** (`0.006 km`).
@@ -97,7 +97,7 @@ Analyzing the error in the **Radial-Along-Cross (RIC)** coordinate frame reveals
 
 ## 1-Day High-Degree Spherical Harmonic Benchmark (SH100 & SH200 Comparison)
 
-To validate how closely the ST-LRPS neural residual corrector matches high-degree spherical harmonic potentials under general eliptic orbits, a **1-Day High-Degree Spherical Harmonic Benchmark** was executed over 100 randomized scenarios. This analysis compares ST-LRPS directly against classical gravity models of much higher degrees (`SH100` and `SH200`).
+To validate how closely the ST-LRPS neural residual corrector matches high-degree spherical harmonic potentials under general elliptic orbits, a **1-Day High-Degree Spherical Harmonic Benchmark** was executed over 100 randomized scenarios. This analysis compares ST-LRPS directly against classical gravity models of much higher degrees (`SH100` and `SH200`).
 
 ### Simulation Configuration
 * **Scenario Count:** 100 independent orbits
@@ -122,9 +122,9 @@ The table below illustrates the physical accuracy and wall-clock execution times
 Analyzing the errors in the Radial-Along-Cross (RIC) frame highlights the extreme physical stability correction provided by the Sobolev neural potential:
 
 * **SH20 Baseline Decay:** Under highly perturbed low-lunar orbits, the classical `SH20` baseline model undergoes rapid physical decay, drifting by a massive **18.21 km** (median along-track) in a single day.
-* **ST-LRPS Sobolev Düzeltmesi:** Sit on the exact same lightweight `SH20` baseline, the ST-LRPS surrogate neural potential gradient corrects for the missing high-degree fields, slashing the median RMS error down to **0.626 km** (a **29.1x accuracy improvement** over SH20!).
-* **Kaçış ve Kararsızlık Engelleme:** While classical `SH30` and `SH20` baselines show wild physical instabilities for highly eccentric scenarios (P95 position errors of **118.21 km** and **310.26 km**), ST-LRPS remains completely bounded and physically stable, keeping its P95 error capped at **1.397 km** (fully matching the P95 error of `SH100`).
-* **Hız-Hassasiyet Dengesi:** ST-LRPS delivers trajectory accuracy on par with `SH100` and `SH200` models while executing **8.32x faster** than `SH200` and **3.64x faster** than `SH100`.
+* **ST-LRPS Sobolev Correction:** Sitting on the exact same lightweight `SH20` baseline, the ST-LRPS surrogate neural potential gradient corrects for the missing high-degree fields, slashing the median RMS error down to **0.626 km** (a **29.1x accuracy improvement** over SH20!).
+* **Escape and Instability Prevention:** While classical `SH30` and `SH20` baselines show wild physical instabilities for highly eccentric scenarios (P95 position errors of **118.21 km** and **310.26 km**), ST-LRPS remains completely bounded and physically stable, keeping its P95 error capped at **1.397 km** (fully matching the P95 error of `SH100`).
+* **Speed-Accuracy Trade-off:** ST-LRPS delivers trajectory accuracy on par with `SH100` and `SH200` models while executing **8.32x faster** than `SH200` and **3.64x faster** than `SH100`.
 
 ---
 
@@ -150,7 +150,7 @@ The double-precision configuration combined with a tighter 10.0-second integrati
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **ST-LRPS (`GPU_ST_LRPS_RK4`)** | **15.83 cm** *($1.58\times10^{-4}\text{ km}$)* | **68.89 cm** *($6.88\times10^{-4}\text{ km}$)* | **95.97 cm** *($9.59\times10^{-4}\text{ km}$)* | **1,894** *(~31 mins)* | **456** | **2.25x** |
 
-### Directional Hata Decompositions (RIC)
+### Directional Error Decompositions (RIC)
 Analyzing the coordinate frame errors reveals sub-decimeter radial and cross-track control:
 * **Radial (Altitude) Median RMS Error:** **4.58 cm** *($4.58\times10^{-5}\text{ km}$)*.
 * **Cross-Track (Plane Inclination) Median RMS Error:** **2.00 cm** *($2.00\times10^{-5}\text{ km}$)*.
@@ -220,7 +220,7 @@ python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
     --workers 4 \
     --torch-dtype float32 \
     --gpu-fallback error \
-    --st-lrps-model-dir st_lrps/runs/resume_denemesi \
+    --st-lrps-model-dir outputs/training/100_1000km_ilk_deneme \
     --output-dir outputs/gravity_benchmark/test_128 \
     --cache-trajectories \
     --reuse-cache

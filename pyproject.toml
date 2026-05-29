@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
-  { name = "ST_LRPS contributors" }
+  { name = "Lunaris contributors" }
 ]
 keywords = ["lunar", "orbit", "propagation", "gravity", "surrogate-model", "st-lrps"]
 classifiers = [

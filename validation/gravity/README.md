@@ -61,7 +61,7 @@ CPU smoke:
 python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
     --random-scenarios 3 --duration-days 0.01 \
     --models sh20,sh80 --truth sh200 \
-    --output-dir results/smoke_cpu
+    --output-dir outputs/gravity_benchmark/smoke_cpu
 ```
 
 GPU batch smoke:
@@ -71,7 +71,7 @@ python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
     --truth sh200 \
     --gpu-models sh200,sh60,sh20,st_lrps \
     --gpu-batch-compare --rk4-dt-s 10 \
-    --output-dir results/smoke_gpu_batch_compare
+    --output-dir outputs/gravity_benchmark/smoke_gpu_batch_compare
 ```
 
 ## ST-LRPS Note
@@ -80,7 +80,7 @@ ST-LRPS comparison is optional and is treated as learned residual-potential surr
 
 ## Generated Outputs
 
-Validation outputs should be written under ignored output locations such as `results/`, `outputs/`, or external scratch storage. Do not commit generated plots, cached truth trajectories, metrics tables, reports, checkpoints, or trained model artifacts.
+Validation outputs should be written under the repository-level `outputs/` directory (the canonical location is `outputs/gravity_benchmark/`) or an external scratch path. Do not commit generated plots, cached truth trajectories, metrics tables, reports, checkpoints, or trained model artifacts; the `outputs/` tree is git-ignored.
 
 ## Future Refactor Target
 

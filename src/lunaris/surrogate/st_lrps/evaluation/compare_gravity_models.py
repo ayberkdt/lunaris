@@ -2317,8 +2317,8 @@ def rebuild_gpu_batch_metrics_from_cache(
             print(f"[cache] Overriding duration_days to {args.duration_days} from cache manifest.", flush=True)
 
     truth = load_cached_truth_set(args, scenarios, cache_dir, strict=True)
-    if truth.t_by:
-        first_scen = next(iter(truth.t_by.values()))
+    if truth.t_by_scenario:
+        first_scen = next(iter(truth.t_by_scenario.values()))
         if len(first_scen) > 0:
             args.duration_days = float(first_scen[-1]) / 86400.0
             print(f"[cache] Recovered true duration_days = {args.duration_days} from trajectory arrays.", flush=True)
