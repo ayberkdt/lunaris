@@ -234,9 +234,15 @@ lunaris-eval \
 
 ### Output policy
 
-The provided Slurm scripts write their logs under `outputs/slurm/` (e.g.
-`outputs/slurm/train_%j.out`), relative to the submit directory. Run products
-(checkpoints, metrics, plots) should go to `LUNARIS_OUTPUT_DIR` on scratch via
-the `--out-dir`/`--output-dir` flags shown above. Do not modify scripts to write
+The provided Slurm scripts write their logs to the **submit directory** using
+plain filenames (e.g. `lunaris_train_%j.out` / `lunaris_train_%j.err`), so they
+do not depend on a pre-existing nested log directory. This is deliberate:
+`#SBATCH --output`/`--error` are resolved by Slurm *before* the job script body
+runs, so a `mkdir -p outputs/slurm` inside the script would be too late to create
+a missing log directory and the job could fail at submission. To collect logs
+elsewhere, either pass `sbatch -o <path> -e <path>` at submit time (after creating
+the directory yourself), or edit the `#SBATCH` lines in the template. Run products
+(checkpoints, metrics, plots) should go to `LUNARIS_OUTPUT_DIR` on scratch via the
+`--out-dir`/`--output-dir` flags shown above. Do not modify scripts to write
 outputs inside source directories such as `src/lunaris/surrogate/st_lrps/` or
 `src/lunaris/core/`.

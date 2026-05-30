@@ -1,6 +1,6 @@
 # ST-LRPS: Orbit-Level Gravity Model Benchmark Results
 
-This document presents the official validation and performance benchmark results for the **Sobolev-Trained Lunar Residual Potential Surrogate (ST-LRPS)** against classical Spherical Harmonic (SH) baselines.
+This document reports validation and performance benchmark results for the **Sobolev-Trained Lunar Residual Potential Surrogate (ST-LRPS)** against classical Spherical Harmonic (SH) baselines. All figures are run-specific evidence for the benchmark configurations described below, not blanket guarantees: values depend on the trained artifact, scenario set, integrator, numerical precision, and hardware.
 
 The analysis evaluates physical orbit propagation accuracy, runtime throughput, and directional error characteristics under highly perturbed low Lunar orbits.
 
@@ -28,8 +28,8 @@ The ST-LRPS model exhibits distinct operating regimes based on step size, numeri
 
 > [!IMPORTANT]
 > The comparison highlights two critical aspects of ST-LRPS:
-> 1. **Accuracy Enhancement:** ST-LRPS corrects the lightweight `SH20` baseline model by a massive factor of **29.1x** in elliptic orbits (from 18.217 km down to 0.626 km) and delivers accuracies comparable to high-degree classical models (`SH100` and `SH200`) at a fraction of their computational cost.
-> 2. **Speed-Accuracy Trade-off:** Even with double-precision `float64` overhead, ST-LRPS achieves an **8.32x execution speedup** relative to `SH200` while preserving sub-meter/centimeter-level physical orbit alignment.
+> 1. **Accuracy:** in this benchmark configuration, ST-LRPS reduced the median RMS error of its lightweight `SH20` baseline by a factor of **29.1x** in elliptic orbits (from 18.217 km to 0.626 km), approaching the accuracy of high-degree classical models (`SH100`, `SH200`) at lower computational cost.
+> 2. **Speed-accuracy trade-off:** for this scenario set, with double-precision `float64`, ST-LRPS ran **8.32x** faster than `GPU_SH200_RK4` while keeping centimetre-to-metre-level RIC alignment.
 
 ---
 
@@ -74,15 +74,15 @@ The table below compiles the median, P95, and maximum RMS position errors, along
 
 ## Critical Analysis
 
-### 1. The Accuracy Victory
-The **ST-LRPS model outperformed all Spherical Harmonic baselines** in median trajectory accuracy, achieving a median RMS position error of **1.106 km** after 5 days of unguided propagation. 
-* It reduces the median position error of its own baseline model (`SH20`) by **30%** (from 1.570 km to 1.106 km).
-* It surpasses the higher-fidelity `SH30` and `SH50` models, demonstrating that the Sobolev-trained potential residual successfully captures higher-degree gravitational details up to equivalent `SH200` fidelity.
+### 1. Accuracy (this scenario set)
+In this benchmark configuration, ST-LRPS achieved the lowest median RMS position error among the compared models — **1.106 km** after 5 days of unguided propagation.
+* It reduced the median position error of its own baseline model (`SH20`) by ~**30%** (from 1.570 km to 1.106 km).
+* It also fell below the higher-fidelity `SH30` and `SH50` runs here, consistent with the Sobolev-trained potential residual capturing higher-degree gravitational structure for these scenarios.
 
-### 2. The Computational Speedup
-* **Nearly 2x Faster than SH50:** ST-LRPS completed the entire propagation in **3,377 seconds** (~56 minutes), whereas `SH50` took **6,620 seconds** (~110 minutes). ST-LRPS is **96% faster** than `SH50` while delivering superior accuracy.
-* **Negligible Overhead over SH20:** ST-LRPS adds only **6% runtime overhead** compared to the extremely lightweight `SH20` baseline (3377s vs 3172s), proving that neural surrogate potential evaluations on PyTorch CUDA are highly efficient.
-* **Massive CPU Savings:** The high-fidelity CPU-side sequential truth generation took a cumulative **9.0 hours** (`32,249` seconds) of compute time. ST-LRPS on a consumer laptop GPU achieved a **9.5x wall-clock speedup** relative to the sequential reference.
+### 2. Runtime (this scenario set)
+* **~2x faster than SH50:** ST-LRPS completed the propagation in **3,377 s** (~56 min) versus `SH50` at **6,620 s** (~110 min) — about **96% faster** here, at higher accuracy.
+* **Low overhead over SH20:** ST-LRPS added ~**6%** runtime over the lightweight `SH20` baseline (3,377 s vs 3,172 s), indicating the neural-potential evaluations on PyTorch CUDA are inexpensive relative to the SH terms.
+* **Versus CPU truth:** sequential CPU `SH200` truth generation took ~**9.0 hours** (32,249 s); ST-LRPS on a consumer laptop GPU was ~**9.5x** faster in wall-clock for this run.
 
 ### 3. Physical Realism: Directional Error Decompositions (RIC)
 Analyzing the error in the **Radial-Along-Cross (RIC)** coordinate frame reveals excellent physical alignment:
@@ -115,16 +115,25 @@ The table below illustrates the physical accuracy and wall-clock execution times
 | **SH200 Baseline (`GPU_SH200_RK4`)** | **0.461** | 1.426 | 1.792 | 5,540 *(~92 mins)* | 52 | **1.00x** (Reference) |
 | **SH100 Baseline (`GPU_SH100_RK4`)** | **0.461** | 1.392 | 1.697 | 2,423 *(~40 mins)* | 118 | **2.28x** |
 | **ST-LRPS Surrogate (`GPU_ST_LRPS_RK4`)** | **0.626** | **1.397** | **2.463** | **665** *(~11 mins)* | **432** | **8.32x** |
-| **SH30 Baseline (`GPU_SH30_RK4`)** | 1.450 | 118.211 | 0.554 | 738 *(~12 mins)* | 389 | 7.50x |
-| **SH20 Baseline (`GPU_SH20_RK4`)** | 18.217 | 310.265 | 1.077 | 513 *(~8 mins)* | 561 | 10.80x |
+| **SH30 Baseline (`GPU_SH30_RK4`)** | 1.450 | 118.211 | TBD | 738 *(~12 mins)* | 389 | 7.50x |
+| **SH20 Baseline (`GPU_SH20_RK4`)** | 18.217 | 310.265 | TBD | 513 *(~8 mins)* | 561 | 10.80x |
+
+> [!NOTE]
+> The `Max RMS Error` cells for the `SH30` and `SH20` rows are marked `TBD`. The
+> originally tabulated values (0.554 km and 1.077 km) are smaller than the same
+> rows' P95 errors (118.211 km and 310.265 km), which is impossible because
+> `max ≥ P95 ≥ median`. The true maxima are at least the P95 values; the exact
+> figures require re-reading the generated metrics artifact and are left as `TBD`
+> rather than guessed. The median and P95 columns are corroborated by the RIC
+> analysis below.
 
 ### Physical RIC Decomposition & Stability Analysis
 Analyzing the errors in the Radial-Along-Cross (RIC) frame highlights the extreme physical stability correction provided by the Sobolev neural potential:
 
-* **SH20 Baseline Decay:** Under highly perturbed low-lunar orbits, the classical `SH20` baseline model undergoes rapid physical decay, drifting by a massive **18.21 km** (median along-track) in a single day.
-* **ST-LRPS Sobolev Correction:** Sitting on the exact same lightweight `SH20` baseline, the ST-LRPS surrogate neural potential gradient corrects for the missing high-degree fields, slashing the median RMS error down to **0.626 km** (a **29.1x accuracy improvement** over SH20!).
-* **Escape and Instability Prevention:** While classical `SH30` and `SH20` baselines show wild physical instabilities for highly eccentric scenarios (P95 position errors of **118.21 km** and **310.26 km**), ST-LRPS remains completely bounded and physically stable, keeping its P95 error capped at **1.397 km** (fully matching the P95 error of `SH100`).
-* **Speed-Accuracy Trade-off:** ST-LRPS delivers trajectory accuracy on par with `SH100` and `SH200` models while executing **8.32x faster** than `SH200` and **3.64x faster** than `SH100`.
+* **SH20 baseline error:** under highly perturbed low-lunar orbits, the `SH20` baseline drifts by ~**18.21 km** (median) in a single day for this scenario set.
+* **ST-LRPS Sobolev correction:** on the same `SH20` baseline, the ST-LRPS potential gradient reduces the median RMS error to **0.626 km** here — about a **29.1x** improvement over `SH20`.
+* **Tail behavior:** for highly eccentric scenarios the `SH30` and `SH20` baselines show large tail errors (P95 of **118.21 km** and **310.26 km**), whereas ST-LRPS keeps its P95 at **1.397 km**, close to `SH100` (1.392 km) in this run.
+* **Speed-accuracy trade-off:** ST-LRPS reached accuracy comparable to `SH100`/`SH200` for these scenarios while running **8.32x** faster than `GPU_SH200_RK4` and **3.64x** faster than `GPU_SH100_RK4`.
 
 ---
 
@@ -157,13 +166,13 @@ Analyzing the coordinate frame errors reveals sub-decimeter radial and cross-tra
 * **Along-Track (Phase/Timing) Median RMS Error:** **15.03 cm** *($1.50\times10^{-4}\text{ km}$)*.
 
 > [!IMPORTANT]
-> The sub-meter accuracy achieved across all circular scenarios demonstrates the high precision of the Sobolev potential training. By matching the $200\times200$ spherical harmonic gravity potential gradients, the neural residual corrector allows low-altitude mapping orbit simulations with errors restricted under **16 centimeters** per day of propagation.
+> The sub-meter accuracy observed across the circular scenarios in this configuration is consistent with the Sobolev potential training matching the $200\times200$ spherical-harmonic gravity gradients: for this scenario set, low-altitude mapping orbits stayed within ~**16 cm** median over one day of propagation.
 
 ---
 
 ## Visualizing the Trade-off
 
-The relationship between model accuracy (lower error is better) and computational cost (faster runtime is better) illustrates the clear Pareto superiority of the ST-LRPS model:
+The relationship between model accuracy (lower error is better) and computational cost (faster runtime is better) illustrates the observed speed-accuracy trade-off for this scenario set:
 
 ```mermaid
 graph TD
@@ -174,7 +183,7 @@ graph TD
     SH20["SH20 Baseline<br>Error: 1.57 km<br>Runtime: ~53 mins"]:::baseline
     SH30["SH30 Baseline<br>Error: 1.23 km<br>Runtime: ~69 mins"]:::baseline
     SH50["SH50 Baseline<br>Error: 1.38 km<br>Runtime: ~110 mins"]:::baseline
-    STLRPS["ST-LRPS Surrogate (SH20 Base + Neural)<br>Error: 1.11 km<br>Runtime: ~56 mins<br>★ BEST TRADE-OFF ★"]:::surrogate
+    STLRPS["ST-LRPS Surrogate (SH20 Base + Neural)<br>Error: 1.11 km<br>Runtime: ~56 mins<br>(best observed trade-off, this set)"]:::surrogate
     Truth["CPU SH200 Truth Reference<br>Error: 0.00 km<br>Runtime: ~9 hours"]:::truth
 
     SH20 -->|More Accuracy| SH30

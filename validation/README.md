@@ -40,4 +40,4 @@ Do not place generated outputs, run artifacts, checkpoints, or trained models un
 
 ## Current status
 
-The current gravity validation harness is still monolithic in `src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py`; future refactors may split it into scenarios, metrics, runners, reports, and schemas.
+The gravity validation harness has been split: `src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py` remains the stable CLI/facade (and backs the `lunaris-benchmark` entry point), while the implementation lives in the internal subpackage `src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/` (`types`, `compute`, `metrics`, `modes`, `plotting`, `results_io`). The module path, CLI flags, and outputs are unchanged.
