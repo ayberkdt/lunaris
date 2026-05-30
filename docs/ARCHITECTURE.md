@@ -26,7 +26,9 @@ Numba-JIT-compiled force-model kernels. Each file is one force model:
 - `spherical_harmonics.py` — gravity field evaluation (reusable `SHWorkspace`).
 - `third_body_effects.py` — Sun/Earth third-body perturbations.
 - `solar_effects.py` — solar radiation pressure.
-- `surface_effects.py` — albedo / thermal.
+- `surface_effects.py` — lunar albedo (reflected-solar) acceleration. (Thermal IR
+  emission is planned and is **not** wired into the dynamics RHS — see the
+  perturbation-flag table below.)
 - `relativity_effects.py` — first-order post-Newtonian.
 - `ephemeris.py` — SPICE kernel wrapper; ephemerides are pre-tabulated at startup.
 - `surrogate_gravity.py`, `gravity_adapter.py` — surrogate force-model adapters.
@@ -52,6 +54,15 @@ Post-processing and presentation.
 - `analysis/monte_carlo/` — Monte Carlo `statistics` and `plotting`.
 - `visualization/` — standalone orbit-animation and surface-explorer tools.
 - `ui/app.py` + `ui/widgets/` — PySide6 desktop UI (mission simulator).
+
+### Support packages
+Alongside the four layers:
+- `lunaris.loaders` — dependency-light data loading (gravity coefficient files,
+  SPICE kernels, topography/albedo grids) consumed by layers 2–3.
+- `lunaris.cli` — console entry points (`lunaris`, `lunaris-mc`, …) and shared
+  CLI argument helpers; wires user input into the `core` configuration.
+- `lunaris.surrogate.st_lrps` — the ST-LRPS surrogate-gravity family
+  (see [ST-LRPS surrogate](#st-lrps-surrogate)).
 
 ## Configuration (SSOT)
 
@@ -87,16 +98,20 @@ CLI (lunaris.cli.main) / UI (lunaris.ui.app)
 `enable_sh=True`. Enabling a flag requires the corresponding config section to be
 non-`None` (e.g. `enable_srp=True` requires `cfg.srp`).
 
-| Flag | Model |
-|------|-------|
-| `enable_sh` | Spherical-harmonics gravity (default degree 100, up to 1800) |
-| `enable_3rd_body_sun` / `enable_3rd_body_earth` | Third-body perturbations |
-| `enable_earth_j2` | Earth oblateness (differential) |
-| `enable_srp` | Solar radiation pressure |
-| `enable_albedo` | Reflected solar from the lunar surface |
-| `enable_thermal` | Lunar thermal emission |
-| `enable_tides_k2` / `enable_tides_k3` | Tidal dissipation |
-| `enable_relativity_1pn` | First-order post-Newtonian |
+| Flag | Model | Status |
+|------|-------|--------|
+| `enable_sh` | Spherical-harmonics gravity (default degree 100, up to 1800) | Implemented |
+| `enable_3rd_body_sun` / `enable_3rd_body_earth` | Third-body perturbations | Implemented |
+| `enable_earth_j2` | Earth oblateness (differential) | Implemented |
+| `enable_srp` | Solar radiation pressure | Implemented |
+| `enable_albedo` | Reflected solar from the lunar surface | Implemented |
+| `enable_relativity_1pn` | First-order post-Newtonian | Implemented |
+| `enable_thermal` | Lunar thermal emission | **Planned** — raises `NotImplementedError` |
+| `enable_tides_k2` / `enable_tides_k3` | Solid tides | **Planned** — raises `NotImplementedError` |
+
+The **Planned** rows are recognized configuration flags but are not yet wired
+into the dynamics RHS; enabling them raises `NotImplementedError` in
+`lunaris.core.dynamics` (`DynamicsEngine._validate_dependencies`).
 
 ## External data (`data/`)
 
@@ -153,7 +168,9 @@ Reload a saved run with `from lunaris.core.monte_carlo_engine import load_mc_res
 - The CUDA kernel workspace uses compile-time fixed `(26×26)` arrays, supporting
   SH degree ≤ 24. `gpu_sh_degree > 24` raises `ValueError`; use the CPU path for
   higher-degree fields.
-- The GPU path does not support albedo / thermal / tides — these are CPU-only.
+- The GPU path does not support albedo (use the CPU path for albedo). Thermal
+  emission and solid tides are not implemented on any path (enabling them raises
+  `NotImplementedError`).
 - CUDA requires `numba` plus a CUDA-capable GPU; the engine falls back to CPU
   (emitting a `RuntimeWarning` and recording a `fallback_reason`) when CUDA is
   unavailable.
@@ -204,3 +221,13 @@ python -m lunaris.surrogate.st_lrps.data.spatial_cloud_generator \
 Model target semantics are recorded explicitly via a `target_contract` in new
 configs/checkpoints, distinguishing residual labels from full-field labels and
 keeping the runtime path aligned with the scaler and loss.
+
+**Runtime.** The propagator-facing API is `runtime/force_model.py`. The only
+implemented runtime is `potential_autograd` (`SurrogateForceModel`): it evaluates
+the learned scalar potential and differentiates it with autograd to obtain the
+residual acceleration, which is added to the SH(`degree_min`) baseline. The
+distilled direct-force runtime (`force_direct` / `DirectForceRuntime`) is a
+reserved placeholder and raises `NotImplementedError`; `load_surrogate_force_model`
+rejects any artifact whose `runtime_model_kind` is not `potential_autograd`.
+Because each evaluation is a network forward pass plus an autograd pass, the
+runtime is most efficient in batched / GPU configurations.

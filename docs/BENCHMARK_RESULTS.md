@@ -6,13 +6,13 @@ The analysis evaluates physical orbit propagation accuracy, runtime throughput, 
 
 ---
 
-## Side-by-Side Comparison: General Stability vs. High-Degree Matching vs. Ultra-Precision
+## Side-by-Side: General Stability vs. High-Degree SH Comparison vs. Ultra-Precision
 
 The ST-LRPS model exhibits distinct operating regimes based on step size, numerical precision, and scenario duration. Below is a direct comparison of the three primary validation benchmarks:
 
 | Benchmark Parameter | 5-Day General Orbit Stability Benchmark | 1-Day High-Degree SH Comparison Benchmark | 1-Day Ultra-Precision Mapping Benchmark |
 | :--- | :---: | :---: | :---: |
-| **Primary Objective** | Long-term physical propagation stability | High-degree potential gradient matching | Sub-meter geodetic/mapping limits |
+| **Primary Objective** | Long-term physical propagation stability | High-degree potential-gradient comparison | Sub-meter geodetic/mapping limits |
 | **Scenario Count** | 128 randomized orbits | 100 randomized orbits | 100 randomized orbits |
 | **Orbit Types** | Bounded Keplerian (Circular to Elliptic) | Bounded Keplerian (Circular to Elliptic) | Near-Circular (Zero Eccentricity Mapping) |
 | **Altitude Envelope** | $100\text{ km}$ to $1000\text{ km}$ (Sparse) | $100\text{ km}$ to $1000\text{ km}$ (Sparse) | $200\text{ km}$ to $400\text{ km}$ (Dense Low-Lunar) |
@@ -85,7 +85,7 @@ In this benchmark configuration, ST-LRPS achieved the lowest median RMS position
 * **Versus CPU truth:** sequential CPU `SH200` truth generation took ~**9.0 hours** (32,249 s); ST-LRPS on a consumer laptop GPU was ~**9.5x** faster in wall-clock for this run.
 
 ### 3. Physical Realism: Directional Error Decompositions (RIC)
-Analyzing the error in the **Radial-Along-Cross (RIC)** coordinate frame reveals excellent physical alignment:
+Analyzing the error in the **Radial-Along-Cross (RIC)** coordinate frame shows close alignment of the RIC error components:
 * **Radial (Altitude) Median RMS Error:** **Only 41 meters** (`0.041 km`).
 * **Cross-Track (Plane Inclination) Median RMS Error:** **Only 6 meters** (`0.006 km`).
 * **Along-Track (Phase/Timing) Median RMS Error:** **1.102 km** (`1.102 km`).
@@ -97,7 +97,7 @@ Analyzing the error in the **Radial-Along-Cross (RIC)** coordinate frame reveals
 
 ## 1-Day High-Degree Spherical Harmonic Benchmark (SH100 & SH200 Comparison)
 
-To validate how closely the ST-LRPS neural residual corrector matches high-degree spherical harmonic potentials under general elliptic orbits, a **1-Day High-Degree Spherical Harmonic Benchmark** was executed over 100 randomized scenarios. This analysis compares ST-LRPS directly against classical gravity models of much higher degrees (`SH100` and `SH200`).
+To assess how closely the ST-LRPS neural residual corrector approximates high-degree spherical harmonic potentials under general elliptic orbits, a **1-Day High-Degree Spherical Harmonic Benchmark** was executed over 100 randomized scenarios. This analysis compares ST-LRPS directly against classical gravity models of much higher degrees (`SH100` and `SH200`).
 
 ### Simulation Configuration
 * **Scenario Count:** 100 independent orbits
@@ -128,7 +128,7 @@ The table below illustrates the physical accuracy and wall-clock execution times
 > analysis below.
 
 ### Physical RIC Decomposition & Stability Analysis
-Analyzing the errors in the Radial-Along-Cross (RIC) frame highlights the extreme physical stability correction provided by the Sobolev neural potential:
+Analyzing the errors in the Radial-Along-Cross (RIC) frame shows the physical stability correction from the Sobolev-trained potential residual:
 
 * **SH20 baseline error:** under highly perturbed low-lunar orbits, the `SH20` baseline drifts by ~**18.21 km** (median) in a single day for this scenario set.
 * **ST-LRPS Sobolev correction:** on the same `SH20` baseline, the ST-LRPS potential gradient reduces the median RMS error to **0.626 km** here — about a **29.1x** improvement over `SH20`.
@@ -139,7 +139,7 @@ Analyzing the errors in the Radial-Along-Cross (RIC) frame highlights the extrem
 
 ## 1-Day Ultra-Precision Near-Circular Orbit Benchmark
 
-To evaluate the extreme high-precision limits of the ST-LRPS model, a specialized **1-Day Near-Circular Orbit Benchmark** was executed using circularized scenarios. This configuration focuses on low altitude mapping orbits where gravitational perturbations are highly dynamic.
+To evaluate the high-precision behavior of the ST-LRPS model, a specialized **1-Day Near-Circular Orbit Benchmark** was executed using circularized scenarios. This configuration focuses on low altitude mapping orbits where gravitational perturbations are highly dynamic.
 
 ### Simulation Configuration
 * **Scenario Count:** 100 independent orbits
@@ -153,7 +153,7 @@ To evaluate the extreme high-precision limits of the ST-LRPS model, a specialize
 * **Ground-Truth Reference:** High-fidelity $200\times200$ Spherical Harmonics (`SH200`) integrated via CPU `DOP853` with tight tolerances ($\text{rtol}=10^{-10}$, $\text{atol}=10^{-12}$).
 
 ### Results & Performance
-The double-precision configuration combined with a tighter 10.0-second integration step size unlocks sub-meter orbit determination accuracies.
+The double-precision configuration combined with a tighter 10.0-second integration step size yields sub-meter orbit-determination errors in this configuration.
 
 | Model | Median RMS Error | P95 RMS Error | Max RMS Error | Total Runtime (s) | Step Speed (steps/s) | Speedup vs. CPU Truth |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |

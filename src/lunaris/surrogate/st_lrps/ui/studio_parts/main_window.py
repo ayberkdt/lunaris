@@ -252,9 +252,9 @@ class MainWindow(QMainWindow):
 
         dep_info = []
         if not _HAS_PYQTGRAPH:
-            dep_info.append("pyqtgraph yüklü değil (canlı grafik devre dışı)")
+            dep_info.append("pyqtgraph not installed (live plotting disabled)")
         if not _HAS_H5PY:
-            dep_info.append("h5py yüklü değil (dataset ön izleme devre dışı)")
+            dep_info.append("h5py not installed (dataset preview disabled)")
 
         # --- Header card (Phase 2: professional experiment header) ---
         if _HAS_DASHBOARD_V2:
@@ -332,7 +332,7 @@ class MainWindow(QMainWindow):
         root.setLayout(root_lo)
         self.setCentralWidget(root)
 
-        # --- Status bar: parametre açıklamaları hover'da gösterilir ---
+        # --- Status bar: parameter descriptions are shown on hover ---
         sb = self.statusBar()
         sb.setSizeGripEnabled(False)
         sb.setStyleSheet(
@@ -344,9 +344,9 @@ class MainWindow(QMainWindow):
             "}"
             "QStatusBar::item { border: none; }"
         )
-        sb.showMessage("Bir parametrenin üzerine gelin — açıklama burada görünür.")
+        sb.showMessage("Hover over a parameter — its description appears here.")
 
-        # Tüm sayfalardaki input widget'larının tooltip'ini status bar'a bağla
+        # Wire every page's input-widget tooltips to the status bar
         for tab in (
             self._cloud_tab, self._analysis_tab,
             self._train_tab, self._profile_tab, self._eval_tab,
