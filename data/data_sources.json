@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "description": "External data catalogue for Lunaris. Files are placed under the resolved data root (--data-dir > LUNARIS_DATA_DIR > repository data/) in canonical subdirectories. Entries with \"url\": null require manual placement from the cited official provider; lunaris-data prints where to put them. URLs target official providers (NASA NAIF/JPL, NASA PDS) and may need updating if a provider reorganizes its archive.",
+  "sha256_policy": "SHA-256 values for URL-backed entries are intentionally left null in this manifest: they were not computed/verified offline while authoring, and several NAIF generic kernels (e.g. LSK/PCK) are periodically refreshed in place, so a pinned hash could cause spurious verify failures. Until a hash is added, `lunaris-data verify` reports these as 'present, no hash'. To enforce strict integrity, run `lunaris-data download` then compute the SHA-256 of your archived copy and add it here; `lunaris-data verify` will then check it. Do not invent or guess hashes.",
   "datasets": [
     {
       "name": "naif_lsk_naif0012",
@@ -14,7 +15,7 @@
       "required": true,
       "license_or_terms": "Public domain (NASA/NAIF). See provider.",
       "source": "NASA NAIF (JPL)",
-      "notes": "Needed for time conversions in any SPICE-based run."
+      "notes": "Needed for time conversions in any SPICE-based run. SHA-256 unpinned (see sha256_policy)."
     },
     {
       "name": "naif_spk_de440",
@@ -28,7 +29,7 @@
       "required": true,
       "license_or_terms": "Public domain (NASA/NAIF). See provider.",
       "source": "NASA NAIF (JPL)",
-      "notes": "Large (~100+ MB); de440s.bsp is a smaller short-span alternative."
+      "notes": "Large (~100+ MB); de440s.bsp is a smaller short-span alternative. SHA-256 unpinned (see sha256_policy)."
     },
     {
       "name": "naif_spk_de440s",
@@ -42,7 +43,7 @@
       "required": false,
       "license_or_terms": "Public domain (NASA/NAIF). See provider.",
       "source": "NASA NAIF (JPL)",
-      "notes": "Smaller alternative to de440.bsp for shorter time spans."
+      "notes": "Smaller alternative to de440.bsp for shorter time spans. SHA-256 unpinned (see sha256_policy)."
     },
     {
       "name": "naif_pck_pck00011",
@@ -56,7 +57,7 @@
       "required": true,
       "license_or_terms": "Public domain (NASA/NAIF). See provider.",
       "source": "NASA NAIF (JPL)",
-      "notes": "Body radii and orientation constants."
+      "notes": "Body radii and orientation constants. SHA-256 unpinned (see sha256_policy)."
     },
     {
       "name": "naif_moon_pa_de440",
@@ -70,7 +71,7 @@
       "required": false,
       "license_or_terms": "Public domain (NASA/NAIF). See provider.",
       "source": "NASA NAIF (JPL)",
-      "notes": "Use together with the moon_de440 frame kernel for lunar body-fixed frames."
+      "notes": "Use together with the moon_de440 frame kernel for lunar body-fixed frames. SHA-256 unpinned (see sha256_policy)."
     },
     {
       "name": "naif_moon_fk_de440",
@@ -84,7 +85,7 @@
       "required": false,
       "license_or_terms": "Public domain (NASA/NAIF). See provider.",
       "source": "NASA NAIF (JPL)",
-      "notes": "Defines the MOON_PA / MOON_ME frames used with the PA kernel."
+      "notes": "Defines the MOON_PA / MOON_ME frames used with the PA kernel. SHA-256 unpinned (see sha256_policy)."
     },
     {
       "name": "grail_gravity_jggrx",

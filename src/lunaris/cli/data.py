@@ -105,6 +105,28 @@ def select_datasets(
     return items
 
 
+def select_for_download(
+    manifest: Dict[str, Any],
+    *,
+    all_groups: bool = False,
+    group: Optional[str] = None,
+    name: Optional[str] = None,
+    include_optional: bool = False,
+) -> List[Dict[str, Any]]:
+    """Select datasets for the ``download`` command.
+
+    ``--name`` selects that exact entry regardless of its required/optional
+    status. Otherwise an ``--all`` or ``--group`` selection is restricted to
+    entries with ``required=true`` unless ``include_optional`` is set.
+    """
+    if name is not None:
+        return select_datasets(manifest, name=name)
+    base = select_datasets(manifest) if all_groups else select_datasets(manifest, group=group)
+    if include_optional:
+        return base
+    return [d for d in base if d.get("required")]
+
+
 # --------------------------------------------------------------------------- #
 # Hashing + download
 # --------------------------------------------------------------------------- #
@@ -239,13 +261,16 @@ def cmd_download(manifest: Dict[str, Any], data_root: Path, args: argparse.Names
     if not (args.all or args.group or args.name):
         print("error: choose what to download: --all, --group <g>, or --name <n>", file=sys.stderr)
         return 2
-    datasets = (
-        select_datasets(manifest)
-        if args.all
-        else select_datasets(manifest, group=args.group, name=args.name)
+    datasets = select_for_download(
+        manifest,
+        all_groups=args.all,
+        group=args.group,
+        name=args.name,
+        include_optional=args.include_optional,
     )
     if not datasets:
-        print("(no matching datasets)")
+        print("(no matching datasets — required entries only; "
+              "pass --include-optional to include optional ones)")
         return 0
     statuses = [
         download_entry(
@@ -321,10 +346,21 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--group", choices=GROUPS, default=None)
     p_list.set_defaults(func=cmd_list)
 
-    p_dl = sub.add_parser("download", help="Download datasets.")
-    p_dl.add_argument("--all", action="store_true", help="Download every catalogued dataset.")
-    p_dl.add_argument("--group", choices=GROUPS, default=None)
-    p_dl.add_argument("--name", default=None, help="Download a single dataset by name.")
+    p_dl = sub.add_parser(
+        "download",
+        help="Download datasets (required-only by default; --include-optional for the rest).",
+        description="Download catalogued datasets. By default a --group or --all "
+        "selection downloads only required entries; add --include-optional to also "
+        "fetch optional ones. --name always downloads the exact entry named.",
+    )
+    p_dl.add_argument("--all", action="store_true",
+                      help="Select required datasets across every group (add --include-optional for optional ones).")
+    p_dl.add_argument("--group", choices=GROUPS, default=None,
+                      help="Select a group; downloads only its required entries unless --include-optional is given.")
+    p_dl.add_argument("--name", default=None,
+                      help="Download a single dataset by exact name, regardless of required/optional status.")
+    p_dl.add_argument("--include-optional", action="store_true",
+                      help="Also include optional (required=false) entries for --group/--all.")
     p_dl.add_argument("--dry-run", action="store_true", help="Show what would happen; download nothing.")
     p_dl.add_argument("--overwrite", action="store_true", help="Refetch even if the file is present.")
     p_dl.add_argument("--no-verify", action="store_true", help="Skip SHA-256 verification.")

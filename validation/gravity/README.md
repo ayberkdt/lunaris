@@ -82,13 +82,18 @@ ST-LRPS comparison is optional and is treated as learned residual-potential surr
 
 Validation outputs should be written under the repository-level `outputs/` directory (the canonical location is `outputs/gravity_benchmark/`) or an external scratch path. Do not commit generated plots, cached truth trajectories, metrics tables, reports, checkpoints, or trained model artifacts; the `outputs/` tree is git-ignored.
 
-## Future Refactor Target
+## Implementation Layout
 
-An intended future split of `src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py` includes:
-- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/scenarios.py`
-- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/metrics.py`
-- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/runners.py`
-- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/reports.py`
-- `src/lunaris/surrogate/st_lrps/evaluation/orbit_benchmark/schemas.py`
+`compare_gravity_models.py` is the stable CLI/facade (and backs the
+`lunaris-benchmark` entry point); its implementation lives in the internal
+subpackage `src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/`:
+- `types.py` — shared dataclasses / result types
+- `compute.py` — propagation and error computation
+- `metrics.py` — metric aggregation
+- `modes.py` — validation modes (CPU smoke, random scenarios, GPU batch compare, …)
+- `plotting.py` — figures
+- `results_io.py` — metrics tables and report I/O
 
-(This is a future plan, not current implementation.)
+`compare_gravity_models` re-exports the implementation symbols as a
+backward-compatible facade, so the module path and CLI flags are unchanged. This
+README documents validation behavior and schemas rather than these internals.

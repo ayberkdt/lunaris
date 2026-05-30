@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=lunaris-train
-#SBATCH --output=outputs/slurm/train_%j.out
-#SBATCH --error=outputs/slurm/train_%j.err
+#SBATCH --output=lunaris_train_%j.out
+#SBATCH --error=lunaris_train_%j.err
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
