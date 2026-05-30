@@ -70,6 +70,7 @@ lunaris-studio    ST-LRPS Studio UI
 lunaris-train     ST-LRPS training CLI
 lunaris-eval      ST-LRPS evaluation CLI
 lunaris-benchmark ST-LRPS orbit-level gravity benchmark / validation CLI
+lunaris-data      external-data download / verify CLI
 ```
 
 ## Installation
@@ -99,6 +100,18 @@ Common data locations:
 | `data/gravity_models/` | Lunar spherical-harmonic coefficient files |
 | `data/topography_models/` | LOLA/LDEM topography rasters |
 | `data/albedo_models/` | Optional lunar albedo grids |
+
+### Acquiring external data
+
+Large files (gravity coefficients, SPICE kernels, topography, albedo) are not bundled. Use the headless `lunaris-data` tool to fetch and verify them into `LUNARIS_DATA_DIR` (or the repository `data/` folder):
+
+```bash
+lunaris-data list
+lunaris-data download --group ephemeris
+lunaris-data verify
+```
+
+The catalogue is `data/data_sources.json`; entries without an official pinned URL print manual-placement instructions. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for the cluster data workflow.
 
 ## Quickstart
 

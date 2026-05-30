@@ -116,6 +116,33 @@ data/topography_models/
 data/albedo_models/
 ```
 
+## Acquiring External Data
+
+Lunaris depends on large external files — lunar gravity coefficients, SPICE/
+ephemeris kernels, LOLA/LDEM topography, and optional albedo grids — that are not
+committed to Git or bundled in the package. Use the headless `lunaris-data` tool
+to list, download, verify, and place them under `LUNARIS_DATA_DIR`:
+
+```bash
+export LUNARIS_DATA_DIR=/scratch/$USER/lunaris_data
+lunaris-data list
+lunaris-data download --group ephemeris
+lunaris-data download --group gravity
+lunaris-data verify
+```
+
+The catalogue lives in `data/data_sources.json`. Entries with an official URL
+(currently the NAIF/JPL SPICE kernels) download directly; entries without a
+pinned URL (e.g. GRAIL gravity, LOLA topography/albedo) print the official
+provider and the directory to place the file in manually. `lunaris-data` resolves
+its data root as `--data-dir` → `LUNARIS_DATA_DIR` → the repository `data/`
+folder, and writes into `gravity_models/`, `ephemeris_models/`,
+`topography_models/`, `albedo_models/`, and `datasets/`.
+
+Download large files **once** to shared scratch/project storage and let every job
+reuse `LUNARIS_DATA_DIR`. Do not copy 400 MB+ gravity files into each run
+directory, and do not commit downloaded data.
+
 ## Running on Slurm
 
 Template batch scripts live in `hpc/`. Each one sources `hpc/env_template.sh`
@@ -138,14 +165,26 @@ Training is the main HPC job. Submit it with the training template; extra
 arguments are forwarded to `lunaris-train`:
 
 ```bash
+export LUNARIS_OUTPUT_DIR=/scratch/$USER/lunaris_outputs
+RUN_NAME="st_lrps_train_$(date +%Y%m%d_%H%M%S)"
+
 sbatch hpc/slurm_train_stlrps.sbatch \
-  --out-dir "$LUNARIS_OUTPUT_DIR/training/st_lrps_train_${SLURM_JOB_ID}" \
+  --out-dir "$LUNARIS_OUTPUT_DIR/training/$RUN_NAME" \
   --epochs 300 \
   --batch-size 8192
 ```
 
 (`lunaris-train` is the `lunaris.surrogate.st_lrps.training.cli` entry point; run
 `lunaris-train --help` for the full flag list.)
+
+> **Submit-time vs. job-time variables.** `$SLURM_JOB_ID` exists only *inside* the
+> running job, not reliably in the submit shell — putting it in the `sbatch`
+> command above would expand to an empty string and create a malformed output
+> path. Likewise, anything you expand before `sbatch` (such as
+> `$LUNARIS_OUTPUT_DIR`) must already be set in the submit environment, so export
+> it first. For reproducible run names use a timestamp (as above), a manual name,
+> or a wrapper script. `hpc/env_template.sh` still sets defaults *inside* the job,
+> but those defaults do not affect values you expand at submit time.
 
 ### 2. Gravity benchmark / validation (after training)
 
