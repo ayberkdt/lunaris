@@ -199,7 +199,6 @@ def _build_metrics(result: object, wall_time_s: float, mc_cfg: MonteCarloConfig)
     """Extract summary statistics from an MCRunResult for the UI metrics panel."""
     import numpy as np
 
-    t          = result.t            # (T,)
     Y          = result.Y            # (T, N, 6)
     impact     = result.impact_mask  # (N,)
     t_impact   = result.t_impact     # (N,)

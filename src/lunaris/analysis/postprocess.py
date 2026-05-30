@@ -37,6 +37,7 @@ Design notes
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -46,6 +47,8 @@ try:
     from ..common.math_utils import batch_y_to_elements, quat_rotate_vec
 except Exception:  # pragma: no cover
     from lunaris.common.math_utils import batch_y_to_elements, quat_rotate_vec
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -471,8 +474,12 @@ def extract_elements(history: Mapping[str, Any]) -> Dict[str, np.ndarray]:
                 i = np.degrees(_as_np(inc, dtype=float))
                 raan = np.degrees(_as_np(raan2, dtype=float))
                 argp = np.degrees(_as_np(argp2, dtype=float))
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "Failed to derive osculating orbital elements from state vectors "
+                "(%s); orbital-element series will be empty in the report.",
+                exc,
+            )
 
     return {"a_km": a, "e": e, "i_deg": i, "raan_deg": raan, "argp_deg": argp}
 

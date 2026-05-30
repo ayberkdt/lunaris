@@ -12,7 +12,22 @@ license = { file = "LICENSE" }
 authors = [
   { name = "Lunaris contributors" }
 ]
-keywords = ["lunar", "orbit", "propagation", "gravity", "surrogate-model", "st-lrps"]
+keywords = [
+  "lunar",
+  "astrodynamics",
+  "orbit-propagation",
+  "gravity-modeling",
+  "lunar-gravity",
+  "spherical-harmonics",
+  "surrogate-modeling",
+  "scientific-machine-learning",
+  "physics-informed-machine-learning",
+  "sobolev-training",
+  "monte-carlo",
+  "gpu-computing",
+  "hpc",
+  "st-lrps",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",

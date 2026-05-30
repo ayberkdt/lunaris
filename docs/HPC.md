@@ -1,86 +1,203 @@
 # HPC and Cluster Deployment
 
-This guide outlines how to deploy and run ST-LRPS on High-Performance Computing (HPC) clusters, specifically those using the Slurm workload manager.
+This guide outlines how to deploy and run Lunaris and its ST-LRPS workflows on
+HPC clusters using Slurm.
 
-## Environment Setup
+[Lunaris](../README.md) is a lunar orbit propagation and gravity-modeling
+framework. ST-LRPS (Sobolev-Trained Lunar Residual Potential Surrogate) is the
+surrogate-gravity model/workflow inside Lunaris, under
+`lunaris.surrogate.st_lrps`. ST-LRPS is the main HPC-heavy workflow in this
+repository — not the desktop UI or single-orbit propagation. A typical cluster
+session works through, in order:
 
-Cluster nodes generally run "headless" (without graphical displays) and may encounter issues if you attempt to install GUI frameworks like PyQt6 or PySide6. Therefore, ST-LRPS provides dedicated configuration files for HPC environments.
+1. **ST-LRPS dataset / spatial cloud generation**
+2. **ST-LRPS training**
+3. **ST-LRPS evaluation**
+4. **Orbit-level gravity benchmark / validation**
+5. **Monte Carlo / batch propagation**
 
-### Option A: Using Conda (Recommended)
+> **Keep GUIs off compute nodes.** The desktop UI (`lunaris-ui`) and the ST-LRPS
+> Studio (`lunaris-studio`) are interactive tools. Do not install or launch them
+> on compute nodes. Install the GUI extras (`.[ui]`/`.[all]`: `PySide6`,
+> `PyQt6`, `pyqtgraph`) only on a login or visualization node, and only if you
+> actually need them there.
 
-1. Load your cluster's Conda/Miniconda module:
-   ```bash
-   module load miniconda3  # Adapt to your cluster's module name
-   ```
-2. Edit `environment.yml` to uncomment and select the `pytorch-cuda` version that matches the CUDA module available on your cluster (e.g., `pytorch-cuda=12.1`).
-3. Create and activate the environment:
-   ```bash
-   conda env create -f environment.yml
-   conda activate lunaris
-   ```
+## Installation
 
-### Option B: Using Pip / Virtual Environment
+The recommended setup registers the package and its console commands
+(`lunaris-train`, `lunaris-eval`, `lunaris-benchmark`, `lunaris-mc`, …) in an
+isolated, GUI-free environment.
 
-If you prefer pip, use `requirements_hpc.txt` which specifically excludes GUI dependencies:
+### Option A: pip / virtual environment (recommended)
 
 ```bash
+git clone https://github.com/ayberkdt/lunaris.git
+cd lunaris
+
 python -m venv lunaris_env
 source lunaris_env/bin/activate
-pip install -r requirements_hpc.txt
+python -m pip install --upgrade pip
+python -m pip install -e ".[hpc]"
 ```
 
-## Running Headless CLI Commands
-
-Instead of using the Studio UI, HPC users must use the headless CLI entry points. Below are examples of launching specific tasks.
-
-### 1. Training
+### Option B: Conda
 
 ```bash
-python -m lunaris.surrogate.st_lrps.training.cli \
-    --out-dir outputs/training/st_lrps_train_run \
-    --epochs 100 \
-    --batch-size 8192
+git clone https://github.com/ayberkdt/lunaris.git
+cd lunaris
+
+conda env create -f environment.yml
+conda activate lunaris
+python -m pip install -e ".[hpc]"
 ```
 
-### 2. Evaluation
+Edit `environment.yml` first to select the `pytorch-cuda` version that matches
+the CUDA module on your cluster (e.g. `pytorch-cuda=12.1`).
 
-Evaluations check the quality of a trained model:
+The `.[hpc]` extra installs PyTorch + h5py on top of the core dependencies and
+omits all GUI packages. A flat, pinned `requirements_hpc.txt` is also available
+as an alternative dependency list (`pip install -r requirements_hpc.txt`), but
+the preferred install is the editable `python -m pip install -e ".[hpc]"` so the
+console entry points are registered.
+
+Verify the headless entry points are available:
 
 ```bash
-python -m lunaris.surrogate.st_lrps.evaluation.cli \
-    --model-dir outputs/training/st_lrps_train_run \
-    --out-dir outputs/evaluations/st_lrps_eval_run
+lunaris-train --help
+lunaris-eval --help
+lunaris-benchmark --help
 ```
 
-### 3. Orbit Validation (Gravity Models)
+## Data and Output Layout
 
-For validating orbital propagation across different gravity models and surrogates:
+Large mission/science data files are **not** tracked in Git or shipped in the
+Python package. On a cluster, keep them on scratch/project storage and point the
+framework at that location with `LUNARIS_DATA_DIR`. Generated outputs (training
+runs, evaluations, benchmarks) should also live on scratch, not in the source
+tree.
+
+`hpc/env_template.sh` sets scratch defaults that the Slurm jobs source:
 
 ```bash
-python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
-    --out-dir outputs/validation/orbit_validation_run
+export LUNARIS_DATA_DIR="${LUNARIS_DATA_DIR:-/scratch/$USER/lunaris_data}"
+export LUNARIS_OUTPUT_DIR="${LUNARIS_OUTPUT_DIR:-/scratch/$USER/lunaris_outputs}"
 ```
 
-### 4. Monte Carlo / Batch Propagation
+Recommended scratch layout:
 
-Run the Monte Carlo simulator headlessly for batch processing (CPU parallelized or GPU vectorized depending on your configuration):
+```text
+/scratch/$USER/lunaris_data/
+  gravity_models/
+  ephemeris_models/
+  topography_models/
+  datasets/
+
+/scratch/$USER/lunaris_outputs/
+  training/
+  evaluations/
+  gravity_benchmark/
+  runtime/
+  monte_carlo/
+```
+
+`LUNARIS_DATA_DIR` is read by the framework when locating external data;
+`LUNARIS_OUTPUT_DIR` is a convenience the example jobs pass through to
+`--out-dir`/`--output-dir`. Large spherical-harmonic / gravity coefficient files
+(400 MB+), SPICE kernels, and topography grids should be stored **once** under
+`LUNARIS_DATA_DIR`, not copied into each job folder and never committed to Git.
+
+Inside the repository, external data uses these canonical directory names (the
+same categories as the scratch layout):
+
+```text
+data/gravity_models/
+data/ephemeris_models/
+data/topography_models/
+data/albedo_models/
+```
+
+## Running on Slurm
+
+Template batch scripts live in `hpc/`. Each one sources `hpc/env_template.sh`
+and then calls a headless entry point, forwarding any extra arguments you pass
+to `sbatch`. These are *templates*: open `hpc/env_template.sh` and the `.sbatch`
+files and adapt the placeholders — partition/account names, module loads, the
+environment activation, and the `#SBATCH` resource directives — to your cluster
+before submitting.
+
+| Workload | Script | Entry point |
+|----------|--------|-------------|
+| Shared environment setup | `hpc/env_template.sh` | sourced by each job |
+| ST-LRPS training | `hpc/slurm_train_stlrps.sbatch` | `lunaris-train` |
+| Orbit-level gravity benchmark / validation | `hpc/slurm_benchmark_gpu.sbatch` | `lunaris-benchmark` |
+| Monte Carlo / batch propagation | `hpc/slurm_mc_array.sbatch` | `lunaris-mc` |
+
+### 1. ST-LRPS training (primary workload)
+
+Training is the main HPC job. Submit it with the training template; extra
+arguments are forwarded to `lunaris-train`:
 
 ```bash
-lunaris-mc --out-dir outputs/monte_carlo/mc_run
+sbatch hpc/slurm_train_stlrps.sbatch \
+  --out-dir "$LUNARIS_OUTPUT_DIR/training/st_lrps_train_${SLURM_JOB_ID}" \
+  --epochs 300 \
+  --batch-size 8192
 ```
 
-## Using Slurm Job Scripts
+(`lunaris-train` is the `lunaris.surrogate.st_lrps.training.cli` entry point; run
+`lunaris-train --help` for the full flag list.)
 
-You can submit background jobs using the provided template scripts located in the `slurm_examples/` directory.
+### 2. Gravity benchmark / validation (after training)
 
-**Important:** These are *templates*. You **must** open them and adapt the placeholders (marked with `TODO`) to match your specific cluster's partition names, account names, and available module names.
+The orbit-level gravity benchmark compares a **trained** ST-LRPS artifact against
+spherical-harmonic baselines/references, so it is normally run after a training
+run exists. Point it at the trained run directory:
 
-- **Training:** `sbatch slurm_examples/train_st_lrps.slurm`
-- **Evaluation:** `sbatch slurm_examples/eval_st_lrps.slurm`
-- **Orbit Validation:** `sbatch slurm_examples/orbit_validation.slurm`
-- **Monte Carlo:** `sbatch slurm_examples/mc_runner.slurm`
+```bash
+lunaris-benchmark \
+  --gpu-batch-compare \
+  --st-lrps-model-dir "$LUNARIS_OUTPUT_DIR/training/<run_dir>" \
+  --output-dir "$LUNARIS_OUTPUT_DIR/gravity_benchmark/<run_name>"
+```
 
-### Output Policy
+The same command runs under Slurm via `hpc/slurm_benchmark_gpu.sbatch` (which
+calls `lunaris-benchmark "$@"`):
 
-All Slurm scripts and headless CLI examples are designed to write outputs into the repository-level `outputs/` folder (e.g., `outputs/slurm_logs/`).
-Please do not modify scripts to write output files inside source code directories such as `src/lunaris/surrogate/st_lrps/` or `src/lunaris/core/`.
+```bash
+sbatch hpc/slurm_benchmark_gpu.sbatch \
+  --gpu-batch-compare \
+  --st-lrps-model-dir "$LUNARIS_OUTPUT_DIR/training/<run_dir>" \
+  --output-dir "$LUNARIS_OUTPUT_DIR/gravity_benchmark/<run_name>"
+```
+
+### 3. Monte Carlo / batch propagation
+
+```bash
+sbatch hpc/slurm_mc_array.sbatch \
+  --out-dir "$LUNARIS_OUTPUT_DIR/monte_carlo/mc_run"
+```
+
+### Dataset generation and evaluation
+
+Dataset/spatial-cloud generation (step 1) and ST-LRPS evaluation (step 3) do not
+ship dedicated templates. Run them through the headless CLI, or copy one of the
+`.sbatch` files and swap in the relevant command:
+
+```bash
+# Dataset / spatial cloud generation
+python -m lunaris.surrogate.st_lrps.data.spatial_cloud_generator --help
+
+# Evaluation of a trained model
+lunaris-eval \
+  --model-dir "$LUNARIS_OUTPUT_DIR/training/<run_dir>" \
+  --output-dir "$LUNARIS_OUTPUT_DIR/evaluations/<run_name>"
+```
+
+### Output policy
+
+The provided Slurm scripts write their logs under `outputs/slurm/` (e.g.
+`outputs/slurm/train_%j.out`), relative to the submit directory. Run products
+(checkpoints, metrics, plots) should go to `LUNARIS_OUTPUT_DIR` on scratch via
+the `--out-dir`/`--output-dir` flags shown above. Do not modify scripts to write
+outputs inside source directories such as `src/lunaris/surrogate/st_lrps/` or
+`src/lunaris/core/`.
