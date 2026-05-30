@@ -198,7 +198,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # ---------------------------------------------------------------------
         # 2. Path & Session Management
         # ---------------------------------------------------------------------
-        self.main_script_path = PROJECT_ROOT / "main.py"
+        # The backend is launched as a subprocess via the installed `lunaris`
+        # package modules (`python <module file>`), not via root-level launcher
+        # scripts. Resolve the module files from the package directory so this
+        # works regardless of where `lunaris` is installed.
+        _lunaris_pkg = Path(__file__).resolve().parents[1]
+        self.main_script_path = _lunaris_pkg / "cli" / "main.py"
         
         # Session Persistence
         app_data_loc = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.AppDataLocation)
@@ -213,7 +218,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.process: Optional[QtCore.QProcess] = None
         self.mc_process: Optional[QtCore.QProcess] = None
         self.preflight_worker: Optional[PreFlightWorker] = None
-        self.mc_script_path   = PROJECT_ROOT / "mc_runner.py"
+        self.mc_script_path   = _lunaris_pkg / "core" / "mc_runner.py"
         self._mc_stdout_buf: str = ""
         
         # UI State Containers (Mutable)
@@ -227,7 +232,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Mission Timeline
         self.mission_epoch = QtCore.QDateTime.fromString("2025-10-01 18:00:00", "yyyy-MM-dd HH:mm:ss")
         
-        # Data & Files Configuration (NEW v12)
+        # Data & Files Configuration
         self.ldem_root_path = ""  # LDEM root directory
         self.albedo_root_path = ""  # Albedo root directory
         self.kernel_dir_path = ""  # SPICE kernels directory
@@ -515,7 +520,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter.addWidget(content_container)
         
         # ---------------------------------------------------------------------
-        # C. Log Panel (ENHANCED v7: Added Copy button)
+        # C. Log Panel
         # ---------------------------------------------------------------------
         self.log_panel = self._build_log_panel()
         self.log_panel.setMinimumHeight(140)
@@ -1857,7 +1862,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._apply_default_log_splitter_sizes()
     
     # =========================================================================
-    # 29. ORBIT & FORCE MODEL LOGIC - UPDATED v7
+    # 29. ORBIT & FORCE MODEL LOGIC
     # =========================================================================
 
     def _on_gravity_settings(self, _checked: bool = False):
@@ -1918,7 +1923,7 @@ class MainWindow(QtWidgets.QMainWindow):
     
 
     # =========================================================================
-    # 31. COMMAND BUILDING & PROCESS MANAGEMENT - UPDATED v12
+    # 31. COMMAND BUILDING & PROCESS MANAGEMENT
     # =========================================================================
     def _build_command(self) -> List[str]:
         """
@@ -2070,7 +2075,7 @@ class MainWindow(QtWidgets.QMainWindow):
     
 
     # -------------------------------------------------------------------------
-    # Collision / impact monitoring (v11)
+    # Collision / impact monitoring
     # -------------------------------------------------------------------------
     @staticmethod
     def _try_float(v):
@@ -2200,7 +2205,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     except Exception:
                         pass
 
-                    # v11: impact monitoring
+                    # impact monitoring
                     self._check_collision(telem)
 
                     # Update progress based on time

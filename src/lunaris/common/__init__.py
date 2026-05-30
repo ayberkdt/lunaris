@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/common/__init__.py
+# lunaris/common/__init__.py
 """
 Common package
 ==============

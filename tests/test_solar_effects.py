@@ -2,8 +2,8 @@
 """
 Pytest suite for Solar Radiation Pressure (SRP) + eclipse geometry.
 
-This file is migrated from the module-level "SMOKE TEST" in models/solar_effects.py
-so it can run in CI and be executed deterministically.
+This file is migrated from the module-level "SMOKE TEST" in
+lunaris.physics.solar_effects so it can run in CI and be executed deterministically.
 
 Run (repo root):
   python -m pytest -vv -rA --durations=10 tests/test_solar_effects.py
@@ -12,7 +12,6 @@ Run (repo root):
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -20,36 +19,15 @@ import pytest
 
 # ---------------------------------------------------------------------------
 # Import the module under test.
-# We add repo root to sys.path to support both "package" and "flat" layouts.
 # ---------------------------------------------------------------------------
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-# Try a couple of likely import paths (adjust if your project layout differs).
-try:
-    from lunar_simulation.models.solar_effects import (  # type: ignore
-        compute_srp_accel,
-        moon_shadow_factor_conical,
-        SRPConfig,
-    )
-    from lunar_simulation.common.constants import AU, R_MOON_MEAN, R_EARTH_MEAN  # type: ignore
-    from lunar_simulation.common.type_defs import SpacecraftProps  # type: ignore
-except Exception:  # pragma: no cover
-    try:
-        from lunaris.physics.solar_effects import (  # type: ignore
-            compute_srp_accel,
-            moon_shadow_factor_conical,
-            SRPConfig,
-        )
-        from lunaris.common.constants import AU, R_MOON_MEAN, R_EARTH_MEAN  # type: ignore
-        from lunaris.common.type_defs import SpacecraftProps  # type: ignore
-    except Exception as e:  # pragma: no cover
-        raise ImportError(
-            "Could not import solar_effects. Update the import path in "
-            "tests/test_solar_effects.py to match your repo layout."
-        ) from e
+from lunaris.physics.solar_effects import (
+    compute_srp_accel,
+    moon_shadow_factor_conical,
+    SRPConfig,
+)
+from lunaris.common.constants import AU, R_MOON_MEAN, R_EARTH_MEAN
+from lunaris.common.type_defs import SpacecraftProps
 
 
 # ---------------------------------------------------------------------------

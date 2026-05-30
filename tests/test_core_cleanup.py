@@ -34,9 +34,10 @@ def test_fail_fast_on_missing_j2_radius():
 
 def test_extract_surface_provider_strict_fail():
     class BadProvider:
-        def get_provider(self):
+        # Missing the canonical `as_numba_dict()` API entirely.
+        def unrelated_method(self):
             return lambda *args: 0.0
-    
+
     with pytest.raises(TypeError):
         extract_surface_provider_strict(BadProvider())
 

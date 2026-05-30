@@ -11,11 +11,23 @@ The framework supports lunar-orbit propagation with configurable physical force 
 
 Accuracy, runtime, and stability depend on the selected data, force-model configuration, trained artifacts, and validation scenario. Treat validation outputs as run-specific evidence rather than a blanket guarantee.
 
+## Documentation
+
+| Document | Contents |
+|----------|----------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, perturbation flags, Monte Carlo internals, ST-LRPS surrogate |
+| [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
+| [docs/HPC.md](docs/HPC.md) | Cluster/headless install, Conda environment, Slurm templates |
+| [docs/profiling.md](docs/profiling.md) | ST-LRPS runtime profiling and timing interpretation |
+| [validation/README.md](validation/README.md) | Independent physics/orbit/gravity validation harness |
+
 ## Repository Architecture
 
-The current repository uses a `src/` package layout. The installable package is
+The repository uses a `src/` package layout. The installable package is
 `lunaris`; ST-LRPS remains a named surrogate family under
-`lunaris.surrogate.st_lrps`.
+`lunaris.surrogate.st_lrps`. The map below is a quick orientation — see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the layered design, data flow,
+configuration model, perturbation flags, and Monte Carlo internals.
 
 ```text
 src/lunaris/
@@ -44,24 +56,33 @@ data/              local input data such as SPICE kernels, gravity, topography
 hpc/               example Slurm templates for cluster use
 ```
 
-Top-level entry points:
+Console entry points (installed via `pip install -e .`):
 
 ```text
-main.py           compatibility launcher for `lunaris`
-mc_runner.py      compatibility launcher for `lunaris-mc`
-ui.py             compatibility launcher for `lunaris-ui`
-studio.py         compatibility launcher for `lunaris-studio`
+lunaris           single-run propagation CLI
+lunaris-mc        Monte Carlo runner
+lunaris-ui        mission desktop UI
+lunaris-studio    ST-LRPS Studio UI
+lunaris-train     ST-LRPS training CLI
+lunaris-eval      ST-LRPS evaluation CLI
 ```
 
 ## Installation
 
-Install the standard Python dependencies from the repository root:
+Install the package in editable mode from the repository root. This wires up the
+console entry points (`lunaris`, `lunaris-ui`, …) and lets code changes take
+effect without reinstalling:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -e .            # core dependencies only
+python -m pip install -e ".[all]"     # core + ML + UI + reports + dev extras
 ```
 
-**For HPC and Cluster Deployments**, you should exclude GUI dependencies. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for Conda (`environment.yml`), Headless CLI `requirements_hpc.txt`, and Slurm templates (`slurm_examples/`).
+Optional dependency groups are declared in `pyproject.toml`: `core`, `ml`, `hpc`,
+`ui`, `reports`, `dev`, and `all`. A pinned `requirements.txt` is also provided
+for environments that prefer a flat dependency list.
+
+**For HPC and Cluster Deployments**, exclude GUI dependencies. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for Conda (`environment.yml`), the headless `requirements_hpc.txt`, and Slurm templates (`slurm_examples/`).
 
 Large mission data files are not bundled. Place local SPICE kernels, gravity coefficient files, topography grids, and albedo grids under `data/` or another local path configured at runtime.
 
@@ -199,11 +220,11 @@ python -m lunaris.surrogate.st_lrps.training.cli \
 
 ## Propagation And Analysis
 
-Single-run propagation is driven by `main.py`; Monte Carlo workflows are driven by `mc_runner.py`. These commands are data-dependent and should be configured with local input files and output paths:
+Single-run propagation is driven by the `lunaris` command; Monte Carlo workflows are driven by `lunaris-mc`. These commands are data-dependent and should be configured with local input files and output paths:
 
 ```bash
-python main.py --help
-python mc_runner.py --help
+lunaris --help
+lunaris-mc --help
 ```
 
 Canonical analysis modules:

@@ -45,7 +45,6 @@ Implementation notes
 
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Tuple, Mapping
 
@@ -236,7 +235,7 @@ def _select_adaptive_sh_degree(
 
 def extract_gravity_strict(g: Any) -> Tuple[Any, ...]:
     """
-    STRICT gravity contract (aligned with models.spherical_harmonics.GravityModel v2).
+    STRICT gravity contract (aligned with lunaris.physics.spherical_harmonics.GravityModel).
 
     Required attributes
     -------------------
@@ -327,7 +326,7 @@ def extract_gravity_strict(g: Any) -> Tuple[Any, ...]:
 
 def extract_ephem_tables_strict(ephem: Any) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     """
-    STRICT ephemeris contract (aligned with models.ephemeris.EphemerisManager).
+    STRICT ephemeris contract (aligned with lunaris.physics.ephemeris.EphemerisManager).
 
     ephem.get_data_provider() must return a mapping with either:
       A) dt, sun_table, earth_table, rot_table
@@ -497,7 +496,7 @@ class _EphemPack:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _GravPack:
-    """Engine-internal gravity pack (validated, float64, C-contiguous; GravityModel v2)."""
+    """Engine-internal gravity pack (validated, float64, C-contiguous; GravityModel)."""
     nmax: int
     r_ref_m: float
     gm_m3s2: float
@@ -813,9 +812,7 @@ class DynamicsEngine:
             raise NotImplementedError(
                 "Thermal perturbation enabled but not implemented in core.dynamics."
             )
-        if bool(getattr(f, "enable_tides_k2", False)) or bool(getattr(f, "enable_tides_k3", False)) or bool(
-            getattr(f, "enable_solid_tides", False)
-        ):
+        if bool(getattr(f, "enable_tides_k2", False)) or bool(getattr(f, "enable_tides_k3", False)):
             raise NotImplementedError(
                 "Solid tides enabled but not implemented in core.dynamics."
             )

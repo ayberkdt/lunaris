@@ -1,4 +1,4 @@
-﻿# LUNAR_SIMULATION/common/montecarlo_defs.py
+﻿# lunaris/common/montecarlo_defs.py
 """
 Monte Carlo Simulation Configuration Definitions
 =================================================
@@ -22,7 +22,6 @@ Units
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Tuple

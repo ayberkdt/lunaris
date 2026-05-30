@@ -523,7 +523,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         except Exception:
             project_root = Path.cwd()
 
-        runner = str((project_root / "mc_runner.py").resolve())
+        runner = str((Path(__file__).resolve().parents[2] / "core" / "mc_runner.py").resolve())
         try:
             python_exec = sys.executable
         except Exception:
@@ -582,7 +582,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             project_root = ST_LRPS_RUNS_DIR.parent.parent
         except Exception:
             project_root = Path.cwd()
-        runner = str((project_root / "mc_runner.py").resolve())
+        runner = str((Path(__file__).resolve().parents[2] / "core" / "mc_runner.py").resolve())
         python_exec = sys.executable
         n_samples = "100"
         try:

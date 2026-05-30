@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/common/constants.py
+# lunaris/common/constants.py
 """
 Lunar Simulation Physical Constants & Reference Values
 ==============================================

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-st_lrps.ui.studio  -  v3
+ST-LRPS Studio.
 
 PyQt6 dashboard for the lunar scalar potential surrogate codebase.
 
@@ -19,15 +19,15 @@ What you can do from the UI
 - Watch live loss curves during training (pyqtgraph)
 - Queue multiple training runs for overnight execution
 
-UX Architecture (v1 → retained)
+UX Architecture — Core features
 ---------------------------------
 1–6.  Groups, Grid, Tooltips, Collapsible, QSettings, Path validation.
 
-UX Architecture (v2 → retained)
+UX Architecture — Productivity features
 ---------------------------------
 7–12. Image gallery, Log highlight, Auto-scroll, Presets, Post-run, Dependent params.
 
-UX Architecture (v3 → new)
+UX Architecture — Live & introspection features
 -----------------------------
 13. Live Loss Plotting: real-time pyqtgraph chart of train/val loss parsed from logs.
 14. Dataset Introspection: auto-read HDF5 metadata (row count, attrs) on path selection.

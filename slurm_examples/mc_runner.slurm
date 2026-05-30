@@ -24,5 +24,5 @@ mkdir -p outputs/slurm_logs
 
 # Run Monte Carlo runner
 echo "Starting Monte Carlo simulation at $(date)"
-python mc_runner.py --out-dir outputs/mc_results/mc_run
+python -m lunaris.core.mc_runner --out-dir outputs/mc_results/mc_run
 echo "Monte Carlo simulation completed at $(date)"

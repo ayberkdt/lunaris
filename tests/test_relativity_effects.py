@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import math
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -17,34 +16,14 @@ import pytest
 
 # ---------------------------------------------------------------------------
 # Import the module under test.
-# We add repo root to sys.path to support both "package" and "flat" layouts.
 # ---------------------------------------------------------------------------
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-# Try a couple of likely import paths (adjust if your project layout differs).
-try:
-    from lunar_simulation.models.relativity_effects import (  # type: ignore
-        calc_schwarzschild_accel,
-        MU_MOON,
-        C_SQ,
-        EPS_1E12,
-    )
-except Exception:  # pragma: no cover
-    try:
-        from lunaris.physics.relativity_effects import (  # type: ignore
-            calc_schwarzschild_accel,
-            MU_MOON,
-            C_SQ,
-            EPS_1E12,
-        )
-    except Exception as e:  # pragma: no cover
-        raise ImportError(
-            "Could not import relativity_effects. "
-            "Update the import path in tests/test_relativity_effects.py to match your repo layout."
-        ) from e
+from lunaris.physics.relativity_effects import (
+    calc_schwarzschild_accel,
+    MU_MOON,
+    C_SQ,
+    EPS_1E12,
+)
 
 
 # ---------------------------------------------------------------------------

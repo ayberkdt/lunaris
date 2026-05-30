@@ -39,7 +39,7 @@ STALE_TOKENS = (
 
 
 def _ui_source_files() -> list[Path]:
-    files = [REPO_ROOT / "ui.py", REPO_ROOT / "src" / "lunaris" / "ui" / "app.py"]
+    files = [REPO_ROOT / "src" / "lunaris" / "ui" / "app.py"]
     files.extend(sorted((REPO_ROOT / "src" / "lunaris" / "ui" / "widgets").glob("*.py")))
     return files
 
@@ -326,7 +326,7 @@ REMOVED_ALIASES = (
 def test_mainwindow_has_no_legacy_aliases() -> None:
     from PySide6 import QtWidgets
 
-    import ui
+    import lunaris.ui.app as ui
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     try:

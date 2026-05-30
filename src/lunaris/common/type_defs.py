@@ -1,4 +1,4 @@
-﻿# LUNAR_SIMULATION/common/type_defs.py
+﻿# lunaris/common/type_defs.py
 """
 Type Definitions & Configuration Dataclasses
 ============================================

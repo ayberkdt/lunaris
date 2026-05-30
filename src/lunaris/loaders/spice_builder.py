@@ -17,11 +17,11 @@ are built:
 Why this lives in `loaders`
 ---------------------------
 These helpers are about filesystem conventions and asset discovery, not orbital
-mechanics or runtime interpolation. Moving them out of `models.ephemeris`
+mechanics or runtime interpolation. Moving them out of `lunaris.physics.ephemeris`
 reduces layering blur:
 
 - `loaders` owns path resolution and disk-facing heuristics.
-- `models.ephemeris` owns SPICE interaction and runtime table generation.
+- `lunaris.physics.ephemeris` owns SPICE interaction and runtime table generation.
 
 Design goals
 ------------

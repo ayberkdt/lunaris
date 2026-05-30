@@ -43,14 +43,13 @@ from lunaris.cli.common_args import (  # noqa: E402
     str2bool,
 )
 
-# Heavy modules (models/core/loaders/analysis) are intentionally NOT imported
+# Heavy modules (physics/core/loaders/analysis) are intentionally NOT imported
 # at module import time. They are imported inside runtime functions (main/init_*)
-# to keep CLI startup and `import main` resilient even without optional deps.
+# to keep CLI startup and `import lunaris.cli.main` resilient even without optional deps.
 
 if TYPE_CHECKING:
     # Typing-only imports (no runtime cost)
     from lunaris.physics.ephemeris import EphemerisManager
-    from lunaris.core.dynamics import DynamicsEngine
 
 
 
@@ -94,7 +93,7 @@ def init_ephemeris(cfg: SimConfig, tf_s: float) -> "EphemerisManager":
     )
     spice_cfg = replace(cfg.spice, include_third_body=need_body_vectors)
 
-    # Local import: models.ephemeris can be heavy (spiceypy/numba)
+    # Local import: lunaris.physics.ephemeris can be heavy (spiceypy/numba)
     from lunaris.physics.ephemeris import EphemerisManager
 
     return EphemerisManager.from_time_and_spice(

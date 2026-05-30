@@ -1623,187 +1623,6 @@ def figure_perturbation_magnitude(
 # =============================================================================
 
 def draw_table(
-    ax: plt.Axes, 
-    title: str, 
-    rows: List[List[str]], 
-    col_widths: Optional[List[float]] = None
-) -> None:
-    """
-    Renders a full-width, striped statistics table (Metrics, Min, Max, Delta, etc.).
-    
-    Used primarily for the 'Detailed Statistics' section of the report.
-    It applies alternating row colors (zebra striping) for readability.
-    """
-    ax.axis("off")
-    
-    # Title
-    ax.text(
-        0.0, 1.02, title,
-        transform=ax.transAxes, ha="left", va="bottom",
-        fontsize=12, fontweight="bold", color=THEME["text"]
-    )
-
-    if not rows:
-        ax.text(0.5, 0.5, "No Data Available", transform=ax.transAxes, ha="center", color="gray")
-        return
-
-    # Standard Columns for the Statistics Table
-    cols = ["Metric", "Start", "End", "Δ (Change)", "Min", "Max", "Unit"]
-    
-    # Default widths if not provided
-    if not col_widths or len(col_widths) != len(cols):
-        col_widths = [0.22, 0.13, 0.13, 0.12, 0.13, 0.13, 0.14]
-
-    # Create Table
-    tbl = ax.table(
-        cellText=rows,
-        colLabels=cols,
-        cellLoc="center",
-        colLoc="center",
-        colWidths=col_widths,
-        loc="center",
-        bbox=[0.0, 0.0, 1.0, 0.95] # Full width, slightly below title
-    )
-    
-    # Typography
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(9.5)
-    tbl.scale(1.0, 1.3) # More vertical breathing room
-
-    # Styling Colors
-    header_bg = THEME["table_header"]
-    row_even  = THEME["table_row_even"]
-    row_odd   = THEME["table_row_odd"]
-    grid_col  = THEME["grid"]
-    text_col  = THEME["text"]
-
-    # Apply Styles Cell by Cell
-    for (r, c), cell in tbl.get_celld().items():
-        cell.set_edgecolor(grid_col)
-        cell.set_linewidth(0.5)
-        
-        if r == 0:
-            # Header Row
-            cell.set_facecolor(header_bg)
-            cell.set_text_props(fontweight="bold", color=text_col)
-            cell.set_height(cell.get_height() * 1.2)
-        else:
-            # Data Rows (Zebra Striping)
-            bg = row_even if (r % 2 == 0) else row_odd
-            cell.set_facecolor(bg)
-            cell.set_text_props(color=text_col)
-
-
-def draw_kv_block(
-    ax: plt.Axes, 
-    title: str, 
-    items: List[Tuple[str, str]], 
-    *, 
-    ncols: int = 1
-) -> None:
-    """
-    Renders a cleaner 'Key: Value' text block without grid lines.
-    
-    Best used for Configuration summaries (e.g., Mass, Integrator Type).
-    It manually places text for a cleaner look than matplotlib's table.
-    """
-    ax.axis("off")
-    
-    # Title
-    ax.text(
-        0.0, 1.02, title, 
-        transform=ax.transAxes, ha="left", va="bottom",
-        fontsize=12, fontweight="bold", color=THEME["text"]
-    )
-
-    if not items:
-        return
-
-    # Layout Calculations
-    ncols = max(1, int(ncols))
-    n_items = len(items)
-    n_rows = math.ceil(n_items / ncols)
-    
-    row_height = 0.85 / max(n_rows, 1)
-    col_width = 1.0 / ncols
-    top_margin = 0.95
-
-    # Render Items
-    for idx, (key, val) in enumerate(items):
-        row = idx % n_rows
-        col = idx // n_rows
-        
-        x = col * col_width
-        y = top_margin - (row * row_height)
-        
-        # Key (Dimmed color)
-        ax.text(x, y, f"{key}:", 
-                transform=ax.transAxes, ha="left", va="top", 
-                fontsize=10, fontweight="bold", color=THEME["text_dim"])
-        
-        # Value (Dark color)
-        # Offset x slightly to separate Key and Value
-        ax.text(x + 0.12, y, str(val), 
-                transform=ax.transAxes, ha="left", va="top", 
-                fontsize=10, color=THEME["text"])
-
-
-def draw_kv_table(
-    ax: plt.Axes, 
-    title: str, 
-    rows: List[Tuple[str, str]], 
-    *,
-    col_widths: Tuple[float, float] = (0.45, 0.55)
-) -> None:
-    """
-    Renders a large, 2-column summary table (Metric | Value).
-    
-    Used for the 'Primary Orbital Metrics' section on the first page.
-    """
-    ax.axis("off")
-    ax.text(
-        0.0, 1.02, title, 
-        transform=ax.transAxes, ha="left", va="bottom",
-        fontsize=12, fontweight="bold", color=THEME["text"]
-    )
-
-    if not rows:
-        return
-
-    tbl = ax.table(
-        cellText=rows,
-        colLabels=["Metric", "Value"],
-        cellLoc="left",
-        colLoc="left",
-        colWidths=col_widths,
-        loc="upper left",
-        bbox=[0.0, 0.0, 1.0, 0.95]
-    )
-    
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(10)
-    tbl.scale(1.0, 1.6) # Tall rows for importance
-
-    # Styling
-    header_bg = THEME["table_header"]
-    
-    for (r, c), cell in tbl.get_celld().items():
-        cell.set_edgecolor(THEME["grid"])
-        cell.set_linewidth(0.6)
-        
-        if r == 0:
-            cell.set_facecolor(header_bg)
-            cell.set_text_props(fontweight="bold")
-        else:
-            # Alternating colors
-            bg = "#FFFFFF" if r % 2 == 0 else "#F8FAFC"
-            cell.set_facecolor(bg)
-            # Make the Value column (c=1) slightly bolder
-            if c == 1:
-                cell.set_text_props(fontweight="medium")
-
-
-def draw_table(
     ax: plt.Axes,
     title: str,
     rows: List[List[str]],
@@ -2057,7 +1876,6 @@ def effects_from_meta_history(
         "albedo": ("enable_albedo",),
         "thermal": ("enable_thermal", "enable_thermal_ir"),
         "tides": ("enable_tides_k2", "enable_tides_k3"),
-        "tides_legacy": ("enable_solid_tides",),  # only if you still expose it
         "gr": ("enable_relativity_1pn", "enable_relativity"),
     }
 
@@ -2116,8 +1934,6 @@ def effects_from_meta_history(
 
         effects["Solid Tides (k2)"] = _bool_on_in_dict(norm_flags, ("enable_tides_k2",))
         effects["Solid Tides (k3)"] = _bool_on_in_dict(norm_flags, ("enable_tides_k3",))
-        if _bool_on_in_dict(norm_flags, CANON["tides_legacy"]):
-            effects["Solid Tides (k2)"] = True
         effects["General Relativity"] = _bool_on_in_dict(norm_flags, CANON["gr"])
 
     # ----------------------------
@@ -2166,7 +1982,7 @@ def effects_from_meta_history(
             effects["Solar Radiation Pressure"] = _attr_on(*CANON["srp"])
             effects["Lunar Albedo"] = _attr_on(*CANON["albedo"])
             effects["Lunar Thermal IR"] = _attr_on(*CANON["thermal"])
-            effects["Solid Tides (k2)"] = _attr_on("enable_tides_k2") or _attr_on(*CANON["tides_legacy"])
+            effects["Solid Tides (k2)"] = _attr_on("enable_tides_k2")
             effects["Solid Tides (k3)"] = _attr_on("enable_tides_k3")
             effects["General Relativity"] = _attr_on(*CANON["gr"])
 
@@ -2211,7 +2027,7 @@ def effects_from_meta_history(
     effects["Solar Radiation Pressure"] = _lookup_on("enable_srp")
     effects["Lunar Albedo"] = _lookup_on("enable_albedo")
     effects["Lunar Thermal IR"] = _lookup_on("enable_thermal", "enable_thermal_ir")
-    effects["Solid Tides (k2)"] = _lookup_on("enable_tides_k2", "enable_solid_tides")
+    effects["Solid Tides (k2)"] = _lookup_on("enable_tides_k2")
     effects["Solid Tides (k3)"] = _lookup_on("enable_tides_k3")
     effects["General Relativity"] = _lookup_on("enable_relativity_1pn", "enable_relativity")
 
@@ -2470,65 +2286,6 @@ def _make_row(name: str, arr: np.ndarray, unit: str, nd: int, sci: bool = False)
         fmt(st["max"], nd),
         str(unit),
     ]
-
-
-def metrics_rows(
-    history: Mapping[str, Any],
-    elems: Dict[str, np.ndarray],
-) -> Tuple[List[List[str]], List[List[str]]]:
-    """
-    Build the detailed statistics tables (orbital elements + invariants).
-
-    Returns:
-        orbital_rows, inv_rows
-    """
-    # ---- Orbital elements ----
-    a = _as_np(elems.get("a_km", [])).astype(float)
-    e = _as_np(elems.get("e", [])).astype(float)
-    i = _as_np(elems.get("i_deg", [])).astype(float)
-    Om = _as_np(elems.get("raan_deg", [])).astype(float)
-    w = _as_np(elems.get("argp_deg", [])).astype(float)
-
-    orbital_rows: List[List[str]] = []
-    if a.size:  orbital_rows.append(_make_row("Semi-major Axis (a)", a, "km", 3))
-    if e.size:  orbital_rows.append(_make_row("Eccentricity (e)", e, "-", 6))
-    if i.size:  orbital_rows.append(_make_row("Inclination (i)", i, "deg", 4))
-    if Om.size: orbital_rows.append(_make_row("RAAN (Ω)", Om, "deg", 4))
-    if w.size:  orbital_rows.append(_make_row("Arg. Periapsis (ω)", w, "deg", 4))
-
-    # Derived radii (rp, ra)
-    if a.size and e.size:
-        n = int(min(a.size, e.size))
-        if n >= 1:
-            aa = a[:n]
-            ee = e[:n]
-            rp = aa * (1.0 - ee)
-            ra = aa * (1.0 + ee)
-            orbital_rows.append(_make_row("Periapsis Radius (rp)", rp, "km", 3))
-            orbital_rows.append(_make_row("Apoapsis Radius (ra)", ra, "km", 3))
-
-    # ---- Invariants ----
-    inv = extract_invariants(history)
-    inv_rows: List[List[str]] = []
-
-    r = _as_np(inv.get("r_norm_km", []))
-    if r.size:
-        inv_rows.append(_make_row("Position Norm ||r||", r, "km", 3))
-
-    v = _as_np(inv.get("v_norm_kmps", []))
-    if v.size:
-        inv_rows.append(_make_row("Velocity Norm ||v||", v, "km/s", 5))
-
-    E = _as_np(inv.get("energy_Jkg", []))
-    if E.size:
-        inv_rows.append(_make_row("Specific Energy (ε)", E, "J/kg", 4, sci=True))
-
-    h = _as_np(inv.get("h_norm_m2s", []))
-    if h.size:
-        inv_rows.append(_make_row("Ang. Momentum ||h||", h, "m²/s", 4, sci=True))
-
-    return orbital_rows, inv_rows
-
 
 
 # =============================================================================

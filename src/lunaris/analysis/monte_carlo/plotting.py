@@ -51,9 +51,6 @@ try:
     import matplotlib
     matplotlib.use("Agg")   # non-interactive backend for headless runs
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Ellipse
-    from mpl_toolkits.mplot3d import Axes3D
-    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
     _MPL_OK = True
 except ImportError:
     _MPL_OK = False

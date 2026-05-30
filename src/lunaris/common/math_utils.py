@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/common/math_utils.py
+# lunaris/common/math_utils.py
 # -*- coding: utf-8 -*-
 """
 Numba-Accelerated Math Utilities

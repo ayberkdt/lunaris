@@ -473,7 +473,7 @@ DEFAULT_CLOUD_SUITE_CONFIG: CloudSuiteConfig = CloudSuiteConfig()
 # ---------------------------------------------------------------------------
 # Suite presets
 # ---------------------------------------------------------------------------
-SUITE_PRESETS: "Dict[str, CloudSuiteConfig]" = {
+SUITE_PRESETS: "dict[str, CloudSuiteConfig]" = {
     "debug_suite": CloudSuiteConfig(
         train_stratified_uniform_n=50_000,
         train_inverse_r2_n=20_000,

@@ -38,7 +38,7 @@ def _create_card(title: str) -> QtWidgets.QGroupBox:
 
 def test_data_page_reuses_ldem_root_for_albedo_when_requested(tmp_path: Path) -> None:
     app = _app()
-    topo_dir = tmp_path / "topografy_models"
+    topo_dir = tmp_path / "topography_models"
     albedo_dir = tmp_path / "albedo_models"
     topo_dir.mkdir()
     albedo_dir.mkdir()
@@ -245,7 +245,7 @@ def test_theme_has_required_lunar_aurora_tokens() -> None:
 
 def test_data_page_detects_ldem_content(tmp_path: Path) -> None:
     app = _app()
-    topo_dir = tmp_path / "topografy_models"
+    topo_dir = tmp_path / "topography_models"
     topo_dir.mkdir()
     # Create recognizable LDEM files
     (topo_dir / "ldem_64_float.img").write_bytes(b"topo")

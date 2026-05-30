@@ -167,7 +167,6 @@ def find_project_root() -> Path:
         "setup.cfg",
         "requirements.txt",
         ".git",
-        "main.py",
         "data",  # project data folder
     ]
 

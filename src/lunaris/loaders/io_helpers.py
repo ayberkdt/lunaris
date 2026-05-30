@@ -36,7 +36,7 @@ Design goals
 - Safe failure behavior: missing folders or unreadable paths should degrade to
   empty results instead of crashing unrelated workflows.
 - Repository awareness: defaults should match this project's actual layout
-  (`data/topografy_models`, `data/albedo_models`, `data/ephemeris_models`,
+  (`data/topography_models`, `data/albedo_models`, `data/ephemeris_models`,
   `data/assets`).
 """
 
@@ -54,9 +54,10 @@ from typing import Callable, Optional, Sequence
 
 PathLike = str | Path
 
-CANONICAL_PROJECT_MARKERS = ("ST_LRPS",)
-LEGACY_PROJECT_MARKERS = ("LUNAR_SIMULATION",)
-PROJECT_ROOT_MARKERS = CANONICAL_PROJECT_MARKERS + LEGACY_PROJECT_MARKERS
+# Files that unambiguously mark the repository root, independent of the folder
+# name. Folder-name heuristics are intentionally not used so the project can be
+# checked out (or renamed) under any directory.
+PROJECT_ROOT_FILE_MARKERS = ("pyproject.toml", ".git")
 
 CANONICAL_TOPOGRAPHY_DIRS = (
     "data/topography_models",
@@ -64,9 +65,6 @@ CANONICAL_TOPOGRAPHY_DIRS = (
     "data/surface",
     "data/ldem",
     "data/LDEM",
-)
-LEGACY_TOPOGRAPHY_DIRS = (
-    "data/topografy_models",
 )
 
 
@@ -321,7 +319,7 @@ def autodetect_repository_data_roots(
     1. Respect already-configured valid directories.
     2. Respect environment overrides when present.
     3. Search repository-default locations using project-specific naming
-       conventions (`topografy_models`, `albedo_models`, `ephemeris_models`).
+       conventions (`topography_models`, `albedo_models`, `ephemeris_models`).
     4. Prefer a dedicated albedo directory over legacy "reuse LDEM" coupling.
 
     Returns
@@ -337,9 +335,9 @@ def autodetect_repository_data_roots(
     root = Path(project_root).expanduser().resolve()
     data_root = root / "data"
 
-    ldem_env = os.environ.get("LUNARSIM_LDEM_ROOT") or os.environ.get("LDEM_ROOT") or ""
-    albedo_env = os.environ.get("LUNARSIM_ALBEDO_ROOT") or os.environ.get("ALBEDO_ROOT") or ""
-    kernel_env = os.environ.get("LUNARSIM_KERNEL_DIR") or os.environ.get("SPICE_KERNELS") or ""
+    ldem_env = os.environ.get("LUNARIS_LDEM_ROOT") or os.environ.get("LDEM_ROOT") or ""
+    albedo_env = os.environ.get("LUNARIS_ALBEDO_ROOT") or os.environ.get("ALBEDO_ROOT") or ""
+    kernel_env = os.environ.get("LUNARIS_KERNEL_DIR") or os.environ.get("SPICE_KERNELS") or ""
 
     ldem_root = resolve_existing_directory(state.ldem_root) or resolve_existing_directory(ldem_env)
     albedo_root = resolve_existing_directory(state.albedo_root) or resolve_existing_directory(albedo_env)
@@ -349,8 +347,6 @@ def autodetect_repository_data_roots(
     if not ldem_root:
         ldem_candidates = [root / p for p in CANONICAL_TOPOGRAPHY_DIRS]
         ldem_candidates.append(root / "ldem")
-        # Legacy typo retained for existing local datasets
-        ldem_candidates.extend([root / p for p in LEGACY_TOPOGRAPHY_DIRS])
         ldem_root = first_matching_directory(
             ldem_candidates,
             lambda path: directory_looks_like_surface_data(path, keywords=("ldem", "topo", "surface")),
@@ -433,8 +429,11 @@ def project_root_from_path(start_path: PathLike, *, max_levels: int = 6, strict:
     Heuristics
     ----------
     Walking upward from `start_path`, return the first directory that:
-    - is itself named with a marker in `PROJECT_ROOT_MARKERS` (canonical `ST_LRPS` or legacy `LUNAR_SIMULATION`), or
+    - contains a root file marker (`pyproject.toml` or `.git`), or
     - contains `data/assets`
+
+    Discovery is independent of the directory name, so the repository can live
+    under any folder.
 
     If no strong signal is found within `max_levels`:
     - if strict=False, the last visited path is returned (fallback).
@@ -447,7 +446,7 @@ def project_root_from_path(start_path: PathLike, *, max_levels: int = 6, strict:
 
     last = current
     for _ in range(max(1, int(max_levels))):
-        if current.name in PROJECT_ROOT_MARKERS:
+        if any((current / marker).exists() for marker in PROJECT_ROOT_FILE_MARKERS):
             return current
         if (current / "data" / "assets").is_dir():
             return current
@@ -469,8 +468,8 @@ def iter_lunar_map_candidates(
     Search order
     ------------
     1. Explicit path passed by the caller
-    2. `LUNARSIM_LUNAR_MAP` environment variable
-    3. `LUNARSIM_ASSETS_DIR` environment variable + common filenames
+    2. `LUNARIS_LUNAR_MAP` environment variable
+    3. `LUNARIS_ASSETS_DIR` environment variable + common filenames
     4. Canonical repository asset directory: `<PROJECT_ROOT>/data/assets`
     5. Local module-adjacent asset folders
     6. Current working directory fallbacks
@@ -486,11 +485,11 @@ def iter_lunar_map_candidates(
     if explicit_path:
         candidates.append(Path(explicit_path).expanduser())
 
-    env_file = os.environ.get("LUNARSIM_LUNAR_MAP", "").strip()
+    env_file = os.environ.get("LUNARIS_LUNAR_MAP", "").strip()
     if env_file:
         candidates.append(Path(env_file).expanduser())
 
-    env_assets_dir = os.environ.get("LUNARSIM_ASSETS_DIR", "").strip()
+    env_assets_dir = os.environ.get("LUNARIS_ASSETS_DIR", "").strip()
     env_dir = Path(env_assets_dir).expanduser() if env_assets_dir else None
 
     for name in _LUNAR_MAP_NAMES:
