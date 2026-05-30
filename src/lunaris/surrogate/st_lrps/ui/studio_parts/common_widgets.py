@@ -417,7 +417,7 @@ class ValidatedPathEdit(QLineEdit):
 
 class CollapsibleSection(QWidget):
     def __init__(
-        self, title: str = "Gelişmiş Ayarlar", parent: Optional[QWidget] = None
+        self, title: str = "Advanced Settings", parent: Optional[QWidget] = None
     ):
         super().__init__(parent)
         self._title = title
@@ -527,7 +527,7 @@ class LogHighlighter(QSyntaxHighlighter):
         fmt_err.setForeground(QColor("#f87171"))
         fmt_err.setFontWeight(QFont.Weight.Bold)
         for p in [
-            r"(?i)\[HATA\]",
+            r"(?i)\[ERROR\]",
             r"(?i)\bError\b",
             r"(?i)\bException\b",
             r"(?i)\bTraceback\b",
@@ -693,7 +693,7 @@ class LiveLossPlot(QWidget):
         self._card.setLayout(card_layout)
 
         # ----------------------------
-        # Row 1: başlık  |  kontroller
+        # Row 1: title  |  controls
         # ----------------------------
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
@@ -702,9 +702,9 @@ class LiveLossPlot(QWidget):
         title_col = QVBoxLayout()
         title_col.setContentsMargins(0, 0, 0, 0)
         title_col.setSpacing(3)
-        title = QLabel("Canlı Eğitim İzleme")
+        title = QLabel("Live Training Monitor")
         title.setObjectName("lossTitle")
-        subtitle = QLabel("Eğitim / doğrulama kayıp eğrisi  ·  logaritmik ölçek önerilir")
+        subtitle = QLabel("Training / validation loss curve  ·  logarithmic scale recommended")
         subtitle.setObjectName("lossSubtitle")
         title_col.addWidget(title)
         title_col.addWidget(subtitle)
@@ -713,8 +713,8 @@ class LiveLossPlot(QWidget):
         self._chk_log_y = QCheckBox("Log Y")
         self._chk_log_y.setChecked(True)
         self._chk_log_y.setToolTip(
-            "Y eksenini logaritmik ölçekte gösterir.\n"
-            "Kayıp değerleri birkaç büyüklük mertebesinde değiştiğinden bu görünüm önerilir."
+            "Shows the Y axis on a logarithmic scale.\n"
+            "Recommended because loss values span several orders of magnitude."
         )
         self._chk_log_y.toggled.connect(self._on_log_toggle)
         top_row.addWidget(self._chk_log_y)
@@ -733,30 +733,30 @@ class LiveLossPlot(QWidget):
         self._smooth_window.valueChanged.connect(lambda _value: self._update_plot())
         top_row.addWidget(self._smooth_window)
 
-        self._btn_fit = QPushButton("Otomatik Ölçek")
+        self._btn_fit = QPushButton("Auto Scale")
         self._btn_fit.setProperty("plotControl", True)
-        self._btn_fit.setToolTip("Grafiği mevcut veriye otomatik olarak yeniden sığdırır.")
+        self._btn_fit.setToolTip("Automatically refits the plot to the current data.")
         self._btn_fit.clicked.connect(self._auto_range)
         top_row.addWidget(self._btn_fit)
 
-        self._btn_clear = QPushButton("Sıfırla")
+        self._btn_clear = QPushButton("Reset")
         self._btn_clear.setProperty("plotControl", True)
-        self._btn_clear.setToolTip("Canlı grafikteki tüm kayıp geçmişini ve metrikleri sıfırlar.")
+        self._btn_clear.setToolTip("Resets all loss history and metrics in the live plot.")
         self._btn_clear.clicked.connect(self.clear)
         top_row.addWidget(self._btn_clear)
 
         card_layout.addLayout(top_row)
 
         # ----------------------------
-        # Row 2: metrik chip'leri (7 eşit genişlik)
+        # Row 2: metric chips (7 equal widths)
         # ----------------------------
-        self._lbl_train = self._metric_label("Eğitim opt/ref", "—")
-        self._lbl_val   = self._metric_label("Doğrulama",      "—")
-        self._lbl_best  = self._metric_label("En İyi Val",     "—")
-        self._lbl_best_epoch  = self._metric_label("En İyi Epoch",   "—")
-        self._lbl_no_improve  = self._metric_label("İyileşme Yok",   "—")
-        self._lbl_lam_dir     = self._metric_label("λ Yön Ağrl.",    "—")
-        self._lbl_lr          = self._metric_label("Öğr. Hızı",      "—")
+        self._lbl_train = self._metric_label("Train opt/ref", "—")
+        self._lbl_val   = self._metric_label("Validation",    "—")
+        self._lbl_best  = self._metric_label("Best Val",      "—")
+        self._lbl_best_epoch  = self._metric_label("Best Epoch",      "—")
+        self._lbl_no_improve  = self._metric_label("No Improvement",  "—")
+        self._lbl_lam_dir     = self._metric_label("λ Dir Weight",    "—")
+        self._lbl_lr          = self._metric_label("Learning Rate",   "—")
 
         self._lbl_score = self._metric_label("Checkpoint Score", "...")
         self._lbl_formula = self._metric_label("Formula", "N/A")
@@ -793,8 +793,8 @@ class LiveLossPlot(QWidget):
         )
         card_layout.addWidget(self._help_label)
 
-        # durum etiketi (altta ortalanmış)
-        self._lbl_status = QLabel("Eğitim bekleniyor…")
+        # status label (bottom-aligned)
+        self._lbl_status = QLabel("Waiting for training…")
         self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._lbl_status.setStyleSheet("color: #5a647a; font-size: 11px;")
 
@@ -994,8 +994,8 @@ class LiveLossPlot(QWidget):
             self._direction_plot = None
             self._checkpoint_plot = None
             placeholder = QLabel(
-                "pyqtgraph yüklü değil — canlı grafik devre dışı.\n"
-                "Yüklemek için:  pip install pyqtgraph"
+                "pyqtgraph not installed — live plotting disabled.\n"
+                "To install:  pip install pyqtgraph"
             )
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
             placeholder.setStyleSheet(
@@ -1093,7 +1093,7 @@ class LiveLossPlot(QWidget):
                 epoch = int(m_epoch_kv.group(1))
         if epoch is None:
             self._refresh_metric_labels()
-            self._lbl_status.setText(self._checkpoint_status or "Bekleniyor")
+            self._lbl_status.setText(self._checkpoint_status or "Waiting")
             return
 
         self._latest_epoch = int(epoch)
@@ -1610,19 +1610,19 @@ class LiveLossPlot(QWidget):
 
         opt_s  = self._fmt_metric(self._latest_train_opt)
         ref_s  = self._fmt_metric(self._latest_train_ref)
-        self._lbl_train.setText(_chip("Eğitim opt/ref", f"{opt_s} / {ref_s}"))
-        self._lbl_val.setText(_chip("Doğrulama", self._fmt_metric(self._latest_val_ref)))
-        self._lbl_best.setText(_chip("En İyi Val", self._fmt_metric(self._best_val)))
+        self._lbl_train.setText(_chip("Train opt/ref", f"{opt_s} / {ref_s}"))
+        self._lbl_val.setText(_chip("Validation", self._fmt_metric(self._latest_val_ref)))
+        self._lbl_best.setText(_chip("Best Val", self._fmt_metric(self._best_val)))
         self._lbl_best_epoch.setText(_chip(
-            "En İyi Epoch",
+            "Best Epoch",
             str(self._best_epoch) if self._best_epoch is not None else "—",
         ))
         self._lbl_no_improve.setText(_chip(
-            "İyileşme Yok",
+            "No Improvement",
             str(self._epochs_since_improvement) if self._epochs_since_improvement is not None else "—",
         ))
-        self._lbl_lam_dir.setText(_chip("λ Yön Ağrl.", self._fmt_metric(self._latest_lam_dir)))
-        self._lbl_lr.setText(_chip("Öğr. Hızı", self._fmt_metric(latest_lr)))
+        self._lbl_lam_dir.setText(_chip("λ Dir Weight", self._fmt_metric(self._latest_lam_dir)))
+        self._lbl_lr.setText(_chip("Learning Rate", self._fmt_metric(latest_lr)))
 
         self._lbl_score.setText(_chip("Checkpoint Score", self._fmt_metric(self._latest_checkpoint_score)))
         formula = self._best_formula if self._best_formula else "N/A"
@@ -1757,7 +1757,7 @@ class LiveLossPlot(QWidget):
 class ImageGallery(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self._header = QLabel("Sonuç Grafikleri")
+        self._header = QLabel("Result Plots")
         self._header.setStyleSheet(
             "font-weight: 600; color: #c4ccff; font-size: 13px; padding: 4px 2px;"
         )
@@ -1770,7 +1770,7 @@ class ImageGallery(QWidget):
             "QTabBar::scroller { width: 22px; }"
         )
         self._placeholder = QLabel(
-            "Değerlendirme tamamlandığında grafikler burada görünecek."
+            "Plots will appear here when evaluation completes."
         )
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setStyleSheet(
@@ -1789,13 +1789,13 @@ class ImageGallery(QWidget):
         self._tabs.clear()
         d = Path(directory)
         if not d.is_dir():
-            self._placeholder.setText(f"Klasör bulunamadı: {directory}")
+            self._placeholder.setText(f"Folder not found: {directory}")
             self._placeholder.setVisible(True)
             self._tabs.setVisible(False)
             return 0
         pngs = sorted(d.glob("*.png"), key=lambda p: p.name.lower())
         if not pngs:
-            self._placeholder.setText("Çıktı klasöründe .png dosyası bulunamadı.")
+            self._placeholder.setText("No .png files found in the output folder.")
             self._placeholder.setVisible(True)
             self._tabs.setVisible(False)
             return 0
@@ -1863,7 +1863,7 @@ class ImageGallery(QWidget):
     def clear_gallery(self) -> None:
         self._tabs.clear()
         self._placeholder.setText(
-            "Değerlendirme tamamlandığında grafikler burada görünecek."
+            "Plots will appear here when evaluation completes."
         )
         self._placeholder.setVisible(True)
         self._tabs.setVisible(False)
@@ -1881,7 +1881,7 @@ class ProcessPane(QWidget):
         self._stop_hint: str = ""
         self._raw_log_container: Optional[QWidget] = None
 
-        self.status = QLabel("Hazır")
+        self.status = QLabel("Ready")
         self.status.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -1896,17 +1896,17 @@ class ProcessPane(QWidget):
         self.log.setFont(_mono_font())
         self._highlighter = LogHighlighter(self.log.document())
 
-        self._auto_scroll = QCheckBox("Otomatik Kaydırma")
+        self._auto_scroll = QCheckBox("Auto-scroll")
         self._auto_scroll.setChecked(True)
-        self._auto_scroll.setToolTip("Aktifken yeni satırlarda otomatik alta kayar.")
+        self._auto_scroll.setToolTip("When enabled, scrolls to the bottom as new lines arrive.")
         self._auto_scroll.setStyleSheet(
             "QCheckBox { font-size: 11px; color: #7480a8; }"
         )
 
-        self.btn_start = QPushButton("Başlat")
-        self.btn_stop = QPushButton("Durdur")
-        self.btn_clear = QPushButton("Log Temizle")
-        self.btn_open_folder = QPushButton("Çıktı Klasörünü Aç")
+        self.btn_start = QPushButton("Start")
+        self.btn_stop = QPushButton("Stop")
+        self.btn_clear = QPushButton("Clear Log")
+        self.btn_open_folder = QPushButton("Open Output Folder")
         self.btn_open_folder.setProperty("kind", "ghost")
         self.btn_open_folder.setVisible(False)
         self._output_dir: str = ""
@@ -2023,7 +2023,7 @@ class ProcessPane(QWidget):
         self, program: str, args: list[str], workdir: Optional[str] = None
     ) -> None:
         if self.proc and self.proc.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.warning(self, "Çalışıyor", "Zaten bir süreç çalışıyor.")
+            QMessageBox.warning(self, "Running", "A process is already running.")
             return
         self.log.clear()
         self.progress.setValue(0)
@@ -2037,7 +2037,7 @@ class ProcessPane(QWidget):
         if workdir:
             self.proc.setWorkingDirectory(workdir)
         self.append("> " + " ".join([program] + args) + "\n")
-        self.status.setText("Çalışıyor...")
+        self.status.setText("Running...")
         self.btn_start.setEnabled(False)
         self.btn_stop.setEnabled(True)
         self.proc.readyReadStandardOutput.connect(self._on_ready_read)
@@ -2046,18 +2046,18 @@ class ProcessPane(QWidget):
         self.proc.setArguments(args)
         self.proc.start()
         if not self.proc.waitForStarted(3000):
-            self.append("[HATA] Süreç başlatılamadı.")
-            self.status.setText("Hata")
+            self.append("[ERROR] Failed to start process.")
+            self.status.setText("Error")
             self.btn_start.setEnabled(True)
             self.btn_stop.setEnabled(False)
 
     def stop(self) -> None:
         if not self.proc or self.proc.state() == QProcess.ProcessState.NotRunning:
             return
-        self.append("\n[UI] Durdurma istendi...\n")
+        self.append("\n[UI] Stop requested...\n")
         if self._stop_hint:
             self.append(self._stop_hint + "\n")
-        self.status.setText("Durduruluyor...")
+        self.status.setText("Stopping...")
 
         # On Windows, kill the entire process tree (includes grandchild workers)
         # to prevent orphan subprocesses.
@@ -2075,7 +2075,7 @@ class ProcessPane(QWidget):
 
         def kill_if_needed():
             if self.proc and self.proc.state() != QProcess.ProcessState.NotRunning:
-                self.append("[UI] Zorla sonlandırılıyor (kill).\n")
+                self.append("[UI] Force-killing process.\n")
                 self.proc.kill()
 
         QTimer.singleShot(2000, kill_if_needed)
@@ -2089,7 +2089,7 @@ class ProcessPane(QWidget):
                 self.append(line)
 
     def _on_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
-        st = "Bitti" if exit_status == QProcess.ExitStatus.NormalExit else "Çöktü"
+        st = "Done" if exit_status == QProcess.ExitStatus.NormalExit else "Crashed"
         self.status.setText(f"{st} | exit_code={exit_code}")
         self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
@@ -2101,7 +2101,7 @@ class ProcessPane(QWidget):
             if self._output_dir and Path(self._output_dir).is_dir():
                 self.btn_open_folder.setVisible(True)
             _send_os_notification(
-                "Lunar Potential Surrogate", f"İşlem tamamlandı (exit={exit_code})."
+                "Lunar Potential Surrogate", f"Process finished (exit={exit_code})."
             )
         if self._on_finished_hook:
             try:

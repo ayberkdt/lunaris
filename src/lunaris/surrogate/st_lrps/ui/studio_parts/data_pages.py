@@ -286,14 +286,14 @@ class CloudGenTab(QWidget):
         mode_bar = QHBoxLayout()
         mode_bar.setContentsMargins(0, 0, 0, 4)
         mode_bar.setSpacing(8)
-        mode_lbl = QLabel("Mod:")
+        mode_lbl = QLabel("Mode:")
         mode_lbl.setStyleSheet("font-weight: 600; color: #c4ccff;")
         self._mode_combo = QComboBox()
-        self._mode_combo.addItem("Tek Bulut (Single Cloud)", self._MODE_SINGLE)
+        self._mode_combo.addItem("Single Cloud", self._MODE_SINGLE)
         self._mode_combo.addItem("Dataset Suite", self._MODE_SUITE)
         self._mode_combo.setToolTip(
-            "Single Cloud: tek bir .h5/.pt dosyasi uretir.\n"
-            "Dataset Suite: train/val/test/ood + manifest.json seti uretir."
+            "Single Cloud: generates a single .h5/.pt file.\n"
+            "Dataset Suite: generates a train/val/test/ood + manifest.json set."
         )
         mode_bar.addWidget(mode_lbl)
         mode_bar.addWidget(self._mode_combo)
@@ -353,7 +353,7 @@ class CloudGenTab(QWidget):
 
         # ── ProcessPane ──────────────────────────────────────────────────────
         self.runner = ProcessPane()
-        self.runner.btn_start.setText("Uretimi Baslatı")
+        self.runner.btn_start.setText("Start Generation")
         self.runner.btn_start.clicked.connect(self._start)
         self.runner.set_finished_hook(self._on_finished)
         self.runner.set_progress_parser(self._parse_progress)
@@ -420,13 +420,13 @@ class CloudGenTab(QWidget):
         btn_gfc.clicked.connect(self._pick_gfc_path)
         gfc_row = _row_lineedit_with_button(self.gfc_path, btn_gfc)
 
-        form_grav.addRow("Maks. SH Derecesi", self.degree_max)
-        form_grav.addRow("Min. SH Derecesi (taban)", self.degree_min)
+        form_grav.addRow("Max SH Degree", self.degree_max)
+        form_grav.addRow("Min SH Degree (base)", self.degree_min)
         form_grav.addRow("GFC Dosyasi", gfc_row)
         grp_grav.setLayout(form_grav)
 
         # ── Group 2: Spatial Sampling ──────────────────────────────────────
-        grp_spatial = QGroupBox("Uzamsal Ornekleme")
+        grp_spatial = QGroupBox("Spatial Sampling")
         form_spatial = QFormLayout()
         _tune_form(form_spatial)
 
@@ -464,10 +464,10 @@ class CloudGenTab(QWidget):
         self.surface_bias_ratio.setValue(float(_cfg_value(cloud_cfg, "surface_bias_ratio", 0.70)))
         self.surface_bias_ratio.setSingleStep(0.05)
 
-        form_spatial.addRow("Ornek Sayisi", self.n_samples)
-        form_spatial.addRow("Min. Irtifa", self.alt_min_km)
-        form_spatial.addRow("Maks. Irtifa", self.alt_max_km)
-        form_spatial.addRow("Ornekleme Stratejisi", self.sampling_strategy)
+        form_spatial.addRow("Sample Count", self.n_samples)
+        form_spatial.addRow("Min Altitude", self.alt_min_km)
+        form_spatial.addRow("Max Altitude", self.alt_max_km)
+        form_spatial.addRow("Sampling Strategy", self.sampling_strategy)
         form_spatial.addRow("Yuzey Agirlik Orani", self.surface_bias_ratio)
         grp_spatial.setLayout(form_spatial)
 
@@ -488,7 +488,7 @@ class CloudGenTab(QWidget):
 
         self.dtype = QComboBox()
         self.dtype.addItem("float32 - onerilen", "float32")
-        self.dtype.addItem("float64 - yuksek hassasiyet", "float64")
+        self.dtype.addItem("float64 - high precision", "float64")
 
         self.canonical = QCheckBox("Kanonik birimler (boyutsuz)")
         self.canonical.setChecked(bool(_cfg_value(cloud_cfg, "canonical", False)))
@@ -522,7 +522,7 @@ class CloudGenTab(QWidget):
         self.no_multiprocessing.setChecked(bool(_cfg_value(cloud_cfg, "no_multiprocessing", False)))
 
         form_perf.addRow("Yigin Boyutu (Chunk)", self.chunk_size)
-        form_perf.addRow(f"Islemci Sayisi (sistem: {cpu_count})", self.workers)
+        form_perf.addRow(f"Worker Count (system: {cpu_count})", self.workers)
         form_perf.addRow(self.no_multiprocessing)
         grp_perf.setLayout(form_perf)
 
@@ -554,7 +554,7 @@ class CloudGenTab(QWidget):
         suite_cfg = DEFAULT_CLOUD_SUITE_CONFIG
 
         # A) Physics group
-        grp_phys = QGroupBox("Fizik / Derece / Irtifa")
+        grp_phys = QGroupBox("Physics / Degree / Altitude")
         form_phys = QFormLayout()
         _tune_form(form_phys)
 
@@ -573,14 +573,14 @@ class CloudGenTab(QWidget):
         self.s_train_alt_min_km.setRange(0.0, 50_000.0)
         self.s_train_alt_min_km.setValue(float(_cfg_value(suite_cfg, "train_alt_min_km", 200.0)))
         self.s_train_alt_min_km.setSuffix(" km")
-        self.s_train_alt_min_km.setToolTip("Egitim irtifa araliginin alt siniri.")
+        self.s_train_alt_min_km.setToolTip("Lower bound of the training altitude range.")
 
         self.s_train_alt_max_km = QDoubleSpinBox()
         self.s_train_alt_max_km.setDecimals(1)
         self.s_train_alt_max_km.setRange(1.0, 50_000.0)
         self.s_train_alt_max_km.setValue(float(_cfg_value(suite_cfg, "train_alt_max_km", 600.0)))
         self.s_train_alt_max_km.setSuffix(" km")
-        self.s_train_alt_max_km.setToolTip("Egitim irtifa araliginin ust siniri.")
+        self.s_train_alt_max_km.setToolTip("Upper bound of the training altitude range.")
 
         self.s_ood_margin_km = QDoubleSpinBox()
         self.s_ood_margin_km.setDecimals(1)
@@ -599,10 +599,10 @@ class CloudGenTab(QWidget):
         btn_s_gfc.clicked.connect(self._pick_suite_gfc_path)
         s_gfc_row = _row_lineedit_with_button(self.s_gfc_path, btn_s_gfc)
 
-        form_phys.addRow("Derece Min (taban)", self.s_degree_min)
-        form_phys.addRow("Derece Max (hedef)", self.s_degree_max)
-        form_phys.addRow("Egitim Alt Min", self.s_train_alt_min_km)
-        form_phys.addRow("Egitim Alt Max", self.s_train_alt_max_km)
+        form_phys.addRow("Degree Min (base)", self.s_degree_min)
+        form_phys.addRow("Degree Max (target)", self.s_degree_max)
+        form_phys.addRow("Training Alt Min", self.s_train_alt_min_km)
+        form_phys.addRow("Training Alt Max", self.s_train_alt_max_km)
         form_phys.addRow("OOD Marjin", self.s_ood_margin_km)
         form_phys.addRow("GFC Dosyasi", s_gfc_row)
         grp_phys.setLayout(form_phys)
@@ -616,25 +616,25 @@ class CloudGenTab(QWidget):
         self.s_train_su_n.setRange(0, 100_000_000)
         self.s_train_su_n.setValue(int(_cfg_value(suite_cfg, "train_stratified_uniform_n", 2_000_000)))
         self.s_train_su_n.setSingleStep(100_000)
-        self.s_train_su_n.setToolTip("Katmanlı düzgün dağılım (stratified uniform) nokta sayısı.")
+        self.s_train_su_n.setToolTip("Number of stratified-uniform points.")
 
         self.s_train_ir2_n = QSpinBox()
         self.s_train_ir2_n.setRange(0, 100_000_000)
         self.s_train_ir2_n.setValue(int(_cfg_value(suite_cfg, "train_inverse_r2_n", 1_000_000)))
         self.s_train_ir2_n.setSingleStep(100_000)
-        self.s_train_ir2_n.setToolTip("Ters-r2 (yüzeye yakın odaklı) nokta sayısı.")
+        self.s_train_ir2_n.setToolTip("Number of inverse-r² (surface-focused) points.")
 
         self.s_train_rm_n = QSpinBox()
         self.s_train_rm_n.setRange(0, 100_000_000)
         self.s_train_rm_n.setValue(int(_cfg_value(suite_cfg, "train_residual_mag_n", 1_000_000)))
         self.s_train_rm_n.setSingleStep(100_000)
-        self.s_train_rm_n.setToolTip("Artık ivme büyüklüğüne göre ağırlıklı örnekleme nokta sayısı.")
+        self.s_train_rm_n.setToolTip("Number of points sampled with weighting by residual-acceleration magnitude.")
 
         self.s_train_bb_n = QSpinBox()
         self.s_train_bb_n.setRange(0, 100_000_000)
         self.s_train_bb_n.setValue(int(_cfg_value(suite_cfg, "train_boundary_n", 1_000_000)))
         self.s_train_bb_n.setSingleStep(100_000)
-        self.s_train_bb_n.setToolTip("Sınır tamponu (alt/üst irtifa kenarları) nokta sayısı.")
+        self.s_train_bb_n.setToolTip("Number of boundary-buffer points (lower/upper altitude edges).")
 
         self._suite_total_lbl = QLabel("")
         self._suite_total_lbl.setStyleSheet("color: #7c8dc7; font-weight: bold;")
@@ -810,7 +810,7 @@ class CloudGenTab(QWidget):
 
         self.s_dtype = QComboBox()
         self.s_dtype.addItem("float32 - onerilen", "float32")
-        self.s_dtype.addItem("float64 - yuksek hassasiyet", "float64")
+        self.s_dtype.addItem("float64 - high precision", "float64")
 
         form_suite_out.addRow("Suite Adi", self.s_suite_name)
         form_suite_out.addRow("Cikti Klasoru", suite_out_row)
@@ -822,7 +822,7 @@ class CloudGenTab(QWidget):
         # G) Suite actions
         btn_open_suite_folder = QPushButton("Suite Klasorunu Ac")
         btn_open_suite_folder.clicked.connect(self._open_suite_folder)
-        btn_apply_to_train = QPushButton("Egitim Sekmesine Uygula")
+        btn_apply_to_train = QPushButton("Apply to Training Tab")
         btn_apply_to_train.clicked.connect(self._apply_suite_to_train)
         actions_row = QHBoxLayout()
         actions_row.setSpacing(8)
@@ -1202,7 +1202,7 @@ class CloudGenTab(QWidget):
         mode = self._mode_combo.currentData()
         self._stack.setCurrentIndex(int(mode))
         self._sync_banner.setVisible(False)
-        btn_label = "Suite Uretimini Baslatı" if mode == self._MODE_SUITE else "Bulut Uretimini Baslatı"
+        btn_label = "Start Suite Generation" if mode == self._MODE_SUITE else "Start Cloud Generation"
         self.runner.btn_start.setText(btn_label)
 
     def _update_suite_total_label(self) -> None:
@@ -1587,10 +1587,10 @@ class CloudGenTab(QWidget):
         if ok:
             self._emit_params_changed()
             msg = (
-                "Bulut uretimi tamamlandi! "
-                f"Irtifa: {self.alt_min_km.value():.0f}-{self.alt_max_km.value():.0f} km  |  "
-                f"Derece: {self.degree_min.value()}->{self.degree_max.value()}  |  "
-                "Egitim sekmesi senkronize edildi."
+                "Cloud generation complete! "
+                f"Altitude: {self.alt_min_km.value():.0f}-{self.alt_max_km.value():.0f} km  |  "
+                f"Degree: {self.degree_min.value()}->{self.degree_max.value()}  |  "
+                "Training tab synchronized."
             )
             self._sync_banner.setText(msg)
             self._sync_banner.setVisible(True)
@@ -1627,7 +1627,7 @@ class CloudGenTab(QWidget):
                         break
 
         self._last_suite_dir = suite_dir
-        msg = "Suite uretimi tamamlandi!"
+        msg = "Suite generation complete!"
         if suite_dir:
             msg += f"  Klasor: {suite_dir}"
         self._sync_banner.setText(msg)
@@ -1843,7 +1843,7 @@ class CloudAnalysisTab(QWidget):
         self.seed.setRange(0, 2_147_483_647)
         self.seed_val = 123
         self.seed.setValue(123)
-        self.seed.setToolTip("Ornekleme tohumu (reproducible)")
+        self.seed.setToolTip("Sampling seed (reproducible)")
 
         self.alt_min_km = QDoubleSpinBox()
         self.alt_min_km.setRange(-1.0, 100_000.0)
@@ -1870,11 +1870,11 @@ class CloudAnalysisTab(QWidget):
         self.dump_json = QCheckBox("summary.json kaydet")
         self.dump_json.setChecked(True)
 
-        form_params.addRow("Ornek Sayisi", self.sample_n)
+        form_params.addRow("Sample Count", self.sample_n)
         form_params.addRow("Tohum", self.seed)
-        form_params.addRow("Min Irtifa (km)", self.alt_min_km)
-        form_params.addRow("Max Irtifa (km)", self.alt_max_km)
-        form_params.addRow("Scatter Nokta Sayisi", self.scatter_n)
+        form_params.addRow("Min Altitude (km)", self.alt_min_km)
+        form_params.addRow("Max Altitude (km)", self.alt_max_km)
+        form_params.addRow("Scatter Point Count", self.scatter_n)
         form_params.addRow(self.no_plots)
         form_params.addRow(self.dump_json)
         grp_params.setLayout(form_params)
@@ -1914,7 +1914,7 @@ class CloudAnalysisTab(QWidget):
             _tune_inputs(g)
 
         self.runner = ProcessPane()
-        self.runner.btn_start.setText("Analizi Baslat")
+        self.runner.btn_start.setText("Start Analysis")
         self.runner.btn_start.clicked.connect(self._start)
         self.runner.set_progress_parser(self._parse_progress)
         self.runner.set_finished_hook(self._on_finished)

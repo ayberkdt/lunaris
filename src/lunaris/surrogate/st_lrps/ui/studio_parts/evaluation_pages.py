@@ -186,21 +186,21 @@ class STLRPSEvalTab(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
 
-        grp_input = QGroupBox("Girdi Dosyaları")
+        grp_input = QGroupBox("Input Files")
         form_input = QFormLayout()
         _tune_form(form_input)
 
         self.model_dir = ValidatedPathEdit(
-            placeholder="Boş → en yeni run klasörü", check_file=False
+            placeholder="Empty → latest run folder", check_file=False
         )
-        btn_model = QPushButton("Seç…")
+        btn_model = QPushButton("Select…")
         btn_model.clicked.connect(self._pick_model_dir)
         model_row = _row_lineedit_with_button(self.model_dir, btn_model)
 
         self.data = ValidatedPathEdit(
-            placeholder="Boş → otomatik aranır", check_file=True
+            placeholder="Empty → auto-detected", check_file=True
         )
-        btn_data = QPushButton("Seç…")
+        btn_data = QPushButton("Select…")
         btn_data.clicked.connect(self._pick_data)
         data_row = _row_lineedit_with_button(self.data, btn_data)
 
@@ -242,7 +242,7 @@ class STLRPSEvalTab(QWidget):
         self.out_dir.setToolTip(
             f"Leave empty for run-local evaluation output. Standalone evaluation folders should use {EVALUATION_OUTPUT_ROOT}."
         )
-        btn_out = QPushButton("Seç…")
+        btn_out = QPushButton("Select…")
         btn_out.clicked.connect(self._pick_out_dir)
         out_row = _row_lineedit_with_button(self.out_dir, btn_out)
         self.run_artifact_badge = QLabel("No run selected")
@@ -255,21 +255,21 @@ class STLRPSEvalTab(QWidget):
             "run_manifest.json-aware artifact summary will appear here."
         )
 
-        form_input.addRow("Model Klasörü", model_row)
-        form_input.addRow("Test Dataseti", data_row)
+        form_input.addRow("Model Folder", model_row)
+        form_input.addRow("Test Dataset", data_row)
         form_input.addRow("Independent Test Dataset", test_data_row)
         form_input.addRow("OOD Dataset", ood_data_row)
         form_input.addRow(self.use_config_datasets)
         form_input.addRow(self.export_hard_samples)
         form_input.addRow("Hard sample count", self.hard_sample_count)
         form_input.addRow("Hard sample metric", self.hard_sample_metric)
-        form_input.addRow("HDF5 Dataset Adı", self.dataset_name)
-        form_input.addRow("Çıktı Klasörü", out_row)
+        form_input.addRow("HDF5 Dataset Name", self.dataset_name)
+        form_input.addRow("Output Folder", out_row)
         form_input.addRow("Artifact Status", self.run_artifact_badge)
         form_input.addRow("Artifact Summary", self.run_artifact_summary)
         grp_input.setLayout(form_input)
 
-        grp_hw = QGroupBox("Donanım ve İşlem")
+        grp_hw = QGroupBox("Hardware and Processing")
         form_hw = QFormLayout()
         _tune_form(form_hw)
         self.device = QComboBox()
@@ -281,16 +281,16 @@ class STLRPSEvalTab(QWidget):
         self.a_sign.setDecimals(1)
         self.a_sign.setRange(-10.0, 10.0)
         self.a_sign.setValue(1.0)
-        form_hw.addRow("Cihaz", self.device)
-        form_hw.addRow("Batch Boyutu", self.batch_size)
-        form_hw.addRow("İvme İşareti", self.a_sign)
+        form_hw.addRow("Device", self.device)
+        form_hw.addRow("Batch Size", self.batch_size)
+        form_hw.addRow("Acceleration Sign", self.a_sign)
         grp_hw.setLayout(form_hw)
 
-        grp_spatial = QGroupBox("Mekansal Analiz")
+        grp_spatial = QGroupBox("Spatial Analysis")
         form_spatial = QFormLayout()
         _tune_form(form_spatial)
         self.r_ref_m = QLineEdit("")
-        self.r_ref_m.setPlaceholderText("Boş → Ay yarıçapı")
+        self.r_ref_m.setPlaceholderText("Empty → lunar radius")
         self.alt_bin_km = QDoubleSpinBox()
         self.alt_bin_km.setDecimals(2)
         self.alt_bin_km.setRange(1.0, 10_000.0)
@@ -299,19 +299,19 @@ class STLRPSEvalTab(QWidget):
         self.start.setRange(0, 2_147_483_647)
         self.start.setValue(0)
         self.end = QLineEdit("")
-        self.end.setPlaceholderText("Boş → EOF")
+        self.end.setPlaceholderText("Empty → EOF")
         self.max_points = QSpinBox()
         self.max_points.setRange(10_000, 50_000_000)
         self.max_points.setValue(500_000)
-        form_spatial.addRow("Referans Yarıçap (m)", self.r_ref_m)
-        form_spatial.addRow("İrtifa Bin (km)", self.alt_bin_km)
-        form_spatial.addRow("Başlangıç", self.start)
-        form_spatial.addRow("Bitiş", self.end)
-        form_spatial.addRow("Nokta Limiti", self.max_points)
+        form_spatial.addRow("Reference Radius (m)", self.r_ref_m)
+        form_spatial.addRow("Altitude Bin (km)", self.alt_bin_km)
+        form_spatial.addRow("Start", self.start)
+        form_spatial.addRow("End", self.end)
+        form_spatial.addRow("Point Limit", self.max_points)
         grp_spatial.setLayout(form_spatial)
 
         self.extra_args = QLineEdit("")
-        self.extra_args.setPlaceholderText("Ek CLI argümanları")
+        self.extra_args.setPlaceholderText("Extra CLI arguments")
 
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
@@ -321,7 +321,7 @@ class STLRPSEvalTab(QWidget):
         grid.addWidget(grp_spatial, 1, 1)
         extra_f = QFormLayout()
         _tune_form(extra_f)
-        extra_f.addRow("Ek CLI", self.extra_args)
+        extra_f.addRow("Extra CLI", self.extra_args)
         extra_w = QWidget()
         extra_w.setLayout(extra_f)
         grid.addWidget(extra_w, 2, 0, 1, 2)
@@ -331,7 +331,7 @@ class STLRPSEvalTab(QWidget):
             _tune_inputs(g)
 
         self.runner = ProcessPane()
-        self.runner.btn_start.setText("Değerlendirmeyi Başlat")
+        self.runner.btn_start.setText("Start Evaluation")
         self.runner.btn_start.clicked.connect(self._start)
         self.runner.set_progress_parser(self._parse_progress)
         self.runner.set_finished_hook(self._on_eval_finished)
@@ -369,7 +369,7 @@ class STLRPSEvalTab(QWidget):
 
     def _pick_model_dir(self):
         d = QFileDialog.getExistingDirectory(
-            self, "Model Klasörü", self.model_dir.text() or str(SCRIPT_DIR)
+            self, "Model Folder", self.model_dir.text() or str(SCRIPT_DIR)
         )
         if d:
             self.model_dir.setText(_norm_path(d))
@@ -432,7 +432,7 @@ class STLRPSEvalTab(QWidget):
 
     def _pick_out_dir(self):
         d = QFileDialog.getExistingDirectory(
-            self, "Çıktı", self.out_dir.text() or str(EVALUATION_OUTPUT_ROOT)
+            self, "Output", self.out_dir.text() or str(EVALUATION_OUTPUT_ROOT)
         )
         if d:
             self.out_dir.setText(_norm_path(d))
@@ -495,19 +495,19 @@ class STLRPSEvalTab(QWidget):
 
     def _start(self):
         if not EVAL_CLI_PATH.exists():
-            QMessageBox.critical(self, "Bulunamadı", "st_lrps/evaluation/cli.py gerekli.")
+            QMessageBox.critical(self, "Not Found", "st_lrps/evaluation/cli.py is required.")
             return
         args = ["-u", "-m", EVAL_CLI_MODULE]
         md = self.model_dir.text().strip()
         if md:
             if not Path(md).exists():
-                QMessageBox.critical(self, "Bulunamadı", f"Model:\n{md}")
+                QMessageBox.critical(self, "Not Found", f"Model:\n{md}")
                 return
             args += ["--model-dir", md]
         dp = self.data.text().strip()
         if dp:
             if not Path(dp).exists():
-                QMessageBox.critical(self, "Bulunamadı", f"Dataset:\n{dp}")
+                QMessageBox.critical(self, "Not Found", f"Dataset:\n{dp}")
                 return
             args += ["--data", dp]
         for flag, path in (
@@ -516,7 +516,7 @@ class STLRPSEvalTab(QWidget):
         ):
             if path:
                 if not Path(path).exists():
-                    QMessageBox.critical(self, "Bulunamadı", f"{flag}:\n{path}")
+                    QMessageBox.critical(self, "Not Found", f"{flag}:\n{path}")
                     return
                 args += [flag, path]
         if self.use_config_datasets.isChecked():
@@ -600,7 +600,7 @@ class STLRPSEvalTab(QWidget):
             all_imgs.sort(key=_sort_key)
             cnt = self._gallery.load_images(all_imgs)
             if cnt:
-                self.runner.append(f"\n[UI] {cnt} grafik yüklendi: {out_dir}")
+                self.runner.append(f"\n[UI] {cnt} plots loaded: {out_dir}")
             self.runner.set_output_dir(out_dir)
             self.runner.btn_open_folder.setVisible(True)
 

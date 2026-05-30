@@ -954,10 +954,10 @@ def _apply_smoothstep(t: float) -> float:
     Applies Cubic Hermite interpolation. 
     Expects t in [0, 1]. Clamps internally to ensure stability.
     """
-    # Mevcut clamp fonksiyonunu kullanarak t'yi [0, 1] arasına hapsediyoruz.
+    # Clamp t to [0, 1] using the existing clamp helper.
     t_clamped = clamp(t, 0.0, 1.0)
-    
-    # S-Curve (Smoothstep) formülü
+
+    # S-curve (smoothstep) formula
     return t_clamped * t_clamped * (3.0 - 2.0 * t_clamped)
 
 

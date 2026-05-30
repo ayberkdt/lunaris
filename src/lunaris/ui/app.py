@@ -1152,7 +1152,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_page_data(self) -> QtWidgets.QWidget:
         from lunaris.ui.widgets.data_files_page import DataPage, DataFilesState
 
-        # başlangıç state'in MainWindow'da tuttuğun değerlerden gelsin:
+        # Initial state comes from the values held on MainWindow:
         init = DataFilesState(
             ldem_root=getattr(self, "ldem_root_path", "") or "",
             albedo_root=getattr(self, "albedo_root_path", "") or "",

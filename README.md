@@ -4,16 +4,40 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://pypi.org/classifiers/)
 
-Lunaris is a Python framework for high-fidelity lunar-orbit propagation and gravity modeling. It bundles spherical-harmonic lunar gravity, configurable physical force models, orbit propagation, Monte Carlo analysis, validation harnesses, visualization tools, and a PySide6 desktop UI.
+Lunaris is a Python framework for lunar-orbit propagation and gravity modeling. It bundles spherical-harmonic lunar gravity, configurable physical force models, orbit propagation, Monte Carlo analysis, validation harnesses, visualization tools, and a PySide6 desktop UI.
 
 It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) — a neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a residual scalar potential above a lower-degree spherical-harmonic baseline, with its own training, evaluation, and Studio UI.
 
+> **Project status.** Lunaris is an **alpha-stage research prototype**
+> (`Development Status :: 3 - Alpha`, version 0.1.0). It is intended for research
+> and experimentation: APIs, trained artifacts, and reported benchmark numbers
+> may change between versions, and not every configurable force model is
+> implemented yet (see [Force models](#force-models)).
+
 ## Overview
 
-Lunaris supports lunar-orbit propagation with configurable physical force models (spherical-harmonic gravity, third-body, solar radiation pressure, surface, relativity), Monte Carlo workflows, validation harnesses, report generation, and PySide6-based desktop workflows. When the ST-LRPS surrogate is enabled, runtime acceleration is obtained from the learned potential gradient and combined with the lower-degree spherical-harmonic baseline.
+Lunaris supports lunar-orbit propagation with configurable physical force models (spherical-harmonic gravity, third-body, Earth J2, solar radiation pressure, lunar albedo, relativity — see [Force models](#force-models)), Monte Carlo workflows, validation harnesses, report generation, and PySide6-based desktop workflows. When the ST-LRPS surrogate is enabled, runtime acceleration is obtained from the learned potential gradient and combined with the lower-degree spherical-harmonic baseline.
 
 Accuracy, runtime, and stability depend on the selected data, force-model configuration, trained artifacts, and validation scenario. Treat validation outputs as run-specific evidence rather than a blanket guarantee.
+
+### Force models
+
+Implemented and wired into the propagator (`lunaris.core.dynamics`):
+
+- Spherical-harmonic lunar gravity (and the ST-LRPS surrogate-gravity model)
+- Third-body perturbations (Sun, Earth)
+- Earth oblateness (differential J2)
+- Solar radiation pressure (with eclipse handling)
+- Lunar albedo (reflected-solar) surface radiation
+- First-order post-Newtonian relativity
+
+Planned / not yet implemented — the configuration flags exist, but enabling them
+currently raises `NotImplementedError` in `lunaris.core.dynamics`:
+
+- Lunar thermal (IR) emission (`enable_thermal`)
+- Solid tides (`enable_tides_k2`, `enable_tides_k3`)
 
 ## Documentation
 
@@ -27,25 +51,27 @@ Accuracy, runtime, and stability depend on the selected data, force-model config
 
 ## Repository Architecture
 
-The repository uses a `src/` package layout. The installable package is
-`lunaris`; ST-LRPS remains a named surrogate family under
-`lunaris.surrogate.st_lrps`. The map below is a quick orientation — see
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the layered design, data flow,
-configuration model, perturbation flags, and Monte Carlo internals.
+The repository uses a `src/` package layout. The propagation framework is
+organized into **four strict layers** — a layer never imports from a layer above
+it — with a few dependency-light support packages alongside them. ST-LRPS remains
+a named surrogate family under `lunaris.surrogate.st_lrps`. The map below is a
+quick orientation; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
+canonical layered design, data flow, configuration model, perturbation flags, and
+Monte Carlo internals.
 
 ```text
 src/lunaris/
-  common/          shared constants, dataclasses, validation helpers
-  loaders/         gravity/topography/ephemeris/data loading
-  physics/         physical/environment models and adapters
-  core/            dynamics, propagation, Monte Carlo backend, configuration
-  analysis/        post-processing, reports, Monte Carlo analysis
-  visualization/   standalone visualization tools
-  cli/             shared CLI argument helpers and main launcher
-  ui/              general Lunar Orbit Simulator desktop UI
-    widgets/       desktop UI page components
+  common/          [layer 1] shared constants, config dataclasses, math/time helpers
+  physics/         [layer 2] Numba force-model kernels, ephemeris (SPICE), gravity adapters
+  core/            [layer 3] config (SimConfig SSOT), dynamics RHS, propagator, events, Monte Carlo
+  analysis/        [layer 4] post-processing, reports, Monte Carlo analysis
+  visualization/   [layer 4] standalone visualization tools
+  ui/              [layer 4] Lunar Orbit Simulator desktop UI (PySide6)
+    widgets/                 desktop UI page components
+  loaders/         (support) gravity / topography / ephemeris / data loading for layers 2–3
+  cli/             (support) console entry points and shared CLI argument helpers
   surrogate/
-    st_lrps/       Sobolev-Trained Lunar Residual Potential Surrogate package
+    st_lrps/       Sobolev-Trained Lunar Residual Potential Surrogate family
       data/        dataset definitions, spatial cloud generation, dataset loading
       training/    ST-LRPS training config, CLI, engine, losses, metrics
       networks/    neural network architecture definitions
@@ -163,6 +189,17 @@ Runtime import example:
 ```python
 from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
 ```
+
+At runtime the surrogate evaluates the learned **scalar residual potential** and
+obtains the residual acceleration by autograd differentiation of that potential
+(`runtime_model_kind="potential_autograd"`), then adds it to the lower-degree
+spherical-harmonic baseline. This is currently the only implemented runtime; the
+distilled direct-force path (`runtime_model_kind="force_direct"` /
+`DirectForceRuntime`) is reserved for future work and raises `NotImplementedError`.
+Because each acceleration evaluation is a network forward pass plus an autograd
+pass, the runtime speedups reported below are obtained in batched / GPU
+configurations — see [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) for
+the exact settings.
 
 Model target semantics are recorded explicitly through a `target_contract` in
 new configs/checkpoints. The contract distinguishes residual labels from
