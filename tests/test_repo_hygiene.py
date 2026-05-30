@@ -217,8 +217,9 @@ def test_readme_sanity():
     
     content = readme_path.read_text(encoding='utf-8')
     
-    assert "ST-LRPS" in content, "README title must contain ST-LRPS"
-    
+    assert "# Lunaris" in content, "README must be titled with the Lunaris framework"
+    assert "ST-LRPS" in content, "README must mention the ST-LRPS surrogate component"
+
     for banned in [*BANNED_PROJECT_NAMES, OLD_PACKAGE_PATH]:
         assert banned not in content, "README must not contain stale project identity or package paths"
 

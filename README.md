@@ -1,13 +1,17 @@
-# ST-LRPS: Sobolev-Trained Lunar Residual Potential Surrogate
+# Lunaris
+
+**Lunar orbit propagation and gravity-modeling framework.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-ST-LRPS is a lunar gravity modeling and propagation framework centered on a Sobolev-trained residual-potential surrogate model. The repository includes spherical-harmonic gravity modeling, ST-LRPS training/evaluation/runtime inference, orbit propagation, Monte Carlo analysis, validation tools, visualization tools, and a desktop UI.
+Lunaris is a Python framework for high-fidelity lunar-orbit propagation and gravity modeling. It bundles spherical-harmonic lunar gravity, configurable physical force models, orbit propagation, Monte Carlo analysis, validation harnesses, visualization tools, and a PySide6 desktop UI.
+
+It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) — a neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a residual scalar potential above a lower-degree spherical-harmonic baseline, with its own training, evaluation, and Studio UI.
 
 ## Overview
 
-The framework supports lunar-orbit propagation with configurable physical force models, spherical-harmonic lunar gravity, optional ST-LRPS residual-potential inference, Monte Carlo workflows, validation harnesses, report generation, and PySide6-based desktop workflows. ST-LRPS is designed to learn a residual scalar potential above a lower-degree spherical-harmonic baseline; runtime acceleration can then be obtained from the learned potential gradient and combined with the baseline gravity model.
+Lunaris supports lunar-orbit propagation with configurable physical force models (spherical-harmonic gravity, third-body, solar radiation pressure, surface, relativity), Monte Carlo workflows, validation harnesses, report generation, and PySide6-based desktop workflows. When the ST-LRPS surrogate is enabled, runtime acceleration is obtained from the learned potential gradient and combined with the lower-degree spherical-harmonic baseline.
 
 Accuracy, runtime, and stability depend on the selected data, force-model configuration, trained artifacts, and validation scenario. Treat validation outputs as run-specific evidence rather than a blanket guarantee.
 
