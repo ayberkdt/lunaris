@@ -270,6 +270,7 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     is_lunar_body_signature,
     looks_like_lunar_run_config,
 )
+from lunaris.physics.surrogate_gravity import find_latest_st_lrps_model_dir
 
 
 # -----------------------------
@@ -1166,6 +1167,377 @@ def benchmark_latency_ms(
 # -----------------------------
 # Main evaluation
 # -----------------------------
+def _save_evaluation_plots(a_mag_err, a_pred_mag, a_pred_vec_np, a_rel_floor_abs, a_true_mag, a_true_vec_np, a_vec_err_norm_np, alt_bin_km, alt_km_all, ang_deg_all, ang_deg_plot, masked_ang_deg, ood_table, plots_dir, u_err, u_pred, u_rel_floor_abs, u_true):
+    save_parity_plot(
+        y_true=u_true.reshape(-1),
+        y_pred=u_pred.reshape(-1),
+        path=plots_dir / "potential_parity.png",
+        title="Potential: prediction vs truth",
+    )
+    save_parity_plot(
+        y_true=u_true.reshape(-1),
+        y_pred=u_pred.reshape(-1),
+        path=plots_dir / "parity_U.png",
+        title="Potential: prediction vs truth",
+    )
+
+    rel_a_all = bounded_relative_error_pct(a_pred_mag, a_true_mag, rel_floor_abs=a_rel_floor_abs)
+    save_scatter_altitude(
+        alt_km=alt_km_all.reshape(-1),
+        rel_err_pct=a_vec_err_norm_np.reshape(-1),
+        path=plots_dir / "accel_vector_error_vs_altitude.png",
+        title="Acceleration vector error norm vs altitude",
+    )
+    save_scatter_altitude(
+        alt_km=alt_km_all.reshape(-1),
+        rel_err_pct=rel_a_all.reshape(-1),
+        path=plots_dir / "scatter_relerr_accel_vs_alt.png",
+        title="|a| bounded relative error vs altitude",
+    )
+    save_scatter_altitude(
+        alt_km=alt_km_all.reshape(-1),
+        rel_err_pct=ang_deg_all.reshape(-1),
+        path=plots_dir / "accel_angular_error_vs_altitude.png",
+        title="Acceleration angular error vs altitude",
+    )
+
+    save_log_hist(u_err, plots_dir / "hist_abs_err_U_log.png", "U absolute error histogram")
+    save_log_hist(a_mag_err, plots_dir / "hist_abs_err_accelmag_log.png", "|a| absolute error histogram")
+    save_log_hist(a_vec_err_norm_np.reshape(-1), plots_dir / "accel_error_histogram.png", "Acceleration vector error histogram")
+
+    # Percentage error histograms
+    rel_u_pct = bounded_relative_error_pct(u_pred.reshape(-1), u_true.reshape(-1), rel_floor_abs=u_rel_floor_abs)
+    save_pct_error_hist(
+        rel_u_pct,
+        plots_dir / "hist_rel_err_U_pct.png",
+        "U bounded relative error distribution",
+    )
+    save_pct_error_hist(
+        rel_a_all.reshape(-1),
+        plots_dir / "hist_rel_err_accel_pct.png",
+        "|a| bounded relative error distribution",
+    )
+
+    # Altitude-binned MAPE bar charts
+    save_binned_mae_pct(
+        alt_km_all.reshape(-1),
+        rel_u_pct,
+        plots_dir / "binned_mape_U_vs_alt.png",
+        "U bounded mean absolute % error by altitude",
+        bin_km=alt_bin_km,
+    )
+    save_binned_mae_pct(
+        alt_km_all.reshape(-1),
+        rel_a_all.reshape(-1),
+        plots_dir / "binned_mape_accel_vs_alt.png",
+        "|a| bounded mean absolute % error by altitude",
+        bin_km=alt_bin_km,
+    )
+
+    # angular error histogram
+    if ang_deg_plot:
+        ang_plot = np.concatenate(ang_deg_plot, axis=0).reshape(-1)
+        save_hist_angular_deg(ang_plot, plots_dir / "hist_angular_err_deg.png", "Angular error (deg) histogram")
+        save_hist_angular_deg(ang_plot, plots_dir / "angular_error_hist.png", "Angular error (deg) histogram")
+
+    # masked angular error histogram (excludes near-zero residuals below direction floor)
+    if masked_ang_deg.size > 0:
+        save_hist_angular_deg(
+            masked_ang_deg,
+            plots_dir / "angular_error_masked.png",
+            "Masked Residual Angular Error (||da_true|| > floor)",
+        )
+
+    # OOD bar chart: accel RMSE for lower_ood / in_band / upper_ood
+    if ood_table is not None:
+        try:
+            _ood_labels, _ood_vals = [], []
+            for _rk in ("lower_ood", "in_band", "upper_ood"):
+                _r = ood_table.get(_rk, {})
+                _ood_labels.append(_r.get("region", _rk))
+                _ood_vals.append(float(_r.get("RMSE_accel_norm", 0.0)))
+            if any(v > 0 for v in _ood_vals):
+                apply_professional_style()
+                _colors = ["#E74C3C", "#2ECC71", "#3498DB"]
+                _fig, _ax = plt.subplots(figsize=(7, 4.5))
+                _bars = _ax.bar(_ood_labels, _ood_vals, color=_colors, alpha=0.85, edgecolor="white")
+                _ax.set_ylabel("Accel RMSE [m/s²]")
+                _ax.set_title("|a| RMSE by Altitude Region (OOD ±10%)", pad=12)
+                for _b, _v in zip(_bars, _ood_vals):
+                    if _v > 0:
+                        _ax.text(_b.get_x() + _b.get_width() / 2, _v * 1.02, f"{_v:.3e}",
+                                 ha="center", va="bottom", fontsize=8)
+                _fig.tight_layout()
+                _fig.savefig(plots_dir / "ood_bar_accel_rmse.png", dpi=300, bbox_inches="tight")
+                plt.close(_fig)
+        except Exception as _ood_plot_err:
+            print(f"[warn] OOD bar chart failed: {_ood_plot_err}")
+
+    # cossim_by_altitude.png
+    try:
+        _alt_flat_cs = alt_km_all.reshape(-1)
+        _cossim_flat_plot = np.clip(
+            np.sum(a_pred_vec_np * a_true_vec_np, axis=1) / np.maximum(
+                np.linalg.norm(a_pred_vec_np, axis=1) * np.linalg.norm(a_true_vec_np, axis=1), 1e-18
+            ), -1.0, 1.0
+        )
+        _cs_bin_km = float(alt_bin_km)
+        _cs_lo = math.floor(float(np.nanmin(_alt_flat_cs)) / _cs_bin_km) * _cs_bin_km
+        _cs_hi = math.ceil(float(np.nanmax(_alt_flat_cs)) / _cs_bin_km) * _cs_bin_km
+        _cs_edges = np.arange(_cs_lo, _cs_hi + _cs_bin_km, _cs_bin_km)
+        _cs_centers, _cs_means, _cs_p10s = [], [], []
+        for _i_e in range(len(_cs_edges) - 1):
+            _ca0, _ca1 = _cs_edges[_i_e], _cs_edges[_i_e + 1]
+            _cmask = (_alt_flat_cs >= _ca0) & (_alt_flat_cs < _ca1)
+            if not np.any(_cmask):
+                continue
+            _cs_centers.append(0.5 * (_ca0 + _ca1))
+            _cs_means.append(float(np.mean(_cossim_flat_plot[_cmask])))
+            _cs_p10s.append(float(np.percentile(_cossim_flat_plot[_cmask], 10)))
+        if _cs_centers:
+            apply_professional_style()
+            _cs_fig, _cs_ax = plt.subplots(figsize=(9, 5))
+            _cs_ax.plot(_cs_centers, _cs_means, color="#4C72B0", linewidth=2.0, label="Mean cos_sim")
+            _cs_ax.fill_between(_cs_centers, _cs_p10s, _cs_means, alpha=0.25, color="#4C72B0", label="P10-mean band")
+            _cs_ax.axhline(1.0, color="#95A5A6", linestyle="--", linewidth=0.8)
+            _cs_ax.set_xlabel("Altitude [km]", labelpad=8)
+            _cs_ax.set_ylabel("Cosine Similarity", labelpad=8)
+            _cs_ax.set_title("Mean Cosine Similarity (a_pred vs a_true) by Altitude", pad=12)
+            _cs_ax.set_ylim(bottom=min(float(np.min(_cs_p10s)) - 0.02, 0.95))
+            _cs_ax.legend(frameon=True, fancybox=True, shadow=True)
+            _cs_fig.tight_layout()
+            _cs_fig.savefig(plots_dir / "accel_cos_sim_vs_altitude.png", dpi=300, bbox_inches="tight")
+            _cs_fig.savefig(plots_dir / "cossim_by_altitude.png", dpi=300, bbox_inches="tight")
+            plt.close(_cs_fig)
+    except Exception as _csp_err:
+        print(f"[warn] cossim_by_altitude.png failed: {_csp_err}")
+
+def _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec_np, a_vec_err_norm_np, alt_bin_km, alt_km_all, ang_deg_all, directional_metrics, metrics, norm_binned_ang, ood_table, out_dir, spatial_a_mag, spatial_a_mape, spatial_a_vec, spatial_u, spatial_u_mape):
+    def write_bins_csv(bins: Dict[str, Any], path: Path, extra_cols: List[str] = []) -> None:
+        header = "alt_km_lo,alt_km_hi,n,rmse"
+        if extra_cols:
+            header += "," + ",".join(extra_cols)
+        rows = [header]
+        for b in bins.get("bins", []):
+            row = f"{b['alt_km_lo']},{b['alt_km_hi']},{b['n']},{b.get('rmse', '')}"
+            for col in extra_cols:
+                row += f",{b.get(col, '')}"
+            rows.append(row)
+        path.write_text("\n".join(rows), encoding="utf-8")
+
+    def write_mape_csv(bins: Dict[str, Any], path: Path) -> None:
+        rows = ["alt_km_lo,alt_km_hi,n,mape_pct,p50_pct,p90_pct"]
+        for b in bins.get("bins", []):
+            rows.append(
+                f"{b['alt_km_lo']},{b['alt_km_hi']},{b['n']},"
+                f"{b.get('mape_pct', '')},{b.get('p50_pct', '')},{b.get('p90_pct', '')}"
+            )
+        path.write_text("\n".join(rows), encoding="utf-8")
+
+    write_bins_csv(spatial_u, out_dir / "spatial_rmse_U.csv")
+    write_bins_csv(spatial_a_vec, out_dir / "spatial_rmse_accelvec.csv")
+    write_bins_csv(spatial_a_mag, out_dir / "spatial_rmse_accelmag.csv")
+    write_mape_csv(spatial_u_mape, out_dir / "spatial_mape_U.csv")
+    write_mape_csv(spatial_a_mape, out_dir / "spatial_mape_accel.csv")
+
+    # --- angular_error_by_altitude.csv ---
+    try:
+        _ang_alt_rows = ["alt_km_lo,alt_km_hi,n,mean_deg,median_deg,p90_deg,p95_deg,mean_cossim"]
+        _ang_bin_km = float(alt_bin_km)
+        _alt_flat_ang = alt_km_all.reshape(-1)
+        _ang_flat = ang_deg_all.reshape(-1)
+        _a_true_norm_flat = a_true_norms.reshape(-1)
+        _cossim_flat = np.clip(
+            np.sum(a_pred_vec_np * a_true_vec_np, axis=1) / np.maximum(
+                np.linalg.norm(a_pred_vec_np, axis=1) * np.linalg.norm(a_true_vec_np, axis=1), 1e-18
+            ), -1.0, 1.0
+        )
+        _ang_lo = math.floor(float(np.nanmin(_alt_flat_ang)) / _ang_bin_km) * _ang_bin_km
+        _ang_hi = math.ceil(float(np.nanmax(_alt_flat_ang)) / _ang_bin_km) * _ang_bin_km
+        _ang_edges = np.arange(_ang_lo, _ang_hi + _ang_bin_km, _ang_bin_km)
+        for _i_e in range(len(_ang_edges) - 1):
+            _a0, _a1 = _ang_edges[_i_e], _ang_edges[_i_e + 1]
+            _amask = (_alt_flat_ang >= _a0) & (_alt_flat_ang < _a1)
+            _n_bin = int(np.sum(_amask))
+            if _n_bin == 0:
+                continue
+            _seg = _ang_flat[_amask]
+            _cs = _cossim_flat[_amask]
+            _ang_alt_rows.append(
+                f"{_a0},{_a1},{_n_bin},"
+                f"{float(np.mean(_seg))},{float(np.median(_seg))},"
+                f"{float(np.percentile(_seg, 90))},{float(np.percentile(_seg, 95))},"
+                f"{float(np.mean(_cs))}"
+            )
+        (out_dir / "angular_error_by_altitude.csv").write_text("\n".join(_ang_alt_rows), encoding="utf-8")
+    except Exception as _ang_csv_err:
+        print(f"[warn] angular_error_by_altitude.csv failed: {_ang_csv_err}")
+
+    # --- angular_error_by_accel_norm.csv ---
+    try:
+        _norm_csv_rows = ["bin_label,norm_lo,norm_hi,N,mean_deg,median_deg,p90_deg,p99_deg"]
+        for _nb in norm_binned_ang:
+            if _nb.get("N", 0) == 0:
+                _norm_csv_rows.append(f"{_nb['bin']},,,0,,,,")
+                continue
+            _nlo = _nb.get("norm_range_m_s2", [None, None])[0]
+            _nhi = _nb.get("norm_range_m_s2", [None, None])[1]
+            _norm_csv_rows.append(
+                f"{_nb['bin']},{_nlo},{_nhi},{_nb['N']},"
+                f"{_nb.get('mean_deg','')},{_nb.get('median_deg','')},"
+                f"{_nb.get('p90_deg','')},{_nb.get('p99_deg','')}"
+            )
+        (out_dir / "angular_error_by_accel_norm.csv").write_text("\n".join(_norm_csv_rows), encoding="utf-8")
+    except Exception as _nc_err:
+        print(f"[warn] angular_error_by_accel_norm.csv failed: {_nc_err}")
+
+    # --- metrics_summary.csv ---
+    _ms_rows = ["metric,mae,rmse,rel_mean_pct,rel_p50_pct,rel_p90_pct,nrmse_pct,linf"]
+    for _key in ("U", "|a|"):
+        _d = metrics[_key]
+        _ms_rows.append(
+            f"{_key},{_d['mae']},{_d['rmse']},{_d['rel_mean_pct']},"
+            f"{_d['rel_p50_pct']},{_d['rel_p90_pct']},{_d['nrmse_pct']},{_d['linf']}"
+        )
+    (out_dir / "metrics_summary.csv").write_text("\n".join(_ms_rows), encoding="utf-8")
+
+    # --- altitude_binned_metrics.csv (combined U + accel RMSE + MAPE) ---
+    _ab_rows = [
+        "alt_km_lo,alt_km_hi,n,rmse_U,rmse_a_vec,rmse_a_mag,mae_a_vec,p95_a_error,"
+        "angular_mean_deg,angular_p90_deg,radial_rmse,cross_rmse,"
+        "mape_U_pct,mape_accel_pct,mape_U_p90_pct,mape_accel_p90_pct"
+    ]
+    _rmse_u_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_u.get("bins", [])}
+    _rmse_a_vec_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_vec.get("bins", [])}
+    _rmse_a_mag_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_mag.get("bins", [])}
+    _mape_u_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_u_mape.get("bins", [])}
+    _mape_a_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_mape.get("bins", [])}
+    _all_bin_keys = sorted(set(_rmse_u_bins) | set(_rmse_a_vec_bins) | set(_rmse_a_mag_bins) | set(_mape_u_bins) | set(_mape_a_bins))
+    for _k in _all_bin_keys:
+        _ru = _rmse_u_bins.get(_k, {}); _ra_vec = _rmse_a_vec_bins.get(_k, {}); _ra_mag = _rmse_a_mag_bins.get(_k, {})
+        _mu = _mape_u_bins.get(_k, {}); _ma = _mape_a_bins.get(_k, {})
+        _n = _ru.get("n", _ra_vec.get("n", _ra_mag.get("n", _mu.get("n", _ma.get("n", 0)))))
+        _mask_bin = (alt_km_all.reshape(-1) >= float(_k[0])) & (alt_km_all.reshape(-1) < float(_k[1]))
+        if np.any(_mask_bin):
+            _aerr_bin = a_vec_err_norm_np[_mask_bin]
+            _ang_bin = ang_deg_all.reshape(-1)[_mask_bin]
+            _rad_bin = a_r[_mask_bin]
+            _cross_bin = a_cross[_mask_bin]
+            _mae_a_vec = float(np.mean(np.abs(_aerr_bin)))
+            _p95_a_error = float(np.percentile(_aerr_bin, 95))
+            _angular_mean = float(np.mean(_ang_bin))
+            _angular_p90 = float(np.percentile(_ang_bin, 90))
+            _radial_rmse = float(np.sqrt(np.mean(_rad_bin ** 2)))
+            _cross_rmse = float(np.sqrt(np.mean(_cross_bin ** 2)))
+        else:
+            _mae_a_vec = _p95_a_error = _angular_mean = _angular_p90 = _radial_rmse = _cross_rmse = ""
+        _ab_rows.append(
+            f"{_k[0]},{_k[1]},{_n},"
+            f"{_ru.get('rmse','')},"
+            f"{_ra_vec.get('rmse','')},"
+            f"{_ra_mag.get('rmse','')},"
+            f"{_mae_a_vec},"
+            f"{_p95_a_error},"
+            f"{_angular_mean},"
+            f"{_angular_p90},"
+            f"{_radial_rmse},"
+            f"{_cross_rmse},"
+            f"{_mu.get('mape_pct','')},"
+            f"{_ma.get('mape_pct','')},"
+            f"{_mu.get('p90_pct','')},"
+            f"{_ma.get('p90_pct','')}"
+        )
+    (out_dir / "altitude_binned_metrics.csv").write_text("\n".join(_ab_rows), encoding="utf-8")
+
+    # --- ood_metrics.csv ---
+    if ood_table is not None:
+        _ood_header = "region,N,RMSE_U,MAE_U,RMSE_accel_norm,MAE_accel_norm,robust_rel_accel_mean_pct,robust_rel_accel_p90_pct,angular_error_mean_deg,angular_error_p90_deg"
+        _ood_rows = [_ood_header]
+        for _region_key in ("lower_ood", "in_band", "upper_ood"):
+            _r = ood_table.get(_region_key, {})
+            if _r.get("N", 0) > 0:
+                _ood_rows.append(
+                    f"{_r.get('region','')},{_r['N']},"
+                    f"{_r.get('RMSE_U','')},{_r.get('MAE_U','')},"
+                    f"{_r.get('RMSE_accel_norm','')},{_r.get('MAE_accel_norm','')},"
+                    f"{_r.get('robust_rel_accel_mean_pct','')},{_r.get('robust_rel_accel_p90_pct','')},"
+                    f"{_r.get('angular_error_mean_deg','')},{_r.get('angular_error_p90_deg','')}"
+                )
+            else:
+                _ood_rows.append(f"{_region_key},0,,,,,,,,")
+        (out_dir / "ood_metrics.csv").write_text("\n".join(_ood_rows), encoding="utf-8")
+
+    # --- acceleration_decomposition.csv ---
+    _ad_rows = [
+        "component,mae,rmse",
+        f"radial,{directional_metrics['accel_err_radial_mae']},{directional_metrics['accel_err_radial_rmse']}",
+        f"cross_radial_norm,{directional_metrics['accel_err_cross_radial_mae']},{directional_metrics['accel_err_cross_radial_rmse']}",
+        f"approx_T,{directional_metrics.get('approx_T_rmse','')},{directional_metrics.get('approx_T_rmse','')}",
+        f"approx_N,{directional_metrics.get('approx_N_rmse','')},{directional_metrics.get('approx_N_rmse','')}",
+    ]
+    (out_dir / "acceleration_decomposition.csv").write_text("\n".join(_ad_rows), encoding="utf-8")
+
+def _print_evaluation_summary(data_path, device, latency_ms_batch1, metrics, model_dir, plots_dir, report_path, spatial_a_mape, spatial_u_mape, throughput_points_per_sec):
+    print("\n==================== EVAL SUMMARY ====================")
+    print(f"Model dir : {model_dir}")
+    print(f"Data      : {data_path}")
+    print(f"Device    : {device}")
+    print(f"Points    : {metrics['n_points']}")
+    print(f"a_sign    : {metrics['a_sign']:+.1f}")
+    print(f"mu_si     : {metrics['mu_si']:.6e} m^3/s^2")
+    def _fmt(d: Dict[str, Any]) -> str:
+        return (f"MAE={d['mae']:.4e}  RMSE={d['rmse']:.4e}  "
+                f"Rel(mean)={d['rel_mean_pct']:.3f}%  NRMSE={d['nrmse_pct']:.3f}%  L_inf={d['linf']:.4e}")
+    print("--- U ---")
+    print("  " + _fmt(metrics["U"]))
+    print("--- |a| ---")
+    print("  " + _fmt(metrics["|a|"]))
+    print("--- a vectorial ---")
+    av = metrics["a_vectorial"]
+    print(f"  mean_deg={av['mean_deg']:.3f} deg  max_deg={av['max_deg']:.3f} deg  "
+          f"mean_cossim={av['mean_cossim']:.6f}")
+    # Print altitude-binned bounded relative-error summary (first 5 bins)
+    print("--- U relative error by altitude (first 5 bins) ---")
+    for b in spatial_u_mape.get("bins", [])[:5]:
+        print(f"  [{b['alt_km_lo']:.0f}-{b['alt_km_hi']:.0f} km]  "
+              f"Mean={b['mape_pct']:.3f}%  P90={b['p90_pct']:.3f}%  n={b['n']}")
+    print("--- |a| relative error by altitude (first 5 bins) ---")
+    for b in spatial_a_mape.get("bins", [])[:5]:
+        print(f"  [{b['alt_km_lo']:.0f}-{b['alt_km_hi']:.0f} km]  "
+              f"Mean={b['mape_pct']:.3f}%  P90={b['p90_pct']:.3f}%  n={b['n']}")
+    print("--- a directional decomposition (radial / cross-radial; approx T/N without velocity) ---")
+    directional = metrics.get("a_directional", {})
+    if directional:
+        print(f"  radial:        MAE={directional['accel_err_radial_mae']:.4e}  RMSE={directional['accel_err_radial_rmse']:.4e}")
+        print(f"  cross-radial:  MAE={directional['accel_err_cross_radial_mae']:.4e}  RMSE={directional['accel_err_cross_radial_rmse']:.4e}")
+        print(f"  approx_T RMSE: {directional['approx_T_rmse']:.4e}  |  approx_N RMSE: {directional['approx_N_rmse']:.4e}")
+    print("--- OOD table (+/-10% beyond training altitude band) ---")
+    ood = metrics.get("ood_table")
+    if ood:
+        print(f"  Training band: {ood['train_alt_range_km'][0]:.0f}-{ood['train_alt_range_km'][1]:.0f} km")
+        for key in ("lower_ood", "in_band", "upper_ood"):
+            row = ood[key]
+            if row["N"] > 0:
+                print(f"  {row['region']:40s}  n={row['N']:7d}  "
+                      f"|a|_RMSE={row['RMSE_accel_norm']:.4e}  U_RMSE={row['RMSE_U']:.4e}  "
+                      f"Rel={row['robust_rel_accel_mean_pct']:.3f}%")
+            else:
+                print(f"  {key:40s}  n=0 (no samples in this region)")
+    else:
+        print("  [skipped: alt_min_km / alt_max_km not found in model config]")
+    print("--- Throughput (points/sec; U+grad) ---")
+    for k, v in throughput_points_per_sec.items():
+        print(f"{k:>8s}: {v:,.0f}")
+    print("--- Latency (ms; batch_size=1; U+grad) ---")
+    for k, v in latency_ms_batch1.items():
+        print(f"{k:>8s}: {v:,.3f} ms")
+    print(f"\nSaved: {report_path}")
+    print("Plots:")
+    for p in sorted(plots_dir.glob("*.png")):
+        print(f"  {p.name}")
+    print("======================================================\n")
+
+
 def evaluate(
     model_dir: Path,
     data_path: Path,
@@ -2100,149 +2472,7 @@ def evaluate(
     plots_dir = out_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    save_parity_plot(
-        y_true=u_true.reshape(-1),
-        y_pred=u_pred.reshape(-1),
-        path=plots_dir / "potential_parity.png",
-        title="Potential: prediction vs truth",
-    )
-    save_parity_plot(
-        y_true=u_true.reshape(-1),
-        y_pred=u_pred.reshape(-1),
-        path=plots_dir / "parity_U.png",
-        title="Potential: prediction vs truth",
-    )
-
-    rel_a_all = bounded_relative_error_pct(a_pred_mag, a_true_mag, rel_floor_abs=a_rel_floor_abs)
-    save_scatter_altitude(
-        alt_km=alt_km_all.reshape(-1),
-        rel_err_pct=a_vec_err_norm_np.reshape(-1),
-        path=plots_dir / "accel_vector_error_vs_altitude.png",
-        title="Acceleration vector error norm vs altitude",
-    )
-    save_scatter_altitude(
-        alt_km=alt_km_all.reshape(-1),
-        rel_err_pct=rel_a_all.reshape(-1),
-        path=plots_dir / "scatter_relerr_accel_vs_alt.png",
-        title="|a| bounded relative error vs altitude",
-    )
-    save_scatter_altitude(
-        alt_km=alt_km_all.reshape(-1),
-        rel_err_pct=ang_deg_all.reshape(-1),
-        path=plots_dir / "accel_angular_error_vs_altitude.png",
-        title="Acceleration angular error vs altitude",
-    )
-
-    save_log_hist(u_err, plots_dir / "hist_abs_err_U_log.png", "U absolute error histogram")
-    save_log_hist(a_mag_err, plots_dir / "hist_abs_err_accelmag_log.png", "|a| absolute error histogram")
-    save_log_hist(a_vec_err_norm_np.reshape(-1), plots_dir / "accel_error_histogram.png", "Acceleration vector error histogram")
-
-    # Percentage error histograms
-    rel_u_pct = bounded_relative_error_pct(u_pred.reshape(-1), u_true.reshape(-1), rel_floor_abs=u_rel_floor_abs)
-    save_pct_error_hist(
-        rel_u_pct,
-        plots_dir / "hist_rel_err_U_pct.png",
-        "U bounded relative error distribution",
-    )
-    save_pct_error_hist(
-        rel_a_all.reshape(-1),
-        plots_dir / "hist_rel_err_accel_pct.png",
-        "|a| bounded relative error distribution",
-    )
-
-    # Altitude-binned MAPE bar charts
-    save_binned_mae_pct(
-        alt_km_all.reshape(-1),
-        rel_u_pct,
-        plots_dir / "binned_mape_U_vs_alt.png",
-        "U bounded mean absolute % error by altitude",
-        bin_km=alt_bin_km,
-    )
-    save_binned_mae_pct(
-        alt_km_all.reshape(-1),
-        rel_a_all.reshape(-1),
-        plots_dir / "binned_mape_accel_vs_alt.png",
-        "|a| bounded mean absolute % error by altitude",
-        bin_km=alt_bin_km,
-    )
-
-    # angular error histogram
-    if ang_deg_plot:
-        ang_plot = np.concatenate(ang_deg_plot, axis=0).reshape(-1)
-        save_hist_angular_deg(ang_plot, plots_dir / "hist_angular_err_deg.png", "Angular error (deg) histogram")
-        save_hist_angular_deg(ang_plot, plots_dir / "angular_error_hist.png", "Angular error (deg) histogram")
-
-    # masked angular error histogram (excludes near-zero residuals below direction floor)
-    if masked_ang_deg.size > 0:
-        save_hist_angular_deg(
-            masked_ang_deg,
-            plots_dir / "angular_error_masked.png",
-            "Masked Residual Angular Error (||da_true|| > floor)",
-        )
-
-    # OOD bar chart: accel RMSE for lower_ood / in_band / upper_ood
-    if ood_table is not None:
-        try:
-            _ood_labels, _ood_vals = [], []
-            for _rk in ("lower_ood", "in_band", "upper_ood"):
-                _r = ood_table.get(_rk, {})
-                _ood_labels.append(_r.get("region", _rk))
-                _ood_vals.append(float(_r.get("RMSE_accel_norm", 0.0)))
-            if any(v > 0 for v in _ood_vals):
-                apply_professional_style()
-                _colors = ["#E74C3C", "#2ECC71", "#3498DB"]
-                _fig, _ax = plt.subplots(figsize=(7, 4.5))
-                _bars = _ax.bar(_ood_labels, _ood_vals, color=_colors, alpha=0.85, edgecolor="white")
-                _ax.set_ylabel("Accel RMSE [m/s²]")
-                _ax.set_title("|a| RMSE by Altitude Region (OOD ±10%)", pad=12)
-                for _b, _v in zip(_bars, _ood_vals):
-                    if _v > 0:
-                        _ax.text(_b.get_x() + _b.get_width() / 2, _v * 1.02, f"{_v:.3e}",
-                                 ha="center", va="bottom", fontsize=8)
-                _fig.tight_layout()
-                _fig.savefig(plots_dir / "ood_bar_accel_rmse.png", dpi=300, bbox_inches="tight")
-                plt.close(_fig)
-        except Exception as _ood_plot_err:
-            print(f"[warn] OOD bar chart failed: {_ood_plot_err}")
-
-    # cossim_by_altitude.png
-    try:
-        _alt_flat_cs = alt_km_all.reshape(-1)
-        _cossim_flat_plot = np.clip(
-            np.sum(a_pred_vec_np * a_true_vec_np, axis=1) / np.maximum(
-                np.linalg.norm(a_pred_vec_np, axis=1) * np.linalg.norm(a_true_vec_np, axis=1), 1e-18
-            ), -1.0, 1.0
-        )
-        _cs_bin_km = float(alt_bin_km)
-        _cs_lo = math.floor(float(np.nanmin(_alt_flat_cs)) / _cs_bin_km) * _cs_bin_km
-        _cs_hi = math.ceil(float(np.nanmax(_alt_flat_cs)) / _cs_bin_km) * _cs_bin_km
-        _cs_edges = np.arange(_cs_lo, _cs_hi + _cs_bin_km, _cs_bin_km)
-        _cs_centers, _cs_means, _cs_p10s = [], [], []
-        for _i_e in range(len(_cs_edges) - 1):
-            _ca0, _ca1 = _cs_edges[_i_e], _cs_edges[_i_e + 1]
-            _cmask = (_alt_flat_cs >= _ca0) & (_alt_flat_cs < _ca1)
-            if not np.any(_cmask):
-                continue
-            _cs_centers.append(0.5 * (_ca0 + _ca1))
-            _cs_means.append(float(np.mean(_cossim_flat_plot[_cmask])))
-            _cs_p10s.append(float(np.percentile(_cossim_flat_plot[_cmask], 10)))
-        if _cs_centers:
-            apply_professional_style()
-            _cs_fig, _cs_ax = plt.subplots(figsize=(9, 5))
-            _cs_ax.plot(_cs_centers, _cs_means, color="#4C72B0", linewidth=2.0, label="Mean cos_sim")
-            _cs_ax.fill_between(_cs_centers, _cs_p10s, _cs_means, alpha=0.25, color="#4C72B0", label="P10-mean band")
-            _cs_ax.axhline(1.0, color="#95A5A6", linestyle="--", linewidth=0.8)
-            _cs_ax.set_xlabel("Altitude [km]", labelpad=8)
-            _cs_ax.set_ylabel("Cosine Similarity", labelpad=8)
-            _cs_ax.set_title("Mean Cosine Similarity (a_pred vs a_true) by Altitude", pad=12)
-            _cs_ax.set_ylim(bottom=min(float(np.min(_cs_p10s)) - 0.02, 0.95))
-            _cs_ax.legend(frameon=True, fancybox=True, shadow=True)
-            _cs_fig.tight_layout()
-            _cs_fig.savefig(plots_dir / "accel_cos_sim_vs_altitude.png", dpi=300, bbox_inches="tight")
-            _cs_fig.savefig(plots_dir / "cossim_by_altitude.png", dpi=300, bbox_inches="tight")
-            plt.close(_cs_fig)
-    except Exception as _csp_err:
-        print(f"[warn] cossim_by_altitude.png failed: {_csp_err}")
+    _save_evaluation_plots(a_mag_err, a_pred_mag, a_pred_vec_np, a_rel_floor_abs, a_true_mag, a_true_vec_np, a_vec_err_norm_np, alt_bin_km, alt_km_all, ang_deg_all, ang_deg_plot, masked_ang_deg, ood_table, plots_dir, u_err, u_pred, u_rel_floor_abs, u_true)
 
     # --- Benchmark: throughput + latency ---
     bench_n = min(int(total), 200_000)
@@ -2327,228 +2557,9 @@ def evaluate(
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
     metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
-    def write_bins_csv(bins: Dict[str, Any], path: Path, extra_cols: List[str] = []) -> None:
-        header = "alt_km_lo,alt_km_hi,n,rmse"
-        if extra_cols:
-            header += "," + ",".join(extra_cols)
-        rows = [header]
-        for b in bins.get("bins", []):
-            row = f"{b['alt_km_lo']},{b['alt_km_hi']},{b['n']},{b.get('rmse', '')}"
-            for col in extra_cols:
-                row += f",{b.get(col, '')}"
-            rows.append(row)
-        path.write_text("\n".join(rows), encoding="utf-8")
+    _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec_np, a_vec_err_norm_np, alt_bin_km, alt_km_all, ang_deg_all, directional_metrics, metrics, norm_binned_ang, ood_table, out_dir, spatial_a_mag, spatial_a_mape, spatial_a_vec, spatial_u, spatial_u_mape)
 
-    def write_mape_csv(bins: Dict[str, Any], path: Path) -> None:
-        rows = ["alt_km_lo,alt_km_hi,n,mape_pct,p50_pct,p90_pct"]
-        for b in bins.get("bins", []):
-            rows.append(
-                f"{b['alt_km_lo']},{b['alt_km_hi']},{b['n']},"
-                f"{b.get('mape_pct', '')},{b.get('p50_pct', '')},{b.get('p90_pct', '')}"
-            )
-        path.write_text("\n".join(rows), encoding="utf-8")
-
-    write_bins_csv(spatial_u, out_dir / "spatial_rmse_U.csv")
-    write_bins_csv(spatial_a_vec, out_dir / "spatial_rmse_accelvec.csv")
-    write_bins_csv(spatial_a_mag, out_dir / "spatial_rmse_accelmag.csv")
-    write_mape_csv(spatial_u_mape, out_dir / "spatial_mape_U.csv")
-    write_mape_csv(spatial_a_mape, out_dir / "spatial_mape_accel.csv")
-
-    # --- angular_error_by_altitude.csv ---
-    try:
-        _ang_alt_rows = ["alt_km_lo,alt_km_hi,n,mean_deg,median_deg,p90_deg,p95_deg,mean_cossim"]
-        _ang_bin_km = float(alt_bin_km)
-        _alt_flat_ang = alt_km_all.reshape(-1)
-        _ang_flat = ang_deg_all.reshape(-1)
-        _a_true_norm_flat = a_true_norms.reshape(-1)
-        _cossim_flat = np.clip(
-            np.sum(a_pred_vec_np * a_true_vec_np, axis=1) / np.maximum(
-                np.linalg.norm(a_pred_vec_np, axis=1) * np.linalg.norm(a_true_vec_np, axis=1), 1e-18
-            ), -1.0, 1.0
-        )
-        _ang_lo = math.floor(float(np.nanmin(_alt_flat_ang)) / _ang_bin_km) * _ang_bin_km
-        _ang_hi = math.ceil(float(np.nanmax(_alt_flat_ang)) / _ang_bin_km) * _ang_bin_km
-        _ang_edges = np.arange(_ang_lo, _ang_hi + _ang_bin_km, _ang_bin_km)
-        for _i_e in range(len(_ang_edges) - 1):
-            _a0, _a1 = _ang_edges[_i_e], _ang_edges[_i_e + 1]
-            _amask = (_alt_flat_ang >= _a0) & (_alt_flat_ang < _a1)
-            _n_bin = int(np.sum(_amask))
-            if _n_bin == 0:
-                continue
-            _seg = _ang_flat[_amask]
-            _cs = _cossim_flat[_amask]
-            _ang_alt_rows.append(
-                f"{_a0},{_a1},{_n_bin},"
-                f"{float(np.mean(_seg))},{float(np.median(_seg))},"
-                f"{float(np.percentile(_seg, 90))},{float(np.percentile(_seg, 95))},"
-                f"{float(np.mean(_cs))}"
-            )
-        (out_dir / "angular_error_by_altitude.csv").write_text("\n".join(_ang_alt_rows), encoding="utf-8")
-    except Exception as _ang_csv_err:
-        print(f"[warn] angular_error_by_altitude.csv failed: {_ang_csv_err}")
-
-    # --- angular_error_by_accel_norm.csv ---
-    try:
-        _norm_csv_rows = ["bin_label,norm_lo,norm_hi,N,mean_deg,median_deg,p90_deg,p99_deg"]
-        for _nb in norm_binned_ang:
-            if _nb.get("N", 0) == 0:
-                _norm_csv_rows.append(f"{_nb['bin']},,,0,,,,")
-                continue
-            _nlo = _nb.get("norm_range_m_s2", [None, None])[0]
-            _nhi = _nb.get("norm_range_m_s2", [None, None])[1]
-            _norm_csv_rows.append(
-                f"{_nb['bin']},{_nlo},{_nhi},{_nb['N']},"
-                f"{_nb.get('mean_deg','')},{_nb.get('median_deg','')},"
-                f"{_nb.get('p90_deg','')},{_nb.get('p99_deg','')}"
-            )
-        (out_dir / "angular_error_by_accel_norm.csv").write_text("\n".join(_norm_csv_rows), encoding="utf-8")
-    except Exception as _nc_err:
-        print(f"[warn] angular_error_by_accel_norm.csv failed: {_nc_err}")
-
-    # --- metrics_summary.csv ---
-    _ms_rows = ["metric,mae,rmse,rel_mean_pct,rel_p50_pct,rel_p90_pct,nrmse_pct,linf"]
-    for _key in ("U", "|a|"):
-        _d = metrics[_key]
-        _ms_rows.append(
-            f"{_key},{_d['mae']},{_d['rmse']},{_d['rel_mean_pct']},"
-            f"{_d['rel_p50_pct']},{_d['rel_p90_pct']},{_d['nrmse_pct']},{_d['linf']}"
-        )
-    (out_dir / "metrics_summary.csv").write_text("\n".join(_ms_rows), encoding="utf-8")
-
-    # --- altitude_binned_metrics.csv (combined U + accel RMSE + MAPE) ---
-    _ab_rows = [
-        "alt_km_lo,alt_km_hi,n,rmse_U,rmse_a_vec,rmse_a_mag,mae_a_vec,p95_a_error,"
-        "angular_mean_deg,angular_p90_deg,radial_rmse,cross_rmse,"
-        "mape_U_pct,mape_accel_pct,mape_U_p90_pct,mape_accel_p90_pct"
-    ]
-    _rmse_u_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_u.get("bins", [])}
-    _rmse_a_vec_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_vec.get("bins", [])}
-    _rmse_a_mag_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_mag.get("bins", [])}
-    _mape_u_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_u_mape.get("bins", [])}
-    _mape_a_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_mape.get("bins", [])}
-    _all_bin_keys = sorted(set(_rmse_u_bins) | set(_rmse_a_vec_bins) | set(_rmse_a_mag_bins) | set(_mape_u_bins) | set(_mape_a_bins))
-    for _k in _all_bin_keys:
-        _ru = _rmse_u_bins.get(_k, {}); _ra_vec = _rmse_a_vec_bins.get(_k, {}); _ra_mag = _rmse_a_mag_bins.get(_k, {})
-        _mu = _mape_u_bins.get(_k, {}); _ma = _mape_a_bins.get(_k, {})
-        _n = _ru.get("n", _ra_vec.get("n", _ra_mag.get("n", _mu.get("n", _ma.get("n", 0)))))
-        _mask_bin = (alt_km_all.reshape(-1) >= float(_k[0])) & (alt_km_all.reshape(-1) < float(_k[1]))
-        if np.any(_mask_bin):
-            _aerr_bin = a_vec_err_norm_np[_mask_bin]
-            _ang_bin = ang_deg_all.reshape(-1)[_mask_bin]
-            _rad_bin = a_r[_mask_bin]
-            _cross_bin = a_cross[_mask_bin]
-            _mae_a_vec = float(np.mean(np.abs(_aerr_bin)))
-            _p95_a_error = float(np.percentile(_aerr_bin, 95))
-            _angular_mean = float(np.mean(_ang_bin))
-            _angular_p90 = float(np.percentile(_ang_bin, 90))
-            _radial_rmse = float(np.sqrt(np.mean(_rad_bin ** 2)))
-            _cross_rmse = float(np.sqrt(np.mean(_cross_bin ** 2)))
-        else:
-            _mae_a_vec = _p95_a_error = _angular_mean = _angular_p90 = _radial_rmse = _cross_rmse = ""
-        _ab_rows.append(
-            f"{_k[0]},{_k[1]},{_n},"
-            f"{_ru.get('rmse','')},"
-            f"{_ra_vec.get('rmse','')},"
-            f"{_ra_mag.get('rmse','')},"
-            f"{_mae_a_vec},"
-            f"{_p95_a_error},"
-            f"{_angular_mean},"
-            f"{_angular_p90},"
-            f"{_radial_rmse},"
-            f"{_cross_rmse},"
-            f"{_mu.get('mape_pct','')},"
-            f"{_ma.get('mape_pct','')},"
-            f"{_mu.get('p90_pct','')},"
-            f"{_ma.get('p90_pct','')}"
-        )
-    (out_dir / "altitude_binned_metrics.csv").write_text("\n".join(_ab_rows), encoding="utf-8")
-
-    # --- ood_metrics.csv ---
-    if ood_table is not None:
-        _ood_header = "region,N,RMSE_U,MAE_U,RMSE_accel_norm,MAE_accel_norm,robust_rel_accel_mean_pct,robust_rel_accel_p90_pct,angular_error_mean_deg,angular_error_p90_deg"
-        _ood_rows = [_ood_header]
-        for _region_key in ("lower_ood", "in_band", "upper_ood"):
-            _r = ood_table.get(_region_key, {})
-            if _r.get("N", 0) > 0:
-                _ood_rows.append(
-                    f"{_r.get('region','')},{_r['N']},"
-                    f"{_r.get('RMSE_U','')},{_r.get('MAE_U','')},"
-                    f"{_r.get('RMSE_accel_norm','')},{_r.get('MAE_accel_norm','')},"
-                    f"{_r.get('robust_rel_accel_mean_pct','')},{_r.get('robust_rel_accel_p90_pct','')},"
-                    f"{_r.get('angular_error_mean_deg','')},{_r.get('angular_error_p90_deg','')}"
-                )
-            else:
-                _ood_rows.append(f"{_region_key},0,,,,,,,,")
-        (out_dir / "ood_metrics.csv").write_text("\n".join(_ood_rows), encoding="utf-8")
-
-    # --- acceleration_decomposition.csv ---
-    _ad_rows = [
-        "component,mae,rmse",
-        f"radial,{directional_metrics['accel_err_radial_mae']},{directional_metrics['accel_err_radial_rmse']}",
-        f"cross_radial_norm,{directional_metrics['accel_err_cross_radial_mae']},{directional_metrics['accel_err_cross_radial_rmse']}",
-        f"approx_T,{directional_metrics.get('approx_T_rmse','')},{directional_metrics.get('approx_T_rmse','')}",
-        f"approx_N,{directional_metrics.get('approx_N_rmse','')},{directional_metrics.get('approx_N_rmse','')}",
-    ]
-    (out_dir / "acceleration_decomposition.csv").write_text("\n".join(_ad_rows), encoding="utf-8")
-
-    print("\n==================== EVAL SUMMARY ====================")
-    print(f"Model dir : {model_dir}")
-    print(f"Data      : {data_path}")
-    print(f"Device    : {device}")
-    print(f"Points    : {metrics['n_points']}")
-    print(f"a_sign    : {metrics['a_sign']:+.1f}")
-    print(f"mu_si     : {metrics['mu_si']:.6e} m^3/s^2")
-    def _fmt(d: Dict[str, Any]) -> str:
-        return (f"MAE={d['mae']:.4e}  RMSE={d['rmse']:.4e}  "
-                f"Rel(mean)={d['rel_mean_pct']:.3f}%  NRMSE={d['nrmse_pct']:.3f}%  L_inf={d['linf']:.4e}")
-    print("--- U ---")
-    print("  " + _fmt(metrics["U"]))
-    print("--- |a| ---")
-    print("  " + _fmt(metrics["|a|"]))
-    print("--- a vectorial ---")
-    av = metrics["a_vectorial"]
-    print(f"  mean_deg={av['mean_deg']:.3f} deg  max_deg={av['max_deg']:.3f} deg  "
-          f"mean_cossim={av['mean_cossim']:.6f}")
-    # Print altitude-binned bounded relative-error summary (first 5 bins)
-    print("--- U relative error by altitude (first 5 bins) ---")
-    for b in spatial_u_mape.get("bins", [])[:5]:
-        print(f"  [{b['alt_km_lo']:.0f}-{b['alt_km_hi']:.0f} km]  "
-              f"Mean={b['mape_pct']:.3f}%  P90={b['p90_pct']:.3f}%  n={b['n']}")
-    print("--- |a| relative error by altitude (first 5 bins) ---")
-    for b in spatial_a_mape.get("bins", [])[:5]:
-        print(f"  [{b['alt_km_lo']:.0f}-{b['alt_km_hi']:.0f} km]  "
-              f"Mean={b['mape_pct']:.3f}%  P90={b['p90_pct']:.3f}%  n={b['n']}")
-    print("--- a directional decomposition (radial / cross-radial; approx T/N without velocity) ---")
-    directional = metrics.get("a_directional", {})
-    if directional:
-        print(f"  radial:        MAE={directional['accel_err_radial_mae']:.4e}  RMSE={directional['accel_err_radial_rmse']:.4e}")
-        print(f"  cross-radial:  MAE={directional['accel_err_cross_radial_mae']:.4e}  RMSE={directional['accel_err_cross_radial_rmse']:.4e}")
-        print(f"  approx_T RMSE: {directional['approx_T_rmse']:.4e}  |  approx_N RMSE: {directional['approx_N_rmse']:.4e}")
-    print("--- OOD table (+/-10% beyond training altitude band) ---")
-    ood = metrics.get("ood_table")
-    if ood:
-        print(f"  Training band: {ood['train_alt_range_km'][0]:.0f}-{ood['train_alt_range_km'][1]:.0f} km")
-        for key in ("lower_ood", "in_band", "upper_ood"):
-            row = ood[key]
-            if row["N"] > 0:
-                print(f"  {row['region']:40s}  n={row['N']:7d}  "
-                      f"|a|_RMSE={row['RMSE_accel_norm']:.4e}  U_RMSE={row['RMSE_U']:.4e}  "
-                      f"Rel={row['robust_rel_accel_mean_pct']:.3f}%")
-            else:
-                print(f"  {key:40s}  n=0 (no samples in this region)")
-    else:
-        print("  [skipped: alt_min_km / alt_max_km not found in model config]")
-    print("--- Throughput (points/sec; U+grad) ---")
-    for k, v in throughput_points_per_sec.items():
-        print(f"{k:>8s}: {v:,.0f}")
-    print("--- Latency (ms; batch_size=1; U+grad) ---")
-    for k, v in latency_ms_batch1.items():
-        print(f"{k:>8s}: {v:,.3f} ms")
-    print(f"\nSaved: {report_path}")
-    print("Plots:")
-    for p in sorted(plots_dir.glob("*.png")):
-        print(f"  {p.name}")
-    print("======================================================\n")
+    _print_evaluation_summary(data_path, device, latency_ms_batch1, metrics, model_dir, plots_dir, report_path, spatial_a_mape, spatial_u_mape, throughput_points_per_sec)
 
     write_evaluate_summary(
         out_dir,
@@ -2663,6 +2674,18 @@ def _dataset_path_from_config(model_dir: Path, key: str) -> Optional[Path]:
             if path.exists():
                 return path
     return None
+
+
+def _auto_find_model_dir(script_dir: Path) -> Optional[Path]:
+    """Return the newest valid surrogate run directory, or ``None``.
+
+    Honors the pre-reorg layout by searching the package-relative
+    ``script_dir/runs`` location first, then falls back to the canonical runs
+    directories resolved by :func:`find_latest_st_lrps_model_dir` (the same
+    discovery used by ``_auto_find_st_lrps_dir`` in the gravity benchmark).
+    """
+    found = find_latest_st_lrps_model_dir(script_dir / "runs")
+    return found if found is not None else find_latest_st_lrps_model_dir()
 
 
 def _auto_find_testset(model_dir: Path) -> Optional[Path]:
@@ -2965,7 +2988,7 @@ def main() -> None:
             r_ref_m_resolved = float(inferred)
             print(f"[auto] Using r_ref_m from dataset meta: {r_ref_m_resolved:g} m")
         else:
-            r_ref_m_resolved = float(MOON_R_REF_M_DEFAULT)
+            r_ref_m_resolved = float(R_MOON_SI)
             print(f"[auto] r_ref_m not found in dataset meta; falling back to lunar reference radius: {r_ref_m_resolved:g} m")
 
     run_layout = make_run_layout(model_dir)

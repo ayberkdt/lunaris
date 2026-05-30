@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional, Tuple, TYPE_CHECKING
+from typing import Literal, Mapping, Optional, Tuple, TYPE_CHECKING
 
 # --- Local Imports: Common (dependency-light) ---
 from lunaris.common.constants import DAY_S
@@ -100,7 +100,7 @@ def _resolve_default_kernel_paths() -> Tuple[str, ...]:
 
     Dependency-light: resolves paths from local filename candidates without
     importing heavy loaders/model modules. Runtime kernel loading/validation is
-    performed elsewhere (models.ephemeris).
+    performed elsewhere (lunaris.physics.ephemeris).
     """
     if not KERNEL_DIR.exists():
         raise FileNotFoundError(
@@ -272,7 +272,7 @@ def load_default_config() -> SimConfig:
     """
     Create, validate, and return the default simulation configuration.
 
-    This function may import heavy modules (models.ephemeris / numba / spiceypy)
+    This function may import heavy modules (lunaris.physics.ephemeris / numba / spiceypy)
     and will raise ImportError with a helpful message if the environment is incomplete.
     """
 

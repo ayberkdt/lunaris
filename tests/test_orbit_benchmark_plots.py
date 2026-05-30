@@ -351,7 +351,10 @@ def _run_two_modes(integrator, dtype_name, monkeypatch):
 
         return accel, "fake_pointmass"
 
-    monkeypatch.setattr(cgm, "_make_gpu_accelerator", _fake_accel)
+    monkeypatch.setattr(
+        "lunaris.surrogate.st_lrps.evaluation._gravity_benchmark.compute._make_gpu_accelerator",
+        _fake_accel,
+    )
 
     eph = _FakeEphem(_rot_z_quat_table(40, max_angle=1.2), dt_s=50.0)
     dtype = torch.float64 if dtype_name == "float64" else torch.float32
@@ -404,7 +407,10 @@ def test_precomputed_cuda_smoke(monkeypatch):
             return -mu * pos_fixed / (r ** 3)
         return accel, "fake_pointmass"
 
-    monkeypatch.setattr(cgm, "_make_gpu_accelerator", _fake_accel)
+    monkeypatch.setattr(
+        "lunaris.surrogate.st_lrps.evaluation._gravity_benchmark.compute._make_gpu_accelerator",
+        _fake_accel,
+    )
     eph = _FakeEphem(_rot_z_quat_table(40, max_angle=1.2), dt_s=50.0)
     y0 = np.array([[1.90e6, 0.0, 0.0, 0.0, 1.60e3, 0.0]], dtype=np.float64)
     res = cgm.propagate_gpu_batch_model(

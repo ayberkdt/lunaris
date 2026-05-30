@@ -45,88 +45,31 @@ def _repo_root_from_this_file() -> "Path":
     return here.parent
 
 
-def _ensure_repo_on_syspath() -> None:
-    """
-    Ensure the repo root is importable.
-    Also add repo_root/LUNAR_SIMULATION if it exists (common in this project layout).
-    """
-    root = _repo_root_from_this_file()
-
-    candidates = [root]
-    lunar_dir = root / "LUNAR_SIMULATION"
-    if lunar_dir.exists():
-        candidates.append(lunar_dir)
-
-    for c in candidates:
-        s = str(c)
-        if s not in sys.path:
-            sys.path.insert(0, s)
-
-
 def _import_sh_module():
     """
-    Import spherical harmonics module robustly.
+    Import the canonical spherical harmonics module.
 
-    Priority:
-    1) If env var LUNAR_SH_MODULE is set, import that exact module path.
-       Example:
-           export LUNAR_SH_MODULE=models.spherical_harmonics
-           pytest -q
-    2) Otherwise, try current and legacy module paths.
-    3) Otherwise, try importing by file path from likely locations inside the repo.
+    If the env var ``LUNAR_SH_MODULE`` is set, import that exact module path
+    instead (useful for benchmarking an alternative implementation).
     """
-    _ensure_repo_on_syspath()
-
     env_name = os.environ.get("LUNAR_SH_MODULE", "").strip()
     if env_name:
         return importlib.import_module(env_name)
 
-    candidates = (
-        "lunaris.physics.spherical_harmonics",
-        "models.spherical_harmonics",
-        "models.spherical_harmonics_v2",
-        "core.spherical_harmonics",
-        "spherical_harmonics",
-        "spherical_harmonics_v2",
-        "spherical_harmonics_fixed",
-    )
-    last_err = None
-    for name in candidates:
-        try:
-            return importlib.import_module(name)
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-
-    # Path-based fallback (no package install needed)
-    root = _repo_root_from_this_file()
-    path_candidates = [
-        root / "src" / "lunaris" / "physics" / "spherical_harmonics.py",
-        root / "models" / "spherical_harmonics.py",
-        root / "models" / "spherical_harmonics_v2.py",
-        root / "models" / "spherical_harmonics_fixed.py",
-        root / "spherical_harmonics.py",
-        root / "spherical_harmonics_v2.py",
-        root / "spherical_harmonics_fixed.py",
-        (root / "LUNAR_SIMULATION" / "models" / "spherical_harmonics.py"),
-        (root / "LUNAR_SIMULATION" / "models" / "spherical_harmonics_v2.py"),
-        (root / "LUNAR_SIMULATION" / "models" / "spherical_harmonics_fixed.py"),
-    ]
-    for p in path_candidates:
-        if p.exists():
-            spec = importlib.util.spec_from_file_location("spherical_harmonics_under_test", p)
+    try:
+        return importlib.import_module("lunaris.physics.spherical_harmonics")
+    except Exception as exc:
+        # Path-based fallback for a non-installed source checkout.
+        path = _repo_root_from_this_file() / "src" / "lunaris" / "physics" / "spherical_harmonics.py"
+        if path.exists():
+            spec = importlib.util.spec_from_file_location("spherical_harmonics_under_test", path)
             if spec and spec.loader:
                 mod = importlib.util.module_from_spec(spec)
                 # dataclasses + string annotations need module in sys.modules before exec_module
                 sys.modules[spec.name] = mod
                 spec.loader.exec_module(mod)  # type: ignore[attr-defined]
                 return mod
-
-    raise ImportError(
-        "Could not import spherical harmonics module. Tried module names: "
-        + ", ".join(candidates)
-        + " and file paths: "
-        + ", ".join(str(p) for p in path_candidates)
-    ) from last_err
+        raise ImportError("Could not import lunaris.physics.spherical_harmonics.") from exc
 
 
 # -----------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/loaders/io_surface.py
+# lunaris/loaders/io_surface.py
 """
 Surface Data Layer (Topography & Albedo Grids)
 =============================================
@@ -1483,17 +1483,6 @@ class FileBackedSurfaceProvider:
     def as_numba_dict(self) -> Dict[str, Any]:
         return _grid_albedo_payload(self._grids.albedo, default_albedo=self.default_albedo)
 
-    def get_provider(self) -> Dict[str, Any]:
-        """
-        Deprecated compatibility alias; prefer `as_numba_dict()`.
-        """
-        warnings.warn(
-            "get_provider() is deprecated; use as_numba_dict() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.as_numba_dict()
-
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float:
         topo = self._grids.topo
         if topo is None:
@@ -1544,17 +1533,6 @@ class InMemorySurfaceProvider:
     def as_numba_dict(self) -> Dict[str, Any]:
         # Only expose grid payload if the injected albedo is grid-like
         return _grid_albedo_payload(self.albedo, default_albedo=self.default_albedo)
-
-    def get_provider(self) -> Dict[str, Any]:
-        """
-        Deprecated compatibility alias; prefer `as_numba_dict()`.
-        """
-        warnings.warn(
-            "get_provider() is deprecated; use as_numba_dict() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.as_numba_dict()
 
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float:
         if self.topo is None:

@@ -1234,7 +1234,7 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
 
 class ForceModelsPage(QtWidgets.QWidget):
     """
-    Page 2: Force Model Settings - Completely Overhauled v7.
+    Page 2: Force Model Settings.
     Encapsulates all widgets (sw_gravity, sw_sun, sw_earth, etc.) inside this page.
     """
 
@@ -1432,19 +1432,19 @@ class ForceModelsPage(QtWidgets.QWidget):
 
 
     # -------------------------------------------------------------------------
-    # 20. PAGE BUILDERS: FORCE MODELS (PAGE 2) - COMPLETELY OVERHAULED v7
+    # 20. PAGE BUILDERS: FORCE MODELS (PAGE 2)
     # -------------------------------------------------------------------------
     def _build_page_forces(self) -> QtWidgets.QWidget:
-        """Page 2: Force Model Settings - Completely Overhauled."""
+        """Page 2: Force Model Settings."""
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(20)
 
-        # Top Row: Gravity + Third-Body (Overhauled)
+        # Top Row: Gravity + Third-Body
         top_row = QtWidgets.QHBoxLayout()
         top_row.setSpacing(20)
         top_row.addWidget(self._group_gravity_force())
-        top_row.addWidget(self._group_thirdbody_force_overhauled())  # NEW v7
+        top_row.addWidget(self._group_thirdbody_force())
         top_row.setStretch(0, 1)
         top_row.setStretch(1, 1)
         layout.addLayout(top_row)
@@ -1452,11 +1452,11 @@ class ForceModelsPage(QtWidgets.QWidget):
         # Middle Row: Non-Gravitational
         layout.addWidget(self._group_nongrav_force())
 
-        # Bottom Row: Tides & Relativity (Overhauled)
+        # Bottom Row: Tides & Relativity
         bottom_row = QtWidgets.QHBoxLayout()
         bottom_row.setSpacing(20)
-        bottom_row.addWidget(self._group_tides_force_overhauled())  # NEW v7
-        bottom_row.addWidget(self._group_relativity_force())        # NEW v7
+        bottom_row.addWidget(self._group_tides_force())
+        bottom_row.addWidget(self._group_relativity_force())
         bottom_row.setStretch(0, 1)
         bottom_row.setStretch(1, 1)
         layout.addLayout(bottom_row)
@@ -1518,8 +1518,8 @@ class ForceModelsPage(QtWidgets.QWidget):
 
         return gb
 
-    def _group_thirdbody_force_overhauled(self) -> QtWidgets.QGroupBox:
-        """Third-body perturbations card - Overhauled v7."""
+    def _group_thirdbody_force(self) -> QtWidgets.QGroupBox:
+        """Third-body perturbations card."""
         gb = self._create_card("Third-Body Perturbations")
         layout = QtWidgets.QVBoxLayout(gb)
         layout.setContentsMargins(20, 24, 20, 20)
@@ -1656,15 +1656,15 @@ class ForceModelsPage(QtWidgets.QWidget):
         layout.addWidget(self.lbl_warn_srp_sun, 3, 0, 1, 4)
 
         # Connect SRP/Albedo to require Sun perturbation
-        self.sw_srp.toggled.connect(self._sync_srp_requirement_overhauled)
-        self.sw_albedo.toggled.connect(self._sync_srp_requirement_overhauled)
+        self.sw_srp.toggled.connect(self._sync_srp_requirement)
+        self.sw_albedo.toggled.connect(self._sync_srp_requirement)
         self.sw_albedo.toggled.connect(self._sync_albedo_settings_button)
-        self.sw_thermal.toggled.connect(self._sync_srp_requirement_overhauled)
+        self.sw_thermal.toggled.connect(self._sync_srp_requirement)
 
         return gb
 
-    def _group_tides_force_overhauled(self) -> QtWidgets.QGroupBox:
-        """Solid tides force card - Overhauled v7."""
+    def _group_tides_force(self) -> QtWidgets.QGroupBox:
+        """Solid tides force card."""
         gb = self._create_card("Solid Body Tides")
         layout = QtWidgets.QVBoxLayout(gb)
         layout.setContentsMargins(20, 24, 20, 20)
@@ -1720,7 +1720,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         return gb
 
     def _group_relativity_force(self) -> QtWidgets.QGroupBox:
-        """General Relativity force card - New v7."""
+        """General Relativity force card."""
         gb = self._create_card("General Relativity")
         layout = QtWidgets.QVBoxLayout(gb)
         layout.setContentsMargins(20, 24, 20, 20)
@@ -1776,7 +1776,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         except Exception as e:
             QtWidgets.QMessageBox.warning(self, "Albedo Settings", f"Could not open albedo settings:\n\n{e}")
 
-    def _sync_srp_requirement_overhauled(self, _checked: bool = False):
+    def _sync_srp_requirement(self, _checked: bool = False):
         """Ensure Sun is enabled if SRP or Albedo is enabled."""
         self._sync_force_dependencies()
 

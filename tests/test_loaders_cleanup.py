@@ -1,4 +1,3 @@
-import warnings
 from pathlib import Path
 
 import pytest
@@ -7,8 +6,6 @@ from lunaris.loaders.io_helpers import (
     project_root_from_path,
     autodetect_repository_data_roots,
     DataRootHints,
-    CANONICAL_PROJECT_MARKERS,
-    LEGACY_PROJECT_MARKERS,
 )
 from lunaris.loaders.io_surface import InMemorySurfaceProvider, FileBackedSurfaceProvider
 from lunaris.loaders.spice_builder import resolve_kernel_paths
@@ -39,13 +36,13 @@ def test_project_root_discovery(tmp_path):
     assert root_fallback.is_dir()
 
 
-def test_deprecation_warnings():
+def test_surface_provider_canonical_api():
+    """`as_numba_dict()` is the single canonical API; the deprecated
+    `get_provider()` alias must no longer exist on any provider."""
     provider = InMemorySurfaceProvider()
-    with pytest.warns(DeprecationWarning, match="get_provider.. is deprecated"):
-        provider.get_provider()
-        
-    # We can't easily test FileBackedSurfaceProvider without real files,
-    # but the logic is identical.
+    assert isinstance(provider.as_numba_dict(), dict)
+    assert not hasattr(provider, "get_provider")
+    assert not hasattr(FileBackedSurfaceProvider, "get_provider")
 
 
 def test_spice_absolute_paths(tmp_path, monkeypatch):

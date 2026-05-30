@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/loaders/io_gravity.py
+# lunaris/loaders/io_gravity.py
 """
 Gravity Model I/O Utilities.
 

@@ -4,7 +4,7 @@
 UI -> CLI bridge helpers for ST-LRPS Studio.
 
 This module centralizes the translation between page-owned UI state and the
-strict command-line interface exposed by `main.py`. Keeping the mapping in one
+strict command-line interface exposed by `lunaris.cli.main`. Keeping the mapping in one
 place has two benefits:
 
 1. The host window no longer needs to know every CLI flag detail.
@@ -350,7 +350,7 @@ def build_mc_command(
     log_warning: Optional[Callable[[str], None]] = None,
 ) -> list[str]:
     """
-    Build the CLI command for ``mc_runner.py`` from modular UI state.
+    Build the CLI command for ``lunaris.core.mc_runner`` from modular UI state.
 
     Parameters mirror ``build_command()`` but target the MC runner script and
     append Monte Carlo specific flags from ``mc_data`` (MonteCarloPage.get_data()).

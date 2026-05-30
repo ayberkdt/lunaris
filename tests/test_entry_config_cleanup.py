@@ -25,8 +25,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY_FILES = (
     "src/lunaris/core/config.py",
-    "main.py",
-    "mc_runner.py",
     "src/lunaris/cli/main.py",
     "src/lunaris/core/mc_runner.py",
 )
@@ -87,8 +85,8 @@ def test_entrypoints_do_not_call_load_default_config_at_import(monkeypatch) -> N
 
     # Re-execute the module bodies under throwaway names so the global
     # sys.modules entries stay clean for the rest of the suite.
-    main_mod = _load_module_by_path("_fresh_main_import", "main.py")
-    mc_mod = _load_module_by_path("_fresh_mc_runner_import", "mc_runner.py")
+    main_mod = _load_module_by_path("_fresh_main_import", "src/lunaris/cli/main.py")
+    mc_mod = _load_module_by_path("_fresh_mc_runner_import", "src/lunaris/core/mc_runner.py")
 
     assert main_mod is not None
     assert mc_mod is not None
@@ -124,15 +122,14 @@ def test_no_stale_lunar_names(file_name: str) -> None:
 # ---------------------------------------------------------------------------
 
 def test_no_keplerian_fallback_in_main() -> None:
-    import main
+    import lunaris.cli.main as main
 
     assert not hasattr(main, "_initial_state_from_keplerian_fallback")
 
 
 def test_mc_runner_does_not_depend_on_main_private_helpers() -> None:
-    source = _read_source("mc_runner.py")
-    assert "from main import" not in source
-    assert "import main" not in source
+    source = _read_source("src/lunaris/core/mc_runner.py")
+    assert "from lunaris.cli.main import" not in source
     assert "_initial_state_from_keplerian_fallback" not in source
 
 

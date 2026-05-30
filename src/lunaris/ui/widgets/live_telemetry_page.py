@@ -110,8 +110,6 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
     - Velocity vs Time
     - Eccentricity vs Time
     - Ground Track (Latitude vs Longitude)
-    
-    Updated v12: Sci-Fi/Mission Control aesthetic with enhanced styling
     """
     
     def __init__(self, parent=None):

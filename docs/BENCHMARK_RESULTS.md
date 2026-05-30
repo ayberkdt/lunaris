@@ -190,7 +190,7 @@ graph TD
 You can reproduce these results using either the command line or the desktop UI.
 
 ### Option A: Running via Desktop UI
-1. Launch the application: `python ui.py`
+1. Launch the application: `lunaris-ui`
 2. Navigate to the **Orbit-Level Benchmark** page in the left sidebar.
 3. Configure the following settings:
    * **Run Mode:** `GPU Batch RK4 (Simultaneous)`

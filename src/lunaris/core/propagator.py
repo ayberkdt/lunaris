@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/core/propagator.py
+# lunaris/core/propagator.py
 # -*- coding: utf-8 -*-
 """
 core.propagator

@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/tests/test_state.py
+# tests/test_state.py
 # -*- coding: utf-8 -*-
 """
 Test Suite for Core State & Geometry Engine

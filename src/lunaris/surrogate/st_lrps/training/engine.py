@@ -1111,6 +1111,127 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
             y_bounds=(-1.05, 1.05),
         )
 
+def _log_dataset_and_model_summary(N, _effective_target, bytes_est, cfg, data_path, dataset_body_name, dset_name, independent_val, meta, n_train, n_val, resolved_mu_si, resolved_r_ref_m, train_data_path, val_data_path):
+    logger.info("=== Dataset ===")
+    if independent_val:
+        logger.info(f"Train file: {train_data_path.name} ({n_train:,} samples)")
+        logger.info(f"Val file  : {val_data_path.name} ({n_val:,} samples)")
+        if cfg.test_data:
+            logger.info(f"Test file : {cfg.test_data}")
+        if cfg.ood_data:
+            logger.info(f"OOD file  : {cfg.ood_data}")
+    _sm = getattr(cfg, "suite_manifest", None)
+    if _sm:
+        logger.info(f"Suite manifest: {_sm}")
+    else:
+        logger.info(f"File: {data_path.name}")
+    logger.info(f"Target Dataset: {dset_name} | Total: [{N:,}, 7] | Size: {_human_bytes(bytes_est)}")
+    logger.info(f"Train/val split: {n_train:,} / {n_val:,}")
+    logger.info("=== Physics Metadata (auto-synced from HDF5) ===")
+    logger.info(f"central_body : {dataset_body_name}")
+    logger.info(f"unit_system  : {meta.unit_system}")
+    logger.info(f"mu_si        : {resolved_mu_si}  |  r_ref_m : {resolved_r_ref_m}")
+    logger.info(f"degree_max   : {meta.requested_degree}  |  degree_min : {meta.degree_min}")
+    logger.info(f"target_mode  : {meta.target_mode or 'unknown (inferred: ' + _effective_target + ')'}")
+    logger.info(f"columns      : {meta.columns or 'unknown'}")
+    logger.info(f"a_sign_conv  : {meta.a_sign_convention or 'unknown'}")
+    _dcv = getattr(meta, "derivative_convention_version", None)
+    if _dcv is None:
+        logger.warning(
+            "derivative_convention_version: MISSING - dataset may have been generated before "
+            "the dP_dphi sign fix. Latitude acceleration labels could be sign-flipped. "
+            "Regenerate with the corrected spatial_cloud_generator.py."
+        )
+    else:
+        logger.info(f"deriv_conv   : {_dcv}")
+    if meta.alt_min_km is not None and meta.alt_max_km is not None:
+        logger.info(f"alt range    : [{meta.alt_min_km}, {meta.alt_max_km}] km")
+    logger.info(f"Conversion factors (DU/TU/VU): {meta.DU_m} / {meta.TU_s} / {meta.VU_m_s}")
+    logger.info("=== Model ===")
+    _n_bands_log = getattr(cfg, "n_bands", 1)
+    _use_res_log = getattr(cfg, "use_residual_blocks", False)
+    _grad_acc_log = getattr(cfg, "grad_accumulation_steps", 1)
+    logger.info(f"{'model.activation':24s}: {cfg.activation}")
+    logger.info(f"{'model.hidden':24s}: {cfg.hidden}")
+    logger.info(f"{'model.depth':24s}: {cfg.depth}")
+    logger.info(f"{'model.preset':24s}: {getattr(cfg, 'model_preset', 'custom')}")
+    logger.info(f"{'model.n_bands':24s}: {_n_bands_log}")
+    logger.info(f"{'model.w0_first':24s}: {cfg.w0_first}")
+    logger.info(f"{'model.w0_hidden':24s}: {cfg.w0_hidden}")
+    logger.info(f"{'model.w0_bands':24s}: {getattr(cfg, 'w0_bands', None)}")
+    logger.info(f"{'model.residual_blocks':24s}: {_use_res_log}")
+    logger.info(f"{'grad_accum':24s}: {_grad_acc_log}")
+
+def _log_training_curriculum(_accel_min_fac, cfg):
+    logger.info("=== Training Curriculum ===")
+    logger.info(
+        f"potential_only_epochs={cfg.potential_only_epochs} | "
+        f"accel_ramp_epochs={cfg.accel_ramp_epochs} | "
+        f"accel_min_factor={_accel_min_fac}"
+    )
+    # Derivative training note: acceleration is ∇U, so it must be constrained from epoch 0.
+    if cfg.potential_only_epochs > 0:
+        logger.warning(
+            "potential_only_epochs > 0 detected. "
+            "SIREN can fit dU while grad(dU) drifts because acceleration is computed via autograd. "
+            f"accel_min_factor={_accel_min_fac} keeps a floor to limit drift. "
+            "Set accel_min_factor=0.0 only if you explicitly want pure potential-only behaviour."
+        )
+    if _accel_min_fac == 0.0:
+        logger.info("  Derivative training note: accel_min_factor=0.0 (pure potential-only during warm-up).")
+    else:
+        logger.info(
+            f"  Derivative training note: acceleration is always active (floor={_accel_min_fac}). "
+            "This prevents grad(dU) from drifting during curriculum warm-up."
+        )
+
+    if cfg.use_altitude_balanced_loss:
+        logger.info(f"  Altitude-Balanced Loss: ON (bins={cfg.altitude_bin_width_km}km)")
+    if cfg.use_radial_cross_loss:
+        logger.info(f"  Radial/Cross Loss: ON (radial_w={cfg.radial_loss_weight}, cross_w={cfg.cross_loss_weight})")
+    if cfg.use_laplacian_regularization:
+        _lap_mode_log = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
+        if _lap_mode_log == "train":
+            logger.info(
+                f"  In-batch Laplacian Reg: ON, mode=train (gradient backpropagates) "
+                f"(w={cfg.laplacian_weight}, every={cfg.laplacian_every_n_batches})"
+            )
+        else:
+            logger.info(
+                f"  In-batch Laplacian Reg: ON, mode={_lap_mode_log} (DIAGNOSTIC ONLY - logged, "
+                f"NOT backpropagated). For a trainable physics constraint set --laplacian-mode train "
+                f"(collocation Laplacian is the preferred trainable regulariser)."
+            )
+    logger.info(f"  Direction Loss: weight={cfg.direction_loss_weight}, start={cfg.direction_loss_start_epoch}, ramp={cfg.direction_loss_ramp_epochs}")
+    # NOTE: best-checkpoint-metric logging moved below, after _best_metric_canonical
+    # and checkpoint_selection are defined (they were referenced here before
+    # assignment, which made train() raise UnboundLocalError on every run).
+
+    # Fail fast on invalid architecture combination
+    if cfg.activation.lower() == "sine" and cfg.use_fourier:
+        raise ValueError(
+            "activation='sine' (SIREN) and use_fourier=True are mutually exclusive. "
+            "Stacking RFF on a SIREN creates a sin-of-sin composition that causes "
+            "catastrophic out-of-distribution overfitting. "
+            "Use one of:\n"
+            "  (1) activation='silu'/'tanh' + use_fourier=True\n"
+            "  (2) activation='sine' + use_fourier=False  (recommended default)"
+        )
+
+def _log_data_loading_policy(N, _avail_ram_mb, _est_ram_mb, _policy, _preload_reason, cfg, dataset_mb, should_preload):
+    logger.info("=== Data Loading Policy ===")
+    logger.info(f"  dataset estimated size : {dataset_mb:.1f} MB ({N:,} rows)")
+    logger.info(f"  preload_policy         : {_policy}")
+    logger.info(f"  auto_preload_mb        : {float(getattr(cfg, 'auto_preload_mb', 2048.0)):.1f} MB")
+    logger.info(f"  estimated preload RAM  : {_est_ram_mb:.0f} MB")
+    if _avail_ram_mb is not None:
+        logger.info(f"  available system RAM   : {_avail_ram_mb:.0f} MB (psutil)")
+    else:
+        logger.info("  available system RAM   : unknown (psutil not installed; RAM safety check skipped)")
+    logger.info(f"  decision               : {'RAM preload' if should_preload else 'HDF5 streaming'}")
+    logger.info(f"  reason                 : {_preload_reason}")
+
+
 def train(cfg: TrainConfig) -> None:
     """Main execution pipeline for the Physics-Informed setup and training.
 
@@ -1491,55 +1612,7 @@ def train(cfg: TrainConfig) -> None:
                 "Verify dataset generation parameters."
             )
 
-    logger.info("=== Dataset ===")
-    if independent_val:
-        logger.info(f"Train file: {train_data_path.name} ({n_train:,} samples)")
-        logger.info(f"Val file  : {val_data_path.name} ({n_val:,} samples)")
-        if cfg.test_data:
-            logger.info(f"Test file : {cfg.test_data}")
-        if cfg.ood_data:
-            logger.info(f"OOD file  : {cfg.ood_data}")
-    _sm = getattr(cfg, "suite_manifest", None)
-    if _sm:
-        logger.info(f"Suite manifest: {_sm}")
-    else:
-        logger.info(f"File: {data_path.name}")
-    logger.info(f"Target Dataset: {dset_name} | Total: [{N:,}, 7] | Size: {_human_bytes(bytes_est)}")
-    logger.info(f"Train/val split: {n_train:,} / {n_val:,}")
-    logger.info("=== Physics Metadata (auto-synced from HDF5) ===")
-    logger.info(f"central_body : {dataset_body_name}")
-    logger.info(f"unit_system  : {meta.unit_system}")
-    logger.info(f"mu_si        : {resolved_mu_si}  |  r_ref_m : {resolved_r_ref_m}")
-    logger.info(f"degree_max   : {meta.requested_degree}  |  degree_min : {meta.degree_min}")
-    logger.info(f"target_mode  : {meta.target_mode or 'unknown (inferred: ' + _effective_target + ')'}")
-    logger.info(f"columns      : {meta.columns or 'unknown'}")
-    logger.info(f"a_sign_conv  : {meta.a_sign_convention or 'unknown'}")
-    _dcv = getattr(meta, "derivative_convention_version", None)
-    if _dcv is None:
-        logger.warning(
-            "derivative_convention_version: MISSING - dataset may have been generated before "
-            "the dP_dphi sign fix. Latitude acceleration labels could be sign-flipped. "
-            "Regenerate with the corrected spatial_cloud_generator.py."
-        )
-    else:
-        logger.info(f"deriv_conv   : {_dcv}")
-    if meta.alt_min_km is not None and meta.alt_max_km is not None:
-        logger.info(f"alt range    : [{meta.alt_min_km}, {meta.alt_max_km}] km")
-    logger.info(f"Conversion factors (DU/TU/VU): {meta.DU_m} / {meta.TU_s} / {meta.VU_m_s}")
-    logger.info("=== Model ===")
-    _n_bands_log = getattr(cfg, "n_bands", 1)
-    _use_res_log = getattr(cfg, "use_residual_blocks", False)
-    _grad_acc_log = getattr(cfg, "grad_accumulation_steps", 1)
-    logger.info(f"{'model.activation':24s}: {cfg.activation}")
-    logger.info(f"{'model.hidden':24s}: {cfg.hidden}")
-    logger.info(f"{'model.depth':24s}: {cfg.depth}")
-    logger.info(f"{'model.preset':24s}: {getattr(cfg, 'model_preset', 'custom')}")
-    logger.info(f"{'model.n_bands':24s}: {_n_bands_log}")
-    logger.info(f"{'model.w0_first':24s}: {cfg.w0_first}")
-    logger.info(f"{'model.w0_hidden':24s}: {cfg.w0_hidden}")
-    logger.info(f"{'model.w0_bands':24s}: {getattr(cfg, 'w0_bands', None)}")
-    logger.info(f"{'model.residual_blocks':24s}: {_use_res_log}")
-    logger.info(f"{'grad_accum':24s}: {_grad_acc_log}")
+    _log_dataset_and_model_summary(N, _effective_target, bytes_est, cfg, data_path, dataset_body_name, dset_name, independent_val, meta, n_train, n_val, resolved_mu_si, resolved_r_ref_m, train_data_path, val_data_path)
     # SIREN derivative-training safety check
     if cfg.activation.lower() == "sine":
         if cfg.lr > 5e-4:
@@ -1554,60 +1627,7 @@ def train(cfg: TrainConfig) -> None:
             )
 
     _accel_min_fac = float(getattr(cfg, "accel_min_factor", 0.05))
-    logger.info("=== Training Curriculum ===")
-    logger.info(
-        f"potential_only_epochs={cfg.potential_only_epochs} | "
-        f"accel_ramp_epochs={cfg.accel_ramp_epochs} | "
-        f"accel_min_factor={_accel_min_fac}"
-    )
-    # Derivative training note: acceleration is ∇U, so it must be constrained from epoch 0.
-    if cfg.potential_only_epochs > 0:
-        logger.warning(
-            "potential_only_epochs > 0 detected. "
-            "SIREN can fit dU while grad(dU) drifts because acceleration is computed via autograd. "
-            f"accel_min_factor={_accel_min_fac} keeps a floor to limit drift. "
-            "Set accel_min_factor=0.0 only if you explicitly want pure potential-only behaviour."
-        )
-    if _accel_min_fac == 0.0:
-        logger.info("  Derivative training note: accel_min_factor=0.0 (pure potential-only during warm-up).")
-    else:
-        logger.info(
-            f"  Derivative training note: acceleration is always active (floor={_accel_min_fac}). "
-            "This prevents grad(dU) from drifting during curriculum warm-up."
-        )
-
-    if cfg.use_altitude_balanced_loss:
-        logger.info(f"  Altitude-Balanced Loss: ON (bins={cfg.altitude_bin_width_km}km)")
-    if cfg.use_radial_cross_loss:
-        logger.info(f"  Radial/Cross Loss: ON (radial_w={cfg.radial_loss_weight}, cross_w={cfg.cross_loss_weight})")
-    if cfg.use_laplacian_regularization:
-        _lap_mode_log = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
-        if _lap_mode_log == "train":
-            logger.info(
-                f"  In-batch Laplacian Reg: ON, mode=train (gradient backpropagates) "
-                f"(w={cfg.laplacian_weight}, every={cfg.laplacian_every_n_batches})"
-            )
-        else:
-            logger.info(
-                f"  In-batch Laplacian Reg: ON, mode={_lap_mode_log} (DIAGNOSTIC ONLY - logged, "
-                f"NOT backpropagated). For a trainable physics constraint set --laplacian-mode train "
-                f"(collocation Laplacian is the preferred trainable regulariser)."
-            )
-    logger.info(f"  Direction Loss: weight={cfg.direction_loss_weight}, start={cfg.direction_loss_start_epoch}, ramp={cfg.direction_loss_ramp_epochs}")
-    # NOTE: best-checkpoint-metric logging moved below, after _best_metric_canonical
-    # and checkpoint_selection are defined (they were referenced here before
-    # assignment, which made train() raise UnboundLocalError on every run).
-
-    # Fail fast on invalid architecture combination
-    if cfg.activation.lower() == "sine" and cfg.use_fourier:
-        raise ValueError(
-            "activation='sine' (SIREN) and use_fourier=True are mutually exclusive. "
-            "Stacking RFF on a SIREN creates a sin-of-sin composition that causes "
-            "catastrophic out-of-distribution overfitting. "
-            "Use one of:\n"
-            "  (1) activation='silu'/'tanh' + use_fourier=True\n"
-            "  (2) activation='sine' + use_fourier=False  (recommended default)"
-        )
+    _log_training_curriculum(_accel_min_fac, cfg)
 
     # 5. Resolve mu_si
     mu_val = float(resolved_mu_si)
@@ -1704,17 +1724,7 @@ def train(cfg: TrainConfig) -> None:
         est_ram_mb=_est_ram_mb,
         avail_ram_mb=_avail_ram_mb,
     )
-    logger.info("=== Data Loading Policy ===")
-    logger.info(f"  dataset estimated size : {dataset_mb:.1f} MB ({N:,} rows)")
-    logger.info(f"  preload_policy         : {_policy}")
-    logger.info(f"  auto_preload_mb        : {float(getattr(cfg, 'auto_preload_mb', 2048.0)):.1f} MB")
-    logger.info(f"  estimated preload RAM  : {_est_ram_mb:.0f} MB")
-    if _avail_ram_mb is not None:
-        logger.info(f"  available system RAM   : {_avail_ram_mb:.0f} MB (psutil)")
-    else:
-        logger.info("  available system RAM   : unknown (psutil not installed; RAM safety check skipped)")
-    logger.info(f"  decision               : {'RAM preload' if should_preload else 'HDF5 streaming'}")
-    logger.info(f"  reason                 : {_preload_reason}")
+    _log_data_loading_policy(N, _avail_ram_mb, _est_ram_mb, _policy, _preload_reason, cfg, dataset_mb, should_preload)
     if should_preload and "WARNING" in _preload_reason:
         logger.warning(f"Preload RAM-safety: {_preload_reason}")
 

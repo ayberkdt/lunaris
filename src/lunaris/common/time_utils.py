@@ -1,4 +1,4 @@
-# LUNAR_SIMULATION/common/time_utils.py
+# lunaris/common/time_utils.py
 """
 Time Utilities (Analytical, SPICE-Free)
 ======================================

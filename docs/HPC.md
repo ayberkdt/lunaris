@@ -66,7 +66,7 @@ python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
 Run the Monte Carlo simulator headlessly for batch processing (CPU parallelized or GPU vectorized depending on your configuration):
 
 ```bash
-python mc_runner.py --out-dir outputs/monte_carlo/mc_run
+lunaris-mc --out-dir outputs/monte_carlo/mc_run
 ```
 
 ## Using Slurm Job Scripts

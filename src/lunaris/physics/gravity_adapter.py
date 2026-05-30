@@ -29,8 +29,8 @@ class GravityModelAdapter:
 
     TODO(ST_LRPS): Remove this adapter once models emit strictly identical structs.
 
-    ``models.spherical_harmonics.GravityModel`` exposes names such as
-    ``max_degree`` and ``c_coeffs``.  ``core.dynamics`` expects names such as
+    ``lunaris.physics.spherical_harmonics.GravityModel`` exposes names such as
+    ``max_degree`` and ``c_coeffs``.  ``lunaris.core.dynamics`` expects names such as
     ``degree_max`` and ``Cnm``.  The adapter deliberately does not copy large
     arrays; it only forwards attribute access.
     """

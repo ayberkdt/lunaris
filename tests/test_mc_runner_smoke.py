@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-import mc_runner
+import lunaris.core.mc_runner as mc_runner
 
 
 def test_mc_runner_cpu_smoke_completes_and_writes_output(tmp_path: Path) -> None:

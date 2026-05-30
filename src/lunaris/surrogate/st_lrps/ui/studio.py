@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-st_lrps.ui.studio  -  v3
+ST-LRPS Studio.
 
-PyQt6 dashboard for the lunar scalar potential surrogate codebase.
-(Thin launcher for structural refactored UI)
+PyQt6 dashboard for the lunar scalar-potential surrogate codebase. This module is
+a thin launcher that wires together the structured UI components.
 """
 
 import os

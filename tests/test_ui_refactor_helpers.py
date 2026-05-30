@@ -83,7 +83,7 @@ def test_build_command_uses_modular_state_objects() -> None:
         downsample_3d=4,
     )
     data_state = DataFilesState(
-        ldem_root=r"C:\data\topografy_models",
+        ldem_root=r"C:\data\topography_models",
         albedo_root=r"C:\data\albedo_models",
         kernel_dir=r"C:\data\ephemeris_models",
         ldem_ppd=16,
@@ -118,7 +118,7 @@ def test_build_command_uses_modular_state_objects() -> None:
 
 def test_autodetect_data_state_understands_repository_folder_names(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
-    topo_dir = data_root / "topografy_models"
+    topo_dir = data_root / "topography_models"
     albedo_dir = data_root / "albedo_models"
     kernel_dir = data_root / "ephemeris_models"
 
@@ -142,7 +142,7 @@ def test_autodetect_data_state_understands_repository_folder_names(tmp_path: Pat
 
 def test_autodetect_data_state_prefers_dedicated_albedo_dir_over_legacy_ldem_reuse(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
-    topo_dir = data_root / "topografy_models"
+    topo_dir = data_root / "topography_models"
     albedo_dir = data_root / "albedo_models"
 
     topo_dir.mkdir(parents=True)
@@ -229,7 +229,7 @@ def test_build_mc_command_includes_solver_and_output_controls() -> None:
         "impact_alt_km": 2.0,
     }
     data_state = DataFilesState(
-        ldem_root=r"C:\data\topografy_models",
+        ldem_root=r"C:\data\topography_models",
         albedo_root=r"C:\data\albedo_models",
         kernel_dir=r"C:\data\ephemeris_models",
         ldem_ppd=16,

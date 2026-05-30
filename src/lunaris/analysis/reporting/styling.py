@@ -128,7 +128,6 @@ Guidelines for contributors
 
 from __future__ import annotations
 
-import os
 import hashlib
 from pathlib import Path
 from typing import Optional, Tuple, Any, Mapping

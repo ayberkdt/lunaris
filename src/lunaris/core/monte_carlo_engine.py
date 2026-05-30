@@ -51,7 +51,7 @@ import time
 import warnings
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional
 
 import numpy as np
 

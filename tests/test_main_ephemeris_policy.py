@@ -15,7 +15,7 @@ from lunaris.common.type_defs import PerturbationFlags, TimeConfig
 from lunaris.physics.ephemeris import SpiceBuildConfig
 
 from lunaris.core.config import load_default_config
-import main
+import lunaris.cli.main as main
 
 
 def _make_cfg(*, flags: PerturbationFlags) -> SimpleNamespace:

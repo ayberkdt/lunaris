@@ -50,7 +50,6 @@ from __future__ import annotations
 
 import math
 import os
-import time
 import warnings
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, List, Optional, Tuple

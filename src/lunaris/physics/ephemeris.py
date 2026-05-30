@@ -130,7 +130,6 @@ Typical usage
 from __future__ import annotations
 
 import warnings
-from pathlib import Path
 from contextlib import contextmanager
 
 from dataclasses import dataclass

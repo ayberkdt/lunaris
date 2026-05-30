@@ -20,9 +20,9 @@ from lunaris.loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_ke
 
 
 def test_autodetect_repository_data_roots_prefers_split_albedo_layout(tmp_path: Path) -> None:
-    project_root = tmp_path / "LUNAR_SIMULATION"
+    project_root = tmp_path / "lunaris"
     data_root = project_root / "data"
-    topo_dir = data_root / "topografy_models"
+    topo_dir = data_root / "topography_models"
     albedo_dir = data_root / "albedo_models"
     kernel_dir = data_root / "ephemeris_models"
 
@@ -52,7 +52,7 @@ def test_autodetect_repository_data_roots_prefers_split_albedo_layout(tmp_path: 
 
 
 def test_find_lunar_map_path_uses_canonical_assets_directory(tmp_path: Path) -> None:
-    project_root = tmp_path / "LUNAR_SIMULATION"
+    project_root = tmp_path / "lunaris"
     assets_dir = project_root / "data" / "assets"
     start_dir = project_root / "analysis"
     assets_dir.mkdir(parents=True)
