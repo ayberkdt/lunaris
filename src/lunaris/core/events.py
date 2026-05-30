@@ -835,7 +835,6 @@ def make_stability_violation_event(
         raise ValueError("R_ref_m must be finite and > 0.")
 
     # Prefer project constants if present; otherwise fallback.
-    KM2M = float(globals().get("KM_TO_M", 1000.0))
     M2KM = float(globals().get("M_TO_KM", 1.0 / 1000.0))
 
     def _coe_from_rv(r_i: NDArray[np.float64], v_i: NDArray[np.float64]) -> tuple[float, float, float, float]:

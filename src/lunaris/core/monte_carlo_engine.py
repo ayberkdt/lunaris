@@ -853,7 +853,6 @@ class MonteCarloEngine:
                 Y_all[:, b_start:b_end, :] = Y_b
             else:
                 # Linear interpolation to reference grid
-                T_ref = len(t_out_ref)
                 for j in range(b_n):
                     for c in range(6):
                         Y_all[:, b_start + j, c] = np.interp(
@@ -891,7 +890,6 @@ class MonteCarloEngine:
         # 5) Write to disk
         # -----------------------------------------------------------------
         # Collect ST-LRPS provenance metadata when the surrogate backend is active.
-        _grav_cfg = getattr(self._sim_cfg, "gravity", None)
         _grav_model = getattr(self._dyn, "grav", None)
         _st_lrps_meta: dict[str, Any] = {}
         if getattr(_grav_model, "model_kind", None) == "st_lrps":

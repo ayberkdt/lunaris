@@ -231,3 +231,49 @@ def test_readme_sanity():
 
     assert "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models" in content
     assert "lunaris.visualization.surface_explorer" in content
+
+
+def test_hpc_docs_use_canonical_hpc_dir():
+    """README and the HPC guide must reference hpc/, not the retired directory."""
+    root = get_project_root()
+    # Built dynamically so this guard file does not trip its own grep checks.
+    retired_dir = "slurm" + "_examples"
+    for rel in ("README.md", "docs/HPC.md"):
+        path = root / rel
+        if not path.exists():
+            continue
+        content = path.read_text(encoding="utf-8")
+        assert retired_dir not in content, (
+            f"{rel} still references the retired {retired_dir}/ directory; use hpc/"
+        )
+
+
+def test_env_template_has_valid_editable_install():
+    """hpc/env_template.sh must document the robust editable install, not the broken form."""
+    root = get_project_root()
+    env_template = root / "hpc" / "env_template.sh"
+    if not env_template.exists():
+        return
+    content = env_template.read_text(encoding="utf-8")
+    assert 'pip install -e ".[hpc]"' in content, (
+        "env_template.sh must show the editable install 'pip install -e \".[hpc]\"'"
+    )
+    # The old broken form concatenated the project-root path onto the extras spec.
+    assert "_PROJECT_ROOT.[hpc]" not in content, (
+        "env_template.sh still contains the broken 'PROJECT_ROOT.[hpc]' install form"
+    )
+
+
+def test_active_docs_use_correct_topography_spelling():
+    """Active documentation must use the correct 'topography' spelling."""
+    root = get_project_root()
+    # Built dynamically so this guard file does not trip its own grep checks.
+    typo = "topo" + "grafy"
+    for filepath in iter_doc_files(root):
+        try:
+            content = filepath.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        assert typo not in content, (
+            f"Old typo '{typo}' found in {filepath.relative_to(root)}"
+        )

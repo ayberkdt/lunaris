@@ -398,7 +398,6 @@ def figure_summary_page(
     ax_phy.axis("off")
     items = list(effects.items())
     cols = 4
-    rows = max(1, (len(items) + cols - 1) // cols)
     badge_w = 0.22
     badge_h = 0.24
 

@@ -69,6 +69,7 @@ lunaris-ui        mission desktop UI
 lunaris-studio    ST-LRPS Studio UI
 lunaris-train     ST-LRPS training CLI
 lunaris-eval      ST-LRPS evaluation CLI
+lunaris-benchmark ST-LRPS orbit-level gravity benchmark / validation CLI
 ```
 
 ## Installation
@@ -86,7 +87,7 @@ Optional dependency groups are declared in `pyproject.toml`: `core`, `ml`, `hpc`
 `ui`, `reports`, `dev`, and `all`. A pinned `requirements.txt` is also provided
 for environments that prefer a flat dependency list.
 
-**For HPC and Cluster Deployments**, exclude GUI dependencies. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for Conda (`environment.yml`), the headless `requirements_hpc.txt`, and Slurm templates (`slurm_examples/`).
+**For HPC and cluster deployments**, use the headless `.[hpc]` extra and the Slurm templates under `hpc/`; keep GUI dependencies off compute nodes. The primary cluster workflows are ST-LRPS dataset generation, training, evaluation, and large orbit-level validation runs. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for details.
 
 Large mission data files are not bundled. Place local SPICE kernels, gravity coefficient files, topography grids, and albedo grids under `data/` or another local path configured at runtime.
 
@@ -252,38 +253,38 @@ python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
 
 Gravity validation commonly uses a high-degree spherical-harmonic model such as SH200 as the truth/reference, lower-degree spherical-harmonic models as baselines, and optional ST-LRPS comparison when a trained artifact directory is supplied. See [validation/README.md](validation/README.md) and [validation/gravity/README.md](validation/gravity/README.md) for details.
 
-### 📊 Orbit-Level Gravity Benchmark Results (128 Scenarios, 5-Day Propagation)
+### Orbit-Level Gravity Benchmark (128 scenarios, 5-day propagation)
 
-A comprehensive physical validation benchmark of the **ST-LRPS neural surrogate** against classical Spherical Harmonic (SH) baselines over **128 randomized orbits** has been completed on a consumer laptop workstation (Intel CPU + GTX 1660 Ti):
+Validation of the ST-LRPS surrogate against spherical-harmonic (SH) baselines over 128 randomized orbits, run on a consumer workstation (Intel CPU + GTX 1660 Ti). In this benchmark configuration:
 
-* **The Accuracy Victory:** ST-LRPS outperformed all classical baselines in median trajectory accuracy, achieving a median RMS position error of **1.106 km** over a total traveled distance of **704,160 km** (a relative error of only **0.00015%**!).
-* **Meter-Level Orbit Control:** Radial (Altitude) error of only **41 meters** and Cross-Track (Plane tilt) error of only **6 meters** after 5 days of unguided propagation!
-* **The Computational Speedup:** 
-  * ST-LRPS is **nearly 2x faster than SH50** (3,377 seconds vs. 6,620 seconds), while delivering far superior physical accuracy.
-  * ST-LRPS adds only **6% computational overhead** compared to the extremely lightweight `SH20` baseline model.
-  * It achieves a **9.55x wall-clock speedup** compared to the high-fidelity sequential CPU truth reference.
+* Median RMS position error of **1.106 km** over ~**704,160 km** of total traveled distance (relative error ~**0.00015%**), below the listed lower-degree SH baselines for this scenario set.
+* Radial (altitude) error of **41 m** and cross-track error of **6 m** after 5 days of unguided propagation.
+* Runtime, for this scenario set:
+  * ≈**2x** faster wall-clock than the `SH50` model (3,377 s vs. 6,620 s) at higher accuracy in this configuration.
+  * ≈**6%** wall-clock overhead relative to the lightweight `SH20` model.
+  * **9.55x** wall-clock speedup versus the sequential CPU truth reference.
 
-### ⚡ 1-Day High-Degree Spherical Harmonic Benchmark (100 Scenarios, 1-Day Propagation)
+### High-Degree SH Comparison (100 scenarios, 1-day propagation)
 
-A validation comparing ST-LRPS directly against classical high-degree Spherical Harmonics (`SH100` and `SH200`) under general elliptic orbits ($100\text{ km}$ to $1000\text{ km}$ altitude):
+ST-LRPS compared against high-degree spherical harmonics (`SH100`, `SH200`) under general elliptic orbits ($100\text{ km}$ to $1000\text{ km}$ altitude). In this benchmark configuration:
 
-* **High-Degree Accuracy Parity:** ST-LRPS achieved a median RMS position error of only **0.626 km**, outperforming `SH30` (**1.450 km**) and `SH20` (**18.217 km**), while closely matching the accuracy of `SH100` (**0.461 km**) and `SH200` (**0.461 km**).
-* **29x Baseline Correction:** Sitting on a lightweight `SH20` baseline, ST-LRPS corrected the error by a factor of **29.1x** (from 18.217 km down to 0.626 km) using Sobolev neural residuals.
-* **Massive GPU Speedup:** ST-LRPS executed **8.32x faster than SH200** (665s vs 5,540s) and **3.64x faster than SH100** (665s vs 2,423s), proving high-degree potential surrogate efficiency.
+* Median RMS position error of **0.626 km** — below `SH30` (**1.450 km**) and `SH20` (**18.217 km**), and close to `SH100` (**0.461 km**) and `SH200` (**0.461 km**) for this scenario set.
+* On the lightweight `SH20` baseline, the Sobolev-trained residual reduced median RMS position error by a factor of **29.1x** (18.217 km → 0.626 km).
+* On GPU, **8.32x** faster wall-clock than `SH200` (665 s vs. 5,540 s) and **3.64x** faster than `SH100` (665 s vs. 2,423 s).
 
-### 🎯 Ultra-Precision 1-Day Near-Circular Gravity Benchmark (100 Scenarios, 1-Day Propagation)
+### Near-Circular Double-Precision Benchmark (100 scenarios, 1-day propagation)
 
-A specialized benchmark focusing on dense low-lunar mapping envelopes ($200\text{ km}$ to $400\text{ km}$ altitude) with double-precision GPU propagation showcases the extreme fidelity limits of ST-LRPS:
+Dense low-lunar mapping envelopes ($200\text{ km}$ to $400\text{ km}$ altitude) with double-precision GPU propagation. In this benchmark configuration:
 
-* **Sub-Meter Trajectory Accuracy:** ST-LRPS achieved a median RMS position error of only **15.83 cm** over a full day of unguided propagation.
-* **Centimeter-Level RIC Control:** Radial (altitude) error was maintained within **4.58 cm** and plane inclination tilt within **2.00 cm** over the entire 1-day period.
-* **GPU Double-Precision Performance:** Even in `float64` double-precision mode on the GPU, ST-LRPS delivered a **2.25x wall-clock speedup** compared to sequential CPU truth generation.
+* Median RMS position error of **15.83 cm** over a full day of unguided propagation.
+* Radial (altitude) error within **4.58 cm** and cross-track within **2.00 cm** over the 1-day period.
+* In `float64` GPU mode, **2.25x** wall-clock speedup versus sequential CPU truth generation.
 
-### 🔄 Side-by-Side Performance Comparison
+### Side-by-side comparison
 
-The table below demonstrates how adjusting numerical precision (`float64`), integration step size ($\Delta t$), and focusing on specific orbit envelopes showcases different performance and accuracy regimes of the ST-LRPS surrogate:
+Results under different numerical precision (`float64`), integration step size ($\Delta t$), and orbit envelopes:
 
-| Criterion / Metric | 5-Day General Stability Test | 1-Day High-Degree Comparison | 1-Day Ultra-Precision Benchmark |
+| Criterion / Metric | 5-Day General Stability Test | 1-Day High-Degree Comparison | 1-Day Near-Circular Benchmark |
 | :--- | :---: | :---: | :---: |
 | **Orbit Type** | Bounded Keplerian (Circular/Elliptic) | Bounded Keplerian (Circular/Elliptic) | Near-Circular (Low Circular Orbit) |
 | **Numerical Precision (Dtype)** | Single-Precision `float32` | Double-Precision `float64` | Double-Precision `float64` |
@@ -295,7 +296,7 @@ The table below demonstrates how adjusting numerical precision (`float64`), inte
 | **Along-Track (Phase) Median RMS** | **1.102 km** | **62.12 cm** | **15.03 cm** |
 | **GPU Speedup (vs. Truth)** | **9.55x** speedup (vs. CPU) | **5.59x** speedup (**8.32x** vs. SH200) | **2.25x** speedup (vs. CPU) |
 
-For the complete benchmark breakdown, tables, physical analyses, and step-by-step instructions on how to reproduce the results via the CLI or the Desktop UI, see the official **[ST-LRPS Gravity Model Benchmark Results](docs/BENCHMARK_RESULTS.md)**.
+For the full benchmark breakdown, tables, analysis, and reproduction steps (CLI or desktop UI), see [ST-LRPS Gravity Model Benchmark Results](docs/BENCHMARK_RESULTS.md).
 
 
 ## Visualization

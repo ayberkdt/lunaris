@@ -706,7 +706,6 @@ def _refine_event_time_bisect(
     gb = float(g1)
 
     # Cache endpoints' states when needed
-    ya = y0
     yb = None
 
     # Early exit if already extremely close
@@ -727,7 +726,6 @@ def _refine_event_time_bisect(
         if (ga > 0.0) == (gm > 0.0):
             a = m
             ga = gm
-            ya = ym
         else:
             b = m
             gb = gm
