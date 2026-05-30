@@ -95,6 +95,7 @@ lunaris-mc = "lunaris.core.monte_carlo_engine:mc_entry"
 lunaris-train = "lunaris.surrogate.st_lrps.training.cli:main"
 lunaris-eval = "lunaris.surrogate.st_lrps.evaluation.cli:main"
 lunaris-benchmark = "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models:main"
+lunaris-data = "lunaris.cli.data:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

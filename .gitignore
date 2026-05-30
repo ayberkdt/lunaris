@@ -37,11 +37,26 @@ CLAUDE.md
 *.local
 
 # External data and generated data
-# Anchored to the repo root; keep only the placement README tracked.
+# Anchored to the repo root; keep only the placement README and data manifest tracked.
 /data/*
 !/data/README.md
+!/data/data_sources.json
 # Generated dataset suites that land inside the data subpackage during local runs:
 st_lrps/data/cloud_suites/
+# Large external scientific data (SPICE kernels, gravity / topography / albedo
+# rasters) and generated datasets — ignored wherever they land in the tree.
+*.bsp
+*.bc
+*.bpc
+*.tf
+*.tls
+*.tpc
+*.img
+*.lbl
+*.cub
+*.tab
+*.grv
+*.sha
 *.h5
 *.hdf5
 *.npz
