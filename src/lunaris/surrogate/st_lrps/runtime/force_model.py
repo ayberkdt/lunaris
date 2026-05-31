@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, Optional, Union
 
@@ -30,6 +31,7 @@ import torch.nn as nn
 logger = logging.getLogger(__name__)
 
 from lunaris.surrogate.st_lrps.artifacts.manager import (
+    validate_checkpoint_contract,
     load_best_or_last,
     make_run_layout,
     read_run_manifest,
@@ -37,7 +39,7 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     resolve_run_dir as resolve_run_dir_from_artifacts,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, compute_base_accel, compute_base_potential
-from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
+from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, ArtifactContractError, TargetContract
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 
 
@@ -135,6 +137,8 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         checkpoint_path: Optional[str] = None,
         checkpoint_epoch: Optional[int] = None,
         architecture_signature: Optional[str] = None,
+        artifact_contract: Optional[ArtifactContract | dict] = None,
+        legacy_contract: bool = False,
         run_manifest: Optional[dict] = None,
         strict_domain: bool = False,
     ):
@@ -146,6 +150,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         self.checkpoint_path = checkpoint_path
         self.checkpoint_epoch = checkpoint_epoch
         self.architecture_signature = architecture_signature
+        self.legacy_contract = bool(legacy_contract)
         self.run_manifest = dict(run_manifest or {})
         # When True, predict_residual_accel / predict_total_accel raise if the
         # domain check recommends falling back (extrapolation outside the trained
@@ -160,11 +165,34 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         self.degree_max = int(cfg.get("degree_max", cfg.get("target_degree", -1)))
         self.r_ref_m = float(cfg.get("resolved_r_ref_m", R_MOON_SI))
         self.runtime_model_kind = str(cfg.get("runtime_model_kind", "potential_autograd"))
-        self.target_contract = TargetContract.from_legacy_config(
-            cfg,
-            resolved_mu_si=self.mu_si,
-            resolved_r_ref_m=self.r_ref_m,
-            a_sign=self.a_sign,
+        if artifact_contract is None:
+            artifact_contract = ArtifactContract.from_legacy_config(
+                cfg,
+                scaler_payload={
+                    "x": asdict(scaler.x) if hasattr(scaler.x, "__dataclass_fields__") else {},
+                    "u": asdict(scaler.u) if hasattr(scaler.u, "__dataclass_fields__") else {},
+                    "a": asdict(scaler.a) if hasattr(scaler.a, "__dataclass_fields__") else {},
+                    "provenance": getattr(scaler, "provenance", {}) or {},
+                },
+                architecture_signature=architecture_signature,
+            )
+        self.artifact_contract = (
+            ArtifactContract.from_dict(artifact_contract)
+            if isinstance(artifact_contract, dict)
+            else artifact_contract
+        )
+        self.target_contract = TargetContract(
+            central_body="moon",
+            target_mode=self.artifact_contract.target_mode,
+            base_degree=self.artifact_contract.base_degree,
+            target_degree=self.artifact_contract.target_degree,
+            baseline_kind=self.artifact_contract.baseline_kind,
+            unit_system="si",
+            frame="moon_fixed_cartesian",
+            derivative_convention_version="dP_dphi_corrected_v1",
+            a_sign=self.artifact_contract.a_sign,
+            mu_si=self.artifact_contract.mu_si,
+            r_ref_m=self.artifact_contract.r_ref_m,
         )
 
         # Training altitude bounds: resolved from 3 sources in priority order.
@@ -199,6 +227,11 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         _v = _prov.get("alt_max_km")
         if _v is not None and self._train_alt_max_km is None:
             self._train_alt_max_km = float(_v)
+
+        if self.artifact_contract.altitude_min_km is not None:
+            self._train_alt_min_km = float(self.artifact_contract.altitude_min_km)
+        if self.artifact_contract.altitude_max_km is not None:
+            self._train_alt_max_km = float(self.artifact_contract.altitude_max_km)
 
     def _predict_chunk(self, x_t: torch.Tensor) -> tuple:
         """Forward + autograd for one chunk. Returns (delta_u_np, delta_a_np)."""
@@ -470,6 +503,8 @@ def load_surrogate_force_model(
     device: str = "auto",
     chunk_size: int = 8192,
     allow_config_mismatch: bool = False,
+    strict_contract: bool = True,
+    allow_legacy_contract: bool = False,
     strict_domain: bool = False,
 ) -> SurrogateForceModel:
     """
@@ -493,6 +528,9 @@ def load_surrogate_force_model(
         RuntimeError if the input lies outside the surrogate's valid domain
         (see SurrogateForceModel.domain_status). Default False keeps the prior
         behaviour of always returning a (possibly extrapolated) prediction.
+    strict_contract : bool
+        When True, require a full versioned artifact contract. Legacy artifacts
+        must opt in with ``allow_legacy_contract=True``.
 
     Returns
     -------
@@ -519,7 +557,22 @@ def load_surrogate_force_model(
         prefer="best",
         allow_config_mismatch=allow_config_mismatch,
     )
+    _, ckpt = load_best_or_last(layout, prefer="best", device=dev)
+    contract_report = validate_checkpoint_contract(
+        ckpt,
+        cfg=cfg,
+        scaler_payload={
+            "x": asdict(scaler.x) if hasattr(scaler.x, "__dataclass_fields__") else {},
+            "u": asdict(scaler.u) if hasattr(scaler.u, "__dataclass_fields__") else {},
+            "a": asdict(scaler.a) if hasattr(scaler.a, "__dataclass_fields__") else {},
+            "provenance": getattr(scaler, "provenance", {}) or {},
+        },
+        strict=bool(strict_contract),
+        allow_legacy_contract=bool(allow_legacy_contract),
+    )
+    artifact_contract = ArtifactContract.from_dict(contract_report["artifact_contract"])
     runtime_kind = str(cfg.get("runtime_model_kind", "potential_autograd") or "potential_autograd")
+    runtime_kind = str(artifact_contract.runtime_model_kind or runtime_kind)
     if runtime_kind != "potential_autograd":
         if runtime_kind == "force_direct":
             DirectForceRuntime()
@@ -536,6 +589,8 @@ def load_surrogate_force_model(
         checkpoint_path=report.get("checkpoint_path"),
         checkpoint_epoch=report.get("checkpoint_epoch"),
         architecture_signature=report.get("architecture_signature"),
+        artifact_contract=artifact_contract,
+        legacy_contract=bool(contract_report.get("legacy_contract")),
         run_manifest=read_run_manifest(layout),
         strict_domain=strict_domain,
     )

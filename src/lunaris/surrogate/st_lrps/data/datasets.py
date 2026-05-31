@@ -17,6 +17,12 @@ import random
 from torch.utils.data import Dataset, Sampler
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI, is_lunar_body_signature
+from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    DatasetContract,
+    DatasetContractError,
+    REQUIRED_DERIVATIVE_CONVENTION,
+    sha256_file,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -386,7 +392,137 @@ def _resolve_lunar_dataset_contract(meta: DatasetMeta, *, data_path: Path) -> Tu
     return resolved_body, resolved_mu, resolved_r_ref
 
 
-REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
+def build_dataset_contract(
+    meta: DatasetMeta,
+    *,
+    data_path: Path,
+    n_samples: Optional[int] = None,
+    dataset_sha256: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build the versioned dataset-contract block used by artifacts."""
+
+    degree_max = meta.degree_max if meta.degree_max is not None else meta.requested_degree
+    a_sign = 1.0 if str(meta.a_sign_convention or "+1").strip() in {"+1", "1", "1.0"} else -1.0
+    contract = DatasetContract(
+        dataset_id=str(meta.raw_attrs.get("dataset_id") or meta.raw_attrs.get("suite_id") or Path(data_path).stem),
+        dataset_kind=str(meta.raw_attrs.get("dataset_kind", "st_lrps_spatial_cloud")),
+        created_at_utc=meta.raw_attrs.get("created_at_utc"),
+        generator_name=str(meta.raw_attrs.get("generator_name") or meta.raw_attrs.get("created_by") or "spatial_cloud_generator"),
+        generator_version=meta.raw_attrs.get("generator_version"),
+        repo_commit_sha=meta.raw_attrs.get("repo_commit_sha"),
+        random_seed=_safe_int(meta.raw_attrs.get("random_seed") or meta.raw_attrs.get("seed")),
+        n_samples=int(n_samples or meta.raw_attrs.get("n_samples") or 0),
+        coordinate_frame=str(meta.raw_attrs.get("coordinate_frame") or meta.raw_attrs.get("frame") or "moon_fixed_cartesian"),
+        units={
+            "position": "m" if meta.unit_system == "si" else meta.unit_system,
+            "potential": "m^2/s^2" if meta.unit_system == "si" else meta.unit_system,
+            "acceleration": "m/s^2" if meta.unit_system == "si" else meta.unit_system,
+        },
+        target_mode=meta.target_mode or ("residual" if (meta.degree_min is not None and int(meta.degree_min) >= 0) else "full"),
+        baseline_kind=str(
+            meta.raw_attrs.get("baseline_kind")
+            or ("spherical_harmonics" if (meta.degree_min is not None and int(meta.degree_min) >= 0) else "none")
+        ),
+        degree_min=meta.degree_min,
+        degree_max=degree_max,
+        mu_si=float(meta.mu_si if meta.mu_si is not None else MU_MOON_SI),
+        r_ref_m=float(meta.r_ref_m if meta.r_ref_m is not None else R_MOON_SI),
+        a_sign=a_sign,
+        altitude_min_km=meta.alt_min_km,
+        altitude_max_km=meta.alt_max_km,
+        sampling_policy={
+            "name": meta.raw_attrs.get("sampling_strategy"),
+            "surface_bias_ratio": _safe_float(meta.raw_attrs, "surface_bias_ratio"),
+        },
+        split_policy={"role": meta.raw_attrs.get("dataset_role") or meta.raw_attrs.get("split")},
+        source_gravity_model=meta.raw_attrs.get("source_gravity_model") or meta.gravity_model_path,
+        source_gravity_file_path=meta.raw_attrs.get("source_gravity_file_path") or meta.gravity_model_path,
+        source_gravity_file_sha256=meta.raw_attrs.get("source_gravity_file_sha256"),
+        content_sha256=dataset_sha256 or meta.raw_attrs.get("content_sha256") or meta.raw_attrs.get("dataset_sha256"),
+        derivative_convention=meta.derivative_convention_version,
+        columns=[c.strip() for c in str(meta.columns or "[x,y,z,dU,dax,day,daz]").strip("[]").split(",") if c.strip()],
+        dataset_layout={"dataset_name": meta.raw_attrs.get("dataset_name") or "data", "shape": None},
+        legacy_inferred=False,
+    )
+    payload = contract.to_dict()
+    payload["path"] = str(Path(data_path))
+    payload["dataset_sha256"] = payload.get("content_sha256")
+    payload["derivative_convention_version"] = payload.get("derivative_convention")
+    payload["alt_min_km"] = payload.get("altitude_min_km")
+    payload["alt_max_km"] = payload.get("altitude_max_km")
+    return payload
+
+
+def _safe_int(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def read_dataset_contract_from_h5(
+    h5_path: Path,
+    *,
+    dataset_name: str = "data",
+    allow_legacy_dataset_contract: bool = True,
+) -> Dict[str, Any]:
+    """Read dataset metadata and return the normalized dataset contract."""
+
+    path = Path(h5_path)
+    try:
+        return DatasetContract.from_hdf5(
+            path,
+            dataset_name=dataset_name,
+            allow_legacy_dataset_contract=allow_legacy_dataset_contract,
+            allow_missing_dataset_contract=allow_legacy_dataset_contract,
+            allow_legacy_derivative_convention=allow_legacy_dataset_contract,
+        ).to_dict()
+    except Exception:
+        meta = DatasetMeta.from_h5(path)
+        n_samples: Optional[int] = None
+        try:
+            with h5py.File(path, "r") as handle:
+                name = dataset_name if dataset_name in handle else _discover_dataset_name(path, dataset_name)
+                n_samples = int(handle[name].shape[0])
+        except Exception:
+            n_samples = None
+        return build_dataset_contract(meta, data_path=path, n_samples=n_samples)
+
+
+def validate_dataset_contract(
+    meta: DatasetMeta,
+    *,
+    data_path: Path,
+    allow_legacy_derivative_convention: bool = False,
+    allow_legacy_target_mode_inference: bool = False,
+    allow_missing_dataset_contract: bool = False,
+    allow_legacy_dataset_contract: bool = False,
+) -> Dict[str, Any]:
+    """Validate dataset metadata and return a normalized dataset contract."""
+
+    validate_training_dataset_convention(
+        meta,
+        data_path=data_path,
+        allow_legacy_derivative_convention=allow_legacy_derivative_convention,
+        allow_legacy_target_mode_inference=allow_legacy_target_mode_inference,
+        allow_missing_dataset_contract=allow_missing_dataset_contract,
+    )
+    contract = build_dataset_contract(meta, data_path=data_path)
+    try:
+        DatasetContract.from_dict(
+            contract,
+            allow_legacy_dataset_contract=allow_legacy_dataset_contract or allow_missing_dataset_contract,
+            allow_missing_source_gravity=True,
+            allow_legacy_derivative_convention=allow_legacy_derivative_convention,
+        )
+    except DatasetContractError as exc:
+        if allow_missing_dataset_contract or allow_legacy_dataset_contract:
+            logger.warning("OVERRIDDEN (allow_legacy_dataset_contract=True): %s", exc)
+        else:
+            raise
+    return contract
 
 
 def validate_training_dataset_convention(
@@ -394,6 +530,8 @@ def validate_training_dataset_convention(
     *,
     data_path: Path,
     allow_legacy_derivative_convention: bool = False,
+    allow_legacy_target_mode_inference: bool = False,
+    allow_missing_dataset_contract: bool = False,
 ) -> None:
     """Fail-fast guard against training on a silently-wrong dataset.
 
@@ -437,7 +575,16 @@ def validate_training_dataset_convention(
         )
 
     # --- target_mode ---
-    if meta.target_mode is not None:
+    if meta.target_mode is None:
+        msg = (
+            f"Dataset {name!r} is missing target_mode. New datasets must declare "
+            "whether labels are residual or full-field."
+        )
+        if allow_legacy_target_mode_inference:
+            logger.warning("OVERRIDDEN (allow_legacy_target_mode_inference=True): " + msg)
+        else:
+            raise ValueError(msg + " Pass --allow-legacy-target-mode-inference only for old datasets.")
+    else:
         tmode = str(meta.target_mode).strip().lower()
         if tmode not in ("residual", "full"):
             raise ValueError(
@@ -447,12 +594,33 @@ def validate_training_dataset_convention(
 
     # --- degree ordering ---
     dmax = meta.degree_max if meta.degree_max is not None else meta.requested_degree
+    if meta.degree_min is None or dmax is None:
+        msg = f"Dataset {name!r} is missing degree_min/degree_max metadata."
+        if allow_missing_dataset_contract or allow_legacy_derivative_convention:
+            logger.warning("OVERRIDDEN (allow_missing_dataset_contract=True): " + msg)
+        else:
+            raise ValueError(msg)
     if meta.degree_min is not None and dmax is not None:
         if int(dmax) <= int(meta.degree_min):
             raise ValueError(
                 f"Dataset {name!r} has degree_max={dmax} <= degree_min={meta.degree_min}; "
                 "a residual band requires degree_max > degree_min."
             )
+
+    # --- units and altitude envelope ---
+    if meta.unit_system not in ("si", "canonical"):
+        raise ValueError(f"Dataset {name!r} has missing or unsupported unit_system={meta.unit_system!r}.")
+    if meta.alt_min_km is None or meta.alt_max_km is None:
+        msg = f"Dataset {name!r} is missing altitude bounds."
+        if allow_missing_dataset_contract or allow_legacy_derivative_convention:
+            logger.warning("OVERRIDDEN (allow_missing_dataset_contract=True): " + msg)
+        else:
+            raise ValueError(msg)
+    elif float(meta.alt_max_km) <= float(meta.alt_min_km):
+        raise ValueError(
+            f"Dataset {name!r} has invalid altitude bounds: "
+            f"{meta.alt_min_km} >= {meta.alt_max_km}."
+        )
 
     # --- a_sign convention parseable ---
     if meta.a_sign_convention is not None:
@@ -801,7 +969,9 @@ def infer_a_sign_from_data(
 
 __all__ = [
     'DTYPE', 'DatasetMeta', 'H5BlockDataset', 'TensorMemoryDataset',
+    'DatasetContract', 'DatasetContractError',
     'BlockShuffleSampler', 'collate_xyz_u_a', 'collate_h5', '_resolve_loader_worker_count',
     '_build_train_val_indices', '_find_latest_dataset', '_discover_dataset_name',
     '_resolve_lunar_dataset_contract', 'infer_a_sign_from_data',
+    'build_dataset_contract', 'read_dataset_contract_from_h5', 'validate_dataset_contract',
 ]

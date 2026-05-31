@@ -347,7 +347,7 @@ def test_predict_residual_potential_rejects_nan_input():
     cfg = MockArgs(hidden=16, depth=1, activation="silu", use_fourier=False, use_sh_encoding=False)
     model = build_model_from_config(cfg)
     scaler = mock_scaler()
-    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 1e14, "degree_min": 0}, device=torch.device("cpu"))
+    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0}, device=torch.device("cpu"))
     
     x_nan = np.array([[np.nan, 1000.0, 1000.0]])
     with pytest.raises(ValueError, match="NaN or Inf"):
@@ -357,7 +357,7 @@ def test_predict_residual_potential_rejects_inf_input():
     cfg = MockArgs(hidden=16, depth=1, activation="silu", use_fourier=False, use_sh_encoding=False)
     model = build_model_from_config(cfg)
     scaler = mock_scaler()
-    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 1e14, "degree_min": 0}, device=torch.device("cpu"))
+    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0}, device=torch.device("cpu"))
     
     x_inf = np.array([[np.inf, 1000.0, 1000.0]])
     with pytest.raises(ValueError, match="NaN or Inf"):
@@ -367,7 +367,7 @@ def test_predict_residual_potential_valid_input_unchanged():
     cfg = MockArgs(hidden=16, depth=1, activation="silu", use_fourier=False, use_sh_encoding=False)
     model = build_model_from_config(cfg)
     scaler = mock_scaler()
-    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 1e14, "degree_min": 0}, device=torch.device("cpu"))
+    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0}, device=torch.device("cpu"))
 
     x = np.array([[1000.0, 1000.0, 1000.0]])
     res = fm.predict_residual_potential(x)
@@ -521,7 +521,7 @@ def test_force_model_loads_sh_encoded_checkpoint(tmp_path):
     """Task 2 & 7: SurrogateForceModel must load an SH-encoded checkpoint and produce finite output."""
     model_dir, _ = _make_encoded_force_model_checkpoint(tmp_path, use_sh=True)
     from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
-    fm = load_surrogate_force_model(str(model_dir), device="cpu")
+    fm = load_surrogate_force_model(str(model_dir), device="cpu", allow_legacy_contract=True)
     x = np.array([[1.8e6, 0.0, 0.0], [0.0, 1.8e6, 0.0]])
     out = fm.predict_residual_potential(x)
     assert np.isfinite(out).all(), f"SH-encoded force model produced non-finite output: {out}"
@@ -531,7 +531,7 @@ def test_force_model_loads_radial_encoded_checkpoint(tmp_path):
     """Task 2 & 7: SurrogateForceModel must load a radial-encoded checkpoint and produce finite output."""
     model_dir, _ = _make_encoded_force_model_checkpoint(tmp_path, use_radial=True)
     from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
-    fm = load_surrogate_force_model(str(model_dir), device="cpu")
+    fm = load_surrogate_force_model(str(model_dir), device="cpu", allow_legacy_contract=True)
     x = np.array([[1.8e6, 0.0, 0.0], [0.0, 1.8e6, 0.0]])
     out = fm.predict_residual_potential(x)
     assert np.isfinite(out).all(), f"Radial-encoded force model produced non-finite output: {out}"

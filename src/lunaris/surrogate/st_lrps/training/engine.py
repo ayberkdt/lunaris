@@ -43,9 +43,13 @@ from lunaris.surrogate.st_lrps.training.config_summary import build_experiment_f
 from lunaris.surrogate.st_lrps.data.datasets import (
     DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
     _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
+    build_dataset_contract,
     _resolve_lunar_dataset_contract, collate_xyz_u_a, infer_a_sign_from_data,
     validate_training_dataset_convention,
 )
+from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract
+from lunaris.surrogate.st_lrps.data.dataset_validation import validate_dataset_file
+from lunaris.surrogate.st_lrps.data.splits import build_split_manifest, split_dataset_indices, write_split_manifest
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     atomic_write_json,
     append_run_evaluation,
@@ -904,6 +908,16 @@ def _dataset_meta_snapshot(
     resolved_r_ref_m: float,
 ) -> Dict[str, Any]:
     snapshot = {
+        "schema_version": 1,
+        "dataset_sha256": (
+            compute_file_sha256(data_path)
+            if data_path is not None and Path(data_path).exists()
+            else (
+                compute_file_sha256(train_data_path)
+                if train_data_path is not None and Path(train_data_path).exists()
+                else None
+            )
+        ),
         "dataset_name": str(dataset_name),
         "data_path": (str(data_path) if data_path is not None else None),
         "train_data_path": (str(train_data_path) if train_data_path is not None else None),
@@ -931,6 +945,12 @@ def _dataset_meta_snapshot(
         "cloud_config": meta.cloud_config,
         "raw_attrs": dict(meta.raw_attrs),
     }
+    snapshot["dataset_contract"] = build_dataset_contract(
+        meta,
+        data_path=(data_path or train_data_path or Path(".")),
+        n_samples=None,
+        dataset_sha256=snapshot["dataset_sha256"],
+    )
     return snapshot
 
 def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
@@ -1570,17 +1590,84 @@ def train(cfg: TrainConfig) -> None:
     if cfg.use_si and meta.unit_system == "canonical" and not meta.can_convert_to_si():
         raise ValueError("Configuration demands SI units, but dataset is missing DU_m/TU_s/VU_m_s attributes.")
 
+    allow_legacy_dataset_contract = bool(getattr(cfg, "allow_legacy_dataset_contract", False))
+    allow_missing_dataset_contract = bool(getattr(cfg, "allow_missing_dataset_contract", False))
+    dataset_contract_obj = DatasetContract.from_hdf5(
+        primary_path,
+        dataset_name=dset_name,
+        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
+        allow_missing_dataset_contract=allow_missing_dataset_contract,
+        allow_legacy_derivative_convention=bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
+    )
+    validation_report = validate_dataset_file(
+        primary_path,
+        out_dir=layout.provenance_dir,
+        dataset_name=dset_name,
+        n_check=min(1024, int(N)),
+        seed=int(cfg.split_seed if cfg.split_seed is not None else cfg.seed),
+        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
+        allow_missing_dataset_contract=allow_missing_dataset_contract,
+        allow_legacy_derivative_convention=bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
+    )
+    if not validation_report.get("passed") and not bool(getattr(cfg, "allow_dataset_validation_fail", False)):
+        raise ValueError(
+            "Dataset validation failed before training: "
+            + "; ".join(str(item) for item in validation_report.get("errors", []))
+        )
+
     # 4. Data Splitting
+    split_seed = int(cfg.split_seed if cfg.split_seed is not None else cfg.seed)
+    split_policy = str(getattr(cfg, "split_policy", "seeded_random") or "seeded_random")
     if independent_val:
         train_indices = None
         val_indices = None
         n_train = N_train_file
         n_val = N_val_file
+        split_manifest = {
+            "schema_version": 1,
+            "dataset_id": dataset_contract_obj.dataset_id,
+            "split_policy": "independent_files",
+            "split_seed": split_seed,
+            "train_count": int(n_train),
+            "val_count": int(n_val),
+            "test_count": 0,
+            "ood_count": 0,
+            "index_hashes": {},
+            "altitude_range_per_split": {},
+            "created_at_utc": validation_report.get("created_at_utc"),
+        }
     else:
-        split_seed = int(cfg.split_seed if cfg.split_seed is not None else cfg.seed)
-        train_indices, val_indices = _build_train_val_indices(N, float(cfg.val_ratio), split_seed)
+        if split_policy in {"seeded_random", "random"}:
+            splits = split_dataset_indices(
+                n_rows=N,
+                split_policy=split_policy,
+                split_seed=split_seed,
+                val_fraction=float(cfg.val_ratio),
+            )
+        elif split_policy == "altitude_stratified":
+            with h5py.File(primary_path, "r", swmr=True) as f:
+                xyz_all = np.asarray(f[dset_name][:, 0:3], dtype=np.float64)
+            altitude_all = (np.linalg.norm(xyz_all, axis=1) - float(meta.r_ref_m or R_MOON_SI)) / 1000.0
+            splits = split_dataset_indices(
+                n_rows=N,
+                split_policy=split_policy,
+                split_seed=split_seed,
+                val_fraction=float(cfg.val_ratio),
+                altitude_km=altitude_all,
+            )
+        else:
+            raise ValueError(f"Unsupported training split_policy={split_policy!r}")
+        train_indices = splits["train"]
+        val_indices = splits["val"]
         n_train = int(train_indices.size)
         n_val = int(val_indices.size)
+        split_manifest = build_split_manifest(
+            dataset_contract=dataset_contract_obj,
+            splits=splits,
+            split_policy=split_policy,
+            split_seed=split_seed,
+        )
+    split_manifest_path = write_split_manifest(layout.provenance_dir / "split_manifest.json", split_manifest)
 
     # 4b. Validate metadata contract
     degree_min_val = int(meta.degree_min) if meta.degree_min is not None else -1
@@ -1595,6 +1682,12 @@ def train(cfg: TrainConfig) -> None:
         data_path=primary_path,
         allow_legacy_derivative_convention=bool(
             getattr(cfg, "allow_legacy_derivative_convention", False)
+        ),
+        allow_legacy_target_mode_inference=bool(
+            getattr(cfg, "allow_legacy_target_mode_inference", False)
+        ),
+        allow_missing_dataset_contract=bool(
+            getattr(cfg, "allow_missing_dataset_contract", False)
         ),
     )
     if _effective_target == "residual" and degree_min_val < 0:
@@ -2049,6 +2142,16 @@ def train(cfg: TrainConfig) -> None:
         resolved_r_ref_m=resolved_r_ref_m,
     )
     dataset_snapshot["target_contract"] = target_contract.to_dict()
+    dataset_snapshot["dataset_contract"] = dataset_contract_obj.to_dict()
+    dataset_snapshot["dataset_validation_report_path"] = str(layout.provenance_dir / "dataset_validation_report.json")
+    dataset_snapshot["split_manifest_path"] = str(split_manifest_path)
+    dataset_snapshot["split_manifest"] = split_manifest
+    dataset_snapshot["dataset_safety_overrides"] = {
+        "allow_legacy_dataset_contract": allow_legacy_dataset_contract,
+        "allow_missing_dataset_contract": allow_missing_dataset_contract,
+        "allow_legacy_derivative_convention": bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
+        "allow_dataset_validation_fail": bool(getattr(cfg, "allow_dataset_validation_fail", False)),
+    }
     atomic_write_json(layout.provenance_dir / "dataset_meta.json", dataset_snapshot)
     feature_summary = build_experiment_feature_summary(cfg, target_contract, model)
     atomic_write_json(layout.provenance_dir / "feature_summary.json", feature_summary)
@@ -2239,9 +2342,21 @@ def train(cfg: TrainConfig) -> None:
                 "degree_max",
                 "target_mode",
                 "target_contract",
+                "artifact_contract",
+                "training_config_hash",
             )},
             "feature_summary_path": str(layout.provenance_dir / "feature_summary.json"),
+            "dataset_validation_report_path": str(layout.provenance_dir / "dataset_validation_report.json"),
+            "split_manifest_path": str(split_manifest_path),
             "architecture_signature": _arch_signature,
+            "artifact_contract": payload.get("artifact_contract"),
+            "training_config_hash": payload.get("training_config_hash"),
+            "dataset_contract": payload.get("dataset_contract"),
+            "split_manifest": split_manifest,
+            "dataset_validation_passed": bool(validation_report.get("passed")),
+            "dataset_safety_overrides": dataset_snapshot.get("dataset_safety_overrides"),
+            "dataset_hash": (payload.get("dataset_contract") or {}).get("dataset_sha256")
+            if isinstance(payload.get("dataset_contract"), dict) else None,
             "w0_bands": payload.get("w0_bands"),
             "status": "running",
         },

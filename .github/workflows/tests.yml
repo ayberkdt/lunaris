@@ -55,5 +55,8 @@ jobs:
       - name: Install Lunaris (CPU stack + dev/test deps)
         run: pip install -e ".[all]"
 
+      - name: Run reproducible benchmark smoke tests
+        run: pytest tests/test_benchmark_config.py tests/test_benchmark_provenance.py tests/test_benchmark_validation.py tests/test_benchmark_pipeline_smoke.py -q
+
       - name: Run CPU-only test suite
         run: pytest tests/ -m "not slow and not requires_data and not requires_cuda" -q

@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "name": "sh_baseline_comparison",
+  "description": "Spherical-harmonic baseline comparison without a surrogate model",
+  "scenario": {
+    "seed": 42,
+    "count": 64,
+    "type": "bounded_keplerian",
+    "altitude_min_km": 100.0,
+    "altitude_max_km": 1000.0,
+    "eccentricity_mode": "circular_to_elliptic",
+    "inclination_mode": "full_range"
+  },
+  "propagation": {
+    "duration_days": 1.0,
+    "output_dt_s": 60.0,
+    "integrator": "RK4",
+    "dt_s": 30.0,
+    "dtype": "float64"
+  },
+  "truth": {
+    "model": "spherical_harmonics",
+    "degree": 200,
+    "integrator": "DOP853",
+    "rtol": 1.0e-10,
+    "atol": 1.0e-12,
+    "gravity_file": null
+  },
+  "baselines": [
+    {"name": "SH20", "model": "spherical_harmonics", "degree": 20},
+    {"name": "SH30", "model": "spherical_harmonics", "degree": 30},
+    {"name": "SH50", "model": "spherical_harmonics", "degree": 50},
+    {"name": "SH100", "model": "spherical_harmonics", "degree": 100}
+  ],
+  "surrogate": {
+    "enabled": false,
+    "name": "ST-LRPS",
+    "model_dir": null,
+    "baseline_degree": 20,
+    "runtime_model_kind": "potential_autograd"
+  },
+  "outputs": {
+    "out_dir": null,
+    "write_figures": true,
+    "write_csv": true,
+    "write_json": true
+  }
+}

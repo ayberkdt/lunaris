@@ -212,7 +212,12 @@ def test_force_model_rejects_config_checkpoint_architecture_mismatch(tmp_path):
     )
     with pytest.raises(RuntimeError, match="architecture"):
         load_surrogate_force_model(run_dir, device="cpu")
-    fm = load_surrogate_force_model(run_dir, device="cpu", allow_config_mismatch=True)
+    fm = load_surrogate_force_model(
+        run_dir,
+        device="cpu",
+        allow_config_mismatch=True,
+        allow_legacy_contract=True,
+    )
     assert fm is not None
 
 

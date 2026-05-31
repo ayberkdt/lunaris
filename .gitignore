@@ -61,12 +61,18 @@ st_lrps/data/cloud_suites/
 *.hdf5
 *.npz
 *.npy
+!tests/fixtures/
+!tests/fixtures/**
+!examples/
+!examples/**
 
 # Simulation outputs
 results/
 output/
 outputs/
 reports/
+checkpoints/
+evals/
 mc_results/
 mission_results/
 
