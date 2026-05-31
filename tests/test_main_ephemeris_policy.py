@@ -9,6 +9,8 @@ lightweight while preserving full ephemeris tables for third-body / SRP cases.
 
 from __future__ import annotations
 
+import pytest
+
 from types import SimpleNamespace
 
 from lunaris.common.type_defs import PerturbationFlags, TimeConfig
@@ -105,6 +107,7 @@ def test_init_ephemeris_keeps_third_body_sampling_when_sun_vector_is_needed(monk
     assert captured["spice_cfg"].include_third_body is True
 
 
+@pytest.mark.requires_data
 def test_apply_args_to_config_canonicalizes_offset_start_dates_to_utc() -> None:
     cfg = load_default_config()
     args = main.parse_args(["--start-date", "2026-05-10T19:19:47+03:00"])

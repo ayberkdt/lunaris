@@ -15,6 +15,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.physics.surrogate_gravity import discover_st_lrps_model_dirs
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
@@ -28,6 +30,7 @@ from lunaris.surrogate.st_lrps.data.spatial_cloud_parameters import (
 )
 
 
+@pytest.mark.requires_data
 def test_default_surrogate_dataset_parameters_point_to_the_moon() -> None:
     assert DEFAULT_DATASET_CONFIG.central_body == "moon"
     assert DEFAULT_DATASET_CONFIG.mu_si == float(MU_MOON)

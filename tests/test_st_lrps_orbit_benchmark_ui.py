@@ -342,6 +342,7 @@ def test_gpu_rk4_dt_variants_build_distinct_cache_and_display_names():
     assert cgm.display_label("GPU_SH20_RK4_DT10") == "SH20 dt10"
 
 
+@pytest.mark.requires_data
 def test_cfg_with_integrator_overrides_method():
     from lunaris.core.config import load_default_config
     from lunaris.surrogate.st_lrps.evaluation.compare_gravity_models import _cfg_with_integrator

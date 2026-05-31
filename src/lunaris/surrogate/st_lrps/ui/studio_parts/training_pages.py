@@ -296,9 +296,9 @@ class TrainingQueue(QWidget):
     argument list (List[str]) that will be passed to QProcess.
 
     Workflow:
-    1. User configures parameters, clicks "Kuyruğa Ekle".
+    1. User configures parameters, clicks "Add to Queue".
     2. Item appears in the list with a short description.
-    3. User clicks "Kuyruğu Başlat" — queue runs jobs sequentially.
+    3. User clicks "Start Queue" — queue runs jobs sequentially.
     4. On each job finish, the next one starts automatically.
     """
 
@@ -315,7 +315,7 @@ class TrainingQueue(QWidget):
         self._running: bool = False
 
         # --- Header ---
-        lbl = QLabel("Eğitim Kuyruğu")
+        lbl = QLabel("Training Queue")
         lbl.setStyleSheet("font-weight: 600; color: #c4ccff; font-size: 13px; padding: 2px 0;")
 
         self._status_lbl = QLabel("")
@@ -326,21 +326,21 @@ class TrainingQueue(QWidget):
         self._list.setMinimumHeight(80)
 
         # --- Buttons ---
-        self.btn_start_queue = QPushButton("Kuyruğu Başlat")
+        self.btn_start_queue = QPushButton("Start Queue")
         self.btn_start_queue.setProperty("kind", "primary")
-        self.btn_start_queue.setToolTip("Kuyruktaki tüm eğitimleri sırasıyla çalıştır.")
+        self.btn_start_queue.setToolTip("Run all queued training jobs sequentially.")
         self.btn_start_queue.clicked.connect(self._start_queue)
 
-        self.btn_stop_queue = QPushButton("Kuyruğu Durdur")
+        self.btn_stop_queue = QPushButton("Stop Queue")
         self.btn_stop_queue.setProperty("kind", "danger")
         self.btn_stop_queue.setEnabled(False)
         self.btn_stop_queue.clicked.connect(self._stop_queue)
 
-        btn_remove = QPushButton("Seçiliyi Kaldır")
+        btn_remove = QPushButton("Remove Selected")
         btn_remove.setProperty("kind", "ghost")
         btn_remove.clicked.connect(self._remove_selected)
 
-        btn_clear_q = QPushButton("Kuyruğu Temizle")
+        btn_clear_q = QPushButton("Clear Queue")
         btn_clear_q.setProperty("kind", "ghost")
         btn_clear_q.clicked.connect(self._clear_queue)
 
@@ -378,7 +378,7 @@ class TrainingQueue(QWidget):
             "args": args,
             "out_dir": out_dir,
             "config": config or {},
-            "status": "Bekliyor",
+            "status": "Pending",
         }
         self._queue.append(item_data)
         self._refresh_list()
@@ -399,18 +399,18 @@ class TrainingQueue(QWidget):
 
         job_ok = exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
         if job_ok:
-            self._queue[self._current_index]["status"] = f"Tamamlandı (exit={exit_code})"
+            self._queue[self._current_index]["status"] = f"Completed (exit={exit_code})"
         else:
-            self._queue[self._current_index]["status"] = f"Hata (exit={exit_code})"
+            self._queue[self._current_index]["status"] = f"Error (exit={exit_code})"
 
         self._refresh_list()
 
         if not job_ok:
             reply = QMessageBox.question(
                 self,
-                "Eğitim Başarısız",
-                f"İş #{self._current_index + 1} başarısız bitti (exit={exit_code}).\n"
-                "Kuyruğa devam edilsin mi?",
+                "Training Failed",
+                f"Job #{self._current_index + 1} failed (exit={exit_code}).\n"
+                "Continue with the queue?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -427,9 +427,9 @@ class TrainingQueue(QWidget):
     # --- Internal ---
 
     def _start_queue(self) -> None:
-        pending = [i for i, q in enumerate(self._queue) if q["status"] == "Bekliyor"]
+        pending = [i for i, q in enumerate(self._queue) if q["status"] == "Pending"]
         if not pending:
-            QMessageBox.information(self, "Boş Kuyruk", "Bekleyen iş yok.")
+            QMessageBox.information(self, "Empty Queue", "No pending jobs.")
             return
         self._running = True
         self._current_index = pending[0] - 1  # _advance will increment
@@ -441,7 +441,7 @@ class TrainingQueue(QWidget):
         # Find next pending job
         next_idx = None
         for i in range(self._current_index + 1, len(self._queue)):
-            if self._queue[i]["status"] == "Bekliyor":
+            if self._queue[i]["status"] == "Pending":
                 next_idx = i
                 break
 
@@ -452,12 +452,12 @@ class TrainingQueue(QWidget):
             self.btn_start_queue.setEnabled(True)
             self.btn_stop_queue.setEnabled(False)
             self._update_status()
-            _send_os_notification("Lunar Potential Surrogate", "Eğitim kuyruğu tamamlandı!")
+            _send_os_notification("Lunar Potential Surrogate", "Training queue completed!")
             self.queue_finished.emit()
             return
 
         self._current_index = next_idx
-        self._queue[next_idx]["status"] = "Çalışıyor…"
+        self._queue[next_idx]["status"] = "Running…"
         self._refresh_list()
         self._update_status()
         self.job_started.emit(next_idx, self._queue[next_idx]["args"])
@@ -465,7 +465,7 @@ class TrainingQueue(QWidget):
     def _stop_queue(self) -> None:
         self._running = False
         if 0 <= self._current_index < len(self._queue):
-            self._queue[self._current_index]["status"] = "Durduruldu"
+            self._queue[self._current_index]["status"] = "Stopped"
         self._current_index = -1
         self.btn_start_queue.setEnabled(True)
         self.btn_stop_queue.setEnabled(False)
@@ -477,7 +477,7 @@ class TrainingQueue(QWidget):
         if 0 <= row < len(self._queue):
             if self._running and row == self._current_index:
                 QMessageBox.warning(
-                    self, "Kaldırılamaz", "Çalışmakta olan iş kaldırılamaz."
+                    self, "Cannot Remove", "The running job cannot be removed."
                 )
                 return
             self._queue.pop(row)
@@ -488,7 +488,7 @@ class TrainingQueue(QWidget):
 
     def _clear_queue(self) -> None:
         if self._running:
-            QMessageBox.warning(self, "Temizlenemez", "Kuyruk çalışırken temizlenemez.")
+            QMessageBox.warning(self, "Cannot Clear", "The queue cannot be cleared while running.")
             return
         self._queue.clear()
         self._current_index = -1
@@ -498,30 +498,30 @@ class TrainingQueue(QWidget):
     def _refresh_list(self) -> None:
         self._list.clear()
         for i, job in enumerate(self._queue):
-            icon = {"Bekliyor": "⏳", "Çalışıyor…": "▶️", "Durduruldu": "⏹️"}.get(
-                job["status"], "✅" if "Tamamlandı" in job["status"] else "❌"
+            icon = {"Pending": "⏳", "Running…": "▶️", "Stopped": "⏹️"}.get(
+                job["status"], "✅" if "Completed" in job["status"] else "❌"
             )
             text = f"{icon}  [{i + 1}] {job['label']}  —  {job['status']}"
             item = QListWidgetItem(text)
-            if "Çalışıyor" in job["status"]:
+            if "Running" in job["status"]:
                 item.setForeground(QColor("#c084fc"))
-            elif "Tamamlandı" in job["status"]:
+            elif "Completed" in job["status"]:
                 item.setForeground(QColor("#34d399"))
-            elif "Hata" in job["status"] or "Durduruldu" in job["status"]:
+            elif "Error" in job["status"] or "Stopped" in job["status"]:
                 item.setForeground(QColor("#f87171"))
             self._list.addItem(item)
 
     def _update_status(self) -> None:
-        pending = sum(1 for q in self._queue if q["status"] == "Bekliyor")
-        done = sum(1 for q in self._queue if "Tamamlandı" in q["status"])
+        pending = sum(1 for q in self._queue if q["status"] == "Pending")
+        done = sum(1 for q in self._queue if "Completed" in q["status"])
         total = len(self._queue)
         if self._running:
             self._status_lbl.setText(
-                f"Çalışıyor: {self._current_index + 1}/{total}  |  Bekleyen: {pending}"
+                f"Running: {self._current_index + 1}/{total}  |  Pending: {pending}"
             )
         elif total > 0:
             self._status_lbl.setText(
-                f"Toplam: {total}  |  Tamamlanan: {done}  |  Bekleyen: {pending}"
+                f"Total: {total}  |  Completed: {done}  |  Pending: {pending}"
             )
         else:
             self._status_lbl.setText(
@@ -540,21 +540,21 @@ class STLRPSTrainTab(QWidget):
         # =====================================================================
         self._preset_combo = NoScrollComboBox()
         self._preset_combo.setMinimumWidth(200)
-        self._preset_combo.setToolTip("Kaydedilmiş hiperparametre profilleri.")
+        self._preset_combo.setToolTip("Saved hyperparameter profiles.")
         self._refresh_preset_list()
 
-        btn_load_preset = QPushButton("Yükle")
+        btn_load_preset = QPushButton("Load")
         btn_load_preset.clicked.connect(self._load_preset)
-        btn_save_preset = QPushButton("Kaydet")
+        btn_save_preset = QPushButton("Save")
         btn_save_preset.clicked.connect(self._save_preset)
-        btn_del_preset = QPushButton("Sil")
+        btn_del_preset = QPushButton("Delete")
         btn_del_preset.setProperty("kind", "danger")
         btn_del_preset.clicked.connect(self._delete_preset)
 
         preset_bar = QHBoxLayout()
         preset_bar.setContentsMargins(4, 0, 4, 0)
         preset_bar.setSpacing(8)
-        preset_lbl = QLabel("Profil:")
+        preset_lbl = QLabel("Profile:")
         preset_lbl.setStyleSheet("font-weight: 600; color: #c4ccff; font-size: 13px;")
         preset_bar.addWidget(preset_lbl)
         preset_bar.addWidget(self._preset_combo, 1)
@@ -572,8 +572,8 @@ class STLRPSTrainTab(QWidget):
         self.workflow_mode.setToolTip(
             f"Train only:         Runs python -m {TRAIN_CLI_MODULE}.\n"
             f"Evaluate only:      Runs python -m {EVAL_CLI_MODULE} (existing model folder required).\n"
-            "Train then eval:    Eğitim biter bitmez otomatik olarak değerlendirme başlatılır.\n"
-            "Queue:              Kuyruktaki tüm işler sırayla çalıştırılır."
+            "Train then eval:    Evaluation starts automatically as soon as training finishes.\n"
+            "Queue:              All queued jobs run sequentially."
         )
         self.workflow_mode.currentIndexChanged.connect(self._on_workflow_mode_changed)
         wf_lbl = QLabel("Workflow:")
@@ -596,7 +596,7 @@ class STLRPSTrainTab(QWidget):
         # =====================================================================
         # GROUP 1: Data & I/O
         # =====================================================================
-        grp_data = QGroupBox("Veri ve Giriş/Çıkış")
+        grp_data = QGroupBox("Data and Input/Output")
         form_data = QFormLayout()
         _tune_form(form_data)
 
@@ -680,7 +680,7 @@ class STLRPSTrainTab(QWidget):
         out_row = _row_lineedit_with_button(self.out_dir, btn_out)
 
         self.dataset_name = QLineEdit("data")
-        self.dataset_name.setToolTip("HDF5 dataset adı.")
+        self.dataset_name.setToolTip("HDF5 dataset name.")
 
         self.val_ratio = QDoubleSpinBox()
         self.val_ratio.setDecimals(4)
@@ -778,7 +778,7 @@ class STLRPSTrainTab(QWidget):
         # =====================================================================
         # GROUP 2: Model Architecture
         # =====================================================================
-        grp_arch = QGroupBox("Model Mimarisi")
+        grp_arch = QGroupBox("Model Architecture")
         form_arch = QFormLayout()
         _tune_form(form_arch)
 
@@ -786,28 +786,28 @@ class STLRPSTrainTab(QWidget):
         self.hidden.setRange(1, 8192)
         self.hidden.setValue(512)
         self.hidden.setToolTip(
-            "Her gizli katmandaki nöron (birim) sayısı.\n"
-            "Daha yüksek değer → daha güçlü ağ, daha yavaş eğitim.\n"
-            "SIREN için önerilen aralık: 256–1024."
+            "Number of neurons (units) in each hidden layer.\n"
+            "Higher value → more expressive network, slower training.\n"
+            "Recommended range for SIREN: 256–1024."
         )
         self.depth = QSpinBox()
         self.depth.setRange(1, 64)
         self.depth.setValue(5)
         self.depth.setToolTip(
-            "Gizli katman sayısı (derinlik).\n"
-            "Çok derin ağlar (>6) SIREN'de gradyan kaybolmasına yol açabilir.\n"
-            "Önerilen: 3–5."
+            "Number of hidden layers (depth).\n"
+            "Very deep networks (>6) can cause vanishing gradients in SIREN.\n"
+            "Recommended: 3–5."
         )
         self.activation = NoScrollComboBox()
         self.activation.addItems(["sine", "silu", "tanh", "softplus"])
         self.activation.setCurrentText("sine")
         self.activation.setToolTip(
-            "Aktivasyon fonksiyonu:\n"
-            "  sine   — SIREN ağı; sürekli türevli, yüksek frekanslı alanlar için önerilir.\n"
-            "  silu   — SiLU (Swish); genel amaçlı, daha hızlı yakınsama.\n"
-            "  tanh   — Klasik MLP; küçük ağlarda dengeli.\n"
-            "  softplus — Pozitif çıktı gerektiren durumlarda kullanılır.\n"
-            "Not: SIREN aktivasyonu ile Fourier gömme birlikte kullanılamaz."
+            "Activation function:\n"
+            "  sine   — SIREN network; smooth derivatives, recommended for high-frequency fields.\n"
+            "  silu   — SiLU (Swish); general-purpose, faster convergence.\n"
+            "  tanh   — Classic MLP; balanced for small networks.\n"
+            "  softplus — Used when a positive output is required.\n"
+            "Note: SIREN activation cannot be combined with Fourier embedding."
         )
         self.dropout = QDoubleSpinBox()
         self.dropout.setDecimals(4)
@@ -815,9 +815,9 @@ class STLRPSTrainTab(QWidget):
         self.dropout.setValue(0.0)
         self.dropout.setSingleStep(0.01)
         self.dropout.setToolTip(
-            "Dropout oranı (0 = kapalı).\n"
-            "Eğitim sırasında bu oranda nöron rastgele devre dışı bırakılır.\n"
-            "Fizik tabanlı ağlarda genellikle 0 önerilir — aşırı regularizasyon hassasiyeti bozar."
+            "Dropout rate (0 = disabled).\n"
+            "During training this fraction of neurons is randomly deactivated.\n"
+            "Usually 0 is recommended for physics-based networks — excessive regularization hurts accuracy."
         )
 
         # SIREN w0 controls
@@ -827,9 +827,9 @@ class STLRPSTrainTab(QWidget):
         self.w0_first.setValue(30.0)
         self.w0_first.setSingleStep(1.0)
         self.w0_first.setToolTip(
-            "SIREN ilk katman frekans çarpanı (ω₀).\n"
-            "İlk katmanın sinüs fonksiyonu bu değerle ölçeklenir: sin(ω₀·Wx+b).\n"
-            f"Varsayılan: 30. Eğer boş bırakılırsa python -m {TRAIN_CLI_MODULE}, veri setinden otomatik hesaplar."
+            "SIREN first-layer frequency multiplier (ω₀).\n"
+            "The first layer's sine is scaled by this value: sin(ω₀·Wx+b).\n"
+            f"Default: 30. If left empty, python -m {TRAIN_CLI_MODULE} computes it automatically from the dataset."
         )
         self.w0_hidden = QDoubleSpinBox()
         self.w0_hidden.setDecimals(1)
@@ -837,19 +837,19 @@ class STLRPSTrainTab(QWidget):
         self.w0_hidden.setValue(30.0)
         self.w0_hidden.setSingleStep(1.0)
         self.w0_hidden.setToolTip(
-            "SIREN gizli katman frekans çarpanı (ω₀).\n"
-            "İlk katman dışındaki tüm katmanlara uygulanır.\n"
-            "Genellikle ilk katman değeriyle aynı tutulur: 30."
+            "SIREN hidden-layer frequency multiplier (ω₀).\n"
+            "Applied to all layers except the first.\n"
+            "Usually kept equal to the first-layer value: 30."
         )
 
         # Fourier/RFF section (only valid for non-sine activations)
-        self._fourier_section = CollapsibleSection("Fourier/RFF Gömme (sine dışı aktivasyon)")
+        self._fourier_section = CollapsibleSection("Fourier/RFF Embedding (non-sine activation)")
         form_fourier = QFormLayout()
         _tune_form(form_fourier)
-        self.use_fourier = QCheckBox("Fourier/RFF Gömmeyi Etkinleştir")
+        self.use_fourier = QCheckBox("Enable Fourier/RFF Embedding")
         self.use_fourier.setChecked(False)
         self.use_fourier.setToolTip(
-            "Random Fourier Feature gömme. SIREN ile KULLANILMAZ."
+            "Random Fourier Feature embedding. NOT used with SIREN."
         )
         self.fourier_info = QLabel("SIREN and Fourier/RFF are mutually exclusive.")
         self.fourier_info.setWordWrap(True)
@@ -857,18 +857,18 @@ class STLRPSTrainTab(QWidget):
         self.fourier_n = QSpinBox()
         self.fourier_n.setRange(16, 4096)
         self.fourier_n.setValue(256)
-        self.fourier_n.setToolTip("Fourier özellik sayısı (n → 2n boyutlu gömme).")
+        self.fourier_n.setToolTip("Number of Fourier features (n → 2n-dimensional embedding).")
         self.fourier_sigma = QDoubleSpinBox()
         self.fourier_sigma.setDecimals(3)
         self.fourier_sigma.setRange(0.001, 100.0)
         self.fourier_sigma.setValue(1.0)
-        self.fourier_sigma.setToolTip("Frekans matrisinin std'si σ.")
-        self.fourier_append_raw = QCheckBox("Ham Koordinatları Ekle")
+        self.fourier_sigma.setToolTip("Standard deviation σ of the frequency matrix.")
+        self.fourier_append_raw = QCheckBox("Append Raw Coordinates")
         self.fourier_append_raw.setChecked(True)
-        self.fourier_append_raw.setToolTip("Fourier özelliklerine orijinal xyz'yi de ekle.")
+        self.fourier_append_raw.setToolTip("Also append the original xyz to the Fourier features.")
         form_fourier.addRow("", self.fourier_info)
         form_fourier.addRow(self.use_fourier)
-        form_fourier.addRow("Özellik Sayısı (n)", self.fourier_n)
+        form_fourier.addRow("Feature Count (n)", self.fourier_n)
         form_fourier.addRow("Sigma (σ)", self.fourier_sigma)
         form_fourier.addRow(self.fourier_append_raw)
         _fourier_inner = QWidget()
@@ -879,17 +879,17 @@ class STLRPSTrainTab(QWidget):
         _fourier_vbox.addWidget(_fourier_inner)
         self._fourier_section.set_content_layout(_fourier_vbox)
 
-        self._w0_row_first = ("SIREN w0 (ilk katman)", self.w0_first)
-        self._w0_row_hidden = ("SIREN w0 (gizli katman)", self.w0_hidden)
+        self._w0_row_first = ("SIREN w0 (first layer)", self.w0_first)
+        self._w0_row_hidden = ("SIREN w0 (hidden layer)", self.w0_hidden)
 
-        form_arch.addRow("Gizli Katman Boyutu", self.hidden)
-        form_arch.addRow("Katman Derinliği", self.depth)
-        form_arch.addRow("Aktivasyon Fonksiyonu", self.activation)
+        form_arch.addRow("Hidden Layer Size", self.hidden)
+        form_arch.addRow("Layer Depth", self.depth)
+        form_arch.addRow("Activation Function", self.activation)
         self._w0_first_row_idx = form_arch.rowCount()
-        form_arch.addRow("SIREN w0 (ilk katman)", self.w0_first)
+        form_arch.addRow("SIREN w0 (first layer)", self.w0_first)
         self._w0_hidden_row_idx = form_arch.rowCount()
-        form_arch.addRow("SIREN w0 (gizli katman)", self.w0_hidden)
-        form_arch.addRow("Dropout Oranı", self.dropout)
+        form_arch.addRow("SIREN w0 (hidden layer)", self.w0_hidden)
+        form_arch.addRow("Dropout Rate", self.dropout)
         grp_arch.setLayout(form_arch)
 
         self.activation.currentTextChanged.connect(self._on_activation_changed)
@@ -897,7 +897,7 @@ class STLRPSTrainTab(QWidget):
         # =====================================================================
         # GROUP 3: Optimization
         # =====================================================================
-        grp_optim = QGroupBox("Optimizasyon")
+        grp_optim = QGroupBox("Optimization")
         form_optim = QFormLayout()
         _tune_form(form_optim)
 
@@ -905,16 +905,16 @@ class STLRPSTrainTab(QWidget):
         self.epochs.setRange(1, 5_000_000)
         self.epochs.setValue(200)
         self.epochs.setToolTip(
-            "Toplam eğitim turu (epoch) sayısı.\n"
-            "Her epoch tüm eğitim verisi üzerinden bir geçiş anlamına gelir."
+            "Total number of training epochs.\n"
+            "Each epoch is one pass over the entire training dataset."
         )
         self.batch_size = QSpinBox()
         self.batch_size.setRange(1, 10_000_000)
         self.batch_size.setValue(8192)
         self.batch_size.setToolTip(
-            "Her güncelleme adımında kullanılan örnek (satır) sayısı.\n"
-            "Büyük batch → kararlı gradyanlar, yüksek GPU bellek kullanımı.\n"
-            "SIREN için önerilen: 4096–16384."
+            "Number of samples (rows) used per update step.\n"
+            "Large batch → stable gradients, higher GPU memory use.\n"
+            "Recommended for SIREN: 4096–16384."
         )
         self.lr = QDoubleSpinBox()
         self.lr.setDecimals(8)
@@ -922,9 +922,9 @@ class STLRPSTrainTab(QWidget):
         self.lr.setValue(1e-4)
         self.lr.setSingleStep(1e-5)
         self.lr.setToolTip(
-            "Başlangıç öğrenme hızı (Learning Rate).\n"
-            "AdamW optimizer bu değerden başlar; cosine decay ile azaltılır.\n"
-            "SIREN için önerilen: 1e-4. Çok yüksek değerler ağın ıraksamas  ına yol açabilir."
+            "Initial learning rate.\n"
+            "The AdamW optimizer starts here and decays with a cosine schedule.\n"
+            "Recommended for SIREN: 1e-4. Values that are too high can cause the network to diverge."
         )
         self.weight_decay = QDoubleSpinBox()
         self.weight_decay.setDecimals(8)
@@ -932,9 +932,9 @@ class STLRPSTrainTab(QWidget):
         self.weight_decay.setValue(1e-6)
         self.weight_decay.setSingleStep(1e-7)
         self.weight_decay.setToolTip(
-            "AdamW L2 ağırlık düzenlemesi (weight decay).\n"
-            "Ağırlıkları sıfıra çekerek aşırı öğrenmeyi azaltır.\n"
-            "Önerilen: 1e-6 ila 1e-4 arası."
+            "AdamW L2 weight regularization (weight decay).\n"
+            "Reduces overfitting by pulling weights toward zero.\n"
+            "Recommended: between 1e-6 and 1e-4."
         )
         self.output_head_lr_mult = QDoubleSpinBox()
         self.output_head_lr_mult.setDecimals(2)
@@ -942,46 +942,46 @@ class STLRPSTrainTab(QWidget):
         self.output_head_lr_mult.setValue(1.0)
         self.output_head_lr_mult.setSingleStep(0.5)
         self.output_head_lr_mult.setToolTip(
-            "Çıkış kafası LR çarpanı. Çıkış başının ağırlıklarını daha hızlı günceller."
+            "Output-head LR multiplier. Updates the output head's weights faster."
         )
         self.t_max = QSpinBox()
         self.t_max.setRange(1, 1_000_000)
         self.t_max.setValue(200)
-        self.t_max.setToolTip("Cosine LR T_max. Boş bırakılırsa epochs ile aynı.")
+        self.t_max.setToolTip("Cosine LR T_max. If left empty, same as epochs.")
         self.warmup_epochs = QSpinBox()
         self.warmup_epochs.setRange(0, 100)
         self.warmup_epochs.setValue(5)
-        self.warmup_epochs.setToolTip("Doğrusal LR ısınma epoch sayısı.")
+        self.warmup_epochs.setToolTip("Number of linear LR warmup epochs.")
         self.min_lr_ratio = QDoubleSpinBox()
         self.min_lr_ratio.setDecimals(4)
         self.min_lr_ratio.setRange(0.0, 1.0)
         self.min_lr_ratio.setValue(0.05)
         self.min_lr_ratio.setSingleStep(0.01)
-        self.min_lr_ratio.setToolTip("Cosine sonundaki minimum LR / başlangıç LR oranı.")
+        self.min_lr_ratio.setToolTip("Ratio of minimum LR at the end of cosine to the initial LR.")
         self.patience = QSpinBox()
         self.patience.setRange(1, 10000)
         self.patience.setValue(30)
-        self.patience.setToolTip("Erken durdurma sabrı (val loss iyileşmezse).")
-        self.no_amp = QCheckBox("AMP Kapalı")
+        self.patience.setToolTip("Early-stopping patience (when val loss does not improve).")
+        self.no_amp = QCheckBox("AMP Off")
         self.no_amp.setChecked(False)
-        self.no_amp.setToolTip("AMP (Mixed Precision) devre dışı bırak.")
+        self.no_amp.setToolTip("Disable AMP (mixed precision).")
 
-        form_optim.addRow("Epoch Sayısı", self.epochs)
-        form_optim.addRow("Batch Boyutu", self.batch_size)
-        form_optim.addRow("Öğrenme Hızı (LR)", self.lr)
-        form_optim.addRow("Ağırlık Azaltma", self.weight_decay)
-        form_optim.addRow("Çıkış Kafası LR Çarpanı", self.output_head_lr_mult)
-        form_optim.addRow("Cosine LR Periyodu (T_max)", self.t_max)
-        form_optim.addRow("Isınma Epoch'u", self.warmup_epochs)
-        form_optim.addRow("Min LR Oranı", self.min_lr_ratio)
-        form_optim.addRow("Erken Durdurma Sabrı", self.patience)
+        form_optim.addRow("Epoch Count", self.epochs)
+        form_optim.addRow("Batch Size", self.batch_size)
+        form_optim.addRow("Learning Rate (LR)", self.lr)
+        form_optim.addRow("Weight Decay", self.weight_decay)
+        form_optim.addRow("Output Head LR Multiplier", self.output_head_lr_mult)
+        form_optim.addRow("Cosine LR Period (T_max)", self.t_max)
+        form_optim.addRow("Warmup Epochs", self.warmup_epochs)
+        form_optim.addRow("Min LR Ratio", self.min_lr_ratio)
+        form_optim.addRow("Early-Stopping Patience", self.patience)
         form_optim.addRow(self.no_amp)
         grp_optim.setLayout(form_optim)
 
         # =====================================================================
         # GROUP 4: Physics & Sobolev Loss
         # =====================================================================
-        grp_phys = QGroupBox("Fizik ve Sobolev Kayıp")
+        grp_phys = QGroupBox("Physics and Sobolev Loss")
         form_phys = QFormLayout()
         _tune_form(form_phys)
 
@@ -990,21 +990,21 @@ class STLRPSTrainTab(QWidget):
         self.w_u.setRange(0.0, 1e6)
         self.w_u.setValue(1.0)
         self.w_u.setSingleStep(0.1)
-        self.w_u.setToolTip("Potansiyel (U) kayıp ağırlığı (fixed/ntk_init modlarında).")
+        self.w_u.setToolTip("Potential (U) loss weight (in fixed/ntk_init modes).")
         self.w_a = QDoubleSpinBox()
         self.w_a.setDecimals(6)
         self.w_a.setRange(0.0, 1e6)
         self.w_a.setValue(1.0)
         self.w_a.setSingleStep(0.1)
-        self.w_a.setToolTip("İvme (a) kayıp ağırlığı (fixed/ntk_init modlarında).")
+        self.w_a.setToolTip("Acceleration (a) loss weight (in fixed/ntk_init modes).")
 
         self.gradnorm_mode = NoScrollComboBox()
         self.gradnorm_mode.addItems(["ntk_init", "fixed", "dynamic"])
         self.gradnorm_mode.setCurrentText("ntk_init")
         self.gradnorm_mode.setToolTip(
-            "ntk_init: ilk adımda gradyan normlarını dengeler, sonra sabit tutar (önerilen).\n"
-            "fixed: w_u ve w_a sabit kalır.\n"
-            "dynamic: her adımda gradyan normuna göre dinamik güncelleme."
+            "ntk_init: balances gradient norms on the first step, then keeps them fixed (recommended).\n"
+            "fixed: w_u and w_a stay constant.\n"
+            "dynamic: updates dynamically each step based on the gradient norm."
         )
         self.gradnorm_mode.currentTextChanged.connect(self._on_gradnorm_mode_changed)
 
@@ -1012,24 +1012,24 @@ class STLRPSTrainTab(QWidget):
         self.gradnorm_w_a_min.setDecimals(4)
         self.gradnorm_w_a_min.setRange(0.0, 100.0)
         self.gradnorm_w_a_min.setValue(0.05)
-        self.gradnorm_w_a_min.setToolTip("NTK/dinamik w_a için alt sınır.")
+        self.gradnorm_w_a_min.setToolTip("Lower bound for NTK/dynamic w_a.")
         self.gradnorm_w_a_max = QDoubleSpinBox()
         self.gradnorm_w_a_max.setDecimals(4)
         self.gradnorm_w_a_max.setRange(0.01, 1000.0)
         self.gradnorm_w_a_max.setValue(2.0)
-        self.gradnorm_w_a_max.setToolTip("NTK/dinamik w_a için üst sınır.")
+        self.gradnorm_w_a_max.setToolTip("Upper bound for NTK/dynamic w_a.")
 
         self.potential_only_epochs = QSpinBox()
         self.potential_only_epochs.setRange(0, 1000)
         self.potential_only_epochs.setValue(0)
         self.potential_only_epochs.setToolTip(
-            "Başlangıç warm-up epoch sayısı. İvme accel_min_factor tabanıyla aktif kalır."
+            "Initial warm-up epoch count. Acceleration stays active at the accel_min_factor floor."
         )
         self.accel_ramp_epochs = QSpinBox()
         self.accel_ramp_epochs.setRange(0, 1000)
         self.accel_ramp_epochs.setValue(80)
         self.accel_ramp_epochs.setToolTip(
-            "İvme kaybını accel_min_factor'dan tam ağırlığa doğrusal olarak artırma epoch sayısı."
+            "Number of epochs to ramp acceleration loss linearly from accel_min_factor to full weight."
         )
 
         self.accel_min_factor = QDoubleSpinBox()
@@ -1038,36 +1038,36 @@ class STLRPSTrainTab(QWidget):
         self.accel_min_factor.setSingleStep(0.01)
         self.accel_min_factor.setValue(0.05)
         self.accel_min_factor.setToolTip(
-            "İvme kaybı için minimum çarpan. 0=tam sıfır (önerilmez), 0.05=küçük taban. "
-            "Türev alanının sürüklenmesini önler."
+            "Minimum multiplier for acceleration loss. 0=exactly zero (not recommended), 0.05=small floor. "
+            "Prevents the derivative field from drifting."
         )
 
         self.a_sign = NoScrollComboBox()
         self.a_sign.addItems(["auto", "+1", "-1"])
         self.a_sign.setCurrentText("auto")
-        self.a_sign.setToolTip("İvme işareti: auto | +1 Jeodezi | -1 Newton")
+        self.a_sign.setToolTip("Acceleration sign: auto | +1 geodesy | -1 Newton")
 
         self.use_si = NoScrollComboBox()
-        self.use_si.addItems(["SI Birimleri (Önerilen)", "Orijinal (Dönüşüm Yok)"])
+        self.use_si.addItems(["SI Units (Recommended)", "Original (No Conversion)"])
         self.use_si.setCurrentIndex(0)
-        self.use_si.setToolTip("Kanonik → SI dönüşümü.")
+        self.use_si.setToolTip("Canonical → SI conversion.")
 
-        form_phys.addRow("Potansiyel (U) Kayıp Ağırlığı", self.w_u)
-        form_phys.addRow("İvme (a) Kayıp Ağırlığı", self.w_a)
-        form_phys.addRow("GradNorm Modu", self.gradnorm_mode)
+        form_phys.addRow("Potential (U) Loss Weight", self.w_u)
+        form_phys.addRow("Acceleration (a) Loss Weight", self.w_a)
+        form_phys.addRow("GradNorm Mode", self.gradnorm_mode)
         form_phys.addRow("GradNorm w_a Minimum", self.gradnorm_w_a_min)
-        form_phys.addRow("GradNorm w_a Maksimum", self.gradnorm_w_a_max)
-        form_phys.addRow("Yalnızca Potansiyel Epoch", self.potential_only_epochs)
-        form_phys.addRow("İvme Ramp Epoch", self.accel_ramp_epochs)
-        form_phys.addRow("İvme Min Faktör", self.accel_min_factor)
-        form_phys.addRow("İvme İşareti (a_sign)", self.a_sign)
-        form_phys.addRow("Birim Sistemi", self.use_si)
+        form_phys.addRow("GradNorm w_a Maximum", self.gradnorm_w_a_max)
+        form_phys.addRow("Potential-Only Epochs", self.potential_only_epochs)
+        form_phys.addRow("Acceleration Ramp Epochs", self.accel_ramp_epochs)
+        form_phys.addRow("Acceleration Min Factor", self.accel_min_factor)
+        form_phys.addRow("Acceleration Sign (a_sign)", self.a_sign)
+        form_phys.addRow("Unit System", self.use_si)
         grp_phys.setLayout(form_phys)
 
         # =====================================================================
         # GROUP 5: Direction Loss (Collapsible)
         # =====================================================================
-        self._dir_loss_section = CollapsibleSection("Yön Kaybı (Direction Loss)")
+        self._dir_loss_section = CollapsibleSection("Direction Loss")
         form_dir = QFormLayout()
         _tune_form(form_dir)
 
@@ -1077,20 +1077,20 @@ class STLRPSTrainTab(QWidget):
         self.direction_loss_weight.setValue(0.10)
         self.direction_loss_weight.setSingleStep(0.01)
         self.direction_loss_weight.setToolTip(
-            "Yön kaybı zirve ağırlığı λ_dir.\n"
+            "Direction-loss peak weight λ_dir.\n"
             "L_dir = mean(1 - cos_sim(a_pred, a_true))"
         )
         self.direction_loss_start_epoch = QSpinBox()
         self.direction_loss_start_epoch.setRange(0, 10000)
         self.direction_loss_start_epoch.setValue(30)
         self.direction_loss_start_epoch.setToolTip(
-            "Yön kaybının başlamaya başladığı epoch."
+            "Epoch at which the direction loss starts."
         )
         self.direction_loss_ramp_epochs = QSpinBox()
         self.direction_loss_ramp_epochs.setRange(1, 10000)
         self.direction_loss_ramp_epochs.setValue(50)
         self.direction_loss_ramp_epochs.setToolTip(
-            "Yön kaybını 0'dan tam ağırlığa çıkarma epoch sayısı."
+            "Number of epochs to ramp the direction loss from 0 to full weight."
         )
         self.direction_loss_floor_abs = QDoubleSpinBox()
         self.direction_loss_floor_abs.setDecimals(8)
@@ -1098,30 +1098,30 @@ class STLRPSTrainTab(QWidget):
         self.direction_loss_floor_abs.setValue(3e-6)
         self.direction_loss_floor_abs.setSingleStep(1e-7)
         self.direction_loss_floor_abs.setToolTip(
-            "||a_true|| eşik değeri. Bunun altındaki noktalar yön kaybı maskesinde çıkarılır."
+            "||a_true|| threshold. Points below it are removed by the direction-loss mask."
         )
 
         self.best_ckpt_start_epoch = QSpinBox()
         self.best_ckpt_start_epoch.setRange(-1, 10000)
         self.best_ckpt_start_epoch.setValue(-1)
         self.best_ckpt_start_epoch.setToolTip(
-            "En iyi checkpoint takibinin başladığı epoch (-1=otomatik).\n"
-            "-1: direction loss aktifse start_epoch + ramp_epochs + settle_epochs sonrasına kadar bekler.\n"
-            "Böylece direction hesabına oturmamış erken epoch'lar best checkpoint olmaz.\n"
-            "0: epoch 0'dan itibaren takip eder; >0: ilk N epoch burn-in olarak atlanır."
+            "Epoch at which best-checkpoint tracking starts (-1=automatic).\n"
+            "-1: if direction loss is active, waits until start_epoch + ramp_epochs + settle_epochs.\n"
+            "This prevents early epochs (before direction has settled) from becoming the best checkpoint.\n"
+            "0: tracks from epoch 0; >0: the first N epochs are skipped as burn-in."
         )
         self.checkpoint_settle_epochs = QSpinBox()
         self.checkpoint_settle_epochs.setRange(0, 10000)
         self.checkpoint_settle_epochs.setValue(5)
         self.checkpoint_settle_epochs.setToolTip(
-            "Otomatik best checkpoint takibi başlamadan önce direction ramp sonrası beklenecek ek epoch sayısı."
+            "Extra epochs to wait after the direction ramp before automatic best-checkpoint tracking starts."
         )
 
-        form_dir.addRow("Zirve Ağırlık (λ)", self.direction_loss_weight)
-        form_dir.addRow("Başlangıç Epoch'u", self.direction_loss_start_epoch)
-        form_dir.addRow("Ramp Epoch Sayısı", self.direction_loss_ramp_epochs)
-        form_dir.addRow("||a|| Eşiği (m/s²)", self.direction_loss_floor_abs)
-        form_dir.addRow("Best Ckpt Başlangıç", self.best_ckpt_start_epoch)
+        form_dir.addRow("Peak Weight (λ)", self.direction_loss_weight)
+        form_dir.addRow("Start Epoch", self.direction_loss_start_epoch)
+        form_dir.addRow("Ramp Epoch Count", self.direction_loss_ramp_epochs)
+        form_dir.addRow("||a|| Threshold (m/s²)", self.direction_loss_floor_abs)
+        form_dir.addRow("Best Ckpt Start", self.best_ckpt_start_epoch)
         form_dir.addRow("Checkpoint Settle Epoch", self.checkpoint_settle_epochs)
         _dir_inner = QWidget()
         _dir_inner.setLayout(form_dir)
@@ -1219,7 +1219,7 @@ class STLRPSTrainTab(QWidget):
         # GROUP 6: Advanced (Collapsible)
         # =====================================================================
         self.advanced_section = CollapsibleSection(
-            "Gelişmiş Ayarlar (Donanım & Performans)"
+            "Advanced Settings (Hardware & Performance)"
         )
         form_adv = QFormLayout()
         _tune_form(form_adv)
@@ -1228,31 +1228,31 @@ class STLRPSTrainTab(QWidget):
         self.max_grad_norm.setDecimals(6)
         self.max_grad_norm.setRange(0.0, 1e6)
         self.max_grad_norm.setValue(0.5)
-        self.max_grad_norm.setToolTip("Gradyan kırpma normu. 0 → Kırpma yok.")
+        self.max_grad_norm.setToolTip("Gradient clipping norm. 0 → no clipping.")
         self.num_workers = QSpinBox()
         self.num_workers.setRange(0, 64)
         self.num_workers.setValue(2)
-        self.num_workers.setToolTip("DataLoader işçi sayısı.")
+        self.num_workers.setToolTip("Number of DataLoader workers.")
         self.cache_rows = QSpinBox()
         self.cache_rows.setRange(1024, 10_000_000)
         self.cache_rows.setValue(65536)
-        self.cache_rows.setToolTip("HDF5 RAM önbellek satır sayısı.")
+        self.cache_rows.setToolTip("HDF5 RAM cache row count.")
         self.fit_rows = QSpinBox()
         self.fit_rows.setRange(10_000, 50_000_000)
         self.fit_rows.setValue(500_000)
-        self.fit_rows.setToolTip("Z-score örneklem satır sayısı.")
+        self.fit_rows.setToolTip("Z-score sample row count.")
         self.seed = QSpinBox()
         self.seed.setRange(0, 2_147_483_647)
         self.seed.setValue(42)
-        self.seed.setToolTip("Rastgele tohum.")
+        self.seed.setToolTip("Random seed.")
         self.split_seed = QSpinBox()
         self.split_seed.setRange(0, 2_147_483_647)
         self.split_seed.setValue(42)
-        self.split_seed.setToolTip("Train/val ayrımı için ayrı tohum (None → seed ile aynı).")
+        self.split_seed.setToolTip("Separate seed for the train/val split (None → same as seed).")
         self.device_hint = NoScrollComboBox()
         self.device_hint.addItems(["auto", "cpu", "cuda", "mps"])
         self.device_hint.setCurrentText("auto")
-        self.device_hint.setToolTip("Cihaz ipucu. cpu/mps → AMP otomatik kapatılır.")
+        self.device_hint.setToolTip("Device hint. cpu/mps → AMP is disabled automatically.")
         self.device_hint.currentTextChanged.connect(self._on_device_hint_changed)
         self.log_every_mode = NoScrollComboBox()
         self.log_every_mode.addItem("auto", "auto")
@@ -1266,12 +1266,12 @@ class STLRPSTrainTab(QWidget):
         self.log_every = QSpinBox()
         self.log_every.setRange(0, 10000)
         self.log_every.setValue(10)
-        self.log_every.setToolTip("Her N batch'te bir ilerleme yaz. 0 → devre dışı. (Fixed modunda kullanılır.)")
-        self.preload_data = QCheckBox("RAM'e Önceden Yükle")
+        self.log_every.setToolTip("Write progress every N batches. 0 → disabled. (Used in Fixed mode.)")
+        self.preload_data = QCheckBox("Preload to RAM")
         self.preload_data.setChecked(False)
         self.preload_data.setToolTip(
-            "Küçük dataset'leri (≤auto_preload_mb) CPU RAM'e yükler.\n"
-            "Windows'ta HDF5 çok-işçi sorununu çözer."
+            "Loads small datasets (≤auto_preload_mb) into CPU RAM.\n"
+            "Fixes the HDF5 multi-worker issue on Windows."
         )
         self.auto_preload_mb = QDoubleSpinBox()
         self.auto_preload_mb.setDecimals(0)
@@ -1279,44 +1279,44 @@ class STLRPSTrainTab(QWidget):
         self.auto_preload_mb.setValue(256.0)
         self.auto_preload_mb.setSingleStep(64.0)
         self.auto_preload_mb.setToolTip(
-            "Bu MB değerinden küçük dataset'ler otomatik RAM'e alınır (0 → devre dışı)."
+            "Datasets smaller than this MB value are loaded into RAM automatically (0 → disabled)."
         )
         self.pin_memory = QCheckBox("Pin Memory")
         self.pin_memory.setChecked(True)
-        self.pin_memory.setToolTip("CUDA transferlerini hızlandırmak için CPU belleği sabitle.")
-        self.quick_check = QCheckBox("Quick Check Modu")
+        self.pin_memory.setToolTip("Pin CPU memory to speed up CUDA transfers.")
+        self.quick_check = QCheckBox("Quick Check Mode")
         self.quick_check.setChecked(False)
         self.quick_check.setToolTip(
-            "1 epoch, 5 train + 2 val batch ile pipeline doğrulaması. Gerçek eğitim değil."
+            "Pipeline validation with 1 epoch, 5 train + 2 val batches. Not real training."
         )
 
         # PINN Architecture (new)
-        self.use_residual_blocks = QCheckBox("Residual SIREN Blokları (SirenResBlock)")
+        self.use_residual_blocks = QCheckBox("Residual SIREN Blocks (SirenResBlock)")
         self.use_residual_blocks.setChecked(False)
         self.use_residual_blocks.setToolTip(
-            "Gizli katmanları pre-norm + zero-init skip (SirenResBlock) ile sarar.\n"
-            "Derinlik >= 6 için önerilir. Ek parametre eklemez."
+            "Wraps hidden layers with pre-norm + zero-init skip (SirenResBlock).\n"
+            "Recommended for depth >= 6. Adds no extra parameters."
         )
         self.n_bands = QSpinBox()
         self.n_bands.setRange(1, 16)
         self.n_bands.setValue(1)
         self.n_bands.setToolTip(
-            "Multi-scale SIREN bant sayısı. >1 → MultiScaleSirenMLP.\n"
-            "1 = standart SirenMLP. Bant w0 değerleri degree_min/max'tan otomatik türetilir."
+            "Multi-scale SIREN band count. >1 → MultiScaleSirenMLP.\n"
+            "1 = standard SirenMLP. Band w0 values are derived automatically from degree_min/max."
         )
         self.grad_accumulation_steps = QSpinBox()
         self.grad_accumulation_steps.setRange(1, 128)
         self.grad_accumulation_steps.setValue(1)
         self.grad_accumulation_steps.setToolTip(
-            "Optimizer adımından önce gradyanları N batch boyunca biriktirir.\n"
-            "Efektif batch = batch_size × N. VRAM kısıtlı durumlar için."
+            "Accumulates gradients over N batches before the optimizer step.\n"
+            "Effective batch = batch_size × N. For VRAM-constrained cases."
         )
         self.n_hutchinson_samples = QSpinBox()
         self.n_hutchinson_samples.setRange(1, 32)
         self.n_hutchinson_samples.setValue(4)
         self.n_hutchinson_samples.setToolTip(
-            "Hutchinson Laplacian tahmini için Rademacher örneklem sayısı K.\n"
-            "K=4 → ~%50 göreli hata; sadece Laplacian reg. etkinken kullanılır."
+            "Number of Rademacher samples K for the Hutchinson Laplacian estimate.\n"
+            "K=4 → ~50% relative error; used only when Laplacian regularization is active."
         )
 
         # Performance extras (new)
@@ -1325,36 +1325,36 @@ class STLRPSTrainTab(QWidget):
         self.prefetch_factor.setRange(0, 32)
         self.prefetch_factor.setValue(0)
         self.prefetch_factor.setToolTip(
-            "DataLoader prefetch_factor (0 = otomatik; yalnızca num_workers > 0 ise geçerli)."
+            "DataLoader prefetch_factor (0 = automatic; only valid when num_workers > 0)."
         )
         self.max_train_batches = QSpinBox()
         self.max_train_batches.setSpecialValueText("unlimited")
         self.max_train_batches.setRange(0, 1_000_000)
         self.max_train_batches.setValue(0)
         self.max_train_batches.setToolTip(
-            "Epoch başına maksimum eğitim batch sayısı. 0 = sınırsız (tam epoch).\n"
-            "Hızlı test için kullanılır; quick_check ile birlikte çalışır."
+            "Maximum training batches per epoch. 0 = unlimited (full epoch).\n"
+            "Used for quick tests; works together with quick_check."
         )
         self.max_val_batches = QSpinBox()
         self.max_val_batches.setSpecialValueText("unlimited")
         self.max_val_batches.setRange(0, 1_000_000)
         self.max_val_batches.setValue(0)
         self.max_val_batches.setToolTip(
-            "Epoch başına maksimum validasyon batch sayısı. 0 = sınırsız."
+            "Maximum validation batches per epoch. 0 = unlimited."
         )
 
-        form_adv.addRow("Cihaz İpucu (Device)", self.device_hint)
-        form_adv.addRow("Gradyan Kırpma Normu", self.max_grad_norm)
-        form_adv.addRow("DataLoader İşçi Sayısı", self.num_workers)
+        form_adv.addRow("Device Hint", self.device_hint)
+        form_adv.addRow("Gradient Clipping Norm", self.max_grad_norm)
+        form_adv.addRow("DataLoader Worker Count", self.num_workers)
         form_adv.addRow("Prefetch Factor", self.prefetch_factor)
-        form_adv.addRow("HDF5 Önbellek Satırı", self.cache_rows)
-        form_adv.addRow("Scaler Örneklem Satırı", self.fit_rows)
-        form_adv.addRow("Rastgele Tohum (Seed)", self.seed)
-        form_adv.addRow("Bölme Tohumu (Split Seed)", self.split_seed)
-        form_adv.addRow("Log Frekans Modu", self.log_every_mode)
-        form_adv.addRow("Batch Log Sıklığı", self.log_every)
+        form_adv.addRow("HDF5 Cache Rows", self.cache_rows)
+        form_adv.addRow("Scaler Sample Rows", self.fit_rows)
+        form_adv.addRow("Random Seed", self.seed)
+        form_adv.addRow("Split Seed", self.split_seed)
+        form_adv.addRow("Log Frequency Mode", self.log_every_mode)
+        form_adv.addRow("Batch Log Interval", self.log_every)
         form_adv.addRow(self.preload_data)
-        form_adv.addRow("Oto-RAM Yükleme Limiti (MB)", self.auto_preload_mb)
+        form_adv.addRow("Auto-RAM Load Limit (MB)", self.auto_preload_mb)
         form_adv.addRow(self.pin_memory)
         # quick_check / max_train_batches / max_val_batches are dev-only debug
         # controls — kept as hidden widgets (for config/profile compatibility)
@@ -1362,7 +1362,7 @@ class STLRPSTrainTab(QWidget):
         self.quick_check.setVisible(False)
         self.max_train_batches.setVisible(False)
         self.max_val_batches.setVisible(False)
-        _adv_sep = QLabel("  PINN Mimarisi")
+        _adv_sep = QLabel("  PINN Architecture")
         _adv_sep.setStyleSheet(
             "color: #9aa7ff; font-size: 11px; font-weight: 600;"
             " padding: 4px 10px; margin-top: 4px;"
@@ -1372,9 +1372,9 @@ class STLRPSTrainTab(QWidget):
         )
         form_adv.addRow(_adv_sep)
         form_adv.addRow(self.use_residual_blocks)
-        form_adv.addRow("Frekans Bandı Sayısı (n_bands)", self.n_bands)
-        form_adv.addRow("Grad. Birikim Adımı", self.grad_accumulation_steps)
-        form_adv.addRow("Hutchinson Örneklem (K)", self.n_hutchinson_samples)
+        form_adv.addRow("Frequency Band Count (n_bands)", self.n_bands)
+        form_adv.addRow("Grad. Accumulation Steps", self.grad_accumulation_steps)
+        form_adv.addRow("Hutchinson Samples (K)", self.n_hutchinson_samples)
 
         adv_inner = QWidget()
         adv_inner.setLayout(form_adv)
@@ -1583,8 +1583,8 @@ class STLRPSTrainTab(QWidget):
         # EXTRA CLI ARGS
         # =====================================================================
         self.extra_args = QLineEdit("")
-        self.extra_args.setPlaceholderText("Ek CLI argümanları (opsiyonel)")
-        self.extra_args.setToolTip(f"Doğrudan python -m {TRAIN_CLI_MODULE} komutuna iletilecek ek argümanlar.")
+        self.extra_args.setPlaceholderText("Extra CLI arguments (optional)")
+        self.extra_args.setToolTip(f"Extra arguments passed directly to the python -m {TRAIN_CLI_MODULE} command.")
 
         # =====================================================================
         # LAYOUT ASSEMBLY
@@ -1606,7 +1606,7 @@ class STLRPSTrainTab(QWidget):
 
         extra_row_layout = QFormLayout()
         _tune_form(extra_row_layout)
-        extra_row_layout.addRow("Ek CLI Argümanları", self.extra_args)
+        extra_row_layout.addRow("Extra CLI Arguments", self.extra_args)
         self.command_preview = QPlainTextEdit()
         self.command_preview.setReadOnly(True)
         self.command_preview.setFont(_mono_font())
@@ -1647,7 +1647,7 @@ class STLRPSTrainTab(QWidget):
 
         # --- ProcessPane ---
         self.runner = ProcessPane()
-        self.runner.btn_start.setText("Eğitimi Başlat")
+        self.runner.btn_start.setText("Start Training")
         self.runner.btn_start.clicked.connect(self._start)
         self.runner.set_progress_parser(self._parse_progress)
         self.runner.set_finished_hook(self._on_train_finished)
@@ -1691,8 +1691,8 @@ class STLRPSTrainTab(QWidget):
 
         # --- "Add to Queue" button (Feature #15) ---
         # Separate Setup buttons to fix duplicate parenting
-        self.btn_enqueue_setup = QPushButton("Kuyruğa Ekle")
-        self.btn_enqueue_setup.setToolTip("Mevcut ayarları eğitim kuyruğuna ekler.")
+        self.btn_enqueue_setup = QPushButton("Add to Queue")
+        self.btn_enqueue_setup.setToolTip("Adds the current settings to the training queue.")
         self.btn_enqueue_setup.setProperty("kind", "ghost")
         self.btn_enqueue_setup.clicked.connect(self._enqueue_current)
         
@@ -1798,7 +1798,7 @@ class STLRPSTrainTab(QWidget):
         self.command_preview.setMaximumHeight(80)
         
         extra_row_layout = QHBoxLayout()
-        extra_lbl = QLabel("Ek CLI Argümanları:")
+        extra_lbl = QLabel("Extra CLI Arguments:")
         extra_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
         extra_row_layout.addWidget(extra_lbl)
         extra_row_layout.addWidget(self.extra_args, 1)
@@ -2114,8 +2114,8 @@ class STLRPSTrainTab(QWidget):
         self.btn_copy_cmd_monitor.setProperty("kind", "ghost")
         self.btn_copy_cmd_monitor.clicked.connect(self._copy_command_preview)
         
-        self.btn_enqueue_monitor = QPushButton("Kuyruğa Ekle")
-        self.btn_enqueue_monitor.setToolTip("Mevcut ayarları eğitim kuyruğuna ekler.")
+        self.btn_enqueue_monitor = QPushButton("Add to Queue")
+        self.btn_enqueue_monitor.setToolTip("Adds the current settings to the training queue.")
         self.btn_enqueue_monitor.setProperty("kind", "ghost")
         self.btn_enqueue_monitor.clicked.connect(self._enqueue_current)
 
@@ -2237,7 +2237,7 @@ class STLRPSTrainTab(QWidget):
         }
         # Update start button label
         if hasattr(self, "runner"):
-            self.runner.btn_start.setText(labels.get(mode, "Başlat"))
+            self.runner.btn_start.setText(labels.get(mode, "Start"))
         if hasattr(self, "btn_start_setup"):
             self.btn_start_setup.setText(labels.get(mode, "Start Training"))
         # Update the control-bar workflow label
@@ -2258,8 +2258,8 @@ class STLRPSTrainTab(QWidget):
         self.altitude_max_km.setValue(alt_max)
         if hasattr(self, "runner"):
             self.runner.append(
-                f"[UI] Cloud config synced → irtifa: {alt_min:.0f}–{alt_max:.0f} km  |  "
-                f"derece: {deg_min}→{deg_max}"
+                f"[UI] Cloud config synced → altitude: {alt_min:.0f}–{alt_max:.0f} km  |  "
+                f"degree: {deg_min}→{deg_max}"
             )
 
     def _refresh_checklist(self) -> None:
@@ -2663,16 +2663,16 @@ class STLRPSTrainTab(QWidget):
         cfg = _BUILTIN_PRESETS.get(key) or _load_user_presets().get(key)
         if cfg:
             self._apply_config(cfg)
-            self.runner.append(f"[UI] Profil yüklendi: {key}")
+            self.runner.append(f"[UI] Profile loaded: {key}")
 
     def _save_preset(self) -> None:
-        name, ok = QInputDialog.getText(self, "Profil Kaydet", "Profil adı:")
+        name, ok = QInputDialog.getText(self, "Save Profile", "Profile name:")
         if not ok or not name.strip():
             return
         name = name.strip()
         if name in _BUILTIN_PRESETS:
             QMessageBox.warning(
-                self, "Engellendi", f"'{name}' yerleşik profil, değiştirilemez."
+                self, "Blocked", f"'{name}' is a built-in profile and cannot be modified."
             )
             return
         _save_user_preset(name, self._collect_config())
@@ -2681,19 +2681,19 @@ class STLRPSTrainTab(QWidget):
             if self._preset_combo.itemData(i) == name:
                 self._preset_combo.setCurrentIndex(i)
                 break
-        self.runner.append(f"[UI] Profil kaydedildi: {name}")
+        self.runner.append(f"[UI] Profile saved: {name}")
 
     def _delete_preset(self) -> None:
         key = self._current_preset_key()
         if not key:
             return
         if key in _BUILTIN_PRESETS:
-            QMessageBox.information(self, "Silinemez", f"'{key}' yerleşik profil.")
+            QMessageBox.information(self, "Cannot Delete", f"'{key}' is a built-in profile.")
             return
         reply = QMessageBox.question(
             self,
-            "Sil",
-            f"'{key}' silinsin mi?",
+            "Delete",
+            f"Delete '{key}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
@@ -2706,7 +2706,7 @@ class STLRPSTrainTab(QWidget):
     def _pick_data(self) -> None:
         fn, _ = QFileDialog.getOpenFileName(
             self,
-            "Dataset Seç",
+            "Select Dataset",
             self.data.text() or str(SCRIPT_DIR),
             "HDF5 (*.h5 *.hdf5);;All (*.*)",
         )
@@ -2725,7 +2725,7 @@ class STLRPSTrainTab(QWidget):
 
     def _pick_out_dir(self) -> None:
         d = QFileDialog.getExistingDirectory(
-            self, "Çıktı Klasörü", self.out_dir.text() or str(TRAINING_OUTPUT_ROOT)
+            self, "Output Folder", self.out_dir.text() or str(TRAINING_OUTPUT_ROOT)
         )
         if d:
             self.out_dir.setText(_norm_path(d))
@@ -3421,7 +3421,7 @@ class STLRPSTrainTab(QWidget):
         )
         out_dir = self.out_dir.text().strip()
         self._queue.enqueue(label, args, out_dir, cfg)
-        self.runner.append(f"[UI] Kuyruğa eklendi: {label}")
+        self.runner.append(f"[UI] Added to queue: {label}")
 
     def _on_queue_job_started(self, job_index: int, args: List[str]) -> None:
         """Called by the queue when it's time to start the next job."""
@@ -3429,7 +3429,7 @@ class STLRPSTrainTab(QWidget):
         self._epochs_max = int(self.epochs.value())
         self.runner.progress.setRange(0, self._epochs_max)
         self.runner.progress.setValue(0)
-        self.runner.progress.setFormat("Epoch %v / %m  [Kuyruk]")
+        self.runner.progress.setFormat("Epoch %v / %m  [Queue]")
         queue_out = self._arg_value(args, "--out") or ""
         self.runner.set_output_dir("")
         self._set_history_poll_dir(queue_out)
