@@ -82,7 +82,7 @@ def _make_run(tmp_path: Path) -> Path:
 
 def test_force_model_and_legacy_adapter_return_same_total_accel(tmp_path: Path) -> None:
     run_dir = _make_run(tmp_path)
-    force = load_surrogate_force_model(run_dir, device="cpu")
+    force = load_surrogate_force_model(run_dir, device="cpu", allow_legacy_contract=True)
     legacy = SurrogateGravityModel.from_model_dir(run_dir, device_preference="cpu")
     x = np.array(
         [

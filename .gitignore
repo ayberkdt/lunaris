@@ -61,12 +61,18 @@ st_lrps/data/cloud_suites/
 *.hdf5
 *.npz
 *.npy
+!tests/fixtures/
+!tests/fixtures/**
+!examples/
+!examples/**
 
 # Simulation outputs
 results/
 output/
 outputs/
 reports/
+checkpoints/
+evals/
 mc_results/
 mission_results/
 
@@ -101,6 +107,10 @@ st_lrps/**/provenance/
 **/eval_manifest.json
 **/evaluate_metrics.json
 **/evaluate_summary.txt
+**/dataset_validation_report.json
+**/dataset_quality_report.json
+**/dataset_quality_summary.md
+**/split_manifest.json
 **/metrics_summary.csv
 **/ood_metrics.csv
 **/topk_worst.csv

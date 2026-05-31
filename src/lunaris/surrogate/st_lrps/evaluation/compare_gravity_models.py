@@ -144,11 +144,35 @@ del _gb_mod, _gb_name
 # CLI
 # =============================================================================
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Lunar gravity model validation harness",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+
+    # --- Config-driven reproducible benchmark mode ---
+    p.add_argument("--config", type=str, default=None,
+                   help="Benchmark config file. Preferred for reproducible benchmark runs.")
+    p.add_argument("--model-dir", type=str, default=None,
+                   help="Config-mode override for surrogate.model_dir (alias for --st-lrps-model-dir in legacy mode).")
+    p.add_argument("--out", type=str, default=None,
+                   help="Config-mode output directory override.")
+    p.add_argument("--scenario-count", type=int, default=None,
+                   help="Config-mode override for scenario.count.")
+    p.add_argument("--seed", type=int, default=None,
+                   help="Config-mode override for scenario.seed.")
+    p.add_argument("--dtype", choices=["float32", "float64"], default=None,
+                   help="Config-mode override for propagation.dtype.")
+    p.add_argument("--quick", action="store_true",
+                   help="Run a lightweight synthetic benchmark that still writes manifest/config/validation outputs.")
+    p.add_argument("--allow-validation-fail", action="store_true",
+                   help="Return success even if standardized benchmark validation fails.")
+    p.add_argument("--allow-contract-mismatch", action="store_true",
+                   help="Config-mode: downgrade artifact/benchmark contract errors to warnings.")
+    p.add_argument("--allow-domain-extrapolation", action="store_true",
+                   help="Config-mode: allow benchmark altitude ranges outside artifact training envelope.")
+    p.add_argument("--allow-legacy-artifact", action="store_true",
+                   help="Config-mode: allow ST-LRPS artifacts without a full artifact_contract.")
 
     # --- Random / sampled scenario mode ---
     p.add_argument("--random-scenarios", type=int, default=100,
@@ -310,7 +334,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--argp-deg", type=float, default=0.0)
     p.add_argument("--ta-deg", type=float, default=0.0)
 
-    return p.parse_args()
+    return p.parse_args(argv)
 
 
 
@@ -449,14 +473,31 @@ def refresh_benchmark_metadata(args: argparse.Namespace) -> None:
         print(f"[refresh-metadata] Wrote {cache_metrics_dir / 'summary.json'}", flush=True)
 
 
-def main() -> None:
-    args    = parse_args()
+def _apply_common_aliases(args: argparse.Namespace) -> argparse.Namespace:
+    if getattr(args, "model_dir", None) and not getattr(args, "st_lrps_model_dir", None):
+        args.st_lrps_model_dir = args.model_dir
+    if getattr(args, "out", None):
+        args.output_dir = args.out
+    if getattr(args, "scenario_count", None) is not None:
+        args.random_scenarios = int(args.scenario_count)
+    if getattr(args, "seed", None) is not None:
+        args.scenario_seed = int(args.seed)
+    if getattr(args, "dtype", None):
+        args.torch_dtype = str(args.dtype)
+    if getattr(args, "quick", False):
+        args.random_scenarios = min(int(args.random_scenarios), 3)
+        args.duration_days = min(float(args.duration_days), 0.01)
+    return args
+
+
+def run_from_args(args: argparse.Namespace) -> int:
+    args = _apply_common_aliases(args)
     out_dir = Path(args.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if getattr(args, "refresh_metadata", False):
         refresh_benchmark_metadata(args)
-        return
+        return 0
 
     print("Initializing Lunar Gravity Validation ...", flush=True)
 
@@ -496,7 +537,7 @@ def main() -> None:
 
     if args.gpu_batch_compare:
         run_gpu_batch_compare_mode(args, cfg, ephem)
-        return
+        return 0
 
     if args.force_sample_trajectory:
         models = [m.strip().lower() for m in args.models.split(",") if m.strip()]
@@ -504,13 +545,39 @@ def main() -> None:
         if truth not in models:
             models.append(truth)
         evaluate_forces(models, truth, args, cfg, ephem, out_dir)
-        return
+        return 0
 
     if args.random_scenarios > 0:
         run_random_scenario_mode(args, cfg, ephem)
     else:
         run_single_orbit_mode(args, cfg, ephem)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+    args = parse_args(raw_argv)
+    if args.config:
+        explicit_out = args.out
+        if explicit_out is None and "--output-dir" in raw_argv:
+            explicit_out = args.output_dir
+        from .benchmark_pipeline import run_configured_benchmark
+
+        return run_configured_benchmark(
+            args.config,
+            out_dir=explicit_out,
+            model_dir=args.model_dir or args.st_lrps_model_dir,
+            scenario_count=args.scenario_count,
+            seed=args.seed,
+            dtype=args.dtype,
+            quick=bool(args.quick),
+            allow_validation_fail=bool(args.allow_validation_fail),
+            allow_contract_mismatch=bool(args.allow_contract_mismatch),
+            allow_domain_extrapolation=bool(args.allow_domain_extrapolation),
+            allow_legacy_artifact=bool(args.allow_legacy_artifact),
+        )
+    return run_from_args(args)
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

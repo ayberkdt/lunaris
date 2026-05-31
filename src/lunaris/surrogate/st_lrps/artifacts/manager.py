@@ -26,6 +26,10 @@ from lunaris.surrogate.st_lrps.networks.models import (
     reconstruct_model_from_artifacts,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
+from lunaris.surrogate.st_lrps.shared.contracts import (
+    ArtifactContract,
+    ArtifactContractError,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -74,6 +78,9 @@ CRITICAL_CONFIG_FIELDS: Tuple[str, ...] = (
     "resolved_mu_si",
     "resolved_r_ref_m",
     "resolved_a_sign",
+    "artifact_contract",
+    "dataset_contract",
+    "training_config_hash",
 )
 
 
@@ -488,6 +495,24 @@ def normalize_legacy_checkpoint(ckpt: dict) -> dict:
     )
     if "scaler_hash" in ckpt:
         normalized["scaler_hash"] = ckpt.get("scaler_hash")
+    for key in (
+        "dataset_contract",
+        "resolved_config",
+        "training_config_hash",
+        "dataset_hash",
+        "model_builder_version",
+    ):
+        if key in ckpt:
+            normalized[key] = ckpt.get(key)
+        elif key in cfg:
+            normalized[key] = cfg.get(key)
+    if isinstance(normalized.get("dataset_contract"), dict):
+        normalized["config"].setdefault("dataset_contract", dict(normalized["dataset_contract"]))
+    if isinstance(ckpt.get("artifact_contract"), dict):
+        normalized["artifact_contract"] = dict(ckpt["artifact_contract"])
+        normalized["config"].setdefault("artifact_contract", dict(ckpt["artifact_contract"]))
+    elif isinstance(normalized["config"].get("artifact_contract"), dict):
+        normalized["artifact_contract"] = dict(normalized["config"]["artifact_contract"])
     if "model" in ckpt or "model_state_dict" not in ckpt:
         normalized["model"] = state_dict
     return normalized
@@ -562,6 +587,8 @@ def validate_checkpoint_schema(ckpt: dict, *, strict: bool = True) -> dict:
 
     if strict and not normalized.get("created_at_utc"):
         raise RuntimeError("Canonical checkpoints must record created_at_utc.")
+    if strict and not isinstance(normalized.get("artifact_contract"), dict):
+        raise RuntimeError("Canonical checkpoints must record artifact_contract.")
 
     normalized["epoch"] = _coerce_int(normalized.get("epoch"), default=0)
     normalized["epoch_display"] = _coerce_int(
@@ -933,9 +960,12 @@ def build_resolved_config(
     ds_meta = dict(dataset_meta or {})
     scaler_payload = canonical_scaler_payload(scaler)
 
-    cfg_dict["resolved_mu_si"] = float(cfg_dict.get("resolved_mu_si", ds_meta.get("mu_si", 0.0)) or 0.0)
-    cfg_dict["resolved_r_ref_m"] = float(cfg_dict.get("resolved_r_ref_m", ds_meta.get("r_ref_m", 0.0)) or 0.0)
-    cfg_dict["resolved_a_sign"] = float(cfg_dict.get("resolved_a_sign", 1.0))
+    cfg_mu = cfg_dict.get("resolved_mu_si")
+    cfg_r_ref = cfg_dict.get("resolved_r_ref_m")
+    cfg_a_sign = cfg_dict.get("resolved_a_sign")
+    cfg_dict["resolved_mu_si"] = float((cfg_mu if cfg_mu is not None else ds_meta.get("mu_si", 0.0)) or 0.0)
+    cfg_dict["resolved_r_ref_m"] = float((cfg_r_ref if cfg_r_ref is not None else ds_meta.get("r_ref_m", 0.0)) or 0.0)
+    cfg_dict["resolved_a_sign"] = float((cfg_a_sign if cfg_a_sign is not None else ds_meta.get("a_sign", 1.0)) or 1.0)
     cfg_dict["mu_si"] = float(cfg_dict.get("resolved_mu_si"))
     cfg_dict["r_ref_m"] = float(cfg_dict.get("resolved_r_ref_m"))
     cfg_dict["architecture_signature"] = str(architecture_signature)
@@ -992,7 +1022,170 @@ def build_resolved_config(
         "u_scale": float((scaler_payload.get("u") or {}).get("scale", 0.0) or 0.0),
         "a_scale": float((scaler_payload.get("a") or {}).get("scale", 0.0) or 0.0),
     }
+    dataset_contract = (
+        cfg_dict.get("dataset_contract")
+        or (cfg_dict.get("dataset_meta") or {}).get("dataset_contract")
+        or _build_dataset_block_from_cfg(cfg_dict)
+    )
+    cfg_dict["dataset_contract"] = _json_safe(dataset_contract)
+    cfg_dict["training_config_hash"] = _compute_payload_sha256(
+        {k: v for k, v in cfg_dict.items() if k not in {"artifact_contract", "training_config_hash"}}
+    )
+    cfg_dict["artifact_contract"] = ArtifactContract.from_legacy_config(
+        cfg_dict,
+        scaler_payload=scaler_payload,
+        dataset_contract=cfg_dict["dataset_contract"],
+        architecture_signature=architecture_signature,
+    ).to_dict()
     return _json_safe(cfg_dict)
+
+
+def build_artifact_contract(
+    cfg: Mapping[str, Any],
+    *,
+    scaler_payload: Optional[Mapping[str, Any]] = None,
+    dataset_contract: Optional[Mapping[str, Any]] = None,
+    architecture_signature: Optional[str] = None,
+) -> ArtifactContract:
+    """Build an :class:`ArtifactContract` from resolved training artifacts."""
+
+    return ArtifactContract.from_legacy_config(
+        cfg,
+        scaler_payload=scaler_payload,
+        dataset_contract=dataset_contract,
+        architecture_signature=architecture_signature,
+    )
+
+
+def validate_checkpoint_contract(
+    ckpt: Mapping[str, Any],
+    *,
+    cfg: Optional[Mapping[str, Any]] = None,
+    scaler_payload: Optional[Mapping[str, Any]] = None,
+    strict: bool = True,
+    allow_legacy_contract: bool = False,
+) -> Dict[str, Any]:
+    """Read and validate the artifact contract embedded in a checkpoint."""
+
+    cfg_payload = dict(cfg or ckpt.get("config") or {})
+    source = "checkpoint"
+    legacy = False
+    raw_contract = ckpt.get("artifact_contract")
+    if not isinstance(raw_contract, dict):
+        raw_contract = cfg_payload.get("artifact_contract")
+        source = "config"
+    if isinstance(raw_contract, dict):
+        contract = ArtifactContract.from_dict(raw_contract)
+    else:
+        legacy = True
+        source = "legacy_inferred"
+        if strict and not allow_legacy_contract:
+            raise ArtifactContractError(
+                "Checkpoint is missing artifact_contract. Strict runtime loading requires a "
+                "versioned artifact contract; pass allow_legacy_contract=True only for "
+                "compatibility inspection of old runs."
+            )
+        try:
+            contract = ArtifactContract.from_legacy_config(
+                cfg_payload,
+                scaler_payload=(
+                    scaler_payload
+                    if isinstance(scaler_payload, Mapping)
+                    else ckpt.get("scaler") if isinstance(ckpt.get("scaler"), dict) else None
+                ),
+                dataset_contract=ckpt.get("dataset") if isinstance(ckpt.get("dataset"), dict) else None,
+                architecture_signature=(ckpt.get("architecture") or {}).get("signature"),
+            )
+        except Exception as exc:
+            if strict and not allow_legacy_contract:
+                raise ArtifactContractError(
+                    "Checkpoint is missing artifact_contract and its legacy metadata could not be "
+                    f"promoted to a validated contract: {exc}. Pass allow_legacy_contract=True "
+                    "only for inspection of old runs."
+                ) from exc
+            raise
+    if not legacy and strict:
+        expected_cfg = dict(cfg_payload)
+        expected_cfg.pop("artifact_contract", None)
+        expected_dataset = (
+            expected_cfg.get("dataset_contract")
+            or ckpt.get("dataset_contract")
+            or ckpt.get("dataset")
+        )
+        try:
+            expected = ArtifactContract.from_legacy_config(
+                expected_cfg,
+                scaler_payload=(
+                    scaler_payload
+                    if isinstance(scaler_payload, Mapping)
+                    else ckpt.get("scaler") if isinstance(ckpt.get("scaler"), dict) else None
+                ),
+                dataset_contract=expected_dataset if isinstance(expected_dataset, Mapping) else None,
+                architecture_signature=(ckpt.get("architecture") or {}).get("signature")
+                if isinstance(ckpt.get("architecture"), Mapping)
+                else expected_cfg.get("architecture_signature"),
+            )
+            compatibility = contract.compatibility_report(expected, strict_domain=False)
+        except Exception as exc:
+            raise ArtifactContractError(
+                f"artifact_contract could not be cross-checked against checkpoint/config metadata: {exc}"
+            ) from exc
+        if compatibility["errors"]:
+            raise ArtifactContractError(
+                "artifact_contract disagrees with checkpoint/config metadata: "
+                + "; ".join(str(item) for item in compatibility["errors"])
+            )
+    return {
+        "artifact_contract": contract.to_dict(),
+        "contract_source": source,
+        "legacy_contract": legacy,
+    }
+
+
+def read_artifact_contract(
+    run_dir: Path | str,
+    *,
+    prefer: str = "best",
+    device: Optional[torch.device] = None,
+    strict: bool = True,
+    allow_legacy_contract: bool = False,
+) -> ArtifactContract:
+    """Load the preferred checkpoint for a run and return its artifact contract."""
+
+    layout = make_run_layout(resolve_run_dir(run_dir))
+    _, ckpt = load_best_or_last(layout, prefer=prefer, device=device or torch.device("cpu"))
+    cfg = dict(ckpt.get("config") or {})
+    if layout.config_json.exists():
+        try:
+            cfg = json.loads(layout.config_json.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    scaler_payload = None
+    try:
+        scaler, _ = load_scaler_for_run(layout, ckpt, device=device or torch.device("cpu"))
+        scaler_payload = canonical_scaler_payload(scaler)
+    except Exception:
+        scaler_payload = None
+    report = validate_checkpoint_contract(
+        ckpt,
+        cfg=cfg,
+        scaler_payload=scaler_payload,
+        strict=strict,
+        allow_legacy_contract=allow_legacy_contract,
+    )
+    return ArtifactContract.from_dict(report["artifact_contract"])
+
+
+def compare_artifact_contracts(
+    artifact: ArtifactContract | Mapping[str, Any],
+    requested: ArtifactContract | Mapping[str, Any],
+    *,
+    strict_domain: bool = False,
+) -> Dict[str, Any]:
+    """Return a machine-readable compatibility report for two contracts."""
+
+    left = artifact if isinstance(artifact, ArtifactContract) else ArtifactContract.from_dict(artifact)
+    return left.compatibility_report(requested, strict_domain=strict_domain)
 
 
 def verify_critical_config_fields_match(config_payload: Mapping[str, Any], ckpt_config: Mapping[str, Any]) -> None:
@@ -1099,6 +1292,21 @@ def build_checkpoint_payload(
         "scaler_hash": _compute_payload_sha256(scaler_payload),
         "architecture": architecture,
         "dataset": dataset,
+        "dataset_contract": cfg_dict.get("dataset_contract") or dataset,
+        "artifact_contract": (
+            ArtifactContract.from_legacy_config(
+                cfg_dict,
+                scaler_payload=scaler_payload,
+                dataset_contract=cfg_dict.get("dataset_contract") or dataset,
+                architecture_signature=architecture_signature,
+            ).to_dict()
+        ),
+        "resolved_config": dict(cfg_dict),
+        "training_config_hash": cfg_dict.get("training_config_hash") or _compute_payload_sha256(cfg_dict),
+        "dataset_hash": (cfg_dict.get("dataset_contract") or dataset).get("dataset_sha256")
+        if isinstance((cfg_dict.get("dataset_contract") or dataset), Mapping)
+        else None,
+        "model_builder_version": cfg_dict.get("model_builder_version", MODEL_BUILDER_VERSION),
         "scoring": scoring,
         "training_state": training_state,
         "created_at_utc": _utcnow_iso(),
@@ -1183,6 +1391,13 @@ def reload_model_from_run_dir(
     )
     scaler, scaler_report = load_scaler_for_run(layout, ckpt, device=device, dtype=torch.float32)
     manifest = read_run_manifest(layout)
+    contract_report = validate_checkpoint_contract(
+        ckpt,
+        cfg=merged_cfg,
+        scaler_payload=canonical_scaler_payload(scaler),
+        strict=False,
+        allow_legacy_contract=True,
+    )
 
     report.update(
         {
@@ -1204,6 +1419,9 @@ def reload_model_from_run_dir(
             "w0_bands": merged_cfg.get("w0_bands"),
             "input_feature_dim": merged_cfg.get("input_feature_dim"),
             "embedding_type": merged_cfg.get("embedding_type"),
+            "artifact_contract": contract_report.get("artifact_contract"),
+            "artifact_contract_source": contract_report.get("contract_source"),
+            "legacy_contract": contract_report.get("legacy_contract"),
         }
     )
     return model, scaler, merged_cfg, report

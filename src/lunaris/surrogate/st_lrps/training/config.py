@@ -74,6 +74,7 @@ class TrainConfig:
 
     val_ratio: float = 0.1
     split_seed: Optional[int] = None
+    split_policy: str = "seeded_random"
 
     # Model architecture
     hidden: int = 512
@@ -287,6 +288,9 @@ class TrainConfig:
     # wrong. By default such datasets are rejected; set True only for inspection.
     allow_legacy_derivative_convention: bool = False
     allow_legacy_target_mode_inference: bool = False
+    allow_legacy_dataset_contract: bool = False
+    allow_missing_dataset_contract: bool = False
+    allow_dataset_validation_fail: bool = False
 
     # Determinism / cuDNN. Defaults preserve prior behavior.
     deterministic: bool = True
@@ -427,6 +431,9 @@ def parse_args() -> TrainConfig:
                             help="Fraction of data reserved for validation (if using --data).")
     group_data.add_argument("--split-seed", type=int, default=None,
                             help="Seed for the deterministic shuffled train/validation split.")
+    group_data.add_argument("--split-policy", choices=["seeded_random", "random", "altitude_stratified"],
+                            default=_TC_DEFAULTS.get("split_policy", "seeded_random"),
+                            help="Dataset split policy recorded in split_manifest.json.")
 
     # Architecture
     group_arch = ap.add_argument_group("Model Architecture")
@@ -877,6 +884,16 @@ def parse_args() -> TrainConfig:
                               default=False,
                               help="Permit old datasets without explicit target_mode by inferring "
                                    "residual/full from degree_min. Prefer regenerating metadata.")
+    group_safety.add_argument("--allow-legacy-dataset-contract", action="store_true",
+                              default=False,
+                              help="Permit HDF5 datasets whose DatasetContract must be inferred from legacy attrs.")
+    group_safety.add_argument("--allow-missing-dataset-contract", action="store_true",
+                              default=False,
+                              help="Permit old datasets with incomplete degree/altitude contract metadata. "
+                                   "Prefer regenerating metadata.")
+    group_safety.add_argument("--allow-dataset-validation-fail", action="store_true",
+                              default=False,
+                              help="Record but do not abort when lightweight dataset validation fails.")
     det_group = group_safety.add_mutually_exclusive_group()
     det_group.add_argument("--deterministic", action="store_true", dest="deterministic",
                            help="Set deterministic cuDNN (default: True).")
@@ -1173,6 +1190,7 @@ def parse_args() -> TrainConfig:
         batch_size=a.batch_size,
         val_ratio=a.val_fraction,
         split_seed=(a.split_seed if a.split_seed is not None else a.seed),
+        split_policy=str(a.split_policy),
         hidden=a.hidden,
         depth=a.depth,
         activation=a.activation,
@@ -1266,6 +1284,9 @@ def parse_args() -> TrainConfig:
         target_scale_multiplier=float(a.target_scale_multiplier),
         allow_legacy_derivative_convention=bool(a.allow_legacy_derivative_convention),
         allow_legacy_target_mode_inference=bool(a.allow_legacy_target_mode_inference),
+        allow_legacy_dataset_contract=bool(a.allow_legacy_dataset_contract),
+        allow_missing_dataset_contract=bool(a.allow_missing_dataset_contract),
+        allow_dataset_validation_fail=bool(a.allow_dataset_validation_fail),
         deterministic=bool(a.deterministic),
         benchmark_cudnn=bool(a.benchmark_cudnn),
         laplacian_mode=str(a.laplacian_mode),

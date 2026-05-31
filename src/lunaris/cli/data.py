@@ -323,6 +323,67 @@ def cmd_path(manifest: Optional[Dict[str, Any]], data_root: Path, args: argparse
     return 0
 
 
+def cmd_inspect(manifest: Optional[Dict[str, Any]], data_root: Path, args: argparse.Namespace) -> int:
+    from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract
+
+    contract = DatasetContract.from_hdf5(
+        args.data,
+        allow_legacy_dataset_contract=bool(args.allow_legacy),
+        allow_missing_dataset_contract=bool(args.allow_legacy),
+        allow_legacy_derivative_convention=bool(args.allow_legacy_derivative_convention),
+    )
+    payload = contract.to_dict()
+    print(json.dumps({
+        "dataset_id": payload.get("dataset_id"),
+        "dataset_kind": payload.get("dataset_kind"),
+        "target_mode": payload.get("target_mode"),
+        "baseline_kind": payload.get("baseline_kind"),
+        "degree_min": payload.get("degree_min"),
+        "degree_max": payload.get("degree_max"),
+        "n_samples": payload.get("n_samples"),
+        "altitude_min_km": payload.get("altitude_min_km"),
+        "altitude_max_km": payload.get("altitude_max_km"),
+        "coordinate_frame": payload.get("coordinate_frame"),
+        "units": payload.get("units"),
+        "legacy_inferred": payload.get("legacy_inferred"),
+    }, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_validate_dataset(manifest: Optional[Dict[str, Any]], data_root: Path, args: argparse.Namespace) -> int:
+    from lunaris.surrogate.st_lrps.data.dataset_validation import validate_dataset_file
+
+    report = validate_dataset_file(
+        args.data,
+        out_dir=args.out,
+        n_check=int(args.n_check),
+        seed=int(args.seed),
+        allow_legacy_dataset_contract=bool(args.allow_legacy),
+        allow_missing_dataset_contract=bool(args.allow_legacy),
+        allow_legacy_derivative_convention=bool(args.allow_legacy_derivative_convention),
+    )
+    print(json.dumps({"passed": report["passed"], "errors": report["errors"], "warnings": report["warnings"]}, indent=2))
+    return 0 if report["passed"] else 1
+
+
+def cmd_report_dataset(manifest: Optional[Dict[str, Any]], data_root: Path, args: argparse.Namespace) -> int:
+    from lunaris.surrogate.st_lrps.data.quality_report import build_dataset_quality_report
+
+    report = build_dataset_quality_report(
+        args.data,
+        out_dir=args.out,
+        bins=int(args.bins),
+        allow_legacy_dataset_contract=bool(args.allow_legacy),
+    )
+    print(json.dumps({
+        "n_samples": report["n_samples"],
+        "altitude_km": report["altitude_km"],
+        "finite_fraction": report["finite_fraction"],
+        "warnings": report["warnings"],
+    }, indent=2, sort_keys=True))
+    return 0
+
+
 # --------------------------------------------------------------------------- #
 # Parser + entry point
 # --------------------------------------------------------------------------- #
@@ -373,6 +434,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_path = sub.add_parser("path", help="Print the resolved data root and subdirectories.")
     p_path.set_defaults(func=cmd_path)
 
+    def _add_dataset_path_flags(p_ds: argparse.ArgumentParser) -> None:
+        p_ds.add_argument("--data", required=True, help="ST-LRPS HDF5 dataset path.")
+        p_ds.add_argument("--allow-legacy", action="store_true",
+                          help="Allow reading old datasets whose DatasetContract is inferred from attrs.")
+        p_ds.add_argument("--allow-legacy-derivative-convention", action="store_true",
+                          help="Allow old derivative convention only for inspection.")
+
+    p_inspect = sub.add_parser("inspect", help="Inspect an ST-LRPS dataset contract.")
+    _add_dataset_path_flags(p_inspect)
+    p_inspect.set_defaults(func=cmd_inspect)
+
+    p_validate = sub.add_parser("validate", help="Validate an ST-LRPS HDF5 dataset.")
+    _add_dataset_path_flags(p_validate)
+    p_validate.add_argument("--out", default=None, help="Directory for dataset_validation_report.json.")
+    p_validate.add_argument("--n-check", type=int, default=1024)
+    p_validate.add_argument("--seed", type=int, default=0)
+    p_validate.set_defaults(func=cmd_validate_dataset)
+
+    p_report = sub.add_parser("report", help="Write ST-LRPS dataset quality JSON/Markdown reports.")
+    _add_dataset_path_flags(p_report)
+    p_report.add_argument("--out", required=True, help="Directory for dataset_quality_report.json and summary Markdown.")
+    p_report.add_argument("--bins", type=int, default=20)
+    p_report.set_defaults(func=cmd_report_dataset)
+
     return parser
 
 
@@ -381,7 +466,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     data_root = resolve_data_root(args.data_dir)
 
     manifest: Optional[Dict[str, Any]] = None
-    if args.command != "path":
+    if args.command not in {"path", "inspect", "validate", "report"}:
         try:
             manifest = load_manifest(find_manifest(args.manifest))
         except (FileNotFoundError, ValueError) as exc:

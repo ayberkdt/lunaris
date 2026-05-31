@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import heapq
 import json
 import math
@@ -45,6 +46,12 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     canonical_scales,
     is_lunar_body_signature,
     load_icgem_gfc,
+)
+from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    DatasetContract,
+    contract_from_generation_attrs,
+    ensure_output_path_allowed,
+    stamp_hdf5_content_hash,
 )
 
 # ---- Cloud-parameter SSOT ----
@@ -93,6 +100,19 @@ def _human_bytes(n: int) -> str:
             return f"{x:.2f} {u}"
         x /= 1024.0
     return f"{x:.2f} PB"
+
+
+def _file_sha256(path: str | Path | None) -> Optional[str]:
+    if path is None:
+        return None
+    p = Path(path)
+    if not p.is_file():
+        return None
+    h = hashlib.sha256()
+    with p.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 # Historical Earth/EGM96 embedded coefficients were retired from the active
@@ -455,6 +475,13 @@ def write_h5_streaming(out_path: Path, n_samples: int, dtype: np.dtype, chunks_r
     )
     for k, v in attrs.items():
         f.attrs[str(k)] = str(v)
+    contract = contract_from_generation_attrs(attrs, n_samples=int(n_samples), dataset_name="data")
+    generation_config = {}
+    try:
+        generation_config = json.loads(str(attrs.get("cloud_config_json", "{}")))
+    except Exception:
+        generation_config = {}
+    contract.write_hdf5_attrs(f, generation_config=generation_config)
     return f
 
 
@@ -625,6 +652,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--format", choices=["pt", "h5"], default=None)
     p.add_argument("--out", type=str, default=None)
     p.add_argument("--dtype", choices=["float32", "float64"], default=None)
+    p.add_argument("--overwrite", action="store_true", default=False,
+                   help="Allow replacing an existing generated dataset file.")
 
     canon = p.add_mutually_exclusive_group()
     canon.add_argument("--canonical", dest="canonical", action="store_true")
@@ -650,7 +679,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--suite-name", type=str, default="",
                    help="Optional human-readable name for the suite folder.")
     p.add_argument("--suite-out-dir", type=str, default="",
-                   help="Parent directory for suite output. Default: <script_dir>/data/cloud_suites/")
+                   help="Parent directory for suite output. Default: <repo>/outputs/datasets/cloud_suites/")
 
     # Suite physics
     p.add_argument("--train-alt-min-km", type=float, default=None)
@@ -790,7 +819,7 @@ def resolve_cloud_config(args: argparse.Namespace) -> SpatialCloudConfig:
     return cfg
 
 
-def run_generation(cfg: SpatialCloudConfig) -> None:
+def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
     C, S, meta = load_coeffs_from_ssot(degree_max=int(cfg.degree_max), gfc_path=cfg.gfc_path)
     mu_si = float(meta["mu_si"])
     r_ref_m = float(meta["r_ref_m"])
@@ -803,9 +832,8 @@ def run_generation(cfg: SpatialCloudConfig) -> None:
     r_min_m = r_ref_m + float(cfg.alt_min_km) * 1_000.0
     r_max_m = r_ref_m + float(cfg.alt_max_km) * 1_000.0
 
-    # --- NEW: always save into ./data next to this script (unless --out is absolute) ---
-    base_dir = _script_dir()
-    data_dir = (base_dir / "data")
+    base_dir = _script_dir().parents[4]
+    data_dir = (base_dir / "outputs" / "datasets")
     data_dir.mkdir(parents=True, exist_ok=True)
 
     resolved = cfg.resolved_out_path()  # e.g. "potential_cloud_moon_deg50.h5" if out_path empty
@@ -814,6 +842,7 @@ def run_generation(cfg: SpatialCloudConfig) -> None:
         out_path = p
     else:
         out_path = (data_dir / p).resolve()
+    out_path = ensure_output_path_allowed(out_path, overwrite=bool(overwrite))
 
     fmt = str(cfg.out_format).lower()
     dtype_out = np.float32 if str(cfg.dtype) == "float32" else np.float64
@@ -832,6 +861,8 @@ def run_generation(cfg: SpatialCloudConfig) -> None:
         }
     )
     attrs: Dict[str, str] = {
+        "schema_version": "1",
+        "dataset_kind": "st_lrps_spatial_cloud",
         **{str(key): str(value) for key, value in meta.items()},
         "unit_system": unit_system,
         "central_body": str(meta.get("central_body", "moon")),
@@ -839,15 +870,25 @@ def run_generation(cfg: SpatialCloudConfig) -> None:
         "degree_max": str(int(cfg.degree_max)),
         "requested_degree": str(int(cfg.degree_max)),
         "target_mode": target_mode,
+        "baseline_kind": "spherical_harmonics" if target_mode == "residual" else "none",
         "columns": columns_str,
         "a_sign_convention": "+1",
         "derivative_convention_version": "dP_dphi_corrected_v1",
         "gravity_model_path": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
+        "source_gravity_model": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
+        "source_gravity_file_path": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
+        "source_gravity_file_sha256": str(_file_sha256(meta.get("gfc_path", cfg.resolved_gfc_path())) or ""),
         "alt_min_km": str(float(cfg.alt_min_km)),
         "alt_max_km": str(float(cfg.alt_max_km)),
+        "coordinate_frame": "moon_fixed_cartesian",
+        "units": json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True),
+        "generator_version": "spatial_cloud_generator_contract_v1",
+        "created_at_utc": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "sampling_strategy": str(cfg.sampling_strategy),
         "surface_bias_ratio": str(float(cfg.surface_bias_ratio)),
         "n_samples": str(int(cfg.n_samples)),
+        "random_seed": str(int(cfg.seed)),
+        "seed": str(int(cfg.seed)),
         "dtype": str(cfg.dtype),
         "DU_m": str(DU),
         "TU_s": str(TU),
@@ -932,6 +973,7 @@ def run_generation(cfg: SpatialCloudConfig) -> None:
                             print(f"[progress] {done:,}/{n_samples:,}")
 
             f.flush()
+        stamp_hdf5_content_hash(out_path, dataset_name="data")
         print("[done] HDF5 saved.")
 
     elif fmt == "pt":
@@ -1039,6 +1081,14 @@ def _write_suite_h5(
         ds[:] = data.astype(dtype, copy=False)
         for k, v in attrs.items():
             f.attrs[str(k)] = str(v)
+        contract = contract_from_generation_attrs(attrs, n_samples=n, dataset_name="data")
+        generation_config = {}
+        try:
+            generation_config = json.loads(str(attrs.get("cloud_config_json", "{}")))
+        except Exception:
+            generation_config = {}
+        contract.write_hdf5_attrs(f, generation_config=generation_config)
+    stamp_hdf5_content_hash(out_path, dataset_name="data")
     print(f"[suite] wrote {n:,} rows -> {out_path.name}")
 
 
@@ -1062,6 +1112,8 @@ def _build_suite_attrs(
     )
     cfg_dict = cfg.to_dict()
     attrs: Dict[str, str] = {
+        "schema_version": "1",
+        "dataset_kind": "st_lrps_spatial_cloud",
         "central_body": "moon",
         "mu_si": str(float(globals_blob["mu_si"])),
         "r_ref_m": str(float(globals_blob["r_ref_m"])),
@@ -1072,13 +1124,22 @@ def _build_suite_attrs(
         "columns": "[x,y,z,dU,dax,day,daz]",
         "alt_min_km": str(float(alt_min_km)),
         "alt_max_km": str(float(alt_max_km)),
+        "coordinate_frame": "moon_fixed_cartesian",
+        "units": json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True),
+        "generator_version": "spatial_cloud_generator_suite_contract_v1",
+        "created_at_utc": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "dataset_role": str(dataset_role),
         "sampling_strategy": str(sampling_strategy),
         "suite_id": str(suite_id),
         "seed": str(int(seed)),
+        "random_seed": str(int(seed)),
         "cloud_config_json": json.dumps(cfg_dict, sort_keys=True),
         "suite_manifest_path": str(suite_dir / "manifest.json"),
         "a_sign_convention": "+1",
+        "baseline_kind": "spherical_harmonics" if int(cfg.degree_min) >= 0 else "none",
+        "source_gravity_model": str(globals_blob.get("gfc_path", "")),
+        "source_gravity_file_path": str(globals_blob.get("gfc_path", "")),
+        "source_gravity_file_sha256": str(globals_blob.get("source_gravity_file_sha256", "")),
         "derivative_convention_version": "dP_dphi_corrected_v1",
         "DU_m": str(DU),
         "TU_s": str(TU),
@@ -1474,8 +1535,8 @@ def run_suite_generation(
     suite_id = f"{suite_label}_{ts}"
 
     if suite_out_dir is None:
-        suite_out_dir = _script_dir() / "data" / "cloud_suites"
-    suite_dir = Path(suite_out_dir) / suite_id
+        suite_out_dir = _script_dir().parents[4] / "outputs" / "datasets" / "cloud_suites"
+    suite_dir = ensure_output_path_allowed(Path(suite_out_dir) / suite_id, overwrite=False)
     suite_dir.mkdir(parents=True, exist_ok=True)
     print(f"[suite] output directory: {suite_dir}")
 
@@ -1500,6 +1561,8 @@ def run_suite_generation(
         "C": C, "S": S, "a_nm": a_nm, "b_nm": b_nm,
         "diag_f": diag_f, "subdiag_f": subdiag_f, "k_ratio": k_ratio,
         "mu_si": mu_si, "r_ref_m": r_ref_m,
+        "gfc_path": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
+        "source_gravity_file_sha256": str(_file_sha256(meta.get("gfc_path", cfg.resolved_gfc_path())) or ""),
         "degree_max": int(cfg.degree_max),
         "degree_min": int(cfg.degree_min),
         "r_min_m": r_min_m, "r_max_m": r_max_m,
@@ -2049,7 +2112,10 @@ def _run_active_refinement(a, ap) -> None:
 
     # Debug path: save positions only (NPZ) and return
     if bool(getattr(a, "active_save_positions_only", False)):
-        positions_path = out_dir / "active_refinement_positions.npz"
+        positions_path = ensure_output_path_allowed(
+            out_dir / "active_refinement_positions.npz",
+            overwrite=bool(getattr(a, "overwrite", False)),
+        )
         np.savez(str(positions_path), x=x_all.astype(np.float64))
         meta_debug = {
             "component_name": "active_error_refinement",
@@ -2120,6 +2186,7 @@ def _run_active_refinement(a, ap) -> None:
     else:
         h5_path = out_dir / "active_refinement_labeled.h5"
 
+    h5_path = ensure_output_path_allowed(h5_path, overwrite=bool(getattr(a, "overwrite", False)))
     h5_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Compute alt bounds from generated points
@@ -2127,6 +2194,8 @@ def _run_active_refinement(a, ap) -> None:
     alt_km_out = (r_norms_out - r_ref_gfc) / 1000.0
     alt_min_out = float(alt_km_out.min())
     alt_max_out = float(alt_km_out.max())
+    if alt_max_out <= alt_min_out:
+        alt_max_out = alt_min_out + 1e-6
 
     print(f"[active-refinement] Saving labeled HDF5 to {h5_path} (shape={data_out.shape}) ...")
     with _h5py.File(str(h5_path), "w") as hf:
@@ -2134,6 +2203,8 @@ def _run_active_refinement(a, ap) -> None:
                                 chunks=(min(65536, data_out.shape[0]), 7),
                                 compression="gzip", compression_opts=4)
         # Required HDF5 attrs
+        hf.attrs["schema_version"] = 1
+        hf.attrs["dataset_kind"] = "st_lrps_spatial_cloud"
         hf.attrs["component_name"] = "active_error_refinement"
         hf.attrs["source_error_file"] = str(error_path.resolve())
         hf.attrs["active_jitter_radial_km"] = float(a.active_jitter_radial_km)
@@ -2150,10 +2221,35 @@ def _run_active_refinement(a, ap) -> None:
         hf.attrs["r_ref_m"] = float(r_ref_gfc)
         hf.attrs["alt_min_km"] = alt_min_out
         hf.attrs["alt_max_km"] = alt_max_out
+        hf.attrs["coordinate_frame"] = "moon_fixed_cartesian"
+        hf.attrs["units"] = json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True)
+        hf.attrs["generator_version"] = "spatial_cloud_generator_active_contract_v1"
+        hf.attrs["created_at_utc"] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         hf.attrs["columns"] = columns_label
         hf.attrs["a_sign_convention"] = "+1"
         hf.attrs["unit_system"] = "si"
+        hf.attrs["baseline_kind"] = "spherical_harmonics" if _is_residual else "none"
+        hf.attrs["source_gravity_model"] = str(gfc_path)
+        hf.attrs["source_gravity_file_path"] = str(gfc_path)
+        hf.attrs["source_gravity_file_sha256"] = str(_file_sha256(gfc_path) or "")
+        hf.attrs["derivative_convention_version"] = "dP_dphi_corrected_v1"
+        hf.attrs["seed"] = int(getattr(a, "active_seed", 42))
         hf.attrs["created_by"] = "spatial_cloud_generator._run_active_refinement"
+        contract = contract_from_generation_attrs(
+            {str(k): hf.attrs[k] for k in hf.attrs.keys()},
+            n_samples=int(data_out.shape[0]),
+            dataset_name="data",
+        )
+        contract.write_hdf5_attrs(
+            hf,
+            generation_config={
+                "active_jitter_radial_km": float(a.active_jitter_radial_km),
+                "active_jitter_tangent_km": float(a.active_jitter_tangent_km),
+                "active_samples_per_point": int(n_per),
+                "active_seed": int(getattr(a, "active_seed", 42)),
+            },
+        )
+    stamp_hdf5_content_hash(h5_path, dataset_name="data")
 
     # Save metadata JSON
     meta = {
@@ -2209,7 +2305,7 @@ def main() -> None:
     if str(args.dump_config).strip():
         cfg.to_json(str(args.dump_config).strip())
 
-    run_generation(cfg)
+    run_generation(cfg, overwrite=bool(getattr(args, "overwrite", False)))
 
 
 if __name__ == "__main__":

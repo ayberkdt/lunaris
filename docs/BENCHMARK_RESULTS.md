@@ -194,7 +194,35 @@ graph TD
 
 ---
 
-## How to Reproduce the Benchmark
+## Reproducible Benchmark Pipeline
+
+New benchmark evidence should be produced with a fixed config file and the
+standard manifest/validation outputs described in
+[REPRODUCIBLE_BENCHMARKS.md](REPRODUCIBLE_BENCHMARKS.md):
+
+```bash
+lunaris-benchmark \
+    --config configs/benchmarks/st_lrps_1day_high_degree.json \
+    --model-dir outputs/training/st_lrps_train_YYYYMMDD_HHMMSS \
+    --out outputs/gravity_benchmark/st_lrps_1day_high_degree
+```
+
+For CPU-only CI or local pipeline checks without large data/checkpoints:
+
+```bash
+lunaris-benchmark --config configs/benchmarks/st_lrps_1day_high_degree.json --quick
+```
+
+Published tables should be treated as accepted only when
+`validation_report.json` passes and the accompanying `benchmark_manifest.json`
+links the result to the resolved config hash, commit, seed, model/checkpoint
+hashes when available, dataset/gravity-file hashes when available, numerical
+settings, runtime environment, and ST-LRPS artifact-contract compatibility
+report when a surrogate model directory is used. See
+[CONFIG_AND_ARTIFACT_CONTRACTS.md](CONFIG_AND_ARTIFACT_CONTRACTS.md) for the
+contract fields and legacy override rules.
+
+## How to Reproduce the Legacy Benchmark
 
 You can reproduce these results using either the command line or the desktop UI.
 

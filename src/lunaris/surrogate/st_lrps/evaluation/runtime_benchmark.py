@@ -49,6 +49,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         device=args.device,
         chunk_size=int(args.chunk_size),
         allow_config_mismatch=bool(args.allow_config_mismatch),
+        allow_legacy_contract=bool(getattr(args, "allow_legacy_artifact", False)),
     )
     q = _queries(args.n, args.seed, args.alt_min_km, args.alt_max_km)
     runtime.predict_residual_potential(q)
@@ -104,6 +105,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="JSON output path. Defaults under ignored outputs/.",
     )
     ap.add_argument("--allow-config-mismatch", action="store_true")
+    ap.add_argument(
+        "--allow-legacy-artifact",
+        action="store_true",
+        help="Allow timing old ST-LRPS checkpoints that lack artifact_contract metadata.",
+    )
     return ap
 
 
