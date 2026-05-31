@@ -401,8 +401,29 @@ def build_dataset_contract(
 ) -> Dict[str, Any]:
     """Build the versioned dataset-contract block used by artifacts."""
 
+    raw_contract = meta.raw_attrs.get("dataset_contract_json") or meta.raw_attrs.get("contract_json")
+    if raw_contract:
+        if isinstance(raw_contract, bytes):
+            raw_contract = raw_contract.decode("utf-8")
+        payload_obj = json.loads(str(raw_contract))
+        contract = DatasetContract.from_dict(
+            payload_obj,
+            allow_legacy_dataset_contract=False,
+            allow_missing_source_gravity=False,
+        )
+        payload = contract.to_dict()
+        if dataset_sha256 and not payload.get("content_sha256"):
+            payload["content_sha256"] = dataset_sha256
+        payload["path"] = str(Path(data_path))
+        payload["dataset_sha256"] = payload.get("content_sha256")
+        payload["derivative_convention_version"] = payload.get("derivative_convention")
+        payload["alt_min_km"] = payload.get("altitude_min_km")
+        payload["alt_max_km"] = payload.get("altitude_max_km")
+        return payload
+
     degree_max = meta.degree_max if meta.degree_max is not None else meta.requested_degree
     a_sign = 1.0 if str(meta.a_sign_convention or "+1").strip() in {"+1", "1", "1.0"} else -1.0
+    legacy_inferred = not bool(raw_contract)
     contract = DatasetContract(
         dataset_id=str(meta.raw_attrs.get("dataset_id") or meta.raw_attrs.get("suite_id") or Path(data_path).stem),
         dataset_kind=str(meta.raw_attrs.get("dataset_kind", "st_lrps_spatial_cloud")),
@@ -442,7 +463,7 @@ def build_dataset_contract(
         derivative_convention=meta.derivative_convention_version,
         columns=[c.strip() for c in str(meta.columns or "[x,y,z,dU,dax,day,daz]").strip("[]").split(",") if c.strip()],
         dataset_layout={"dataset_name": meta.raw_attrs.get("dataset_name") or "data", "shape": None},
-        legacy_inferred=False,
+        legacy_inferred=legacy_inferred,
     )
     payload = contract.to_dict()
     payload["path"] = str(Path(data_path))
@@ -509,11 +530,23 @@ def validate_dataset_contract(
         allow_legacy_target_mode_inference=allow_legacy_target_mode_inference,
         allow_missing_dataset_contract=allow_missing_dataset_contract,
     )
-    contract = build_dataset_contract(meta, data_path=data_path)
+    n_samples: Optional[int] = None
+    try:
+        with h5py.File(data_path, "r") as handle:
+            name = "data" if "data" in handle else _discover_dataset_name(data_path)
+            n_samples = int(handle[name].shape[0])
+    except Exception:
+        n_samples = None
+    contract = build_dataset_contract(meta, data_path=data_path, n_samples=n_samples)
     try:
         DatasetContract.from_dict(
             contract,
-            allow_legacy_dataset_contract=allow_legacy_dataset_contract or allow_missing_dataset_contract,
+            allow_legacy_dataset_contract=(
+                allow_legacy_dataset_contract
+                or allow_missing_dataset_contract
+                or allow_legacy_target_mode_inference
+                or allow_legacy_derivative_convention
+            ),
             allow_missing_source_gravity=True,
             allow_legacy_derivative_convention=allow_legacy_derivative_convention,
         )

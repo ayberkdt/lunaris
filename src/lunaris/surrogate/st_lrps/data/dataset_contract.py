@@ -61,6 +61,26 @@ def content_sha256_for_hdf5_dataset(path: str | Path, dataset_name: str = "data"
     return digest.hexdigest()
 
 
+def stamp_hdf5_content_hash(path: str | Path, dataset_name: str = "data") -> "DatasetContract":
+    """Compute the HDF5 dataset payload hash and update the embedded contract."""
+
+    import h5py  # type: ignore
+
+    digest = content_sha256_for_hdf5_dataset(path, dataset_name=dataset_name)
+    contract = DatasetContract.from_hdf5(path, dataset_name=dataset_name, allow_legacy_dataset_contract=True)
+    payload = contract.to_dict()
+    payload["content_sha256"] = digest
+    updated = DatasetContract.from_dict(
+        payload,
+        allow_legacy_dataset_contract=bool(payload.get("legacy_inferred")),
+        allow_missing_source_gravity=bool(payload.get("legacy_inferred")),
+        allow_legacy_derivative_convention=bool(payload.get("legacy_inferred")),
+    )
+    with h5py.File(path, "a") as handle:
+        updated.write_hdf5_attrs(handle)
+    return updated
+
+
 def _repo_commit_sha() -> Optional[str]:
     try:
         root = Path(__file__).resolve().parents[5]
@@ -217,7 +237,11 @@ class DatasetContract:
         object.__setattr__(self, "columns", _columns(self.columns))
         object.__setattr__(self, "dataset_layout", dict(self.dataset_layout or {}))
         object.__setattr__(self, "legacy_inferred", bool(self.legacy_inferred))
-        self.validate()
+        self.validate(
+            allow_legacy_dataset_contract=bool(self.legacy_inferred),
+            allow_missing_source_gravity=bool(self.legacy_inferred),
+            allow_legacy_derivative_convention=bool(self.legacy_inferred),
+        )
 
     def validate(
         self,
@@ -454,22 +478,27 @@ class DatasetContract:
         payload = self.to_dict()
         text = _json_text(payload)
         handle.attrs[DATASET_CONTRACT_ATTR] = text
-        handle.attrs["schema_version"] = str(self.schema_version)
+        handle.attrs["schema_version"] = int(self.schema_version)
         handle.attrs["dataset_kind"] = self.dataset_kind
         handle.attrs["dataset_id"] = self.dataset_id or ""
         handle.attrs["target_mode"] = self.target_mode
         handle.attrs["baseline_kind"] = self.baseline_kind
-        handle.attrs["degree_min"] = "" if self.degree_min is None else str(self.degree_min)
-        handle.attrs["degree_max"] = "" if self.degree_max is None else str(self.degree_max)
-        handle.attrs["mu_si"] = str(self.mu_si)
-        handle.attrs["r_ref_m"] = str(self.r_ref_m)
+        handle.attrs["n_samples"] = int(self.n_samples)
+        handle.attrs["degree_min"] = "" if self.degree_min is None else int(self.degree_min)
+        handle.attrs["degree_max"] = "" if self.degree_max is None else int(self.degree_max)
+        handle.attrs["mu_si"] = float(self.mu_si)
+        handle.attrs["r_ref_m"] = float(self.r_ref_m)
         handle.attrs["a_sign_convention"] = "+1" if self.a_sign > 0 else "-1"
-        handle.attrs["alt_min_km"] = "" if self.altitude_min_km is None else str(self.altitude_min_km)
-        handle.attrs["alt_max_km"] = "" if self.altitude_max_km is None else str(self.altitude_max_km)
+        handle.attrs["alt_min_km"] = "" if self.altitude_min_km is None else float(self.altitude_min_km)
+        handle.attrs["alt_max_km"] = "" if self.altitude_max_km is None else float(self.altitude_max_km)
         handle.attrs["coordinate_frame"] = self.coordinate_frame
         handle.attrs["units"] = json.dumps(self.units, sort_keys=True)
         handle.attrs["derivative_convention_version"] = self.derivative_convention or ""
         handle.attrs["columns"] = "[" + ",".join(self.columns) + "]"
+        handle.attrs["source_gravity_model"] = self.source_gravity_model or ""
+        handle.attrs["source_gravity_file_path"] = self.source_gravity_file_path or ""
+        handle.attrs["source_gravity_file_sha256"] = self.source_gravity_file_sha256 or ""
+        handle.attrs["content_sha256"] = self.content_sha256 or ""
         meta = handle.require_group(METADATA_GROUP)
         _write_scalar_text_dataset(meta, "contract_json", text)
         if generation_config is not None:
@@ -602,5 +631,6 @@ __all__ = [
     "contract_from_generation_attrs",
     "ensure_output_path_allowed",
     "sha256_file",
+    "stamp_hdf5_content_hash",
     "utc_now_iso",
 ]

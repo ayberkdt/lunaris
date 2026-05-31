@@ -106,6 +106,22 @@ committed.
 If an optional file does not exist locally, the manifest records `null` plus a
 clear `missing_reason` instead of failing the run.
 
+## Dataset Inputs
+
+When a benchmark or training run depends on an ST-LRPS HDF5 cloud, generate or
+inspect the dataset with the dataset pipeline first:
+
+```bash
+lunaris-data inspect --data outputs/datasets/cloud.h5
+lunaris-data validate --data outputs/datasets/cloud.h5 --out outputs/dataset_reports/cloud
+lunaris-data report --data outputs/datasets/cloud.h5 --out outputs/dataset_reports/cloud
+```
+
+The dataset validation report and quality report should be kept with any
+benchmark paper trail that depends on that cloud. Training run manifests also
+record the embedded dataset contract, the validation report path, and the split
+manifest path.
+
 ## Validation
 
 `validation_report.json` is machine-readable:

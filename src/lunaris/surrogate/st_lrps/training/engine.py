@@ -1516,6 +1516,8 @@ def train(cfg: TrainConfig) -> None:
     # 2. Dataset Discovery & Validation
     data_path = Path(cfg.data)
     independent_val = cfg.train_data is not None and cfg.val_data is not None
+    train_data_path: Optional[Path] = None
+    val_data_path: Optional[Path] = None
 
     if independent_val:
         train_data_path = Path(cfg.train_data)

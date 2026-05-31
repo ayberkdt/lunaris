@@ -12,6 +12,10 @@ from lunaris.surrogate.st_lrps.data.datasets import (
     validate_dataset_contract,
 )
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    DatasetContract,
+    stamp_hdf5_content_hash,
+)
 
 
 def _write_h5(path: Path, **attrs) -> Path:
@@ -83,3 +87,30 @@ def test_units_are_validated(tmp_path):
     meta = DatasetMeta.from_h5(path)
     with pytest.raises(ValueError, match="unit_system"):
         validate_dataset_contract(meta, data_path=path)
+
+
+def test_dataset_contract_content_hash_can_be_stamped(tmp_path):
+    path = tmp_path / "contracted.h5"
+    with h5py.File(path, "w") as handle:
+        handle.create_dataset("data", data=np.ones((3, 7), dtype=np.float32))
+        contract = DatasetContract(
+            dataset_id="hash-test",
+            n_samples=3,
+            target_mode="residual",
+            baseline_kind="spherical_harmonics",
+            degree_min=2,
+            degree_max=4,
+            altitude_min_km=100.0,
+            altitude_max_km=200.0,
+            source_gravity_model="toy",
+            source_gravity_file_path="toy.gfc",
+            source_gravity_file_sha256="a" * 64,
+            dataset_layout={"dataset_name": "data", "shape": [3, 7]},
+        )
+        contract.write_hdf5_attrs(handle)
+
+    updated = stamp_hdf5_content_hash(path)
+    reread = read_dataset_contract_from_h5(path)
+
+    assert updated.content_sha256
+    assert reread["content_sha256"] == updated.content_sha256

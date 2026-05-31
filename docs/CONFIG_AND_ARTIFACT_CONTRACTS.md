@@ -59,29 +59,49 @@ ordering.
 
 ## Dataset Contract
 
-Generated HDF5 clouds now include a normalized dataset contract with:
+Generated HDF5 clouds now include a normalized `DatasetContract` in both root
+attrs (`dataset_contract_json`) and `/metadata/contract_json`.
 
-- schema and dataset kind
-- target mode, baseline kind, degree range
-- `mu_si`, `r_ref_m`, `a_sign`
-- altitude envelope
-- coordinate frame and units
-- generator/source gravity metadata
-- dataset/source hashes when available
-- derivative convention
+Core fields:
 
-Training rejects missing `target_mode`, missing degree metadata, invalid unit
-system, invalid altitude bounds, non-lunar body metadata, and old derivative
-conventions by default. Compatibility escape hatches are explicit:
+- `schema_version`, `dataset_id`, `dataset_kind`, `created_at_utc`
+- `generator_name`, `generator_version`, `repo_commit_sha`, `random_seed`
+- `n_samples`, `dataset_layout`, and column names
+- `target_mode`, `baseline_kind`, `degree_min`, `degree_max`
+- `mu_si`, `r_ref_m`, `a_sign`, coordinate frame, and SI unit block
+- `altitude_min_km`, `altitude_max_km`, sampling policy, and split policy
+- source gravity model/path/SHA-256 and dataset content SHA-256 when known
+- `derivative_convention`, which must be `dP_dphi_corrected_v1`
+
+Training reads this contract before any optimizer work, runs dataset validation,
+writes `provenance/dataset_validation_report.json`, creates
+`provenance/split_manifest.json`, and copies the dataset contract into
+`provenance/dataset_meta.json`, `config.json`, and `run_manifest.json`.
+
+Validation rejects missing contracts, missing `target_mode`, missing degree
+metadata, invalid unit system, invalid altitude bounds, non-lunar body
+metadata, unsafe derivative conventions, non-finite values, invalid HDF5 shape,
+and altitude-envelope violations by default. Compatibility escape hatches are
+explicit:
 
 ```bash
+lunaris-train --allow-legacy-dataset-contract
 lunaris-train --allow-legacy-target-mode-inference
 lunaris-train --allow-missing-dataset-contract
 lunaris-train --allow-legacy-derivative-convention
+lunaris-train --allow-dataset-validation-fail
 ```
 
 These flags are intended for inspecting old data, not for producing new
 research artifacts.
+
+Dataset inspection and report commands:
+
+```bash
+lunaris-data inspect --data outputs/datasets/cloud.h5
+lunaris-data validate --data outputs/datasets/cloud.h5 --out outputs/dataset_reports/cloud
+lunaris-data report --data outputs/datasets/cloud.h5 --out outputs/dataset_reports/cloud
+```
 
 ## Training Outputs
 

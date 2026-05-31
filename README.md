@@ -46,6 +46,7 @@ currently raises `NotImplementedError` in `lunaris.core.dynamics`:
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, perturbation flags, Monte Carlo internals, ST-LRPS surrogate |
 | [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
 | [docs/REPRODUCIBLE_BENCHMARKS.md](docs/REPRODUCIBLE_BENCHMARKS.md) | Config-driven benchmark runs, provenance manifests, validation reports, and CI smoke mode |
+| [docs/DATASET_PIPELINE.md](docs/DATASET_PIPELINE.md) | ST-LRPS dataset contract, validation, quality reports, split manifests, and strict training ingestion |
 | [docs/CONFIG_AND_ARTIFACT_CONTRACTS.md](docs/CONFIG_AND_ARTIFACT_CONTRACTS.md) | ST-LRPS dataset, training, checkpoint, runtime, and benchmark contract rules |
 | [docs/HPC.md](docs/HPC.md) | Cluster/headless install, Conda environment, Slurm templates |
 | [docs/profiling.md](docs/profiling.md) | ST-LRPS runtime profiling and timing interpretation |
@@ -137,6 +138,9 @@ Large files (gravity coefficients, SPICE kernels, topography, albedo) are not bu
 lunaris-data list
 lunaris-data download --group ephemeris
 lunaris-data verify
+lunaris-data inspect --data outputs/datasets/cloud.h5
+lunaris-data validate --data outputs/datasets/cloud.h5 --out outputs/dataset_reports/cloud
+lunaris-data report --data outputs/datasets/cloud.h5 --out outputs/dataset_reports/cloud
 ```
 
 The catalogue is `data/data_sources.json`; entries without an official pinned URL print manual-placement instructions. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for the cluster data workflow.

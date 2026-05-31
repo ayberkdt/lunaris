@@ -253,7 +253,8 @@ def test_engine_resume_smoke(tmp_path):
     common = [
         "--n-bands", "1", "--activation", "silu", "--hidden", "8", "--depth", "2",
         "--batch-size", "32", "--num-workers", "0", "--quick-check",
-        "--a-sign", "1.0", "--allow-legacy-derivative-convention",
+        "--a-sign", "1.0", "--allow-legacy-dataset-contract",
+        "--allow-legacy-derivative-convention",
         "--direction-loss-weight", "0.0", "--best-ckpt-start-epoch", "0",
         "--no-auto-preload",
     ]

@@ -94,6 +94,14 @@ def validate_dataset_file(
         data = np.empty((0, 7), dtype=np.float64)
     else:
         n_total = int(shape[0])
+        if contract is not None and int(contract.n_samples) != n_total:
+            errors.append(f"contract n_samples={contract.n_samples} does not match HDF5 rows={n_total}")
+        if contract is not None:
+            layout_shape = (contract.dataset_layout or {}).get("shape")
+            if isinstance(layout_shape, (list, tuple)) and len(layout_shape) >= 2:
+                expected_shape = tuple(int(v) for v in layout_shape[:2])
+                if expected_shape != tuple(shape[:2]):
+                    errors.append(f"contract dataset_layout.shape={expected_shape} does not match HDF5 shape={shape}")
         idx = _sample_indices(n_total, n_check, seed)
         data, _ = _read_subset(path, dataset_name, idx)
     checked.append("shape")
@@ -115,7 +123,8 @@ def validate_dataset_file(
     if contract is not None and altitude_km.size:
         lo = float(contract.altitude_min_km)
         hi = float(contract.altitude_max_km)
-        outside = (altitude_km < lo - 1e-9) | (altitude_km > hi + 1e-9)
+        envelope_tol_km = 1e-3
+        outside = (altitude_km < lo - envelope_tol_km) | (altitude_km > hi + envelope_tol_km)
         if np.any(outside):
             msg = f"{int(outside.sum())} checked samples are outside contract altitude envelope [{lo}, {hi}] km"
             if strict:

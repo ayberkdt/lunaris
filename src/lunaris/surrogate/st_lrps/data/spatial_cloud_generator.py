@@ -51,6 +51,7 @@ from lunaris.surrogate.st_lrps.data.dataset_contract import (
     DatasetContract,
     contract_from_generation_attrs,
     ensure_output_path_allowed,
+    stamp_hdf5_content_hash,
 )
 
 # ---- Cloud-parameter SSOT ----
@@ -678,7 +679,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--suite-name", type=str, default="",
                    help="Optional human-readable name for the suite folder.")
     p.add_argument("--suite-out-dir", type=str, default="",
-                   help="Parent directory for suite output. Default: <script_dir>/data/cloud_suites/")
+                   help="Parent directory for suite output. Default: <repo>/outputs/datasets/cloud_suites/")
 
     # Suite physics
     p.add_argument("--train-alt-min-km", type=float, default=None)
@@ -972,6 +973,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
                             print(f"[progress] {done:,}/{n_samples:,}")
 
             f.flush()
+        stamp_hdf5_content_hash(out_path, dataset_name="data")
         print("[done] HDF5 saved.")
 
     elif fmt == "pt":
@@ -1086,6 +1088,7 @@ def _write_suite_h5(
         except Exception:
             generation_config = {}
         contract.write_hdf5_attrs(f, generation_config=generation_config)
+    stamp_hdf5_content_hash(out_path, dataset_name="data")
     print(f"[suite] wrote {n:,} rows -> {out_path.name}")
 
 
@@ -1532,8 +1535,8 @@ def run_suite_generation(
     suite_id = f"{suite_label}_{ts}"
 
     if suite_out_dir is None:
-        suite_out_dir = _script_dir() / "data" / "cloud_suites"
-    suite_dir = Path(suite_out_dir) / suite_id
+        suite_out_dir = _script_dir().parents[4] / "outputs" / "datasets" / "cloud_suites"
+    suite_dir = ensure_output_path_allowed(Path(suite_out_dir) / suite_id, overwrite=False)
     suite_dir.mkdir(parents=True, exist_ok=True)
     print(f"[suite] output directory: {suite_dir}")
 
@@ -2109,7 +2112,10 @@ def _run_active_refinement(a, ap) -> None:
 
     # Debug path: save positions only (NPZ) and return
     if bool(getattr(a, "active_save_positions_only", False)):
-        positions_path = out_dir / "active_refinement_positions.npz"
+        positions_path = ensure_output_path_allowed(
+            out_dir / "active_refinement_positions.npz",
+            overwrite=bool(getattr(a, "overwrite", False)),
+        )
         np.savez(str(positions_path), x=x_all.astype(np.float64))
         meta_debug = {
             "component_name": "active_error_refinement",
@@ -2180,6 +2186,7 @@ def _run_active_refinement(a, ap) -> None:
     else:
         h5_path = out_dir / "active_refinement_labeled.h5"
 
+    h5_path = ensure_output_path_allowed(h5_path, overwrite=bool(getattr(a, "overwrite", False)))
     h5_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Compute alt bounds from generated points
@@ -2187,6 +2194,8 @@ def _run_active_refinement(a, ap) -> None:
     alt_km_out = (r_norms_out - r_ref_gfc) / 1000.0
     alt_min_out = float(alt_km_out.min())
     alt_max_out = float(alt_km_out.max())
+    if alt_max_out <= alt_min_out:
+        alt_max_out = alt_min_out + 1e-6
 
     print(f"[active-refinement] Saving labeled HDF5 to {h5_path} (shape={data_out.shape}) ...")
     with _h5py.File(str(h5_path), "w") as hf:
@@ -2240,6 +2249,7 @@ def _run_active_refinement(a, ap) -> None:
                 "active_seed": int(getattr(a, "active_seed", 42)),
             },
         )
+    stamp_hdf5_content_hash(h5_path, dataset_name="data")
 
     # Save metadata JSON
     meta = {
