@@ -106,3 +106,10 @@ include = ["lunaris*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "slow: long-running tests (deselect with -m 'not slow')",
+  "integration: end-to-end tests that exercise multiple layers together",
+  "requires_data: needs large external data (SPICE kernels, gravity/topography files)",
+  "requires_cuda: needs an NVIDIA CUDA device",
+  "requires_torch: needs PyTorch installed (skipped cleanly otherwise)",
+]

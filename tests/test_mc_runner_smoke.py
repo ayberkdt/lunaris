@@ -13,8 +13,13 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 import lunaris.core.mc_runner as mc_runner
+
+# These smoke tests boot the real Monte Carlo runtime, which needs SPICE kernels
+# and the lunar gravity model. Skip cleanly when that external data is absent.
+pytestmark = pytest.mark.requires_data
 
 
 def test_mc_runner_cpu_smoke_completes_and_writes_output(tmp_path: Path) -> None:

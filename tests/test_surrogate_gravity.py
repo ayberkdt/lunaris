@@ -188,6 +188,7 @@ class TestExtractDegreeMetadata:
 class TestSurrogateGravityModelDegreeAttributes:
     """Verify that the loaded runtime wrapper exposes all degree metadata."""
 
+    @pytest.mark.requires_data
     def test_degree_attributes_exposed(self, tmp_path: Path) -> None:
         run_dir = _make_tiny_run(tmp_path, "run_deg", extra_config={"degree_min": 20, "degree_max": 100})
         model = SurrogateGravityModel.from_model_dir(

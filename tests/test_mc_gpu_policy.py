@@ -397,6 +397,7 @@ def _make_tiny_surrogate(tmp_path: Path) -> "Any":  # noqa: F821
     )
 
 
+@pytest.mark.requires_data
 def test_predict_residual_accel_torch_shape(tmp_path: Path) -> None:
     """predict_residual_accel_torch returns [N, 3] for [N, 3] input."""
     model = _make_tiny_surrogate(tmp_path)
@@ -410,6 +411,7 @@ def test_predict_residual_accel_torch_shape(tmp_path: Path) -> None:
     assert out.device.type == "cpu"
 
 
+@pytest.mark.requires_data
 def test_predict_total_accel_torch_shape(tmp_path: Path) -> None:
     """predict_total_accel_torch returns [N, 3] for [N, 3] input."""
     model = _make_tiny_surrogate(tmp_path)
@@ -422,6 +424,7 @@ def test_predict_total_accel_torch_shape(tmp_path: Path) -> None:
     assert out.dtype == torch.float32
 
 
+@pytest.mark.requires_data
 def test_predict_total_accel_torch_zero_net_matches_point_mass(tmp_path: Path) -> None:
     """Zero-weight network → total acceleration equals point-mass (residual mode)."""
     from lunaris.common.constants import MU_MOON
@@ -437,6 +440,7 @@ def test_predict_total_accel_torch_zero_net_matches_point_mass(tmp_path: Path) -
     assert abs(float(out[0, 2])) < 1e-3
 
 
+@pytest.mark.requires_data
 def test_predict_residual_accel_torch_zero_net_is_zero(tmp_path: Path) -> None:
     """Zero-weight network → residual acceleration is zero (delta above point mass)."""
     model = _make_tiny_surrogate(tmp_path)
@@ -445,6 +449,7 @@ def test_predict_residual_accel_torch_zero_net_is_zero(tmp_path: Path) -> None:
     assert torch.allclose(out, torch.zeros(1, 3), atol=1e-10)
 
 
+@pytest.mark.requires_data
 def test_degree_max_metadata_exposed(tmp_path: Path) -> None:
     """SurrogateGravityModel exposes degree_max for MC propagator contract."""
     model = _make_tiny_surrogate(tmp_path)
@@ -457,6 +462,7 @@ def test_degree_max_metadata_exposed(tmp_path: Path) -> None:
 # New: TorchBatchPropagator smoke test (CPU-only, no real GPU needed)
 # =============================================================================
 
+@pytest.mark.requires_data
 def test_torch_batch_propagator_cpu_smoke(tmp_path: Path, monkeypatch) -> None:
     """
     Smoke test: TorchBatchPropagator propagates N=4 samples for a few steps.
