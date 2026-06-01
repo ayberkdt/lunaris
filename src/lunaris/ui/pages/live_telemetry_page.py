@@ -70,7 +70,7 @@ except ImportError as e:
 
 
 try:
-    from .ui_commons import THEME
+    from lunaris.ui.core.ui_commons import THEME
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -80,7 +80,7 @@ except ImportError:
         print("  When executed directly, relative imports like '.constants' fail.", file=sys.stderr)
         print("-" * 60, file=sys.stderr)
         print("  From the project root, run:", file=sys.stderr)
-        print("\n      python -m lunaris.ui.widgets.live_telemetry_page\n", file=sys.stderr)
+        print("\n      python -m lunaris.ui.pages.live_telemetry_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
         raise SystemExit(2)
     raise

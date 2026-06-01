@@ -22,7 +22,7 @@ from typing import Any, List, Mapping, Tuple
 from PySide6 import QtCore
 
 try:
-    from .surrogate_artifacts import validate_surrogate_run_preflight
+    from lunaris.ui.core.surrogate_artifacts import validate_surrogate_run_preflight
 except ImportError:
     if __name__ == "__main__":
         raise SystemExit(2)

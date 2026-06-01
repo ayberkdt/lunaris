@@ -23,8 +23,8 @@ from lunaris.common.time_utils import (
 )
 
 try:
-    from .ui_commons import THEME, NumericDragLineEdit, QuickChip, get_icon
-    from .solver_policy import (
+    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, QuickChip, get_icon
+    from lunaris.ui.core.solver_policy import (
         DEFAULT_ADAPTIVE_ATOL,
         DEFAULT_ADAPTIVE_RTOL,
         DEFAULT_MAX_STEP_S,
@@ -43,7 +43,7 @@ except ImportError:
         print("  When executed directly, relative imports like '.constants' fail.", file=sys.stderr)
         print("-" * 60, file=sys.stderr)
         print("  From the project root, run:", file=sys.stderr)
-        print("\n      python -m lunaris.ui.widgets.mission_propagation_page\n", file=sys.stderr)
+        print("\n      python -m lunaris.ui.pages.mission_propagation_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
         raise SystemExit(2)
     raise

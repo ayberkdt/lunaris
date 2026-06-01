@@ -114,12 +114,12 @@ is imported lazily, so launching one never loads the other's dependencies; both
 Behind the cards, the launcher can show an optional, **offline** interactive 3D
 Moon (a Sobolev/visual and gravity-anomaly texture toggle, plus a small demo
 orbit). The visual is a Next.js / Three.js scene under
-`desktop/website/lunaris-web`, statically exported and served from a local
+`web`, statically exported and served from a local
 loopback HTTP server — no internet and no Node runtime are required at app run
 time. Build it once:
 
 ```bash
-cd desktop/website/lunaris-web
+cd web
 npm install
 npm run build      # writes ./out (embed route at out/embed/index.html)
 ```

@@ -69,7 +69,7 @@ except ImportError as e:
 
 
 try:
-    from .ui_commons import THEME, NumericDragLineEdit, get_icon, R_MOON_KM, MU_MOON_KM3_S2, StatusBadge
+    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, get_icon, R_MOON_KM, MU_MOON_KM3_S2, StatusBadge
     R_MOON = R_MOON_KM  # local alias used throughout this module
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
@@ -80,7 +80,7 @@ except ImportError:
         print("  When executed directly, relative imports like '.constants' fail.", file=sys.stderr)
         print("-" * 60, file=sys.stderr)
         print("  From the project root, run:", file=sys.stderr)
-        print("\n      python -m lunaris.ui.widgets.orbit_config_page\n", file=sys.stderr)
+        print("\n      python -m lunaris.ui.pages.orbit_config_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
         raise SystemExit(2)
     raise

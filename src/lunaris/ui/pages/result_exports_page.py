@@ -42,7 +42,7 @@ from typing import Callable, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
-    from .ui_commons import THEME, ToggleSwitch, get_icon
+    from lunaris.ui.core.ui_commons import THEME, ToggleSwitch, get_icon
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
         import sys
@@ -50,7 +50,7 @@ except ImportError:
         print("\n" + "!" * 60, file=sys.stderr)
         print("  [ERROR] This module must be run as part of the package.", file=sys.stderr)
         print("  From the project root, run:", file=sys.stderr)
-        print("\n      python -m lunaris.ui.widgets.result_exports_page\n", file=sys.stderr)
+        print("\n      python -m lunaris.ui.pages.result_exports_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
         raise SystemExit(2)
     raise

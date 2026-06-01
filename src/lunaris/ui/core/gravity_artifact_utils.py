@@ -19,12 +19,12 @@ from pathlib import Path
 from typing import List, Optional
 
 try:
-    from .ui_commons import normalize_path, find_project_root
-    from .surrogate_artifacts import is_valid_surrogate_run, looks_like_lunar_surrogate_run
+    from lunaris.ui.core.ui_commons import normalize_path, find_project_root
+    from lunaris.ui.core.surrogate_artifacts import is_valid_surrogate_run, looks_like_lunar_surrogate_run
 except ImportError:
     if __name__ == "__main__":
         import sys
-        print("Run as: python -m lunaris.ui.widgets.gravity_artifact_utils", file=sys.stderr)
+        print("Run as: python -m lunaris.ui.core.gravity_artifact_utils", file=sys.stderr)
         raise SystemExit(2)
     raise
 

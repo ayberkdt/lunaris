@@ -2,7 +2,7 @@ import pytest
 from pathlib import Path
 
 try:
-    from lunaris.ui.widgets.monte_carlo_page import (
+    from lunaris.ui.pages.monte_carlo_page import (
         _normalize_output_path_for_format,
         _format_clock_span,
         MonteCarloPage,

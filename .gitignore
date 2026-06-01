@@ -149,15 +149,15 @@ LATEX/
 # Tasks
 tasks/
 
-# Web showcase (desktop/website/lunaris-web): ignore deps + build output.
+# Web showcase (web/): ignore deps + build output.
 # The embed only needs the three *_real.webp textures + orbit-data.json, which
 # are tracked explicitly; the heavy unused source textures are ignored.
-desktop/website/lunaris-web/node_modules/
-desktop/website/lunaris-web/.next/
-desktop/website/lunaris-web/out/
-desktop/website/lunaris-web/public/textures/8k_moon.jpg
-desktop/website/lunaris-web/public/textures/moon.png
-desktop/website/lunaris-web/public/textures/moon_color.jpg
-desktop/website/lunaris-web/public/textures/aesthetic_moon.png
-desktop/website/lunaris-web/public/textures/artemis_color.png
-desktop/website/lunaris-web/public/textures/artemis_disp.png
+web/node_modules/
+web/.next/
+web/out/
+web/public/textures/8k_moon.jpg
+web/public/textures/moon.png
+web/public/textures/moon_color.jpg
+web/public/textures/aesthetic_moon.png
+web/public/textures/artemis_color.png
+web/public/textures/artemis_disp.png

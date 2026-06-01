@@ -49,13 +49,13 @@ from typing import Any, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
-    from .ui_commons import THEME, NumericDragLineEdit, ToggleSwitch, get_icon
-    from .monte_carlo_analysis_panel import MonteCarloAnalysisPanel
-    from .force_models_page import ST_LRPS_RUNS_DIR, list_st_lrps_model_dirs
+    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, ToggleSwitch, get_icon
+    from lunaris.ui.components.monte_carlo_analysis_panel import MonteCarloAnalysisPanel
+    from lunaris.ui.pages.force_models_page import ST_LRPS_RUNS_DIR, list_st_lrps_model_dirs
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
         import sys
-        print("Run as:  python -m lunaris.ui.widgets.monte_carlo_page", file=sys.stderr)
+        print("Run as:  python -m lunaris.ui.pages.monte_carlo_page", file=sys.stderr)
         raise SystemExit(2)
     raise
 

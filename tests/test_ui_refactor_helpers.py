@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lunaris.ui.widgets.command_builder import build_command, build_mc_command
-from lunaris.ui.widgets.data_files_page import DataFilesState
-from lunaris.ui.widgets.force_models_page import UIGravityConfig
-from lunaris.ui.widgets.result_exports_page import OutputPageState
-from lunaris.ui.widgets.session_persistence import autodetect_data_state
+from lunaris.ui.core.command_builder import build_command, build_mc_command
+from lunaris.ui.pages.data_files_page import DataFilesState
+from lunaris.ui.pages.force_models_page import UIGravityConfig
+from lunaris.ui.pages.result_exports_page import OutputPageState
+from lunaris.ui.core.session_persistence import autodetect_data_state
 from lunaris.loaders.io_surface import _iter_label_candidates
 
 
