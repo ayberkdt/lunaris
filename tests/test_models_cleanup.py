@@ -11,8 +11,15 @@ def test_models_init_exports():
     assert not hasattr(models, "sh_accel_fixed_numba_dual"), "sh_accel_fixed_numba_dual legacy symbol should be removed."
 
 def test_surface_effects_cleanup():
-    """Verify accel_thermal_lommel_seeliger was removed from surface_effects."""
+    """Verify dead/legacy surface-radiation kernels were removed from surface_effects."""
     assert not hasattr(surface_effects, "accel_thermal_lommel_seeliger"), "accel_thermal_lommel_seeliger should be removed."
+    # accel_thermal_simple: dead engineering recoil kernel, superseded by the
+    # Lambertian facet model in lunaris.physics.thermal_ir.
+    assert not hasattr(surface_effects, "accel_thermal_simple"), "accel_thermal_simple (dead) should be removed."
+    # accel_albedo_lommel_seeliger: unvalidated engineering proxy; albedo now has
+    # exactly two backends (lambert_facets default + simple cannonball).
+    assert not hasattr(surface_effects, "accel_albedo_lommel_seeliger"), "accel_albedo_lommel_seeliger (legacy) should be removed."
+    assert not hasattr(surface_effects, "_ALBEDO_KERNELS"), "_ALBEDO_KERNELS dispatch dict should be removed."
 
 def test_surrogate_gravity_fail_fast():
     """Verify surrogate_gravity._build_model_from_config rejects advanced architectures."""

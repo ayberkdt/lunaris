@@ -289,7 +289,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         
         desc = QtWidgets.QLabel(
             "Choose either the classical spherical-harmonics field or a trained "
-            "trained surrogate model for the Moon's central gravity model."
+            "surrogate model for the Moon's central gravity model."
         )
         desc.setStyleSheet(f"color: {THEME['fg_muted']};")
         desc.setWordWrap(True)
@@ -1018,213 +1018,186 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
 
 @dataclass
 class UIAlbedoConfig:
+    """UI buffer for the lunar albedo (reflected-solar) physics model.
+
+    Mirrors the backend ``lunaris.physics.surface_effects.AlbedoConfig`` knobs
+    exposed through the CLI. The albedo *grid raster* (LOLA LDAM) itself is
+    selected on the Data Files page via the Albedo Root path; this dialog owns
+    only the physics-model parameters, which ``command_builder`` translates into
+    ``--albedo-*`` flags.
     """
-    Mutable configuration container for the UI dialog.
-    This acts as a buffer before saving to the main immutable SimConfig.
-    """
-    label_path: str = ""
-    img_path: str = ""
-    model: str = "Lambertian"  # Options: Lambertian, Lommel-Seeliger
-    use_ls: bool = False
-    sampling: str = "bilinear" # Options: bilinear, nearest
-    normal_mult: float = 1.0
-    update_interval: float = 60.0
+
+    # Backend: "lambert_facets" (facet Lambertian, default) | "simple" (legacy cannonball)
+    model: str = "lambert_facets"
+    # Per-facet albedo source: "constant_albedo" | "scaled_dn_grid" (samples Albedo Root)
+    source: str = "constant_albedo"
+    albedo_const: float = 0.12          # constant lunar albedo in [0, 1]
+    pressure_coefficient: float = 1.0   # C_R_albedo (facet model; distinct from SRP cr)
+    facet_lat_count: int = 18
+    facet_lon_count: int = 36
+    enable_eclipse: bool = True         # lunar-eclipse (Earth-umbra) dimming
 
 
 class AlbedoSettingsDialog(QtWidgets.QDialog):
+    """Configuration dialog for the lunar albedo (reflected-solar) model.
+
+    Exposes the backend ``AlbedoConfig`` knobs the CLI honors: backend
+    (lambert_facets / simple), albedo source (constant / surface grid), constant
+    albedo, radiation-pressure coefficient, facet resolution, and lunar-eclipse
+    dimming. The albedo grid raster itself is selected on the Data Files page.
     """
-    Advanced configuration dialog for Lunar Albedo models.
-    Handles file selection for PDS labels/images and numeric solver tunings.
-    """
+
     def __init__(self, parent: QtWidgets.QWidget, cfg: UIAlbedoConfig):
         super().__init__(parent)
         self.setWindowTitle("Albedo Model Configuration")
         self.setModal(True)
-        self.resize(720, 500)
+        self.resize(620, 540)
         self._cfg = cfg
-        
-        # Main Layout
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
-        
-        # Style the dialog background
         self.setStyleSheet(f"background-color: {THEME['bg_space']}; color: {THEME['fg_main']};")
-        
-        # Tabs Container
-        self.tabs = QtWidgets.QTabWidget()
-        self.tabs.setDocumentMode(True)
-        self._apply_tab_style()
-        
-        # --- TAB 1: DATA SOURCES (MAPS) ---
-        self.tab_maps = self._create_maps_tab()
-        self.tabs.addTab(self.tab_maps, "Data Sources")
-        
-        # --- TAB 2: PHYSICAL MODEL ---
-        self.tab_model = self._create_model_tab()
-        self.tabs.addTab(self.tab_model, "Physics Model")
-        
-        layout.addWidget(self.tabs, 1)
-        
-        # Action Buttons
+
+        header = QtWidgets.QLabel("Lunar Albedo (Reflected Solar) Model")
+        header.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {THEME['accent']};")
+        layout.addWidget(header)
+
+        desc = QtWidgets.QLabel(
+            "Radiation pressure from sunlight reflected off the lunar surface. The "
+            "facet model sums Lambertian contributions from facets that are both "
+            "sunlit and visible. This is reflected solar radiation, not gravity."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet(f"color: {THEME['fg_muted']};")
+        layout.addWidget(desc)
+
+        form_frame = QtWidgets.QFrame()
+        form_frame.setStyleSheet(
+            f"background-color: {THEME['bg_card']}; border-radius: 8px; "
+            f"border: 1px solid {THEME['border']};"
+        )
+        form = QtWidgets.QFormLayout(form_frame)
+        form.setContentsMargins(16, 16, 16, 16)
+        form.setSpacing(12)
+
+        self.cb_model = QtWidgets.QComboBox()
+        self.cb_model.addItem("Lambertian facets (recommended)", "lambert_facets")
+        self.cb_model.addItem("Simple cannonball (legacy)", "simple")
+        form.addRow("Backend:", self.cb_model)
+
+        self.cb_source = QtWidgets.QComboBox()
+        self.cb_source.addItem("Constant albedo", "constant_albedo")
+        self.cb_source.addItem("Surface grid (LOLA Albedo Root)", "scaled_dn_grid")
+        form.addRow("Albedo source:", self.cb_source)
+
+        self.sp_const = QtWidgets.QDoubleSpinBox()
+        self.sp_const.setRange(0.0, 1.0)
+        self.sp_const.setSingleStep(0.01)
+        self.sp_const.setDecimals(3)
+        form.addRow("Constant albedo:", self.sp_const)
+
+        self.sp_pcoef = QtWidgets.QDoubleSpinBox()
+        self.sp_pcoef.setRange(0.0, 5.0)
+        self.sp_pcoef.setSingleStep(0.1)
+        self.sp_pcoef.setDecimals(2)
+        form.addRow("Pressure coefficient (C_R):", self.sp_pcoef)
+
+        facet_row = QtWidgets.QHBoxLayout()
+        self.sp_lat = QtWidgets.QSpinBox()
+        self.sp_lat.setRange(1, 180)
+        self.sp_lon = QtWidgets.QSpinBox()
+        self.sp_lon.setRange(1, 360)
+        facet_row.addWidget(self.sp_lat)
+        facet_row.addWidget(QtWidgets.QLabel("x"))
+        facet_row.addWidget(self.sp_lon)
+        facet_row.addWidget(QtWidgets.QLabel("(lat x lon)"))
+        facet_row.addStretch()
+        facet_holder = QtWidgets.QWidget()
+        facet_holder.setLayout(facet_row)
+        form.addRow("Facet resolution:", facet_holder)
+
+        self.chk_eclipse = QtWidgets.QCheckBox("Apply lunar-eclipse (Earth-umbra) dimming")
+        self.chk_eclipse.setStyleSheet(f"color: {THEME['fg_main']};")
+        form.addRow("", self.chk_eclipse)
+
+        layout.addWidget(form_frame)
+
+        self.lbl_note = QtWidgets.QLabel()
+        self.lbl_note.setWordWrap(True)
+        self.lbl_note.setStyleSheet(f"color: {THEME['fg_muted']}; font-style: italic;")
+        layout.addWidget(self.lbl_note)
+
+        layout.addStretch(1)
+
         btn_layout = QtWidgets.QHBoxLayout()
         btn_layout.addStretch()
-        
         self.btn_cancel = QtWidgets.QPushButton("Cancel")
         self.btn_save = QtWidgets.QPushButton("Apply Settings")
-        
         for btn in (self.btn_cancel, self.btn_save):
             btn.setCursor(QtCore.Qt.PointingHandCursor)
             btn.setFixedHeight(32)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {THEME['bg_entry']};
-                    border: 1px solid {THEME['border']};
-                    border-radius: 6px;
-                    color: {THEME['fg_main']};
-                    padding: 0 16px;
-                }}
-                QPushButton:hover {{
-                    background-color: {THEME['border']};
-                }}
-            """)
-        
-        # Highlight Save button
-        self.btn_save.setStyleSheet(self.btn_save.styleSheet() + f"""
-            QPushButton {{
-                background-color: {THEME['accent']};
-                border: 1px solid {THEME['accent']};
-            }}
-            QPushButton:hover {{
-                background-color: {THEME['accent_hov']};
-            }}
-        """)
-        
+            btn.setStyleSheet(
+                f"QPushButton {{ background-color: {THEME['bg_entry']}; "
+                f"border: 1px solid {THEME['border']}; border-radius: 6px; "
+                f"color: {THEME['fg_main']}; padding: 0 16px; }}"
+                f"QPushButton:hover {{ background-color: {THEME['border']}; }}"
+            )
+        self.btn_save.setStyleSheet(
+            self.btn_save.styleSheet()
+            + f"QPushButton {{ background-color: {THEME['accent']}; "
+            f"border: 1px solid {THEME['accent']}; }}"
+            f"QPushButton:hover {{ background-color: {THEME['accent_hov']}; }}"
+        )
         btn_layout.addWidget(self.btn_cancel)
         btn_layout.addWidget(self.btn_save)
         layout.addLayout(btn_layout)
-        
-        # Signals
+
         self.btn_cancel.clicked.connect(self.reject)
         self.btn_save.clicked.connect(self._on_save)
-    
-    def _apply_tab_style(self):
-        self.tabs.setStyleSheet(f"""
-            QTabWidget::pane {{
-                border: 1px solid {THEME['border']};
-                border-radius: 8px;
-                background: {THEME['bg_card']};
-            }}
-            QTabBar::tab {{
-                background: {THEME['bg_space']};
-                border: 1px solid {THEME['border']};
-                padding: 8px 16px;
-                margin-right: 4px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                color: {THEME['fg_muted']};
-            }}
-            QTabBar::tab:selected {{
-                background: {THEME['bg_card']};
-                color: {THEME['fg_main']};
-                border-bottom: 1px solid {THEME['bg_card']};
-            }}
-        """)
-    
-    def _create_maps_tab(self) -> QtWidgets.QWidget:
-        page = QtWidgets.QWidget()
-        layout = QtWidgets.QGridLayout(page)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setVerticalSpacing(15)
-        
-        # Label Path Input
-        self.ent_label = self._create_file_input(layout, 0, "Albedo Label (.lbl)", self._cfg.label_path,
-                                               "PDS Label (*.lbl *.txt);;All Files (*.*)")
-        
-        # Image Path Input
-        self.ent_img = self._create_file_input(layout, 1, "Albedo Image (.img) [Optional]", self._cfg.img_path,
-                                             "Binary Image (*.img);;All Files (*.*)")
-        
-        # Info Note
-        note = QtWidgets.QLabel("ℹ️ If a PDS3 label is provided, the engine will attempt to load the Albedo grid. Otherwise, a constant default albedo model is used.")
-        note.setWordWrap(True)
-        note.setStyleSheet(f"color: {THEME['fg_muted']}; font-style: italic; margin-top: 10px;")
-        layout.addWidget(note, 2, 0, 1, 3)
-        
-        layout.setRowStretch(3, 1)
-        return page
-    
-    def _create_file_input(self, layout, row, label_text, default_val, filters):
-        lbl = QtWidgets.QLabel(label_text)
-        ent = QtWidgets.QLineEdit(default_val)
-        ent.setStyleSheet(f"background: {THEME['bg_entry']}; border: 1px solid {THEME['border']}; padding: 6px; border-radius: 4px; color: {THEME['fg_main']};")
-        
-        btn = QtWidgets.QPushButton("Browse")
-        btn.setCursor(QtCore.Qt.PointingHandCursor)
-        btn.setStyleSheet(f"background: {THEME['bg_entry']}; border: 1px solid {THEME['border']}; padding: 6px 12px; border-radius: 4px; color: {THEME['fg_main']};")
-        
-        def _browse(_checked: bool = False):
-            f, _ = QtWidgets.QFileDialog.getOpenFileName(self, label_text, ent.text(), filters)
-            if f: ent.setText(normalize_path(f))
-        
-        btn.clicked.connect(_browse)
-        
-        layout.addWidget(lbl, row, 0)
-        layout.addWidget(ent, row, 1)
-        layout.addWidget(btn, row, 2)
-        return ent
-    
-    def _create_model_tab(self) -> QtWidgets.QWidget:
-        page = QtWidgets.QWidget()
-        layout = QtWidgets.QFormLayout(page)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
-        
-        # BRDF Model
-        self.cb_model = QtWidgets.QComboBox()
-        self.cb_model.addItems(["Lambertian", "Lommel-Seeliger"])
-        self.cb_model.setCurrentText(self._cfg.model)
-        self.cb_model.setStyleSheet(f"background: {THEME['bg_entry']}; border: 1px solid {THEME['border']}; padding: 4px;")
-        layout.addRow("Reflectance Model:", self.cb_model)
-        
-        # Lommel-Seeliger Toggle
-        self.chk_ls = QtWidgets.QCheckBox("Enable LS Phase Function")
-        self.chk_ls.setChecked(self._cfg.use_ls)
-        self.chk_ls.setStyleSheet(f"color: {THEME['fg_main']};")
-        layout.addRow("", self.chk_ls)
-        
-        # Sampling Method
-        self.cb_sample = QtWidgets.QComboBox()
-        self.cb_sample.addItems(["bilinear", "nearest"])
-        self.cb_sample.setCurrentText(self._cfg.sampling)
-        self.cb_sample.setStyleSheet(f"background: {THEME['bg_entry']}; border: 1px solid {THEME['border']}; padding: 4px;")
-        layout.addRow("Grid Sampling:", self.cb_sample)
-        
-        # Numeric Spinners
-        self.sp_normal = QtWidgets.QDoubleSpinBox()
-        self.sp_normal.setRange(0.1, 10.0)
-        self.sp_normal.setValue(self._cfg.normal_mult)
-        self.sp_normal.setStyleSheet(f"background: {THEME['bg_entry']}; border: 1px solid {THEME['border']};")
-        layout.addRow("Normal Step Multiplier:", self.sp_normal)
-        
-        self.sp_interval = QtWidgets.QDoubleSpinBox()
-        self.sp_interval.setRange(0.0, 3600.0)
-        self.sp_interval.setValue(self._cfg.update_interval)
-        self.sp_interval.setSuffix(" s")
-        self.sp_interval.setStyleSheet(f"background: {THEME['bg_entry']}; border: 1px solid {THEME['border']};")
-        layout.addRow("LS Update Interval:", self.sp_interval)
-        
-        return page
-    
-    def _on_save(self, _checked: bool = False):
-        # Commit UI state back to the config object
-        self._cfg.label_path = normalize_path(self.ent_label.text())
-        self._cfg.img_path = normalize_path(self.ent_img.text())
-        self._cfg.model = self.cb_model.currentText()
-        self._cfg.use_ls = self.chk_ls.isChecked()
-        self._cfg.sampling = self.cb_sample.currentText()
-        self._cfg.normal_mult = self.sp_normal.value()
-        self._cfg.update_interval = self.sp_interval.value()
+        self.cb_model.currentIndexChanged.connect(self._sync_enabled)
+        self.cb_source.currentIndexChanged.connect(self._sync_enabled)
+
+        self._load_current_config()
+
+    def _load_current_config(self) -> None:
+        idx = self.cb_model.findData(str(getattr(self._cfg, "model", "lambert_facets")))
+        self.cb_model.setCurrentIndex(idx if idx >= 0 else 0)
+        sdx = self.cb_source.findData(str(getattr(self._cfg, "source", "constant_albedo")))
+        self.cb_source.setCurrentIndex(sdx if sdx >= 0 else 0)
+        self.sp_const.setValue(float(getattr(self._cfg, "albedo_const", 0.12)))
+        self.sp_pcoef.setValue(float(getattr(self._cfg, "pressure_coefficient", 1.0)))
+        self.sp_lat.setValue(int(getattr(self._cfg, "facet_lat_count", 18)))
+        self.sp_lon.setValue(int(getattr(self._cfg, "facet_lon_count", 36)))
+        self.chk_eclipse.setChecked(bool(getattr(self._cfg, "enable_eclipse", True)))
+        self._sync_enabled()
+
+    def _sync_enabled(self) -> None:
+        is_facet = self.cb_model.currentData() == "lambert_facets"
+        is_grid = self.cb_source.currentData() == "scaled_dn_grid"
+        # Facet-only knobs are meaningless for the legacy cannonball backend.
+        self.sp_pcoef.setEnabled(is_facet)
+        self.sp_lat.setEnabled(is_facet)
+        self.sp_lon.setEnabled(is_facet)
+        self.chk_eclipse.setEnabled(is_facet)
+        if is_grid:
+            self.lbl_note.setText(
+                "Surface-grid mode samples the Albedo Root raster configured on the "
+                "Data Files page (constant albedo is the nodata fallback)."
+            )
+        else:
+            self.lbl_note.setText(
+                "Constant mode applies a single albedo everywhere; no surface grid required."
+            )
+
+    def _on_save(self, _checked: bool = False) -> None:
+        self._cfg.model = str(self.cb_model.currentData() or "lambert_facets")
+        self._cfg.source = str(self.cb_source.currentData() or "constant_albedo")
+        self._cfg.albedo_const = float(self.sp_const.value())
+        self._cfg.pressure_coefficient = float(self.sp_pcoef.value())
+        self._cfg.facet_lat_count = int(self.sp_lat.value())
+        self._cfg.facet_lon_count = int(self.sp_lon.value())
+        self._cfg.enable_eclipse = bool(self.chk_eclipse.isChecked())
         self.accept()
 
 
@@ -1621,7 +1594,9 @@ class ForceModelsPage(QtWidgets.QWidget):
         lbl_albedo.setStyleSheet(f"color: {THEME['fg_main']};")
         layout.addWidget(lbl_albedo, 1, 1)
 
-        self.ind_albedo_cost = CostIndicator("high")
+        # Albedo uses the same lat-lon facet machinery as thermal IR (default
+        # 18x36 facets), so its per-step cost sits alongside thermal, not above it.
+        self.ind_albedo_cost = CostIndicator("medium")
         layout.addWidget(self.ind_albedo_cost, 1, 2)
 
         # Albedo settings button

@@ -114,33 +114,42 @@ class OrbitViz3D(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         
         if not HAS_OPENGL:
-            # Fallback: Show error message
-            error_label = QtWidgets.QLabel(
+            self._install_fallback(
+                layout,
                 "OpenGL visualization unavailable.\n"
                 "Install pyqtgraph with OpenGL support:\n"
-                "pip install pyqtgraph pyopengl"
+                "pip install pyqtgraph pyopengl",
             )
-            error_label.setAlignment(QtCore.Qt.AlignCenter)
-            error_label.setStyleSheet(f"color: {THEME['error']}; padding: 20px;")
-            layout.addWidget(error_label)
             return
-        
-        # Create GL View Widget
-        self.gl_widget = gl.GLViewWidget()
-        self.gl_widget.setBackgroundColor(THEME['bg_space'])
-        self.gl_widget.opts['distance'] = 8000  # Initial camera distance (km)
-        self.gl_widget.opts['elevation'] = 30
-        self.gl_widget.opts['azimuth'] = 45
-        
-        # Add coordinate axes
-        self._add_axes()
-        
-        # Create Moon sphere
-        self._create_moon()
-        
+
+        try:
+            # pyqtgraph's GLViewWidget reads the *global* 'background' config
+            # option in its constructor and raises ("make a color from (None,)")
+            # if it is None. Another pyqtgraph-using subsystem in the same
+            # process (e.g. the ST-LRPS Studio) can set that process-wide, so
+            # pin a valid value before constructing the widget.
+            if pg.getConfigOption('background') is None:
+                pg.setConfigOption('background', THEME['bg_space'])
+
+            self.gl_widget = gl.GLViewWidget()
+            self.gl_widget.setBackgroundColor(THEME['bg_space'])
+            self.gl_widget.opts['distance'] = 8000  # Initial camera distance (km)
+            self.gl_widget.opts['elevation'] = 30
+            self.gl_widget.opts['azimuth'] = 45
+
+            # Add coordinate axes + Moon sphere
+            self._add_axes()
+            self._create_moon()
+        except Exception as exc:
+            # A 3D preview must never prevent the mission window from opening.
+            print(f"[3D Viz] GL initialization failed, using fallback: {exc}")
+            self.gl_widget = None
+            self._install_fallback(layout, "3D orbit preview is unavailable on this system.")
+            return
+
         # Orbit line (will be updated)
         self.orbit_line = None
-        
+
         layout.addWidget(self.gl_widget)
         
         # Add view controls
@@ -167,44 +176,52 @@ class OrbitViz3D(QtWidgets.QWidget):
         
         # Initial draw
         QtCore.QTimer.singleShot(100, lambda: self.update_orbit())
-    
+
+    def _install_fallback(self, layout: QtWidgets.QVBoxLayout, message: str) -> None:
+        """Show a centered notice in place of the 3D viewer (no GL / GL failure)."""
+        label = QtWidgets.QLabel(message)
+        label.setAlignment(QtCore.Qt.AlignCenter)
+        label.setWordWrap(True)
+        label.setStyleSheet(f"color: {THEME['fg_muted']}; padding: 20px;")
+        layout.addWidget(label)
+
     def _add_axes(self):
-        """Add XYZ axes for orientation reference."""
-        # X axis (red)
-        x_axis = gl.GLLinePlotItem(
-            pos=np.array([[0, 0, 0], [5000, 0, 0]]),
-            color=(1, 0, 0, 0.7), width=2, antialias=True
+        """Add muted ECI reference axes for orientation.
+
+        Full-saturation red/green/blue axes read as harsh against the dark
+        lunar scene. These are deliberately desaturated, thin, and translucent —
+        orientation hints rather than the visual focus of the preview.
+        """
+        axis_len = 3600.0
+        axis_specs = (
+            ((axis_len, 0.0, 0.0), (0.86, 0.42, 0.46, 0.32)),  # X (muted red)
+            ((0.0, axis_len, 0.0), (0.50, 0.80, 0.52, 0.32)),  # Y (muted green)
+            ((0.0, 0.0, axis_len), (0.45, 0.62, 0.95, 0.32)),  # Z (muted blue)
         )
-        self.gl_widget.addItem(x_axis)
-        
-        # Y axis (green)
-        y_axis = gl.GLLinePlotItem(
-            pos=np.array([[0, 0, 0], [0, 5000, 0]]),
-            color=(0, 1, 0, 0.7), width=2, antialias=True
-        )
-        self.gl_widget.addItem(y_axis)
-        
-        # Z axis (blue)
-        z_axis = gl.GLLinePlotItem(
-            pos=np.array([[0, 0, 0], [0, 0, 5000]]),
-            color=(0, 0.5, 1, 0.7), width=2, antialias=True
-        )
-        self.gl_widget.addItem(z_axis)
+        for end, color in axis_specs:
+            axis = gl.GLLinePlotItem(
+                pos=np.array([[0.0, 0.0, 0.0], list(end)]),
+                color=color, width=1.4, antialias=True,
+            )
+            axis.setGLOptions('translucent')
+            self.gl_widget.addItem(axis)
     
     def _create_moon(self):
-        """Create the Moon as a grey sphere."""
-        # Create sphere mesh
-        md = gl.MeshData.sphere(rows=20, cols=40, radius=R_MOON)
-        
-        # Color the sphere grey
+        """Create the Moon as a softly-shaded regolith sphere.
+
+        A higher-resolution mesh removes the faceted look, and a soft, slightly
+        warm neutral grey reads more like the Moon under the 'shaded' lighting
+        model than the previous flat 0.5 grey.
+        """
+        md = gl.MeshData.sphere(rows=32, cols=64, radius=R_MOON)
+
         colors = np.ones((md.faceCount(), 4), dtype=float)
-        colors[:, 0] = 0.5  # R
-        colors[:, 1] = 0.5  # G
-        colors[:, 2] = 0.5  # B
-        colors[:, 3] = 1.0  # A
-        
+        colors[:, 0] = 0.52  # R
+        colors[:, 1] = 0.51  # G
+        colors[:, 2] = 0.49  # B  (very slight warm bias)
+        colors[:, 3] = 1.0   # A
         md.setFaceColors(colors)
-        
+
         self.moon_mesh = gl.GLMeshItem(
             meshdata=md,
             smooth=True,
@@ -267,7 +284,7 @@ class OrbitViz3D(QtWidgets.QWidget):
     
     def update_orbit(self):
         """Update the 3D orbit visualization."""
-        if not HAS_OPENGL or not hasattr(self, 'gl_widget'):
+        if not HAS_OPENGL or getattr(self, 'gl_widget', None) is None:
             return
         
         # Convert degrees to radians
@@ -286,11 +303,13 @@ class OrbitViz3D(QtWidgets.QWidget):
             if self.orbit_line is not None:
                 self.gl_widget.removeItem(self.orbit_line)
             
-            # Create new orbit line
+            # Create new orbit line — a clean cyan accent (matching the app's
+            # primary accent) that reads crisply against the grey Moon and dark
+            # space, instead of the muddy tan that blended with the regolith.
             self.orbit_line = gl.GLLinePlotItem(
                 pos=points,
-                color=(0.76, 0.63, 0.39, 1.0),
-                width=3,
+                color=(0.30, 0.80, 1.0, 0.95),
+                width=2.5,
                 antialias=True,
                 glOptions='translucent'
             )
@@ -327,7 +346,7 @@ class OrbitViz3D(QtWidgets.QWidget):
     
     def reset_view(self, _checked: bool = False):
         """Reset camera to default position."""
-        if HAS_OPENGL and hasattr(self, 'gl_widget'):
+        if HAS_OPENGL and getattr(self, 'gl_widget', None) is not None:
             self.gl_widget.setCameraPosition(
                 distance=8000,
                 elevation=30,

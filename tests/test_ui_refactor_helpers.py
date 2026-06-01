@@ -116,6 +116,70 @@ def test_build_command_uses_modular_state_objects() -> None:
     assert "--save-csv" not in command
 
 
+class _DummyAlbedoConfig:
+    model = "lambert_facets"
+    source = "scaled_dn_grid"
+    albedo_const = 0.11
+    pressure_coefficient = 1.3
+    facet_lat_count = 24
+    facet_lon_count = 48
+    enable_eclipse = True
+
+
+def _albedo_command(albedo_cfg: object) -> list[str]:
+    forces = {
+        "gravity": {"enabled": True},
+        "sun": True, "earth": True, "earth_j2": False,
+        "srp": False, "albedo": True, "thermal": False,
+        "tides_k2": False, "tides_k3": False, "relativity_1pn": False,
+    }
+    orbit = {"mode": "circular", "alt_km": 100.0, "inc_deg": 90.0,
+             "raan_deg": 0.0, "argp_deg": 0.0, "ta_deg": 0.0}
+    propagation = {"timeline": {"duration": "1", "unit": "Days"},
+                   "integrator": {"method": "DOP853"}}
+    return build_command(
+        python_executable="python",
+        main_script_path=Path("main.py"),
+        orbit=orbit,
+        forces=forces,
+        propagation=propagation,
+        output=OutputPageState(output_dir=r"C:\results", generate_3d_plots=False),
+        data_files=DataFilesState(albedo_root=r"C:\data\albedo_models"),
+        gravity_cfg=_DummyGravityConfig(),
+        solver_cfg=_DummySolverConfig(),
+        spacecraft_cfg=_DummySpacecraftConfig(),
+        albedo_cfg=albedo_cfg,
+    )
+
+
+def test_build_command_emits_albedo_model_flags() -> None:
+    command = _albedo_command(_DummyAlbedoConfig())
+
+    def _val(flag: str) -> str:
+        return command[command.index(flag) + 1]
+
+    assert _val("--enable-albedo") == "on"
+    assert _val("--albedo-model") == "lambert_facets"
+    assert _val("--albedo-mode") == "scaled_dn_grid"
+    assert _val("--albedo-const") == "0.11"
+    assert _val("--albedo-pressure-coefficient") == "1.3"
+    assert _val("--albedo-facet-lat-count") == "24"
+    assert _val("--albedo-facet-lon-count") == "48"
+    assert _val("--albedo-enable-eclipse") == "on"
+    # Grid source -> the surface raster directory must be forwarded.
+    assert "--albedo-root" in command
+
+
+def test_build_command_constant_albedo_skips_albedo_root() -> None:
+    class _Const(_DummyAlbedoConfig):
+        source = "constant_albedo"
+
+    command = _albedo_command(_Const())
+    assert command[command.index("--albedo-mode") + 1] == "constant_albedo"
+    # Constant albedo needs no surface raster.
+    assert "--albedo-root" not in command
+
+
 def test_autodetect_data_state_understands_repository_folder_names(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
     topo_dir = data_root / "topography_models"

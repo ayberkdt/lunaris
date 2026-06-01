@@ -326,8 +326,8 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     # Lunar albedo (reflected solar) radiation pressure
     g_phys.add_argument(
         "--albedo-model",
-        choices=("lambert_facets", "simple", "lommel"),
-        help="Albedo backend: 'lambert_facets' (default, facet Lambertian) or legacy 'simple'/'lommel'.",
+        choices=("lambert_facets", "simple"),
+        help="Albedo backend: 'lambert_facets' (default, facet Lambertian) or legacy 'simple' (cannonball).",
     )
     g_phys.add_argument(
         "--albedo-mode",

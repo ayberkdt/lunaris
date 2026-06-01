@@ -106,8 +106,8 @@ def build_preflight_snapshot(
         "tides_k3_enabled": bool(forces.get("tides_k3", False)),
         "relativity_1pn_enabled": bool(forces.get("relativity_1pn", False)),
         "albedo_enabled": bool(forces.get("albedo", False)),
-        "albedo_label": str(getattr(albedo_cfg, "label_path", "") or ""),
-        "albedo_img": str(getattr(albedo_cfg, "img_path", "") or ""),
+        "albedo_source": str(getattr(albedo_cfg, "source", "constant_albedo") or "constant_albedo"),
+        "albedo_model": str(getattr(albedo_cfg, "model", "lambert_facets") or "lambert_facets"),
         "mass_kg": float(getattr(spacecraft_cfg, "mass_kg", 1000.0)),
         "area_m2": float(getattr(spacecraft_cfg, "area_m2", 5.0)),
         "cd": float(getattr(spacecraft_cfg, "cd", 2.2)),
@@ -149,6 +149,7 @@ def build_command(
     gravity_cfg: Any,
     solver_cfg: Any,
     spacecraft_cfg: Any,
+    albedo_cfg: Any = None,
     log_warning: Optional[Callable[[str], None]] = None,
 ) -> list[str]:
     """
@@ -245,9 +246,30 @@ def build_command(
     command.extend(["--enable-3rd-body-earth", bool_to_onoff(bool(forces.get("earth", True)))])
     command.extend(["--enable-earth-j2", bool_to_onoff(bool(forces.get("earth_j2", False)))])
     command.extend(["--enable-srp", bool_to_onoff(bool(forces.get("srp", False)))])
-    command.extend(["--enable-albedo", bool_to_onoff(bool(forces.get("albedo", False)))])
+
+    albedo_on = bool(forces.get("albedo", False))
+    command.extend(["--enable-albedo", bool_to_onoff(albedo_on)])
+
+    # Translate the albedo physics-model dialog state into --albedo-* flags.
+    albedo_source = "constant_albedo"
+    if albedo_on and albedo_cfg is not None:
+        albedo_source = str(getattr(albedo_cfg, "source", "constant_albedo") or "constant_albedo")
+        command.extend(["--albedo-model", str(getattr(albedo_cfg, "model", "lambert_facets") or "lambert_facets")])
+        command.extend(["--albedo-mode", albedo_source])
+        command.extend(["--albedo-const", f"{float(getattr(albedo_cfg, 'albedo_const', 0.12)):g}"])
+        command.extend(["--albedo-pressure-coefficient", f"{float(getattr(albedo_cfg, 'pressure_coefficient', 1.0)):g}"])
+        command.extend(["--albedo-facet-lat-count", str(int(getattr(albedo_cfg, "facet_lat_count", 18)))])
+        command.extend(["--albedo-facet-lon-count", str(int(getattr(albedo_cfg, "facet_lon_count", 36)))])
+        command.extend(["--albedo-enable-eclipse", bool_to_onoff(bool(getattr(albedo_cfg, "enable_eclipse", True)))])
+
     command.extend(["--enable-thermal", bool_to_onoff(bool(forces.get("thermal", False)))])
-    surface_albedo_needed = bool(forces.get("albedo", False))
+
+    # The surface raster (--albedo-root) is only needed in grid albedo modes. When
+    # no albedo dialog state is supplied, fall back to the legacy "needed whenever
+    # albedo is on" behavior.
+    surface_albedo_needed = albedo_on and (
+        albedo_cfg is None or albedo_source in ("scaled_dn_grid", "albedo_grid")
+    )
 
     tides_k2 = bool(forces.get("tides_k2", True))
     tides_k3 = bool(forces.get("tides_k3", False))

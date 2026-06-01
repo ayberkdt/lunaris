@@ -1267,12 +1267,6 @@ class DynamicsEngine:
 
         if model == "simple":
             return self._prepare_albedo_simple(cfg)
-        if model == "lommel":
-            raise ValueError(
-                "albedo_model='lommel' is only available through the standalone "
-                "lunaris.physics.surface_effects.albedo_accel() wrapper, not the "
-                "propagator RHS. Use 'lambert_facets' (default) or 'simple'."
-            )
 
         # --- lambert_facets (default): build facets + per-facet albedo once. ---
         lat_count = int(getattr(cfg, "facet_lat_count", 18))

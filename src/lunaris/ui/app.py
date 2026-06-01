@@ -519,7 +519,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # C. Log Panel
         # ---------------------------------------------------------------------
         self.log_panel = self._build_log_panel()
-        self.log_panel.setMinimumHeight(140)
+        self.log_panel.setMinimumHeight(150)
         self.log_panel.setSizePolicy(
             QtWidgets.QSizePolicy.Preferred,
             QtWidgets.QSizePolicy.Expanding,
@@ -822,8 +822,9 @@ class MainWindow(QtWidgets.QMainWindow):
             subcontrol-position: top left;
             padding: 0 8px;
             margin-left: 12px;
-            color: {THEME['fg_soft']};
+            color: {THEME['fg_main']};
             font-size: 10.4pt;
+            font-weight: 700;
         }}
 
         /* BUTTONS (default / secondary) */
@@ -1003,7 +1004,6 @@ class MainWindow(QtWidgets.QMainWindow):
         QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
         QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ height: 0px; width: 0px; }}
 
-        /* SPLITTER */
         /* SPLITTER */
         QSplitter::handle {{
             background: {THEME['border_soft']};
@@ -1337,7 +1337,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # A. Header Bar
         header = QtWidgets.QFrame()
         header.setObjectName("logHeader")
-        header.setFixedHeight(48)
+        header.setFixedHeight(42)
         self.log_header = header
         
         h_layout = QtWidgets.QHBoxLayout(header)
@@ -1393,20 +1393,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.txt_log.setReadOnly(True)
         self.txt_log.setAcceptRichText(True)
         self.txt_log.document().setDefaultStyleSheet(
-            "p { margin: 0 0 6px 0; }"
+            "p { margin: 0 0 3px 0; }"
         )
         layout.addWidget(self.txt_log)
         
         return container
 
-    def _apply_default_log_splitter_sizes(self, *, top_ratio: float = 0.72) -> None:
+    def _apply_default_log_splitter_sizes(self, *, top_ratio: float = 0.64) -> None:
         """
         Rebalance the main vertical splitter using the live window geometry.
 
         Without an explicit size pass, Qt tends to honor child size hints from
         the page stack, which makes the lower terminal/log area feel stuck and
         difficult to drag upward. This helper gives the splitter a practical
-        starting ratio after the window has a real size.
+        starting ratio after the window has a real size. The terminal keeps a
+        comfortable share (~36%) so streaming output is readable without dragging.
         """
 
         total = sum(max(0, size) for size in self.main_splitter.sizes())
@@ -1414,7 +1415,7 @@ class MainWindow(QtWidgets.QMainWindow):
             total = max(self.main_splitter.height(), 480)
 
         min_top = 220
-        min_bottom = 140
+        min_bottom = 170
         if total < (min_top + min_bottom):
             min_top = max(120, int(total * 0.55))
             min_bottom = max(80, total - min_top)
@@ -1797,8 +1798,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.chk_autoscroll.show()
             self.btn_log_copy.show()
             self.btn_log_clear.show()
-            self.log_header.setFixedHeight(48)
-            self.log_panel.setMinimumHeight(140)
+            self.log_header.setFixedHeight(42)
+            self.log_panel.setMinimumHeight(150)
             sizes = getattr(self, "_log_expanded_sizes", None)
             if sizes and sizes[1] > 60:
                 self.main_splitter.setSizes(sizes)
@@ -1887,6 +1888,7 @@ class MainWindow(QtWidgets.QMainWindow):
             gravity_cfg=self.gravity_cfg,
             solver_cfg=self.solver_cfg,
             spacecraft_cfg=self.spacecraft_cfg,
+            albedo_cfg=self.albedo_cfg,
             log_warning=lambda msg: self._log_message(msg, severity="warning"),
         )
 

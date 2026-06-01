@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -73,10 +73,10 @@ class AlbedoConfig:
         coefficient ``albedo_pressure_coefficient`` (C_R_albedo), **not** the
         spacecraft SRP coefficient ``cr``.
 
-    ``simple`` / ``lommel``
-        Legacy engineering "cannonball" kernels kept for backward compatibility.
-        They push along the Sun->spacecraft line and reuse the spacecraft SRP
-        coefficient ``cr`` scaled by ``k_lambert``. Their behavior is unchanged.
+    ``simple``
+        Legacy engineering "cannonball" kernel kept for backward compatibility.
+        It pushes along the Sun->spacecraft line and reuses the spacecraft SRP
+        coefficient ``cr`` scaled by ``k_lambert``. Its behavior is unchanged.
 
     The per-facet albedo ``A_i`` used by ``lambert_facets`` is built once at
     setup time from ``albedo_mode``:
@@ -96,12 +96,12 @@ class AlbedoConfig:
 
     # --- Legacy / simple-backend fields (kept for backward compatibility) ---
     A_moon: float = 0.12          # constant lunar albedo in [0,1] (legacy alias of albedo_const)
-    k_lambert: float = 1.0        # Lambertian scaling for simple/lommel (>= 0)
-    P0: float = P_SUN_1AU         # SRP at 1 AU [N/m^2] (simple/lommel only)
+    k_lambert: float = 1.0        # Lambertian scaling for the simple backend (>= 0)
+    P0: float = P_SUN_1AU         # SRP at 1 AU [N/m^2] (simple backend only)
     AU_m: float = AU              # astronomical unit [m]
 
     # --- Backend & albedo-source selection ---
-    albedo_model: str = "lambert_facets"   # "lambert_facets" | "simple" | "lommel"
+    albedo_model: str = "lambert_facets"   # "lambert_facets" | "simple"
     albedo_mode: str = "constant_albedo"   # "constant_albedo" | "albedo_grid" | "scaled_dn_grid"
     albedo_const: float = 0.12             # constant facet albedo for lambert_facets
 
@@ -121,14 +121,12 @@ class AlbedoConfig:
         model = str(self.albedo_model).strip().lower()
         if model in {"facet", "facets", "lambert", "lambert_facets"}:
             model = "lambert_facets"
-        elif model in {"lommel", "lommel_seeliger"}:
-            model = "lommel"
         elif model == "simple":
             model = "simple"
         else:
             raise ValueError(
-                "AlbedoConfig.albedo_model must be 'lambert_facets', 'simple', "
-                f"or 'lommel'. Got {self.albedo_model!r}."
+                "AlbedoConfig.albedo_model must be 'lambert_facets' or 'simple'. "
+                f"Got {self.albedo_model!r}."
             )
 
         # Validate and canonicalize the albedo-source mode string.
@@ -270,15 +268,6 @@ def _valid_area_mass(area_m2: float, mass_kg: float) -> bool:
     return (mass_kg > 0.0) and (area_m2 > 0.0)
 
 
-@njit(cache=True, inline="always")
-def _clamp_pm1(x: float) -> float:
-    if x < -1.0:
-        return -1.0
-    if x > 1.0:
-        return 1.0
-    return x
-
-
 @njit(cache=True)
 def accel_albedo_simple(
     rx: float, ry: float, rz: float,
@@ -321,108 +310,6 @@ def accel_albedo_simple(
     return scale * dx * inv_d, scale * dy * inv_d, scale * dz * inv_d
 
 
-@njit(cache=True)
-def accel_albedo_lommel_seeliger(
-    rx: float, ry: float, rz: float,
-    sx: float, sy: float, sz: float,
-    R_moon: float,
-    AU_m: float, P0: float,
-    A_moon: float,
-    k_lambert: float,
-    Cr: float, area_m2: float, mass_kg: float,
-    enable_eclipse: int,
-) -> Tuple[float, float, float]:
-    """Lommel–Seeliger-inspired albedo scaling (engineering)."""
-    if not _valid_area_mass(area_m2, mass_kg):
-        return 0.0, 0.0, 0.0
-
-    # Sun -> Spacecraft vector
-    dx = rx - sx
-    dy = ry - sy
-    dz = rz - sz
-
-    d2 = dx * dx + dy * dy + dz * dz
-    if d2 <= 1e-6:
-        return 0.0, 0.0, 0.0
-
-    d = math.sqrt(d2)
-
-    shadow = 1.0
-    if enable_eclipse != 0:
-        shadow = moon_shadow_factor_conical(rx, ry, rz, sx, sy, sz, R_moon)
-        if shadow <= 1e-9:
-            return 0.0, 0.0, 0.0
-
-    # Phase weight w in [0,1] (simple proxy)
-    r_sc2 = rx * rx + ry * ry + rz * rz
-    r_sun2 = sx * sx + sy * sy + sz * sz
-
-    w = 1.0
-    if r_sc2 > 0.0 and r_sun2 > 0.0:
-        inv_mag = 1.0 / (math.sqrt(r_sc2) * math.sqrt(r_sun2))
-        cos_phase = (rx * sx + ry * sy + rz * sz) * inv_mag
-        cos_phase = _clamp_pm1(cos_phase)
-        w = 0.5 + 0.5 * cos_phase
-        if w < 0.0:
-            w = 0.0
-
-    flux_ratio = (AU_m * AU_m) / d2
-
-    scale = P0 * flux_ratio * shadow
-    scale *= (A_moon * k_lambert * w) * Cr * (area_m2 / mass_kg)
-
-    inv_d = 1.0 / d
-    return scale * dx * inv_d, scale * dy * inv_d, scale * dz * inv_d
-
-
-@njit(cache=True)
-def accel_thermal_simple(
-    rx: float, ry: float, rz: float,
-    sx: float, sy: float, sz: float,
-    R_moon: float,
-    AU_m: float, P0: float,
-    k_thermal: float,
-    Cr: float, area_m2: float, mass_kg: float,
-    enable_eclipse: int,
-) -> Tuple[float, float, float]:
-    """Simple lunar thermal IR recoil (engineering)."""
-    if not _valid_area_mass(area_m2, mass_kg):
-        return 0.0, 0.0, 0.0
-
-    # Moon -> Spacecraft (radial) direction
-    r2 = rx * rx + ry * ry + rz * rz
-    if r2 <= 1.0:  # avoid singular near origin
-        return 0.0, 0.0, 0.0
-
-    r = math.sqrt(r2)
-    inv_r = 1.0 / r
-    urx = rx * inv_r
-    ury = ry * inv_r
-    urz = rz * inv_r
-
-    # Sun -> Spacecraft distance (flux proxy)
-    dx = rx - sx
-    dy = ry - sy
-    dz = rz - sz
-
-    d2 = dx * dx + dy * dy + dz * dz
-    if d2 <= 1.0:
-        return 0.0, 0.0, 0.0
-
-    shadow = 1.0
-    if enable_eclipse != 0:
-        shadow = moon_shadow_factor_conical(rx, ry, rz, sx, sy, sz, R_moon)
-        if shadow <= 1e-9:
-            return 0.0, 0.0, 0.0
-
-    flux_ratio = (AU_m * AU_m) / d2
-
-    scale = P0 * flux_ratio * shadow
-    scale *= k_thermal * Cr * (area_m2 / mass_kg)
-
-    return scale * urx, scale * ury, scale * urz
-
-
 # =============================================================================
 # 3) Public wrappers (NumPy interface)
 # =============================================================================
@@ -432,12 +319,6 @@ def _as_vec3(x: npt.ArrayLike, name: str) -> Vec3:
     if v.shape != (3,):
         raise ValueError(f"{name} must have shape (3,), got {v.shape}.")
     return v
-
-
-_ALBEDO_KERNELS: Dict[str, object] = {
-    "simple": accel_albedo_simple,
-    "lommel": accel_albedo_lommel_seeliger,
-}
 
 
 def albedo_accel(
@@ -454,10 +335,9 @@ def albedo_accel(
 
     ``model`` selects the backend; when ``None`` it defaults to
     ``config.albedo_model`` (``"lambert_facets"`` by default). The legacy
-    cannonball kernels (``"simple"``, ``"lommel"``) are unchanged and reuse the
-    spacecraft SRP coefficient ``cr``; ``"lambert_facets"`` builds a constant
-    albedo facet sphere from the config and uses
-    ``config.albedo_pressure_coefficient``.
+    ``"simple"`` cannonball kernel is unchanged and reuses the spacecraft SRP
+    coefficient ``cr``; ``"lambert_facets"`` builds a constant-albedo facet
+    sphere from the config and uses ``config.albedo_pressure_coefficient``.
     """
     r_sc_v = _as_vec3(r_sc, "r_sc")
     r_sun_v = _as_vec3(r_sun, "r_sun")
@@ -489,16 +369,14 @@ def albedo_accel(
             enable_eclipse=False,
         )
 
-    kernel = _ALBEDO_KERNELS.get(selected)
-    if kernel is None:
+    if selected != "simple":
         raise ValueError(
-            f"Unsupported albedo model: {model!r}. "
-            f"Supported: 'lambert_facets', {sorted(_ALBEDO_KERNELS)}"
+            f"Unsupported albedo model: {model!r}. Supported: 'lambert_facets', 'simple'."
         )
 
     eclipse_flag = 1 if enable_eclipse else 0
 
-    ax, ay, az = kernel(  # type: ignore[misc]
+    ax, ay, az = accel_albedo_simple(
         float(r_sc_v[0]), float(r_sc_v[1]), float(r_sc_v[2]),
         float(r_sun_v[0]), float(r_sun_v[1]), float(r_sun_v[2]),
         float(R_moon),
@@ -564,10 +442,8 @@ __all__ = (
     # Config bundles
     "AlbedoConfig",
     "ThermalConfig",
-    # Numba kernels
+    # Numba kernels (legacy cannonball albedo backend)
     "accel_albedo_simple",
-    "accel_albedo_lommel_seeliger",
-    "accel_thermal_simple",
     # High-level wrappers
     "albedo_accel",
     "thermal_accel",
