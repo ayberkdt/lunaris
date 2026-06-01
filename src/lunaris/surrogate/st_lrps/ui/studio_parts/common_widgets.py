@@ -239,10 +239,101 @@ def _mono_font() -> QFont:
     return f
 
 
+def _make_page_header(title: str, subtitle: str, eyebrow: str = "ST-LRPS Studio") -> QFrame:
+    """Compact page header used across long-lived Studio workspaces."""
+    frame = QFrame()
+    frame.setObjectName("studioPageHeader")
+    frame.setStyleSheet(
+        "QFrame#studioPageHeader {"
+        "  background: transparent;"
+        "  border: none;"
+        "  border-bottom: 1px solid rgba(185, 194, 221, 0.11);"
+        "}"
+    )
+    lo = QVBoxLayout(frame)
+    lo.setContentsMargins(0, 0, 0, 14)
+    lo.setSpacing(4)
+
+    eyebrow_lbl = QLabel(eyebrow.upper())
+    eyebrow_lbl.setStyleSheet(
+        "color: rgba(53, 208, 255, 0.78); font-size: 10px; font-weight: 800; "
+        "background: transparent; border: none;"
+    )
+    title_lbl = QLabel(title)
+    title_lbl.setStyleSheet(
+        "color: #f3f7ff; font-size: 22px; font-weight: 800; "
+        "background: transparent; border: none;"
+    )
+    subtitle_lbl = QLabel(subtitle)
+    subtitle_lbl.setWordWrap(True)
+    subtitle_lbl.setStyleSheet(
+        "color: #8fa0bf; font-size: 12px; background: transparent; border: none;"
+    )
+
+    lo.addWidget(eyebrow_lbl)
+    lo.addWidget(title_lbl)
+    lo.addWidget(subtitle_lbl)
+    return frame
+
+
+def _style_surface(frame: QFrame, *, object_name: str = "studioSurface", padding: int = 0) -> QFrame:
+    """Apply the shared Studio surface treatment to a QFrame."""
+    frame.setObjectName(object_name)
+    frame.setStyleSheet(
+        f"QFrame#{object_name} {{"
+        "  background: rgba(11, 16, 32, 0.72);"
+        "  border: 1px solid rgba(185, 194, 221, 0.12);"
+        "  border-radius: 12px;"
+        "}"
+    )
+    if padding:
+        layout = frame.layout()
+        if layout is not None:
+            layout.setContentsMargins(padding, padding, padding, padding)
+    return frame
+
+
+def _style_command_preview(edit: QPlainTextEdit, *, min_h: int = 76, max_h: Optional[int] = None) -> None:
+    """Make generated CLI/log snippets readable without dominating the page."""
+    edit.setReadOnly(True)
+    edit.setFont(_mono_font())
+    edit.setMinimumHeight(min_h)
+    if max_h is not None:
+        edit.setMaximumHeight(max_h)
+    edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+    edit.setStyleSheet(
+        "QPlainTextEdit {"
+        "  background: rgba(4, 8, 16, 0.92);"
+        "  border: 1px solid rgba(53, 208, 255, 0.18);"
+        "  border-radius: 10px;"
+        "  color: #d8e7ff;"
+        "  padding: 10px 12px;"
+        "  selection-background-color: rgba(53, 208, 255, 0.35);"
+        "}"
+    )
+
+
+def _make_status_note(text: str = "", *, level: str = "info") -> QLabel:
+    colors = {
+        "info": ("#8fa0bf", "rgba(53, 208, 255, 0.07)", "rgba(53, 208, 255, 0.22)"),
+        "ok": ("#7dd3ae", "rgba(52, 211, 153, 0.08)", "rgba(52, 211, 153, 0.25)"),
+        "warn": ("#fbbf24", "rgba(251, 191, 36, 0.08)", "rgba(251, 191, 36, 0.25)"),
+        "error": ("#fca5a5", "rgba(248, 113, 113, 0.08)", "rgba(248, 113, 113, 0.25)"),
+    }
+    fg, bg, border = colors.get(level, colors["info"])
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet(
+        f"QLabel {{ color: {fg}; font-size: 11px; padding: 7px 10px; "
+        f"background: {bg}; border: 1px solid {border}; border-radius: 8px; }}"
+    )
+    return lbl
+
+
 def _tune_form(form: QFormLayout) -> None:
-    form.setContentsMargins(14, 12, 14, 12)
-    form.setHorizontalSpacing(14)
-    form.setVerticalSpacing(10)
+    form.setContentsMargins(16, 14, 16, 14)
+    form.setHorizontalSpacing(16)
+    form.setVerticalSpacing(12)
     form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
     form.setFormAlignment(Qt.AlignmentFlag.AlignTop)
     form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
@@ -304,6 +395,10 @@ def _scroll_wrap(widget: QWidget) -> QScrollArea:
     area.setWidgetResizable(True)
     area.setFrameShape(QScrollArea.Shape.NoFrame)
     area.setWidget(widget)
+    area.setStyleSheet(
+        "QScrollArea { background: transparent; border: none; }"
+        "QScrollArea > QWidget > QWidget { background: transparent; }"
+    )
     return area
 
 
@@ -649,7 +744,6 @@ class LiveLossPlot(QWidget):
                 color: #eef2ff;
                 font-size: 14px;
                 font-weight: 700;
-                letter-spacing: 0.2px;
             }
             QLabel#lossSubtitle {
                 color: #7480a8;
@@ -962,7 +1056,7 @@ class LiveLossPlot(QWidget):
                 lbl = QLabel(title)
                 lbl.setStyleSheet(
                     "color: #8ea3c8; font-size: 11px; font-weight: 700;"
-                    " letter-spacing: 0.4px; background: transparent; border: none;"
+                    " background: transparent; border: none;"
                     " padding-left: 4px;"
                 )
                 widget.setMinimumHeight(minh)
@@ -1765,7 +1859,7 @@ class ImageGallery(QWidget):
         super().__init__(parent)
         self._header = QLabel("Result Plots")
         self._header.setStyleSheet(
-            "font-weight: 600; color: #c4ccff; font-size: 13px; padding: 4px 2px;"
+            "font-weight: 800; color: #e8ecf8; font-size: 13px; padding: 2px 2px;"
         )
         self._tabs = QTabWidget()
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -1780,11 +1874,14 @@ class ImageGallery(QWidget):
         )
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setStyleSheet(
-            "color: #6b7394; padding: 32px; font-style: italic; font-size: 12px;"
+            "QLabel { color: #7f91ac; padding: 36px; font-size: 12px;"
+            " background: rgba(7, 11, 20, 0.45);"
+            " border: 1px dashed rgba(185, 194, 221, 0.16);"
+            " border-radius: 12px; }"
         )
         lo = QVBoxLayout()
-        lo.setContentsMargins(0, 6, 0, 0)
-        lo.setSpacing(6)
+        lo.setContentsMargins(0, 8, 0, 0)
+        lo.setSpacing(8)
         lo.addWidget(self._header)
         lo.addWidget(self._placeholder)
         lo.addWidget(self._tabs)
@@ -1933,7 +2030,7 @@ class ProcessPane(QWidget):
         btn_row.addWidget(self.btn_clear)
 
         self.status.setStyleSheet(
-            "QLabel { color: #9aa7c7; font-size: 12px; padding: 2px 0; }"
+            "QLabel { color: #9aa7c7; font-size: 12px; font-weight: 600; padding: 2px 0; }"
         )
 
         _log_sep = QFrame()
@@ -1945,13 +2042,14 @@ class ProcessPane(QWidget):
 
         layout = QVBoxLayout()
         layout.setContentsMargins(14, 12, 14, 12)
-        layout.setSpacing(8)
+        layout.setSpacing(10)
         layout.addWidget(self.status)
         layout.addWidget(self.progress)
         layout.addLayout(btn_row)
         layout.addWidget(_log_sep)
         layout.addWidget(self.log, 1)
         self.setLayout(layout)
+        _style_command_preview(self.log, min_h=180)
 
         self.btn_clear.clicked.connect(self.log.clear)
         self.btn_stop.clicked.connect(self.stop)

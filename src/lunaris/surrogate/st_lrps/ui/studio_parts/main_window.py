@@ -291,7 +291,7 @@ class MainWindow(QMainWindow):
             lbl_title = QLabel("ST-LRPS Studio")
             lbl_title.setStyleSheet(
                 "color: #e8ecf8; font-size: 15px; font-weight: 700;"
-                " letter-spacing: 0.3px; background: transparent; border: none;"
+                " background: transparent; border: none;"
             )
             lbl_subtitle = QLabel(
                 "Lunar residual-potential surrogate training and evaluation"
@@ -325,8 +325,8 @@ class MainWindow(QMainWindow):
 
         root = QWidget()
         root_lo = QVBoxLayout()
-        root_lo.setContentsMargins(12, 10, 12, 10)
-        root_lo.setSpacing(10)
+        root_lo.setContentsMargins(16, 14, 16, 14)
+        root_lo.setSpacing(12)
         root_lo.addWidget(header_card)
         root_lo.addWidget(content_area, 1)
         root.setLayout(root_lo)
@@ -344,7 +344,7 @@ class MainWindow(QMainWindow):
             "}"
             "QStatusBar::item { border: none; }"
         )
-        sb.showMessage("Hover over a parameter — its description appears here.")
+        sb.showMessage("Hover over a parameter - its description appears here.")
 
         # Wire every page's input-widget tooltips to the status bar
         for tab in (
@@ -373,27 +373,28 @@ class MainWindow(QMainWindow):
         sidebar.setFixedWidth(238)
         sidebar.setStyleSheet(
             "QFrame#navSidebar {"
-            "  background: #0b1220;"
-            "  border: none;"
-            "  border-right: 1px solid rgba(185, 194, 221, 0.12);"
-            "  border-radius: 0;"
+            "  background: rgba(8, 13, 26, 0.86);"
+            "  border: 1px solid rgba(185, 194, 221, 0.10);"
+            "  border-radius: 14px;"
             "}"
         )
 
         _NAV_BTN_STYLE = (
             "QPushButton {"
-            "  text-align: left; padding: 12px 14px 12px 18px;"
-            "  border: none; border-left: 3px solid transparent;"
-            "  border-radius: 0; font-size: 13px; font-weight: 600;"
+            "  text-align: left; padding: 11px 14px 11px 16px;"
+            "  border: 1px solid transparent; border-left: 3px solid transparent;"
+            "  border-radius: 10px; font-size: 13px; font-weight: 650;"
             "  min-height: 40px;"
             "  color: #8a98b8; background: transparent;"
             "}"
             "QPushButton:hover {"
-            "  color: #d7e1f7; background: rgba(53, 208, 255, 0.06);"
+            "  color: #d7e1f7; background: rgba(53, 208, 255, 0.07);"
+            "  border-color: rgba(53, 208, 255, 0.12);"
             "}"
             "QPushButton:checked {"
             "  color: #f2f6ff; font-weight: 700;"
-            "  background: rgba(53, 208, 255, 0.12);"
+            "  background: rgba(53, 208, 255, 0.14);"
+            "  border-color: rgba(53, 208, 255, 0.26);"
             "  border-left: 3px solid rgba(53, 208, 255, 0.85);"
             "}"
         )
@@ -402,7 +403,7 @@ class MainWindow(QMainWindow):
             lbl = QLabel(text)
             lbl.setStyleSheet(
                 "color: rgba(185, 194, 221, 0.32); font-size: 10px; font-weight: 700;"
-                " letter-spacing: 1.8px; padding: 12px 12px 4px 16px;"
+                " padding: 12px 12px 4px 16px;"
                 " background: transparent; border: none;"
             )
             return lbl
@@ -431,8 +432,8 @@ class MainWindow(QMainWindow):
             return box, gl
 
         lo = QVBoxLayout()
-        lo.setContentsMargins(10, 16, 10, 16)
-        lo.setSpacing(4)
+        lo.setContentsMargins(10, 14, 10, 14)
+        lo.setSpacing(6)
 
         # ── DATA ──
         lo.addWidget(_section_lbl("DATA"))

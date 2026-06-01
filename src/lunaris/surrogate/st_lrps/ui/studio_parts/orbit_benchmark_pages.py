@@ -37,6 +37,7 @@ from .common_widgets import (
     ProcessPane,
     ValidatedPathEdit,
     _format_command,
+    _make_page_header,
     _mono_font,
     _norm_path,
     _row_lineedit_with_button,
@@ -1633,15 +1634,11 @@ class OrbitBenchmarkPage(QWidget):
         lo = QVBoxLayout()
         lo.setContentsMargins(22, 20, 22, 20)
         lo.setSpacing(14)
-        title = QLabel("Orbit-Level Benchmark")
-        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
-        subtitle = QLabel(
-            "Propagate full orbits and compare gravity models (SH / ST-LRPS) "
-            "against a high-degree truth — DOP853 (RK8) or GPU fixed-step RK4."
-        )
-        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
-        lo.addWidget(title)
-        lo.addWidget(subtitle)
+        lo.addWidget(_make_page_header(
+            "Orbit-Level Benchmark",
+            "Propagate full orbits and compare SH / ST-LRPS gravity models against a high-degree truth.",
+            "Validation Harness",
+        ))
         lo.addWidget(benchmark_tab, 1)
         self.setLayout(lo)
 
@@ -2261,15 +2258,11 @@ class OrbitBenchmarkPlotsPage(QWidget):
         lo = QVBoxLayout()
         lo.setContentsMargins(22, 20, 22, 20)
         lo.setSpacing(14)
-        title = QLabel("Gravity Plots")
-        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
-        subtitle = QLabel(
-            "Pick which models to compare and regenerate the comparison plots from "
-            "previously-cached benchmark results — no new run or training is started."
-        )
-        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
-        lo.addWidget(title)
-        lo.addWidget(subtitle)
+        lo.addWidget(_make_page_header(
+            "Gravity Plots",
+            "Regenerate comparison plots from cached benchmark results without launching a new run.",
+            "Cached Analysis",
+        ))
         lo.addWidget(plots_tab, 1)
         self.setLayout(lo)
 

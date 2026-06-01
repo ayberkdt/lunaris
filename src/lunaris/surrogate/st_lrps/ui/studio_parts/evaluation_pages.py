@@ -175,7 +175,7 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 from .common_widgets import *
 from .runtime_pages import ModelReportPanel
 
-from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _inspect_run_artifacts, _NoWheelOnSpinFilter
+from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _inspect_run_artifacts, _NoWheelOnSpinFilter
 
 
 from .data_pages import *
@@ -248,9 +248,7 @@ class STLRPSEvalTab(QWidget):
         self.run_artifact_badge = QLabel("No run selected")
         self.run_artifact_badge.setStyleSheet("color: #94a3b8; font-size: 10px;")
         self.run_artifact_summary = QPlainTextEdit()
-        self.run_artifact_summary.setReadOnly(True)
-        self.run_artifact_summary.setFont(_mono_font())
-        self.run_artifact_summary.setMaximumHeight(150)
+        _style_command_preview(self.run_artifact_summary, min_h=120, max_h=170)
         self.run_artifact_summary.setPlaceholderText(
             "run_manifest.json-aware artifact summary will appear here."
         )
@@ -683,12 +681,11 @@ class EvaluationPage(QWidget):
         lo = QVBoxLayout()
         lo.setContentsMargins(22, 20, 22, 20)
         lo.setSpacing(14)
-        title = QLabel("Evaluation")
-        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
-        subtitle = QLabel("Inspect artifacts and evaluate pointwise surrogate accuracy.")
-        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
-        lo.addWidget(title)
-        lo.addWidget(subtitle)
+        lo.addWidget(_make_page_header(
+            "Evaluation",
+            "Inspect training artifacts, verify checkpoint readiness, and run pointwise surrogate accuracy analysis.",
+            "Model Quality",
+        ))
         lo.addWidget(tabs, 1)
         self.setLayout(lo)
 
