@@ -55,7 +55,18 @@ import numpy as np
 from numba import njit 
 
 
-from lunaris.common.constants import AU, MU_EARTH, MU_MOON, MU_SUN, P_SUN_1AU, R_MOON, R_EARTH_MEAN
+from lunaris.common.constants import (
+    AU,
+    C_LIGHT,
+    MU_EARTH,
+    MU_MOON,
+    MU_SUN,
+    P_SUN_1AU,
+    R_EARTH_MEAN,
+    R_MOON,
+    SIGMA_SB,
+    SOLAR_FLUX_1AU,
+)
 from lunaris.common.type_defs import SpacecraftProps, PerturbationFlags, SolidTideConfig, F64Array
 from lunaris.common.math_utils import (
     quat_rotate_vec,
@@ -71,8 +82,16 @@ from lunaris.physics.spherical_harmonics import sh_accel_fixed_numba, compute_po
 from lunaris.physics.third_body_effects import accel_third_body_numba, accel_j2_oblate_diff_numba
 from lunaris.physics.solar_effects import accel_srp
 from lunaris.physics.relativity_effects import _schwarzschild_components
-from lunaris.physics.surface_effects import accel_albedo_simple
+from lunaris.physics.surface_effects import ThermalConfig, accel_albedo_simple
 from lunaris.physics.solid_tides import accel_solid_tides_numba
+from lunaris.physics.thermal_ir import (
+    THERMAL_MODE_CONSTANT,
+    THERMAL_MODE_EQUILIBRIUM,
+    THERMAL_MODE_TEMPERATURE_GRID,
+    accel_thermal_ir_facets_numba,
+    build_latlon_facets,
+    normalize_thermal_mode,
+)
 
 
 # =============================================================================
@@ -437,7 +456,7 @@ def extract_surface_provider_strict(surface_provider: Any) -> Dict[str, Any]:
 
 def need_ephemeris(flags: PerturbationFlags) -> bool:
     """Return True if any enabled perturbation requires ephemeris tables."""
-    return bool(flags.enable_third_body or flags.enable_srp or flags.enable_albedo or flags.enable_tides)
+    return bool(flags.enable_third_body or flags.enable_srp or flags.enable_albedo or flags.enable_thermal or flags.enable_tides)
 
 
 def require_srp_props(sc: SpacecraftProps) -> Tuple[float, float, float]:
@@ -702,6 +721,86 @@ class _TidePack:
             raise ValueError("solid tides require at least one tide-raising body.")
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ThermalPack:
+    """Engine-internal Lambertian thermal IR configuration."""
+    mode: int
+    surface_emissivity: float
+    surface_albedo: float
+    temperature_K: float
+    night_temperature_K: float
+    thermal_floor_flux_W_m2: float
+    ir_pressure_coefficient: float
+    solar_flux_1au_W_m2: float
+    au_m: float
+    c_light_m_s: float
+    sigma_sb: float
+    include_sun_distance_scaling: bool
+    facet_pos_m: F64Array
+    facet_normals: F64Array
+    facet_areas_m2: F64Array
+    facet_temperatures_K: F64Array
+
+    def __post_init__(self) -> None:
+        if self.mode not in (THERMAL_MODE_CONSTANT, THERMAL_MODE_EQUILIBRIUM, THERMAL_MODE_TEMPERATURE_GRID):
+            raise ValueError(f"thermal mode must be 0/1/2, got {self.mode}")
+
+        for name in (
+            "surface_emissivity",
+            "surface_albedo",
+            "temperature_K",
+            "night_temperature_K",
+            "thermal_floor_flux_W_m2",
+            "ir_pressure_coefficient",
+            "solar_flux_1au_W_m2",
+            "au_m",
+            "c_light_m_s",
+            "sigma_sb",
+        ):
+            value = float(getattr(self, name))
+            if not np.isfinite(value):
+                raise ValueError(f"thermal {name} must be finite, got {value}")
+
+        if not (0.0 <= self.surface_emissivity <= 1.0):
+            raise ValueError(f"thermal surface_emissivity must be in [0,1], got {self.surface_emissivity}")
+        if not (0.0 <= self.surface_albedo <= 1.0):
+            raise ValueError(f"thermal surface_albedo must be in [0,1], got {self.surface_albedo}")
+        if self.temperature_K < 0.0 or self.night_temperature_K < 0.0:
+            raise ValueError("thermal temperatures must be >= 0 K")
+        if self.thermal_floor_flux_W_m2 < 0.0:
+            raise ValueError("thermal_floor_flux_W_m2 must be >= 0")
+        if self.ir_pressure_coefficient < 0.0:
+            raise ValueError("thermal ir_pressure_coefficient must be >= 0")
+        if self.solar_flux_1au_W_m2 < 0.0:
+            raise ValueError("thermal solar_flux_1au_W_m2 must be >= 0")
+        if self.au_m <= 0.0 or self.c_light_m_s <= 0.0 or self.sigma_sb <= 0.0:
+            raise ValueError("thermal au_m, c_light_m_s, and sigma_sb must be > 0")
+
+        pos = _as_f64_c(self.facet_pos_m, "thermal.facet_pos_m")
+        normals = _as_f64_c(self.facet_normals, "thermal.facet_normals")
+        areas = _as_f64_c(self.facet_areas_m2, "thermal.facet_areas_m2")
+        temps = _as_f64_c(self.facet_temperatures_K, "thermal.facet_temperatures_K")
+
+        if pos.ndim != 2 or pos.shape[1] != 3:
+            raise ValueError(f"thermal.facet_pos_m must have shape (N,3), got {pos.shape}")
+        if normals.ndim != 2 or normals.shape[1] != 3:
+            raise ValueError(f"thermal.facet_normals must have shape (N,3), got {normals.shape}")
+        if areas.ndim != 1:
+            raise ValueError(f"thermal.facet_areas_m2 must be 1D, got {areas.shape}")
+        if pos.shape[0] != normals.shape[0] or pos.shape[0] != areas.shape[0]:
+            raise ValueError("thermal facet positions, normals, and areas must share the same row count")
+        if self.mode == THERMAL_MODE_TEMPERATURE_GRID and temps.shape[0] != areas.shape[0]:
+            raise ValueError(
+                "temperature_grid mode requires one temperature per thermal facet "
+                f"(got temps={temps.shape[0]}, facets={areas.shape[0]})."
+            )
+
+        object.__setattr__(self, "facet_pos_m", pos)
+        object.__setattr__(self, "facet_normals", normals)
+        object.__setattr__(self, "facet_areas_m2", areas)
+        object.__setattr__(self, "facet_temperatures_K", temps)
+
+
 
 # =============================================================================
 # 3.                             DYNAMICS ENGINE
@@ -725,6 +824,7 @@ class DynamicsEngine:
         ephem_manager: Any = None,
         surface_provider: Any = None,
         earth_j2: Any = None,
+        thermal: Any = None,
         solid_tides: Optional[SolidTideConfig] = None,
         allow_identity_rotation: bool = False,
     ) -> None:
@@ -736,6 +836,7 @@ class DynamicsEngine:
         self.ephem = ephem_manager
         self.surf = surface_provider
         self.earth_j2 = earth_j2
+        self.thermal = thermal if thermal is not None else ThermalConfig()
         self.solid_tides = solid_tides if solid_tides is not None else SolidTideConfig()
 
         # If True, q_i2f is treated as identity when ephemeris is absent.
@@ -756,6 +857,7 @@ class DynamicsEngine:
         use_sh = bool(getattr(f, "enable_sh", False))
         use_surrogate_gravity = bool(use_sh and _is_surrogate_gravity_provider(self.grav))
         use_albedo = bool(getattr(f, "enable_albedo", False))
+        use_thermal = bool(getattr(f, "enable_thermal", getattr(f, "enable_thermal_ir", False)))
         use_srp = bool(getattr(f, "enable_srp", False))
         use_3rd_sun = bool(getattr(f, "enable_3rd_body_sun", False))
         use_3rd_earth = bool(getattr(f, "enable_3rd_body_earth", False))
@@ -771,11 +873,14 @@ class DynamicsEngine:
         tide_bodies = getattr(self.solid_tides, "tide_bodies", ("earth", "sun"))
         use_tide_earth = bool(use_tides and ("earth" in tide_bodies))
         use_tide_sun = bool(use_tides and ("sun" in tide_bodies))
+        thermal_mode = normalize_thermal_mode(getattr(self.thermal, "thermal_mode", "constant_temperature"))
+        use_thermal_equilibrium = bool(use_thermal and thermal_mode == THERMAL_MODE_EQUILIBRIUM)
+        use_thermal_grid = bool(use_thermal and thermal_mode == THERMAL_MODE_TEMPERATURE_GRID)
 
         # What data do we need from ephemeris?
-        need_sun = bool(use_srp or use_3rd_sun or use_albedo or use_tide_sun)
+        need_sun = bool(use_srp or use_3rd_sun or use_albedo or use_tide_sun or use_thermal_equilibrium)
         need_earth = bool(use_3rd_earth or use_earth_j2 or use_tide_earth)
-        need_q = bool(use_sh or use_surrogate_gravity or use_albedo or use_tides)
+        need_q = bool(use_sh or use_surrogate_gravity or use_albedo or use_tides or use_thermal)
 
         # Ephemeris manager is required if Sun/Earth vectors are needed.
         need_vectors = bool(need_sun or need_earth)
@@ -789,6 +894,9 @@ class DynamicsEngine:
             "use_sh": use_sh,
             "use_surrogate_gravity": use_surrogate_gravity,
             "use_albedo": use_albedo,
+            "use_thermal": use_thermal,
+            "use_thermal_equilibrium": use_thermal_equilibrium,
+            "use_thermal_grid": use_thermal_grid,
             "use_srp": use_srp,
             "use_3rd_sun": use_3rd_sun,
             "use_3rd_earth": use_3rd_earth,
@@ -816,12 +924,19 @@ class DynamicsEngine:
         if req["use_albedo"] and self.surf is None:
             raise ValueError("enable_albedo=True but surface_provider is None.")
 
-        # SRP / Albedo require valid spacecraft optical area and mass
-        if req["use_srp"] or req["use_albedo"]:
+        if req["use_thermal_grid"] and self.surf is None:
+            raise ValueError(
+                "ThermalConfig.thermal_mode='temperature_grid' requires surface_provider "
+                "with thermal_temperature_cells_K, temperature_cells_K, or temperature_grid."
+            )
+
+        # SRP / Albedo / Thermal IR require valid spacecraft optical area and mass
+        if req["use_srp"] or req["use_albedo"] or req["use_thermal"]:
             if self.sc_props.mass_kg <= 0.0:
                 raise ValueError(f"mass_kg must be > 0, got {self.sc_props.mass_kg}")
             if self.sc_props.area_m2 <= 0.0:
-                raise ValueError(f"area_m2 must be > 0 for SRP/Albedo, got {self.sc_props.area_m2}")
+                raise ValueError(f"area_m2 must be > 0 for SRP/Albedo/Thermal IR, got {self.sc_props.area_m2}")
+        if req["use_srp"] or req["use_albedo"]:
             if not (0.0 < self.sc_props.cr <= 2.5):
                 raise ValueError(f"cr looks invalid, got {self.sc_props.cr}")
 
@@ -829,11 +944,11 @@ class DynamicsEngine:
             reasons: list[str] = []
             if req["need_vectors"]:
                 if req["need_sun"]:
-                    reasons.append("Sun vector (SRP / 3rd-body Sun / Albedo / solid tides)")
+                    reasons.append("Sun vector (SRP / 3rd-body Sun / Albedo / Thermal IR equilibrium / solid tides)")
                 if req["need_earth"]:
                     reasons.append("Earth vector (3rd-body Earth / Earth J2 / solid tides)")
             if req["need_quat_from_ephem"]:
-                reasons.append("q_i2f (SH / Albedo / solid tides)")
+                reasons.append("q_i2f (SH / Albedo / Thermal IR / solid tides)")
 
             why = "; ".join(reasons) if reasons else "Sun/Earth vectors and/or q_i2f"
             raise ValueError(
@@ -842,12 +957,7 @@ class DynamicsEngine:
                 "Note: allow_identity_rotation only replaces q_i2f, not Sun/Earth vectors."
             )
 
-        # Features that may exist on flags but are not implemented here
         f = self.flags
-        if bool(getattr(f, "enable_thermal", getattr(f, "enable_thermal_ir", False))):
-            raise NotImplementedError(
-                "Thermal perturbation enabled but not implemented in core.dynamics."
-            )
         if req["use_tides_k3"] and getattr(self.solid_tides, "k3", None) is None:
             raise ValueError(
                 "enable_tides_k3=True requires solid_tides.k3 to be set explicitly; "
@@ -1124,6 +1234,87 @@ class DynamicsEngine:
             r_ref_m=float(getattr(cfg, "r_ref_m", R_MOON)),
         )
 
+    def _prepare_thermal(self, req: Dict[str, bool]) -> _ThermalPack:
+        if not req["use_thermal"]:
+            return _ThermalPack(
+                mode=THERMAL_MODE_CONSTANT,
+                surface_emissivity=1.0,
+                surface_albedo=0.0,
+                temperature_K=0.0,
+                night_temperature_K=0.0,
+                thermal_floor_flux_W_m2=0.0,
+                ir_pressure_coefficient=0.0,
+                solar_flux_1au_W_m2=0.0,
+                au_m=float(AU),
+                c_light_m_s=1.0,
+                sigma_sb=1.0,
+                include_sun_distance_scaling=True,
+                facet_pos_m=np.zeros((1, 3), dtype=np.float64),
+                facet_normals=np.zeros((1, 3), dtype=np.float64),
+                facet_areas_m2=np.zeros(1, dtype=np.float64),
+                facet_temperatures_K=np.zeros(1, dtype=np.float64),
+            )
+
+        cfg = self.thermal if self.thermal is not None else ThermalConfig()
+        mode = normalize_thermal_mode(getattr(cfg, "thermal_mode", "constant_temperature"))
+        lat_count = int(getattr(cfg, "facet_lat_count", 18))
+        lon_count = int(getattr(cfg, "facet_lon_count", 36))
+        pos, normals, areas, _lat, _lon = build_latlon_facets(lat_count, lon_count, radius_m=float(R_MOON))
+
+        temps = np.zeros(1, dtype=np.float64)
+        if mode == THERMAL_MODE_TEMPERATURE_GRID:
+            surf = extract_surface_provider_strict(self.surf)
+            raw_temps = None
+            for key in ("thermal_temperature_cells_K", "temperature_cells_K", "facet_temperatures_K"):
+                if key in surf:
+                    raw_temps = surf[key]
+                    break
+            if raw_temps is None and "temperature_grid" in surf:
+                raw_temps = surf["temperature_grid"]
+
+            if raw_temps is None:
+                raise ValueError(
+                    "temperature_grid thermal mode requires surface_provider data: "
+                    "thermal_temperature_cells_K, temperature_cells_K, facet_temperatures_K, or temperature_grid."
+                )
+
+            arr = np.asarray(raw_temps, dtype=np.float64)
+            if arr.ndim == 2:
+                if arr.shape != (lat_count, lon_count):
+                    raise ValueError(
+                        "temperature_grid shape must match thermal facet grid "
+                        f"({lat_count}, {lon_count}), got {arr.shape}."
+                    )
+                arr = arr.reshape(-1)
+            else:
+                arr = arr.reshape(-1)
+
+            if arr.shape[0] != areas.shape[0]:
+                raise ValueError(
+                    "temperature_grid mode requires one temperature per thermal facet "
+                    f"(got temps={arr.shape[0]}, facets={areas.shape[0]})."
+                )
+            temps = np.ascontiguousarray(arr, dtype=np.float64)
+
+        return _ThermalPack(
+            mode=int(mode),
+            surface_emissivity=float(getattr(cfg, "surface_emissivity", 0.95)),
+            surface_albedo=float(getattr(cfg, "surface_albedo", 0.12)),
+            temperature_K=float(getattr(cfg, "temperature_K", 250.0)),
+            night_temperature_K=float(getattr(cfg, "night_temperature_K", 100.0)),
+            thermal_floor_flux_W_m2=float(getattr(cfg, "thermal_floor_flux_W_m2", 0.0)),
+            ir_pressure_coefficient=float(getattr(cfg, "ir_pressure_coefficient", getattr(cfg, "k_thermal", 1.0))),
+            solar_flux_1au_W_m2=float(getattr(cfg, "solar_flux_1au_W_m2", SOLAR_FLUX_1AU)),
+            au_m=float(getattr(cfg, "AU_m", AU)),
+            c_light_m_s=float(getattr(cfg, "c_light_m_s", C_LIGHT)),
+            sigma_sb=float(getattr(cfg, "sigma_sb", SIGMA_SB)),
+            include_sun_distance_scaling=bool(getattr(cfg, "include_sun_distance_scaling", True)),
+            facet_pos_m=pos,
+            facet_normals=normals,
+            facet_areas_m2=areas,
+            facet_temperatures_K=temps,
+        )
+
     # -------------------------------------------------------------------------
     # Public: build RHS
     # -------------------------------------------------------------------------
@@ -1139,9 +1330,10 @@ class DynamicsEngine:
         ap = self._prepare_albedo(req)
         ej = self._prepare_earth_j2(req)
         tp = self._prepare_solid_tides(req)
+        th = self._prepare_thermal(req)
 
         # Cache for debug/reporting
-        self._prep = {"req": req, "grav": gp, "eph": ep, "alb": ap, "earth_j2": ej, "tides": tp}
+        self._prep = {"req": req, "grav": gp, "eph": ep, "alb": ap, "earth_j2": ej, "tides": tp, "thermal": th}
 
         # Flags captured into closure
         USE_SH = bool(req["use_sh"])
@@ -1155,6 +1347,7 @@ class DynamicsEngine:
         USE_TIDES = bool(req["use_tides"])
         USE_TIDE_EARTH = bool(req["use_tide_earth"])
         USE_TIDE_SUN = bool(req["use_tide_sun"])
+        USE_THERMAL = bool(req["use_thermal"])
 
         # Ephemeris fetch needed inside kernel only if we actually have ephem_manager.
         HAVE_EPH = bool(self.ephem is not None)
@@ -1246,6 +1439,24 @@ class DynamicsEngine:
         TIDE_K2 = float(tp.k2)
         TIDE_K3 = float(tp.k3)
         TIDE_RREF = float(tp.r_ref_m)
+
+        # Thermal IR
+        TH_MODE = int(th.mode)
+        TH_EPS = float(th.surface_emissivity)
+        TH_ALB = float(th.surface_albedo)
+        TH_TEMP = float(th.temperature_K)
+        TH_NIGHT_TEMP = float(th.night_temperature_K)
+        TH_FLOOR = float(th.thermal_floor_flux_W_m2)
+        TH_COEFF = float(th.ir_pressure_coefficient)
+        TH_SOLAR_FLUX = float(th.solar_flux_1au_W_m2)
+        TH_AU = float(th.au_m)
+        TH_C = float(th.c_light_m_s)
+        TH_SIGMA = float(th.sigma_sb)
+        TH_SCALE_SUN_DIST = bool(th.include_sun_distance_scaling)
+        TH_POS = th.facet_pos_m
+        TH_NORMALS = th.facet_normals
+        TH_AREAS = th.facet_areas_m2
+        TH_TEMPS = th.facet_temperatures_K
 
         if USE_SURROGATE:
             surrogate = self.grav
@@ -1379,6 +1590,40 @@ class DynamicsEngine:
                     ax += aax
                     ay += aay
                     az += aaz
+
+                if USE_THERMAL:
+                    rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
+                    sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
+                    athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
+                        rfx,
+                        rfy,
+                        rfz,
+                        sfx,
+                        sfy,
+                        sfz,
+                        TH_POS,
+                        TH_NORMALS,
+                        TH_AREAS,
+                        TH_TEMPS,
+                        TH_MODE,
+                        TH_EPS,
+                        TH_ALB,
+                        TH_TEMP,
+                        TH_NIGHT_TEMP,
+                        TH_FLOOR,
+                        TH_COEFF,
+                        SC_AREA,
+                        mass,
+                        TH_SOLAR_FLUX,
+                        TH_AU,
+                        TH_C,
+                        TH_SIGMA,
+                        TH_SCALE_SUN_DIST,
+                    )
+                    athx, athy, athz = quat_rotate_vec(q0, -q1, -q2, -q3, athx_f, athy_f, athz_f)
+                    ax += athx
+                    ay += athy
+                    az += athz
 
                 if USE_REL:
                     arx, ary, arz = _schwarzschild_components(rx, ry, rz, vx, vy, vz, MU_M)
@@ -1663,7 +1908,42 @@ class DynamicsEngine:
                 ay += aay
                 az += aaz
 
-            # F) Relativity
+            # F) Lunar thermal IR radiation pressure
+            if USE_THERMAL:
+                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
+                sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
+                athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
+                    rfx,
+                    rfy,
+                    rfz,
+                    sfx,
+                    sfy,
+                    sfz,
+                    TH_POS,
+                    TH_NORMALS,
+                    TH_AREAS,
+                    TH_TEMPS,
+                    TH_MODE,
+                    TH_EPS,
+                    TH_ALB,
+                    TH_TEMP,
+                    TH_NIGHT_TEMP,
+                    TH_FLOOR,
+                    TH_COEFF,
+                    SC_AREA,
+                    mass,
+                    TH_SOLAR_FLUX,
+                    TH_AU,
+                    TH_C,
+                    TH_SIGMA,
+                    TH_SCALE_SUN_DIST,
+                )
+                athx, athy, athz = quat_rotate_vec(q0, -q1, -q2, -q3, athx_f, athy_f, athz_f)
+                ax += athx
+                ay += athy
+                az += athz
+
+            # G) Relativity
             if USE_REL:
                 arx, ary, arz = _schwarzschild_components(rx, ry, rz, vx, vy, vz, MU_M)
                 ax += arx
@@ -1705,6 +1985,7 @@ class DynamicsEngine:
         ap: _AlbedoPack = self._prep["alb"]
         ej: _EarthJ2Pack = self._prep["earth_j2"]
         tp: _TidePack = self._prep["tides"]
+        th: _ThermalPack = self._prep["thermal"]
 
         r = np.asarray(y[0:3], dtype=float)
         v = np.asarray(y[3:6], dtype=float)
@@ -1965,6 +2246,39 @@ class DynamicsEngine:
             )
             aax_i, aay_i, aaz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], aax_f, aay_f, aaz_f)
             out["Albedo"] = _norm3(aax_i, aay_i, aaz_i)
+
+        # Lunar thermal IR radiation pressure
+        if req["use_thermal"]:
+            rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
+            sfx, sfy, sfz = quat_rotate_vec(q[0], q[1], q[2], q[3], sun[0], sun[1], sun[2])
+            athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
+                rfx,
+                rfy,
+                rfz,
+                sfx,
+                sfy,
+                sfz,
+                np.ascontiguousarray(th.facet_pos_m, dtype=np.float64),
+                np.ascontiguousarray(th.facet_normals, dtype=np.float64),
+                np.ascontiguousarray(th.facet_areas_m2, dtype=np.float64),
+                np.ascontiguousarray(th.facet_temperatures_K, dtype=np.float64),
+                int(th.mode),
+                float(th.surface_emissivity),
+                float(th.surface_albedo),
+                float(th.temperature_K),
+                float(th.night_temperature_K),
+                float(th.thermal_floor_flux_W_m2),
+                float(th.ir_pressure_coefficient),
+                float(self.sc_props.area_m2),
+                float(mass),
+                float(th.solar_flux_1au_W_m2),
+                float(th.au_m),
+                float(th.c_light_m_s),
+                float(th.sigma_sb),
+                bool(th.include_sun_distance_scaling),
+            )
+            athx_i, athy_i, athz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], athx_f, athy_f, athz_f)
+            out["Thermal IR"] = _norm3(athx_i, athy_i, athz_i)
 
         # Relativity
         if req["use_rel"]:

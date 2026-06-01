@@ -81,6 +81,13 @@ def init_ephemeris(cfg: SimConfig, tf_s: float) -> "EphemerisManager":
     tf_s_buffered = float(tf_s) + 0.1 * DAY_S
     time_cfg = replace(cfg.time, duration_s=tf_s_buffered)
     flags = cfg.flags
+    thermal_mode = (
+        str(getattr(getattr(cfg, "thermal", None), "thermal_mode", "constant_temperature")).strip().lower()
+    )
+    thermal_needs_sun = bool(
+        flags.enable_thermal
+        and thermal_mode in {"equilibrium", "equilibrium_temperature", "instantaneous_equilibrium"}
+    )
 
     need_body_vectors = bool(
         flags.enable_3rd_body_sun
@@ -88,7 +95,7 @@ def init_ephemeris(cfg: SimConfig, tf_s: float) -> "EphemerisManager":
         or flags.enable_earth_j2
         or flags.enable_srp
         or flags.enable_albedo
-        or flags.enable_thermal
+        or thermal_needs_sun
         or flags.enable_tides_k2
         or flags.enable_tides_k3
     )
@@ -199,6 +206,11 @@ def print_summary(cfg: SimConfig, orbit_params: Optional[Dict[str, float]], y0: 
     print(f"  SRP                  : {f.enable_srp}")
     print(f"  Albedo               : {f.enable_albedo}")
     print(f"  Thermal              : {f.enable_thermal}")
+    if f.enable_thermal and cfg.thermal is not None:
+        print(
+            "  Thermal mode/grid    : "
+            f"{cfg.thermal.thermal_mode} / {cfg.thermal.facet_lat_count}x{cfg.thermal.facet_lon_count}"
+        )
     tides_on = bool(f.enable_tides_k2 or f.enable_tides_k3)
     tides_kind = "k3" if f.enable_tides_k3 else ("k2" if f.enable_tides_k2 else "off")
     print(f"  Tides                : {tides_on} (kind={tides_kind})")
@@ -296,6 +308,20 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     g_phys.add_argument("--enable-srp", type=str2bool, help="Enable SRP (on/off)")
     g_phys.add_argument("--enable-albedo", type=str2bool, help="Enable lunar albedo pressure (on/off)")
     g_phys.add_argument("--enable-thermal", type=str2bool, help="Enable lunar thermal pressure (on/off)")
+    g_phys.add_argument("--enable-thermal-ir", dest="enable_thermal", type=str2bool, help="Alias for --enable-thermal")
+    g_phys.add_argument(
+        "--thermal-mode",
+        choices=("constant_temperature", "equilibrium_temperature", "temperature_grid"),
+        help="Lunar thermal IR mode.",
+    )
+    g_phys.add_argument("--thermal-temperature-k", type=float, help="Constant-mode surface temperature [K]")
+    g_phys.add_argument("--thermal-night-temperature-k", type=float, help="Equilibrium-mode night/floor temperature [K]")
+    g_phys.add_argument("--thermal-emissivity", type=float, help="Thermal surface emissivity [0,1]")
+    g_phys.add_argument("--thermal-surface-albedo", type=float, help="Thermal equilibrium absorbed-solar albedo [0,1]")
+    g_phys.add_argument("--thermal-ir-coefficient", type=float, help="Spacecraft IR pressure coefficient [-]")
+    g_phys.add_argument("--thermal-floor-flux-w-m2", type=float, help="Minimum thermal exitance floor [W/m^2]")
+    g_phys.add_argument("--thermal-facet-lat-count", type=int, help="Thermal facet latitude count")
+    g_phys.add_argument("--thermal-facet-lon-count", type=int, help="Thermal facet longitude count")
 
     # clean tides contract -> maps to enable_tides_k2/enable_tides_k3
     g_phys.add_argument("--enable-tides", type=str2bool, help="Enable solid tides (on/off)")
@@ -430,6 +456,22 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--tide-k3 must be >= 0.")
     if args.tide_r_ref_m is not None and args.tide_r_ref_m <= 0.0:
         parser.error("--tide-r-ref-m must be positive.")
+    if args.thermal_temperature_k is not None and args.thermal_temperature_k < 0.0:
+        parser.error("--thermal-temperature-k must be >= 0.")
+    if args.thermal_night_temperature_k is not None and args.thermal_night_temperature_k < 0.0:
+        parser.error("--thermal-night-temperature-k must be >= 0.")
+    if args.thermal_emissivity is not None and not (0.0 <= args.thermal_emissivity <= 1.0):
+        parser.error("--thermal-emissivity must be in [0, 1].")
+    if args.thermal_surface_albedo is not None and not (0.0 <= args.thermal_surface_albedo <= 1.0):
+        parser.error("--thermal-surface-albedo must be in [0, 1].")
+    if args.thermal_ir_coefficient is not None and args.thermal_ir_coefficient < 0.0:
+        parser.error("--thermal-ir-coefficient must be >= 0.")
+    if args.thermal_floor_flux_w_m2 is not None and args.thermal_floor_flux_w_m2 < 0.0:
+        parser.error("--thermal-floor-flux-w-m2 must be >= 0.")
+    if args.thermal_facet_lat_count is not None and args.thermal_facet_lat_count < 1:
+        parser.error("--thermal-facet-lat-count must be >= 1.")
+    if args.thermal_facet_lon_count is not None and args.thermal_facet_lon_count < 1:
+        parser.error("--thermal-facet-lon-count must be >= 1.")
 
     # adaptive table implies adaptive enabled unless user explicitly disabled
     if args.adaptive_table is not None and args.adaptive_enabled is False:
@@ -572,15 +614,25 @@ def main() -> int:
     # Surface grids (CLI-requested only)
     topo_requested = bool(args.ldem_root or args.albedo_root)
     surface_provider: Optional[Any] = None
-    if topo_requested or cfg.flags.enable_surface_forces:
+    thermal_mode = (
+        str(getattr(cfg.thermal, "thermal_mode", "constant_temperature")).strip().lower()
+        if cfg.thermal is not None
+        else "constant_temperature"
+    )
+    thermal_needs_surface = bool(cfg.flags.enable_thermal and thermal_mode == "temperature_grid")
+    surface_force_needs_provider = bool(cfg.flags.enable_albedo or thermal_needs_surface)
+    if topo_requested or surface_force_needs_provider:
         try:
             surface_provider = init_surface_provider(args)
         except Exception as e:
             print(f"[FATAL] Surface grids load failed: {e}")
             return 1
 
-        if cfg.flags.enable_surface_forces and surface_provider is None:
-            print("[FATAL] Surface forces enabled, but no surface grids loaded. Provide --ldem-root/--albedo-root.")
+        if cfg.flags.enable_albedo and surface_provider is None:
+            print("[FATAL] Albedo force enabled, but no albedo grids loaded. Provide --albedo-root.")
+            return 1
+        if thermal_needs_surface and surface_provider is None:
+            print("[FATAL] Thermal temperature_grid mode requires surface temperature data. Provide a compatible surface provider.")
             return 1
 
     # Topography grid for topo-aware impact events (optional)
@@ -652,6 +704,7 @@ def main() -> int:
             ephem_manager=ephem_mgr,
             surface_provider=surface_provider,
             earth_j2=cfg.earth_j2,
+            thermal=cfg.thermal,
             solid_tides=cfg.solid_tides,
         )
         _ = engine.build_rhs()  # triggers warmup / JIT (if enabled)

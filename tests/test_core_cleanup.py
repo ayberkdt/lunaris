@@ -6,6 +6,7 @@ from lunaris.core.monte_carlo_engine import MonteCarloEngine
 from lunaris.core.mc_backend_policy import resolve_mc_backend_policy
 from lunaris.core.dynamics import extract_surface_provider_strict, DynamicsEngine
 from lunaris.common.type_defs import SpacecraftProps, PerturbationFlags
+from lunaris.physics.surface_effects import ThermalConfig
 
 def test_no_legacy_exports():
     import lunaris.core as core
@@ -13,15 +14,24 @@ def test_no_legacy_exports():
     assert not hasattr(core, "ae_from_rp_ra")
     assert hasattr(core, "create_state_from_keplerian")
 
-def test_fail_fast_on_unsupported_physics():
+def test_thermal_ir_is_supported_in_dynamics():
     sc = SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3)
     flags = PerturbationFlags(
         enable_sh=False,
-        enable_thermal=True, # Not implemented
+        enable_thermal=True,
         enable_tides_k2=False,
     )
-    with pytest.raises(NotImplementedError):
-        DynamicsEngine(sc_props=sc, flags=flags, gravity_model=None, ephem_manager=None, surface_provider=None, earth_j2=None, allow_identity_rotation=True)
+    engine = DynamicsEngine(
+        sc_props=sc,
+        flags=flags,
+        gravity_model=None,
+        ephem_manager=None,
+        surface_provider=None,
+        earth_j2=None,
+        thermal=ThermalConfig(facet_lat_count=2, facet_lon_count=4),
+        allow_identity_rotation=True,
+    )
+    assert engine._requirements()["use_thermal"] is True
 
 def test_fail_fast_on_missing_j2_radius():
     sc = SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3)

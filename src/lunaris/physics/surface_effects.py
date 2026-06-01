@@ -32,9 +32,10 @@ import numpy as np
 import numpy.typing as npt
 from numba import njit
 
-from lunaris.common.constants import AU, P_SUN_1AU, R_MOON_MEAN
+from lunaris.common.constants import AU, C_LIGHT, P_SUN_1AU, R_MOON_MEAN, SIGMA_SB, SOLAR_FLUX_1AU
 from lunaris.common.type_defs import SpacecraftProps, Vec3
 from lunaris.physics.solar_effects import moon_shadow_factor_conical
+from lunaris.physics.thermal_ir import build_latlon_facets, calc_thermal_ir_accel
 
 
 # =============================================================================
@@ -44,7 +45,7 @@ from lunaris.physics.solar_effects import moon_shadow_factor_conical
 def _require_range(name: str, x: float, lo: float, hi: float) -> float:
     """Validate x is finite and in [lo, hi]. Returns normalized float."""
     v = float(x)
-    if not (lo <= v <= hi):
+    if not math.isfinite(v) or not (lo <= v <= hi):
         raise ValueError(f"{name} must be in [{lo}, {hi}], got {v}.")
     return v
 
@@ -52,7 +53,7 @@ def _require_range(name: str, x: float, lo: float, hi: float) -> float:
 def _require_ge0(name: str, x: float) -> float:
     """Validate x is finite and >= 0. Returns normalized float."""
     v = float(x)
-    if v < 0.0:
+    if not math.isfinite(v) or v < 0.0:
         raise ValueError(f"{name} must be >= 0, got {v}.")
     return v
 
@@ -75,14 +76,84 @@ class AlbedoConfig:
 
 @dataclass(frozen=True, slots=True)
 class ThermalConfig:
-    """Settings for thermal re-radiation (thermal recoil) models."""
+    """
+    Settings for Lambertian lunar thermal IR radiation pressure.
 
-    k_thermal: float = 1.0        # tuning factor (>= 0)
-    P0: float = P_SUN_1AU         # SRP at 1 AU [N/m^2]
-    AU_m: float = AU              # astronomical unit [m]
+    Defaults are configurable engineering values, not a full lunar thermal
+    environment. ``k_thermal`` is retained as a compatibility alias for the
+    pressure coefficient used by older callers.
+    """
+
+    thermal_mode: str = "constant_temperature"
+    surface_emissivity: float = 0.95
+    surface_albedo: float = 0.12
+    temperature_K: float = 250.0
+    night_temperature_K: float = 100.0
+    thermal_floor_flux_W_m2: float = 0.0
+    ir_pressure_coefficient: float = 1.0
+    facet_lat_count: int = 18
+    facet_lon_count: int = 36
+    max_facets: int = 10_000
+    use_existing_surface_grid: bool = False
+    require_surface_provider: bool = False
+    solar_flux_1au_W_m2: float = SOLAR_FLUX_1AU
+    c_light_m_s: float = C_LIGHT
+    sigma_sb: float = SIGMA_SB
+    include_sun_distance_scaling: bool = True
+
+    # Compatibility with the former simple thermal wrapper.
+    k_thermal: float | None = None
+
+    # Legacy constants retained for old wrappers.
+    P0: float = P_SUN_1AU
+    AU_m: float = AU
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "k_thermal", _require_ge0("ThermalConfig.k_thermal", self.k_thermal))
+        mode = str(self.thermal_mode).strip().lower()
+        if mode not in {"constant_temperature", "constant", "equilibrium_temperature", "equilibrium", "temperature_grid", "grid"}:
+            raise ValueError(
+                "ThermalConfig.thermal_mode must be 'constant_temperature', "
+                "'equilibrium_temperature', or 'temperature_grid'."
+            )
+        if mode == "constant":
+            mode = "constant_temperature"
+        elif mode == "equilibrium":
+            mode = "equilibrium_temperature"
+        elif mode == "grid":
+            mode = "temperature_grid"
+
+        ir_coeff = float(self.ir_pressure_coefficient)
+        if self.k_thermal is not None:
+            k_alias = float(self.k_thermal)
+            # Older callers may pass only k_thermal. Newer dataclass.replace()
+            # calls often update ir_pressure_coefficient on an existing config
+            # whose compatibility alias is already populated.
+            if ir_coeff == 1.0 or ir_coeff == k_alias:
+                ir_coeff = k_alias
+
+        object.__setattr__(self, "thermal_mode", mode)
+        object.__setattr__(self, "surface_emissivity", _require_range("ThermalConfig.surface_emissivity", self.surface_emissivity, 0.0, 1.0))
+        object.__setattr__(self, "surface_albedo", _require_range("ThermalConfig.surface_albedo", self.surface_albedo, 0.0, 1.0))
+        object.__setattr__(self, "temperature_K", _require_ge0("ThermalConfig.temperature_K", self.temperature_K))
+        object.__setattr__(self, "night_temperature_K", _require_ge0("ThermalConfig.night_temperature_K", self.night_temperature_K))
+        object.__setattr__(self, "thermal_floor_flux_W_m2", _require_ge0("ThermalConfig.thermal_floor_flux_W_m2", self.thermal_floor_flux_W_m2))
+        object.__setattr__(self, "ir_pressure_coefficient", _require_ge0("ThermalConfig.ir_pressure_coefficient", ir_coeff))
+        object.__setattr__(self, "k_thermal", _require_ge0("ThermalConfig.k_thermal", ir_coeff))
+        object.__setattr__(self, "facet_lat_count", int(self.facet_lat_count))
+        object.__setattr__(self, "facet_lon_count", int(self.facet_lon_count))
+        object.__setattr__(self, "max_facets", int(self.max_facets))
+        if self.facet_lat_count < 1 or self.facet_lon_count < 1:
+            raise ValueError("ThermalConfig facet_lat_count/facet_lon_count must be >= 1.")
+        if self.max_facets < 1:
+            raise ValueError("ThermalConfig.max_facets must be >= 1.")
+        if self.facet_lat_count * self.facet_lon_count > self.max_facets:
+            raise ValueError(
+                "Thermal facet grid exceeds max_facets: "
+                f"{self.facet_lat_count * self.facet_lon_count} > {self.max_facets}."
+            )
+        object.__setattr__(self, "solar_flux_1au_W_m2", _require_ge0("ThermalConfig.solar_flux_1au_W_m2", self.solar_flux_1au_W_m2))
+        object.__setattr__(self, "c_light_m_s", _require_ge0("ThermalConfig.c_light_m_s", self.c_light_m_s))
+        object.__setattr__(self, "sigma_sb", _require_ge0("ThermalConfig.sigma_sb", self.sigma_sb))
         object.__setattr__(self, "P0", _require_ge0("ThermalConfig.P0", self.P0))
         object.__setattr__(self, "AU_m", _require_ge0("ThermalConfig.AU_m", self.AU_m))
 
@@ -311,25 +382,42 @@ def thermal_accel(
     enable_eclipse: bool = True,
     R_moon: float = R_MOON_MEAN,
 ) -> Vec3:
-    """Thermal (IR re-radiation) acceleration in a Moon-centered frame."""
+    """Thermal IR acceleration in a Moon-centered frame.
+
+    This wrapper now delegates to the Lambertian facet model in
+    :mod:`lunaris.physics.thermal_ir`. ``enable_eclipse`` is accepted for
+    compatibility with older callers; thermal emission is controlled by the
+    selected thermal mode rather than spacecraft eclipse state.
+    """
     r_sc_v = _as_vec3(r_sc, "r_sc")
     r_sun_v = _as_vec3(r_sun, "r_sun")
 
-    eclipse_flag = 1 if enable_eclipse else 0
-
-    ax, ay, az = accel_thermal_simple(
-        float(r_sc_v[0]), float(r_sc_v[1]), float(r_sc_v[2]),
-        float(r_sun_v[0]), float(r_sun_v[1]), float(r_sun_v[2]),
-        float(R_moon),
-        float(config.AU_m),
-        float(config.P0),
-        float(config.k_thermal),
-        float(sc_props.cr),
-        float(sc_props.area_m2),
-        float(sc_props.mass_kg),
-        eclipse_flag,
+    facet_pos, facet_normals, facet_areas, _, _ = build_latlon_facets(
+        int(config.facet_lat_count),
+        int(config.facet_lon_count),
+        radius_m=float(R_moon),
     )
-    return np.array((ax, ay, az), dtype=np.float64)
+    return calc_thermal_ir_accel(
+        r_sc_v,
+        r_sun_v,
+        facet_pos,
+        facet_normals,
+        facet_areas,
+        mode=str(config.thermal_mode),
+        surface_emissivity=float(config.surface_emissivity),
+        surface_albedo=float(config.surface_albedo),
+        temperature_K=float(config.temperature_K),
+        night_temperature_K=float(config.night_temperature_K),
+        thermal_floor_flux_W_m2=float(config.thermal_floor_flux_W_m2),
+        ir_pressure_coefficient=float(config.ir_pressure_coefficient),
+        spacecraft_area_m2=float(sc_props.area_m2),
+        spacecraft_mass_kg=float(sc_props.mass_kg),
+        solar_flux_1au_W_m2=float(config.solar_flux_1au_W_m2),
+        au_m=float(config.AU_m),
+        c_light_m_s=float(config.c_light_m_s),
+        sigma_sb=float(config.sigma_sb),
+        include_sun_distance_scaling=bool(config.include_sun_distance_scaling),
+    )
 
 __all__ = (
     # Config bundles
