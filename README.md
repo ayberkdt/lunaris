@@ -94,6 +94,7 @@ Console entry points (installed via `pip install -e .`):
 ```text
 lunaris           single-run propagation CLI
 lunaris-mc        Monte Carlo runner
+lunaris-launcher  welcome hub (picks a workspace; optional 3D Moon preview)
 lunaris-ui        mission desktop UI
 lunaris-studio    ST-LRPS Studio UI
 lunaris-train     ST-LRPS training CLI
@@ -101,6 +102,33 @@ lunaris-eval      ST-LRPS evaluation CLI
 lunaris-benchmark ST-LRPS orbit-level gravity benchmark / validation CLI
 lunaris-data      external-data download / verify CLI
 ```
+
+### Desktop launcher & 3D web preview
+
+`lunaris-launcher` is the top-level welcome hub. It presents two workspaces —
+**Lunar Propagation** (`lunaris-ui`) and **ST-LRPS Studio** (`lunaris-studio`) —
+as glassmorphic cards, and opens the chosen one in its own window. Each workspace
+is imported lazily, so launching one never loads the other's dependencies; both
+`lunaris-ui` and `lunaris-studio` also remain usable directly.
+
+Behind the cards, the launcher can show an optional, **offline** interactive 3D
+Moon (a Sobolev/visual and gravity-anomaly texture toggle, plus a small demo
+orbit). The visual is a Next.js / Three.js scene under
+`desktop/website/lunaris-web`, statically exported and served from a local
+loopback HTTP server — no internet and no Node runtime are required at app run
+time. Build it once:
+
+```bash
+cd desktop/website/lunaris-web
+npm install
+npm run build      # writes ./out (embed route at out/embed/index.html)
+```
+
+The preview is entirely optional. If the build is missing, QtWebEngine is not
+installed, or the GPU lacks WebGL, the launcher falls back to a dark background
+and still opens normally — the 3D scene never blocks the app. Point the launcher
+at a custom build with the `LUNARIS_WEB_EMBED_DIR` environment variable. (The
+satellite path in the preview is a *demo orbit*, not solver output.)
 
 ## Installation
 

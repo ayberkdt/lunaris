@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Mapping, Optional, Tuple
 import torch
 import torch.nn as nn
 
-from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI, is_lunar_body_signature
+from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import (
     ScalerPack,

@@ -63,28 +63,19 @@ except ImportError:
     make_accel = None
 
 from lunaris.analysis.postprocess import (
-    extract_time_seconds,
     extract_time_days,
-    extract_elements,
     extract_invariants,
-    extract_altitude_km,
-    extract_events,
     _extract_rv_vectors,
     _first_present,
 )
 
 from .styling import (
-    COLORS,
     DEFAULT_STYLE,
-    PlotStyle,
     THEME,
-    setup_global_style,
     apply_rcparams,
-    apply_axes_style,
     add_lunar_background,
     format_scientific_axis,
     format_log_axis_sci,
-    make_axis_label,
     get_accel_color,
     get_series_color,
     apply_legend_style,

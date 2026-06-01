@@ -13,7 +13,7 @@ import h5py
 import numpy as np
 import torch
 
-from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI, is_lunar_body_signature
+from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 
 

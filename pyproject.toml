@@ -90,6 +90,7 @@ all = [
 [project.scripts]
 lunaris = "lunaris.cli.main:main_entry"
 lunaris-ui = "lunaris.ui.app:main"
+lunaris-launcher = "lunaris.ui.launcher:main"
 lunaris-studio = "lunaris.surrogate.st_lrps.ui.studio:main"
 lunaris-mc = "lunaris.core.monte_carlo_engine:mc_entry"
 lunaris-train = "lunaris.surrogate.st_lrps.training.cli:main"

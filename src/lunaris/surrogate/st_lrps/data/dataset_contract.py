@@ -6,7 +6,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-import os
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

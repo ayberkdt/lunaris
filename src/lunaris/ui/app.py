@@ -44,7 +44,7 @@ from lunaris.ui.widgets.ui_commons import (
     WINDOW_SETTINGS,
 )
 
-# Updated navigation for 6 specialized pages (added Data & Files)
+# Navigation entries for the specialized mission-analysis pages.
 NAV_PAGES = [
     ("Orbit",       "Orbit Setup",       "fa6s.rocket"),
     ("Forces",      "Force Models",      "fa6s.atom"),
@@ -53,7 +53,6 @@ NAV_PAGES = [
     ("Telemetry",   "Live Telemetry",    "fa6s.chart-line"),
     ("Data",        "Data & Files",      "fa6s.database"),
     ("MonteCarlo",  "Monte Carlo",       "fa6s.dice"),
-    ("Surrogate",   "ST-LRPS Studio",    "fa6s.brain"),
 ]
 
 # Default UI values (Internal SI units convention)
@@ -100,7 +99,6 @@ from lunaris.ui.widgets.session_persistence import (
     collect_session_snapshot,
     collect_visual_state,
 )
-from lunaris.ui.widgets.surrogate_studio_page import SurrogateStudioPage
 
 
 
@@ -504,9 +502,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_telemetry = self._build_page_telemetry()
         self.page_data = self._build_page_data()
         self.page_mc = self._build_page_mc()
-        self.page_surrogate = self._build_page_surrogate()
 
-        # Wrap pages in scroll areas (except telemetry, MC, and Surrogate which have their own)
+        # Wrap pages in scroll areas (except telemetry and MC, which have their own)
         self.stack_pages.addWidget(self._wrap_scroll(self.page_orbit))
         self.stack_pages.addWidget(self._wrap_scroll(self.page_forces))
         self.stack_pages.addWidget(self._wrap_scroll(self.page_propagation))
@@ -514,7 +511,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stack_pages.addWidget(self.page_telemetry)  # Telemetry doesn't need scroll
         self.stack_pages.addWidget(self._wrap_scroll(self.page_data))
         self.stack_pages.addWidget(self.page_mc)         # MC has internal scrolls
-        self.stack_pages.addWidget(self.page_surrogate)  # Surrogate has its own scroll area
         
         content_layout.addWidget(self.stack_pages, 1)
         self.main_splitter.addWidget(content_container)
@@ -1181,58 +1177,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_mc = MonteCarloPage(parent=self)
         self.page_mc.run_requested.connect(self._on_mc_run_requested)
         return self.page_mc
-
-    # =========================================================================
-    # 24c. PAGE BUILDERS: SURROGATE STUDIO (PAGE 8)
-    # =========================================================================
-
-    def _build_page_surrogate(self) -> QtWidgets.QWidget:
-        """Page 8: ST-LRPS Surrogate Studio — runs browser, eval artifacts, training preview."""
-        self.page_surrogate = SurrogateStudioPage(parent=self)
-        try:
-            self.page_surrogate.model_selected.connect(self._on_surrogate_model_selected)
-        except Exception:
-            pass
-        return self.page_surrogate
-
-    def _on_surrogate_model_selected(self, run_dir: str) -> None:
-        """
-        Slot: invoked when the Surrogate Studio user clicks "Use This Model".
-
-        Sets the gravity backend to ``st_lrps`` and wires the run directory into
-        the shared ``UIGravityConfig`` so subsequent command builds and
-        preflight validation pick the correct surrogate model.
-        """
-        if not run_dir:
-            return
-        try:
-            if hasattr(self.gravity_cfg, "backend"):
-                self.gravity_cfg.backend = "st_lrps"
-            if hasattr(self.gravity_cfg, "st_lrps_model_dir"):
-                self.gravity_cfg.st_lrps_model_dir = run_dir
-            # Best-effort: keep the force-models page summary visually aligned.
-            try:
-                if hasattr(self, "page_forces") and hasattr(self.page_forces, "_update_gravity_summary_ui"):
-                    self.page_forces._update_gravity_summary_ui()
-            except Exception:
-                pass
-            self._log_message(f"[UI] ST-LRPS model selected: {run_dir}", severity="success")
-            try:
-                if self.statusBar() is not None:
-                    self.statusBar().showMessage(
-                        f"ST-LRPS model active: {Path(run_dir).name}", 4000
-                    )
-            except Exception:
-                pass
-            # Refresh command preview so the new surrogate path is reflected.
-            try:
-                self._update_command_preview_silent()
-            except Exception:
-                pass
-        except Exception as exc:
-            self._log_message(
-                f"[Warning] Failed to apply surrogate model: {exc}", severity="warning"
-            )
 
     def _on_mc_run_requested(self) -> None:
         """Slot: user clicked 'Run Monte Carlo' on the MC page."""
@@ -2343,7 +2287,6 @@ class MainWindow(QtWidgets.QMainWindow):
             spacecraft_cfg=self.spacecraft_cfg,
             app_version=APP_VERSION,
             mc_page=getattr(self, "page_mc", None),
-            surrogate_page=getattr(self, "page_surrogate", None),
         )
 
         # Collect visual workspace state (Task 11)
@@ -2426,7 +2369,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 project_root=PROJECT_ROOT,
                 log_warning=lambda msg: self._log_message(msg, severity="warning"),
                 mc_page=getattr(self, "page_mc", None),
-                surrogate_page=getattr(self, "page_surrogate", None),
             )
 
             state = self.page_data.get_state()

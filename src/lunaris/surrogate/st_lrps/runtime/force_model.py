@@ -18,7 +18,6 @@ physically wrong accelerations with no error signal.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import asdict
 from pathlib import Path
@@ -38,8 +37,8 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     reload_model_from_run_dir as reload_model_from_artifact_run_dir,
     resolve_run_dir as resolve_run_dir_from_artifacts,
 )
-from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, compute_base_accel, compute_base_potential
-from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, ArtifactContractError, TargetContract
+from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
+from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, TargetContract
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 
 
@@ -607,7 +606,6 @@ __all__ = [
 
 if __name__ == "__main__":
     import argparse
-    import sys
 
     ap = argparse.ArgumentParser(description="Smoke-test st_lrps.runtime.force_model")
     ap.add_argument("model_dir", help="Run dir, checkpoint dir, or .pt file")

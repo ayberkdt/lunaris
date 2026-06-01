@@ -422,7 +422,6 @@ class CloudSuiteConfig:
         return str(getattr(DEFAULT_DATASET_CONFIG, "gravity_gfc_path"))
 
     def to_dict(self) -> dict:
-        import os as _os
         return {
             "degree_min": int(self.degree_min),
             "degree_max": int(self.degree_max),
