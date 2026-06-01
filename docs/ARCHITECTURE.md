@@ -26,7 +26,9 @@ Numba-JIT-compiled force-model kernels. Each file is one force model:
 - `spherical_harmonics.py` — gravity field evaluation (reusable `SHWorkspace`).
 - `third_body_effects.py` — Sun/Earth third-body perturbations.
 - `solar_effects.py` — solar radiation pressure.
-- `surface_effects.py` — lunar albedo wrappers and surface-radiation config.
+- `surface_effects.py` — `AlbedoConfig`/`ThermalConfig`, legacy cannonball
+  albedo kernels, and the standalone albedo/thermal wrappers.
+- `lunar_albedo.py` — Lambertian lunar albedo (reflected-solar) facets.
 - `thermal_ir.py` — Lambertian lunar thermal IR radiation-pressure facets.
 - `solid_tides.py` — elastic lunar solid-body tide potential and acceleration.
 - `relativity_effects.py` — first-order post-Newtonian.
@@ -104,10 +106,34 @@ non-`None` (e.g. `enable_srp=True` requires `cfg.srp`).
 | `enable_3rd_body_sun` / `enable_3rd_body_earth` | Third-body perturbations | Implemented |
 | `enable_earth_j2` | Earth oblateness (differential) | Implemented |
 | `enable_srp` | Solar radiation pressure | Implemented |
-| `enable_albedo` | Reflected solar from the lunar surface | Implemented |
+| `enable_albedo` | Reflected-solar radiation pressure (facet Lambertian) | Implemented |
 | `enable_relativity_1pn` | First-order post-Newtonian | Implemented |
 | `enable_thermal` | Lunar thermal IR radiation pressure | Implemented on CPU RHS |
 | `enable_tides_k2` / `enable_tides_k3` | Elastic lunar solid-body tides | Implemented on CPU RHS |
+
+Lunar albedo is configured through `AlbedoConfig` and evaluated in
+`lunaris.physics.lunar_albedo`. It is a non-gravitational **reflected-solar**
+radiation-pressure perturbation (sunlight reflected from the lunar surface and
+received by the spacecraft); it belongs with SRP and thermal IR, not with
+gravity. The default `lambert_facets` backend discretizes the Moon into
+Moon-fixed latitude-longitude facets (the same discretization as thermal IR),
+treats each facet as a Lambertian reflector with reflected exitance
+`M_i = A_i * S_i * mu_sun_i`, and sums the contributions of facets that are
+simultaneously sunlit (`mu_sun > 0`) and visible to the spacecraft
+(`mu_view > 0`) before rotating the result back to the inertial frame. Per-facet
+albedo `A_i` is precomputed at setup time from one of three `albedo_mode`
+sources: `constant_albedo` (provider-free), `albedo_grid` (provider-supplied
+[0,1] grid), or `scaled_dn_grid` (provider digital-number grid via
+`A = scale*DN + offset`, with nodata falling back to `albedo_const`). The model
+uses a dedicated coefficient `albedo_pressure_coefficient` (C_R_albedo), **not**
+the SRP `cr`. An optional lunar-eclipse (Earth-umbra) dimming reuses the SRP
+conical-shadow geometry. The legacy cannonball kernels remain available for
+backward compatibility through `albedo_model` (`simple` is wired into the
+propagator RHS; `lommel` is exposed only via the standalone
+`surface_effects.albedo_accel` wrapper). The facet model is Lambertian only: it
+does not model non-Lambertian BRDFs, wavelength dependence, surface roughness,
+terrain self-shadowing beyond the incidence/visibility cutoffs, photometric
+phase functions, multiple scattering, or local topography.
 
 Thermal IR is configured through `ThermalConfig` and evaluated in
 `lunaris.physics.thermal_ir`. The current model discretizes the Moon into

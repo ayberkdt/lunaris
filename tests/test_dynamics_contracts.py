@@ -25,7 +25,7 @@ from lunaris.core.dynamics import (
     _is_surrogate_gravity_provider,
     extract_gravity_strict,
 )
-from lunaris.physics.surface_effects import ThermalConfig
+from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig
 
 
 # -----------------------------------------------------------------------------
@@ -87,11 +87,26 @@ def test_enable_sh_without_gravity_model_raises():
                        gravity_model=None, allow_identity_rotation=True)
 
 
-def test_enable_albedo_without_surface_provider_raises():
-    with pytest.raises(ValueError, match="surface_provider is None"):
+def test_enable_albedo_constant_requires_ephemeris_not_provider():
+    # The facet model in constant-albedo mode needs no surface_provider, but it
+    # does need the Sun vector from an ephemeris (it is reflected sunlight).
+    with pytest.raises(ValueError, match="Ephemeris is required"):
         DynamicsEngine(
             _sc(),
             PerturbationFlags(enable_sh=False, enable_albedo=True),
+            surface_provider=None,
+            allow_identity_rotation=True,
+        )
+
+
+def test_enable_albedo_grid_mode_without_provider_raises():
+    # Grid-sourced albedo requires a surface provider; the error fires before the
+    # ephemeris check during dependency validation.
+    with pytest.raises(ValueError, match="requires a surface_provider"):
+        DynamicsEngine(
+            _sc(),
+            PerturbationFlags(enable_sh=False, enable_albedo=True),
+            albedo=AlbedoConfig(albedo_mode="albedo_grid"),
             surface_provider=None,
             allow_identity_rotation=True,
         )

@@ -73,8 +73,12 @@ from lunaris.common.math_utils import (
     latlon_from_xyz_m,
     wrap_lon_deg,
     clamp,
-    sample_2d_scaled_bilinear,
     sample_grid_bilinear,
+    # Numba-callable kernels for use inside @njit code (the public
+    # sample_*/sample_grid_* wrappers validate in Python and cannot be called
+    # from nopython mode).
+    _sample_grid_bilinear_kernel,
+    _sample_2d_scaled_bilinear_kernel,
 )
 
 from lunaris.physics.ephemeris import get_ephem_state
@@ -82,7 +86,7 @@ from lunaris.physics.spherical_harmonics import sh_accel_fixed_numba, compute_po
 from lunaris.physics.third_body_effects import accel_third_body_numba, accel_j2_oblate_diff_numba
 from lunaris.physics.solar_effects import accel_srp
 from lunaris.physics.relativity_effects import _schwarzschild_components
-from lunaris.physics.surface_effects import ThermalConfig, accel_albedo_simple
+from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig, accel_albedo_simple
 from lunaris.physics.solid_tides import accel_solid_tides_numba
 from lunaris.physics.thermal_ir import (
     THERMAL_MODE_CONSTANT,
@@ -91,6 +95,13 @@ from lunaris.physics.thermal_ir import (
     accel_thermal_ir_facets_numba,
     build_latlon_facets,
     normalize_thermal_mode,
+)
+from lunaris.physics.lunar_albedo import (
+    ALBEDO_SOURCE_CONSTANT,
+    ALBEDO_SOURCE_GRID,
+    ALBEDO_SOURCE_SCALED_DN,
+    accel_albedo_facets_numba,
+    normalize_albedo_mode,
 )
 
 
@@ -140,7 +151,7 @@ def _sample_albedo_dn_scaled(
     j_f = (lon_wrapped - lon_ref_deg) / deg_per_px
     j_f = j_f % n_cols
 
-    return sample_2d_scaled_bilinear(
+    return _sample_2d_scaled_bilinear_kernel(
         dn_grid, i_f, j_f, n_rows, n_cols, scale, bias, nodata_dn
     )
 
@@ -620,15 +631,26 @@ class _AlbedoPack:
     """
     Engine-internal albedo configuration.
 
-    mode:
+    ``backend`` selects the reflected-solar model used in the RHS:
+      0 = simple legacy cannonball (``accel_albedo_simple``); the acceleration
+          points along the Sun->spacecraft line using a single sub-satellite
+          albedo sample and the spacecraft SRP coefficient ``cr``.
+      1 = lambert_facets (``accel_albedo_facets_numba``); a Lambertian facet sum
+          using the precomputed per-facet albedo array and the dedicated
+          ``pressure_coefficient`` (C_R_albedo).
+
+    For backend 0, ``mode`` selects the sub-satellite albedo source:
       0 = albedo grid (grid_alb)
       1 = scaled DN grid (dn; albedo = sf*DN + off)
       2 = constant albedo (alb_const)
     """
-    mode: int
-    alb_const: float
-    alb_scale: float
-    k_lambert: float
+    backend: int = 1
+
+    # --- legacy simple-backend sub-satellite sampling ---
+    mode: int = 2
+    alb_const: float = 0.12
+    alb_scale: float = 1.0
+    k_lambert: float = 1.0
 
     grid_alb: Optional[F64Array] = None
     dn: Optional[F64Array] = None
@@ -645,41 +667,105 @@ class _AlbedoPack:
     latmin: float = -90.0
     latmax: float = 90.0
 
+    # --- lambert_facets backend (precomputed at setup) ---
+    facet_pos_m: Optional[F64Array] = None
+    facet_normals: Optional[F64Array] = None
+    facet_areas_m2: Optional[F64Array] = None
+    facet_albedo: Optional[F64Array] = None
+    pressure_coefficient: float = 1.0
+    solar_flux_1au_W_m2: float = float(SOLAR_FLUX_1AU)
+    au_m: float = float(AU)
+    c_light_m_s: float = float(C_LIGHT)
+    r_earth_m: float = float(R_EARTH_MEAN)
+    include_sun_distance_scaling: bool = True
+    enable_eclipse: bool = True
+
     def __post_init__(self) -> None:
+        if self.backend not in (0, 1):
+            raise ValueError(f"albedo backend must be 0 or 1, got {self.backend}")
         if self.mode not in (0, 1, 2):
             raise ValueError(f"albedo mode must be 0/1/2, got {self.mode}")
 
-        if self.mode == 2:
-            return
+        # Facet arrays are always normalized to contiguous float64 with >= 1 row
+        # so the closure captures valid arrays even when the facet backend is
+        # inactive (the RHS skips the albedo block entirely when disabled).
+        pos = (
+            np.zeros((1, 3), dtype=np.float64)
+            if self.facet_pos_m is None
+            else _as_f64_c(self.facet_pos_m, "albedo.facet_pos_m")
+        )
+        normals = (
+            np.zeros((1, 3), dtype=np.float64)
+            if self.facet_normals is None
+            else _as_f64_c(self.facet_normals, "albedo.facet_normals")
+        )
+        areas = (
+            np.zeros(1, dtype=np.float64)
+            if self.facet_areas_m2 is None
+            else _as_f64_c(self.facet_areas_m2, "albedo.facet_areas_m2")
+        )
+        albedo = (
+            np.zeros(1, dtype=np.float64)
+            if self.facet_albedo is None
+            else _as_f64_c(self.facet_albedo, "albedo.facet_albedo")
+        )
 
-        if self.res_deg <= 0.0 or self.n_lines <= 0 or self.n_samples <= 0:
-            raise ValueError("albedo grid params invalid (res_deg, n_lines, n_samples must be positive)")
-        if not (self.latmin < self.latmax):
-            raise ValueError(f"latmin must be < latmax (latmin={self.latmin}, latmax={self.latmax})")
-
-        if self.mode == 0:
-            if self.grid_alb is None:
-                raise ValueError("mode=0 requires grid_alb")
-            grid = _as_f64_c(self.grid_alb, "grid_alb")
-            if grid.ndim != 2:
-                raise ValueError(f"grid_alb must be 2D, got ndim={grid.ndim}")
-            if grid.shape != (self.n_lines, self.n_samples):
+        if self.backend == 1:
+            if pos.ndim != 2 or pos.shape[1] != 3:
+                raise ValueError(f"albedo.facet_pos_m must be (N,3), got {pos.shape}")
+            if normals.ndim != 2 or normals.shape[1] != 3:
+                raise ValueError(f"albedo.facet_normals must be (N,3), got {normals.shape}")
+            if areas.ndim != 1:
+                raise ValueError(f"albedo.facet_areas_m2 must be 1D, got {areas.shape}")
+            if albedo.ndim != 1:
+                raise ValueError(f"albedo.facet_albedo must be 1D, got {albedo.shape}")
+            n = pos.shape[0]
+            if normals.shape[0] != n or areas.shape[0] != n or albedo.shape[0] != n:
                 raise ValueError(
-                    f"grid_alb shape mismatch: expected {(self.n_lines, self.n_samples)}, got {grid.shape}"
+                    "albedo facet positions, normals, areas, and albedo must share "
+                    f"the same row count (got {pos.shape[0]}, {normals.shape[0]}, "
+                    f"{areas.shape[0]}, {albedo.shape[0]})."
                 )
-            object.__setattr__(self, "grid_alb", grid)
+            if not np.all(np.isfinite(albedo)):
+                raise ValueError("albedo.facet_albedo must be finite.")
+            if float(np.min(albedo)) < 0.0 or float(np.max(albedo)) > 1.0:
+                raise ValueError("albedo.facet_albedo must lie in [0, 1].")
 
-        else:  # mode == 1
-            if self.dn is None:
-                raise ValueError("mode=1 requires dn")
-            dn = _as_f64_c(self.dn, "dn")
-            if dn.ndim != 2:
-                raise ValueError(f"dn must be 2D, got ndim={dn.ndim}")
-            if dn.shape != (self.n_lines, self.n_samples):
-                raise ValueError(
-                    f"dn shape mismatch: expected {(self.n_lines, self.n_samples)}, got {dn.shape}"
-                )
-            object.__setattr__(self, "dn", dn)
+        object.__setattr__(self, "facet_pos_m", pos)
+        object.__setattr__(self, "facet_normals", normals)
+        object.__setattr__(self, "facet_areas_m2", areas)
+        object.__setattr__(self, "facet_albedo", albedo)
+
+        # Legacy grid validation only matters for the simple backend with a grid.
+        if self.backend == 0 and self.mode != 2:
+            if self.res_deg <= 0.0 or self.n_lines <= 0 or self.n_samples <= 0:
+                raise ValueError("albedo grid params invalid (res_deg, n_lines, n_samples must be positive)")
+            if not (self.latmin < self.latmax):
+                raise ValueError(f"latmin must be < latmax (latmin={self.latmin}, latmax={self.latmax})")
+
+            if self.mode == 0:
+                if self.grid_alb is None:
+                    raise ValueError("mode=0 requires grid_alb")
+                grid = _as_f64_c(self.grid_alb, "grid_alb")
+                if grid.ndim != 2:
+                    raise ValueError(f"grid_alb must be 2D, got ndim={grid.ndim}")
+                if grid.shape != (self.n_lines, self.n_samples):
+                    raise ValueError(
+                        f"grid_alb shape mismatch: expected {(self.n_lines, self.n_samples)}, got {grid.shape}"
+                    )
+                object.__setattr__(self, "grid_alb", grid)
+
+            else:  # mode == 1
+                if self.dn is None:
+                    raise ValueError("mode=1 requires dn")
+                dn = _as_f64_c(self.dn, "dn")
+                if dn.ndim != 2:
+                    raise ValueError(f"dn must be 2D, got ndim={dn.ndim}")
+                if dn.shape != (self.n_lines, self.n_samples):
+                    raise ValueError(
+                        f"dn shape mismatch: expected {(self.n_lines, self.n_samples)}, got {dn.shape}"
+                    )
+                object.__setattr__(self, "dn", dn)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -825,6 +911,7 @@ class DynamicsEngine:
         surface_provider: Any = None,
         earth_j2: Any = None,
         thermal: Any = None,
+        albedo: Any = None,
         solid_tides: Optional[SolidTideConfig] = None,
         allow_identity_rotation: bool = False,
     ) -> None:
@@ -837,6 +924,7 @@ class DynamicsEngine:
         self.surf = surface_provider
         self.earth_j2 = earth_j2
         self.thermal = thermal if thermal is not None else ThermalConfig()
+        self.albedo = albedo if albedo is not None else AlbedoConfig()
         self.solid_tides = solid_tides if solid_tides is not None else SolidTideConfig()
 
         # If True, q_i2f is treated as identity when ephemeris is absent.
@@ -857,6 +945,18 @@ class DynamicsEngine:
         use_sh = bool(getattr(f, "enable_sh", False))
         use_surrogate_gravity = bool(use_sh and _is_surrogate_gravity_provider(self.grav))
         use_albedo = bool(getattr(f, "enable_albedo", False))
+
+        alb_cfg = self.albedo if self.albedo is not None else AlbedoConfig()
+        albedo_model = str(getattr(alb_cfg, "albedo_model", "lambert_facets")).strip().lower()
+        albedo_source = normalize_albedo_mode(getattr(alb_cfg, "albedo_mode", "constant_albedo"))
+        albedo_needs_provider = bool(
+            use_albedo
+            and (
+                albedo_source != ALBEDO_SOURCE_CONSTANT
+                or bool(getattr(alb_cfg, "require_surface_provider", False))
+            )
+        )
+
         use_thermal = bool(getattr(f, "enable_thermal", getattr(f, "enable_thermal_ir", False)))
         use_srp = bool(getattr(f, "enable_srp", False))
         use_3rd_sun = bool(getattr(f, "enable_3rd_body_sun", False))
@@ -894,6 +994,8 @@ class DynamicsEngine:
             "use_sh": use_sh,
             "use_surrogate_gravity": use_surrogate_gravity,
             "use_albedo": use_albedo,
+            "albedo_model": albedo_model,
+            "albedo_needs_provider": albedo_needs_provider,
             "use_thermal": use_thermal,
             "use_thermal_equilibrium": use_thermal_equilibrium,
             "use_thermal_grid": use_thermal_grid,
@@ -921,8 +1023,14 @@ class DynamicsEngine:
         if req["use_sh"] and self.grav is None:
             raise ValueError("enable_sh=True but gravity_model is None.")
 
-        if req["use_albedo"] and self.surf is None:
-            raise ValueError("enable_albedo=True but surface_provider is None.")
+        if req["albedo_needs_provider"] and self.surf is None:
+            cfg = self.albedo if self.albedo is not None else AlbedoConfig()
+            raise ValueError(
+                f"enable_albedo with albedo_mode={cfg.albedo_mode!r} requires a "
+                "surface_provider supplying an albedo grid, but none was provided. "
+                "Use albedo_mode='constant_albedo' for a provider-free model, or "
+                "supply a surface_provider (e.g. --albedo-root)."
+            )
 
         if req["use_thermal_grid"] and self.surf is None:
             raise ValueError(
@@ -936,7 +1044,10 @@ class DynamicsEngine:
                 raise ValueError(f"mass_kg must be > 0, got {self.sc_props.mass_kg}")
             if self.sc_props.area_m2 <= 0.0:
                 raise ValueError(f"area_m2 must be > 0 for SRP/Albedo/Thermal IR, got {self.sc_props.area_m2}")
-        if req["use_srp"] or req["use_albedo"]:
+        # The SRP and simple/legacy albedo backends reuse the spacecraft SRP
+        # coefficient cr; the lambert_facets albedo backend does not (it uses
+        # albedo_pressure_coefficient), so cr is only enforced when actually used.
+        if req["use_srp"] or (req["use_albedo"] and req["albedo_model"] == "simple"):
             if not (0.0 < self.sc_props.cr <= 2.5):
                 raise ValueError(f"cr looks invalid, got {self.sc_props.cr}")
 
@@ -1149,50 +1260,160 @@ class DynamicsEngine:
 
     def _prepare_albedo(self, req: Dict[str, bool]) -> _AlbedoPack:
         if not req["use_albedo"]:
-            return _AlbedoPack(mode=2, alb_const=0.12, alb_scale=1.0, k_lambert=1.0)
+            return _AlbedoPack(backend=1, mode=2, alb_const=0.12, alb_scale=1.0, k_lambert=1.0)
+
+        cfg = self.albedo if self.albedo is not None else AlbedoConfig()
+        model = str(getattr(cfg, "albedo_model", "lambert_facets")).strip().lower()
+
+        if model == "simple":
+            return self._prepare_albedo_simple(cfg)
+        if model == "lommel":
+            raise ValueError(
+                "albedo_model='lommel' is only available through the standalone "
+                "lunaris.physics.surface_effects.albedo_accel() wrapper, not the "
+                "propagator RHS. Use 'lambert_facets' (default) or 'simple'."
+            )
+
+        # --- lambert_facets (default): build facets + per-facet albedo once. ---
+        lat_count = int(getattr(cfg, "facet_lat_count", 18))
+        lon_count = int(getattr(cfg, "facet_lon_count", 36))
+        pos, normals, areas, lat_c, lon_c = build_latlon_facets(
+            lat_count, lon_count, radius_m=float(R_MOON)
+        )
+
+        source = normalize_albedo_mode(getattr(cfg, "albedo_mode", "constant_albedo"))
+        fallback = float(getattr(cfg, "albedo_const", 0.12))
+
+        if source == ALBEDO_SOURCE_CONSTANT:
+            facet_albedo = np.full(areas.shape[0], fallback, dtype=np.float64)
+        else:
+            if self.surf is None:
+                raise ValueError(
+                    f"albedo_mode={cfg.albedo_mode!r} requires a surface_provider "
+                    "supplying an albedo grid, but none was provided."
+                )
+            surf = extract_surface_provider_strict(self.surf)
+            facet_albedo = self._sample_facet_albedo_from_provider(
+                surf, source, lat_c, lon_c, fallback
+            )
+
+        np.clip(facet_albedo, 0.0, 1.0, out=facet_albedo)
+
+        return _AlbedoPack(
+            backend=1,
+            mode=2,
+            facet_pos_m=pos,
+            facet_normals=normals,
+            facet_areas_m2=areas,
+            facet_albedo=np.ascontiguousarray(facet_albedo, dtype=np.float64),
+            pressure_coefficient=float(getattr(cfg, "albedo_pressure_coefficient", 1.0)),
+            solar_flux_1au_W_m2=float(getattr(cfg, "solar_flux_1au_W_m2", SOLAR_FLUX_1AU)),
+            au_m=float(getattr(cfg, "AU_m", AU)),
+            c_light_m_s=float(getattr(cfg, "c_light_m_s", C_LIGHT)),
+            r_earth_m=float(R_EARTH_MEAN),
+            include_sun_distance_scaling=bool(getattr(cfg, "include_sun_distance_scaling", True)),
+            enable_eclipse=bool(getattr(cfg, "enable_eclipse", True)),
+        )
+
+    def _prepare_albedo_simple(self, cfg: "AlbedoConfig") -> _AlbedoPack:
+        """Legacy cannonball backend: parameters sourced from the surface provider.
+
+        Reproduces the historical albedo behavior (single sub-satellite albedo
+        sample, Sun->spacecraft push, SRP coefficient ``cr``). Works without a
+        provider using a constant albedo from the config.
+        """
+        const = float(getattr(cfg, "albedo_const", 0.12))
+        klamb = float(getattr(cfg, "k_lambert", 1.0))
+        if self.surf is None:
+            return _AlbedoPack(backend=0, mode=2, alb_const=const, alb_scale=1.0, k_lambert=klamb)
 
         surf = extract_surface_provider_strict(self.surf)
-
-        alb_const = float(surf.get("albedo_const", 0.12))
+        alb_const = float(surf.get("albedo_const", const))
         alb_scale = float(surf.get("scale", 1.0))
-        k_lambert = float(surf.get("k_lambert", 1.0))
+        k_lambert = float(surf.get("k_lambert", klamb))
 
         if "albedo_grid" in surf:
             return _AlbedoPack(
-                mode=0,
-                alb_const=alb_const,
-                alb_scale=alb_scale,
-                k_lambert=k_lambert,
+                backend=0, mode=0, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert,
                 grid_alb=surf["albedo_grid"],
-                n_lines=int(surf["n_lines"]),
-                n_samples=int(surf["n_samples"]),
-                res_deg=float(surf["res_deg"]),
-                lon0_deg=float(surf["lon0_deg"]),
-                lat0_deg=float(surf["lat0_deg"]),
+                n_lines=int(surf["n_lines"]), n_samples=int(surf["n_samples"]),
+                res_deg=float(surf["res_deg"]), lon0_deg=float(surf["lon0_deg"]), lat0_deg=float(surf["lat0_deg"]),
             )
-
         if "dn" in surf:
             return _AlbedoPack(
-                mode=1,
-                alb_const=alb_const,
-                alb_scale=alb_scale,
-                k_lambert=k_lambert,
+                backend=0, mode=1, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert,
                 dn=surf["dn"],
-                n_lines=int(surf["n_lines"]),
-                n_samples=int(surf["n_samples"]),
-                res_deg=float(surf["res_deg"]),
-                lon0_deg=float(surf["lon0_deg"]),
-                lat0_deg=float(surf["lat0_deg"]),
-                sf=float(surf.get("scale_factor", 1.0)),
-                off=float(surf.get("offset", 0.0)),
-                missing=float(surf.get("missing_dn", -1.0)),
-                flip=int(surf.get("flip_lat", 0)),
-                latmin=float(surf.get("lat_min_deg", -90.0)),
-                latmax=float(surf.get("lat_max_deg", 90.0)),
+                n_lines=int(surf["n_lines"]), n_samples=int(surf["n_samples"]),
+                res_deg=float(surf["res_deg"]), lon0_deg=float(surf["lon0_deg"]), lat0_deg=float(surf["lat0_deg"]),
+                sf=float(surf.get("scale_factor", 1.0)), off=float(surf.get("offset", 0.0)),
+                missing=float(surf.get("missing_dn", -1.0)), flip=int(surf.get("flip_lat", 0)),
+                latmin=float(surf.get("lat_min_deg", -90.0)), latmax=float(surf.get("lat_max_deg", 90.0)),
             )
+        return _AlbedoPack(backend=0, mode=2, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert)
 
-        # Constant-only fallback
-        return _AlbedoPack(mode=2, alb_const=alb_const, alb_scale=alb_scale, k_lambert=k_lambert)
+    def _sample_facet_albedo_from_provider(
+        self,
+        surf: Dict[str, Any],
+        source: int,
+        lat_c_rad: np.ndarray,
+        lon_c_rad: np.ndarray,
+        fallback: float,
+    ) -> np.ndarray:
+        """Precompute per-facet albedo by sampling a provider grid at facet centers.
+
+        ``lat_c_rad`` / ``lon_c_rad`` are facet-center latitudes/longitudes [rad].
+        NaN / nodata samples fall back to ``fallback`` (documented policy). Grid
+        shape/metadata mismatches raise via the underlying samplers.
+        """
+        n = int(lat_c_rad.shape[0])
+        out = np.empty(n, dtype=np.float64)
+
+        if source == ALBEDO_SOURCE_GRID:
+            if "albedo_grid" not in surf:
+                raise ValueError(
+                    "albedo_mode='albedo_grid' requires surface provider key 'albedo_grid'."
+                )
+            grid = np.ascontiguousarray(np.asarray(surf["albedo_grid"], dtype=np.float64))
+            nl = int(surf["n_lines"])
+            ns = int(surf["n_samples"])
+            res = float(surf["res_deg"])
+            lon0 = float(surf["lon0_deg"])
+            lat0 = float(surf["lat0_deg"])
+            for i in range(n):
+                lat_deg = math.degrees(float(lat_c_rad[i]))
+                lon_deg = math.degrees(float(lon_c_rad[i]))
+                a = float(sample_grid_bilinear(lat_deg, lon_deg, grid, nl, ns, res, lon0, lat0))
+                out[i] = fallback if not math.isfinite(a) else a
+        else:  # ALBEDO_SOURCE_SCALED_DN
+            if "dn" not in surf:
+                raise ValueError(
+                    "albedo_mode='scaled_dn_grid' requires surface provider DN payload ('dn')."
+                )
+            dn = np.ascontiguousarray(np.asarray(surf["dn"], dtype=np.float64))
+            nl = int(surf["n_lines"])
+            ns = int(surf["n_samples"])
+            res = float(surf["res_deg"])
+            lon0 = float(surf["lon0_deg"])
+            lat0 = float(surf["lat0_deg"])
+            sf = float(surf.get("scale_factor", 1.0))
+            off = float(surf.get("offset", 0.0))
+            missing = float(surf.get("missing_dn", -1.0))
+            flip = int(surf.get("flip_lat", 0))
+            latmin = float(surf.get("lat_min_deg", -90.0))
+            latmax = float(surf.get("lat_max_deg", 90.0))
+            for i in range(n):
+                lat_deg = math.degrees(float(lat_c_rad[i]))
+                lon_deg = math.degrees(float(lon_c_rad[i]))
+                a = float(
+                    _sample_albedo_dn_scaled(
+                        lat_deg, lon_deg, dn, nl, ns, res, lon0, lat0,
+                        flip, sf, off, missing, latmin, latmax,
+                    )
+                )
+                out[i] = fallback if not math.isfinite(a) else a
+
+        np.clip(out, 0.0, 1.0, out=out)
+        return out
 
     def _prepare_earth_j2(self, req: Dict[str, bool]) -> _EarthJ2Pack:
         if not req["use_earth_j2"] or (self.earth_j2 is None):
@@ -1422,6 +1643,20 @@ class DynamicsEngine:
         ALB_LATMIN = float(ap.latmin)
         ALB_LATMAX = float(ap.latmax)
 
+        # Albedo backend selector + lambert_facets arrays/coefficients.
+        ALB_BACKEND = int(ap.backend)  # 0 = simple cannonball, 1 = lambert_facets
+        ALB_FACET_POS = ap.facet_pos_m
+        ALB_FACET_NORM = ap.facet_normals
+        ALB_FACET_AREA = ap.facet_areas_m2
+        ALB_FACET_ALB = ap.facet_albedo
+        ALB_PCOEF = float(ap.pressure_coefficient)
+        ALB_SOLAR_FLUX = float(ap.solar_flux_1au_W_m2)
+        ALB_AU = float(ap.au_m)
+        ALB_C = float(ap.c_light_m_s)
+        ALB_R_EARTH = float(ap.r_earth_m)
+        ALB_SCALE_SUN_DIST = bool(ap.include_sun_distance_scaling)
+        ALB_ECLIPSE = bool(ap.enable_eclipse)
+
         # Earth J2 axis normalize once outside kernel
         EJ2_J2 = float(ej.j2)
         EJ2_RREF = float(ej.r_ref_m)
@@ -1560,32 +1795,43 @@ class DynamicsEngine:
 
                 if USE_ALBEDO:
                     rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-                    lat_deg, lon_deg, _ = latlon_from_xyz_m(rfx, rfy, rfz)
-
-                    alb_val = ALB_CONST
-                    if ALB_MODE == 0:
-                        alb_val = sample_grid_bilinear(
-                            lat_deg, lon_deg, ALB_GRID, ALB_NLINES, ALB_NSAMPLES, ALB_RES, ALB_LON0, ALB_LAT0
-                        )
-                    elif ALB_MODE == 1:
-                        alb_val = _sample_albedo_dn_scaled(
-                            lat_deg, lon_deg, ALB_DN, ALB_NLINES, ALB_NSAMPLES, ALB_RES,
-                            ALB_LON0, ALB_LAT0, ALB_FLIP, ALB_SF, ALB_OFF, ALB_MISSING, ALB_LATMIN, ALB_LATMAX,
-                        )
-
-                    if math.isnan(alb_val):
-                        alb_val = ALB_CONST
-                    if alb_val < 0.0:
-                        alb_val = 0.0
-                    elif alb_val > 1.0:
-                        alb_val = 1.0
-                    alb_val *= ALB_SCALE
-
                     sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
-                    aax_f, aay_f, aaz_f = accel_albedo_simple(
-                        rfx, rfy, rfz, sfx, sfy, sfz, RMOON, AU_, P1AU,
-                        alb_val, ALB_KLAMB, SC_CR, SC_AREA, mass, 1 if ENABLE_ECLIPSE else 0,
-                    )
+
+                    if ALB_BACKEND == 1:
+                        # Lambertian facet model (reflected solar; Moon-fixed sum).
+                        efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
+                        aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
+                            rfx, rfy, rfz, sfx, sfy, sfz, efx, efy, efz,
+                            ALB_FACET_POS, ALB_FACET_NORM, ALB_FACET_AREA, ALB_FACET_ALB,
+                            ALB_PCOEF, SC_AREA, mass,
+                            ALB_SOLAR_FLUX, ALB_AU, ALB_C, ALB_R_EARTH,
+                            ALB_SCALE_SUN_DIST, ALB_ECLIPSE,
+                        )
+                    else:
+                        # Legacy cannonball (sub-satellite albedo sample).
+                        lat_deg, lon_deg, _ = latlon_from_xyz_m(rfx, rfy, rfz)
+                        alb_val = ALB_CONST
+                        if ALB_MODE == 0:
+                            alb_val = sample_grid_bilinear(
+                                lat_deg, lon_deg, ALB_GRID, ALB_NLINES, ALB_NSAMPLES, ALB_RES, ALB_LON0, ALB_LAT0
+                            )
+                        elif ALB_MODE == 1:
+                            alb_val = _sample_albedo_dn_scaled(
+                                lat_deg, lon_deg, ALB_DN, ALB_NLINES, ALB_NSAMPLES, ALB_RES,
+                                ALB_LON0, ALB_LAT0, ALB_FLIP, ALB_SF, ALB_OFF, ALB_MISSING, ALB_LATMIN, ALB_LATMAX,
+                            )
+                        if math.isnan(alb_val):
+                            alb_val = ALB_CONST
+                        if alb_val < 0.0:
+                            alb_val = 0.0
+                        elif alb_val > 1.0:
+                            alb_val = 1.0
+                        alb_val *= ALB_SCALE
+                        aax_f, aay_f, aaz_f = accel_albedo_simple(
+                            rfx, rfy, rfz, sfx, sfy, sfz, RMOON, AU_, P1AU,
+                            alb_val, ALB_KLAMB, SC_CR, SC_AREA, mass, 1 if ENABLE_ECLIPSE else 0,
+                        )
+
                     aax, aay, aaz = quat_rotate_vec(q0, -q1, -q2, -q3, aax_f, aay_f, aaz_f)
                     ax += aax
                     ay += aay
@@ -1840,69 +2086,100 @@ class DynamicsEngine:
                 ay += asy
                 az += asz
 
-            # E) Albedo
+            # E) Albedo (reflected solar radiation pressure)
             if USE_ALBEDO:
                 rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-                lat_deg, lon_deg, _ = latlon_from_xyz_m(rfx, rfy, rfz)
-
-                alb_val = ALB_CONST
-                if ALB_MODE == 0:
-                    alb_val = sample_grid_bilinear(
-                        lat_deg,
-                        lon_deg,
-                        ALB_GRID,
-                        ALB_NLINES,
-                        ALB_NSAMPLES,
-                        ALB_RES,
-                        ALB_LON0,
-                        ALB_LAT0,
-                    )
-                elif ALB_MODE == 1:
-                    alb_val = _sample_albedo_dn_scaled(
-                        lat_deg,
-                        lon_deg,
-                        ALB_DN,
-                        ALB_NLINES,
-                        ALB_NSAMPLES,
-                        ALB_RES,
-                        ALB_LON0,
-                        ALB_LAT0,
-                        ALB_FLIP,
-                        ALB_SF,
-                        ALB_OFF,
-                        ALB_MISSING,
-                        ALB_LATMIN,
-                        ALB_LATMAX,
-                    )
-
-                if math.isnan(alb_val):
-                    alb_val = ALB_CONST
-                if alb_val < 0.0:
-                    alb_val = 0.0
-                elif alb_val > 1.0:
-                    alb_val = 1.0
-                alb_val *= ALB_SCALE
-
                 # Sun inertial -> fixed
                 sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
 
-                aax_f, aay_f, aaz_f = accel_albedo_simple(
-                    rfx,
-                    rfy,
-                    rfz,
-                    sfx,
-                    sfy,
-                    sfz,
-                    RMOON,
-                    AU_,
-                    P1AU,
-                    alb_val,
-                    ALB_KLAMB,
-                    SC_CR,
-                    SC_AREA,
-                    mass,
-                    1 if ENABLE_ECLIPSE else 0,
-                )
+                if ALB_BACKEND == 1:
+                    # Lambertian facet model: sum reflected-solar contributions
+                    # from sunlit, visible facets in the Moon-fixed frame.
+                    efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
+                    aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
+                        rfx,
+                        rfy,
+                        rfz,
+                        sfx,
+                        sfy,
+                        sfz,
+                        efx,
+                        efy,
+                        efz,
+                        ALB_FACET_POS,
+                        ALB_FACET_NORM,
+                        ALB_FACET_AREA,
+                        ALB_FACET_ALB,
+                        ALB_PCOEF,
+                        SC_AREA,
+                        mass,
+                        ALB_SOLAR_FLUX,
+                        ALB_AU,
+                        ALB_C,
+                        ALB_R_EARTH,
+                        ALB_SCALE_SUN_DIST,
+                        ALB_ECLIPSE,
+                    )
+                else:
+                    # Legacy cannonball: single sub-satellite albedo sample.
+                    lat_deg, lon_deg, _ = latlon_from_xyz_m(rfx, rfy, rfz)
+
+                    alb_val = ALB_CONST
+                    if ALB_MODE == 0:
+                        alb_val = _sample_grid_bilinear_kernel(
+                            lat_deg,
+                            lon_deg,
+                            ALB_GRID,
+                            ALB_NLINES,
+                            ALB_NSAMPLES,
+                            ALB_RES,
+                            ALB_LON0,
+                            ALB_LAT0,
+                        )
+                    elif ALB_MODE == 1:
+                        alb_val = _sample_albedo_dn_scaled(
+                            lat_deg,
+                            lon_deg,
+                            ALB_DN,
+                            ALB_NLINES,
+                            ALB_NSAMPLES,
+                            ALB_RES,
+                            ALB_LON0,
+                            ALB_LAT0,
+                            ALB_FLIP,
+                            ALB_SF,
+                            ALB_OFF,
+                            ALB_MISSING,
+                            ALB_LATMIN,
+                            ALB_LATMAX,
+                        )
+
+                    if math.isnan(alb_val):
+                        alb_val = ALB_CONST
+                    if alb_val < 0.0:
+                        alb_val = 0.0
+                    elif alb_val > 1.0:
+                        alb_val = 1.0
+                    alb_val *= ALB_SCALE
+
+                    aax_f, aay_f, aaz_f = accel_albedo_simple(
+                        rfx,
+                        rfy,
+                        rfz,
+                        sfx,
+                        sfy,
+                        sfz,
+                        RMOON,
+                        AU_,
+                        P1AU,
+                        alb_val,
+                        ALB_KLAMB,
+                        SC_CR,
+                        SC_AREA,
+                        mass,
+                        1 if ENABLE_ECLIPSE else 0,
+                    )
+
                 aax, aay, aaz = quat_rotate_vec(q0, -q1, -q2, -q3, aax_f, aay_f, aaz_f)
                 ax += aax
                 ay += aay
@@ -2182,68 +2459,96 @@ class DynamicsEngine:
             )
             out["SRP"] = _norm3(asx, asy, asz)
 
-        # Albedo
-        if req["use_albedo"] and (ap.mode != 2):
+        # Albedo (reflected solar radiation pressure)
+        if req["use_albedo"]:
             rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
-            lat_deg, lon_deg, _ = latlon_from_xyz_m(rfx, rfy, rfz)
-
-            aval = float(ap.alb_const)
-            if ap.mode == 0 and ap.grid_alb is not None:
-                aval = float(
-                    sample_grid_bilinear(
-                        lat_deg,
-                        lon_deg,
-                        np.ascontiguousarray(ap.grid_alb, dtype=np.float64),
-                        int(ap.n_lines),
-                        int(ap.n_samples),
-                        float(ap.res_deg),
-                        float(ap.lon0_deg),
-                        float(ap.lat0_deg),
-                    )
-                )
-            elif ap.mode == 1 and ap.dn is not None:
-                aval = float(
-                    _sample_albedo_dn_scaled(
-                        lat_deg,
-                        lon_deg,
-                        np.ascontiguousarray(ap.dn, dtype=np.float64),
-                        int(ap.n_lines),
-                        int(ap.n_samples),
-                        float(ap.res_deg),
-                        float(ap.lon0_deg),
-                        float(ap.lat0_deg),
-                        int(ap.flip),
-                        float(ap.sf),
-                        float(ap.off),
-                        float(ap.missing),
-                        float(ap.latmin),
-                        float(ap.latmax),
-                    )
-                )
-
-            if math.isnan(aval):
-                aval = float(ap.alb_const)
-            aval = max(0.0, min(1.0, aval)) * float(ap.alb_scale)
-
             sfx, sfy, sfz = quat_rotate_vec(q[0], q[1], q[2], q[3], sun[0], sun[1], sun[2])
 
-            aax_f, aay_f, aaz_f = accel_albedo_simple(
-                rfx,
-                rfy,
-                rfz,
-                sfx,
-                sfy,
-                sfz,
-                float(R_MOON),
-                float(AU),
-                float(P_SUN_1AU),
-                float(aval),
-                float(ap.k_lambert),
-                float(self.sc_props.cr),
-                float(self.sc_props.area_m2),
-                float(mass),
-                1,
-            )
+            if ap.backend == 1:
+                efx, efy, efz = quat_rotate_vec(q[0], q[1], q[2], q[3], earth[0], earth[1], earth[2])
+                aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
+                    rfx,
+                    rfy,
+                    rfz,
+                    sfx,
+                    sfy,
+                    sfz,
+                    efx,
+                    efy,
+                    efz,
+                    np.ascontiguousarray(ap.facet_pos_m, dtype=np.float64),
+                    np.ascontiguousarray(ap.facet_normals, dtype=np.float64),
+                    np.ascontiguousarray(ap.facet_areas_m2, dtype=np.float64),
+                    np.ascontiguousarray(ap.facet_albedo, dtype=np.float64),
+                    float(ap.pressure_coefficient),
+                    float(self.sc_props.area_m2),
+                    float(mass),
+                    float(ap.solar_flux_1au_W_m2),
+                    float(ap.au_m),
+                    float(ap.c_light_m_s),
+                    float(ap.r_earth_m),
+                    bool(ap.include_sun_distance_scaling),
+                    bool(ap.enable_eclipse),
+                )
+            else:
+                lat_deg, lon_deg, _ = latlon_from_xyz_m(rfx, rfy, rfz)
+
+                aval = float(ap.alb_const)
+                if ap.mode == 0 and ap.grid_alb is not None:
+                    aval = float(
+                        sample_grid_bilinear(
+                            lat_deg,
+                            lon_deg,
+                            np.ascontiguousarray(ap.grid_alb, dtype=np.float64),
+                            int(ap.n_lines),
+                            int(ap.n_samples),
+                            float(ap.res_deg),
+                            float(ap.lon0_deg),
+                            float(ap.lat0_deg),
+                        )
+                    )
+                elif ap.mode == 1 and ap.dn is not None:
+                    aval = float(
+                        _sample_albedo_dn_scaled(
+                            lat_deg,
+                            lon_deg,
+                            np.ascontiguousarray(ap.dn, dtype=np.float64),
+                            int(ap.n_lines),
+                            int(ap.n_samples),
+                            float(ap.res_deg),
+                            float(ap.lon0_deg),
+                            float(ap.lat0_deg),
+                            int(ap.flip),
+                            float(ap.sf),
+                            float(ap.off),
+                            float(ap.missing),
+                            float(ap.latmin),
+                            float(ap.latmax),
+                        )
+                    )
+
+                if math.isnan(aval):
+                    aval = float(ap.alb_const)
+                aval = max(0.0, min(1.0, aval)) * float(ap.alb_scale)
+
+                aax_f, aay_f, aaz_f = accel_albedo_simple(
+                    rfx,
+                    rfy,
+                    rfz,
+                    sfx,
+                    sfy,
+                    sfz,
+                    float(R_MOON),
+                    float(AU),
+                    float(P_SUN_1AU),
+                    float(aval),
+                    float(ap.k_lambert),
+                    float(self.sc_props.cr),
+                    float(self.sc_props.area_m2),
+                    float(mass),
+                    1,
+                )
+
             aax_i, aay_i, aaz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], aax_f, aay_f, aaz_f)
             out["Albedo"] = _norm3(aax_i, aay_i, aaz_i)
 

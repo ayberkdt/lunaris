@@ -307,6 +307,47 @@ def apply_args_to_config(cfg: "SimConfig", args: argparse.Namespace) -> "SimConf
             th = replace(th, facet_lon_count=int(args.thermal_facet_lon_count))
         cfg = replace(cfg, thermal=th)
 
+    # --- Lunar albedo configuration ---
+    albedo_arg_names = (
+        "albedo_model",
+        "albedo_mode",
+        "albedo_const",
+        "albedo_pressure_coefficient",
+        "albedo_facet_lat_count",
+        "albedo_facet_lon_count",
+        "albedo_require_provider",
+        "albedo_enable_eclipse",
+    )
+    albedo_requested = bool(flags.enable_albedo) or any(
+        getattr(args, name, None) is not None for name in albedo_arg_names
+    )
+    if albedo_requested:
+        from lunaris.physics.surface_effects import AlbedoConfig
+
+        alb = cfg.albedo if cfg.albedo is not None else AlbedoConfig()
+        if getattr(args, "albedo_model", None) is not None:
+            alb = replace(alb, albedo_model=str(args.albedo_model))
+        # Convenience: supplying an albedo raster but no explicit mode selects the
+        # scaled-DN grid source, preserving the historical "--albedo-root drives
+        # albedo" behavior with the facet model.
+        if getattr(args, "albedo_mode", None) is not None:
+            alb = replace(alb, albedo_mode=str(args.albedo_mode))
+        elif getattr(args, "albedo_root", None) is not None:
+            alb = replace(alb, albedo_mode="scaled_dn_grid")
+        if getattr(args, "albedo_const", None) is not None:
+            alb = replace(alb, albedo_const=float(args.albedo_const), A_moon=float(args.albedo_const))
+        if getattr(args, "albedo_pressure_coefficient", None) is not None:
+            alb = replace(alb, albedo_pressure_coefficient=float(args.albedo_pressure_coefficient))
+        if getattr(args, "albedo_facet_lat_count", None) is not None:
+            alb = replace(alb, facet_lat_count=int(args.albedo_facet_lat_count))
+        if getattr(args, "albedo_facet_lon_count", None) is not None:
+            alb = replace(alb, facet_lon_count=int(args.albedo_facet_lon_count))
+        if getattr(args, "albedo_require_provider", None) is not None:
+            alb = replace(alb, require_surface_provider=bool(args.albedo_require_provider))
+        if getattr(args, "albedo_enable_eclipse", None) is not None:
+            alb = replace(alb, enable_eclipse=bool(args.albedo_enable_eclipse))
+        cfg = replace(cfg, albedo=alb)
+
     # --- Solid tide configuration ---
     tide_cfg = cfg.solid_tides if cfg.solid_tides is not None else SolidTideConfig()
     if getattr(args, "tide_bodies", None) is not None:
