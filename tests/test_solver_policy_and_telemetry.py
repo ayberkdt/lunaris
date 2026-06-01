@@ -17,8 +17,8 @@ from PySide6 import QtWidgets
 from lunaris.core.dynamics import _select_adaptive_sh_degree
 from lunaris.core.propagator import _make_telem_dict, build_events
 from lunaris.common.type_defs import PropagatorConfig
-from lunaris.ui.widgets.live_telemetry_page import HAS_PYQTGRAPH, MultiTelemetryPlot
-from lunaris.ui.widgets.solver_policy import (
+from lunaris.ui.pages.live_telemetry_page import HAS_PYQTGRAPH, MultiTelemetryPlot
+from lunaris.ui.core.solver_policy import (
     DEFAULT_ADAPTIVE_ATOL,
     DEFAULT_ADAPTIVE_RTOL,
     LEGACY_ADAPTIVE_ATOL,

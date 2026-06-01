@@ -20,8 +20,8 @@ pytest.importorskip("PySide6")
 
 from PySide6 import QtWidgets  # noqa: E402
 
-from lunaris.ui.widgets import showcase_embed  # noqa: E402
-from lunaris.ui.widgets.showcase_embed import (  # noqa: E402
+from lunaris.ui.components import showcase_embed  # noqa: E402
+from lunaris.ui.components.showcase_embed import (  # noqa: E402
     ShowcaseEmbedWidget,
     _web_engine_is_safe,
     resolve_web_embed_dir,

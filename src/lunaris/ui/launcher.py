@@ -11,7 +11,7 @@ user choose one of two workspaces:
    (:class:`lunaris.surrogate.st_lrps.ui.studio_parts.main_window.MainWindow`).
 
 Behind the navigation cards sits an optional, offline, interactive 3D Moon
-(:class:`lunaris.ui.widgets.showcase_embed.ShowcaseEmbedWidget`). The web side is
+(:class:`lunaris.ui.components.showcase_embed.ShowcaseEmbedWidget`). The web side is
 a pure visual engine; all navigation lives in the PySide6 glassmorphic overlay.
 
 Design rules
@@ -37,8 +37,8 @@ import sys
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from lunaris.ui.widgets.showcase_embed import ShowcaseEmbedWidget
-from lunaris.ui.widgets.ui_commons import (
+from lunaris.ui.components.showcase_embed import ShowcaseEmbedWidget
+from lunaris.ui.core.ui_commons import (
     ASSETS_DIR,
     THEME,
     find_project_root,

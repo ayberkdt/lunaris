@@ -37,12 +37,12 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
-    from .ui_commons import THEME, get_icon
+    from lunaris.ui.core.ui_commons import THEME, get_icon
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
         import sys
 
-        print("Run as: python -m lunaris.ui.widgets.monte_carlo_analysis_panel", file=sys.stderr)
+        print("Run as: python -m lunaris.ui.components.monte_carlo_analysis_panel", file=sys.stderr)
         raise SystemExit(2)
     raise
 

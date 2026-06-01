@@ -17,12 +17,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6 import QtCore, QtWidgets
 
-from lunaris.ui.widgets.data_files_page import DataFilesState, DataPage
-from lunaris.ui.widgets.mission_propagation_page import MissionPropagationPage, UISolverConfig
-from lunaris.ui.widgets.monte_carlo_page import MonteCarloPage, UIMonteCarloConfig
-from lunaris.ui.widgets.result_exports_page import OutputPageState, ResultsExportPage
-from lunaris.ui.widgets.solver_policy import DEFAULT_ADAPTIVE_RTOL, DEFAULT_MAX_STEP_S
-from lunaris.ui.widgets.ui_commons import THEME
+from lunaris.ui.pages.data_files_page import DataFilesState, DataPage
+from lunaris.ui.pages.mission_propagation_page import MissionPropagationPage, UISolverConfig
+from lunaris.ui.pages.monte_carlo_page import MonteCarloPage, UIMonteCarloConfig
+from lunaris.ui.pages.result_exports_page import OutputPageState, ResultsExportPage
+from lunaris.ui.core.solver_policy import DEFAULT_ADAPTIVE_RTOL, DEFAULT_MAX_STEP_S
+from lunaris.ui.core.ui_commons import THEME
 
 
 def _app() -> QtWidgets.QApplication:
@@ -493,7 +493,7 @@ def test_monte_carlo_copy_all_backend_commands_smoke(tmp_path: Path) -> None:
 
 
 def test_session_persists_visual_state_roundtrip() -> None:
-    from lunaris.ui.widgets.session_persistence import collect_visual_state, apply_visual_state
+    from lunaris.ui.core.session_persistence import collect_visual_state, apply_visual_state
 
     visual = collect_visual_state(
         active_page_key="Forces",
@@ -522,7 +522,7 @@ def test_session_persists_visual_state_roundtrip() -> None:
 
 
 def test_old_session_without_visual_state_still_loads() -> None:
-    from lunaris.ui.widgets.session_persistence import apply_visual_state
+    from lunaris.ui.core.session_persistence import apply_visual_state
 
     # An old session payload that has no 'visual_state' key
     old_payload = {"orbit": {}, "forces": {}}

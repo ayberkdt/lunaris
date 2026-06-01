@@ -35,7 +35,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 # =============================================================================
 # 1.                            UI CONFIGURATION
 # =============================================================================
-from lunaris.ui.widgets.ui_commons import (
+from lunaris.ui.core.ui_commons import (
     APP_NAME,
     APP_VERSION,
     ASSETS_DIR as UI_ASSETS_DIR,
@@ -69,7 +69,7 @@ DEFAULT_UI_STATE = {
 # =============================================================================
 # 3.                          FONT LOADING
 # =============================================================================
-from lunaris.ui.widgets.ui_commons import find_project_root, load_fonts
+from lunaris.ui.core.ui_commons import find_project_root, load_fonts
 
 PROJECT_ROOT = find_project_root()
 DATA_DIR = PROJECT_ROOT / "data"
@@ -79,20 +79,20 @@ ASSETS_DIR = UI_ASSETS_DIR
 # =============================================================================
 # 4.                          ICON UTILITIES
 # =============================================================================
-from lunaris.ui.widgets.ui_commons import get_icon
+from lunaris.ui.core.ui_commons import get_icon
 
 
 # =============================================================================
 # 5.                          UTILITY HELPERS
 # =============================================================================
-from lunaris.ui.widgets.ui_commons import normalize_path
+from lunaris.ui.core.ui_commons import normalize_path
 
-from lunaris.ui.widgets.force_models_page import find_best_gravity_file
-from lunaris.ui.widgets.command_builder import build_command, build_command_preview, build_preflight_snapshot, build_mc_command
-from lunaris.ui.widgets.preflight_validation import PreFlightWorker
-from lunaris.ui.widgets.result_exports_page import OutputPageState, ResultsExportPage
-from lunaris.ui.widgets.solver_policy import normalize_solver_config_object
-from lunaris.ui.widgets.session_persistence import (
+from lunaris.ui.pages.force_models_page import find_best_gravity_file
+from lunaris.ui.core.command_builder import build_command, build_command_preview, build_preflight_snapshot, build_mc_command
+from lunaris.ui.core.preflight_validation import PreFlightWorker
+from lunaris.ui.pages.result_exports_page import OutputPageState, ResultsExportPage
+from lunaris.ui.core.solver_policy import normalize_solver_config_object
+from lunaris.ui.core.session_persistence import (
     apply_session_snapshot,
     apply_visual_state,
     autodetect_data_state,
@@ -105,7 +105,7 @@ from lunaris.ui.widgets.session_persistence import (
 # =============================================================================
 # 6.                        DATACLASSES (main glue)
 # =============================================================================
-from lunaris.ui.widgets.mission_propagation_page import UISolverConfig, UISpacecraftConfig
+from lunaris.ui.pages.mission_propagation_page import UISolverConfig, UISpacecraftConfig
 
 @dataclass
 class SimulationState:
@@ -121,34 +121,34 @@ class SimulationState:
 # =============================================================================
 # 7.                        CUSTOM UI PRIMITIVES
 # =============================================================================
-from lunaris.ui.widgets.ui_commons import StatusBadge
+from lunaris.ui.core.ui_commons import StatusBadge
 
 
 # =============================================================================
 # 10.                       GRAVITY CONFIGURATION
 # =============================================================================
-from lunaris.ui.widgets.force_models_page import UIGravityConfig
+from lunaris.ui.pages.force_models_page import UIGravityConfig
 
 
 
 # =============================================================================
 # 11.                       SOLVER SETTINGS DIALOG
 # =============================================================================
-from lunaris.ui.widgets.mission_propagation_page import SolverSettingsDialog
+from lunaris.ui.pages.mission_propagation_page import SolverSettingsDialog
 
 
 
 # =============================================================================
 # 12.                       SPACECRAFT BUILDER DIALOG
 # =============================================================================
-from lunaris.ui.widgets.mission_propagation_page import SpacecraftBusDialog
+from lunaris.ui.pages.mission_propagation_page import SpacecraftBusDialog
 
 
 
 # =============================================================================
 # 15.                       ALBEDO CONFIGURATION
 # =============================================================================
-from lunaris.ui.widgets.force_models_page import UIAlbedoConfig
+from lunaris.ui.pages.force_models_page import UIAlbedoConfig
 
 
 
@@ -1066,7 +1066,7 @@ class MainWindow(QtWidgets.QMainWindow):
         Page 1: Orbit Configuration.
         Delegated to ui_parts.orbit_config_page.OrbitPage
         """
-        from lunaris.ui.widgets.orbit_config_page import OrbitPage  # local import to avoid circulars
+        from lunaris.ui.pages.orbit_config_page import OrbitPage  # local import to avoid circulars
         self.page_orbit = OrbitPage()
         return self.page_orbit
     
@@ -1080,7 +1080,7 @@ class MainWindow(QtWidgets.QMainWindow):
         Page 2: Force Model Settings.
         Delegated to ui_parts.force_models_page.ForceModelsPage
         """
-        from lunaris.ui.widgets.force_models_page import ForceModelsPage  # local import to avoid circulars
+        from lunaris.ui.pages.force_models_page import ForceModelsPage  # local import to avoid circulars
 
         # IMPORTANT: pass shared config objects so dialogs mutate the same instances
         self.page_forces = ForceModelsPage(
@@ -1095,7 +1095,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # =========================================================================
     
     def _build_page_propagation(self) -> QtWidgets.QWidget:
-        from lunaris.ui.widgets.mission_propagation_page import MissionPropagationPage
+        from lunaris.ui.pages.mission_propagation_page import MissionPropagationPage
         self.page_propagation = MissionPropagationPage(
             parent=self,
             mission_epoch=self.mission_epoch,
@@ -1137,7 +1137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return page
     
     def _build_page_telemetry(self) -> QtWidgets.QWidget:
-        from lunaris.ui.widgets.live_telemetry_page import TelemetryPage
+        from lunaris.ui.pages.live_telemetry_page import TelemetryPage
         self.page_telemetry = TelemetryPage()
         return self.page_telemetry
 
@@ -1146,7 +1146,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # 24. PAGE BUILDERS: DATA & FILES (PAGE 6) 
     # =========================================================================
     def _build_page_data(self) -> QtWidgets.QWidget:
-        from lunaris.ui.widgets.data_files_page import DataPage, DataFilesState
+        from lunaris.ui.pages.data_files_page import DataPage, DataFilesState
 
         # Initial state comes from the values held on MainWindow:
         init = DataFilesState(
@@ -1173,7 +1173,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_page_mc(self) -> QtWidgets.QWidget:
         """Page 7: Monte Carlo Analysis — configuration + live metrics."""
-        from lunaris.ui.widgets.monte_carlo_page import MonteCarloPage
+        from lunaris.ui.pages.monte_carlo_page import MonteCarloPage
         self.page_mc = MonteCarloPage(parent=self)
         self.page_mc.run_requested.connect(self._on_mc_run_requested)
         return self.page_mc

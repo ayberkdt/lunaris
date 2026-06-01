@@ -41,7 +41,7 @@ from typing import Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from lunaris.ui.widgets.ui_commons import THEME, find_project_root
+from lunaris.ui.core.ui_commons import THEME, find_project_root
 
 # --- Optional QtWebEngine import (must never break module import) ------------
 try:
@@ -112,7 +112,7 @@ def resolve_web_embed_dir() -> Optional[Path]:
     # In-repo build output.
     try:
         repo_root = find_project_root()
-        candidates.append(repo_root / "desktop" / "website" / "lunaris-web" / "out")
+        candidates.append(repo_root / "web" / "out")
     except Exception:
         pass
 

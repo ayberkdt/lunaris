@@ -48,7 +48,7 @@ from PySide6 import QtCore, QtWidgets
 
 
 try:
-    from lunaris.ui.widgets.ui_commons import THEME, get_icon, StatusBadge, create_hint_label
+    from lunaris.ui.core.ui_commons import THEME, get_icon, StatusBadge, create_hint_label
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -58,7 +58,7 @@ except ImportError:
         print("  When executed directly, relative imports like '.constants' fail.", file=sys.stderr)
         print("-" * 60, file=sys.stderr)
         print("  From the project root, run:", file=sys.stderr)
-        print("\n      python -m lunaris.ui.widgets.data_files_page\n", file=sys.stderr)
+        print("\n      python -m lunaris.ui.pages.data_files_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
         raise SystemExit(2)
     raise
@@ -604,7 +604,7 @@ if __name__ == "__main__":
     )
 
     # Helpers required by DataPage
-    from lunaris.ui.widgets.ui_commons import find_project_root, normalize_path  # keep consistent with your imports
+    from lunaris.ui.core.ui_commons import find_project_root, normalize_path  # keep consistent with your imports
 
     def log_message(msg: str) -> None:
         print(msg)

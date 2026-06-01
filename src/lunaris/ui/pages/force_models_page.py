@@ -55,7 +55,7 @@ Optional helpers (recommended):
 
 Typical usage (MainWindow)
 --------------------------
-    from lunaris.ui.widgets.force_models_page import ForceModelsPage
+    from lunaris.ui.pages.force_models_page import ForceModelsPage
 
     self.page_forces = ForceModelsPage(
         on_gravity_settings=self._on_gravity_settings,
@@ -99,9 +99,9 @@ from PySide6 import QtCore, QtWidgets
 
 
 try:
-    from .ui_commons import normalize_path, THEME, QuickChip, ToggleSwitch, get_icon, find_project_root, CostIndicator
-    from .surrogate_artifacts import is_valid_surrogate_run, looks_like_lunar_surrogate_run
-    from .gravity_artifact_utils import (
+    from lunaris.ui.core.ui_commons import normalize_path, THEME, QuickChip, ToggleSwitch, get_icon, find_project_root, CostIndicator
+    from lunaris.ui.core.surrogate_artifacts import is_valid_surrogate_run, looks_like_lunar_surrogate_run
+    from lunaris.ui.core.gravity_artifact_utils import (
         GRAVITY_EXTENSIONS,
         extract_sh_degree,
         find_best_gravity_file,
@@ -117,7 +117,7 @@ except ImportError:
         print("  When executed directly, relative imports like '.constants' fail.", file=sys.stderr)
         print("-" * 60, file=sys.stderr)
         print("  From the project root, run:", file=sys.stderr)
-        print("\n      python -m lunaris.ui.widgets.force_models_page\n", file=sys.stderr)
+        print("\n      python -m lunaris.ui.pages.force_models_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
         raise SystemExit(2)
     raise

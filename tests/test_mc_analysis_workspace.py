@@ -28,7 +28,7 @@ from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
 from lunaris.analysis.monte_carlo.plotting import plot_mc_report
 from lunaris.common.montecarlo_defs import MCRunResult
 from lunaris.ui.app import MainWindow
-from lunaris.ui.widgets.monte_carlo_analysis_panel import MonteCarloAnalysisPanel
+from lunaris.ui.components.monte_carlo_analysis_panel import MonteCarloAnalysisPanel
 
 
 def _app() -> QtWidgets.QApplication:
