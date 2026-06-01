@@ -173,7 +173,7 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 
 
 from .common_widgets import *
-from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _inspect_run_artifacts, _NoWheelOnSpinFilter
+from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _inspect_run_artifacts, _NoWheelOnSpinFilter
 
 
 from .data_pages import *
@@ -292,9 +292,7 @@ class STLRPSProfilingTab(QWidget):
             _tune_inputs(group)
 
         self.command_preview = QPlainTextEdit()
-        self.command_preview.setReadOnly(True)
-        self.command_preview.setFont(_mono_font())
-        self.command_preview.setMinimumHeight(76)
+        _style_command_preview(self.command_preview, min_h=82, max_h=120)
         self.command_preview.setPlaceholderText(
             f"Click Preview Command to see the exact python -m {PROFILE_CLI_MODULE} command."
         )
@@ -316,8 +314,6 @@ class STLRPSProfilingTab(QWidget):
         preview_buttons_widget = QWidget()
         preview_buttons_widget.setLayout(preview_buttons)
         preview_form.addRow("", preview_buttons_widget)
-        preview_form.addRow("Generated Command", self.command_preview)
-        preview_form.addRow("", self.command_warning)
 
         # Rebuild Runtime Performance page layout (Phase 2):
         # We refactor the profiling dashboard to place Configuration in a scrollable panel,
@@ -329,8 +325,8 @@ class STLRPSProfilingTab(QWidget):
         config_card.setObjectName("profileConfigCard")
         config_card.setStyleSheet(
             "QFrame#profileConfigCard {"
-            "  background: rgba(11, 16, 32, 0.58);"
-            "  border: 1px solid rgba(185, 194, 221, 0.10);"
+            "  background: rgba(11, 16, 32, 0.72);"
+            "  border: 1px solid rgba(185, 194, 221, 0.12);"
             "  border-radius: 12px;"
             "}"
         )
@@ -381,9 +377,9 @@ class STLRPSProfilingTab(QWidget):
         actions_card.setObjectName("profileActionsCard")
         actions_card.setStyleSheet(
             "QFrame#profileActionsCard {"
-            "  background: rgba(11, 16, 32, 0.72);"
-            "  border: 1px solid rgba(185, 194, 221, 0.10);"
-            "  border-radius: 10px;"
+            "  background: rgba(8, 13, 26, 0.82);"
+            "  border: 1px solid rgba(53, 208, 255, 0.18);"
+            "  border-radius: 12px;"
             "}"
         )
         actions_l = QVBoxLayout()
@@ -391,8 +387,8 @@ class STLRPSProfilingTab(QWidget):
         actions_l.setSpacing(8)
         
         # Command preview directly inside actions
-        cmd_head = QLabel("Generated CLI Command:")
-        cmd_head.setStyleSheet("font-size: 11px; font-weight: 600; color: #35d0ff;")
+        cmd_head = QLabel("Generated CLI Command")
+        cmd_head.setStyleSheet("font-size: 11px; font-weight: 800; color: #35d0ff;")
         
         actions_l.addWidget(cmd_head)
         actions_l.addWidget(self.command_preview)
@@ -430,8 +426,7 @@ class STLRPSProfilingTab(QWidget):
         profiling_bar.addWidget(self.btn_clear_profiling)
 
         self.profile_summary = QPlainTextEdit()
-        self.profile_summary.setReadOnly(True)
-        self.profile_summary.setFont(_mono_font())
+        _style_command_preview(self.profile_summary, min_h=180)
         self.profile_summary.setPlaceholderText("runtime_profile_summary.md will appear here after profiling.")
         self._gallery = ImageGallery()
         self._gallery._placeholder.setText("Runtime profile plots will appear here.")
@@ -758,14 +753,11 @@ class RuntimePerformancePage(QWidget):
         lo = QVBoxLayout()
         lo.setContentsMargins(22, 20, 22, 20)
         lo.setSpacing(14)
-        title = QLabel("Runtime Performance")
-        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
-        subtitle = QLabel(
-            "Runtime inference performance: loading latency, throughput sweep, chunk effects, and hardware acceleration validation."
-        )
-        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
-        lo.addWidget(title)
-        lo.addWidget(subtitle)
+        lo.addWidget(_make_page_header(
+            "Runtime Performance",
+            "Profile loading latency, throughput, batching behavior, chunk effects, and hardware acceleration.",
+            "Inference Workbench",
+        ))
         lo.addWidget(profile_tab, 1)
         self.setLayout(lo)
 

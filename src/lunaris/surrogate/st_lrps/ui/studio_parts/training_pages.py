@@ -174,7 +174,7 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 
 
 from .common_widgets import *
-from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _inspect_run_artifacts, _NoWheelOnSpinFilter
+from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _inspect_run_artifacts, _NoWheelOnSpinFilter
 
 
 from .data_pages import *
@@ -1737,9 +1737,9 @@ class STLRPSTrainTab(QWidget):
         launch_strip.setObjectName("setupLaunchStrip")
         launch_strip.setStyleSheet(
             "QFrame#setupLaunchStrip {"
-            "  background: rgba(11, 16, 32, 0.82);"
-            "  border: 1px solid rgba(185, 194, 221, 0.13);"
-            "  border-radius: 8px;"
+            "  background: rgba(8, 13, 26, 0.82);"
+            "  border: 1px solid rgba(53, 208, 255, 0.18);"
+            "  border-radius: 12px;"
             "}"
         )
         launch_l = QHBoxLayout()
@@ -1794,8 +1794,7 @@ class STLRPSTrainTab(QWidget):
         cmd_header.addWidget(self.btn_copy_cmd_setup)
         cmd_header.addStretch(1)
         
-        self.command_preview.setMinimumHeight(60)
-        self.command_preview.setMaximumHeight(80)
+        _style_command_preview(self.command_preview, min_h=72, max_h=96)
         
         extra_row_layout = QHBoxLayout()
         extra_lbl = QLabel("Extra CLI Arguments:")
@@ -1828,16 +1827,12 @@ class STLRPSTrainTab(QWidget):
         setup_l = QVBoxLayout()
         setup_l.setContentsMargins(22, 20, 22, 20)
         setup_l.setSpacing(16)
-        
-        setup_title = QLabel("Training Setup")
-        setup_title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
-        setup_subtitle = QLabel(
-            "Configure datasets, model representation, optimization, resume behavior, and launch commands."
-        )
-        setup_subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
-        
-        setup_l.addWidget(setup_title)
-        setup_l.addWidget(setup_subtitle)
+
+        setup_l.addWidget(_make_page_header(
+            "Training Setup",
+            "Shape the dataset, architecture, optimization, resume behavior, and launch plan before starting a long run.",
+            "Experiment Design",
+        ))
         setup_l.addWidget(launch_strip)
         setup_l.addWidget(params_page, 1)
         
@@ -1902,7 +1897,12 @@ class STLRPSTrainTab(QWidget):
         self.monitor_page = QWidget()
         monitor_shell_l = QVBoxLayout(self.monitor_page)
         monitor_shell_l.setContentsMargins(18, 16, 18, 16)
-        monitor_shell_l.setSpacing(10)
+        monitor_shell_l.setSpacing(12)
+        monitor_shell_l.addWidget(_make_page_header(
+            "Training Monitor",
+            "Track lifecycle, loss curves, phase timing, checkpoints, and process output while the experiment runs.",
+            "Live Experiment",
+        ))
         monitor_shell_l.addWidget(_scroll_wrap(monitor_content), 1)
 
         # ── 9. Final Setup ──

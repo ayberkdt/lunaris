@@ -145,6 +145,8 @@ lunaris-train     ST-LRPS training CLI
 lunaris-eval      ST-LRPS evaluation CLI
 lunaris-benchmark ST-LRPS orbit-level gravity benchmark / validation CLI
 lunaris-data      external-data download / verify CLI
+lunaris-perturbation-budget
+                  acceleration and force-model uncertainty budget analysis
 ```
 
 ### Desktop launcher & 3D web preview
@@ -229,6 +231,7 @@ lunaris-train --help
 lunaris-eval --help
 lunaris-benchmark --help
 lunaris-mc --help
+lunaris-perturbation-budget --help
 python -m lunaris.surrogate.st_lrps.training.cli --help
 python -m lunaris.surrogate.st_lrps.evaluation.cli --help
 python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
@@ -236,6 +239,26 @@ python -m lunaris.visualization.surface_explorer --help
 ```
 
 Data-dependent examples such as full propagation, ST-LRPS training, gravity validation runs, and topography plots require local gravity, SPICE, or LOLA files.
+
+## Perturbation Budget Analysis
+
+`lunaris-perturbation-budget` quantifies instantaneous acceleration
+contributions, spherical-harmonic degree increments, and first-order
+force-model uncertainty assumptions. It is a mission-analysis / validation tool,
+not an electrical power analysis and not a new propagation force model.
+
+```bash
+lunaris-perturbation-budget \
+  --altitudes-km 50,100,300,1000,3000 \
+  --sh-degrees 20,30,60,100,200 \
+  --gravity-model path/to/lunar_gravity_model.tab \
+  --out-dir outputs/perturbation_budget/default
+```
+
+If no gravity model is provided, the command uses clearly labeled synthetic
+gravity coefficients for smoke testing only. See
+[`docs/PERTURBATION_BUDGET.md`](docs/PERTURBATION_BUDGET.md) for assumptions,
+outputs, limitations, and interpretation guidance.
 
 ## ST-LRPS Commands
 

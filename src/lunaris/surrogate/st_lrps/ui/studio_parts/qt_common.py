@@ -174,16 +174,15 @@ def apply_premium_dark_theme(app: QApplication) -> None:
             border-radius: 8px; padding: 8px 10px; font-size: 12px;
         }
         QGroupBox {
-            background-color: rgba(16, 24, 48, 0.72);
-            border: 1px solid rgba(185, 194, 221, 0.14);
-            border-radius: 10px; margin-top: 16px; padding-top: 10px;
+            background-color: rgba(12, 18, 34, 0.62);
+            border: 1px solid rgba(185, 194, 221, 0.12);
+            border-radius: 12px; margin-top: 18px; padding-top: 12px;
         }
         QGroupBox::title {
-            subcontrol-origin: margin; left: 14px; padding: 3px 14px;
-            color: #d8e1f7; font-weight: 600; font-size: 13px;
-            background-color: rgba(16, 24, 58, 0.98);
-            border: 1px solid rgba(185, 194, 221, 0.16);
-            border-radius: 7px;
+            subcontrol-origin: margin; left: 14px; padding: 2px 10px;
+            color: #d8e1f7; font-weight: 750; font-size: 12px;
+            background-color: #0b1020;
+            border: none;
         }
         QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
             background-color: rgba(7, 11, 20, 0.92);
@@ -208,7 +207,7 @@ def apply_premium_dark_theme(app: QApplication) -> None:
         QPlainTextEdit {
             background-color: rgba(7, 11, 20, 0.92);
             border: 1px solid rgba(185, 194, 221, 0.22);
-            border-radius: 12px; padding: 10px 12px;
+            border-radius: 10px; padding: 10px 12px;
             selection-background-color: #35d0ff;
         }
         QTabWidget::pane {

@@ -174,7 +174,7 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 
 
 from .common_widgets import *
-from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _inspect_run_artifacts, _NoWheelOnSpinFilter
+from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _style_surface, _inspect_run_artifacts, _NoWheelOnSpinFilter
 
 
 def _introspect_h5(path: str) -> Optional[Dict[str, Any]]:
@@ -253,6 +253,107 @@ def _introspect_h5(path: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _attr_lookup(attrs: Dict[str, Any], *keys: str) -> Any:
+    """Return the first present metadata value across common naming variants."""
+    for key in keys:
+        if key in attrs:
+            return attrs[key]
+        lower = key.lower()
+        for candidate, value in attrs.items():
+            if str(candidate).lower() == lower:
+                return value
+    return None
+
+
+def _data_action_card(
+    title: str,
+    subtitle: str,
+    primary_button: QPushButton,
+    *,
+    secondary_buttons: Optional[List[QPushButton]] = None,
+    detail: Optional[QWidget] = None,
+    object_name: str = "dataActionCard",
+) -> QFrame:
+    """Create a compact, action-first card for the Data workspace."""
+    card = QFrame()
+    card.setObjectName(object_name)
+    card.setStyleSheet(
+        f"QFrame#{object_name} {{"
+        "  background: rgba(8, 13, 26, 0.84);"
+        "  border: 1px solid rgba(53, 208, 255, 0.18);"
+        "  border-radius: 14px;"
+        "}"
+    )
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(16, 14, 16, 14)
+    layout.setSpacing(12)
+
+    top = QHBoxLayout()
+    top.setContentsMargins(0, 0, 0, 0)
+    top.setSpacing(14)
+
+    text_col = QVBoxLayout()
+    text_col.setContentsMargins(0, 0, 0, 0)
+    text_col.setSpacing(3)
+    title_lbl = QLabel(title)
+    title_lbl.setStyleSheet(
+        "color: #f3f7ff; font-size: 16px; font-weight: 800; "
+        "background: transparent; border: none;"
+    )
+    subtitle_lbl = QLabel(subtitle)
+    subtitle_lbl.setWordWrap(True)
+    subtitle_lbl.setStyleSheet(
+        "color: #8fa0bf; font-size: 12px; background: transparent; border: none;"
+    )
+    text_col.addWidget(title_lbl)
+    text_col.addWidget(subtitle_lbl)
+
+    primary_button.setProperty("kind", "primary")
+    primary_button.setMinimumHeight(42)
+    primary_button.setMinimumWidth(150)
+
+    top.addLayout(text_col, 1)
+    top.addWidget(primary_button, 0, Qt.AlignmentFlag.AlignTop)
+    layout.addLayout(top)
+
+    if secondary_buttons:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        for button in secondary_buttons:
+            button.setProperty("kind", button.property("kind") or "ghost")
+            row.addWidget(button)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+    if detail is not None:
+        layout.addWidget(detail)
+    return card
+
+
+def _compact_path_label(empty_text: str) -> QLabel:
+    label = QLabel(empty_text)
+    label.setWordWrap(True)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    label.setStyleSheet(
+        "QLabel { color: #9fb0cc; font-size: 11px; padding: 8px 10px;"
+        " background: rgba(4, 8, 16, 0.55);"
+        " border: 1px solid rgba(185, 194, 221, 0.12);"
+        " border-radius: 9px; }"
+    )
+    return label
+
+
+def _set_path_label(label: QLabel, path: str, *, empty_text: str) -> None:
+    path = path.strip()
+    if not path:
+        label.setText(empty_text)
+        return
+    p = Path(path)
+    shown = p.name if p.name else path
+    label.setText(f"{shown}\n{path}")
+
+
 class CloudGenTab(QWidget):
     """Tab for generating spatial point-cloud datasets via spatial_cloud_generator.py.
 
@@ -286,11 +387,12 @@ class CloudGenTab(QWidget):
         mode_bar = QHBoxLayout()
         mode_bar.setContentsMargins(0, 0, 0, 4)
         mode_bar.setSpacing(8)
-        mode_lbl = QLabel("Mode:")
-        mode_lbl.setStyleSheet("font-weight: 600; color: #c4ccff;")
+        mode_lbl = QLabel("Workflow")
+        mode_lbl.setStyleSheet("font-weight: 700; color: #c4ccff;")
         self._mode_combo = QComboBox()
         self._mode_combo.addItem("Single Cloud", self._MODE_SINGLE)
         self._mode_combo.addItem("Dataset Suite", self._MODE_SUITE)
+        self._mode_combo.setMinimumWidth(220)
         self._mode_combo.setToolTip(
             "Single Cloud: generates a single .h5/.pt file.\n"
             "Dataset Suite: generates a train/val/test/ood + manifest.json set."
@@ -323,24 +425,26 @@ class CloudGenTab(QWidget):
 
         # ── Command preview (shared) ─────────────────────────────────────────
         self.command_preview = QPlainTextEdit()
-        self.command_preview.setReadOnly(True)
-        self.command_preview.setFont(_mono_font())
-        self.command_preview.setMaximumHeight(82)
+        _style_command_preview(self.command_preview, min_h=76, max_h=96)
         self.command_preview.setPlaceholderText(
-            "Onizleme icin 'Preview' butonuna tiklayin."
+            "Generated CLI command"
         )
-        btn_preview = QPushButton("Preview Command")
-        btn_preview.clicked.connect(self._refresh_preview)
+        self.command_preview.setVisible(False)
+        btn_preview = QPushButton("Show Command")
+        btn_preview.clicked.connect(self._show_command_preview)
         btn_copy_cmd = QPushButton("Copy")
         btn_copy_cmd.clicked.connect(
             lambda: QGuiApplication.clipboard().setText(self.command_preview.toPlainText())
         )
+        self._btn_generate_now = QPushButton("Start Cloud Generation")
+        self._btn_generate_now.clicked.connect(self._start)
         preview_btns = QHBoxLayout()
         preview_btns.setContentsMargins(0, 0, 0, 0)
         preview_btns.setSpacing(8)
+        preview_btns.addLayout(mode_bar)
+        preview_btns.addStretch(1)
         preview_btns.addWidget(btn_preview)
         preview_btns.addWidget(btn_copy_cmd)
-        preview_btns.addStretch(1)
 
         preview_w = QWidget()
         preview_vbox = QVBoxLayout()
@@ -349,11 +453,17 @@ class CloudGenTab(QWidget):
         preview_vbox.addLayout(preview_btns)
         preview_vbox.addWidget(self.command_preview)
         preview_w.setLayout(preview_vbox)
+        generator_card = _data_action_card(
+            "Generate Dataset",
+            "Pick a workflow, tune the cards below, then launch the dataset job.",
+            self._btn_generate_now,
+            detail=preview_w,
+        )
         analysis_panel = self._build_analysis_panel()
 
         # ── ProcessPane ──────────────────────────────────────────────────────
         self.runner = ProcessPane()
-        self.runner.btn_start.setText("Start Generation")
+        self.runner.btn_start.setText("Start Cloud Generation")
         self.runner.btn_start.clicked.connect(self._start)
         self.runner.set_finished_hook(self._on_finished)
         self.runner.set_progress_parser(self._parse_progress)
@@ -361,11 +471,10 @@ class CloudGenTab(QWidget):
         top = QWidget()
         top_l = QVBoxLayout()
         top_l.setContentsMargins(8, 8, 8, 4)
-        top_l.setSpacing(6)
-        top_l.addLayout(mode_bar)
+        top_l.setSpacing(10)
+        top_l.addWidget(generator_card)
         top_l.addWidget(self._sync_banner)
         top_l.addWidget(self._stack, 1)
-        top_l.addWidget(preview_w)
         top_l.addWidget(analysis_panel)
         top.setLayout(top_l)
 
@@ -396,7 +505,7 @@ class CloudGenTab(QWidget):
         cloud_cfg = DEFAULT_SPATIAL_CLOUD_CONFIG
 
         # ── Group 1: Gravity Field ─────────────────────────────────────────
-        grp_grav = QGroupBox("Yercekimi Alani")
+        grp_grav = QGroupBox("Gravity Field")
         form_grav = QFormLayout()
         _tune_form(form_grav)
 
@@ -414,15 +523,15 @@ class CloudGenTab(QWidget):
         )
 
         self.gfc_path = ValidatedPathEdit(
-            placeholder="Bos -> varsayilan Ay yercekimi modeli (jggrx_1800f)", check_file=True
+            placeholder="Empty -> default lunar gravity model", check_file=True
         )
-        btn_gfc = QPushButton("Sec...")
+        btn_gfc = QPushButton("Choose...")
         btn_gfc.clicked.connect(self._pick_gfc_path)
         gfc_row = _row_lineedit_with_button(self.gfc_path, btn_gfc)
 
         form_grav.addRow("Max SH Degree", self.degree_max)
         form_grav.addRow("Min SH Degree (base)", self.degree_min)
-        form_grav.addRow("GFC Dosyasi", gfc_row)
+        form_grav.addRow("Gravity Model", gfc_row)
         grp_grav.setLayout(form_grav)
 
         # ── Group 2: Spatial Sampling ──────────────────────────────────────
@@ -451,9 +560,9 @@ class CloudGenTab(QWidget):
         self.alt_max_km.setSuffix(" km")
 
         self.sampling_strategy = QComboBox()
-        self.sampling_strategy.addItem("mixed - karma (onerilen)", "mixed")
-        self.sampling_strategy.addItem("uniform - hacimce homojen", "uniform")
-        self.sampling_strategy.addItem("inverse_r2 - yuzey odakli", "inverse_r2")
+        self.sampling_strategy.addItem("Mixed - recommended", "mixed")
+        self.sampling_strategy.addItem("Uniform volume", "uniform")
+        self.sampling_strategy.addItem("Inverse-r2 surface focus", "inverse_r2")
         _strategy_idx = self.sampling_strategy.findData(str(_cfg_value(cloud_cfg, "sampling_strategy", "mixed")))
         if _strategy_idx >= 0:
             self.sampling_strategy.setCurrentIndex(_strategy_idx)
@@ -468,44 +577,44 @@ class CloudGenTab(QWidget):
         form_spatial.addRow("Min Altitude", self.alt_min_km)
         form_spatial.addRow("Max Altitude", self.alt_max_km)
         form_spatial.addRow("Sampling Strategy", self.sampling_strategy)
-        form_spatial.addRow("Yuzey Agirlik Orani", self.surface_bias_ratio)
+        form_spatial.addRow("Surface Bias", self.surface_bias_ratio)
         grp_spatial.setLayout(form_spatial)
 
         # ── Group 3: Output ────────────────────────────────────────────────
-        grp_out = QGroupBox("Cikti Ayarlari")
+        grp_out = QGroupBox("Output Settings")
         form_out = QFormLayout()
         _tune_form(form_out)
 
         self.out_format = QComboBox()
-        self.out_format.addItem("HDF5 (.h5) - onerilen", "h5")
+        self.out_format.addItem("HDF5 (.h5) - recommended", "h5")
         self.out_format.addItem("PyTorch (.pt)", "pt")
 
         self.out_path = QLineEdit("")
-        self.out_path.setPlaceholderText("Bos -> otomatik (data/ klasorunde)")
-        btn_out_save = QPushButton("Sec...")
+        self.out_path.setPlaceholderText("Auto when empty")
+        btn_out_save = QPushButton("Choose...")
         btn_out_save.clicked.connect(self._pick_out_path)
         out_row = _row_lineedit_with_button(self.out_path, btn_out_save)
 
         self.dtype = QComboBox()
-        self.dtype.addItem("float32 - onerilen", "float32")
+        self.dtype.addItem("float32 - recommended", "float32")
         self.dtype.addItem("float64 - high precision", "float64")
 
-        self.canonical = QCheckBox("Kanonik birimler (boyutsuz)")
+        self.canonical = QCheckBox("Canonical units")
         self.canonical.setChecked(bool(_cfg_value(cloud_cfg, "canonical", False)))
 
         self.seed = QSpinBox()
         self.seed.setRange(0, 999_999)
         self.seed.setValue(int(_cfg_value(cloud_cfg, "seed", 12345)))
 
-        form_out.addRow("Cikti Formati", self.out_format)
-        form_out.addRow("Cikti Dosyasi", out_row)
-        form_out.addRow("Veri Tipi", self.dtype)
+        form_out.addRow("Output Format", self.out_format)
+        form_out.addRow("Output File", out_row)
+        form_out.addRow("Dtype", self.dtype)
         form_out.addRow(self.canonical)
-        form_out.addRow("Rastgele Tohum", self.seed)
+        form_out.addRow("Seed", self.seed)
         grp_out.setLayout(form_out)
 
         # ── Group 4: Performance ───────────────────────────────────────────
-        grp_perf = QGroupBox("Performans")
+        grp_perf = QGroupBox("Performance")
         form_perf = QFormLayout()
         _tune_form(form_perf)
 
@@ -518,10 +627,10 @@ class CloudGenTab(QWidget):
         self.workers.setRange(1, 256)
         self.workers.setValue(min(cpu_count, int(_cfg_value(cloud_cfg, "workers", 8))))
 
-        self.no_multiprocessing = QCheckBox("Coklu islem devre disi (tek is parcacigi)")
+        self.no_multiprocessing = QCheckBox("Single-process mode")
         self.no_multiprocessing.setChecked(bool(_cfg_value(cloud_cfg, "no_multiprocessing", False)))
 
-        form_perf.addRow("Yigin Boyutu (Chunk)", self.chunk_size)
+        form_perf.addRow("Chunk Size", self.chunk_size)
         form_perf.addRow(f"Worker Count (system: {cpu_count})", self.workers)
         form_perf.addRow(self.no_multiprocessing)
         grp_perf.setLayout(form_perf)
@@ -593,9 +702,9 @@ class CloudGenTab(QWidget):
         )
 
         self.s_gfc_path = ValidatedPathEdit(
-            placeholder="Bos -> varsayilan Ay yercekimi modeli (jggrx_1800f)", check_file=True
+            placeholder="Empty -> default lunar gravity model", check_file=True
         )
-        btn_s_gfc = QPushButton("Sec...")
+        btn_s_gfc = QPushButton("Choose...")
         btn_s_gfc.clicked.connect(self._pick_suite_gfc_path)
         s_gfc_row = _row_lineedit_with_button(self.s_gfc_path, btn_s_gfc)
 
@@ -603,12 +712,12 @@ class CloudGenTab(QWidget):
         form_phys.addRow("Degree Max (target)", self.s_degree_max)
         form_phys.addRow("Training Alt Min", self.s_train_alt_min_km)
         form_phys.addRow("Training Alt Max", self.s_train_alt_max_km)
-        form_phys.addRow("OOD Marjin", self.s_ood_margin_km)
-        form_phys.addRow("GFC Dosyasi", s_gfc_row)
+        form_phys.addRow("OOD Margin", self.s_ood_margin_km)
+        form_phys.addRow("Gravity Model", s_gfc_row)
         grp_phys.setLayout(form_phys)
 
         # B) Train hybrid allocation
-        grp_train = QGroupBox("Train Hybrid Dagilimi")
+        grp_train = QGroupBox("Training Hybrid Distribution")
         form_train = QFormLayout()
         _tune_form(form_train)
 
@@ -661,8 +770,8 @@ class CloudGenTab(QWidget):
         )
 
         self.s_boundary_mode = QComboBox()
-        self.s_boundary_mode.addItem("strict (egitim araliginda)", "strict")
-        self.s_boundary_mode.addItem("soft (sinir uzerinde)", "soft")
+        self.s_boundary_mode.addItem("Strict in train range", "strict")
+        self.s_boundary_mode.addItem("Soft around edge", "soft")
         _boundary_idx = self.s_boundary_mode.findData(str(_cfg_value(suite_cfg, "boundary_mode", "strict")))
         if _boundary_idx >= 0:
             self.s_boundary_mode.setCurrentIndex(_boundary_idx)
@@ -714,18 +823,18 @@ class CloudGenTab(QWidget):
         self.s_ood_high_n.setValue(int(_cfg_value(suite_cfg, "ood_high_n", 250_000)))
         self.s_ood_high_n.setSingleStep(50_000)
 
-        self.s_combine_ood = QCheckBox("OOD low + high birlestirilsin (ood_combined.h5)")
+        self.s_combine_ood = QCheckBox("Combine OOD low + high")
         self.s_combine_ood.setChecked(bool(_cfg_value(suite_cfg, "combine_ood", True)))
 
-        form_vto.addRow("Validation Noktalari", self.s_val_n)
-        form_vto.addRow("Test Noktalari", self.s_test_n)
-        form_vto.addRow("OOD Low Noktalari", self.s_ood_low_n)
-        form_vto.addRow("OOD High Noktalari", self.s_ood_high_n)
+        form_vto.addRow("Validation", self.s_val_n)
+        form_vto.addRow("Test", self.s_test_n)
+        form_vto.addRow("OOD Low", self.s_ood_low_n)
+        form_vto.addRow("OOD High", self.s_ood_high_n)
         form_vto.addRow(self.s_combine_ood)
         grp_vto.setLayout(form_vto)
 
         # D) Seeds
-        grp_seeds = QGroupBox("Tohumlar (Seeds)")
+        grp_seeds = QGroupBox("Seeds")
         form_seeds = QFormLayout()
         _tune_form(form_seeds)
 
@@ -745,7 +854,7 @@ class CloudGenTab(QWidget):
         self.s_seed_ood_low       = _make_seed_spin(int(_cfg_value(suite_cfg, "ood_low_seed", 3042)))
         self.s_seed_ood_high      = _make_seed_spin(int(_cfg_value(suite_cfg, "ood_high_seed", 4042)))
 
-        btn_auto_seeds = QPushButton("Bagimsiz Tohumlar Ata")
+        btn_auto_seeds = QPushButton("Assign Independent Seeds")
         btn_auto_seeds.setToolTip("Tum tohumlara base_seed bazli bagimsiz degerler atar.")
         btn_auto_seeds.clicked.connect(self._auto_assign_seeds)
 
@@ -762,18 +871,18 @@ class CloudGenTab(QWidget):
         grp_seeds.setLayout(form_seeds)
 
         # E) Presets
-        grp_presets = QGroupBox("Suite Onayarlari (Presets)")
+        grp_presets = QGroupBox("Suite Presets")
         form_presets = QFormLayout()
         _tune_form(form_presets)
 
         self.s_preset_combo = QComboBox()
-        self.s_preset_combo.addItem("-- Seciniz --", "")
+        self.s_preset_combo.addItem("Choose preset...", "")
         self.s_preset_combo.addItem("Debug Suite (100k)", "debug_suite")
         self.s_preset_combo.addItem("Baseline Uniform (2M train)", "baseline_uniform_suite")
-        self.s_preset_combo.addItem("Recommended Hybrid 5M (onerilen)", "recommended_hybrid_5M")
+        self.s_preset_combo.addItem("Recommended Hybrid 5M", "recommended_hybrid_5M")
         self.s_preset_combo.addItem("High Accuracy 10M", "high_accuracy_10M")
 
-        btn_apply_preset = QPushButton("Onayari Uygula")
+        btn_apply_preset = QPushButton("Apply Preset")
         btn_apply_preset.clicked.connect(self._apply_suite_preset)
 
         form_presets.addRow("Preset", self.s_preset_combo)
@@ -781,26 +890,26 @@ class CloudGenTab(QWidget):
         grp_presets.setLayout(form_presets)
 
         # F) Suite output
-        grp_suite_out = QGroupBox("Suite Ciktisi")
+        grp_suite_out = QGroupBox("Suite Output")
         form_suite_out = QFormLayout()
         _tune_form(form_suite_out)
 
         self.s_suite_name = QLineEdit("")
-        self.s_suite_name.setPlaceholderText("Bos -> otomatik adlandirilir")
+        self.s_suite_name.setPlaceholderText("Auto-named when empty")
 
         self.s_suite_out_dir = QLineEdit("")
         self.s_suite_out_dir.setPlaceholderText(
-            f"Bos -> {DATASET_SUITE_OUTPUT_ROOT}"
+            f"Empty -> {DATASET_SUITE_OUTPUT_ROOT}"
         )
-        btn_suite_out = QPushButton("Sec...")
+        btn_suite_out = QPushButton("Choose...")
         btn_suite_out.clicked.connect(self._pick_suite_out_dir)
         suite_out_row = _row_lineedit_with_button(self.s_suite_out_dir, btn_suite_out)
 
-        self.s_auto_apply = QCheckBox("Suite tamamlaninca egitim sekmesini otomatik doldur")
+        self.s_auto_apply = QCheckBox("Auto-fill Training when done")
         self.s_auto_apply.setChecked(True)
         self.s_auto_apply.setToolTip(
-            "Isaretlenirse: manifest.json'dan train/val/test/ood yollarini\n"
-            "otomatik olarak egitim sekmesine yazar."
+            "When enabled, manifest train/val/test/ood paths are written\n"
+            "automatically into the Training tab."
         )
 
         self.s_chunk_size = QSpinBox()
@@ -809,18 +918,18 @@ class CloudGenTab(QWidget):
         self.s_chunk_size.setSingleStep(10_000)
 
         self.s_dtype = QComboBox()
-        self.s_dtype.addItem("float32 - onerilen", "float32")
+        self.s_dtype.addItem("float32 - recommended", "float32")
         self.s_dtype.addItem("float64 - high precision", "float64")
 
-        form_suite_out.addRow("Suite Adi", self.s_suite_name)
-        form_suite_out.addRow("Cikti Klasoru", suite_out_row)
+        form_suite_out.addRow("Suite Name", self.s_suite_name)
+        form_suite_out.addRow("Output Folder", suite_out_row)
         form_suite_out.addRow(self.s_auto_apply)
-        form_suite_out.addRow("Chunk Boyutu", self.s_chunk_size)
-        form_suite_out.addRow("Veri Tipi", self.s_dtype)
+        form_suite_out.addRow("Chunk Size", self.s_chunk_size)
+        form_suite_out.addRow("Dtype", self.s_dtype)
         grp_suite_out.setLayout(form_suite_out)
 
         # G) Suite actions
-        btn_open_suite_folder = QPushButton("Suite Klasorunu Ac")
+        btn_open_suite_folder = QPushButton("Open Suite Folder")
         btn_open_suite_folder.clicked.connect(self._open_suite_folder)
         btn_apply_to_train = QPushButton("Apply to Training Tab")
         btn_apply_to_train.clicked.connect(self._apply_suite_to_train)
@@ -870,19 +979,23 @@ class CloudGenTab(QWidget):
     # Cloud analysis panel
     # ------------------------------------------------------------------
     def _build_analysis_panel(self) -> QWidget:
-        grp = QGroupBox("Cloud Analysis")
-        grp.setToolTip(
-            "Generated HDF5/PT cloud datasets can be analyzed without leaving the UI. "
-            "The analysis computes altitude balance, directional coverage, field dynamic range, "
-            "and acceleration radial/cross-radial diagnostics."
-        )
-
         self.analysis_input = ValidatedPathEdit(
             placeholder="Analyze a generated .h5/.hdf5/.pt dataset", check_file=True
         )
-        btn_pick = QPushButton("Select...")
+        self.analysis_input.setVisible(False)
+        self._quick_analysis_file_label = _compact_path_label("No analysis dataset selected")
+        self.analysis_input.textChanged.connect(
+            lambda text: _set_path_label(
+                self._quick_analysis_file_label,
+                text,
+                empty_text="No analysis dataset selected",
+            )
+        )
+        btn_pick = QPushButton("Choose...")
         btn_pick.clicked.connect(self._pick_analysis_input)
-        input_row = _row_lineedit_with_button(self.analysis_input, btn_pick)
+        btn_path = QPushButton("Path")
+        btn_path.setCheckable(True)
+        btn_path.toggled.connect(self.analysis_input.setVisible)
 
         self.analysis_outdir = QLineEdit("")
         self.analysis_outdir.setPlaceholderText(
@@ -919,51 +1032,55 @@ class CloudGenTab(QWidget):
         btn_suite = QPushButton("Analyze Suite")
         btn_suite.clicked.connect(self._run_suite_analysis_from_last_dir)
 
-        action_row = QHBoxLayout()
-        action_row.setContentsMargins(0, 0, 0, 0)
-        action_row.setSpacing(8)
-        action_row.addWidget(btn_use_latest)
-        action_row.addWidget(btn_run)
-        action_row.addWidget(btn_suite)
-        action_row.addStretch(1)
-        action_row.addWidget(self.analysis_make_plots)
-        action_row.addWidget(self.analysis_auto_after_suite)
-
         self.analysis_summary = QPlainTextEdit()
-        self.analysis_summary.setReadOnly(True)
-        self.analysis_summary.setFont(_mono_font())
+        _style_command_preview(self.analysis_summary, min_h=92, max_h=150)
         self.analysis_summary.setMaximumHeight(150)
-        self.analysis_summary.setPlaceholderText(
-            "Analysis summary will appear here: altitude balance, octant coverage, "
-            "finite checks, field dynamic range, and acceleration geometry."
-        )
+        self.analysis_summary.setPlaceholderText("Analysis summary")
 
         form = QFormLayout()
         _tune_form(form)
-        form.addRow("Dataset", input_row)
+        form.setContentsMargins(0, 0, 0, 0)
         form.addRow("Analysis Output", out_row)
         form.addRow("Sample Rows", self.analysis_sample)
         form.addRow("Scatter Points", self.analysis_scatter_n)
 
-        layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
-        layout.addLayout(form)
-        layout.addLayout(action_row)
-        layout.addWidget(self.analysis_summary)
-        grp.setLayout(layout)
-        _tune_inputs(grp)
+        toggles = QHBoxLayout()
+        toggles.setContentsMargins(0, 0, 0, 0)
+        toggles.setSpacing(10)
+        toggles.addWidget(self.analysis_make_plots)
+        toggles.addWidget(self.analysis_auto_after_suite)
+        toggles.addStretch(1)
+
+        detail = QWidget()
+        detail_l = QVBoxLayout(detail)
+        detail_l.setContentsMargins(0, 0, 0, 0)
+        detail_l.setSpacing(8)
+        detail_l.addWidget(self._quick_analysis_file_label)
+        detail_l.addWidget(self.analysis_input)
+        detail_l.addLayout(form)
+        detail_l.addLayout(toggles)
+        detail_l.addWidget(self.analysis_summary)
+
+        panel = _data_action_card(
+            "Quick Analysis",
+            "Run a compact report on the latest generated dataset.",
+            btn_run,
+            secondary_buttons=[btn_use_latest, btn_pick, btn_path, btn_suite],
+            detail=detail,
+            object_name="quickAnalysisCard",
+        )
+        _tune_inputs(panel)
 
         self._analysis_proc = QProcess(self)
         self._analysis_proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self._analysis_proc.readyReadStandardOutput.connect(self._on_analysis_output)
         self._analysis_proc.finished.connect(self._on_analysis_finished)
-        return grp
+        return panel
 
     def _pick_analysis_input(self) -> None:
         fn, _ = QFileDialog.getOpenFileName(
             self,
-            "Cloud Dataset Sec",
+            "Choose Cloud Dataset",
             self.analysis_input.text() or str(SCRIPT_DIR),
             "Cloud datasets (*.h5 *.hdf5 *.pt);;All (*.*)",
         )
@@ -973,7 +1090,7 @@ class CloudGenTab(QWidget):
     def _pick_analysis_outdir(self) -> None:
         d = QFileDialog.getExistingDirectory(
             self,
-            "Analysis Output Klasoru",
+            "Analysis Output Folder",
             self.analysis_outdir.text() or str(DATASET_REPORTS_OUTPUT_ROOT),
         )
         if d:
@@ -1046,7 +1163,7 @@ class CloudGenTab(QWidget):
     def _use_latest_analysis_candidate(self) -> None:
         candidates = self._analysis_candidates()
         if not candidates:
-            QMessageBox.information(self, "Cloud Analysis", "Analiz edilecek mevcut dataset bulunamadi.")
+            QMessageBox.information(self, "Cloud Analysis", "No generated dataset was found.")
             return
         self.analysis_input.setText(candidates[0])
 
@@ -1066,7 +1183,7 @@ class CloudGenTab(QWidget):
 
     def _run_cloud_analysis(self, dataset_path: Optional[str] = None, label: str = "dataset") -> None:
         if self._analysis_proc.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "Cloud Analysis", "Analiz zaten calisiyor.")
+            QMessageBox.information(self, "Cloud Analysis", "Analysis is already running.")
             return
         path_text = dataset_path or self.analysis_input.text().strip()
         if not path_text:
@@ -1078,7 +1195,7 @@ class CloudGenTab(QWidget):
         if not p.is_absolute():
             p = (SCRIPT_DIR / p).resolve()
         if not p.exists():
-            QMessageBox.warning(self, "Cloud Analysis", f"Dataset bulunamadi:\n{p}")
+            QMessageBox.warning(self, "Cloud Analysis", f"Dataset not found:\n{p}")
             return
         outdir = self._analysis_default_outdir(p, label if label != "dataset" else "")
         self._active_analysis = (str(p), str(outdir), label)
@@ -1088,13 +1205,13 @@ class CloudGenTab(QWidget):
 
     def _run_suite_analysis_from_last_dir(self) -> None:
         if not self._last_suite_dir:
-            QMessageBox.information(self, "Cloud Analysis", "Once bir dataset suite uretin veya secin.")
+            QMessageBox.information(self, "Cloud Analysis", "Generate or choose a dataset suite first.")
             return
         self._run_suite_analysis(Path(self._last_suite_dir))
 
     def _run_suite_analysis(self, suite_dir: Path) -> None:
         if self._analysis_proc.state() != QProcess.ProcessState.NotRunning:
-            QMessageBox.information(self, "Cloud Analysis", "Analiz zaten calisiyor.")
+            QMessageBox.information(self, "Cloud Analysis", "Analysis is already running.")
             return
         suite_dir = Path(suite_dir)
         if not suite_dir.is_absolute():
@@ -1112,7 +1229,7 @@ class CloudGenTab(QWidget):
                 outdir = self._analysis_default_outdir(Path(value), label)
                 self._analysis_queue.append((value, str(outdir), label))
         if not self._analysis_queue:
-            QMessageBox.warning(self, "Cloud Analysis", "Suite icinde analiz edilecek HDF5 dosyasi bulunamadi.")
+            QMessageBox.warning(self, "Cloud Analysis", "No analyzable HDF5 file was found in the suite.")
             return
         self.analysis_summary.setPlainText("[analysis] suite analysis queued...")
         self._start_next_analysis_job()
@@ -1204,6 +1321,8 @@ class CloudGenTab(QWidget):
         self._sync_banner.setVisible(False)
         btn_label = "Start Suite Generation" if mode == self._MODE_SUITE else "Start Cloud Generation"
         self.runner.btn_start.setText(btn_label)
+        if hasattr(self, "_btn_generate_now"):
+            self._btn_generate_now.setText(btn_label)
 
     def _update_suite_total_label(self) -> None:
         total = (
@@ -1309,14 +1428,14 @@ class CloudGenTab(QWidget):
     def _open_suite_folder(self) -> None:
         d = self._last_suite_dir
         if not d or not Path(d).is_dir():
-            QMessageBox.information(self, "Suite Klasoru", "Suite henuz uretilmedi veya klasor bulunamadi.")
+            QMessageBox.information(self, "Suite Folder", "No generated suite folder was found.")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(d)))
 
     def _apply_suite_to_train(self) -> None:
         d = self._last_suite_dir
         if not d or not Path(d).is_dir():
-            QMessageBox.information(self, "Suite Klasoru", "Once suite uretin.")
+            QMessageBox.information(self, "Suite Folder", "Generate a suite first.")
             return
         self._fill_train_tab_from_manifest(Path(d))
 
@@ -1417,7 +1536,7 @@ class CloudGenTab(QWidget):
     # ------------------------------------------------------------------
     def _pick_gfc_path(self) -> None:
         fn, _ = QFileDialog.getOpenFileName(
-            self, "GFC Dosyasi Sec",
+            self, "Choose Gravity Model",
             self.gfc_path.text() or str(SCRIPT_DIR),
             "GFC/TAB (*.gfc *.tab *.txt);;All (*.*)",
         )
@@ -1426,7 +1545,7 @@ class CloudGenTab(QWidget):
 
     def _pick_out_path(self) -> None:
         fn, _ = QFileDialog.getSaveFileName(
-            self, "Cikti Dosyasi",
+            self, "Output File",
             self.out_path.text() or str(SCRIPT_DIR / "data"),
             "HDF5 (*.h5);;PyTorch (*.pt);;All (*.*)",
         )
@@ -1435,7 +1554,7 @@ class CloudGenTab(QWidget):
 
     def _pick_suite_gfc_path(self) -> None:
         fn, _ = QFileDialog.getOpenFileName(
-            self, "GFC Dosyasi Sec",
+            self, "Choose Gravity Model",
             self.s_gfc_path.text() or str(SCRIPT_DIR),
             "GFC/TAB (*.gfc *.tab *.txt);;All (*.*)",
         )
@@ -1444,7 +1563,7 @@ class CloudGenTab(QWidget):
 
     def _pick_suite_out_dir(self) -> None:
         d = QFileDialog.getExistingDirectory(
-            self, "Suite Cikti Klasoru",
+            self, "Suite Output Folder",
             self.s_suite_out_dir.text() or str(DATASET_SUITE_OUTPUT_ROOT),
         )
         if d:
@@ -1457,19 +1576,19 @@ class CloudGenTab(QWidget):
         script = _STLRPS_DATA_MODULE_DIR / "spatial_cloud_generator.py"
         if not script.exists():
             if show_errors:
-                QMessageBox.critical(self, "Eksik script", "spatial_cloud_generator.py bulunamadi.")
+                QMessageBox.critical(self, "Missing Script", "spatial_cloud_generator.py was not found.")
             return None
         deg_min = self.degree_min.value()
         deg_max = self.degree_max.value()
         if deg_max <= deg_min and deg_min != -1:
             if show_errors:
-                QMessageBox.critical(self, "Gecersiz derece", f"degree_max ({deg_max}) > degree_min ({deg_min}) olmali.")
+                QMessageBox.critical(self, "Invalid Degree", f"degree_max ({deg_max}) must be greater than degree_min ({deg_min}).")
             return None
         alt_min = self.alt_min_km.value()
         alt_max = self.alt_max_km.value()
         if alt_max <= alt_min:
             if show_errors:
-                QMessageBox.critical(self, "Gecersiz irtifa", f"alt_max ({alt_max}) > alt_min ({alt_min}) olmali.")
+                QMessageBox.critical(self, "Invalid Altitude", f"alt_max ({alt_max}) must be greater than alt_min ({alt_min}).")
             return None
         args: List[str] = ["-u", str(script)]
         args += ["--degree-max", str(deg_max), "--degree-min", str(deg_min)]
@@ -1497,19 +1616,19 @@ class CloudGenTab(QWidget):
         script = _STLRPS_DATA_MODULE_DIR / "spatial_cloud_generator.py"
         if not script.exists():
             if show_errors:
-                QMessageBox.critical(self, "Eksik script", "spatial_cloud_generator.py bulunamadi.")
+                QMessageBox.critical(self, "Missing Script", "spatial_cloud_generator.py was not found.")
             return None
         deg_min = self.s_degree_min.value()
         deg_max = self.s_degree_max.value()
         if deg_max <= deg_min:
             if show_errors:
-                QMessageBox.critical(self, "Gecersiz derece", f"degree_max ({deg_max}) > degree_min ({deg_min}) olmali.")
+                QMessageBox.critical(self, "Invalid Degree", f"degree_max ({deg_max}) must be greater than degree_min ({deg_min}).")
             return None
         alt_min = self.s_train_alt_min_km.value()
         alt_max = self.s_train_alt_max_km.value()
         if alt_max <= alt_min:
             if show_errors:
-                QMessageBox.critical(self, "Gecersiz irtifa", f"alt_max ({alt_max}) > alt_min ({alt_min}) olmali.")
+                QMessageBox.critical(self, "Invalid Altitude", f"alt_max ({alt_max}) must be greater than alt_min ({alt_min}).")
             return None
 
         args: List[str] = ["-u", str(script), "--generate-suite"]
@@ -1563,6 +1682,10 @@ class CloudGenTab(QWidget):
         args = self._build_args(show_errors=False)
         if args:
             self.command_preview.setPlainText(_format_command(sys.executable, args))
+
+    def _show_command_preview(self) -> None:
+        self._refresh_preview()
+        self.command_preview.setVisible(True)
 
     # ------------------------------------------------------------------
     # Start / finish
@@ -1629,7 +1752,7 @@ class CloudGenTab(QWidget):
         self._last_suite_dir = suite_dir
         msg = "Suite generation complete!"
         if suite_dir:
-            msg += f"  Klasor: {suite_dir}"
+            msg += f"  Folder: {suite_dir}"
         self._sync_banner.setText(msg)
         self._sync_banner.setVisible(True)
 
@@ -1814,22 +1937,42 @@ class CloudAnalysisTab(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
 
-        # --- Input ---
-        grp_input = QGroupBox("Veri Dosyasi")
-        form_input = QFormLayout()
-        _tune_form(form_input)
-
         self.input_file = ValidatedPathEdit(
             placeholder="Dataset (.h5 or .pt)", check_file=True
         )
-        btn_input = QPushButton("Sec...")
+        self.input_file.setVisible(False)
+        self._analysis_file_label = _compact_path_label("No dataset selected")
+        self.input_file.textChanged.connect(
+            lambda text: _set_path_label(
+                self._analysis_file_label,
+                text,
+                empty_text="No dataset selected",
+            )
+        )
+        btn_input = QPushButton("Choose Dataset")
         btn_input.clicked.connect(self._pick_input)
-        input_row = _row_lineedit_with_button(self.input_file, btn_input)
-        form_input.addRow("Dataset Dosyasi", input_row)
-        grp_input.setLayout(form_input)
+        self._btn_start_analysis_top = QPushButton("Start Analysis")
+        self._btn_start_analysis_top.clicked.connect(self._start)
+        btn_path = QPushButton("Path")
+        btn_path.setCheckable(True)
+        btn_path.toggled.connect(self.input_file.setVisible)
+
+        file_detail = QWidget()
+        file_detail_l = QVBoxLayout(file_detail)
+        file_detail_l.setContentsMargins(0, 0, 0, 0)
+        file_detail_l.setSpacing(8)
+        file_detail_l.addWidget(self._analysis_file_label)
+        file_detail_l.addWidget(self.input_file)
+        input_card = _data_action_card(
+            "Analyze Dataset",
+            "Choose a generated cloud and create the quality report.",
+            btn_input,
+            secondary_buttons=[self._btn_start_analysis_top, btn_path],
+            detail=file_detail,
+        )
 
         # --- Analysis parameters ---
-        grp_params = QGroupBox("Analiz Parametreleri")
+        grp_params = QGroupBox("Analysis Settings")
         form_params = QFormLayout()
         _tune_form(form_params)
 
@@ -1837,7 +1980,7 @@ class CloudAnalysisTab(QWidget):
         self.sample_n.setRange(1_000, 10_000_000)
         self.sample_n.setValue(200_000)
         self.sample_n.setSingleStep(10_000)
-        self.sample_n.setToolTip("Analiz edilecek satir sayisi (ornekleme ile)")
+        self.sample_n.setToolTip("Rows sampled for analysis.")
 
         self.seed = QSpinBox()
         self.seed.setRange(0, 2_147_483_647)
@@ -1865,13 +2008,13 @@ class CloudAnalysisTab(QWidget):
         self.scatter_n.setSingleStep(5_000)
         self.scatter_n.setToolTip("3B scatter grafikde kullanilacak nokta sayisi")
 
-        self.no_plots = QCheckBox("Grafik olusturma")
+        self.no_plots = QCheckBox("Skip plots")
         self.no_plots.setChecked(False)
         self.dump_json = QCheckBox("summary.json kaydet")
         self.dump_json.setChecked(True)
 
         form_params.addRow("Sample Count", self.sample_n)
-        form_params.addRow("Tohum", self.seed)
+        form_params.addRow("Seed", self.seed)
         form_params.addRow("Min Altitude (km)", self.alt_min_km)
         form_params.addRow("Max Altitude (km)", self.alt_max_km)
         form_params.addRow("Scatter Point Count", self.scatter_n)
@@ -1880,17 +2023,17 @@ class CloudAnalysisTab(QWidget):
         grp_params.setLayout(form_params)
 
         # --- Output ---
-        grp_out = QGroupBox("Cikti")
+        grp_out = QGroupBox("Output")
         form_out = QFormLayout()
         _tune_form(form_out)
 
         self.out_dir = ValidatedPathEdit(
-            placeholder=f"Bos -> {DATASET_REPORTS_OUTPUT_ROOT}/<dataset>_<timestamp>", check_file=False
+            placeholder=f"Empty -> {DATASET_REPORTS_OUTPUT_ROOT}/<dataset>_<timestamp>", check_file=False
         )
-        btn_out = QPushButton("Sec...")
+        btn_out = QPushButton("Choose...")
         btn_out.clicked.connect(self._pick_out_dir)
         out_row = _row_lineedit_with_button(self.out_dir, btn_out)
-        form_out.addRow("Cikti Klasoru", out_row)
+        form_out.addRow("Output Folder", out_row)
         grp_out.setLayout(form_out)
 
         self.extra_args = QLineEdit("")
@@ -1899,7 +2042,7 @@ class CloudAnalysisTab(QWidget):
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(12)
-        grid.addWidget(grp_input, 0, 0, 1, 2)
+        grid.addWidget(input_card, 0, 0, 1, 2)
         grid.addWidget(grp_params, 1, 0)
         grid.addWidget(grp_out, 1, 1)
         extra_f = QFormLayout()
@@ -1910,7 +2053,7 @@ class CloudAnalysisTab(QWidget):
         grid.addWidget(extra_w, 2, 0, 1, 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        for g in (grp_input, grp_params, grp_out):
+        for g in (grp_params, grp_out):
             _tune_inputs(g)
 
         self.runner = ProcessPane()
@@ -1951,7 +2094,7 @@ class CloudAnalysisTab(QWidget):
     def _pick_input(self):
         fn, _ = QFileDialog.getOpenFileName(
             self,
-            "Dataset Sec",
+            "Choose Dataset",
             self.input_file.text() or str(SCRIPT_DIR),
             "HDF5 (*.h5 *.hdf5);;PT (*.pt);;All (*.*)",
         )
@@ -1960,7 +2103,7 @@ class CloudAnalysisTab(QWidget):
 
     def _pick_out_dir(self):
         d = QFileDialog.getExistingDirectory(
-            self, "Cikti Klasoru", self.out_dir.text() or str(DATASET_REPORTS_OUTPUT_ROOT)
+            self, "Output Folder", self.out_dir.text() or str(DATASET_REPORTS_OUTPUT_ROOT)
         )
         if d:
             self.out_dir.setText(_norm_path(d))
@@ -2049,10 +2192,10 @@ class CloudAnalysisTab(QWidget):
     def _start(self):
         inp = self.input_file.text().strip()
         if not inp:
-            QMessageBox.warning(self, "Eksik Girdi", "Lutfen bir dataset dosyasi secin.")
+            QMessageBox.warning(self, "Missing Input", "Choose a dataset first.")
             return
         if not Path(inp).is_file():
-            QMessageBox.warning(self, "Dosya Bulunamadi", f"Dosya mevcut degil:\n{inp}")
+            QMessageBox.warning(self, "File Not Found", f"File does not exist:\n{inp}")
             return
         if not self.out_dir.text().strip():
             self.out_dir.setText(str(_default_dataset_report_dir(inp)))
@@ -2091,82 +2234,81 @@ class DatasetInspectionPanel(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
 
-        title = QLabel("Dataset Readiness")
-        title.setStyleSheet("font-size: 15px; font-weight: 700; color: #e6edf7;")
-        subtitle = QLabel(
-            "Inspect an HDF5 cloud and confirm it is suitable for ST-LRPS training."
-        )
-        subtitle.setStyleSheet("color: #7f91ac; font-size: 12px;")
-
         self.path_edit = ValidatedPathEdit(
-            placeholder="Select an HDF5 dataset (.h5) to inspect", check_file=True
+            placeholder="Paste a dataset path or choose one above", check_file=True
         )
-        btn_browse = QPushButton("Select...")
+        self.path_edit.setVisible(False)
+        self.path_edit.textChanged.connect(self._on_path_text_changed)
+        self._selected_file = _compact_path_label("No dataset selected")
+
+        btn_browse = QPushButton("Choose Dataset")
         btn_browse.clicked.connect(self._pick)
         self.btn_validate = QPushButton("Validate Dataset")
-        self.btn_validate.setProperty("kind", "primary")
+        self.btn_validate.setProperty("kind", "ghost")
         self.btn_validate.clicked.connect(self._validate)
         self.btn_send = QPushButton("Send to Training")
         self.btn_send.setProperty("kind", "ghost")
         self.btn_send.clicked.connect(self._send)
-        path_row = QHBoxLayout()
-        path_row.setContentsMargins(0, 0, 0, 0)
-        path_row.setSpacing(8)
-        path_row.addWidget(self.path_edit, 1)
-        path_row.addWidget(btn_browse)
-        path_row.addWidget(self.btn_validate)
-        path_row.addWidget(self.btn_send)
+        btn_path = QPushButton("Path")
+        btn_path.setCheckable(True)
+        btn_path.toggled.connect(self.path_edit.setVisible)
+
+        file_detail = QWidget()
+        file_detail_l = QVBoxLayout(file_detail)
+        file_detail_l.setContentsMargins(0, 0, 0, 0)
+        file_detail_l.setSpacing(8)
+        file_detail_l.addWidget(self._selected_file)
+        file_detail_l.addWidget(self.path_edit)
+
+        action_card = _data_action_card(
+            "Inspect Dataset",
+            "Choose an HDF5 cloud, validate it, then send it to Training.",
+            btn_browse,
+            secondary_buttons=[self.btn_validate, self.btn_send, btn_path],
+            detail=file_detail,
+        )
 
         self.status_label = QLabel("UNKNOWN")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._set_status("unknown", "Select a dataset to inspect metadata.")
 
         # Metadata summary card
-        self._summary = QLabel("Select a dataset to inspect metadata.")
+        self._summary = QLabel("Metadata appears after validation.")
         self._summary.setWordWrap(True)
         self._summary.setTextFormat(Qt.TextFormat.RichText)
         self._summary.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._summary.setStyleSheet(
-            "background: rgba(13, 22, 38, 0.85); border: 1px solid #26364f;"
+            "background: rgba(13, 22, 38, 0.72); border: 1px solid rgba(185, 194, 221, 0.12);"
             " border-radius: 10px; padding: 12px; color: #cdd9ee; font-size: 12px;"
         )
-        self._summary.setMinimumHeight(220)
+        self._summary.setMinimumHeight(140)
 
         # Raw metadata panel
         self._raw = QPlainTextEdit()
-        self._raw.setReadOnly(True)
-        self._raw.setFont(_mono_font())
+        _style_command_preview(self._raw, min_h=140)
         self._raw.setPlaceholderText("Raw metadata/attributes will appear here.")
-        self._raw.setMinimumHeight(180)
 
-        meta_split = QSplitter(Qt.Orientation.Horizontal)
-        sl = QWidget(); slo = QVBoxLayout(); slo.setContentsMargins(0, 0, 0, 0)
-        slo.addWidget(QLabel("Metadata summary")); slo.addWidget(self._summary, 1); sl.setLayout(slo)
-        sr = QWidget(); sro = QVBoxLayout(); sro.setContentsMargins(0, 0, 0, 0)
-        sro.addWidget(QLabel("Raw attributes")); sro.addWidget(self._raw, 1); sr.setLayout(sro)
-        meta_split.addWidget(sl)
-        meta_split.addWidget(sr)
-        meta_split.setSizes([520, 420])
-
-        backend_note = QLabel(
-            "Full dataset convention validation is performed by the training backend "
-            "before training starts."
-        )
-        backend_note.setWordWrap(True)
-        backend_note.setStyleSheet("color: #7f91ac; font-size: 11px;")
+        meta_tabs = QTabWidget()
+        meta_tabs.setDocumentMode(True)
+        meta_tabs.addTab(self._summary, "Summary")
+        meta_tabs.addTab(self._raw, "Raw")
 
         lo = QVBoxLayout()
-        lo.setContentsMargins(12, 12, 12, 12)
-        lo.setSpacing(10)
-        lo.addWidget(title)
-        lo.addWidget(subtitle)
-        lo.addLayout(path_row)
+        lo.setContentsMargins(8, 8, 8, 8)
+        lo.setSpacing(12)
+        lo.addWidget(action_card)
         lo.addWidget(self.status_label)
-        lo.addWidget(meta_split, 1)
-        lo.addWidget(backend_note)
+        lo.addWidget(meta_tabs, 1)
         self.setLayout(lo)
 
     # -- helpers --
+    def _on_path_text_changed(self, text: str) -> None:
+        _set_path_label(
+            self._selected_file,
+            text,
+            empty_text="No dataset selected",
+        )
+
     def _pick(self) -> None:
         start = self.path_edit.text().strip() or str(_REPO_ROOT)
         path, _ = QFileDialog.getOpenFileName(
@@ -2184,7 +2326,7 @@ class DatasetInspectionPanel(QWidget):
             "unknown": ("#7f91ac", "rgba(127, 145, 172, 0.12)", "Unknown"),
         }
         color, bg, label = colors.get(level, colors["unknown"])
-        self.status_label.setText(f"{label} — {text}")
+        self.status_label.setText(f"{label}: {text}")
         self.status_label.setStyleSheet(
             f"color: {color}; background: {bg}; border: 1px solid {color};"
             " border-radius: 8px; padding: 6px 10px; font-weight: 600; font-size: 12px;"
@@ -2222,30 +2364,21 @@ class DatasetInspectionPanel(QWidget):
         unit_system = _attr_lookup(attrs, "unit_system", "units")
         degree_max = _attr_lookup(attrs, "degree_max", "requested_degree", "max_degree")
         degree_min = _attr_lookup(attrs, "degree_min", "min_degree")
+        alt_min = _attr_lookup(attrs, "alt_min_km", "altitude_min_km", "alt_min")
+        alt_max = _attr_lookup(attrs, "alt_max_km", "altitude_max_km", "alt_max")
 
         fields = [
-            ("File", Path(path).name),
-            ("Path", str(path)),
             ("Rows", f"{rows:,}" if isinstance(rows, int) else rows),
             ("Columns", info.get("cols")),
-            ("Dataset name", info.get("dataset_name")),
-            ("Unit system", unit_system),
-            ("Central body", _attr_lookup(attrs, "central_body", "body")),
-            ("Target mode", _attr_lookup(attrs, "target_mode")),
-            ("Degree min", degree_min),
-            ("Degree max", degree_max),
-            ("Altitude min (km)", _attr_lookup(attrs, "alt_min_km", "altitude_min_km", "alt_min")),
-            ("Altitude max (km)", _attr_lookup(attrs, "alt_max_km", "altitude_max_km", "alt_max")),
-            ("Derivative convention", _attr_lookup(attrs, "derivative_convention_version", "derivative_convention")),
+            ("Dataset", info.get("dataset_name")),
+            ("Units", unit_system),
+            ("Degree", f"{degree_min} -> {degree_max}" if degree_min is not None or degree_max is not None else None),
+            ("Altitude", f"{alt_min} -> {alt_max} km" if alt_min is not None or alt_max is not None else None),
             ("Gravity model", _attr_lookup(attrs, "gravity_model_path", "gfc_path", "gravity_model")),
-            ("Include potential", _attr_lookup(attrs, "include_potential")),
-            ("DU_m", _attr_lookup(attrs, "DU_m", "du_m")),
-            ("TU_s", _attr_lookup(attrs, "TU_s", "tu_s")),
-            ("VU_m_s", _attr_lookup(attrs, "VU_m_s", "vu_m_s")),
         ]
         html_rows = []
         for label, value in fields:
-            shown = "—" if value is None else str(value)
+            shown = "-" if value is None else str(value)
             html_rows.append(
                 f"<tr><td style='color:#7f91ac;padding:2px 14px 2px 0;'>{label}</td>"
                 f"<td style='color:#e6edf7;font-family:Consolas,monospace;'>{shown}</td></tr>"
@@ -2292,9 +2425,9 @@ class DataPage(QWidget):
         nav.setMaximumWidth(260)
         nav.setStyleSheet(
             "QFrame#dataSectionNav {"
-            "  background: rgba(11, 16, 32, 0.72);"
-            "  border: 1px solid rgba(185, 194, 221, 0.11);"
-            "  border-radius: 12px;"
+            "  background: rgba(8, 13, 26, 0.74);"
+            "  border: 1px solid rgba(185, 194, 221, 0.12);"
+            "  border-radius: 14px;"
             "}"
         )
         nav_l = QVBoxLayout()
@@ -2302,14 +2435,16 @@ class DataPage(QWidget):
         nav_l.setSpacing(8)
 
         def _nav_btn(label: str, hint: str, idx: int) -> QPushButton:
-            btn = QPushButton(label + "\n" + hint)
+            btn = QPushButton(label)
+            btn.setToolTip(hint)
             btn.setCheckable(True)
+            btn.setMinimumHeight(46)
             btn.setStyleSheet(
                 "QPushButton {"
-                "  text-align: left; padding: 12px 12px;"
+                "  text-align: left; padding: 0 14px;"
                 "  border: 1px solid rgba(185, 194, 221, 0.10);"
-                "  border-radius: 9px; background: rgba(255,255,255,0.025);"
-                "  color: #a8b5d0; font-weight: 600;"
+                "  border-radius: 10px; background: rgba(255,255,255,0.025);"
+                "  color: #a8b5d0; font-weight: 750; font-size: 13px;"
                 "}"
                 "QPushButton:hover { background: rgba(53, 208, 255, 0.06); color: #e8ecf8; }"
                 "QPushButton:checked {"
@@ -2322,14 +2457,15 @@ class DataPage(QWidget):
             self._section_buttons.append(btn)
             return btn
 
-        nav_title = QLabel("Data Workspace")
+        nav_title = QLabel("Data")
         nav_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #e8ecf8;")
         nav_l.addWidget(nav_title)
-        nav_l.addWidget(_nav_btn("Inspect Dataset", "readiness and metadata", 0))
-        nav_l.addWidget(_nav_btn("Generate Clouds", "train/val/test/OOD suites", 1))
-        nav_l.addWidget(_nav_btn("Analyze Dataset", "coverage and field reports", 2))
+        nav_l.addWidget(_nav_btn("Inspect", "Readiness and metadata", 0))
+        nav_l.addWidget(_nav_btn("Generate", "Single cloud or train/val/test/OOD suite", 1))
+        nav_l.addWidget(_nav_btn("Analyze", "Coverage and field reports", 2))
         nav_l.addStretch(1)
         nav.setLayout(nav_l)
+        _style_surface(nav, object_name="dataSectionNav")
 
         workspace = QHBoxLayout()
         workspace.setContentsMargins(0, 0, 0, 0)
@@ -2340,12 +2476,11 @@ class DataPage(QWidget):
         lo = QVBoxLayout()
         lo.setContentsMargins(22, 20, 22, 20)
         lo.setSpacing(14)
-        title = QLabel("Data")
-        title.setStyleSheet("font-size: 18px; font-weight: 700; color: #e8ecf8;")
-        subtitle = QLabel("Prepare and inspect lunar gravity clouds for ST-LRPS training.")
-        subtitle.setStyleSheet("color: #94a3b8; font-size: 12px;")
-        lo.addWidget(title)
-        lo.addWidget(subtitle)
+        lo.addWidget(_make_page_header(
+            "Data Workspace",
+            "Choose a data task, then act from the primary card on that page.",
+            "Dataset Pipeline",
+        ))
         lo.addLayout(workspace, 1)
         self.setLayout(lo)
         self._show_section(0)

@@ -54,6 +54,10 @@ Post-processing and presentation.
 - `analysis/postprocess.py` — orbital elements, invariants, metrics.
 - `analysis/reporting/` — report `manager`, `plotting`, `styling`.
 - `analysis/monte_carlo/` — Monte Carlo `statistics` and `plotting`.
+- `analysis/perturbation_budget/` — mission-analysis acceleration budgets,
+  spherical-harmonic degree sensitivity, force-model uncertainty comparisons,
+  and per-configuration gravity-degree recommendations. It calls existing
+  physics kernels but does not alter propagation RHS behavior.
 - `visualization/` — standalone orbit-animation and surface-explorer tools.
 - `ui/app.py` + `ui/widgets/` — PySide6 desktop UI (mission simulator).
 
@@ -92,6 +96,17 @@ CLI (lunaris.cli.main) / UI (lunaris.ui.app)
   → lunaris.core.propagator (solve_ivp → PropagationResult)
   → lunaris.analysis.postprocess (orbital elements, metrics)
   → lunaris.analysis.reporting.{plotting,manager} (PNG/PDF output)
+```
+
+Perturbation Budget Analysis is a sibling analysis flow:
+
+```text
+lunaris-perturbation-budget
+  -> lunaris.analysis.perturbation_budget.config
+  -> sampling (representative states and RIC frames)
+  -> existing physics kernels / gravity loader
+  -> acceleration, SH-increment, uncertainty, and recommendation tables
+  -> CSV + Markdown outputs
 ```
 
 ## Perturbation flags
