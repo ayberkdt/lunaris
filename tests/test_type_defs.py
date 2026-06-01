@@ -34,6 +34,7 @@ try:
         AdaptiveDegreeConfig,
         GravityConfig,
         PerturbationFlags,
+        SolidTideConfig,
         TimeConfig,
         InitialState,
         EventConfig,
@@ -171,6 +172,22 @@ def test_perturbation_flags_tides_guards_and_properties():
     pf0 = PerturbationFlags()
     assert pf0.tides_degree == 0
     assert pf0.tides_kind == "none"
+
+
+def test_solid_tide_config_validation_and_normalization():
+    cfg = SolidTideConfig(tide_bodies=("Earth", "sun", "earth"), k2=0.0, k3=0.01)
+    assert cfg.tide_bodies == ("earth", "sun")
+    assert cfg.k2 == 0.0
+    assert cfg.k3 == 0.01
+
+    with pytest.raises(ValueError):
+        SolidTideConfig(tide_bodies=("mars",))
+    with pytest.raises(ValueError):
+        SolidTideConfig(tide_bodies=())
+    with pytest.raises(ValueError):
+        SolidTideConfig(k2=-1.0)
+    with pytest.raises(ValueError):
+        SolidTideConfig(r_ref_m=0.0)
 
 
 def test_perturbation_flags_enable_third_body_and_surface_forces():

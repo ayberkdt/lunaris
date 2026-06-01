@@ -18,7 +18,7 @@ It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) �
 
 ## Overview
 
-Lunaris supports lunar-orbit propagation with configurable physical force models (spherical-harmonic gravity, third-body, Earth J2, solar radiation pressure, lunar albedo, relativity — see [Force models](#force-models)), Monte Carlo workflows, validation harnesses, report generation, and PySide6-based desktop workflows. When the ST-LRPS surrogate is enabled, runtime acceleration is obtained from the learned potential gradient and combined with the lower-degree spherical-harmonic baseline.
+Lunaris supports lunar-orbit propagation with configurable physical force models (spherical-harmonic gravity, third-body, Earth J2, solar radiation pressure, lunar albedo, solid tides, relativity — see [Force models](#force-models)), Monte Carlo workflows, validation harnesses, report generation, and PySide6-based desktop workflows. When the ST-LRPS surrogate is enabled, runtime acceleration is obtained from the learned potential gradient and combined with the lower-degree spherical-harmonic baseline.
 
 Accuracy, runtime, and stability depend on the selected data, force-model configuration, trained artifacts, and validation scenario. Treat validation outputs as run-specific evidence rather than a blanket guarantee.
 
@@ -31,13 +31,31 @@ Implemented and wired into the propagator (`lunaris.core.dynamics`):
 - Earth oblateness (differential J2)
 - Solar radiation pressure (with eclipse handling)
 - Lunar albedo (reflected-solar) surface radiation
+- Elastic lunar solid-body tides (`k2`, optional explicit `k3`; Earth and/or Sun raised)
 - First-order post-Newtonian relativity
 
-Planned / not yet implemented — the configuration flags exist, but enabling them
+Planned / not yet implemented — the configuration flag exists, but enabling it
 currently raises `NotImplementedError` in `lunaris.core.dynamics`:
 
 - Lunar thermal (IR) emission (`enable_thermal`)
-- Solid tides (`enable_tides_k2`, `enable_tides_k3`)
+
+Solid tides use `lunaris.physics.solid_tides`: the Moon-fixed disturbing
+potential is evaluated with configurable Love numbers and differentiated
+analytically, then the acceleration is rotated back to the inertial integration
+frame. The default `SolidTideConfig.k2=0.02416` follows the GRAIL/LRO monthly
+lunar `k2` value reported by Williams & Boggs (2015) in
+[NASA PGDA product 96](https://pgda.gsfc.nasa.gov/products/96);
+`k3` has no default and must be set explicitly for `--tides-kind k3`.
+Supported tide-raising bodies are `earth`, `sun`, or both. This is an elastic
+instantaneous solid-body model only: no time lag/dissipation, ocean tide, or
+thermal tide is included.
+
+CLI example:
+
+```bash
+lunaris --enable-tides on --tides-kind k2 --tide-bodies earth,sun
+lunaris --enable-tides on --tides-kind k3 --tide-k3 0.01 --tide-bodies earth
+```
 
 ## Documentation
 

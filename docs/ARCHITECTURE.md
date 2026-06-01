@@ -29,6 +29,7 @@ Numba-JIT-compiled force-model kernels. Each file is one force model:
 - `surface_effects.py` — lunar albedo (reflected-solar) acceleration. (Thermal IR
   emission is planned and is **not** wired into the dynamics RHS — see the
   perturbation-flag table below.)
+- `solid_tides.py` — elastic lunar solid-body tide potential and acceleration.
 - `relativity_effects.py` — first-order post-Newtonian.
 - `ephemeris.py` — SPICE kernel wrapper; ephemerides are pre-tabulated at startup.
 - `surrogate_gravity.py`, `gravity_adapter.py` — surrogate force-model adapters.
@@ -107,11 +108,29 @@ non-`None` (e.g. `enable_srp=True` requires `cfg.srp`).
 | `enable_albedo` | Reflected solar from the lunar surface | Implemented |
 | `enable_relativity_1pn` | First-order post-Newtonian | Implemented |
 | `enable_thermal` | Lunar thermal emission | **Planned** — raises `NotImplementedError` |
-| `enable_tides_k2` / `enable_tides_k3` | Solid tides | **Planned** — raises `NotImplementedError` |
+| `enable_tides_k2` / `enable_tides_k3` | Elastic lunar solid-body tides | Implemented on CPU RHS |
 
-The **Planned** rows are recognized configuration flags but are not yet wired
-into the dynamics RHS; enabling them raises `NotImplementedError` in
+The **Planned** row is a recognized configuration flag but is not yet wired
+into the dynamics RHS; enabling it raises `NotImplementedError` in
 `lunaris.core.dynamics` (`DynamicsEngine._validate_dependencies`).
+
+Solid tides are configured through `SolidTideConfig` and evaluated in
+`lunaris.physics.solid_tides`. The model is an instantaneous elastic response
+only. For each enabled tide-raising body (`earth`, `sun`, or both), the
+Moon-fixed disturbing potential
+
+```text
+dU_l = k_l * mu_j / |R_j| * (R / |r|)^(l+1) * (R / |R_j|)^l * P_l(c)
+```
+
+is differentiated analytically and the resulting acceleration is rotated back
+to the inertial integration frame. Degree 2 uses the documented default
+`k2=0.02416` from the GRAIL/LRO monthly lunar Love-number solution reported by
+Williams & Boggs (2015; [NASA PGDA product 96](https://pgda.gsfc.nasa.gov/products/96)).
+Degree 3 has no project default:
+`enable_tides_k3=True` requires an explicit `SolidTideConfig.k3` or CLI
+`--tide-k3` value. The current model does not include dissipation/time lag,
+ocean tides, or thermal tides.
 
 ## External data (`data/`)
 
@@ -168,9 +187,9 @@ Reload a saved run with `from lunaris.core.monte_carlo_engine import load_mc_res
 - The CUDA kernel workspace uses compile-time fixed `(26×26)` arrays, supporting
   SH degree ≤ 24. `gpu_sh_degree > 24` raises `ValueError`; use the CPU path for
   higher-degree fields.
-- The GPU path does not support albedo (use the CPU path for albedo). Thermal
-  emission and solid tides are not implemented on any path (enabling them raises
-  `NotImplementedError`).
+- The GPU path does not support albedo or solid tides (use the CPU path for
+  those models). Thermal emission is not implemented on any path and raises
+  `NotImplementedError`.
 - CUDA requires `numba` plus a CUDA-capable GPU; the engine falls back to CPU
   (emitting a `RuntimeWarning` and recording a `fallback_reason`) when CUDA is
   unavailable.

@@ -1225,6 +1225,7 @@ class CPUBatchPropagator:
         gravity_adaptive = getattr(template, "gravity_adaptive", None) if template is not None else None
         ephem_manager = getattr(template, "ephem", None) if template is not None else None
         earth_j2 = getattr(template, "earth_j2", None) if template is not None else None
+        solid_tides = getattr(template, "solid_tides", None) if template is not None else getattr(self._sim_cfg, "solid_tides", None)
 
         return DynamicsEngine(
             sc_props=sc,
@@ -1234,6 +1235,7 @@ class CPUBatchPropagator:
             ephem_manager=ephem_manager,
             surface_provider=self._surface_provider,
             earth_j2=earth_j2,
+            solid_tides=solid_tides,
             allow_identity_rotation=(ephem_manager is None),
         )
 

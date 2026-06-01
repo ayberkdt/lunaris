@@ -164,7 +164,7 @@ def test_allow_identity_rotation_does_not_substitute_sun_or_earth_vectors():
 
 
 # =============================================================================
-# Unimplemented features must fail loudly (not silently no-op)
+# Unsupported or missing dependencies must fail loudly (not silently no-op)
 # =============================================================================
 
 def test_thermal_raises_not_implemented():
@@ -173,9 +173,9 @@ def test_thermal_raises_not_implemented():
                        allow_identity_rotation=True)
 
 
-def test_solid_tides_raise_not_implemented():
+def test_solid_tides_require_ephemeris_vectors():
     # enable_sh disabled so the gravity-model check does not fire first.
-    with pytest.raises(NotImplementedError, match="tides"):
+    with pytest.raises(ValueError, match="Ephemeris is required"):
         DynamicsEngine(_sc(), PerturbationFlags(enable_sh=False, enable_tides_k2=True),
                        allow_identity_rotation=True)
 

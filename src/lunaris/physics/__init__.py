@@ -66,6 +66,11 @@ _EXPORTS: Final[dict[str, tuple[str, str, str]]] = {
     "accel_third_body_numba": (".third_body_effects", "accel_third_body_numba", "Numba kernel: third-body accel."),
     "accel_solid_tide": (".third_body_effects", "accel_solid_tide", "Solid-tide acceleration term."),
 
+    # Solid-body tides
+    "calc_solid_tide_accel": (".solid_tides", "calc_solid_tide_accel", "Elastic lunar solid-tide acceleration."),
+    "accel_solid_tides_numba": (".solid_tides", "accel_solid_tides_numba", "Numba kernel: elastic solid-tide accel."),
+    "solid_tide_potential_degree": (".solid_tides", "solid_tide_potential_degree", "Solid-tide disturbing potential."),
+
     # Solar effects (SRP + shadow)
     "SRPConfig": (".solar_effects", "SRPConfig", "Solar Radiation Pressure configuration."), 
     "compute_srp_accel": (".solar_effects", "compute_srp_accel", "Compute SRP acceleration."), 
@@ -83,6 +88,7 @@ _LAZY_MODULES: Final[dict[str, str]] = {
     "ephemeris": "Ephemeris & SPICE utilities (can be heavy).", 
     "relativity_effects": "Relativistic corrections.", 
     "third_body_effects": "Earth/Sun third-body effects.", 
+    "solid_tides": "Elastic lunar solid-body tides.",
     "solar_effects": "SRP + eclipse/shadow geometry.", 
     "surface_effects": "Surface environment (topography/albedo/thermal; often heavy).", 
 }
@@ -163,6 +169,7 @@ if TYPE_CHECKING:
         ephemeris,
         relativity_effects,
         third_body_effects,
+        solid_tides,
         solar_effects,
         surface_effects,
     )
@@ -197,6 +204,11 @@ if TYPE_CHECKING:
         calc_j2_oblate_diff_accel,
         accel_third_body_numba,
         accel_solid_tide,
+    )
+    from .solid_tides import (  # noqa: F401
+        calc_solid_tide_accel,
+        accel_solid_tides_numba,
+        solid_tide_potential_degree,
     )
     from .solar_effects import (  # noqa: F401
         SRPConfig,

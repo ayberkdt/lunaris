@@ -39,6 +39,7 @@ from lunaris.cli.common_args import (  # noqa: E402
     init_surface_provider,
     need_ephemeris,
     parse_adaptive_table,
+    parse_tide_bodies,
     resolve_orbit_elements,
     str2bool,
 )
@@ -201,6 +202,9 @@ def print_summary(cfg: SimConfig, orbit_params: Optional[Dict[str, float]], y0: 
     tides_on = bool(f.enable_tides_k2 or f.enable_tides_k3)
     tides_kind = "k3" if f.enable_tides_k3 else ("k2" if f.enable_tides_k2 else "off")
     print(f"  Tides                : {tides_on} (kind={tides_kind})")
+    if tides_on and cfg.solid_tides is not None:
+        k3_str = "explicit" if cfg.solid_tides.k3 is not None else "unset"
+        print(f"  Tides bodies/k2/k3   : {','.join(cfg.solid_tides.tide_bodies)} / {cfg.solid_tides.k2:g} / {k3_str}")
     print(f"  Relativity (1PN)     : {f.enable_relativity_1pn}")
     print("")
     print("[Initial State]")
@@ -296,6 +300,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     # clean tides contract -> maps to enable_tides_k2/enable_tides_k3
     g_phys.add_argument("--enable-tides", type=str2bool, help="Enable solid tides (on/off)")
     g_phys.add_argument("--tides-kind", choices=("k2", "k3"), help="Tides model kind (k2 or k3)")
+    g_phys.add_argument("--tide-bodies", type=parse_tide_bodies, help="Comma-separated tide bodies: earth,sun")
+    g_phys.add_argument("--tide-k2", type=float, help="Degree-2 lunar potential Love number k2")
+    g_phys.add_argument("--tide-k3", type=float, help="Degree-3 lunar potential Love number k3 (required for --tides-kind k3)")
+    g_phys.add_argument("--tide-r-ref-m", type=float, help="Lunar tide reference radius [m]")
 
     g_phys.add_argument("--enable-relativity-1pn", type=str2bool, help="Enable relativity 1PN (on/off)")
 
@@ -416,6 +424,12 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--ldem-ppd must be positive.")
     if args.user_max_step_s is not None and args.user_max_step_s <= 0:
         parser.error("--user-max-step-s must be positive.")
+    if args.tide_k2 is not None and args.tide_k2 < 0.0:
+        parser.error("--tide-k2 must be >= 0.")
+    if args.tide_k3 is not None and args.tide_k3 < 0.0:
+        parser.error("--tide-k3 must be >= 0.")
+    if args.tide_r_ref_m is not None and args.tide_r_ref_m <= 0.0:
+        parser.error("--tide-r-ref-m must be positive.")
 
     # adaptive table implies adaptive enabled unless user explicitly disabled
     if args.adaptive_table is not None and args.adaptive_enabled is False:
@@ -424,6 +438,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     # tides-kind implies enable-tides unless user explicitly forced off
     if args.tides_kind is not None and args.enable_tides is False:
         parser.error("--tides-kind requires --enable-tides on (or omit --enable-tides).")
+    if args.tides_kind == "k3" and args.tide_k3 is None:
+        parser.error("--tides-kind k3 requires an explicit --tide-k3 value.")
 
     # path sanity
     if args.kernel_dir is not None:
@@ -636,6 +652,7 @@ def main() -> int:
             ephem_manager=ephem_mgr,
             surface_provider=surface_provider,
             earth_j2=cfg.earth_j2,
+            solid_tides=cfg.solid_tides,
         )
         _ = engine.build_rhs()  # triggers warmup / JIT (if enabled)
     except Exception as e:

@@ -572,6 +572,7 @@ class MonteCarloEngine:
                 ) from exc
 
         earth_j2 = getattr(cfg, "earth_j2", None)
+        solid_tides = getattr(cfg, "solid_tides", None)
 
         return DynamicsEngine(
             sc_props=cfg.spacecraft,
@@ -584,6 +585,7 @@ class MonteCarloEngine:
             ephem_manager=ephem_manager,
             surface_provider=surface_provider,
             earth_j2=earth_j2,
+            solid_tides=solid_tides,
             allow_identity_rotation=(ephem_manager is None),
         )
 
