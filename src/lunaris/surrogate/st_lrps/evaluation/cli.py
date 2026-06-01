@@ -268,7 +268,6 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     MU_MOON_SI,
     R_MOON_SI,
     is_lunar_body_signature,
-    looks_like_lunar_run_config,
 )
 from lunaris.physics.surrogate_gravity import find_latest_st_lrps_model_dir
 
@@ -315,22 +314,14 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     load_best_or_last,
     load_checkpoint,
     make_run_layout,
-    read_run_manifest,
     reload_model_from_run_dir as reload_model_from_artifact_run_dir,
     resolve_run_dir,
-    update_run_manifest,
     write_eval_manifest,
     write_evaluate_summary,
-)
-from lunaris.surrogate.st_lrps.networks.models import (
-    FourierInputEmbedding, MLP, PhysicsNet, Sine, SirenMLP, build_model_from_config,
-    ARCH_SIGNATURE_FIELDS, MODEL_BUILDER_VERSION, architecture_mismatch_fields,
-    compute_architecture_signature, reconstruct_model_from_artifacts,
 )
 from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import (
-    IsometricScaleParams,
     ScalerPack,
     compute_base_accel,
     compute_base_accel_from_contract,

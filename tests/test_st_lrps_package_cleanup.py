@@ -185,10 +185,7 @@ def test_module_help_exits_zero(module: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5) UI command path references the new package
+# 5) (removed) The in-app ST-LRPS "Surrogate" page was deleted; the real Studio
+#    lives under lunaris.surrogate.st_lrps.ui. Selecting a trained surrogate as
+#    the gravity backend is covered by the Force Models / command-builder tests.
 # ---------------------------------------------------------------------------
-
-def test_ui_surrogate_studio_uses_new_package_path() -> None:
-    src = (REPO_ROOT / "src" / "lunaris" / "ui" / "widgets" / "surrogate_studio_page.py").read_text(encoding="utf-8")
-    assert "lunaris.surrogate.st_lrps.training.cli" in src
-    assert OLD_PKG not in src.replace(ALLOWED_CLI_ARG, "")

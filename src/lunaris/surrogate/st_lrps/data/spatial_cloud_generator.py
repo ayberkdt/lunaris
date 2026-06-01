@@ -48,7 +48,6 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     load_icgem_gfc,
 )
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
-    DatasetContract,
     contract_from_generation_attrs,
     ensure_output_path_allowed,
     stamp_hdf5_content_hash,

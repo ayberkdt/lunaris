@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import argparse
 import csv
-import json
 import math
 import shutil
 from datetime import datetime, timezone
@@ -14,7 +12,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
-from .benchmark_config import canonical_json_text, load_benchmark_config
+from .benchmark_config import load_benchmark_config
 from .benchmark_validation import validate_benchmark_outputs
 from .provenance import build_benchmark_manifest, sha256_payload, write_json
 from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract

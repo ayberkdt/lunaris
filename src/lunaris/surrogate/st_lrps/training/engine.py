@@ -24,7 +24,6 @@ import logging
 import math
 import os
 import random
-import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -42,7 +41,7 @@ from lunaris.surrogate.st_lrps.training.config import TrainConfig, apply_model_p
 from lunaris.surrogate.st_lrps.training.config_summary import build_experiment_feature_summary
 from lunaris.surrogate.st_lrps.data.datasets import (
     DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
-    _build_train_val_indices, _discover_dataset_name, _resolve_loader_worker_count,
+    _discover_dataset_name, _resolve_loader_worker_count,
     build_dataset_contract,
     _resolve_lunar_dataset_contract, collate_xyz_u_a, infer_a_sign_from_data,
     validate_training_dataset_convention,
@@ -52,7 +51,6 @@ from lunaris.surrogate.st_lrps.data.dataset_validation import validate_dataset_f
 from lunaris.surrogate.st_lrps.data.splits import build_split_manifest, split_dataset_indices, write_split_manifest
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     atomic_write_json,
-    append_run_evaluation,
     build_checkpoint_payload,
     build_resolved_config,
     capture_environment_snapshot,
@@ -89,7 +87,6 @@ from lunaris.surrogate.st_lrps.training.metrics import (
     normalize_best_metric,
 )
 from lunaris.surrogate.st_lrps.networks.models import (
-    FourierInputEmbedding, MLP, MultiScaleSirenMLP, PhysicsNet, SirenMLP,
     _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
     MODEL_BUILDER_VERSION, compute_architecture_signature,
 )
@@ -636,7 +633,6 @@ class STLRPSTrainer:
                             try:
                                 _fm_path = Path(self.cfg.out) / "failure_manifest.json"
                                 _fm_path.parent.mkdir(parents=True, exist_ok=True)
-                                import dataclasses as _dc_mod
                                 _fm_path.write_text(
                                     _json_mod.dumps({
                                         "epoch": epoch, "batch": n_batches,
