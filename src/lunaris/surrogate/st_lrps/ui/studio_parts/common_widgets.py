@@ -802,7 +802,13 @@ class LiveLossPlot(QWidget):
         # Plot body
         # ----------------------------
         if _HAS_PYQTGRAPH:
-            pg.setConfigOptions(antialias=True, background=None, foreground="#b9c2dd")
+            # NOTE: do NOT set the global 'background' to None here. It is a
+            # process-wide pyqtgraph option, and pyqtgraph's GLViewWidget reads
+            # it in its constructor and raises ("make a color from (None,)") when
+            # it is None — which crashed the Lunar Propagation orbit preview once
+            # the Studio had been touched. This widget sets its own background
+            # per-instance below, so a global background override is unnecessary.
+            pg.setConfigOptions(antialias=True, foreground="#b9c2dd")
 
             self._plot_widget = pg.PlotWidget(axisItems={"left": _CleanLogAxis(orientation="left")})
             self._plot_widget.setMinimumHeight(360)

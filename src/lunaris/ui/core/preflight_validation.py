@@ -259,28 +259,29 @@ class PreFlightWorker(QtCore.QThread):
 
     def _validate_albedo_files(self) -> Tuple[bool, str]:
         """
-        Check albedo label/image files when the albedo force model is enabled.
+        Validate the albedo surface raster when a grid albedo source is selected.
 
-        The backend can fall back to defaults when explicit file paths are not
-        set, so "missing path configuration" is not treated as an error here.
+        The backend reads the albedo grid from the Albedo Root directory
+        (``--albedo-root``); constant-albedo mode needs no files. Only grid modes
+        require that directory to exist.
         """
 
-        label_path = str(self.command_data.get("albedo_label", "") or "").strip()
-        image_path = str(self.command_data.get("albedo_img", "") or "").strip()
+        source = str(self.command_data.get("albedo_source", "constant_albedo") or "constant_albedo").strip()
+        if source not in ("scaled_dn_grid", "albedo_grid"):
+            return True, "Using constant albedo model"
 
-        if not label_path:
-            return True, "Using default albedo model"
+        albedo_root = str(self.command_data.get("albedo_root", "") or "").strip()
+        if not albedo_root:
+            return False, (
+                "Grid albedo source selected, but no Albedo Root directory is set. "
+                "Configure it on the Data Files page or switch to constant albedo."
+            )
 
-        label_file = Path(label_path)
-        if not label_file.exists():
-            return False, f"Albedo label file not found: {label_path}"
+        root = Path(albedo_root)
+        if not root.exists() or not root.is_dir():
+            return False, f"Albedo Root directory not found: {albedo_root}"
 
-        if image_path:
-            image_file = Path(image_path)
-            if not image_file.exists():
-                return False, f"Albedo image file not found: {image_path}"
-
-        return True, f"Albedo files validated: {label_file.name}"
+        return True, f"Albedo grid root validated: {root.name}"
 
     def _validate_output_directory(self) -> Tuple[bool, str]:
         """

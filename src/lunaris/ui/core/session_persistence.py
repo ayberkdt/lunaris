@@ -332,16 +332,28 @@ def apply_session_snapshot(
 
     albedo_payload = payload.get("albedo_config", {}) or {}
     for field_name in (
-        "label_path",
-        "img_path",
         "model",
-        "use_ls",
-        "sampling",
-        "normal_mult",
-        "update_interval",
+        "source",
+        "albedo_const",
+        "pressure_coefficient",
+        "facet_lat_count",
+        "facet_lon_count",
+        "enable_eclipse",
     ):
-        if field_name in albedo_payload:
+        if field_name in albedo_payload and hasattr(albedo_cfg, field_name):
             setattr(albedo_cfg, field_name, albedo_payload[field_name])
+
+    # Migrate older sessions: the legacy dialog stored free-text model names
+    # ("Lambertian", "Lommel-Seeliger") and unrelated knobs. Coerce any unknown
+    # backend/source value back to a valid default so command building stays sane.
+    if hasattr(albedo_cfg, "model") and str(getattr(albedo_cfg, "model", "")) not in ("lambert_facets", "simple"):
+        albedo_cfg.model = "lambert_facets"
+    if hasattr(albedo_cfg, "source") and str(getattr(albedo_cfg, "source", "")) not in (
+        "constant_albedo",
+        "scaled_dn_grid",
+        "albedo_grid",
+    ):
+        albedo_cfg.source = "constant_albedo"
 
     data_payload = payload.get("data_config", {}) or {}
     if data_payload:

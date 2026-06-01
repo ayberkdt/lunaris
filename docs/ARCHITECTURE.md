@@ -127,10 +127,9 @@ sources: `constant_albedo` (provider-free), `albedo_grid` (provider-supplied
 `A = scale*DN + offset`, with nodata falling back to `albedo_const`). The model
 uses a dedicated coefficient `albedo_pressure_coefficient` (C_R_albedo), **not**
 the SRP `cr`. An optional lunar-eclipse (Earth-umbra) dimming reuses the SRP
-conical-shadow geometry. The legacy cannonball kernels remain available for
-backward compatibility through `albedo_model` (`simple` is wired into the
-propagator RHS; `lommel` is exposed only via the standalone
-`surface_effects.albedo_accel` wrapper). The facet model is Lambertian only: it
+conical-shadow geometry. The legacy `simple` cannonball backend remains
+available for backward compatibility via `albedo_model='simple'`. The facet
+model is Lambertian only: it
 does not model non-Lambertian BRDFs, wavelength dependence, surface roughness,
 terrain self-shadowing beyond the incidence/visibility cutoffs, photometric
 phase functions, multiple scattering, or local topography.
