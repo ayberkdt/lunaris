@@ -14,13 +14,14 @@ import pytest
 from types import SimpleNamespace
 
 from lunaris.common.type_defs import PerturbationFlags, TimeConfig
+from lunaris.physics.surface_effects import ThermalConfig
 from lunaris.physics.ephemeris import SpiceBuildConfig
 
 from lunaris.core.config import load_default_config
 import lunaris.cli.main as main
 
 
-def _make_cfg(*, flags: PerturbationFlags) -> SimpleNamespace:
+def _make_cfg(*, flags: PerturbationFlags, thermal=None) -> SimpleNamespace:
     """Create the minimal config shape consumed by ``main.init_ephemeris``."""
 
     return SimpleNamespace(
@@ -34,6 +35,7 @@ def _make_cfg(*, flags: PerturbationFlags) -> SimpleNamespace:
             include_third_body=True,
         ),
         flags=flags,
+        thermal=thermal,
     )
 
 
@@ -99,6 +101,52 @@ def test_init_ephemeris_keeps_third_body_sampling_when_sun_vector_is_needed(monk
             enable_tides_k3=False,
             enable_relativity_1pn=False,
         )
+    )
+
+    result = main.init_ephemeris(cfg, tf_s=3600.0)
+
+    assert result == "mock-ephem"
+    assert captured["spice_cfg"].include_third_body is True
+
+
+def test_init_ephemeris_thermal_constant_needs_q_only(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_from_time_and_spice(time_cfg, spice_cfg, **kwargs):
+        captured["spice_cfg"] = spice_cfg
+        return "mock-ephem"
+
+    monkeypatch.setattr(
+        "lunaris.physics.ephemeris.EphemerisManager.from_time_and_spice",
+        _fake_from_time_and_spice,
+    )
+
+    cfg = _make_cfg(
+        flags=PerturbationFlags(enable_sh=False, enable_thermal=True),
+        thermal=ThermalConfig(thermal_mode="constant_temperature"),
+    )
+
+    result = main.init_ephemeris(cfg, tf_s=3600.0)
+
+    assert result == "mock-ephem"
+    assert captured["spice_cfg"].include_third_body is False
+
+
+def test_init_ephemeris_thermal_equilibrium_keeps_sun_sampling(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_from_time_and_spice(time_cfg, spice_cfg, **kwargs):
+        captured["spice_cfg"] = spice_cfg
+        return "mock-ephem"
+
+    monkeypatch.setattr(
+        "lunaris.physics.ephemeris.EphemerisManager.from_time_and_spice",
+        _fake_from_time_and_spice,
+    )
+
+    cfg = _make_cfg(
+        flags=PerturbationFlags(enable_sh=False, enable_thermal=True),
+        thermal=ThermalConfig(thermal_mode="equilibrium_temperature"),
     )
 
     result = main.init_ephemeris(cfg, tf_s=3600.0)

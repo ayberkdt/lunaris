@@ -26,9 +26,8 @@ Numba-JIT-compiled force-model kernels. Each file is one force model:
 - `spherical_harmonics.py` — gravity field evaluation (reusable `SHWorkspace`).
 - `third_body_effects.py` — Sun/Earth third-body perturbations.
 - `solar_effects.py` — solar radiation pressure.
-- `surface_effects.py` — lunar albedo (reflected-solar) acceleration. (Thermal IR
-  emission is planned and is **not** wired into the dynamics RHS — see the
-  perturbation-flag table below.)
+- `surface_effects.py` — lunar albedo wrappers and surface-radiation config.
+- `thermal_ir.py` — Lambertian lunar thermal IR radiation-pressure facets.
 - `solid_tides.py` — elastic lunar solid-body tide potential and acceleration.
 - `relativity_effects.py` — first-order post-Newtonian.
 - `ephemeris.py` — SPICE kernel wrapper; ephemerides are pre-tabulated at startup.
@@ -107,12 +106,17 @@ non-`None` (e.g. `enable_srp=True` requires `cfg.srp`).
 | `enable_srp` | Solar radiation pressure | Implemented |
 | `enable_albedo` | Reflected solar from the lunar surface | Implemented |
 | `enable_relativity_1pn` | First-order post-Newtonian | Implemented |
-| `enable_thermal` | Lunar thermal emission | **Planned** — raises `NotImplementedError` |
+| `enable_thermal` | Lunar thermal IR radiation pressure | Implemented on CPU RHS |
 | `enable_tides_k2` / `enable_tides_k3` | Elastic lunar solid-body tides | Implemented on CPU RHS |
 
-The **Planned** row is a recognized configuration flag but is not yet wired
-into the dynamics RHS; enabling it raises `NotImplementedError` in
-`lunaris.core.dynamics` (`DynamicsEngine._validate_dependencies`).
+Thermal IR is configured through `ThermalConfig` and evaluated in
+`lunaris.physics.thermal_ir`. The current model discretizes the Moon into
+Moon-fixed latitude-longitude facets, treats each facet as a Lambertian emitter,
+and rotates the resulting acceleration back to the inertial integration frame.
+Supported modes are `constant_temperature`, `equilibrium_temperature`
+(instantaneous solar incidence with no thermal inertia), and `temperature_grid`
+(provider-supplied facet temperatures). The model is a radiation-pressure
+perturbation only; it does not alter lunar gravity.
 
 Solid tides are configured through `SolidTideConfig` and evaluated in
 `lunaris.physics.solid_tides`. The model is an instantaneous elastic response
@@ -187,9 +191,8 @@ Reload a saved run with `from lunaris.core.monte_carlo_engine import load_mc_res
 - The CUDA kernel workspace uses compile-time fixed `(26×26)` arrays, supporting
   SH degree ≤ 24. `gpu_sh_degree > 24` raises `ValueError`; use the CPU path for
   higher-degree fields.
-- The GPU path does not support albedo or solid tides (use the CPU path for
-  those models). Thermal emission is not implemented on any path and raises
-  `NotImplementedError`.
+- The GPU path does not support albedo, thermal IR, or solid tides (use the CPU
+  path for those models).
 - CUDA requires `numba` plus a CUDA-capable GPU; the engine falls back to CPU
   (emitting a `RuntimeWarning` and recording a `fallback_reason`) when CUDA is
   unavailable.

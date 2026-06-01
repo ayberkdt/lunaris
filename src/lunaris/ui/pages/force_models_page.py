@@ -1406,19 +1406,19 @@ class ForceModelsPage(QtWidgets.QWidget):
     def _sync_force_dependencies(self):
         """
         Show/hide dependency warnings (non-blocking) and enforce hard deps.
-        - SRP/Albedo/Thermal: warn when Sun is not enabled
+        - SRP/Albedo: warn when Sun is not enabled
         - Earth J2: warn when Earth third-body is not enabled
         """
         sun_on = hasattr(self, "sw_sun") and self.sw_sun.isChecked()
         srp_on = hasattr(self, "sw_srp") and self.sw_srp.isChecked()
         albedo_on = hasattr(self, "sw_albedo") and self.sw_albedo.isChecked()
-        thermal_on = hasattr(self, "sw_thermal") and self.sw_thermal.isChecked()
         earth_on = hasattr(self, "sw_earth") and self.sw_earth.isChecked()
         earth_j2_on = hasattr(self, "sw_earth_j2") and self.sw_earth_j2.isChecked()
 
-        # Warning: SRP/Albedo/Thermal without Sun
+        # Warning: SRP/Albedo without Sun. The UI thermal toggle uses the
+        # constant-temperature thermal IR mode, which only needs Moon attitude.
         if hasattr(self, "lbl_warn_srp_sun"):
-            needs_sun = srp_on or albedo_on or thermal_on
+            needs_sun = srp_on or albedo_on
             self.lbl_warn_srp_sun.setVisible(needs_sun and not sun_on)
 
         # Warning: Earth J2 without Earth

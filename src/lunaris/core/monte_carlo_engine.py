@@ -138,13 +138,20 @@ def _need_body_vectors(cfg: Any) -> bool:
     """
 
     flags = cfg.flags
+    thermal_mode = (
+        str(getattr(getattr(cfg, "thermal", None), "thermal_mode", "constant_temperature")).strip().lower()
+    )
+    thermal_needs_sun = bool(
+        flags.enable_thermal
+        and thermal_mode in {"equilibrium", "equilibrium_temperature", "instantaneous_equilibrium"}
+    )
     return bool(
         flags.enable_3rd_body_sun
         or flags.enable_3rd_body_earth
         or flags.enable_earth_j2
         or flags.enable_srp
         or flags.enable_albedo
-        or flags.enable_thermal
+        or thermal_needs_sun
         or flags.enable_tides_k2
         or flags.enable_tides_k3
     )
@@ -572,6 +579,7 @@ class MonteCarloEngine:
                 ) from exc
 
         earth_j2 = getattr(cfg, "earth_j2", None)
+        thermal = getattr(cfg, "thermal", None)
         solid_tides = getattr(cfg, "solid_tides", None)
 
         return DynamicsEngine(
@@ -585,6 +593,7 @@ class MonteCarloEngine:
             ephem_manager=ephem_manager,
             surface_provider=surface_provider,
             earth_j2=earth_j2,
+            thermal=thermal,
             solid_tides=solid_tides,
             allow_identity_rotation=(ephem_manager is None),
         )

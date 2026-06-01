@@ -267,6 +267,46 @@ def apply_args_to_config(cfg: "SimConfig", args: argparse.Namespace) -> "SimConf
 
     cfg = replace(cfg, flags=flags)
 
+    # --- Thermal IR configuration ---
+    thermal_arg_names = (
+        "thermal_mode",
+        "thermal_temperature_k",
+        "thermal_night_temperature_k",
+        "thermal_emissivity",
+        "thermal_surface_albedo",
+        "thermal_ir_coefficient",
+        "thermal_floor_flux_w_m2",
+        "thermal_facet_lat_count",
+        "thermal_facet_lon_count",
+    )
+    thermal_requested = bool(flags.enable_thermal) or any(
+        getattr(args, name, None) is not None for name in thermal_arg_names
+    )
+    if thermal_requested:
+        from lunaris.physics.surface_effects import ThermalConfig
+
+        th = cfg.thermal if cfg.thermal is not None else ThermalConfig()
+        if getattr(args, "thermal_mode", None) is not None:
+            th = replace(th, thermal_mode=str(args.thermal_mode))
+        if getattr(args, "thermal_temperature_k", None) is not None:
+            th = replace(th, temperature_K=float(args.thermal_temperature_k))
+        if getattr(args, "thermal_night_temperature_k", None) is not None:
+            th = replace(th, night_temperature_K=float(args.thermal_night_temperature_k))
+        if getattr(args, "thermal_emissivity", None) is not None:
+            th = replace(th, surface_emissivity=float(args.thermal_emissivity))
+        if getattr(args, "thermal_surface_albedo", None) is not None:
+            th = replace(th, surface_albedo=float(args.thermal_surface_albedo))
+        if getattr(args, "thermal_ir_coefficient", None) is not None:
+            coeff = float(args.thermal_ir_coefficient)
+            th = replace(th, ir_pressure_coefficient=coeff, k_thermal=coeff)
+        if getattr(args, "thermal_floor_flux_w_m2", None) is not None:
+            th = replace(th, thermal_floor_flux_W_m2=float(args.thermal_floor_flux_w_m2))
+        if getattr(args, "thermal_facet_lat_count", None) is not None:
+            th = replace(th, facet_lat_count=int(args.thermal_facet_lat_count))
+        if getattr(args, "thermal_facet_lon_count", None) is not None:
+            th = replace(th, facet_lon_count=int(args.thermal_facet_lon_count))
+        cfg = replace(cfg, thermal=th)
+
     # --- Solid tide configuration ---
     tide_cfg = cfg.solid_tides if cfg.solid_tides is not None else SolidTideConfig()
     if getattr(args, "tide_bodies", None) is not None:

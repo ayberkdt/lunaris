@@ -25,6 +25,7 @@ from lunaris.core.dynamics import (
     _is_surrogate_gravity_provider,
     extract_gravity_strict,
 )
+from lunaris.physics.surface_effects import ThermalConfig
 
 
 # -----------------------------------------------------------------------------
@@ -167,10 +168,25 @@ def test_allow_identity_rotation_does_not_substitute_sun_or_earth_vectors():
 # Unsupported or missing dependencies must fail loudly (not silently no-op)
 # =============================================================================
 
-def test_thermal_raises_not_implemented():
-    with pytest.raises(NotImplementedError, match="Thermal"):
-        DynamicsEngine(_sc(), PerturbationFlags(enable_sh=False, enable_thermal=True),
-                       allow_identity_rotation=True)
+def test_thermal_constant_mode_is_supported_without_surface_provider():
+    eng = DynamicsEngine(
+        _sc(),
+        PerturbationFlags(enable_sh=False, enable_thermal=True),
+        thermal=ThermalConfig(thermal_mode="constant_temperature", facet_lat_count=2, facet_lon_count=4),
+        allow_identity_rotation=True,
+    )
+    assert eng._requirements()["use_thermal"] is True
+
+
+def test_thermal_equilibrium_requires_sun_ephemeris():
+    with pytest.raises(ValueError, match="Ephemeris is required"):
+        DynamicsEngine(
+            _sc(),
+            PerturbationFlags(enable_sh=False, enable_thermal=True),
+            thermal=ThermalConfig(thermal_mode="equilibrium_temperature", facet_lat_count=2, facet_lon_count=4),
+            ephem_manager=None,
+            allow_identity_rotation=True,
+        )
 
 
 def test_solid_tides_require_ephemeris_vectors():

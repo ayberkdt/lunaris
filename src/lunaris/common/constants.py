@@ -51,6 +51,10 @@ from typing import Final, Mapping
 # Speed of light [m/s] (exact, by definition)
 C_LIGHT: float = 299_792_458.0
 
+# Stefan-Boltzmann constant [W m^-2 K^-4].
+# Exact after the 2019 SI redefinition through fixed h, k_B, and c.
+SIGMA_SB: float = 5.670_374_419e-8
+
 # Newtonian gravitational constant [m^3 kg^-1 s^-2] (CODATA 2018)
 G: float = 6.6743e-11
 
@@ -121,6 +125,9 @@ AU: float = 149_597_870_700.0
 # Solar radiation pressure at 1 AU [N/m^2] (typical nominal value)
 P_SUN_1AU: float = 4.56 * 1e-06
 
+# Solar flux at 1 AU [W/m^2], kept consistent with the nominal SRP pressure.
+SOLAR_FLUX_1AU: float = P_SUN_1AU * C_LIGHT
+
 
 # =============================================================================
 # 6.                 MATHEMATICAL CONSTANTS & CONVERSIONS
@@ -162,6 +169,7 @@ EPS_1E30: float = 1e-30
 CONSTANT_SOURCES: Final[Mapping[str, str]] = MappingProxyType({
     # --- Universal ---
     "C_LIGHT": "SI definition (exact)",
+    "SIGMA_SB": "SI/CODATA exact value after 2019 SI redefinition",
     "G": "CODATA 2018",
 
     # --- Time / epochs (conventions) ---
@@ -174,6 +182,7 @@ CONSTANT_SOURCES: Final[Mapping[str, str]] = MappingProxyType({
     "AU": "IAU 2012 exact definition",
     "MU_SUN": "JPL DE440 ephemeris (GM of Sun)",
     "P_SUN_1AU": "Nominal SRP at 1 AU (common astrodynamics reference value)",
+    "SOLAR_FLUX_1AU": "Derived from nominal P_SUN_1AU * C_LIGHT",
 
     # --- Earth ---
     "MU_EARTH": "JPL DE440 geocentric GM",
@@ -197,6 +206,7 @@ CONSTANT_SOURCES: Final[Mapping[str, str]] = MappingProxyType({
 __all__ = (
     # 1. Universal & Physical Constants
     "C_LIGHT",                   # Speed of light in vacuum [m/s]
+    "SIGMA_SB",                   # Stefan-Boltzmann constant [W m^-2 K^-4]
     "G",                         # Newtonian constant of gravitation [m^3/(kg*s^2)]
 
     # 2. Time & Epoch Standards
@@ -221,6 +231,7 @@ __all__ = (
     "R_SUN_MEAN",                # Solar nominal mean radius [m]
     "AU",                        # Astronomical Unit [m]
     "P_SUN_1AU",                 # Solar radiation pressure at 1 AU [N/m^2]
+    "SOLAR_FLUX_1AU",            # Solar flux at 1 AU [W/m^2]
 
     # 6. Mathematics & Unit Conversions
     "PI",                        # π

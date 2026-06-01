@@ -247,7 +247,7 @@ def build_command(
     command.extend(["--enable-srp", bool_to_onoff(bool(forces.get("srp", False)))])
     command.extend(["--enable-albedo", bool_to_onoff(bool(forces.get("albedo", False)))])
     command.extend(["--enable-thermal", bool_to_onoff(bool(forces.get("thermal", False)))])
-    surface_albedo_needed = bool(forces.get("albedo", False) or forces.get("thermal", False))
+    surface_albedo_needed = bool(forces.get("albedo", False))
 
     tides_k2 = bool(forces.get("tides_k2", True))
     tides_k3 = bool(forces.get("tides_k3", False))
@@ -449,7 +449,7 @@ def build_mc_command(
     command.extend(["--enable-srp",             bool_to_onoff(bool(forces.get("srp",    False)))])
     command.extend(["--enable-albedo",          bool_to_onoff(bool(forces.get("albedo", False)))])
     command.extend(["--enable-thermal",         bool_to_onoff(bool(forces.get("thermal", False)))])
-    surface_albedo_needed = bool(forces.get("albedo", False) or forces.get("thermal", False))
+    surface_albedo_needed = bool(forces.get("albedo", False))
 
     tides_k2 = bool(forces.get("tides_k2", True))
     tides_k3 = bool(forces.get("tides_k3", False))

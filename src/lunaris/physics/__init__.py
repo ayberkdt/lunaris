@@ -71,6 +71,11 @@ _EXPORTS: Final[dict[str, tuple[str, str, str]]] = {
     "accel_solid_tides_numba": (".solid_tides", "accel_solid_tides_numba", "Numba kernel: elastic solid-tide accel."),
     "solid_tide_potential_degree": (".solid_tides", "solid_tide_potential_degree", "Solid-tide disturbing potential."),
 
+    # Thermal IR radiation pressure
+    "build_latlon_facets": (".thermal_ir", "build_latlon_facets", "Build spherical thermal IR facets."),
+    "calc_thermal_ir_accel": (".thermal_ir", "calc_thermal_ir_accel", "Lambertian lunar thermal IR acceleration."),
+    "accel_thermal_ir_facets_numba": (".thermal_ir", "accel_thermal_ir_facets_numba", "Numba kernel: thermal IR facets."),
+
     # Solar effects (SRP + shadow)
     "SRPConfig": (".solar_effects", "SRPConfig", "Solar Radiation Pressure configuration."), 
     "compute_srp_accel": (".solar_effects", "compute_srp_accel", "Compute SRP acceleration."), 
@@ -89,6 +94,7 @@ _LAZY_MODULES: Final[dict[str, str]] = {
     "relativity_effects": "Relativistic corrections.", 
     "third_body_effects": "Earth/Sun third-body effects.", 
     "solid_tides": "Elastic lunar solid-body tides.",
+    "thermal_ir": "Lambertian lunar thermal IR radiation pressure.",
     "solar_effects": "SRP + eclipse/shadow geometry.", 
     "surface_effects": "Surface environment (topography/albedo/thermal; often heavy).", 
 }
@@ -170,6 +176,7 @@ if TYPE_CHECKING:
         relativity_effects,
         third_body_effects,
         solid_tides,
+        thermal_ir,
         solar_effects,
         surface_effects,
     )
@@ -209,6 +216,11 @@ if TYPE_CHECKING:
         calc_solid_tide_accel,
         accel_solid_tides_numba,
         solid_tide_potential_degree,
+    )
+    from .thermal_ir import (  # noqa: F401
+        build_latlon_facets,
+        calc_thermal_ir_accel,
+        accel_thermal_ir_facets_numba,
     )
     from .solar_effects import (  # noqa: F401
         SRPConfig,

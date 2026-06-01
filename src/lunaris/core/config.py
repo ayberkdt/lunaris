@@ -250,12 +250,21 @@ class SimConfig:
             )
 
         tide_bodies = self.solid_tides.tide_bodies if (f.enable_tides and self.solid_tides is not None) else ()
+        thermal_mode = (
+            str(getattr(self.thermal, "thermal_mode", "constant_temperature")).strip().lower()
+            if self.thermal is not None
+            else "constant_temperature"
+        )
+        thermal_needs_sun = bool(
+            f.enable_thermal
+            and thermal_mode in {"equilibrium", "equilibrium_temperature", "instantaneous_equilibrium"}
+        )
 
         # C) Ephemeris requirements (Sun/Earth vectors)
         need_sun_vec = (
             f.enable_srp
             or f.enable_albedo
-            or f.enable_thermal
+            or thermal_needs_sun
             or f.enable_3rd_body_sun
             or ("sun" in tide_bodies)
         )
