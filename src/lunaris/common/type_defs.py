@@ -46,7 +46,7 @@ from typing import Any, Dict, Optional, Tuple, List, TypeAlias, Annotated
 import numpy as np
 import numpy.typing as npt
 
-from .constants import DAY_S, R_MOON_MEAN
+from .constants import DAY_S, R_MOON, R_MOON_MEAN
 
 
 # =============================================================================
@@ -301,6 +301,56 @@ class PerturbationFlags:
     @property
     def tides_kind(self) -> str:
         return {0: "none", 2: "k2", 3: "k3"}[self.tides_degree]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SolidTideConfig:
+    """
+    Elastic lunar solid-body tide model configuration.
+
+    The model evaluates the Moon-fixed potential-gradient response raised by
+    external bodies. The default degree-2 Love number is the GRAIL/LRO monthly
+    lunar value reported by Williams & Boggs (2015) and distributed through
+    NASA PGDA product 96. Degree-3 response is not given a project default; set
+    ``k3`` explicitly before enabling ``enable_tides_k3``.
+    """
+
+    tide_bodies: Tuple[str, ...] = ("earth", "sun")
+    k2: float = 0.02416
+    k3: Optional[float] = None
+    r_ref_m: float = R_MOON
+
+    def __post_init__(self) -> None:
+        allowed = {"earth", "sun"}
+        normalized: list[str] = []
+        for body in self.tide_bodies:
+            b = str(body).strip().lower()
+            if b not in allowed:
+                raise ValueError(
+                    f"SolidTideConfig.tide_bodies entries must be 'earth' or 'sun', got {body!r}"
+                )
+            if b not in normalized:
+                normalized.append(b)
+
+        if not normalized:
+            raise ValueError("SolidTideConfig.tide_bodies must include at least one body.")
+
+        k2 = float(self.k2)
+        if not np.isfinite(k2) or k2 < 0.0:
+            raise ValueError(f"SolidTideConfig.k2 must be finite and >= 0, got {self.k2!r}")
+
+        k3 = None if self.k3 is None else float(self.k3)
+        if k3 is not None and (not np.isfinite(k3) or k3 < 0.0):
+            raise ValueError(f"SolidTideConfig.k3 must be finite and >= 0 when set, got {self.k3!r}")
+
+        r_ref = float(self.r_ref_m)
+        if not np.isfinite(r_ref) or r_ref <= 0.0:
+            raise ValueError(f"SolidTideConfig.r_ref_m must be finite and > 0, got {self.r_ref_m!r}")
+
+        object.__setattr__(self, "tide_bodies", tuple(normalized))
+        object.__setattr__(self, "k2", k2)
+        object.__setattr__(self, "k3", k3)
+        object.__setattr__(self, "r_ref_m", r_ref)
 
 
 
@@ -737,6 +787,7 @@ __all__ = [
 
     # Perturbation enable/disable flags
     "PerturbationFlags",      # Toggles: SH, 3rd bodies, SRP, albedo/thermal, tides, etc.
+    "SolidTideConfig",        # Love numbers, tide-raising bodies, reference radius
 
 
     # Time span and output grid

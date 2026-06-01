@@ -36,7 +36,7 @@ host can drive it.
 Build the offline static export consumed by the launcher:
 
 ```bash
-cd web
+cd src/lunaris/ui/web
 npm install
 npm run build      # output: 'export' -> writes ./out
 ```

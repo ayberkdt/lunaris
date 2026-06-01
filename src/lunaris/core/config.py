@@ -41,6 +41,7 @@ from lunaris.common.type_defs import (
     InitialState,
     PerturbationFlags,
     PropagatorConfig,
+    SolidTideConfig,
     SpacecraftProps,
     TimeConfig,
 )
@@ -209,6 +210,7 @@ class SimConfig:
     srp: Optional["SRPConfig"] = None
     albedo: Optional["AlbedoConfig"] = None
     thermal: Optional["ThermalConfig"] = None
+    solid_tides: Optional[SolidTideConfig] = field(default_factory=SolidTideConfig)
 
     # Numerics & output
     propagator: PropagatorConfig = field(default_factory=PropagatorConfig)
@@ -240,6 +242,14 @@ class SimConfig:
             raise ValueError("SimConfig: enable_albedo=True but albedo config is None.")
         if f.enable_thermal and self.thermal is None:
             raise ValueError("SimConfig: enable_thermal=True but thermal config is None.")
+        if f.enable_tides and self.solid_tides is None:
+            raise ValueError("SimConfig: solid tides enabled but solid_tides config is None.")
+        if f.enable_tides_k3 and self.solid_tides is not None and self.solid_tides.k3 is None:
+            raise ValueError(
+                "SimConfig: enable_tides_k3=True requires solid_tides.k3 to be set explicitly."
+            )
+
+        tide_bodies = self.solid_tides.tide_bodies if (f.enable_tides and self.solid_tides is not None) else ()
 
         # C) Ephemeris requirements (Sun/Earth vectors)
         need_sun_vec = (
@@ -247,14 +257,12 @@ class SimConfig:
             or f.enable_albedo
             or f.enable_thermal
             or f.enable_3rd_body_sun
-            or f.enable_tides_k2
-            or f.enable_tides_k3
+            or ("sun" in tide_bodies)
         )
         need_earth_vec = (
             f.enable_3rd_body_earth
             or f.enable_earth_j2
-            or f.enable_tides_k2
-            or f.enable_tides_k3
+            or ("earth" in tide_bodies)
         )
         need_vectors = bool(need_sun_vec or need_earth_vec)
         if need_vectors and (not getattr(self.spice, "include_third_body", True)):
@@ -344,6 +352,7 @@ def load_default_config() -> SimConfig:
     srp_cfg = None
     albedo_cfg = None
     thermal_cfg = None
+    solid_tides_cfg = SolidTideConfig()
 
     if flags.enable_srp:
         try:
@@ -400,6 +409,7 @@ def load_default_config() -> SimConfig:
         srp=srp_cfg,
         albedo=albedo_cfg,
         thermal=thermal_cfg,
+        solid_tides=solid_tides_cfg,
 
         time=time_cfg,
         propagator=propagator_cfg,

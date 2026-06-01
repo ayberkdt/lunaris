@@ -56,7 +56,7 @@ from numba import njit
 
 
 from lunaris.common.constants import AU, MU_EARTH, MU_MOON, MU_SUN, P_SUN_1AU, R_MOON, R_EARTH_MEAN
-from lunaris.common.type_defs import SpacecraftProps, PerturbationFlags, F64Array
+from lunaris.common.type_defs import SpacecraftProps, PerturbationFlags, SolidTideConfig, F64Array
 from lunaris.common.math_utils import (
     quat_rotate_vec,
     latlon_from_xyz_m,
@@ -72,6 +72,7 @@ from lunaris.physics.third_body_effects import accel_third_body_numba, accel_j2_
 from lunaris.physics.solar_effects import accel_srp
 from lunaris.physics.relativity_effects import _schwarzschild_components
 from lunaris.physics.surface_effects import accel_albedo_simple
+from lunaris.physics.solid_tides import accel_solid_tides_numba
 
 
 # =============================================================================
@@ -436,7 +437,7 @@ def extract_surface_provider_strict(surface_provider: Any) -> Dict[str, Any]:
 
 def need_ephemeris(flags: PerturbationFlags) -> bool:
     """Return True if any enabled perturbation requires ephemeris tables."""
-    return bool(flags.enable_third_body or flags.enable_srp or flags.enable_albedo)
+    return bool(flags.enable_third_body or flags.enable_srp or flags.enable_albedo or flags.enable_tides)
 
 
 def require_srp_props(sc: SpacecraftProps) -> Tuple[float, float, float]:
@@ -679,6 +680,28 @@ class _EarthJ2Pack:
             raise ValueError("EarthJ2 axis vector is degenerate (norm ~ 0).")
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _TidePack:
+    """Engine-internal solid tide configuration."""
+    use_k2: bool
+    use_k3: bool
+    use_earth: bool
+    use_sun: bool
+    k2: float
+    k3: float
+    r_ref_m: float
+
+    def __post_init__(self) -> None:
+        if self.r_ref_m <= 0.0 or not np.isfinite(self.r_ref_m):
+            raise ValueError(f"solid tide r_ref_m must be finite and > 0, got {self.r_ref_m}")
+        if not np.isfinite(self.k2) or self.k2 < 0.0:
+            raise ValueError(f"solid tide k2 must be finite and >= 0, got {self.k2}")
+        if not np.isfinite(self.k3) or self.k3 < 0.0:
+            raise ValueError(f"solid tide k3 must be finite and >= 0, got {self.k3}")
+        if (self.use_k2 or self.use_k3) and not (self.use_earth or self.use_sun):
+            raise ValueError("solid tides require at least one tide-raising body.")
+
+
 
 # =============================================================================
 # 3.                             DYNAMICS ENGINE
@@ -702,6 +725,7 @@ class DynamicsEngine:
         ephem_manager: Any = None,
         surface_provider: Any = None,
         earth_j2: Any = None,
+        solid_tides: Optional[SolidTideConfig] = None,
         allow_identity_rotation: bool = False,
     ) -> None:
         self.sc_props = sc_props
@@ -712,6 +736,7 @@ class DynamicsEngine:
         self.ephem = ephem_manager
         self.surf = surface_provider
         self.earth_j2 = earth_j2
+        self.solid_tides = solid_tides if solid_tides is not None else SolidTideConfig()
 
         # If True, q_i2f is treated as identity when ephemeris is absent.
         # This only substitutes for frame rotation (q), NOT for Sun/Earth vectors.
@@ -734,17 +759,23 @@ class DynamicsEngine:
         use_srp = bool(getattr(f, "enable_srp", False))
         use_3rd_sun = bool(getattr(f, "enable_3rd_body_sun", False))
         use_3rd_earth = bool(getattr(f, "enable_3rd_body_earth", False))
+        use_tides_k2 = bool(getattr(f, "enable_tides_k2", False))
+        use_tides_k3 = bool(getattr(f, "enable_tides_k3", False))
+        use_tides = bool(use_tides_k2 or use_tides_k3)
 
         # Backwards compatibility: enable_relativity_1pn or enable_relativity
         use_rel = bool(getattr(f, "enable_relativity_1pn", getattr(f, "enable_relativity", False)))
 
         use_earth_j2_flag = bool(getattr(f, "enable_earth_j2", False))
         use_earth_j2 = bool(use_earth_j2_flag and (self.earth_j2 is not None))
+        tide_bodies = getattr(self.solid_tides, "tide_bodies", ("earth", "sun"))
+        use_tide_earth = bool(use_tides and ("earth" in tide_bodies))
+        use_tide_sun = bool(use_tides and ("sun" in tide_bodies))
 
         # What data do we need from ephemeris?
-        need_sun = bool(use_srp or use_3rd_sun or use_albedo)
-        need_earth = bool(use_3rd_earth or use_earth_j2)
-        need_q = bool(use_sh or use_surrogate_gravity or use_albedo)
+        need_sun = bool(use_srp or use_3rd_sun or use_albedo or use_tide_sun)
+        need_earth = bool(use_3rd_earth or use_earth_j2 or use_tide_earth)
+        need_q = bool(use_sh or use_surrogate_gravity or use_albedo or use_tides)
 
         # Ephemeris manager is required if Sun/Earth vectors are needed.
         need_vectors = bool(need_sun or need_earth)
@@ -761,6 +792,11 @@ class DynamicsEngine:
             "use_srp": use_srp,
             "use_3rd_sun": use_3rd_sun,
             "use_3rd_earth": use_3rd_earth,
+            "use_tides": use_tides,
+            "use_tides_k2": use_tides_k2,
+            "use_tides_k3": use_tides_k3,
+            "use_tide_earth": use_tide_earth,
+            "use_tide_sun": use_tide_sun,
             "use_rel": use_rel,
             "use_earth_j2": use_earth_j2,
             "need_sun": need_sun,
@@ -793,11 +829,11 @@ class DynamicsEngine:
             reasons: list[str] = []
             if req["need_vectors"]:
                 if req["need_sun"]:
-                    reasons.append("Sun vector (SRP / 3rd-body Sun / Albedo)")
+                    reasons.append("Sun vector (SRP / 3rd-body Sun / Albedo / solid tides)")
                 if req["need_earth"]:
-                    reasons.append("Earth vector (3rd-body Earth / Earth J2)")
+                    reasons.append("Earth vector (3rd-body Earth / Earth J2 / solid tides)")
             if req["need_quat_from_ephem"]:
-                reasons.append("q_i2f (SH / Albedo)")
+                reasons.append("q_i2f (SH / Albedo / solid tides)")
 
             why = "; ".join(reasons) if reasons else "Sun/Earth vectors and/or q_i2f"
             raise ValueError(
@@ -812,9 +848,10 @@ class DynamicsEngine:
             raise NotImplementedError(
                 "Thermal perturbation enabled but not implemented in core.dynamics."
             )
-        if bool(getattr(f, "enable_tides_k2", False)) or bool(getattr(f, "enable_tides_k3", False)):
-            raise NotImplementedError(
-                "Solid tides enabled but not implemented in core.dynamics."
+        if req["use_tides_k3"] and getattr(self.solid_tides, "k3", None) is None:
+            raise ValueError(
+                "enable_tides_k3=True requires solid_tides.k3 to be set explicitly; "
+                "no degree-3 lunar Love number default is assumed."
             )
 
         if bool(getattr(f, "enable_earth_j2", False)) and (self.earth_j2 is None):
@@ -1057,6 +1094,36 @@ class DynamicsEngine:
         kx, ky, kz = ej2.spin_axis_i
         return _EarthJ2Pack(j2=j2, r_ref_m=r_ref, ax=float(kx), ay=float(ky), az=float(kz))
 
+    def _prepare_solid_tides(self, req: Dict[str, bool]) -> _TidePack:
+        if not req["use_tides"]:
+            return _TidePack(
+                use_k2=False,
+                use_k3=False,
+                use_earth=False,
+                use_sun=False,
+                k2=0.0,
+                k3=0.0,
+                r_ref_m=float(R_MOON),
+            )
+
+        cfg = self.solid_tides
+        k3_raw = getattr(cfg, "k3", None)
+        if req["use_tides_k3"] and k3_raw is None:
+            raise ValueError(
+                "enable_tides_k3=True requires solid_tides.k3 to be set explicitly; "
+                "no degree-3 lunar Love number default is assumed."
+            )
+
+        return _TidePack(
+            use_k2=bool(req["use_tides_k2"]),
+            use_k3=bool(req["use_tides_k3"]),
+            use_earth=bool(req["use_tide_earth"]),
+            use_sun=bool(req["use_tide_sun"]),
+            k2=float(getattr(cfg, "k2", 0.0)),
+            k3=0.0 if k3_raw is None else float(k3_raw),
+            r_ref_m=float(getattr(cfg, "r_ref_m", R_MOON)),
+        )
+
     # -------------------------------------------------------------------------
     # Public: build RHS
     # -------------------------------------------------------------------------
@@ -1071,9 +1138,10 @@ class DynamicsEngine:
         ep = self._prepare_ephem(req)
         ap = self._prepare_albedo(req)
         ej = self._prepare_earth_j2(req)
+        tp = self._prepare_solid_tides(req)
 
         # Cache for debug/reporting
-        self._prep = {"req": req, "grav": gp, "eph": ep, "alb": ap, "earth_j2": ej}
+        self._prep = {"req": req, "grav": gp, "eph": ep, "alb": ap, "earth_j2": ej, "tides": tp}
 
         # Flags captured into closure
         USE_SH = bool(req["use_sh"])
@@ -1084,6 +1152,9 @@ class DynamicsEngine:
         USE_ALBEDO = bool(req["use_albedo"])
         USE_REL = bool(req["use_rel"])
         USE_EJ2 = bool(req["use_earth_j2"])
+        USE_TIDES = bool(req["use_tides"])
+        USE_TIDE_EARTH = bool(req["use_tide_earth"])
+        USE_TIDE_SUN = bool(req["use_tide_sun"])
 
         # Ephemeris fetch needed inside kernel only if we actually have ephem_manager.
         HAVE_EPH = bool(self.ephem is not None)
@@ -1169,6 +1240,13 @@ class DynamicsEngine:
         else:
             EJ2_KX, EJ2_KY, EJ2_KZ = 0.0, 0.0, 1.0
 
+        # Solid tides
+        TIDE_USE_K2 = bool(tp.use_k2)
+        TIDE_USE_K3 = bool(tp.use_k3)
+        TIDE_K2 = float(tp.k2)
+        TIDE_K3 = float(tp.k3)
+        TIDE_RREF = float(tp.r_ref_m)
+
         if USE_SURROGATE:
             surrogate = self.grav
 
@@ -1233,6 +1311,29 @@ class DynamicsEngine:
                     ax += j2x
                     ay += j2y
                     az += j2z
+
+                if USE_TIDES:
+                    rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
+
+                    if USE_TIDE_EARTH:
+                        efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
+                        atx_f, aty_f, atz_f = accel_solid_tides_numba(
+                            rfx, rfy, rfz, efx, efy, efz, MU_E, TIDE_RREF, TIDE_K2, TIDE_K3, TIDE_USE_K2, TIDE_USE_K3
+                        )
+                        atx, aty, atz = quat_rotate_vec(q0, -q1, -q2, -q3, atx_f, aty_f, atz_f)
+                        ax += atx
+                        ay += aty
+                        az += atz
+
+                    if USE_TIDE_SUN:
+                        sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
+                        atx_f, aty_f, atz_f = accel_solid_tides_numba(
+                            rfx, rfy, rfz, sfx, sfy, sfz, MU_S, TIDE_RREF, TIDE_K2, TIDE_K3, TIDE_USE_K2, TIDE_USE_K3
+                        )
+                        atx, aty, atz = quat_rotate_vec(q0, -q1, -q2, -q3, atx_f, aty_f, atz_f)
+                        ax += atx
+                        ay += aty
+                        az += atz
 
                 if USE_SRP:
                     earth_r2 = earthx * earthx + earthy * earthy + earthz * earthz
@@ -1419,7 +1520,53 @@ class DynamicsEngine:
                 ay += j2y
                 az += j2z
 
-            # C) SRP
+            # C) Solid-body tides (Moon-fixed potential gradient)
+            if USE_TIDES:
+                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
+
+                if USE_TIDE_EARTH:
+                    efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
+                    atx_f, aty_f, atz_f = accel_solid_tides_numba(
+                        rfx,
+                        rfy,
+                        rfz,
+                        efx,
+                        efy,
+                        efz,
+                        MU_E,
+                        TIDE_RREF,
+                        TIDE_K2,
+                        TIDE_K3,
+                        TIDE_USE_K2,
+                        TIDE_USE_K3,
+                    )
+                    atx, aty, atz = quat_rotate_vec(q0, -q1, -q2, -q3, atx_f, aty_f, atz_f)
+                    ax += atx
+                    ay += aty
+                    az += atz
+
+                if USE_TIDE_SUN:
+                    sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
+                    atx_f, aty_f, atz_f = accel_solid_tides_numba(
+                        rfx,
+                        rfy,
+                        rfz,
+                        sfx,
+                        sfy,
+                        sfz,
+                        MU_S,
+                        TIDE_RREF,
+                        TIDE_K2,
+                        TIDE_K3,
+                        TIDE_USE_K2,
+                        TIDE_USE_K3,
+                    )
+                    atx, aty, atz = quat_rotate_vec(q0, -q1, -q2, -q3, atx_f, aty_f, atz_f)
+                    ax += atx
+                    ay += aty
+                    az += atz
+
+            # D) SRP
             if USE_SRP:
                 earth_r2 = earthx * earthx + earthy * earthy + earthz * earthz
                 enable_earth = ENABLE_ECLIPSE and (earth_r2 > 1.0e12)
@@ -1448,7 +1595,7 @@ class DynamicsEngine:
                 ay += asy
                 az += asz
 
-            # D) Albedo
+            # E) Albedo
             if USE_ALBEDO:
                 rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
                 lat_deg, lon_deg, _ = latlon_from_xyz_m(rfx, rfy, rfz)
@@ -1516,7 +1663,7 @@ class DynamicsEngine:
                 ay += aay
                 az += aaz
 
-            # E) Relativity
+            # F) Relativity
             if USE_REL:
                 arx, ary, arz = _schwarzschild_components(rx, ry, rz, vx, vy, vz, MU_M)
                 ax += arx
@@ -1557,6 +1704,7 @@ class DynamicsEngine:
         ep: _EphemPack = self._prep["eph"]
         ap: _AlbedoPack = self._prep["alb"]
         ej: _EarthJ2Pack = self._prep["earth_j2"]
+        tp: _TidePack = self._prep["tides"]
 
         r = np.asarray(y[0:3], dtype=float)
         v = np.asarray(y[3:6], dtype=float)
@@ -1670,6 +1818,61 @@ class DynamicsEngine:
                 float(ej.az),
             )
             out["3rd Body (Earth J2)"] = _norm3(j2x, j2y, j2z)
+
+        # Solid-body tides
+        if req["use_tides"]:
+            rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
+            tide_x = 0.0
+            tide_y = 0.0
+            tide_z = 0.0
+
+            if req["use_tide_earth"]:
+                efx, efy, efz = quat_rotate_vec(q[0], q[1], q[2], q[3], earth[0], earth[1], earth[2])
+                atx_f, aty_f, atz_f = accel_solid_tides_numba(
+                    rfx,
+                    rfy,
+                    rfz,
+                    efx,
+                    efy,
+                    efz,
+                    float(MU_EARTH),
+                    float(tp.r_ref_m),
+                    float(tp.k2),
+                    float(tp.k3),
+                    bool(tp.use_k2),
+                    bool(tp.use_k3),
+                )
+                atx_i, aty_i, atz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], atx_f, aty_f, atz_f)
+                earth_norm = _norm3(atx_i, aty_i, atz_i)
+                out["Solid Tides (Earth)"] = earth_norm
+                tide_x += atx_i
+                tide_y += aty_i
+                tide_z += atz_i
+
+            if req["use_tide_sun"]:
+                sfx, sfy, sfz = quat_rotate_vec(q[0], q[1], q[2], q[3], sun[0], sun[1], sun[2])
+                atx_f, aty_f, atz_f = accel_solid_tides_numba(
+                    rfx,
+                    rfy,
+                    rfz,
+                    sfx,
+                    sfy,
+                    sfz,
+                    float(MU_SUN),
+                    float(tp.r_ref_m),
+                    float(tp.k2),
+                    float(tp.k3),
+                    bool(tp.use_k2),
+                    bool(tp.use_k3),
+                )
+                atx_i, aty_i, atz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], atx_f, aty_f, atz_f)
+                sun_norm = _norm3(atx_i, aty_i, atz_i)
+                out["Solid Tides (Sun)"] = sun_norm
+                tide_x += atx_i
+                tide_y += aty_i
+                tide_z += atz_i
+
+            out["Solid Tides"] = _norm3(tide_x, tide_y, tide_z)
 
         # SRP
         if req["use_srp"]:

@@ -112,7 +112,7 @@ def resolve_web_embed_dir() -> Optional[Path]:
     # In-repo build output.
     try:
         repo_root = find_project_root()
-        candidates.append(repo_root / "web" / "out")
+        candidates.append(repo_root / "src" / "lunaris" / "ui" / "web" / "out")
     except Exception:
         pass
 

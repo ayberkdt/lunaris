@@ -99,7 +99,7 @@ def _warmup_numba(tbe, constants):
     MU_EARTH, _, R_MOON, R_EARTH_EQ = constants
 
     # Simple collinear geometry for warmup
-    r_sc = np.array((100e3, 0.0, 0.0), dtype=np.float64)
+    r_sc = np.array((R_MOON + 100e3, 0.0, 0.0), dtype=np.float64)
     r_earth = np.array((384_400e3, 0.0, 0.0), dtype=np.float64)
 
     # Core kernels should exist and be callable
@@ -173,7 +173,7 @@ def test_solid_tide_nonzero_and_small(tbe, constants):
     if not hasattr(tbe, "accel_solid_tide"):
         pytest.skip("accel_solid_tide not implemented in third_body_effects")
 
-    r_sc = np.array((100e3, 0.0, 0.0), dtype=np.float64)
+    r_sc = np.array((R_MOON + 100e3, 0.0, 0.0), dtype=np.float64)
     r_earth = np.array((384_400e3, 0.0, 0.0), dtype=np.float64)
 
     acc_3b = tbe.calc_3rd_body_accel(r_sc, r_earth, MU_EARTH)

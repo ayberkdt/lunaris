@@ -30,6 +30,7 @@ from lunaris.common.type_defs import (
     GravityConfig,
     InitialState,
     PerturbationFlags,
+    SolidTideConfig,
     SpacecraftProps,
 )
 
@@ -165,6 +166,15 @@ def test_tides_degree_and_kind_matrix(flags, expect_degree, expect_kind):
     assert pf.tides_degree == expect_degree
     assert pf.tides_kind == expect_kind
     assert pf.enable_tides == (expect_degree > 0)
+
+
+def test_solid_tide_config_requires_known_body_and_explicit_k3_is_optional():
+    cfg = SolidTideConfig(tide_bodies=("sun",), k2=0.02416)
+    assert cfg.tide_bodies == ("sun",)
+    assert cfg.k3 is None
+
+    with pytest.raises(ValueError, match="earth.*sun|tide_bodies"):
+        SolidTideConfig(tide_bodies=("jupiter",))
 
 
 def test_third_body_and_surface_force_properties():

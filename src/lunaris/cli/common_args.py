@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
 
 from lunaris.common.constants import R_MOON, DAY_S
+from lunaris.common.type_defs import SolidTideConfig
 
 if TYPE_CHECKING:
     # Typing-only import keeps this module import-safe.
@@ -41,6 +42,15 @@ def str2bool(v: Any) -> bool:
     raise argparse.ArgumentTypeError(
         f"Boolean value expected (one of {sorted(_BOOL_TRUE | _BOOL_FALSE)}), got '{v}'."
     )
+
+
+def parse_tide_bodies(v: Any) -> Tuple[str, ...]:
+    """Parse a comma-separated tide body list into a validated tuple."""
+    parts = tuple(p.strip().lower() for p in str(v).split(",") if p.strip())
+    try:
+        return SolidTideConfig(tide_bodies=parts).tide_bodies
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def parse_adaptive_table(s: str) -> Optional[Tuple[Tuple[float, int], ...]]:
@@ -257,6 +267,18 @@ def apply_args_to_config(cfg: "SimConfig", args: argparse.Namespace) -> "SimConf
 
     cfg = replace(cfg, flags=flags)
 
+    # --- Solid tide configuration ---
+    tide_cfg = cfg.solid_tides if cfg.solid_tides is not None else SolidTideConfig()
+    if getattr(args, "tide_bodies", None) is not None:
+        tide_cfg = replace(tide_cfg, tide_bodies=tuple(args.tide_bodies))
+    if getattr(args, "tide_k2", None) is not None:
+        tide_cfg = replace(tide_cfg, k2=float(args.tide_k2))
+    if getattr(args, "tide_k3", None) is not None:
+        tide_cfg = replace(tide_cfg, k3=float(args.tide_k3))
+    if getattr(args, "tide_r_ref_m", None) is not None:
+        tide_cfg = replace(tide_cfg, r_ref_m=float(args.tide_r_ref_m))
+    cfg = replace(cfg, solid_tides=tide_cfg)
+
     # --- Gravity config (GravityConfig) ---
     grav_cfg = cfg.gravity
     new_backend = str(getattr(grav_cfg, "backend", "classic_sh") or "classic_sh")
@@ -315,6 +337,7 @@ def apply_args_to_config(cfg: "SimConfig", args: argparse.Namespace) -> "SimConf
 
 __all__ = [
     "str2bool",
+    "parse_tide_bodies",
     "parse_adaptive_table",
     "resolve_orbit_elements",
     "init_surface_provider",

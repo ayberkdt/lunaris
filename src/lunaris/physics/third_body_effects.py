@@ -72,6 +72,7 @@ from numba import njit
 from lunaris.common.constants import MU_EARTH, MU_SUN, R_MOON_MEAN, R_EARTH_EQUATORIAL
 
 from lunaris.common.type_defs import Vec3
+from lunaris.physics.solid_tides import accel_solid_tides_numba
 
 
 # =============================================================================
@@ -229,11 +230,12 @@ class LoveParams:
     - apply_earth_tide / apply_sun_tide are orchestration toggles (used by higher-level
       models that combine multiple external perturbers). The kernel below is *generic*
       and does not branch on these toggles.
-    - Defaults are commonly used Moon values (often cited around GL1800F-era usage).
-      Keep them configurable if you plan to swap geophysical models.
+    - k2 defaults to a GRAIL/LRO-derived lunar monthly value. k3 is left unset
+      by default because this project does not assume a degree-3 lunar Love
+      number without explicit user configuration.
     """
-    k2: float = 0.024223
-    k3: float = 0.0163
+    k2: float = 0.02416
+    k3: Optional[float] = None
     apply_earth_tide: bool = True
     apply_sun_tide: bool = True
 
@@ -277,119 +279,24 @@ def accel_solid_tide(
 
     Notes
     -----
-    - The closed-form expression is evaluated for any non-degenerate radius.
-      Interior points are saturated to the surface radius so debug/low-altitude
-      states do not blow up or silently drop to zero.
+    - This compatibility wrapper delegates to ``lunaris.physics.solid_tides``,
+      which evaluates the analytical gradient of the documented potential.
     - Degenerate geometry returns (0, 0, 0) by design (robust propagation policy).
     """
-    # -------------------------------------------------------------------------
-    # Fast reject: nothing to do
-    # -------------------------------------------------------------------------
-    if mu_ext == 0.0 or (k2 == 0.0 and k3 == 0.0):
-        return 0.0, 0.0, 0.0
-
-    # Basic sanity on R_ref (keep kernel robust; policy decisions belong above)
-    if R_ref <= 0.0:
-        return 0.0, 0.0, 0.0
-
-    # -------------------------------------------------------------------------
-    # Geometry
-    # -------------------------------------------------------------------------
-    r2 = rx * rx + ry * ry + rz * rz
-    s2 = sx * sx + sy * sy + sz * sz
-
-    # External body at/near origin is undefined for this model
-    if s2 <= 0.0:
-        return 0.0, 0.0, 0.0
-
-    # Only reject degenerate near-center states. A broader interior-body guard
-    # silently disabled tides for otherwise valid low-altitude/debug scenarios.
-    if r2 <= _MIN_R2:
-        return 0.0, 0.0, 0.0
-
-    r = math.sqrt(r2)
-    s = math.sqrt(s2)
-
-    # Saturate interior states at the reference surface radius. This keeps the
-    # response finite and directionally meaningful without silently erasing the
-    # perturbation for low-radius test/debug trajectories.
-    r_eval = r if r >= R_ref else R_ref
-
-    inv_r = 1.0 / r
-    inv_s = 1.0 / s
-    inv_r_eval = 1.0 / r_eval
-    inv_r2 = inv_r_eval * inv_r_eval
-
-    # Unit vectors u = r/|r|, e = s/|s|
-    ux = rx * inv_r
-    uy = ry * inv_r
-    uz = rz * inv_r
-
-    ex = sx * inv_s
-    ey = sy * inv_s
-    ez = sz * inv_s
-
-    # cos(theta) = u·e
-    c = ux * ex + uy * ey + uz * ez
-    # Clamp for numerical safety
-    if c > 1.0:
-        c = 1.0
-    elif c < -1.0:
-        c = -1.0
-
-    c2 = c * c
-
-    # -------------------------------------------------------------------------
-    # Ratios (R/s) and (R/r)
-    # -------------------------------------------------------------------------
-    R_over_s = R_ref * inv_s
-    R_over_r = R_ref * inv_r_eval
-
-    # Powers (avoid pow() for speed & determinism under Numba)
-    R_over_s2 = R_over_s * R_over_s
-    R_over_s3 = R_over_s2 * R_over_s
-    R_over_s4 = R_over_s2 * R_over_s2
-
-    R_over_r2 = R_over_r * R_over_r
-    R_over_r3 = R_over_r2 * R_over_r
-
-    ax = 0.0
-    ay = 0.0
-    az = 0.0
-
-    # -------------------------------------------------------------------------
-    # Degree-2 tide contribution
-    # a2 = 1.5*(k2*mu_ext/r^2)*(R/s)^3*(R/r)^2 * [ (5c^2-1) u - 2c e ]
-    # -------------------------------------------------------------------------
-    if k2 != 0.0:
-        fac2 = 1.5 * (k2 * mu_ext * inv_r2) * (R_over_s3 * R_over_r2)
-        k_u2 = 5.0 * c2 - 1.0
-        k_e2 = 2.0 * c
-
-        ax += fac2 * (k_u2 * ux - k_e2 * ex)
-        ay += fac2 * (k_u2 * uy - k_e2 * ey)
-        az += fac2 * (k_u2 * uz - k_e2 * ez)
-
-    # -------------------------------------------------------------------------
-    # Degree-3 tide contribution
-    # a3 = (k3*mu_ext/r^2)*(R/s)^4*(R/r)^3 * [ Tu(c) u - Te(c) e ]
-    # Tu = 0.5*(35c^3 - 15c)
-    # Te = 1.5*(5c^2 - 1)
-    # -------------------------------------------------------------------------
-    if k3 != 0.0:
-        fac3 = (k3 * mu_ext * inv_r2) * (R_over_s4 * R_over_r3)
-        c3 = c2 * c
-
-        Tu = 0.5 * (35.0 * c3 - 15.0 * c)
-        Te = 1.5 * (5.0 * c2 - 1.0)
-
-        ax += fac3 * (Tu * ux - Te * ex)
-        ay += fac3 * (Tu * uy - Te * ey)
-        az += fac3 * (Tu * uz - Te * ez)
-
-    return ax, ay, az
-
-
+    return accel_solid_tides_numba(
+        rx,
+        ry,
+        rz,
+        sx,
+        sy,
+        sz,
+        mu_ext,
+        R_ref,
+        k2,
+        k3,
+        True,
+        k3 != 0.0,
+    )
 
 # =============================================================================
 # 3.                           EARTHS J2 PERTURBATION
@@ -685,10 +592,11 @@ class ThirdBodyModel:
 
         # Optional solid tide (Moon deformed by Earth) contribution
         if self.love.apply_earth_tide:
+            k3 = 0.0 if self.love.k3 is None else float(self.love.k3)
             tx, ty, tz = accel_solid_tide(
                 float(r_sc_v[0]), float(r_sc_v[1]), float(r_sc_v[2]),
                 float(r_e_v[0]),  float(r_e_v[1]),  float(r_e_v[2]),
-                float(mu_e), float(self.R_ref), float(self.love.k2), float(self.love.k3),
+                float(mu_e), float(self.R_ref), float(self.love.k2), k3,
             )
             # In-place add to avoid an extra allocation
             a[0] += tx
@@ -723,10 +631,11 @@ class ThirdBodyModel:
 
         # Optional solid tide (Moon deformed by Sun) contribution
         if self.love.apply_sun_tide:
+            k3 = 0.0 if self.love.k3 is None else float(self.love.k3)
             tx, ty, tz = accel_solid_tide(
                 float(r_sc_v[0]), float(r_sc_v[1]), float(r_sc_v[2]),
                 float(r_s_v[0]),  float(r_s_v[1]),  float(r_s_v[2]),
-                float(mu_s), float(self.R_ref), float(self.love.k2), float(self.love.k3),
+                float(mu_s), float(self.R_ref), float(self.love.k2), k3,
             )
             # In-place add to avoid an extra allocation
             a[0] += tx
@@ -790,4 +699,3 @@ __all__ = (
     "calc_3rd_body_accel",           # Returns (3,) np.ndarray (wrapper around accel_third_body_numba)
     "calc_j2_oblate_diff_accel",     # Returns (3,) np.ndarray (wrapper; normalizes axis once)
 )
-
