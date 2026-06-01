@@ -32,10 +32,11 @@ import numpy as np
 import numpy.typing as npt
 from numba import njit
 
-from lunaris.common.constants import AU, C_LIGHT, P_SUN_1AU, R_MOON_MEAN, SIGMA_SB, SOLAR_FLUX_1AU
+from lunaris.common.constants import AU, C_LIGHT, P_SUN_1AU, R_EARTH_MEAN, R_MOON_MEAN, SIGMA_SB, SOLAR_FLUX_1AU
 from lunaris.common.type_defs import SpacecraftProps, Vec3
 from lunaris.physics.solar_effects import moon_shadow_factor_conical
 from lunaris.physics.thermal_ir import build_latlon_facets, calc_thermal_ir_accel
+from lunaris.physics.lunar_albedo import calc_albedo_accel, normalize_albedo_mode
 
 
 # =============================================================================
@@ -60,18 +61,120 @@ def _require_ge0(name: str, x: float) -> float:
 
 @dataclass(frozen=True, slots=True)
 class AlbedoConfig:
-    """Settings for lunar albedo radiation-pressure models."""
+    """Settings for lunar albedo radiation-pressure models.
 
-    A_moon: float = 0.12          # effective lunar albedo in [0,1]
-    k_lambert: float = 1.0        # Lambertian scaling (>= 0)
-    P0: float = P_SUN_1AU         # SRP at 1 AU [N/m^2]
+    Two backends are available, selected by ``albedo_model``:
+
+    ``lambert_facets`` (default)
+        Physically-resolved facet model in :mod:`lunaris.physics.lunar_albedo`.
+        The Moon is discretized into sunlit/visible Lambertian facets whose
+        reflected-solar contributions are summed (in the Moon-fixed frame) and
+        rotated back to inertial by the dynamics layer. It uses the dedicated
+        coefficient ``albedo_pressure_coefficient`` (C_R_albedo), **not** the
+        spacecraft SRP coefficient ``cr``.
+
+    ``simple`` / ``lommel``
+        Legacy engineering "cannonball" kernels kept for backward compatibility.
+        They push along the Sun->spacecraft line and reuse the spacecraft SRP
+        coefficient ``cr`` scaled by ``k_lambert``. Their behavior is unchanged.
+
+    The per-facet albedo ``A_i`` used by ``lambert_facets`` is built once at
+    setup time from ``albedo_mode``:
+
+    ``constant_albedo``
+        ``albedo_const`` everywhere (engineering approximation; ~0.07-0.16 for
+        the Moon). Requires no surface provider.
+    ``albedo_grid``
+        Provider-supplied albedo grid already in [0,1].
+    ``scaled_dn_grid``
+        Provider digital-number grid mapped via ``A = scale*DN + offset`` with
+        explicit nodata handling; nodata falls back to ``albedo_const``.
+
+    Grid modes require a surface provider; ``require_surface_provider`` forces a
+    hard error if one is missing.
+    """
+
+    # --- Legacy / simple-backend fields (kept for backward compatibility) ---
+    A_moon: float = 0.12          # constant lunar albedo in [0,1] (legacy alias of albedo_const)
+    k_lambert: float = 1.0        # Lambertian scaling for simple/lommel (>= 0)
+    P0: float = P_SUN_1AU         # SRP at 1 AU [N/m^2] (simple/lommel only)
     AU_m: float = AU              # astronomical unit [m]
 
+    # --- Backend & albedo-source selection ---
+    albedo_model: str = "lambert_facets"   # "lambert_facets" | "simple" | "lommel"
+    albedo_mode: str = "constant_albedo"   # "constant_albedo" | "albedo_grid" | "scaled_dn_grid"
+    albedo_const: float = 0.12             # constant facet albedo for lambert_facets
+
+    # --- Facet (lambert_facets) model parameters ---
+    albedo_pressure_coefficient: float = 1.0   # C_R_albedo (distinct from SRP cr)
+    facet_lat_count: int = 18
+    facet_lon_count: int = 36
+    max_facets: int = 10_000
+    solar_flux_1au_W_m2: float = SOLAR_FLUX_1AU
+    c_light_m_s: float = C_LIGHT
+    include_sun_distance_scaling: bool = True
+    enable_eclipse: bool = True
+    require_surface_provider: bool = False
+    use_existing_surface_grid: bool = False
+
     def __post_init__(self) -> None:
-        object.__setattr__(self, "A_moon", _require_range("AlbedoConfig.A_moon", self.A_moon, 0.0, 1.0))
+        model = str(self.albedo_model).strip().lower()
+        if model in {"facet", "facets", "lambert", "lambert_facets"}:
+            model = "lambert_facets"
+        elif model in {"lommel", "lommel_seeliger"}:
+            model = "lommel"
+        elif model == "simple":
+            model = "simple"
+        else:
+            raise ValueError(
+                "AlbedoConfig.albedo_model must be 'lambert_facets', 'simple', "
+                f"or 'lommel'. Got {self.albedo_model!r}."
+            )
+
+        # Validate and canonicalize the albedo-source mode string.
+        mode_code = normalize_albedo_mode(self.albedo_mode)
+        mode = {0: "constant_albedo", 1: "albedo_grid", 2: "scaled_dn_grid"}[mode_code]
+
+        # ``albedo_const`` is the canonical constant-albedo field; ``A_moon`` is a
+        # legacy alias. Mirror whichever the caller set away from the shared
+        # default so both backends honor a single intent.
+        albedo_const = float(self.albedo_const)
+        a_moon = float(self.A_moon)
+        if albedo_const == 0.12 and a_moon != 0.12:
+            albedo_const = a_moon
+        elif a_moon == 0.12 and albedo_const != 0.12:
+            a_moon = albedo_const
+
+        object.__setattr__(self, "albedo_model", model)
+        object.__setattr__(self, "albedo_mode", mode)
+        object.__setattr__(self, "A_moon", _require_range("AlbedoConfig.A_moon", a_moon, 0.0, 1.0))
+        object.__setattr__(self, "albedo_const", _require_range("AlbedoConfig.albedo_const", albedo_const, 0.0, 1.0))
         object.__setattr__(self, "k_lambert", _require_ge0("AlbedoConfig.k_lambert", self.k_lambert))
         object.__setattr__(self, "P0", _require_ge0("AlbedoConfig.P0", self.P0))
         object.__setattr__(self, "AU_m", _require_ge0("AlbedoConfig.AU_m", self.AU_m))
+        object.__setattr__(
+            self,
+            "albedo_pressure_coefficient",
+            _require_ge0("AlbedoConfig.albedo_pressure_coefficient", self.albedo_pressure_coefficient),
+        )
+        object.__setattr__(self, "facet_lat_count", int(self.facet_lat_count))
+        object.__setattr__(self, "facet_lon_count", int(self.facet_lon_count))
+        object.__setattr__(self, "max_facets", int(self.max_facets))
+        if self.facet_lat_count < 1 or self.facet_lon_count < 1:
+            raise ValueError("AlbedoConfig facet_lat_count/facet_lon_count must be >= 1.")
+        if self.max_facets < 1:
+            raise ValueError("AlbedoConfig.max_facets must be >= 1.")
+        if self.facet_lat_count * self.facet_lon_count > self.max_facets:
+            raise ValueError(
+                "Albedo facet grid exceeds max_facets: "
+                f"{self.facet_lat_count * self.facet_lon_count} > {self.max_facets}."
+            )
+        object.__setattr__(
+            self,
+            "solar_flux_1au_W_m2",
+            _require_ge0("AlbedoConfig.solar_flux_1au_W_m2", self.solar_flux_1au_W_m2),
+        )
+        object.__setattr__(self, "c_light_m_s", _require_ge0("AlbedoConfig.c_light_m_s", self.c_light_m_s))
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,17 +446,55 @@ def albedo_accel(
     sc_props: SpacecraftProps,
     config: AlbedoConfig,
     *,
-    model: str = "simple",
+    model: str | None = None,
     enable_eclipse: bool = True,
     R_moon: float = R_MOON_MEAN,
 ) -> Vec3:
-    """Albedo acceleration in a Moon-centered frame."""
+    """Albedo acceleration in a Moon-centered frame.
+
+    ``model`` selects the backend; when ``None`` it defaults to
+    ``config.albedo_model`` (``"lambert_facets"`` by default). The legacy
+    cannonball kernels (``"simple"``, ``"lommel"``) are unchanged and reuse the
+    spacecraft SRP coefficient ``cr``; ``"lambert_facets"`` builds a constant
+    albedo facet sphere from the config and uses
+    ``config.albedo_pressure_coefficient``.
+    """
     r_sc_v = _as_vec3(r_sc, "r_sc")
     r_sun_v = _as_vec3(r_sun, "r_sun")
 
-    kernel = _ALBEDO_KERNELS.get(model)
+    selected = str(model if model is not None else config.albedo_model).strip().lower()
+
+    if selected in {"lambert_facets", "facet", "facets", "lambert"}:
+        facet_pos, facet_normals, facet_areas, _, _ = build_latlon_facets(
+            int(config.facet_lat_count),
+            int(config.facet_lon_count),
+            radius_m=float(R_moon),
+        )
+        facet_albedo = np.full(facet_areas.shape[0], float(config.albedo_const), dtype=np.float64)
+        return calc_albedo_accel(
+            r_sc_v,
+            r_sun_v,
+            facet_pos,
+            facet_normals,
+            facet_areas,
+            facet_albedo,
+            pressure_coefficient=float(config.albedo_pressure_coefficient),
+            spacecraft_area_m2=float(sc_props.area_m2),
+            spacecraft_mass_kg=float(sc_props.mass_kg),
+            solar_flux_1au_W_m2=float(config.solar_flux_1au_W_m2),
+            au_m=float(config.AU_m),
+            c_light_m_s=float(config.c_light_m_s),
+            r_earth_m=float(R_EARTH_MEAN),
+            include_sun_distance_scaling=bool(config.include_sun_distance_scaling),
+            enable_eclipse=False,
+        )
+
+    kernel = _ALBEDO_KERNELS.get(selected)
     if kernel is None:
-        raise ValueError(f"Unsupported albedo model: {model!r}. Supported: {sorted(_ALBEDO_KERNELS)}")
+        raise ValueError(
+            f"Unsupported albedo model: {model!r}. "
+            f"Supported: 'lambert_facets', {sorted(_ALBEDO_KERNELS)}"
+        )
 
     eclipse_flag = 1 if enable_eclipse else 0
 

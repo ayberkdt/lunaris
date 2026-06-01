@@ -64,6 +64,25 @@ lunaris --enable-thermal on --thermal-mode constant_temperature --thermal-temper
 lunaris --enable-thermal on --thermal-mode equilibrium_temperature --thermal-night-temperature-k 100
 ```
 
+Lunar albedo uses `lunaris.physics.lunar_albedo`: a non-gravitational
+*reflected-solar* radiation pressure (sunlight reflected off the lunar surface),
+not a gravity term. The Moon is discretized into Lambertian facets, and each
+facet that is both sunlit and visible to the spacecraft reflects sunlight toward
+it; the summed acceleration is rotated back to the inertial frame. Per-facet
+albedo is set by `--albedo-mode`: `constant_albedo` (provider-free, uses
+`--albedo-const`), `albedo_grid`, or `scaled_dn_grid` (the latter two sample a
+LOLA-style grid supplied via `--albedo-root`). It uses a dedicated
+`--albedo-pressure-coefficient` (C_R_albedo), not the SRP `cr`. The legacy
+cannonball model stays available via `--albedo-model simple`. The facet model is
+Lambertian only: no non-Lambertian BRDF, wavelength dependence, surface
+roughness, terrain self-shadowing beyond the incidence/visibility cutoffs,
+photometric phase functions, multiple scattering, or local topography.
+
+```bash
+lunaris --enable-albedo on --albedo-const 0.12
+lunaris --enable-albedo on --albedo-mode scaled_dn_grid --albedo-root data/albedo_models
+```
+
 ## Documentation
 
 | Document | Contents |

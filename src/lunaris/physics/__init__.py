@@ -76,6 +76,11 @@ _EXPORTS: Final[dict[str, tuple[str, str, str]]] = {
     "calc_thermal_ir_accel": (".thermal_ir", "calc_thermal_ir_accel", "Lambertian lunar thermal IR acceleration."),
     "accel_thermal_ir_facets_numba": (".thermal_ir", "accel_thermal_ir_facets_numba", "Numba kernel: thermal IR facets."),
 
+    # Lunar albedo radiation pressure (reflected solar)
+    "calc_albedo_accel": (".lunar_albedo", "calc_albedo_accel", "Lambertian lunar albedo acceleration."),
+    "accel_albedo_facets_numba": (".lunar_albedo", "accel_albedo_facets_numba", "Numba kernel: albedo facets."),
+    "normalize_albedo_mode": (".lunar_albedo", "normalize_albedo_mode", "Albedo source-mode string -> code."),
+
     # Solar effects (SRP + shadow)
     "SRPConfig": (".solar_effects", "SRPConfig", "Solar Radiation Pressure configuration."), 
     "compute_srp_accel": (".solar_effects", "compute_srp_accel", "Compute SRP acceleration."), 
@@ -95,7 +100,8 @@ _LAZY_MODULES: Final[dict[str, str]] = {
     "third_body_effects": "Earth/Sun third-body effects.", 
     "solid_tides": "Elastic lunar solid-body tides.",
     "thermal_ir": "Lambertian lunar thermal IR radiation pressure.",
-    "solar_effects": "SRP + eclipse/shadow geometry.", 
+    "lunar_albedo": "Lambertian lunar albedo (reflected solar) radiation pressure.",
+    "solar_effects": "SRP + eclipse/shadow geometry.",
     "surface_effects": "Surface environment (topography/albedo/thermal; often heavy).", 
 }
 
@@ -177,6 +183,7 @@ if TYPE_CHECKING:
         third_body_effects,
         solid_tides,
         thermal_ir,
+        lunar_albedo,
         solar_effects,
         surface_effects,
     )
@@ -221,6 +228,11 @@ if TYPE_CHECKING:
         build_latlon_facets,
         calc_thermal_ir_accel,
         accel_thermal_ir_facets_numba,
+    )
+    from .lunar_albedo import (  # noqa: F401
+        calc_albedo_accel,
+        accel_albedo_facets_numba,
+        normalize_albedo_mode,
     )
     from .solar_effects import (  # noqa: F401
         SRPConfig,

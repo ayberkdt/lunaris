@@ -323,6 +323,24 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     g_phys.add_argument("--thermal-facet-lat-count", type=int, help="Thermal facet latitude count")
     g_phys.add_argument("--thermal-facet-lon-count", type=int, help="Thermal facet longitude count")
 
+    # Lunar albedo (reflected solar) radiation pressure
+    g_phys.add_argument(
+        "--albedo-model",
+        choices=("lambert_facets", "simple", "lommel"),
+        help="Albedo backend: 'lambert_facets' (default, facet Lambertian) or legacy 'simple'/'lommel'.",
+    )
+    g_phys.add_argument(
+        "--albedo-mode",
+        choices=("constant_albedo", "albedo_grid", "scaled_dn_grid"),
+        help="Per-facet albedo source (grid modes require --albedo-root).",
+    )
+    g_phys.add_argument("--albedo-const", type=float, help="Constant lunar albedo in [0,1] (default 0.12)")
+    g_phys.add_argument("--albedo-pressure-coefficient", type=float, help="Albedo radiation-pressure coefficient C_R_albedo [-]")
+    g_phys.add_argument("--albedo-facet-lat-count", type=int, help="Albedo facet latitude count")
+    g_phys.add_argument("--albedo-facet-lon-count", type=int, help="Albedo facet longitude count")
+    g_phys.add_argument("--albedo-require-provider", type=str2bool, help="Require a surface provider for albedo (on/off)")
+    g_phys.add_argument("--albedo-enable-eclipse", type=str2bool, help="Apply lunar-eclipse (Earth-umbra) dimming (on/off)")
+
     # clean tides contract -> maps to enable_tides_k2/enable_tides_k3
     g_phys.add_argument("--enable-tides", type=str2bool, help="Enable solid tides (on/off)")
     g_phys.add_argument("--tides-kind", choices=("k2", "k3"), help="Tides model kind (k2 or k3)")
@@ -473,6 +491,15 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     if args.thermal_facet_lon_count is not None and args.thermal_facet_lon_count < 1:
         parser.error("--thermal-facet-lon-count must be >= 1.")
 
+    if args.albedo_const is not None and not (0.0 <= args.albedo_const <= 1.0):
+        parser.error("--albedo-const must be in [0, 1].")
+    if args.albedo_pressure_coefficient is not None and args.albedo_pressure_coefficient < 0.0:
+        parser.error("--albedo-pressure-coefficient must be >= 0.")
+    if args.albedo_facet_lat_count is not None and args.albedo_facet_lat_count < 1:
+        parser.error("--albedo-facet-lat-count must be >= 1.")
+    if args.albedo_facet_lon_count is not None and args.albedo_facet_lon_count < 1:
+        parser.error("--albedo-facet-lon-count must be >= 1.")
+
     # adaptive table implies adaptive enabled unless user explicitly disabled
     if args.adaptive_table is not None and args.adaptive_enabled is False:
         parser.error("--adaptive-table requires --adaptive-enabled on (or omit --adaptive-enabled).")
@@ -620,7 +647,19 @@ def main() -> int:
         else "constant_temperature"
     )
     thermal_needs_surface = bool(cfg.flags.enable_thermal and thermal_mode == "temperature_grid")
-    surface_force_needs_provider = bool(cfg.flags.enable_albedo or thermal_needs_surface)
+    albedo_mode = (
+        str(getattr(cfg.albedo, "albedo_mode", "constant_albedo")).strip().lower()
+        if cfg.albedo is not None
+        else "constant_albedo"
+    )
+    albedo_needs_surface = bool(
+        cfg.flags.enable_albedo
+        and (
+            albedo_mode in ("albedo_grid", "scaled_dn_grid")
+            or bool(getattr(cfg.albedo, "require_surface_provider", False))
+        )
+    )
+    surface_force_needs_provider = bool(albedo_needs_surface or thermal_needs_surface)
     if topo_requested or surface_force_needs_provider:
         try:
             surface_provider = init_surface_provider(args)
@@ -628,8 +667,11 @@ def main() -> int:
             print(f"[FATAL] Surface grids load failed: {e}")
             return 1
 
-        if cfg.flags.enable_albedo and surface_provider is None:
-            print("[FATAL] Albedo force enabled, but no albedo grids loaded. Provide --albedo-root.")
+        if albedo_needs_surface and surface_provider is None:
+            print(
+                "[FATAL] Albedo grid mode enabled, but no albedo grids loaded. "
+                "Provide --albedo-root or use --albedo-mode constant_albedo."
+            )
             return 1
         if thermal_needs_surface and surface_provider is None:
             print("[FATAL] Thermal temperature_grid mode requires surface temperature data. Provide a compatible surface provider.")
@@ -705,6 +747,7 @@ def main() -> int:
             surface_provider=surface_provider,
             earth_j2=cfg.earth_j2,
             thermal=cfg.thermal,
+            albedo=cfg.albedo,
             solid_tides=cfg.solid_tides,
         )
         _ = engine.build_rhs()  # triggers warmup / JIT (if enabled)
