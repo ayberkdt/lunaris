@@ -7,13 +7,32 @@ Usage:
     from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
 
     fm = load_surrogate_force_model("runs/st_lrps_train_20240101_120000")
-    delta_u = fm.predict_residual_potential(x_m)   # DeltaU in m^2/s^2
-    delta_a = fm.predict_residual_accel(x_m)       # Delta_a in m/s^2
-    a_total = fm.predict_total_accel(x_m, base_accel_fn)  # a_SH20 + Delta_a
+    # Body-fixed (Moon-fixed Cartesian) inputs — the frame the dataset was made in:
+    delta_u = fm.predict_residual_potential_fixed(r_fixed_m)   # DeltaU in m^2/s^2
+    delta_a = fm.predict_residual_accel_fixed(r_fixed_m)       # Delta_a in m/s^2
+    a_total = fm.predict_total_accel_fixed(r_fixed_m, base_accel_fixed_fn)
 
-Frame warning: x_m must be in the same Moon-centered inertial frame used when
-generating the SH dataset (typically MCMF / PA frame). Mixing frames will produce
-physically wrong accelerations with no error signal.
+    # Inertial inputs — supply the inertial->fixed quaternion q_i2f (scalar-first):
+    delta_a_i = fm.predict_residual_accel_inertial(r_inertial_m, q_i2f)
+
+FRAME CONTRACT
+--------------
+ST-LRPS predicts residual lunar gravity in the **Moon-fixed / body-fixed
+Cartesian** frame (``moon_fixed_cartesian``) — the same frame the SH residual
+dataset was generated in. It is NOT an inertial / MCMF-inertial / PA-inertial
+model. Feeding inertial coordinates straight into the ``*_fixed`` methods
+produces physically wrong accelerations with no error signal.
+
+To integrate from an inertial propagation frame you MUST:
+    1. rotate the inertial position into the Moon-fixed frame (r_fixed = R(q_i2f) r_inertial),
+    2. evaluate ST-LRPS in the fixed frame,
+    3. rotate the fixed-frame acceleration back into the inertial frame.
+The ``*_inertial`` helpers below do exactly this; the dynamics engine performs
+the same rotation around ``acceleration_fixed`` in ``physics/surrogate_gravity.py``.
+
+The legacy ``predict_residual_potential`` / ``predict_residual_accel`` /
+``predict_total_accel`` names are retained as thin **fixed-frame** wrappers for
+backward compatibility and behave identically to their ``*_fixed`` counterparts.
 """
 
 from __future__ import annotations
@@ -28,6 +47,54 @@ import torch
 import torch.nn as nn
 
 logger = logging.getLogger(__name__)
+
+# The only runtime frame ST-LRPS artifacts currently support. Inputs to the
+# ``*_fixed`` methods are interpreted in this body-fixed Cartesian frame.
+SUPPORTED_RUNTIME_FRAME = "moon_fixed_cartesian"
+
+
+def _quat_to_rotation_matrix(q_i2f: Union[np.ndarray, "tuple"]) -> np.ndarray:
+    """Scalar-first unit quaternion ``q_i2f`` -> 3x3 inertial->fixed rotation matrix.
+
+    Matches ``lunaris.common.math_utils.quat_rotate_vec`` exactly: for a position
+    ``r_inertial``, ``R @ r_inertial`` gives ``r_fixed``; the transpose maps a
+    fixed-frame vector back to inertial (``R.T @ a_fixed = a_inertial``).
+    """
+    q = np.asarray(q_i2f, dtype=np.float64).ravel()
+    if q.size != 4:
+        raise ValueError(f"q_i2f must have 4 elements (scalar-first), got {q.size}.")
+    n = float(np.linalg.norm(q))
+    if n == 0.0:
+        raise ValueError("q_i2f has zero norm; cannot form a rotation.")
+    w, x, y, z = (q / n).tolist()
+    return np.array(
+        [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - w * z), 2.0 * (x * z + w * y)],
+            [2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)],
+            [2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _rotate_inertial_to_fixed(r_inertial_m: np.ndarray, q_i2f) -> np.ndarray:
+    """Rotate inertial position(s) ``(3,)`` or ``(N,3)`` into the Moon-fixed frame."""
+    r = np.asarray(r_inertial_m, dtype=np.float64)
+    single = r.ndim == 1
+    r2 = r.reshape(1, 3) if single else r
+    rot = _quat_to_rotation_matrix(q_i2f)
+    out = r2 @ rot.T
+    return out[0] if single else out
+
+
+def _rotate_fixed_to_inertial(a_fixed_m: np.ndarray, q_i2f) -> np.ndarray:
+    """Rotate fixed-frame acceleration(s) ``(3,)`` or ``(N,3)`` back to inertial."""
+    a = np.asarray(a_fixed_m, dtype=np.float64)
+    single = a.ndim == 1
+    a2 = a.reshape(1, 3) if single else a
+    rot = _quat_to_rotation_matrix(q_i2f)
+    out = a2 @ rot  # R.T @ a per row == a @ R
+    return out[0] if single else out
 
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     validate_checkpoint_contract,
@@ -110,8 +177,12 @@ class SurrogateForceModel(PotentialAutogradRuntime):
     """
     Loaded surrogate gravity force model for propagator integration.
 
-    All methods accept positions in SI metres (Moon-centred inertial frame,
-    matching the frame used during SH dataset generation).
+    The ``*_fixed`` methods accept positions in SI metres in the **Moon-fixed
+    Cartesian** frame (``moon_fixed_cartesian``) — the frame used during SH
+    residual dataset generation. The ``*_inertial`` methods accept inertial
+    positions plus the inertial->fixed quaternion ``q_i2f`` and handle the
+    rotation. The unsuffixed legacy methods are fixed-frame wrappers. The
+    constructor hard-fails if the artifact declares a non-fixed frame.
 
     Attributes
     ----------
@@ -193,6 +264,26 @@ class SurrogateForceModel(PotentialAutogradRuntime):
             mu_si=self.artifact_contract.mu_si,
             r_ref_m=self.artifact_contract.r_ref_m,
         )
+
+        # Frame guard: ST-LRPS is a body-fixed surrogate. Read the declared frame
+        # from the artifact (dataset_contract.coordinate_frame, then the target
+        # contract). A legacy artifact without the field defaults to the fixed
+        # frame; an artifact that explicitly declares a different frame fails
+        # loudly so inertial coordinates can never be fed to a fixed-frame model.
+        declared_frame = (
+            (self.artifact_contract.dataset_contract or {}).get("coordinate_frame")
+            or self.target_contract.frame
+            or SUPPORTED_RUNTIME_FRAME
+        )
+        self.frame = str(declared_frame).strip().lower()
+        if self.frame != SUPPORTED_RUNTIME_FRAME:
+            raise ValueError(
+                f"SurrogateForceModel supports only frame={SUPPORTED_RUNTIME_FRAME!r} "
+                f"(Moon-fixed Cartesian), but the artifact declares frame={self.frame!r}. "
+                "ST-LRPS predicts residual gravity in the body-fixed frame; rotate "
+                "inertial inputs with predict_*_inertial(q_i2f) instead of loading a "
+                "wrong-frame artifact."
+            )
 
         # Training altitude bounds: resolved from 3 sources in priority order.
         # Priority 1: explicit top-level config fields
@@ -278,20 +369,21 @@ class SurrogateForceModel(PotentialAutogradRuntime):
             delta_u = self.scaler.unscale_u(delta_u_scaled)
         return delta_u.cpu().numpy()
 
-    def predict_residual_potential(self, x_m):
+    def predict_residual_potential_fixed(self, r_fixed_m):
         """
-        Predict residual gravitational potential DeltaU(x) in m^2/s^2.
+        Predict residual gravitational potential DeltaU(r) in m^2/s^2.
 
         Parameters
         ----------
-        x_m : array-like, shape (3,) or (N,3)
-            Moon-centred position(s) in metres.
+        r_fixed_m : array-like, shape (3,) or (N,3)
+            Moon-**fixed** Cartesian position(s) in metres (``moon_fixed_cartesian``).
 
         Returns
         -------
         delta_u : np.ndarray, shape (N,) or scalar
             Residual potential in m^2/s^2.
         """
+        x_m = r_fixed_m
         x_arr = np.asarray(x_m, dtype=np.float64)
         if not np.all(np.isfinite(x_arr)):
             raise ValueError(
@@ -330,21 +422,21 @@ class SurrogateForceModel(PotentialAutogradRuntime):
             )
         return status
 
-    def predict_residual_accel(
-        self, x_m: Union[np.ndarray, torch.Tensor]
+    def predict_residual_accel_fixed(
+        self, r_fixed_m: Union[np.ndarray, torch.Tensor]
     ) -> np.ndarray:
         """
         Predict residual acceleration Delta_a = a_sign * grad(DeltaU) in m/s^2.
 
         Parameters
         ----------
-        x_m : array-like, shape (3,) or (N,3)
-            Moon-centred position(s) in metres.
+        r_fixed_m : array-like, shape (3,) or (N,3)
+            Moon-**fixed** Cartesian position(s) in metres (``moon_fixed_cartesian``).
 
         Returns
         -------
         delta_a : np.ndarray, shape (3,) or (N,3)
-            Residual acceleration in m/s^2.
+            Residual acceleration in m/s^2, in the Moon-fixed frame.
 
         Raises
         ------
@@ -352,13 +444,14 @@ class SurrogateForceModel(PotentialAutogradRuntime):
             If the model was loaded with ``strict_domain=True`` and the input
             lies outside the trained domain (see :meth:`domain_status`).
         """
+        x_m = r_fixed_m
         x_arr = np.asarray(x_m, dtype=np.float64)
         if not np.all(np.isfinite(x_arr)):
             raise ValueError(
-                "predict_residual_accel: Input positions contain NaN or Inf values. "
+                "predict_residual_accel_fixed: Input positions contain NaN or Inf values. "
                 "All position components must be finite real numbers."
             )
-        self._enforce_domain(x_arr, caller="predict_residual_accel")
+        self._enforce_domain(x_arr, caller="predict_residual_accel_fixed")
         single = x_arr.ndim == 1
         _, da = self._chunked_predict(x_m)
         return da[0] if single else da
@@ -430,37 +523,39 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         a_total = self.predict_total_accel(x_m, base_accel_fn)
         return a_total, status
 
-    def predict_total_accel(
+    def predict_total_accel_fixed(
         self,
-        x_m: Union[np.ndarray, torch.Tensor],
-        base_accel_fn: Optional[Callable] = None,
+        r_fixed_m: Union[np.ndarray, torch.Tensor],
+        base_accel_fixed_fn: Optional[Callable] = None,
     ) -> np.ndarray:
         """
-        Predict total acceleration a_total = a_base(x) + Delta_a_NN(x).
+        Predict total acceleration a_total = a_base(r) + Delta_a_NN(r), all fixed-frame.
 
         Parameters
         ----------
-        x_m : array-like, shape (3,) or (N,3)
-            Moon-centred position(s) in metres.
-        base_accel_fn : callable, optional
-            base_accel_fn(x_m) -> np.ndarray of shape (N,3).
-            Should return the base SH(degree_min) acceleration.
+        r_fixed_m : array-like, shape (3,) or (N,3)
+            Moon-**fixed** Cartesian position(s) in metres (``moon_fixed_cartesian``).
+        base_accel_fixed_fn : callable, optional
+            ``base_accel_fixed_fn(r_fixed_m) -> np.ndarray`` of shape (N,3),
+            the base SH(degree_min) acceleration evaluated in the Moon-fixed frame.
             If None and degree_min < 0: uses point-mass formula with self.mu_si.
             If None and degree_min >= 0: raises ValueError (base model required).
 
         Returns
         -------
         a_total : np.ndarray, shape (3,) or (N,3)
-            Total acceleration in m/s^2.
+            Total acceleration in m/s^2, in the Moon-fixed frame.
         """
+        x_m = r_fixed_m
+        base_accel_fn = base_accel_fixed_fn
         single = np.asarray(x_m).ndim == 1
         x_arr = np.asarray(x_m, dtype=np.float64)
         if not np.all(np.isfinite(x_arr)):
             raise ValueError(
-                "predict_total_accel: Input positions contain NaN or Inf values. "
+                "predict_total_accel_fixed: Input positions contain NaN or Inf values. "
                 "All position components must be finite real numbers."
             )
-        self._enforce_domain(x_arr, caller="predict_total_accel")
+        self._enforce_domain(x_arr, caller="predict_total_accel_fixed")
         if x_arr.ndim == 1:
             x_arr = x_arr[None, :]
 
@@ -495,6 +590,79 @@ class SurrogateForceModel(PotentialAutogradRuntime):
 
         a_total = a_base + da.astype(np.float64)
         return a_total[0] if single else a_total
+
+    # ------------------------------------------------------------------
+    # Backward-compatible fixed-frame wrappers (legacy unsuffixed names)
+    # ------------------------------------------------------------------
+    def predict_residual_potential(self, x_m):
+        """Fixed-frame alias of :meth:`predict_residual_potential_fixed`.
+
+        ``x_m`` is interpreted in the Moon-fixed Cartesian frame. Retained for
+        backward compatibility; prefer the explicit ``_fixed`` name.
+        """
+        return self.predict_residual_potential_fixed(x_m)
+
+    def predict_residual_accel(self, x_m: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+        """Fixed-frame alias of :meth:`predict_residual_accel_fixed`."""
+        return self.predict_residual_accel_fixed(x_m)
+
+    def predict_total_accel(
+        self,
+        x_m: Union[np.ndarray, torch.Tensor],
+        base_accel_fn: Optional[Callable] = None,
+    ) -> np.ndarray:
+        """Fixed-frame alias of :meth:`predict_total_accel_fixed`."""
+        return self.predict_total_accel_fixed(x_m, base_accel_fn)
+
+    # ------------------------------------------------------------------
+    # Inertial-frame helpers: rotate in -> evaluate fixed -> rotate out
+    # ------------------------------------------------------------------
+    def predict_residual_potential_inertial(
+        self, r_inertial_m: Union[np.ndarray, torch.Tensor], q_i2f
+    ):
+        """Residual potential for inertial position(s) via the ``q_i2f`` rotation.
+
+        The potential is a frame-invariant scalar, so only the input position is
+        rotated into the Moon-fixed frame before evaluation.
+        """
+        r_fixed = _rotate_inertial_to_fixed(r_inertial_m, q_i2f)
+        return self.predict_residual_potential_fixed(r_fixed)
+
+    def predict_residual_accel_inertial(
+        self, r_inertial_m: Union[np.ndarray, torch.Tensor], q_i2f
+    ) -> np.ndarray:
+        """Residual acceleration expressed in the inertial frame.
+
+        Parameters
+        ----------
+        r_inertial_m : array-like, shape (3,) or (N,3)
+            Inertial position(s) in metres.
+        q_i2f : array-like, shape (4,)
+            Scalar-first inertial->fixed unit quaternion.
+
+        Steps: (1) rotate inertial position -> Moon-fixed, (2) evaluate ST-LRPS
+        residual acceleration in the fixed frame, (3) rotate the fixed-frame
+        acceleration back into the inertial frame.
+        """
+        r_fixed = _rotate_inertial_to_fixed(r_inertial_m, q_i2f)
+        a_fixed = self.predict_residual_accel_fixed(r_fixed)
+        return _rotate_fixed_to_inertial(a_fixed, q_i2f)
+
+    def predict_total_accel_inertial(
+        self,
+        r_inertial_m: Union[np.ndarray, torch.Tensor],
+        q_i2f,
+        base_accel_fixed_fn: Optional[Callable] = None,
+    ) -> np.ndarray:
+        """Total acceleration expressed in the inertial frame.
+
+        ``base_accel_fixed_fn`` (when supplied) must evaluate the SH baseline in
+        the Moon-fixed frame; the combined fixed acceleration is rotated back to
+        inertial via ``q_i2f``.
+        """
+        r_fixed = _rotate_inertial_to_fixed(r_inertial_m, q_i2f)
+        a_fixed = self.predict_total_accel_fixed(r_fixed, base_accel_fixed_fn)
+        return _rotate_fixed_to_inertial(a_fixed, q_i2f)
 
 
 def load_surrogate_force_model(
@@ -596,6 +764,7 @@ def load_surrogate_force_model(
 
 
 __all__ = [
+    "SUPPORTED_RUNTIME_FRAME",
     "BaseSurrogateRuntime",
     "PotentialAutogradRuntime",
     "DirectForceRuntime",
@@ -614,8 +783,8 @@ if __name__ == "__main__":
     args = ap.parse_args()
 
     fm = load_surrogate_force_model(args.model_dir, device=args.device)
-    print(f"Loaded: degree_min={fm.degree_min}, mu_si={fm.mu_si:.4e}, a_sign={fm.a_sign:+.1f}")
-    print("Frame warning: input must be Moon-centred inertial frame matching SH dataset generation.")
+    print(f"Loaded: degree_min={fm.degree_min}, mu_si={fm.mu_si:.4e}, a_sign={fm.a_sign:+.1f}, frame={fm.frame}")
+    print("Frame contract: *_fixed inputs are Moon-fixed Cartesian; use *_inertial(q_i2f) for inertial inputs.")
 
     from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI as _R_REF
 
@@ -625,8 +794,8 @@ if __name__ == "__main__":
     dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
     x = (r * dirs).astype(np.float32)
 
-    du = fm.predict_residual_potential(x)
-    da = fm.predict_residual_accel(x)
+    du = fm.predict_residual_potential_fixed(x)
+    da = fm.predict_residual_accel_fixed(x)
     print(f"dU range: [{du.min():.3e}, {du.max():.3e}] m^2/s^2")
     print(f"|da| range: [{np.linalg.norm(da, axis=1).min():.3e}, {np.linalg.norm(da, axis=1).max():.3e}] m/s^2")
     print("Smoke test passed.")

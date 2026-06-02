@@ -75,6 +75,17 @@ class TrainConfig:
     val_ratio: float = 0.1
     split_seed: Optional[int] = None
     split_policy: str = "seeded_random"
+    test_fraction: float = 0.0
+    # Spatial-block split knobs (Moon-fixed lon/lat grid holdout).
+    spatial_lon_bins: int = 12
+    spatial_lat_bins: int = 6
+    spatial_val_block_fraction: Optional[float] = None  # defaults to val_ratio
+    spatial_test_block_fraction: Optional[float] = None  # defaults to test_fraction
+    spatial_altitude_bins: int = 4
+    # OOD altitude split knobs. Thresholds override the fraction-based holdout.
+    ood_low_altitude_max_km: Optional[float] = None
+    ood_high_altitude_min_km: Optional[float] = None
+    ood_holdout_fraction: float = 0.2
 
     # Model architecture
     hidden: int = 512
@@ -431,9 +442,43 @@ def parse_args() -> TrainConfig:
                             help="Fraction of data reserved for validation (if using --data).")
     group_data.add_argument("--split-seed", type=int, default=None,
                             help="Seed for the deterministic shuffled train/validation split.")
-    group_data.add_argument("--split-policy", choices=["seeded_random", "random", "altitude_stratified"],
-                            default=_TC_DEFAULTS.get("split_policy", "seeded_random"),
-                            help="Dataset split policy recorded in split_manifest.json.")
+    group_data.add_argument(
+        "--split-policy",
+        choices=[
+            "seeded_random",
+            "random",
+            "altitude_stratified",
+            "spatial_block",
+            "ood_low_altitude",
+            "ood_high_altitude",
+            "spatial_plus_altitude_stratified",
+        ],
+        default=_TC_DEFAULTS.get("split_policy", "seeded_random"),
+        help=(
+            "Dataset split policy. 'seeded_random'/'altitude_stratified' are "
+            "interpolation splits; 'spatial_block' holds out Moon-fixed lon/lat "
+            "blocks (spatial generalization); 'ood_low_altitude'/'ood_high_altitude' "
+            "hold out an altitude band (extrapolation). Recorded in split_manifest.json."
+        ),
+    )
+    group_data.add_argument("--test-fraction", type=float, default=_TC_DEFAULTS.get("test_fraction", 0.0),
+                            help="Fraction reserved for an in-distribution test split.")
+    group_data.add_argument("--spatial-lon-bins", type=int, default=_TC_DEFAULTS.get("spatial_lon_bins", 12),
+                            help="spatial_block: number of longitude bins for the holdout grid.")
+    group_data.add_argument("--spatial-lat-bins", type=int, default=_TC_DEFAULTS.get("spatial_lat_bins", 6),
+                            help="spatial_block: number of latitude bins for the holdout grid.")
+    group_data.add_argument("--spatial-val-block-fraction", type=float, default=None,
+                            help="spatial_block: fraction of blocks held out for validation (default: val fraction).")
+    group_data.add_argument("--spatial-test-block-fraction", type=float, default=None,
+                            help="spatial_block: fraction of blocks held out for test (default: test fraction).")
+    group_data.add_argument("--spatial-altitude-bins", type=int, default=_TC_DEFAULTS.get("spatial_altitude_bins", 4),
+                            help="spatial_plus_altitude_stratified: altitude strata for balanced spatial holdout.")
+    group_data.add_argument("--ood-low-altitude-max-km", type=float, default=None,
+                            help="ood_low_altitude: hold out altitudes <= this value (km). Overrides --ood-holdout-fraction.")
+    group_data.add_argument("--ood-high-altitude-min-km", type=float, default=None,
+                            help="ood_high_altitude: hold out altitudes >= this value (km). Overrides --ood-holdout-fraction.")
+    group_data.add_argument("--ood-holdout-fraction", type=float, default=_TC_DEFAULTS.get("ood_holdout_fraction", 0.2),
+                            help="ood_*_altitude: fraction of the altitude range held out when no explicit threshold is given.")
 
     # Architecture
     group_arch = ap.add_argument_group("Model Architecture")
@@ -1191,6 +1236,15 @@ def parse_args() -> TrainConfig:
         val_ratio=a.val_fraction,
         split_seed=(a.split_seed if a.split_seed is not None else a.seed),
         split_policy=str(a.split_policy),
+        test_fraction=float(a.test_fraction),
+        spatial_lon_bins=int(a.spatial_lon_bins),
+        spatial_lat_bins=int(a.spatial_lat_bins),
+        spatial_val_block_fraction=a.spatial_val_block_fraction,
+        spatial_test_block_fraction=a.spatial_test_block_fraction,
+        spatial_altitude_bins=int(a.spatial_altitude_bins),
+        ood_low_altitude_max_km=a.ood_low_altitude_max_km,
+        ood_high_altitude_min_km=a.ood_high_altitude_min_km,
+        ood_holdout_fraction=float(a.ood_holdout_fraction),
         hidden=a.hidden,
         depth=a.depth,
         activation=a.activation,

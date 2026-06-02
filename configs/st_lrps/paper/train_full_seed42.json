@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "name": "st_lrps_paper_full_seed42",
+  "description": "Canonical paper-safe ST-LRPS final-candidate training config (seed 42). Every scientifically relevant option is explicit; legacy/debug escape hatches are explicitly false. Fill in the dataset paths before training.",
+  "paper_safe": true,
+  "stage": "train",
+
+  "dataset": {
+    "train_data": "<FILL: path to the spatial/OOD residual cloud HDF5 (single-file split mode)>",
+    "val_data": null,
+    "test_data": null,
+    "ood_data": null,
+    "dataset_name": "data",
+    "expected_central_body": "moon",
+    "expected_gravity_model": "<FILL: lunar GFC model name, e.g. GRGM1200B>",
+    "expected_unit_system": "si",
+    "expected_derivative_convention_version": "dP_dphi_corrected_v1"
+  },
+
+  "output": {
+    "out_dir": "outputs/st_lrps_paper/seed42"
+  },
+
+  "seed": 42,
+
+  "split": {
+    "split_policy": "spatial_block",
+    "split_seed": 42,
+    "val_fraction": 0.15,
+    "test_fraction": 0.1,
+    "spatial_lon_bins": 12,
+    "spatial_lat_bins": 6,
+    "spatial_val_block_fraction": 0.15,
+    "spatial_test_block_fraction": 0.1
+  },
+
+  "target": {
+    "target_mode": "residual",
+    "base_sh_degree": 20,
+    "target_sh_degree": 60
+  },
+
+  "scaler": {
+    "fit_scope": "train_only",
+    "u_scale_mode": "hybrid",
+    "a_scale_mode": "hybrid",
+    "target_scale_multiplier": 6.0
+  },
+
+  "contract_safety": {
+    "strict_dataset_contract": true,
+    "allow_legacy_dataset_contract": false,
+    "allow_missing_dataset_contract": false,
+    "allow_dataset_validation_fail": false,
+    "allow_legacy_derivative_convention": false,
+    "allow_legacy_target_mode_inference": false
+  },
+
+  "model": {
+    "model_preset": "baseline_raw",
+    "hidden": 512,
+    "depth": 6,
+    "activation": "sine",
+    "n_bands": 3,
+    "use_residual_blocks": true,
+    "w0_first": 30.0,
+    "w0_hidden": 30.0
+  },
+
+  "loss": {
+    "w_u": 1.0,
+    "w_a": 1.0,
+    "direction_loss_weight": 0.2,
+    "use_altitude_balanced_loss": true,
+    "use_radial_cross_loss": true,
+    "potential_only_epochs": 0,
+    "accel_ramp_epochs": 25
+  },
+
+  "optimizer": {
+    "lr": 1e-4,
+    "weight_decay": 1e-6,
+    "max_grad_norm": 0.5,
+    "warmup_epochs": 5,
+    "min_lr_ratio": 0.05
+  },
+
+  "batch_size": 8192,
+  "epochs": 400,
+
+  "early_stopping": {
+    "enabled": true,
+    "patience": 30,
+    "metric": "val_total_loss"
+  },
+
+  "periodic_eval": {
+    "enabled": true,
+    "count": 10,
+    "dataset": "val",
+    "prefer_checkpoint": "last"
+  },
+
+  "artifact_contract_output": true,
+  "provenance_output": true
+}

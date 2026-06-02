@@ -62,8 +62,18 @@ def test_altitude_stratified_split_and_manifest(tmp_path):
     assert json.loads(out.read_text(encoding="utf-8"))["split_seed"] == 5
 
 
-def test_unimplemented_ood_split_policy_is_explicit():
-    with pytest.raises(NotImplementedError):
+def test_unknown_split_policy_is_explicit():
+    with pytest.raises(ValueError):
+        split_dataset_indices(
+            n_rows=20,
+            split_policy="totally_made_up",
+            split_seed=0,
+            val_fraction=0.2,
+        )
+
+
+def test_ood_low_altitude_requires_altitude():
+    with pytest.raises(ValueError):
         split_dataset_indices(
             n_rows=20,
             split_policy="ood_low_altitude",

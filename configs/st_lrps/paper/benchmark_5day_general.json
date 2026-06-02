@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "name": "st_lrps_paper_5day_general",
+  "description": "Paper-safe 5-day general low-lunar-orbit stability benchmark: ST-LRPS vs SH baselines against an SH100 DOP853 numerical reference. SH100 is a numerical reference, not physical truth. Results are valid for this dataset/split/artifact and benchmark configuration only.",
+  "paper_safe": true,
+  "scenario": {
+    "seed": 123,
+    "count": 100,
+    "type": "near_circular_altitude",
+    "altitude_min_km": 80.0,
+    "altitude_max_km": 400.0,
+    "eccentricity_mode": "circular_to_elliptic",
+    "inclination_mode": "full_range"
+  },
+  "propagation": {
+    "duration_days": 5.0,
+    "output_dt_s": 120.0,
+    "integrator": "RK4",
+    "dt_s": 30.0,
+    "dtype": "float64"
+  },
+  "truth": {
+    "model": "spherical_harmonics",
+    "degree": 100,
+    "integrator": "DOP853",
+    "rtol": 1.0e-10,
+    "atol": 1.0e-12,
+    "gravity_file": null
+  },
+  "baselines": [
+    {"name": "SH20", "model": "spherical_harmonics", "degree": 20},
+    {"name": "SH30", "model": "spherical_harmonics", "degree": 30},
+    {"name": "SH60", "model": "spherical_harmonics", "degree": 60},
+    {"name": "SH100_RK4", "model": "spherical_harmonics", "degree": 100, "allow_truth_duplicate": true}
+  ],
+  "surrogate": {
+    "enabled": true,
+    "name": "ST-LRPS",
+    "model_dir": "<FILL: trained ST-LRPS run directory>",
+    "baseline_degree": 20,
+    "runtime_model_kind": "potential_autograd"
+  },
+  "outputs": {
+    "out_dir": "validation/paper_evidence/st_lrps/orbit_benchmarks/benchmark_5day_general",
+    "write_figures": true,
+    "write_csv": true,
+    "write_json": true
+  },
+  "run_options": {
+    "synthetic": false,
+    "quick": false
+  },
+  "validation": {
+    "allow_truth_baseline": true,
+    "truth_baseline_justification": "SH100_RK4 is included only as the same-integrator numerical reference (the DOP853 SH100 truth uses a different integrator); it is labelled as a reference, not a competing physical model.",
+    "strict_domain": true
+  }
+}

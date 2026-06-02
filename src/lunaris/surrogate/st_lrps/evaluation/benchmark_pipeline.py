@@ -6,13 +6,19 @@ from __future__ import annotations
 import csv
 import math
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
 import numpy as np
 
-from .benchmark_config import load_benchmark_config
+from .benchmark_config import (
+    SYNTHETIC_BANNER,
+    apply_paper_safe,
+    is_paper_safe_requested,
+    load_benchmark_config,
+)
 from .benchmark_validation import validate_benchmark_outputs
 from .provenance import build_benchmark_manifest, sha256_payload, write_json
 from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
@@ -32,6 +38,7 @@ def run_configured_benchmark(
     allow_contract_mismatch: bool = False,
     allow_domain_extrapolation: bool = False,
     allow_legacy_artifact: bool = False,
+    paper_safe: bool = False,
 ) -> int:
     """Run a benchmark from a fixed config and write standardized outputs."""
 
@@ -44,6 +51,19 @@ def run_configured_benchmark(
         "quick": quick,
     }
     config = load_benchmark_config(config_path, overrides)
+
+    # Paper-safe mode hard-fails on synthetic/quick/legacy/mismatch/extrapolation
+    # settings *before* any output is produced, and forces the strict flags so a
+    # debug/legacy benchmark can never masquerade as a scientific result.
+    paper_safe = is_paper_safe_requested(config, flag=bool(paper_safe))
+    paper_safe_enforced: dict[str, Any] | None = None
+    if paper_safe:
+        paper_safe_enforced = apply_paper_safe(config)
+        allow_validation_fail = False
+        allow_contract_mismatch = False
+        allow_domain_extrapolation = False
+        allow_legacy_artifact = False
+
     output_dir = _resolve_output_dir(config, out_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "figures").mkdir(parents=True, exist_ok=True)
@@ -65,6 +85,9 @@ def run_configured_benchmark(
         cwd=Path.cwd(),
     )
     manifest["contract_compatibility"] = contract_report
+    manifest["paper_safe"] = {"enabled": bool(paper_safe), "enforced": paper_safe_enforced}
+    # Always record the exact invocation so a benchmark can be reproduced.
+    _write_run_command(output_dir)
     write_json(output_dir / "resolved_config.json", config)
     write_json(output_dir / "benchmark_manifest.json", manifest)
 
@@ -296,6 +319,7 @@ def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> Non
             "units": _metric_units(),
             "rows": summary_rows,
             "synthetic": True,
+            "warning": SYNTHETIC_BANNER,
         },
     )
 
@@ -342,9 +366,17 @@ def _write_report(
     truth = config["truth"]
     models = ", ".join(_configured_model_names(config))
     status = "pending" if validation_report is None else ("passed" if validation_report.get("passed") else "failed")
+    run_options = config.get("run_options", {}) if isinstance(config.get("run_options"), Mapping) else {}
+    is_synthetic = bool(run_options.get("synthetic", False))
     lines = [
         f"# Benchmark Report: {config['name']}",
         "",
+    ]
+    if is_synthetic:
+        lines += [f"> **{SYNTHETIC_BANNER}**", ""]
+    if config.get("paper_safe"):
+        lines += ["> Paper-safe mode: strict contract/domain enforcement, no synthetic/legacy settings.", ""]
+    lines += [
         f"- Benchmark name: {config['name']}",
         f"- Scenario count: {scenario['count']}",
         f"- Duration days: {config['propagation']['duration_days']}",
@@ -425,3 +457,12 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def _read_csv(path: Path) -> list[dict[str, str]]:
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+def _write_run_command(output_dir: Path) -> None:
+    """Persist the exact CLI invocation for reproducibility/provenance."""
+    try:
+        command = " ".join([Path(sys.argv[0]).name, *sys.argv[1:]]) if sys.argv else ""
+    except Exception:
+        command = ""
+    (output_dir / "run_command.txt").write_text(command + "\n", encoding="utf-8")

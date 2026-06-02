@@ -1635,35 +1635,58 @@ def train(cfg: TrainConfig) -> None:
             "created_at_utc": validation_report.get("created_at_utc"),
         }
     else:
-        if split_policy in {"seeded_random", "random"}:
-            splits = split_dataset_indices(
-                n_rows=N,
-                split_policy=split_policy,
-                split_seed=split_seed,
-                val_fraction=float(cfg.val_ratio),
-            )
-        elif split_policy == "altitude_stratified":
+        # Geometry-aware policies (spatial / OOD / altitude) need positions.
+        # Random splits do not, so the xyz read is skipped for them.
+        xyz_all: Optional[np.ndarray] = None
+        altitude_all: Optional[np.ndarray] = None
+        if split_policy not in {"seeded_random", "random"}:
             with h5py.File(primary_path, "r", swmr=True) as f:
                 xyz_all = np.asarray(f[dset_name][:, 0:3], dtype=np.float64)
             altitude_all = (np.linalg.norm(xyz_all, axis=1) - float(meta.r_ref_m or R_MOON_SI)) / 1000.0
+        _raw_split_options = {
+            "spatial_lon_bins": int(getattr(cfg, "spatial_lon_bins", 12)),
+            "spatial_lat_bins": int(getattr(cfg, "spatial_lat_bins", 6)),
+            "spatial_val_block_fraction": getattr(cfg, "spatial_val_block_fraction", None),
+            "spatial_test_block_fraction": getattr(cfg, "spatial_test_block_fraction", None),
+            "spatial_altitude_bins": int(getattr(cfg, "spatial_altitude_bins", 4)),
+            "ood_low_altitude_max_km": getattr(cfg, "ood_low_altitude_max_km", None),
+            "ood_high_altitude_min_km": getattr(cfg, "ood_high_altitude_min_km", None),
+            "ood_holdout_fraction": float(getattr(cfg, "ood_holdout_fraction", 0.2)),
+        }
+        split_options = {k: v for k, v in _raw_split_options.items() if v is not None}
+        split_info: Dict[str, Any] = {}
+        try:
             splits = split_dataset_indices(
                 n_rows=N,
                 split_policy=split_policy,
                 split_seed=split_seed,
                 val_fraction=float(cfg.val_ratio),
+                test_fraction=float(getattr(cfg, "test_fraction", 0.0)),
                 altitude_km=altitude_all,
+                xyz=xyz_all,
+                options=split_options,
+                split_info_out=split_info,
             )
-        else:
-            raise ValueError(f"Unsupported training split_policy={split_policy!r}")
+        except (ValueError, NotImplementedError) as exc:
+            raise ValueError(f"Unsupported/invalid training split_policy={split_policy!r}: {exc}") from exc
         train_indices = splits["train"]
         val_indices = splits["val"]
         n_train = int(train_indices.size)
         n_val = int(val_indices.size)
+        if n_train == 0 or n_val == 0:
+            raise ValueError(
+                f"split_policy={split_policy!r} produced an empty train ({n_train}) or "
+                f"val ({n_val}) split; adjust split fractions/thresholds."
+            )
         split_manifest = build_split_manifest(
             dataset_contract=dataset_contract_obj,
             splits=splits,
             split_policy=split_policy,
             split_seed=split_seed,
+            altitude_km=altitude_all,
+            xyz=xyz_all,
+            spatial_bins=split_info.get("spatial_bins"),
+            ood_thresholds=split_info.get("ood_thresholds"),
         )
     split_manifest_path = write_split_manifest(layout.provenance_dir / "split_manifest.json", split_manifest)
 
@@ -1777,6 +1800,34 @@ def train(cfg: TrainConfig) -> None:
             "scaler_payload": asdict(scaler),
         }
     else:
+        # Leakage-safe scaler provenance. Scalers (including the residual
+        # ΔU/Δa target scalers) are fit on TRAIN ROWS ONLY: for single-file
+        # datasets we pass train_indices so validation/test/OOD target rows
+        # never influence the mean/scale; for independent files primary_path is
+        # already the dedicated train file (indices=None, still train-only).
+        _split_index_hashes = (
+            split_manifest.get("index_hashes", {}) if isinstance(split_manifest, dict) else {}
+        ) or {}
+        try:
+            _dataset_contract_hash = compute_payload_sha256(dataset_contract_obj.to_dict())
+        except Exception:
+            _dataset_contract_hash = None
+        _dataset_content_sha256 = getattr(dataset_contract_obj, "content_sha256", None) or (
+            split_manifest.get("dataset_content_sha256") if isinstance(split_manifest, dict) else None
+        )
+        scaler_split_provenance = {
+            "fit_scope": "train_only",
+            "split_policy": ("independent_files" if independent_val else split_policy),
+            "split_seed": int(split_seed),
+            "train_count": int(n_train),
+            "val_count": int(n_val),
+            "test_count": int(split_manifest.get("test_count", 0)) if isinstance(split_manifest, dict) else 0,
+            "train_index_hash": _split_index_hashes.get("train"),
+            "val_index_hash": _split_index_hashes.get("val"),
+            "test_index_hash": _split_index_hashes.get("test"),
+            "dataset_content_sha256": _dataset_content_sha256,
+            "dataset_contract_hash": _dataset_contract_hash,
+        }
         scaler = fit_scaler_streaming(
             h5_path=primary_path, dset_name=dset_name, meta=meta,
             use_si=cfg.use_si, mu_si=mu_val, a_sign=a_sign,
@@ -1788,6 +1839,8 @@ def train(cfg: TrainConfig) -> None:
             a_scale_mode=str(getattr(cfg, "a_scale_mode", "hybrid")),
             target_scale_multiplier=float(getattr(cfg, "target_scale_multiplier", 6.0)),
             target_contract=target_contract,
+            indices=(None if independent_val else train_indices),
+            split_provenance=scaler_split_provenance,
         )
         scaler_hash_info = write_scaler_json(layout, scaler)
     logger.info(f"[artifacts] scaler_hash={scaler_hash_info['scaler_hash']}")

@@ -293,3 +293,18 @@ reserved placeholder and raises `NotImplementedError`; `load_surrogate_force_mod
 rejects any artifact whose `runtime_model_kind` is not `potential_autograd`.
 Because each evaluation is a network forward pass plus an autograd pass, the
 runtime is most efficient in batched / GPU configurations.
+
+**Frame.** ST-LRPS is a **Moon-fixed / body-fixed Cartesian** surrogate
+(`moon_fixed_cartesian`). The runtime exposes explicit `predict_*_fixed`
+(body-fixed inputs) and `predict_*_inertial(q_i2f)` (rotate in → evaluate fixed →
+rotate out) methods, and the loader hard-fails on a non-fixed artifact frame.
+
+**Validation hygiene.** Scalers — including the residual target scalers — are fit
+on **training rows only** (recorded as `fit_scope="train_only"` in `scaler.json`).
+Splits go beyond random interpolation: `spatial_block` (spatial generalization)
+and `ood_low_altitude`/`ood_high_altitude` (altitude extrapolation), with
+geometry recorded in `split_manifest.json`. The benchmark pipeline adds a
+`--paper-safe` mode that forbids synthetic/legacy/mismatch/extrapolation settings,
+and a strengthened scenario-metadata validator. See
+[ST_LRPS_VALIDATION_HYGIENE.md](ST_LRPS_VALIDATION_HYGIENE.md) for the full
+reference, the validation/ablation suites, and the recommended paper workflow.

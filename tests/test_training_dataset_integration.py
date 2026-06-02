@@ -99,6 +99,15 @@ def test_training_writes_dataset_validation_and_split_manifest(tmp_path):
     split = json.loads(split_path.read_text(encoding="utf-8"))
     assert split["split_policy"] == "altitude_stratified"
     assert split["train_count"] + split["val_count"] == 48
+    # Task 1: the fitted scaler must record that it saw TRAIN ROWS ONLY, with the
+    # split provenance that lets a reviewer audit the separation.
+    scaler_path = run_dir / "scaler.json"
+    assert scaler_path.exists()
+    scaler_prov = json.loads(scaler_path.read_text(encoding="utf-8")).get("provenance", {})
+    assert scaler_prov.get("fit_scope") == "train_only"
+    assert scaler_prov.get("split_policy") == "altitude_stratified"
+    assert scaler_prov.get("train_count") == split["train_count"]
+    assert scaler_prov.get("train_index_hash") == split["index_hashes"]["train"]
     dataset_meta = json.loads(dataset_meta_path.read_text(encoding="utf-8"))
     assert dataset_meta["dataset_contract"]["dataset_id"] == "toy_residual_cloud"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

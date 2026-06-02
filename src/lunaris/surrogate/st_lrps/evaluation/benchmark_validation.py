@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -63,7 +64,11 @@ def validate_benchmark_outputs(
     _check_no_nan_inf("scenario_results.csv", scenario_rows, errors, checked_metrics)
     _check_no_nan_inf("runtime_summary.csv", runtime_rows, errors, checked_metrics)
     _check_metric_order(metrics_rows, errors, checked_metrics)
-    _check_scenario_count(scenario_rows, expected_count, errors, checked_metrics)
+    _check_scenario_ids(root, scenario_rows, expected_count, resolved_config, errors, checked_metrics)
+    _check_per_model_scenario_counts(scenario_rows, expected_count, errors, checked_metrics)
+    _check_runtime_scenarios(runtime_rows, expected_count, errors, checked_metrics)
+    _check_model_name_consistency(metrics_rows, scenario_rows, runtime_rows, errors, checked_metrics)
+    _check_report_scenario_count(root, expected_count, errors, checked_metrics)
     _check_positive_runtime(runtime_rows, errors, checked_metrics)
     _check_positive_steps(runtime_rows, errors, checked_metrics)
     _check_unique_model_names(metrics_rows, errors, checked_metrics)
@@ -148,18 +153,187 @@ def _check_metric_order(
                 )
 
 
-def _check_scenario_count(
+def _to_int(value: Any) -> int | None:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(f) if float(f).is_integer() else None
+
+
+def _scenario_id_policy(config: Mapping[str, Any] | None) -> str:
+    if not config:
+        return "contiguous"
+    policy = config.get("scenario_id_policy")
+    if not policy and isinstance(config.get("scenario"), Mapping):
+        policy = config["scenario"].get("scenario_id_policy")
+    return str(policy or "contiguous").strip().lower()
+
+
+def _check_scenario_ids(
+    root: Path,
+    rows: list[dict[str, str]],
+    expected_count: int | None,
+    config: Mapping[str, Any] | None,
+    errors: list[str],
+    checked: list[str],
+) -> None:
+    """Scenario IDs must be integers and (for generated benchmarks) the exact
+    contiguous range ``0..expected_count-1``. Non-contiguous external IDs are
+    only allowed with an explicit policy + mapping file."""
+    if expected_count is None or not rows:
+        return
+    checked.append("scenario_ids")
+    raw_ids = [row.get("scenario_id") for row in rows if row.get("scenario_id") not in {None, ""}]
+    int_ids = [_to_int(v) for v in raw_ids]
+    if any(v is None for v in int_ids):
+        bad = [raw for raw, parsed in zip(raw_ids, int_ids) if parsed is None]
+        errors.append(f"scenario_results.csv has non-integer scenario_id values, e.g. {bad[:5]}")
+        return
+    unique = sorted(set(int_ids))
+
+    policy = _scenario_id_policy(config)
+    if policy == "external_noncontiguous":
+        checked.append("scenario_id_mapping")
+        if not (root / "scenario_id_mapping.json").exists():
+            errors.append(
+                "scenario_id_policy='external_noncontiguous' requires scenario_id_mapping.json"
+            )
+        if len(unique) != int(expected_count):
+            errors.append(
+                f"scenario count mismatch: expected {expected_count}, observed {len(unique)} unique ids"
+            )
+        return
+
+    # Standard generated benchmark: IDs must be exactly 0..expected_count-1.
+    if len(unique) != int(expected_count):
+        errors.append(
+            f"scenario count mismatch: expected {expected_count}, observed {len(unique)} unique ids"
+        )
+    if unique and unique[0] != 0:
+        errors.append(f"scenario_id min must be 0, got {unique[0]}")
+    if unique and unique[-1] != int(expected_count) - 1:
+        errors.append(f"scenario_id max must be {int(expected_count) - 1}, got {unique[-1]}")
+    expected_set = set(range(int(expected_count)))
+    missing = sorted(expected_set - set(unique))
+    extra = sorted(set(unique) - expected_set)
+    if missing:
+        errors.append(
+            f"scenario_ids are not contiguous; missing {missing[:10]}"
+            + (" ..." if len(missing) > 10 else "")
+            + ". Use scenario_id_policy='external_noncontiguous' with a mapping if intentional."
+        )
+    if extra:
+        errors.append(f"scenario_ids outside 0..{int(expected_count) - 1}: {extra[:10]}")
+
+
+def _check_per_model_scenario_counts(
     rows: list[dict[str, str]],
     expected_count: int | None,
     errors: list[str],
     checked: list[str],
 ) -> None:
+    if expected_count is None or not rows:
+        return
+    checked.append("per_model_scenario_count")
+    by_model: dict[str, set[Any]] = {}
+    for row in rows:
+        model = row.get("model")
+        if model:
+            by_model.setdefault(model, set()).add(row.get("scenario_id"))
+    for model, ids in sorted(by_model.items()):
+        if len(ids) != int(expected_count):
+            errors.append(
+                f"model {model} has {len(ids)} scenario rows in scenario_results.csv, "
+                f"expected {expected_count}"
+            )
+
+
+def _check_runtime_scenarios(
+    rows: list[dict[str, str]],
+    expected_count: int | None,
+    errors: list[str],
+    checked: list[str],
+) -> None:
+    """runtime_summary.csv must carry n_scenarios per model, equal to the expected
+    count, and total_runtime_s/n_scenarios must match runtime_per_scenario_s."""
+    if not rows:
+        return
+    checked.append("runtime_n_scenarios")
+    if "n_scenarios" not in rows[0]:
+        errors.append("runtime_summary.csv is missing the required n_scenarios column")
+        return
+    for index, row in enumerate(rows):
+        model = row.get("model", f"<row {index}>")
+        n = _to_int(row.get("n_scenarios"))
+        if n is None:
+            errors.append(f"runtime_summary.csv row {index} ({model}) n_scenarios is not an integer")
+            continue
+        if expected_count is not None and n != int(expected_count):
+            errors.append(
+                f"runtime_summary.csv row {index} ({model}) n_scenarios={n} != expected {expected_count}"
+            )
+        total = _to_float(row.get("total_runtime_s"))
+        per = _to_float(row.get("runtime_per_scenario_s"))
+        if total is not None and per is not None and n and n > 0:
+            expected_per = total / n
+            tol = max(1e-9, 1e-2 * abs(expected_per))
+            if abs(expected_per - per) > tol:
+                errors.append(
+                    f"runtime_summary.csv row {index} ({model}): total_runtime_s/n_scenarios="
+                    f"{expected_per:.6g} != runtime_per_scenario_s={per:.6g}"
+                )
+
+
+def _check_model_name_consistency(
+    metrics_rows: list[dict[str, str]],
+    scenario_rows: list[dict[str, str]],
+    runtime_rows: list[dict[str, str]],
+    errors: list[str],
+    checked: list[str],
+) -> None:
+    if not metrics_rows or not scenario_rows:
+        return
+    checked.append("model_name_consistency")
+    metrics_models = {r.get("model") for r in metrics_rows if r.get("model")}
+    scenario_models = {r.get("model") for r in scenario_rows if r.get("model")}
+    if metrics_models != scenario_models:
+        errors.append(
+            "model names differ between metrics_summary.csv and scenario_results.csv "
+            f"(metrics-only={sorted(metrics_models - scenario_models)}, "
+            f"scenario-only={sorted(scenario_models - metrics_models)})"
+        )
+    if runtime_rows:
+        runtime_models = {r.get("model") for r in runtime_rows if r.get("model")}
+        if runtime_models and runtime_models != metrics_models:
+            errors.append(
+                "model names differ between runtime_summary.csv and metrics_summary.csv "
+                f"(runtime-only={sorted(runtime_models - metrics_models)}, "
+                f"metrics-only={sorted(metrics_models - runtime_models)})"
+            )
+
+
+def _check_report_scenario_count(
+    root: Path,
+    expected_count: int | None,
+    errors: list[str],
+    checked: list[str],
+) -> None:
+    """If report.md states a scenario count, it must match the validated count
+    (guards against stale config text in the report header)."""
     if expected_count is None:
         return
-    ids = {row.get("scenario_id") for row in rows if row.get("scenario_id") not in {None, ""}}
-    checked.append("scenario_count")
-    if len(ids) != int(expected_count):
-        errors.append(f"scenario count mismatch: expected {expected_count}, observed {len(ids)}")
+    report = root / "report.md"
+    if not report.exists():
+        return
+    match = re.search(r"Scenario count:\s*(\d+)", report.read_text(encoding="utf-8"))
+    if match is None:
+        return
+    checked.append("report_scenario_count")
+    if int(match.group(1)) != int(expected_count):
+        errors.append(
+            f"report.md scenario count {match.group(1)} does not match validated count {expected_count}"
+        )
 
 
 def _check_positive_runtime(

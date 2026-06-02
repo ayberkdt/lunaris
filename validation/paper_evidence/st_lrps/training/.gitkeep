@@ -1,0 +1,3 @@
+# Per-candidate training evidence bundles are written here at runtime
+# (one subfolder per run, e.g. st_lrps_paper_full_seed42/). Large checkpoints
+# are referenced by path + SHA-256, not copied here.

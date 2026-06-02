@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "name": "st_lrps_ablation",
+  "description": "ST-LRPS ablation suite (A0..A6 cumulative progression). Secondary evidence: does not block final-candidate evidence generation. Uses the same dataset split, train-only scaler, and seed across ablations.",
+  "dataset": {
+    "train_data": "<FILL: residual cloud HDF5 (same dataset as final candidates)>",
+    "val_data": null
+  },
+  "out_root": "validation/paper_evidence/st_lrps/ablation",
+  "seed": 42,
+  "matrix": "default",
+  "epochs": null,
+  "run_eval_after_training": true,
+  "execute": false,
+  "note": "matrix='default' runs A0..A6; 'all' adds optional A7/A8/A9 encodings. Set execute=true to launch training; default is dry-run (commands + manifest only). Ablation is expensive and optional."
+}

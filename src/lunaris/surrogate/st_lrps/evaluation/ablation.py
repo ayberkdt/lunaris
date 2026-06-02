@@ -33,42 +33,178 @@ class AblationSpec:
     include_in_default_matrix: bool = True
 
 
+# A0..A9 cumulative ablation progression. Each step adds exactly ONE component
+# relative to the previous one (A0..A6 build up the recommended model; A7..A9 are
+# optional encoding variants). The default matrix is the A0..A6 progression so the
+# contribution of every shipped feature is measurable against simpler baselines.
+#
+# Monitor-only contract: the training engine selects checkpoints purely from the
+# validation metric (compute_checkpoint_score); periodic evaluation runs AFTER
+# checkpoint selection and never influences it. Ablations therefore compare
+# models chosen by the same criterion.
 ABLATION_REGISTRY: List[AblationSpec] = [
+    AblationSpec(
+        name="A0_raw_siren_sobolev",
+        description="Raw single-scale SIREN with Sobolev U/a loss only (no residual blocks, no auxiliary losses).",
+        cli_overrides=[
+            "--no-residual-blocks", "--n-bands", "1",
+            "--no-altitude-balanced-loss", "--no-radial-cross-loss",
+            "--direction-loss-weight", "0.0",
+        ],
+        expected_purpose="Establish the minimal scalar-potential SIREN + Sobolev baseline.",
+    ),
+    AblationSpec(
+        name="A1_plus_residual_blocks",
+        description="A0 + residual SIREN blocks.",
+        cli_overrides=[
+            "--use-residual-blocks", "--n-bands", "1",
+            "--no-altitude-balanced-loss", "--no-radial-cross-loss",
+            "--direction-loss-weight", "0.0",
+        ],
+        expected_purpose="Measure the contribution of residual SIREN blocks.",
+    ),
+    AblationSpec(
+        name="A2_plus_multiscale",
+        description="A1 + multi-scale SIREN (n_bands=3).",
+        cli_overrides=[
+            "--use-residual-blocks", "--n-bands", "3",
+            "--no-altitude-balanced-loss", "--no-radial-cross-loss",
+            "--direction-loss-weight", "0.0",
+        ],
+        expected_purpose="Measure the contribution of multi-scale bands.",
+    ),
+    AblationSpec(
+        name="A3_plus_altitude_balanced",
+        description="A2 + altitude-balanced loss.",
+        cli_overrides=[
+            "--use-residual-blocks", "--n-bands", "3",
+            "--use-altitude-balanced-loss", "--no-radial-cross-loss",
+            "--direction-loss-weight", "0.0",
+        ],
+        expected_purpose="Measure the contribution of altitude-balanced residual weighting.",
+    ),
+    AblationSpec(
+        name="A4_plus_direction",
+        description="A3 + direction (angular acceleration) loss.",
+        cli_overrides=[
+            "--use-residual-blocks", "--n-bands", "3",
+            "--use-altitude-balanced-loss", "--no-radial-cross-loss",
+            "--direction-loss-weight", "0.2",
+        ],
+        expected_purpose="Measure the contribution of the angular acceleration objective.",
+    ),
+    AblationSpec(
+        name="A5_plus_radial_cross",
+        description="A4 + radial/cross-radial loss decomposition.",
+        cli_overrides=[
+            "--use-residual-blocks", "--n-bands", "3",
+            "--use-altitude-balanced-loss", "--use-radial-cross-loss",
+            "--direction-loss-weight", "0.2",
+        ],
+        expected_purpose="Measure the contribution of the radial/cross-radial loss.",
+    ),
+    AblationSpec(
+        name="A6_full_recommended",
+        description="Full recommended ST-LRPS (shipped defaults: residual blocks + multi-scale + all auxiliary losses).",
+        cli_overrides=[],
+        expected_purpose="Reference recommended configuration; the control the ablations are measured against.",
+    ),
+    AblationSpec(
+        name="A7_physical_radial_decay",
+        description="A6 + physically-informed radial-decay input encoding (true R_ref/r features).",
+        cli_overrides=["--model-preset", "recommended_physical_radial_decay", "--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Optional: physical radial-decay input encoding.",
+        experimental=True,
+        include_in_default_matrix=False,
+    ),
+    AblationSpec(
+        name="A8_real_sh_basis",
+        description="A6 + real spherical-harmonic basis input encoding.",
+        cli_overrides=[
+            "--model-preset", "custom", "--use-real-sh-basis", "--real-sh-degree", "4",
+            "--real-sh-append-raw", "--real-sh-include-radial", "--use-residual-blocks", "--n-bands", "3",
+        ],
+        expected_purpose="Optional: real SH angular basis input encoding.",
+        experimental=True,
+        include_in_default_matrix=False,
+    ),
+    AblationSpec(
+        name="A9_additive_multiband",
+        description="A6 with additive multi-band SIREN composition.",
+        cli_overrides=["--multiscale-mode", "additive", "--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Optional: additive multi-band composition.",
+        experimental=True,
+        include_in_default_matrix=False,
+    ),
+    # --- Legacy named deviations (kept for backward compat; run via --matrix all
+    #     or --only NAME). Not part of the A0..A9 default progression. The three
+    #     encoding variants are the same configs as A7/A8/A9 under their original
+    #     names. ---
     AblationSpec(
         name="baseline_single_siren",
         description="Single-scale SIREN baseline without residual blocks or auxiliary balancing losses.",
         cli_overrides=["--no-residual-blocks", "--n-bands", "1", "--no-altitude-balanced-loss", "--no-radial-cross-loss"],
-        expected_purpose="Establish the simplest scalar-potential SIREN baseline.",
+        expected_purpose="Legacy alias near A0; simplest scalar-potential SIREN baseline.",
+        include_in_default_matrix=False,
     ),
     AblationSpec(
         name="multiscale_siren",
-        description="Current multi-scale SIREN default with residual blocks.",
+        description="Multi-scale SIREN with residual blocks (recommended architecture).",
         cli_overrides=["--use-residual-blocks", "--n-bands", "3"],
-        expected_purpose="Reference production architecture.",
+        expected_purpose="Legacy alias near A6; reference production architecture.",
+        include_in_default_matrix=False,
     ),
     AblationSpec(
         name="multiscale_no_resblocks",
         description="Three-band multi-scale SIREN without residual blocks.",
         cli_overrides=["--no-residual-blocks", "--n-bands", "3"],
-        expected_purpose="Measure the contribution of residual SIREN blocks.",
+        expected_purpose="Legacy deviation: measure residual SIREN blocks.",
+        include_in_default_matrix=False,
     ),
     AblationSpec(
         name="multiscale_no_direction",
         description="Production multi-scale SIREN with direction loss disabled.",
         cli_overrides=["--direction-loss-weight", "0.0"],
-        expected_purpose="Measure the contribution of the angular acceleration objective.",
+        expected_purpose="Legacy deviation: measure the angular acceleration objective.",
+        include_in_default_matrix=False,
     ),
     AblationSpec(
         name="multiscale_no_altitude_balance",
         description="Production multi-scale SIREN without altitude-balanced loss.",
         cli_overrides=["--no-altitude-balanced-loss"],
-        expected_purpose="Measure the contribution of altitude-balanced residual weighting.",
+        expected_purpose="Legacy deviation: measure altitude-balanced residual weighting.",
+        include_in_default_matrix=False,
     ),
     AblationSpec(
         name="multiscale_no_radial_cross",
         description="Production multi-scale SIREN without radial/cross-radial penalties.",
         cli_overrides=["--no-radial-cross-loss"],
-        expected_purpose="Measure the contribution of radial/cross-radial loss decomposition.",
+        expected_purpose="Legacy deviation: measure radial/cross-radial loss decomposition.",
+        include_in_default_matrix=False,
+    ),
+    AblationSpec(
+        name="physical_radial_decay_recommended",
+        description="A7 (legacy name): physical radial-decay features using true R_ref/r_phys.",
+        cli_overrides=["--model-preset", "recommended_physical_radial_decay", "--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Legacy alias of A7_physical_radial_decay.",
+        experimental=True,
+        include_in_default_matrix=False,
+    ),
+    AblationSpec(
+        name="real_sh_basis_encoding_optional",
+        description="A8 (legacy name): torch-native real spherical-harmonic basis encoding.",
+        cli_overrides=["--model-preset", "custom", "--use-real-sh-basis", "--real-sh-degree", "4", "--real-sh-append-raw", "--real-sh-include-radial", "--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Legacy alias of A8_real_sh_basis.",
+        experimental=True,
+        include_in_default_matrix=False,
+    ),
+    AblationSpec(
+        name="additive_multiband",
+        description="A9 (legacy name): additive multi-band SIREN with per-band trunks summed.",
+        cli_overrides=["--multiscale-mode", "additive", "--use-residual-blocks", "--n-bands", "3"],
+        expected_purpose="Legacy alias of A9_additive_multiband.",
+        experimental=True,
+        include_in_default_matrix=False,
     ),
     AblationSpec(
         name="radial_decay_encoding",
@@ -76,26 +212,7 @@ ABLATION_REGISTRY: List[AblationSpec] = [
         cli_overrides=["--model-preset", "custom", "--use-radial-decay-encoding", "--radial-decay-max-power", "4", "--radial-decay-append-raw", "--use-residual-blocks", "--n-bands", "3"],
         expected_purpose="Test the experimental scaled inverse-radius input encoding.",
         experimental=True,
-    ),
-    AblationSpec(
-        name="physical_radial_decay_recommended",
-        description="Physical radial-decay features using true R_ref/r_phys.",
-        cli_overrides=["--model-preset", "recommended_physical_radial_decay", "--use-residual-blocks", "--n-bands", "3"],
-        expected_purpose="Benchmark the physically informed recommended input representation.",
-    ),
-    AblationSpec(
-        name="real_sh_basis_encoding_optional",
-        description="Torch-native real spherical-harmonic basis encoding.",
-        cli_overrides=["--model-preset", "custom", "--use-real-sh-basis", "--real-sh-degree", "4", "--real-sh-append-raw", "--real-sh-include-radial", "--use-residual-blocks", "--n-bands", "3"],
-        expected_purpose="Test the experimental angular SH basis encoding.",
-        experimental=True,
-    ),
-    AblationSpec(
-        name="additive_multiband",
-        description="Additive multi-band SIREN with per-band trunks summed.",
-        cli_overrides=["--multiscale-mode", "additive", "--use-residual-blocks", "--n-bands", "3"],
-        expected_purpose="Test the experimental additive multi-band composition.",
-        experimental=True,
+        include_in_default_matrix=False,
     ),
     AblationSpec(
         name="direct_accel_baseline_optional_only_if_easy",
@@ -164,17 +281,18 @@ def _data_flags(args: argparse.Namespace) -> List[str]:
 
 def _selected_specs(args: argparse.Namespace) -> List[AblationSpec]:
     selected = set(args.only or [])
-    specs = [
-        spec for spec in ABLATION_REGISTRY
-        if (args.matrix == "all" or spec.include_in_default_matrix)
-    ]
     if selected:
+        # --only selects by name from the FULL registry, regardless of whether a
+        # spec is in the default matrix, so any named ablation can be run directly.
         known = {spec.name for spec in ABLATION_REGISTRY}
         unknown = sorted(selected - known)
         if unknown:
             raise ValueError(f"Unknown ablation name(s): {', '.join(unknown)}")
-        specs = [spec for spec in specs if spec.name in selected]
-    return specs
+        return [spec for spec in ABLATION_REGISTRY if spec.name in selected]
+    return [
+        spec for spec in ABLATION_REGISTRY
+        if (args.matrix == "all" or spec.include_in_default_matrix)
+    ]
 
 
 def build_matrix(args: argparse.Namespace) -> List[Dict[str, Any]]:
@@ -258,6 +376,12 @@ def _ablation_summary_row(entry: Mapping[str, Any]) -> Dict[str, Any]:
     config = _read_json(run_dir / "config.json")
     hist = _last_history_row(run_dir)
     eval_root = run_dir / "evals"
+    def _first(*candidates: Any) -> Any:
+        for value in candidates:
+            if value is not None:
+                return value
+        return None
+
     row = {
         "name": entry["name"],
         "description": entry["description"],
@@ -268,6 +392,17 @@ def _ablation_summary_row(entry: Mapping[str, Any]) -> Dict[str, Any]:
         "status": manifest.get("status", "missing"),
         "trained_run": str(run_dir) if run_dir.exists() else None,
         "overrides": " ".join(str(x) for x in entry.get("overrides", entry.get("flags", []))),
+        # Capacity + cost.
+        "param_count": _first(
+            manifest.get("param_count"), manifest.get("n_parameters"),
+            config.get("param_count"), config.get("n_parameters"),
+        ),
+        "training_time_s": _first(
+            manifest.get("training_time_s"), manifest.get("elapsed_s"),
+            manifest.get("wall_time_s"), manifest.get("total_training_time_s"),
+        ),
+        "inference_runtime_path": str(run_dir / "runtime") if (run_dir / "runtime").exists() else None,
+        # Checkpoint selection (validation-only; periodic eval is monitor-only).
         "best_checkpoint_score": manifest.get("best_score", config.get("best_score", hist.get("best_score"))),
         "best_epoch": manifest.get("best_epoch", config.get("best_epoch", hist.get("best_epoch"))),
         "best_metric": manifest.get("best_metric", config.get("best_metric", hist.get("best_metric"))),
@@ -279,11 +414,19 @@ def _ablation_summary_row(entry: Mapping[str, Any]) -> Dict[str, Any]:
         "ood_eval_path": str(eval_root / "ood_high") if (eval_root / "ood_high").exists() else None,
         "test_rmse_a": None,
         "ood_rmse_a": None,
+        # Validation-suite (field + spatial/OOD) accel RMSE per split, when present.
+        "validation_suite_path": None,
     }
     for split, key in (("test", "test_rmse_a"), ("ood_high", "ood_rmse_a"), ("ood", "ood_rmse_a")):
         summary = _read_json(eval_root / split / "summary_metrics.json")
         if isinstance(summary, list) and summary:
             row[key] = summary[0].get("rmse_a_vec")
+    suite = _read_json(eval_root / "validation_suite.json")
+    if isinstance(suite, Mapping) and suite.get("field_validation"):
+        row["validation_suite_path"] = str(eval_root / "validation_suite.json")
+        for policy, metrics in suite["field_validation"].items():
+            if isinstance(metrics, Mapping) and "residual_accel_rmse_m_s2" in metrics:
+                row[f"suite_{policy}_accel_rmse"] = metrics.get("residual_accel_rmse_m_s2")
     return row
 
 
@@ -296,10 +439,52 @@ def _write_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
             writer.writerow(dict(row))
 
 
+def _write_summary_md(path: Path, rows: List[Mapping[str, Any]]) -> None:
+    lines = [
+        "# ST-LRPS Ablation Summary",
+        "",
+        "Each row adds/removes one component relative to the recommended ST-LRPS "
+        "(`A6_full_recommended`). Checkpoints are selected on the validation metric "
+        "only; periodic evaluation is monitor-only and never influences selection.",
+        "",
+        "| ablation | params | train time [s] | best epoch | val base loss | "
+        "test RMSE a | ood RMSE a | status |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            "| {name} | {params} | {tt} | {ep} | {vbl} | {test} | {ood} | {status} |".format(
+                name=row.get("name"),
+                params=_md_num(row.get("param_count")),
+                tt=_md_num(row.get("training_time_s")),
+                ep=_md_num(row.get("best_epoch")),
+                vbl=_md_num(row.get("final_val_base_loss")),
+                test=_md_num(row.get("test_rmse_a")),
+                ood=_md_num(row.get("ood_rmse_a")),
+                status=row.get("status"),
+            )
+        )
+    lines.append("")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _md_num(value: Any) -> str:
+    if value is None:
+        return "-"
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{f:.4g}"
+
+
 def aggregate(entries: List[Dict[str, Any]], out_root: Path) -> None:
     rows = [_ablation_summary_row(entry) for entry in entries]
     (out_root / "ablation_summary.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
     _write_csv(out_root / "ablation_summary.csv", rows)
+    # Canonical paper artifacts (per task): csv + md keyed by the ST-LRPS suite name.
+    _write_csv(out_root / "st_lrps_ablation_summary.csv", rows)
+    _write_summary_md(out_root / "st_lrps_ablation_summary.md", rows)
 
     def _rank(name: str, key: str) -> None:
         def sort_key(row: Mapping[str, Any]) -> float:

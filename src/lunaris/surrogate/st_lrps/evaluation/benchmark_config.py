@@ -110,6 +110,82 @@ def apply_quick_mode(config: MutableMapping[str, Any]) -> None:
     validation["allow_truth_baseline"] = True
 
 
+SYNTHETIC_BANNER = "SYNTHETIC SMOKE TEST - NOT A SCIENTIFIC BENCHMARK"
+
+
+def is_paper_safe_requested(config: Mapping[str, Any], *, flag: bool = False) -> bool:
+    """Return True when paper-safe mode is requested by flag or config."""
+    run_options = config.get("run_options") if isinstance(config.get("run_options"), Mapping) else {}
+    return bool(flag or config.get("paper_safe") or run_options.get("paper_safe"))
+
+
+def apply_paper_safe(config: MutableMapping[str, Any]) -> dict[str, Any]:
+    """Enforce paper-safe settings in-place; raise on unsafe configuration.
+
+    Paper-safe mode makes a benchmark result defensible: it forbids synthetic /
+    quick / legacy / mismatch / extrapolation settings and requires a real,
+    contract-checked surrogate whose altitude domain covers the scenarios. Any
+    violation raises :class:`BenchmarkConfigError` *before* scientific-looking
+    outputs are produced. Returns the enforced-settings block for provenance.
+    """
+    run_options = _ensure_mapping(config, "run_options")
+    validation = _ensure_mapping(config, "validation")
+
+    if bool(run_options.get("synthetic", False)):
+        raise BenchmarkConfigError(
+            "paper_safe mode forbids synthetic benchmark output (run_options.synthetic=true). "
+            "Synthetic output is a smoke test, not a scientific benchmark."
+        )
+    if bool(run_options.get("quick", False)):
+        raise BenchmarkConfigError(
+            "paper_safe mode forbids quick mode (run_options.quick=true); quick mode uses "
+            "synthetic outputs and reduced scenarios."
+        )
+
+    allow_truth = bool(config.get("allow_truth_baseline", False)) or bool(
+        validation.get("allow_truth_baseline", False)
+    )
+    justification = str(validation.get("truth_baseline_justification", "")).strip()
+    if allow_truth and not justification:
+        raise BenchmarkConfigError(
+            "paper_safe mode forbids allow_truth_baseline unless "
+            "validation.truth_baseline_justification explains the exception."
+        )
+
+    surrogate = config.get("surrogate") if isinstance(config.get("surrogate"), Mapping) else {}
+    if not (surrogate.get("enabled") and surrogate.get("model_dir")):
+        raise BenchmarkConfigError(
+            "paper_safe mode requires surrogate.enabled=true with a surrogate.model_dir so the "
+            "artifact contract and altitude domain can be verified against the benchmark."
+        )
+
+    config["paper_safe"] = True
+    run_options["paper_safe"] = True
+    run_options["synthetic"] = False
+    validation["strict_domain"] = True
+    validation["allow_validation_fail"] = False
+    validation["allow_contract_mismatch"] = False
+    validation["allow_domain_extrapolation"] = False
+    validation["allow_legacy_artifact"] = False
+    if not allow_truth:
+        validation["allow_truth_baseline"] = False
+
+    enforced = {
+        "paper_safe": True,
+        "synthetic": False,
+        "quick": False,
+        "allow_contract_mismatch": False,
+        "allow_domain_extrapolation": False,
+        "allow_legacy_artifact": False,
+        "allow_validation_fail": False,
+        "strict_domain": True,
+        "allow_truth_baseline": bool(allow_truth),
+        "truth_baseline_justification": justification or None,
+    }
+    config["paper_safe_enforced"] = enforced
+    return enforced
+
+
 def validate_benchmark_config(config: Mapping[str, Any]) -> None:
     """Validate required fields and reject unsafe ambiguity."""
 

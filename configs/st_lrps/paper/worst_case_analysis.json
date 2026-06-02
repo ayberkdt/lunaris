@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "st_lrps_worst_case",
+  "description": "Worst-case scenario analysis over an orbit benchmark output. Ranks the worst scenarios by max/RMS/final/along-track/radial error and labels failure mode (phase drift vs radial) and OOD status honestly.",
+  "benchmark_dir": "<FILL: orbit benchmark output dir containing scenario_results.csv (e.g. validation/paper_evidence/st_lrps/orbit_benchmarks/benchmark_1day_high_degree)>",
+  "model": "ST-LRPS",
+  "top_n": 5,
+  "train_altitude_min_km": null,
+  "train_altitude_max_km": null,
+  "outputs": {
+    "out_dir": "validation/paper_evidence/st_lrps/worst_case_analysis"
+  }
+}

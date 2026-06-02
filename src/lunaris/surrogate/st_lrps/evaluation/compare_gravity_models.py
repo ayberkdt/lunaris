@@ -173,6 +173,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Config-mode: allow benchmark altitude ranges outside artifact training envelope.")
     p.add_argument("--allow-legacy-artifact", action="store_true",
                    help="Config-mode: allow ST-LRPS artifacts without a full artifact_contract.")
+    p.add_argument("--paper-safe", action="store_true",
+                   help="Config-mode: enforce a defensible benchmark. Forbids synthetic/quick/legacy "
+                        "artifacts, contract mismatch, and domain extrapolation; requires a real "
+                        "contract-checked surrogate covering all scenario altitudes. Hard-fails otherwise.")
 
     # --- Random / sampled scenario mode ---
     p.add_argument("--random-scenarios", type=int, default=100,
@@ -575,6 +579,7 @@ def main(argv: list[str] | None = None) -> int:
             allow_contract_mismatch=bool(args.allow_contract_mismatch),
             allow_domain_extrapolation=bool(args.allow_domain_extrapolation),
             allow_legacy_artifact=bool(args.allow_legacy_artifact),
+            paper_safe=bool(args.paper_safe),
         )
     return run_from_args(args)
 
