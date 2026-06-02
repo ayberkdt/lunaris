@@ -62,7 +62,9 @@ def test_no_stale_ui_names(source_file: Path) -> None:
 def test_app_name_is_canonical() -> None:
     from lunaris.ui.core.ui_commons import APP_NAME
 
-    assert APP_NAME == "ST-LRPS Studio"
+    # The visible app identity was generalized away from the ST-LRPS branding.
+    assert APP_NAME == "Lunaris Mission Studio"
+    assert APP_NAME != "ST-LRPS Studio"
 
 
 def test_project_root_env_var_is_canonical(monkeypatch, tmp_path: Path) -> None:
@@ -271,7 +273,7 @@ def test_collect_session_snapshot_writes_canonical_meta() -> None:
     )
 
     assert snapshot["meta"]["schema_version"] == 2
-    assert snapshot["meta"]["app"] == "ST-LRPS Studio"
+    assert snapshot["meta"]["app"] == "Lunaris Mission Studio"
 
 
 def test_migrate_session_payload_upgrades_legacy() -> None:
@@ -291,7 +293,7 @@ def test_migrate_session_payload_upgrades_legacy() -> None:
     migrated = migrate_session_payload(legacy, log_warning=warnings.append)
 
     assert migrated["meta"]["schema_version"] == SESSION_SCHEMA_VERSION == 2
-    assert migrated["meta"]["app"] == SESSION_APP_NAME == "ST-LRPS Studio"
+    assert migrated["meta"]["app"] == SESSION_APP_NAME == "Lunaris Mission Studio"
     # Legacy top-level gravity_config folded into forces.gravity exactly once.
     assert migrated["forces"]["gravity"]["config"]["degree"] == 50
     # A migration warning was emitted for the legacy payload.
@@ -299,14 +301,32 @@ def test_migrate_session_payload_upgrades_legacy() -> None:
 
 
 def test_migrate_session_payload_is_idempotent_for_canonical() -> None:
-    from lunaris.ui.core.session_persistence import migrate_session_payload
+    from lunaris.ui.core.session_persistence import (
+        SESSION_APP_NAME,
+        migrate_session_payload,
+    )
 
     warnings: list[str] = []
-    canonical = {"meta": {"schema_version": 2, "app": "ST-LRPS Studio"}}
+    canonical = {"meta": {"schema_version": 2, "app": SESSION_APP_NAME}}
     migrated = migrate_session_payload(canonical, log_warning=warnings.append)
 
     assert migrated["meta"]["schema_version"] == 2
     # No migration warning for an already-canonical payload.
+    assert warnings == []
+
+
+def test_legacy_app_named_session_still_readable() -> None:
+    """Profiles saved by the old 'ST-LRPS Studio' build must remain loadable."""
+    from lunaris.ui.core.session_persistence import migrate_session_payload
+
+    warnings: list[str] = []
+    legacy = {"meta": {"schema_version": 2, "app": "ST-LRPS Studio"}, "forces": {}}
+    migrated = migrate_session_payload(legacy, log_warning=warnings.append)
+
+    # Already at the current schema → accepted without a migration warning, and
+    # the recorded (legacy) app name is preserved rather than rejected.
+    assert migrated["meta"]["schema_version"] == 2
+    assert migrated["meta"]["app"] == "ST-LRPS Studio"
     assert warnings == []
 
 
@@ -340,3 +360,37 @@ def test_mainwindow_has_no_legacy_aliases() -> None:
     finally:
         window.deleteLater()
     _ = app
+
+
+# ---------------------------------------------------------------------------
+# 7) Lunar Graphite theme extraction
+# ---------------------------------------------------------------------------
+
+def test_theme_package_exposes_stylesheet_builder() -> None:
+    """The global QSS now lives in lunaris.ui.theme, not inline in app.py."""
+    from lunaris.ui.theme import build_app_stylesheet
+    from lunaris.ui.core.ui_commons import LOG_COLORS, THEME
+
+    qss = build_app_stylesheet(THEME, LOG_COLORS)
+    assert isinstance(qss, str) and "QMainWindow" in qss
+
+
+def test_theme_module_files_exist() -> None:
+    theme_dir = REPO_ROOT / "src" / "lunaris" / "ui" / "theme"
+    assert (theme_dir / "__init__.py").is_file()
+    assert (theme_dir / "stylesheet.py").is_file()
+
+
+def test_ui_commons_exports_theme_api() -> None:
+    from lunaris.ui.core import ui_commons
+
+    for name in ("THEME", "ORBIT_THEME", "LOG_COLORS",
+                 "hex_to_rgba_float", "rgba_css_to_tuple", "with_alpha"):
+        assert hasattr(ui_commons, name), f"ui_commons no longer exports {name!r}"
+
+
+def test_app_py_is_not_a_design_token_dump() -> None:
+    """app.py should delegate styling; the big QSS block must be gone."""
+    src = (REPO_ROOT / "src" / "lunaris" / "ui" / "app.py").read_text(encoding="utf-8")
+    assert "build_app_stylesheet" in src
+    assert "GLOBAL FOUNDATION" not in src

@@ -140,7 +140,7 @@ Console entry points (installed via `pip install -e .`):
 lunaris           single-run propagation CLI
 lunaris-mc        Monte Carlo runner
 lunaris-launcher  welcome hub (picks a workspace; optional 3D Moon preview)
-lunaris-ui        mission desktop UI
+lunaris-ui        mission desktop UI (Lunaris Mission Studio)
 lunaris-studio    ST-LRPS Studio UI
 lunaris-train     ST-LRPS training CLI
 lunaris-train-force-direct
@@ -180,6 +180,16 @@ installed, or the GPU lacks WebGL, the launcher falls back to a dark background
 and still opens normally — the 3D scene never blocks the app. Point the launcher
 at a custom build with the `LUNARIS_WEB_EMBED_DIR` environment variable. (The
 satellite path in the preview is a *demo orbit*, not solver output.)
+
+### Desktop theme — *Lunar Graphite*
+
+The desktop UI uses a single calm, mission-control dark theme called **Lunar
+Graphite**: flat surfaces, a restrained orbital-blue accent, telemetry-teal
+highlights, and amber reserved for warnings and periapsis markers. All Qt widget
+colors flow from the `THEME` palette in `lunaris.ui.core.ui_commons`, the global
+stylesheet is built by `lunaris.ui.theme.build_app_stylesheet`, and the OpenGL
+orbit preview uses the separate `ORBIT_THEME` palette. See
+[docs/UI_THEME.md](docs/UI_THEME.md) for the design goals and token reference.
 
 ## Installation
 

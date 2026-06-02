@@ -44,6 +44,7 @@ from lunaris.ui.core.ui_commons import (
     find_project_root,
     get_icon,
     load_fonts,
+    with_alpha,
 )
 
 GITHUB_URL = "https://github.com/ayberkdt/lunaris"
@@ -386,7 +387,7 @@ class LauncherWindow(QtWidgets.QWidget):
             QLabel#openingCard {{
                 background: rgba(7, 11, 20, 0.94);
                 color: {THEME['fg_soft']};
-                border: 1px solid rgba(53, 208, 255, 0.35);
+                border: 1px solid {with_alpha(THEME['accent'], 0.35)};
                 border-radius: 14px;
                 padding: 20px 38px;
                 font-size: 12pt;
@@ -410,7 +411,7 @@ class LauncherWindow(QtWidgets.QWidget):
                 min-height: 28px;
             }}
             QScrollArea#panelScroll QScrollBar::handle:vertical:hover {{
-                background: rgba(53, 208, 255, 0.45);
+                background: {with_alpha(THEME['accent'], 0.45)};
             }}
             QScrollArea#panelScroll QScrollBar::add-line:vertical,
             QScrollArea#panelScroll QScrollBar::sub-line:vertical {{
@@ -453,13 +454,13 @@ class LauncherWindow(QtWidgets.QWidget):
                 border: 1px solid {THEME['secondary']};
             }}
             QLabel#cardIconBadge {{
-                background: rgba(53, 208, 255, 0.10);
-                border: 1px solid rgba(53, 208, 255, 0.22);
+                background: {with_alpha(THEME['accent'], 0.10)};
+                border: 1px solid {with_alpha(THEME['accent'], 0.22)};
                 border-radius: 12px;
             }}
             QLabel#cardIconBadge[accent="{THEME['secondary']}"] {{
-                background: rgba(139, 124, 255, 0.10);
-                border: 1px solid rgba(139, 124, 255, 0.24);
+                background: {with_alpha(THEME['secondary'], 0.10)};
+                border: 1px solid {with_alpha(THEME['secondary'], 0.24)};
             }}
             QLabel#cardTitle {{
                 font-size: 14pt;
@@ -511,7 +512,7 @@ class LauncherWindow(QtWidgets.QWidget):
             }}
             QPushButton#sceneToggle:hover {{
                 color: {THEME['fg_main']};
-                border-color: rgba(53, 208, 255, 0.35);
+                border-color: {with_alpha(THEME['accent'], 0.35)};
             }}
             QPushButton#sceneToggle:checked {{
                 background: {THEME['accent_dim']};

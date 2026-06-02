@@ -43,6 +43,12 @@ from lunaris.ui.core.ui_commons import (
     THEME,
     WINDOW_SETTINGS,
 )
+from lunaris.ui.theme import build_app_stylesheet
+from lunaris.ui.widgets.log_panel import (
+    ExecutionLogPanel,
+    COLLAPSED_HEIGHT as LOG_COLLAPSED_HEIGHT,
+    EXPANDED_MIN_HEIGHT as EXPANDED_MIN_LOG_HEIGHT,
+)
 
 # Navigation entries for the specialized mission-analysis pages.
 NAV_PAGES = [
@@ -170,7 +176,7 @@ def _make_lbl(text: str, style: str = "") -> QtWidgets.QLabel:
 
 class MainWindow(QtWidgets.QMainWindow):
     """
-    Main application window for the modular ST-LRPS Studio UI.
+    Main application window for the modular Lunaris Mission Studio UI.
 
     The window now acts primarily as an orchestration layer: individual pages
     own their widgets and page-local state, while the main window coordinates
@@ -203,12 +209,28 @@ class MainWindow(QtWidgets.QMainWindow):
         _lunaris_pkg = Path(__file__).resolve().parents[1]
         self.main_script_path = _lunaris_pkg / "cli" / "main.py"
         
-        # Session Persistence
+        # Session Persistence.
+        #
+        # The app shipped historically as "ST-LRPS Studio" and stored its data
+        # under an "STLRPSStudio" folder. The visible app is now "Lunaris Mission
+        # Studio", so new data lives under "LunarisMissionStudio". We still check
+        # the legacy folder once (read-only) so a user's previously saved mission
+        # profile survives the rename instead of silently disappearing.
         app_data_loc = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.AppDataLocation)
-        self.app_data_dir = Path(app_data_loc) / "STLRPSStudio" if app_data_loc else Path.home() / ".stlrps_studio"
+        _base_dir = Path(app_data_loc) if app_data_loc else Path.home()
+        self.app_data_dir = (
+            _base_dir / "LunarisMissionStudio" if app_data_loc else _base_dir / ".lunaris_studio"
+        )
         self.app_data_dir.mkdir(parents=True, exist_ok=True)
-        
+
         self.session_path = self.app_data_dir / "studio_session.json"
+
+        # Legacy app-data location, kept only for one-time backward-compatible
+        # session migration (see _try_load_last_session).
+        _legacy_dir = (
+            _base_dir / "STLRPSStudio" if app_data_loc else _base_dir / ".stlrps_studio"
+        )
+        self._legacy_session_path = _legacy_dir / "studio_session.json"
         
         # ---------------------------------------------------------------------
         # 3. Application State & Sub-Configs
@@ -241,6 +263,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.last_cmd_preview: str = ""
         self.is_log_collapsed: bool = False
         self._stdout_buf = ""
+        self._stderr_buf = ""
         # Reset impact monitoring for this run
         self._collision_triggered = False
         self._collision_reason = ""
@@ -519,19 +542,19 @@ class MainWindow(QtWidgets.QMainWindow):
         # C. Log Panel
         # ---------------------------------------------------------------------
         self.log_panel = self._build_log_panel()
-        self.log_panel.setMinimumHeight(150)
+        self.log_panel.setMinimumHeight(EXPANDED_MIN_LOG_HEIGHT)
         self.log_panel.setSizePolicy(
             QtWidgets.QSizePolicy.Preferred,
             QtWidgets.QSizePolicy.Expanding,
         )
         self.main_splitter.addWidget(self.log_panel)
-        
-        # Initial Splitter Sizes
+
+        # Initial Splitter Sizes — content dominant (~68%), console ~32%.
         self.main_splitter.setHandleWidth(8)   # wide enough to grab reliably
         self.main_splitter.setCollapsible(0, False)
         self.main_splitter.setCollapsible(1, False)  # prevent log from disappearing
-        self.main_splitter.setStretchFactor(0, 3)
-        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setStretchFactor(0, 68)
+        self.main_splitter.setStretchFactor(1, 32)
         
         # Build Menu & Status
         self._build_menubar()
@@ -638,424 +661,10 @@ class MainWindow(QtWidgets.QMainWindow):
             pal.setColor(QtGui.QPalette.Highlight, QtGui.QColor(THEME['accent']))
             app.setPalette(pal)
         
-        # 2. Generate CSS from THEME dict — Lunar Aurora palette
-        qss = f"""
-        /* GLOBAL FOUNDATION */
-        QMainWindow,
-        QWidget#centralRoot {{
-            background: qlineargradient(
-                x1: 0, y1: 0, x2: 1, y2: 1,
-                stop: 0 {THEME['bg_space']},
-                stop: 0.48 {THEME['bg_shell']},
-                stop: 1 #0F1A2E
-            );
-            color: {THEME['fg_main']};
-        }}
-        QWidget {{
-            background: transparent;
-            color: {THEME['fg_main']};
-            font-family: "Segoe UI", "Inter", "Noto Sans", sans-serif;
-            font-size: 10pt;
-        }}
-        QLabel {{
-            background: transparent;
-        }}
-        QWidget#contentRoot,
-        QStackedWidget#pages,
-        QScrollArea,
-        QScrollArea > QWidget > QWidget {{
-            background: transparent;
-            border: none;
-        }}
-        QToolTip {{
-            background: {THEME['bg_card_alt']};
-            color: {THEME['fg_main']};
-            border: 1px solid {THEME['border']};
-            padding: 6px 8px;
-        }}
-
-        /* MENUS */
-        QMenuBar {{
-            background: {THEME['bg_shell']};
-            color: {THEME['fg_main']};
-            border-bottom: 1px solid {THEME['border_soft']};
-            padding: 4px 8px;
-        }}
-        QMenuBar::item {{
-            background: transparent;
-            padding: 6px 12px;
-            border-radius: 7px;
-        }}
-        QMenuBar::item:selected {{
-            background: {THEME['accent_dim']};
-            color: {THEME['fg_soft']};
-        }}
-        QMenu {{
-            background: {THEME['bg_card']};
-            color: {THEME['fg_main']};
-            border: 1px solid {THEME['border']};
-            padding: 6px;
-        }}
-        QMenu::item {{
-            padding: 7px 22px 7px 12px;
-            border-radius: 7px;
-        }}
-        QMenu::item:selected {{
-            background: {THEME['accent_dim']};
-            color: {THEME['fg_soft']};
-        }}
-        QMenu::separator {{
-            height: 1px;
-            background: {THEME['border_soft']};
-            margin: 6px 8px;
-        }}
-
-        /* CONTAINERS */
-        QFrame#header, QFrame#logHeader {{
-            background: qlineargradient(
-                x1: 0, y1: 0, x2: 1, y2: 0,
-                stop: 0 {THEME['bg_card']},
-                stop: 1 {THEME['bg_card_alt']}
-            );
-            border: 1px solid {THEME['border']};
-            border-radius: 14px;
-        }}
-        QFrame#stateFrame {{
-            background: {THEME['accent_dim']};
-            border: 1px solid rgba(53,208,255,0.20);
-            border-radius: 8px;
-            padding: 2px 8px;
-        }}
-
-        /* TEXT */
-        QLabel#title {{
-            font-size: 15pt;
-            font-weight: 700;
-            color: {THEME['fg_soft']};
-            letter-spacing: 0.3px;
-        }}
-        QLabel#runState {{
-            color: {THEME['fg_soft']};
-            font-weight: 600;
-        }}
-        QLabel#progressText {{
-            color: {THEME['fg_muted']};
-            font-size: 9pt;
-        }}
-
-        /* NAVIGATION */
-        QListWidget#navDrawer {{
-            background: qlineargradient(
-                x1: 0, y1: 0, x2: 0, y2: 1,
-                stop: 0 {THEME['bg_card']},
-                stop: 1 {THEME['bg_shell']}
-            );
-            border: 1px solid {THEME['border']};
-            border-radius: 14px;
-            padding: 10px;
-            outline: none;
-        }}
-        QListWidget#navDrawer::item {{
-            background: transparent;
-            padding: 11px 14px;
-            margin-bottom: 6px;
-            border-radius: 10px;
-            color: {THEME['fg_muted']};
-        }}
-        QListWidget#navDrawer::item:hover {{
-            background: rgba(53,208,255,0.06);
-            color: {THEME['fg_main']};
-        }}
-        QListWidget#navDrawer::item:selected {{
-            background: {THEME['secondary_dim']};
-            color: {THEME['fg_soft']};
-            font-weight: 700;
-            border-left: 3px solid {THEME['accent']};
-        }}
-
-        /* INPUTS */
-        QLineEdit, QPlainTextEdit, QComboBox, QDoubleSpinBox, QDateTimeEdit, QSpinBox {{
-            background: {THEME['bg_entry']};
-            color: {THEME['fg_main']};
-            border: 1px solid {THEME['border']};
-            border-radius: 9px;
-            padding: 7px 10px;
-            selection-background-color: {THEME['secondary']};
-        }}
-        QLineEdit:hover, QComboBox:hover, QPlainTextEdit:hover,
-        QDoubleSpinBox:hover, QDateTimeEdit:hover, QSpinBox:hover {{
-            border: 1px solid rgba(53,208,255,0.45);
-        }}
-        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus,
-        QDoubleSpinBox:focus, QDateTimeEdit:focus, QSpinBox:focus {{
-            border: 1px solid {THEME['accent']};
-            background: {THEME['bg_card_alt']};
-        }}
-        QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled,
-        QDoubleSpinBox:disabled, QDateTimeEdit:disabled {{
-            color: {THEME['text_disabled']};
-            background: {THEME['bg_card']};
-            border-color: {THEME['border_soft']};
-        }}
-        QComboBox::drop-down,
-        QDateTimeEdit::drop-down {{
-            border: none;
-            width: 24px;
-        }}
-        QComboBox QAbstractItemView {{
-            background: {THEME['bg_card_alt']};
-            color: {THEME['fg_main']};
-            border: 1px solid {THEME['border']};
-            selection-background-color: {THEME['secondary_dim']};
-        }}
-
-        /* CARDS */
-        QGroupBox {{
-            background: {THEME['bg_card']};
-            border: 1px solid {THEME['border']};
-            border-radius: 14px;
-            margin-top: 24px;
-            font-weight: 600;
-        }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            padding: 0 8px;
-            margin-left: 12px;
-            color: {THEME['fg_main']};
-            font-size: 10.4pt;
-            font-weight: 700;
-        }}
-
-        /* BUTTONS (default / secondary) */
-        QPushButton {{
-            background: {THEME['bg_card_alt']};
-            color: {THEME['fg_main']};
-            border: 1px solid {THEME['border']};
-            border-radius: 9px;
-            padding: 7px 16px;
-            font-weight: 600;
-        }}
-        QPushButton:hover {{
-            border-color: rgba(53,208,255,0.45);
-            background: {THEME['bg_entry']};
-            color: {THEME['fg_main']};
-        }}
-        QPushButton:pressed {{
-            background: {THEME['border_soft']};
-        }}
-        QPushButton:disabled {{
-            background: {THEME['bg_card']};
-            border-color: {THEME['border_soft']};
-            color: {THEME['text_disabled']};
-        }}
-        QPushButton#quickChip {{
-            background: {THEME['accent_dim']};
-            border: 1px solid rgba(53,208,255,0.20);
-            color: {THEME['fg_soft']};
-            border-radius: 9px;
-            padding: 5px 12px;
-        }}
-        QPushButton#quickChip:hover {{
-            background: rgba(53,208,255,0.18);
-            border-color: {THEME['accent']};
-        }}
-
-        /* PRIMARY BUTTON (RUN) */
-        QPushButton#primaryBtn {{
-            background: qlineargradient(
-                x1: 0, y1: 0, x2: 1, y2: 0,
-                stop: 0 {THEME['accent']},
-                stop: 1 {THEME['secondary']}
-            );
-            border: 1px solid {THEME['accent']};
-            color: #05090F;
-            font-weight: 700;
-        }}
-        QPushButton#primaryBtn:hover {{
-            background: {THEME['accent_hov']};
-            border-color: {THEME['accent_hov']};
-            color: #05090F;
-        }}
-        QPushButton#primaryBtn:disabled {{
-            background: {THEME['bg_entry']};
-            border-color: {THEME['border']};
-            color: {THEME['text_disabled']};
-        }}
-
-        /* DANGER BUTTON (STOP) */
-        QPushButton#dangerBtn {{
-            background: rgba(255,107,122,0.10);
-            border: 1px solid rgba(255,107,122,0.26);
-            color: {THEME['fg_main']};
-        }}
-        QPushButton#dangerBtn:hover {{
-            background: rgba(255,107,122,0.20);
-            border-color: {THEME['error']};
-        }}
-        QPushButton#dangerBtn:disabled {{
-            background: {THEME['bg_entry']};
-            border-color: {THEME['border']};
-            color: {THEME['text_disabled']};
-        }}
-
-        /* TOOL + CHECK CONTROLS */
-        QToolButton {{
-            background: transparent;
-            border: none;
-            padding: 4px;
-        }}
-        QToolButton:hover {{
-            background: {THEME['accent_dim']};
-            border-radius: 7px;
-        }}
-        QCheckBox {{
-            spacing: 8px;
-            color: {THEME['fg_muted']};
-        }}
-        QCheckBox::indicator {{
-            width: 14px;
-            height: 14px;
-            border-radius: 4px;
-            border: 1px solid {THEME['border']};
-            background: {THEME['bg_entry']};
-        }}
-        QCheckBox::indicator:checked {{
-            background: {THEME['accent']};
-            border-color: {THEME['accent']};
-        }}
-        QCheckBox::indicator:hover {{
-            border-color: rgba(53,208,255,0.55);
-        }}
-
-        /* STATUS BADGE */
-        QLabel#statusBadge {{
-            border-radius: 10px;
-            border: 1px solid {THEME['border']};
-            font-weight: 700;
-            padding: 0 8px;
-        }}
-        QLabel#statusBadge[kind="info"] {{ background: {THEME['accent_dim']}; color: {THEME['accent_hov']}; border-color: rgba(53,208,255,0.35); }}
-        QLabel#statusBadge[kind="success"] {{ background: rgba(45,212,191,0.12); color: {THEME['success']}; border-color: rgba(45,212,191,0.32); }}
-        QLabel#statusBadge[kind="error"] {{ background: rgba(255,107,122,0.12); color: {THEME['error']}; border-color: rgba(255,107,122,0.30); }}
-        QLabel#statusBadge[kind="warning"] {{ background: rgba(246,193,119,0.12); color: {THEME['warning']}; border-color: rgba(246,193,119,0.32); }}
-
-        /* RUN DOT */
-        QFrame#runDot {{ border-radius: 6px; }}
-        QFrame#runDot[kind="idle"] {{ background: {THEME['fg_muted']}; }}
-        QFrame#runDot[kind="running"] {{ background: {THEME['success']}; }}
-        QFrame#runDot[kind="error"] {{ background: {THEME['error']}; }}
-        QFrame#runDot[kind="warning"] {{ background: {THEME['warning']}; }}
-
-        /* TABS */
-        QTabWidget::pane {{
-            border: 1px solid {THEME['border']};
-            background: {THEME['bg_card']};
-            border-radius: 12px;
-            top: -1px;
-        }}
-        QTabBar::tab {{
-            background: rgba(255,255,255,0.03);
-            color: {THEME['fg_muted']};
-            border: 1px solid {THEME['border_soft']};
-            padding: 8px 16px;
-            margin-right: 6px;
-            border-top-left-radius: 10px;
-            border-top-right-radius: 10px;
-        }}
-        QTabBar::tab:selected {{
-            background: {THEME['accent_dim']};
-            color: {THEME['fg_soft']};
-            border-color: rgba(53,208,255,0.30);
-            border-bottom: 2px solid {THEME['accent']};
-        }}
-        QTabBar::tab:hover:!selected {{
-            color: {THEME['fg_main']};
-            background: rgba(255,255,255,0.04);
-        }}
-
-        /* LOGGING */
-        QTextEdit#log {{
-            background: {THEME['bg_log']};
-            color: {LOG_COLORS['default']};
-            font-family: "Consolas", "Courier New", monospace;
-            font-size: 10pt;
-            border: 1px solid {THEME['border']};
-            border-radius: 10px;
-            padding: 8px;
-        }}
-
-        /* SCROLLBARS */
-        QScrollBar:vertical, QScrollBar:horizontal {{
-            background: transparent;
-            width: 8px;
-            height: 8px;
-            margin: 0;
-        }}
-        QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
-            background: {THEME['border']};
-            border-radius: 4px;
-            min-height: 20px;
-            min-width: 20px;
-        }}
-        QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
-            background: rgba(53,208,255,0.40);
-        }}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ height: 0px; width: 0px; }}
-
-        /* SPLITTER */
-        QSplitter::handle {{
-            background: {THEME['border_soft']};
-        }}
-        QSplitter::handle:vertical {{
-            height: 8px;
-            margin: 0 4px;
-            border-radius: 3px;
-            image: none;
-        }}
-        QSplitter::handle:vertical:hover {{
-            background: rgba(53,208,255,0.35);
-        }}
-        QSplitter#mainSplit::handle:vertical {{
-            background: {THEME['border']};
-            height: 8px;
-            border-radius: 3px;
-        }}
-        QSplitter#mainSplit::handle:vertical:hover {{
-            background: rgba(53,208,255,0.40);
-        }}
-
-        /* TREE / LIST WIDGETS */
-        QTreeWidget, QListWidget {{
-            background: {THEME['bg_entry']};
-            color: {THEME['fg_main']};
-            border: 1px solid {THEME['border']};
-            border-radius: 10px;
-            outline: none;
-            alternate-background-color: {THEME['bg_card_alt']};
-        }}
-        QTreeWidget::item, QListWidget::item {{
-            padding: 4px 6px;
-            border-radius: 5px;
-        }}
-        QTreeWidget::item:selected, QListWidget::item:selected {{
-            background: {THEME['secondary_dim']};
-            color: {THEME['fg_main']};
-        }}
-        QTreeWidget::item:hover, QListWidget::item:hover {{
-            background: {THEME['accent_dim']};
-        }}
-        QHeaderView::section {{
-            background: {THEME['bg_card']};
-            color: {THEME['fg_soft']};
-            border: none;
-            border-bottom: 1px solid {THEME['border']};
-            padding: 5px 8px;
-            font-weight: 600;
-        }}
-        """
-        self.setStyleSheet(qss)
+        # 2. Build the global QSS from the Lunar Graphite palette.
+        #    The large stylesheet now lives in lunaris.ui.theme.stylesheet
+        #    so app.py stays an orchestration layer, not a design-token dump.
+        self.setStyleSheet(build_app_stylesheet(THEME, LOG_COLORS))
     
     # =========================================================================
     # 19. PAGE BUILDERS: ORBIT PAGE (PAGE 1)
@@ -1273,7 +882,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._log_message("[MC] Ignored malformed metrics payload.", severity="warning")
                 continue
 
-            self._log_message(line, severity="info")
+            self._log_message(line, severity="info", source="MC")
 
             # Forward to the page's mini-log + progress bar
             if hasattr(self, "page_mc"):
@@ -1327,95 +936,34 @@ class MainWindow(QtWidgets.QMainWindow):
     # =========================================================================
     
     def _build_log_panel(self) -> QtWidgets.QWidget:
-        """Constructs the collapsible logging panel with rich text support and Copy button."""
-        container = QtWidgets.QWidget()
-        container.setMinimumHeight(0)
-        layout = QtWidgets.QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        
-        # A. Header Bar
-        header = QtWidgets.QFrame()
-        header.setObjectName("logHeader")
-        header.setFixedHeight(42)
-        self.log_header = header
-        
-        h_layout = QtWidgets.QHBoxLayout(header)
-        h_layout.setContentsMargins(12, 4, 12, 4)
-        h_layout.setSpacing(12)
-        
-        # Collapse Button
-        self.btn_log_toggle = QtWidgets.QToolButton()
-        self.btn_log_toggle.setIcon(get_icon("fa6s.chevron-down", THEME['fg_main']))
-        self.btn_log_toggle.setToolTip("Hide Log Panel")
-        self.btn_log_toggle.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_log_toggle.setStyleSheet("border: none; background: transparent;")
-        self.btn_log_toggle.clicked.connect(self._toggle_log_collapsed)
-        h_layout.addWidget(self.btn_log_toggle)
-        
-        label = QtWidgets.QLabel("Execution Log")
-        label.setStyleSheet("font-weight: 600;")
-        h_layout.addWidget(label)
-        
-        h_layout.addStretch()
-        
-        # Tools
-        self.chk_autoscroll = QtWidgets.QCheckBox("Auto-scroll")
-        self.chk_autoscroll.setChecked(True)
-        h_layout.addWidget(self.chk_autoscroll)
-        
-        # Copy button
-        btn_copy = QtWidgets.QPushButton("Copy")
-        btn_copy.setFixedSize(60, 24)
-        btn_copy.setStyleSheet("padding: 2px;")
-        btn_copy.setIcon(get_icon("fa6s.copy", THEME['fg_main']))
-        btn_copy.clicked.connect(self._copy_log_to_clipboard)
-        h_layout.addWidget(btn_copy)
-        self.btn_log_copy = btn_copy
-        
-        btn_clear = QtWidgets.QPushButton("Clear")
-        btn_clear.setFixedSize(60, 24)
-        btn_clear.setStyleSheet("padding: 2px;")
-        btn_clear.clicked.connect(self._clear_log)
-        h_layout.addWidget(btn_clear)
-        self.btn_log_clear = btn_clear
-        
-        layout.addWidget(header)
-        
-        # B. Text Area (QTextEdit for HTML support)
-        self.txt_log = QtWidgets.QTextEdit()
-        self.txt_log.setObjectName("log")
-        self.txt_log.setMinimumHeight(0)
-        self.txt_log.setSizePolicy(
-            QtWidgets.QSizePolicy.Preferred,
-            QtWidgets.QSizePolicy.Expanding,
-        )
-        self.txt_log.setReadOnly(True)
-        self.txt_log.setAcceptRichText(True)
-        self.txt_log.document().setDefaultStyleSheet(
-            "p { margin: 0 0 3px 0; }"
-        )
-        layout.addWidget(self.txt_log)
-        
-        return container
+        """Construct the buffered Execution Console (see widgets.log_panel)."""
+        panel = ExecutionLogPanel(output_dir_provider=self._current_output_dir)
+        panel.setMinimumHeight(EXPANDED_MIN_LOG_HEIGHT)
+        panel.collapsed_changed.connect(self._on_log_collapsed_changed)
+        return panel
 
-    def _apply_default_log_splitter_sizes(self, *, top_ratio: float = 0.64) -> None:
+    def _current_output_dir(self) -> str:
+        """Best-effort current mission output directory (used by the Save button)."""
+        try:
+            return self.page_output.get_state().output_dir
+        except Exception:
+            return ""
+
+    def _apply_default_log_splitter_sizes(self, *, top_ratio: float = 0.68) -> None:
         """
         Rebalance the main vertical splitter using the live window geometry.
 
-        Without an explicit size pass, Qt tends to honor child size hints from
-        the page stack, which makes the lower terminal/log area feel stuck and
-        difficult to drag upward. This helper gives the splitter a practical
-        starting ratio after the window has a real size. The terminal keeps a
-        comfortable share (~36%) so streaming output is readable without dragging.
+        Without an explicit size pass, Qt honors child size hints from the page
+        stack, which makes the lower console feel stuck and hard to drag. This
+        gives the splitter a practical starting ratio (~68% content / ~32%
+        console) once the window has a real size.
         """
-
         total = sum(max(0, size) for size in self.main_splitter.sizes())
         if total <= 0:
             total = max(self.main_splitter.height(), 480)
 
-        min_top = 220
-        min_bottom = 170
+        min_top = 240
+        min_bottom = EXPANDED_MIN_LOG_HEIGHT
         if total < (min_top + min_bottom):
             min_top = max(120, int(total * 0.55))
             min_bottom = max(80, total - min_top)
@@ -1427,147 +975,51 @@ class MainWindow(QtWidgets.QMainWindow):
             bottom_size = max(min_bottom, total - top_size)
 
         self.main_splitter.setSizes([top_size, bottom_size])
-    
-    def _copy_log_to_clipboard(self, _checked: bool = False):
-        """Copy the entire log content to clipboard."""
-        plain_text = self.txt_log.toPlainText()
-        if plain_text.strip():
-            QtWidgets.QApplication.clipboard().setText(plain_text)
-            self._log_message("[UI] Log copied to clipboard", severity="system")
+
+    def _on_log_collapsed_changed(self, collapsed: bool) -> None:
+        """React to the console collapse toggle by resizing the splitter."""
+        self.is_log_collapsed = bool(collapsed)
+        if collapsed:
+            self._log_expanded_sizes = self.main_splitter.sizes()
+            self.log_panel.setMinimumHeight(LOG_COLLAPSED_HEIGHT)
+            self.main_splitter.setSizes([10_000, LOG_COLLAPSED_HEIGHT])
         else:
-            self._log_message("[UI] Log is empty, nothing to copy", severity="warning")
-    
+            self.log_panel.setMinimumHeight(EXPANDED_MIN_LOG_HEIGHT)
+            sizes = getattr(self, "_log_expanded_sizes", None)
+            if sizes and len(sizes) == 2 and sizes[1] > 60:
+                self.main_splitter.setSizes(sizes)
+            else:
+                self._apply_default_log_splitter_sizes()
+
     # =========================================================================
-    # 26. RICH TEXT LOGGING IMPLEMENTATION
+    # 26. EXECUTION CONSOLE LOGGING (delegates to ExecutionLogPanel)
     # =========================================================================
-    
-    def _parse_log_severity(self, text: str) -> Tuple[str, str]:
-        """
-        Parse log message to determine severity and accent color.
 
-        The returned color is used for a compact severity tag rather than for
-        coloring the whole line. That keeps the console easier to scan during
-        long runs.
+    def _log_message(self, text: str, is_error: bool = False, severity: str = None, source: str = ""):
         """
-        text_lower = text.lower()
-        
-        # Error patterns
-        if any(pattern in text_lower for pattern in ["[err]", "error:", "failed", "exception", "traceback", "critical"]):
-            return "error", LOG_COLORS["error"]
-        
-        # Warning patterns
-        if any(pattern in text_lower for pattern in ["[warning]", "[warn]", "warning:", "caution", "deprecated"]):
-            return "warning", LOG_COLORS["warning"]
-        
-        # Success patterns
-        if any(pattern in text_lower for pattern in ["success", "finished", "completed", "✓", "passed"]):
-            return "success", LOG_COLORS["success"]
-        
-        # System/Info patterns
-        if any(pattern in text_lower for pattern in ["[system]", "[ui]", "initializing", "loading", "validating"]):
-            return "system", LOG_COLORS["system"]
-        
-        # Default/Info
-        return "info", LOG_COLORS["info"]
-    
-    def _escape_html(self, text: str) -> str:
-        """Escape HTML special characters to prevent injection."""
-        return (text.replace("&", "&amp;")
-                   .replace("<", "&lt;")
-                   .replace(">", "&gt;")
-                   .replace('"', "&quot;")
-                   .replace("'", "&#39;"))
-    
-    def _format_timestamp(self) -> str:
-        """Generate a subtle timestamp block for the log panel."""
-        timestamp = QtCore.QDateTime.currentDateTime().toString("HH:mm:ss")
-        return f'<span style="color: {LOG_COLORS["timestamp"]}; font-weight: 600;">[{timestamp}]</span>'
+        Route a message to the Execution Console.
 
-    def _format_log_level(self, severity: str, color: str) -> str:
+        Kept as a thin MainWindow delegate so the many existing call sites keep
+        working. Severity defaults to auto-detection from the message text.
         """
-        Render a compact severity tag for rich-text log output.
-
-        The message body stays neutral and readable while the tag carries the
-        color cue for the severity level.
-        """
-
-        labels = {
-            "error": "ERROR",
-            "warning": "WARN",
-            "success": "OK",
-            "system": "SYSTEM",
-            "info": "INFO",
-            "debug": "DEBUG",
-        }
-        label = labels.get(severity, "INFO")
-        return f'<span style="color: {color}; font-weight: 700;">[{label}]</span>'
-    
-    def _log_message(self, text: str, is_error: bool = False, severity: str = None):
-        """
-        Append rich text message to log panel.
-        
-        Args:
-            text: The message text
-            is_error: Legacy error flag (overrides auto-detection)
-            severity: Optional explicit severity ("error", "warning", "success", "system", "info")
-        """
-        if not text.strip():
+        if text is None:
             return
-        
-        # Determine severity and color
-        if severity:
-            log_severity = severity
-            color = LOG_COLORS.get(severity, LOG_COLORS["default"])
-        elif is_error:
-            log_severity = "error"
-            color = LOG_COLORS["error"]
-        else:
-            log_severity, color = self._parse_log_severity(text)
-        
-        # Escape HTML in the message
-        escaped_text = self._escape_html(text.strip())
-        
-        # Format the message with a muted timestamp, a colored severity tag,
-        # and a neutral body color for readability.
-        timestamp = self._format_timestamp()
-        level_tag = self._format_log_level(log_severity, color)
-        formatted_message = (
-            f'{timestamp} {level_tag} '
-            f'<span style="color: {LOG_COLORS["default"]};">{escaped_text}</span><br>'
-        )
-        
-        # Append to log (thread-safe)
-        QtCore.QMetaObject.invokeMethod(
-            self.txt_log,
-            "append",
-            QtCore.Qt.QueuedConnection,
-            QtCore.Q_ARG(str, formatted_message)
-        )
-        
-        # Auto-scroll if enabled
-        if self.chk_autoscroll.isChecked():
-            QtCore.QMetaObject.invokeMethod(
-                self.txt_log.verticalScrollBar(),
-                "setValue",
-                QtCore.Qt.QueuedConnection,
-                QtCore.Q_ARG(int, self.txt_log.verticalScrollBar().maximum())
-            )
-    
+        sev = severity if severity else ("error" if is_error else "auto")
+        self.log_panel.append(text, severity=sev, source=source)
+
     def _log_separator(self):
-        """Add a visual separator to the log."""
-        separator = f'<hr style="border: none; border-top: 1px solid {THEME["border"]}; margin: 10px 0;">'
-        QtCore.QMetaObject.invokeMethod(
-            self.txt_log,
-            "append",
-            QtCore.Qt.QueuedConnection,
-            QtCore.Q_ARG(str, separator)
-        )
-    
+        """Add a visual separator to the console."""
+        self.log_panel.append_separator()
+
     def _clear_log(self, _checked: bool = False):
-        """Clear the log panel."""
-        self.txt_log.clear()
-        self._log_message("[UI] Log cleared.", severity="system")
-    
+        """Clear the console."""
+        self.log_panel.clear()
+        self._log_message("[UI] Console cleared.", severity="system")
+
+    def _copy_log_to_clipboard(self, _checked: bool = False):
+        """Copy the console contents to the clipboard."""
+        self.log_panel.copy_to_clipboard()
+
     # =========================================================================
     # 27. ASYNCHRONOUS PRE-FLIGHT VALIDATION
     # =========================================================================
@@ -1768,44 +1220,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.badge_page.set_status("info", display_name)
     
     def _toggle_log_collapsed(self, _checked: bool = False):
-        """
-        Collapse or restore the terminal panel without leaving dead vertical space.
+        """Collapse or expand the Execution Console (splitter handled via signal)."""
+        self.log_panel.toggle_collapsed()
 
-        The earlier implementation only hid the text widget, but the splitter
-        still respected the log panel's expanded minimum height.  That made the
-        terminal feel half-closed.  The current implementation collapses the
-        panel into a slim dock rail and restores the expanded geometry on
-        demand.
-        """
-
-        self.is_log_collapsed = not self.is_log_collapsed
-
-        icon_name = "fa6s.chevron-up" if self.is_log_collapsed else "fa6s.chevron-down"
-        self.btn_log_toggle.setIcon(get_icon(icon_name, THEME['fg_main']))
-        self.btn_log_toggle.setToolTip("Show Log Panel" if self.is_log_collapsed else "Hide Log Panel")
-
-        if self.is_log_collapsed:
-            self._log_expanded_sizes = self.main_splitter.sizes()
-            self.txt_log.hide()
-            self.chk_autoscroll.hide()
-            self.btn_log_copy.hide()
-            self.btn_log_clear.hide()
-            self.log_header.setFixedHeight(34)
-            self.log_panel.setMinimumHeight(34)
-            self.main_splitter.setSizes([10000, 34])
-        else:
-            self.txt_log.show()
-            self.chk_autoscroll.show()
-            self.btn_log_copy.show()
-            self.btn_log_clear.show()
-            self.log_header.setFixedHeight(42)
-            self.log_panel.setMinimumHeight(150)
-            sizes = getattr(self, "_log_expanded_sizes", None)
-            if sizes and sizes[1] > 60:
-                self.main_splitter.setSizes(sizes)
-            else:
-                self._apply_default_log_splitter_sizes()
-    
     # =========================================================================
     # 29. ORBIT & FORCE MODEL LOGIC
     # =========================================================================
@@ -1908,7 +1325,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Prep UI
         self._set_run_state("running")
-        self.txt_log.clear()
+        self.log_panel.clear()
 
         # Telemetry reset (TelemetryPage owns the plot)
         try:
@@ -1918,6 +1335,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.progress_bar.setValue(0)
         self._stdout_buf = ""
+        self._stderr_buf = ""
         self._run_wall_t0 = time.time()
         self._last_telem_t_s = None
         self._progress_is_determinate = False
@@ -2207,23 +1625,46 @@ class MainWindow(QtWidgets.QMainWindow):
             # Regular log message
             self._log_message(clean_line)
 
-    def _handle_stderr(self):
-        """Handle stderr from process with warning/error classification."""
-        if self.process is None:
-            return
-        data = self.process.readAllStandardError().data().decode('utf-8', errors='ignore')
-        if not data.strip():
-            return
-
-        lowered = data.lower()
-        severity = "warning" if (
+    @staticmethod
+    def _classify_stderr_line(line: str) -> str:
+        """Classify a single stderr line as 'warning' or 'error'."""
+        lowered = line.lower()
+        is_warning = (
             "warning" in lowered
             and "traceback" not in lowered
             and "[fatal]" not in lowered
             and "fatal error" not in lowered
-        ) else "error"
-        self._log_message(data, severity=severity)
-    
+        )
+        return "warning" if is_warning else "error"
+
+    def _handle_stderr(self):
+        """Handle stderr with per-line buffering and warning/error classification."""
+        if self.process is None:
+            return
+        data = self.process.readAllStandardError().data().decode('utf-8', errors='ignore')
+        if not data:
+            return
+
+        # Buffer partial lines until a newline so chunk boundaries never split a
+        # message mid-line during high-volume output.
+        self._stderr_buf += data
+        while "\n" in self._stderr_buf:
+            line, self._stderr_buf = self._stderr_buf.split("\n", 1)
+            line = line.rstrip("\r")
+            if not line.strip():
+                continue
+            self._log_message(line, severity=self._classify_stderr_line(line))
+
+    def _flush_stream_buffers(self):
+        """Emit any trailing partial stdout/stderr lines left without a newline."""
+        tail_err = (self._stderr_buf or "").strip()
+        self._stderr_buf = ""
+        if tail_err:
+            self._log_message(tail_err, severity=self._classify_stderr_line(tail_err))
+        # A trailing stdout fragment is usually a partial telemetry payload; drop
+        # it rather than logging noise, but reset the buffer for the next run.
+        self._stdout_buf = ""
+
     def _on_process_finished(self, exit_code, exit_status):
         """
         Handle process completion and always return the UI to a restart-ready state.
@@ -2232,6 +1673,9 @@ class MainWindow(QtWidgets.QMainWindow):
         log retains the error details, so there is little value in keeping the
         header latched in a pseudo-running state after the backend has exited.
         """
+
+        # Emit any trailing partial stderr line the stream buffering held back.
+        self._flush_stream_buffers()
 
         if exit_code == 0:
             status_msg = "Mission analysis completed successfully"
@@ -2477,15 +1921,37 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
     def _try_load_last_session(self):
-        """Attempt to load last session from app data."""
-        if not self.session_path.exists():
-            return
-        
+        """Attempt to load the last session, migrating a legacy profile if needed."""
+        # Prefer the current session file; fall back once to the pre-rename
+        # ("ST-LRPS Studio") location so existing users keep their saved profile.
+        source_path = self.session_path
+        migrating_legacy = False
+        if not source_path.exists():
+            legacy = getattr(self, "_legacy_session_path", None)
+            if legacy is not None and legacy.exists():
+                source_path = legacy
+                migrating_legacy = True
+            else:
+                return
+
         try:
-            with open(self.session_path, 'r', encoding='utf-8') as f:
+            with open(source_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             self._apply_preset_dict(data)
-            self._log_message("[UI] Previous session restored.", severity="system")
+            if migrating_legacy:
+                # Copy the migrated profile forward so future launches use the
+                # new location; never delete the legacy file.
+                try:
+                    with open(self.session_path, 'w', encoding='utf-8') as f:
+                        json.dump(data, f, indent=2, ensure_ascii=False)
+                except Exception:
+                    pass
+                self._log_message(
+                    "[UI] Migrated previous session from legacy app-data folder.",
+                    severity="system",
+                )
+            else:
+                self._log_message("[UI] Previous session restored.", severity="system")
         except Exception as e:
             self._log_message(f"[Warning] Could not restore last session: {e}", severity="warning")
     

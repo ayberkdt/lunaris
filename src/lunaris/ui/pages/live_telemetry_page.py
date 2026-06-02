@@ -2,7 +2,7 @@
 """
 Live Telemetry Page (UI)
 
-This module defines the **TelemetryPage** used by the ST-LRPS Studio UI to display
+This module defines the **TelemetryPage** used by the Lunaris Mission Studio UI to display
 runtime telemetry in a compact, mission-control style view.
 
 What it provides
@@ -257,20 +257,20 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         self._switch_plot("Altitude vs Time")
     
     def _create_altitude_plot(self):
-        """Altitude vs Time plot with Sci-Fi styling."""
+        """Altitude vs Time plot (Lunar Graphite styling)."""
         widget = pg.PlotWidget()
         widget.setBackground(THEME['bg_space'])
-        widget.setTitle("Orbital Altitude", color='#00FFFF', size='14pt', bold=True)  # Cyan
-        widget.setLabel('left', 'Altitude [km]', color='#FFFFFF', size='11pt')
-        widget.setLabel('bottom', 'Time [s]', color='#FFFFFF', size='11pt')
+        widget.setTitle("Orbital Altitude", color=THEME['accent'], size='14pt', bold=True)
+        widget.setLabel('left', 'Altitude [km]', color=THEME['fg_soft'], size='11pt')
+        widget.setLabel('bottom', 'Time [s]', color=THEME['fg_soft'], size='11pt')
         widget.showGrid(x=True, y=True, alpha=0.3)
         
         # Enhanced axis styling
-        axis_pen = pg.mkPen(color='#8BE9FD', width=1.5)  # Bright cyan
+        axis_pen = pg.mkPen(color=THEME['fg_muted'], width=1.5)
         widget.getAxis('left').setPen(axis_pen)
-        widget.getAxis('left').setTextPen('#FFFFFF')
+        widget.getAxis('left').setTextPen(THEME['fg_soft'])
         widget.getAxis('bottom').setPen(axis_pen)
-        widget.getAxis('bottom').setTextPen('#FFFFFF')
+        widget.getAxis('bottom').setTextPen(THEME['fg_soft'])
         
 
         # Store widgets / viewbox for axis controls
@@ -284,27 +284,27 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
 
         # Enhanced plot line with glow effect
         self.alt_curve = widget.plot(
-            pen=pg.mkPen(color='#00FFFF', width=2.5),  # Bright cyan
+            pen=pg.mkPen(color=THEME['accent'], width=2.5),
             name='Altitude',
-            shadowPen=pg.mkPen(color='#00FFFF', width=4, alpha=0.3)
+            shadowPen=pg.mkPen(color=THEME['accent'], width=4, alpha=0.3)
         )
         
         self.plot_stack.addWidget(widget)
     
     def _create_velocity_plot(self):
-        """Velocity vs Time plot with Sci-Fi styling."""
+        """Velocity vs Time plot (Lunar Graphite styling)."""
         widget = pg.PlotWidget()
         widget.setBackground(THEME['bg_space'])
-        widget.setTitle("Orbital Velocity", color='#FF00FF', size='14pt', bold=True)  # Magenta
-        widget.setLabel('left', 'Velocity [km/s]', color='#FFFFFF', size='11pt')
-        widget.setLabel('bottom', 'Time [s]', color='#FFFFFF', size='11pt')
+        widget.setTitle("Orbital Velocity", color=THEME['secondary'], size='14pt', bold=True)
+        widget.setLabel('left', 'Velocity [km/s]', color=THEME['fg_soft'], size='11pt')
+        widget.setLabel('bottom', 'Time [s]', color=THEME['fg_soft'], size='11pt')
         widget.showGrid(x=True, y=True, alpha=0.3)
         
-        axis_pen = pg.mkPen(color='#FF79C6', width=1.5)  # Bright pink
+        axis_pen = pg.mkPen(color=THEME['fg_muted'], width=1.5)
         widget.getAxis('left').setPen(axis_pen)
-        widget.getAxis('left').setTextPen('#FFFFFF')
+        widget.getAxis('left').setTextPen(THEME['fg_soft'])
         widget.getAxis('bottom').setPen(axis_pen)
-        widget.getAxis('bottom').setTextPen('#FFFFFF')
+        widget.getAxis('bottom').setTextPen(THEME['fg_soft'])
         
 
         # Store widgets / viewbox for axis controls
@@ -316,27 +316,27 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             _warn_once("vel_viewbox_mouse", str(exc))
 
         self.vel_curve = widget.plot(
-            pen=pg.mkPen(color='#FF00FF', width=2.5),  # Magenta
+            pen=pg.mkPen(color=THEME['secondary'], width=2.5),
             name='Velocity',
-            shadowPen=pg.mkPen(color='#FF00FF', width=4, alpha=0.3)
+            shadowPen=pg.mkPen(color=THEME['secondary'], width=4, alpha=0.3)
         )
         
         self.plot_stack.addWidget(widget)
     
     def _create_eccentricity_plot(self):
-        """Eccentricity vs Time plot with Sci-Fi styling."""
+        """Eccentricity vs Time plot (Lunar Graphite styling)."""
         widget = pg.PlotWidget()
         widget.setBackground(THEME['bg_space'])
-        widget.setTitle("Orbit Eccentricity", color='#FFFF00', size='14pt', bold=True)  # Yellow
-        widget.setLabel('left', 'Eccentricity', color='#FFFFFF', size='11pt')
-        widget.setLabel('bottom', 'Time [s]', color='#FFFFFF', size='11pt')
+        widget.setTitle("Orbit Eccentricity", color=THEME['warning'], size='14pt', bold=True)
+        widget.setLabel('left', 'Eccentricity', color=THEME['fg_soft'], size='11pt')
+        widget.setLabel('bottom', 'Time [s]', color=THEME['fg_soft'], size='11pt')
         widget.showGrid(x=True, y=True, alpha=0.3)
         
-        axis_pen = pg.mkPen(color='#F1FA8C', width=1.5)  # Light yellow
+        axis_pen = pg.mkPen(color=THEME['fg_muted'], width=1.5)
         widget.getAxis('left').setPen(axis_pen)
-        widget.getAxis('left').setTextPen('#FFFFFF')
+        widget.getAxis('left').setTextPen(THEME['fg_soft'])
         widget.getAxis('bottom').setPen(axis_pen)
-        widget.getAxis('bottom').setTextPen('#FFFFFF')
+        widget.getAxis('bottom').setTextPen(THEME['fg_soft'])
         
 
         # Store widgets / viewbox for axis controls
@@ -348,38 +348,38 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             _warn_once("ecc_viewbox_mouse", str(exc))
 
         self.ecc_curve = widget.plot(
-            pen=pg.mkPen(color='#FFFF00', width=2.5),  # Yellow
+            pen=pg.mkPen(color=THEME['warning'], width=2.5),
             name='Eccentricity',
-            shadowPen=pg.mkPen(color='#FFFF00', width=4, alpha=0.3)
+            shadowPen=pg.mkPen(color=THEME['warning'], width=4, alpha=0.3)
         )
         
         self.plot_stack.addWidget(widget)
     
     def _create_ground_track_plot(self):
-        """Ground Track (Latitude vs Longitude) plot with Sci-Fi styling."""
+        """Ground Track (Latitude vs Longitude) plot (Lunar Graphite styling)."""
         widget = pg.PlotWidget()
         widget.setBackground(THEME['bg_space'])
-        widget.setTitle("Ground Track", color='#50FA7B', size='14pt', bold=True)  # Green
-        widget.setLabel('left', 'Latitude [deg]', color='#FFFFFF', size='11pt')
-        widget.setLabel('bottom', 'Longitude [deg]', color='#FFFFFF', size='11pt')
+        widget.setTitle("Ground Track", color=THEME['info'], size='14pt', bold=True)
+        widget.setLabel('left', 'Latitude [deg]', color=THEME['fg_soft'], size='11pt')
+        widget.setLabel('bottom', 'Longitude [deg]', color=THEME['fg_soft'], size='11pt')
         widget.showGrid(x=True, y=True, alpha=0.3)
         
         # Set axis ranges for Moon
         widget.setXRange(-180, 180)
         widget.setYRange(-90, 90)
         
-        axis_pen = pg.mkPen(color='#50FA7B', width=1.5)  # Green
+        axis_pen = pg.mkPen(color=THEME['info'], width=1.5)
         widget.getAxis('left').setPen(axis_pen)
-        widget.getAxis('left').setTextPen('#FFFFFF')
+        widget.getAxis('left').setTextPen(THEME['fg_soft'])
         widget.getAxis('bottom').setPen(axis_pen)
-        widget.getAxis('bottom').setTextPen('#FFFFFF')
+        widget.getAxis('bottom').setTextPen(THEME['fg_soft'])
         
         self.ground_track_curve = widget.plot(
-            pen=pg.mkPen(color='#50FA7B', width=2.0, style=QtCore.Qt.DashLine),
+            pen=pg.mkPen(color=THEME['info'], width=2.0, style=QtCore.Qt.DashLine),
             symbol='o',
             symbolSize=5,
-            symbolBrush=(80, 250, 123, 0.9),  # Green with alpha
-            symbolPen=pg.mkPen(color='#50FA7B', width=1),
+            symbolBrush=THEME['info'],
+            symbolPen=pg.mkPen(color=THEME['info'], width=1),
             name='Ground Track'
         )
         
@@ -480,7 +480,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             if w is None:
                 continue
             try:
-                w.setLabel('bottom', label, color='#FFFFFF', size='11pt')
+                w.setLabel('bottom', label, color=THEME['fg_soft'], size='11pt')
             except Exception as exc:
                 _warn_once("axis_bottom_label", str(exc))
 

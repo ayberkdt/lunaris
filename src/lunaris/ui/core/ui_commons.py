@@ -1,7 +1,7 @@
 # ST_LRPS/ui_parts/ui_commons.py
 
 """
-Core UI Utilities and Shared Resources for ST-LRPS Studio.
+Core UI Utilities and Shared Resources for Lunaris Mission Studio.
 
 This module serves as the foundational layer for the user interface, providing
 centralized access to:
@@ -63,73 +63,157 @@ except ImportError:
 # Application metadata is centralized here so wrapper entry points and saved
 # session metadata still share one authoritative version value, while the live
 # UI can choose whether or not to display it.
-APP_NAME = "ST-LRPS Studio"
+#
+# Visible app identity. This used to be "ST-LRPS Studio", but the desktop app is
+# now a broader Lunaris orbit-analysis tool, so the user-facing name is
+# generalized here. The Python package, console entry points (`lunaris-ui`,
+# `lunaris-studio`, …) and the ST-LRPS surrogate feature names are intentionally
+# unchanged — only the visible branding moves.
+APP_NAME = "Lunaris Mission Studio"
 APP_VERSION = "13.0"
 
 
-# Theme configuration using a dictionary for easier QSS (Qt Style Sheet) integration
-# Lunar Aurora palette — deep-space, mission-control aesthetic.
-# Primary accent: ion cyan (#35D0FF).  Secondary highlight: restrained violet (#8B7CFF).
-# No dominant gold/champagne.  All tokens below are the single source of truth.
+# Theme configuration using a dictionary for easier QSS (Qt Style Sheet) integration.
+# "Lunar Graphite" palette — a calm, engineering-oriented mission-control aesthetic.
+# Primary accent: orbital blue (#6AA9FF).  Secondary highlight: lunar telemetry
+# teal (#6EE7C8).  Amber is reserved for warning states and periapsis markers, not
+# as a general brand accent.  All tokens below are the single source of truth for
+# Qt widget styling (OpenGL colors live in ORBIT_THEME).
 THEME = {
     # ── Backgrounds ──────────────────────────────────────────────────────────
-    "bg_space":    "#070B14",   # deepest canvas
-    "bg_shell":    "#0B1220",   # header / sidebar shell
-    "bg_card":     "#101A2B",   # primary cards
-    "bg_card_alt": "#17243A",   # elevated cards / hover surfaces
-    "bg_entry":    "#0D1626",   # input fields / selectors
-    "bg_log":      "#050812",   # terminal / log panel
+    "bg_space":    "#05070A",   # deepest canvas / app background
+    "bg_shell":    "#0A0F16",   # header / sidebar shell
+    "bg_card":     "#111821",   # primary cards
+    "bg_card_alt": "#17202B",   # elevated cards / hover surfaces
+    "bg_entry":    "#0D141D",   # input fields / selectors
+    "bg_log":      "#030507",   # terminal / log panel
 
     # ── Foreground ────────────────────────────────────────────────────────────
-    "fg_main":     "#E6EDF7",   # primary text
-    "fg_soft":     "#BFD2EA",   # secondary headings
-    "fg_muted":    "#7F91AC",   # helper / muted text
+    "fg_main":     "#E7ECF2",   # primary text
+    "fg_soft":     "#B8C3D0",   # secondary headings
+    "fg_muted":    "#7D8997",   # helper / muted text
 
-    # ── Primary accent (cyan / ion-blue) ─────────────────────────────────────
-    "accent":      "#35D0FF",   # primary cyan — progress, active, primary CTAs
-    "accent_hov":  "#7CE7FF",   # hover / brighter cyan
-    "accent_dim":  "rgba(53,208,255,0.13)",  # subtle tinted background
+    # ── Primary accent — orbital blue, less neon ─────────────────────────────
+    "accent":      "#6AA9FF",   # primary blue — progress, active, primary CTAs
+    "accent_hov":  "#9AC4FF",   # hover / brighter blue
+    "accent_dim":  "rgba(106,169,255,0.12)",  # subtle tinted background
 
-    # ── Secondary accent (violet) ─────────────────────────────────────────────
-    "secondary":       "#8B7CFF",   # selected state, secondary UI
-    "secondary_hov":   "#B0A7FF",
-    "secondary_dim":   "rgba(139,124,255,0.13)",
+    # ── Secondary accent — lunar telemetry teal ──────────────────────────────
+    "secondary":       "#6EE7C8",   # secondary highlight / success
+    "secondary_hov":   "#9FF3DD",
+    "secondary_dim":   "rgba(110,231,200,0.10)",
 
     # ── Semantic colors ───────────────────────────────────────────────────────
-    "success":     "#2DD4BF",   # teal — success states
-    "warning":     "#F6C177",   # amber — warnings (not used as dominant accent)
-    "error":       "#FF6B7A",   # soft coral — error / danger
-    "info":        "#60A5FA",   # sky blue — info chips
+    "success":     "#6EE7C8",   # telemetry teal — success states
+    "warning":     "#E7B86A",   # amber — warnings / periapsis only
+    "error":       "#F87171",   # soft red — error / danger
+    "info":        "#8AB4F8",   # sky blue — info chips
 
     # ── Borders ───────────────────────────────────────────────────────────────
-    "border":      "#26364F",   # card / input borders
-    "border_soft": "#1A2940",   # quieter separators
+    "border":      "#263241",   # card / input borders
+    "border_soft": "#1B2530",   # quieter separators
 
     # ── Semantic aliases (for callers that use these token names) ─────────────
-    "primary":        "#35D0FF",   # → accent
-    "primary_hover":  "#7CE7FF",   # → accent_hov
-    "selected_bg":    "rgba(139,124,255,0.13)",   # → secondary_dim
-    "panel_shadow":   "rgba(0,0,0,0.40)",
-    "plot_bg":        "#050812",   # → bg_log
-    "grid_color":     "rgba(38,54,79,0.55)",
-    "text_disabled":  "rgba(127,145,172,0.45)",
+    "primary":        "#6AA9FF",   # → accent
+    "primary_hover":  "#9AC4FF",   # → accent_hov
+    "selected_bg":    "rgba(106,169,255,0.12)",   # → accent_dim
+    "panel_shadow":   "rgba(0,0,0,0.45)",
+    "plot_bg":        "#030507",   # → bg_log
+    "grid_color":     "rgba(80,96,120,0.32)",
+    "text_disabled":  "rgba(125,137,151,0.45)",
 
     # ── Backward-compat keys (kept so older pages still resolve) ─────────────
-    # accent_deep was used for darker gold edges; map to a deep cyan instead.
-    "accent_deep": "#1A607A",
+    # accent_deep is a darker companion to the primary accent (deep orbital blue).
+    "accent_deep": "#315F99",
 }
 
-# Rich Text Log Colors (HTML) — aligned with Lunar Aurora palette
+# Rich Text Log Colors (HTML) — aligned with the Lunar Graphite palette.
 LOG_COLORS = {
-    "error":     "#FF8B96",   # soft coral — readable on dark bg
-    "warning":   "#F6C177",   # amber
-    "success":   "#2DD4BF",   # teal
-    "system":    "#BFD2EA",   # fg_soft
-    "info":      "#7CE7FF",   # cyan highlight
-    "debug":     "#7F91AC",   # fg_muted
-    "timestamp": "#4A6080",   # dimmed
-    "default":   "#E6EDF7",   # fg_main
+    "error":     "#FCA5A5",   # soft red — readable on dark bg
+    "warning":   "#E7B86A",   # amber
+    "success":   "#6EE7C8",   # telemetry teal
+    "system":    "#B8C3D0",   # fg_soft
+    "info":      "#9AC4FF",   # bright accent blue
+    "debug":     "#7D8997",   # fg_muted
+    "timestamp": "#536172",   # dimmed
+    "default":   "#E7ECF2",   # fg_main
 }
+
+# OpenGL / pyqtgraph orbit-preview palette.  These tokens are kept separate from
+# the Qt ``THEME`` because the 3D preview needs deliberate, slightly different
+# values (true space-black background, regolith greys, marker hues) and is
+# consumed as float RGBA tuples via ``rgba_css_to_tuple`` / ``hex_to_rgba_float``.
+ORBIT_THEME = {
+    "space_bg":      "#020408",   # near-black space backdrop
+
+    "moon_dark":     "#5E6268",   # terminator-side regolith
+    "moon_mid":      "#8D9299",   # mid regolith
+    "moon_light":    "#B7BCC4",   # sunlit regolith
+
+    "orbit_line":    "#7DB7FF",   # soft orbital blue trajectory
+    "orbit_glow":    "#3B82F6",   # faint underlying glow line
+    "spacecraft":    "#F8FAFC",   # near-white current-position marker
+
+    "periapsis":     "#E7B86A",   # amber periapsis marker (warning hue)
+    "apoapsis":      "#6EE7C8",   # telemetry-teal apoapsis marker
+
+    "orbit_plane":   "rgba(106,169,255,0.08)",  # optional orbit-plane fill
+
+    "axis_x":        "rgba(248,113,113,0.70)",   # red — orientation axis
+    "axis_y":        "rgba(110,231,200,0.70)",   # teal — orientation axis
+    "axis_z":        "rgba(125,183,255,0.70)",   # blue — orientation axis
+}
+
+
+def hex_to_rgba_float(color: str, alpha: float = 1.0) -> "tuple[float, float, float, float]":
+    """Convert a ``#rrggbb`` (or ``#rgb``) hex string to a float RGBA tuple.
+
+    pyqtgraph / OpenGL items expect colors as 0..1 floats rather than CSS
+    strings.  The optional *alpha* (0..1) sets the returned opacity.
+    """
+    s = color.strip().lstrip("#")
+    if len(s) == 3:
+        s = "".join(ch * 2 for ch in s)
+    if len(s) != 6:
+        raise ValueError(f"Invalid hex color: {color!r}")
+    r = int(s[0:2], 16) / 255.0
+    g = int(s[2:4], 16) / 255.0
+    b = int(s[4:6], 16) / 255.0
+    a = max(0.0, min(1.0, float(alpha)))
+    return (r, g, b, a)
+
+
+def rgba_css_to_tuple(color: str) -> "tuple[float, float, float, float]":
+    """Convert a CSS color token to a float RGBA tuple in 0..1.
+
+    Accepts either ``#rrggbb`` hex strings or ``rgb()/rgba()`` function notation
+    so ``THEME`` / ``ORBIT_THEME`` tokens can be fed straight to OpenGL items.
+    """
+    s = color.strip()
+    if s.startswith("#"):
+        return hex_to_rgba_float(s)
+    if s.lower().startswith("rgb"):
+        inner = s[s.find("(") + 1 : s.rfind(")")]
+        parts = [p.strip() for p in inner.split(",") if p.strip()]
+        if len(parts) not in (3, 4):
+            raise ValueError(f"Invalid rgb/rgba color: {color!r}")
+        r = float(parts[0]) / 255.0
+        g = float(parts[1]) / 255.0
+        b = float(parts[2]) / 255.0
+        a = float(parts[3]) if len(parts) == 4 else 1.0
+        return (r, g, b, max(0.0, min(1.0, a)))
+    raise ValueError(f"Unrecognized color token: {color!r}")
+
+
+def with_alpha(color: str, alpha: float) -> str:
+    """Return a CSS ``rgba(r, g, b, alpha)`` string from a hex / rgb(a) token.
+
+    Lets QSS callers derive translucent variants directly from ``THEME`` hex
+    tokens instead of hard-coding raw ``rgba(...)`` literals in page-local styles.
+    """
+    r, g, b, _ = rgba_css_to_tuple(color)
+    a = max(0.0, min(1.0, float(alpha)))
+    return f"rgba({round(r * 255)}, {round(g * 255)}, {round(b * 255)}, {a:g})"
 
 # Window and Navigation Constants
 WINDOW_SETTINGS = {
@@ -435,7 +519,7 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
         self.setObjectName("numericDrag")  # For QSS targeting
         self.setMinimumHeight(38)
 
-        # Styling — uses Lunar Aurora cyan accent
+        # Styling — uses the Lunar Graphite orbital-blue accent
         self.setStyleSheet(f"""
             QLineEdit#numericDrag {{
                 background-color: {THEME['bg_entry']};
@@ -443,10 +527,10 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
                 border: 1px solid {THEME['border']};
                 border-radius: 9px;
                 padding: 7px 10px;
-                selection-background-color: {THEME['secondary']};
+                selection-background-color: {THEME['accent']};
             }}
             QLineEdit#numericDrag:hover {{
-                border: 1px solid rgba(53,208,255,0.45);
+                border: 1px solid {THEME['accent_deep']};
             }}
             QLineEdit#numericDrag:focus {{
                 border: 1px solid {THEME['accent']};
@@ -741,7 +825,7 @@ def style_primary_button(btn: "QtWidgets.QPushButton") -> None:
                 stop: 0 {THEME['accent']},
                 stop: 1 {THEME['secondary']}
             );
-            color: #05090F;
+            color: {THEME['bg_space']};
             border: 1px solid {THEME['accent']};
             border-radius: 8px;
             padding: 7px 16px;
@@ -750,7 +834,7 @@ def style_primary_button(btn: "QtWidgets.QPushButton") -> None:
         QPushButton#primaryBtn:hover {{
             background: {THEME['accent_hov']};
             border-color: {THEME['accent_hov']};
-            color: #05090F;
+            color: {THEME['bg_space']};
         }}
         QPushButton#primaryBtn:disabled {{
             background: {THEME['bg_entry']};
@@ -914,15 +998,15 @@ def create_danger_button(
     btn.setStyleSheet(
         f"""
         QPushButton#dangerBtn {{
-            background: rgba(255,107,122,0.12);
+            background: {with_alpha(THEME['error'], 0.12)};
             color: {THEME['fg_main']};
-            border: 1px solid rgba(255,107,122,0.30);
+            border: 1px solid {with_alpha(THEME['error'], 0.30)};
             border-radius: 8px;
             padding: 7px 16px;
             font-weight: 600;
         }}
         QPushButton#dangerBtn:hover {{
-            background: rgba(255,107,122,0.22);
+            background: {with_alpha(THEME['error'], 0.22)};
             border-color: {THEME['error']};
         }}
         QPushButton#dangerBtn:disabled {{
