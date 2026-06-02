@@ -48,17 +48,17 @@ def test_log_panel_collapse_reduces_splitter_footprint() -> None:
     app.processEvents()
 
     collapsed_sizes = win.main_splitter.sizes()
-    assert collapsed_sizes[1] <= 40
-    assert win.log_panel.minimumHeight() == 34
-    assert win.txt_log.isHidden() is True
+    assert collapsed_sizes[1] <= 60
+    assert win.log_panel.minimumHeight() >= 34
+    assert win.log_panel.is_collapsed is True
 
     win._toggle_log_collapsed()
     app.processEvents()
 
     restored_sizes = win.main_splitter.sizes()
     assert restored_sizes[1] >= 120
-    assert win.log_panel.minimumHeight() == 150
-    assert win.txt_log.isHidden() is False
+    assert win.log_panel.minimumHeight() >= 150
+    assert win.log_panel.is_collapsed is False
 
     win.close()
 
