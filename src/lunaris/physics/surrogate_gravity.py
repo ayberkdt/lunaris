@@ -902,13 +902,18 @@ class SurrogateGravityModel:
 
         x_phys = torch.as_tensor(pos, device=self.device, dtype=torch.float32)
         if self._force_runtime is not None:
-            delta_u_np = np.asarray(self._force_runtime.predict_residual_potential(pos), dtype=np.float64).reshape(-1, 1)
+            is_direct = str(getattr(self._force_runtime, "runtime_model_kind", "") or "") == "force_direct"
+            if is_direct:
+                delta_u_np = np.full((pos.shape[0], 1), np.nan, dtype=np.float64)
+            else:
+                delta_u_np = np.asarray(self._force_runtime.predict_residual_potential(pos), dtype=np.float64).reshape(-1, 1)
             delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
             potential = torch.as_tensor(delta_u_np, device=self.device, dtype=torch.float32)
             accel = torch.as_tensor(delta_a_np, device=self.device, dtype=torch.float32)
             if self.training_mode == "residual_potential":
                 accel = accel + self._base_acceleration(x_phys)
-                potential = potential + self._base_potential(x_phys)
+                if not is_direct:
+                    potential = potential + self._base_potential(x_phys)
             return (
                 potential.detach().cpu().numpy().astype(np.float64, copy=False),
                 accel.detach().cpu().numpy().astype(np.float64, copy=False),
@@ -979,6 +984,11 @@ class SurrogateGravityModel:
         self._mu_tensor = self._mu_tensor.to(device=device)
         self._baseline_torch_evaluator = None
         self._baseline_torch_signature = None
+        if self._force_runtime is not None:
+            self._force_runtime.device = device
+            self._force_runtime.model = self.model
+            if hasattr(self._force_runtime.scaler, "to_tensors"):
+                self._force_runtime.scaler.to_tensors(device=device, dtype=torch.float32)
         # Update the stored device so _scale_x and _base_acceleration stay
         # consistent with future inputs.
         object.__setattr__(self, "device", device)  # bypass any frozen guard
@@ -1017,6 +1027,20 @@ class SurrogateGravityModel:
 
         out_dtype = x_m.dtype if x_m.is_floating_point() else torch.float32
         x = x_m.to(device=self.device, dtype=torch.float32)
+        if (
+            self._force_runtime is not None
+            and str(getattr(self._force_runtime, "runtime_model_kind", "") or "") == "force_direct"
+        ):
+            with torch.no_grad():
+                x_scaled = self._force_runtime.scaler.scale_x(x)
+                delta_a_scaled = self.model(x_scaled)
+                if delta_a_scaled.ndim != 2 or delta_a_scaled.shape[1] != 3:
+                    raise RuntimeError(
+                        "force_direct ST-LRPS tensor inference requires model output shape (N,3); "
+                        f"got {tuple(delta_a_scaled.shape)}."
+                    )
+                delta_a = self._force_runtime.scaler.unscale_a(delta_a_scaled)
+            return delta_a.detach().to(dtype=out_dtype)
 
         with torch.enable_grad():
             x_scaled = self._scale_x(x).requires_grad_(True)

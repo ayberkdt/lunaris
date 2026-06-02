@@ -215,8 +215,9 @@ sim_cfg = load_default_config()
 mc_cfg = MonteCarloConfig(
     n_samples=500,
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
-    use_gpu=True,        # requires CUDA + numba.cuda; falls back to CPU with a warning
-    gpu_sh_degree=10,    # SH degree evaluated per GPU thread (0 = point mass)
+    use_gpu=True,
+    mc_backend="auto",   # auto, cpu_sh, gpu_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
+    gpu_sh_degree=10,    # requested SH degree; true GPU classic-SH currently supports <=24
     output_format="hdf5",
     output_path="outputs/monte_carlo/run.h5",
 )
@@ -228,14 +229,19 @@ figs = plot_mc_report(result, stats, output_path="outputs/monte_carlo/report.pdf
 Reload a saved run with `from lunaris.core.monte_carlo_engine import load_mc_result`.
 
 ### GPU kernel constraints
-- The CUDA kernel workspace uses compile-time fixed `(26×26)` arrays, supporting
-  SH degree ≤ 24. `gpu_sh_degree > 24` raises `ValueError`; use the CPU path for
-  higher-degree fields.
-- The GPU path does not support albedo, thermal IR, or solid tides (use the CPU
-  path for those models).
-- CUDA requires `numba` plus a CUDA-capable GPU; the engine falls back to CPU
-  (emitting a `RuntimeWarning` and recording a `fallback_reason`) when CUDA is
-  unavailable.
+- The current classic-SH CUDA kernel workspace uses compile-time fixed `(26 x 26)`
+  per-thread arrays, so the only true GPU SH tier is degree 24. Higher requested
+  degrees are not clipped; `mc_backend="auto"` and `mc_backend="gpu_sh"` route
+  them to CPU SH and record `requested_sh_degree`, `actual_sh_degree`, and
+  `fallback_reason` metadata.
+- Use `mc_backend="cpu_sh"` for high-fidelity CPU truth, `mc_backend="gpu_sh"` for
+  the degree-24 CUDA SH tier, and `mc_backend="gpu_st_lrps_potential"` or
+  `mc_backend="gpu_st_lrps_direct"` for PyTorch CUDA ST-LRPS propagation.
+- The GPU paths do not support albedo, thermal IR, or solid tides; use the CPU
+  path for those models.
+- CUDA SH requires `numba` plus a CUDA-capable GPU; ST-LRPS GPU requires PyTorch
+  CUDA. The engine falls back to CPU with a warning and metadata when the
+  requested GPU path is unavailable.
 
 ## Performance notes
 
@@ -284,15 +290,16 @@ Model target semantics are recorded explicitly via a `target_contract` in new
 configs/checkpoints, distinguishing residual labels from full-field labels and
 keeping the runtime path aligned with the scaler and loss.
 
-**Runtime.** The propagator-facing API is `runtime/force_model.py`. The only
-implemented runtime is `potential_autograd` (`SurrogateForceModel`): it evaluates
-the learned scalar potential and differentiates it with autograd to obtain the
-residual acceleration, which is added to the SH(`degree_min`) baseline. The
-distilled direct-force runtime (`force_direct` / `DirectForceRuntime`) is a
-reserved placeholder and raises `NotImplementedError`; `load_surrogate_force_model`
-rejects any artifact whose `runtime_model_kind` is not `potential_autograd`.
-Because each evaluation is a network forward pass plus an autograd pass, the
-runtime is most efficient in batched / GPU configurations.
+**Runtime.** The propagator-facing API is `runtime/force_model.py`.
+`potential_autograd` (`SurrogateForceModel`) evaluates the learned scalar
+potential and differentiates it with autograd to obtain residual acceleration,
+which is added to the SH(`degree_min`) baseline. `force_direct`
+(`DirectForceRuntime`) loads a 3-output residual-acceleration artifact and uses
+`torch.no_grad()` inference with the acceleration scaler; it never predicts
+`DeltaU`. `load_surrogate_force_model` dispatches by `runtime_model_kind` and
+strictly validates artifact contracts, output dimension, and frame. Direct-force
+is a faster inference target but is not conservative by construction and needs
+separate curl / orbit-level validation.
 
 **Frame.** ST-LRPS is a **Moon-fixed / body-fixed Cartesian** surrogate
 (`moon_fixed_cartesian`). The runtime exposes explicit `predict_*_fixed`

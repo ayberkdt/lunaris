@@ -7,7 +7,7 @@ torch = pytest.importorskip("torch")
 
 from lunaris.surrogate.st_lrps.artifacts.manager import validate_checkpoint_contract
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
-from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
+from lunaris.surrogate.st_lrps.runtime.force_model import DirectForceRuntime, load_surrogate_force_model
 from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContractError
 from st_lrps_contract_test_utils import make_contract_run
 
@@ -49,13 +49,24 @@ def test_checkpoint_contract_cross_check_rejects_mismatched_baseline_degree(tmp_
         load_surrogate_force_model(run["run_dir"], device="cpu")
 
 
-def test_runtime_rejects_unimplemented_force_direct_artifact(tmp_path):
+def test_runtime_loads_force_direct_artifact(tmp_path):
     run = make_contract_run(
         tmp_path,
-        contract_overrides={"runtime_model_kind": "force_direct", "prediction_kind": "force"},
+        cfg_overrides={"runtime_model_kind": "force_direct", "prediction_kind": "residual_force", "output_dim": 3},
     )
 
-    with pytest.raises((ArtifactContractError, NotImplementedError, ValueError), match="force_direct|runtime_model_kind"):
+    fm = load_surrogate_force_model(run["run_dir"], device="cpu")
+
+    assert isinstance(fm, DirectForceRuntime)
+
+
+def test_runtime_rejects_force_direct_contract_mismatch(tmp_path):
+    run = make_contract_run(
+        tmp_path,
+        contract_overrides={"runtime_model_kind": "force_direct", "prediction_kind": "residual_force", "output_dim": 3},
+    )
+
+    with pytest.raises(ArtifactContractError, match="runtime_model_kind|output_dim"):
         load_surrogate_force_model(run["run_dir"], device="cpu")
 
 

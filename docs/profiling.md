@@ -6,8 +6,12 @@ The profiler measures:
 
 - model loading and checkpoint/config/scaler load phases
 - single-point latency and batched throughput
-- full acceleration inference, including the autograd-gradient path
-- potential-only forward timing as a low-risk proxy for forward cost
+- full acceleration inference, including the autograd-gradient path for
+  `potential_autograd` artifacts
+- potential-only forward timing as a low-risk proxy for forward cost when the
+  artifact predicts scalar potential
+- direct residual-acceleration timing for `force_direct` artifacts; potential
+  timing is reported as unavailable for those artifacts
 - CPU or CUDA runtime behavior
 - chunk-size sensitivity
 - CUDA memory allocation and reservation when available
@@ -91,6 +95,34 @@ python -m lunaris.surrogate.st_lrps.runtime.profiling \
 
 If the local gravity coefficient file is unavailable, ST-LRPS profiling still runs and the classic SH comparison is skipped with a warning.
 
+## Monte Carlo Backend Profiling
+
+Monte Carlo profiling must record the requested backend and the resolved backend.
+Use `lunaris-mc --mc-backend ...` to compare:
+
+```bash
+lunaris-mc \
+    --mc-backend auto \
+    --gpu-sh-degree 24 \
+    --n-samples 128 \
+    --mc-dt-s 60 \
+    --mc-output-path outputs/monte_carlo/profile_auto.h5
+```
+
+Important interpretation rules:
+
+- The current true classic-SH GPU tier is degree 24. Requests above degree 24
+  fall back to CPU SH and must be reported as fallback, not GPU high-degree SH.
+- Monte Carlo outputs include `requested_mc_backend`, `actual_mc_backend`,
+  `requested_sh_degree`, `actual_sh_degree`, `runtime_model_kind`,
+  `fallback_reason`, CUDA device name when available, dtype, integrator, and step
+  size metadata.
+- `gpu_st_lrps_potential` keeps the scalar-potential/autograd path and is the
+  physically cleaner ST-LRPS runtime.
+- `gpu_st_lrps_direct` avoids autograd and should benchmark faster, but it has no
+  conservative-field guarantee and remains experimental until curl and orbit
+  validation pass for the target regime.
+
 ## Generated Outputs
 
 When `--out-dir` is provided, the profiler writes:
@@ -102,3 +134,11 @@ When `--out-dir` is provided, the profiler writes:
 - `runtime_profile_throughput.png` if matplotlib is available
 
 These are generated outputs. The canonical location is `outputs/runtime/<profile_name>/`. External scratch storage is also fine; do not commit generated profiling products.
+
+## Direct-Force Runtime Notes
+
+`force_direct` artifacts are trained with `lunaris-train-force-direct` and
+evaluated with `lunaris-eval-force-direct`. They target faster acceleration
+inference by predicting residual acceleration directly, but they are not scalar
+potential models. Treat speedup numbers as runtime diagnostics only until curl
+and orbit-level validation have been run.

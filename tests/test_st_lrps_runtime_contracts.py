@@ -14,7 +14,7 @@ propagator physically wrong (but error-free) accelerations:
 - output shapes/types for single point and batch,
 - finite-input rejection (NaN / Inf),
 - domain reporting + ``strict_domain`` hard-fail outside the trained shell,
-- the ``force_direct`` runtime placeholder failing loudly,
+- the ``force_direct`` runtime class being available for direct artifacts,
 - the residual SH-baseline requiring an explicit ``base_accel_fn``,
 - the point-mass fallback only firing when the target contract allows it.
 """
@@ -166,9 +166,8 @@ def test_non_strict_domain_still_returns_prediction():
 # Runtime-kind & baseline contracts
 # =============================================================================
 
-def test_force_direct_runtime_is_not_implemented():
-    with pytest.raises(NotImplementedError, match="force_direct"):
-        DirectForceRuntime()
+def test_force_direct_runtime_class_is_available():
+    assert DirectForceRuntime.runtime_model_kind == "force_direct"
 
 
 def test_residual_sh_baseline_requires_base_accel_fn():

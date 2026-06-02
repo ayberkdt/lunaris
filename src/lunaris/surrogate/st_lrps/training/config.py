@@ -138,6 +138,7 @@ class TrainConfig:
     # flag-level control for ablations and old configs.
     model_preset: str = "baseline_raw"
     runtime_model_kind: str = "potential_autograd"
+    output_dim: int = 1
 
     # Fourier/RFF embedding → only for non-sine MLPs (activation="silu"/"tanh"/"softplus").
     # MUST NOT be combined with activation="sine" (SIREN): train() raises ValueError.
@@ -502,7 +503,13 @@ def parse_args() -> TrainConfig:
         "--runtime-model-kind",
         choices=["potential_autograd", "force_direct"],
         default=_TC_DEFAULTS.get("runtime_model_kind", "potential_autograd"),
-        help="Runtime model contract. force_direct is a future placeholder and is not trainable here.",
+        help="Runtime model contract. Main Sobolev training uses potential_autograd; use force_direct_cli for direct-force artifacts.",
+    )
+    group_arch.add_argument(
+        "--output-dim",
+        type=int,
+        default=_TC_DEFAULTS.get("output_dim", 1),
+        help="Model output dimension. potential_autograd uses 1; force_direct uses 3.",
     )
     group_arch.add_argument("--w0-first", type=float, default=None,
                             help="SIREN w0 for first layer (default: auto-derived from dataset degree_max).")
@@ -1277,6 +1284,7 @@ def parse_args() -> TrainConfig:
         amp=bool(a.amp),
         model_preset=str(a.model_preset),
         runtime_model_kind=str(a.runtime_model_kind),
+        output_dim=int(a.output_dim),
         use_fourier=bool(a.use_fourier),
         fourier_append_raw=bool(a.fourier_append_raw),
         fourier_n_features=int(a.fourier_n),

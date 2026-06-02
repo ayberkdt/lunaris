@@ -6,9 +6,11 @@ Propagation-facing ST-LRPS inference is loaded through
 ``st_lrps.runtime.force_model.load_surrogate_force_model``.  That loader
 resolves a run directory, selects ``ckpt_best.pt`` with ``ckpt_last.pt``
 fallback through ``st_lrps.artifacts.manager``, reconstructs the trained
-network and scaler, then returns ``SurrogateForceModel``.  Acceleration is
-computed as the autograd gradient of the learned residual potential, with
-large inputs processed through the runtime chunk size.
+network and scaler, then returns the contract-matched runtime object.  Scalar
+``potential_autograd`` artifacts compute acceleration as the autograd gradient
+of the learned residual potential; ``force_direct`` artifacts return a
+three-component residual acceleration head and do not expose potential timing.
+Large inputs are processed through the runtime chunk size.
 
 This module measures that path without changing physics, model architecture,
 checkpoint schema, loss functions, or propagation algorithms.
@@ -34,13 +36,14 @@ import torch
 
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     load_checkpoint,
-    load_scaler_for_run,
     make_run_layout,
     read_run_manifest,
     resolve_run_dir,
 )
-from lunaris.surrogate.st_lrps.networks.models import reconstruct_model_from_artifacts
-from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel
+from lunaris.surrogate.st_lrps.runtime.force_model import (
+    BaseSurrogateRuntime,
+    load_surrogate_force_model,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +324,7 @@ def _load_profiled_surrogate_force_model(
     device: str,
     chunk_size: int,
     allow_config_mismatch: bool = False,
-) -> tuple[SurrogateForceModel, ProfileTimerResult, dict[str, Any]]:
+) -> tuple[BaseSurrogateRuntime, ProfileTimerResult, dict[str, Any]]:
     """Load the canonical runtime object while collecting phase timings."""
 
     load_t0 = now_perf()
@@ -357,26 +360,16 @@ def _load_profiled_surrogate_force_model(
             )
         cfg_json = dict(ckpt_cfg)
 
-    elapsed, reconstructed = timed_call(
-        lambda: reconstruct_model_from_artifacts(
-            cfg_json,
-            ckpt,
-            dev,
-            allow_config_mismatch=allow_config_mismatch,
-        ),
-        device=dev,
-    )
-    timings.model_reconstruct_s = elapsed
-    model, merged_cfg, report = reconstructed
-
-    elapsed, scaler_result = timed_call(
-        lambda: load_scaler_for_run(layout, ckpt, device=dev, dtype=torch.float32),
-        device=dev,
-    )
-    timings.scaler_load_s = elapsed
-    scaler, scaler_report = scaler_result
-
     manifest = read_run_manifest(layout)
+    ckpt_cfg = ckpt.get("config") if isinstance(ckpt.get("config"), dict) else {}
+    runtime_model_kind = cfg_json.get("runtime_model_kind") or ckpt_cfg.get("runtime_model_kind")
+    report: dict[str, Any] = {
+        "runtime_model_kind": runtime_model_kind,
+        "architecture_signature": (
+            (ckpt.get("architecture") or {}).get("signature")
+            or cfg_json.get("architecture_signature")
+        ),
+    }
     report.update(
         {
             "checkpoint_schema_version": ckpt.get("schema_version"),
@@ -395,23 +388,23 @@ def _load_profiled_surrogate_force_model(
             if layout.run_manifest_json.exists()
             else None,
             "run_manifest": manifest or None,
-            "scaler_source": scaler_report["scaler_source"],
-            "scaler_hash": scaler_report["scaler_hash"],
         }
     )
 
-    runtime = SurrogateForceModel(
-        model=model,
-        scaler=scaler,
-        cfg=merged_cfg,
+    elapsed, runtime = timed_call(
+        lambda: load_surrogate_force_model(
+            run_dir,
+            device=str(dev),
+            chunk_size=int(chunk_size),
+            allow_config_mismatch=allow_config_mismatch,
+            strict_contract=False,
+            allow_legacy_contract=True,
+            strict_domain=False,
+        ),
         device=dev,
-        chunk_size=int(chunk_size),
-        checkpoint_path=report.get("checkpoint_path"),
-        checkpoint_epoch=report.get("checkpoint_epoch"),
-        architecture_signature=report.get("architecture_signature"),
-        run_manifest=manifest,
-        strict_domain=False,
     )
+    timings.model_reconstruct_s = elapsed
+    report["runtime_model_kind"] = getattr(runtime, "runtime_model_kind", report.get("runtime_model_kind"))
     sync_device(dev)
     timings.total_load_s = now_perf() - load_t0
     return runtime, timings, report

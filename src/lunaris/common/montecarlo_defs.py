@@ -174,13 +174,18 @@ class MonteCarloConfig:
 
     Routing
     -------
-    ``use_gpu=True``  → GPU CUDA RK4 batch propagator (low/medium-fidelity physics).
+    ``use_gpu=True``  → request a GPU backend.
     ``use_gpu=False`` → CPU multiprocessing via existing :func:`core.propagator.propagate`
                         (full-fidelity physics, slower for large N).
 
+    ``mc_backend`` is the explicit backend selector.  The default ``"auto"``
+    preserves the historical ``use_gpu`` + ``gravity_mode_override`` behavior.
+    Explicit values are ``"cpu_sh"``, ``"gpu_sh"``,
+    ``"gpu_st_lrps_potential"``, and ``"gpu_st_lrps_direct"``.
+
     GPU physics model
     -----------------
-    - Point-mass + SH gravity up to ``gpu_sh_degree`` (≤ 24 supported by the GPU kernel).
+    - Point-mass + SH gravity up to the resolved ``gpu_sh_degree``.
     - Third-body Sun / Earth (if enabled in SimConfig flags).
     - SRP (if enabled in SimConfig flags).
     - 1PN relativity (if enabled in SimConfig flags).
@@ -193,8 +198,11 @@ class MonteCarloConfig:
 
     Validation
     ----------
-    ``gpu_sh_degree`` is capped at 24 because the GPU kernel uses compile-time
-    fixed workspace arrays sized for degree 24 (26×26 per thread).
+    The current Numba CUDA SH kernel is a true GPU implementation only through
+    degree 24 because it uses compile-time fixed workspace arrays sized for
+    degree 24 (26×26 per thread).  Higher requested degrees are accepted here
+    so the backend resolver can fall back explicitly to CPU instead of silently
+    clipping the request.
     """
     # Ensemble
     n_samples: int = 1_000
@@ -206,12 +214,13 @@ class MonteCarloConfig:
 
     # Backend selection
     use_gpu: bool = True
+    mc_backend: str = "auto"
     gpu_device_id: int = 0
     gravity_mode_override: str = "follow_mission"
     st_lrps_model_dir: Optional[str] = None
 
     # GPU physics fidelity
-    gpu_sh_degree: int = 10         # SH degree evaluated per-thread on GPU (0 = PM only)
+    gpu_sh_degree: int = 10         # requested SH degree (GPU supports true SH only through 24)
     gpu_threads_per_block: int = 128
 
     # Fixed-step RK4 integration (GPU path)
@@ -238,12 +247,29 @@ class MonteCarloConfig:
                 "'follow_mission', 'classic_sh', 'st_lrps'. "
                 f"Got {self.gravity_mode_override!r}"
             )
-        st_lrps_model_dir = str(self.st_lrps_model_dir or "").strip()
-        if self.gravity_mode_override == "st_lrps" and not st_lrps_model_dir:
-            raise ValueError("st_lrps_model_dir cannot be empty when gravity_mode_override='st_lrps'.")
-        if not (0 <= self.gpu_sh_degree <= 24):
+        if self.mc_backend not in (
+            "auto",
+            "cpu_sh",
+            "gpu_sh",
+            "gpu_st_lrps_potential",
+            "gpu_st_lrps_direct",
+        ):
             raise ValueError(
-                f"gpu_sh_degree must be in [0, 24] (GPU kernel limit), "
+                "mc_backend must be one of: 'auto', 'cpu_sh', 'gpu_sh', "
+                "'gpu_st_lrps_potential', 'gpu_st_lrps_direct'. "
+                f"Got {self.mc_backend!r}"
+            )
+        st_lrps_model_dir = str(self.st_lrps_model_dir or "").strip()
+        if (
+            self.gravity_mode_override == "st_lrps"
+            or self.mc_backend in ("gpu_st_lrps_potential", "gpu_st_lrps_direct")
+        ) and not st_lrps_model_dir:
+            raise ValueError(
+                "st_lrps_model_dir cannot be empty when ST-LRPS Monte Carlo gravity is requested."
+            )
+        if int(self.gpu_sh_degree) < 0:
+            raise ValueError(
+                f"gpu_sh_degree must be >= 0; backend policy handles GPU support limits. "
                 f"got {self.gpu_sh_degree}."
             )
         if not (32 <= self.gpu_threads_per_block <= 1024):

@@ -29,8 +29,10 @@ LUNAR_BODY_ALIASES = frozenset({"moon", "lunar", "selene"})
 TARGET_MODES = frozenset({"residual", "full"})
 BASELINE_KINDS = frozenset({"none", "point_mass", "spherical_harmonics"})
 ARTIFACT_CONTRACT_SCHEMA_VERSION = 1
-RUNTIME_MODEL_KINDS = frozenset({"potential_autograd"})
-PREDICTION_KINDS = frozenset({"potential", "residual_potential", "force", "residual_force", "total"})
+RUNTIME_MODEL_KINDS = frozenset({"potential_autograd", "force_direct"})
+PREDICTION_KINDS = frozenset(
+    {"potential", "residual_potential", "force", "residual_force", "acceleration", "residual_acceleration", "total"}
+)
 
 
 class ArtifactContractError(RuntimeError):
@@ -375,6 +377,7 @@ class ArtifactContract:
     input_encoding: dict[str, Any]
     scaler_contract: dict[str, Any]
     dataset_contract: dict[str, Any]
+    output_dim: int = 1
     architecture_signature: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -401,6 +404,7 @@ class ArtifactContract:
         object.__setattr__(self, "input_encoding", _mapping(self.input_encoding))
         object.__setattr__(self, "scaler_contract", _mapping(self.scaler_contract))
         object.__setattr__(self, "dataset_contract", _mapping(self.dataset_contract))
+        object.__setattr__(self, "output_dim", int(self.output_dim))
         object.__setattr__(
             self,
             "architecture_signature",
@@ -421,10 +425,22 @@ class ArtifactContract:
         if self.runtime_model_kind not in RUNTIME_MODEL_KINDS:
             errors.append(
                 f"unsupported runtime_model_kind={self.runtime_model_kind!r}; "
-                "only 'potential_autograd' is implemented"
+                "expected 'potential_autograd' or 'force_direct'"
             )
         if self.prediction_kind not in PREDICTION_KINDS:
             errors.append(f"unsupported prediction_kind={self.prediction_kind!r}")
+        if self.output_dim <= 0:
+            errors.append("output_dim must be positive")
+        if self.runtime_model_kind == "potential_autograd":
+            if self.output_dim != 1:
+                errors.append("potential_autograd artifacts must have output_dim=1")
+            if self.prediction_kind not in {"potential", "residual_potential", "total"}:
+                errors.append("potential_autograd artifacts must predict scalar potential targets")
+        if self.runtime_model_kind == "force_direct":
+            if self.output_dim != 3:
+                errors.append("force_direct artifacts must have output_dim=3")
+            if self.prediction_kind not in {"force", "residual_force", "acceleration", "residual_acceleration"}:
+                errors.append("force_direct artifacts must predict residual acceleration, not scalar potential")
         if self.target_mode == "residual":
             if self.baseline_kind == "none":
                 errors.append("residual contracts require a non-none baseline_kind")
@@ -483,6 +499,10 @@ class ArtifactContract:
             input_encoding=_mapping(payload.get("input_encoding")),
             scaler_contract=_mapping(payload.get("scaler_contract")),
             dataset_contract=_mapping(payload.get("dataset_contract")),
+            output_dim=_as_int(
+                payload.get("output_dim"),
+                3 if payload.get("runtime_model_kind") == "force_direct" else 1,
+            ),
             architecture_signature=payload.get("architecture_signature"),
         )
 
@@ -543,14 +563,20 @@ class ArtifactContract:
                 "a": {"scale": summary.get("a_scale")},
                 "provenance": {},
             }
+        runtime_kind = config.get("runtime_model_kind", "potential_autograd")
+        output_dim = _as_int(config.get("output_dim"), 3 if runtime_kind == "force_direct" else 1)
+        prediction_kind = config.get(
+            "prediction_kind",
+            "residual_force" if runtime_kind == "force_direct" else ("residual_potential" if target.is_residual else "potential"),
+        )
         return cls(
             schema_version=ARTIFACT_CONTRACT_SCHEMA_VERSION,
             target_mode=target.target_mode,
             baseline_kind=target.baseline_kind,
             base_degree=target.base_degree,
             target_degree=target.target_degree,
-            runtime_model_kind=config.get("runtime_model_kind", "potential_autograd"),
-            prediction_kind=config.get("prediction_kind", "residual_potential" if target.is_residual else "potential"),
+            runtime_model_kind=runtime_kind,
+            prediction_kind=prediction_kind,
             mu_si=target.mu_si,
             r_ref_m=target.r_ref_m,
             a_sign=target.a_sign,
@@ -559,6 +585,7 @@ class ArtifactContract:
             input_encoding=_input_encoding_from_config(config) or {"embedding_type": "raw", "input_feature_dim": 3},
             scaler_contract=scaler_contract,
             dataset_contract=dataset,
+            output_dim=output_dim,
             architecture_signature=architecture_signature or config.get("architecture_signature"),
         )
 
@@ -597,6 +624,7 @@ class ArtifactContract:
             input_encoding={"benchmark_dtype": propagation.get("dtype"), "embedding_type": "artifact_runtime"},
             scaler_contract={"schema_version": 1, "kind": "benchmark_request", "x": {}, "u": {}, "a": {}},
             dataset_contract=dataset,
+            output_dim=1,
             architecture_signature=None,
         )
 
@@ -633,6 +661,8 @@ class ArtifactContract:
                 f"runtime_model_kind mismatch: artifact={self.runtime_model_kind} "
                 f"requested={requested.runtime_model_kind}"
             )
+        if self.output_dim != requested.output_dim:
+            error(f"output_dim mismatch: artifact={self.output_dim} requested={requested.output_dim}")
         if abs(self.mu_si - requested.mu_si) > 1.0:
             error(f"mu_si mismatch: artifact={self.mu_si} requested={requested.mu_si}")
         if abs(self.r_ref_m - requested.r_ref_m) > 1.0:

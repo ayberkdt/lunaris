@@ -291,6 +291,8 @@ def test_policy_classic_sh_numba_cuda_true(monkeypatch) -> None:
     plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
     assert plan.final_backend == MCBackend.GPU_CLASSIC_SH
     assert plan.use_gpu
+    assert plan.actual_backend == "gpu_sh"
+    assert plan.requested_sh_degree == 0 or plan.requested_sh_degree == int(getattr(mc_cfg, "gpu_sh_degree", 0))
 
 
 def test_policy_classic_sh_numba_cuda_false(monkeypatch) -> None:
@@ -309,6 +311,66 @@ def test_policy_classic_sh_numba_cuda_false(monkeypatch) -> None:
     plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
     assert plan.final_backend == MCBackend.CPU
     assert not plan.use_gpu
+    assert plan.actual_backend == "cpu_sh"
+    assert "cuda" in plan.fallback_reason.lower()
+
+
+def test_policy_classic_sh_high_degree_falls_back_without_clipping(monkeypatch) -> None:
+    """Classic GPU SH degree > true CUDA tier is an explicit CPU fallback."""
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+
+    monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
+    monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
+    monkeypatch.setattr(policy_mod, "_gpu_sh_limits", lambda: (24, (24,)))
+
+    mc_cfg = SimpleNamespace(
+        use_gpu=True,
+        mc_backend="gpu_sh",
+        gravity_mode_override="follow_mission",
+        gpu_sh_degree=80,
+    )
+    sim_cfg = SimpleNamespace(
+        flags=PerturbationFlags(enable_sh=True),
+        gravity=SimpleNamespace(uses_st_lrps=False),
+    )
+    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
+    assert plan.final_backend == MCBackend.CPU
+    assert not plan.use_gpu
+    assert plan.requested_backend == "gpu_sh"
+    assert plan.actual_backend == "cpu_sh"
+    assert plan.requested_sh_degree == 80
+    assert plan.actual_sh_degree is None
+    assert plan.gpu_sh_max_degree == 24
+    assert plan.gpu_sh_supported_tiers == (24,)
+    assert "gpu_sh_degree>24" == plan.fallback_reason
+    assert any("without clipping" in w.lower() for w in plan.warnings)
+
+
+def test_policy_explicit_st_lrps_direct_backend(monkeypatch) -> None:
+    """Explicit direct ST-LRPS backend records direct runtime intent."""
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+
+    monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
+    monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
+    monkeypatch.setattr(policy_mod, "_read_st_lrps_runtime_kind", lambda mc_cfg, sim_cfg: "force_direct")
+
+    mc_cfg = SimpleNamespace(
+        use_gpu=True,
+        mc_backend="gpu_st_lrps_direct",
+        gravity_mode_override="follow_mission",
+        gpu_sh_degree=20,
+    )
+    sim_cfg = SimpleNamespace(
+        flags=PerturbationFlags(enable_sh=True),
+        gravity=SimpleNamespace(uses_st_lrps=False),
+    )
+    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
+    assert plan.final_backend == MCBackend.GPU_ST_LRPS
+    assert plan.actual_backend == "gpu_st_lrps_direct"
+    assert plan.runtime_model_kind == "force_direct"
+    assert "no-grad" in plan.batch_note.lower()
 
 
 def test_policy_no_contradictory_command_args_st_lrps_gpu(monkeypatch) -> None:

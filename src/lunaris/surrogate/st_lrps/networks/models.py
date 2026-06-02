@@ -163,10 +163,14 @@ class SirenMLP(nn.Module):
         w0_hidden: float = 30.0,
         dropout: float = 0.0,
         use_residual: bool = False,
+        output_dim: int = 1,
     ):
         super().__init__()
         self.w0_first = w0_first
         self.w0_hidden = w0_hidden
+        self.output_dim = int(output_dim)
+        if self.output_dim <= 0:
+            raise ValueError(f"output_dim must be positive, got {self.output_dim}")
 
         layers: List[nn.Module] = []
 
@@ -193,7 +197,7 @@ class SirenMLP(nn.Module):
         # Final output layer: small-amplitude SIREN-style init keeps the
         # initial residual prediction gentle while still providing non-zero
         # gradients to the backbone from the first optimisation step.
-        final = nn.Linear(hidden, 1)
+        final = nn.Linear(hidden, self.output_dim)
         head_bound = 0.1 * (math.sqrt(6.0 / hidden) / max(float(w0_hidden), 1.0))
         nn.init.uniform_(final.weight, -head_bound, head_bound)
         if final.bias is not None:
@@ -220,8 +224,12 @@ class MLP(nn.Module):
         depth: int = 4,
         activation: str = "silu",
         dropout: float = 0.0,
+        output_dim: int = 1,
     ):
         super().__init__()
+        self.output_dim = int(output_dim)
+        if self.output_dim <= 0:
+            raise ValueError(f"output_dim must be positive, got {self.output_dim}")
         act_map = {"silu": nn.SiLU, "tanh": nn.Tanh, "softplus": nn.Softplus}
         activation = activation.lower()
         if activation not in act_map:
@@ -236,7 +244,7 @@ class MLP(nn.Module):
             if dropout > 0:
                 layers.append(nn.Dropout(p=float(dropout)))
             d_in = hidden
-        layers.append(nn.Linear(d_in, 1))
+        layers.append(nn.Linear(d_in, self.output_dim))
         self.net = nn.Sequential(*layers)
         self._initialize_weights(activation)
 
@@ -309,8 +317,12 @@ class MultiScaleSirenMLP(nn.Module):
         w0_bands: Optional[List[float]] = None,
         dropout: float = 0.0,
         use_residual: bool = True,
+        output_dim: int = 1,
     ):
         super().__init__()
+        self.output_dim = int(output_dim)
+        if self.output_dim <= 0:
+            raise ValueError(f"output_dim must be positive, got {self.output_dim}")
         if w0_bands is None:
             w0_bands = [30.0]
         self.w0_bands: List[float] = [float(w) for w in w0_bands]
@@ -365,7 +377,7 @@ class MultiScaleSirenMLP(nn.Module):
         self.shared: nn.Module = nn.Sequential(*shared) if shared else nn.Identity()
 
         # --- Output head ---
-        self.head = nn.Linear(hidden, 1)
+        self.head = nn.Linear(hidden, self.output_dim)
         head_bound = 0.1 * (math.sqrt(6.0 / hidden) / max(w0_deep, 1.0))
         nn.init.uniform_(self.head.weight, -head_bound, head_bound)
         nn.init.zeros_(self.head.bias)
@@ -426,8 +438,12 @@ class AdditiveMultiBandSirenMLP(nn.Module):
         w0_bands: Optional[List[float]] = None,
         dropout: float = 0.0,
         use_residual: bool = True,
+        output_dim: int = 1,
     ):
         super().__init__()
+        self.output_dim = int(output_dim)
+        if self.output_dim <= 0:
+            raise ValueError(f"output_dim must be positive, got {self.output_dim}")
         if w0_bands is None:
             w0_bands = [30.0]
         self.w0_bands: List[float] = [float(w) for w in w0_bands]
@@ -452,6 +468,7 @@ class AdditiveMultiBandSirenMLP(nn.Module):
                 w0_hidden=w0,
                 dropout=dropout,
                 use_residual=use_residual,
+                output_dim=self.output_dim,
             )
             for w0 in self.w0_bands
         )
@@ -955,6 +972,18 @@ def build_model_from_config(
         Random Fourier Feature embedding (only with non-SIREN activations).
     """
     activation = str(_cfg_value(cfg, "activation", "sine")).lower()
+    runtime_model_kind = str(_cfg_value(cfg, "runtime_model_kind", "potential_autograd") or "potential_autograd")
+    output_dim_raw = _cfg_value(cfg, "output_dim", None)
+    output_dim = int(output_dim_raw) if output_dim_raw is not None else (3 if runtime_model_kind == "force_direct" else 1)
+    if runtime_model_kind == "potential_autograd" and output_dim != 1:
+        raise ValueError("potential_autograd models must use output_dim=1 for scalar residual potential.")
+    if runtime_model_kind == "force_direct" and output_dim != 3:
+        raise ValueError("force_direct models must use output_dim=3 for residual acceleration vectors.")
+    if runtime_model_kind not in {"potential_autograd", "force_direct"}:
+        raise ValueError(
+            f"Unsupported runtime_model_kind={runtime_model_kind!r}; "
+            "expected 'potential_autograd' or 'force_direct'."
+        )
     encoding_flags = _encoding_flags_from_preset(cfg)
     use_fourier = bool(encoding_flags["use_fourier"])
     if activation == "sine" and use_fourier:
@@ -1108,6 +1137,7 @@ def build_model_from_config(
                     w0_bands=w0_bands,
                     dropout=dropout,
                     use_residual=use_residual,
+                    output_dim=output_dim,
                 )
             else:
                 backbone = MultiScaleSirenMLP(
@@ -1117,6 +1147,7 @@ def build_model_from_config(
                     w0_bands=w0_bands,
                     dropout=dropout,
                     use_residual=True,
+                    output_dim=output_dim,
                 )
         else:
             backbone = SirenMLP(
@@ -1127,6 +1158,7 @@ def build_model_from_config(
                 w0_hidden=float(_cfg_value(cfg, "w0_hidden", 30.0)),
                 dropout=dropout,
                 use_residual=use_residual,
+                output_dim=output_dim,
             )
     else:
         backbone = MLP(
@@ -1135,6 +1167,7 @@ def build_model_from_config(
             depth=int(_cfg_value(cfg, "depth",  4)),
             activation=activation,
             dropout=float(_cfg_value(cfg, "dropout", 0.0)),
+            output_dim=output_dim,
         )
 
     model = PhysicsNet(backbone=backbone, embedding=embedding)
@@ -1160,6 +1193,8 @@ def build_model_from_config(
     model.embedding_type: str = _emb_type  # type: ignore[assignment]
     model.input_feature_dim: int = int(backbone_in_dim)  # type: ignore[assignment]
     model.model_builder_version: str = MODEL_BUILDER_VERSION  # type: ignore[assignment]
+    model.output_dim: int = int(output_dim)  # type: ignore[assignment]
+    model.runtime_model_kind: str = runtime_model_kind  # type: ignore[assignment]
     # Resolved per-band SIREN frequencies (None for single-scale / non-SIREN).
     # The engine persists this so evaluation reconstructs the exact spectrum.
     model.w0_bands = resolved_w0_bands  # type: ignore[assignment]
@@ -1173,14 +1208,14 @@ def build_model_from_config(
 
 # Bumped whenever the build logic changes in a way that affects the functional
 # architecture for a fixed config. Persisted into config.json and checkpoints.
-MODEL_BUILDER_VERSION: str = "v3"
+MODEL_BUILDER_VERSION: str = "v4"
 
 # Fields that fully determine the functional architecture. Two configs that
 # agree on all of these must build identical (shape- AND frequency-identical)
 # models. Used to detect config/checkpoint drift on reload.
 ARCH_SIGNATURE_FIELDS = (
     "activation", "hidden", "depth", "dropout",
-    "model_preset", "runtime_model_kind",
+    "model_preset", "runtime_model_kind", "output_dim",
     "use_residual_blocks", "n_bands", "multiscale_mode",
     "degree_min", "degree_max", "w0_bands",
     "use_sh_encoding", "sh_encoding_degree", "sh_append_raw",
@@ -1205,7 +1240,7 @@ def _normalize_signature_value(key: str, value: Any) -> Any:
             return [round(float(v), 4) for v in value]
         except (TypeError, ValueError):
             return value
-    if key in ("hidden", "depth", "n_bands", "degree_min", "degree_max",
+    if key in ("hidden", "depth", "n_bands", "degree_min", "degree_max", "output_dim",
                "sh_encoding_degree", "fourier_n_features", "fourier_seed",
                "input_feature_dim", "radial_decay_max_power", "real_sh_degree",
                "physical_radial_decay_max_power"):
@@ -1297,6 +1332,11 @@ def _verify_reconstructed_model(model: nn.Module, ref_cfg: Dict[str, Any]) -> No
     model_ifd = getattr(model, "input_feature_dim", None)
     if ref_ifd is not None and model_ifd is not None and int(ref_ifd) != int(model_ifd):
         problems.append(f"input_feature_dim: checkpoint={ref_ifd} but reconstructed={model_ifd}")
+
+    ref_output_dim = ref_cfg.get("output_dim")
+    model_output_dim = getattr(model, "output_dim", None)
+    if ref_output_dim is not None and model_output_dim is not None and int(ref_output_dim) != int(model_output_dim):
+        problems.append(f"output_dim: checkpoint={ref_output_dim} but reconstructed={model_output_dim}")
 
     ref_emb = ref_cfg.get("embedding_type")
     model_emb = getattr(model, "embedding_type", None)

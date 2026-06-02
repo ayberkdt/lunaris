@@ -89,8 +89,9 @@ class UIMonteCarloConfig:
 
     # Backend
     use_gpu: bool = True
+    mc_backend: str = "auto"
     gpu_device_id: int = 0
-    gpu_sh_degree: int = 10        # 0-24
+    gpu_sh_degree: int = 10        # requested; true GPU classic-SH currently supports <=24
     gpu_threads_per_block: int = 128
     gravity_mode_override: str = "follow_mission"
     st_lrps_model_dir: str = ""
@@ -218,7 +219,7 @@ def _format_clock_span(seconds: Optional[float]) -> str:
     """
 
     if seconds is None or not math.isfinite(float(seconds)) or float(seconds) < 0.0:
-        return "—"
+        return "\u2014"
 
     total = int(round(float(seconds)))
     hours, rem = divmod(total, 3600)
@@ -770,6 +771,30 @@ class MonteCarloPage(QtWidgets.QWidget):
         gravity_hint.setWordWrap(True)
         layout.addWidget(gravity_hint)
 
+        backend_row = QtWidgets.QHBoxLayout()
+        backend_row.addWidget(_label("Monte Carlo Backend:"))
+        self.cb_mc_backend = QtWidgets.QComboBox()
+        self.cb_mc_backend.addItem("Auto Policy", "auto")
+        self.cb_mc_backend.addItem("CPU Spherical Harmonics", "cpu_sh")
+        self.cb_mc_backend.addItem("GPU Spherical Harmonics", "gpu_sh")
+        self.cb_mc_backend.addItem("GPU ST-LRPS Potential", "gpu_st_lrps_potential")
+        self.cb_mc_backend.addItem("GPU ST-LRPS Direct", "gpu_st_lrps_direct")
+        self.cb_mc_backend.setToolTip(
+            "Explicit backend selector recorded in Monte Carlo metadata.\n"
+            "Auto uses safe GPU paths when available and records any fallback."
+        )
+        self.cb_mc_backend.currentIndexChanged.connect(self._on_mc_backend_changed)
+        backend_row.addWidget(self.cb_mc_backend, 1)
+        layout.addLayout(backend_row)
+
+        backend_hint = _label(
+            "GPU SH is a true CUDA spherical-harmonic path through degree 24 today. "
+            "Higher requested degrees are routed by policy to CPU SH without clipping.",
+            muted=True,
+        )
+        backend_hint.setWordWrap(True)
+        layout.addWidget(backend_hint)
+
         # ST-LRPS surrogate selection is only relevant when MC explicitly forces
         # the surrogate backend.  Leaving it blank intentionally falls back to
         # the global Force Models page setting.
@@ -844,15 +869,15 @@ class MonteCarloPage(QtWidgets.QWidget):
         gpu_grid.setVerticalSpacing(8)
         gpu_grid.setHorizontalSpacing(12)
 
-        gpu_grid.addWidget(_label("SH Degree on GPU  (0-24):"), 0, 0)
+        gpu_grid.addWidget(_label("Requested SH Degree:"), 0, 0)
         self.ent_gpu_sh = NumericDragLineEdit(
             str(self.mc_cfg.gpu_sh_degree),
-            step=1, min_value=0, max_value=24, decimals=0,
+            step=1, min_value=0, max_value=200, decimals=0,
         )
         self.ent_gpu_sh.setToolTip(
-            "Spherical-harmonic degree evaluated per CUDA thread.\n"
-            "GPU kernel workspace is fixed at 26×26 → max degree 24.\n"
-            "0 = point-mass only (fastest)."
+            "Requested spherical-harmonic degree.\n"
+            "The current true GPU classic-SH kernel supports degree <= 24.\n"
+            "Higher values fall back to CPU SH with metadata, not silent clipping."
         )
         gpu_grid.addWidget(self.ent_gpu_sh, 0, 1)
 
@@ -876,9 +901,9 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         # GPU-only warning banner
         warn_lbl = _label(
-            "• Classic-SH GPU uses Numba CUDA and is limited to SH degree ≤ 24.\n"
-            "• ST-LRPS GPU uses PyTorch CUDA and is gravity-only.\n"
-            "• Full-fidelity non-gravity perturbations can force CPU fallback depending on selected physics.",
+            "- Classic-SH GPU uses Numba CUDA and supports true SH through degree 24.\n"
+            "- ST-LRPS GPU uses PyTorch CUDA and is gravity-only.\n"
+            "- Full-fidelity non-gravity perturbations can force CPU fallback depending on selected physics.",
             muted=True,
         )
         warn_lbl.setWordWrap(True)
@@ -889,6 +914,10 @@ class MonteCarloPage(QtWidgets.QWidget):
         if gravity_mode_index < 0:
             gravity_mode_index = 0
         self.cb_mc_gravity_mode.setCurrentIndex(gravity_mode_index)
+        backend_index = self.cb_mc_backend.findData(str(getattr(self.mc_cfg, "mc_backend", "auto") or "auto"))
+        if backend_index < 0:
+            backend_index = 0
+        self.cb_mc_backend.setCurrentIndex(backend_index)
         self._on_gravity_mode_changed()
         self._on_backend_changed(self.mc_cfg.use_gpu)
 
@@ -917,9 +946,18 @@ class MonteCarloPage(QtWidgets.QWidget):
         operator wants to compare different trained surrogate runs.
         """
 
-        is_st_lrps = str(self.cb_mc_gravity_mode.currentData() or "") == "st_lrps"
+        backend = str(self.cb_mc_backend.currentData() or "auto") if hasattr(self, "cb_mc_backend") else "auto"
+        is_st_lrps = (
+            str(self.cb_mc_gravity_mode.currentData() or "") == "st_lrps"
+            or backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
+        )
         if hasattr(self, "st_lrps_config_frame"):
             self.st_lrps_config_frame.setVisible(is_st_lrps)
+
+    def _on_mc_backend_changed(self, *_args: Any) -> None:
+        if hasattr(self, "cb_mc_backend"):
+            self.mc_cfg.mc_backend = str(self.cb_mc_backend.currentData() or "auto")
+        self._on_gravity_mode_changed()
 
     def _browse_st_lrps_model_dir(self) -> None:
         """Open a folder chooser rooted at the surrogate run directory."""
@@ -1513,6 +1551,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             "sigma_cd":              self._parse_float(self.ent_sigma_cd.text(), 0.0),
             "sigma_cr":              self._parse_float(self.ent_sigma_cr.text(), 0.0),
             "use_gpu":               bool(self.toggle_gpu.isChecked()),
+            "mc_backend":            str(self.cb_mc_backend.currentData() or "auto"),
             "gpu_device_id":         self._parse_int(self.ent_gpu_dev.text(), 0),
             "gpu_sh_degree":         self._parse_int(self.ent_gpu_sh.text(), 10),
             "gpu_threads_per_block": self._parse_int(self.ent_tpb.text(), 128),
@@ -1542,6 +1581,11 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.ent_sigma_cd.setText(_s("sigma_cd", 0.0))
         self.ent_sigma_cr.setText(_s("sigma_cr", 0.0))
         self.toggle_gpu.setChecked(bool(data.get("use_gpu", True)))
+        self.mc_cfg.mc_backend = str(data.get("mc_backend", "auto") or "auto")
+        backend_idx = self.cb_mc_backend.findData(self.mc_cfg.mc_backend)
+        if backend_idx < 0:
+            backend_idx = 0
+        self.cb_mc_backend.setCurrentIndex(backend_idx)
         self.ent_gpu_dev.setText(_s("gpu_device_id", 0))
         self.ent_gpu_sh.setText(_s("gpu_sh_degree", 10))
         self.ent_tpb.setText(_s("gpu_threads_per_block", 128))
@@ -1625,18 +1669,26 @@ class MonteCarloPage(QtWidgets.QWidget):
         # 4. Backend
         gpu_enabled = self.toggle_gpu.isChecked()
         gravity_mode = self.cb_mc_gravity_mode.currentData() or "follow_mission"
+        mc_backend = str(self.cb_mc_backend.currentData() or "auto")
         st_lrps_dir = self.ent_mc_st_lrps_model_dir.text().strip()
         
-        if gpu_enabled and gravity_mode == "classic_sh":
+        if gpu_enabled and (gravity_mode == "classic_sh" or mc_backend == "gpu_sh"):
             sh_deg = self._parse_int(self.ent_gpu_sh.text(), 0)
             if sh_deg > 24:
-                errors.append("Classic-SH GPU mode only supports SH degree <= 24.")
-                ok = False
+                warnings.append(
+                    "Requested SH degree > 24: current true GPU classic-SH tier is 24; "
+                    "backend policy records CPU SH fallback without clipping."
+                )
                 
         if not gpu_enabled:
             warnings.append("GPU disabled: CPU full-fidelity mode may be slower.")
+            if mc_backend.startswith("gpu_"):
+                warnings.append("Explicit GPU MC backend selected; backend policy will record the resolved fallback or GPU override.")
             
-        if gravity_mode == "st_lrps" and not st_lrps_dir:
+        if (
+            gravity_mode == "st_lrps"
+            or mc_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
+        ) and not st_lrps_dir:
             warnings.append("ST-LRPS model dir is blank. MC will fall back to main Force Models setting.")
             
         # 5. Integration
@@ -1686,6 +1738,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.ent_sigma_cr.textChanged.connect(trigger)
         self.toggle_gpu.toggled.connect(trigger)
         self.cb_mc_gravity_mode.currentIndexChanged.connect(trigger)
+        self.cb_mc_backend.currentIndexChanged.connect(trigger)
         self.ent_mc_st_lrps_model_dir.textChanged.connect(trigger)
         self.ent_gpu_sh.textChanged.connect(trigger)
         self.ent_dt.textChanged.connect(trigger)

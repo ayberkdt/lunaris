@@ -5,7 +5,7 @@ export default function Hero() {
     <section className={styles.heroSection}>
       <div className="container" style={{ position: 'relative', height: '100%' }}>
         <div className={styles.contentWrapper} style={{ pointerEvents: 'auto' }}>
-          <div className={styles.badge}>LUNARIS ALPHA 0.1.0</div>
+          <div className={styles.badge}>LUNARIS ALPHA</div>
           <h1>
             Lunar orbit propagation<br/> 
             <span className={styles.gradientText}>& gravity-modeling</span> framework.

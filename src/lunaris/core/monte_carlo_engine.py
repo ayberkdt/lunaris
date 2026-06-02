@@ -452,6 +452,7 @@ class MonteCarloEngine:
         self._surface_provider = surface_provider
         self._topo_grid = topo_grid
         self._backend_note = ""
+        self._backend_plan = None
         if self._topo_grid is None and self._surface_provider is not None and hasattr(self._surface_provider, "grids"):
             try:
                 self._topo_grid = self._surface_provider.grids().topo  # type: ignore[attr-defined]
@@ -530,6 +531,9 @@ class MonteCarloEngine:
         from lunaris.core.dynamics import DynamicsEngine
 
         cfg = self._sim_cfg
+        mc_backend = str(getattr(self._mc, "mc_backend", "auto") or "auto")
+        mc_forces_classic_sh = mc_backend in {"cpu_sh", "gpu_sh"}
+        mc_forces_st_lrps = mc_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
         grav_model = None
         ephem_manager = None
         surface_provider = self._surface_provider
@@ -537,7 +541,14 @@ class MonteCarloEngine:
 
         if bool(cfg.flags.enable_sh):
             try:
-                if bool(getattr(cfg.gravity, "uses_st_lrps", False)):
+                use_st_lrps_gravity = (
+                    mc_forces_st_lrps
+                    or (
+                        not mc_forces_classic_sh
+                        and bool(getattr(cfg.gravity, "uses_st_lrps", False))
+                    )
+                )
+                if use_st_lrps_gravity:
                     from lunaris.physics.surrogate_gravity import SurrogateGravityModel
 
                     # Prioritize the MC-specific ST-LRPS run directory if provided.
@@ -614,6 +625,7 @@ class MonteCarloEngine:
         from lunaris.core.mc_propagator import CPUBatchPropagator
 
         plan = resolve_mc_backend_policy(self._mc, self._sim_cfg)
+        self._backend_plan = plan
 
         # Emit all warnings produced by the policy resolver
         for w in plan.warnings:
@@ -770,6 +782,7 @@ class MonteCarloEngine:
         else:
             backend_name = "CPU"
         backend_diag = prop.diagnostics_snapshot() if hasattr(prop, "diagnostics_snapshot") else {}
+        backend_plan = getattr(self, "_backend_plan", None)
         requested_max_batch = mc.effective_max_batch()
         if hasattr(prop, "recommended_max_batch"):
             max_batch = int(prop.recommended_max_batch(requested_max_batch))
@@ -910,25 +923,49 @@ class MonteCarloEngine:
                 "st_lrps_degree_min": getattr(_grav_model, "degree_min", None),
                 "st_lrps_degree_max": getattr(_grav_model, "degree_max", None),
                 "effective_degree_max": getattr(_grav_model, "effective_degree_max", None),
+                "runtime_model_kind": str(
+                    getattr(getattr(_grav_model, "_force_runtime", None), "runtime_model_kind", "")
+                    or getattr(_grav_model, "config", {}).get("runtime_model_kind", "potential_autograd")
+                ),
             }
 
         # Collect backend-plan provenance for the archive
         try:
-            from lunaris.core.mc_backend_policy import resolve_mc_backend_policy as _resolve
-            _plan = _resolve(mc, self._sim_cfg)
+            _plan = backend_plan
+            if _plan is None:
+                from lunaris.core.mc_backend_policy import resolve_mc_backend_policy as _resolve
+                _plan = _resolve(mc, self._sim_cfg)
+            actual_sh_degree = backend_diag.get("actual_gpu_sh_degree", backend_diag.get("gpu_sh_degree"))
+            if actual_sh_degree is None and _grav_model is not None:
+                actual_sh_degree = getattr(_grav_model, "effective_degree_max", getattr(_grav_model, "degree", None))
             _plan_meta: dict[str, Any] = {
+                "requested_mc_backend": getattr(_plan, "requested_backend", "auto"),
+                "actual_mc_backend": getattr(_plan, "actual_backend", _plan.final_backend.value),
                 "mc_backend": _plan.final_backend.value,
                 "requested_use_gpu": bool(mc.use_gpu),
                 "final_use_gpu": _plan.use_gpu,
                 "plan_gravity_backend": _plan.gravity_backend,   # renamed: avoids collision with _st_lrps_meta["gravity_backend"]
+                "requested_sh_degree": getattr(_plan, "requested_sh_degree", int(mc.gpu_sh_degree)),
+                "actual_sh_degree": actual_sh_degree,
+                "gpu_sh_max_degree": getattr(_plan, "gpu_sh_max_degree", None),
+                "gpu_sh_supported_tiers": list(getattr(_plan, "gpu_sh_supported_tiers", ())),
+                "runtime_model_kind": _st_lrps_meta.get(
+                    "runtime_model_kind",
+                    getattr(_plan, "runtime_model_kind", None),
+                ),
                 "torch_cuda_available": _plan.torch_cuda_available,
                 "numba_cuda_available": _plan.numba_cuda_available,
+                "cuda_device_name": backend_diag.get("device_name") or getattr(_plan, "cuda_device_name", None),
+                "dtype": backend_diag.get("dtype") or getattr(_plan, "dtype", "float64"),
                 "integrator": _plan.integrator,
                 "batch_size": max_batch,
-                "fallback_reason": _plan.reason if not _plan.use_gpu else "",
+                "fallback_reason": getattr(_plan, "fallback_reason", "") or (_plan.reason if not _plan.use_gpu else ""),
             }
         except Exception:
-            _plan_meta = {}
+            _plan_meta = {
+                "requested_mc_backend": str(getattr(mc, "mc_backend", "auto") or "auto"),
+                "requested_sh_degree": int(mc.gpu_sh_degree),
+            }
 
         writer.write_metadata(
             n_samples=N,
@@ -1006,6 +1043,12 @@ class MonteCarloEngine:
                 "backend_note": self._backend_note,
                 "output_path": str(mc.output_path_resolved),
                 "backend_diagnostics": backend_diag,
+                "requested_mc_backend": _plan_meta.get("requested_mc_backend"),
+                "actual_mc_backend": _plan_meta.get("actual_mc_backend"),
+                "requested_sh_degree": _plan_meta.get("requested_sh_degree"),
+                "actual_sh_degree": _plan_meta.get("actual_sh_degree"),
+                "runtime_model_kind": _plan_meta.get("runtime_model_kind"),
+                "fallback_reason": _plan_meta.get("fallback_reason"),
             },
         )
 
