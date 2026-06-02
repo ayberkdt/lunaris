@@ -313,6 +313,15 @@ until orbit drift is benchmarked for the target scenario set. See
 [docs/OPTIMIZATION_ROADMAP.md](docs/OPTIMIZATION_ROADMAP.md) for the current
 method-selection policy.
 
+**Reproducible HPC sweeps.** Self-describing experiment definitions live under
+[`hpc/scenarios/`](hpc/scenarios/) as JSONL files (one experiment per line).
+Submit them as Slurm arrays via `hpc/slurm_train_scenario_array.sbatch` to run
+clean, parallel ablation / capacity / encoding / force-direct sweeps. Scenario
+names are intentionally long and self-describing (e.g.
+`PotentialAutograd_A6FullRecommended_3Band_RawXYZ_DirectionW020_Seed42`) and
+double as the run-directory name. See the
+[HPC scenario-arrays guide](docs/HPC.md#1b-st-lrps-scenario-arrays-reproducible-sweeps).
+
 Model target semantics are recorded explicitly through versioned
 `artifact_contract` and `dataset_contract` blocks in new configs/checkpoints.
 The contract distinguishes residual labels from full-field labels, records the

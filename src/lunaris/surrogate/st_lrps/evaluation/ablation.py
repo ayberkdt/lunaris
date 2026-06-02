@@ -214,14 +214,13 @@ ABLATION_REGISTRY: List[AblationSpec] = [
         experimental=True,
         include_in_default_matrix=False,
     ),
-    AblationSpec(
-        name="direct_accel_baseline_optional_only_if_easy",
-        description="Placeholder for a direct-acceleration baseline; not part of default matrix.",
-        cli_overrides=[],
-        expected_purpose="Reserved for a future non-ST-LRPS baseline; omitted to preserve scalar potential design.",
-        experimental=True,
-        include_in_default_matrix=False,
-    ),
+    # NOTE: A direct-acceleration baseline is intentionally NOT registered here.
+    # The scalar-potential ablation matrix trains potential_autograd models only,
+    # so a placeholder with empty overrides would silently train the normal
+    # scalar-potential model under a misleading "direct accel" name. The real
+    # direct residual-acceleration runtime is the separate force_direct student
+    # (lunaris-train-force-direct); benchmark it via its own scenario sweep
+    # (hpc/scenarios/st_lrps_force_direct_student_sweep.jsonl), not this matrix.
 ]
 
 # Backward-compatible list-of-dicts shape used by older tests/callers.
