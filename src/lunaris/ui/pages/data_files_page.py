@@ -3,7 +3,7 @@
 Data & Files Page (UI)
 
 This module defines the **DataPage** (and its lightweight state container) used by the
-ST-LRPS Studio UI to configure external data sources required by the simulation.
+Lunaris Mission Studio UI to configure external data sources required by the simulation.
 
 Typical responsibilities
 - Select and validate filesystem paths for:

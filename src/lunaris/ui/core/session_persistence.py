@@ -24,10 +24,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from lunaris.ui.core.ui_commons import APP_NAME
+
 # Canonical session schema. Bump SESSION_SCHEMA_VERSION whenever the on-disk
 # layout changes in a way that requires migration in migrate_session_payload().
 SESSION_SCHEMA_VERSION = 2
-SESSION_APP_NAME = "ST-LRPS Studio"
+# Saved-profile metadata tracks the visible app name (single source of truth in
+# ui_commons.APP_NAME). Older profiles written as "ST-LRPS Studio" stay readable:
+# migration only keys off ``meta.schema_version`` and never rejects on app name.
+SESSION_APP_NAME = APP_NAME
 
 
 def migrate_session_payload(

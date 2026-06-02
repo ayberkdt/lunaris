@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Force Models Page (UI Part) for ST-LRPS Studio.
+Force Models Page (UI Part) for Lunaris Mission Studio.
 
 This module defines the Force Models configuration page that lives inside the
 MainWindow's page stack (e.g., Page 2). The page owns all force-model widgets

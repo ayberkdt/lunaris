@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Orbit Configuration & Visualization Module for ST-LRPS Studio.
+Orbit Configuration & Visualization Module for Lunaris Mission Studio.
 
 This module manages the user interface for defining the Initial State Vector 
 of the spacecraft using Keplerian elements. It integrates real-time mathematical 
@@ -69,7 +69,18 @@ except ImportError as e:
 
 
 try:
-    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, get_icon, R_MOON_KM, MU_MOON_KM3_S2, StatusBadge
+    from lunaris.ui.core.ui_commons import (
+        THEME,
+        ORBIT_THEME,
+        NumericDragLineEdit,
+        get_icon,
+        hex_to_rgba_float,
+        rgba_css_to_tuple,
+        with_alpha,
+        R_MOON_KM,
+        MU_MOON_KM3_S2,
+        StatusBadge,
+    )
     R_MOON = R_MOON_KM  # local alias used throughout this module
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
@@ -93,184 +104,290 @@ except ImportError:
 
 class OrbitViz3D(QtWidgets.QWidget):
     """
-    3D Orbit Visualizer using PyQtGraph OpenGL.
-    Displays Moon as central sphere and orbit as elliptical line.
+    3D orbit visualizer using pyqtgraph's OpenGL backend.
+
+    Renders the Moon as a softly shaded regolith sphere with faint lat/long
+    guide rings, the orbital trajectory as a clean translucent arc with an
+    optional glow underlay, and labelled markers for periapsis, apoapsis, and
+    the current spacecraft position (true anomaly).  All colors come from
+    ``ORBIT_THEME`` so the preview matches the Lunar Graphite palette.
     """
-    
+
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(320, 280)
-        
-        # Keplerian elements storage
+        self.setMinimumSize(360, 340)
+
+        # Keplerian element storage
         self._a_km = 2000.0
         self._e = 0.0
         self._inc_deg = 90.0
         self._raan_deg = 0.0
         self._argp_deg = 0.0
         self._ta_deg = 0.0
-        
-        # Create layout
+
+        # GL item handles (created lazily / refreshed on each update)
+        self.gl_widget = None
+        self.orbit_line = None
+        self.orbit_glow = None
+        self.periapsis_marker = None
+        self.apoapsis_marker = None
+        self.spacecraft_marker = None
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        
+        layout.setSpacing(0)
+
         if not HAS_OPENGL:
-            self._install_fallback(
-                layout,
-                "OpenGL visualization unavailable.\n"
-                "Install pyqtgraph with OpenGL support:\n"
-                "pip install pyqtgraph pyopengl",
-            )
+            self._install_fallback(layout)
             return
 
         try:
             # pyqtgraph's GLViewWidget reads the *global* 'background' config
-            # option in its constructor and raises ("make a color from (None,)")
-            # if it is None. Another pyqtgraph-using subsystem in the same
-            # process (e.g. the ST-LRPS Studio) can set that process-wide, so
-            # pin a valid value before constructing the widget.
+            # option in its constructor and raises if it is None. Another
+            # pyqtgraph-using subsystem in the same process can set that
+            # process-wide, so pin a valid value before constructing the widget.
             if pg.getConfigOption('background') is None:
-                pg.setConfigOption('background', THEME['bg_space'])
+                pg.setConfigOption('background', ORBIT_THEME['space_bg'])
 
             self.gl_widget = gl.GLViewWidget()
-            self.gl_widget.setBackgroundColor(THEME['bg_space'])
+            self.gl_widget.setBackgroundColor(ORBIT_THEME['space_bg'])
             self.gl_widget.opts['distance'] = 8000  # Initial camera distance (km)
-            self.gl_widget.opts['elevation'] = 30
+            self.gl_widget.opts['elevation'] = 28
             self.gl_widget.opts['azimuth'] = 45
 
-            # Add coordinate axes + Moon sphere
             self._add_axes()
             self._create_moon()
         except Exception as exc:
             # A 3D preview must never prevent the mission window from opening.
             print(f"[3D Viz] GL initialization failed, using fallback: {exc}")
             self.gl_widget = None
-            self._install_fallback(layout, "3D orbit preview is unavailable on this system.")
+            self._install_fallback(layout)
             return
 
-        # Orbit line (will be updated)
-        self.orbit_line = None
+        layout.addWidget(self.gl_widget, 1)
+        layout.addLayout(self._build_camera_bar())
 
-        layout.addWidget(self.gl_widget)
-        
-        # Add view controls
-        control_bar = QtWidgets.QHBoxLayout()
-        control_bar.setContentsMargins(8, 4, 8, 8)
-        
-        self.btn_reset_view = QtWidgets.QPushButton("Reset View")
-        self.btn_reset_view.setFixedHeight(28)
-        self.btn_reset_view.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Fixed,
-            QtWidgets.QSizePolicy.Policy.Fixed,
-        )
-        # Reserve a little extra width so the label never looks clipped when the
-        # global UI stylesheet increases horizontal padding or the active font
-        # metrics differ slightly across Windows machines.
-        reset_text_w = self.btn_reset_view.fontMetrics().horizontalAdvance("Reset View")
-        self.btn_reset_view.setMinimumWidth(max(108, reset_text_w + 28))
-        self.btn_reset_view.clicked.connect(self.reset_view)
-        
-        control_bar.addWidget(self.btn_reset_view)
-        control_bar.addStretch()
-        
-        layout.addLayout(control_bar)
-        
         # Initial draw
-        QtCore.QTimer.singleShot(100, lambda: self.update_orbit())
+        QtCore.QTimer.singleShot(100, self.update_orbit)
 
-    def _install_fallback(self, layout: QtWidgets.QVBoxLayout, message: str) -> None:
-        """Show a centered notice in place of the 3D viewer (no GL / GL failure)."""
-        label = QtWidgets.QLabel(message)
-        label.setAlignment(QtCore.Qt.AlignCenter)
-        label.setWordWrap(True)
-        label.setStyleSheet(f"color: {THEME['fg_muted']}; padding: 20px;")
-        layout.addWidget(label)
+    # -------------------------------------------------------------------------
+    # Construction helpers
+    # -------------------------------------------------------------------------
+
+    def _build_camera_bar(self) -> QtWidgets.QHBoxLayout:
+        """Compact camera-preset row: Reset | Top | Side | Iso | Fit."""
+        bar = QtWidgets.QHBoxLayout()
+        bar.setContentsMargins(8, 6, 8, 4)
+        bar.setSpacing(6)
+
+        presets = (
+            ("Reset", "Default mission view", self.reset_view),
+            ("Top", "Look straight down +Z", self._view_top),
+            ("Side", "Equatorial side view", self._view_side),
+            ("Iso", "Isometric mission view", self._view_iso),
+            ("Fit", "Frame the whole orbit", self._view_fit),
+        )
+        self._cam_buttons = []
+        for label, tip, handler in presets:
+            btn = QtWidgets.QPushButton(label)
+            btn.setCursor(QtCore.Qt.PointingHandCursor)
+            btn.setFixedHeight(26)
+            btn.setMinimumWidth(46)
+            btn.setToolTip(tip)
+            btn.clicked.connect(handler)
+            self._cam_buttons.append(btn)
+            bar.addWidget(btn)
+        bar.addStretch(1)
+        return bar
+
+    def _install_fallback(self, layout: QtWidgets.QVBoxLayout) -> None:
+        """Designed empty-state card shown when OpenGL is unavailable."""
+        card = QtWidgets.QFrame()
+        card.setObjectName("vizFallback")
+        card.setStyleSheet(
+            f"QFrame#vizFallback {{"
+            f"  background: {THEME['bg_card_alt']};"
+            f"  border: 1px solid {THEME['border_soft']};"
+            f"  border-radius: 12px;"
+            f"}}"
+        )
+        v = QtWidgets.QVBoxLayout(card)
+        v.setContentsMargins(28, 28, 28, 28)
+        v.setSpacing(10)
+        v.addStretch(1)
+
+        try:
+            icon_lbl = QtWidgets.QLabel()
+            icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
+            pix = get_icon("fa6s.cube", THEME['fg_muted']).pixmap(48, 48)
+            if not pix.isNull():
+                icon_lbl.setPixmap(pix)
+                v.addWidget(icon_lbl)
+        except Exception:
+            pass
+
+        title = QtWidgets.QLabel("3D preview unavailable")
+        title.setAlignment(QtCore.Qt.AlignCenter)
+        title.setStyleSheet(
+            f"color: {THEME['fg_soft']}; font-size: 12pt; font-weight: 700;"
+        )
+        v.addWidget(title)
+
+        body = QtWidgets.QLabel(
+            "The orbit can still be configured normally — only the interactive "
+            "3D preview needs OpenGL, which is not available on this system."
+        )
+        body.setAlignment(QtCore.Qt.AlignCenter)
+        body.setWordWrap(True)
+        body.setStyleSheet(f"color: {THEME['fg_muted']};")
+        v.addWidget(body)
+
+        hint = QtWidgets.QLabel("Install support:   pip install pyqtgraph PyOpenGL")
+        hint.setAlignment(QtCore.Qt.AlignCenter)
+        hint.setStyleSheet(
+            f"color: {THEME['fg_muted']}; font-family: Consolas, monospace; font-size: 9pt;"
+        )
+        v.addWidget(hint)
+        v.addStretch(1)
+
+        layout.addWidget(card)
 
     def _add_axes(self):
-        """Add muted ECI reference axes for orientation.
+        """Add muted ECI reference axes — orientation hints, not the focus.
 
-        Full-saturation red/green/blue axes read as harsh against the dark
-        lunar scene. These are deliberately desaturated, thin, and translucent —
-        orientation hints rather than the visual focus of the preview.
+        Colors come from ``ORBIT_THEME`` (desaturated, translucent red/teal/blue)
+        so the axes read as quiet guides against the dark lunar scene.
         """
         axis_len = 3600.0
-        axis_specs = (
-            ((axis_len, 0.0, 0.0), (0.86, 0.42, 0.46, 0.32)),  # X (muted red)
-            ((0.0, axis_len, 0.0), (0.50, 0.80, 0.52, 0.32)),  # Y (muted green)
-            ((0.0, 0.0, axis_len), (0.45, 0.62, 0.95, 0.32)),  # Z (muted blue)
+        specs = (
+            (ORBIT_THEME['axis_x'], (axis_len, 0.0, 0.0), 'X'),
+            (ORBIT_THEME['axis_y'], (0.0, axis_len, 0.0), 'Y'),
+            (ORBIT_THEME['axis_z'], (0.0, 0.0, axis_len), 'Z'),
         )
-        for end, color in axis_specs:
+        for css, end, name in specs:
+            color = rgba_css_to_tuple(css)
             axis = gl.GLLinePlotItem(
                 pos=np.array([[0.0, 0.0, 0.0], list(end)]),
-                color=color, width=1.4, antialias=True,
+                color=color, width=2.2, antialias=True,
             )
             axis.setGLOptions('translucent')
             self.gl_widget.addItem(axis)
-    
+            # Crisp, fully-opaque X/Y/Z label so orientation reads clearly.
+            try:
+                label_color = (
+                    int(round(color[0] * 255)),
+                    int(round(color[1] * 255)),
+                    int(round(color[2] * 255)),
+                    255,
+                )
+                label = gl.GLTextItem(
+                    pos=np.array(end, dtype=float) * 1.05, text=name, color=label_color
+                )
+                self.gl_widget.addItem(label)
+            except Exception:
+                pass
+
     def _create_moon(self):
-        """Create the Moon as a softly-shaded regolith sphere.
+        """Create the Moon as a softly shaded regolith sphere.
 
-        A higher-resolution mesh removes the faceted look, and a soft, slightly
-        warm neutral grey reads more like the Moon under the 'shaded' lighting
-        model than the previous flat 0.5 grey.
+        A higher-resolution smooth mesh removes the faceted look and the
+        'shaded' lighting model gives a natural lit/terminator gradient instead
+        of the previous flat toy-grey. Faint guide rings add a scientific feel.
         """
-        md = gl.MeshData.sphere(rows=32, cols=64, radius=R_MOON)
+        md = gl.MeshData.sphere(rows=48, cols=96, radius=R_MOON)
 
-        colors = np.ones((md.faceCount(), 4), dtype=float)
-        colors[:, 0] = 0.52  # R
-        colors[:, 1] = 0.51  # G
-        colors[:, 2] = 0.49  # B  (very slight warm bias)
-        colors[:, 3] = 1.0   # A
+        base = hex_to_rgba_float(ORBIT_THEME['moon_mid'])
+        colors = np.empty((md.faceCount(), 4), dtype=float)
+        colors[:] = base
         md.setFaceColors(colors)
 
         self.moon_mesh = gl.GLMeshItem(
             meshdata=md,
             smooth=True,
             shader='shaded',
-            glOptions='opaque'
+            glOptions='opaque',
         )
         self.gl_widget.addItem(self.moon_mesh)
-    
-    def _kepler_to_cartesian(self, a_km, e, inc_rad, raan_rad, argp_rad, ta_rad):
-        """
-        Convert Keplerian elements to 3D Cartesian coordinates.
-        Returns array of points for one orbit.
-        """
-        mu = MU_MOON_KM3_S2  # km³/s², derived from lunaris.common.constants
+        self._add_moon_grid()
 
-        # Generate true anomalies from 0 to 2π
-        n_points = 200
-        true_anomalies = np.linspace(0, 2 * np.pi, n_points)
-        
-        # Calculate radius for each true anomaly
-        r = a_km * (1 - e**2) / (1 + e * np.cos(true_anomalies))
-        
-        # Position in perifocal frame (PQW)
-        x_pqw = r * np.cos(true_anomalies)
-        y_pqw = r * np.sin(true_anomalies)
-        z_pqw = np.zeros_like(true_anomalies)
-        
-        # Rotation matrix from perifocal to ECI
-        cos_raan = np.cos(raan_rad)
-        sin_raan = np.sin(raan_rad)
-        cos_inc = np.cos(inc_rad)
-        sin_inc = np.sin(inc_rad)
-        cos_argp = np.cos(argp_rad)
-        sin_argp = np.sin(argp_rad)
-        
-        # Combined rotation matrix: R_z(Ω) * R_x(i) * R_z(ω)
-        R = np.array([
-            [cos_raan*cos_argp - sin_raan*cos_inc*sin_argp, -cos_raan*sin_argp - sin_raan*cos_inc*cos_argp, sin_raan*sin_inc],
-            [sin_raan*cos_argp + cos_raan*cos_inc*sin_argp, -sin_raan*sin_argp + cos_raan*cos_inc*cos_argp, -cos_raan*sin_inc],
-            [sin_inc*sin_argp, sin_inc*cos_argp, cos_inc]
+    def _add_moon_grid(self):
+        """Add very faint latitude/longitude guide rings for a scientific look."""
+        ring_color = hex_to_rgba_float(ORBIT_THEME['moon_light'], 0.10)
+        r = R_MOON * 1.001
+        n = 120
+        t = np.linspace(0.0, 2.0 * np.pi, n)
+
+        # Latitude rings
+        for lat_deg in (-60.0, -30.0, 0.0, 30.0, 60.0):
+            lat = np.deg2rad(lat_deg)
+            rr = r * np.cos(lat)
+            z = r * np.sin(lat)
+            pts = np.column_stack([rr * np.cos(t), rr * np.sin(t), np.full_like(t, z)])
+            ring = gl.GLLinePlotItem(pos=pts, color=ring_color, width=1.0, antialias=True)
+            ring.setGLOptions('translucent')
+            self.gl_widget.addItem(ring)
+
+        # Meridians
+        phi = np.linspace(-np.pi, np.pi, n)
+        for lon_deg in (0.0, 45.0, 90.0, 135.0):
+            lon = np.deg2rad(lon_deg)
+            pts = np.column_stack([
+                r * np.cos(phi) * np.cos(lon),
+                r * np.cos(phi) * np.sin(lon),
+                r * np.sin(phi),
+            ])
+            mer = gl.GLLinePlotItem(pos=pts, color=ring_color, width=1.0, antialias=True)
+            mer.setGLOptions('translucent')
+            self.gl_widget.addItem(mer)
+
+    # -------------------------------------------------------------------------
+    # Orbital geometry
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _rotation_matrix(inc_rad, raan_rad, argp_rad):
+        """Perifocal (PQW) -> ECI rotation: R_z(raan) R_x(inc) R_z(argp)."""
+        cr, sr = np.cos(raan_rad), np.sin(raan_rad)
+        ci, si = np.cos(inc_rad), np.sin(inc_rad)
+        cw, sw = np.cos(argp_rad), np.sin(argp_rad)
+        return np.array([
+            [cr * cw - sr * ci * sw, -cr * sw - sr * ci * cw, sr * si],
+            [sr * cw + cr * ci * sw, -sr * sw + cr * ci * cw, -cr * si],
+            [si * sw, si * cw, ci],
         ])
-        
-        # Transform to ECI
-        points_pqw = np.stack([x_pqw, y_pqw, z_pqw], axis=1)
-        points_eci = points_pqw @ R.T
-        
-        return points_eci
-    
-    def set_orbit_params(self, a_km: float, e: float, inc_deg: float, 
+
+    def _kepler_to_cartesian(self, a_km, e, inc_rad, raan_rad, argp_rad, ta_rad=0.0):
+        """Convert Keplerian elements to a full-orbit array of ECI points."""
+        n_points = 360
+        true_anomalies = np.linspace(0.0, 2.0 * np.pi, n_points)
+
+        r = a_km * (1 - e ** 2) / (1 + e * np.cos(true_anomalies))
+        pqw = np.stack([
+            r * np.cos(true_anomalies),
+            r * np.sin(true_anomalies),
+            np.zeros_like(true_anomalies),
+        ], axis=1)
+
+        R = self._rotation_matrix(inc_rad, raan_rad, argp_rad)
+        return pqw @ R.T
+
+    def _eci_point_at_ta(self, ta_deg):
+        """ECI position (km) for a single true anomaly using current elements."""
+        ta = np.deg2rad(ta_deg)
+        denom = 1 + self._e * np.cos(ta)
+        if abs(denom) < 1e-9:
+            denom = 1e-9
+        r = self._a_km * (1 - self._e ** 2) / denom
+        pqw = np.array([r * np.cos(ta), r * np.sin(ta), 0.0])
+        R = self._rotation_matrix(
+            np.deg2rad(self._inc_deg),
+            np.deg2rad(self._raan_deg),
+            np.deg2rad(self._argp_deg),
+        )
+        return R @ pqw
+
+    def set_orbit_params(self, a_km: float, e: float, inc_deg: float,
                          raan_deg: float, argp_deg: float, ta_deg: float):
         """Update the orbit parameters and redraw."""
         self._a_km = max(1.0, float(a_km))
@@ -279,79 +396,119 @@ class OrbitViz3D(QtWidgets.QWidget):
         self._raan_deg = float(raan_deg)
         self._argp_deg = float(argp_deg)
         self._ta_deg = float(ta_deg)
-        
+
         self.update_orbit()
-    
+
     def update_orbit(self):
-        """Update the 3D orbit visualization."""
+        """Redraw the orbit line, glow underlay, and the three markers."""
         if not HAS_OPENGL or getattr(self, 'gl_widget', None) is None:
             return
-        
-        # Convert degrees to radians
+
         inc_rad = np.deg2rad(self._inc_deg)
         raan_rad = np.deg2rad(self._raan_deg)
         argp_rad = np.deg2rad(self._argp_deg)
         ta_rad = np.deg2rad(self._ta_deg)
-        
+
         try:
-            # Generate orbit points
             points = self._kepler_to_cartesian(
                 self._a_km, self._e, inc_rad, raan_rad, argp_rad, ta_rad
             )
-            
-            # Remove old orbit line if exists
-            if self.orbit_line is not None:
-                self.gl_widget.removeItem(self.orbit_line)
-            
-            # Create new orbit line — a clean cyan accent (matching the app's
-            # primary accent) that reads crisply against the grey Moon and dark
-            # space, instead of the muddy tan that blended with the regolith.
+
+            # Refresh the trajectory items (glow underlay first, crisp line on top).
+            for attr in ('orbit_glow', 'orbit_line'):
+                item = getattr(self, attr, None)
+                if item is not None:
+                    self.gl_widget.removeItem(item)
+                    setattr(self, attr, None)
+
+            self.orbit_glow = gl.GLLinePlotItem(
+                pos=points,
+                color=hex_to_rgba_float(ORBIT_THEME['orbit_glow'], 0.35),
+                width=8.0,
+                antialias=True,
+                glOptions='translucent',
+            )
+            self.gl_widget.addItem(self.orbit_glow)
+
             self.orbit_line = gl.GLLinePlotItem(
                 pos=points,
-                color=(0.30, 0.80, 1.0, 0.95),
-                width=2.5,
+                color=hex_to_rgba_float(ORBIT_THEME['orbit_line'], 1.0),
+                width=3.2,
                 antialias=True,
-                glOptions='translucent'
+                glOptions='translucent',
             )
             self.gl_widget.addItem(self.orbit_line)
-            
-            # Add periapsis marker
-            self._add_periapsis_marker(points[0])
-            
-        except Exception as e:
-            print(f"[3D Viz] Error updating orbit: {e}")
-    
-    def _add_periapsis_marker(self, periapsis_point):
-        """Add a marker at periapsis."""
-        if hasattr(self, 'periapsis_marker'):
-            self.gl_widget.removeItem(self.periapsis_marker)
-        
-        # Create a small sphere at periapsis
-        md = gl.MeshData.sphere(rows=10, cols=20, radius=50)  # 50km radius marker
-        
-        colors = np.ones((md.faceCount(), 4), dtype=float)
-        colors[:, 0] = 0.84
-        colors[:, 1] = 0.70
-        colors[:, 2] = 0.43
+
+            # Markers at periapsis (nu=0), apoapsis (nu=180), and current nu.
+            r_marker = self._marker_radius_km()
+            self._update_marker('periapsis_marker', self._eci_point_at_ta(0.0),
+                                ORBIT_THEME['periapsis'], r_marker)
+            self._update_marker('apoapsis_marker', self._eci_point_at_ta(180.0),
+                                ORBIT_THEME['apoapsis'], r_marker)
+            self._update_marker('spacecraft_marker', self._eci_point_at_ta(self._ta_deg),
+                                ORBIT_THEME['spacecraft'], r_marker * 0.72)
+
+        except Exception as exc:
+            print(f"[3D Viz] Error updating orbit: {exc}")
+
+    def _marker_radius_km(self) -> float:
+        """Marker radius (km) scaled to the orbit so it never looks cartoonish.
+
+        Scales with the orbit extent (aposelene radius, floored at the Moon
+        radius) and is clamped so markers stay visible on tight orbits without
+        becoming huge balls on very large ones.
+        """
+        extent = max(self._a_km * (1.0 + self._e), R_MOON)
+        return float(np.clip(0.006 * extent, 12.0, 40.0))
+
+    def _update_marker(self, attr: str, point, color_token: str, radius: float):
+        """Create/replace a small shaded sphere marker stored under *attr*."""
+        existing = getattr(self, attr, None)
+        if existing is not None:
+            self.gl_widget.removeItem(existing)
+            setattr(self, attr, None)
+
+        md = gl.MeshData.sphere(rows=12, cols=24, radius=radius)
+        rgba = hex_to_rgba_float(color_token)
+        colors = np.empty((md.faceCount(), 4), dtype=float)
+        colors[:] = rgba
         md.setFaceColors(colors)
-        
-        self.periapsis_marker = gl.GLMeshItem(
-            meshdata=md,
-            smooth=True,
-            shader='shaded',
-            glOptions='translucent'
+
+        marker = gl.GLMeshItem(
+            meshdata=md, smooth=True, shader='shaded', glOptions='translucent'
         )
-        self.periapsis_marker.translate(*periapsis_point)
-        self.gl_widget.addItem(self.periapsis_marker)
-    
-    def reset_view(self, _checked: bool = False):
-        """Reset camera to default position."""
+        marker.translate(float(point[0]), float(point[1]), float(point[2]))
+        self.gl_widget.addItem(marker)
+        setattr(self, attr, marker)
+
+    # -------------------------------------------------------------------------
+    # Camera presets
+    # -------------------------------------------------------------------------
+
+    def _set_camera(self, **kwargs):
         if HAS_OPENGL and getattr(self, 'gl_widget', None) is not None:
-            self.gl_widget.setCameraPosition(
-                distance=8000,
-                elevation=30,
-                azimuth=45
-            )
+            self.gl_widget.setCameraPosition(**kwargs)
+
+    def reset_view(self, _checked: bool = False):
+        """Reset camera to the default mission view."""
+        self._set_camera(distance=8000, elevation=28, azimuth=45)
+
+    def _view_top(self, _checked: bool = False):
+        """Look straight down the +Z axis."""
+        self._set_camera(elevation=90, azimuth=0)
+
+    def _view_side(self, _checked: bool = False):
+        """Equatorial side view."""
+        self._set_camera(elevation=0, azimuth=0)
+
+    def _view_iso(self, _checked: bool = False):
+        """Isometric, mission-style view."""
+        self._set_camera(distance=8000, elevation=26, azimuth=135)
+
+    def _view_fit(self, _checked: bool = False):
+        """Frame the whole orbit by setting distance from its aposelene radius."""
+        ra = self._a_km * (1.0 + self._e)  # aposelene radius (km)
+        self._set_camera(distance=max(3000.0, 2.6 * ra))
 
 
 
@@ -374,7 +531,36 @@ class OrbitPage(QtWidgets.QWidget):
         """Factory for standard titled group boxes (Cards)."""
         gb = QtWidgets.QGroupBox(title)
         return gb
-    
+
+    def _metric_chip(self, title: str) -> "tuple[QtWidgets.QFrame, QtWidgets.QLabel]":
+        """Return a compact ``(frame, value_label)`` metric chip for the info strip."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("orbitMetric")
+        frame.setStyleSheet(
+            f"QFrame#orbitMetric {{"
+            f"  background: {THEME['bg_card_alt']};"
+            f"  border: 1px solid {THEME['border_soft']};"
+            f"  border-radius: 8px;"
+            f"}}"
+        )
+        v = QtWidgets.QVBoxLayout(frame)
+        v.setContentsMargins(10, 6, 10, 6)
+        v.setSpacing(1)
+
+        title_lbl = QtWidgets.QLabel(title)
+        title_lbl.setStyleSheet(
+            f"color: {THEME['fg_muted']}; font-size: 8pt; font-weight: 600; border: none;"
+        )
+        v.addWidget(title_lbl)
+
+        value_lbl = QtWidgets.QLabel("--")
+        value_lbl.setStyleSheet(
+            f"color: {THEME['fg_soft']}; font-size: 11pt; font-weight: 700;"
+            f" font-family: Consolas, monospace; border: none;"
+        )
+        v.addWidget(value_lbl)
+        return frame, value_lbl
+
     def _build_ui(self):
         """Constructs the layout of the Orbit Configuration Page."""
         layout = QtWidgets.QGridLayout(self)
@@ -435,8 +621,8 @@ class OrbitPage(QtWidgets.QWidget):
                     background-color: rgba(255, 255, 255, 0.04);
                 }}
                 QPushButton:checked {{
-                    background-color: rgba(185, 151, 91, 0.22);
-                    border: 1px solid rgba(185, 151, 91, 0.34);
+                    background-color: {THEME['accent_dim']};
+                    border: 1px solid {with_alpha(THEME['accent'], 0.35)};
                     color: {THEME['fg_main']};
                 }}
             """)
@@ -578,21 +764,27 @@ class OrbitPage(QtWidgets.QWidget):
         self.orbit_viz_3d.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
         layout.addWidget(self.orbit_viz_3d)
 
+        # Compact metric strip — period, periselene, aposelene, e, i, energy.
         info_frame = QtWidgets.QFrame()
-        info_frame.setStyleSheet(
-            f"background: {THEME['bg_card_alt']}; border: 1px solid {THEME['border_soft']}; border-radius: 8px;"
-        )
-        info_layout = QtWidgets.QHBoxLayout(info_frame)
+        info_frame.setObjectName("orbitInfoStrip")
+        info_frame.setStyleSheet("QFrame#orbitInfoStrip { background: transparent; }")
+        info_grid = QtWidgets.QGridLayout(info_frame)
+        info_grid.setContentsMargins(0, 0, 0, 0)
+        info_grid.setHorizontalSpacing(8)
+        info_grid.setVerticalSpacing(8)
 
-        self.lbl_period = QtWidgets.QLabel("Estimated Period: --")
-        self.lbl_period.setStyleSheet(f"color: {THEME['fg_muted']};")
+        chip_period, self.lbl_period = self._metric_chip("Period (h)")
+        chip_hp, self.lbl_hp = self._metric_chip("Periselene (km)")
+        chip_ha, self.lbl_ha = self._metric_chip("Aposelene (km)")
+        chip_e, self.lbl_ecc = self._metric_chip("Eccentricity")
+        chip_i, self.lbl_inc = self._metric_chip("Inclination (°)")
+        chip_energy, self.lbl_energy = self._metric_chip("Energy (km²/s²)")
 
-        self.lbl_energy = QtWidgets.QLabel("Orbit Energy: --")
-        self.lbl_energy.setStyleSheet(f"color: {THEME['fg_muted']};")
-
-        info_layout.addWidget(self.lbl_period)
-        info_layout.addWidget(self.lbl_energy)
-        info_layout.addStretch()
+        for col, chip in enumerate((chip_period, chip_hp, chip_ha)):
+            info_grid.addWidget(chip, 0, col)
+            info_grid.setColumnStretch(col, 1)
+        for col, chip in enumerate((chip_e, chip_i, chip_energy)):
+            info_grid.addWidget(chip, 1, col)
 
         layout.addWidget(info_frame)
 
@@ -773,17 +965,25 @@ class OrbitPage(QtWidgets.QWidget):
             # Update 3D visualizer
             self.orbit_viz_3d.set_orbit_params(a_km, e, inc_deg, raan_deg, argp_deg, ta_deg)
             
-            # Update orbital period estimate (Kepler's third law)
+            # Update the metric strip (period, geometry, energy).
             mu = MU_MOON_KM3_S2  # km³/s², derived from lunaris.common.constants
             if a_km > 0:
                 period_s = 2 * 3.1415926535 * (a_km ** 3 / mu) ** 0.5
                 period_h = period_s / 3600
-                self.lbl_period.setText(f"Estimated Period: {period_h:.1f} h")
-                
-                # Specific orbital energy
+                self.lbl_period.setText(f"{period_h:.2f}")
+
+                # Periselene / aposelene altitudes back from (a, e).
+                hp_km = a_km * (1.0 - e) - R_MOON
+                ha_km = a_km * (1.0 + e) - R_MOON
+                self.lbl_hp.setText(f"{hp_km:,.0f}")
+                self.lbl_ha.setText(f"{ha_km:,.0f}")
+                self.lbl_ecc.setText(f"{e:.4f}")
+                self.lbl_inc.setText(f"{inc_deg:.1f}")
+
+                # Specific orbital energy.
                 energy = -mu / (2 * a_km)
-                self.lbl_energy.setText(f"Orbit Energy: {energy:.3f} km^2/s^2")
-        
+                self.lbl_energy.setText(f"{energy:.3f}")
+
         except ValueError:
             pass
 

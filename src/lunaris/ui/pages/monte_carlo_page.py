@@ -49,7 +49,7 @@ from typing import Any, Dict, List, Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
-    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, ToggleSwitch, get_icon
+    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, ToggleSwitch, get_icon, with_alpha
     from lunaris.ui.components.monte_carlo_analysis_panel import MonteCarloAnalysisPanel
     from lunaris.ui.pages.force_models_page import ST_LRPS_RUNS_DIR, list_st_lrps_model_dirs
 except ImportError:
@@ -382,7 +382,8 @@ class MonteCarloPage(QtWidgets.QWidget):
         )
         notice.setStyleSheet(
             f"color: {THEME['warning']}; font-size: 9pt; font-weight: 600;"
-            f" background: rgba(246,193,119,0.08); border: 1px solid rgba(246,193,119,0.25);"
+            f" background: {with_alpha(THEME['warning'], 0.08)};"
+            f" border: 1px solid {with_alpha(THEME['warning'], 0.25)};"
             f" border-radius: 6px; padding: 5px 10px;"
         )
         notice.setWordWrap(True)
@@ -801,9 +802,9 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.st_lrps_config_frame = QtWidgets.QFrame()
         self.st_lrps_config_frame.setStyleSheet(f"""
             QFrame {{
-                border: 1px solid rgba(245, 158, 11, 0.35);
+                border: 1px solid {with_alpha(THEME['warning'], 0.35)};
                 border-radius: 10px;
-                background: rgba(245, 158, 11, 0.055);
+                background: {with_alpha(THEME['warning'], 0.055)};
             }}
             QLineEdit {{
                 background: {THEME['bg_entry']};
@@ -813,7 +814,7 @@ class MonteCarloPage(QtWidgets.QWidget):
                 color: {THEME['fg_main']};
             }}
             QLineEdit:focus {{
-                border-color: #f59e0b;
+                border-color: {THEME['warning']};
             }}
         """)
         st_lrps_layout = QtWidgets.QVBoxLayout(self.st_lrps_config_frame)
@@ -822,7 +823,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         st_lrps_title_row = QtWidgets.QHBoxLayout()
         st_lrps_title = _label("ST-LRPS Model Run")
-        st_lrps_title.setStyleSheet("color: #f8d48a; font-weight: 800;")
+        st_lrps_title.setStyleSheet(f"color: {THEME['warning']}; font-weight: 800;")
         st_lrps_title_row.addWidget(st_lrps_title)
         st_lrps_title_row.addStretch(1)
         st_lrps_layout.addLayout(st_lrps_title_row)
@@ -1148,7 +1149,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.badge_mc.setProperty("kind", "info")
         self.badge_mc.setStyleSheet(
             f"border-radius: 10px; border: 1px solid {THEME['accent']};"
-            f" background: rgba(59,130,246,0.1); color: {THEME['accent']};"
+            f" background: {with_alpha(THEME['accent'], 0.1)}; color: {THEME['accent']};"
             f" font-weight: 700; padding: 0 8px;"
         )
         status_row.addWidget(self.badge_mc)

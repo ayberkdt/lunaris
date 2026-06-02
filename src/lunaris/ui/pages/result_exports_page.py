@@ -166,7 +166,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         """
 
         self.txt_preview.setPlainText(text)
-        color = THEME["error"] if is_error else "#A0A0A0"
+        color = THEME["error"] if is_error else THEME["fg_muted"]
         self.txt_preview.setStyleSheet(
             f"""
             background-color: {THEME['bg_log']};
