@@ -190,3 +190,4 @@ python -m lunaris.surrogate.st_lrps.evaluation.ablation \
   with no inference-time autograd. It does not predict `DeltaU`, may have
   non-zero curl / energy drift, and needs explicit acceleration, curl, and
   orbit-level validation before scientific claims.
+
