@@ -454,7 +454,8 @@ def test_ablation_matrix_contains_new_experimental_architectures(tmp_path):
 
     # Generate the manifest (dry-run) and check the note + flag wiring.
     out_root = tmp_path / "abl"
-    rc = ram.main(["--train-data", "train.h5", "--out-root", str(out_root), "--dry-run"])
+    # The experimental encodings are non-default (optional A7/A8/A9); request all.
+    rc = ram.main(["--train-data", "train.h5", "--out-root", str(out_root), "--matrix", "all", "--dry-run"])
     assert rc == 0
     manifest = json.loads((out_root / "ablation_manifest.json").read_text(encoding="utf-8"))
     assert "note" in manifest and "recommended" in manifest["note"].lower()

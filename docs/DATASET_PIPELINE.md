@@ -73,16 +73,21 @@ gravity metadata, and the embedded contract. It writes:
 
 ## Split Policy
 
-Training now writes `provenance/split_manifest.json`. Supported automatic split
-policies are:
+Training writes `provenance/split_manifest.json` with the policy, seed, per-split
+counts and index hashes, and per-split altitude/latitude/longitude ranges (plus
+spatial-bin / OOD-threshold definitions). Supported split policies:
 
-- `seeded_random`: deterministic random train/validation split
-- `random`: alias for seeded random using the configured seed
-- `altitude_stratified`: keeps validation coverage across altitude bins
+- `seeded_random` / `random`: deterministic random split (interpolation)
+- `altitude_stratified`: altitude-balanced split (interpolation)
+- `spatial_block`: holds out whole Moon-fixed lon/lat blocks (spatial generalization)
+- `ood_low_altitude` / `ood_high_altitude`: hold out a low/high altitude band (extrapolation)
+- `spatial_plus_altitude_stratified`: spatial holdout with altitude kept balanced
 
-Reserved policies such as `spatial_block`, `ood_low_altitude`, and
-`ood_high_altitude` are recognized as metadata concepts but intentionally raise
-until implemented.
+Scalers — including the residual potential/acceleration target scalers — are fit
+on **training rows only**; `scaler.json` records `fit_scope="train_only"` with the
+split provenance. Random validation is interpolation validation, not
+generalization. See
+[ST_LRPS_VALIDATION_HYGIENE.md](ST_LRPS_VALIDATION_HYGIENE.md).
 
 ## Training Integration
 

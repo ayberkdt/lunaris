@@ -7,7 +7,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple
 
 import h5py
 import numpy as np
@@ -277,6 +277,8 @@ def fit_scaler_streaming(
     a_scale_mode: str = "hybrid",
     target_scale_multiplier: float = 6.0,
     target_contract: Optional[TargetContract] = None,
+    indices: Optional[np.ndarray] = None,
+    split_provenance: Optional[Mapping[str, Any]] = None,
 ) -> "ScalerPack":
     """Stream-fit isometric scalers on residuals ΔU/Δa (baseline already subtracted).
 
@@ -293,8 +295,28 @@ def fit_scaler_streaming(
         The x (input) scale is always origin-fixed max-radius and is unaffected.
     target_scale_multiplier : float
         RMS expansion factor used by the ``"rms"``/``"hybrid"`` target modes.
+    indices : np.ndarray, optional
+        When given, the scaler is fit **only** on these dataset rows (the train
+        split). This is the leakage-safe path: validation/test/OOD rows never
+        influence the target (ΔU/Δa) mean or scale. Up to ``n_fit`` of the
+        provided indices are sampled (seeded) and read in sorted chunks so the
+        HDF5 stream stays memory-bounded. When ``None`` the legacy whole-file
+        random-block fit is used (correct only when ``h5_path`` is already a
+        dedicated train file).
+    split_provenance : Mapping, optional
+        Extra provenance recorded verbatim into ``scaler.provenance`` (split
+        policy/seed/counts, index hashes, dataset sha, contract hash, and an
+        explicit ``fit_scope``). The caller owns these values so this layer
+        never needs to import the split machinery.
     """
-    logger.info(f"Fitting isometric scaler on {n_fit:,} rows from '{h5_path.name}'...")
+    idx_train: Optional[np.ndarray] = None
+    if indices is not None:
+        idx_train = np.asarray(indices, dtype=np.int64).reshape(-1)
+        if idx_train.size == 0:
+            raise ValueError("fit_scaler_streaming: indices is empty; cannot fit a train-only scaler.")
+    _n_fit_effective = int(n_fit) if idx_train is None else min(int(n_fit), int(idx_train.size))
+    _fit_src = "train indices" if idx_train is not None else "whole-file random blocks"
+    logger.info(f"Fitting isometric scaler on {_n_fit_effective:,} rows from '{h5_path.name}' ({_fit_src})...")
     contract = target_contract
     if contract is None:
         contract = TargetContract.from_legacy_config(
@@ -322,44 +344,66 @@ def fit_scaler_streaming(
     a_stats = OnlineIsometricStats(3)   # will receive Δa = a - a_base
 
     max_r_from_origin: float = 0.0  # max ‖x‖ tracked independently to fix origin at Moon CoM
+    seen_rows = 0
+
+    def _accumulate(arr: np.ndarray) -> None:
+        """Update running x/u/a stats and max-radius for one HDF5 chunk."""
+        nonlocal max_r_from_origin
+        x = arr[:, 0:3]
+        u = arr[:, 3:4]
+        a = arr[:, 4:7]
+
+        if use_si and meta.unit_system == "canonical":
+            x, u, a = meta.convert_xyz_U_a_to_si(x, u, a)
+
+        # Track max ‖x‖ from origin (not from running mean) for SH-correct scaling
+        batch_max_r = float(np.max(np.linalg.norm(x, axis=1)))
+        if batch_max_r > max_r_from_origin:
+            max_r_from_origin = batch_max_r
+
+        # Subtract baseline so scaler is fitted on residuals
+        x_t = torch.as_tensor(x, dtype=torch.float64)
+        u_base = compute_base_potential_from_contract(x_t, contract).numpy()   # (B, 1)
+        a_base = compute_base_accel_from_contract(x_t, contract).numpy()       # (B, 3)
+
+        delta_u = u - u_base    # residual potential
+        delta_a = a - a_base    # residual acceleration
+
+        x_stats.update(x)
+        u_stats.update(delta_u)
+        a_stats.update(delta_a)
 
     with h5py.File(h5_path, "r", libver="latest", swmr=True) as f:
         ds = f[dset_name]
         total_rows = int(ds.shape[0])
-        rows_to_use = min(int(n_fit), total_rows)
 
-        seen_rows = 0
-        while seen_rows < rows_to_use:
-            block_size = min(chunk_rows, rows_to_use - seen_rows)
-            start_idx = int(rng.integers(0, max(total_rows - block_size, 1)))
-
-            arr = np.asarray(ds[start_idx : start_idx + block_size, :], dtype=np.float64)
-
-            x = arr[:, 0:3]
-            u = arr[:, 3:4]
-            a = arr[:, 4:7]
-
-            if use_si and meta.unit_system == "canonical":
-                x, u, a = meta.convert_xyz_U_a_to_si(x, u, a)
-
-            # Track max ‖x‖ from origin (not from running mean) for SH-correct scaling
-            batch_max_r = float(np.max(np.linalg.norm(x, axis=1)))
-            if batch_max_r > max_r_from_origin:
-                max_r_from_origin = batch_max_r
-
-            # Subtract baseline so scaler is fitted on residuals
-            x_t = torch.as_tensor(x, dtype=torch.float64)
-            u_base = compute_base_potential_from_contract(x_t, contract).numpy()   # (B, 1)
-            a_base = compute_base_accel_from_contract(x_t, contract).numpy()       # (B, 3)
-
-            delta_u = u - u_base    # residual potential
-            delta_a = a - a_base    # residual acceleration
-
-            x_stats.update(x)
-            u_stats.update(delta_u)
-            a_stats.update(delta_a)
-
-            seen_rows += block_size
+        if idx_train is not None:
+            # Leakage-safe path: read ONLY train rows. Sample up to n_fit of the
+            # provided indices, then read them in sorted chunks (h5py fancy
+            # indexing requires increasing order) so validation/test/OOD rows are
+            # never touched and memory stays bounded by chunk_rows.
+            if int(idx_train.min()) < 0 or int(idx_train.max()) >= total_rows:
+                raise ValueError(
+                    f"fit_scaler_streaming: train indices out of range for dataset with {total_rows} rows."
+                )
+            if int(n_fit) < idx_train.size:
+                selected = rng.choice(idx_train, size=int(n_fit), replace=False)
+            else:
+                selected = idx_train
+            selected = np.sort(np.unique(selected.astype(np.int64, copy=False)))
+            for start in range(0, selected.size, int(chunk_rows)):
+                group = selected[start : start + int(chunk_rows)]
+                arr = np.asarray(ds[group, :], dtype=np.float64)
+                _accumulate(arr)
+                seen_rows += int(group.size)
+        else:
+            rows_to_use = min(int(n_fit), total_rows)
+            while seen_rows < rows_to_use:
+                block_size = min(chunk_rows, rows_to_use - seen_rows)
+                start_idx = int(rng.integers(0, max(total_rows - block_size, 1)))
+                arr = np.asarray(ds[start_idx : start_idx + block_size, :], dtype=np.float64)
+                _accumulate(arr)
+                seen_rows += block_size
 
     # x_mean is fixed to [0,0,0]: shifting the coordinate origin away from Moon's CoM
     # breaks the 1/r symmetry that SH expansions depend on.
@@ -412,6 +456,13 @@ def fit_scaler_streaming(
         "a_scale_mode": str(a_scale_mode),
         "target_scale_multiplier": float(target_scale_multiplier),
     }
+    # Leakage provenance: explicit fit scope, then any caller-supplied split
+    # metadata (policy/seed/counts, index hashes, dataset sha, contract hash).
+    # An explicit ``fit_scope`` in ``split_provenance`` (e.g. independent
+    # train-file mode passes "train_only" with indices=None) takes precedence.
+    provenance["fit_scope"] = "train_only" if idx_train is not None else "full_dataset"
+    if split_provenance:
+        provenance.update(dict(split_provenance))
     return ScalerPack(
         x=IsometricScaleParams(mean=x_mean.tolist(), scale=float(x_scale)),
         u=IsometricScaleParams(mean=u_mean.tolist(), scale=float(u_scale)),

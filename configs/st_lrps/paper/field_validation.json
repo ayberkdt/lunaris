@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "name": "st_lrps_field_validation",
+  "description": "Field-level (residual) validation of a trained ST-LRPS candidate across interpolation, spatial-generalization, and altitude-extrapolation splits. Random/altitude splits measure interpolation; spatial-block measures spatial generalization; OOD low/high measure altitude extrapolation.",
+  "paper_safe": true,
+  "model_dir": "<FILL: trained ST-LRPS run directory (e.g. outputs/st_lrps_paper/seed42)>",
+  "dataset": "<FILL: residual cloud HDF5 with full spatial + altitude coverage>",
+  "device": "auto",
+  "split_seed": 1234,
+  "val_fraction": 0.15,
+  "policies": [
+    "seeded_random",
+    "altitude_stratified",
+    "spatial_block",
+    "ood_low_altitude",
+    "ood_high_altitude"
+  ],
+  "policy_kinds": {
+    "seeded_random": "interpolation",
+    "altitude_stratified": "interpolation",
+    "spatial_block": "spatial_generalization",
+    "ood_low_altitude": "altitude_extrapolation",
+    "ood_high_altitude": "altitude_extrapolation"
+  },
+  "options": {
+    "spatial_lon_bins": 12,
+    "spatial_lat_bins": 6,
+    "spatial_val_block_fraction": 0.15,
+    "spatial_test_block_fraction": 0.1,
+    "ood_holdout_fraction": 0.2
+  },
+  "outputs": {
+    "out_dir": "validation/paper_evidence/st_lrps/field_validation"
+  }
+}

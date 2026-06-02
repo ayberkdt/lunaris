@@ -140,7 +140,15 @@ Validation fails on impossible or incomplete evidence, including:
 
 - missing or empty required output files
 - NaN or Inf in numeric metrics
-- scenario count mismatch
+- scenario IDs that are non-integer or not the exact contiguous range `0..N-1`
+  (non-contiguous external IDs require `scenario_id_policy="external_noncontiguous"`
+  and a `scenario_id_mapping.json`)
+- per-model scenario row counts that differ from the expected count
+- `runtime_summary.csv` missing `n_scenarios`, or `n_scenarios` ≠ expected count
+- `total_runtime_s / n_scenarios` inconsistent with `runtime_per_scenario_s`
+- model names that differ across `metrics_summary`, `scenario_results`, and
+  `runtime_summary`
+- a `report.md` scenario count that disagrees with the validated count
 - `max < p95` or `p95 < median`
 - non-positive runtime or step counts
 - duplicate model names
@@ -174,7 +182,29 @@ lunaris-benchmark \
 ```
 
 Quick-mode numbers are pipeline smoke-test evidence, not scientific benchmark
-claims.
+claims. Synthetic artifacts are stamped
+`SYNTHETIC SMOKE TEST - NOT A SCIENTIFIC BENCHMARK` in `report.md` and
+`metrics_summary.json`.
+
+## Paper-Safe Mode
+
+`--paper-safe` (or `paper_safe: true` in the config) makes a benchmark
+defensible. It **hard-fails before producing any output** on unsafe settings and
+forces the strict flags so they cannot be re-enabled by an `allow_*` flag:
+
+```bash
+lunaris-benchmark --config configs/benchmarks/st_lrps_1day_high_degree.json --paper-safe
+```
+
+Paper-safe enforces: no synthetic/quick output; `allow_contract_mismatch`,
+`allow_domain_extrapolation`, `allow_legacy_artifact`, `allow_validation_fail`
+all false; `strict_domain` true; no truth-as-baseline unless
+`validation.truth_baseline_justification` is given; a real surrogate whose
+artifact contract matches the config and whose altitude domain covers all
+scenarios. It writes `resolved_config.json`, `benchmark_manifest.json` (with a
+`paper_safe` block), `validation_report.json`, and `run_command.txt`. See
+[ST_LRPS_VALIDATION_HYGIENE.md](ST_LRPS_VALIDATION_HYGIENE.md) for the full
+recommended paper-evidence workflow.
 
 ## Paper Trail
 

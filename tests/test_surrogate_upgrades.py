@@ -468,14 +468,15 @@ def test_ablation_command_generation_dry_run(tmp_path):
     assert "note" in manifest and "recommended production" in manifest["note"]
     names = [a["name"] for a in manifest["ablations"]]
     expected = [
-        "baseline_single_siren", "multiscale_siren", "multiscale_no_resblocks",
-        "multiscale_no_direction", "multiscale_no_altitude_balance",
-        "multiscale_no_radial_cross", "radial_decay_encoding",
-        "physical_radial_decay_recommended",
-        "real_sh_basis_encoding_optional", "additive_multiband",
+        "A0_raw_siren_sobolev", "A1_plus_residual_blocks", "A2_plus_multiscale",
+        "A3_plus_altitude_balanced", "A4_plus_direction", "A5_plus_radial_cross",
+        "A6_full_recommended",
     ]
     assert names == expected
     for ab in manifest["ablations"]:
+        # A6 is the recommended control (no overrides); A0..A5 each carry flags.
+        if ab["name"] != "A6_full_recommended":
+            assert ab["overrides"], ab["name"]
         assert isinstance(ab["command"], list) and ab["command"]
         assert ab["seed"] == 7
 
@@ -490,7 +491,8 @@ def test_ablation_matrix_contains_radial_decay_and_real_sh(tmp_path):
     from lunaris.surrogate.st_lrps.evaluation import ablation as ram
 
     out_root = tmp_path / "ablations2"
-    rc = ram.main(["--train-data", "train.h5", "--out-root", str(out_root), "--dry-run"])
+    # The experimental encodings are non-default; --matrix all includes them.
+    rc = ram.main(["--train-data", "train.h5", "--out-root", str(out_root), "--matrix", "all", "--dry-run"])
     assert rc == 0
     manifest = json.loads((out_root / "ablation_manifest.json").read_text(encoding="utf-8"))
     by_name = {a["name"]: a for a in manifest["ablations"]}
