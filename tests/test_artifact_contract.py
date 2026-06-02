@@ -75,9 +75,17 @@ def test_missing_target_mode_fails():
         _contract(target_mode="")
 
 
-def test_invalid_runtime_model_kind_fails():
-    with pytest.raises(ArtifactContractError, match="runtime_model_kind"):
-        _contract(runtime_model_kind="force_direct")
+def test_valid_force_direct_contract_passes():
+    c = _contract(runtime_model_kind="force_direct", prediction_kind="residual_force", output_dim=3)
+    assert c.runtime_model_kind == "force_direct"
+    assert c.output_dim == 3
+
+
+def test_force_direct_requires_vector_output_and_accel_prediction():
+    with pytest.raises(ArtifactContractError, match="output_dim"):
+        _contract(runtime_model_kind="force_direct", prediction_kind="residual_force", output_dim=1)
+    with pytest.raises(ArtifactContractError, match="residual acceleration|scalar potential"):
+        _contract(runtime_model_kind="force_direct", prediction_kind="residual_potential", output_dim=3)
 
 
 def test_residual_contract_missing_baseline_degree_fails():

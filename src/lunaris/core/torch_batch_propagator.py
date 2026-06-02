@@ -112,6 +112,11 @@ class TorchBatchPropagator:
             "device_name": torch.cuda.get_device_name(dev.index or 0),
             "torch_cuda_version": str(torch.version.cuda or "unknown"),
             "threads_per_block": "managed by PyTorch",
+            "runtime_model_kind": str(
+                getattr(getattr(self._model, "_force_runtime", None), "runtime_model_kind", "")
+                or getattr(self._model, "config", {}).get("runtime_model_kind", "potential_autograd")
+            ),
+            "dtype": str(self._dtype).replace("torch.", ""),
         }
 
     def recommended_max_batch(self, budget: int) -> int:
@@ -192,6 +197,10 @@ class TorchBatchPropagator:
         # ------------------------------------------------------------------
         deg_min = getattr(model, "degree_min", "?")
         deg_max = getattr(model, "degree_max", "?")
+        runtime_kind = str(
+            getattr(getattr(model, "_force_runtime", None), "runtime_model_kind", "")
+            or getattr(model, "config", {}).get("runtime_model_kind", "potential_autograd")
+        )
         dev_name = torch.cuda.get_device_name(device.index or 0)
         print(
             f"[MC][GPU-STLRPS] N={N}  device={device} ({dev_name})",
@@ -199,6 +208,7 @@ class TorchBatchPropagator:
         )
         print(
             f"[MC][GPU-STLRPS] degree_min={deg_min}  degree_max={deg_max}  "
+            f"runtime_model_kind={runtime_kind}  "
             f"dt={dt_eff:.1f}s  snaps={n_snaps}  steps/snap={steps_per_snap}  "
             f"dtype={str(self._dtype).replace('torch.', '')}",
             flush=True,

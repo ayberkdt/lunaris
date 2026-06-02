@@ -1261,8 +1261,10 @@ def train(cfg: TrainConfig) -> None:
     apply_model_preset(cfg)
     if str(getattr(cfg, "runtime_model_kind", "potential_autograd")) == "force_direct":
         raise NotImplementedError(
-            "runtime_model_kind='force_direct' is a future distilled acceleration "
-            "runtime and is not supported by the current scalar-potential training path."
+            "runtime_model_kind='force_direct' uses the direct residual-acceleration "
+            "training path. Run `lunaris-train-force-direct` or "
+            "`python -m lunaris.surrogate.st_lrps.training.force_direct_cli`; "
+            "the main Sobolev trainer remains scalar-potential/autograd only."
         )
     set_seed(
         cfg.seed,

@@ -183,5 +183,11 @@ python -m lunaris.surrogate.st_lrps.evaluation.ablation \
   not exercised by the field-only suite.
 * Paper-safe mode validates the contract and altitude envelope at the config
   level; it does not re-derive the truth model's own numerical accuracy.
-* `runtime_model_kind` is `potential_autograd` only; a distilled direct-force
-  runtime is reserved but unimplemented.
+* `runtime_model_kind="potential_autograd"` is the scalar residual-potential
+  path: acceleration comes from autograd and is conservative by construction up
+  to network smoothness/numerics.
+* `runtime_model_kind="force_direct"` predicts residual acceleration directly
+  with no inference-time autograd. It does not predict `DeltaU`, may have
+  non-zero curl / energy drift, and needs explicit acceleration, curl, and
+  orbit-level validation before scientific claims.
+

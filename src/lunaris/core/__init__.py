@@ -21,7 +21,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "2.2.0"
+from lunaris._version import __version__
 
 __all__ = [
     "DynamicsEngine",

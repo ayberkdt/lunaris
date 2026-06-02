@@ -536,6 +536,7 @@ def build_mc_command(
     # back to CPU DOP853 when it is not.  No command-side override is needed.
     use_gpu = bool(mc_data.get("use_gpu", True))
     command.extend(["--use-gpu",               bool_to_onoff(use_gpu)])
+    command.extend(["--mc-backend",            str(mc_data.get("mc_backend", "auto"))])
     command.extend(["--gpu-device-id",         str(mc_data.get("gpu_device_id",  0))])
     command.extend(["--gpu-sh-degree",         str(mc_data.get("gpu_sh_degree", 10))])
     command.extend(["--gpu-threads-per-block", str(mc_data.get("gpu_threads_per_block", 128))])

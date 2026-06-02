@@ -33,8 +33,13 @@ def test_monte_carlo_config_no_fs_check():
     assert cfg.st_lrps_model_dir == "some_nonexistent_dir"
     
     # Should raise if st_lrps_model_dir is empty when backend is st_lrps
-    with pytest.raises(ValueError, match="st_lrps_model_dir cannot be empty when gravity_mode_override='st_lrps'"):
+    with pytest.raises(ValueError, match="st_lrps_model_dir cannot be empty"):
         MonteCarloConfig(n_samples=10, gravity_mode_override="st_lrps", st_lrps_model_dir="")
+
+    # High-degree GPU SH requests are accepted at config time so backend policy
+    # can record an explicit CPU fallback instead of silently clipping degree.
+    cfg = MonteCarloConfig(n_samples=10, gpu_sh_degree=80)
+    assert cfg.gpu_sh_degree == 80
 
 
 def test_validate_st_lrps_model_dir(tmp_path: Path):

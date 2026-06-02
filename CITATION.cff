@@ -4,5 +4,4 @@ message: "If you use Lunaris (or its ST-LRPS surrogate-gravity model) in scienti
 type: software
 authors:
   - name: "Lunaris contributors"
-version: "0.1.0"
 license: "MIT"

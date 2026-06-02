@@ -72,7 +72,7 @@ def test_validate_page_inputs_errors(mc_page):
     assert not ok
     assert any("Ensemble must have at least 2 samples" in e for e in errors)
     assert any("Position uncertainty" in e for e in errors)
-    assert any("Classic-SH GPU mode only supports SH degree <= 24" in e for e in errors)
+    assert any("Requested SH degree > 24" in w for w in warnings)
 
 def test_validate_page_inputs_warnings(mc_page):
     mc_page.ent_dt.setText("400")

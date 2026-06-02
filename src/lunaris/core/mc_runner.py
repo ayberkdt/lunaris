@@ -153,9 +153,19 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--sigma-cr",              type=float, default=0.0)
     g.add_argument("--use-gpu",               type=str2bool, default=True,
                    help="Use CUDA RK4 propagator (on/off)")
+    g.add_argument(
+        "--mc-backend",
+        choices=["auto", "cpu_sh", "gpu_sh", "gpu_st_lrps_potential", "gpu_st_lrps_direct"],
+        default="auto",
+        help=(
+            "Explicit Monte Carlo backend. 'auto' preserves use-gpu + gravity-mode "
+            "routing; high-degree GPU SH requests fall back with metadata instead "
+            "of clipping degree."
+        ),
+    )
     g.add_argument("--gpu-device-id",         type=int,   default=0)
     g.add_argument("--gpu-sh-degree",         type=int,   default=10,
-                   help="SH degree on GPU (0-24)")
+                   help="Requested SH degree. Current true GPU classic-SH support is degree <=24; higher requests fall back explicitly.")
     g.add_argument("--gpu-threads-per-block", type=int,   default=128)
     g.add_argument(
         "--mc-gravity-mode",
@@ -240,6 +250,12 @@ def _build_metrics(result: object, wall_time_s: float, mc_cfg: MonteCarloConfig)
         "wall_time_s":      round(wall_time_s, 2),
         "backend":          backend_name,
         "backend_note":     backend_note,
+        "actual_mc_backend": diagnostics.get("actual_mc_backend"),
+        "requested_mc_backend": diagnostics.get("requested_mc_backend"),
+        "runtime_model_kind": diagnostics.get("runtime_model_kind"),
+        "fallback_reason": diagnostics.get("fallback_reason"),
+        "requested_sh_degree": diagnostics.get("requested_sh_degree"),
+        "actual_sh_degree": diagnostics.get("actual_sh_degree"),
         "device_name":      str(backend_diag.get("device_name", "") or ""),
         "threads_per_block": backend_diag.get("threads_per_block"),
         "output_path":      str(mc_cfg.output_path_resolved),
@@ -285,6 +301,26 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
         except Exception as exc:
             print(f"[MC][FATAL] Gravity override failed: {exc}", flush=True)
+            return 1
+
+    if str(args.mc_backend) != "auto":
+        try:
+            from dataclasses import replace
+
+            explicit_backend = str(args.mc_backend)
+            if explicit_backend in {"cpu_sh", "gpu_sh"}:
+                forced_backend = "classic_sh"
+            elif explicit_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}:
+                forced_backend = "st_lrps"
+            else:
+                forced_backend = str(getattr(cfg.gravity, "backend", "classic_sh"))
+            cfg = replace(
+                cfg,
+                gravity=replace(cfg.gravity, backend=forced_backend),
+                flags=replace(cfg.flags, enable_sh=True),
+            )
+        except Exception as exc:
+            print(f"[MC][FATAL] MC backend gravity override failed: {exc}", flush=True)
             return 1
 
     # ---- Resolve orbit → InitialState ---------------------------------------
@@ -334,6 +370,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 sigma_area_m2 = float(args.sigma_area_m2),
             ),
             use_gpu               = bool(args.use_gpu),
+            mc_backend            = str(args.mc_backend),
             gpu_device_id         = int(args.gpu_device_id),
             gpu_sh_degree         = int(args.gpu_sh_degree),
             gpu_threads_per_block = int(args.gpu_threads_per_block),

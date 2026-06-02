@@ -52,10 +52,18 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         allow_legacy_contract=bool(getattr(args, "allow_legacy_artifact", False)),
     )
     q = _queries(args.n, args.seed, args.alt_min_km, args.alt_max_km)
-    runtime.predict_residual_potential(q)
+    runtime_kind = getattr(runtime, "runtime_model_kind", "potential_autograd")
+    if runtime_kind != "force_direct":
+        runtime.predict_residual_potential(q)
     runtime.predict_residual_accel(q)
 
-    potential = _time(lambda: runtime.predict_residual_potential(q), args.repeat)
+    if runtime_kind == "force_direct":
+        potential: dict[str, Any] = {
+            "available": False,
+            "skipped": "force_direct artifacts do not predict scalar residual potential",
+        }
+    else:
+        potential = _time(lambda: runtime.predict_residual_potential(q), args.repeat)
     residual_accel = _time(lambda: runtime.predict_residual_accel(q), args.repeat)
     total_accel: dict[str, float] | None = None
     try:
@@ -67,7 +75,7 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "model_dir": str(Path(args.model_dir).expanduser()),
         "checkpoint_path": runtime.checkpoint_path,
         "device": str(runtime.device),
-        "runtime_model_kind": getattr(runtime, "runtime_model_kind", "potential_autograd"),
+        "runtime_model_kind": runtime_kind,
         "n": int(args.n),
         "repeat": int(args.repeat),
         "chunk_size": int(args.chunk_size),

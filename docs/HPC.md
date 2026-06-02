@@ -213,8 +213,30 @@ sbatch hpc/slurm_benchmark_gpu.sbatch \
 
 ```bash
 sbatch hpc/slurm_mc_array.sbatch \
+  --mc-backend auto \
+  --gpu-sh-degree 24 \
   --out-dir "$LUNARIS_OUTPUT_DIR/monte_carlo/mc_run"
 ```
+
+Backend selection is explicit and recorded in Monte Carlo outputs:
+
+- `--mc-backend auto` prefers the safe GPU path when available and records any
+  fallback.
+- `--mc-backend cpu_sh` uses the full CPU spherical-harmonic path and is the
+  recommended high-fidelity truth/reference backend.
+- `--mc-backend gpu_sh` selects the true Numba CUDA classic-SH path. The current
+  supported GPU SH tier is degree 24; higher `--gpu-sh-degree` requests fall back
+  to CPU SH without silently clipping the degree.
+- `--mc-backend gpu_st_lrps_potential` uses the scalar-potential ST-LRPS artifact
+  and autograd residual acceleration on PyTorch CUDA.
+- `--mc-backend gpu_st_lrps_direct` uses direct residual acceleration with a
+  no-grad PyTorch CUDA forward pass. Keep it experimental until orbit-level
+  validation shows acceptable drift for the target scenario set.
+
+For 512-orbit GPU Monte Carlo, use `auto` or an explicit ST-LRPS GPU backend for
+throughput runs, and keep `cpu_sh` high-degree runs as validation/truth jobs.
+Do not describe high-degree SH as a true GPU baseline unless the output metadata
+shows `actual_mc_backend=gpu_sh` and an `actual_sh_degree` at the requested tier.
 
 ### Dataset generation and evaluation
 

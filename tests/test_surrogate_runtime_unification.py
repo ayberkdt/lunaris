@@ -11,7 +11,11 @@ torch = pytest.importorskip("torch")
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 from lunaris.surrogate.st_lrps.networks.models import build_model_from_config, compute_architecture_signature
-from lunaris.surrogate.st_lrps.runtime.force_model import DirectForceRuntime, load_surrogate_force_model
+from lunaris.surrogate.st_lrps.runtime.force_model import (
+    BaseSurrogateRuntime,
+    DirectForceRuntime,
+    load_surrogate_force_model,
+)
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 from lunaris.physics.surrogate_gravity import SurrogateGravityModel
@@ -97,6 +101,6 @@ def test_force_model_and_legacy_adapter_return_same_total_accel(tmp_path: Path) 
     assert force.target_contract.target_mode == "residual"
 
 
-def test_force_direct_placeholder_raises() -> None:
-    with pytest.raises(NotImplementedError, match="force_direct"):
-        DirectForceRuntime()
+def test_force_direct_runtime_class_is_available() -> None:
+    assert DirectForceRuntime.runtime_model_kind == "force_direct"
+    assert issubclass(DirectForceRuntime, BaseSurrogateRuntime)

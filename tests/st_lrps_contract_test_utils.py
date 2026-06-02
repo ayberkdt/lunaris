@@ -77,6 +77,7 @@ def tiny_training_cfg(
         "physical_radial_decay_include_unit": True,
         "physical_radial_decay_include_r_scaled": True,
         "runtime_model_kind": "potential_autograd",
+        "output_dim": 1,
         "model_preset": "custom",
         "best_metric": "val_total_loss",
         "altitude_min_km": float(alt_min_km),

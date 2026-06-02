@@ -11,7 +11,7 @@ Lunaris is a Python framework for lunar-orbit propagation and gravity modeling. 
 It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) — a neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a residual scalar potential above a lower-degree spherical-harmonic baseline, with its own training, evaluation, and Studio UI.
 
 > **Project status.** Lunaris is an **alpha-stage research prototype**
-> (`Development Status :: 3 - Alpha`, version 0.1.0). It is intended for research
+> (`Development Status :: 3 - Alpha`). It is intended for research
 > and experimentation: APIs, trained artifacts, and reported benchmark numbers
 > may change between versions, and some experimental runtime paths are still
 > reserved for future work.
@@ -143,7 +143,11 @@ lunaris-launcher  welcome hub (picks a workspace; optional 3D Moon preview)
 lunaris-ui        mission desktop UI
 lunaris-studio    ST-LRPS Studio UI
 lunaris-train     ST-LRPS training CLI
+lunaris-train-force-direct
+                  minimal direct residual-acceleration training CLI
 lunaris-eval      ST-LRPS evaluation CLI
+lunaris-eval-force-direct
+                  field-level acceleration evaluation for force_direct artifacts
 lunaris-benchmark ST-LRPS orbit-level gravity benchmark / validation CLI
 lunaris-data      external-data download / verify CLI
 lunaris-perturbation-budget
@@ -293,16 +297,21 @@ Runtime import example:
 from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
 ```
 
-At runtime the surrogate evaluates the learned **scalar residual potential** and
-obtains the residual acceleration by autograd differentiation of that potential
-(`runtime_model_kind="potential_autograd"`), then adds it to the lower-degree
-spherical-harmonic baseline. This is currently the only implemented runtime; the
-distilled direct-force path (`runtime_model_kind="force_direct"` /
-`DirectForceRuntime`) is reserved for future work and raises `NotImplementedError`.
-Because each acceleration evaluation is a network forward pass plus an autograd
-pass, the runtime speedups reported below are obtained in batched / GPU
-configurations — see [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) for
-the exact settings.
+At runtime ST-LRPS supports two artifact contracts. The default
+`runtime_model_kind="potential_autograd"` evaluates a learned **scalar residual
+potential** and obtains residual acceleration by autograd differentiation before
+adding the lower-degree spherical-harmonic baseline. The newer
+`runtime_model_kind="force_direct"` (`DirectForceRuntime`) loads a 3-output
+student artifact that predicts residual acceleration directly, with no autograd
+during inference. Direct-force artifacts do not predict `DeltaU`, are not
+conservative by construction, and require acceleration, curl, and orbit-level
+validation before scientific claims.
+
+For throughput Monte Carlo, keep `potential_autograd` as the validation-safe
+ST-LRPS default and use `force_direct` as an experimental/deployment runtime
+until orbit drift is benchmarked for the target scenario set. See
+[docs/OPTIMIZATION_ROADMAP.md](docs/OPTIMIZATION_ROADMAP.md) for the current
+method-selection policy.
 
 Model target semantics are recorded explicitly through versioned
 `artifact_contract` and `dataset_contract` blocks in new configs/checkpoints.
@@ -403,6 +412,12 @@ lunaris --help
 lunaris-mc --help
 ```
 
+Monte Carlo backend names are explicit: `auto`, `cpu_sh`, `gpu_sh`,
+`gpu_st_lrps_potential`, and `gpu_st_lrps_direct`. The current true classic-SH
+GPU tier is degree 24; higher requested `--gpu-sh-degree` values are not clipped
+and are recorded as CPU SH fallback metadata. Use high-degree `cpu_sh` runs for
+truth/reference and ST-LRPS GPU backends for 512-orbit throughput experiments.
+
 Canonical analysis modules:
 
 | Purpose | Module |
@@ -467,7 +482,6 @@ Results under different numerical precision (`float64`), integration step size (
 | **Along-Track (Phase) Median RMS** | **1.102 km** | **62.12 cm** | **15.03 cm** |
 | **GPU Speedup (vs. Truth)** | **9.55x** speedup (vs. CPU) | **5.59x** speedup (**8.32x** vs. SH200) | **2.25x** speedup (vs. CPU) |
 
-For the full benchmark breakdown, tables, analysis, and reproduction steps (CLI or desktop UI), see [ST-LRPS Gravity Model Benchmark Results](docs/BENCHMARK_RESULTS.md).
 
 
 ## Visualization

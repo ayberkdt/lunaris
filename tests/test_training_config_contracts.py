@@ -95,13 +95,12 @@ def test_custom_preset_preserves_manual_encoding_choices():
 # Runtime-kind handling
 # =============================================================================
 
-def test_runtime_model_kind_default_and_reserved_value_preserved():
+def test_runtime_model_kind_default_and_direct_force_value_preserved():
     assert _cfg().runtime_model_kind == "potential_autograd"
     assert TrainConfig.__dataclass_fields__["runtime_model_kind"].default == "potential_autograd"
 
-    # 'force_direct' is a reserved future value: it must be preserved (not silently
-    # rewritten) by preset application, but it remains unsupported at runtime
-    # (enforced by the runtime layer, see test_st_lrps_runtime_contracts).
+    # Preset application must not silently rewrite force_direct; the dedicated
+    # direct-force CLI owns its artifact creation path.
     cfg = apply_model_preset(_cfg(model_preset="custom", runtime_model_kind="force_direct"))
     assert cfg.runtime_model_kind == "force_direct"
 

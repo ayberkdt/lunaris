@@ -76,8 +76,12 @@ except ImportError:
     numba = None  # type: ignore[assignment]
 
 
-# Compile-time workspace size: supports SH degree up to _GPU_WS-2 = 24
+# Compile-time workspace size: supports SH degree up to _GPU_WS-2 = 24.
+# Higher-degree classic-SH requests must be routed by mc_backend_policy to CPU
+# or another backend; this kernel must never silently clip the requested degree.
 _GPU_WS: int = 26
+GPU_SH_MAX_DEGREE: int = _GPU_WS - 2
+GPU_SH_SUPPORTED_TIERS: Tuple[int, ...] = (GPU_SH_MAX_DEGREE,)
 
 
 def gpu_unsupported_features(flags: Any) -> Tuple[str, ...]:
@@ -97,6 +101,25 @@ def gpu_unsupported_features(flags: Any) -> Tuple[str, ...]:
     if bool(getattr(flags, "enable_tides_k2", False)) or bool(getattr(flags, "enable_tides_k3", False)):
         unsupported.append("solid tides")
     return tuple(unsupported)
+
+
+def gpu_sh_capability() -> Dict[str, Any]:
+    """Return the true classic-SH capability of the current Numba CUDA kernel."""
+
+    return {
+        "backend": "numba_cuda_classic_sh",
+        "supported": bool(_CUDA_AVAILABLE),
+        "max_degree": int(GPU_SH_MAX_DEGREE),
+        "supported_tiers": [int(v) for v in GPU_SH_SUPPORTED_TIERS],
+        "workspace": f"{_GPU_WS}x{_GPU_WS}",
+        "workspace_policy": "compile_time_thread_local",
+        "dtype": "float64",
+        "notes": (
+            "The current GPU SH evaluator uses cuda.local.array workspace with "
+            "fixed 26x26 Legendre arrays. Requests above degree 24 require an "
+            "explicit CPU/ST-LRPS fallback or a new specialized kernel."
+        ),
+    }
 
 
 def _sanitize_gpu_threads_per_block(
@@ -873,6 +896,7 @@ class GPUBatchPropagator:
 
         grav = getattr(dyn, "grav", None)
         n_sh_req = int(self._mc.gpu_sh_degree)
+        self._requested_gpu_sh_degree = int(n_sh_req)
 
         if grav is None or n_sh_req == 0:
             # Point-mass only
@@ -891,7 +915,15 @@ class GPUBatchPropagator:
                 )
 
         nmax, r_ref, gm, Cnm, Snm, *_ = extract_gravity_strict(grav)
-        n_use = min(int(nmax), n_sh_req, _GPU_WS - 2)
+        if n_sh_req > GPU_SH_MAX_DEGREE:
+            raise RuntimeError(
+                f"Requested gpu_sh_degree={n_sh_req}, but the current Numba CUDA "
+                f"classic-SH kernel supports true GPU SH only through degree "
+                f"{GPU_SH_MAX_DEGREE} (workspace {_GPU_WS}x{_GPU_WS}). "
+                "Use mc_backend='auto' or 'cpu_sh' for explicit CPU fallback, "
+                "or implement a higher-degree specialized/streaming CUDA kernel."
+            )
+        n_use = min(int(nmax), n_sh_req)
 
         # Slice coefficients to n_use
         Cnm_s = np.ascontiguousarray(Cnm[:n_use + 1, :n_use + 1], dtype=np.float64)
@@ -994,7 +1026,13 @@ class GPUBatchPropagator:
             "gpu_free_mem_bytes": int(self._free_mem_bytes),
             "gpu_total_mem_bytes": int(self._total_mem_bytes),
             "recommended_max_batch": int(self._recommended_max_batch),
+            "requested_gpu_sh_degree": int(getattr(self, "_requested_gpu_sh_degree", 0)),
             "gpu_sh_degree": int(getattr(self._grav_pack, "n_sh", 0)),
+            "actual_gpu_sh_degree": int(getattr(self._grav_pack, "n_sh", 0)),
+            "gpu_sh_max_degree": int(GPU_SH_MAX_DEGREE),
+            "gpu_sh_supported_tiers": [int(v) for v in GPU_SH_SUPPORTED_TIERS],
+            "gpu_sh_workspace": f"{_GPU_WS}x{_GPU_WS}",
+            "gpu_sh_workspace_policy": "compile_time_thread_local",
             "supports_earth_j2": bool(self._earth_j2_pack["enabled"]),
         }
 
@@ -1371,7 +1409,10 @@ class CPUBatchPropagator:
 # =============================================================================
 
 __all__ = [
+    "GPU_SH_MAX_DEGREE",
+    "GPU_SH_SUPPORTED_TIERS",
     "GPUBatchPropagator",
     "CPUBatchPropagator",
+    "gpu_sh_capability",
     "gpu_unsupported_features",
 ]

@@ -1,0 +1,110 @@
+# Optimization Roadmap
+
+Date: 2026-06-02
+
+This roadmap records the current ST-LRPS and Monte Carlo backend decision. It is
+intentionally conservative: do not claim a faster or more accurate method as the
+default until runtime and orbit-level validation have both been run for the same
+artifact, hardware, force model, and scenario set.
+
+## Executive Recommendation
+
+1. Keep `potential_autograd` as the validation-safe ST-LRPS runtime.
+2. Keep `force_direct` available for deployment and bulk-throughput experiments,
+   but mark it experimental until acceleration, curl, and orbit drift are
+   validated against the target truth model.
+3. Use `mc_backend="auto"` for ordinary Monte Carlo runs, explicit `cpu_sh` for
+   high-fidelity truth/reference, explicit `gpu_sh` for the current degree-24
+   classic-SH CUDA tier, and explicit ST-LRPS GPU backends for throughput.
+4. Do not remove the GPU SH degree-24 limit by raising a constant. The current
+   Numba CUDA evaluator uses fixed `(26 x 26)` per-thread Legendre workspaces, so
+   degree 24 is the only true GPU SH tier today.
+5. For requested classic-SH degrees above 24, route to CPU SH with warning and
+   metadata. No silent clipping, no "GPU SH100" label unless the kernel truly
+   computes degree 100 on GPU.
+
+## Method Selection Audit
+
+| Option | Expected speed | Accuracy / physics | Complexity | Recommendation |
+|--------|----------------|--------------------|------------|----------------|
+| A: `potential_autograd` | Medium. Autograd is expensive, especially for small batches and CPU. | Best current ST-LRPS physical structure because acceleration is the gradient of a learned scalar residual potential. | Already supported. | Keep as default validation/runtime baseline. |
+| B: `force_direct` | High. It avoids input-gradient autograd and can run under `torch.no_grad()`. | No potential output and no conservative-field guarantee. Needs curl and orbit validation. | Already supported by the new direct runtime. | Keep experimental; use for deployment throughput after validation. |
+| C: Distilled direct-force student | High if the student is small and batched. | Could inherit useful behavior from a potential teacher, but still needs field and orbit checks. | Moderate training/evaluation work. | Benchmark next; this is the most promising speed path. |
+| D: Hybrid runtime | High for bulk Monte Carlo while preserving validation with SH or potential runs. | Strong practical compromise if fallbacks and domain metadata are clear. | Low-to-moderate, mostly policy and reporting. | Recommended operating model for 512-orbit studies. |
+| E: Alternative architectures | Unknown without new experiments. | Could improve extrapolation or invariances, but risks scope creep. | Medium to high. | Postpone until baseline/direct-student evidence is collected. |
+
+## 512-Orbit Monte Carlo Policy
+
+Recommended production workflow:
+
+- Run throughput sweeps with `mc_backend="auto"` or
+  `mc_backend="gpu_st_lrps_potential"` when a validated potential artifact is
+  available.
+- Use `mc_backend="gpu_st_lrps_direct"` only for deployment-style experiments
+  until drift and curl validation pass.
+- Run smaller high-degree `mc_backend="cpu_sh"` truth/reference batches to
+  quantify the error envelope.
+- Use `mc_backend="gpu_sh"` only for the true degree-24 classic-SH CUDA tier.
+  Requests above degree 24 fall back to CPU SH and must be reported as fallback.
+
+## Implemented Now
+
+- Added `mc_backend` selection with the supported values `auto`, `cpu_sh`,
+  `gpu_sh`, `gpu_st_lrps_potential`, and `gpu_st_lrps_direct`.
+- Added explicit requested/actual backend metadata, requested/actual SH degree,
+  GPU SH capability metadata, runtime model kind, CUDA device name, dtype, and
+  fallback reason.
+- Removed silent degree clipping in the classic-SH CUDA pack builder. Direct use
+  of the low-level CUDA propagator with degree >24 now raises a clear runtime
+  error; the high-level Monte Carlo policy routes such requests to CPU SH.
+- Kept `potential_autograd` and `force_direct` runtime paths working, with direct
+  force inference using a no-grad torch path through `SurrogateGravityModel`.
+- Added UI and CLI support for the explicit backend names.
+
+## Benchmark Status
+
+Baseline files live under `outputs/optimization/baseline_profile/`.
+
+The current local workstation probe found PyTorch CUDA on an NVIDIA GeForce GTX
+1660 Ti, but Numba CUDA was unavailable in this environment. As a result, the
+classic-SH CUDA benchmark could not run here. The available local ST-LRPS
+artifact also lacks the newer `artifact_contract` block required by the runtime
+benchmark, so ST-LRPS timing is recorded as blocked rather than fabricated.
+
+Because of those constraints, no before/after speedup claim is made in this
+roadmap. The next benchmark pass should use a contract-valid potential artifact,
+a contract-valid force-direct artifact trained on the same dataset/degree
+contract, and a machine where both PyTorch CUDA and Numba CUDA are available.
+
+## What To Benchmark Next
+
+- ST-LRPS runtime: `potential_autograd` vs `force_direct`, CPU and CUDA, batch
+  sizes `1, 16, 128, 512, 1024, 8192`.
+- Monte Carlo classic SH: degrees `0, 2, 10, 20, 24`, batch sizes `32, 128, 512,
+  2048`, with CPU same-degree correctness checks.
+- High-degree truth: CPU SH50/SH100/SH200 against ST-LRPS potential and direct
+  force over representative 1-day and 5-day orbit sets.
+- Direct-force validity: acceleration absolute/relative error, curl penalty,
+  radial/along-track/cross-track RMS, P95/P99/max error, instability/impact
+  counts, and any domain fallback counts.
+
+## Postponed
+
+- True GPU SH50/SH100/SH200 kernels. This needs either generated max-degree
+  specializations with explicit memory tiers or a streaming/row-wise recurrence.
+  It should not be attempted as a constant change.
+- CUDA graphs or `torch.compile` for ST-LRPS. These may help repeated fixed
+  shapes, but should follow baseline timings and must preserve autograd for
+  `potential_autograd`.
+- New surrogate architectures such as SIREN variants, curl-penalized vector
+  fields, equivariant encodings, FNO, or DeepONet. They require a separate
+  experiment plan and should not replace the current runtime by default.
+
+## Delete Or Hide
+
+- Hide or relabel any UI/report wording that implies high-degree classic SH is
+  computed on GPU when metadata shows CPU fallback.
+- Do not publish `force_direct` scientific accuracy claims without orbit-level
+  validation.
+- Do not keep legacy benchmark artifacts in the default runtime path unless they
+  carry the required artifact contract or are explicitly loaded as legacy.
