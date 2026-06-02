@@ -8,10 +8,21 @@ numbers. It doubles as the developer summary for the validation-hygiene work.
 
 ## What ST-LRPS is (and is not)
 
-* ST-LRPS is a **scalar residual potential surrogate**. The network learns a
+* The **default, validation-safe ST-LRPS path is a scalar residual potential
+  surrogate** (`runtime_model_kind="potential_autograd"`). The network learns a
   residual potential `ΔU(r)` above a lower-degree spherical-harmonic baseline.
-* **Acceleration is the autograd gradient** of the learned residual potential:
-  `Δa = a_sign · ∇ΔU`. There is no separately trained force head.
+* In that default path **acceleration is the autograd gradient** of the learned
+  residual potential: `Δa = a_sign · ∇ΔU`. The `potential_autograd` model has no
+  separately trained force head; acceleration is always derived from `ΔU`.
+* A **separate `force_direct` student runtime** exists
+  (`runtime_model_kind="force_direct"`, trained via `lunaris-train-force-direct`).
+  It is a direct residual-**acceleration** model: it predicts `Δa` directly with
+  no inference-time autograd and does **not** predict `ΔU`. It is a distinct
+  artifact, **not** the scalar-potential model's force head. `force_direct` is
+  **not** part of the A0–A6 scalar-potential ablation matrix; evaluate it only in
+  its own student sweep
+  (`hpc/scenarios/st_lrps_force_direct_student_sweep.jsonl`) and gate any
+  scientific claim on explicit acceleration, curl, and orbit-level validation.
 * Dataset labels are **residual or full-field** according to an explicit
   `TargetContract` (`target_mode`, `baseline_kind`, `base_degree`,
   `target_degree`). Residual datasets carry `ΔU`/`Δa`; full-field datasets carry

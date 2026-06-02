@@ -1,0 +1,8 @@
+# ST-LRPS runtime benchmark smoke sweep (CPU + CUDA timing sanity checks).
+# These run lunaris-benchmark (compare_gravity_models) on a tiny SH-only scenario
+# set so they are fast and need no trained artifact. To include a trained ST-LRPS
+# model, pass --st-lrps-model-dir <run_dir> and --models sh20,st_lrps as common
+# flags at submit time. These are timing/plumbing smoke checks, not paper results.
+# Submit: sbatch --array=0-1 hpc/slurm_train_scenario_array.sbatch <this file> --quick
+{"name": "RuntimeBenchmark_Smoke_CPU_SH_Quick", "entrypoint": "lunaris-benchmark", "description": "CPU spherical-harmonic timing smoke check on a tiny random scenario set (no ST-LRPS artifact required).", "runtime_model_kind": "benchmark", "tags": ["benchmark", "smoke", "cpu", "sh"], "flags": ["--quick", "--random-scenarios", "4", "--models", "sh20,sh80"]}
+{"name": "RuntimeBenchmark_Smoke_CUDA_SH_Quick", "entrypoint": "lunaris-benchmark", "description": "CUDA GPU-batch spherical-harmonic timing smoke check on a tiny random scenario set (no ST-LRPS artifact required).", "runtime_model_kind": "benchmark", "tags": ["benchmark", "smoke", "cuda", "gpu", "sh"], "flags": ["--gpu-batch-compare", "--quick", "--random-scenarios", "4", "--gpu-models", "sh20,sh60"]}

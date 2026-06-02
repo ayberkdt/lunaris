@@ -78,6 +78,16 @@ contract, and a machine where both PyTorch CUDA and Numba CUDA are available.
 
 ## What To Benchmark Next
 
+> **Launch these as reproducible scenario sweeps.** The capacity, encoding/loss,
+> and force-direct student experiments below are committed as self-describing
+> JSONL sweeps under `hpc/scenarios/` and submitted with
+> `hpc/slurm_train_scenario_array.sbatch` (see
+> [docs/HPC.md](HPC.md#1b-st-lrps-scenario-arrays-reproducible-sweeps)). Each run
+> records its scenario, command, and environment for provenance. `force_direct`
+> students are trained from `st_lrps_force_direct_student_sweep.jsonl` and remain
+> experimental until acceleration, curl, and orbit drift are validated; they are
+> never folded into the scalar-potential A0–A6 ablation matrix.
+
 - ST-LRPS runtime: `potential_autograd` vs `force_direct`, CPU and CUDA, batch
   sizes `1, 16, 128, 512, 1024, 8192`.
 - Monte Carlo classic SH: degrees `0, 2, 10, 20, 24`, batch sizes `32, 128, 512,

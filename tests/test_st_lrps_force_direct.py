@@ -94,6 +94,7 @@ def test_force_direct_strict_domain(tmp_path):
 def test_force_direct_surrogate_gravity_torch_path_avoids_autograd(tmp_path, monkeypatch):
     run = make_contract_run(
         tmp_path,
+        degree_min=0,
         cfg_overrides={"runtime_model_kind": "force_direct", "prediction_kind": "residual_force", "output_dim": 3},
     )
     sg = SurrogateGravityModel.from_model_dir(run["run_dir"], device_preference="cpu")

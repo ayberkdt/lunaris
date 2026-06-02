@@ -1,0 +1,11 @@
+# ST-LRPS force_direct (direct residual-acceleration) student sweep.
+# WARNING: force_direct is a DEPLOYMENT/STUDENT runtime. It predicts residual
+# acceleration directly (no inference-time autograd), does NOT predict the scalar
+# potential DeltaU, is not conservative by construction, and must pass field,
+# curl, and orbit-level validation before any scientific claim. Do NOT mix these
+# into the scalar-potential A0..A6 ablation matrix.
+# Submit: sbatch --array=0-3 hpc/slurm_train_scenario_array.sbatch <this file> --data ... --epochs 100
+{"name": "ForceDirect_Student_4x512_RawXYZ_Seed42", "entrypoint": "lunaris-train-force-direct", "description": "Direct residual-acceleration student, raw xyz, depth=4, hidden=512.", "runtime_model_kind": "force_direct", "tags": ["force_direct", "student", "raw_xyz", "4x512"], "flags": ["--model-preset", "baseline_raw", "--depth", "4", "--hidden", "512", "--use-residual-blocks", "--n-bands", "3", "--seed", "42"]}
+{"name": "ForceDirect_Student_5x512_RawXYZ_Seed42", "entrypoint": "lunaris-train-force-direct", "description": "Direct residual-acceleration student, raw xyz, depth=5, hidden=512.", "runtime_model_kind": "force_direct", "tags": ["force_direct", "student", "raw_xyz", "5x512"], "flags": ["--model-preset", "baseline_raw", "--depth", "5", "--hidden", "512", "--use-residual-blocks", "--n-bands", "3", "--seed", "42"]}
+{"name": "ForceDirect_Student_6x512_RawXYZ_Seed42", "entrypoint": "lunaris-train-force-direct", "description": "Direct residual-acceleration student, raw xyz, depth=6, hidden=512.", "runtime_model_kind": "force_direct", "tags": ["force_direct", "student", "raw_xyz", "6x512"], "flags": ["--model-preset", "baseline_raw", "--depth", "6", "--hidden", "512", "--use-residual-blocks", "--n-bands", "3", "--seed", "42"]}
+{"name": "ForceDirect_Student_5x512_PhysicalRadialDecay_Seed42", "entrypoint": "lunaris-train-force-direct", "description": "Direct residual-acceleration student using physical radial-decay input features, depth=5, hidden=512.", "runtime_model_kind": "force_direct", "tags": ["force_direct", "student", "physical_radial_decay", "5x512"], "flags": ["--model-preset", "recommended_physical_radial_decay", "--depth", "5", "--hidden", "512", "--use-residual-blocks", "--n-bands", "3", "--seed", "42"]}

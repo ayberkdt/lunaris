@@ -230,7 +230,7 @@ def train_force_direct(args: argparse.Namespace) -> Path:
         "runtime_model_kind": "force_direct",
         "prediction_kind": "residual_force",
         "output_dim": 3,
-        "model_preset": "custom",
+        "model_preset": str(getattr(args, "model_preset", "baseline_raw") or "baseline_raw"),
         "use_fourier": False,
         "fourier_append_raw": True,
         "fourier_n_features": 0,
@@ -253,6 +253,10 @@ def train_force_direct(args: argparse.Namespace) -> Path:
         "altitude_max_km": meta.alt_max_km,
         "best_metric": "val_force_mse",
         "run_name": "force_direct",
+        # Origin-fixed isometric x scale (meters). Needed by physically-informed
+        # encodings (e.g. recommended_physical_radial_decay) to recover r_phys;
+        # harmless for the raw-xyz baseline.
+        "x_scale_m": float(scaler.x.scale),
     }
     model = build_model_from_config(cfg, device=device, dtype=torch.float32)
     cfg["input_feature_dim"] = int(getattr(model, "input_feature_dim", 3))
@@ -395,6 +399,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--w0-hidden", type=float, default=30.0)
     parser.add_argument("--n-bands", type=int, default=1)
     parser.add_argument("--use-residual-blocks", action="store_true")
+    parser.add_argument(
+        "--model-preset",
+        choices=["baseline_raw", "recommended_physical_radial_decay"],
+        default="baseline_raw",
+        help=(
+            "Input-encoding preset for the student. 'baseline_raw' keeps raw xyz "
+            "inputs (default, current behaviour); 'recommended_physical_radial_decay' "
+            "enables the true R_ref/r radial-decay features. Same encoding semantics "
+            "as the scalar-potential trainer; force_direct still predicts residual "
+            "acceleration directly (no autograd, no scalar potential)."
+        ),
+    )
     parser.add_argument("--target-mode", choices=["residual", "full"], default=None)
     parser.add_argument("--degree-min", type=int, default=None)
     parser.add_argument("--degree-max", type=int, default=None)

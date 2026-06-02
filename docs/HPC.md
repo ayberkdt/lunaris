@@ -156,6 +156,7 @@ before submitting.
 |----------|--------|-------------|
 | Shared environment setup | `hpc/env_template.sh` | sourced by each job |
 | ST-LRPS training | `hpc/slurm_train_stlrps.sbatch` | `lunaris-train` |
+| ST-LRPS scenario arrays (sweeps) | `hpc/slurm_train_scenario_array.sbatch` | `tools/hpc/run_training_scenario.py` |
 | Orbit-level gravity benchmark / validation | `hpc/slurm_benchmark_gpu.sbatch` | `lunaris-benchmark` |
 | Monte Carlo / batch propagation | `hpc/slurm_mc_array.sbatch` | `lunaris-mc` |
 
@@ -185,6 +186,132 @@ sbatch hpc/slurm_train_stlrps.sbatch \
 > it first. For reproducible run names use a timestamp (as above), a manual name,
 > or a wrapper script. `hpc/env_template.sh` still sets defaults *inside* the job,
 > but those defaults do not affect values you expand at submit time.
+
+### 1b. ST-LRPS scenario arrays (reproducible sweeps)
+
+For paper ablations and capacity / encoding / loss sweeps you usually want to
+launch **many** clearly-named experiments in parallel rather than hand-writing a
+long `lunaris-train` command for each one. The scenario launcher reads a JSONL
+file where **each line is one self-describing experiment** and submits the whole
+file as a Slurm array.
+
+**Why JSONL scenario files exist.** Each scenario carries its own `name`,
+`entrypoint`, `description`, `runtime_model_kind`, `tags`, and `flags`, so the
+sweep is self-documenting and version-controlled. The `name` is intentionally
+long and explicit (e.g.
+`PotentialAutograd_A6FullRecommended_3Band_RawXYZ_DirectionW020_Seed42`) and is
+reused verbatim as the run-directory name. JSONL is preferred over YAML to avoid
+an extra parser dependency.
+
+The committed sweep files live under `hpc/scenarios/`:
+
+| File | Array range | Purpose |
+|------|-------------|---------|
+| `st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl` | `0-6` | Cumulative scalar-potential ablation A0→A6 (mirrors `lunaris-ablation`) |
+| `st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl` | `0-4` | A6-full architecture-size sweep (4×256 … 5×768) |
+| `st_lrps_potential_autograd_encoding_and_loss_sweep.jsonl` | `0-6` | 5×512 direction-weight + input-encoding matrix |
+| `st_lrps_force_direct_student_sweep.jsonl` | `0-3` | Direct residual-acceleration student sweep |
+| `st_lrps_runtime_benchmark_smoke.jsonl` | `0-1` | CPU/CUDA timing smoke checks |
+
+**How submission works.** The first positional argument to the `.sbatch` file is
+the scenario JSONL path; **everything after it is forwarded to every array task**
+as common flags (data paths, epochs, batch size, split policy …). The launcher
+selects the line matching `$SLURM_ARRAY_TASK_ID`, validates it, and injects
+`--out "$LUNARIS_OUTPUT_DIR/training/<scenario_name>"` itself — never set an
+output flag in the scenario or in the common flags.
+
+```bash
+export TRAIN_DATA=/scratch/$USER/lunaris_data/datasets/train.h5
+export VAL_DATA=/scratch/$USER/lunaris_data/datasets/val.h5
+export TEST_DATA=/scratch/$USER/lunaris_data/datasets/test.h5
+export OOD_DATA=/scratch/$USER/lunaris_data/datasets/ood_high.h5
+export LUNARIS_OUTPUT_DIR=/scratch/$USER/lunaris_outputs
+
+# A0–A6 paper ablation (7 tasks)
+sbatch --array=0-6 hpc/slurm_train_scenario_array.sbatch \
+  hpc/scenarios/st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl \
+  --train-data "$TRAIN_DATA" \
+  --val-data "$VAL_DATA" \
+  --test-data "$TEST_DATA" \
+  --ood-data "$OOD_DATA" \
+  --epochs 300 \
+  --batch-size 8192 \
+  --split-policy spatial_block
+```
+
+Capacity sweep (5 tasks):
+
+```bash
+sbatch --array=0-4 hpc/slurm_train_scenario_array.sbatch \
+  hpc/scenarios/st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl \
+  --train-data "$TRAIN_DATA" \
+  --val-data "$VAL_DATA" \
+  --epochs 300 \
+  --batch-size 8192 \
+  --split-policy spatial_block
+```
+
+Encoding / loss sweep (7 tasks):
+
+```bash
+sbatch --array=0-6 hpc/slurm_train_scenario_array.sbatch \
+  hpc/scenarios/st_lrps_potential_autograd_encoding_and_loss_sweep.jsonl \
+  --train-data "$TRAIN_DATA" \
+  --val-data "$VAL_DATA" \
+  --test-data "$TEST_DATA" \
+  --ood-data "$OOD_DATA" \
+  --epochs 300 \
+  --batch-size 8192 \
+  --split-policy spatial_block
+```
+
+Force-direct student sweep (4 tasks). **`force_direct` is a deployment/student
+runtime**: it predicts residual acceleration directly, does **not** predict the
+scalar potential, and needs field, curl, and orbit-level validation before any
+scientific claim. It uses the single-file `--data` flag (no train/val split
+flags), and it must never be mixed into the scalar-potential ablation matrix:
+
+```bash
+sbatch --array=0-3 hpc/slurm_train_scenario_array.sbatch \
+  hpc/scenarios/st_lrps_force_direct_student_sweep.jsonl \
+  --data "$TRAIN_DATA" \
+  --epochs 100 \
+  --batch-size 8192
+```
+
+Runtime-benchmark smoke (2 tasks; pure SH timing, no artifact required):
+
+```bash
+sbatch --array=0-1 hpc/slurm_train_scenario_array.sbatch \
+  hpc/scenarios/st_lrps_runtime_benchmark_smoke.jsonl
+```
+
+**Output-directory naming.** Each task writes to
+`$LUNARIS_OUTPUT_DIR/training/<scenario_name>/` (falling back to
+`outputs/training/<scenario_name>/` when `LUNARIS_OUTPUT_DIR` is unset). Before
+launching, the launcher writes `scenario.json`, `scenario_command.txt`, and
+`scenario_environment.json` into that directory for provenance. Outputs are never
+written under `src/`.
+
+**Log naming.** The array job writes
+`lunaris_scenario_%A_%a.out` / `lunaris_scenario_%A_%a.err` to the submit
+directory, where `%A` is the array job ID and `%a` the task ID.
+
+**Resume / overwrite.** A task refuses to start if its output directory already
+exists and is non-empty, so an accidental resubmission cannot clobber a finished
+run. Pass `--force` (alias `--overwrite`) as a common flag to reuse the
+directory. To preview without launching, run the launcher directly with
+`--dry-run`:
+
+```bash
+python tools/hpc/run_training_scenario.py \
+  hpc/scenarios/st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl \
+  --index 0 --dry-run --train-data "$TRAIN_DATA" --val-data "$VAL_DATA"
+```
+
+To adjust GPU/CPU/memory/time, edit the `#SBATCH` directives at the top of
+`hpc/slurm_train_scenario_array.sbatch` or override them at submit time
+(e.g. `sbatch --gres=gpu:2 --time=48:00:00 ...`).
 
 ### 2. Gravity benchmark / validation (after training)
 
