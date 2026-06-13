@@ -244,11 +244,11 @@ def _make_page_header(title: str, subtitle: str, eyebrow: str = "ST-LRPS Studio"
     frame = QFrame()
     frame.setObjectName("studioPageHeader")
     frame.setStyleSheet(
-        "QFrame#studioPageHeader {"
-        "  background: transparent;"
-        "  border: none;"
-        "  border-bottom: 1px solid rgba(185, 194, 221, 0.11);"
-        "}"
+        f"QFrame#studioPageHeader {{"
+        f"  background: transparent;"
+        f"  border: none;"
+        f"  border-bottom: 1px solid {with_alpha(THEME['border_soft'], 0.11)};"
+        f"}}"
     )
     lo = QVBoxLayout(frame)
     lo.setContentsMargins(0, 0, 0, 14)
@@ -256,18 +256,18 @@ def _make_page_header(title: str, subtitle: str, eyebrow: str = "ST-LRPS Studio"
 
     eyebrow_lbl = QLabel(eyebrow.upper())
     eyebrow_lbl.setStyleSheet(
-        "color: rgba(53, 208, 255, 0.78); font-size: 10px; font-weight: 800; "
-        "background: transparent; border: none;"
+        f"color: {THEME['accent']}; font-size: 10px; font-weight: 800; "
+        f"background: transparent; border: none;"
     )
     title_lbl = QLabel(title)
     title_lbl.setStyleSheet(
-        "color: #f3f7ff; font-size: 22px; font-weight: 800; "
-        "background: transparent; border: none;"
+        f"color: {THEME['fg_main']}; font-size: 22px; font-weight: 800; "
+        f"background: transparent; border: none;"
     )
     subtitle_lbl = QLabel(subtitle)
     subtitle_lbl.setWordWrap(True)
     subtitle_lbl.setStyleSheet(
-        "color: #8fa0bf; font-size: 12px; background: transparent; border: none;"
+        f"color: {THEME['fg_soft']}; font-size: 12px; background: transparent; border: none;"
     )
 
     lo.addWidget(eyebrow_lbl)
@@ -281,10 +281,10 @@ def _style_surface(frame: QFrame, *, object_name: str = "studioSurface", padding
     frame.setObjectName(object_name)
     frame.setStyleSheet(
         f"QFrame#{object_name} {{"
-        "  background: rgba(11, 16, 32, 0.72);"
-        "  border: 1px solid rgba(185, 194, 221, 0.12);"
-        "  border-radius: 12px;"
-        "}"
+        f"  background: {with_alpha(THEME['bg_card'], 0.72)};"
+        f"  border: 1px solid {with_alpha(THEME['border'], 0.12)};"
+        f"  border-radius: 12px;"
+        f"}}"
     )
     if padding:
         layout = frame.layout()
@@ -302,23 +302,23 @@ def _style_command_preview(edit: QPlainTextEdit, *, min_h: int = 76, max_h: Opti
         edit.setMaximumHeight(max_h)
     edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
     edit.setStyleSheet(
-        "QPlainTextEdit {"
-        "  background: rgba(4, 8, 16, 0.92);"
-        "  border: 1px solid rgba(53, 208, 255, 0.18);"
-        "  border-radius: 10px;"
-        "  color: #d8e7ff;"
-        "  padding: 10px 12px;"
-        "  selection-background-color: rgba(53, 208, 255, 0.35);"
-        "}"
+        f"QPlainTextEdit {{"
+        f"  background: {with_alpha(THEME['bg_log'], 0.92)};"
+        f"  border: 1px solid {with_alpha(THEME['accent'], 0.18)};"
+        f"  border-radius: 10px;"
+        f"  color: {THEME['fg_main']};"
+        f"  padding: 10px 12px;"
+        f"  selection-background-color: {with_alpha(THEME['accent'], 0.35)};"
+        f"}}"
     )
 
 
 def _make_status_note(text: str = "", *, level: str = "info") -> QLabel:
     colors = {
-        "info": ("#8fa0bf", "rgba(53, 208, 255, 0.07)", "rgba(53, 208, 255, 0.22)"),
-        "ok": ("#7dd3ae", "rgba(52, 211, 153, 0.08)", "rgba(52, 211, 153, 0.25)"),
-        "warn": ("#fbbf24", "rgba(251, 191, 36, 0.08)", "rgba(251, 191, 36, 0.25)"),
-        "error": ("#fca5a5", "rgba(248, 113, 113, 0.08)", "rgba(248, 113, 113, 0.25)"),
+        "info": (THEME["fg_soft"], with_alpha(THEME["accent"], 0.07), with_alpha(THEME["accent"], 0.22)),
+        "ok": (THEME["success"], with_alpha(THEME["success"], 0.08), with_alpha(THEME["success"], 0.25)),
+        "warn": (THEME["warning"], with_alpha(THEME["warning"], 0.08), with_alpha(THEME["warning"], 0.25)),
+        "error": (THEME["error"], with_alpha(THEME["error"], 0.08), with_alpha(THEME["error"], 0.25)),
     }
     fg, bg, border = colors.get(level, colors["info"])
     lbl = QLabel(text)
@@ -482,8 +482,8 @@ class ValidatedPathEdit(QLineEdit):
 
     path_validated = pyqtSignal(str, bool)  # (path, exists)
 
-    _STYLE_VALID = "border: 1px solid rgba(52, 211, 153, 0.7);"
-    _STYLE_INVALID = "border: 1px solid rgba(248, 113, 113, 0.75); background-color: rgba(248, 113, 113, 0.08);"
+    _STYLE_VALID = f"border: 1px solid {with_alpha(THEME['success'], 0.7)};"
+    _STYLE_INVALID = f"border: 1px solid {with_alpha(THEME['error'], 0.75)}; background-color: {with_alpha(THEME['error'], 0.08)};"
     _STYLE_NEUTRAL = ""
 
     def __init__(
@@ -521,13 +521,13 @@ class CollapsibleSection(QWidget):
         self._toggle_btn.setChecked(False)
         self._toggle_btn.setProperty("kind", "ghost")
         self._toggle_btn.setStyleSheet(
-            "QPushButton { text-align: left; padding: 8px 14px; font-weight: 600; "
-            "color: #8fb9d4; border: 1px solid transparent; border-radius: 8px; "
-            "background: rgba(53, 208, 255, 0.04); }"
-            "QPushButton:hover { color: #d7e1f7; background: rgba(53, 208, 255, 0.08); "
-            "border-color: rgba(53, 208, 255, 0.18); }"
-            "QPushButton:checked { color: #e8ecf8; background: rgba(53, 208, 255, 0.10); "
-            "border-color: rgba(53, 208, 255, 0.22); }"
+            f"QPushButton {{ text-align: left; padding: 8px 14px; font-weight: 600; "
+            f"color: {THEME['accent']}; border: 1px solid transparent; border-radius: 8px; "
+            f"background: {with_alpha(THEME['accent'], 0.04)}; }}"
+            f"QPushButton:hover {{ color: {THEME['fg_main']}; background: {with_alpha(THEME['accent'], 0.08)}; "
+            f"border-color: {with_alpha(THEME['accent'], 0.18)}; }}"
+            f"QPushButton:checked {{ color: {THEME['fg_main']}; background: {with_alpha(THEME['accent'], 0.10)}; "
+            f"border-color: {with_alpha(THEME['accent'], 0.22)}; }}"
         )
         self._toggle_btn.clicked.connect(self._on_toggle)
         self._content = QWidget()
@@ -567,10 +567,10 @@ class DatasetInfoLabel(QLabel):
         super().__init__(parent)
         self.setWordWrap(True)
         self.setStyleSheet(
-            "QLabel { color: #7c8dc7; font-size: 11px; padding: 3px 10px;"
-            " background: rgba(124, 92, 255, 0.06);"
-            " border-left: 2px solid rgba(124, 92, 255, 0.35);"
-            " border-radius: 0 6px 6px 0; }"
+            f"QLabel {{ color: {THEME['fg_soft']}; font-size: 11px; padding: 3px 10px;"
+            f" background: {with_alpha(THEME['accent'], 0.06)};"
+            f" border-left: 2px solid {with_alpha(THEME['accent'], 0.35)};"
+            f" border-radius: 0 6px 6px 0; }}"
         )
         self.setVisible(False)
 
@@ -619,7 +619,7 @@ class LogHighlighter(QSyntaxHighlighter):
         self._rules: List[Tuple[re.Pattern, QTextCharFormat]] = []
 
         fmt_err = QTextCharFormat()
-        fmt_err.setForeground(QColor("#f87171"))
+        fmt_err.setForeground(QColor(THEME["error"]))
         fmt_err.setFontWeight(QFont.Weight.Bold)
         for p in [
             r"(?i)\[ERROR\]",
@@ -632,7 +632,7 @@ class LogHighlighter(QSyntaxHighlighter):
             self._rules.append((re.compile(p), fmt_err))
 
         fmt_warn = QTextCharFormat()
-        fmt_warn.setForeground(QColor("#fbbf24"))
+        fmt_warn.setForeground(QColor(THEME["warning"]))
         for p in [
             r"(?i)\[WARNING\]",
             r"(?i)\bWarning\b",
@@ -642,12 +642,12 @@ class LogHighlighter(QSyntaxHighlighter):
             self._rules.append((re.compile(p), fmt_warn))
 
         fmt_epoch = QTextCharFormat()
-        fmt_epoch.setForeground(QColor("#c084fc"))
+        fmt_epoch.setForeground(QColor(THEME["accent"]))
         fmt_epoch.setFontWeight(QFont.Weight.Bold)
         self._rules.append((re.compile(r"Epoch\s*\[\s*\d+\s*/\s*\d+\s*\]"), fmt_epoch))
 
         fmt_metric = QTextCharFormat()
-        fmt_metric.setForeground(QColor("#34d399"))
+        fmt_metric.setForeground(QColor(THEME["success"]))
         for p in [
             r"(?:Loss|loss|RMSE|rmse|MAE|mae|R²|r2|accuracy|acc)\s*[:=]\s*[\d.eE+\-]+",
             r"(?:Val|val|Train|train)[\s_](?:Loss|loss)\s*[:=]\s*[\d.eE+\-]+",
@@ -656,7 +656,7 @@ class LogHighlighter(QSyntaxHighlighter):
             self._rules.append((re.compile(p), fmt_metric))
 
         fmt_time = QTextCharFormat()
-        fmt_time.setForeground(QColor("#22d3ee"))
+        fmt_time.setForeground(QColor(THEME["secondary"]))
         for p in [
             r"[\d.]+\s*s/epoch",
             r"[\d,.]+\s*(?:pts|points|samples)/s",
@@ -665,7 +665,7 @@ class LogHighlighter(QSyntaxHighlighter):
             self._rules.append((re.compile(p), fmt_time))
 
         fmt_ui = QTextCharFormat()
-        fmt_ui.setForeground(QColor("#7c8dc7"))
+        fmt_ui.setForeground(QColor(THEME["info"]))
         self._rules.append((re.compile(r"^\[UI\].*", re.MULTILINE), fmt_ui))
 
     def highlightBlock(self, text: str) -> None:
@@ -734,53 +734,145 @@ class LiveLossPlot(QWidget):
         self._card = QFrame()
         self._card.setObjectName("liveLossCard")
         self._card.setStyleSheet(
-            """
-            QFrame#liveLossCard {
-                background-color: rgba(10, 16, 31, 0.96);
-                border: 1px solid rgba(124, 92, 255, 0.30);
+            f"""
+            QFrame#liveLossCard {{
+                background-color: {with_alpha(THEME['bg_card'], 0.96)};
+                border: 1px solid {with_alpha(THEME['accent'], 0.30)};
                 border-radius: 18px;
-            }
-            QLabel#lossTitle {
-                color: #eef2ff;
+            }}
+            QLabel#lossTitle {{
+                color: {THEME['fg_main']};
                 font-size: 14px;
                 font-weight: 700;
-            }
-            QLabel#lossSubtitle {
-                color: #7480a8;
-                font-size: 11px;
-            }
-            QLabel[metric="true"] {
-                color: #dbe4ff;
-                background-color: rgba(255, 255, 255, 0.05);
-                border: 1px solid rgba(185, 194, 221, 0.13);
-                border-radius: 10px;
-                padding: 5px 8px;
-                min-width: 82px;
-                max-height: 46px;
-                font-family: Consolas, 'Courier New', monospace;
-                font-size: 11px;
-            }
-            QPushButton[plotControl="true"] {
-                color: #b9c2dd;
-                background-color: rgba(255, 255, 255, 0.045);
-                border: 1px solid rgba(185, 194, 221, 0.16);
-                border-radius: 10px;
-                padding: 5px 10px;
-                font-size: 11px;
-            }
-            QPushButton[plotControl="true"]:hover {
-                color: #ffffff;
-                background-color: rgba(124, 92, 255, 0.22);
-                border: 1px solid rgba(124, 92, 255, 0.55);
-            }
-            QCheckBox {
-                color: #9aa7c7;
-                font-size: 11px;
-                spacing: 6px;
-            }
+        card_layout.setContentsMargins(16, 14, 16, 16)
+        card_layout.setSpacing(12)
+        self._card.setLayout(card_layout)
+
+        # ----------------------------
+        # Row 1: title  |  controls
+        # ----------------------------
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(12)
+
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(3)
+        title = QLabel("Live Training Monitor")
+        title.setObjectName("lossTitle")
+        subtitle = QLabel("Training / validation loss curve  ·  logarithmic scale recommended")
+        subtitle.setObjectName("lossSubtitle")
+        title_col.addWidget(title)
+        title_col.addWidget(subtitle)
+        top_row.addLayout(title_col, 1)
+
+        self._chk_log_y = QCheckBox("Log Y")
+        self._chk_log_y.setChecked(True)
+        self._chk_log_y.setToolTip(
+            "Shows the Y axis on a logarithmic scale.\n"
+            "Recommended because loss values span several orders of magnitude."
+        )
+        self._chk_log_y.toggled.connect(self._on_log_toggle)
+        top_row.addWidget(self._chk_log_y)
+
+        self._chk_smooth = QCheckBox("Smooth")
+        self._chk_smooth.setChecked(False)
+        self._chk_smooth.setToolTip("Display-only moving-average smoothing. History files and metrics are unchanged.")
+        self._chk_smooth.toggled.connect(lambda _checked: self._update_plot())
+        top_row.addWidget(self._chk_smooth)
+
+        self._smooth_window = QSpinBox()
+        self._smooth_window.setRange(2, 101)
+        self._smooth_window.setValue(5)
+        self._smooth_window.setMaximumWidth(70)
+        self._smooth_window.setToolTip("Smoothing window in plotted points.")
+        self._smooth_window.valueChanged.connect(lambda _value: self._update_plot())
+        top_row.addWidget(self._smooth_window)
+
+        self._btn_fit = QPushButton("Auto Scale")
+        self._btn_fit.setProperty("plotControl", True)
+        self._btn_fit.setToolTip("Automatically refits the plot to the current data.")
+        self._btn_fit.clicked.connect(self._auto_range)
+        top_row.addWidget(self._btn_fit)
+
+        self._btn_clear = QPushButton("Reset")
+        self._btn_clear.setProperty("plotControl", True)
+        self._btn_clear.setToolTip("Resets all loss history and metrics in the live plot.")
+        self._btn_clear.clicked.connect(self.clear)
+        top_row.addWidget(self._btn_clear)
+
+        card_layout.addLayout(top_row)
+
+        # ----------------------------
+        # Row 2: metric chips (7 equal widths)
+        # ----------------------------
+        self._lbl_train = self._metric_label("Train opt/ref", "—")
+        self._lbl_val   = self._metric_label("Validation",    "—")
+        self._lbl_best  = self._metric_label("Best Val",      "—")
+        self._lbl_best_epoch  = self._metric_label("Best Epoch",      "—")
+        self._lbl_no_improve  = self._metric_label("No Improvement",  "—")
+        self._lbl_lam_dir     = self._metric_label("λ Dir Weight",    "—")
+        self._lbl_lr          = self._metric_label("Learning Rate",   "—")
+
+        self._lbl_score = self._metric_label("Checkpoint Score", "...")
+        self._lbl_formula = self._metric_label("Formula", "N/A")
+
+        # Metric chips are wrapped in containers so they can be hidden in
+        # compact mode (when an external KPI strip already shows these values).
+        self._metrics_row1 = QWidget()
+        metrics_row = QHBoxLayout(self._metrics_row1)
+        metrics_row.setContentsMargins(0, 0, 0, 0)
+        metrics_row.setSpacing(6)
+        for w in (
+            self._lbl_train, self._lbl_val, self._lbl_best,
+            self._lbl_best_epoch, self._lbl_no_improve, self._lbl_lam_dir, self._lbl_lr,
+        ):
+            metrics_row.addWidget(w, 1)
+        card_layout.addWidget(self._metrics_row1)
+
+        self._metrics_row2 = QWidget()
+        metrics_row2 = QHBoxLayout(self._metrics_row2)
+        metrics_row2.setContentsMargins(0, 0, 0, 0)
+        metrics_row2.setSpacing(6)
+        metrics_row2.addWidget(self._lbl_score, 1)
+        metrics_row2.addWidget(self._lbl_formula, 3)
+        card_layout.addWidget(self._metrics_row2)
+
+        self._help_label = QLabel(
+            "Best metric selects ckpt_best.pt. Hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
+        )
+        self._help_label.setWordWrap(True)
+        self._help_label.setStyleSheet("color: #7f8ab0; font-size: 10px;")
+        self._help_label.setToolTip(
+            "Best metric is the scalar score used to select ckpt_best.pt. "
+            "For hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
+        )
+        card_layout.addWidget(self._help_label)
+
+        # status label (bottom-aligned)
+        self._lbl_status = QLabel("Waiting for training…")
+        self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._lbl_status.setStyleSheet("color: #5a647a; font-size: 11px;")
+
+        # ----------------------------
+        # Plot body
+        # ----------------------------
+        if _HAS_PYQTGRAPH:
+            }}
+            QLabel#lossSubtitle {{
+                color: {THEME['fg_muted']};
+                font-size: 12px;
+            }}
+            QPushButton[plotControl='true'] {{
+                background: {with_alpha(THEME['bg_shell'], 0.5)};
+                border: 1px solid {THEME['border']};
+                border-radius: 4px;
+                color: {THEME['fg_main']};
+                padding: 4px 8px;
+            }}
+            QPushButton[plotControl='true']:hover {{ background: {THEME['border']}; }}
             """
         )
-
         card_layout = QVBoxLayout()
         card_layout.setContentsMargins(16, 14, 16, 16)
         card_layout.setSpacing(12)
@@ -902,15 +994,15 @@ class LiveLossPlot(QWidget):
             # it is None — which crashed the Lunar Propagation orbit preview once
             # the Studio had been touched. This widget sets its own background
             # per-instance below, so a global background override is unnecessary.
-            pg.setConfigOptions(antialias=True, foreground="#b9c2dd")
+            pg.setConfigOptions(antialias=True, foreground=THEME["fg_soft"])
 
             self._plot_widget = pg.PlotWidget(axisItems={"left": _CleanLogAxis(orientation="left")})
             self._plot_widget.setMinimumHeight(360)
-            self._plot_widget.setBackground("#0a1120")
+            self._plot_widget.setBackground(THEME["bg_shell"])
             self._plot_widget.setMenuEnabled(False)
             self._plot_widget.showGrid(x=True, y=True, alpha=0.10)
             # Cell titles above each plot describe the y-axis, so keep axes clean.
-            self._plot_widget.setLabel("bottom", "Epoch", color="#6f7d9c", size="9pt")
+            self._plot_widget.setLabel("bottom", "Epoch", color=THEME["fg_soft"], size="9pt")
             self._plot_widget.setLogMode(x=False, y=True)
 
             plot_item = self._plot_widget.getPlotItem()
@@ -918,8 +1010,8 @@ class LiveLossPlot(QWidget):
             plot_item.hideButtons()
             for axis_name in ("left", "bottom"):
                 axis = self._plot_widget.getAxis(axis_name)
-                axis.setTextPen(pg.mkPen("#7f8ca8"))
-                axis.setPen(pg.mkPen("#2a3550"))
+                axis.setTextPen(pg.mkPen(THEME["fg_muted"]))
+                axis.setPen(pg.mkPen(THEME["border_soft"]))
                 axis.setStyle(
                     tickFont=QFont("Consolas", 8),
                     autoExpandTextSpace=True,
@@ -927,10 +1019,10 @@ class LiveLossPlot(QWidget):
                     tickLength=4,
                 )
 
-            self._pen_train = pg.mkPen(color="#8b5cf6", width=2.6)
-            self._pen_val = pg.mkPen(color="#22d3ee", width=2.6)
-            self._pen_train_shadow = pg.mkPen(color=(139, 92, 246, 70), width=7)
-            self._pen_val_shadow = pg.mkPen(color=(34, 211, 238, 70), width=7)
+            self._pen_train = pg.mkPen(color=THEME["accent"], width=2.6)
+            self._pen_val = pg.mkPen(color=THEME["info"], width=2.6)
+            self._pen_train_shadow = pg.mkPen(color=QColor(with_alpha(THEME["accent"], 0.27)), width=7)
+            self._pen_val_shadow = pg.mkPen(color=QColor(with_alpha(THEME["info"], 0.27)), width=7)
 
             self._curve_train_shadow = self._plot_widget.plot([], [], pen=self._pen_train_shadow)
             self._curve_val_shadow = self._plot_widget.plot([], [], pen=self._pen_val_shadow)
@@ -939,8 +1031,8 @@ class LiveLossPlot(QWidget):
                 pen=self._pen_train,
                 symbol="o",
                 symbolSize=5,
-                symbolBrush=pg.mkBrush("#8b5cf6"),
-                symbolPen=pg.mkPen("#1b1035"),
+                symbolBrush=pg.mkBrush(THEME["accent"]),
+                symbolPen=pg.mkPen(THEME["bg_space"]),
                 name="train_total",
             )
             self._curve_val = self._plot_widget.plot(
@@ -948,25 +1040,25 @@ class LiveLossPlot(QWidget):
                 pen=self._pen_val,
                 symbol="o",
                 symbolSize=5,
-                symbolBrush=pg.mkBrush("#22d3ee"),
-                symbolPen=pg.mkPen("#06202a"),
+                symbolBrush=pg.mkBrush(THEME["info"]),
+                symbolPen=pg.mkPen(THEME["bg_space"]),
                 name="val_total",
             )
             self._curve_train_opt = self._plot_widget.plot(
                 [], [],
-                pen=pg.mkPen(color="#a78bfa", width=1.8, style=pg_QtCore.Qt.PenStyle.DashLine),
+                pen=pg.mkPen(color=THEME["accent"], width=1.8, style=pg_QtCore.Qt.PenStyle.DashLine),
                 name="train_objective",
             )
             self._curve_val_base = self._plot_widget.plot(
                 [], [],
-                pen=pg.mkPen(color="#67e8f9", width=1.8, style=pg_QtCore.Qt.PenStyle.DashLine),
+                pen=pg.mkPen(color=THEME["info"], width=1.8, style=pg_QtCore.Qt.PenStyle.DashLine),
                 name="val_base",
             )
 
             self._best_line = pg.InfiniteLine(
                 angle=0,
                 movable=False,
-                pen=pg.mkPen(color=(52, 211, 153, 130), width=1.2, style=pg_QtCore.Qt.PenStyle.DashLine),
+                pen=pg.mkPen(color=QColor(with_alpha(THEME["success"], 0.5)), width=1.2, style=pg_QtCore.Qt.PenStyle.DashLine),
             )
             self._best_line.setVisible(False)
             self._plot_widget.addItem(self._best_line)
@@ -975,9 +1067,9 @@ class LiveLossPlot(QWidget):
                 self._legend = plot_item.addLegend(
                     offset=(12, 12),
                     labelTextSize="9pt",
-                    labelTextColor="#dbe4ff",
-                    brush=pg.mkBrush(8, 12, 26, 185),
-                    pen=pg.mkPen(124, 92, 255, 90),
+                    labelTextColor=THEME["fg_main"],
+                    brush=pg.mkBrush(QColor(with_alpha(THEME["bg_card"], 0.72))),
+                    pen=pg.mkPen(QColor(with_alpha(THEME["border"], 0.35))),
                 )
             except TypeError:
                 # Older pyqtgraph versions do not support all styling kwargs.
@@ -985,25 +1077,25 @@ class LiveLossPlot(QWidget):
 
             self._direction_plot = pg.PlotWidget(axisItems={"left": _CleanLogAxis(orientation="left")})
             self._direction_plot.setMinimumHeight(230)
-            self._direction_plot.setBackground("#0a1120")
+            self._direction_plot.setBackground(THEME["bg_shell"])
             self._direction_plot.setMenuEnabled(False)
             self._direction_plot.showGrid(x=True, y=True, alpha=0.10)
-            self._direction_plot.setLabel("bottom", "Epoch", color="#6f7d9c", size="9pt")
+            self._direction_plot.setLabel("bottom", "Epoch", color=THEME["fg_soft"], size="9pt")
             self._direction_plot.setLogMode(x=False, y=True)
-            self._curve_train_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#34d399", width=2.1), name="train a")
-            self._curve_val_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color="#10b981", width=2.4), name="val a")
-            self._curve_train_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#fbbf24", width=2.1), name="train dir")
-            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color="#f59e0b", width=2.4), name="val dir")
+            self._curve_train_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["success"], width=2.1), name="train a")
+            self._curve_val_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["success"], width=2.4), name="val a")
+            self._curve_train_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["warning"], width=2.1), name="train dir")
+            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["warning"], width=2.4), name="val dir")
 
             self._direction_quality_plot = pg.PlotWidget()
             self._direction_quality_plot.setMinimumHeight(180)
-            self._direction_quality_plot.setBackground("#0a1120")
+            self._direction_quality_plot.setBackground(THEME["bg_shell"])
             self._direction_quality_plot.setMenuEnabled(False)
             self._direction_quality_plot.showGrid(x=True, y=True, alpha=0.10)
-            self._direction_quality_plot.setLabel("bottom", "Epoch", color="#6f7d9c", size="9pt")
-            self._curve_val_angular = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#3b82f6", width=2.4), name="val ang°")
-            self._curve_train_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#c084fc", width=2.1), name="train cos")
-            self._curve_val_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color="#8b5cf6", width=2.4), name="val cos")
+            self._direction_quality_plot.setLabel("bottom", "Epoch", color=THEME["fg_soft"], size="9pt")
+            self._curve_val_angular = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color=THEME["info"], width=2.4), name="val ang°")
+            self._curve_train_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color=THEME["accent"], width=2.1), name="train cos")
+            self._curve_val_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color=THEME["accent"], width=2.4), name="val cos")
 
             self._direction_tab = QWidget()
             direction_layout = QVBoxLayout()
@@ -1015,13 +1107,13 @@ class LiveLossPlot(QWidget):
 
             self._checkpoint_plot = pg.PlotWidget(axisItems={"left": _CleanLogAxis(orientation="left")})
             self._checkpoint_plot.setMinimumHeight(360)
-            self._checkpoint_plot.setBackground("#0a1120")
+            self._checkpoint_plot.setBackground(THEME["bg_shell"])
             self._checkpoint_plot.setMenuEnabled(False)
             self._checkpoint_plot.showGrid(x=True, y=True, alpha=0.10)
-            self._checkpoint_plot.setLabel("bottom", "Epoch", color="#6f7d9c", size="9pt")
+            self._checkpoint_plot.setLabel("bottom", "Epoch", color=THEME["fg_soft"], size="9pt")
             self._checkpoint_plot.setLogMode(x=False, y=True)
-            self._curve_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#34d399", width=2.6), name="score")
-            self._curve_best_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color="#f472b6", width=2.2, style=pg_QtCore.Qt.PenStyle.DashLine), name="best")
+            self._curve_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color=THEME["success"], width=2.6), name="score")
+            self._curve_best_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color=THEME["accent"], width=2.2, style=pg_QtCore.Qt.PenStyle.DashLine), name="best")
 
             # Consistent clean axes + a compact legend on every companion plot.
             for _p in (self._direction_plot, self._direction_quality_plot, self._checkpoint_plot):
@@ -1030,14 +1122,14 @@ class LiveLossPlot(QWidget):
                 _pi.hideButtons()
                 for _axis_name in ("left", "bottom"):
                     _ax = _p.getAxis(_axis_name)
-                    _ax.setTextPen(pg.mkPen("#7f8ca8"))
-                    _ax.setPen(pg.mkPen("#2a3550"))
+                    _ax.setTextPen(pg.mkPen(THEME["fg_muted"]))
+                    _ax.setPen(pg.mkPen(THEME["border_soft"]))
                     _ax.setStyle(tickFont=QFont("Consolas", 8), tickTextOffset=6, tickLength=4)
                 try:
                     _pi.addLegend(offset=(8, 8), labelTextSize="8pt",
-                                  labelTextColor="#cdd9ee",
-                                  brush=pg.mkBrush(8, 12, 26, 170),
-                                  pen=pg.mkPen(124, 92, 255, 70))
+                                  labelTextColor=THEME["fg_main"],
+                                  brush=pg.mkBrush(QColor(with_alpha(THEME["bg_card"], 0.65))),
+                                  pen=pg.mkPen(QColor(with_alpha(THEME["border"], 0.25))))
                 except TypeError:
                     _pi.addLegend(offset=(8, 8))
 
@@ -1055,9 +1147,9 @@ class LiveLossPlot(QWidget):
                 v.setSpacing(3)
                 lbl = QLabel(title)
                 lbl.setStyleSheet(
-                    "color: #8ea3c8; font-size: 11px; font-weight: 700;"
-                    " background: transparent; border: none;"
-                    " padding-left: 4px;"
+                    f"color: {THEME['fg_soft']}; font-size: 11px; font-weight: 700;"
+                    f" background: transparent; border: none;"
+                    f" padding-left: 4px;"
                 )
                 widget.setMinimumHeight(minh)
                 v.addWidget(lbl)
@@ -1099,9 +1191,9 @@ class LiveLossPlot(QWidget):
             )
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
             placeholder.setStyleSheet(
-                "color: #7f8ab0; background-color: rgba(4, 8, 18, 0.72); "
-                "border: 1px solid rgba(185, 194, 221, 0.12); border-radius: 14px; "
-                "padding: 24px; font-style: italic;"
+                f"color: {THEME['fg_muted']}; background-color: {with_alpha(THEME['bg_shell'], 0.72)}; "
+                f"border: 1px solid {with_alpha(THEME['border'], 0.12)}; border-radius: 14px; "
+                f"padding: 24px; font-style: italic;"
             )
             card_layout.addWidget(placeholder)
 

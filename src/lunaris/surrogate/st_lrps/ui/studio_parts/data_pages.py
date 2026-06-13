@@ -64,8 +64,7 @@ import sys
 
 from .qt_common import *
 from .qt_common import _USE_PYSIDE
-
-
+from lunaris.ui.core.ui_commons import THEME, with_alpha
 # pyqtgraph — optional, graceful fallback
 try:
     import pyqtgraph as pg
@@ -279,10 +278,10 @@ def _data_action_card(
     card.setObjectName(object_name)
     card.setStyleSheet(
         f"QFrame#{object_name} {{"
-        "  background: rgba(8, 13, 26, 0.84);"
-        "  border: 1px solid rgba(53, 208, 255, 0.18);"
-        "  border-radius: 14px;"
-        "}"
+        f"  background: {{with_alpha(THEME['bg_card'], 0.84)}};"
+        f"  border: 1px solid {{with_alpha(THEME['accent'], 0.18)}};"
+        f"  border-radius: 14px;"
+        f"}}"
     )
     layout = QVBoxLayout(card)
     layout.setContentsMargins(16, 14, 16, 14)
@@ -297,13 +296,13 @@ def _data_action_card(
     text_col.setSpacing(3)
     title_lbl = QLabel(title)
     title_lbl.setStyleSheet(
-        "color: #f3f7ff; font-size: 16px; font-weight: 800; "
-        "background: transparent; border: none;"
+        f"color: {{THEME['fg_main']}}; font-size: 16px; font-weight: 800; "
+        f"background: transparent; border: none;"
     )
     subtitle_lbl = QLabel(subtitle)
     subtitle_lbl.setWordWrap(True)
     subtitle_lbl.setStyleSheet(
-        "color: #8fa0bf; font-size: 12px; background: transparent; border: none;"
+        f"color: {{THEME['fg_soft']}}; font-size: 12px; background: transparent; border: none;"
     )
     text_col.addWidget(title_lbl)
     text_col.addWidget(subtitle_lbl)
@@ -336,10 +335,10 @@ def _compact_path_label(empty_text: str) -> QLabel:
     label.setWordWrap(True)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     label.setStyleSheet(
-        "QLabel { color: #9fb0cc; font-size: 11px; padding: 8px 10px;"
-        " background: rgba(4, 8, 16, 0.55);"
-        " border: 1px solid rgba(185, 194, 221, 0.12);"
-        " border-radius: 9px; }"
+        f"QLabel {{ color: {{THEME['fg_muted']}}; font-size: 11px; padding: 8px 10px;"
+        f" background: {{with_alpha(THEME['bg_shell'], 0.55)}};"
+        f" border: 1px solid {{with_alpha(THEME['border'], 0.12)}};"
+        f" border-radius: 9px; }}"
     )
     return label
 
@@ -388,7 +387,7 @@ class CloudGenTab(QWidget):
         mode_bar.setContentsMargins(0, 0, 0, 4)
         mode_bar.setSpacing(8)
         mode_lbl = QLabel("Workflow")
-        mode_lbl.setStyleSheet("font-weight: 700; color: #c4ccff;")
+        mode_lbl.setStyleSheet(f"font-weight: 700; color: {{THEME['fg_soft']}};")
         self._mode_combo = QComboBox()
         self._mode_combo.addItem("Single Cloud", self._MODE_SINGLE)
         self._mode_combo.addItem("Dataset Suite", self._MODE_SUITE)
@@ -405,9 +404,9 @@ class CloudGenTab(QWidget):
         self._sync_banner = QLabel("")
         self._sync_banner.setWordWrap(True)
         self._sync_banner.setStyleSheet(
-            "QLabel { color: #34d399; background: rgba(52,211,153,0.08); "
-            "border: 1px solid rgba(52,211,153,0.3); border-radius: 8px; "
-            "padding: 6px 12px; font-size: 11px; }"
+            f"QLabel {{ color: {{THEME['success']}}; background: {{with_alpha(THEME['success'], 0.08)}}; "
+            f"border: 1px solid {{with_alpha(THEME['success'], 0.3)}}; border-radius: 8px; "
+            f"padding: 6px 12px; font-size: 11px; }}"
         )
         self._sync_banner.setVisible(False)
 
@@ -2278,8 +2277,8 @@ class DatasetInspectionPanel(QWidget):
         self._summary.setTextFormat(Qt.TextFormat.RichText)
         self._summary.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._summary.setStyleSheet(
-            "background: rgba(13, 22, 38, 0.72); border: 1px solid rgba(185, 194, 221, 0.12);"
-            " border-radius: 10px; padding: 12px; color: #cdd9ee; font-size: 12px;"
+            f"background: {{with_alpha(THEME['bg_card'], 0.72)}}; border: 1px solid {{with_alpha(THEME['border'], 0.12)}};"
+            f" border-radius: 10px; padding: 12px; color: {{THEME['fg_main']}}; font-size: 12px;"
         )
         self._summary.setMinimumHeight(140)
 
@@ -2320,16 +2319,16 @@ class DatasetInspectionPanel(QWidget):
 
     def _set_status(self, level: str, text: str) -> None:
         colors = {
-            "ready":   ("#2dd4bf", "rgba(45, 212, 191, 0.12)", "Ready"),
-            "warning": ("#f6c177", "rgba(246, 193, 119, 0.12)", "Warning"),
-            "error":   ("#ff6b7a", "rgba(255, 107, 122, 0.14)", "Error"),
-            "unknown": ("#7f91ac", "rgba(127, 145, 172, 0.12)", "Unknown"),
+            "ready":   (THEME["success"], with_alpha(THEME["success"], 0.12), "Ready"),
+            "warning": (THEME["warning"], with_alpha(THEME["warning"], 0.12), "Warning"),
+            "error":   (THEME["error"], with_alpha(THEME["error"], 0.14), "Error"),
+            "unknown": (THEME["fg_muted"], with_alpha(THEME["fg_muted"], 0.12), "Unknown"),
         }
         color, bg, label = colors.get(level, colors["unknown"])
         self.status_label.setText(f"{label}: {text}")
         self.status_label.setStyleSheet(
             f"color: {color}; background: {bg}; border: 1px solid {color};"
-            " border-radius: 8px; padding: 6px 10px; font-weight: 600; font-size: 12px;"
+            f" border-radius: 8px; padding: 6px 10px; font-weight: 600; font-size: 12px;"
         )
 
     def _send(self) -> None:
@@ -2424,11 +2423,11 @@ class DataPage(QWidget):
         nav.setObjectName("dataSectionNav")
         nav.setMaximumWidth(260)
         nav.setStyleSheet(
-            "QFrame#dataSectionNav {"
-            "  background: rgba(8, 13, 26, 0.74);"
-            "  border: 1px solid rgba(185, 194, 221, 0.12);"
-            "  border-radius: 14px;"
-            "}"
+            f"QFrame#dataSectionNav {{"
+            f"  background: {{with_alpha(THEME['bg_card'], 0.74)}};"
+            f"  border: 1px solid {{with_alpha(THEME['border'], 0.12)}};"
+            f"  border-radius: 14px;"
+            f"}}"
         )
         nav_l = QVBoxLayout()
         nav_l.setContentsMargins(12, 12, 12, 12)
@@ -2440,25 +2439,25 @@ class DataPage(QWidget):
             btn.setCheckable(True)
             btn.setMinimumHeight(46)
             btn.setStyleSheet(
-                "QPushButton {"
-                "  text-align: left; padding: 0 14px;"
-                "  border: 1px solid rgba(185, 194, 221, 0.10);"
-                "  border-radius: 10px; background: rgba(255,255,255,0.025);"
-                "  color: #a8b5d0; font-weight: 750; font-size: 13px;"
-                "}"
-                "QPushButton:hover { background: rgba(53, 208, 255, 0.06); color: #e8ecf8; }"
-                "QPushButton:checked {"
-                "  background: rgba(53, 208, 255, 0.12);"
-                "  border-color: rgba(53, 208, 255, 0.35);"
-                "  color: #f2f8ff;"
-                "}"
+                f"QPushButton {{"
+                f"  text-align: left; padding: 0 14px;"
+                f"  border: 1px solid {{with_alpha(THEME['border'], 0.10)}};"
+                f"  border-radius: 10px; background: {{with_alpha('#ffffff', 0.025)}};"
+                f"  color: {{THEME['fg_soft']}}; font-weight: 750; font-size: 13px;"
+                f"}}"
+                f"QPushButton:hover {{ background: {{with_alpha(THEME['accent'], 0.06)}}; color: {{THEME['fg_main']}}; }}"
+                f"QPushButton:checked {{"
+                f"  background: {{with_alpha(THEME['accent'], 0.12)}};"
+                f"  border-color: {{with_alpha(THEME['accent'], 0.35)}};"
+                f"  color: {{THEME['fg_main']}};"
+                f"}}"
             )
             btn.clicked.connect(lambda _c=False, i=idx: self._show_section(i))
             self._section_buttons.append(btn)
             return btn
 
         nav_title = QLabel("Data")
-        nav_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #e8ecf8;")
+        nav_title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {{THEME['fg_main']}};")
         nav_l.addWidget(nav_title)
         nav_l.addWidget(_nav_btn("Inspect", "Readiness and metadata", 0))
         nav_l.addWidget(_nav_btn("Generate", "Single cloud or train/val/test/OOD suite", 1))
