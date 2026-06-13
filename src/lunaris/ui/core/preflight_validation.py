@@ -17,9 +17,14 @@ window can focus on orchestration rather than background validation mechanics.
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, List, Mapping, Tuple
 
 from PySide6 import QtCore
+
+# Shared, flow-agnostic preflight service: the UI reaches the same backend
+# verdict (and the same output-directory check) as the CLI / MC / benchmark.
+from lunaris.core.preflight import check_backend_capability, check_output_dir_writable
 
 try:
     from lunaris.ui.core.surrogate_artifacts import validate_surrogate_run_preflight
@@ -27,6 +32,38 @@ except ImportError:
     if __name__ == "__main__":
         raise SystemExit(2)
     raise
+
+
+# Map the UI preflight snapshot's force toggles to the PerturbationFlags
+# attribute names the capability registry understands. (The snapshot is built by
+# ``command_builder.build_preflight_snapshot``.)
+_SNAPSHOT_FLAG_MAP = {
+    "gravity_enabled": "enable_sh",
+    "sun_enabled": "enable_3rd_body_sun",
+    "earth_enabled": "enable_3rd_body_earth",
+    "earth_j2_enabled": "enable_earth_j2",
+    "albedo_enabled": "enable_albedo",
+    "tides_k2_enabled": "enable_tides_k2",
+    "tides_k3_enabled": "enable_tides_k3",
+    "relativity_1pn_enabled": "enable_relativity_1pn",
+}
+
+
+def backend_request_from_snapshot(command_data: Mapping[str, Any]) -> Tuple[str, SimpleNamespace]:
+    """Translate a UI preflight snapshot into a (backend_name, flags) request.
+
+    The desktop mission-propagation run uses the CPU full-fidelity path, so the
+    request maps to ``cpu_st_lrps`` (surrogate gravity) or ``cpu_sh`` (classic
+    spherical harmonics). The returned ``flags`` object exposes the
+    ``enable_*`` attributes the capability registry checks. Pure and Qt-free so
+    it can be unit-tested without a running UI.
+    """
+    gravity_backend = str(command_data.get("gravity_backend", "classic_sh") or "classic_sh").strip().lower()
+    backend = "cpu_st_lrps" if gravity_backend == "st_lrps" else "cpu_sh"
+    flags = SimpleNamespace(
+        **{attr: bool(command_data.get(key, False)) for key, attr in _SNAPSHOT_FLAG_MAP.items()}
+    )
+    return backend, flags
 
 
 class PreFlightWorker(QtCore.QThread):
@@ -98,6 +135,16 @@ class PreFlightWorker(QtCore.QThread):
                     return
                 if message:
                     self.validation_warning.emit(message)
+
+            if self._is_cancelled():
+                return
+
+            self.validation_progress.emit("Validating backend capability...")
+            success, message = self._validate_backend_capability()
+            if not success:
+                self.validation_error.emit(message)
+                self.validation_complete.emit(False, "Backend capability validation failed")
+                return
 
             if self._is_cancelled():
                 return
@@ -283,32 +330,46 @@ class PreFlightWorker(QtCore.QThread):
 
         return True, f"Albedo grid root validated: {root.name}"
 
+    def _validate_backend_capability(self) -> Tuple[bool, str]:
+        """
+        Check the requested backend against the central capability registry.
+
+        Delegates to the shared :mod:`lunaris.core.preflight` service so the UI
+        reaches the same verdict as the CLI / MC / benchmark flows: an invalid
+        backend, an over-limit SH degree, or an unsupported force model is caught
+        here instead of being silently clipped or dropped at run time. The
+        desktop mission-propagation path is CPU full-fidelity, which supports
+        every force model, so this normally passes; it gates correctly if a GPU
+        backend is ever selectable for this flow.
+        """
+
+        backend, flags = backend_request_from_snapshot(self.command_data)
+        issues = check_backend_capability(requested_backend=backend, flags=flags)
+        for issue in issues:
+            if issue.severity == "warning":
+                self.validation_warning.emit(issue.message)
+        errors = [issue for issue in issues if issue.severity == "error"]
+        if errors:
+            return False, errors[0].message
+        return True, f"Backend '{backend}' supports the selected force models"
+
     def _validate_output_directory(self) -> Tuple[bool, str]:
         """
         Ensure the selected output directory can be created and written to.
 
-        This catches permission problems before the backend starts, which makes
-        failures much easier to understand from the user's perspective.
+        Delegates to the shared :func:`lunaris.core.preflight.check_output_dir_writable`
+        so the UI and headless flows use one implementation. This catches
+        permission problems before the backend starts, which makes failures much
+        easier to understand from the user's perspective.
         """
 
         output_dir = str(self.command_data.get("output_dir", "") or "").strip()
-        if not output_dir:
-            return False, "Output directory not specified"
+        issues = check_output_dir_writable(output_dir)
+        errors = [issue for issue in issues if issue.severity == "error"]
+        if errors:
+            return False, errors[0].message
 
-        path = Path(output_dir)
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            return False, f"Cannot create output directory: {exc}"
-
-        test_file = path / ".write_test"
-        try:
-            test_file.touch()
-            test_file.unlink(missing_ok=True)
-        except OSError as exc:
-            return False, f"No write permission in output directory: {exc}"
-
-        return True, f"Output directory ready: {path}"
+        return True, f"Output directory ready: {Path(output_dir)}"
 
     def _validate_numeric_ranges(self) -> Tuple[bool, str]:
         """

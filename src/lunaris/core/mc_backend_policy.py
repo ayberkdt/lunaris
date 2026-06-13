@@ -97,12 +97,21 @@ def _torch_cuda_device_name() -> str | None:
 
 
 def _gpu_sh_limits() -> tuple[int, Tuple[int, ...]]:
-    """Return current true-GPU classic-SH max degree and supported tiers."""
+    """Return current true-GPU classic-SH max degree and supported tiers.
+
+    Sourced from the central backend capability registry
+    (:mod:`lunaris.core.backend_capabilities`) so the MC engine, the benchmark
+    runner, the UI, and provenance writers all agree on the same limit. The
+    registry in turn reads the real Numba CUDA workspace constant.
+    """
 
     try:
-        from lunaris.core.mc_propagator import GPU_SH_MAX_DEGREE, GPU_SH_SUPPORTED_TIERS
+        from lunaris.core.backend_capabilities import (
+            gpu_sh_max_degree,
+            gpu_sh_supported_tiers,
+        )
 
-        return int(GPU_SH_MAX_DEGREE), tuple(int(v) for v in GPU_SH_SUPPORTED_TIERS)
+        return gpu_sh_max_degree(), gpu_sh_supported_tiers()
     except Exception:
         return 24, (24,)
 
