@@ -32,6 +32,9 @@ dist/
 # Local settings
 .claude/
 CLAUDE.md
+claude.md
+*.ui
+refactor.ui
 .env
 .env.*
 *.local
