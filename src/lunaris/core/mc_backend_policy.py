@@ -97,14 +97,142 @@ def _torch_cuda_device_name() -> str | None:
 
 
 def _gpu_sh_limits() -> tuple[int, Tuple[int, ...]]:
-    """Return current true-GPU classic-SH max degree and supported tiers."""
+    """Return current true-GPU classic-SH max degree and supported tiers.
+
+    Sourced from the central backend capability registry
+    (:mod:`lunaris.core.backend_capabilities`) so the MC engine, the benchmark
+    runner, the UI, and provenance writers all agree on the same limit. The
+    registry in turn reads the real Numba CUDA workspace constant.
+    """
 
     try:
-        from lunaris.core.mc_propagator import GPU_SH_MAX_DEGREE, GPU_SH_SUPPORTED_TIERS
+        from lunaris.core.backend_capabilities import (
+            gpu_sh_max_degree,
+            gpu_sh_supported_tiers,
+        )
 
-        return int(GPU_SH_MAX_DEGREE), tuple(int(v) for v in GPU_SH_SUPPORTED_TIERS)
+        return gpu_sh_max_degree(), gpu_sh_supported_tiers()
     except Exception:
         return 24, (24,)
+
+
+@dataclass
+class ClassicSHDecision:
+    """Result of the degree-aware classic-SH backend selection (task §8).
+
+    ``backend`` is the resolved backend name. ``requires_error`` is True when an
+    explicit request cannot be honored and ``fallback_policy='error'`` was set —
+    the caller must raise rather than silently substitute. The requested degree
+    is preserved verbatim (never clipped).
+    """
+
+    backend: str
+    requested_backend: str
+    requested_degree: int
+    fallback_applied: bool = False
+    fallback_reason: str = ""
+    requires_error: bool = False
+
+
+def select_classic_sh_backend(
+    *,
+    requested_backend: str,
+    requested_degree: int,
+    numba_cuda_available: bool,
+    torch_cuda_available: bool,
+    numba_physics_ok: bool = True,
+    torch_physics_ok: bool = True,
+    fallback_policy: str = "compatible_gpu",
+    numba_max_degree: int | None = None,
+) -> ClassicSHDecision:
+    """Pure, testable classic-SH backend selection policy (task §8).
+
+    Implements the documented routing without ever silently clipping the degree
+    or silently disabling a backend:
+
+    * degree <= numba limit: numba_cuda_sh -> torch_cuda_sh -> cpu_sh;
+    * degree  > numba limit: torch_cuda_sh -> cpu_sh (CPU is never the *only*
+      option — torch is tried first);
+    * explicit ``numba_cuda_sh`` with degree > limit obeys ``fallback_policy``
+      (``error`` | ``compatible_gpu`` | ``cpu``).
+
+    This is the decision layer; wiring it into the live MC runtime requires the
+    torch-SH batch propagator (task §4/§6), which is a separate piece.
+    """
+    req = resolve_backend_alias_local(requested_backend)
+    limit = int(numba_max_degree if numba_max_degree is not None else _gpu_sh_limits()[0])
+    degree = int(requested_degree or 0)
+
+    def _decide(backend: str, *, applied: bool = False, reason: str = "", err: bool = False) -> ClassicSHDecision:
+        return ClassicSHDecision(
+            backend=backend,
+            requested_backend=requested_backend,
+            requested_degree=degree,
+            fallback_applied=applied,
+            fallback_reason=reason,
+            requires_error=err,
+        )
+
+    def _high_degree_gpu_or_cpu(reason: str) -> ClassicSHDecision:
+        if torch_cuda_available and torch_physics_ok:
+            return _decide("torch_cuda_sh", applied=True, reason=reason)
+        return _decide("cpu_sh", applied=True, reason=reason)
+
+    # --- Explicit CPU --------------------------------------------------------
+    if req == "cpu_sh":
+        return _decide("cpu_sh")
+
+    # --- Explicit torch ------------------------------------------------------
+    if req == "torch_cuda_sh":
+        if not torch_cuda_available:
+            return _decide("cpu_sh", applied=True, reason="PyTorch CUDA unavailable for torch_cuda_sh")
+        if not torch_physics_ok:
+            return _decide("cpu_sh", applied=True, reason="requested physics not supported by torch_cuda_sh")
+        return _decide("torch_cuda_sh")
+
+    # --- Explicit Numba ------------------------------------------------------
+    if req == "numba_cuda_sh":
+        if degree > limit:
+            reason = f"numba_cuda_sh supports degree <= {limit}"
+            policy = str(fallback_policy or "compatible_gpu").strip().lower()
+            if policy == "error":
+                return _decide("numba_cuda_sh", applied=False, reason=reason, err=True)
+            if policy == "cpu":
+                return _decide("cpu_sh", applied=True, reason=reason)
+            return _high_degree_gpu_or_cpu(reason)  # compatible_gpu (default)
+        if not numba_cuda_available:
+            return _high_degree_gpu_or_cpu("Numba CUDA unavailable for numba_cuda_sh") \
+                if (str(fallback_policy).lower() != "cpu") else _decide(
+                    "cpu_sh", applied=True, reason="Numba CUDA unavailable for numba_cuda_sh")
+        if not numba_physics_ok:
+            return _decide("cpu_sh", applied=True, reason="requested physics not supported by numba_cuda_sh")
+        return _decide("numba_cuda_sh")
+
+    # --- auto ----------------------------------------------------------------
+    if degree <= limit:
+        if numba_cuda_available and numba_physics_ok:
+            return _decide("numba_cuda_sh")
+        if torch_cuda_available and torch_physics_ok:
+            return _decide("torch_cuda_sh", applied=True, reason="numba_cuda_sh unavailable; using torch_cuda_sh")
+        return _decide("cpu_sh", applied=True, reason="no compatible GPU classic-SH backend available")
+    # degree > numba limit: prefer torch over CPU
+    if torch_cuda_available and torch_physics_ok:
+        return _decide("torch_cuda_sh")
+    return _decide(
+        "cpu_sh",
+        applied=True,
+        reason=f"degree {degree} exceeds numba_cuda_sh limit {limit} and torch_cuda_sh unavailable",
+    )
+
+
+def resolve_backend_alias_local(name: str) -> str:
+    """Resolve a backend alias (``gpu_sh`` -> ``numba_cuda_sh``) via the registry."""
+    try:
+        from lunaris.core.backend_capabilities import resolve_backend_alias
+
+        return resolve_backend_alias(name)
+    except Exception:
+        return str(name).strip()
 
 
 def _clean_requested_backend(value: Any) -> str:
@@ -173,11 +301,18 @@ MC_BACKEND_REQUESTS = frozenset(
     {
         "auto",
         "cpu_sh",
-        "gpu_sh",
+        "numba_cuda_sh",
+        "torch_cuda_sh",
+        "gpu_sh",  # legacy alias -> numba_cuda_sh
         "gpu_st_lrps_potential",
         "gpu_st_lrps_direct",
     }
 )
+
+# Classic-SH request names that select the Numba CUDA backend (degree <= 24).
+_NUMBA_SH_REQUESTS = frozenset({"gpu_sh", "numba_cuda_sh"})
+# Classic-SH request names that select the PyTorch SH backend (arbitrary degree).
+_TORCH_SH_REQUESTS = frozenset({"torch_cuda_sh"})
 
 
 @dataclass
@@ -195,6 +330,8 @@ class MCBackendPlan:
     numba_cuda_available: bool
     requested_backend: str = "auto"
     actual_backend: str = "cpu_sh"
+    backend_family: str = ""
+    backend_implementation: str = ""
     requested_sh_degree: int = 0
     actual_sh_degree: int | None = None
     gpu_sh_max_degree: int = 24
@@ -207,6 +344,22 @@ class MCBackendPlan:
     fallback_reason: str = ""
     integrator: str = "adaptive (DOP853)"
     batch_note: str = ""
+
+    def __post_init__(self) -> None:
+        # Auto-populate provenance family/implementation from the central
+        # capability registry based on the resolved backend, unless explicitly
+        # set. Keeps every return site labeled without per-site duplication.
+        if not self.backend_family or not self.backend_implementation:
+            try:
+                from lunaris.core.backend_capabilities import get_capabilities
+
+                caps = get_capabilities(self.actual_backend)
+                if not self.backend_family:
+                    self.backend_family = caps.family
+                if not self.backend_implementation:
+                    self.backend_implementation = caps.implementation
+            except Exception:
+                pass
 
     def log_summary(self) -> None:
         """Print a one-line backend decision summary suitable for the MC log."""
@@ -303,7 +456,7 @@ def resolve_mc_backend_policy(
     requested_backend = _clean_requested_backend(getattr(mc_cfg, "mc_backend", "auto"))
     requested_sh_degree = int(getattr(mc_cfg, "gpu_sh_degree", 0) or 0)
 
-    if requested_backend in {"cpu_sh", "gpu_sh"}:
+    if requested_backend in {"cpu_sh"} | _NUMBA_SH_REQUESTS | _TORCH_SH_REQUESTS:
         is_st_lrps = False
     elif requested_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}:
         is_st_lrps = True
@@ -314,7 +467,9 @@ def resolve_mc_backend_policy(
     requested_gpu = bool(getattr(mc_cfg, "use_gpu", False))
     if requested_backend == "cpu_sh":
         requested_gpu = False
-    elif requested_backend in {"gpu_sh", "gpu_st_lrps_potential", "gpu_st_lrps_direct"}:
+    elif requested_backend in (
+        _NUMBA_SH_REQUESTS | _TORCH_SH_REQUESTS | {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
+    ):
         requested_gpu = True
 
     runtime_model_kind = _read_st_lrps_runtime_kind(mc_cfg, sim_cfg) if is_st_lrps else None
@@ -481,10 +636,12 @@ def resolve_mc_backend_policy(
     sh_enabled = bool(getattr(flags, "enable_sh", True)) if flags is not None else True
     if sh_enabled and requested_sh_degree > gpu_sh_max_degree:
         msg = (
-            f"[MC] Requested gpu_sh_degree={requested_sh_degree}, but the current "
-            f"Numba CUDA classic-SH kernel supports true GPU SH only through "
-            f"degree {gpu_sh_max_degree}. Falling back to CPU without clipping "
-            "the requested degree. Selected MC backend: CPU."
+            f"[MC] Requested classic-SH degree {requested_sh_degree} exceeds the "
+            f"numba_cuda_sh kernel limit (degree <= {gpu_sh_max_degree}; a "
+            "thread-local workspace limit, not a physical one). The high-degree "
+            "GPU path is torch_cuda_sh; it is not yet wired into the MC runtime, "
+            "so this run falls back to CPU without clipping the requested degree. "
+            "Selected MC backend: CPU."
         )
         warns.append(msg)
         return MCBackendPlan(
@@ -501,8 +658,8 @@ def resolve_mc_backend_policy(
             gpu_sh_supported_tiers=gpu_sh_tiers,
             dtype="float64",
             warnings=warns,
-            reason=f"Classic SH GPU degree {requested_sh_degree} exceeds true GPU max {gpu_sh_max_degree}",
-            fallback_reason=f"gpu_sh_degree>{gpu_sh_max_degree}",
+            reason=f"Classic SH degree {requested_sh_degree} exceeds numba_cuda_sh max {gpu_sh_max_degree}",
+            fallback_reason=f"numba_cuda_sh supports degree <= {gpu_sh_max_degree}",
             integrator="adaptive (DOP853)",
         )
 
@@ -542,7 +699,7 @@ def resolve_mc_backend_policy(
         torch_cuda_available=torch_cuda,
         numba_cuda_available=numba_cuda,
         requested_backend=requested_backend,
-        actual_backend="gpu_sh",
+        actual_backend="numba_cuda_sh",
         requested_sh_degree=requested_sh_degree,
         actual_sh_degree=requested_sh_degree,
         gpu_sh_max_degree=gpu_sh_max_degree,
@@ -558,6 +715,8 @@ __all__ = [
     "MCBackend",
     "MCBackendPlan",
     "resolve_mc_backend_policy",
+    "select_classic_sh_backend",
+    "ClassicSHDecision",
     "MC_BACKEND_REQUESTS",
     "_torch_cuda_available",
     "_numba_cuda_available",
