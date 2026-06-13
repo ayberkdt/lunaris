@@ -291,7 +291,9 @@ def test_policy_classic_sh_numba_cuda_true(monkeypatch) -> None:
     plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
     assert plan.final_backend == MCBackend.GPU_CLASSIC_SH
     assert plan.use_gpu
-    assert plan.actual_backend == "gpu_sh"
+    assert plan.actual_backend == "numba_cuda_sh"
+    assert plan.backend_family == "classic_sh"
+    assert plan.backend_implementation == "numba_cuda"
     assert plan.requested_sh_degree == 0 or plan.requested_sh_degree == int(getattr(mc_cfg, "gpu_sh_degree", 0))
 
 
@@ -343,7 +345,7 @@ def test_policy_classic_sh_high_degree_falls_back_without_clipping(monkeypatch) 
     assert plan.actual_sh_degree is None
     assert plan.gpu_sh_max_degree == 24
     assert plan.gpu_sh_supported_tiers == (24,)
-    assert "gpu_sh_degree>24" == plan.fallback_reason
+    assert plan.fallback_reason == "numba_cuda_sh supports degree <= 24"
     assert any("without clipping" in w.lower() for w in plan.warnings)
 
 

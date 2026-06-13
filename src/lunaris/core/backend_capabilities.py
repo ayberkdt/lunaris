@@ -5,26 +5,29 @@ Central Backend Capability Registry
 
 Single source of truth (SSOT) for *what each propagator backend can do*.
 
-Phase 2 §4 requires CLI, UI, the Monte Carlo engine, the benchmark runner, and
-the report/provenance writers to consult **one** capability source so they all
-make the same backend decision and label results identically. Before this
-module, the same facts were declared in two places:
+CLI, UI, the Monte Carlo engine, the benchmark runner, and the
+report/provenance writers consult **one** capability source so they all make the
+same backend decision and label results identically.
 
-* :func:`lunaris.core.mc_propagator.gpu_unsupported_features` — classic-SH CUDA
-  kernel: blocks albedo, thermal IR, and solid tides.
-* :func:`lunaris.core.mc_backend_policy._st_lrps_gpu_unsupported_features` —
-  ST-LRPS torch CUDA path: gravity only.
+Two distinct GPU spherical-harmonics implementations exist in the repository and
+are kept **separate** here — they must never be merged under a single ``gpu_sh``
+capability:
 
-This registry consolidates those facts. It **does not change behavior**: the
-values here are locked to the existing MC path by the consistency tests in
-``tests/test_backend_capabilities.py``. The classic-SH GPU degree limit is still
-sourced from the real workspace constant (:data:`mc_propagator.GPU_SH_MAX_DEGREE`)
-via :func:`gpu_sh_max_degree`; the static ``max_sh_degree`` recorded here is
-guarded against drift by a test.
+* ``numba_cuda_sh`` — Numba CUDA, one Monte Carlo sample per CUDA thread with a
+  fixed thread-local Legendre workspace. The degree-24 ceiling is a *kernel
+  workspace* limit (``cuda.local.array``), not a physical one. Intended for
+  low-degree, high-throughput Monte Carlo screening.
+* ``torch_cuda_sh`` — PyTorch tensors on CUDA (or CPU), evaluating arbitrary
+  degrees (SH25/50/100/200…) bounded only by the loaded coefficient file, GPU
+  memory, batch size, dtype, and step size — **no** hard degree-24 cap.
 
-Backend names match the ``actual_backend`` strings emitted by
-:class:`lunaris.core.mc_backend_policy.MCBackendPlan` and the request names in
-``MC_BACKEND_REQUESTS``.
+``gpu_sh`` is retained only as a **legacy alias** that resolves explicitly to
+``numba_cuda_sh`` (see :data:`BACKEND_ALIASES`). Machine-readable provenance and
+user-facing output always use the resolved, real backend name.
+
+The Numba force-model support matrix here is locked to the existing Monte Carlo
+behavior by the consistency tests in ``tests/test_backend_capabilities.py``; do
+not change it without updating those tests.
 """
 
 from __future__ import annotations
@@ -34,8 +37,7 @@ from typing import Any, Optional, Tuple
 
 # Mapping of canonical force-model name -> the PerturbationFlags attribute that
 # enables it. Used to translate an active-flags object into the set of force
-# models a backend cannot honor. Keys are the canonical labels surfaced to users
-# and written into artifact metadata.
+# models a backend cannot honor.
 FORCE_MODEL_FLAG_ATTR: dict[str, str] = {
     "spherical_harmonics": "enable_sh",
     "third_body_sun": "enable_3rd_body_sun",
@@ -54,23 +56,28 @@ FORCE_MODEL_FLAG_ATTR: dict[str, str] = {
 class BackendCapabilities:
     """Immutable description of one propagator backend's capabilities.
 
-    ``max_sh_degree`` is the highest classic spherical-harmonics degree the
-    backend can evaluate on-device. ``None`` means "not bounded by the backend"
-    (the CPU full-fidelity path, bounded only by the loaded gravity model) or
-    "not applicable" (the ST-LRPS surrogate, which is not an SH evaluator).
+    ``max_runtime_sh_degree`` is the highest classic spherical-harmonics degree
+    the backend can evaluate on-device. ``None`` does **not** mean "infinite
+    physical accuracy" or "unlimited GPU capacity"; it means only that the
+    *implementation* has no hard-coded SH-degree ceiling (the real limit is the
+    coefficient file, GPU memory, batch size, dtype, and step size). A concrete
+    integer (e.g. 24 for ``numba_cuda_sh``) is an implementation ceiling that
+    must never be silently exceeded by clipping.
 
-    The ``supports_*`` flags map to :class:`~lunaris.common.type_defs.PerturbationFlags`.
-    ``supports_third_body`` covers both Sun and Earth third-body terms;
-    ``supports_solid_tides`` covers both the k2 and k3 contributions — no current
-    backend supports one half of either pair without the other.
+    ``family`` groups backends by physics family (``classic_sh`` / ``st_lrps`` /
+    ``meta``); ``implementation`` names the compute backend
+    (``numba_cuda`` / ``torch`` / ``numpy_numba_cpu`` …). The ``supports_*``
+    flags map to :class:`~lunaris.common.type_defs.PerturbationFlags`;
+    ``supports_third_body`` covers both Sun and Earth, ``supports_solid_tides``
+    covers both k2 and k3.
     """
 
     name: str
-    device: str                 # "cpu" | "cuda" | "auto"
-    gravity_kind: str           # "classic_sh" | "st_lrps" | "any"
-    max_sh_degree: Optional[int]
-    supports_float32: bool
-    supports_float64: bool
+    family: str                       # "classic_sh" | "st_lrps" | "meta"
+    implementation: str               # "numba_cuda" | "torch" | "numpy_numba_cpu" | ...
+    device: str                       # "cpu" | "cuda" | "auto"
+    max_runtime_sh_degree: Optional[int]
+    dtype_support: Tuple[str, ...]
     supports_sh: bool
     supports_third_body: bool
     supports_earth_j2: bool
@@ -81,8 +88,28 @@ class BackendCapabilities:
     supports_relativity_1pn: bool
     integrator: str
     default_dtype: str
+    fidelity_class: str = "standard"
     is_meta: bool = False
     description: str = ""
+
+    # ---- Back-compat aliases (older callers used these names) -------------
+    @property
+    def gravity_kind(self) -> str:
+        """Alias of :attr:`family` kept for backward compatibility."""
+        return self.family
+
+    @property
+    def max_sh_degree(self) -> Optional[int]:
+        """Alias of :attr:`max_runtime_sh_degree` kept for backward compatibility."""
+        return self.max_runtime_sh_degree
+
+    @property
+    def supports_float32(self) -> bool:
+        return "float32" in self.dtype_support
+
+    @property
+    def supports_float64(self) -> bool:
+        return "float64" in self.dtype_support
 
     def supports_force_model(self, canonical_name: str) -> bool:
         """Return whether this backend can model the named canonical force model."""
@@ -107,20 +134,19 @@ class BackendCapabilities:
 # Registry
 # =============================================================================
 #
-# Capability values below are FAITHFUL to the current implementation, not the
-# illustrative example in the Phase 2 brief:
-#   * classic-SH GPU and CPU run float64 (no float32 kernel today);
-#   * the ST-LRPS torch path defaults to float32 but can run float64.
-# The force-model matrix is locked to the existing MC behavior by the
-# consistency tests; do not change it without updating those tests.
+# Values are FAITHFUL to the current implementation, not the illustrative brief:
+#   * classic-SH Numba GPU and CPU run float64 (no float32 SH kernel today);
+#   * the torch SH path can run float32 or float64;
+#   * the torch SH Monte Carlo runtime is, in its first form, gravity-only — any
+#     extra perturbation forces an explicit fallback (see §7 of the task brief).
 
 _CPU_SH = BackendCapabilities(
     name="cpu_sh",
+    family="classic_sh",
+    implementation="numpy_numba_cpu",
     device="cpu",
-    gravity_kind="classic_sh",
-    max_sh_degree=None,            # bounded only by the loaded gravity model
-    supports_float32=False,
-    supports_float64=True,
+    max_runtime_sh_degree=None,        # bounded only by the loaded gravity model
+    dtype_support=("float64",),
     supports_sh=True,
     supports_third_body=True,
     supports_earth_j2=True,
@@ -131,16 +157,17 @@ _CPU_SH = BackendCapabilities(
     supports_relativity_1pn=True,
     integrator="adaptive (DOP853)",
     default_dtype="float64",
+    fidelity_class="full",
     description="CPU full-fidelity per-sample scipy DOP853. All force models supported.",
 )
 
-_GPU_SH = BackendCapabilities(
-    name="gpu_sh",
+_NUMBA_CUDA_SH = BackendCapabilities(
+    name="numba_cuda_sh",
+    family="classic_sh",
+    implementation="numba_cuda",
     device="cuda",
-    gravity_kind="classic_sh",
-    max_sh_degree=24,             # == mc_propagator.GPU_SH_MAX_DEGREE (guarded by test)
-    supports_float32=False,
-    supports_float64=True,
+    max_runtime_sh_degree=24,          # == mc_propagator.GPU_SH_MAX_DEGREE (guarded by test)
+    dtype_support=("float64",),
     supports_sh=True,
     supports_third_body=True,
     supports_earth_j2=True,
@@ -151,21 +178,76 @@ _GPU_SH = BackendCapabilities(
     supports_relativity_1pn=True,
     integrator="fixed-step RK4",
     default_dtype="float64",
+    fidelity_class="low_degree_screening",
     description=(
-        "Numba CUDA classic-SH fixed-step RK4 (degree <= 24). Supports third-body "
-        "Sun/Earth, Earth J2, SRP, and 1PN relativity; albedo, thermal IR, and "
-        "solid tides require the CPU backend."
+        "Numba CUDA classic-SH fixed-step RK4, one MC sample per CUDA thread "
+        "(degree <= 24, a thread-local workspace limit — NOT a physical one). "
+        "Supports third-body Sun/Earth, Earth J2, SRP, and 1PN relativity; "
+        "albedo, thermal IR, and solid tides require the CPU backend. Use for "
+        "low-degree, high-throughput Monte Carlo screening."
+    ),
+)
+
+# Torch classic-SH backends. First runtime form is gravity-only (lunar SH +
+# frame transform + fixed-step batch propagation); added perturbations trigger
+# an explicit, recorded fallback rather than silent disabling.
+_TORCH_CUDA_SH = BackendCapabilities(
+    name="torch_cuda_sh",
+    family="classic_sh",
+    implementation="torch",
+    device="cuda",
+    max_runtime_sh_degree=None,        # no hard degree cap; limited by coeff file / VRAM / batch
+    dtype_support=("float32", "float64"),
+    supports_sh=True,
+    supports_third_body=False,
+    supports_earth_j2=False,
+    supports_srp=False,
+    supports_albedo=False,
+    supports_thermal=False,
+    supports_solid_tides=False,
+    supports_relativity_1pn=False,
+    integrator="fixed-step RK4",
+    default_dtype="float64",
+    fidelity_class="high_degree",
+    description=(
+        "PyTorch CUDA classic-SH, arbitrary degree (SH25/50/100/200…) bounded by "
+        "the coefficient file, GPU memory, batch size, dtype, and step size. "
+        "First runtime form is gravity-only."
+    ),
+)
+
+_TORCH_CPU_SH = BackendCapabilities(
+    name="torch_cpu_sh",
+    family="classic_sh",
+    implementation="torch",
+    device="cpu",
+    max_runtime_sh_degree=None,
+    dtype_support=("float32", "float64"),
+    supports_sh=True,
+    supports_third_body=False,
+    supports_earth_j2=False,
+    supports_srp=False,
+    supports_albedo=False,
+    supports_thermal=False,
+    supports_solid_tides=False,
+    supports_relativity_1pn=False,
+    integrator="fixed-step RK4",
+    default_dtype="float64",
+    fidelity_class="high_degree",
+    description=(
+        "PyTorch CPU classic-SH (same evaluator as torch_cuda_sh on CPU). Useful "
+        "for validation and CUDA-free testing of the high-degree SH path."
     ),
 )
 
 _GPU_ST_LRPS_POTENTIAL = BackendCapabilities(
     name="gpu_st_lrps_potential",
+    family="st_lrps",
+    implementation="torch",
     device="cuda",
-    gravity_kind="st_lrps",
-    max_sh_degree=None,           # surrogate gravity, not an SH evaluator
-    supports_float32=True,
-    supports_float64=True,
-    supports_sh=True,             # provides central gravity via the surrogate
+    max_runtime_sh_degree=None,        # surrogate gravity, not an SH evaluator
+    dtype_support=("float32", "float64"),
+    supports_sh=True,                  # provides central gravity via the surrogate
     supports_third_body=False,
     supports_earth_j2=False,
     supports_srp=False,
@@ -175,19 +257,21 @@ _GPU_ST_LRPS_POTENTIAL = BackendCapabilities(
     supports_relativity_1pn=False,
     integrator="fixed-step RK4",
     default_dtype="float32",
+    fidelity_class="surrogate",
     description=(
-        "PyTorch CUDA fixed-step RK4; ST-LRPS acceleration via batched autograd. "
-        "Gravity only — any added perturbation forces a CPU fallback."
+        "PyTorch CUDA fixed-step RK4; ST-LRPS = torch SH baseline + neural "
+        "residual via batched autograd. Gravity only — any added perturbation "
+        "forces a CPU fallback."
     ),
 )
 
 _GPU_ST_LRPS_DIRECT = BackendCapabilities(
     name="gpu_st_lrps_direct",
+    family="st_lrps",
+    implementation="torch",
     device="cuda",
-    gravity_kind="st_lrps",
-    max_sh_degree=None,
-    supports_float32=True,
-    supports_float64=True,
+    max_runtime_sh_degree=None,
+    dtype_support=("float32", "float64"),
     supports_sh=True,
     supports_third_body=False,
     supports_earth_j2=False,
@@ -198,22 +282,22 @@ _GPU_ST_LRPS_DIRECT = BackendCapabilities(
     supports_relativity_1pn=False,
     integrator="fixed-step RK4",
     default_dtype="float32",
+    fidelity_class="surrogate",
     description=(
         "PyTorch CUDA fixed-step RK4; ST-LRPS direct residual acceleration via a "
         "batched no-grad forward pass. Gravity only."
     ),
 )
 
-# CPU ST-LRPS full-fidelity path (the actual_backend the policy emits when an
-# ST-LRPS GPU run is forced back to CPU). Not in the brief's five-name list but
-# emitted by the system, so it is registered for complete provenance labeling.
+# CPU ST-LRPS full-fidelity path (the actual_backend emitted when an ST-LRPS GPU
+# run is forced back to CPU).
 _CPU_ST_LRPS = BackendCapabilities(
     name="cpu_st_lrps",
+    family="st_lrps",
+    implementation="torch_cpu",
     device="cpu",
-    gravity_kind="st_lrps",
-    max_sh_degree=None,
-    supports_float32=False,
-    supports_float64=True,
+    max_runtime_sh_degree=None,
+    dtype_support=("float64",),
     supports_sh=True,
     supports_third_body=True,
     supports_earth_j2=True,
@@ -224,17 +308,18 @@ _CPU_ST_LRPS = BackendCapabilities(
     supports_relativity_1pn=True,
     integrator="adaptive (DOP853)",
     default_dtype="float64",
+    fidelity_class="full",
     description="CPU full-fidelity DOP853 with the ST-LRPS surrogate as the gravity model.",
 )
 
 # Meta request: the policy resolver picks the concrete backend at runtime.
 _AUTO = BackendCapabilities(
     name="auto",
+    family="meta",
+    implementation="resolved",
     device="auto",
-    gravity_kind="any",
-    max_sh_degree=None,
-    supports_float32=True,
-    supports_float64=True,
+    max_runtime_sh_degree=None,
+    dtype_support=("float32", "float64"),
     supports_sh=True,
     supports_third_body=True,
     supports_earth_j2=True,
@@ -253,7 +338,9 @@ BACKEND_REGISTRY: dict[str, BackendCapabilities] = {
     cap.name: cap
     for cap in (
         _CPU_SH,
-        _GPU_SH,
+        _NUMBA_CUDA_SH,
+        _TORCH_CUDA_SH,
+        _TORCH_CPU_SH,
         _GPU_ST_LRPS_POTENTIAL,
         _GPU_ST_LRPS_DIRECT,
         _CPU_ST_LRPS,
@@ -261,12 +348,22 @@ BACKEND_REGISTRY: dict[str, BackendCapabilities] = {
     )
 }
 
-# The five request/backend names the Phase 2 brief requires to be defined.
+# Legacy names kept for backward compatibility, resolved to the real backend.
+# ``gpu_sh`` was the single classic-SH GPU capability before the Numba/torch
+# split; it now resolves explicitly to the Numba CUDA backend.
+BACKEND_ALIASES: dict[str, str] = {
+    "gpu_sh": "numba_cuda_sh",
+}
+
+# Backend names the task brief requires to be registered as distinct entries.
 REQUIRED_BACKEND_NAMES: Tuple[str, ...] = (
     "cpu_sh",
-    "gpu_sh",
+    "numba_cuda_sh",
+    "torch_cuda_sh",
+    "torch_cpu_sh",
     "gpu_st_lrps_potential",
     "gpu_st_lrps_direct",
+    "cpu_st_lrps",
     "auto",
 )
 
@@ -276,23 +373,39 @@ REQUIRED_BACKEND_NAMES: Tuple[str, ...] = (
 # =============================================================================
 
 
-def get_capabilities(name: str) -> BackendCapabilities:
-    """Return the :class:`BackendCapabilities` for ``name``.
+def resolve_backend_alias(name: str) -> str:
+    """Resolve a (possibly legacy) backend name to its canonical registry name.
 
-    Raises :class:`KeyError` with the list of known names if ``name`` is not a
-    registered backend (callers should surface this as a configuration error
-    *before* a run starts, never silently fall back).
+    ``gpu_sh`` -> ``numba_cuda_sh``. Non-alias names are returned unchanged.
     """
+    key = str(name).strip()
+    return BACKEND_ALIASES.get(key, key)
+
+
+def get_capabilities(name: str) -> BackendCapabilities:
+    """Return the :class:`BackendCapabilities` for ``name`` (resolving aliases).
+
+    Raises :class:`KeyError` listing the known names if ``name`` is neither a
+    registered backend nor a known alias (callers should surface this as a
+    configuration error before a run starts, never a silent fallback).
+    """
+    resolved = resolve_backend_alias(name)
     try:
-        return BACKEND_REGISTRY[name]
+        return BACKEND_REGISTRY[resolved]
     except KeyError:
         known = ", ".join(sorted(BACKEND_REGISTRY))
-        raise KeyError(f"Unknown backend {name!r}; known backends: {known}") from None
+        aliases = ", ".join(sorted(BACKEND_ALIASES))
+        raise KeyError(
+            f"Unknown backend {name!r}; known backends: {known}; aliases: {aliases}"
+        ) from None
 
 
-def list_backend_names() -> Tuple[str, ...]:
+def list_backend_names(*, include_aliases: bool = False) -> Tuple[str, ...]:
     """Return all registered backend names in a stable, sorted order."""
-    return tuple(sorted(BACKEND_REGISTRY))
+    names = set(BACKEND_REGISTRY)
+    if include_aliases:
+        names |= set(BACKEND_ALIASES)
+    return tuple(sorted(names))
 
 
 def _flag_on(flags: Any, attr: str) -> bool:
@@ -300,8 +413,8 @@ def _flag_on(flags: Any, attr: str) -> bool:
 
 
 def unsupported_force_models(name: str, flags: Any) -> Tuple[str, ...]:
-    """Return the canonical force models that are *active* in ``flags`` but not
-    supported by backend ``name``.
+    """Return the canonical force models active in ``flags`` but unsupported by
+    backend ``name``.
 
     An empty tuple means the backend can honor every active force model. A
     non-empty result means a run on this backend would silently drop physics —
@@ -319,11 +432,12 @@ def unsupported_force_models(name: str, flags: Any) -> Tuple[str, ...]:
 
 
 def gpu_sh_max_degree() -> int:
-    """Return the true classic-SH GPU degree limit from the CUDA kernel workspace.
+    """Return the Numba CUDA classic-SH degree limit from the kernel workspace.
 
     Sourced from :data:`lunaris.core.mc_propagator.GPU_SH_MAX_DEGREE` (lazily, to
     avoid importing the Numba CUDA stack at module load). Falls back to the
-    historical default of 24 if that import is unavailable.
+    historical default of 24 if that import is unavailable. This is the limit of
+    the ``numba_cuda_sh`` backend only; ``torch_cuda_sh`` has no such cap.
     """
     try:
         from lunaris.core.mc_propagator import GPU_SH_MAX_DEGREE
@@ -334,7 +448,7 @@ def gpu_sh_max_degree() -> int:
 
 
 def gpu_sh_supported_tiers() -> Tuple[int, ...]:
-    """Return the supported true-GPU classic-SH degree tiers."""
+    """Return the supported Numba CUDA classic-SH degree tiers."""
     try:
         from lunaris.core.mc_propagator import GPU_SH_SUPPORTED_TIERS
 
@@ -346,8 +460,10 @@ def gpu_sh_supported_tiers() -> Tuple[int, ...]:
 __all__ = [
     "BackendCapabilities",
     "BACKEND_REGISTRY",
+    "BACKEND_ALIASES",
     "REQUIRED_BACKEND_NAMES",
     "FORCE_MODEL_FLAG_ATTR",
+    "resolve_backend_alias",
     "get_capabilities",
     "list_backend_names",
     "unsupported_force_models",
