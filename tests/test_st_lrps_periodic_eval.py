@@ -280,9 +280,9 @@ def test_runner_success_records_and_extracts_metrics(tmp_path):
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def qapp():
-    pytest.importorskip("PyQt6")
+    pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

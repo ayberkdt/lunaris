@@ -15,9 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-pytest.importorskip("PyQt6")
+pytest.importorskip("PySide6")
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 try:  # studio.py was refactored into studio_parts/ — import from the new home.
     from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import LiveLossPlot  # noqa: E402
