@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Central Backend Capability Registry
 ===================================
@@ -33,7 +32,7 @@ not change it without updating those tests.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional, Tuple
+from typing import Any
 
 # Mapping of canonical force-model name -> the PerturbationFlags attribute that
 # enables it. Used to translate an active-flags object into the set of force
@@ -76,8 +75,8 @@ class BackendCapabilities:
     family: str                       # "classic_sh" | "st_lrps" | "meta"
     implementation: str               # "numba_cuda" | "torch" | "numpy_numba_cpu" | ...
     device: str                       # "cpu" | "cuda" | "auto"
-    max_runtime_sh_degree: Optional[int]
-    dtype_support: Tuple[str, ...]
+    max_runtime_sh_degree: int | None
+    dtype_support: tuple[str, ...]
     supports_sh: bool
     supports_third_body: bool
     supports_earth_j2: bool
@@ -99,7 +98,7 @@ class BackendCapabilities:
         return self.family
 
     @property
-    def max_sh_degree(self) -> Optional[int]:
+    def max_sh_degree(self) -> int | None:
         """Alias of :attr:`max_runtime_sh_degree` kept for backward compatibility."""
         return self.max_runtime_sh_degree
 
@@ -356,7 +355,7 @@ BACKEND_ALIASES: dict[str, str] = {
 }
 
 # Backend names the task brief requires to be registered as distinct entries.
-REQUIRED_BACKEND_NAMES: Tuple[str, ...] = (
+REQUIRED_BACKEND_NAMES: tuple[str, ...] = (
     "cpu_sh",
     "numba_cuda_sh",
     "torch_cuda_sh",
@@ -400,7 +399,7 @@ def get_capabilities(name: str) -> BackendCapabilities:
         ) from None
 
 
-def list_backend_names(*, include_aliases: bool = False) -> Tuple[str, ...]:
+def list_backend_names(*, include_aliases: bool = False) -> tuple[str, ...]:
     """Return all registered backend names in a stable, sorted order."""
     names = set(BACKEND_REGISTRY)
     if include_aliases:
@@ -412,7 +411,7 @@ def _flag_on(flags: Any, attr: str) -> bool:
     return bool(getattr(flags, attr, False))
 
 
-def unsupported_force_models(name: str, flags: Any) -> Tuple[str, ...]:
+def unsupported_force_models(name: str, flags: Any) -> tuple[str, ...]:
     """Return the canonical force models active in ``flags`` but unsupported by
     backend ``name``.
 
@@ -447,7 +446,7 @@ def gpu_sh_max_degree() -> int:
         return 24
 
 
-def gpu_sh_supported_tiers() -> Tuple[int, ...]:
+def gpu_sh_supported_tiers() -> tuple[int, ...]:
     """Return the supported Numba CUDA classic-SH degree tiers."""
     try:
         from lunaris.core.mc_propagator import GPU_SH_SUPPORTED_TIERS

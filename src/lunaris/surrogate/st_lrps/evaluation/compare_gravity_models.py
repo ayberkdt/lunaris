@@ -1,5 +1,4 @@
 # lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py
-# -*- coding: utf-8 -*-
 """
 Lunar Gravity Model Validation Harness
 =======================================
@@ -71,9 +70,10 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import matplotlib
+
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
@@ -87,34 +87,20 @@ except ImportError as exc:
 
 
 # --- intra-package wiring (auto-generated split) ---
-from ._gravity_benchmark.types import (
-    INCLINATION_SAMPLING_METHODS,
-    SAMPLING_METHODS,
-    _find_st_lrps_weight_file,
-    build_base_config,
+from ._gravity_benchmark import (
+    compute as _gb_compute,
 )
-from ._gravity_benchmark.compute import (
-    GPU_INTEGRATORS,
-    _model_display_name,
-    _parse_model_list_csv,
+from ._gravity_benchmark import (
+    metrics as _gb_metrics,
 )
-from ._gravity_benchmark.results_io import (
-    _benchmark_cache_dir,
-    _build_gpu_batch_summary,
-    _cache_provenance,
-    _coerce_numeric_row,
-    _read_csv_rows,
-    _write_run_metadata,
+from ._gravity_benchmark import (
+    modes as _gb_modes,
 )
-from ._gravity_benchmark.plotting import (
-    estimate_stlrps_equivalent_sh_degree,
+from ._gravity_benchmark import (
+    plotting as _gb_plotting,
 )
-from ._gravity_benchmark.modes import (
-    _auto_find_st_lrps_dir,
-    evaluate_forces,
-    run_gpu_batch_compare_mode,
-    run_random_scenario_mode,
-    run_single_orbit_mode,
+from ._gravity_benchmark import (
+    results_io as _gb_results_io,
 )
 
 # ---------------------------------------------------------------------------
@@ -126,11 +112,35 @@ from ._gravity_benchmark.modes import (
 # ---------------------------------------------------------------------------
 from ._gravity_benchmark import (
     types as _gb_types,
-    compute as _gb_compute,
-    metrics as _gb_metrics,
-    plotting as _gb_plotting,
-    results_io as _gb_results_io,
-    modes as _gb_modes,
+)
+from ._gravity_benchmark.compute import (
+    GPU_INTEGRATORS,
+    _model_display_name,
+    _parse_model_list_csv,
+)
+from ._gravity_benchmark.modes import (
+    _auto_find_st_lrps_dir,
+    evaluate_forces,
+    run_gpu_batch_compare_mode,
+    run_random_scenario_mode,
+    run_single_orbit_mode,
+)
+from ._gravity_benchmark.plotting import (
+    estimate_stlrps_equivalent_sh_degree,
+)
+from ._gravity_benchmark.results_io import (
+    _benchmark_cache_dir,
+    _build_gpu_batch_summary,
+    _cache_provenance,
+    _coerce_numeric_row,
+    _read_csv_rows,
+    _write_run_metadata,
+)
+from ._gravity_benchmark.types import (
+    INCLINATION_SAMPLING_METHODS,
+    SAMPLING_METHODS,
+    _find_st_lrps_weight_file,
+    build_base_config,
 )
 
 for _gb_mod in (_gb_types, _gb_compute, _gb_results_io, _gb_plotting, _gb_metrics, _gb_modes):
@@ -362,7 +372,7 @@ def refresh_benchmark_metadata(args: argparse.Namespace) -> None:
     # Read the manifest first so we can restore the fingerprint-relevant model
     # dir (otherwise the recomputed fingerprint would drift from the run that
     # produced the cache). Never load trajectory NPZ files here.
-    manifest: Dict[str, Any] = {}
+    manifest: dict[str, Any] = {}
     manifest_path = cache_dir / "cache_manifest.json"
     if manifest_path.exists():
         try:
@@ -375,7 +385,7 @@ def refresh_benchmark_metadata(args: argparse.Namespace) -> None:
         args.st_lrps_model_dir = md["st_lrps_model_dir"]
 
     # 1) run_metadata.json — skip the torch device probe (no imports on refresh).
-    setattr(args, "_no_torch_probe", True)
+    args._no_torch_probe = True
     _write_run_metadata(args, out_dir)
     print(f"[refresh-metadata] Wrote {out_dir / 'run_metadata.json'}", flush=True)
 

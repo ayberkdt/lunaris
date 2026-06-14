@@ -19,20 +19,22 @@ def test_analysis_import():
     assert not hasattr(analysis, "compute_mc_statistics")
 
 def test_removed_modules_raise_importerror():
-    with pytest.raises(ImportError):
-        import lunaris.analysis.report_manager
-    with pytest.raises(ImportError):
-        import lunaris.analysis.plotting
-    with pytest.raises(ImportError):
-        import lunaris.analysis.styling
-    with pytest.raises(ImportError):
-        import lunaris.analysis.mc_analysis
-    with pytest.raises(ImportError):
-        import lunaris.analysis.mc_plotting
-    with pytest.raises(ImportError):
-        import lunaris.analysis.compare_gravity_models
-    with pytest.raises(ImportError):
-        import lunaris.analysis.threeD_animation
+    import sys
+    import importlib
+    
+    modules_to_check = [
+        "lunaris.analysis.report_manager",
+        "lunaris.analysis.plotting",
+        "lunaris.analysis.styling",
+        "lunaris.analysis.mc_analysis",
+        "lunaris.analysis.mc_plotting",
+        "lunaris.analysis.compare_gravity_models",
+        "lunaris.analysis.threeD_animation",
+    ]
+    for mod in modules_to_check:
+        sys.modules.pop(mod, None)
+        with pytest.raises(ImportError):
+            importlib.import_module(mod)
 
 def test_new_canonical_paths_importable():
     from lunaris.analysis.postprocess import process_simulation_results, compute_history, summarize_history

@@ -13,11 +13,10 @@ from pathlib import Path
 import pytest
 
 from lunaris.surrogate.st_lrps.evaluation.benchmark_config import (
-    BenchmarkConfigError,
     SYNTHETIC_BANNER,
+    BenchmarkConfigError,
     apply_paper_safe,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pure enforcement function (no torch needed)
@@ -179,7 +178,7 @@ def test_paper_safe_overrides_allow_domain_extrapolation(tmp_path):
 def test_paper_safe_overrides_allow_legacy_artifact(tmp_path):
     run = make_contract_run(tmp_path, degree_min=20, degree_max=60, include_contract=False)
     config = _write_config(tmp_path / "bench.json")
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017  # legacy artifact rejected with various types
         run_configured_benchmark(
             config,
             out_dir=tmp_path / "out",

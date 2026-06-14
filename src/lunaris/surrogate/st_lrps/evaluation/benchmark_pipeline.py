@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Config-driven benchmark pipeline glue for ``lunaris-benchmark``."""
 
 from __future__ import annotations
@@ -7,11 +6,15 @@ import csv
 import math
 import shutil
 import sys
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
+
+from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
+from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, ArtifactContractError
 
 from .benchmark_config import (
     SYNTHETIC_BANNER,
@@ -21,8 +24,6 @@ from .benchmark_config import (
 )
 from .benchmark_validation import validate_benchmark_outputs
 from .provenance import build_benchmark_manifest, sha256_payload, write_json
-from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
-from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, ArtifactContractError
 
 
 def run_configured_benchmark(

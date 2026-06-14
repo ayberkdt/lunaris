@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Regression tests for the standard reporting / plotting pipeline.
 
@@ -11,12 +10,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lunaris.analysis.reporting.plotting import effects_from_meta_history, figure_perturbation_magnitude
 from lunaris.analysis.reporting.manager import (
     figure_run_config_page,
     figure_summary_page,
     make_report_pdf,
     plot_all,
+)
+from lunaris.analysis.reporting.plotting import (
+    effects_from_meta_history,
+    figure_perturbation_magnitude,
 )
 
 

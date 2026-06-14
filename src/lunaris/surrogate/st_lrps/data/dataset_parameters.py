@@ -1,5 +1,4 @@
 ﻿#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Lunar Surrogate Dataset Parameters
 =================================
@@ -38,7 +37,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 try:
     from lunaris.common.lunar_data import (
@@ -96,7 +95,7 @@ class DatasetParameters:
 
         return float(self.r_ref_m)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping for provenance snapshots."""
 
         return asdict(self)
@@ -110,7 +109,7 @@ DEFAULT_DATASET_CONFIG = DatasetParameters()
 # =============================================================================
 
 
-def canonical_scales(*, mu_si: float, du_m: float) -> Tuple[float, float, float]:
+def canonical_scales(*, mu_si: float, du_m: float) -> tuple[float, float, float]:
     """
     Compute canonical length / time / velocity scales for gravity datasets.
 
@@ -147,10 +146,10 @@ def canonical_scales(*, mu_si: float, du_m: float) -> Tuple[float, float, float]
 def load_icgem_gfc(
     *,
     file_path: str | Path,
-    max_degree: Optional[int] = None,
+    max_degree: int | None = None,
     expected_norm: str = "fully_normalized",
     strict: bool = True,
-) -> Tuple[Any, Any, Dict[str, Any]]:
+) -> tuple[Any, Any, dict[str, Any]]:
     """
     Load the repository's lunar gravity coefficient file.
 
@@ -182,7 +181,7 @@ def load_icgem_gfc(
 # 4.                           CONFIG FILE LOADING
 # =============================================================================
 
-def load_run_config(path: str | Path) -> Dict[str, Any]:
+def load_run_config(path: str | Path) -> dict[str, Any]:
     """Load a surrogate run ``config.json`` using UTF-8 with fail-fast errors."""
 
     cfg_path = Path(path).expanduser().resolve()

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Lunaris Launcher / Welcome Hub.
 
@@ -631,14 +630,14 @@ class LauncherWindow(QtWidgets.QWidget):
         return PropagationMainWindow()
 
     def _build_studio_window(self) -> QtWidgets.QWidget:
-        from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import (
-            apply_premium_dark_theme,
-        )
         from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import (
             _NoWheelOnSpinFilter,
         )
         from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import (
             MainWindow as StudioMainWindow,
+        )
+        from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import (
+            apply_premium_dark_theme,
         )
 
         app = QtWidgets.QApplication.instance()

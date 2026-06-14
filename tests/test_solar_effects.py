@@ -16,19 +16,17 @@ import sys
 import numpy as np
 import pytest
 
+from lunaris.common.constants import AU, R_EARTH_MEAN, R_MOON_MEAN
+from lunaris.common.type_defs import SpacecraftProps
 
 # ---------------------------------------------------------------------------
 # Import the module under test.
 # ---------------------------------------------------------------------------
-
 from lunaris.physics.solar_effects import (
+    SRPConfig,
     compute_srp_accel,
     moon_shadow_factor_conical,
-    SRPConfig,
 )
-from lunaris.common.constants import AU, R_MOON_MEAN, R_EARTH_MEAN
-from lunaris.common.type_defs import SpacecraftProps
-
 
 # ---------------------------------------------------------------------------
 # Shared test inputs (deterministic)

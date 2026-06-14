@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Execution Console — the buffered log panel for Lunaris Mission Studio.
 
@@ -26,10 +25,10 @@ from __future__ import annotations
 
 import threading
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -117,9 +116,9 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
 
     def __init__(
         self,
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
         *,
-        output_dir_provider: Optional[Callable[[], str]] = None,
+        output_dir_provider: Callable[[], str] | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("logPanel")
@@ -128,14 +127,14 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
 
         # Model + pending queue (both bounded). The queue is filled by append()
         # — possibly from a worker thread — and drained on the GUI thread.
-        self._entries: "deque[LogEntry]" = deque(maxlen=MAX_LOG_LINES)
-        self._pending: "deque[LogEntry]" = deque(maxlen=MAX_LOG_LINES)
+        self._entries: deque[LogEntry] = deque(maxlen=MAX_LOG_LINES)
+        self._pending: deque[LogEntry] = deque(maxlen=MAX_LOG_LINES)
         self._lock = threading.Lock()
 
         self._collapsed = False
         self._paused = False
         self._show_timestamps = True
-        self._status_revert_timer: Optional[QtCore.QTimer] = None
+        self._status_revert_timer: QtCore.QTimer | None = None
         self._severity_counts = {"warning": 0, "error": 0}
 
         self._build_ui()
@@ -458,7 +457,7 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
         self.append("[UI] Console cleared.", severity="system")
 
     def _on_save_clicked(self) -> None:
-        default_dir: Optional[Path] = None
+        default_dir: Path | None = None
         if self._output_dir_provider is not None:
             try:
                 provided = self._output_dir_provider()

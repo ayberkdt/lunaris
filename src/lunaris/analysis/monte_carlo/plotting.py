@@ -1,5 +1,4 @@
 # ST_LRPS/analysis/monte_carlo/plotting.py
-# -*- coding: utf-8 -*-
 """
 Monte Carlo Visualization
 ==========================
@@ -41,11 +40,12 @@ Design conventions
 from __future__ import annotations
 
 import math
-from typing import Any, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
-from lunaris.analysis.formatting import safe_float, format_percent, format_days, format_km
+from lunaris.analysis.formatting import format_days, format_km, format_percent, safe_float
 
 try:
     import matplotlib
@@ -65,7 +65,6 @@ from lunaris.analysis.monte_carlo.statistics import (
 )
 from lunaris.common.constants import DAY_S, R_MOON_MEAN
 from lunaris.common.montecarlo_defs import MCRunResult
-
 
 # =============================================================================
 # 0.              INTERNAL HELPERS
@@ -87,7 +86,7 @@ def _km(arr: np.ndarray) -> np.ndarray:
     return arr / 1_000.0
 
 
-def _default_figsize(landscape: bool = True) -> Tuple[float, float]:
+def _default_figsize(landscape: bool = True) -> tuple[float, float]:
     return (12.0, 7.0) if landscape else (8.0, 10.0)
 
 
@@ -118,7 +117,7 @@ def _ellipsoid_wireframe(
     eigvecs: np.ndarray,       # (3,3) columns = principal axes
     n_u: int = 16,
     n_v: int = 10,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Compute (X, Y, Z) wireframe coordinates of an ellipsoid.
 
@@ -147,7 +146,7 @@ def plot_mc_summary(
     result: MCRunResult,
     mc_stats: MCStatistics,
     *,
-    figsize: Optional[Tuple[float, float]] = None,
+    figsize: tuple[float, float] | None = None,
     title: str = "Monte Carlo Executive Summary",
 ) -> Any:
     """
@@ -229,7 +228,7 @@ def plot_mc_summary(
         ("OE Dispersion", "Included" if mc_stats.oe_disp is not None else "Not requested"),
     ]
 
-    def _draw_metric_column(bounds: Sequence[float], heading: str, rows: Sequence[Tuple[str, str]]) -> None:
+    def _draw_metric_column(bounds: Sequence[float], heading: str, rows: Sequence[tuple[str, str]]) -> None:
         ax = fig.add_axes(bounds)
         ax.axis("off")
         ax.text(0.0, 1.0, heading, fontsize=11.5, fontweight="bold", color="#233754", va="top")
@@ -292,7 +291,7 @@ def plot_altitude_envelope(
     sigma_levels: Sequence[float] = (1.0, 2.0, 3.0),
     max_traj: int = 50,
     r_ref_m: float = R_MOON_MEAN,
-    figsize: Optional[Tuple[float, float]] = None,
+    figsize: tuple[float, float] | None = None,
     title: str = "Altitude Envelope – Monte Carlo Ensemble",
 ) -> Any:
     """
@@ -364,9 +363,9 @@ def plot_covariance_tubes_3d(
     ellipsoids: ErrorEllipsoids,
     *,
     max_traj: int = 30,
-    ellipsoid_epochs: Optional[Sequence[int]] = None,
+    ellipsoid_epochs: Sequence[int] | None = None,
     r_moon_km: float = R_MOON_MEAN / 1_000.0,
-    figsize: Optional[Tuple[float, float]] = None,
+    figsize: tuple[float, float] | None = None,
     title: str = "3-D Orbit Ensemble with 3σ Error Ellipsoids",
 ) -> Any:
     """
@@ -449,7 +448,7 @@ def plot_covariance_tubes_3d(
 def plot_position_covariance_history(
     stats: EnsembleStatistics,
     *,
-    figsize: Optional[Tuple[float, float]] = None,
+    figsize: tuple[float, float] | None = None,
     title: str = "Position Covariance History",
 ) -> Any:
     """
@@ -496,7 +495,7 @@ def plot_position_covariance_history(
 def plot_impact_map(
     impacts: ImpactStatistics,
     *,
-    figsize: Optional[Tuple[float, float]] = None,
+    figsize: tuple[float, float] | None = None,
     title: str = "Monte Carlo Impact Site Distribution",
 ) -> Any:
     """
@@ -552,7 +551,7 @@ def plot_impact_time_histogram(
     result: MCRunResult,
     *,
     n_bins: int = 30,
-    figsize: Optional[Tuple[float, float]] = None,
+    figsize: tuple[float, float] | None = None,
     title: str = "Impact Time Distribution",
 ) -> Any:
     """
@@ -591,7 +590,7 @@ def plot_impact_time_histogram(
 def plot_oe_dispersion(
     oe: OEDispersion,
     *,
-    figsize: Optional[Tuple[float, float]] = None,
+    figsize: tuple[float, float] | None = None,
     title: str = "Orbital Element Dispersion",
 ) -> Any:
     """
@@ -629,9 +628,9 @@ def plot_mc_report(
     result: MCRunResult,
     mc_stats: MCStatistics,
     *,
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
     show: bool = False,
-) -> List[Any]:
+) -> list[Any]:
     """
     Generate the full MC report bundle and optionally save it to a multi-page PDF.
 
@@ -649,7 +648,7 @@ def plot_mc_report(
     """
     _require_mpl()
 
-    figs: List[Any] = []
+    figs: list[Any] = []
 
     # Figure 0: Executive summary
     figs.append(
@@ -689,8 +688,9 @@ def plot_mc_report(
 
     # Save to PDF
     if output_path is not None:
-        from matplotlib.backends.backend_pdf import PdfPages
         from pathlib import Path
+
+        from matplotlib.backends.backend_pdf import PdfPages
         p = Path(output_path).expanduser().resolve()
         p.parent.mkdir(parents=True, exist_ok=True)
         with PdfPages(str(p)) as pdf:

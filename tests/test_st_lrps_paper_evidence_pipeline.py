@@ -15,10 +15,7 @@ from lunaris.surrogate.st_lrps.evaluation.validation_suite import (
     compute_field_metrics,
     write_field_validation_csvs,
 )
-from lunaris.surrogate.st_lrps.paper_evidence.worst_case import (
-    analyze_worst_cases,
-    run_worst_case_from_benchmark_dir,
-)
+from lunaris.surrogate.st_lrps.paper_evidence import runner as R
 from lunaris.surrogate.st_lrps.paper_evidence.multi_seed import (
     aggregate_multi_seed,
     collect_seed_entry,
@@ -29,7 +26,10 @@ from lunaris.surrogate.st_lrps.paper_evidence.paper_tables import (
     generate_paper_figures,
     generate_paper_tables,
 )
-from lunaris.surrogate.st_lrps.paper_evidence import runner as R
+from lunaris.surrogate.st_lrps.paper_evidence.worst_case import (
+    analyze_worst_cases,
+    run_worst_case_from_benchmark_dir,
+)
 
 _REPO = Path(__file__).resolve().parents[1]
 _CONFIGS = _REPO / "configs" / "st_lrps" / "paper"
@@ -57,7 +57,10 @@ def test_pipeline_configs_exist_and_parse(name):
 
 
 def test_benchmark_configs_are_paper_safe():
-    from lunaris.surrogate.st_lrps.evaluation.benchmark_config import load_benchmark_config, is_paper_safe_requested
+    from lunaris.surrogate.st_lrps.evaluation.benchmark_config import (
+        is_paper_safe_requested,
+        load_benchmark_config,
+    )
 
     for name in ("benchmark_1day_high_degree.json", "benchmark_5day_general.json"):
         cfg = load_benchmark_config(_CONFIGS / name)

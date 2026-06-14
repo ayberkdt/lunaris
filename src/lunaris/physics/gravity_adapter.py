@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Gravity model adapter shared by the application and validation tools.
 
@@ -58,9 +57,9 @@ class GravityModelAdapter:
     @property
     def ws(self) -> Any:
         if hasattr(self._g, "ws"):
-            return getattr(self._g, "ws")
+            return self._g.ws
         if hasattr(self._g, "workspace"):
-            return getattr(self._g, "workspace")
+            return self._g.workspace
         if hasattr(self._g, "make_workspace"):
             return self._g.make_workspace()
         raise AttributeError("gravity model must expose ws, workspace, or make_workspace().")

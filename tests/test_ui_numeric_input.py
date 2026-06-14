@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Interaction tests for ``NumericDragLineEdit`` (objective 4).
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Periodic Evaluation During Training (monitoring only).
 
@@ -31,7 +30,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from lunaris.common.paths import project_root_from_file
 
@@ -51,10 +50,10 @@ _VALID_PREFER = ("last", "best")
 # ---------------------------------------------------------------------------
 def compute_periodic_eval_epochs(
     total_epochs: int,
-    count: Optional[int],
-    every_epochs: Optional[int],
+    count: int | None,
+    every_epochs: int | None,
     start_epoch: int = 1,
-) -> List[int]:
+) -> list[int]:
     """Return the sorted, de-duplicated list of (1-based) periodic-eval epochs.
 
     Exactly one scheduling mode may be active:
@@ -114,13 +113,13 @@ class PeriodicEvalPlan:
     """Resolved periodic-evaluation plan for a training run."""
 
     enabled: bool
-    epochs: List[int] = field(default_factory=list)
+    epochs: list[int] = field(default_factory=list)
     dataset: str = "val"
     prefer_checkpoint: str = "last"
     max_samples: int = 200_000
     batch_size: int = 8192
     device: str = "auto"
-    timeout_sec: Optional[int] = None
+    timeout_sec: int | None = None
     continue_on_fail: bool = True
 
     @property
@@ -178,7 +177,7 @@ def resolve_periodic_eval_plan(cfg: Any, *, start_epoch: int = 1) -> PeriodicEva
     )
 
 
-def resolve_eval_dataset_path(cfg: Any, dataset: str) -> Optional[str]:
+def resolve_eval_dataset_path(cfg: Any, dataset: str) -> str | None:
     """Resolve the dataset path for periodic evaluation.
 
     ``val``  -> ``cfg.val_data`` (falls back to ``cfg.data`` for single-dataset
@@ -212,8 +211,8 @@ def build_periodic_eval_command(
     batch_size: int = 8192,
     device: str = "auto",
     dataset_name: str = "data",
-    python_exe: Optional[str] = None,
-) -> List[str]:
+    python_exe: str | None = None,
+) -> list[str]:
     """Build the argv list that invokes the evaluation CLI for one epoch.
 
     Uses only flags the evaluation CLI actually supports (``--model-dir``,
@@ -254,10 +253,10 @@ def epoch_output_dir(run_dir: str | Path, epoch: int) -> Path:
     return periodic_evals_dir(run_dir) / f"epoch_{int(epoch):04d}"
 
 
-def load_periodic_eval_history(run_dir: str | Path) -> Dict[int, str]:
+def load_periodic_eval_history(run_dir: str | Path) -> dict[int, str]:
     """Return ``{epoch: last_status}`` from the history jsonl (empty if absent)."""
     path = history_path(run_dir)
-    result: Dict[int, str] = {}
+    result: dict[int, str] = {}
     if not path.is_file():
         return result
     try:
@@ -294,7 +293,7 @@ def completed_periodic_eval_epochs(run_dir: str | Path) -> set[int]:
     }
 
 
-def _append_history_record(run_dir: str | Path, record: Dict[str, Any]) -> None:
+def _append_history_record(run_dir: str | Path, record: dict[str, Any]) -> None:
     path = history_path(run_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8", newline="\n") as handle:
@@ -304,7 +303,7 @@ def _append_history_record(run_dir: str | Path, record: Dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # Metrics extraction (best-effort, for the log line)
 # ---------------------------------------------------------------------------
-def _extract_summary_metrics(out_dir: Path) -> tuple[Optional[str], Dict[str, Any]]:
+def _extract_summary_metrics(out_dir: Path) -> tuple[str | None, dict[str, Any]]:
     """Best-effort read of headline metrics from the eval outputs.
 
     Returns ``(summary_path, metrics)``. Tries the flat ``summary_metrics.json``
@@ -367,9 +366,9 @@ def run_periodic_eval(
     epoch: int,
     plan: PeriodicEvalPlan,
     *,
-    log: Optional[logging.Logger] = None,
+    log: logging.Logger | None = None,
     dataset_name: str = "data",
-    python_exe: Optional[str] = None,
+    python_exe: str | None = None,
     _runner=None,
 ) -> bool:
     """Run one periodic evaluation for a 1-based ``epoch``. Returns success bool.
@@ -429,8 +428,8 @@ def run_periodic_eval(
     stdout_path = out_dir / "eval_stdout.log"
     stderr_path = out_dir / "eval_stderr.log"
     status = "failure"
-    error_msg: Optional[str] = None
-    rc: Optional[int] = None
+    error_msg: str | None = None
+    rc: int | None = None
 
     try:
         completed = runner(

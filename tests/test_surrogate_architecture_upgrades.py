@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Architecture + Laplacian-cleanup validation tests for the ST-LRPS surrogate.
 
@@ -26,13 +25,6 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from lunaris.surrogate.st_lrps.training.config import TrainConfig, parse_args
-from lunaris.surrogate.st_lrps.training.engine import _laplacian_requested
-from lunaris.surrogate.st_lrps.training.losses import (
-    GradNormWeights,
-    SobolevLoss,
-    collocation_laplacian_loss,
-)
 from lunaris.surrogate.st_lrps.networks.models import (
     PhysicalRadialDecayEncoding,
     RadialDecayEncoding,
@@ -41,6 +33,13 @@ from lunaris.surrogate.st_lrps.networks.models import (
     compute_architecture_signature,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
+from lunaris.surrogate.st_lrps.training.config import TrainConfig, parse_args
+from lunaris.surrogate.st_lrps.training.engine import _laplacian_requested
+from lunaris.surrogate.st_lrps.training.losses import (
+    GradNormWeights,
+    SobolevLoss,
+    collocation_laplacian_loss,
+)
 
 R_REF = 1.737e6
 MU = 4.902800066e12
@@ -493,10 +492,12 @@ def test_real_sh_basis_matches_scipy_subspace_if_available():
     cols = []
     try:
         if hasattr(sp, "sph_harm_y"):
-            sph = lambda m, l: sp.sph_harm_y(l, m, colat, az)      # (n, m, theta=polar, phi=azimuth)
+            def sph(m, l):  # noqa: E741  # l = SH degree (scipy sph_harm convention)
+                return sp.sph_harm_y(l, m, colat, az)      # (n, m, theta=polar, phi=azimuth)
         else:  # pragma: no cover - older scipy
-            sph = lambda m, l: sp.sph_harm(m, l, az, colat)        # (m, n, theta=azimuth, phi=polar)
-        for l in range(L + 1):
+            def sph(m, l):  # noqa: E741  # l = SH degree (scipy sph_harm convention)
+                return sp.sph_harm(m, l, az, colat)        # (m, n, theta=azimuth, phi=polar)
+        for l in range(L + 1):  # noqa: E741  # l = SH degree (scipy sph_harm convention)
             for m in range(-l, l + 1):
                 yc = np.asarray(sph(m, l), dtype=np.complex128)
                 cols.append(yc.real)

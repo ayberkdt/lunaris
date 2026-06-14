@@ -1,5 +1,4 @@
-﻿# -*- coding: utf-8 -*-
-"""
+﻿"""
 Focused regression tests for the modular UI helper layer.
 
 These tests intentionally avoid booting the full Qt application. The goal is to
@@ -12,12 +11,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from lunaris.loaders.io_surface import _iter_label_candidates
 from lunaris.ui.core.command_builder import build_command, build_mc_command
+from lunaris.ui.core.session_persistence import autodetect_data_state
 from lunaris.ui.pages.data_files_page import DataFilesState
 from lunaris.ui.pages.force_models_page import UIGravityConfig
 from lunaris.ui.pages.result_exports_page import OutputPageState
-from lunaris.ui.core.session_persistence import autodetect_data_state
-from lunaris.loaders.io_surface import _iter_label_candidates
 
 
 class _DummyGravityConfig:

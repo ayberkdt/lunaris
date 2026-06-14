@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Qt-free helpers for the Execution Console data flow.
 
@@ -20,8 +19,6 @@ running application:
 """
 
 from __future__ import annotations
-
-from typing import List
 
 # How close (in scrollbar units, ~pixels) to the bottom still counts as "at the
 # bottom" for auto-scroll purposes. A small slack absorbs sub-line rounding so a
@@ -47,7 +44,7 @@ class LineAssembler:
         """The partial line retained so far (without a trailing newline)."""
         return self._buffer
 
-    def push(self, chunk: str) -> List[str]:
+    def push(self, chunk: str) -> list[str]:
         """Append a decoded *chunk* and return any newly completed lines.
 
         A line is considered complete once its ``\\n`` terminator has been seen.
@@ -64,7 +61,7 @@ class LineAssembler:
         self._buffer = parts.pop()
         return [line.rstrip("\r") for line in parts]
 
-    def flush(self) -> List[str]:
+    def flush(self) -> list[str]:
         """Return the final unterminated line (if any) and clear the buffer."""
         tail = self._buffer
         self._buffer = ""

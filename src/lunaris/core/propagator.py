@@ -1,5 +1,4 @@
 # lunaris/core/propagator.py
-# -*- coding: utf-8 -*-
 """
 core.propagator
 ===============
@@ -56,31 +55,25 @@ import json
 import math
 import os
 import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 import numpy as np
-
-
 from scipy.integrate import solve_ivp  # type: ignore
 
-
 from lunaris.common.constants import MU_MOON, R_MOON
-from lunaris.common.math_utils import nyquist_max_step_s, quat_slerp_np, quat_rotate_np
+from lunaris.common.math_utils import nyquist_max_step_s, quat_rotate_np, quat_slerp_np
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig, TimeConfig
-
-
 from lunaris.core.dynamics import DynamicsEngine
-from lunaris.core.state import OrbitState
 from lunaris.core.events import (
-    make_impact_event,
-    make_hybrid_impact_event,
-    make_periselene_event,
     make_aposelene_event,
+    make_hybrid_impact_event,
+    make_impact_event,
+    make_periselene_event,
 )
-
-
+from lunaris.core.state import OrbitState
 
 # =============================================================================
 # 1.                             UTILITIES
@@ -94,10 +87,10 @@ def _make_telem_dict(
     R_ref_m: float,
     mu_m3s2: float,
     *,
-    t_frame_s: Optional[float] = None,
-    r_i_to_bf: Optional[Callable[[float, np.ndarray], np.ndarray]] = None,
-    surface_radius_m: Optional[Callable[[float, float], float]] = None,
-) -> Optional[Dict[str, float]]:
+    t_frame_s: float | None = None,
+    r_i_to_bf: Callable[[float, np.ndarray], np.ndarray] | None = None,
+    surface_radius_m: Callable[[float, float], float] | None = None,
+) -> dict[str, float] | None:
     """
     Create a compact telemetry dict for the desktop UI (JSON-lines on stdout).
 
@@ -170,7 +163,7 @@ def _make_telem_dict(
         return None
 
 
-def _latlon_from_r_bf(r_bf: np.ndarray) -> Tuple[float, float]:
+def _latlon_from_r_bf(r_bf: np.ndarray) -> tuple[float, float]:
     """
     Compute body-fixed geocentric latitude/longitude from a Cartesian vector.
 
@@ -201,32 +194,32 @@ def _build_surface_radius_sampler(topo: Any) -> Callable[[float, float], float]:
     - `radius_m(lat_rad, lon_rad)`
     """
 
-    if hasattr(topo, "sample_bilinear") and callable(getattr(topo, "sample_bilinear")):
-        fn = getattr(topo, "sample_bilinear")
+    if hasattr(topo, "sample_bilinear") and callable(topo.sample_bilinear):
+        fn = topo.sample_bilinear
 
         def _radius_from_bilinear(lat_rad: float, lon_rad: float) -> float:
             return float(fn(math.degrees(lat_rad), math.degrees(lon_rad) % 360.0, kind="radius_m"))
 
         return _radius_from_bilinear
 
-    if hasattr(topo, "sample_nearest") and callable(getattr(topo, "sample_nearest")):
-        fn = getattr(topo, "sample_nearest")
+    if hasattr(topo, "sample_nearest") and callable(topo.sample_nearest):
+        fn = topo.sample_nearest
 
         def _radius_from_nearest(lat_rad: float, lon_rad: float) -> float:
             return float(fn(math.degrees(lat_rad), math.degrees(lon_rad) % 360.0, kind="radius_m"))
 
         return _radius_from_nearest
 
-    if hasattr(topo, "radius_m_deg") and callable(getattr(topo, "radius_m_deg")):
-        fn = getattr(topo, "radius_m_deg")
+    if hasattr(topo, "radius_m_deg") and callable(topo.radius_m_deg):
+        fn = topo.radius_m_deg
 
         def _radius_from_deg(lat_rad: float, lon_rad: float) -> float:
             return float(fn(math.degrees(lat_rad), math.degrees(lon_rad) % 360.0))
 
         return _radius_from_deg
 
-    if hasattr(topo, "radius_m") and callable(getattr(topo, "radius_m")):
-        fn = getattr(topo, "radius_m")
+    if hasattr(topo, "radius_m") and callable(topo.radius_m):
+        fn = topo.radius_m
 
         def _radius_from_rad(lat_rad: float, lon_rad: float) -> float:
             return float(fn(float(lat_rad), float(lon_rad)))
@@ -272,7 +265,7 @@ def _sympl_name(method: str) -> str:
     return "Y4" if m in ("YOSHIDA4", "Y4") else "VV"
 
 
-def _stop_requested(stop_file: Optional[str]) -> bool:
+def _stop_requested(stop_file: str | None) -> bool:
     """Stop if a sentinel file exists (safe on all platforms)."""
     if not stop_file:
         return False
@@ -344,7 +337,7 @@ def _clamp_output_dt(t0: float, tf: float, dt_out: float, cap: int, verbose: boo
     return dt
 
 
-def _get_ref_radius_and_mu(dynamics: DynamicsEngine) -> Tuple[float, float]:
+def _get_ref_radius_and_mu(dynamics: DynamicsEngine) -> tuple[float, float]:
     """
     STRICT gravity SSOT:
       - grav.R_ref_m
@@ -363,7 +356,7 @@ def _get_ref_radius_and_mu(dynamics: DynamicsEngine) -> Tuple[float, float]:
             + ". Expected SSOT fields: R_ref_m, GM_m3s2."
         )
 
-    return float(getattr(grav, "R_ref_m")), float(getattr(grav, "GM_m3s2"))
+    return float(grav.R_ref_m), float(grav.GM_m3s2)
 
 
 def _get_sh_degree(dynamics: DynamicsEngine) -> int:
@@ -379,7 +372,7 @@ def _get_sh_degree(dynamics: DynamicsEngine) -> int:
     if not hasattr(grav, "degree_max"):
         raise AttributeError("Gravity model missing required strict attribute: degree_max.")
 
-    d = int(getattr(grav, "degree_max"))
+    d = int(grav.degree_max)
     return max(1, d)
 
 
@@ -390,7 +383,7 @@ def _get_sh_degree(dynamics: DynamicsEngine) -> int:
 
 def _build_r_i_to_bf_from_rot_table(
     dynamics: DynamicsEngine,
-) -> Optional[Callable[[float, np.ndarray], np.ndarray]]:
+) -> Callable[[float, np.ndarray], np.ndarray] | None:
     """Build an inertial→body-fixed position mapper from an ephemeris quaternion table.
 
     Expected rotation table format:
@@ -417,7 +410,7 @@ def _build_r_i_to_bf_from_rot_table(
     if eph is None:
         return None
 
-    def _try_get_dt_and_qtab() -> Optional[Tuple[float, np.ndarray]]:
+    def _try_get_dt_and_qtab() -> tuple[float, np.ndarray] | None:
         # Tables-style (strict)
         if hasattr(eph, "tables"):
 
@@ -549,7 +542,7 @@ def _get_enable_peri_apo_events(cfg: Any) -> bool:
     return _get_cfg_bool(cfg, "enable_peri_apo_events", True)
 
 
-def _find_event_index(events: Optional[List[Callable[[float, np.ndarray], float]]], role: str) -> Optional[int]:
+def _find_event_index(events: list[Callable[[float, np.ndarray], float]] | None, role: str) -> int | None:
     if not events:
         return None
     for i, ev in enumerate(events):
@@ -564,7 +557,7 @@ def build_events(
     *,
     topo_grid: Any = None,
     add_stop_event: bool = True,
-) -> List[Callable[[float, np.ndarray], float]]:
+) -> list[Callable[[float, np.ndarray], float]]:
     """Build SciPy-compatible event callables based on PropagatorConfig (+ optional topo grid)."""
     R_ref, _mu = _get_ref_radius_and_mu(dynamics)
 
@@ -572,7 +565,7 @@ def build_events(
     impact_alt_km = _get_impact_alt_km(cfg)
     impact_alt_m = float(impact_alt_km) * 1000.0
 
-    events: List[Callable[[float, np.ndarray], float]] = []
+    events: list[Callable[[float, np.ndarray], float]] = []
 
     # Impact event (terminal)
     if detect_impact:
@@ -594,15 +587,15 @@ def build_events(
             ev_imp = make_impact_event(R_ref_m=float(R_ref), impact_alt_m=float(impact_alt_m), terminal=True)
 
         ev_imp6 = _wrap_event_first6(ev_imp)
-        setattr(ev_imp6, "_event_role", "impact")
+        ev_imp6._event_role = "impact"
         events.append(ev_imp6)
 
     # Peri/Apo events (non-terminal)
     if _get_enable_peri_apo_events(cfg):
         ev_peri = _wrap_event_first6(make_periselene_event(terminal=False))
         ev_apo = _wrap_event_first6(make_aposelene_event(terminal=False))
-        setattr(ev_peri, "_event_role", "peri")
-        setattr(ev_apo, "_event_role", "apo")
+        ev_peri._event_role = "peri"
+        ev_apo._event_role = "apo"
         events.append(ev_peri)
         events.append(ev_apo)
 
@@ -615,7 +608,7 @@ def build_events(
             return -1.0 if _stop_requested(str(stop_file)) else 1.0
         _stop_ev.terminal = True           # type: ignore[attr-defined]
         _stop_ev.direction = 0.0           # type: ignore[attr-defined]
-        setattr(_stop_ev, "_event_role", "stop")
+        _stop_ev._event_role = "stop"
         events.append(_stop_ev)
 
     return events
@@ -688,7 +681,7 @@ def _refine_event_time_bisect(
     g1: float,
     max_iter: int = 30,
     tol_s: float = 1e-6,
-) -> Tuple[float, np.ndarray]:
+) -> tuple[float, np.ndarray]:
     """Refine a single event root inside a step using bisection + final linear-in-g correction.
 
     We re-integrate short substeps from (t0,y0) to candidate times. This does NOT modify the
@@ -756,14 +749,14 @@ def _integrate_fixed_step(
     *,
     max_step: float,
     method: str,
-    events: Optional[List[Callable[[float, np.ndarray], float]]],
+    events: list[Callable[[float, np.ndarray], float]] | None,
     R_ref_m: float,
     mu_m3s2: float,
     verbose: bool,
     heartbeat_hours: float,
-    stop_file: Optional[str],
-    checkpoint_path: Optional[str],
-) -> Tuple[Any, bool, Optional[float], Optional[np.ndarray], bool, Optional[str], Optional[float]]:
+    stop_file: str | None,
+    checkpoint_path: str | None,
+) -> tuple[Any, bool, float | None, np.ndarray | None, bool, str | None, float | None]:
     """Integrate a 6D state with a fixed-step symplectic method (VV / Yoshida4).
 
     Notes
@@ -800,31 +793,31 @@ def _integrate_fixed_step(
     # ------------------------------------------------------------------
     # Events: support all events, with optional refinement
     # ------------------------------------------------------------------
-    ev_list: List[Callable[[float, np.ndarray], float]] = list(events) if events else []
+    ev_list: list[Callable[[float, np.ndarray], float]] = list(events) if events else []
 
     n_ev = len(ev_list)
-    t_events_acc: List[List[float]] = [[] for _ in range(n_ev)]
-    y_events_acc: List[List[np.ndarray]] = [[] for _ in range(n_ev)]
+    t_events_acc: list[list[float]] = [[] for _ in range(n_ev)]
+    y_events_acc: list[list[np.ndarray]] = [[] for _ in range(n_ev)]
 
     # Initialize previous event values at the start time
     t_start = float(t_eval[0])
-    g_prev: List[float] = []
+    g_prev: list[float] = []
     for ev in ev_list:
         try:
             g_prev.append(float(ev(t_start, y0)))
         except Exception:
             g_prev.append(float("nan"))
 
-    t_list: List[float] = [t_start]
-    y_list: List[np.ndarray] = [y0.copy()]
+    t_list: list[float] = [t_start]
+    y_list: list[np.ndarray] = [y0.copy()]
 
     impacted = False
-    t_imp: Optional[float] = None
-    y_imp: Optional[np.ndarray] = None
+    t_imp: float | None = None
+    y_imp: np.ndarray | None = None
 
     stopped_early = False
-    stop_reason: Optional[str] = None
-    t_stop: Optional[float] = None
+    stop_reason: str | None = None
+    t_stop: float | None = None
 
     last_hb_hr = 0.0
     alt_min_km = float("inf")
@@ -860,7 +853,7 @@ def _integrate_fixed_step(
             y_next = stepper(accel, tj, y_curr, h)
             t_next = tj + h
 
-            earliest_terminal: Optional[Tuple[float, int, np.ndarray]] = None  # (t_event, idx, y_event)
+            earliest_terminal: tuple[float, int, np.ndarray] | None = None  # (t_event, idx, y_event)
 
             for i, ev in enumerate(ev_list):
                 try:
@@ -986,7 +979,7 @@ def _integrate_fixed_step(
             _atomic_save_npz(checkpoint_path, t=t_arr, y_row=y_arr)
         except Exception as exc:
             import warnings
-            warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning)
+            warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
     return (
         ode_like,
@@ -1009,9 +1002,9 @@ def propagate(
     y0: Any,
     cfg: PropagatorConfig,
     *,
-    time_cfg: Optional["TimeConfig"] = None,
+    time_cfg: TimeConfig | None = None,
     topo_grid: Any = None,
-    extra_events: Optional[Sequence[Callable[[float, np.ndarray], float]]] = None,
+    extra_events: Sequence[Callable[[float, np.ndarray], float]] | None = None,
 ) -> PropagationResult:
     """
     Propagate the trajectory for a configured duration and output sampling grid.
@@ -1034,14 +1027,14 @@ def propagate(
     verbose = bool(getattr(cfg, "verbose", False))
 
     # Normalize optional filesystem paths to str (or None) for string ops in helpers.
-    stop_file: Optional[str] = None
+    stop_file: str | None = None
     try:
         sf = getattr(cfg, "stop_file", None)
         stop_file = (str(sf) if sf else None)
     except Exception:
         stop_file = None
 
-    checkpoint_path: Optional[str] = None
+    checkpoint_path: str | None = None
     try:
         cp = getattr(cfg, "checkpoint_path", None)
         checkpoint_path = (str(cp) if cp else None)
@@ -1111,8 +1104,8 @@ def propagate(
     # similar capability deeper in the propagator, but surfacing the sampled
     # local radius here lets the desktop UI explain *why* a run stopped near the
     # surface instead of only showing mean-radius altitude.
-    telem_r_i_to_bf: Optional[Callable[[float, np.ndarray], np.ndarray]] = None
-    telem_surface_radius_m: Optional[Callable[[float, float], float]] = None
+    telem_r_i_to_bf: Callable[[float, np.ndarray], np.ndarray] | None = None
+    telem_surface_radius_m: Callable[[float, float], float] | None = None
     if topo_grid is not None:
         try:
             telem_r_i_to_bf = _build_r_i_to_bf_from_rot_table(dynamics)
@@ -1164,7 +1157,7 @@ def propagate(
     degree = _get_sh_degree(dynamics)
     topo_present = topo_grid is not None
 
-    nyq_max: Optional[float] = None
+    nyq_max: float | None = None
     if bool(getattr(cfg, "use_nyquist_max_step", False)):
         try:
             nyq_max = float(nyquist_max_step_s(
@@ -1278,7 +1271,7 @@ def propagate(
                 chunk_s = None
 
         stopped_early = False
-        stop_reason: Optional[str] = None
+        stop_reason: str | None = None
         chunk_idx = 0
 
         if chunk_s is None:
@@ -1288,12 +1281,12 @@ def propagate(
             t_events = [np.asarray(te, dtype=np.float64) for te in (sol.t_events or [])]
             y_events = [np.asarray(ye, dtype=np.float64) for ye in (sol.y_events or [])]
         else:
-            t_parts: List[np.ndarray] = []
-            y_parts: List[np.ndarray] = []
+            t_parts: list[np.ndarray] = []
+            y_parts: list[np.ndarray] = []
 
             n_ev = len(events) if events else 0
-            t_events_acc: List[List[np.ndarray]] = [[] for _ in range(n_ev)]
-            y_events_acc: List[List[np.ndarray]] = [[] for _ in range(n_ev)]
+            t_events_acc: list[list[np.ndarray]] = [[] for _ in range(n_ev)]
+            y_events_acc: list[list[np.ndarray]] = [[] for _ in range(n_ev)]
 
             y_curr = y0_arr.copy()
             t_curr = float(t0)
@@ -1350,7 +1343,7 @@ def propagate(
                             _atomic_save_npz(checkpoint_path, t=t_tmp, y_row=y_tmp.T)
                     except Exception as exc:
                         import warnings
-                        warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning)
+                        warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
                 if int(getattr(sol_k, "status", 0)) == 1:
                     stopped_early = True
@@ -1430,7 +1423,7 @@ def propagate(
                 _atomic_save_npz(checkpoint_path, t=np.asarray(t_cat, dtype=np.float64), y_row=y_row)
             except Exception as exc:
                 import warnings
-                warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning)
+                warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
         res = PropagationResult(
             t=np.asarray(t_cat, dtype=np.float64),
@@ -1486,7 +1479,7 @@ def _compute_2body_baseline(
     mu_m3s2: float,
     cfg: PropagatorConfig,
     max_step: float,
-) -> Optional[PropagationResult]:
+) -> PropagationResult | None:
     """Compute a simple 2-body (central-gravity) reference trajectory.
 
     This is a diagnostic baseline to compare against the full dynamics model.

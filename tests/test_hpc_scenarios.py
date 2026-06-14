@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Validation tests for the ST-LRPS HPC scenario sweep files and launcher.
 
 These tests never launch training; they only parse the scenario JSONL files and
@@ -191,7 +190,7 @@ def test_no_scenario_flags_set_output_flag():
 
 def test_every_scenario_validates_via_launcher():
     module = _load_launcher_module()
-    for fname, obj in _all_scenarios():
+    for _fname, obj in _all_scenarios():
         # Strip the loader's bookkeeping key if present.
         scenario = {k: v for k, v in obj.items() if k != "_source_line"}
         module.validate_scenario(scenario)  # must not raise

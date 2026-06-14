@@ -18,13 +18,12 @@ Optional:
 
 from __future__ import annotations
 
-from pathlib import Path
 import importlib
 import importlib.util
+import math
 import os
 import sys
-import math
-from typing import Tuple
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -33,7 +32,7 @@ import pytest
 # -----------------------------------------------------------------------------
 # Import helper
 # -----------------------------------------------------------------------------
-def _repo_root_from_this_file() -> "Path":
+def _repo_root_from_this_file() -> Path:
     """
     Resolve repository root from this test file location:
         repo_root/tests/test_spherical_harmonics.py  -> repo_root
@@ -88,7 +87,7 @@ def _rel_err(a: float, b: float) -> float:
     return abs(a - b) / denom
 
 
-def _rel_err_vec(a: Tuple[float, float, float], b: Tuple[float, float, float]) -> float:
+def _rel_err_vec(a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
     na = _norm3(*a)
     nb = _norm3(*b)
     denom = max(1e-30, nb)
@@ -398,7 +397,7 @@ def test_adaptive_blend_boundaries_and_continuity(sh, constants):
         z = float(rr * v[2])
         return _call_fixed_numba(sh, model, x, y, z, int(deg_use))
 
-    def bracket_degrees_at_alt(alt_m: float) -> Tuple[int, int]:
+    def bracket_degrees_at_alt(alt_m: float) -> tuple[int, int]:
         denom = (alt_far - alt_near)
         t = (alt_far - alt_m) / denom
         t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)

@@ -26,10 +26,11 @@ import statistics
 import sys
 import time
 import warnings
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional, Sequence
+from typing import Any
 
 import numpy as np
 import torch
@@ -45,7 +46,6 @@ from lunaris.surrogate.st_lrps.runtime.force_model import (
     load_surrogate_force_model,
 )
 
-
 # ---------------------------------------------------------------------------
 # Dataclass schema
 # ---------------------------------------------------------------------------
@@ -55,13 +55,13 @@ from lunaris.surrogate.st_lrps.runtime.force_model import (
 class ProfileTimerResult:
     """Best-effort load-phase timing for one ST-LRPS runtime load."""
 
-    total_load_s: Optional[float] = None
-    checkpoint_select_s: Optional[float] = None
-    config_load_s: Optional[float] = None
-    checkpoint_load_s: Optional[float] = None
-    scaler_load_s: Optional[float] = None
-    model_reconstruct_s: Optional[float] = None
-    model_to_device_s: Optional[float] = None
+    total_load_s: float | None = None
+    checkpoint_select_s: float | None = None
+    config_load_s: float | None = None
+    checkpoint_load_s: float | None = None
+    scaler_load_s: float | None = None
+    model_reconstruct_s: float | None = None
+    model_to_device_s: float | None = None
 
 
 @dataclass
@@ -71,7 +71,7 @@ class InferenceProfileResult:
     batch_size: int
     n_warmup: int
     n_repeat: int
-    chunk_size: Optional[int]
+    chunk_size: int | None
     input_source: str
     device: str
     total_wall_s: float
@@ -82,23 +82,23 @@ class InferenceProfileResult:
     max_call_s: float
     samples_per_s: float
     microseconds_per_sample: float
-    cuda_memory_allocated_mb_before: Optional[float] = None
-    cuda_memory_allocated_mb_after: Optional[float] = None
-    cuda_memory_reserved_mb_after: Optional[float] = None
-    peak_cuda_memory_mb: Optional[float] = None
+    cuda_memory_allocated_mb_before: float | None = None
+    cuda_memory_allocated_mb_after: float | None = None
+    cuda_memory_reserved_mb_after: float | None = None
+    peak_cuda_memory_mb: float | None = None
     output_shape: str = ""
     output_dtype: str = ""
     finite_output_fraction: float = 0.0
-    accel_norm_mean: Optional[float] = None
-    accel_norm_max: Optional[float] = None
-    potential_mean_call_s: Optional[float] = None
-    accel_minus_potential_mean_call_s: Optional[float] = None
-    classic_sh_degree: Optional[int] = None
-    classic_sh_mean_call_s: Optional[float] = None
-    classic_sh_median_call_s: Optional[float] = None
-    classic_sh_p95_call_s: Optional[float] = None
-    speedup_vs_classic_sh: Optional[float] = None
-    accuracy_diff_vs_classic_sh: Optional[float] = None
+    accel_norm_mean: float | None = None
+    accel_norm_max: float | None = None
+    potential_mean_call_s: float | None = None
+    accel_minus_potential_mean_call_s: float | None = None
+    classic_sh_degree: int | None = None
+    classic_sh_mean_call_s: float | None = None
+    classic_sh_median_call_s: float | None = None
+    classic_sh_p95_call_s: float | None = None
+    speedup_vs_classic_sh: float | None = None
+    accuracy_diff_vs_classic_sh: float | None = None
 
 
 @dataclass
@@ -110,14 +110,14 @@ class RuntimeProfileConfig:
     batch_sizes: list[int] = field(default_factory=lambda: [1, 16, 128, 1024, 8192])
     n_warmup: int = 10
     n_repeat: int = 50
-    chunk_sizes: list[Optional[int]] = field(default_factory=lambda: [None])
+    chunk_sizes: list[int | None] = field(default_factory=lambda: [None])
     input_source: str = "synthetic"
-    data_path: Optional[str] = None
+    data_path: str | None = None
     dataset_name: str = "data"
     alt_min_km: float = 100.0
     alt_max_km: float = 2000.0
     seed: int = 42
-    output_dir: Optional[str] = None
+    output_dir: str | None = None
     compare_classic_sh: bool = False
     classic_sh_degree: int = 60
 
@@ -128,13 +128,13 @@ class RuntimeProfileReport:
 
     config: RuntimeProfileConfig
     model_dir: str
-    checkpoint_kind: Optional[str]
-    checkpoint_path: Optional[str]
+    checkpoint_kind: str | None
+    checkpoint_path: str | None
     device: str
     dtype: str
     torch_version: str
     cuda_available: bool
-    cuda_device_name: Optional[str]
+    cuda_device_name: str | None
     created_at_utc: str
     load: ProfileTimerResult
     inference_results: list[InferenceProfileResult] = field(default_factory=list)
@@ -207,8 +207,8 @@ def generate_lunar_shell_queries(
     alt_min_km: float,
     alt_max_km: float,
     seed: int,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
 ) -> np.ndarray | torch.Tensor:
     """Generate random Moon-centered positions in SI meters with shape ``(n, 3)``.
 
@@ -245,8 +245,8 @@ def sample_hdf5_position_queries(
     n: int,
     dataset_name: str = "data",
     seed: int = 42,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
 ) -> np.ndarray | torch.Tensor:
     """Sample ``x,y,z`` rows from an HDF5 dataset without loading it all."""
 
@@ -415,7 +415,7 @@ def _load_profiled_surrogate_force_model(
 # ---------------------------------------------------------------------------
 
 
-def _cuda_memory_mb(device: torch.device) -> tuple[Optional[float], Optional[float], Optional[float]]:
+def _cuda_memory_mb(device: torch.device) -> tuple[float | None, float | None, float | None]:
     if device.type != "cuda" or not torch.cuda.is_available():
         return None, None, None
     idx = device.index if device.index is not None else torch.cuda.current_device()
@@ -479,7 +479,7 @@ def _profile_potential_only(
     n_warmup: int,
     n_repeat: int,
     device: torch.device,
-) -> Optional[dict[str, float]]:
+) -> dict[str, float] | None:
     if not hasattr(runtime, "predict_residual_potential"):
         return None
     try:
@@ -523,12 +523,12 @@ def _profile_one_case(
     queries: np.ndarray,
     *,
     batch_size: int,
-    chunk_size: Optional[int],
+    chunk_size: int | None,
     input_source: str,
     n_warmup: int,
     n_repeat: int,
     device: torch.device,
-    classic_sh_model: Optional[Any],
+    classic_sh_model: Any | None,
     classic_sh_degree: int,
 ) -> InferenceProfileResult:
     old_chunk = getattr(runtime, "chunk_size", None)
@@ -641,7 +641,7 @@ def _make_queries(
     alt_min_km: float,
     alt_max_km: float,
     seed: int,
-    data_path: Optional[Path | str],
+    data_path: Path | str | None,
     dataset_name: str,
 ) -> np.ndarray:
     if input_source == "dataset":
@@ -670,7 +670,7 @@ def _make_queries(
     )
 
 
-def _try_load_classic_sh(degree: int) -> tuple[Optional[Any], Optional[str]]:
+def _try_load_classic_sh(degree: int) -> tuple[Any | None, str | None]:
     try:
         from lunaris.common.lunar_data import resolve_lunar_gravity_path
         from lunaris.physics.spherical_harmonics import GravityModel
@@ -692,12 +692,12 @@ def profile_surrogate_runtime(
     n_repeat: int = 50,
     chunk_sizes: Sequence[int | None] = (None,),
     input_source: str = "synthetic",
-    data_path: Optional[Path | str] = None,
+    data_path: Path | str | None = None,
     dataset_name: str = "data",
     alt_min_km: float = 100.0,
     alt_max_km: float = 2000.0,
     seed: int = 42,
-    output_dir: Optional[Path | str] = None,
+    output_dir: Path | str | None = None,
     compare_classic_sh: bool = False,
     classic_sh_degree: int = 60,
 ) -> RuntimeProfileReport:
@@ -726,7 +726,7 @@ def profile_surrogate_runtime(
     if compare_classic_sh:
         classic_model, warning_text = _try_load_classic_sh(int(classic_sh_degree))
         if warning_text:
-            warnings.warn(warning_text)
+            warnings.warn(warning_text, stacklevel=2)
             warnings_out.append(warning_text)
 
     cfg = RuntimeProfileConfig(
@@ -860,7 +860,7 @@ def _best_by(
     key: Callable[[InferenceProfileResult], float],
     *,
     reverse: bool = False,
-) -> Optional[InferenceProfileResult]:
+) -> InferenceProfileResult | None:
     if not rows:
         return None
     return sorted(rows, key=key, reverse=reverse)[0]
@@ -918,7 +918,7 @@ def write_runtime_profile_plots(report: RuntimeProfileReport, output_dir: Path |
     try:
         import matplotlib.pyplot as plt
     except Exception as exc:  # pragma: no cover - depends on optional dependency
-        warnings.warn(f"Skipping runtime profile plots: matplotlib unavailable ({exc}).")
+        warnings.warn(f"Skipping runtime profile plots: matplotlib unavailable ({exc}).", stacklevel=2)
         return []
 
     rows = list(report.inference_results)
@@ -933,7 +933,7 @@ def write_runtime_profile_plots(report: RuntimeProfileReport, output_dir: Path |
 
     fig, ax = plt.subplots(figsize=(7, 4))
     ax.scatter(batch, [r.microseconds_per_sample for r in rows])
-    for x_val, y_val, label in zip(batch, [r.microseconds_per_sample for r in rows], labels):
+    for x_val, y_val, label in zip(batch, [r.microseconds_per_sample for r in rows], labels, strict=False):
         ax.annotate(label, (x_val, y_val), fontsize=8)
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -949,7 +949,7 @@ def write_runtime_profile_plots(report: RuntimeProfileReport, output_dir: Path |
 
     fig, ax = plt.subplots(figsize=(7, 4))
     ax.scatter(batch, [r.samples_per_s for r in rows])
-    for x_val, y_val, label in zip(batch, [r.samples_per_s for r in rows], labels):
+    for x_val, y_val, label in zip(batch, [r.samples_per_s for r in rows], labels, strict=False):
         ax.annotate(label, (x_val, y_val), fontsize=8)
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -1001,11 +1001,11 @@ def _parse_int_list(text: str) -> list[int]:
     return parsed
 
 
-def _parse_chunk_list(text: str) -> list[Optional[int]]:
+def _parse_chunk_list(text: str) -> list[int | None]:
     values = [item.strip().lower() for item in str(text).split(",") if item.strip()]
     if not values:
         return [None]
-    parsed: list[Optional[int]] = []
+    parsed: list[int | None] = []
     for item in values:
         if item in {"none", "default", "null"}:
             parsed.append(None)
@@ -1048,7 +1048,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
     if args.input_source == "dataset" and not args.data:

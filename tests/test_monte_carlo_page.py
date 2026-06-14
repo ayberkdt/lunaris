@@ -1,14 +1,16 @@
-import pytest
 from pathlib import Path
 
+import pytest
+
 try:
-    from lunaris.ui.pages.monte_carlo_page import (
-        _normalize_output_path_for_format,
-        _format_clock_span,
-        MonteCarloPage,
-        UIMonteCarloConfig
-    )
     from PySide6.QtWidgets import QApplication
+
+    from lunaris.ui.pages.monte_carlo_page import (
+        MonteCarloPage,
+        UIMonteCarloConfig,
+        _format_clock_span,
+        _normalize_output_path_for_format,
+    )
     HAS_PYSIDE = True
 except ImportError:
     HAS_PYSIDE = False
@@ -60,14 +62,14 @@ def test_validate_page_inputs_errors(mc_page):
     mc_page.ent_n_samples.setText("1")
     mc_page.ent_sigma_r.setText("-10")
     mc_page.toggle_gpu.setChecked(True)
-    
+
     # Try to set gravity mode to classic_sh
     mc_page.cb_mc_gravity_mode.addItem("Classic", "classic_sh")
     idx = mc_page.cb_mc_gravity_mode.findData("classic_sh")
     mc_page.cb_mc_gravity_mode.setCurrentIndex(idx)
-    
+
     mc_page.ent_gpu_sh.setText("30")
-    
+
     ok, errors, warnings = mc_page.validate_page_inputs()
     assert not ok
     assert any("Ensemble must have at least 2 samples" in e for e in errors)
@@ -76,13 +78,13 @@ def test_validate_page_inputs_errors(mc_page):
 
 def test_validate_page_inputs_warnings(mc_page):
     mc_page.ent_dt.setText("400")
-    
+
     mc_page.cb_mc_gravity_mode.addItem("ST-LRPS", "st_lrps")
     idx = mc_page.cb_mc_gravity_mode.findData("st_lrps")
     mc_page.cb_mc_gravity_mode.setCurrentIndex(idx)
-    
+
     mc_page.ent_mc_st_lrps_model_dir.setText("")
-    
+
     ok, errors, warnings = mc_page.validate_page_inputs()
     assert ok is True # Warnings don't block
     assert any("Large dt" in w for w in warnings)

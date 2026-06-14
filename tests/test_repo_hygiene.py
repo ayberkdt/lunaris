@@ -2,7 +2,9 @@ import os
 import re
 import subprocess
 from pathlib import Path
+
 import pytest
+
 
 def get_project_root() -> Path:
     return Path(__file__).resolve().parent.parent
@@ -54,7 +56,7 @@ def iter_source_files(root: Path):
         "output", "outputs", "reports", ".vscode", ".idea",
         "AIAA SciTech", "LATEX",
     }
-    
+
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in exclude_dirs]
         for f in filenames:
@@ -95,10 +97,10 @@ def test_no_validation_typo_folder():
 def get_committed_files(root: Path):
     try:
         result = subprocess.run(
-            ['git', 'ls-files'], 
-            cwd=root, 
-            capture_output=True, 
-            text=True, 
+            ['git', 'ls-files'],
+            cwd=root,
+            capture_output=True,
+            text=True,
             check=True
         )
         return [root / Path(p) for p in result.stdout.splitlines() if p.strip()]
@@ -116,7 +118,7 @@ def get_committed_files(root: Path):
 def test_no_stale_project_identity():
     root = get_project_root()
     found_issues = []
-    
+
     for filepath in iter_doc_files(root):
         try:
             content = filepath.read_text(encoding='utf-8')
@@ -125,7 +127,7 @@ def test_no_stale_project_identity():
                     found_issues.append(f"Found '{banned}' in {filepath.relative_to(root)}")
         except Exception:
             pass
-            
+
     assert not found_issues, "Stale project identity found:\n" + "\n".join(found_issues)
 
 @pytest.mark.skipif(
@@ -135,7 +137,7 @@ def test_no_stale_project_identity():
 def test_no_old_surrogate_package_path():
     root = get_project_root()
     found_issues = []
-    
+
     for filepath in iter_doc_files(root):
         try:
             content = filepath.read_text(encoding='utf-8')
@@ -143,7 +145,7 @@ def test_no_old_surrogate_package_path():
                 found_issues.append(f"Found old package path in {filepath.relative_to(root)}")
         except Exception:
             pass
-            
+
     assert not found_issues, "Old surrogate package path found:\n" + "\n".join(found_issues)
 
 @pytest.mark.skipif(
@@ -153,7 +155,7 @@ def test_no_old_surrogate_package_path():
 def test_no_generated_artifacts_committed():
     root = get_project_root()
     committed_files = get_committed_files(root)
-    
+
     banned_exact = {
         "gececi" + "_kod",
         "history.jsonl",
@@ -172,35 +174,35 @@ def test_no_generated_artifacts_committed():
         "angular_error_by_accel_norm.csv",
         "acceleration_decomposition.csv"
     }
-    
+
     banned_dirs = {
         "checkpoints",
         "evals",
         "gececi" + "_kod"
     }
-    
+
     banned_regexes = [
         re.compile(r"spatial_rmse_.*\.csv"),
         re.compile(r"spatial_mape_.*\.csv")
     ]
-    
+
     found_issues = []
     for filepath in committed_files:
         rel_path_str = filepath.relative_to(root).as_posix()
         if "tests/fixtures" in rel_path_str or "examples/st_lrps_minimal_artifact" in rel_path_str:
             continue
-            
+
         name = filepath.name
         # Exact match
         if name in banned_exact:
             found_issues.append(f"Banned artifact committed: {rel_path_str}")
             continue
-            
+
         # Regex match
         if any(r.match(name) for r in banned_regexes):
             found_issues.append(f"Banned artifact pattern committed: {rel_path_str}")
             continue
-            
+
         # Directory check
         parts = filepath.parts
         for b_dir in banned_dirs:
@@ -214,9 +216,9 @@ def test_readme_sanity():
     root = get_project_root()
     readme_path = root / "README.md"
     assert readme_path.exists(), "README.md does not exist"
-    
+
     content = readme_path.read_text(encoding='utf-8')
-    
+
     assert "# Lunaris" in content, "README must be titled with the Lunaris framework"
     assert "ST-LRPS" in content, "README must mention the ST-LRPS surrogate component"
 

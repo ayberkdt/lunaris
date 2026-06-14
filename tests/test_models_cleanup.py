@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
 import pytest
+
 import lunaris.physics as models
 from lunaris.physics import surface_effects
 from lunaris.surrogate.runtime_adapter import _build_model_from_config
+
 
 def test_models_init_exports():
     """Verify models/__init__.py canonical exports are correct."""

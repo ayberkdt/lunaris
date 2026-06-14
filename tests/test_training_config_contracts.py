@@ -1,5 +1,4 @@
 # tests/test_training_config_contracts.py
-# -*- coding: utf-8 -*-
 """
 Contract tests for ``lunaris.surrogate.st_lrps.training.config``.
 
@@ -15,9 +14,9 @@ from __future__ import annotations
 import pytest
 
 from lunaris.surrogate.st_lrps.training.config import (
+    _ENCODING_FLAGS,
     MODEL_PRESETS,
     TrainConfig,
-    _ENCODING_FLAGS,
     apply_model_preset,
 )
 

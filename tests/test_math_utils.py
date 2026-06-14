@@ -1,5 +1,4 @@
 # tests/test_math_utils.py
-# -*- coding: utf-8 -*-
 """
 Unit tests for common.math_utils
 ================================
@@ -15,10 +14,8 @@ Run:
 from __future__ import annotations
 
 import math
-import os
 import sys
 from pathlib import Path
-from typing import Tuple
 
 import numpy as np
 import pytest
@@ -104,7 +101,7 @@ def coe_to_rv(
     argp: float,
     nu: float,
     mu: float,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Classical elements -> inertial Cartesian (r,v). Elliptic (e<1) assumed."""
     p = a * (1.0 - e * e)
     r_pf = p / (1.0 + e * math.cos(nu)) * np.array([math.cos(nu), math.sin(nu), 0.0], dtype=np.float64)

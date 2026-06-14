@@ -8,12 +8,12 @@ supporting both legacy binary formats and standard PDS ASCII tables.
 Key Features:
   - **SHBDR Loader:** Efficient binary parsing for legacy formats.
   - **SHADR (PDS3) Loader:** Robust ASCII parsing for modern GRAIL/LRO datasets (.TAB, .SHA).
-  - **Auto-Inference:** Automatically detects coefficient column order 
+  - **Auto-Inference:** Automatically detects coefficient column order
     ((degree, order) vs (order, degree)) by analyzing triangular index constraints.
   - **Validation:** Optional 'strict' mode to ensure data integrity, completeness,
     and correct normalization states.
 
-The loaders return fully normalized coefficients (Cnm, Snm) and reference 
+The loaders return fully normalized coefficients (Cnm, Snm) and reference
 constants (R_ref, GM) consistently converted to SI units (meters).
 """
 
@@ -25,15 +25,12 @@ constants (R_ref, GM) consistently converted to SI units (meters).
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import struct
-import logging
-
-from typing import List, Optional, Tuple
 
 import numpy as np
-
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +43,7 @@ def load_shbdr(
     file_path: str,
     record_bytes: int = 512,
     names_record: int = 2,
-) -> Tuple[int, float, float, np.ndarray, np.ndarray]:
+) -> tuple[int, float, float, np.ndarray, np.ndarray]:
     """
     Parses legacy SHBDR-like binary gravity files.
 
@@ -75,7 +72,7 @@ def load_shbdr(
     with open(file_path, "rb") as f:
         header_data = f.read(56)
         if len(header_data) < 56:
-            raise IOError("File too short (missing header).")
+            raise OSError("File too short (missing header).")
 
         R_ref, GM, GM_sigma, n_max, m_max, norm_state, num_params, ref_lon, ref_lat = struct.unpack(
             "<3d4i2d", header_data
@@ -96,7 +93,7 @@ def load_shbdr(
 
         names_raw = f.read(num_params * 8)
         if len(names_raw) != num_params * 8:
-            raise IOError("Failed to read parameter names table.")
+            raise OSError("Failed to read parameter names table.")
 
         names = [
             names_raw[i * 8 : (i + 1) * 8].decode("ascii", errors="ignore").strip()
@@ -111,14 +108,14 @@ def load_shbdr(
         f.seek(coeff_offset)
         coeff_raw = f.read(num_params * 8)
         if len(coeff_raw) != num_params * 8:
-            raise IOError("Failed to read coefficients value table.")
+            raise OSError("Failed to read coefficients value table.")
 
         vals = np.frombuffer(coeff_raw, dtype="<f8", count=num_params)
 
     Cnm = np.zeros((n_max + 1, n_max + 1), dtype=np.float64)
     Snm = np.zeros((n_max + 1, n_max + 1), dtype=np.float64)
 
-    for name, val in zip(names, vals):
+    for name, val in zip(names, vals, strict=False):
         if len(name) < 7:
             continue
 
@@ -144,7 +141,7 @@ def load_shbdr(
 
 
 # =============================================================================
-# 2.                         SHADR PARSER (ASCII / PDS) 
+# 2.                         SHADR PARSER (ASCII / PDS)
 # =============================================================================
 
 # Regex to find floating point numbers in loose ASCII text
@@ -153,7 +150,7 @@ _FLOAT_RE = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?")
 _NUM_DELIM_TRANS = str.maketrans({",": " ", "\t": " "})
 
 
-def _parse_nums(line: str) -> List[float]:
+def _parse_nums(line: str) -> list[float]:
     """
     Robust numeric tokenizer for ASCII lines.
 
@@ -172,7 +169,7 @@ def _parse_nums(line: str) -> List[float]:
         return [float(m.group(0)) for m in _FLOAT_RE.finditer(line)]
 
 
-def _infer_column_order(sample_lines: List[Tuple[int, int, float, float]]) -> bool:
+def _infer_column_order(sample_lines: list[tuple[int, int, float, float]]) -> bool:
     """
     Determines if the file columns are (Degree, Order) or (Order, Degree).
 
@@ -196,14 +193,14 @@ def _infer_column_order(sample_lines: List[Tuple[int, int, float, float]]) -> bo
 
 def load_shadr_ascii(
     file_path: str,
-    degree_max: Optional[int] = None,
+    degree_max: int | None = None,
     coeff_start_line: int = 3,
     break_when_past_degree: bool = True,
     sample_size: int = 1000,
     *,
     strict: bool = True,
-    require_normalization_state: Optional[int] = 1,
-) -> Tuple[int, float, float, np.ndarray, np.ndarray]:
+    require_normalization_state: int | None = 1,
+) -> tuple[int, float, float, np.ndarray, np.ndarray]:
     """
     Parses PDS3 ASCII SHADR gravity models (e.g., GRAIL .TAB files).
 
@@ -250,21 +247,21 @@ def load_shadr_ascii(
     if not os.path.isfile(file_path):
         raise FileNotFoundError(f"SHADR file not found: {file_path}")
 
-    header_nums: Optional[List[float]] = None
+    header_nums: list[float] | None = None
     R_ref_m = 0.0
     GM_m3s2 = 0.0
     n_use = 0
     file_n_max = 0
     file_m_max = 0
-    norm_state: Optional[int] = None
+    norm_state: int | None = None
 
-    Cnm: Optional[np.ndarray] = None
-    Snm: Optional[np.ndarray] = None
+    Cnm: np.ndarray | None = None
+    Snm: np.ndarray | None = None
 
-    swap: Optional[bool] = None
+    swap: bool | None = None
     sample_size_eff = int(sample_size)  # may be tightened after header is read
     # buffer: (raw1, raw2, C, S, line_no)
-    buffered: List[Tuple[int, int, float, float, int]] = []
+    buffered: list[tuple[int, int, float, float, int]] = []
 
     # --- strict accounting ---
     stored_count = 0
@@ -278,7 +275,7 @@ def load_shadr_ascii(
     last_n_seen = -1
     sorted_non_decreasing = True
 
-    seen: Optional[np.ndarray] = None  # uint8 mask for duplicates / coverage (only if strict)
+    seen: np.ndarray | None = None  # uint8 mask for duplicates / coverage (only if strict)
 
     def _maybe_fail(msg: str) -> None:
         if strict:
@@ -335,7 +332,7 @@ def load_shadr_ascii(
         return n
 
     open_errors = "strict" if strict else "ignore"
-    with open(file_path, "r", encoding="utf-8", errors=open_errors) as f:
+    with open(file_path, encoding="utf-8", errors=open_errors) as f:
         for i_line, line in enumerate(f, 1):
             # --- Header parse: first non-empty line ---
             if header_nums is None:
@@ -434,7 +431,7 @@ def load_shadr_ascii(
                 if strict:
                     raise ValueError(
                         f"Failed to parse coefficient indices/values at line {i_line}: {line.rstrip()[:200]}"
-                    )
+                    ) from None
                 continue
 
             # If column order not decided yet, buffer samples first
@@ -500,7 +497,7 @@ def load_shadr_ascii(
             missing = expected - stored_count
 
             # Provide a few concrete missing (n,m) pairs to make debugging actionable.
-            missing_examples: List[Tuple[int, int]] = []
+            missing_examples: list[tuple[int, int]] = []
             if missing > 0:
                 for nn in range(0, n_use + 1):
                     for mm in range(0, nn + 1):
@@ -574,11 +571,11 @@ def _slice_square(a: np.ndarray, n_use: int) -> np.ndarray:
 
 def load_gravity_model(
     file_path: str,
-    degree_max: Optional[int] = None,
+    degree_max: int | None = None,
     *,
     ascii_strict: bool = True,
-    ascii_require_normalization_state: Optional[int] = 1,
-) -> Tuple[int, float, float, np.ndarray, np.ndarray]:
+    ascii_require_normalization_state: int | None = 1,
+) -> tuple[int, float, float, np.ndarray, np.ndarray]:
     """
     Universal entry point for loading gravity models.
 

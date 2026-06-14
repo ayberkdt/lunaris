@@ -29,9 +29,10 @@ Design Philosophy
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal, Mapping, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 # --- Local Imports: Common (dependency-light) ---
 from lunaris.common.constants import DAY_S
@@ -67,7 +68,7 @@ GRAV_DIR = DATA_DIR / "gravity_models"
 
 # Kernel filename candidates (in priority order).
 # We support both raw kernels and "text-wrapped" variants some repos ship (*.tls.txt, *.tpc.txt, *.bpc.txt).
-_KERNEL_CANDIDATES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+_KERNEL_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("leapseconds", ("naif0012.tls", "naif0012.tls.txt")),
     ("planetary_constants", ("pck00011.tpc", "pck00011.tpc.txt")),
     ("moon_orientation", ("moon_pa_de440_200625.bpc", "moon_pa_de440_200625.bpc.txt")),
@@ -75,7 +76,7 @@ _KERNEL_CANDIDATES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
 )
 
 # Gravity model filename candidates (in priority order).
-_GRAVITY_CANDIDATES: Tuple[str, ...] = (
+_GRAVITY_CANDIDATES: tuple[str, ...] = (
     "jggrx_1800f_sha.tab",
     "jggrx_1800f_sha.tab.txt",
 )
@@ -83,7 +84,7 @@ _GRAVITY_CANDIDATES: Tuple[str, ...] = (
 FigureSizeName = Literal["landscape", "portrait", "standard"]
 
 
-def _pick_existing_file(folder: Path, candidates: Tuple[str, ...], what: str) -> Path:
+def _pick_existing_file(folder: Path, candidates: tuple[str, ...], what: str) -> Path:
     """Return the first existing file inside folder among candidates."""
     for name in candidates:
         p = (folder / name)
@@ -96,7 +97,7 @@ def _pick_existing_file(folder: Path, candidates: Tuple[str, ...], what: str) ->
     )
 
 
-def _resolve_default_kernel_paths() -> Tuple[str, ...]:
+def _resolve_default_kernel_paths() -> tuple[str, ...]:
     """Default local SPICE-kernel resolver for the ST_LRPS config factory only.
 
     Dependency-light: resolves paths from local filename candidates without
@@ -141,7 +142,7 @@ class VisualConfig:
     save_pngs: bool = True
     interactive: bool = False
 
-    figure_sizes: Mapping[FigureSizeName, Tuple[float, float]] = field(
+    figure_sizes: Mapping[FigureSizeName, tuple[float, float]] = field(
         default_factory=lambda: {
             "landscape": (12.0, 8.0),
             "portrait": (8.0, 12.0),
@@ -162,7 +163,7 @@ class VisualConfig:
             if w <= 0.0 or h <= 0.0:
                 raise ValueError(f"VisualConfig: figure size '{name}' must be positive. Got {(w, h)}")
 
-    def get_figure_size(self, name: Optional[FigureSizeName] = None) -> Tuple[float, float]:
+    def get_figure_size(self, name: FigureSizeName | None = None) -> tuple[float, float]:
         key = name or self.figure_size_default
         return tuple(self.figure_sizes[key])
 
@@ -199,7 +200,7 @@ class SimConfig:
     """
     # Mandatory
     gravity: GravityConfig
-    spice: "SpiceBuildConfig"
+    spice: SpiceBuildConfig
     initial_state: InitialState
 
     # Physics
@@ -207,10 +208,10 @@ class SimConfig:
     spacecraft: SpacecraftProps = field(default_factory=SpacecraftProps)
 
     # Optional model configs (created only if the corresponding flag is enabled)
-    srp: Optional["SRPConfig"] = None
-    albedo: Optional["AlbedoConfig"] = None
-    thermal: Optional["ThermalConfig"] = None
-    solid_tides: Optional[SolidTideConfig] = field(default_factory=SolidTideConfig)
+    srp: SRPConfig | None = None
+    albedo: AlbedoConfig | None = None
+    thermal: ThermalConfig | None = None
+    solid_tides: SolidTideConfig | None = field(default_factory=SolidTideConfig)
 
     # Numerics & output
     propagator: PropagatorConfig = field(default_factory=PropagatorConfig)
@@ -219,7 +220,7 @@ class SimConfig:
     output: OutputConfig = field(default_factory=OutputConfig)
 
     # Optional extensions
-    earth_j2: Optional["EarthJ2Params"] = None
+    earth_j2: EarthJ2Params | None = None
 
     @property
     def total_seconds(self) -> float:

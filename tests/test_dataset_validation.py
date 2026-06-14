@@ -4,14 +4,13 @@ import json
 
 import numpy as np
 
-from lunaris.surrogate.st_lrps.data.dataset_validation import validate_dataset_file
-
 from dataset_pipeline_test_utils import (
     make_toy_residual_rows,
     toy_baseline_fn,
     toy_truth_fn,
     write_toy_contract_h5,
 )
+from lunaris.surrogate.st_lrps.data.dataset_validation import validate_dataset_file
 
 
 def test_dataset_validation_passes_and_writes_report(tmp_path):

@@ -11,16 +11,16 @@ import pytest
 from lunaris.surrogate.st_lrps.paper_evidence import (
     PaperConfigError,
     build_training_argv,
+    collect_environment,
     compute_file_sha256,
     compute_json_hash,
-    collect_environment,
     validate_st_lrps_paper_training_config,
     write_evidence_manifest,
 )
+from lunaris.surrogate.st_lrps.paper_evidence import runner as paper_runner
 from lunaris.surrogate.st_lrps.paper_evidence.config_validation import load_paper_training_config
 from lunaris.surrogate.st_lrps.paper_evidence.evidence_manifest import build_evidence_manifest
 from lunaris.surrogate.st_lrps.paper_evidence.training_argv import find_unfilled_placeholders
-from lunaris.surrogate.st_lrps.paper_evidence import runner as paper_runner
 
 _REPO = Path(__file__).resolve().parents[1]
 _CONFIGS = _REPO / "configs" / "st_lrps" / "paper"
@@ -61,7 +61,7 @@ def test_configs_differ_only_by_seed_and_output():
         assert f"seed{seed}" in other["output"]["out_dir"]
         # Everything else identical.
         a, b = copy.deepcopy(base), copy.deepcopy(other)
-        for d, s in ((a, 42), (b, seed)):
+        for d, _s in ((a, 42), (b, seed)):
             d.pop("name"); d.pop("seed")
             d["split"].pop("split_seed")
             d["output"].pop("out_dir")
@@ -365,7 +365,7 @@ def test_package_evidence_writes_full_bundle(tmp_path):
     run_dir = _make_hygiene_run(tmp_path)
     config = load_paper_training_config(_CONFIGS / "train_full_seed42.json")
     evidence_dir = tmp_path / "evidence"
-    bundle = paper_runner.package_evidence(
+    paper_runner.package_evidence(
         run_dir, evidence_dir, config=config, command=["python", "-m", "trainer", "--x"]
     )
     for name in (

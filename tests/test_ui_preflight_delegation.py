@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 The desktop pre-flight worker delegates to the shared core.preflight service.
 
@@ -22,7 +21,6 @@ from lunaris.ui.core.preflight_validation import (  # noqa: E402
     PreFlightWorker,
     backend_request_from_snapshot,
 )
-
 
 # ---------------------------------------------------------------------------
 # Snapshot -> registry request mapping (pure, Qt-free)

@@ -35,21 +35,20 @@ ST_LRPS Core - UI components.
 
 
 # =============================================================================
-# 0.                                    IMPORTS 
+# 0.                                    IMPORTS
 # =============================================================================
 from __future__ import annotations
 
 import math
+from collections import deque
+from typing import Any
 
 import numpy as np
-from typing import Dict, Any
-from collections import deque
-
 from PySide6 import QtCore, QtWidgets
 
 # Modern Icon Library
 try:
-    import qtawesome as qta
+    import qtawesome as qta  # noqa: F401  # availability probe for HAS_QTAWESOME
     HAS_QTAWESOME = True
 except ImportError:
     HAS_QTAWESOME = False
@@ -58,7 +57,7 @@ except ImportError:
 # Live Plotting & 3D Visualization
 try:
     import pyqtgraph as pg
-    import pyqtgraph.opengl as gl
+    import pyqtgraph.opengl as gl  # noqa: F401  # availability probe for HAS_OPENGL
     HAS_PYQTGRAPH = True
     HAS_OPENGL = True
     # Enable antialiasing globally
@@ -82,7 +81,7 @@ except ImportError:
         print("  From the project root, run:", file=sys.stderr)
         print("\n      python -m lunaris.ui.pages.live_telemetry_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -111,10 +110,10 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
     - Eccentricity vs Time
     - Ground Track (Latitude vs Longitude)
     """
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        
+
         # Data storage (ring buffers)
         self.max_points = 5000
         self.time_data = deque(maxlen=self.max_points)
@@ -123,7 +122,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         self.ecc_data = deque(maxlen=self.max_points)
         self.lat_data = deque(maxlen=self.max_points)
         self.lon_data = deque(maxlen=self.max_points)
-        
+
         # Buffers for incoming data
         self._buffer_lock = QtCore.QMutex()
         self._time_buffer = []
@@ -138,11 +137,11 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         # Many engines emit absolute seconds (e.g., ET or Unix); we display relative time by default.
         self._t0_raw = None
         self._last_time_unit = "s"
-        
+
         # Create layout
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        
+
         if not HAS_PYQTGRAPH:
             # Fallback message
             placeholder = QtWidgets.QLabel("PyQtGraph not installed.\nLive telemetry unavailable.")
@@ -150,11 +149,11 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             placeholder.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 14px;")
             layout.addWidget(placeholder)
             return
-        
+
         # Plot Type Selector
         selector_layout = QtWidgets.QHBoxLayout()
         selector_layout.setContentsMargins(10, 5, 10, 5)
-        
+
         selector_layout.addWidget(QtWidgets.QLabel("Plot Type:"))
         self.plot_type_combo = QtWidgets.QComboBox()
         self.plot_type_combo.addItems([
@@ -165,7 +164,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         ])
         self.plot_type_combo.currentTextChanged.connect(self._switch_plot)
         selector_layout.addWidget(self.plot_type_combo)
-        
+
         selector_layout.addStretch()
 
         # ------------------------------
@@ -234,28 +233,28 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         self.btn_clear.setFixedHeight(24)
         self.btn_clear.clicked.connect(self.clear_all)
         selector_layout.addWidget(self.btn_clear)
-        
+
         layout.addLayout(selector_layout)
-        
+
         # Stacked widget for different plots
         self.plot_stack = QtWidgets.QStackedWidget()
         layout.addWidget(self.plot_stack, 1)
-        
+
         # Create individual plot widgets
         self._create_altitude_plot()
         self._create_velocity_plot()
         self._create_eccentricity_plot()
         self._create_ground_track_plot()
-        
+
         # Timer for buffered updates (30 FPS)
         self.update_timer = QtCore.QTimer(self)
         self.update_timer.setInterval(33)  # ~30 Hz
         self.update_timer.timeout.connect(self._flush_buffer)
         self.update_timer.start()
-        
+
         # Set initial plot
         self._switch_plot("Altitude vs Time")
-    
+
     def _create_altitude_plot(self):
         """Altitude vs Time plot (Lunar Graphite styling)."""
         widget = pg.PlotWidget()
@@ -264,14 +263,14 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         widget.setLabel('left', 'Altitude [km]', color=THEME['fg_soft'], size='11pt')
         widget.setLabel('bottom', 'Time [s]', color=THEME['fg_soft'], size='11pt')
         widget.showGrid(x=True, y=True, alpha=0.3)
-        
+
         # Enhanced axis styling
         axis_pen = pg.mkPen(color=THEME['fg_muted'], width=1.5)
         widget.getAxis('left').setPen(axis_pen)
         widget.getAxis('left').setTextPen(THEME['fg_soft'])
         widget.getAxis('bottom').setPen(axis_pen)
         widget.getAxis('bottom').setTextPen(THEME['fg_soft'])
-        
+
 
         # Store widgets / viewbox for axis controls
         self.alt_plot_widget = widget
@@ -288,9 +287,9 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             name='Altitude',
             shadowPen=pg.mkPen(color=THEME['accent'], width=4, alpha=0.3)
         )
-        
+
         self.plot_stack.addWidget(widget)
-    
+
     def _create_velocity_plot(self):
         """Velocity vs Time plot (Lunar Graphite styling)."""
         widget = pg.PlotWidget()
@@ -299,13 +298,13 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         widget.setLabel('left', 'Velocity [km/s]', color=THEME['fg_soft'], size='11pt')
         widget.setLabel('bottom', 'Time [s]', color=THEME['fg_soft'], size='11pt')
         widget.showGrid(x=True, y=True, alpha=0.3)
-        
+
         axis_pen = pg.mkPen(color=THEME['fg_muted'], width=1.5)
         widget.getAxis('left').setPen(axis_pen)
         widget.getAxis('left').setTextPen(THEME['fg_soft'])
         widget.getAxis('bottom').setPen(axis_pen)
         widget.getAxis('bottom').setTextPen(THEME['fg_soft'])
-        
+
 
         # Store widgets / viewbox for axis controls
         self.vel_plot_widget = widget
@@ -320,9 +319,9 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             name='Velocity',
             shadowPen=pg.mkPen(color=THEME['secondary'], width=4, alpha=0.3)
         )
-        
+
         self.plot_stack.addWidget(widget)
-    
+
     def _create_eccentricity_plot(self):
         """Eccentricity vs Time plot (Lunar Graphite styling)."""
         widget = pg.PlotWidget()
@@ -331,13 +330,13 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         widget.setLabel('left', 'Eccentricity', color=THEME['fg_soft'], size='11pt')
         widget.setLabel('bottom', 'Time [s]', color=THEME['fg_soft'], size='11pt')
         widget.showGrid(x=True, y=True, alpha=0.3)
-        
+
         axis_pen = pg.mkPen(color=THEME['fg_muted'], width=1.5)
         widget.getAxis('left').setPen(axis_pen)
         widget.getAxis('left').setTextPen(THEME['fg_soft'])
         widget.getAxis('bottom').setPen(axis_pen)
         widget.getAxis('bottom').setTextPen(THEME['fg_soft'])
-        
+
 
         # Store widgets / viewbox for axis controls
         self.ecc_plot_widget = widget
@@ -352,9 +351,9 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             name='Eccentricity',
             shadowPen=pg.mkPen(color=THEME['warning'], width=4, alpha=0.3)
         )
-        
+
         self.plot_stack.addWidget(widget)
-    
+
     def _create_ground_track_plot(self):
         """Ground Track (Latitude vs Longitude) plot (Lunar Graphite styling)."""
         widget = pg.PlotWidget()
@@ -363,17 +362,17 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         widget.setLabel('left', 'Latitude [deg]', color=THEME['fg_soft'], size='11pt')
         widget.setLabel('bottom', 'Longitude [deg]', color=THEME['fg_soft'], size='11pt')
         widget.showGrid(x=True, y=True, alpha=0.3)
-        
+
         # Set axis ranges for Moon
         widget.setXRange(-180, 180)
         widget.setYRange(-90, 90)
-        
+
         axis_pen = pg.mkPen(color=THEME['info'], width=1.5)
         widget.getAxis('left').setPen(axis_pen)
         widget.getAxis('left').setTextPen(THEME['fg_soft'])
         widget.getAxis('bottom').setPen(axis_pen)
         widget.getAxis('bottom').setTextPen(THEME['fg_soft'])
-        
+
         self.ground_track_curve = widget.plot(
             pen=pg.mkPen(color=THEME['info'], width=2.0, style=QtCore.Qt.DashLine),
             symbol='o',
@@ -382,9 +381,9 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             symbolPen=pg.mkPen(color=THEME['info'], width=1),
             name='Ground Track'
         )
-        
+
         self.plot_stack.addWidget(widget)
-    
+
     def _switch_plot(self, plot_name):
         """Switch between different plot types."""
         plot_map = {
@@ -705,7 +704,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             self._apply_live_auto_y_range()
 
 
-    def add_datapoint(self, telem_data: Dict[str, Any]):
+    def add_datapoint(self, telem_data: dict[str, Any]):
         """
         Add one telemetry sample in a strictly synchronized way.
 
@@ -894,7 +893,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             except Exception:
                 # UI redraw race / curve deleted; ignore to keep stream alive
                 pass
-    
+
     def clear_all(self, _checked: bool = False):
         """Clear all telemetry data."""
         self._buffer_lock.lock()
@@ -907,7 +906,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             self._lon_buffer.clear()
         finally:
             self._buffer_lock.unlock()
-        
+
         self.time_data.clear()
         self.alt_data.clear()
         self.vel_data.clear()
@@ -961,8 +960,8 @@ class TelemetryPage(QtWidgets.QWidget):
 # =============================================================================
 
 if __name__ == "__main__":
-    import sys
     import math
+    import sys
 
     # Start the application
     app = QtWidgets.QApplication(sys.argv)

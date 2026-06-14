@@ -8,12 +8,12 @@ centralized access to:
 
 1. Global Constants: Application-wide paths, physics constants (e.g., R_MOON_KM),
    and visual theme definitions (color palettes, window settings).
-   
-2. Utility Functions: Robust helpers for asset loading (fonts, icons), path 
+
+2. Utility Functions: Robust helpers for asset loading (fonts, icons), path
    normalization, and project root detection.
 
-3. Custom UI Primitives: Reusable, stylized PySide6 widgets (e.g., 
-   NumericDragLineEdit, ToggleSwitch, StatusBadge) designed to maintain 
+3. Custom UI Primitives: Reusable, stylized PySide6 widgets (e.g.,
+   NumericDragLineEdit, ToggleSwitch, StatusBadge) designed to maintain
    visual consistency and interactivity across all application pages.
 
 Dependencies:
@@ -23,21 +23,23 @@ Dependencies:
 
 
 # =============================================================================
-# 0.                                    IMPORTS 
+# 0.                                    IMPORTS
 # =============================================================================
 from __future__ import annotations
 
-import os
 import math
+import os
 from pathlib import Path
-from typing import Optional
 
-from PySide6 import QtGui, QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from lunaris.ui_foundation import (
-    DESIGN_TOKENS,
     LOG_COLORS as FOUNDATION_LOG_COLORS,
+)
+from lunaris.ui_foundation import (
     ORBIT_THEME as FOUNDATION_ORBIT_THEME,
+)
+from lunaris.ui_foundation import (
     THEME as FOUNDATION_THEME,
 )
 
@@ -45,7 +47,8 @@ from lunaris.ui_foundation import (
 # UI code works in km, so we convert here once and export aliases.
 # Fallback literals keep the UI loadable without the backend on PYTHONPATH.
 try:
-    from lunaris.common.constants import R_MOON_MEAN as _R_MOON_MEAN_M, MU_MOON as _MU_MOON_SI
+    from lunaris.common.constants import MU_MOON as _MU_MOON_SI
+    from lunaris.common.constants import R_MOON_MEAN as _R_MOON_MEAN_M
     R_MOON_KM: float = _R_MOON_MEAN_M / 1000.0       # 1737.4 km
     MU_MOON_KM3_S2: float = _MU_MOON_SI / 1e9         # ~4902.87 km³/s²
 except ImportError:
@@ -80,85 +83,20 @@ APP_NAME = "Lunaris Mission Studio"
 APP_VERSION = "13.0"
 
 
-# Theme configuration using a dictionary for easier QSS (Qt Style Sheet) integration.
-# "Lunar Graphite" palette — a calm, engineering-oriented mission-control aesthetic.
-# Primary accent: orbital blue (#6AA9FF).  Secondary highlight: lunar telemetry
-# teal (#6EE7C8).  Amber is reserved for warning states and periapsis markers, not
-# as a general brand accent.  All tokens below are the single source of truth for
-# Qt widget styling (OpenGL colors live in ORBIT_THEME).
-_LEGACY_THEME_REFERENCE = {
-    # ── Backgrounds ──────────────────────────────────────────────────────────
-    "bg_space":    "#05070A",   # deepest canvas / app background
-    "bg_shell":    "#0A0F16",   # header / sidebar shell
-    "bg_card":     "#111821",   # primary cards
-    "bg_card_alt": "#17202B",   # elevated cards / hover surfaces
-    "bg_entry":    "#0D141D",   # input fields / selectors
-    "bg_log":      "#030507",   # terminal / log panel
-
-    # ── Foreground ────────────────────────────────────────────────────────────
-    "fg_main":     "#E7ECF2",   # primary text
-    "fg_soft":     "#B8C3D0",   # secondary headings
-    "fg_muted":    "#7D8997",   # helper / muted text
-
-    # ── Primary accent — orbital blue, less neon ─────────────────────────────
-    "accent":      "#6AA9FF",   # primary blue — progress, active, primary CTAs
-    "accent_hov":  "#9AC4FF",   # hover / brighter blue
-    "accent_dim":  "rgba(106,169,255,0.12)",  # subtle tinted background
-
-    # ── Secondary accent — lunar telemetry teal ──────────────────────────────
-    "secondary":       "#6EE7C8",   # secondary highlight / success
-    "secondary_hov":   "#9FF3DD",
-    "secondary_dim":   "rgba(110,231,200,0.10)",
-
-    # ── Semantic colors ───────────────────────────────────────────────────────
-    "success":     "#6EE7C8",   # telemetry teal — success states
-    "warning":     "#E7B86A",   # amber — warnings / periapsis only
-    "error":       "#F87171",   # soft red — error / danger
-    "info":        "#8AB4F8",   # sky blue — info chips
-
-    # ── Borders ───────────────────────────────────────────────────────────────
-    "border":      "#263241",   # card / input borders
-    "border_soft": "#1B2530",   # quieter separators
-
-    # ── Semantic aliases (for callers that use these token names) ─────────────
-    "primary":        "#6AA9FF",   # → accent
-    "primary_hover":  "#9AC4FF",   # → accent_hov
-    "selected_bg":    "rgba(106,169,255,0.12)",   # → accent_dim
-    "panel_shadow":   "rgba(0,0,0,0.45)",
-    "plot_bg":        "#030507",   # → bg_log
-    "grid_color":     "rgba(80,96,120,0.32)",
-    "text_disabled":  "rgba(125,137,151,0.45)",
-
-    # ── Backward-compat keys (kept so older pages still resolve) ─────────────
-    # accent_deep is a darker companion to the primary accent (deep orbital blue).
-    "accent_deep": "#315F99",
-}
-
-# Rich Text Log Colors (HTML) — aligned with the Lunar Graphite palette.
-# Typed tokens are authoritative. This compatibility mapping keeps the existing
-# page API stable while the remaining inline styling migrates to global QSS.
+# Palette single source of truth.
+#
+# THEME (Qt widget colors), LOG_COLORS (rich-text log HTML colors) and
+# ORBIT_THEME (OpenGL / pyqtgraph 3D preview colors) are all defined ONCE in
+# ``lunaris.ui_foundation`` — the binding-neutral UI foundation — and merely
+# re-exported here so existing ``from lunaris.ui.core.ui_commons import THEME``
+# call sites keep working. Do NOT add or edit color literals here; change the
+# palette in ``lunaris.ui_foundation.palette`` instead.
 THEME = FOUNDATION_THEME
-
-_LEGACY_LOG_COLORS_REFERENCE = {
-    "error":     "#FCA5A5",   # soft red — readable on dark bg
-    "warning":   "#E7B86A",   # amber
-    "success":   "#6EE7C8",   # telemetry teal
-    "system":    "#B8C3D0",   # fg_soft
-    "info":      "#9AC4FF",   # bright accent blue
-    "debug":     "#7D8997",   # fg_muted
-    "timestamp": "#536172",   # dimmed
-    "default":   "#E7ECF2",   # fg_main
-}
-
-# OpenGL / pyqtgraph orbit-preview palette.  These tokens are kept separate from
-# the Qt ``THEME`` because the 3D preview needs deliberate, slightly different
-# values (true space-black background, regolith greys, marker hues) and is
-# consumed as float RGBA tuples via ``rgba_css_to_tuple`` / ``hex_to_rgba_float``.
 LOG_COLORS = FOUNDATION_LOG_COLORS
 ORBIT_THEME = FOUNDATION_ORBIT_THEME
 
 
-def hex_to_rgba_float(color: str, alpha: float = 1.0) -> "tuple[float, float, float, float]":
+def hex_to_rgba_float(color: str, alpha: float = 1.0) -> tuple[float, float, float, float]:
     """Convert a ``#rrggbb`` (or ``#rgb``) hex string to a float RGBA tuple.
 
     pyqtgraph / OpenGL items expect colors as 0..1 floats rather than CSS
@@ -176,7 +114,7 @@ def hex_to_rgba_float(color: str, alpha: float = 1.0) -> "tuple[float, float, fl
     return (r, g, b, a)
 
 
-def rgba_css_to_tuple(color: str) -> "tuple[float, float, float, float]":
+def rgba_css_to_tuple(color: str) -> tuple[float, float, float, float]:
     """Convert a CSS color token to a float RGBA tuple in 0..1.
 
     Accepts either ``#rrggbb`` hex strings or ``rgb()/rgba()`` function notation
@@ -310,7 +248,7 @@ def load_fonts() -> QtGui.QFont:
 # 3.                          ICON UTILITIES
 # =============================================================================
 
-def get_icon(icon_name: str, color: Optional[str] = None) -> QtGui.QIcon:
+def get_icon(icon_name: str, color: str | None = None) -> QtGui.QIcon:
     """
     Returns a FontAwesome icon using qtawesome.
     Falls back to a colored square if qtawesome is unavailable.
@@ -320,7 +258,7 @@ def get_icon(icon_name: str, color: Optional[str] = None) -> QtGui.QIcon:
         pixmap = QtGui.QPixmap(16, 16)
         pixmap.fill(QtGui.QColor(color or THEME['accent']))
         return QtGui.QIcon(pixmap)
-    
+
     try:
         options = {'color': color or THEME['fg_main']}
         return qta.icon(icon_name, **options)
@@ -412,7 +350,7 @@ def input_stylesheet() -> str:
     """
 
 
-def section_label(text: str, parent=None) -> "QtWidgets.QLabel":
+def section_label(text: str, parent=None) -> QtWidgets.QLabel:
     """A styled section header label."""
     lbl = QtWidgets.QLabel(text, parent)
     lbl.setStyleSheet(
@@ -422,7 +360,7 @@ def section_label(text: str, parent=None) -> "QtWidgets.QLabel":
     return lbl
 
 
-def path_validity_badge(parent=None) -> "StatusBadge":
+def path_validity_badge(parent=None) -> StatusBadge:
     """A StatusBadge pre-configured for path validation state."""
     badge = StatusBadge("NOT SET", kind="error", parent=parent)
     badge.setFixedWidth(90)
@@ -477,14 +415,14 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
     - Double-click to type manually.
     - Glow effect on focus/hover (styled via QSS).
     """
-    
+
     value_changed = QtCore.Signal(float) # Custom signal for cleaner connection
-    
+
     def __init__(self, value: float = 0.0, *, step: float = 1.0,
-                 min_value: Optional[float] = None, max_value: Optional[float] = None,
+                 min_value: float | None = None, max_value: float | None = None,
                  decimals: int = 2, parent=None):
         super().__init__(parent)
-        
+
         # Logic State
         try:
             if value is None:
@@ -536,7 +474,7 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
                 background-color: {THEME['bg_card_alt']};
             }}
         """)
-    
+
     def _format(self, v: float) -> str:
         """
         Format the numeric value for display without hiding tiny tolerances.
@@ -558,7 +496,7 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
             return f"{val:.{precision}e}"
 
         return f"{val:.{self._decimals}f}"
-    
+
     # ---- internal numeric helpers ----
     def _clamp(self, val: float) -> float:
         """Apply the configured min/max bounds to *val* (consistent everywhere)."""
@@ -710,49 +648,49 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         self.setCheckable(True)
         self.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.setFixedSize(44, 24)
-    
+
     def paintEvent(self, _):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
-        
+
         is_on = self.isChecked()
         is_enabled = self.isEnabled()
-        
+
         # Colors from THEME (cyan when on, dark entry when off)
         bg_color = QtGui.QColor(THEME['accent'] if is_on else THEME['bg_entry'])
         knob_color = QtGui.QColor(THEME['fg_main'])
-        
+
         if not is_enabled:
             bg_color.setAlpha(100)
             knob_color.setAlpha(150)
-        
+
         # Draw Track
         rect = self.rect()
         radius = rect.height() / 2
-        
+
         p.setPen(QtCore.Qt.NoPen)
         p.setBrush(bg_color)
         p.drawRoundedRect(rect, radius, radius)
-        
+
         # Draw Border (if off)
         if not is_on:
             p.setBrush(QtCore.Qt.NoBrush)
             p.setPen(QtGui.QPen(QtGui.QColor(THEME['border']), 1))
             p.drawRoundedRect(rect, radius, radius)
-        
+
         # Draw Knob
         p.setPen(QtCore.Qt.NoPen)
         p.setBrush(knob_color)
-        
+
         margin = 3
         knob_dia = rect.height() - (2 * margin)
-        
+
         # Calculate Position (Left vs Right)
         if is_on:
             x_pos = rect.width() - margin - knob_dia
         else:
             x_pos = margin
-            
+
         p.drawEllipse(QtCore.QRectF(x_pos, margin, knob_dia, knob_dia))
 
 
@@ -763,32 +701,32 @@ class CostIndicator(QtWidgets.QWidget):
     """
     _LEVELS = {"low": 1, "medium": 2, "high": 3}
     _COLORS = {"low": "success", "medium": "warning", "high": "error"} # Keys in THEME
-    
+
     def __init__(self, level: str = "low", parent=None):
         super().__init__(parent)
         self._level = "low"
         self.set_level(level)
         self.setFixedSize(50, 14)
         self.setToolTip("Estimated CPU Load")
-    
+
     def set_level(self, level: str):
         self._level = (level or "low").lower()
         self.update()
-    
+
     def paintEvent(self, _):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
-        
+
         active_bars = self._LEVELS.get(self._level, 1)
         color_key = self._COLORS.get(self._level, "info")
         active_color = QtGui.QColor(THEME.get(color_key, THEME['accent']))
         inactive_color = QtGui.QColor(THEME['bg_entry'])
-        
+
         bar_width = 12
         bar_height = 8
         gap = 4
         y_pos = (self.height() - bar_height) / 2
-        
+
         for i in range(3):
             x_pos = i * (bar_width + gap)
 
@@ -805,7 +743,7 @@ class CostIndicator(QtWidgets.QWidget):
 # 7.                       FACTORY HELPERS (theming aids)
 # =============================================================================
 
-def create_metric_card(parent: Optional["QtWidgets.QWidget"] = None) -> "tuple[QtWidgets.QGroupBox, QtWidgets.QGridLayout]":
+def create_metric_card(parent: QtWidgets.QWidget | None = None) -> tuple[QtWidgets.QGroupBox, QtWidgets.QGridLayout]:
     """
     Return a ``(card, grid)`` tuple for rendering compact key/value metrics.
 
@@ -822,7 +760,7 @@ def create_metric_card(parent: Optional["QtWidgets.QWidget"] = None) -> "tuple[Q
     return card, grid
 
 
-def create_empty_state(message: str, parent: Optional["QtWidgets.QWidget"] = None) -> "QtWidgets.QLabel":
+def create_empty_state(message: str, parent: QtWidgets.QWidget | None = None) -> QtWidgets.QLabel:
     """
     Return a centered, muted label suitable for empty-state placeholders.
 
@@ -842,8 +780,8 @@ def create_empty_state(message: str, parent: Optional["QtWidgets.QWidget"] = Non
 def create_path_row(
     label_text: str,
     placeholder: str = "",
-    parent: Optional["QtWidgets.QWidget"] = None,
-) -> "tuple[QtWidgets.QWidget, QtWidgets.QLineEdit, QtWidgets.QPushButton]":
+    parent: QtWidgets.QWidget | None = None,
+) -> tuple[QtWidgets.QWidget, QtWidgets.QLineEdit, QtWidgets.QPushButton]:
     """
     Return a reusable label + line-edit + browse-button row.
 
@@ -872,7 +810,7 @@ def create_path_row(
     return row, line_edit, button
 
 
-def style_primary_button(btn: "QtWidgets.QPushButton") -> None:
+def style_primary_button(btn: QtWidgets.QPushButton) -> None:
     """
     Apply the project-wide primary accent style to ``btn``.
 
@@ -915,7 +853,7 @@ def style_primary_button(btn: "QtWidgets.QPushButton") -> None:
         pass
 
 
-def style_secondary_button(btn: "QtWidgets.QPushButton") -> None:
+def style_secondary_button(btn: QtWidgets.QPushButton) -> None:
     """Apply the project's quieter, neutral button style to ``btn``."""
 
     btn.setObjectName("secondaryBtn")
@@ -955,8 +893,8 @@ def style_secondary_button(btn: "QtWidgets.QPushButton") -> None:
 
 def create_card(
     title: str,
-    parent: Optional["QtWidgets.QWidget"] = None,
-) -> "QtWidgets.QGroupBox":
+    parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QGroupBox:
     """
     Return a styled QGroupBox card with the project-wide dark card language.
 
@@ -970,9 +908,9 @@ def create_card(
 
 def create_section_header(
     title: str,
-    subtitle: Optional[str] = None,
-    parent: Optional["QtWidgets.QWidget"] = None,
-) -> "QtWidgets.QWidget":
+    subtitle: str | None = None,
+    parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QWidget:
     """
     Return a labelled section header widget (title + optional subtitle row).
     """
@@ -1001,8 +939,8 @@ def create_section_header(
 def create_hint_label(
     text: str,
     kind: str = "info",
-    parent: Optional["QtWidgets.QWidget"] = None,
-) -> "QtWidgets.QLabel":
+    parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QLabel:
     """
     Return a small inline hint / callout label.
 
@@ -1025,9 +963,9 @@ def create_hint_label(
 
 def create_primary_button(
     text: str,
-    icon: Optional["QtGui.QIcon"] = None,
-    parent: Optional["QtWidgets.QWidget"] = None,
-) -> "QtWidgets.QPushButton":
+    icon: QtGui.QIcon | None = None,
+    parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QPushButton:
     """Return a styled primary (cyan) action button."""
     btn = QtWidgets.QPushButton(text, parent)
     if icon:
@@ -1038,9 +976,9 @@ def create_primary_button(
 
 def create_secondary_button(
     text: str,
-    icon: Optional["QtGui.QIcon"] = None,
-    parent: Optional["QtWidgets.QWidget"] = None,
-) -> "QtWidgets.QPushButton":
+    icon: QtGui.QIcon | None = None,
+    parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QPushButton:
     """Return a styled secondary (neutral) action button."""
     btn = QtWidgets.QPushButton(text, parent)
     if icon:
@@ -1051,9 +989,9 @@ def create_secondary_button(
 
 def create_danger_button(
     text: str,
-    icon: Optional["QtGui.QIcon"] = None,
-    parent: Optional["QtWidgets.QWidget"] = None,
-) -> "QtWidgets.QPushButton":
+    icon: QtGui.QIcon | None = None,
+    parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QPushButton:
     """Return a styled danger (coral) action button."""
     btn = QtWidgets.QPushButton(text, parent)
     if icon:
@@ -1088,8 +1026,8 @@ def create_metric_chip(
     title: str,
     value: str = "—",
     subtitle: str = "",
-    parent: Optional["QtWidgets.QWidget"] = None,
-) -> "QtWidgets.QFrame":
+    parent: QtWidgets.QWidget | None = None,
+) -> QtWidgets.QFrame:
     """
     Return a compact metric card: dim title on top, bold value, optional
     subtitle.  Suitable for header metric rows in monitoring pages.
@@ -1134,7 +1072,7 @@ def create_metric_chip(
     return frame
 
 
-def apply_tree_style(tree: "QtWidgets.QTreeWidget") -> None:
+def apply_tree_style(tree: QtWidgets.QTreeWidget) -> None:
     """Apply project-wide styling to a QTreeWidget."""
     tree.setStyleSheet(
         f"""
@@ -1167,7 +1105,7 @@ def apply_tree_style(tree: "QtWidgets.QTreeWidget") -> None:
     )
 
 
-def apply_plot_theme(widget: "QtWidgets.QWidget") -> None:
+def apply_plot_theme(widget: QtWidgets.QWidget) -> None:
     """
     Apply the project-wide pyqtgraph/canvas background color to *widget*.
 

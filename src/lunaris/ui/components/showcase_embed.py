@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Offline 3D-Moon showcase embed for the Lunaris launcher.
 
@@ -37,9 +36,8 @@ import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Optional
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from lunaris.ui.core.ui_commons import THEME, find_project_root
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
@@ -84,7 +82,7 @@ def _web_engine_is_safe() -> bool:
 # Embed-dir resolution
 # =============================================================================
 
-def resolve_web_embed_dir() -> Optional[Path]:
+def resolve_web_embed_dir() -> Path | None:
     """
     Locate a built static export that contains ``embed/index.html``.
 
@@ -141,9 +139,9 @@ class _LoopbackServer:
 
     def __init__(self, root_dir: Path) -> None:
         self._root = Path(root_dir)
-        self._httpd: Optional[ThreadingHTTPServer] = None
-        self._thread: Optional[threading.Thread] = None
-        self.port: Optional[int] = None
+        self._httpd: ThreadingHTTPServer | None = None
+        self._thread: threading.Thread | None = None
+        self.port: int | None = None
 
     def start(self) -> int:
         handler = partial(_QuietHandler, directory=str(self._root))
@@ -190,14 +188,14 @@ class ShowcaseEmbedWidget(QtWidgets.QWidget):
     toggles).
     """
 
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("showcaseEmbed")
         self.setAttribute(QtCore.Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"QWidget#showcaseEmbed {{ background: {_FALLBACK_BG}; }}")
 
-        self._server: Optional[_LoopbackServer] = None
-        self._view: Optional[QWebEngineView] = None  # type: ignore[assignment]
+        self._server: _LoopbackServer | None = None
+        self._view: QWebEngineView | None = None  # type: ignore[assignment]
         self._live = False
 
         self._layout = QtWidgets.QVBoxLayout(self)

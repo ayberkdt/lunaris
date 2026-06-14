@@ -59,22 +59,22 @@ Notes
 from __future__ import annotations
 
 import math
-import numpy as np
-
-from typing import Tuple
 from dataclasses import dataclass
 
-
+import numpy as np
 from numba import njit
 
-
-from lunaris.common.constants import (P_SUN_1AU, AU,
-                              R_SUN_MEAN, R_MOON_MEAN, R_EARTH_MEAN,
-                              EPS_1E6,EPS_1E12, EPS_1E24)
-
+from lunaris.common.constants import (
+    AU,
+    EPS_1E6,
+    EPS_1E12,
+    EPS_1E24,
+    P_SUN_1AU,
+    R_EARTH_MEAN,
+    R_MOON_MEAN,
+    R_SUN_MEAN,
+)
 from lunaris.common.type_defs import SpacecraftProps
-
-
 
 # =============================================================================
 # 1.                       SHADOW / ECLIPSE GEOMETRY
@@ -310,7 +310,7 @@ def accel_srp(
     mass_kg: float,                      # Mass [kg]
     enable_moon_eclipse: bool,
     enable_earth_eclipse: bool,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Core SRP kernel (cannonball model), optimized for Numba.
 

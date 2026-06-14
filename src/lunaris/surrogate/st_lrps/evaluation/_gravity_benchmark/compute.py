@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Internal module of the lunar gravity-model benchmark harness.
 
 Part of :mod:`lunaris.surrogate.st_lrps.evaluation.compare_gravity_models`;
@@ -11,27 +10,28 @@ import argparse
 import math
 import time
 from dataclasses import dataclass, replace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.core.config import SimConfig, replace_sim_config
-from lunaris.core.state import create_state_from_keplerian, calculate_ae_from_altitudes
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagator import propagate
-from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.core.state import calculate_ae_from_altitudes, create_state_from_keplerian
 from lunaris.surrogate.st_lrps.evaluation import progress
 
 # --- intra-package wiring (auto-generated split) ---
 from .types import (
+    SAMPLING_METHODS,
+    SCENARIO_UNIT_DIM,
     BatchModelResult,
     GpuBatchTask,
     GravityModelCache,
-    SAMPLING_METHODS,
-    SCENARIO_UNIT_DIM,
     Scenario,
 )
 
@@ -52,14 +52,14 @@ def _model_display_name(model_name: str) -> str:
     return name.upper()
 
 
-def _parse_model_list_csv(value: str) -> List[str]:
+def _parse_model_list_csv(value: str) -> list[str]:
     return [m.strip().lower() for m in str(value).split(",") if m.strip()]
 
 
-def _parse_float_list_csv(value: Optional[str]) -> List[float]:
+def _parse_float_list_csv(value: str | None) -> list[float]:
     if value is None or str(value).strip() == "":
         return []
-    out: List[float] = []
+    out: list[float] = []
     for raw in str(value).split(","):
         raw = raw.strip()
         if not raw:
@@ -79,7 +79,7 @@ def _format_rk4_dt_token(dt_s: float) -> str:
     return _format_rk4_dt_label(dt_s).replace("-", "m").replace(".", "p")
 
 
-def _split_gpu_variant_name(model_name: str) -> Tuple[str, Optional[str]]:
+def _split_gpu_variant_name(model_name: str) -> tuple[str, str | None]:
     name = str(model_name).lower()
     marker = "_rk4_dt"
     if marker not in name:
@@ -97,17 +97,17 @@ def _gpu_variant_cache_name(model_name: str, rk4_dt_s: float, include_dt: bool) 
     return f"{base}_rk4_dt{_format_rk4_dt_token(rk4_dt_s)}"
 
 
-def _gpu_rk4_dt_values(args: argparse.Namespace) -> List[float]:
+def _gpu_rk4_dt_values(args: argparse.Namespace) -> list[float]:
     values = _parse_float_list_csv(getattr(args, "gpu_rk4_dt_s_list", None))
     if values:
         return values
     return [float(args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt)]
 
 
-def _build_gpu_batch_tasks(gpu_models: List[str], args: argparse.Namespace) -> List[GpuBatchTask]:
+def _build_gpu_batch_tasks(gpu_models: list[str], args: argparse.Namespace) -> list[GpuBatchTask]:
     dt_values = _gpu_rk4_dt_values(args)
     include_dt = bool(str(getattr(args, "gpu_rk4_dt_s_list", "") or "").strip()) or len(dt_values) > 1
-    tasks: List[GpuBatchTask] = []
+    tasks: list[GpuBatchTask] = []
     for model in gpu_models:
         for dt_s in dt_values:
             cache_name = _gpu_variant_cache_name(model, dt_s, include_dt)
@@ -139,7 +139,7 @@ def _quat_rotate_torch(q: Any, v: Any) -> Any:
     return v + torch_stack_like(v, (q0 * tx + cx, q0 * ty + cy, q0 * tz + cz))
 
 
-def torch_stack_like(reference: Any, cols: Tuple[Any, Any, Any]) -> Any:
+def torch_stack_like(reference: Any, cols: tuple[Any, Any, Any]) -> Any:
     """Stack columns using the torch module that owns *reference*."""
 
     import torch
@@ -224,7 +224,7 @@ class TorchFrameProvider:
         q[1:] = -q[1:]
         return _quat_rotate_torch(q, a_f)
 
-    def precompute_rk_stage_quaternions(self, total_steps: int, dt_eff: float, gpu_integrator: str) -> "TorchFrameCache":
+    def precompute_rk_stage_quaternions(self, total_steps: int, dt_eff: float, gpu_integrator: str) -> TorchFrameCache:
         import torch
         if gpu_integrator == "light":
             rel_t = [0.0, 0.5 * dt_eff]
@@ -234,11 +234,11 @@ class TorchFrameProvider:
                      0.5 * dt_eff, 0.75 * dt_eff, 0.75 * dt_eff, dt_eff]
         else:
             rel_t = [0.0, 0.5 * dt_eff, 0.5 * dt_eff, dt_eff]
-            
+
         t_base = torch.arange(total_steps, dtype=torch.float64, device=self.device) * dt_eff
         t_rel = torch.tensor(rel_t, dtype=torch.float64, device=self.device)
         t_all = t_base[:, None] + t_rel[None, :]
-        
+
         if self.q_tab.shape[0] <= 1:
             q_i2f = self.q_tab[0].expand(*t_all.shape, 4).clone()
         else:
@@ -254,28 +254,28 @@ class TorchFrameProvider:
             frac = (u - i0).clamp(0.0, 1.0).to(dtype=self.dtype)
             qa = self.q_tab[i0]
             qb = self.q_tab[i0 + 1]
-            
+
             dot = (qa * qb).sum(dim=-1)
             sign = torch.where(dot < 0.0, -torch.ones_like(dot), torch.ones_like(dot))
             qb = qb * sign.unsqueeze(-1)
             dot = (dot * sign).clamp(-1.0, 1.0)
-            
+
             q_linear = (1.0 - frac.unsqueeze(-1)) * qa + frac.unsqueeze(-1) * qb
-            
+
             theta_0 = torch.acos(dot)
             sin_theta_0 = torch.sin(theta_0).clamp_min(1e-30)
             theta = theta_0 * frac
-            
+
             s0 = (torch.sin(theta_0 - theta) / sin_theta_0).unsqueeze(-1)
             s1 = (torch.sin(theta) / sin_theta_0).unsqueeze(-1)
-            
+
             q_slerp = s0 * qa + s1 * qb
             q_i2f = torch.where((dot > 0.9995).unsqueeze(-1), q_linear, q_slerp)
             q_i2f = q_i2f / torch.linalg.norm(q_i2f, dim=-1, keepdim=True).clamp_min(1e-30)
 
         q_f2i = q_i2f.clone()
         q_f2i[..., 1:] = -q_f2i[..., 1:]
-        
+
         return TorchFrameCache(q_i2f=q_i2f, q_f2i=q_f2i)
 
 
@@ -290,7 +290,7 @@ from lunaris.physics.torch_spherical_harmonics import (  # noqa: E402
 )
 
 
-def _make_gpu_accelerator(model_name: str, gravity_model: Any, *, device: Any, dtype: Any) -> Tuple[Any, str]:
+def _make_gpu_accelerator(model_name: str, gravity_model: Any, *, device: Any, dtype: Any) -> tuple[Any, str]:
     """Create a batched torch acceleration provider for one GPU model."""
 
     name = str(model_name).lower()
@@ -377,7 +377,7 @@ def propagate_gpu_batch_model(
     frame_mode: str,
     gpu_integrator: str = "medium",
     finite_check_mode: str = "step",
-    progress_cb: Optional[Any] = None,
+    progress_cb: Any | None = None,
 ) -> BatchModelResult:
     """Propagate one model for all scenarios using a fixed-step torch integrator.
 
@@ -441,23 +441,23 @@ def propagate_gpu_batch_model(
         step_idx = 0
         stage_idx = 0
         stages_per_step = frame_cache.q_i2f.shape[1]
-        
+
         def _rhs(t_s: float, s: Any) -> Any:
             nonlocal step_idx, stage_idx
             q_i2f = frame_cache.q_i2f[step_idx, stage_idx]
             q_f2i = frame_cache.q_f2i[step_idx, stage_idx]
-            
+
             r_i = s[:, :3]
             v_i = s[:, 3:]
             r_f = _quat_rotate_torch(q_i2f, r_i)
             a_f = accel_fixed(r_f)
             a_i = _quat_rotate_torch(q_f2i, a_f)
-            
+
             stage_idx += 1
             if stage_idx == stages_per_step:
                 stage_idx = 0
                 step_idx += 1
-                
+
             return torch.cat((v_i, a_i), dim=1)
     else:
         def _rhs(t_s: float, s: Any) -> Any:
@@ -673,7 +673,7 @@ def _state_from_elements(
 def generate_scenarios_from_samples(
     samples: np.ndarray,
     args: argparse.Namespace,
-) -> List[Scenario]:
+) -> list[Scenario]:
     """Map unit-hypercube samples into validation scenarios without propagation."""
 
     _validate_sampling_bounds(args)
@@ -683,7 +683,7 @@ def generate_scenarios_from_samples(
     if samples.shape[1] < SCENARIO_UNIT_DIM:
         raise ValueError(f"samples must have at least {SCENARIO_UNIT_DIM} columns")
 
-    scenarios: List[Scenario] = []
+    scenarios: list[Scenario] = []
     moon_r_km = float(R_MOON) / 1_000.0
     for sid, u in enumerate(samples):
         raw = [float(x) for x in u[:SCENARIO_UNIT_DIM]]
@@ -744,14 +744,14 @@ def generate_scenarios_from_samples(
 def generate_random_scenarios(
     args: argparse.Namespace,
     rng: np.random.Generator,
-) -> List[Scenario]:
+) -> list[Scenario]:
     n = args.random_scenarios
     alt_min = args.altitude_min_km
     alt_max = args.altitude_max_km
     inc_min = math.radians(args.inc_min_deg)
     inc_max = math.radians(args.inc_max_deg)
 
-    scenarios: List[Scenario] = []
+    scenarios: list[Scenario] = []
     attempts = 0
     max_attempts = n * 20
 
@@ -816,7 +816,7 @@ def generate_random_scenarios(
     return scenarios
 
 
-def generate_validation_scenarios(args: argparse.Namespace) -> List[Scenario]:
+def generate_validation_scenarios(args: argparse.Namespace) -> list[Scenario]:
     method = str(getattr(args, "sampling_method", "random"))
     if method == "random":
         rng = np.random.default_rng(args.scenario_seed)
@@ -841,7 +841,7 @@ def propagate_for_scenario(
     cfg_base: SimConfig,
     ephem: Any,
     model_cache: GravityModelCache,
-) -> Tuple[Optional[Any], float]:
+) -> tuple[Any | None, float]:
     """Propagate with the named model. Returns (PropagationResult|None, runtime_s)."""
     grav = model_cache.get(model_name)
     cfg  = cfg_base
@@ -946,7 +946,7 @@ def run_st_lrps_batch_rk4(
     dt_s: float,
     output_dt_s: float,
     args: argparse.Namespace,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run ST-LRPS fixed-step RK4 for N scenarios.
 
@@ -964,7 +964,7 @@ def run_st_lrps_batch_rk4(
               flush=True)
         child_args = argparse.Namespace(**vars(args))
         child_args.batch_size = None
-        chunk_results: List[Dict[str, Any]] = []
+        chunk_results: list[dict[str, Any]] = []
         for start in range(0, y0_batch.shape[0], chunk_size):
             end = min(start + chunk_size, y0_batch.shape[0])
             print(f"[batch-rk4] chunk {start}:{end}", flush=True)
@@ -1044,8 +1044,9 @@ def _run_batch_rk4_gpu(
     dt_s: float,
     output_dt_s: float,
     args: argparse.Namespace,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     import torch
+
     from lunaris.core.torch_batch_propagator import TorchBatchPropagator
 
     device = torch.device("cuda:0")
@@ -1096,7 +1097,7 @@ def _run_batch_rk4_cpu(
     duration_s: float,
     dt_s: float,
     output_dt_s: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """CPU sequential batch RK4 using acceleration_fixed_batch."""
     N = y0_batch.shape[0]
     steps_per_snap = max(1, round(output_dt_s / dt_s))
@@ -1159,7 +1160,7 @@ def run_sh200_cpu_rk4_reference(
     duration_s: float,
     dt_s: float,
     output_dt_s: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run SH200 fixed-step CPU RK4 for N scenarios sequentially.
     Gravity evaluated WITHOUT lunar rotation (same approximation as GPU batch RK4)

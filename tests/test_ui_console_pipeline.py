@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Behavioral tests for the Execution Console data flow (objective 1).
 
@@ -20,7 +19,7 @@ pytest.importorskip("PySide6")
 
 from PySide6 import QtWidgets
 
-from lunaris.ui.widgets.log_panel import ExecutionConsoleDock, MAX_LOG_LINES
+from lunaris.ui.widgets.log_panel import MAX_LOG_LINES, ExecutionConsoleDock
 
 
 def _app() -> QtWidgets.QApplication:

@@ -1,5 +1,4 @@
-﻿# -*- coding: utf-8 -*-
-"""
+﻿"""
 Spatial Cloud Parameters
 ========================
 
@@ -17,10 +16,8 @@ import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import DEFAULT_DATASET_CONFIG
-
 
 # =============================================================================
 # 1.                      SAMPLING ENUMS / HELPERS
@@ -80,7 +77,7 @@ class SpatialCloudConfig:
     # ----------------------------
     degree_max: int = 100
     degree_min: int = 20  # Network learns residual for degrees (degree_min, degree_max]. -1 = full field.
-    gfc_path: Optional[str] = None  # None => DEFAULT_DATASET_CONFIG.gravity_gfc_path
+    gfc_path: str | None = None  # None => DEFAULT_DATASET_CONFIG.gravity_gfc_path
 
     # ----------------------------
     # Spatial sampling envelope
@@ -147,7 +144,7 @@ class SpatialCloudConfig:
 
         if self.gfc_path and str(self.gfc_path).strip():
             return str(self.gfc_path)
-        return str(getattr(DEFAULT_DATASET_CONFIG, "gravity_gfc_path"))
+        return str(DEFAULT_DATASET_CONFIG.gravity_gfc_path)
 
     def resolved_out_path(self) -> str:
         """
@@ -213,7 +210,7 @@ class SpatialCloudConfig:
             json.dump(self.to_dict(), handle, indent=indent, sort_keys=True)
 
     @staticmethod
-    def from_json(path: str | Path) -> "SpatialCloudConfig":
+    def from_json(path: str | Path) -> SpatialCloudConfig:
         """Load a config from JSON while ignoring extra provenance fields."""
 
         in_path = Path(path)
@@ -239,10 +236,10 @@ class SpatialCloudConfig:
             seed=int(payload.get("seed", 12345)),
         )
 
-    def to_cli_args(self) -> List[str]:
+    def to_cli_args(self) -> list[str]:
         """Convert the config into CLI arguments for the generator script."""
 
-        args: List[str] = [
+        args: list[str] = [
             "--degree-max", str(int(self.degree_max)),
             "--degree-min", str(int(self.degree_min)),
             "--n-samples", str(int(self.n_samples)),
@@ -315,7 +312,7 @@ class CloudSuiteConfig:
     # ----------------------------
     degree_min: int = 20
     degree_max: int = 100
-    gfc_path: Optional[str] = None  # None => DEFAULT_DATASET_CONFIG.gravity_gfc_path
+    gfc_path: str | None = None  # None => DEFAULT_DATASET_CONFIG.gravity_gfc_path
 
     # ----------------------------
     # Spatial sampling envelope
@@ -419,7 +416,7 @@ class CloudSuiteConfig:
     def resolved_gfc_path(self) -> str:
         if self.gfc_path and str(self.gfc_path).strip():
             return str(self.gfc_path)
-        return str(getattr(DEFAULT_DATASET_CONFIG, "gravity_gfc_path"))
+        return str(DEFAULT_DATASET_CONFIG.gravity_gfc_path)
 
     def to_dict(self) -> dict:
         return {
@@ -472,7 +469,7 @@ DEFAULT_CLOUD_SUITE_CONFIG: CloudSuiteConfig = CloudSuiteConfig()
 # ---------------------------------------------------------------------------
 # Suite presets
 # ---------------------------------------------------------------------------
-SUITE_PRESETS: "dict[str, CloudSuiteConfig]" = {
+SUITE_PRESETS: dict[str, CloudSuiteConfig] = {
     "debug_suite": CloudSuiteConfig(
         train_stratified_uniform_n=50_000,
         train_inverse_r2_n=20_000,

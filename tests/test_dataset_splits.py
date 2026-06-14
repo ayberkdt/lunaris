@@ -5,13 +5,12 @@ import json
 import numpy as np
 import pytest
 
+from dataset_pipeline_test_utils import make_toy_dataset_contract
 from lunaris.surrogate.st_lrps.data.splits import (
     build_split_manifest,
     split_dataset_indices,
     write_split_manifest,
 )
-
-from dataset_pipeline_test_utils import make_toy_dataset_contract
 
 
 def test_seeded_random_split_is_reproducible_and_disjoint():

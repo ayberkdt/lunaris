@@ -1,5 +1,4 @@
 # st_lrps/evaluation/progress.py
-# -*- coding: utf-8 -*-
 """
 Structured progress reporting for the orbit-level gravity benchmark.
 
@@ -23,7 +22,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 __all__ = [
     "PROGRESS_PREFIX",
@@ -76,7 +75,7 @@ def _fmt_value(key: str, value: Any) -> str:
     return str(value)
 
 
-def _format_line(prefix: str, fields: Dict[str, Any]) -> str:
+def _format_line(prefix: str, fields: dict[str, Any]) -> str:
     tokens = [prefix]
     for key, value in fields.items():
         if value is None:
@@ -90,7 +89,7 @@ def format_progress(phase: str, **fields: Any) -> str:
 
     Field order follows kwargs insertion order, with ``phase`` first.
     """
-    ordered: Dict[str, Any] = {"phase": phase}
+    ordered: dict[str, Any] = {"phase": phase}
     ordered.update(fields)
     return _format_line(PROGRESS_PREFIX, ordered)
 
@@ -99,9 +98,9 @@ def format_progress_total(
     percent: float,
     phase: str,
     *,
-    model: Optional[str] = None,
-    elapsed_s: Optional[float] = None,
-    eta_s: Optional[float] = None,
+    model: str | None = None,
+    elapsed_s: float | None = None,
+    eta_s: float | None = None,
 ) -> str:
     """Build a ``[progress_total]`` line for the weighted overall estimate."""
     return _format_line(
@@ -125,9 +124,9 @@ def emit_progress_total(
     percent: float,
     phase: str,
     *,
-    model: Optional[str] = None,
-    elapsed_s: Optional[float] = None,
-    eta_s: Optional[float] = None,
+    model: str | None = None,
+    elapsed_s: float | None = None,
+    eta_s: float | None = None,
 ) -> None:
     """Print a ``[progress_total]`` line (flushed)."""
     print(
@@ -157,7 +156,7 @@ def _coerce(value: str) -> Any:
         return value
 
 
-def parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
+def parse_progress_line(line: str) -> dict[str, Any] | None:
     """Parse a ``[progress]`` / ``[progress_total]`` line.
 
     Returns a dict with a ``kind`` key (``"progress"`` or ``"progress_total"``)
@@ -176,7 +175,7 @@ def parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
     else:
         return None
 
-    result: Dict[str, Any] = {"kind": kind}
+    result: dict[str, Any] = {"kind": kind}
     for key, raw in _TOKEN_RE.findall(body):
         result[key] = _coerce(raw)
     return result
@@ -186,7 +185,7 @@ def parse_progress_line(line: str) -> Optional[Dict[str, Any]]:
 # Numeric helpers (pure; unit-testable without CUDA)
 # ---------------------------------------------------------------------------
 
-def compute_eta_s(elapsed_s: float, percent: float) -> Optional[float]:
+def compute_eta_s(elapsed_s: float, percent: float) -> float | None:
     """Linear ETA from elapsed wall-time and percent-complete (0..100)."""
     pct = float(percent)
     if pct <= 1e-9 or pct >= 100.0:
@@ -196,7 +195,7 @@ def compute_eta_s(elapsed_s: float, percent: float) -> Optional[float]:
 
 def compute_step_stats(
     current_step: int, total_steps: int, elapsed_s: float
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Percent / steps-per-second / ETA for a fixed-step propagation.
 
     ``current_step`` is clamped to ``[0, total_steps]`` and ``total_steps`` is
@@ -207,7 +206,7 @@ def compute_step_stats(
     percent = 100.0 * cur / tot
     elapsed = max(0.0, float(elapsed_s))
     steps_per_s = (cur / elapsed) if elapsed > 0.0 else 0.0
-    eta_s: Optional[float] = (
+    eta_s: float | None = (
         (tot - cur) / steps_per_s if steps_per_s > 0.0 else None
     )
     return {
@@ -236,7 +235,7 @@ def windowed_rate(
     return 0.0
 
 
-def eta_from_rate(remaining_steps: float, steps_per_s: float) -> Optional[float]:
+def eta_from_rate(remaining_steps: float, steps_per_s: float) -> float | None:
     """Seconds remaining for ``remaining_steps`` at ``steps_per_s`` (None if unknown)."""
     if steps_per_s <= 0.0:
         return None
@@ -257,7 +256,7 @@ def gpu_total_steps(duration_s: float, output_dt_s: float, rk4_dt_s: float) -> i
     return int(n_snaps * steps_per_snap)
 
 
-def format_duration(seconds: Optional[float]) -> str:
+def format_duration(seconds: float | None) -> str:
     """Human elapsed string, e.g. ``"45s"``, ``"12.4 min"`` or ``"1h 56m"``."""
     if seconds is None:
         return "—"
@@ -271,7 +270,7 @@ def format_duration(seconds: Optional[float]) -> str:
     return f"{h}h {m:02d}m"
 
 
-def format_eta(seconds: Optional[float]) -> str:
+def format_eta(seconds: float | None) -> str:
     """Human ETA string, e.g. ``"1h 51m"``, ``"7m 30s"`` or ``"45s"``."""
     if seconds is None:
         return "—"
@@ -304,9 +303,9 @@ class OverallProgress:
 
     def __init__(
         self,
-        weights: Optional[Dict[str, float]] = None,
+        weights: dict[str, float] | None = None,
         *,
-        start_time: Optional[float] = None,
+        start_time: float | None = None,
     ) -> None:
         raw = dict(weights) if weights else dict(self.DEFAULT_WEIGHTS)
         positive = {k: float(v) for k, v in raw.items() if float(v) > 0.0}
@@ -348,11 +347,11 @@ class OverallProgress:
     def percent(self) -> float:
         return self._last_percent
 
-    def elapsed_s(self, now: Optional[float] = None) -> float:
+    def elapsed_s(self, now: float | None = None) -> float:
         now = now if now is not None else time.perf_counter()
         return max(0.0, now - self._t0)
 
-    def eta_s(self, now: Optional[float] = None) -> Optional[float]:
+    def eta_s(self, now: float | None = None) -> float | None:
         return compute_eta_s(self.elapsed_s(now), self._last_percent)
 
 
@@ -378,7 +377,7 @@ class StepThrottle:
         self.min_interval_s = float(min_interval_s)
         self.step_interval = max(1, self.total_steps // 100)
         self._last_step = 0
-        self._last_t: Optional[float] = None
+        self._last_t: float | None = None
 
     def needs_time_check(self, current_step: int) -> bool:
         """Cheap step-only gate: True when a wall-clock check may be due.

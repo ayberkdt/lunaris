@@ -1,11 +1,11 @@
-# -*- coding: utf-8 -*-
 """Neural model components for the scalar residual lunar potential field."""
 
 from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 import torch
@@ -54,7 +54,7 @@ def _compute_harmonic_w0_bands(
     n_bands: int,
     degree_min: int,
     degree_max: int,
-) -> List[float]:
+) -> list[float]:
     """
     Geometrically-spaced SIREN w0 values covering the residual harmonic spectrum.
 
@@ -79,7 +79,7 @@ def _compute_harmonic_w0_bands(
         return [max(10.0, min(100.0, round(math.sqrt(float(hi)) * 3.0, 1)))]
     log_lo = math.log(float(lo))
     log_hi = math.log(float(hi))
-    out: List[float] = []
+    out: list[float] = []
     for i in range(n_bands):
         t = float(i) / float(n_bands - 1)
         deg_c = math.exp(log_lo + t * (log_hi - log_lo))
@@ -172,7 +172,7 @@ class SirenMLP(nn.Module):
         if self.output_dim <= 0:
             raise ValueError(f"output_dim must be positive, got {self.output_dim}")
 
-        layers: List[nn.Module] = []
+        layers: list[nn.Module] = []
 
         # First layer (special init + w0_first)
         first_linear = nn.Linear(in_dim, hidden)
@@ -236,7 +236,7 @@ class MLP(nn.Module):
             raise ValueError(f"Activation must be one of {list(act_map.keys())}")
         Act = act_map[activation]
 
-        layers: List[nn.Module] = []
+        layers: list[nn.Module] = []
         d_in = in_dim
         for _ in range(depth):
             layers.append(nn.Linear(d_in, hidden))
@@ -314,7 +314,7 @@ class MultiScaleSirenMLP(nn.Module):
         in_dim: int = 3,
         hidden: int = 512,
         depth: int = 6,
-        w0_bands: Optional[List[float]] = None,
+        w0_bands: list[float] | None = None,
         dropout: float = 0.0,
         use_residual: bool = True,
         output_dim: int = 1,
@@ -325,7 +325,7 @@ class MultiScaleSirenMLP(nn.Module):
             raise ValueError(f"output_dim must be positive, got {self.output_dim}")
         if w0_bands is None:
             w0_bands = [30.0]
-        self.w0_bands: List[float] = [float(w) for w in w0_bands]
+        self.w0_bands: list[float] = [float(w) for w in w0_bands]
         n_bands = len(self.w0_bands)
         self.n_bands: int = n_bands
 
@@ -347,7 +347,7 @@ class MultiScaleSirenMLP(nn.Module):
 
         # --- Multi-scale input stage ---
         self.band_layers: nn.ModuleList = nn.ModuleList()
-        for i, (w0, bw_i) in enumerate(zip(self.w0_bands, band_widths)):
+        for i, (w0, bw_i) in enumerate(zip(self.w0_bands, band_widths, strict=False)):
             lin = nn.Linear(in_dim, bw_i)
             if i == 0:
                 siren_init_first_(lin)      # uniform [-1/n, 1/n], frequency-agnostic
@@ -363,7 +363,7 @@ class MultiScaleSirenMLP(nn.Module):
         # input-stage + merge = 2 "layers"; remaining depth goes to shared blocks.
         n_shared = max(0, int(depth) - 2)
         w0_deep = self.w0_bands[-1]
-        shared: List[nn.Module] = []
+        shared: list[nn.Module] = []
         for _ in range(n_shared):
             if use_residual:
                 shared.append(SirenResBlock(hidden, w0=w0_deep, dropout=dropout))
@@ -435,7 +435,7 @@ class AdditiveMultiBandSirenMLP(nn.Module):
         in_dim: int = 3,
         hidden: int = 512,
         depth: int = 6,
-        w0_bands: Optional[List[float]] = None,
+        w0_bands: list[float] | None = None,
         dropout: float = 0.0,
         use_residual: bool = True,
         output_dim: int = 1,
@@ -446,7 +446,7 @@ class AdditiveMultiBandSirenMLP(nn.Module):
             raise ValueError(f"output_dim must be positive, got {self.output_dim}")
         if w0_bands is None:
             w0_bands = [30.0]
-        self.w0_bands: List[float] = [float(w) for w in w0_bands]
+        self.w0_bands: list[float] = [float(w) for w in w0_bands]
         n_bands = len(self.w0_bands)
         self.n_bands: int = n_bands
 
@@ -562,10 +562,10 @@ class SHInspiredAngularEncoding(nn.Module):
         super().__init__()
         self.degree_max = int(degree_max)
         self.append_raw = bool(append_raw)
-        
+
         if self.degree_max > 8:
             raise ValueError(f"SHInspiredAngularEncoding degree_max={self.degree_max} > 8 is not allowed by policy.")
-            
+
         if not self.append_raw:
             raise ValueError(
                 "SHInspiredAngularEncoding with append_raw=False loses radial information. "
@@ -574,14 +574,14 @@ class SHInspiredAngularEncoding(nn.Module):
 
         import math
         self.n_features = math.comb(self.degree_max + 3, 3) - 1
-        
+
         from itertools import product
         combos = []
         for i, j, k in product(range(self.degree_max + 1), repeat=3):
             if 1 <= i + j + k <= self.degree_max:
                 combos.append((i, j, k))
         combos.sort(key=lambda t: (sum(t), t[0], t[1], t[2]))
-        
+
         self.register_buffer("pow_x", torch.tensor([c[0] for c in combos], dtype=torch.int32))
         self.register_buffer("pow_y", torch.tensor([c[1] for c in combos], dtype=torch.int32))
         self.register_buffer("pow_z", torch.tensor([c[2] for c in combos], dtype=torch.int32))
@@ -595,7 +595,7 @@ class SHInspiredAngularEncoding(nn.Module):
         nx = x[:, 0:1] / r
         ny = x[:, 1:2] / r
         nz = x[:, 2:3] / r
-        
+
         features = (nx ** self.pow_x) * (ny ** self.pow_y) * (nz ** self.pow_z)
 
         if self.append_raw:
@@ -658,7 +658,7 @@ class RadialDecayEncoding(nn.Module):
         r = torch.norm(x, dim=-1, keepdim=True).clamp_min(self.eps)   # (N, 1)
         u = x / r                                                     # (N, 3)
         rho = 1.0 / r                                                 # (N, 1)
-        feats: List[torch.Tensor] = [r, u]
+        feats: list[torch.Tensor] = [r, u]
         rho_power = rho
         feats.append(rho_power)
         for _ in range(2, self.max_power + 1):
@@ -722,7 +722,7 @@ class PhysicalRadialDecayEncoding(nn.Module):
         r_phys = r_scaled * x.new_tensor(float(self.x_scale_m))
         rho = x.new_tensor(float(self.r_ref_m)) / r_phys.clamp_min(self.eps)
 
-        feats: List[torch.Tensor] = []
+        feats: list[torch.Tensor] = []
         if self.include_r_scaled:
             feats.append(r_scaled)
         if self.include_unit:
@@ -811,20 +811,20 @@ class RealSHBasisEncoding(nn.Module):
         ones = torch.ones_like(t)
 
         # C_m = sinθ^m cos(mφ), S_m = sinθ^m sin(mφ) via complex-power recurrence.
-        C: List[torch.Tensor] = [ones]
-        S: List[torch.Tensor] = [torch.zeros_like(t)]
+        C: list[torch.Tensor] = [ones]
+        S: list[torch.Tensor] = [torch.zeros_like(t)]
         for _m in range(1, L + 1):
             C.append(C[-1] * nx - S[-1] * ny)
             S.append(C[-2] * ny + S[-1] * nx)
 
         # Q[(l, m)] = P̄_{l,m}(t) / sinθ^m  (polynomial in t; sinθ^m carried by C/S).
-        Q: Dict[Tuple[int, int], torch.Tensor] = {(0, 0): ones}
+        Q: dict[tuple[int, int], torch.Tensor] = {(0, 0): ones}
         sec = 1.0
         for m in range(1, L + 1):
             sec *= math.sqrt((2 * m + 1) / (2 * m))   # constant sectoral seed (no sinθ)
             Q[(m, m)] = sec * ones
         for m in range(0, L + 1):
-            for l in range(m + 1, L + 1):
+            for l in range(m + 1, L + 1):  # noqa: E741  # l = SH degree (standard notation)
                 a = math.sqrt((2 * l - 1) * (2 * l + 1) / ((l - m) * (l + m)))
                 if l - 2 >= m:
                     b = math.sqrt(
@@ -836,10 +836,10 @@ class RealSHBasisEncoding(nn.Module):
                     Q[(l, m)] = a * t * Q[(l - 1, m)]
 
         sqrt2 = math.sqrt(2.0)
-        feats: List[torch.Tensor] = []
+        feats: list[torch.Tensor] = []
         if self.include_radial:
             feats.append(r)
-        for l in range(0, L + 1):
+        for l in range(0, L + 1):  # noqa: E741  # l = SH degree (standard notation)
             feats.append(Q[(l, 0)])                       # Y_{l,0}
             for m in range(1, l + 1):
                 base = sqrt2 * Q[(l, m)]
@@ -857,7 +857,7 @@ class RealSHBasisEncoding(nn.Module):
 class PhysicsNet(nn.Module):
     """Optional FourierEmbedding → backbone. ``embedding=None`` is a no-op pass-through."""
 
-    def __init__(self, backbone: nn.Module, embedding: Optional[nn.Module] = None):
+    def __init__(self, backbone: nn.Module, embedding: nn.Module | None = None):
         super().__init__()
         self.embedding = embedding
         self.backbone = backbone
@@ -872,7 +872,7 @@ class PhysicsNet(nn.Module):
 # Parameter helpers
 # ---------------------------------------------------------------------------
 
-def _get_output_head_params(model: nn.Module) -> List[nn.Parameter]:
+def _get_output_head_params(model: nn.Module) -> list[nn.Parameter]:
     """
     Return the parameters of the final scalar output head.
 
@@ -893,7 +893,7 @@ def _cfg_value(cfg: Any, key: str, default: Any = None) -> Any:
     return getattr(cfg, key, default)
 
 
-def _encoding_flags_from_preset(cfg: Any) -> Dict[str, bool]:
+def _encoding_flags_from_preset(cfg: Any) -> dict[str, bool]:
     """Return effective encoding flags after applying a named preset.
 
     Missing ``model_preset`` means old artifact/config behavior: respect the
@@ -951,8 +951,8 @@ def build_model_from_config(
     cfg: Any,
     *,
     in_dim: int = 3,
-    device: Optional[torch.device] = None,
-    dtype: Optional[torch.dtype] = None,
+    device: torch.device | None = None,
+    dtype: torch.dtype | None = None,
 ) -> PhysicsNet:
     """
     Build ``PhysicsNet`` from a ``TrainConfig``-like object or config dict.
@@ -1082,7 +1082,7 @@ def build_model_from_config(
     n_bands      = max(1, int(_cfg_value(cfg, "n_bands", 1)))
     use_residual = bool(_cfg_value(cfg, "use_residual_blocks", False))
 
-    resolved_w0_bands: Optional[List[float]] = None
+    resolved_w0_bands: list[float] | None = None
     if activation == "sine":
         hidden  = int(_cfg_value(cfg, "hidden",  512))
         depth   = int(_cfg_value(cfg, "depth",   4))
@@ -1263,7 +1263,7 @@ def _normalize_signature_value(key: str, value: Any) -> Any:
     return str(value)
 
 
-def architecture_fingerprint(cfg: Any) -> Dict[str, Any]:
+def architecture_fingerprint(cfg: Any) -> dict[str, Any]:
     """Return the normalized architecture-critical fields for ``cfg``."""
     return {
         key: _normalize_signature_value(key, _cfg_value(cfg, key, None))
@@ -1281,11 +1281,11 @@ def compute_architecture_signature(cfg: Any) -> str:
     return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
-def architecture_mismatch_fields(cfg_a: Any, cfg_b: Any) -> List[str]:
+def architecture_mismatch_fields(cfg_a: Any, cfg_b: Any) -> list[str]:
     """Return field names where two configs disagree on the architecture."""
     fa = architecture_fingerprint(cfg_a)
     fb = architecture_fingerprint(cfg_b)
-    out: List[str] = []
+    out: list[str] = []
     for key in ARCH_SIGNATURE_FIELDS:
         va, vb = fa.get(key), fb.get(key)
         # Treat "absent on one side" as agreement to stay lenient toward
@@ -1310,13 +1310,13 @@ def _is_optional_state_key(key: str) -> bool:
     return any(key.endswith(suf) for suf in _OPTIONAL_BUFFER_SUFFIXES)
 
 
-def _verify_reconstructed_model(model: nn.Module, ref_cfg: Dict[str, Any]) -> None:
+def _verify_reconstructed_model(model: nn.Module, ref_cfg: dict[str, Any]) -> None:
     """Fail loudly if the built model disagrees with the checkpoint config.
 
     Catches the failure mode where a state_dict loads by shape but the functional
     architecture (SIREN band frequencies / input encoding) differs.
     """
-    problems: List[str] = []
+    problems: list[str] = []
 
     ref_n_bands = ref_cfg.get("n_bands")
     if ref_n_bands is not None and int(ref_n_bands) > 1:
@@ -1360,13 +1360,13 @@ def _verify_reconstructed_model(model: nn.Module, ref_cfg: Dict[str, Any]) -> No
 
 
 def reconstruct_model_from_artifacts(
-    cfg_json: Dict[str, Any],
-    ckpt: Dict[str, Any],
-    device: Optional[torch.device] = None,
+    cfg_json: dict[str, Any],
+    ckpt: dict[str, Any],
+    device: torch.device | None = None,
     *,
     dtype: torch.dtype = torch.float32,
     allow_config_mismatch: bool = False,
-) -> Tuple[nn.Module, Dict[str, Any], Dict[str, Any]]:
+) -> tuple[nn.Module, dict[str, Any], dict[str, Any]]:
     """Reconstruct the EXACT trained model from config.json + checkpoint.
 
     Reload-safety contract:
@@ -1394,7 +1394,7 @@ def reconstruct_model_from_artifacts(
             "True only if you understand the risk."
         )
 
-    merged_cfg: Dict[str, Any] = dict(cfg_json)
+    merged_cfg: dict[str, Any] = dict(cfg_json)
     used_ckpt_config = False
     for key in ARCH_SIGNATURE_FIELDS:
         if key in ckpt_cfg and ckpt_cfg[key] is not None:
@@ -1425,7 +1425,7 @@ def reconstruct_model_from_artifacts(
 
     _verify_reconstructed_model(model, ckpt_cfg or merged_cfg)
 
-    report: Dict[str, Any] = {
+    report: dict[str, Any] = {
         "checkpoint_config_source": "checkpoint" if used_ckpt_config else "config_json",
         "architecture_mismatch_fields": mismatches,
         "allow_config_mismatch": bool(allow_config_mismatch),

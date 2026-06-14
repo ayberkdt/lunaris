@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Degree-aware classic-SH backend selection policy (task §8).
 

@@ -1,5 +1,4 @@
 # tests/test_ephemeris.py
-# -*- coding: utf-8 -*-
 """
 Pytest port of the "Premium self-test" that used to live under:
 
@@ -23,11 +22,11 @@ or:
 from __future__ import annotations
 
 import math
-import numpy as np
-import pytest
 import sys
 from pathlib import Path
 
+import numpy as np
+import pytest
 
 # -----------------------------------------------------------------------------
 # Import helper
@@ -40,10 +39,11 @@ if str(_REPO_ROOT) not in sys.path:
 
 
 from lunaris.physics.ephemeris import (
-    EphemerisTables,
     EphemerisManager,
+    EphemerisTables,
     get_ephem_state,
 )
+
 
 # -----------------------------------------------------------------------------
 # Helpers

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Regression tests for lunar thermal IR radiation pressure."""
 
 from __future__ import annotations
@@ -13,9 +12,9 @@ from lunaris.core.dynamics import DynamicsEngine
 from lunaris.physics.surface_effects import ThermalConfig
 from lunaris.physics.thermal_ir import (
     THERMAL_MODE_EQUILIBRIUM,
+    accel_thermal_ir_facets_numba,
     build_latlon_facets,
     calc_thermal_ir_accel,
-    accel_thermal_ir_facets_numba,
     thermal_ir_single_facet_accel_numba,
 )
 

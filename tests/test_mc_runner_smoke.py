@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Smoke tests for the Monte Carlo runner entry point.
 

@@ -1,5 +1,4 @@
 # ST_LRPS/core/torch_batch_propagator.py
-# -*- coding: utf-8 -*-
 """
 GPU-Accelerated Batched Monte Carlo Propagator — ST-LRPS Path
 ==============================================================
@@ -47,7 +46,8 @@ Timing metrics are printed to stdout at run start and end.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -138,8 +138,8 @@ class TorchBatchPropagator:
         crs: np.ndarray,           # (N,)  — accepted but not used
         duration_s: float,
         output_dt_s: float,
-        callback: Optional[Callable[[float], None]] = None,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        callback: Callable[[float], None] | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Propagate N samples simultaneously on CUDA.
 
@@ -178,14 +178,14 @@ class TorchBatchPropagator:
         # Inner helpers (closures capture `model` and `device`)
         # ------------------------------------------------------------------
 
-        def _rhs(s: "torch.Tensor") -> "torch.Tensor":
+        def _rhs(s: torch.Tensor) -> torch.Tensor:
             """Evaluate [v; a] for state [N, 6]."""
             r = s[:, :3]                               # positions [N, 3]
             v = s[:, 3:]                               # velocities [N, 3]
             a = model.predict_total_accel_torch(r)     # [N, 3]
             return torch.cat([v, a], dim=1)
 
-        def _rk4(s: "torch.Tensor", h: float) -> "torch.Tensor":
+        def _rk4(s: torch.Tensor, h: float) -> torch.Tensor:
             k1 = _rhs(s)
             k2 = _rhs(s + (h * 0.5) * k1)
             k3 = _rhs(s + (h * 0.5) * k2)

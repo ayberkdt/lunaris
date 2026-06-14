@@ -58,22 +58,16 @@ Layering and dependencies
 from __future__ import annotations
 
 import math
-import numpy as np
-
-import numpy.typing as npt
-from numpy.typing import ArrayLike
-from typing import Tuple, Dict, Optional
-
 from dataclasses import dataclass, field
 
+import numpy as np
+import numpy.typing as npt
 from numba import njit
+from numpy.typing import ArrayLike
 
-
-from lunaris.common.constants import MU_EARTH, MU_SUN, R_MOON_MEAN, R_EARTH_EQUATORIAL
-
+from lunaris.common.constants import MU_EARTH, MU_SUN, R_EARTH_EQUATORIAL, R_MOON_MEAN
 from lunaris.common.type_defs import Vec3
 from lunaris.physics.solid_tides import accel_solid_tides_numba
-
 
 # =============================================================================
 # 1.                       CORE ACCELERATION LOGIC
@@ -89,7 +83,7 @@ def accel_third_body_numba(
     rx: float, ry: float, rz: float,
     bx: float, by: float, bz: float,
     mu: float,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Third-body differential gravity acceleration (spacecraft relative to central body).
 
@@ -235,7 +229,7 @@ class LoveParams:
       number without explicit user configuration.
     """
     k2: float = 0.02416
-    k3: Optional[float] = None
+    k3: float | None = None
     apply_earth_tide: bool = True
     apply_sun_tide: bool = True
 
@@ -248,7 +242,7 @@ def accel_solid_tide(
     R_ref: float,
     k2: float,
     k3: float = 0.0,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Solid-tide acceleration on a spacecraft due to an external perturber.
 
@@ -329,13 +323,13 @@ class EarthJ2Params:
     """
     j2_coeff: float = 1.082_626_68e-3
     r_eq_m: float = R_EARTH_EQUATORIAL  # expects your constants SSOT
-    spin_axis_i: Tuple[float, float, float] = (0.0, 0.0, 1.0)
+    spin_axis_i: tuple[float, float, float] = (0.0, 0.0, 1.0)
 
 
 @njit(cache=True, nogil=True, fastmath=True)
 def _normalize_axis_or_default(
     kx: float, ky: float, kz: float
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Normalize (kx,ky,kz). If degenerate, return default (0,0,1).
     """
@@ -351,7 +345,7 @@ def _accel_j2_oblate_unit_k(
     x: float, y: float, z: float,
     mu: float, r_ref: float, j2: float,
     kx: float, ky: float, kz: float,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     J2 acceleration for an oblate body acting on a test particle in the body's
     centered frame. Spin axis k must be UNIT LENGTH.
@@ -395,7 +389,7 @@ def accel_j2_oblate_diff_numba(
     r_ref: float,
     j2: float,
     kx: float, ky: float, kz: float,  # UNIT
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     return _accel_j2_oblate_diff_unit_k(
         rx, ry, rz, bx, by, bz, mu_body, r_ref, j2, kx, ky, kz
     )
@@ -409,7 +403,7 @@ def _accel_j2_oblate_diff_unit_k(
     r_ref: float,
     j2: float,
     kx: float, ky: float, kz: float,   # Earth spin axis (UNIT, inertial)
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Differential Earth-J2 acceleration in a Moon-centered inertial frame:
 
@@ -441,10 +435,10 @@ def calc_j2_oblate_diff_accel(
     r_body: npt.ArrayLike,
     *,
     mu_body: float,
-    params: Optional[EarthJ2Params] = None,
-    r_ref: Optional[float] = None,
-    j2: Optional[float] = None,
-    k_hat: Optional[npt.ArrayLike] = None,
+    params: EarthJ2Params | None = None,
+    r_ref: float | None = None,
+    j2: float | None = None,
+    k_hat: npt.ArrayLike | None = None,
 ) -> Vec3:
     """
     Compute the differential Earth-J2 acceleration as a (3,) NumPy array.
@@ -536,10 +530,10 @@ class ThirdBodyModel:
 
     # User override map, e.g. {"earth": MU_EARTH, "sun": MU_SUN}.
     # Keys are case-insensitive and normalized to lowercase in __post_init__.
-    mu_map: Dict[str, float] = field(default_factory=dict)
+    mu_map: dict[str, float] = field(default_factory=dict)
 
     # Love numbers + toggles controlling whether Earth/Sun solid-tide terms are applied.
-    love: "LoveParams" = field(default_factory=lambda: LoveParams())
+    love: LoveParams = field(default_factory=lambda: LoveParams())
 
     # Reference radius used by the solid-tide model (Moon mean radius by default).
     R_ref: float = float(R_MOON_MEAN)
@@ -554,7 +548,7 @@ class ThirdBodyModel:
         # Normalize user-provided map:
         # - force keys to lowercase strings
         # - force values to float
-        merged: Dict[str, float] = {str(k).lower(): float(v) for k, v in self.mu_map.items()}
+        merged: dict[str, float] = {str(k).lower(): float(v) for k, v in self.mu_map.items()}
 
         # Fill missing keys from base defaults (do not overwrite user overrides).
         for k, v in base.items():

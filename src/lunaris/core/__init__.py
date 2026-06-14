@@ -1,5 +1,4 @@
 # ST_LRPS/core/__init__.py
-# -*- coding: utf-8 -*-
 """
 ST_LRPS core simulation engine.
 
@@ -24,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from lunaris._version import __version__
 
 __all__ = [
+    "__version__",
     "DynamicsEngine",
     "propagate",
     "build_events",
@@ -35,15 +35,15 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
+    from . import events
     from .dynamics import DynamicsEngine
     from .propagator import build_events, propagate
     from .state import (
-        create_state_from_keplerian,
         calculate_ae_from_altitudes,
         calculate_ae_from_radii,
         calculate_altitudes_from_ae,
+        create_state_from_keplerian,
     )
-    from . import events
 
 
 # name -> (relative_module, attribute)

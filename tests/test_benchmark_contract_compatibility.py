@@ -11,7 +11,6 @@ from lunaris.surrogate.st_lrps.evaluation.benchmark_pipeline import run_configur
 from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContractError
 from st_lrps_contract_test_utils import make_contract_run
 
-
 pytestmark = pytest.mark.requires_torch
 
 

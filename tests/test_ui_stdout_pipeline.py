@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Subprocess-output assembly and telemetry routing (objective 2).
 

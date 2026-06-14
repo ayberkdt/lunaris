@@ -1,5 +1,4 @@
 # ST_LRPS/ui_parts/command_builder.py
-# -*- coding: utf-8 -*-
 """
 UI -> CLI bridge helpers for ST-LRPS Studio.
 
@@ -29,13 +28,11 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any
 
 from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string
-
-from lunaris.ui.pages.data_files_page import DataFilesState
-from lunaris.ui.pages.result_exports_page import OutputPageState
 from lunaris.ui.core.solver_policy import (
     DEFAULT_MAX_STEP_S,
     choose_max_step,
@@ -43,9 +40,11 @@ from lunaris.ui.core.solver_policy import (
     coerce_positive_float,
 )
 from lunaris.ui.core.ui_commons import bool_to_onoff
+from lunaris.ui.pages.data_files_page import DataFilesState
+from lunaris.ui.pages.result_exports_page import OutputPageState
 
 
-def _warn(log_warning: Optional[Callable[[str], None]], message: str) -> None:
+def _warn(log_warning: Callable[[str], None] | None, message: str) -> None:
     """
     Forward a non-fatal warning to the optional host callback.
 
@@ -150,7 +149,7 @@ def build_command(
     solver_cfg: Any,
     spacecraft_cfg: Any,
     albedo_cfg: Any = None,
-    log_warning: Optional[Callable[[str], None]] = None,
+    log_warning: Callable[[str], None] | None = None,
 ) -> list[str]:
     """
     Convert the current UI state into the strict backend CLI command.
@@ -295,7 +294,7 @@ def build_command(
         command.extend(["--method", integrator_method])
 
     max_step_raw = str(integrator.get("max_step", "") or "").strip()
-    max_step_value: Optional[float] = None
+    max_step_value: float | None = None
     if max_step_raw:
         try:
             max_step_value = float(max_step_raw)
@@ -369,7 +368,7 @@ def build_mc_command(
     gravity_cfg: Any,
     solver_cfg: Any,
     spacecraft_cfg: Any,
-    log_warning: Optional[Callable[[str], None]] = None,
+    log_warning: Callable[[str], None] | None = None,
 ) -> list[str]:
     """
     Build the CLI command for ``lunaris.core.mc_runner`` from modular UI state.

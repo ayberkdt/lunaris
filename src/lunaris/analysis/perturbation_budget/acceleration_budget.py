@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from math import sqrt
-from typing import Dict, Iterable, List, Mapping, Tuple
 
 import numpy as np
 
@@ -92,12 +91,12 @@ def central_gravity(r_m: np.ndarray) -> np.ndarray:
     return np.array((ax, ay, az), dtype=np.float64)
 
 
-def gravity_vectors_by_degree(model: GravityModel, sample: SampleState, degrees: Iterable[int]) -> Dict[int, np.ndarray]:
+def gravity_vectors_by_degree(model: GravityModel, sample: SampleState, degrees: Iterable[int]) -> dict[int, np.ndarray]:
     return {int(degree): model.accel_fixed(sample.r_m, degree=int(degree)) for degree in degrees}
 
 
-def non_gravity_vectors(config: PerturbationBudgetConfig, sample: SampleState) -> Dict[str, np.ndarray]:
-    vectors: Dict[str, np.ndarray] = {}
+def non_gravity_vectors(config: PerturbationBudgetConfig, sample: SampleState) -> dict[str, np.ndarray]:
+    vectors: dict[str, np.ndarray] = {}
     sc = SpacecraftProps(
         mass_kg=float(config.spacecraft_mass_kg),
         area_m2=float(config.spacecraft_area_m2),
@@ -183,10 +182,10 @@ def non_gravity_vectors(config: PerturbationBudgetConfig, sample: SampleState) -
     return vectors
 
 
-def sh_increment_vectors(sh_vectors: Mapping[int, np.ndarray]) -> Dict[str, np.ndarray]:
+def sh_increment_vectors(sh_vectors: Mapping[int, np.ndarray]) -> dict[str, np.ndarray]:
     degrees = sorted(int(d) for d in sh_vectors)
-    out: Dict[str, np.ndarray] = {}
-    for lo, hi in zip(degrees[:-1], degrees[1:]):
+    out: dict[str, np.ndarray] = {}
+    for lo, hi in zip(degrees[:-1], degrees[1:], strict=False):
         out[f"Delta SH{lo}->{hi}"] = np.asarray(sh_vectors[hi], dtype=np.float64) - np.asarray(sh_vectors[lo], dtype=np.float64)
     return out
 
@@ -199,7 +198,7 @@ def vector_row(
     central_norm: float,
     srp_norm: float,
     selected_sh_increment_norm: float,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     radial, along, cross = decompose_ric(vector, sample.r_m, sample.v_m_s)
     norm = _norm(vector)
     return {
@@ -224,10 +223,10 @@ def compute_acceleration_budget(
     config: PerturbationBudgetConfig,
     samples: Iterable[SampleState],
     gravity_info: GravityModelInfo,
-) -> Tuple[List[Dict[str, object]], Dict[str, Dict[int, np.ndarray]], Dict[str, Dict[str, np.ndarray]]]:
-    rows: List[Dict[str, object]] = []
-    sh_by_sample: Dict[str, Dict[int, np.ndarray]] = {}
-    forces_by_sample: Dict[str, Dict[str, np.ndarray]] = {}
+) -> tuple[list[dict[str, object]], dict[str, dict[int, np.ndarray]], dict[str, dict[str, np.ndarray]]]:
+    rows: list[dict[str, object]] = []
+    sh_by_sample: dict[str, dict[int, np.ndarray]] = {}
+    forces_by_sample: dict[str, dict[str, np.ndarray]] = {}
     selected_band = ""
     if len(config.sh_degrees) >= 2:
         selected_band = f"Delta SH{config.sh_degrees[-2]}->{config.sh_degrees[-1]}"
@@ -241,7 +240,7 @@ def compute_acceleration_budget(
         srp_norm = _norm(non_grav.get("SRP", np.zeros(3, dtype=np.float64)))
         central_norm = _norm(central)
 
-        force_vectors: Dict[str, np.ndarray] = {"Central Lunar Gravity": central}
+        force_vectors: dict[str, np.ndarray] = {"Central Lunar Gravity": central}
         for degree in config.sh_degrees:
             force_vectors[f"Gravity SH{degree}"] = sh_vectors[int(degree)]
         force_vectors.update(increments)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 spatial_cloud_analysis.py
 
@@ -31,9 +30,12 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import h5py  # optional dependency; imported lazily at runtime
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +51,7 @@ def _human_bytes(n: int) -> str:
     return f"{x:.2f} PB"
 
 
-def _safe_float(d: Dict[str, object], key: str, default: float) -> float:
+def _safe_float(d: dict[str, object], key: str, default: float) -> float:
     try:
         v = d.get(key, default)
         return float(v)  # type: ignore[arg-type]
@@ -57,7 +59,7 @@ def _safe_float(d: Dict[str, object], key: str, default: float) -> float:
         return float(default)
 
 
-def _np_stats(x: np.ndarray) -> Dict[str, float]:
+def _np_stats(x: np.ndarray) -> dict[str, float]:
     x = np.asarray(x)
     return {
         "min": float(np.nanmin(x)),
@@ -95,7 +97,7 @@ def _entropy_score(counts: np.ndarray) -> float:
     return float(h / math.log(float(counts.size)))
 
 
-def _bin_balance(values: np.ndarray, lo: float, hi: float, n_bins: int = 10) -> Dict[str, object]:
+def _bin_balance(values: np.ndarray, lo: float, hi: float, n_bins: int = 10) -> dict[str, object]:
     """Occupancy metrics for a scalar coordinate such as altitude."""
     values = np.asarray(values, dtype=np.float64)
     if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
@@ -118,7 +120,7 @@ def _bin_balance(values: np.ndarray, lo: float, hi: float, n_bins: int = 10) -> 
     }
 
 
-def _optional_float_attr(raw: Dict[str, object], *keys: str) -> Optional[float]:
+def _optional_float_attr(raw: dict[str, object], *keys: str) -> float | None:
     for key in keys:
         if key in raw:
             try:
@@ -128,7 +130,7 @@ def _optional_float_attr(raw: Dict[str, object], *keys: str) -> Optional[float]:
     return None
 
 
-def _optional_str_attr(raw: Dict[str, object], *keys: str) -> Optional[str]:
+def _optional_str_attr(raw: dict[str, object], *keys: str) -> str | None:
     for key in keys:
         if key in raw:
             try:
@@ -149,23 +151,23 @@ def _optional_str_attr(raw: Dict[str, object], *keys: str) -> Optional[str]:
 @dataclass(frozen=True)
 class CloudMeta:
     n_total: int
-    columns: Tuple[str, ...]
+    columns: tuple[str, ...]
     unit_system: str  # "si" | "canonical" | unknown
-    mu_si: Optional[float]
-    r_ref_m: Optional[float]
-    DU_m: Optional[float]
-    TU_s: Optional[float]
-    VU_m_s: Optional[float]
-    raw: Dict[str, object]
+    mu_si: float | None
+    r_ref_m: float | None
+    DU_m: float | None
+    TU_s: float | None
+    VU_m_s: float | None
+    raw: dict[str, object]
     # Optional metadata fields from modern generator output
-    degree_min: Optional[int] = None
-    degree_max: Optional[int] = None
-    target_mode: Optional[str] = None
-    central_body: Optional[str] = None
-    a_sign_convention: Optional[str] = None
+    degree_min: int | None = None
+    degree_max: int | None = None
+    target_mode: str | None = None
+    central_body: str | None = None
+    a_sign_convention: str | None = None
 
 
-def _load_h5_meta(path: Path) -> Tuple["h5py.File", "h5py.Dataset", CloudMeta]:
+def _load_h5_meta(path: Path) -> tuple[h5py.File, h5py.Dataset, CloudMeta]:
     import h5py  # type: ignore
 
     f = h5py.File(str(path), "r")
@@ -184,7 +186,7 @@ def _load_h5_meta(path: Path) -> Tuple["h5py.File", "h5py.Dataset", CloudMeta]:
 
     unit_system = str(attrs.get("unit_system", "unknown")).lower()
 
-    def _parse_int_attr(key: str) -> Optional[int]:
+    def _parse_int_attr(key: str) -> int | None:
         val = attrs.get(key)
         if val is None:
             return None
@@ -193,7 +195,7 @@ def _load_h5_meta(path: Path) -> Tuple["h5py.File", "h5py.Dataset", CloudMeta]:
         except (ValueError, TypeError):
             return None
 
-    def _parse_str_attr(key: str) -> Optional[str]:
+    def _parse_str_attr(key: str) -> str | None:
         val = attrs.get(key)
         if val is None:
             return None
@@ -222,7 +224,7 @@ def _load_h5_meta(path: Path) -> Tuple["h5py.File", "h5py.Dataset", CloudMeta]:
     return f, dset, meta
 
 
-def _load_pt(path: Path) -> Tuple[np.ndarray, CloudMeta]:
+def _load_pt(path: Path) -> tuple[np.ndarray, CloudMeta]:
     import torch  # type: ignore
 
     obj = torch.load(str(path), map_location="cpu")
@@ -243,7 +245,7 @@ def _load_pt(path: Path) -> Tuple[np.ndarray, CloudMeta]:
 
     unit_system = str(raw_meta.get("unit_system", "unknown")).lower()
 
-    def _safe_int_meta(key: str) -> Optional[int]:
+    def _safe_int_meta(key: str) -> int | None:
         val = raw_meta.get(key)
         if val is None:
             return None
@@ -252,7 +254,7 @@ def _load_pt(path: Path) -> Tuple[np.ndarray, CloudMeta]:
         except (ValueError, TypeError):
             return None
 
-    def _safe_str_meta(key: str) -> Optional[str]:
+    def _safe_str_meta(key: str) -> str | None:
         val = raw_meta.get(key)
         if val is None:
             return None
@@ -325,17 +327,17 @@ def _sample_rows_h5_contiguous(
 def _apply_region_filter(
     X: np.ndarray,
     *,
-    r_ref_m: Optional[float],
-    DU_m: Optional[float],
+    r_ref_m: float | None,
+    DU_m: float | None,
     unit_system: str,
-    alt_min_km: Optional[float],
-    alt_max_km: Optional[float],
-) -> Tuple[np.ndarray, Dict[str, object]]:
+    alt_min_km: float | None,
+    alt_max_km: float | None,
+) -> tuple[np.ndarray, dict[str, object]]:
     """
     Filter points by altitude band (km) if requested.
     Works for SI and canonical datasets (needs DU_m).
     """
-    info: Dict[str, object] = {"filter": "none"}
+    info: dict[str, object] = {"filter": "none"}
     if alt_min_km is None and alt_max_km is None:
         return X, info
 
@@ -372,13 +374,13 @@ def _make_plots(
     meta: CloudMeta,
     outdir: Path,
     scatter_n: int,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     outdir.mkdir(parents=True, exist_ok=True)
 
     import matplotlib
     matplotlib.use("Agg")  # headless
     import matplotlib.pyplot as plt  # type: ignore
-    
+
     try:
         plt.style.use('seaborn-v0_8-whitegrid')
     except Exception:
@@ -393,7 +395,7 @@ def _make_plots(
         "figure.autolayout": True
     })
 
-    paths: Dict[str, str] = {}
+    paths: dict[str, str] = {}
 
     xyz = X[:, 0:3]
     r = np.linalg.norm(xyz, axis=1)
@@ -899,7 +901,7 @@ def main() -> None:
     print("===========================================\n")
 
     # Plots
-    plot_paths: Dict[str, str] = {}
+    plot_paths: dict[str, str] = {}
     if not bool(args.no_plots):
         plot_paths = _make_plots(X_f, meta, outdir, scatter_n=int(args.scatter_n))
         print(f"[plots] saved to: {outdir}")

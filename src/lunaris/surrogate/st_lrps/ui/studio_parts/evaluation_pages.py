@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 ST-LRPS Studio.
 
@@ -45,25 +44,13 @@ Run
 from __future__ import annotations
 
 import json
-import math
-import os
-import platform
 import re
-import shlex
-import subprocess
 import sys
-import time
-from collections import deque
-from datetime import datetime
 from pathlib import Path
 
 from lunaris.common.paths import project_root_from_file
-from typing import Any, Callable, Dict, List, Optional, Tuple
-
-import sys
 
 from .qt_common import *
-
 
 # pyqtgraph — optional, graceful fallback
 try:
@@ -79,9 +66,13 @@ try:
         CHECKPOINT_SCHEMA_VERSION,
         CRITICAL_CONFIG_FIELDS,
         compute_payload_sha256,
-        load_checkpoint as load_artifact_checkpoint,
         make_run_layout,
         read_run_manifest,
+    )
+    from lunaris.surrogate.st_lrps.artifacts.manager import (
+        load_checkpoint as load_artifact_checkpoint,
+    )
+    from lunaris.surrogate.st_lrps.artifacts.manager import (
         resolve_run_dir as resolve_artifact_run_dir,
     )
 except Exception:  # pragma: no cover - UI remains usable without artifact deps
@@ -95,20 +86,6 @@ except Exception:  # pragma: no cover - UI remains usable without artifact deps
 
 # Dashboard widgets and training metrics (Phase 1-8 redesign)
 try:
-    from lunaris.surrogate.st_lrps.ui.dashboard_widgets import (
-        ExperimentHeader,
-        KPIStrip,
-        MetricCard,
-        StructuredLogView,
-        TimeMetricsStrip,
-    )
-    from lunaris.surrogate.st_lrps.ui.training_metrics import (
-        EpochGuard,
-        ETAEstimator,
-        TrainingLogParser,
-        TrainingMetricsStore,
-        compute_auto_log_interval,
-    )
     _HAS_DASHBOARD_V2 = True
 except Exception:  # pragma: no cover
     _HAS_DASHBOARD_V2 = False
@@ -165,16 +142,23 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 
 
 from .common_widgets import *
+from .common_widgets import (
+    _inspect_run_artifacts,
+    _make_page_header,
+    _norm_path,
+    _row_lineedit_with_button,
+    _scroll_wrap,
+    _settings,
+    _split_cli_args,
+    _style_command_preview,
+    _tune_form,
+    _tune_inputs,
+)
 from .runtime_pages import ModelReportPanel
-
-from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _inspect_run_artifacts, _NoWheelOnSpinFilter
-
-
-from .dataset_introspection import inspect_h5_metadata as _introspect_h5
 
 
 class STLRPSEvalTab(QWidget):
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
 
         grp_input = QGroupBox("Input Files")
@@ -572,7 +556,7 @@ class STLRPSEvalTab(QWidget):
                 "scatter_relerr_accel_vs_alt",
                 "ood_bar_accel_rmse",
             ]
-            all_imgs: List[Path] = []
+            all_imgs: list[Path] = []
             for sub in ("", "test", "ood"):
                 sd = Path(out_dir) / sub if sub else Path(out_dir)
                 if sd.is_dir():
@@ -602,7 +586,7 @@ class STLRPSEvalTab(QWidget):
         if not report_path.exists():
             return
         try:
-            with open(report_path, "r", encoding="utf-8") as fh:
+            with open(report_path, encoding="utf-8") as fh:
                 rep = json.load(fh)
         except Exception as exc:
             self.runner.append(f"[UI] eval_report.json parse error: {exc}")
@@ -661,7 +645,7 @@ class STLRPSEvalTab(QWidget):
 class EvaluationPage(QWidget):
     """Evaluation workspace: model quality and reporting."""
 
-    def __init__(self, eval_tab: QWidget, parent: Optional[QWidget] = None):
+    def __init__(self, eval_tab: QWidget, parent: QWidget | None = None):
         super().__init__(parent)
         self.report_panel = ModelReportPanel()
         tabs = QTabWidget()

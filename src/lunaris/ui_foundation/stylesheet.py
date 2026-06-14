@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Global application stylesheet builder for the Lunar Graphite theme.
 
@@ -13,13 +12,11 @@ are no page-local hard-coded values here.
 
 from __future__ import annotations
 
-from typing import Dict
-
 from lunaris.ui_foundation.palette import with_alpha
 from lunaris.ui_foundation.tokens import DESIGN_TOKENS
 
 
-def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> str:
+def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> str:
     """Return the full application QSS string for the given palettes.
 
     Parameters

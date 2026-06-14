@@ -1,5 +1,4 @@
-﻿# -*- coding: utf-8 -*-
-"""
+﻿"""
 Regression tests for the lunarized surrogate-gravity configuration layer.
 
 These tests focus on the "glue" that keeps the experimental ST-LRPS tooling aligned

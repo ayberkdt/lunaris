@@ -29,7 +29,6 @@ powers.
 from __future__ import annotations
 
 import math
-from typing import Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -37,7 +36,6 @@ from numba import njit
 
 from lunaris.common.constants import R_MOON
 from lunaris.common.type_defs import Vec3
-
 
 _MIN_NORM2 = 1.0
 
@@ -137,7 +135,7 @@ def solid_tide_accel_degree_numba(
     r_ref_m: float,
     k_l: float,
     degree: int,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Analytical gradient of the degree-l tide potential for l=2 or l=3.
 
@@ -204,7 +202,7 @@ def accel_solid_tides_numba(
     k3: float,
     use_k2: bool,
     use_k3: bool,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Sum enabled degree-2 and degree-3 elastic solid-tide accelerations.
 

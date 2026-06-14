@@ -1,5 +1,4 @@
 # ST_LRPS/core/monte_carlo_engine.py
-# -*- coding: utf-8 -*-
 """
 Monte Carlo Dispatch Engine
 ============================
@@ -49,9 +48,10 @@ import json
 import math
 import time
 import warnings
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -59,7 +59,6 @@ from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 from lunaris.common.montecarlo_defs import MCRunResult, MonteCarloConfig, StateUncertainty
 from lunaris.common.type_defs import F64Array
 from lunaris.physics.gravity_adapter import adapt_gravity_model
-
 
 # =============================================================================
 # 0.                    LOCAL BOOTSTRAP / COMPAT HELPERS
@@ -78,9 +77,9 @@ def _state_to_array(state_like: Any) -> np.ndarray:
         raise ValueError("Nominal state is None.")
 
     if hasattr(state_like, "to_array"):
-        arr = np.asarray(getattr(state_like, "to_array")(), dtype=np.float64).reshape(-1)
+        arr = np.asarray(state_like.to_array(), dtype=np.float64).reshape(-1)
     elif hasattr(state_like, "y"):
-        arr = np.asarray(getattr(state_like, "y"), dtype=np.float64).reshape(-1)
+        arr = np.asarray(state_like.y, dtype=np.float64).reshape(-1)
     else:
         arr = np.asarray(state_like, dtype=np.float64).reshape(-1)
 
@@ -207,7 +206,7 @@ def _build_ephemeris_manager(cfg: Any) -> Any:
 
 def sample_initial_states(
     nominal_state: F64Array,         # (6,) [x,y,z,vx,vy,vz]
-    uncertainty: "StateUncertainty",
+    uncertainty: StateUncertainty,
     n_samples: int,
     rng: np.random.Generator,
 ) -> F64Array:
@@ -318,7 +317,7 @@ class _HDF5Writer:
             raise ImportError(
                 "h5py is required for HDF5 output. "
                 "Install via:  pip install h5py"
-            )
+            ) from None
 
         path.parent.mkdir(parents=True, exist_ok=True)
         self._f = h5py.File(str(path), "w")
@@ -381,8 +380,8 @@ class _NPZWriter:
     def __init__(self, path: Path, n_samples: int, n_state: int = 6) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
-        self._t_list: List[float] = []
-        self._Y_list: List[np.ndarray] = []
+        self._t_list: list[float] = []
+        self._Y_list: list[np.ndarray] = []
         self._metadata: dict[str, Any] = {}
 
     def write_snapshot(self, t: float, Y: np.ndarray) -> None:
@@ -463,7 +462,7 @@ class MonteCarloEngine:
         dynamics_engine: Any = None,        # core.dynamics.DynamicsEngine
         surface_provider: Any = None,
         topo_grid: Any = None,
-        progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._sim_cfg = sim_cfg
         self._mc      = mc_cfg
@@ -488,8 +487,8 @@ class MonteCarloEngine:
         done_samples: float,
         elapsed_s: float,
         backend: str,
-        batch_index: Optional[int] = None,
-        batch_count: Optional[int] = None,
+        batch_index: int | None = None,
+        batch_count: int | None = None,
         detail: str = "",
     ) -> None:
         """
@@ -513,7 +512,7 @@ class MonteCarloEngine:
         offset, weight = stage_offsets.get(stage, (0.0, 1.0))
         stage_fraction = max(0.0, min(1.0, float(stage_fraction)))
         overall_fraction = max(0.0, min(1.0, offset + weight * stage_fraction))
-        eta_s: Optional[float] = None
+        eta_s: float | None = None
         if overall_fraction > 1.0e-6:
             eta_s = max(0.0, float(elapsed_s) * (1.0 - overall_fraction) / overall_fraction)
 
@@ -572,7 +571,7 @@ class MonteCarloEngine:
 
                     # Prioritize the MC-specific ST-LRPS run directory if provided.
                     st_lrps_dir = self._mc.st_lrps_model_dir or cfg.gravity.st_lrps_model_dir
-                    
+
                     from lunaris.common.montecarlo_defs import validate_st_lrps_model_dir
                     valid_dir = validate_st_lrps_model_dir(st_lrps_dir)
 
@@ -648,7 +647,7 @@ class MonteCarloEngine:
 
         # Emit all warnings produced by the policy resolver
         for w in plan.warnings:
-            warnings.warn(w, RuntimeWarning)
+            warnings.warn(w, RuntimeWarning, stacklevel=2)
             self._backend_note = w  # keep the most recent one for the run log
 
         # Log the resolved plan
@@ -685,7 +684,7 @@ class MonteCarloEngine:
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._backend_note = note
-                warnings.warn(note, RuntimeWarning)
+                warnings.warn(note, RuntimeWarning, stacklevel=2)
 
         # ----------------------------------------------------------------
         # GPU classic-SH path — Numba CUDA fixed-step RK4 (torch_cuda_sh's sibling)
@@ -705,7 +704,7 @@ class MonteCarloEngine:
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._backend_note = note
-                warnings.warn(note, RuntimeWarning)
+                warnings.warn(note, RuntimeWarning, stacklevel=2)
                 self._downgrade_plan_to_cpu(plan, note)
 
         # ----------------------------------------------------------------
@@ -734,7 +733,7 @@ class MonteCarloEngine:
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._backend_note = note
-                warnings.warn(note, RuntimeWarning)
+                warnings.warn(note, RuntimeWarning, stacklevel=2)
                 self._downgrade_plan_to_cpu(plan, note)
 
         # ----------------------------------------------------------------
@@ -761,7 +760,7 @@ class MonteCarloEngine:
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._backend_note = note
-                warnings.warn(note, RuntimeWarning)
+                warnings.warn(note, RuntimeWarning, stacklevel=2)
                 self._downgrade_plan_to_cpu(plan, note)
 
         # ----------------------------------------------------------------
@@ -933,7 +932,7 @@ class MonteCarloEngine:
         )
 
         # Accumulators for the full ensemble
-        t_out_ref: Optional[np.ndarray] = None
+        t_out_ref: np.ndarray | None = None
         Y_all     = None   # will be (T, N, 6) after first batch
         impact_all   = np.zeros(N, dtype=np.float64)
         t_impact_all = np.full(N, np.nan, dtype=np.float64)
@@ -949,8 +948,16 @@ class MonteCarloEngine:
                 flush=True,
             )
 
-            def _batch_progress(local_fraction: float) -> None:
-                effective_done = float(b_start) + float(b_n) * max(0.0, min(1.0, float(local_fraction)))
+            # Loop variables are bound as defaults: the callback is invoked
+            # synchronously within this iteration's propagate() call, but binding
+            # makes that explicit and silences B023 (late-binding closure).
+            def _batch_progress(
+                local_fraction: float,
+                _b_start: int = b_start,
+                _b_n: int = b_n,
+                _b_idx: int = b_idx,
+            ) -> None:
+                effective_done = float(_b_start) + float(_b_n) * max(0.0, min(1.0, float(local_fraction)))
                 self._publish_progress(
                     stage="propagating",
                     stage_fraction=(effective_done / max(N, 1)),
@@ -958,9 +965,9 @@ class MonteCarloEngine:
                     done_samples=effective_done,
                     elapsed_s=time.perf_counter() - t_wall0,
                     backend=backend_name,
-                    batch_index=b_idx + 1,
+                    batch_index=_b_idx + 1,
                     batch_count=n_batches,
-                    detail=f"Batch {b_idx + 1}/{n_batches}",
+                    detail=f"Batch {_b_idx + 1}/{n_batches}",
                 )
 
             t_b, Y_b, imp_b, t_imp_b = prop.propagate(
@@ -1195,7 +1202,7 @@ def load_mc_result(path: str) -> MCRunResult:
         try:
             import h5py
         except ImportError:
-            raise ImportError("h5py required to read HDF5 MC output.")
+            raise ImportError("h5py required to read HDF5 MC output.") from None
         with h5py.File(str(p), "r") as f:
             t_arr  = np.asarray(f["t"],           dtype=np.float64)
             Y_arr  = np.asarray(f["Y"],           dtype=np.float64)

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for the shared, flow-agnostic pre-flight service.
 

@@ -10,7 +10,6 @@ from lunaris.surrogate.st_lrps.artifacts.manager import validate_checkpoint_cont
 from lunaris.surrogate.st_lrps.training.config import parse_args
 from st_lrps_contract_test_utils import make_contract_run
 
-
 pytestmark = pytest.mark.requires_torch
 
 

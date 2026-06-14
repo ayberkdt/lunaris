@@ -23,6 +23,8 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
     QUrl,
+)
+from PySide6.QtCore import (
     Signal as pyqtSignal,
 )
 from PySide6.QtGui import (

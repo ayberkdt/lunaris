@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """ST-LRPS validation suite beyond random interpolation.
 
 Random point-cloud validation only measures *interpolation* inside the training
@@ -18,8 +17,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -203,7 +203,7 @@ def run_field_validation(
     policies: Sequence[str] = DEFAULT_FIELD_POLICIES,
     split_seed: int = 1234,
     val_fraction: float = 0.15,
-    options: Optional[Mapping[str, Any]] = None,
+    options: Mapping[str, Any] | None = None,
     device: str = "cpu",
 ) -> dict[str, Any]:
     """Evaluate a trained ST-LRPS model on each split policy's validation rows.
@@ -372,7 +372,7 @@ def write_field_validation_csvs(report: Mapping[str, Any], out_dir: str | Path) 
     return paths
 
 
-def attach_orbit_validation(report: dict[str, Any], orbit_metrics: Optional[Mapping[str, Any]]) -> dict[str, Any]:
+def attach_orbit_validation(report: dict[str, Any], orbit_metrics: Mapping[str, Any] | None) -> dict[str, Any]:
     """Attach orbit-level (trajectory) metrics under a clearly separate key.
 
     Orbit propagation validation (final/RMS/max position error, radial/along/
@@ -455,7 +455,7 @@ def _fmt(value: Any) -> str:
         return str(value)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     import argparse
 
     ap = argparse.ArgumentParser(description="Run the ST-LRPS validation suite (field-level, multi-split).")

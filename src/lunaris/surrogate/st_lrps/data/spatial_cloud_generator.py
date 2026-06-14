@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 spatial_cloud_generator_refactored.py
 
@@ -29,9 +28,12 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import h5py  # optional dependency; imported lazily at runtime
 
 try:
     from numba import njit  # type: ignore
@@ -39,6 +41,11 @@ except Exception as e:  # pragma: no cover
     raise RuntimeError("Numba is required for this script. Install: pip install numba") from e
 
 # ---- Physics SSOT (local lunar dataset parameters) ----
+from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    contract_from_generation_attrs,
+    ensure_output_path_allowed,
+    stamp_hdf5_content_hash,
+)
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     DEFAULT_DATASET_CONFIG,
     MU_MOON_SI,
@@ -47,20 +54,16 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     is_lunar_body_signature,
     load_icgem_gfc,
 )
-from lunaris.surrogate.st_lrps.data.dataset_contract import (
-    contract_from_generation_attrs,
-    ensure_output_path_allowed,
-    stamp_hdf5_content_hash,
-)
 
 # ---- Cloud-parameter SSOT ----
 from lunaris.surrogate.st_lrps.data.spatial_cloud_parameters import (
-    SpatialCloudConfig,
-    DEFAULT_SPATIAL_CLOUD_CONFIG,
-    SamplingStrategy,
-    CloudSuiteConfig,
     DEFAULT_CLOUD_SUITE_CONFIG,
+    DEFAULT_SPATIAL_CLOUD_CONFIG,
+    CloudSuiteConfig,
+    SamplingStrategy,
+    SpatialCloudConfig,
 )
+
 
 # =============================================================================
 # Utilities
@@ -72,7 +75,7 @@ def _script_dir() -> Path:
         return Path.cwd()
 
 
-def _resolve_path(p: str | Path, base: Optional[Path] = None) -> Path:
+def _resolve_path(p: str | Path, base: Path | None = None) -> Path:
     pp = Path(p)
     if pp.is_absolute() and pp.exists():
         return pp
@@ -101,7 +104,7 @@ def _human_bytes(n: int) -> str:
     return f"{x:.2f} PB"
 
 
-def _file_sha256(path: str | Path | None) -> Optional[str]:
+def _file_sha256(path: str | Path | None) -> str | None:
     if path is None:
         return None
     p = Path(path)
@@ -123,7 +126,7 @@ def _file_sha256(path: str | Path | None) -> Optional[str]:
 # =============================================================================
 # SH constants precompute (pure NumPy, called once)
 # =============================================================================
-def precompute_legendre_constants(N: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def precompute_legendre_constants(N: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     N = int(N)
     a_nm = np.zeros((N + 1, N + 1), dtype=np.float64)
     b_nm = np.zeros_like(a_nm)
@@ -176,7 +179,7 @@ def _sh_potential_accel_batch_serial(
     r_ref_m: float,
     degree_max: int,
     degree_min: int,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     M = xyz_m.shape[0]
     N = degree_max
     V_out = np.empty(M, dtype=np.float64)
@@ -454,7 +457,7 @@ def sample_shell_xyz(
 # =============================================================================
 # Writers
 # =============================================================================
-def write_h5_streaming(out_path: Path, n_samples: int, dtype: np.dtype, chunks_rows: int, attrs: Dict[str, str]) -> "h5py.File":
+def write_h5_streaming(out_path: Path, n_samples: int, dtype: np.dtype, chunks_rows: int, attrs: dict[str, str]) -> h5py.File:
     try:
         import h5py  # type: ignore
     except Exception as e:  # pragma: no cover
@@ -484,7 +487,7 @@ def write_h5_streaming(out_path: Path, n_samples: int, dtype: np.dtype, chunks_r
     return f
 
 
-def finalize_pt_from_memmap(memmap_path: Path, out_path: Path, n_samples: int, dtype: np.dtype, attrs: Dict[str, str], *, delete_memmap: bool = True) -> None:
+def finalize_pt_from_memmap(memmap_path: Path, out_path: Path, n_samples: int, dtype: np.dtype, attrs: dict[str, str], *, delete_memmap: bool = True) -> None:
     try:
         import torch  # type: ignore
     except Exception as e:  # pragma: no cover
@@ -512,16 +515,16 @@ def finalize_pt_from_memmap(memmap_path: Path, out_path: Path, n_samples: int, d
 # Coeff loader (physics SSOT)
 # =============================================================================
 
-def load_coeffs_from_ssot(*, degree_max: int, gfc_path: Optional[str]) -> Tuple[np.ndarray, np.ndarray, Dict[str, object]]:
+def load_coeffs_from_ssot(*, degree_max: int, gfc_path: str | None) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
     cfg = DEFAULT_DATASET_CONFIG
-    meta: Dict[str, object] = {
+    meta: dict[str, object] = {
         "degree_max": int(degree_max),
         "coeff_source": "gfc",
     }
 
     p = (gfc_path or "").strip()
     if not p:
-        p = str(getattr(cfg, "gravity_gfc_path"))
+        p = str(cfg.gravity_gfc_path)
     gfc = _resolve_path(p, base=_script_dir())
     C, S, gmeta = load_icgem_gfc(
         file_path=str(gfc),
@@ -560,15 +563,15 @@ def load_coeffs_from_ssot(*, degree_max: int, gfc_path: Optional[str]) -> Tuple[
 # =============================================================================
 # Multiprocessing globals
 # =============================================================================
-_G: Dict[str, object] = {}
+_G: dict[str, object] = {}
 
 
-def _init_worker(globals_blob: Dict[str, object]) -> None:
+def _init_worker(globals_blob: dict[str, object]) -> None:
     global _G
     _G = globals_blob
 
 
-def _worker_compute_chunk(start: int, n: int, seed: int) -> Tuple[int, np.ndarray]:
+def _worker_compute_chunk(start: int, n: int, seed: int) -> tuple[int, np.ndarray]:
     global _G
     rng = np.random.default_rng(int(seed))
     xyz = sample_shell_xyz(
@@ -859,7 +862,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
             "gravity_model_path": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
         }
     )
-    attrs: Dict[str, str] = {
+    attrs: dict[str, str] = {
         "schema_version": "1",
         "dataset_kind": "st_lrps_spatial_cloud",
         **{str(key): str(value) for key, value in meta.items()},
@@ -912,7 +915,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
     print(f"[info] precompute constants took {t1 - t0:.2f} s")
     print(f"[info] output: {out_path}")
 
-    globals_blob: Dict[str, object] = {
+    globals_blob: dict[str, object] = {
         "C": C,
         "S": S,
         "a_nm": a_nm,
@@ -1028,7 +1031,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
 
 def _compute_labels_for_xyz(
     xyz: np.ndarray,
-    globals_blob: Dict[str, object],
+    globals_blob: dict[str, object],
 ) -> np.ndarray:
     """Compute SH potential + acceleration for xyz (M,3) using current globals_blob.
 
@@ -1058,7 +1061,7 @@ def _compute_labels_for_xyz(
 def _write_suite_h5(
     out_path: Path,
     data: np.ndarray,
-    attrs: Dict[str, str],
+    attrs: dict[str, str],
     chunk_size: int,
     dtype: np.dtype,
 ) -> None:
@@ -1093,8 +1096,8 @@ def _write_suite_h5(
 
 def _build_suite_attrs(
     *,
-    globals_blob: Dict[str, object],
-    cfg: "CloudSuiteConfig",
+    globals_blob: dict[str, object],
+    cfg: CloudSuiteConfig,
     dataset_role: str,
     sampling_strategy: str,
     alt_min_km: float,
@@ -1102,15 +1105,15 @@ def _build_suite_attrs(
     seed: int,
     suite_id: str,
     suite_dir: Path,
-    extra: Optional[Dict[str, str]] = None,
-) -> Dict[str, str]:
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
     """Build the HDF5 attribute dict for one suite component."""
     DU, TU, VU = canonical_scales(
         mu_si=float(globals_blob["mu_si"]),
         du_m=float(globals_blob["r_ref_m"]),
     )
     cfg_dict = cfg.to_dict()
-    attrs: Dict[str, str] = {
+    attrs: dict[str, str] = {
         "schema_version": "1",
         "dataset_kind": "st_lrps_spatial_cloud",
         "central_body": "moon",
@@ -1170,7 +1173,7 @@ def _sample_stratified_uniform(
     remainder = n - base * n_bins
     counts = [base + (1 if i < remainder else 0) for i in range(n_bins)]
 
-    chunks: List[np.ndarray] = []
+    chunks: list[np.ndarray] = []
     for i, cnt in enumerate(counts):
         if cnt <= 0:
             continue
@@ -1192,7 +1195,7 @@ def _generate_component(
     r_ref_m: float,
     seed: int,
     strategy: str,
-    globals_blob: Dict[str, object],
+    globals_blob: dict[str, object],
     chunk_size: int,
     *,
     bin_width_km: float = 50.0,
@@ -1201,7 +1204,7 @@ def _generate_component(
     if n <= 0:
         return np.empty((0, 7), dtype=np.float64)
     rng = np.random.default_rng(int(seed))
-    results: List[np.ndarray] = []
+    results: list[np.ndarray] = []
     generated = 0
     while generated < n:
         cnt = min(chunk_size, n - generated)
@@ -1221,7 +1224,7 @@ def _generate_component(
 
 def _residual_mag_bin_counts(
     n: int, r_min_m: float, r_max_m: float, n_bins: int
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Return per-bin sample counts (sum == n) and the r-space bin edges."""
     r_edges = np.linspace(float(r_min_m), float(r_max_m), n_bins + 1)
     bin_vols = np.array(
@@ -1242,7 +1245,7 @@ def _residual_mag_stream_bin(
     lo_r: float,
     hi_r: float,
     rng: np.random.Generator,
-    globals_blob: Dict[str, object],
+    globals_blob: dict[str, object],
     chunk_size: int,
     *,
     candidate_multiplier: int,
@@ -1262,7 +1265,7 @@ def _residual_mag_stream_bin(
     """
     n_cand = n_bin * max(1, int(candidate_multiplier))
     # min-heap of (key, tie_breaker, row); the smallest key sits at heap[0].
-    heap: List[Tuple[float, int, np.ndarray]] = []
+    heap: list[tuple[float, int, np.ndarray]] = []
     tie = 0
     gen = 0
     while gen < n_cand:
@@ -1294,7 +1297,7 @@ def _generate_residual_mag_component(
     r_max_m: float,
     r_ref_m: float,
     seed: int,
-    globals_blob: Dict[str, object],
+    globals_blob: dict[str, object],
     chunk_size: int,
     *,
     candidate_multiplier: int = 5,
@@ -1337,7 +1340,7 @@ def _generate_residual_mag_component(
         f"mode={'streaming-reservoir' if streaming else 'exact-in-memory'}) ..."
     )
 
-    results: List[np.ndarray] = []
+    results: list[np.ndarray] = []
     for i in range(n_bins):
         n_bin = int(bin_counts[i])
         if n_bin <= 0:
@@ -1357,7 +1360,7 @@ def _generate_residual_mag_component(
 
         # Exact (legacy) path: materialise all bin candidates, then weighted choice.
         n_cand_bin = n_bin * max(1, int(candidate_multiplier))
-        bin_chunks: List[np.ndarray] = []
+        bin_chunks: list[np.ndarray] = []
         gen = 0
         while gen < n_cand_bin:
             cnt = min(chunk_size, n_cand_bin - gen)
@@ -1394,7 +1397,7 @@ def _generate_boundary_component(
     r_max_m: float,
     r_ref_m: float,
     seed: int,
-    globals_blob: Dict[str, object],
+    globals_blob: dict[str, object],
     chunk_size: int,
     *,
     boundary_mode: str = "strict",
@@ -1423,7 +1426,7 @@ def _generate_boundary_component(
 
     rng = np.random.default_rng(int(seed))
 
-    parts: List[np.ndarray] = []
+    parts: list[np.ndarray] = []
     for (cnt, lo_km, hi_km) in [(n_lower, lo_lo_km, lo_hi_km), (n_upper, hi_lo_km, hi_hi_km)]:
         if cnt <= 0:
             continue
@@ -1441,10 +1444,10 @@ def _generate_boundary_component(
     return np.concatenate(parts, axis=0)
 
 
-def resolve_suite_config(args: argparse.Namespace) -> "CloudSuiteConfig":
+def resolve_suite_config(args: argparse.Namespace) -> CloudSuiteConfig:
     """Build a CloudSuiteConfig from CLI args, starting from defaults."""
     cfg = DEFAULT_CLOUD_SUITE_CONFIG
-    kw: Dict[str, object] = {}
+    kw: dict[str, object] = {}
 
     # Override from args if provided
     if args.degree_max is not None:
@@ -1518,16 +1521,15 @@ def resolve_suite_config(args: argparse.Namespace) -> "CloudSuiteConfig":
 
 
 def run_suite_generation(
-    cfg: "CloudSuiteConfig",
+    cfg: CloudSuiteConfig,
     *,
-    suite_out_dir: Optional[Path] = None,
+    suite_out_dir: Path | None = None,
     combine_ood: bool = True,
 ) -> Path:
     """
     Generate the full dataset suite: train_hybrid, val, test, ood_low, ood_high,
     ood_combined, and manifest.json.  Returns the suite directory.
     """
-    import h5py  # type: ignore
 
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     suite_label = str(cfg.suite_name).strip() or f"moon_deg{cfg.degree_min}to{cfg.degree_max}_alt{int(cfg.train_alt_min_km)}to{int(cfg.train_alt_max_km)}km"
@@ -1556,7 +1558,7 @@ def run_suite_generation(
     r_max_m = r_ref_m + float(cfg.train_alt_max_km) * 1_000.0
     dtype_np = np.float32 if str(cfg.dtype) == "float32" else np.float64
 
-    globals_blob: Dict[str, object] = {
+    globals_blob: dict[str, object] = {
         "C": C, "S": S, "a_nm": a_nm, "b_nm": b_nm,
         "diag_f": diag_f, "subdiag_f": subdiag_f, "k_ratio": k_ratio,
         "mu_si": mu_si, "r_ref_m": r_ref_m,
@@ -1576,7 +1578,7 @@ def run_suite_generation(
     chunk_size = int(cfg.chunk_size)
 
     def _attrs(role: str, strategy: str, lo_km: float, hi_km: float, seed: int,
-               extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+               extra: dict[str, str] | None = None) -> dict[str, str]:
         return _build_suite_attrs(
             globals_blob=globals_blob, cfg=cfg,
             dataset_role=role, sampling_strategy=strategy,
@@ -1587,8 +1589,8 @@ def run_suite_generation(
 
     train_alt_min = float(cfg.train_alt_min_km)
     train_alt_max = float(cfg.train_alt_max_km)
-    output_files: Dict[str, str] = {}
-    component_counts: Dict[str, int] = {}
+    output_files: dict[str, str] = {}
+    component_counts: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # A) Stratified uniform train component
@@ -1732,7 +1734,7 @@ def run_suite_generation(
     # ------------------------------------------------------------------
     n_ood_low = int(cfg.ood_low_n)
     ood_low_data = np.empty((0, 7), dtype=np.float64)
-    ood_low_path: Optional[Path] = None
+    ood_low_path: Path | None = None
     if n_ood_low > 0:
         ood_lo_min = float(cfg.ood_low_alt_min_km)
         ood_lo_max = float(cfg.ood_low_alt_max_km)
@@ -1751,7 +1753,7 @@ def run_suite_generation(
     # ------------------------------------------------------------------
     n_ood_high = int(cfg.ood_high_n)
     ood_high_data = np.empty((0, 7), dtype=np.float64)
-    ood_high_path: Optional[Path] = None
+    ood_high_path: Path | None = None
     if n_ood_high > 0:
         ood_hi_min = float(cfg.ood_high_alt_min_km)
         ood_hi_max = float(cfg.ood_high_alt_max_km)
@@ -1768,7 +1770,7 @@ def run_suite_generation(
     # ------------------------------------------------------------------
     # I) OOD combined
     # ------------------------------------------------------------------
-    ood_combined_path: Optional[Path] = None
+    ood_combined_path: Path | None = None
     if combine_ood and (len(ood_low_data) > 0 or len(ood_high_data) > 0):
         parts_ood = [p for p in [ood_low_data, ood_high_data] if len(p) > 0]
         ood_combined_data = np.concatenate(parts_ood, axis=0)
@@ -1869,7 +1871,7 @@ def _load_error_points(path: Path, max_source: int = 5000) -> np.ndarray:
     """
     import csv as _csv
     rows = []
-    with open(path, "r", newline="", encoding="utf-8") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         reader = _csv.DictReader(f)
         for i, row in enumerate(reader):
             if i >= int(max_source):
@@ -1884,7 +1886,7 @@ def _load_error_points(path: Path, max_source: int = 5000) -> np.ndarray:
     return np.array(rows, dtype=np.float64)
 
 
-def _resolve_active_alt_bounds(a) -> "Tuple[Optional[float], Optional[float], str]":
+def _resolve_active_alt_bounds(a) -> tuple[float | None, float | None, str]:
     """Resolve the active-refinement altitude shell [min, max] km and its source.
 
     Priority: explicit CLI args -> source dataset HDF5 metadata -> suite manifest.
@@ -1999,8 +2001,8 @@ def _run_active_refinement(a, ap) -> None:
 
     If --active-save-positions-only is set, saves only positions NPZ (debug mode).
     """
-    from pathlib import Path
     import json
+    from pathlib import Path
     try:
         import h5py as _h5py
     except ImportError:
@@ -2198,7 +2200,7 @@ def _run_active_refinement(a, ap) -> None:
 
     print(f"[active-refinement] Saving labeled HDF5 to {h5_path} (shape={data_out.shape}) ...")
     with _h5py.File(str(h5_path), "w") as hf:
-        ds = hf.create_dataset("data", data=data_out.astype(np.float64),
+        hf.create_dataset("data", data=data_out.astype(np.float64),
                                 chunks=(min(65536, data_out.shape[0]), 7),
                                 compression="gzip", compression_opts=4)
         # Required HDF5 attrs

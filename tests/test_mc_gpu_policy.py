@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Regression tests for Monte Carlo GPU backend selection and tuning helpers.
 
@@ -29,7 +28,6 @@ from lunaris.common.type_defs import PerturbationFlags
 from lunaris.core.mc_propagator import _sanitize_gpu_threads_per_block, gpu_unsupported_features
 from lunaris.core.monte_carlo_engine import MonteCarloEngine
 
-
 # =============================================================================
 # Existing tests — updated to also monkeypatch torch CUDA where needed
 # =============================================================================
@@ -56,8 +54,8 @@ def test_sanitize_gpu_threads_per_block_aligns_and_clamps() -> None:
 
 
 def test_engine_falls_back_to_cpu_when_gpu_requested_with_unsupported_physics(monkeypatch) -> None:
-    import lunaris.core.mc_propagator as mc_prop
     import lunaris.core.mc_backend_policy as policy_mod
+    import lunaris.core.mc_propagator as mc_prop
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -98,8 +96,8 @@ def test_engine_falls_back_to_cpu_when_gpu_requested_with_unsupported_physics(mo
 
 
 def test_engine_keeps_gpu_path_for_supported_earth_j2_runs(monkeypatch) -> None:
-    import lunaris.core.mc_propagator as mc_prop
     import lunaris.core.mc_backend_policy as policy_mod
+    import lunaris.core.mc_propagator as mc_prop
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -139,8 +137,8 @@ def test_engine_falls_back_to_cpu_when_surrogate_gravity_is_requested_and_torch_
     monkeypatch,
 ) -> None:
     """ST-LRPS + torch CUDA unavailable → CPU fallback."""
-    import lunaris.core.mc_propagator as mc_prop
     import lunaris.core.mc_backend_policy as policy_mod
+    import lunaris.core.mc_propagator as mc_prop
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -417,7 +415,7 @@ def test_policy_no_contradictory_command_args_cpu_fallback(monkeypatch) -> None:
 torch = pytest.importorskip("torch")
 
 
-def _make_tiny_surrogate(tmp_path: Path) -> "Any":  # noqa: F821
+def _make_tiny_surrogate(tmp_path: Path) -> Any:  # noqa: F821
     """Create a minimal SurrogateGravityModel on CPU for inference tests."""
     from lunaris.common.constants import MU_MOON, R_MOON
     from lunaris.surrogate.runtime_adapter import SurrogateGravityModel, _build_model_from_config
@@ -538,8 +536,9 @@ def test_torch_batch_propagator_cpu_smoke(tmp_path: Path, monkeypatch) -> None:
     - impact_flags and t_impact have correct shapes
     """
     import torch as _torch
-    from lunaris.core.torch_batch_propagator import TorchBatchPropagator
+
     from lunaris.common.constants import R_MOON
+    from lunaris.core.torch_batch_propagator import TorchBatchPropagator
 
     model = _make_tiny_surrogate(tmp_path)
     # Ensure model tensors are on CPU (they already are; explicit for clarity)
@@ -588,8 +587,8 @@ def test_torch_batch_propagator_cpu_smoke(tmp_path: Path, monkeypatch) -> None:
 
 def test_engine_selects_torch_gpu_when_st_lrps_and_torch_cuda_available(monkeypatch) -> None:
     """ST-LRPS + torch CUDA available + no extra perturbations → TorchBatchPropagator."""
-    import lunaris.core.mc_propagator as mc_prop
     import lunaris.core.mc_backend_policy as policy_mod
+    import lunaris.core.mc_propagator as mc_prop
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:

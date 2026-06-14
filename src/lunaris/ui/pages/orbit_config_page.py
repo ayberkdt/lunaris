@@ -1,11 +1,10 @@
 # ST_LRPS/ui_parts/orbit_config_page.py
-# -*- coding: utf-8 -*-
 
 """
 Orbit Configuration & Visualization Module for Lunaris Mission Studio.
 
-This module manages the user interface for defining the Initial State Vector 
-of the spacecraft using Keplerian elements. It integrates real-time mathematical 
+This module manages the user interface for defining the Initial State Vector
+of the spacecraft using Keplerian elements. It integrates real-time mathematical
 conversions with an interactive 3D OpenGL visualization.
 
 Key Features:
@@ -14,10 +13,10 @@ Key Features:
    Allows the user to define the orbit using two distinct paradigms:
    - Altitude-based: Periselene (hp) and Aposelene (ha) altitudes relative to R_MOON.
    - Classical Keplerian: Semi-major axis (a) and Eccentricity (e).
-   
+
 2. Bi-Directional Synchronization ("Ghosting"):
    Implements a live "shadowing" mechanism where:
-   - If 'Altitude' mode is active, classical elements (a, e) are automatically 
+   - If 'Altitude' mode is active, classical elements (a, e) are automatically
      calculated and displayed as read-only "ghost" text.
    - If 'Classical' mode is active, altitudes (hp, ha) are back-calculated.
    This provides immediate feedback on the relationship between altitude and orbital geometry.
@@ -27,9 +26,9 @@ Key Features:
    - The Moon (scaled sphere).
    - The orbital trajectory (calculated via True Anomaly propagation).
    - Periapsis markers and coordinate axes (ECI Frame).
-   
+
 4. Input Validation:
-   Enforces physical constraints (e.g., 0 <= e < 1.0, non-negative altitudes) 
+   Enforces physical constraints (e.g., 0 <= e < 1.0, non-negative altitudes)
    before data is passed to the simulation engine.
 
 Dependencies:
@@ -39,7 +38,7 @@ Dependencies:
 """
 
 # =============================================================================
-# 0.                                    IMPORTS 
+# 0.                                    IMPORTS
 # =============================================================================
 from __future__ import annotations
 
@@ -51,7 +50,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 # Modern Icon Library
 try:
-    import qtawesome as qta
+    import qtawesome as qta  # noqa: F401  # availability probe for HAS_QTAWESOME
     HAS_QTAWESOME = True
 except ImportError:
     HAS_QTAWESOME = False
@@ -73,16 +72,14 @@ except ImportError as e:
 
 try:
     from lunaris.ui.core.ui_commons import (
-        THEME,
+        MU_MOON_KM3_S2,
         ORBIT_THEME,
+        R_MOON_KM,
+        THEME,
         NumericDragLineEdit,
         get_icon,
         hex_to_rgba_float,
         rgba_css_to_tuple,
-        with_alpha,
-        R_MOON_KM,
-        MU_MOON_KM3_S2,
-        StatusBadge,
     )
     R_MOON = R_MOON_KM  # local alias used throughout this module
 except ImportError:
@@ -96,7 +93,7 @@ except ImportError:
         print("  From the project root, run:", file=sys.stderr)
         print("\n      python -m lunaris.ui.pages.orbit_config_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -556,7 +553,7 @@ class OrbitPage(QtWidgets.QWidget):
     The main widget page for configuring the orbit.
     Contains inputs for orbit elements and the 3D visualization.
     """
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._updating_ghost = False # Flag to prevent recursive signal loops
@@ -564,7 +561,7 @@ class OrbitPage(QtWidgets.QWidget):
 
         # The last orbit state that validated cleanly. Invalid or partial input
         # never overwrites it, so the preview keeps showing the last good orbit.
-        self._last_valid_orbit: "_OrbitState | None" = None
+        self._last_valid_orbit: _OrbitState | None = None
 
         # Debounce timer: many rapid parameter changes (especially dragging)
         # collapse into a single preview/metric refresh, avoiding redraw stutter.
@@ -574,13 +571,13 @@ class OrbitPage(QtWidgets.QWidget):
         self._orbit_update_timer.timeout.connect(self._apply_orbit_update)
 
         self._build_ui()
-        
+
     def _create_card(self, title: str) -> QtWidgets.QGroupBox:
         """Factory for standard titled group boxes (Cards)."""
         gb = QtWidgets.QGroupBox(title)
         return gb
 
-    def _metric_chip(self, title: str) -> "tuple[QtWidgets.QFrame, QtWidgets.QLabel]":
+    def _metric_chip(self, title: str) -> tuple[QtWidgets.QFrame, QtWidgets.QLabel]:
         """Return a compact ``(frame, value_label)`` metric chip for the info strip."""
         frame = QtWidgets.QFrame()
         frame.setObjectName("orbitMetric")
@@ -604,15 +601,15 @@ class OrbitPage(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(20)
         layout.setVerticalSpacing(20)
-        
+
         # Left Column: Orbit Parameters
         self.group_params = self._create_params_group()
         layout.addWidget(self.group_params, 0, 0, 2, 1)
-        
+
         # Right Column: 3D Visualization
         self.group_viz = self._create_viz_group()
         layout.addWidget(self.group_viz, 0, 1, 2, 1)
-        
+
         # Adjust column ratios (Left slightly wider for inputs, Right for Viz)
         layout.setColumnStretch(0, 11)
         layout.setColumnStretch(1, 9)
@@ -655,16 +652,16 @@ class OrbitPage(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(gb)
         layout.setContentsMargins(22, 24, 22, 22)
         layout.setSpacing(16)
-        
+
         # A. Modern Segmented Control for Input Mode
         mode_container = QtWidgets.QWidget()
         mode_container.setObjectName("segmentedControl")
         mode_container.setFixedHeight(46)
-        
+
         mode_layout = QtWidgets.QHBoxLayout(mode_container)
         mode_layout.setContentsMargins(4, 4, 4, 4)
         mode_layout.setSpacing(0)
-        
+
         # Create three styled buttons as segments
         self.btn_mode_altitude = QtWidgets.QPushButton("Altitude (hp/ha)")
         self.btn_mode_classical = QtWidgets.QPushButton("Classical (a/e)")
@@ -687,7 +684,7 @@ class OrbitPage(QtWidgets.QWidget):
         # Connect signal
         self.btn_mode_altitude.toggled.connect(self._sync_orbit_mode_ghosting)
         self.btn_mode_circular.toggled.connect(self._sync_orbit_mode_ghosting)
-        
+
         layout.addWidget(mode_container)
 
         intro = QtWidgets.QLabel(
@@ -697,12 +694,12 @@ class OrbitPage(QtWidgets.QWidget):
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color: {THEME['fg_muted']};")
         layout.addWidget(intro)
-        
+
         # B. Parameter Form with Ghosting
         form_layout = QtWidgets.QGridLayout()
         form_layout.setHorizontalSpacing(12)
         form_layout.setVerticalSpacing(12)
-        
+
         def add_param(row, label, widget, unit=""):
             lbl = QtWidgets.QLabel(label)
             lbl.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
@@ -713,20 +710,20 @@ class OrbitPage(QtWidgets.QWidget):
                 lbl_unit = QtWidgets.QLabel(unit)
                 lbl_unit.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
                 form_layout.addWidget(lbl_unit, row, 2)
-        
+
         # Input Fields - All are NumericDragLineEdit
         self.ent_hp = NumericDragLineEdit("100.0", step=5.0, min_value=0.0, decimals=1)
         self.ent_ha = NumericDragLineEdit("", step=5.0, min_value=0.0, decimals=1)
         self.ent_ha.setPlaceholderText("Circular (same as hp)")
-        
+
         self.ent_a = NumericDragLineEdit("", step=10.0, min_value=1.0, decimals=2)
         self.ent_e = NumericDragLineEdit("0.0", step=0.01, min_value=0.0, max_value=0.999, decimals=4)
-        
+
         self.ent_inc = NumericDragLineEdit("90.0", step=1.0, min_value=0.0, max_value=180.0, decimals=2)
         self.ent_raan = NumericDragLineEdit("0.0", step=5.0, min_value=0.0, max_value=360.0, decimals=2)
         self.ent_argp = NumericDragLineEdit("0.0", step=5.0, min_value=0.0, max_value=360.0, decimals=2)
         self.ent_ta = NumericDragLineEdit("0.0", step=5.0, min_value=0.0, max_value=360.0, decimals=2)
-        
+
         # Circular altitude mode input (shown only in "circular" mode)
         self.ent_alt_circular = NumericDragLineEdit("100.0", step=10.0, min_value=0.0, max_value=10000.0, decimals=1)
 
@@ -740,7 +737,7 @@ class OrbitPage(QtWidgets.QWidget):
         add_param(3, "Semi-major Axis (a)", self.ent_a, "km")
         add_param(4, "Eccentricity (e)", self.ent_e, "")
         add_param(5, "Circular Altitude", self.ent_alt_circular, "km")
-        
+
         sep = QtWidgets.QFrame()
         sep.setFrameShape(QtWidgets.QFrame.HLine)
         sep.setStyleSheet(f"color: {THEME['border_soft']};")
@@ -754,28 +751,28 @@ class OrbitPage(QtWidgets.QWidget):
         add_param(9, "RAAN (Omega)", self.ent_raan, "deg")
         add_param(10, "Argument of Periapsis (omega)", self.ent_argp, "deg")
         add_param(11, "True Anomaly (nu)", self.ent_ta, "deg")
-        
+
         layout.addLayout(form_layout)
-        
+
         # C. Quick Actions
         action_bar = QtWidgets.QHBoxLayout()
-        
+
         btn_zero = QtWidgets.QPushButton("Reset Orientation")
         btn_zero.setIcon(get_icon("fa6s.rotate-left", THEME['fg_main']))
         btn_zero.clicked.connect(self._zero_angles)
         btn_zero.setFixedHeight(32)
-        
+
         btn_circular = QtWidgets.QPushButton("Set Circular Orbit")
         btn_circular.setIcon(get_icon("fa6s.circle", THEME['fg_main']))
         btn_circular.clicked.connect(self._make_circular)
         btn_circular.setFixedHeight(32)
-        
+
         action_bar.addWidget(btn_zero)
         action_bar.addWidget(btn_circular)
         action_bar.addStretch()
-        
+
         layout.addLayout(action_bar)
-        
+
         # Connect Signals for Bidirectional Ghosting
         self.ent_hp.value_changed.connect(lambda _: self._update_ghost_orbit())
         self.ent_ha.value_changed.connect(lambda _: self._update_ghost_orbit())
@@ -788,10 +785,10 @@ class OrbitPage(QtWidgets.QWidget):
             w.value_changed.connect(lambda _: self._update_orbit_3d())
         self.btn_mode_altitude.toggled.connect(self._update_orbit_3d)
         self.btn_mode_circular.toggled.connect(self._update_orbit_3d)
-        
+
         # Initial Ghosting State
         self._sync_orbit_mode_ghosting()
-        
+
         return gb
 
     def _create_viz_group(self) -> QtWidgets.QGroupBox:
@@ -887,33 +884,33 @@ class OrbitPage(QtWidgets.QWidget):
         # Prevent infinite recursion
         if self._updating_ghost:
             return
-        
+
         self._updating_ghost = True
-        
+
         try:
             is_alt_mode = self.btn_mode_altitude.isChecked()
-            
+
             if is_alt_mode:
                 # Altitude mode active: calculate a/e from hp/ha
                 try:
                     hp_text = self.ent_hp.text().strip()
                     ha_text = self.ent_ha.text().strip()
-                    
+
                     if hp_text:
                         hp = float(hp_text)
                         ha = float(ha_text) if ha_text else hp
-                        
+
                         # Formulas: From Altitude to Classical
                         rp = R_MOON + hp
                         ra = R_MOON + ha
-                        
+
                         # Ensure periapsis <= apoapsis
                         if rp > ra:
                             rp, ra = ra, rp
-                        
+
                         a = (rp + ra) / 2.0
                         e = (ra - rp) / (ra + rp) if (ra + rp) > 0 else 0.0
-                        
+
                         # Update ghost fields (block signals to prevent recursion)
                         self.ent_a.blockSignals(True)
                         self.ent_e.blockSignals(True)
@@ -928,25 +925,25 @@ class OrbitPage(QtWidgets.QWidget):
                 try:
                     a_text = self.ent_a.text().strip()
                     e_text = self.ent_e.text().strip()
-                    
+
                     if a_text:
                         a = float(a_text)
                         e = float(e_text) if e_text else 0.0
-                        
+
                         # Clamp eccentricity
                         e = max(0.0, min(0.999, e))
-                        
+
                         # Formulas: From Classical to Altitude
                         rp = a * (1 - e)
                         ra = a * (1 + e)
-                        
+
                         hp = rp - R_MOON
                         ha = ra - R_MOON
-                        
+
                         # Ensure non-negative altitudes
                         hp = max(0.0, hp)
                         ha = max(0.0, ha)
-                        
+
                         # Update ghost fields (block signals to prevent recursion)
                         self.ent_hp.blockSignals(True)
                         self.ent_ha.blockSignals(True)
@@ -970,7 +967,7 @@ class OrbitPage(QtWidgets.QWidget):
             return
         self._orbit_update_timer.start()
 
-    def _compute_orbit_state(self) -> "_OrbitState | None":
+    def _compute_orbit_state(self) -> _OrbitState | None:
         """Validate the current inputs into an :class:`_OrbitState`.
 
         Returns ``None`` when the active-mode inputs are empty, malformed, or
@@ -1032,7 +1029,7 @@ class OrbitPage(QtWidgets.QWidget):
         )
         self._update_metric_strip(state)
 
-    def _update_metric_strip(self, state: "_OrbitState") -> None:
+    def _update_metric_strip(self, state: _OrbitState) -> None:
         """Refresh the period/geometry/energy chips from a validated state."""
         mu = MU_MOON_KM3_S2  # km³/s², derived from lunaris.common.constants
         a_km, e = state.a_km, state.e
@@ -1058,7 +1055,7 @@ class OrbitPage(QtWidgets.QWidget):
             hp = self.ent_hp.text().strip()
             if hp:
                 self.ent_ha.setText(hp)
-        
+
         self._update_ghost_orbit()
         self._update_orbit_3d()
 

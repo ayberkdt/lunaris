@@ -20,9 +20,9 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from lunaris.surrogate.st_lrps.ui.studio import (  # noqa: E402
     PROFILE_CLI_MODULE,
+    TRAIN_CLI_MODULE,
     STLRPSProfilingTab,
     STLRPSTrainTab,
-    TRAIN_CLI_MODULE,
 )
 
 

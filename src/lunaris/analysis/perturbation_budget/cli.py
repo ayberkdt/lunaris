@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Iterable
 from dataclasses import replace
-from typing import Iterable, Optional
 
 from .config import (
     PerturbationBudgetConfig,
@@ -94,7 +94,7 @@ def config_from_args(args: argparse.Namespace) -> PerturbationBudgetConfig:
     return replace(cfg, **updates)
 
 
-def main(argv: Optional[Iterable[str]] = None) -> int:
+def main(argv: Iterable[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
     result = run_perturbation_budget(config_from_args(args))

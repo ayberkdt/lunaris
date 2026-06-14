@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Smoke tests for the Lunaris launcher / welcome hub.
 

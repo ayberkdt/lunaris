@@ -1,5 +1,4 @@
 # ST_LRPS/models/__init__.py
-# -*- coding: utf-8 -*-
 """
 Lunar Simulation - Models package
 =================================
@@ -28,7 +27,7 @@ from __future__ import annotations
 
 import importlib
 import sys
-from typing import Any, Final, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Final
 
 # -----------------------------------------------------------------------------
 # Lazy symbol exports: name -> (relative_module, attribute, short purpose)
@@ -36,7 +35,7 @@ from typing import Any, Final, TYPE_CHECKING
 # -----------------------------------------------------------------------------
 _EXPORTS: Final[dict[str, tuple[str, str, str]]] = {
     # Gravity / Spherical Harmonics (compute-only)
-    "GravityModel": (".spherical_harmonics", "GravityModel", "High-level SH gravity wrapper."), 
+    "GravityModel": (".spherical_harmonics", "GravityModel", "High-level SH gravity wrapper."),
     "SHWorkspace": (".spherical_harmonics", "SHWorkspace", "Reusable scratch buffers for SH kernels."),
     "compute_point_mass_acceleration": (".spherical_harmonics", "compute_point_mass_acceleration", "Baseline point-mass gravity."),
     "build_legendre_coeffs": (".spherical_harmonics", "build_legendre_coeffs", "Legendre recurrence constants."),
@@ -47,7 +46,7 @@ _EXPORTS: Final[dict[str, tuple[str, str, str]]] = {
     "sh_accel_adaptive_blend_numba": (".spherical_harmonics", "sh_accel_adaptive_blend_numba", "Numba kernel: adaptive/blended degree SH accel."),
 
     # Ephemeris & SPICE
-    "SpiceBuildConfig": (".ephemeris", "SpiceBuildConfig", "SPICE build configuration."), 
+    "SpiceBuildConfig": (".ephemeris", "SpiceBuildConfig", "SPICE build configuration."),
     "EphemerisTables": (".ephemeris", "EphemerisTables", "Prebuilt ephemeris tables container."),
     "EphemerisManager": (".ephemeris", "EphemerisManager", "Ephemeris accessor/manager."),
     "build_spice_tables": (".ephemeris", "build_spice_tables", "Build ephemeris tables from SPICE."),
@@ -82,11 +81,11 @@ _EXPORTS: Final[dict[str, tuple[str, str, str]]] = {
     "normalize_albedo_mode": (".lunar_albedo", "normalize_albedo_mode", "Albedo source-mode string -> code."),
 
     # Solar effects (SRP + shadow)
-    "SRPConfig": (".solar_effects", "SRPConfig", "Solar Radiation Pressure configuration."), 
-    "compute_srp_accel": (".solar_effects", "compute_srp_accel", "Compute SRP acceleration."), 
-    "accel_srp": (".solar_effects", "accel_srp", "SRP acceleration helper (low-level)."), 
-    "moon_shadow_factor_conical": (".solar_effects", "moon_shadow_factor_conical", "Conical umbra shadow factor."), 
-    "in_moon_umbra_conical": (".solar_effects", "in_moon_umbra_conical", "Umbra test (conical)."), 
+    "SRPConfig": (".solar_effects", "SRPConfig", "Solar Radiation Pressure configuration."),
+    "compute_srp_accel": (".solar_effects", "compute_srp_accel", "Compute SRP acceleration."),
+    "accel_srp": (".solar_effects", "accel_srp", "SRP acceleration helper (low-level)."),
+    "moon_shadow_factor_conical": (".solar_effects", "moon_shadow_factor_conical", "Conical umbra shadow factor."),
+    "in_moon_umbra_conical": (".solar_effects", "in_moon_umbra_conical", "Umbra test (conical)."),
 }
 
 # -----------------------------------------------------------------------------
@@ -94,15 +93,15 @@ _EXPORTS: Final[dict[str, tuple[str, str, str]]] = {
 # Exposed so users can do `from lunaris.physics import surface_effects` without eager import.
 # -----------------------------------------------------------------------------
 _LAZY_MODULES: Final[dict[str, str]] = {
-    "spherical_harmonics": "Spherical harmonics gravity (compute-only).", 
-    "ephemeris": "Ephemeris & SPICE utilities (can be heavy).", 
-    "relativity_effects": "Relativistic corrections.", 
-    "third_body_effects": "Earth/Sun third-body effects.", 
+    "spherical_harmonics": "Spherical harmonics gravity (compute-only).",
+    "ephemeris": "Ephemeris & SPICE utilities (can be heavy).",
+    "relativity_effects": "Relativistic corrections.",
+    "third_body_effects": "Earth/Sun third-body effects.",
     "solid_tides": "Elastic lunar solid-body tides.",
     "thermal_ir": "Lambertian lunar thermal IR radiation pressure.",
     "lunar_albedo": "Lambertian lunar albedo (reflected solar) radiation pressure.",
     "solar_effects": "SRP + eclipse/shadow geometry.",
-    "surface_effects": "Surface environment (topography/albedo/thermal; often heavy).", 
+    "surface_effects": "Surface environment (topography/albedo/thermal; often heavy).",
 }
 
 # Public API list (symbols + module shortcuts)
@@ -177,67 +176,66 @@ def __dir__() -> list[str]:
 # -----------------------------------------------------------------------------
 if TYPE_CHECKING:
     from . import (  # noqa: F401
-        spherical_harmonics,
         ephemeris,
-        relativity_effects,
-        third_body_effects,
-        solid_tides,
-        thermal_ir,
         lunar_albedo,
+        relativity_effects,
         solar_effects,
+        solid_tides,
+        spherical_harmonics,
         surface_effects,
-    )
-
-    from .spherical_harmonics import (  # noqa: F401
-        GravityModel,
-        SHWorkspace,
-        compute_point_mass_acceleration,
-        build_legendre_coeffs,
-        slice_gravity_model,
-        make_sh_workspace,
-        sh_accel_fixed,
-        sh_accel_fixed_numba,
-        sh_accel_adaptive_blend_numba,
+        thermal_ir,
+        third_body_effects,
     )
     from .ephemeris import (  # noqa: F401
-        SpiceBuildConfig,
-        EphemerisTables,
         EphemerisManager,
+        EphemerisTables,
+        SpiceBuildConfig,
         build_spice_tables,
         get_ephem_state,
+    )
+    from .lunar_albedo import (  # noqa: F401
+        accel_albedo_facets_numba,
+        calc_albedo_accel,
+        normalize_albedo_mode,
     )
     from .relativity_effects import (  # noqa: F401
         RelativityModel,
         calc_schwarzschild_accel,
     )
-    from .third_body_effects import (  # noqa: F401
-        ThirdBodyModel,
-        LoveParams,
-        EarthJ2Params,
-        calc_3rd_body_accel,
-        calc_j2_oblate_diff_accel,
-        accel_third_body_numba,
-        accel_solid_tide,
-    )
-    from .solid_tides import (  # noqa: F401
-        calc_solid_tide_accel,
-        accel_solid_tides_numba,
-        solid_tide_potential_degree,
-    )
-    from .thermal_ir import (  # noqa: F401
-        build_latlon_facets,
-        calc_thermal_ir_accel,
-        accel_thermal_ir_facets_numba,
-    )
-    from .lunar_albedo import (  # noqa: F401
-        calc_albedo_accel,
-        accel_albedo_facets_numba,
-        normalize_albedo_mode,
-    )
     from .solar_effects import (  # noqa: F401
         SRPConfig,
-        compute_srp_accel,
         accel_srp,
-        moon_shadow_factor_conical,
+        compute_srp_accel,
         in_moon_umbra_conical,
+        moon_shadow_factor_conical,
+    )
+    from .solid_tides import (  # noqa: F401
+        accel_solid_tides_numba,
+        calc_solid_tide_accel,
+        solid_tide_potential_degree,
+    )
+    from .spherical_harmonics import (  # noqa: F401
+        GravityModel,
+        SHWorkspace,
+        build_legendre_coeffs,
+        compute_point_mass_acceleration,
+        make_sh_workspace,
+        sh_accel_adaptive_blend_numba,
+        sh_accel_fixed,
+        sh_accel_fixed_numba,
+        slice_gravity_model,
+    )
+    from .thermal_ir import (  # noqa: F401
+        accel_thermal_ir_facets_numba,
+        build_latlon_facets,
+        calc_thermal_ir_accel,
+    )
+    from .third_body_effects import (  # noqa: F401
+        EarthJ2Params,
+        LoveParams,
+        ThirdBodyModel,
+        accel_solid_tide,
+        accel_third_body_numba,
+        calc_3rd_body_accel,
+        calc_j2_oblate_diff_accel,
     )

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Regression tests for lunar albedo (reflected-solar) radiation pressure.
 
 Covers the facet Lambertian model in :mod:`lunaris.physics.lunar_albedo` and its
@@ -17,7 +16,6 @@ import pytest
 from lunaris.common.constants import AU, C_LIGHT, R_MOON, SOLAR_FLUX_1AU
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
 from lunaris.core.dynamics import DynamicsEngine, _AlbedoPack
-from lunaris.physics.surface_effects import AlbedoConfig, albedo_accel
 from lunaris.physics.lunar_albedo import (
     accel_albedo_facets_numba,
     albedo_single_facet_accel_numba,
@@ -25,7 +23,7 @@ from lunaris.physics.lunar_albedo import (
     calc_albedo_accel,
     normalize_albedo_mode,
 )
-
+from lunaris.physics.surface_effects import AlbedoConfig, albedo_accel
 
 # A facet center at +X with an outward +X normal: directly under the Sun and the
 # spacecraft when both sit on the +X axis (mu_sun = mu_view = 1).
@@ -320,7 +318,7 @@ def test_albedo_grid_shape_mismatch_raises():
         surface_provider=surf,
         albedo=AlbedoConfig(albedo_mode="albedo_grid", facet_lat_count=4, facet_lon_count=8),
     )
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017  # invalid albedo config may fail with various types
         engine.build_rhs(force_rebuild=True)
 
 

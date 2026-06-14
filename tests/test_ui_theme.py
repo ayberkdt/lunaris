@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for the "Lunar Graphite" UI theme.
 
@@ -26,7 +25,6 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from lunaris.ui.core import ui_commons
 from lunaris.ui.core.ui_commons import (
     LOG_COLORS,
     ORBIT_THEME,

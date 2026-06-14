@@ -129,23 +129,27 @@ Guidelines for contributors
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
-from typing import Optional, Tuple, Any, Mapping
-from types import MappingProxyType
-import numpy as np
-import matplotlib.axes
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-from matplotlib.ticker import ScalarFormatter, LogLocator, LogFormatterSciNotation
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any
+
+import matplotlib.axes
+import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.ticker import LogFormatterSciNotation, LogLocator, ScalarFormatter
 
 from lunaris.loaders.io_helpers import (
     find_lunar_map_path as _find_lunar_map_path_from_loader,
+)
+from lunaris.loaders.io_helpers import (
     iter_lunar_map_candidates as _iter_lunar_map_candidates_from_loader,
+)
+from lunaris.loaders.io_helpers import (
     project_root_from_path as _project_root_from_path_loader,
 )
-
-
 
 # =============================================================================
 # 1.                          CONSTANTS & PALETTES
@@ -194,7 +198,7 @@ COLORS: Mapping[str, Mapping[str, str]] = MappingProxyType(
 
 # Ordered accent cycle for Matplotlib (stable and readable on white)
 # Example: ax.set_prop_cycle(color=COLOR_CYCLE)
-COLOR_CYCLE: Tuple[str, ...] = (
+COLOR_CYCLE: tuple[str, ...] = (
     COLORS["accent"]["blue"],
     COLORS["accent"]["red"],
     COLORS["accent"]["ochre"],
@@ -320,7 +324,7 @@ _FIGURE_SIZES = {
     "wide":         (12.0, 6.7),
     "wide_compact": (11.7, 6.6),
 }
-FIGURE_SIZES: Mapping[str, Tuple[float, float]] = MappingProxyType(_FIGURE_SIZES)
+FIGURE_SIZES: Mapping[str, tuple[float, float]] = MappingProxyType(_FIGURE_SIZES)
 
 
 # ----------------------------
@@ -341,7 +345,7 @@ _LABEL_UNIT = {
     "t_days":   ("Time", "days"),
     "t_s":      ("Time", "s"),
 }
-LABEL_UNIT: Mapping[str, Tuple[str, str]] = MappingProxyType(_LABEL_UNIT)
+LABEL_UNIT: Mapping[str, tuple[str, str]] = MappingProxyType(_LABEL_UNIT)
 
 
 
@@ -483,7 +487,7 @@ def apply_rcparams(style: PlotStyle = DEFAULT_STYLE) -> None:
 # 3.                          AXES-LEVEL STYLING
 # =============================================================================
 
-def apply_axes_style(ax: "matplotlib.axes.Axes", title: str = "") -> None:
+def apply_axes_style(ax: matplotlib.axes.Axes, title: str = "") -> None:
     """
     Apply a clean, publication-oriented style to a single Axes.
 
@@ -557,9 +561,9 @@ def apply_axes_style(ax: "matplotlib.axes.Axes", title: str = "") -> None:
 
 
 def format_scientific_axis(
-    ax: "matplotlib.axes.Axes",
+    ax: matplotlib.axes.Axes,
     axis: str = "y",
-    powerlimits: Tuple[int, int] = (-3, 3),
+    powerlimits: tuple[int, int] = (-3, 3),
 ) -> None:
     """
     Apply scientific-notation formatting using mathtext.
@@ -582,7 +586,7 @@ def format_scientific_axis(
         ax.xaxis.set_major_formatter(fmt)
 
 
-def format_log_axis_sci(ax: "matplotlib.axes.Axes", axis: str = "y", numticks: int = 8) -> None:
+def format_log_axis_sci(ax: matplotlib.axes.Axes, axis: str = "y", numticks: int = 8) -> None:
     """
     Improve log-axis tick locator + scientific formatting.
     """
@@ -624,14 +628,14 @@ def apply_standard_colorbar(cbar) -> None:
 # =============================================================================
 
 def apply_legend_style(
-    ax: "matplotlib.axes.Axes",
+    ax: matplotlib.axes.Axes,
     loc: str = "best",
     *,
-    title: Optional[str] = None,
+    title: str | None = None,
     ncol: int = 1,
     framealpha: float = 0.92,
     linewidth: float = 0.9,
-    text_color: Optional[str] = None,
+    text_color: str | None = None,
     **kwargs,
 ):
     """
@@ -679,7 +683,7 @@ def apply_legend_style(
     return leg
 
 
-def apply_standard_legend(ax: "matplotlib.axes.Axes", loc: str = "best", **kwargs):
+def apply_standard_legend(ax: matplotlib.axes.Axes, loc: str = "best", **kwargs):
     """Backwards-simple wrapper to keep legend usage consistent across the codebase."""
     return apply_legend_style(ax, loc=loc, **kwargs)
 
@@ -703,7 +707,7 @@ def _project_root_from_here(here: Path) -> Path:
     return _project_root_from_path_loader(here)
 
 
-def _iter_lunar_map_candidates(explicit_path: Optional[str] = None) -> list[Path]:
+def _iter_lunar_map_candidates(explicit_path: str | None = None) -> list[Path]:
     """
     Compatibility wrapper around loader-side lunar texture discovery.
 
@@ -717,7 +721,7 @@ def _iter_lunar_map_candidates(explicit_path: Optional[str] = None) -> list[Path
     )
 
 
-def _find_lunar_map_path(explicit_path: Optional[str] = None) -> Optional[str]:
+def _find_lunar_map_path(explicit_path: str | None = None) -> str | None:
     """
     Resolve the first available lunar texture path using loader-layer policy.
     """
@@ -727,7 +731,7 @@ def _find_lunar_map_path(explicit_path: Optional[str] = None) -> Optional[str]:
     )
 
 
-def load_lunar_map(path: Optional[str] = None, *, cache: bool = True):
+def load_lunar_map(path: str | None = None, *, cache: bool = True):
     """
     Load the lunar surface texture as a NumPy array (via matplotlib.image).
 
@@ -766,11 +770,11 @@ def load_lunar_map(path: Optional[str] = None, *, cache: bool = True):
 
 
 def add_lunar_background(
-    ax: "matplotlib.axes.Axes",
+    ax: matplotlib.axes.Axes,
     map_img=None,
-    map_path: Optional[str] = None,
+    map_path: str | None = None,
     alpha: float = 0.55,
-    extent: Tuple[float, float, float, float] = (-180.0, 180.0, -90.0, 90.0),
+    extent: tuple[float, float, float, float] = (-180.0, 180.0, -90.0, 90.0),
     zorder: int = 0,
     *,
     origin: str = "upper",
@@ -930,7 +934,7 @@ def get_accel_color(name: str) -> str:
     return THEME["text"]
 
 
-def get_series_color(name: Optional[str], *, idx: int = 0, default: Optional[str] = None) -> str:
+def get_series_color(name: str | None, *, idx: int = 0, default: str | None = None) -> str:
     """
     Return a stable color for a named series.
 
@@ -974,8 +978,8 @@ if __name__ == "__main__":
     # - deterministic color selection
     # - optional background loading (non-fatal if missing)
 
-    import numpy as np
     import matplotlib.pyplot as plt
+    import numpy as np
 
     # 1) Apply global theme/rcParams
     apply_rcparams()

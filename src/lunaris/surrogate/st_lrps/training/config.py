@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Configuration and CLI parsing for the lunar potential surrogate trainer.
 
@@ -35,7 +34,6 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Union
 
 from lunaris.common.paths import project_root_from_file
 from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta, _find_latest_dataset
@@ -43,7 +41,9 @@ from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta, _find_latest_da
 # Pull altitude defaults from the cloud-generation SSOT so both modules
 # always agree on the training envelope without manual synchronisation.
 try:
-    from lunaris.surrogate.st_lrps.data.spatial_cloud_parameters import DEFAULT_SPATIAL_CLOUD_CONFIG as _CLOUD_CFG
+    from lunaris.surrogate.st_lrps.data.spatial_cloud_parameters import (
+        DEFAULT_SPATIAL_CLOUD_CONFIG as _CLOUD_CFG,
+    )
 except ImportError:  # pragma: no cover - cloud-param defaults are optional
     _CLOUD_CFG = None  # type: ignore
 
@@ -56,11 +56,11 @@ class TrainConfig:
     data: str
     out: str
     dataset_name: str = "data"
-    train_data: Optional[str] = None
-    val_data: Optional[str] = None
-    test_data: Optional[str] = None
-    ood_data: Optional[str] = None
-    suite_manifest: Optional[str] = None  # path to suite manifest.json (provenance only)
+    train_data: str | None = None
+    val_data: str | None = None
+    test_data: str | None = None
+    ood_data: str | None = None
+    suite_manifest: str | None = None  # path to suite manifest.json (provenance only)
 
     seed: int = 42
     epochs: int = 200
@@ -70,21 +70,21 @@ class TrainConfig:
     sampler_block_size: int = 65_536
     num_workers: int = 2
     pin_memory: bool = True
-    prefetch_factor: Optional[int] = None  # only used when num_workers > 0
+    prefetch_factor: int | None = None  # only used when num_workers > 0
 
     val_ratio: float = 0.1
-    split_seed: Optional[int] = None
+    split_seed: int | None = None
     split_policy: str = "seeded_random"
     test_fraction: float = 0.0
     # Spatial-block split knobs (Moon-fixed lon/lat grid holdout).
     spatial_lon_bins: int = 12
     spatial_lat_bins: int = 6
-    spatial_val_block_fraction: Optional[float] = None  # defaults to val_ratio
-    spatial_test_block_fraction: Optional[float] = None  # defaults to test_fraction
+    spatial_val_block_fraction: float | None = None  # defaults to val_ratio
+    spatial_test_block_fraction: float | None = None  # defaults to test_fraction
     spatial_altitude_bins: int = 4
     # OOD altitude split knobs. Thresholds override the fraction-based holdout.
-    ood_low_altitude_max_km: Optional[float] = None
-    ood_high_altitude_min_km: Optional[float] = None
+    ood_low_altitude_max_km: float | None = None
+    ood_high_altitude_min_km: float | None = None
     ood_holdout_fraction: float = 0.2
 
     # Model architecture
@@ -100,7 +100,7 @@ class TrainConfig:
     weight_decay: float = 1e-6
     output_head_lr_mult: float = 1.0
     max_grad_norm: float = 0.5
-    t_max: Optional[int] = None   # defaults to epochs for monotonic cosine decay
+    t_max: int | None = None   # defaults to epochs for monotonic cosine decay
     warmup_epochs: int = 5
     min_lr_ratio: float = 0.05
     patience: int = 30
@@ -122,7 +122,7 @@ class TrainConfig:
     # Prevents the derivative field from drifting completely unconstrained.
     # Set to 0.0 for a pure potential-only warm-up (no acceleration floor).
     accel_min_factor: float = 0.15
-    a_sign: Union[float, str] = "auto"
+    a_sign: float | str = "auto"
 
     # SSOT / Physics Meta behavior
     use_si: bool = True
@@ -165,8 +165,8 @@ class TrainConfig:
     # Quick-check mode: run 1 epoch with 5 train + 2 val batches to verify the
     # full pipeline (CUDA, autograd, checkpoint, metrics) in under a minute.
     quick_check: bool = False
-    max_train_batches: Optional[int] = None  # cap training batches (None = full epoch)
-    max_val_batches: Optional[int] = None    # cap validation batches (None = full epoch)
+    max_train_batches: int | None = None  # cap training batches (None = full epoch)
+    max_val_batches: int | None = None    # cap validation batches (None = full epoch)
 
     # Acceleration direction loss -> penalises angular error between a_pred and a_true.
     # L_dir = mean(1 - cos_sim(a_pred, a_true)) for points where ||a_true|| > floor.
@@ -219,8 +219,8 @@ class TrainConfig:
     laplacian_mode: str = "diagnostic"    # "off" | "diagnostic" | "train"
     collocation_laplacian_every: int = 25  # optimizer steps between collocation Laplacian evaluations
     # Collocation altitude bounds (defaults to altitude_min_km / altitude_max_km when None)
-    collocation_alt_min_km: Optional[float] = None
-    collocation_alt_max_km: Optional[float] = None
+    collocation_alt_min_km: float | None = None
+    collocation_alt_max_km: float | None = None
     # Separate control over collocation samples (alias for laplacian_subset_size in collocation call)
     collocation_laplacian_samples: int = 512
     collocation_laplacian_hutchinson_samples: int = 4
@@ -254,8 +254,8 @@ class TrainConfig:
     physical_radial_decay_append_raw: bool = True
     physical_radial_decay_include_unit: bool = True
     physical_radial_decay_include_r_scaled: bool = True
-    x_scale_m: Optional[float] = None
-    resolved_r_ref_m: Optional[float] = None
+    x_scale_m: float | None = None
+    resolved_r_ref_m: float | None = None
 
     # Real spherical-harmonic angular basis (experimental). Genuine real SH up to
     # real_sh_degree (orthonormal recurrence). See RealSHBasisEncoding.
@@ -282,10 +282,10 @@ class TrainConfig:
     # checkpoint so evaluation reconstructs the identical multi-scale spectrum.
     # Leaving these None at build time for n_bands>1 is a hard error (no silent
     # fallback to 0/50, which silently corrupted reloaded MultiScale SIRENs).
-    degree_min: Optional[int] = None
-    degree_max: Optional[int] = None
+    degree_min: int | None = None
+    degree_max: int | None = None
     # Resolved per-band SIREN frequencies (filled in by the engine for n_bands>1).
-    w0_bands: Optional[list] = None
+    w0_bands: list | None = None
 
     # Target scaler robustness. "max" lets a single outlier shrink every
     # normalized residual target; "hybrid" caps the scale at
@@ -316,7 +316,7 @@ class TrainConfig:
     # optimizer, GradNorm and RNG state from a previous run and continues from the
     # last completed epoch. --epochs is the TOTAL target epoch count (not extra
     # epochs). Defaults preserve existing behavior when resume is not used.
-    resume_from: Optional[str] = None
+    resume_from: str | None = None
     resume_checkpoint: str = "last"          # "last" (continue training) | "best" (fine-tune)
     resume_strict: bool = True               # fail on architecture/dataset/scaler-critical mismatch
     resume_allow_longer_epochs: bool = True  # allow extending the epoch target on resume
@@ -329,14 +329,14 @@ class TrainConfig:
     # This NEVER feeds back into the optimizer, scheduler, GradNorm, checkpoint
     # selection, gradients, RNG, or model weights. periodic_eval_count and
     # periodic_eval_every_epochs are mutually exclusive; both None = disabled.
-    periodic_eval_count: Optional[int] = None          # run N evals across the full horizon
-    periodic_eval_every_epochs: Optional[int] = None   # alternative: run every K epochs
+    periodic_eval_count: int | None = None          # run N evals across the full horizon
+    periodic_eval_every_epochs: int | None = None   # alternative: run every K epochs
     periodic_eval_dataset: str = "val"                 # "val" | "test" | "ood"
     periodic_eval_max_samples: int = 200_000           # keep monitoring eval lightweight
-    periodic_eval_batch_size: Optional[int] = None     # None = reuse training batch_size
+    periodic_eval_batch_size: int | None = None     # None = reuse training batch_size
     periodic_eval_device: str = "auto"                 # "auto" | "cpu" | "cuda" | "mps"
     periodic_eval_prefer_checkpoint: str = "last"      # "last" (default) | "best"
-    periodic_eval_timeout_sec: Optional[int] = None    # per-eval subprocess timeout
+    periodic_eval_timeout_sec: int | None = None    # per-eval subprocess timeout
     periodic_eval_continue_on_fail: bool = True        # failure must not abort training
 
 
@@ -405,6 +405,7 @@ def apply_model_preset(cfg: TrainConfig) -> TrainConfig:
 
 
 import dataclasses as _dataclasses
+
 _TC_DEFAULTS: dict = {
     f.name: f.default
     for f in _dataclasses.fields(TrainConfig)
@@ -428,7 +429,7 @@ def parse_args() -> TrainConfig:
         description="Sobolev scalar-potential surrogate training for residual lunar gravity",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-    
+
     # Data & Output
     group_data = ap.add_argument_group("Data & Output")
     group_data.add_argument("--data", default=None, help="Path to input HDF5 file (fallback for train/val split).")
@@ -1135,7 +1136,7 @@ def parse_args() -> TrainConfig:
     script_dir = Path(__file__).resolve().parents[1]
     repo_root = project_root_from_file(__file__)
     data_path_raw = a.data or os.environ.get("SPATIAL_CLOUD_INPUT") or os.environ.get("DATASET_PATH")
-    
+
     if data_path_raw is None and a.train_data is None:
         found = _find_latest_dataset(script_dir)
         if found:
@@ -1220,7 +1221,7 @@ def parse_args() -> TrainConfig:
             w0_hidden_val = 30.0
 
     # 4. Resolve a_sign
-    a_sign_val: Union[float, str] = "auto"
+    a_sign_val: float | str = "auto"
     if str(a.a_sign).lower() != "auto":
         try:
             a_sign_val = float(a.a_sign)
@@ -1387,7 +1388,7 @@ def parse_args() -> TrainConfig:
             "exclusive. Set at most one."
         )
         sys.exit(1)
-    setattr(cfg, "_model_preset_explicit", bool(preset_explicit))
+    cfg._model_preset_explicit = bool(preset_explicit)
     return apply_model_preset(cfg)
 
 

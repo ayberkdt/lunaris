@@ -26,18 +26,24 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Tuple
 
 import numpy as np
 import numpy.typing as npt
 from numba import njit
 
-from lunaris.common.constants import AU, C_LIGHT, P_SUN_1AU, R_EARTH_MEAN, R_MOON_MEAN, SIGMA_SB, SOLAR_FLUX_1AU
+from lunaris.common.constants import (
+    AU,
+    C_LIGHT,
+    P_SUN_1AU,
+    R_EARTH_MEAN,
+    R_MOON_MEAN,
+    SIGMA_SB,
+    SOLAR_FLUX_1AU,
+)
 from lunaris.common.type_defs import SpacecraftProps, Vec3
+from lunaris.physics.lunar_albedo import calc_albedo_accel, normalize_albedo_mode
 from lunaris.physics.solar_effects import moon_shadow_factor_conical
 from lunaris.physics.thermal_ir import build_latlon_facets, calc_thermal_ir_accel
-from lunaris.physics.lunar_albedo import calc_albedo_accel, normalize_albedo_mode
-
 
 # =============================================================================
 # 1) Config bundles
@@ -278,7 +284,7 @@ def accel_albedo_simple(
     k_lambert: float,
     Cr: float, area_m2: float, mass_kg: float,
     enable_eclipse: int,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """Simple Lambertian albedo (engineering model)."""
     if not _valid_area_mass(area_m2, mass_kg):
         return 0.0, 0.0, 0.0

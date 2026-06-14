@@ -9,7 +9,10 @@ containers.
 
 ## Token Ownership
 
-Typed tokens live in `lunaris.ui.theme.tokens`.
+Typed tokens live in `lunaris.ui_foundation.tokens`, the single, Qt-binding-neutral
+source of truth shared by both desktop applications. `lunaris.ui.theme.tokens` is a
+compatibility re-export only — do not define tokens there. See
+[UI_THEME.md](UI_THEME.md#ownership) for the full SSOT / re-export map.
 
 - `ColorTokens`: surfaces, text tiers, borders, accent, and semantic colors.
 - `TypographyTokens`: font families, sizes, and weights.

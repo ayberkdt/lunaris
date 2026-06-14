@@ -14,13 +14,12 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Optional, Tuple, List
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.colors import Normalize
 
-from lunaris.loaders.io_surface import TopographyGrid, LOLAAlbedoGrid
+from lunaris.loaders.io_surface import LOLAAlbedoGrid, TopographyGrid
 
 # =============================================================================
 # Helpers: paths, downsampling, etc.
@@ -34,7 +33,7 @@ def _downsample(arr: np.ndarray, stride: int) -> np.ndarray:
     s = max(1, int(stride))
     return arr[::s, ::s]
 
-def resolve_topography_paths(label_path: Optional[str | Path], img_path: Optional[str | Path]) -> tuple[Path, Path]:
+def resolve_topography_paths(label_path: str | Path | None, img_path: str | Path | None) -> tuple[Path, Path]:
     """Resolve topography label and IMG paths."""
     if not label_path or not img_path:
         raise ValueError("Both label_path and img_path must be provided for topography.")
@@ -46,15 +45,15 @@ def resolve_topography_paths(label_path: Optional[str | Path], img_path: Optiona
         raise FileNotFoundError(f"Topography IMG not found: {img}")
     return lbl, img
 
-def resolve_albedo_paths(label_path: Optional[str | Path], img_path: Optional[str | Path]) -> tuple[Path | None, Path | None]:
+def resolve_albedo_paths(label_path: str | Path | None, img_path: str | Path | None) -> tuple[Path | None, Path | None]:
     """Resolve albedo label and IMG paths."""
     if not label_path:
         return None, None
     lbl = Path(label_path)
     if not lbl.exists():
         return None, None
-        
-    img: Optional[Path] = None
+
+    img: Path | None = None
     if img_path:
         img = Path(img_path)
     else:
@@ -68,20 +67,20 @@ def resolve_albedo_paths(label_path: Optional[str | Path], img_path: Optional[st
         cand = lbl.with_name(stem + ".img")
         if cand.exists():
             img = cand
-            
+
     if img is not None and not img.exists():
         img = None
-        
+
     if img is None:
         return None, None
-        
+
     return lbl, img
 
 # =============================================================================
 # Windowed maximum query (lat/lon range) -- memory-safe
 # =============================================================================
 
-def _latlon_centers_deg(topo: TopographyGrid) -> Tuple[np.ndarray, np.ndarray]:
+def _latlon_centers_deg(topo: TopographyGrid) -> tuple[np.ndarray, np.ndarray]:
     lat = getattr(topo, "lat_centers_deg", None)
     lon = getattr(topo, "lon_centers_deg", None)
     if lat is None:
@@ -92,13 +91,13 @@ def _latlon_centers_deg(topo: TopographyGrid) -> Tuple[np.ndarray, np.ndarray]:
         raise AttributeError("TopographyGrid does not expose lat/lon centers.")
     return np.asarray(lat, dtype=np.float64), np.asarray(lon, dtype=np.float64)
 
-def _indices_to_slices(idx: np.ndarray) -> List[slice]:
+def _indices_to_slices(idx: np.ndarray) -> list[slice]:
     idx = np.asarray(idx, dtype=int)
     if idx.size == 0:
         return []
     idx_sorted = np.sort(idx)
 
-    slices: List[slice] = []
+    slices: list[slice] = []
     start = int(idx_sorted[0])
     prev = int(idx_sorted[0])
 
@@ -114,7 +113,7 @@ def _indices_to_slices(idx: np.ndarray) -> List[slice]:
     slices.append(slice(start, prev + 1))
     return slices
 
-def _select_lat_slices(lat_deg: np.ndarray, lat_range: Optional[Tuple[float, float]]) -> List[slice]:
+def _select_lat_slices(lat_deg: np.ndarray, lat_range: tuple[float, float] | None) -> list[slice]:
     if lat_range is None:
         return [slice(0, lat_deg.size)]
     lat_min, lat_max = float(lat_range[0]), float(lat_range[1])
@@ -122,7 +121,7 @@ def _select_lat_slices(lat_deg: np.ndarray, lat_range: Optional[Tuple[float, flo
     idx = np.where((lat_deg >= lo) & (lat_deg <= hi))[0].astype(int)
     return _indices_to_slices(idx)
 
-def _select_lon_slices(lon_deg: np.ndarray, lon_range: Optional[Tuple[float, float]]) -> Tuple[List[slice], bool]:
+def _select_lon_slices(lon_deg: np.ndarray, lon_range: tuple[float, float] | None) -> tuple[list[slice], bool]:
     n = lon_deg.size
     if lon_range is None:
         return [slice(0, n)], False
@@ -146,9 +145,9 @@ def _select_lon_slices(lon_deg: np.ndarray, lon_range: Optional[Tuple[float, flo
 
 def report_topography_max(
     topo: TopographyGrid,
-    lat_range: Optional[Tuple[float, float]] = None,
-    lon_range: Optional[Tuple[float, float]] = None,
-) -> Tuple[float, float, float]:
+    lat_range: tuple[float, float] | None = None,
+    lon_range: tuple[float, float] | None = None,
+) -> tuple[float, float, float]:
     """Find max topography height within lat/lon bounds."""
     dn = topo.dn_km
     sf = float(getattr(topo.info, "scaling_factor", 1.0) or 1.0)
@@ -216,7 +215,7 @@ def plot_topography_2d(
     topo: TopographyGrid,
     out_dir: str | Path,
     stride: int = 16,
-    clip_m: Optional[Tuple[float, float]] = None,
+    clip_m: tuple[float, float] | None = None,
     show: bool = False,
 ) -> Path:
     out_dir = _ensure_dir(Path(out_dir))
@@ -268,7 +267,7 @@ def plot_topography_3d(
     out_dir: str | Path,
     stride: int = 128,
     zscale: float = 2.0,
-    clip_m: Optional[Tuple[float, float]] = None,
+    clip_m: tuple[float, float] | None = None,
     show: bool = False,
     elev: float = 25.0,
     azim: float = 35.0,
@@ -334,7 +333,7 @@ def plot_albedo_2d(
     alb: LOLAAlbedoGrid,
     out_dir: str | Path,
     stride: int = 16,
-    clip: Optional[Tuple[float, float]] = None,
+    clip: tuple[float, float] | None = None,
     show: bool = False,
 ) -> Path:
     out_dir = _ensure_dir(Path(out_dir))
@@ -443,15 +442,15 @@ def run_surface_explorer(args: argparse.Namespace) -> int:
 
     return 0
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Lunar Surface and Topography Explorer.")
     parser.add_argument("--topo-label", help="Path to topography .lbl file")
     parser.add_argument("--topo-img", help="Path to topography .img file")
     parser.add_argument("--albedo-label", help="Path to albedo .lbl file")
     parser.add_argument("--albedo-img", help="Path to albedo .img file (optional if inferable)")
-    
+
     parser.add_argument("--out-dir", default="outputs_surface", help="Output directory for plots")
-    
+
     parser.add_argument("--lat-min", type=float, help="Min latitude for query")
     parser.add_argument("--lat-max", type=float, help="Max latitude for query")
     parser.add_argument("--lon-min", type=float, help="Min longitude for query")
@@ -460,11 +459,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--plot-2d", action="store_true", help="Plot 2D topography")
     parser.add_argument("--plot-3d", action="store_true", help="Plot 3D topography")
     parser.add_argument("--plot-albedo", action="store_true", help="Plot 2D albedo")
-    
+
     parser.add_argument("--stride-2d", type=int, default=16, help="Downsample stride for 2D topo")
     parser.add_argument("--stride-3d", type=int, default=128, help="Downsample stride for 3D topo")
     parser.add_argument("--stride-albedo", type=int, default=16, help="Downsample stride for albedo")
-    
+
     parser.add_argument("--show", action="store_true", help="Display GUI plot windows")
 
     args = parser.parse_args(argv)

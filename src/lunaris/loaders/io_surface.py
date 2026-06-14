@@ -22,14 +22,15 @@ reradiation, etc.) live in their respective effect modules.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from functools import lru_cache
-import warnings
 import math
 import re
+import warnings
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Protocol, Tuple, Union, Callable, TypeVar
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Protocol, TypeVar
 
 import numpy as np
 import numpy.typing as npt
@@ -57,8 +58,8 @@ _LABEL_NAME_SUFFIXES: tuple[str, ...] = (
 # -----------------------------------------------------------------------------
 # Local type aliases
 # -----------------------------------------------------------------------------
-Number = Union[int, float]
-PathLike = Union[str, Path]
+Number = int | float
+PathLike = str | Path
 
 
 # =============================================================================
@@ -194,7 +195,7 @@ _RE_FILE_NAME = re.compile(r'\bFILE_NAME\s*=\s*"([^"]+)"', flags=re.IGNORECASE |
 _RE_RECORD_BYTES = re.compile(r"\bRECORD_BYTES\s*=\s*(\d+)", flags=re.IGNORECASE | re.MULTILINE)
 
 
-def _read_text(path: Union[str, Path]) -> str:
+def _read_text(path: str | Path) -> str:
     """Read text robustly (UTF-8), ignoring decoding errors."""
     return Path(path).read_text(encoding="utf-8", errors="ignore")
 
@@ -204,7 +205,7 @@ def _strip_pds_comments(text: str) -> str:
     return _RE_PDS_COMMENT.sub("", text)
 
 
-def _re_find_one(pattern: Union[str, re.Pattern[str]], text: str, cast: Callable[[str], T] = str) -> T:
+def _re_find_one(pattern: str | re.Pattern[str], text: str, cast: Callable[[str], T] = str) -> T:
     """
     Find a required PDS field using a regex capturing group (group 1).
 
@@ -227,11 +228,11 @@ def _re_find_one(pattern: Union[str, re.Pattern[str]], text: str, cast: Callable
 
 
 def _re_find_optional(
-    pattern: Union[str, re.Pattern[str]],
+    pattern: str | re.Pattern[str],
     text: str,
     cast: Callable[[str], T] = str,
-    default: Optional[T] = None,
-) -> Optional[T]:
+    default: T | None = None,
+) -> T | None:
     """
     Find an optional PDS field using a regex capturing group (group 1).
 
@@ -254,7 +255,7 @@ def _re_find_optional(
         ) from e
 
 
-def _strip_known_label_suffixes(p: Union[str, Path]) -> Path:
+def _strip_known_label_suffixes(p: str | Path) -> Path:
     """
     Remove common label suffixes to recover the base stem.
 
@@ -267,7 +268,7 @@ def _strip_known_label_suffixes(p: Union[str, Path]) -> Path:
     return base
 
 
-def _find_case_insensitive(path: Union[str, Path]) -> Optional[Path]:
+def _find_case_insensitive(path: str | Path) -> Path | None:
     """
     Return an existing path even if the filename casing differs.
 
@@ -292,7 +293,7 @@ def _find_case_insensitive(path: Union[str, Path]) -> Optional[Path]:
     return None
 
 
-def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> Tuple[Optional[str], int]:
+def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> tuple[str | None, int]:
     """
     Parse the PDS3 '^IMAGE' pointer.
 
@@ -329,7 +330,7 @@ def _parse_pds3_image_pointer(label_text: str, *, strict: bool = True) -> Tuple[
     return None, 1
 
 
-def _resolve_img_from_label(label_path: Union[str, Path], *, strict: bool = True) -> Tuple[Path, int]:
+def _resolve_img_from_label(label_path: str | Path, *, strict: bool = True) -> tuple[Path, int]:
     """
     Resolve the binary IMG path and byte offset from a PDS3 label file.
 
@@ -392,7 +393,7 @@ def _resolve_img_from_label(label_path: Union[str, Path], *, strict: bool = True
     candidates.append(stem.with_suffix(".img"))
 
     # 4) Resolve
-    img_path: Optional[Path] = None
+    img_path: Path | None = None
 
     # Special case: data inside label (ptr_file None) with a non-trivial start record
     if ptr_file is None and start_record > 1:
@@ -457,13 +458,13 @@ class PDS3MapInfo:
     center_lat_deg: float
 
     # --- optional reference ellipsoid radii (km) ---
-    a_axis_radius_km: Optional[float] = None
-    b_axis_radius_km: Optional[float] = None
-    c_axis_radius_km: Optional[float] = None
+    a_axis_radius_km: float | None = None
+    b_axis_radius_km: float | None = None
+    c_axis_radius_km: float | None = None
 
 
 @lru_cache(maxsize=128)
-def parse_ldem_label(label_path: Union[str, Path]) -> PDS3MapInfo:
+def parse_ldem_label(label_path: str | Path) -> PDS3MapInfo:
     """
     Parse the minimal LOLA LDEM-style metadata from a PDS3 label.
 
@@ -657,7 +658,7 @@ class TopographyGrid(TopographyProvider):
     def __init__(
         self,
         label_path: PathLike,
-        img_path: Optional[PathLike] = None,
+        img_path: PathLike | None = None,
         *,
         mmap: bool = True,
         flip_lat: bool = False,
@@ -687,14 +688,14 @@ class TopographyGrid(TopographyProvider):
         lon_e = float(self.info.east_lon_deg) - 0.5 * self.ddeg
         self._lon_centers_deg = np.linspace(lon_w, lon_e, int(self.info.samples), dtype=np.float64)
 
-        self._arr: Optional[npt.NDArray[np.generic]] = None
+        self._arr: npt.NDArray[np.generic] | None = None
         if mmap:
             self.open(mmap=True)
 
     # -------------------------------------------------------------------------
     # I/O
     # -------------------------------------------------------------------------
-    def open(self, *, mmap: bool = True) -> "TopographyGrid":
+    def open(self, *, mmap: bool = True) -> TopographyGrid:
         """Open/attach the raster array (idempotent)."""
         if self._arr is not None:
             return self
@@ -760,7 +761,7 @@ class TopographyGrid(TopographyProvider):
         _, _, r_m = latlon_from_xyz_m(float(x_m), float(y_m), float(z_m), lon_0_360=True)
         return float(r_m) - self.reference_radius_m
 
-    def _ij_from_latlon(self, lat_deg: Number, lon_deg: Number) -> Tuple[float, float]:
+    def _ij_from_latlon(self, lat_deg: Number, lon_deg: Number) -> tuple[float, float]:
         """
         Convert (lat, lon) in degrees -> fractional (i, j) indices into the raster.
 
@@ -872,7 +873,7 @@ class PDS3CylindricalGrid:
     def __init__(
         self,
         label_path: PathLike,
-        img_path: Optional[PathLike] = None,
+        img_path: PathLike | None = None,
         *,
         mmap: bool = True,
         flip_lat: bool = False,
@@ -900,11 +901,11 @@ class PDS3CylindricalGrid:
         lon_e = float(self.info.east_lon_deg) - 0.5 * self.ddeg
         self._lon_centers_deg = np.linspace(lon_w, lon_e, int(self.info.samples), dtype=np.float64)
 
-        self._arr: Optional[npt.NDArray[np.generic]] = None
+        self._arr: npt.NDArray[np.generic] | None = None
         if mmap:
             self.open(mmap=True)
 
-    def open(self, *, mmap: bool = True) -> "PDS3CylindricalGrid":
+    def open(self, *, mmap: bool = True) -> PDS3CylindricalGrid:
         """Open/attach the raster array (idempotent)."""
         if self._arr is not None:
             return self
@@ -943,7 +944,7 @@ class PDS3CylindricalGrid:
     def lon_centers_deg(self) -> npt.NDArray[np.float64]:
         return self._lon_centers_deg
 
-    def _ij_from_latlon(self, lat_deg: Number, lon_deg: Number) -> Tuple[float, float]:
+    def _ij_from_latlon(self, lat_deg: Number, lon_deg: Number) -> tuple[float, float]:
         lat = float(lat_deg)
         lon = wrap_lon_deg(float(lon_deg), float(self.info.west_lon_deg), float(self.info.east_lon_deg))
 
@@ -1020,15 +1021,15 @@ class SurfaceGrids:
 
     This container makes it easy to pass around datasets without tuple unpacking.
     """
-    topo: Optional[TopographyGrid] = None
-    albedo: Optional[LOLAAlbedoGrid] = None
+    topo: TopographyGrid | None = None
+    albedo: LOLAAlbedoGrid | None = None
 
 
 def load_surface_grids(
     *,
-    ldem_root: Optional[PathLike] = None,
-    albedo_root: Optional[PathLike] = None,
-    ldem_ppd: Optional[int] = None,
+    ldem_root: PathLike | None = None,
+    albedo_root: PathLike | None = None,
+    ldem_ppd: int | None = None,
     mmap: bool = True,
     flip_lat_ldem: bool = False,
     flip_lat_albedo: bool = False,
@@ -1044,8 +1045,8 @@ def load_surface_grids(
     SurfaceGrids
         topo and/or albedo may be None.
     """
-    topo: Optional[TopographyGrid] = None
-    alb: Optional[LOLAAlbedoGrid] = None
+    topo: TopographyGrid | None = None
+    alb: LOLAAlbedoGrid | None = None
 
     if ldem_root is not None:
         ldem_lbl, ldem_img = find_ldem_product(ldem_root, ppd=ldem_ppd)
@@ -1193,7 +1194,7 @@ def _iter_label_candidates(root: Path) -> list[Path]:
     return sorted(out)
 
 
-def find_ldem_product(root: PathLike, *, ppd: Optional[int] = None) -> Tuple[Path, Path]:
+def find_ldem_product(root: PathLike, *, ppd: int | None = None) -> tuple[Path, Path]:
     """
     Locate a LOLA LDEM (topography) label + IMG pair.
 
@@ -1254,7 +1255,7 @@ def find_ldem_product(root: PathLike, *, ppd: Optional[int] = None) -> Tuple[Pat
 
 
 
-def find_lola_albedo_product(root: PathLike) -> Tuple[Path, Path]:
+def find_lola_albedo_product(root: PathLike) -> tuple[Path, Path]:
     """
     Locate a LOLA Albedo (LDAM) cylindrical label + IMG pair.
 
@@ -1310,7 +1311,7 @@ def _grid_albedo_payload(
     alb: Any,
     *,
     default_albedo: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Package an albedo grid into a plain dict for Numba-side RHS consumption.
 
@@ -1333,8 +1334,8 @@ def _grid_albedo_payload(
     if info is None or dn is None:
         return {"albedo_const": float(default_albedo)}
 
-    n_lines = int(getattr(info, "lines"))
-    n_samples = int(getattr(info, "samples"))
+    n_lines = int(info.lines)
+    n_samples = int(info.samples)
 
     # Your grids expose ddeg = 1/ppd
     res_deg = float(getattr(alb, "ddeg", 1.0))
@@ -1396,11 +1397,11 @@ class SurfaceProvider(Protocol):
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float: ...
     def albedo_deg(self, lat_deg: float, lon_deg: float) -> float: ...
 
-    def grids(self) -> "SurfaceGrids":
+    def grids(self) -> SurfaceGrids:
         """Return underlying grid objects if available, otherwise empty."""
         return SurfaceGrids(None, None)
 
-    def as_numba_dict(self) -> Dict[str, Any]:
+    def as_numba_dict(self) -> dict[str, Any]:
         """Return plain dict payload for core.dynamics (Numba-side)."""
         return {"albedo_const": 0.12}
 
@@ -1424,11 +1425,11 @@ class FileBackedSurfaceProvider:
     - ``as_numba_dict()`` for Numba-side RHS consumption.
     """
 
-    ldem_root: Optional[PathLike] = None
-    albedo_root: Optional[PathLike] = None
+    ldem_root: PathLike | None = None
+    albedo_root: PathLike | None = None
     mmap: bool = True
     flip_lat: bool = False
-    ldem_ppd: Optional[int] = None
+    ldem_ppd: int | None = None
 
     default_radius_m: float = float(R_MOON_MEAN)
     default_albedo: float = 0.12
@@ -1437,8 +1438,8 @@ class FileBackedSurfaceProvider:
     warn_on_fallback: bool = True
 
     # internal
-    _grids: "SurfaceGrids" = None  # type: ignore
-    _errors: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
+    _grids: SurfaceGrids = None  # type: ignore
+    _errors: dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.default_radius_m = float(self.default_radius_m)
@@ -1457,7 +1458,7 @@ class FileBackedSurfaceProvider:
                 if self.strict_io:
                     raise
                 if self.warn_on_fallback:
-                    warnings.warn(f"LDEM load failed, falling back to constant radius: {e}", RuntimeWarning)
+                    warnings.warn(f"LDEM load failed, falling back to constant radius: {e}", RuntimeWarning, stacklevel=2)
 
         if self.albedo_root is not None:
             try:
@@ -1468,19 +1469,19 @@ class FileBackedSurfaceProvider:
                 if self.strict_io:
                     raise
                 if self.warn_on_fallback:
-                    warnings.warn(f"Albedo load failed, falling back to constant albedo: {e}", RuntimeWarning)
+                    warnings.warn(f"Albedo load failed, falling back to constant albedo: {e}", RuntimeWarning, stacklevel=2)
 
         self._grids = SurfaceGrids(topo=topo, albedo=alb)
 
     @property
-    def errors(self) -> Dict[str, str]:
+    def errors(self) -> dict[str, str]:
         """Human-readable load errors captured during initialization."""
         return dict(self._errors)
 
-    def grids(self) -> "SurfaceGrids":
+    def grids(self) -> SurfaceGrids:
         return self._grids
 
-    def as_numba_dict(self) -> Dict[str, Any]:
+    def as_numba_dict(self) -> dict[str, Any]:
         return _grid_albedo_payload(self._grids.albedo, default_albedo=self.default_albedo)
 
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float:
@@ -1517,8 +1518,8 @@ class InMemorySurfaceProvider:
       - using ConstantTopography / ConstantAlbedo
     """
 
-    topo: Optional["TopographyProvider"] = None
-    albedo: Optional["AlbedoProvider"] = None
+    topo: TopographyProvider | None = None
+    albedo: AlbedoProvider | None = None
     default_radius_m: float = float(R_MOON_MEAN)
     default_albedo: float = 0.12
 
@@ -1526,11 +1527,11 @@ class InMemorySurfaceProvider:
         self.default_radius_m = float(self.default_radius_m)
         self.default_albedo = float(self.default_albedo)
 
-    def grids(self) -> "SurfaceGrids":
+    def grids(self) -> SurfaceGrids:
         # In-memory provider is not file-backed -> no grids
         return SurfaceGrids(None, None)
 
-    def as_numba_dict(self) -> Dict[str, Any]:
+    def as_numba_dict(self) -> dict[str, Any]:
         # Only expose grid payload if the injected albedo is grid-like
         return _grid_albedo_payload(self.albedo, default_albedo=self.default_albedo)
 
@@ -1560,7 +1561,7 @@ class InMemorySurfaceProvider:
 # =============================================================================
 
 @lru_cache(maxsize=128)
-def parse_pds3_label(lbl_path: Union[str, Path]) -> Union["PDS3MapInfo", "PDS3RasterInfo"]:
+def parse_pds3_label(lbl_path: str | Path) -> PDS3MapInfo | PDS3RasterInfo:
     """Heuristic parser selecting the appropriate PDS3 label parser.
 
     - LDEM-like topography labels commonly include ellipsoid radii fields

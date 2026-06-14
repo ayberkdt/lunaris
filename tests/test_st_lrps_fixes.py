@@ -1,25 +1,22 @@
-import os
 import json
-import math
-import tempfile
-import pytest
 from pathlib import Path
 
-import numpy as np
-import torch
-import torch.nn as nn
 import h5py
+import numpy as np
+import pytest
+import torch
 
-from lunaris.surrogate.st_lrps.networks.models import (
-    SHInspiredAngularEncoding,
-    RadialSeparationEncoding,
-    PhysicsNet,
-    build_model_from_config
+from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import (
+    _run_active_refinement,
+    _sh_potential_accel_batch_serial,
 )
-from lunaris.surrogate.st_lrps.runtime.force_model import SurrogateForceModel, ScalerPack
-from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _run_active_refinement, _sh_potential_accel_batch_serial
-from lunaris.surrogate.st_lrps.training.engine import TrainConfig
 from lunaris.surrogate.st_lrps.evaluation.cli import evaluate
+from lunaris.surrogate.st_lrps.networks.models import (
+    RadialSeparationEncoding,
+    SHInspiredAngularEncoding,
+    build_model_from_config,
+)
+from lunaris.surrogate.st_lrps.runtime.force_model import ScalerPack, SurrogateForceModel
 
 # ==============================================================================
 # TESTS FOR TASK 1: ACTIVE REFINEMENT SH LABELING
@@ -66,7 +63,7 @@ def test_active_refinement_full_labeling_path_writes_h5(tmp_path):
     err_csv.write_text("x,y,z,u_true,u_pred,ax_true,ay_true,az_true,ax_pred,ay_pred,az_pred,abs_a_error,rel_a_error,altitude_km\n1000,0,0,0,0,0,0,0,0,0,0,0,0,0\n")
     gfc_path = tmp_path / "mock.txt"
     create_mock_gfc(gfc_path)
-    
+
     args = MockArgs(
         active_error_file=str(err_csv),
         active_from_error_points=str(err_csv),
@@ -77,12 +74,12 @@ def test_active_refinement_full_labeling_path_writes_h5(tmp_path):
         active_save_positions_only=False,
         active_out=str(out_dir / "active_refinement_labeled.h5")
     )
-    
+
     _run_active_refinement(args, out_dir)
-    
+
     h5_file = out_dir / "active_refinement_labeled.h5"
     assert h5_file.exists()
-    
+
     with h5py.File(h5_file, "r") as f:
         assert "data" in f
         data = f["data"][:]
@@ -100,7 +97,7 @@ def test_active_refinement_residual_labeling_path_writes_h5(tmp_path):
     err_csv.write_text("x,y,z,u_true,u_pred,ax_true,ay_true,az_true,ax_pred,ay_pred,az_pred,abs_a_error,rel_a_error,altitude_km\n1000,0,0,0,0,0,0,0,0,0,0,0,0,0\n")
     gfc_path = tmp_path / "mock.txt"
     create_mock_gfc(gfc_path)
-    
+
     args = MockArgs(
         active_error_file=str(err_csv),
         active_from_error_points=str(err_csv),
@@ -111,9 +108,9 @@ def test_active_refinement_residual_labeling_path_writes_h5(tmp_path):
         active_save_positions_only=False,
         active_out=str(out_dir / "active_refinement_labeled.h5")
     )
-    
+
     _run_active_refinement(args, out_dir)
-    
+
     h5_file = out_dir / "active_refinement_labeled.h5"
     with h5py.File(h5_file, "r") as f:
         assert f.attrs["target_mode"] == "residual"
@@ -189,7 +186,8 @@ def test_sh_encoded_model_predicts_accel_with_autograd():
     loss.backward()
     assert x.grad is not None
 
-from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, IsometricScaleParams
+from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams
+
 
 def mock_scaler():
     return ScalerPack(
@@ -216,7 +214,7 @@ def test_streaming_report_does_not_use_stub_arrays(tmp_path):
         f.attrs["target_mode"] = "full"
         f.attrs["degree_min"] = -1
         f.attrs["degree_max"] = 2
-    
+
     cfg = MockArgs(
         hidden=16, depth=1, activation="silu", use_fourier=False, use_sh_encoding=False,
         central_body="moon", resolved_mu_si=4.902800066e12, resolved_r_ref_m=1737400.0,
@@ -236,15 +234,15 @@ def test_streaming_report_does_not_use_stub_arrays(tmp_path):
     ckpt_dir = model_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     torch.save({"model": model.state_dict()}, ckpt_dir / "ckpt_best.pt")
-    
+
     out_dir = tmp_path / "eval_out"
     evaluate(
         model_dir=model_dir, data_path=dpath, out_dir=out_dir, device=torch.device("cpu"),
         batch_size=10, a_sign=1.0, r_ref_m=1737400.0, alt_bin_km=50.0,
         streaming=True
     )
-    
-    with open(out_dir / "evaluate_metrics.json", "r") as f:
+
+    with open(out_dir / "evaluate_metrics.json") as f:
         metrics = json.load(f)
     assert metrics["evaluation_mode"] == "streaming"
     assert metrics["memory_safe"] is True
@@ -264,7 +262,7 @@ def test_streaming_report_metrics_match_in_memory_for_small_dataset(tmp_path):
         f.attrs["target_mode"] = "full"
         f.attrs["degree_min"] = -1
         f.attrs["degree_max"] = 2
-        
+
     cfg = MockArgs(
         hidden=16, depth=1, activation="silu", use_fourier=False, use_sh_encoding=False,
         central_body="moon", resolved_mu_si=4.902800066e12, resolved_r_ref_m=1737400.0,
@@ -284,26 +282,26 @@ def test_streaming_report_metrics_match_in_memory_for_small_dataset(tmp_path):
     ckpt_dir = model_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     torch.save({"model": model.state_dict()}, ckpt_dir / "ckpt_best.pt")
-    
+
     out_dir_mem = tmp_path / "eval_mem"
     evaluate(
         model_dir=model_dir, data_path=dpath, out_dir=out_dir_mem, device=torch.device("cpu"),
         batch_size=50, a_sign=1.0, r_ref_m=1737400.0, alt_bin_km=50.0,
         streaming=False
     )
-    
+
     out_dir_str = tmp_path / "eval_str"
     evaluate(
         model_dir=model_dir, data_path=dpath, out_dir=out_dir_str, device=torch.device("cpu"),
         batch_size=50, a_sign=1.0, r_ref_m=1737400.0, alt_bin_km=50.0,
         streaming=True
     )
-    
-    with open(out_dir_str / "evaluate_metrics.json", "r") as f:
+
+    with open(out_dir_str / "evaluate_metrics.json") as f:
         metrics_str = json.load(f)
-    with open(out_dir_mem / "eval_report.json", "r") as f:
+    with open(out_dir_mem / "eval_report.json") as f:
         metrics_mem = json.load(f)["metrics"]
-    
+
     # Check that core metrics are identical
     assert metrics_str["n_points"] == metrics_mem["n_points"]
     assert np.isclose(metrics_str["U"]["mae"], metrics_mem["U"]["mae"])
@@ -315,7 +313,7 @@ def test_streaming_report_metrics_match_in_memory_for_small_dataset(tmp_path):
 
 def test_hybrid_checkpoint_score_uses_base_plus_direction():
     cfg = MockArgs(best_metric="hybrid", hybrid_direction_alpha=0.5, direction_loss_weight=1.0)
-    
+
     # Mock validation loop dictionary
     va = {
         "loss": 15.0, # val_total_loss
@@ -324,7 +322,7 @@ def test_hybrid_checkpoint_score_uses_base_plus_direction():
         "mse_u": 5.0,
         "mse_a": 5.0
     }
-    
+
     _best_metric_mode = getattr(cfg, "best_metric", "hybrid")
     _hybrid_alpha = getattr(cfg, "hybrid_direction_alpha", 0.5)
     _direction_loss_weight = getattr(cfg, "direction_loss_weight", 1.0)
@@ -334,7 +332,7 @@ def test_hybrid_checkpoint_score_uses_base_plus_direction():
         assert score != (va["loss"] + 0.5 * va["loss_dir"]) # 15 + 2 = 17
 
 def test_best_metric_val_total_loss_uses_total_loss_directly():
-    cfg = MockArgs(best_metric="val_total_loss")
+    MockArgs(best_metric="val_total_loss")
     va = {"loss": 15.0, "val_total_loss": 15.0, "val_base_loss": 10.0}
     score = float(va.get("val_total_loss", va["loss"]))
     assert score == 15.0
@@ -348,7 +346,7 @@ def test_predict_residual_potential_rejects_nan_input():
     model = build_model_from_config(cfg)
     scaler = mock_scaler()
     fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0}, device=torch.device("cpu"))
-    
+
     x_nan = np.array([[np.nan, 1000.0, 1000.0]])
     with pytest.raises(ValueError, match="NaN or Inf"):
         fm.predict_residual_potential(x_nan)
@@ -358,7 +356,7 @@ def test_predict_residual_potential_rejects_inf_input():
     model = build_model_from_config(cfg)
     scaler = mock_scaler()
     fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0}, device=torch.device("cpu"))
-    
+
     x_inf = np.array([[np.inf, 1000.0, 1000.0]])
     with pytest.raises(ValueError, match="NaN or Inf"):
         fm.predict_residual_potential(x_inf)
@@ -392,8 +390,9 @@ def test_sh_inspired_angular_encoding_in_all():
 
 def test_train_config_has_encoding_fields():
     """Task 1 & 8: TrainConfig must have all 5 encoding fields with correct defaults."""
-    from lunaris.surrogate.st_lrps.training.config import TrainConfig
     import dataclasses as _dc
+
+    from lunaris.surrogate.st_lrps.training.config import TrainConfig
     field_names = {f.name for f in _dc.fields(TrainConfig)}
     for field in ("use_sh_encoding", "sh_encoding_degree", "sh_append_raw",
                   "use_radial_separation", "radial_append_raw"):
@@ -411,6 +410,7 @@ def test_train_config_has_encoding_fields():
 def test_sh_encoding_config_written_to_json():
     """Task 2: config.json must contain encoding fields when SH encoding is active."""
     import dataclasses
+
     from lunaris.surrogate.st_lrps.training.config import TrainConfig
     cfg = TrainConfig(data="/dev/null", out="/tmp", use_sh_encoding=True, sh_encoding_degree=3)
     payload = dataclasses.asdict(cfg)
@@ -719,7 +719,7 @@ def test_active_refinement_degree_min_zero_preserved(tmp_path, monkeypatch):
 
 def _make_small_h5(path: Path, n: int = 150):
     """Create a minimal valid HDF5 file for evaluator smoke tests."""
-    from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI, MU_MOON_SI
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
     rng = np.random.default_rng(7)
     r = R_MOON_SI + rng.uniform(200e3, 500e3, n)
     theta = rng.uniform(0, np.pi, n)
@@ -747,7 +747,7 @@ def _make_small_h5(path: Path, n: int = 150):
 
 def _make_minimal_run_dir(tmp_path: Path):
     """Create a minimal model run dir (config.json + scaler.json + checkpoint) for evaluator."""
-    from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI, MU_MOON_SI
+    from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
     cfg_dict = {
         "activation": "sine", "hidden": 16, "depth": 2,
         "w0_first": 30.0, "w0_hidden": 30.0, "dropout": 0.0,

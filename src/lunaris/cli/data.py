@@ -20,7 +20,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlsplit
 
 from lunaris.common.paths import data_dir_from_root, find_project_root
@@ -58,25 +58,25 @@ def default_manifest_path() -> Path:
     return root / "data" / "data_sources.json"
 
 
-def find_manifest(explicit: Optional[str] = None) -> Path:
+def find_manifest(explicit: str | None = None) -> Path:
     """Resolve the manifest path from ``--manifest`` or the repository default."""
     if explicit:
         return Path(explicit).expanduser().resolve()
     return default_manifest_path()
 
 
-def load_manifest(path: Path) -> Dict[str, Any]:
+def load_manifest(path: Path) -> dict[str, Any]:
     """Load and minimally validate the JSON manifest."""
     if not path.exists():
         raise FileNotFoundError(f"Data manifest not found: {path}")
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         manifest = json.load(fh)
     if not isinstance(manifest, dict) or not isinstance(manifest.get("datasets"), list):
         raise ValueError(f"Malformed manifest (expected a 'datasets' list): {path}")
     return manifest
 
 
-def resolve_data_root(cli_data_dir: Optional[str] = None) -> Path:
+def resolve_data_root(cli_data_dir: str | None = None) -> Path:
     """Resolve the data root: ``--data-dir`` > ``LUNARIS_DATA_DIR`` > repo ``data/``."""
     if cli_data_dir:
         return Path(cli_data_dir).expanduser().resolve()
@@ -84,18 +84,18 @@ def resolve_data_root(cli_data_dir: Optional[str] = None) -> Path:
     return data_dir_from_root(root)
 
 
-def dataset_target_path(data_root: Path, entry: Dict[str, Any]) -> Path:
+def dataset_target_path(data_root: Path, entry: dict[str, Any]) -> Path:
     """Absolute path where ``entry`` is expected to live on disk."""
     subdir = entry.get("target_subdir") or ""
     return data_root / subdir / entry["filename"]
 
 
 def select_datasets(
-    manifest: Dict[str, Any],
+    manifest: dict[str, Any],
     *,
-    group: Optional[str] = None,
-    name: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    group: str | None = None,
+    name: str | None = None,
+) -> list[dict[str, Any]]:
     """Filter manifest datasets by group and/or name (no filter -> all)."""
     items = list(manifest.get("datasets", []))
     if group is not None:
@@ -106,13 +106,13 @@ def select_datasets(
 
 
 def select_for_download(
-    manifest: Dict[str, Any],
+    manifest: dict[str, Any],
     *,
     all_groups: bool = False,
-    group: Optional[str] = None,
-    name: Optional[str] = None,
+    group: str | None = None,
+    name: str | None = None,
     include_optional: bool = False,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Select datasets for the ``download`` command.
 
     ``--name`` selects that exact entry regardless of its required/optional
@@ -165,7 +165,7 @@ def _stream_to_file(url: str, dest: Path) -> None:
 
 
 def download_entry(
-    entry: Dict[str, Any],
+    entry: dict[str, Any],
     data_root: Path,
     *,
     overwrite: bool = False,
@@ -220,7 +220,7 @@ def download_entry(
 # --------------------------------------------------------------------------- #
 # Verification
 # --------------------------------------------------------------------------- #
-def verify_entry(entry: Dict[str, Any], data_root: Path) -> str:
+def verify_entry(entry: dict[str, Any], data_root: Path) -> str:
     """Return a verification status for a single entry.
 
     One of: ``valid``, ``present`` (no hash to check), ``missing``,
@@ -238,13 +238,13 @@ def verify_entry(entry: Dict[str, Any], data_root: Path) -> str:
 # --------------------------------------------------------------------------- #
 # Commands
 # --------------------------------------------------------------------------- #
-def cmd_list(manifest: Dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
+def cmd_list(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
     datasets = select_datasets(manifest, group=args.group)
     print(f"manifest schema_version={manifest.get('schema_version')}   data root: {data_root}")
     if not datasets:
         print("(no matching datasets)")
         return 0
-    by_group: Dict[str, List[Dict[str, Any]]] = {}
+    by_group: dict[str, list[dict[str, Any]]] = {}
     for d in datasets:
         by_group.setdefault(d.get("group", "other"), []).append(d)
     ordered = [g for g in GROUPS if g in by_group] + [g for g in by_group if g not in GROUPS]
@@ -257,7 +257,7 @@ def cmd_list(manifest: Dict[str, Any], data_root: Path, args: argparse.Namespace
     return 0
 
 
-def cmd_download(manifest: Dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
+def cmd_download(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
     if not (args.all or args.group or args.name):
         print("error: choose what to download: --all, --group <g>, or --name <n>", file=sys.stderr)
         return 2
@@ -291,7 +291,7 @@ def cmd_download(manifest: Dict[str, Any], data_root: Path, args: argparse.Names
     return 1 if failed else 0
 
 
-def cmd_verify(manifest: Dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
+def cmd_verify(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
     datasets = select_datasets(manifest, group=args.group)
     labels = {
         "valid": "OK (hash verified)",
@@ -316,14 +316,14 @@ def cmd_verify(manifest: Dict[str, Any], data_root: Path, args: argparse.Namespa
     return 0
 
 
-def cmd_path(manifest: Optional[Dict[str, Any]], data_root: Path, args: argparse.Namespace) -> int:
+def cmd_path(manifest: dict[str, Any] | None, data_root: Path, args: argparse.Namespace) -> int:
     print(data_root)
     for sub in CANONICAL_SUBDIRS:
         print(data_root / sub)
     return 0
 
 
-def cmd_inspect(manifest: Optional[Dict[str, Any]], data_root: Path, args: argparse.Namespace) -> int:
+def cmd_inspect(manifest: dict[str, Any] | None, data_root: Path, args: argparse.Namespace) -> int:
     from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract
 
     contract = DatasetContract.from_hdf5(
@@ -350,7 +350,7 @@ def cmd_inspect(manifest: Optional[Dict[str, Any]], data_root: Path, args: argpa
     return 0
 
 
-def cmd_validate_dataset(manifest: Optional[Dict[str, Any]], data_root: Path, args: argparse.Namespace) -> int:
+def cmd_validate_dataset(manifest: dict[str, Any] | None, data_root: Path, args: argparse.Namespace) -> int:
     from lunaris.surrogate.st_lrps.data.dataset_validation import validate_dataset_file
 
     report = validate_dataset_file(
@@ -366,7 +366,7 @@ def cmd_validate_dataset(manifest: Optional[Dict[str, Any]], data_root: Path, ar
     return 0 if report["passed"] else 1
 
 
-def cmd_report_dataset(manifest: Optional[Dict[str, Any]], data_root: Path, args: argparse.Namespace) -> int:
+def cmd_report_dataset(manifest: dict[str, Any] | None, data_root: Path, args: argparse.Namespace) -> int:
     from lunaris.surrogate.st_lrps.data.quality_report import build_dataset_quality_report
 
     report = build_dataset_quality_report(
@@ -461,11 +461,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     data_root = resolve_data_root(args.data_dir)
 
-    manifest: Optional[Dict[str, Any]] = None
+    manifest: dict[str, Any] | None = None
     if args.command not in {"path", "inspect", "validate", "report"}:
         try:
             manifest = load_manifest(find_manifest(args.manifest))

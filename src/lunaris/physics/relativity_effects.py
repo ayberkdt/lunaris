@@ -52,18 +52,13 @@ Scope / limitations
 from __future__ import annotations
 
 import math
-import numpy as np
-
-from typing import Tuple
 from dataclasses import dataclass
 
-
-
-from lunaris.common.constants import C_LIGHT, MU_MOON, EPS_1E12
-from lunaris.common.type_defs import Vec3
-
-
+import numpy as np
 from numba import njit
+
+from lunaris.common.constants import C_LIGHT, EPS_1E12, MU_MOON
+from lunaris.common.type_defs import Vec3
 
 # 3) Pre-calculation (Module Level Constant)
 C_SQ: float = C_LIGHT * C_LIGHT
@@ -78,7 +73,7 @@ def _schwarzschild_components(
     rx: float, ry: float, rz: float,
     vx: float, vy: float, vz: float,
     mu: float,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     1PN Schwarzschild acceleration correction (alloc-free scalar kernel).
 

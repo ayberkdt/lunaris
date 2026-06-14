@@ -1,5 +1,4 @@
 # ST_LRPS/ui_parts/solver_policy.py
-# -*- coding: utf-8 -*-
 """
 Shared solver-default and normalization policy for the desktop UI.
 
@@ -23,8 +22,7 @@ invalid tolerance.
 from __future__ import annotations
 
 import math
-from typing import Any, Optional, Tuple
-
+from typing import Any
 
 # These defaults intentionally match the stricter-but-stable backend SSOT in
 # `common.type_defs.PropagatorConfig` rather than the older UI-local values.
@@ -60,7 +58,7 @@ def solver_method_is_adaptive(method_label: Any) -> bool:
     return any(token in text for token in _ADAPTIVE_METHOD_HINTS)
 
 
-def coerce_positive_float(value: Any) -> Optional[float]:
+def coerce_positive_float(value: Any) -> float | None:
     """
     Convert an arbitrary UI/session value into a strictly positive float.
 
@@ -87,7 +85,7 @@ def choose_solver_tolerances(
     *,
     rtol: Any = None,
     atol: Any = None,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Produce a restart-safe `(rtol, atol)` pair for the selected solver.
 
@@ -156,7 +154,7 @@ def uses_legacy_adaptive_defaults(rtol: Any, atol: Any) -> bool:
     )
 
 
-def choose_max_step(value: Any, *, default: Any = DEFAULT_MAX_STEP_S) -> Optional[float]:
+def choose_max_step(value: Any, *, default: Any = DEFAULT_MAX_STEP_S) -> float | None:
     """
     Normalize a maximum-step value while preserving the "auto" option.
 
@@ -199,9 +197,9 @@ def normalize_solver_config_object(
         rtol=raw_rtol,
         atol=raw_atol,
     )
-    setattr(solver_cfg, "rtol", rtol_value)
-    setattr(solver_cfg, "atol", atol_value)
+    solver_cfg.rtol = rtol_value
+    solver_cfg.atol = atol_value
 
     max_step_value = choose_max_step(getattr(solver_cfg, "max_step", DEFAULT_MAX_STEP_S))
-    setattr(solver_cfg, "max_step", max_step_value if max_step_value is not None else DEFAULT_MAX_STEP_S)
+    solver_cfg.max_step = max_step_value if max_step_value is not None else DEFAULT_MAX_STEP_S
     return solver_cfg

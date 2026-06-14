@@ -1,5 +1,4 @@
 # ST_LRPS/core/events.py
-# -*- coding: utf-8 -*-
 """
 core.events
 ===========
@@ -90,14 +89,13 @@ Example
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
+
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
-from typing import Callable, Optional
 
 from lunaris.common.type_defs import F64
 from lunaris.core.state import as_vec3
-
-
 
 # =============================================================================
 # 1.                              HELPERS
@@ -250,8 +248,8 @@ def make_hybrid_impact_event(
     R_ref_m: float,
     impact_alt_m: float,
     *,
-    topo: Optional[object] = None,
-    r_i_to_bf: Optional[Callable[[float, NDArray[np.float64]], NDArray[np.float64]]] = None,
+    topo: object | None = None,
+    r_i_to_bf: Callable[[float, NDArray[np.float64]], NDArray[np.float64]] | None = None,
     switch_alt_m: float = 11_000.0,
     kind: str = "bilinear",
     terminal: bool = True,
@@ -299,7 +297,7 @@ def make_hybrid_impact_event(
     )
 
     # Resolve a radius sampler once (avoid repeated hasattr() checks inside the event)
-    radius_sampler: Optional[Callable[[float, float], float]] = None
+    radius_sampler: Callable[[float, float], float] | None = None
     if use_topo:
         # Choose "nearest" only if explicitly requested; otherwise prefer continuous sampling.
         prefer_nearest = ("near" in kind_l)
@@ -328,7 +326,7 @@ def make_hybrid_impact_event(
                 radius_sampler = _r_m
 
         if radius_sampler is None and hasattr(topo, "radius_m_deg"):
-            fn = getattr(topo, "radius_m_deg")
+            fn = topo.radius_m_deg
             if callable(fn):
                 def _r_m(lat_rad: float, lon_rad: float) -> float:
                     lat_deg = math.degrees(lat_rad)
@@ -337,7 +335,7 @@ def make_hybrid_impact_event(
                 radius_sampler = _r_m
 
         if radius_sampler is None and hasattr(topo, "radius_m"):
-            fn = getattr(topo, "radius_m")
+            fn = topo.radius_m
             if callable(fn):
                 def _r_m(lat_rad: float, lon_rad: float) -> float:
                     # Expect radians
@@ -471,7 +469,7 @@ def make_solar_eclipse_event(
     *,
     get_sun_vec_m: VecFn,
     R_moon_m: float,
-    get_earth_vec_m: Optional[VecFn] = None,
+    get_earth_vec_m: VecFn | None = None,
     R_earth_m: float = 6_378_137.0,
     include_moon: bool = True,
     include_earth: bool = True,
@@ -533,7 +531,7 @@ def make_is_eclipsed_solar(
     *,
     get_sun_vec_m: VecFn,
     R_moon_m: float,
-    get_earth_vec_m: Optional[VecFn] = None,
+    get_earth_vec_m: VecFn | None = None,
     R_earth_m: float = 6_378_137.0,
     include_moon: bool = True,
     include_earth: bool = True,
@@ -657,7 +655,7 @@ def make_terminator_crossing_event(
 
 def make_node_crossing_event(
     *,
-    r_i_to_ref: Optional[XformFn_t] = None,
+    r_i_to_ref: XformFn_t | None = None,
     which: str = "both",
     terminal: bool = False,
     t_guard_s: float = 1.0,
@@ -985,6 +983,7 @@ if __name__ == "__main__":
     - Keep all events non-terminal here so one event doesn't stop the run before others fire.
     """
     import sys
+
     import numpy as np
 
     try:

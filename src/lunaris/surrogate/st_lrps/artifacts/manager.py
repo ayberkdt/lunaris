@@ -11,10 +11,11 @@ import random
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Literal, Mapping, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -25,12 +26,11 @@ from lunaris.surrogate.st_lrps.networks.models import (
     compute_architecture_signature,
     reconstruct_model_from_artifacts,
 )
-from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 from lunaris.surrogate.st_lrps.shared.contracts import (
     ArtifactContract,
     ArtifactContractError,
 )
-
+from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ RUN_MANIFEST_SCHEMA_VERSION = "st_lrps_run_manifest_v1"
 CHECKPOINTS_MANIFEST_SCHEMA_VERSION = "st_lrps_checkpoints_manifest_v1"
 EVAL_MANIFEST_SCHEMA_VERSION = "st_lrps_eval_manifest_v1"
 
-CRITICAL_CONFIG_FIELDS: Tuple[str, ...] = (
+CRITICAL_CONFIG_FIELDS: tuple[str, ...] = (
     "activation",
     "hidden",
     "depth",
@@ -150,7 +150,7 @@ def _json_safe(value: Any) -> Any:
         return {str(k): _json_safe(v) for k, v in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [_json_safe(v) for v in value]
-    if hasattr(value, "item") and callable(getattr(value, "item")):
+    if hasattr(value, "item") and callable(value.item):
         try:
             return value.item()
         except Exception:
@@ -249,7 +249,7 @@ def _coerce_int(value: Any, *, default: int = 0) -> int:
         return int(default)
 
 
-def _coerce_int_or_none(value: Any) -> Optional[int]:
+def _coerce_int_or_none(value: Any) -> int | None:
     if value is None:
         return None
     try:
@@ -258,7 +258,7 @@ def _coerce_int_or_none(value: Any) -> Optional[int]:
         return None
 
 
-def _coerce_float_or_none(value: Any) -> Optional[float]:
+def _coerce_float_or_none(value: Any) -> float | None:
     if value is None:
         return None
     try:
@@ -267,7 +267,7 @@ def _coerce_float_or_none(value: Any) -> Optional[float]:
         return None
 
 
-def _coerce_str_or_none(value: Any) -> Optional[str]:
+def _coerce_str_or_none(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
@@ -283,7 +283,7 @@ def _infer_checkpoint_kind_from_path(path: Path) -> str:
     return "epoch"
 
 
-def _state_dict_from_checkpoint(ckpt: Any) -> Dict[str, torch.Tensor]:
+def _state_dict_from_checkpoint(ckpt: Any) -> dict[str, torch.Tensor]:
     if isinstance(ckpt, dict):
         if isinstance(ckpt.get("model_state_dict"), dict):
             return ckpt["model_state_dict"]
@@ -294,7 +294,7 @@ def _state_dict_from_checkpoint(ckpt: Any) -> Dict[str, torch.Tensor]:
     raise ValueError("Checkpoint does not contain a usable model state_dict.")
 
 
-def _extract_config_block(ckpt: Mapping[str, Any]) -> Dict[str, Any]:
+def _extract_config_block(ckpt: Mapping[str, Any]) -> dict[str, Any]:
     raw_cfg = ckpt.get("config")
     if isinstance(raw_cfg, dict):
         cfg = dict(raw_cfg)
@@ -374,7 +374,7 @@ def _extract_config_block(ckpt: Mapping[str, Any]) -> Dict[str, Any]:
     return cfg
 
 
-def _build_architecture_block_from_cfg(cfg: Mapping[str, Any]) -> Dict[str, Any]:
+def _build_architecture_block_from_cfg(cfg: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "signature": cfg.get("architecture_signature"),
         "model_builder_version": cfg.get("model_builder_version", MODEL_BUILDER_VERSION),
@@ -401,7 +401,7 @@ def _build_architecture_block_from_cfg(cfg: Mapping[str, Any]) -> Dict[str, Any]
     }
 
 
-def _build_dataset_block_from_cfg(cfg: Mapping[str, Any]) -> Dict[str, Any]:
+def _build_dataset_block_from_cfg(cfg: Mapping[str, Any]) -> dict[str, Any]:
     dataset_meta = cfg.get("dataset_meta") or {}
     if not isinstance(dataset_meta, dict):
         dataset_meta = {}
@@ -702,7 +702,7 @@ def load_checkpoint(path: Path, device: torch.device) -> dict:
 def load_best_or_last(
     layout: RunLayout,
     prefer: str = "best",
-    device: Optional[torch.device] = None,
+    device: torch.device | None = None,
 ) -> tuple[Path, dict]:
     layout = make_run_layout(layout.run_dir)
     dev = device or torch.device("cpu")
@@ -727,7 +727,7 @@ def _deep_merge(dst: MutableMapping[str, Any], src: Mapping[str, Any]) -> Mutabl
     return dst
 
 
-def read_run_manifest(layout: RunLayout) -> Dict[str, Any]:
+def read_run_manifest(layout: RunLayout) -> dict[str, Any]:
     path = make_run_layout(layout.run_dir).run_manifest_json
     if not path.exists():
         return {}
@@ -774,8 +774,8 @@ def resolve_resume_checkpoint(
     path_like: Path | str,
     *,
     prefer: str = "last",
-    device: Optional[torch.device] = None,
-) -> Tuple["RunLayout", Path, dict]:
+    device: torch.device | None = None,
+) -> tuple[RunLayout, Path, dict]:
     """Resolve a resume target into ``(layout, checkpoint_path, checkpoint_payload)``.
 
     Centralizes all resume path handling so the engine never re-implements it.
@@ -819,14 +819,14 @@ def resolve_resume_checkpoint(
     return layout, ckpt_path, payload
 
 
-def capture_rng_state() -> Dict[str, Any]:
+def capture_rng_state() -> dict[str, Any]:
     """Capture Python / NumPy / torch (CPU + CUDA) RNG state for resume.
 
     Returns a pickle/torch-saveable dict. Restoration is best-effort and
     epoch-level: it does NOT guarantee bitwise-identical DataLoader worker
     ordering, only that the core generators continue from a consistent state.
     """
-    state: Dict[str, Any] = {
+    state: dict[str, Any] = {
         "python": random.getstate(),
         "numpy": np.random.get_state(),
         "torch_cpu": torch.get_rng_state(),
@@ -839,7 +839,7 @@ def capture_rng_state() -> Dict[str, Any]:
     return state
 
 
-def restore_rng_state(state: Optional[Mapping[str, Any]]) -> None:
+def restore_rng_state(state: Mapping[str, Any] | None) -> None:
     """Restore RNG state captured by :func:`capture_rng_state`.
 
     Tolerant of ``None`` and of partial/foreign payloads; never raises so a
@@ -874,7 +874,7 @@ def restore_rng_state(state: Optional[Mapping[str, Any]]) -> None:
             logger.warning("restore_rng_state: torch CUDA RNG restore failed: %s", exc)
 
 
-def canonical_scaler_payload(scaler: Any) -> Dict[str, Any]:
+def canonical_scaler_payload(scaler: Any) -> dict[str, Any]:
     if isinstance(scaler, dict):
         return _json_safe(scaler)
     if dataclasses.is_dataclass(scaler):
@@ -882,7 +882,7 @@ def canonical_scaler_payload(scaler: Any) -> Dict[str, Any]:
     raise TypeError("Unsupported scaler payload type.")
 
 
-def write_scaler_json(layout: RunLayout, scaler: Any) -> Dict[str, Any]:
+def write_scaler_json(layout: RunLayout, scaler: Any) -> dict[str, Any]:
     payload = canonical_scaler_payload(scaler)
     atomic_write_json(layout.scaler_json, payload)
     return {
@@ -907,8 +907,8 @@ def load_scaler_for_run(
     *,
     device: torch.device,
     dtype: torch.dtype = torch.float32,
-) -> Tuple[ScalerPack, Dict[str, Any]]:
-    file_payload: Optional[Dict[str, Any]] = None
+) -> tuple[ScalerPack, dict[str, Any]]:
+    file_payload: dict[str, Any] | None = None
     if layout.scaler_json.exists():
         file_payload = json.loads(layout.scaler_json.read_text(encoding="utf-8"))
 
@@ -1049,9 +1049,9 @@ def build_resolved_config(
 def build_artifact_contract(
     cfg: Mapping[str, Any],
     *,
-    scaler_payload: Optional[Mapping[str, Any]] = None,
-    dataset_contract: Optional[Mapping[str, Any]] = None,
-    architecture_signature: Optional[str] = None,
+    scaler_payload: Mapping[str, Any] | None = None,
+    dataset_contract: Mapping[str, Any] | None = None,
+    architecture_signature: str | None = None,
 ) -> ArtifactContract:
     """Build an :class:`ArtifactContract` from resolved training artifacts."""
 
@@ -1066,11 +1066,11 @@ def build_artifact_contract(
 def validate_checkpoint_contract(
     ckpt: Mapping[str, Any],
     *,
-    cfg: Optional[Mapping[str, Any]] = None,
-    scaler_payload: Optional[Mapping[str, Any]] = None,
+    cfg: Mapping[str, Any] | None = None,
+    scaler_payload: Mapping[str, Any] | None = None,
     strict: bool = True,
     allow_legacy_contract: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Read and validate the artifact contract embedded in a checkpoint."""
 
     cfg_payload = dict(cfg or ckpt.get("config") or {})
@@ -1152,7 +1152,7 @@ def read_artifact_contract(
     run_dir: Path | str,
     *,
     prefer: str = "best",
-    device: Optional[torch.device] = None,
+    device: torch.device | None = None,
     strict: bool = True,
     allow_legacy_contract: bool = False,
 ) -> ArtifactContract:
@@ -1187,7 +1187,7 @@ def compare_artifact_contracts(
     requested: ArtifactContract | Mapping[str, Any],
     *,
     strict_domain: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return a machine-readable compatibility report for two contracts."""
 
     left = artifact if isinstance(artifact, ArtifactContract) else ArtifactContract.from_dict(artifact)
@@ -1214,15 +1214,15 @@ def build_checkpoint_payload(
     kind: Literal["best", "last", "epoch"],
     epoch: int,
     model: torch.nn.Module,
-    optimizer: Optional[torch.optim.Optimizer],
-    scheduler: Optional[Any],
+    optimizer: torch.optim.Optimizer | None,
+    scheduler: Any | None,
     cfg: Mapping[str, Any],
     scaler: Any,
     train_stats: Mapping[str, Any],
     val_stats: Mapping[str, Any],
     dataset_meta: Mapping[str, Any],
     architecture_signature: str,
-    global_step: Optional[int],
+    global_step: int | None,
 ) -> dict:
     cfg_dict = dict(cfg)
     scaler_payload = canonical_scaler_payload(scaler)
@@ -1320,14 +1320,14 @@ def build_checkpoint_payload(
     return validate_checkpoint_schema(payload, strict=True)
 
 
-def write_command_txt(layout: RunLayout, argv: Optional[Sequence[str]] = None) -> str:
+def write_command_txt(layout: RunLayout, argv: Sequence[str] | None = None) -> str:
     argv = list(argv if argv is not None else [sys.executable, *sys.argv])
     command = subprocess.list2cmdline([str(v) for v in argv])
     _atomic_write_text(layout.command_txt, command + "\n")
     return command
 
 
-def capture_environment_snapshot(layout: RunLayout, *, extra: Optional[Mapping[str, Any]] = None) -> Path:
+def capture_environment_snapshot(layout: RunLayout, *, extra: Mapping[str, Any] | None = None) -> Path:
     payload = {
         "created_at_utc": _utcnow_iso(),
         "python": sys.version,
@@ -1345,7 +1345,7 @@ def capture_environment_snapshot(layout: RunLayout, *, extra: Optional[Mapping[s
     return path
 
 
-def default_eval_output_dir(layout: RunLayout, dataset_path: Path, *, timestamp: Optional[str] = None) -> Path:
+def default_eval_output_dir(layout: RunLayout, dataset_path: Path, *, timestamp: str | None = None) -> Path:
     stem = Path(dataset_path).stem or "dataset"
     stamp = timestamp or datetime.now().strftime("%Y%m%d_%H%M%S")
     return layout.evals_dir / f"eval_{stem}_{stamp}"
@@ -1374,7 +1374,7 @@ def reload_model_from_run_dir(
     *,
     prefer: str = "best",
     allow_config_mismatch: bool = False,
-) -> Tuple[torch.nn.Module, ScalerPack, Dict[str, Any], Dict[str, Any]]:
+) -> tuple[torch.nn.Module, ScalerPack, dict[str, Any], dict[str, Any]]:
     layout = make_run_layout(resolve_run_dir(run_dir))
     ckpt_path, ckpt = load_best_or_last(layout, prefer=prefer, device=device)
 
@@ -1433,17 +1433,17 @@ def reload_model_from_run_dir(
     return model, scaler, merged_cfg, report
 
 
-def _critical_config_mismatches(config_payload: Mapping[str, Any], ckpt_config: Mapping[str, Any]) -> Dict[str, Tuple[Any, Any]]:
-    mismatches: Dict[str, Tuple[Any, Any]] = {}
+def _critical_config_mismatches(config_payload: Mapping[str, Any], ckpt_config: Mapping[str, Any]) -> dict[str, tuple[Any, Any]]:
+    mismatches: dict[str, tuple[Any, Any]] = {}
     for key in CRITICAL_CONFIG_FIELDS:
         if _json_safe(config_payload.get(key)) != _json_safe(ckpt_config.get(key)):
             mismatches[key] = (config_payload.get(key), ckpt_config.get(key))
     return mismatches
 
 
-def inspect_run(run_dir: Path | str) -> Dict[str, Any]:
+def inspect_run(run_dir: Path | str) -> dict[str, Any]:
     layout = make_run_layout(resolve_run_dir(run_dir))
-    summary: Dict[str, Any] = {
+    summary: dict[str, Any] = {
         "run_dir": str(layout.run_dir),
         "config_json": str(layout.config_json),
         "scaler_json": str(layout.scaler_json),
@@ -1532,7 +1532,7 @@ def migrate_run(
     run_dir: Path | str,
     *,
     write_normalized_checkpoints: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     layout = ensure_run_layout(resolve_run_dir(run_dir))
     inspection = inspect_run(layout.run_dir)
 
@@ -1579,7 +1579,7 @@ def _print_inspection(summary: Mapping[str, Any]) -> None:
     print(f"canonical_reload: {summary.get('canonical_reload')}")
 
 
-def _parse_cli(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def _parse_cli(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Inspect or migrate ST-LRPS run artifacts.")
     ap.add_argument("--inspect-run", default=None, help="Inspect a run directory/checkpoint/checkpoints dir.")
     ap.add_argument("--migrate-run", default=None, help="Create canonical manifests for an old run.")
@@ -1594,7 +1594,7 @@ def _parse_cli(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     return args
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     args = _parse_cli(argv)
     if args.inspect_run:
         _print_inspection(inspect_run(args.inspect_run))

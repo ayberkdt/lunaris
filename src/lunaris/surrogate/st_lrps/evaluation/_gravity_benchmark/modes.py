@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Internal module of the lunar gravity-model benchmark harness.
 
 Part of :mod:`lunaris.surrogate.st_lrps.evaluation.compare_gravity_models`;
@@ -15,36 +14,25 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.core.config import SimConfig
-from lunaris.core.state import create_state_from_keplerian
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagator import propagate
+from lunaris.core.state import create_state_from_keplerian
 from lunaris.surrogate.runtime_adapter import (
     find_latest_st_lrps_model_dir,
 )
-from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.surrogate.st_lrps.evaluation import progress
 
-# --- intra-package wiring (auto-generated split) ---
-from .types import (
-    BatchModelResult,
-    GravityModelCache,
-    Scenario,
-    TruthTrajectorySet,
-    _METRICS_FIELDNAMES,
-    _cfg_with_integrator,
-    _find_st_lrps_weight_file,
-    decompose_vector_ric,
-    interpolate_state_to_times,
-)
 from .compute import (
     _build_gpu_batch_tasks,
     _gpu_integrator_evals_per_step,
@@ -57,6 +45,33 @@ from .compute import (
     propagate_gpu_batch_model,
     run_sh200_cpu_rk4_reference,
     run_st_lrps_batch_rk4,
+)
+from .metrics import (
+    _batch_agg_stats,
+    aggregate_gpu_batch_metrics,
+    aggregate_metrics,
+    build_gpu_model_ranking,
+    build_gpu_runtime_metrics,
+    build_rankings,
+    compute_batch_rk4_metrics,
+    compute_gpu_batch_metrics_for_model,
+    compute_trajectory_metrics,
+    find_worst_cases,
+    rebuild_gpu_batch_metrics_from_cache,
+    select_median_difficulty_scenario,
+)
+from .plotting import (
+    _color,
+    _fmt_km,
+    estimate_stlrps_equivalent_sh_degree,
+    plot_aggregate_stats,
+    plot_batch_rk4_results,
+    plot_batch_selected_scenario,
+    plot_gpu_batch_report_figures,
+    plot_selected_scenario,
+    select_stlrps_scenarios,
+    write_gpu_batch_report_pdf,
+    write_report_pdf,
 )
 from .results_io import (
     _PARALLEL_STATE,
@@ -84,32 +99,18 @@ from .results_io import (
     build_truth_trajectory_set,
     prepare_scenarios,
 )
-from .plotting import (
-    _color,
-    _fmt_km,
-    estimate_stlrps_equivalent_sh_degree,
-    plot_aggregate_stats,
-    plot_batch_rk4_results,
-    plot_batch_selected_scenario,
-    plot_gpu_batch_report_figures,
-    plot_selected_scenario,
-    select_stlrps_scenarios,
-    write_gpu_batch_report_pdf,
-    write_report_pdf,
-)
-from .metrics import (
-    _batch_agg_stats,
-    aggregate_gpu_batch_metrics,
-    aggregate_metrics,
-    build_gpu_model_ranking,
-    build_gpu_runtime_metrics,
-    build_rankings,
-    compute_batch_rk4_metrics,
-    compute_gpu_batch_metrics_for_model,
-    compute_trajectory_metrics,
-    find_worst_cases,
-    rebuild_gpu_batch_metrics_from_cache,
-    select_median_difficulty_scenario,
+
+# --- intra-package wiring (auto-generated split) ---
+from .types import (
+    _METRICS_FIELDNAMES,
+    BatchModelResult,
+    GravityModelCache,
+    Scenario,
+    TruthTrajectorySet,
+    _cfg_with_integrator,
+    _find_st_lrps_weight_file,
+    decompose_vector_ric,
+    interpolate_state_to_times,
 )
 
 # =============================================================================
@@ -117,7 +118,7 @@ from .metrics import (
 # =============================================================================
 
 def evaluate_forces(
-    models_to_test: List[str],
+    models_to_test: list[str],
     truth_model: str,
     args: argparse.Namespace,
     cfg: SimConfig,
@@ -263,8 +264,8 @@ def run_single_orbit_mode(args: argparse.Namespace, cfg: SimConfig, ephem: Any) 
     ).y
 
     model_cache = GravityModelCache(cfg, args)
-    results: Dict[str, Any] = {}
-    runtimes: Dict[str, float] = {}
+    results: dict[str, Any] = {}
+    runtimes: dict[str, float] = {}
 
     for m in models:
         print(f"\n--- Running {m.upper()} ---", flush=True)
@@ -326,8 +327,8 @@ def run_single_orbit_mode(args: argparse.Namespace, cfg: SimConfig, ephem: Any) 
 # =============================================================================
 
 def _print_ranking_table(
-    rankings: List[Dict],
-    agg: Dict[str, Dict],
+    rankings: list[dict],
+    agg: dict[str, dict],
     args: argparse.Namespace,
 ) -> None:
     n_sc = max((r.get("n_scenarios", 0) for r in rankings), default=0)
@@ -378,10 +379,10 @@ def _print_ranking_table(
 
 
 def _print_batch_summary(
-    batch_result: Dict[str, Any],
-    total_rows: List[Dict],
-    model_rows: List[Dict],
-    integr_rows: List[Dict],
+    batch_result: dict[str, Any],
+    total_rows: list[dict],
+    model_rows: list[dict],
+    integr_rows: list[dict],
     args: argparse.Namespace,
 ) -> None:
     sep = "=" * 80
@@ -389,7 +390,7 @@ def _print_batch_summary(
     ok_model  = [r for r in model_rows  if r.get("status") == "ok"]
     ok_integr = [r for r in integr_rows if r.get("status") == "ok"]
 
-    def _rms_stats(rows: List[Dict]) -> str:
+    def _rms_stats(rows: list[dict]) -> str:
         if not rows:
             return "N/A"
         vals = [r["rms_pos_err_km"] for r in rows if np.isfinite(r.get("rms_pos_err_km", np.nan))]
@@ -413,24 +414,24 @@ def _print_batch_summary(
     print(f"  Throughput:      {n_sc * n_steps / max(rt, 1e-9):,.0f} traj-steps/s")
     print(f"  Per-scenario:    {rt / max(n_sc, 1):.2f} s")
     print(sep)
-    print(f"  ST-LRPS RK4 vs SH200 DOP853 (total error):")
+    print("  ST-LRPS RK4 vs SH200 DOP853 (total error):")
     print(f"    {_rms_stats(ok_total)}")
     if ok_model:
-        print(f"  ST-LRPS RK4 vs SH200 RK4 (model error):")
+        print("  ST-LRPS RK4 vs SH200 RK4 (model error):")
         print(f"    {_rms_stats(ok_model)}")
     if ok_integr:
-        print(f"  SH200 RK4 vs SH200 DOP853 (integrator error):")
+        print("  SH200 RK4 vs SH200 DOP853 (integrator error):")
         print(f"    {_rms_stats(ok_integr)}")
     print(sep)
 
 
 def _print_final_validation_summary(
     args: argparse.Namespace,
-    agg: Dict[str, Dict],
-    batch_result: Optional[Dict[str, Any]],
-    total_rows: List[Dict],
-    model_rows: List[Dict],
-    integr_rows: List[Dict],
+    agg: dict[str, dict],
+    batch_result: dict[str, Any] | None,
+    total_rows: list[dict],
+    model_rows: list[dict],
+    integr_rows: list[dict],
 ) -> None:
     """Print a compact end-of-run summary focused on runtime vs accuracy."""
 
@@ -462,7 +463,7 @@ def _print_final_validation_summary(
         ok_model = [r for r in model_rows if r.get("status") == "ok"]
         ok_integr = [r for r in integr_rows if r.get("status") == "ok"]
 
-        def _med_p95(rows: List[Dict]) -> Tuple[float, float]:
+        def _med_p95(rows: list[dict]) -> tuple[float, float]:
             vals = np.array([r["rms_pos_err_km"] for r in rows], dtype=np.float64)
             if vals.size == 0:
                 return np.nan, np.nan
@@ -496,7 +497,7 @@ def _print_final_validation_summary(
     print(sep)
 
 
-def _load_written_summary(metrics_dir: Path) -> Optional[Dict[str, Any]]:
+def _load_written_summary(metrics_dir: Path) -> dict[str, Any] | None:
     """Best-effort read of the just-written gpu_batch_summary.json (for stdout)."""
     p = metrics_dir / "gpu_batch_summary.json"
     if not p.exists():
@@ -509,11 +510,11 @@ def _load_written_summary(metrics_dir: Path) -> Optional[Dict[str, Any]]:
 
 def _print_gpu_batch_summary(
     args: argparse.Namespace,
-    aggregate_rows: List[Dict[str, Any]],
-    runtime_rows: List[Dict[str, Any]],
-    equivalent: Dict[str, Any],
-    selected: Dict[str, Any],
-    summary: Optional[Dict[str, Any]] = None,
+    aggregate_rows: list[dict[str, Any]],
+    runtime_rows: list[dict[str, Any]],
+    equivalent: dict[str, Any],
+    selected: dict[str, Any],
+    summary: dict[str, Any] | None = None,
 ) -> None:
     sep = "=" * 96
     print(f"\n{sep}")
@@ -629,7 +630,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
 
     cache_enabled = _cache_requested(args) or bool(getattr(args, "cache_trajectories", False))
     cache_dir = _benchmark_cache_dir(args, out_dir)
-    cache_warnings: List[str] = []
+    cache_warnings: list[str] = []
     if cache_enabled:
         cache_dir.mkdir(parents=True, exist_ok=True)
         print(f"[cache] Enabled trajectory cache: {cache_dir}", flush=True)
@@ -670,12 +671,12 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     # model so a later run (same seed, larger --random-scenarios) only computes
     # the new orbits and the aggregate covers the cumulative set.
     per_scenario_csv = metrics_dir / "gpu_batch_per_scenario_metrics.csv"
-    existing_rows: List[Dict[str, Any]] = []
+    existing_rows: list[dict[str, Any]] = []
     completed_ids: set = set()
     if args.resume and per_scenario_csv.exists():
         existing_rows = [_coerce_numeric_row(r) for r in _read_csv_rows(per_scenario_csv)]
         needed_models = {task.display_name for task in gpu_tasks}
-        by_id: Dict[int, set] = {}
+        by_id: dict[int, set] = {}
         for r in existing_rows:
             try:
                 sid = int(float(r.get("scenario_id")))
@@ -735,7 +736,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         truth = TruthTrajectorySet(_truth_name, {}, {}, {})
 
     duration_s = float(args.duration_days) * 86400.0
-    results: List[BatchModelResult] = []
+    results: list[BatchModelResult] = []
     t_gpu_start = time.perf_counter()
     completed_gpu = 0
     for model_idx, task in enumerate(gpu_tasks if run_scenarios else [], 1):
@@ -762,7 +763,8 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         def _gpu_progress_cb(
             current_step: int, total_steps: int, elapsed_s: float,
             _name: str = task.display_name, _idx: int = model_idx,
-            _state: Dict[str, float] = cb_state,
+            _state: dict[str, float] = cb_state,
+            _n_scenarios: int = len(model_scenarios),
         ) -> None:
             stats = progress.compute_step_stats(current_step, total_steps, elapsed_s)
             # steps/s over the most recent window (ignores one-off warmup such as
@@ -788,7 +790,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
                 percent=stats["percent"], elapsed_s=elapsed_s,
                 eta_s=model_eta, steps_per_s=rate,
                 device=str(device), dtype=str(args.torch_dtype),
-                n_scenarios=len(model_scenarios),
+                n_scenarios=_n_scenarios,
             )
             model_frac = stats["current_step"] / max(1, stats["total_steps"])
             gpu_frac = ((_idx - 1) + model_frac) / n_gpu_models
@@ -799,7 +801,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
             # extrapolation on the weighted bar percentage.
             elapsed_gpu = time.perf_counter() - t_gpu_start
             completed_models = _idx - 1
-            future: Optional[float] = None
+            future: float | None = None
             if completed_models >= 1:
                 avg_done = max(0.0, elapsed_gpu - elapsed_s) / completed_models
                 future = (n_gpu_models - _idx) * avg_done
@@ -916,11 +918,11 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         _ov_agg, "aggregate", elapsed_s=overall.elapsed_s(), eta_s=overall.eta_s()
     )
 
-    new_rows: List[Dict[str, Any]] = []
+    new_rows: list[dict[str, Any]] = []
     for result in results:
         new_rows.extend(compute_gpu_batch_metrics_for_model(result, truth, run_scenarios, args.duration_days))
     # Cumulative union: previously-stored rows + newly-computed rows.
-    all_rows: List[Dict[str, Any]] = list(existing_rows) + new_rows
+    all_rows: list[dict[str, Any]] = list(existing_rows) + new_rows
 
     aggregate_rows = aggregate_gpu_batch_metrics(all_rows)
     runtime_rows = build_gpu_runtime_metrics(
@@ -940,7 +942,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     )
     result_status = {r.display_name: getattr(r, "status", "") for r in results}
     models_in_agg = {str(r.get("model")) for r in aggregate_rows}
-    status_by_model: Dict[str, str] = {}
+    status_by_model: dict[str, str] = {}
     for task in gpu_tasks:
         disp = task.display_name
         st = result_status.get(disp)
@@ -1029,7 +1031,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
 
 
 
-def _parallel_worker_scenario(payload: Tuple[Scenario, str, List[str]]) -> Dict[str, Any]:
+def _parallel_worker_scenario(payload: tuple[Scenario, str, list[str]]) -> dict[str, Any]:
     """Propagate truth + compared models for one scenario inside a worker.
 
     Only lightweight metric rows (not full trajectories) are returned so the
@@ -1048,7 +1050,7 @@ def _parallel_worker_scenario(payload: Tuple[Scenario, str, List[str]]) -> Dict[
     if truth_res is None:
         return {"scenario_id": scenario.scenario_id, "truth_failed": True, "truth_rt": None, "rows": []}
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for model in compare_models:
         try:
             res, rt = propagate_for_scenario(model, y0, args, cfg_base, ephem, cache)
@@ -1127,7 +1129,7 @@ def run_random_scenario_mode(
 
     cache_enabled = _cache_requested(args) or bool(getattr(args, "cache_trajectories", False))
     cache_dir = _benchmark_cache_dir(args, out_dir)
-    model_missing_by_name: Dict[str, List[Scenario]] = {}
+    model_missing_by_name: dict[str, list[Scenario]] = {}
     if cache_enabled:
         cache_dir.mkdir(parents=True, exist_ok=True)
         print(f"[cache] Enabled trajectory cache: {cache_dir}", flush=True)
@@ -1164,7 +1166,7 @@ def run_random_scenario_mode(
     # Resume support: load old rows into all_metrics
     metrics_path   = out_dir / "per_scenario_metrics.csv"
     completed_ids: set = set()
-    all_metrics: List[Dict] = []
+    all_metrics: list[dict] = []
 
     if args.resume and metrics_path.exists() and not cache_enabled:
         try:
@@ -1194,8 +1196,8 @@ def run_random_scenario_mode(
     if metrics_path.exists() and (cache_enabled or not args.resume):
         metrics_path.unlink()
 
-    truth_runtimes: List[float] = []
-    truth_results_all: Dict[int, Any] = {}  # for batch RK4
+    truth_runtimes: list[float] = []
+    truth_results_all: dict[int, Any] = {}  # for batch RK4
 
     header_written = len(all_metrics) > 0 or (args.resume and metrics_path.exists())
     n_total = len(scenarios)
@@ -1454,7 +1456,7 @@ def run_random_scenario_mode(
     if selected_sc is not None and dop853_compare_models:
         print(f"\n[harness] Plotting selected scenario {selected_sc.scenario_id} "
               f"(median-difficulty) ...", flush=True)
-        traj: Dict[str, Any] = {}
+        traj: dict[str, Any] = {}
         y0 = selected_sc.initial_state
         for m in [truth_model] + dop853_compare_models:
             if cache_enabled:
@@ -1495,7 +1497,7 @@ def run_random_scenario_mode(
             if worst_sc is not None:
                 print(f"\n[harness] Plotting worst-case scenario "
                       f"{worst_sc.scenario_id} ({worst_global['model'].upper()}) ...", flush=True)
-                traj_w: Dict[str, Any] = {}
+                traj_w: dict[str, Any] = {}
                 y0w = worst_sc.initial_state
                 for m in [truth_model] + dop853_compare_models:
                     if cache_enabled:
@@ -1528,9 +1530,9 @@ def run_random_scenario_mode(
     # Batch RK4 mode
     # =========================================================================
     batch_result     = None
-    total_rows:  List[Dict] = []
-    model_rows:  List[Dict] = []
-    integr_rows: List[Dict] = []
+    total_rows:  list[dict] = []
+    model_rows:  list[dict] = []
+    integr_rows: list[dict] = []
 
     if args.batch_rk4 and "st_lrps" in compare_models and not getattr(args, "rebuild_metrics", False):
         print("\n[batch-rk4] Starting batched RK4 propagation ...", flush=True)
@@ -1714,19 +1716,19 @@ def run_random_scenario_mode(
     _print_final_validation_summary(args, agg, batch_result, total_rows, model_rows, integr_rows)
 
     print(f"\n[harness] Complete -> {out_dir}", flush=True)
-    print(f"  scenarios.csv              per_scenario_metrics.csv")
-    print(f"  aggregate_summary.csv      aggregate_summary.json")
-    print(f"  ranking_summary.csv        worst_cases_by_model.csv")
+    print("  scenarios.csv              per_scenario_metrics.csv")
+    print("  aggregate_summary.csv      aggregate_summary.json")
+    print("  ranking_summary.csv        worst_cases_by_model.csv")
     if batch_result is not None:
-        print(f"  batch_rk4_per_scenario_metrics.csv  batch_rk4_summary.json")
-    print(f"  plots/                     gravity_random_validation_report.pdf")
+        print("  batch_rk4_per_scenario_metrics.csv  batch_rk4_summary.json")
+    print("  plots/                     gravity_random_validation_report.pdf")
 
 
 # =============================================================================
 # ST-LRPS auto-detection
 # =============================================================================
 
-def _auto_find_st_lrps_dir() -> Optional[str]:
+def _auto_find_st_lrps_dir() -> str | None:
     """
     Return the newest valid surrogate run directory.
     Uses surrogate.runtime_adapter.find_latest_st_lrps_model_dir which requires

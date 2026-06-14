@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Internal module of the lunar gravity-model benchmark harness.
 
 Part of :mod:`lunaris.surrogate.st_lrps.evaluation.compare_gravity_models`;
@@ -10,29 +9,24 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 from lunaris.common.constants import R_MOON
 
-# --- intra-package wiring (auto-generated split) ---
-from .types import (
-    BatchModelResult,
-    CachedTrajectory,
-    Scenario,
-    TruthTrajectorySet,
-    _BATCH_METRICS_FIELDNAMES,
-    _GPU_BATCH_METRICS_FIELDNAMES,
-    _METRICS_FIELDNAMES,
-    compute_ric_errors,
-    interpolate_state_to_times,
-)
 from .compute import (
     _model_display_name,
+)
+from .plotting import (
+    estimate_stlrps_equivalent_sh_degree,
+    plot_gpu_batch_report_figures,
+    select_stlrps_scenarios,
+    write_gpu_batch_report_pdf,
 )
 from .results_io import (
     _build_gpu_batch_summary,
@@ -45,11 +39,18 @@ from .results_io import (
     _truth_cache_name,
     _write_csv,
 )
-from .plotting import (
-    estimate_stlrps_equivalent_sh_degree,
-    plot_gpu_batch_report_figures,
-    select_stlrps_scenarios,
-    write_gpu_batch_report_pdf,
+
+# --- intra-package wiring (auto-generated split) ---
+from .types import (
+    _BATCH_METRICS_FIELDNAMES,
+    _GPU_BATCH_METRICS_FIELDNAMES,
+    _METRICS_FIELDNAMES,
+    BatchModelResult,
+    CachedTrajectory,
+    Scenario,
+    TruthTrajectorySet,
+    compute_ric_errors,
+    interpolate_state_to_times,
 )
 
 # =============================================================================
@@ -63,7 +64,7 @@ def compute_trajectory_metrics(
     model_res: Any,
     model_runtime_s: float,
     truth_runtime_s: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     t_ref  = truth_res.t
     r_ref  = truth_res.y[:, :3]
     v_ref  = truth_res.y[:, 3:6]
@@ -128,11 +129,11 @@ def compute_trajectory_metrics(
 # =============================================================================
 
 def compute_batch_rk4_metrics(
-    batch_result: Dict[str, Any],
-    truth_results: List[Optional[Any]],   # DOP853 truth per scenario
-    scenarios: List[Scenario],
-    sh200_rk4_result: Optional[Dict[str, Any]] = None,
-) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+    batch_result: dict[str, Any],
+    truth_results: list[Any | None],   # DOP853 truth per scenario
+    scenarios: list[Scenario],
+    sh200_rk4_result: dict[str, Any] | None = None,
+) -> tuple[list[dict], list[dict], list[dict]]:
     """
     Returns:
         total_rows   : st_lrps_rk4 vs sh200_dop853
@@ -142,11 +143,11 @@ def compute_batch_rk4_metrics(
     t_batch = batch_result["t"]    # (T,)
     Y_batch = batch_result["Y"]    # (T, N, 6)
 
-    total_rows: List[Dict] = []
-    model_rows: List[Dict] = []
-    integr_rows: List[Dict] = []
+    total_rows: list[dict] = []
+    model_rows: list[dict] = []
+    integr_rows: list[dict] = []
 
-    for i, (scenario, truth_res) in enumerate(zip(scenarios, truth_results)):
+    for i, (scenario, truth_res) in enumerate(zip(scenarios, truth_results, strict=False)):
         if truth_res is None:
             continue
 
@@ -242,7 +243,7 @@ def compute_batch_rk4_metrics(
     return total_rows, model_rows, integr_rows
 
 
-def _batch_agg_stats(rows: List[Dict], key: str) -> Dict[str, float]:
+def _batch_agg_stats(rows: list[dict], key: str) -> dict[str, float]:
     vals = np.array([r[key] for r in rows if r.get("status") == "ok"
                      and np.isfinite(r.get(key, np.nan))], dtype=np.float64)
     if len(vals) == 0:
@@ -258,12 +259,12 @@ def _batch_agg_stats(rows: List[Dict], key: str) -> Dict[str, float]:
 def compute_gpu_batch_metrics_for_model(
     result: BatchModelResult,
     truth: TruthTrajectorySet,
-    scenarios: List[Scenario],
+    scenarios: list[Scenario],
     duration_days: float,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Compute per-scenario metrics for one GPU RK4 model against truth."""
 
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for i, scenario in enumerate(scenarios):
         base = {
             "scenario_id": scenario.scenario_id,
@@ -358,12 +359,12 @@ def compute_gpu_batch_metrics_for_model(
     return rows
 
 
-def aggregate_gpu_batch_metrics(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def aggregate_gpu_batch_metrics(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Aggregate GPU batch metrics per model."""
 
     from collections import defaultdict
-    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-    failed: Dict[str, int] = defaultdict(int)
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    failed: dict[str, int] = defaultdict(int)
     for row in rows:
         model = str(row.get("model", ""))
         if row.get("status") in {"ok", "warning_negative_altitude"}:
@@ -371,7 +372,7 @@ def aggregate_gpu_batch_metrics(rows: List[Dict[str, Any]]) -> List[Dict[str, An
         else:
             failed[model] += 1
 
-    def _vals(model_rows: List[Dict[str, Any]], key: str) -> np.ndarray:
+    def _vals(model_rows: list[dict[str, Any]], key: str) -> np.ndarray:
         return np.array([
             float(r[key]) for r in model_rows
             if key in r and np.isfinite(float(r.get(key, np.nan)))
@@ -380,7 +381,7 @@ def aggregate_gpu_batch_metrics(rows: List[Dict[str, Any]]) -> List[Dict[str, An
     def _percentile(vals: np.ndarray, pct: float) -> float:
         return float(np.percentile(vals, pct)) if vals.size else np.nan
 
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for model, model_rows in grouped.items():
         rms = _vals(model_rows, "rms_pos_err_km")
         final = _vals(model_rows, "final_pos_err_km")
@@ -419,15 +420,15 @@ def aggregate_gpu_batch_metrics(rows: List[Dict[str, Any]]) -> List[Dict[str, An
 
 def load_cached_truth_set(
     args: argparse.Namespace,
-    scenarios: List[Scenario],
+    scenarios: list[Scenario],
     cache_dir: Path,
     *,
     strict: bool = False,
 ) -> TruthTrajectorySet:
-    t_by: Dict[int, np.ndarray] = {}
-    y_by: Dict[int, np.ndarray] = {}
-    rt_by: Dict[int, float] = {}
-    missing: List[int] = []
+    t_by: dict[int, np.ndarray] = {}
+    y_by: dict[int, np.ndarray] = {}
+    rt_by: dict[int, float] = {}
+    missing: list[int] = []
     for scenario in scenarios:
         cached = _load_cached_trajectory(_cached_truth_path(cache_dir, args, scenario.scenario_id))
         if cached is None:
@@ -443,12 +444,12 @@ def load_cached_truth_set(
 
 def _cached_gpu_runtime_rows(
     args: argparse.Namespace,
-    models: List[str],
-    scenarios: List[Scenario],
+    models: list[str],
+    scenarios: list[Scenario],
     cache_dir: Path,
     truth: TruthTrajectorySet,
-) -> List[Dict[str, Any]]:
-    rows: List[Dict[str, Any]] = []
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     for model in models:
         runtime = 0.0
         n = 0
@@ -491,13 +492,13 @@ def _cached_gpu_runtime_rows(
 
 def _load_cached_gpu_batch_results(
     args: argparse.Namespace,
-    scenarios: List[Scenario],
+    scenarios: list[Scenario],
     cache_dir: Path,
-    models: List[str],
-) -> List[BatchModelResult]:
-    results: List[BatchModelResult] = []
+    models: list[str],
+) -> list[BatchModelResult]:
+    results: list[BatchModelResult] = []
     for model in models:
-        cached_by_scenario: List[CachedTrajectory] = []
+        cached_by_scenario: list[CachedTrajectory] = []
         complete = True
         for scenario in scenarios:
             cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
@@ -539,15 +540,15 @@ def _load_cached_gpu_batch_results(
 
 def rebuild_gpu_batch_metrics_from_cache(
     args: argparse.Namespace,
-    scenarios: List[Scenario],
+    scenarios: list[Scenario],
     cache_dir: Path,
-    gpu_models: List[str],
+    gpu_models: list[str],
     metrics_dir: Path,
     plots_dir: Path,
     reports_dir: Path,
     *,
-    run_context: Optional[Dict[str, Any]] = None,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any], Dict[str, Any]]:
+    run_context: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     print("[cache] Rebuilding metrics from cached trajectories.", flush=True)
     manifest_path = cache_dir / "cache_manifest.json"
     if manifest_path.exists():
@@ -564,12 +565,12 @@ def rebuild_gpu_batch_metrics_from_cache(
             args.duration_days = float(first_scen[-1]) / 86400.0
             print(f"[cache] Recovered true duration_days = {args.duration_days} from trajectory arrays.", flush=True)
 
-    run_ctx: Dict[str, Any] = dict(run_context or {})
+    run_ctx: dict[str, Any] = dict(run_context or {})
     failed_models = {str(x) for x in run_ctx.get("failed_models", [])}
 
-    all_rows: List[Dict[str, Any]] = []
-    model_entries: Dict[str, Dict[str, Any]] = {}
-    status_by_model: Dict[str, str] = {}
+    all_rows: list[dict[str, Any]] = []
+    model_entries: dict[str, dict[str, Any]] = {}
+    status_by_model: dict[str, str] = {}
     for model in gpu_models:
         complete, missing = _model_cache_completion(cache_dir, model, scenarios)
         print(f"[cache] Model {model}: {complete}/{len(scenarios)} complete.", flush=True)
@@ -578,7 +579,7 @@ def rebuild_gpu_batch_metrics_from_cache(
                 f"Model {model} is missing {len(missing)} cached scenario trajectories."
             )
         disp = _model_display_name(model)
-        sample_meta: Dict[str, Any] = {}
+        sample_meta: dict[str, Any] = {}
         for scenario in scenarios:
             cached = _load_cached_trajectory(_cached_model_path(cache_dir, model, scenario.scenario_id))
             if cached is None:
@@ -696,10 +697,10 @@ def rebuild_gpu_batch_metrics_from_cache(
 
 
 def build_gpu_runtime_metrics(
-    results: List[BatchModelResult],
+    results: list[BatchModelResult],
     truth: TruthTrajectorySet,
     evals_per_step: int = 4,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Build per-model runtime and speedup rows.
 
     ``evals_per_step`` is the RHS (acceleration) evaluations per output step for
@@ -707,8 +708,8 @@ def build_gpu_runtime_metrics(
     acceleration-evaluation throughput so that figure is not mis-reported.
     """
 
-    base_rows: List[Dict[str, Any]] = []
-    by_model: Dict[str, Dict[str, Any]] = {}
+    base_rows: list[dict[str, Any]] = []
+    by_model: dict[str, dict[str, Any]] = {}
     truth_total = truth.total_runtime_s
     truth_mean = truth.mean_runtime_s
     evals = max(1, int(evals_per_step))
@@ -743,7 +744,7 @@ def build_gpu_runtime_metrics(
     return sorted(base_rows, key=lambda r: r["total_runtime_s"])
 
 
-def build_gpu_model_ranking(aggregate_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def build_gpu_model_ranking(aggregate_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     rows = []
     for i, row in enumerate(sorted(aggregate_rows, key=lambda r: r.get("median_rms_pos_err_km", np.inf)), 1):
         rows.append({
@@ -782,18 +783,18 @@ def _stat(arr: np.ndarray, stat: str) -> float:
 
 
 def aggregate_metrics(
-    all_metrics: List[Dict],
+    all_metrics: list[dict],
     truth_runtime_mean: float,
-) -> Dict[str, Dict]:
+) -> dict[str, dict]:
     from collections import defaultdict
-    grouped: Dict[str, List[Dict]] = defaultdict(list)
+    grouped: dict[str, list[dict]] = defaultdict(list)
     for m in all_metrics:
         if m.get("status") == "ok":
             grouped[m["model"]].append(m)
 
-    result: Dict[str, Dict] = {}
+    result: dict[str, dict] = {}
     for model, rows in grouped.items():
-        entry: Dict[str, Any] = {"n_scenarios": len(rows)}
+        entry: dict[str, Any] = {"n_scenarios": len(rows)}
         for key, stats in _AGG_KEYS:
             vals = np.array([r[key] for r in rows if r.get(key) is not None],
                             dtype=np.float64)
@@ -813,7 +814,7 @@ def aggregate_metrics(
     return result
 
 
-def build_rankings(agg: Dict[str, Dict]) -> List[Dict]:
+def build_rankings(agg: dict[str, dict]) -> list[dict]:
     rows = []
     for model, stats in agg.items():
         rows.append({
@@ -839,11 +840,11 @@ def build_rankings(agg: Dict[str, Dict]) -> List[Dict]:
 
 
 def find_worst_cases(
-    all_metrics: List[Dict],
-    scenarios_by_id: Dict[int, Scenario],
-) -> List[Dict]:
+    all_metrics: list[dict],
+    scenarios_by_id: dict[int, Scenario],
+) -> list[dict]:
     from collections import defaultdict
-    grouped: Dict[str, List[Dict]] = defaultdict(list)
+    grouped: dict[str, list[dict]] = defaultdict(list)
     for m in all_metrics:
         if m.get("status") == "ok":
             grouped[m["model"]].append(m)
@@ -875,15 +876,15 @@ def find_worst_cases(
 
 
 def select_median_difficulty_scenario(
-    all_metrics: List[Dict],
-    scenarios: List[Scenario],
-) -> Optional[Scenario]:
+    all_metrics: list[dict],
+    scenarios: list[Scenario],
+) -> Scenario | None:
     """Choose the scenario whose max-RMS across all models is nearest the median."""
     if not all_metrics or not scenarios:
         return scenarios[len(scenarios) // 2] if scenarios else None
 
     from collections import defaultdict
-    rms_by_sc: Dict[int, List[float]] = defaultdict(list)
+    rms_by_sc: dict[int, list[float]] = defaultdict(list)
     for m in all_metrics:
         if m.get("status") == "ok" and m.get("rms_pos_err_km") is not None:
             rms_by_sc[m["scenario_id"]].append(float(m["rms_pos_err_km"]))

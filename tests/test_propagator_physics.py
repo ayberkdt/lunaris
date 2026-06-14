@@ -1,5 +1,4 @@
 # tests/test_propagator_physics.py
-# -*- coding: utf-8 -*-
 """
 Physics & orchestration tests for ``lunaris.core.propagator``.
 

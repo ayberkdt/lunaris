@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Practical ST-LRPS ablation launcher and aggregator."""
 
 from __future__ import annotations
@@ -9,9 +8,10 @@ import csv
 import json
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any
 
 from lunaris.common.paths import project_root_from_file
 
@@ -27,7 +27,7 @@ _EVALUATE_MODULE = "lunaris.surrogate.st_lrps.evaluation.cli"
 class AblationSpec:
     name: str
     description: str
-    cli_overrides: List[str]
+    cli_overrides: list[str]
     expected_purpose: str
     experimental: bool = False
     include_in_default_matrix: bool = True
@@ -42,7 +42,7 @@ class AblationSpec:
 # validation metric (compute_checkpoint_score); periodic evaluation runs AFTER
 # checkpoint selection and never influences it. Ablations therefore compare
 # models chosen by the same criterion.
-ABLATION_REGISTRY: List[AblationSpec] = [
+ABLATION_REGISTRY: list[AblationSpec] = [
     AblationSpec(
         name="A0_raw_siren_sobolev",
         description="Raw single-scale SIREN with Sobolev U/a loss only (no residual blocks, no auxiliary losses).",
@@ -224,7 +224,7 @@ ABLATION_REGISTRY: List[AblationSpec] = [
 ]
 
 # Backward-compatible list-of-dicts shape used by older tests/callers.
-ABLATIONS: List[Dict[str, Any]] = [
+ABLATIONS: list[dict[str, Any]] = [
     {
         "name": spec.name,
         "description": spec.description,
@@ -238,7 +238,7 @@ ABLATIONS: List[Dict[str, Any]] = [
 ]
 
 
-def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description="Generate, run, and aggregate an ST-LRPS ablation matrix.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -263,8 +263,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def _data_flags(args: argparse.Namespace) -> List[str]:
-    flags: List[str] = []
+def _data_flags(args: argparse.Namespace) -> list[str]:
+    flags: list[str] = []
     if args.train_data and args.val_data:
         flags += ["--train-data", str(args.train_data), "--val-data", str(args.val_data)]
     elif args.train_data:
@@ -278,7 +278,7 @@ def _data_flags(args: argparse.Namespace) -> List[str]:
     return flags
 
 
-def _selected_specs(args: argparse.Namespace) -> List[AblationSpec]:
+def _selected_specs(args: argparse.Namespace) -> list[AblationSpec]:
     selected = set(args.only or [])
     if selected:
         # --only selects by name from the FULL registry, regardless of whether a
@@ -294,13 +294,13 @@ def _selected_specs(args: argparse.Namespace) -> List[AblationSpec]:
     ]
 
 
-def build_matrix(args: argparse.Namespace) -> List[Dict[str, Any]]:
+def build_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
     out_root = Path(args.out_root)
     base_data = _data_flags(args)
-    entries: List[Dict[str, Any]] = []
+    entries: list[dict[str, Any]] = []
     for spec in _selected_specs(args):
         run_dir = out_root / spec.name
-        cmd: List[str] = [sys.executable, "-m", _TRAIN_MODULE]
+        cmd: list[str] = [sys.executable, "-m", _TRAIN_MODULE]
         cmd += base_data
         cmd += ["--out", str(run_dir), "--seed", str(int(args.seed))]
         if args.epochs is not None:
@@ -348,7 +348,7 @@ def _run_completed(run_dir: Path) -> bool:
     return str(payload.get("status", "")).lower() == "completed"
 
 
-def _read_json(path: Path) -> Dict[str, Any]:
+def _read_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
@@ -357,7 +357,7 @@ def _read_json(path: Path) -> Dict[str, Any]:
         return {}
 
 
-def _last_history_row(run_dir: Path) -> Dict[str, Any]:
+def _last_history_row(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "history.jsonl"
     if not path.exists():
         return {}
@@ -369,7 +369,7 @@ def _last_history_row(run_dir: Path) -> Dict[str, Any]:
     return json.loads(last) if last else {}
 
 
-def _ablation_summary_row(entry: Mapping[str, Any]) -> Dict[str, Any]:
+def _ablation_summary_row(entry: Mapping[str, Any]) -> dict[str, Any]:
     run_dir = Path(str(entry["out_dir"]))
     manifest = _read_json(run_dir / "run_manifest.json")
     config = _read_json(run_dir / "config.json")
@@ -429,7 +429,7 @@ def _ablation_summary_row(entry: Mapping[str, Any]) -> Dict[str, Any]:
     return row
 
 
-def _write_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
+def _write_csv(path: Path, rows: list[Mapping[str, Any]]) -> None:
     fields = sorted({k for row in rows for k in row.keys()})
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
@@ -438,7 +438,7 @@ def _write_csv(path: Path, rows: List[Mapping[str, Any]]) -> None:
             writer.writerow(dict(row))
 
 
-def _write_summary_md(path: Path, rows: List[Mapping[str, Any]]) -> None:
+def _write_summary_md(path: Path, rows: list[Mapping[str, Any]]) -> None:
     lines = [
         "# ST-LRPS Ablation Summary",
         "",
@@ -477,7 +477,7 @@ def _md_num(value: Any) -> str:
     return f"{f:.4g}"
 
 
-def aggregate(entries: List[Dict[str, Any]], out_root: Path) -> None:
+def aggregate(entries: list[dict[str, Any]], out_root: Path) -> None:
     rows = [_ablation_summary_row(entry) for entry in entries]
     (out_root / "ablation_summary.json").write_text(json.dumps(rows, indent=2), encoding="utf-8")
     _write_csv(out_root / "ablation_summary.csv", rows)
@@ -499,7 +499,7 @@ def aggregate(entries: List[Dict[str, Any]], out_root: Path) -> None:
     _rank("ablation_ranked_by_ood_rmse_a.csv", "ood_rmse_a")
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if not args.train_data:
         print("[ablation] WARNING: no --train-data provided; commands may not be runnable.", file=sys.stderr)

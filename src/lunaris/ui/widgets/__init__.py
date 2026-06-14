@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Reusable composite widgets for the Lunaris Mission Studio desktop UI.
 

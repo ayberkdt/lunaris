@@ -1,5 +1,4 @@
 # ST_LRPS/analysis/postprocess.py
-# -*- coding: utf-8 -*-
 """
 ST_LRPS post-processing utilities.
 
@@ -38,7 +37,8 @@ Design notes
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -121,7 +121,7 @@ def _specific_ang_mom_norm(r: np.ndarray, v: np.ndarray) -> np.ndarray:
     return _norm(h, axis=0)
 
 
-def _detect_peri_apo_indices(r: np.ndarray, v: np.ndarray, *, vr_eps: float = 1e-10) -> Tuple[np.ndarray, np.ndarray]:
+def _detect_peri_apo_indices(r: np.ndarray, v: np.ndarray, *, vr_eps: float = 1e-10) -> tuple[np.ndarray, np.ndarray]:
     """
     Detect periapsis/apoapsis indices via sign changes of radial velocity:
         vr = dot(r, v)/|r|
@@ -157,7 +157,7 @@ def _detect_peri_apo_indices(r: np.ndarray, v: np.ndarray, *, vr_eps: float = 1e
     return peri.astype(int), apo.astype(int)
 
 
-def _detect_impact_index(alt_km: np.ndarray, impact_alt_km: Optional[float]) -> Optional[int]:
+def _detect_impact_index(alt_km: np.ndarray, impact_alt_km: float | None) -> int | None:
     """Return first index where altitude crosses below impact_alt_km (if provided)."""
     if impact_alt_km is None:
         return None
@@ -173,7 +173,7 @@ def _detect_impact_index(alt_km: np.ndarray, impact_alt_km: Optional[float]) -> 
 # 2.                 HISTORY NORMALIZATION / EXTRACTORS
 # =============================================================================
 
-def _first_present(d: Mapping[str, Any], keys: Sequence[str]) -> Optional[Any]:
+def _first_present(d: Mapping[str, Any], keys: Sequence[str]) -> Any | None:
     """Return the first key that exists in `d` with a non-None value."""
     for k in keys:
         if k in d:
@@ -364,7 +364,7 @@ def _maybe_v_mps(v: np.ndarray) -> np.ndarray:
     return v
 
 
-def _extract_rv_vectors(history: Mapping[str, Any]) -> Tuple[np.ndarray, np.ndarray]:
+def _extract_rv_vectors(history: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     """
     Return position/velocity histories as (N, 3) arrays in SI units:
       - r: meters
@@ -419,7 +419,7 @@ def _extract_rv_vectors(history: Mapping[str, Any]) -> Tuple[np.ndarray, np.ndar
 # Orbital elements
 # ------------------------------------------------------------
 
-def extract_elements(history: Mapping[str, Any]) -> Dict[str, np.ndarray]:
+def extract_elements(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
     """
     Extract (or derive) osculating orbital elements for plotting.
 
@@ -488,7 +488,7 @@ def extract_elements(history: Mapping[str, Any]) -> Dict[str, np.ndarray]:
 # Invariants and diagnostics
 # ------------------------------------------------------------
 
-def extract_invariants(history: Mapping[str, Any]) -> Dict[str, np.ndarray]:
+def extract_invariants(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
     """
     Extract common invariants/diagnostics.
 
@@ -538,7 +538,7 @@ def extract_invariants(history: Mapping[str, Any]) -> Dict[str, np.ndarray]:
     }
 
 
-def extract_altitude_km(history: Mapping[str, Any], meta: Optional[Mapping[str, Any]] = None) -> np.ndarray:
+def extract_altitude_km(history: Mapping[str, Any], meta: Mapping[str, Any] | None = None) -> np.ndarray:
     """
     Altitude [km].
 
@@ -574,7 +574,7 @@ def extract_altitude_km(history: Mapping[str, Any], meta: Optional[Mapping[str, 
         return np.empty((0,), dtype=float)
 
 
-def extract_events(history: Mapping[str, Any]) -> Dict[str, Any]:
+def extract_events(history: Mapping[str, Any]) -> dict[str, Any]:
     """
     Return event indices dict:
       - peri_idx: int array
@@ -603,19 +603,19 @@ def extract_events(history: Mapping[str, Any]) -> Dict[str, Any]:
 # 3.                        OPTIONAL DERIVED PRODUCTS
 # =============================================================================
 
-def _downsample_indices(n: int, max_samples: int) -> Optional[np.ndarray]:
+def _downsample_indices(n: int, max_samples: int) -> np.ndarray | None:
     """Return evenly spaced indices if downsampling is needed, otherwise None."""
     if (max_samples is None) or (max_samples <= 0) or (n <= max_samples):
         return None
     return np.linspace(0, n - 1, int(max_samples), dtype=np.int64)
 
 
-def _require_ephem(ctx: Any) -> Dict[str, Any]:
+def _require_ephem(ctx: Any) -> dict[str, Any]:
     """Fetch and validate ctx.ephem_data (strict)."""
     if ctx is None or not hasattr(ctx, "ephem_data"):
         raise ValueError("Strict ephemeris required: ctx.ephem_data is missing.")
 
-    ephem = getattr(ctx, "ephem_data")
+    ephem = ctx.ephem_data
     if not isinstance(ephem, dict):
         raise TypeError("Strict ephemeris required: ctx.ephem_data must be a dict.")
 
@@ -677,7 +677,7 @@ def _accel_breakdown_if_available(
     t_s: np.ndarray,
     y: np.ndarray,
     max_samples: int = 20000,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """
     Compute acceleration component magnitudes using strict API:
         ctx.accel_breakdown(t_s: float, y6: np.ndarray) -> dict[name -> vec3]
@@ -708,7 +708,7 @@ def _accel_breakdown_if_available(
         t_work = t_s
         y_work = y[:6, :]
 
-    mags: Dict[str, list[float]] = {}
+    mags: dict[str, list[float]] = {}
     for k in range(int(t_work.size)):
         d = fn(float(t_work[k]), y_work[:, k])
         if not isinstance(d, dict):
@@ -727,7 +727,7 @@ def _groundtrack_if_available(
     t_s: np.ndarray,
     y: np.ndarray,
     max_samples: int = 50000,
-) -> Optional[Dict[str, np.ndarray]]:
+) -> dict[str, np.ndarray] | None:
     """
     Convert inertial position history to body-fixed latitude/longitude (strict).
 
@@ -793,7 +793,7 @@ def _eclipse_if_available(
     t_s: np.ndarray,
     y: np.ndarray,
     R_body: float,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     Eclipse mask + summary (strict hard-shadow segment test).
 
@@ -885,7 +885,7 @@ def compute_history(
     mu: float,
     R_body: float,
     ctx: Any = None,
-    impact_alt_km: Optional[float] = None,
+    impact_alt_km: float | None = None,
     max_samples: int = 50000,
     *,
     detect_peri_apo: bool = True,
@@ -894,7 +894,7 @@ def compute_history(
     compute_groundtrack: bool = True,
     compute_accel_breakdown: bool = True,
     strict: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Compute derived time series and event indices from a propagated state history.
 
@@ -996,7 +996,7 @@ def compute_history(
     # ------------------------------------------------------------------
     # 5) History (canonical keys)
     # ------------------------------------------------------------------
-    hist: Dict[str, Any] = {
+    hist: dict[str, Any] = {
         "t_s": t,
         "y": ys,
         "r_m": r,
@@ -1073,7 +1073,7 @@ def compute_history(
 # 5.                   REPORTING & SUMMARY HELPERS (CLEAN)
 # =============================================================================
 
-def summarize_history(hist: Dict[str, Any]) -> Dict[str, float]:
+def summarize_history(hist: dict[str, Any]) -> dict[str, float]:
     """Return basic summary statistics for altitude [km]."""
     alt = _as_np(hist.get("alt_km", []), float)
     if alt.size == 0:
@@ -1090,7 +1090,7 @@ def summarize_history(hist: Dict[str, Any]) -> Dict[str, float]:
 # 6.                       HIGH-LEVEL ENTRYPOINT (STRICT)
 # =============================================================================
 
-def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None, *, strict: bool = False) -> Dict[str, Any]:
+def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None, *, strict: bool = False) -> dict[str, Any]:
     """
     Preferred postprocess entry point.
 
@@ -1146,7 +1146,7 @@ def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None, *,
     max_samples = 50000
     if cfg is not None:
         try:
-            cap = getattr(getattr(cfg, "time"), "max_points_cap", None)
+            cap = getattr(cfg.time, "max_points_cap", None)
             if cap is not None:
                 cap_i = int(cap)
                 if cap_i > 0:
@@ -1161,7 +1161,7 @@ def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None, *,
 
     if cfg is not None:
         try:
-            ev = getattr(getattr(cfg, "propagator"), "events")
+            ev = cfg.propagator.events
             detect_impact = bool(getattr(ev, "detect_impact", True))
             detect_peri_apo = bool(getattr(ev, "enable_peri_apo_events", True))
             detect_eclipse = bool(getattr(ev, "detect_eclipse", False))

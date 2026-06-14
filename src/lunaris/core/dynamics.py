@@ -1,5 +1,4 @@
 # ST_LRPS/core/dynamics.py
-# -*- coding: utf-8 -*-
 """
 Core Dynamics Engine (EOM / RHS Builder)
 =======================================
@@ -45,15 +44,14 @@ Implementation notes
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, Tuple, Mapping
-
-import time
 import math
+import time
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import Any
+
 import numpy as np
-
-from numba import njit 
-
+from numba import njit
 
 from lunaris.common.constants import (
     AU,
@@ -67,27 +65,34 @@ from lunaris.common.constants import (
     SIGMA_SB,
     SOLAR_FLUX_1AU,
 )
-from lunaris.common.type_defs import SpacecraftProps, PerturbationFlags, SolidTideConfig, F64Array
 from lunaris.common.math_utils import (
-    quat_rotate_vec,
-    latlon_from_xyz_m,
-    wrap_lon_deg,
-    clamp,
-    sample_grid_bilinear,
+    _sample_2d_scaled_bilinear_kernel,
     # Numba-callable kernels for use inside @njit code (the public
     # sample_*/sample_grid_* wrappers validate in Python and cannot be called
     # from nopython mode).
     _sample_grid_bilinear_kernel,
-    _sample_2d_scaled_bilinear_kernel,
+    clamp,
+    latlon_from_xyz_m,
+    quat_rotate_vec,
+    sample_grid_bilinear,
+    wrap_lon_deg,
 )
-
+from lunaris.common.type_defs import F64Array, PerturbationFlags, SolidTideConfig, SpacecraftProps
 from lunaris.physics.ephemeris import get_ephem_state
-from lunaris.physics.spherical_harmonics import sh_accel_fixed_numba, compute_point_mass_acceleration
-from lunaris.physics.third_body_effects import accel_third_body_numba, accel_j2_oblate_diff_numba
-from lunaris.physics.solar_effects import accel_srp
+from lunaris.physics.lunar_albedo import (
+    ALBEDO_SOURCE_CONSTANT,
+    ALBEDO_SOURCE_GRID,
+    accel_albedo_facets_numba,
+    normalize_albedo_mode,
+)
 from lunaris.physics.relativity_effects import _schwarzschild_components
-from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig, accel_albedo_simple
+from lunaris.physics.solar_effects import accel_srp
 from lunaris.physics.solid_tides import accel_solid_tides_numba
+from lunaris.physics.spherical_harmonics import (
+    compute_point_mass_acceleration,
+    sh_accel_fixed_numba,
+)
+from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig, accel_albedo_simple
 from lunaris.physics.thermal_ir import (
     THERMAL_MODE_CONSTANT,
     THERMAL_MODE_EQUILIBRIUM,
@@ -96,14 +101,7 @@ from lunaris.physics.thermal_ir import (
     build_latlon_facets,
     normalize_thermal_mode,
 )
-from lunaris.physics.lunar_albedo import (
-    ALBEDO_SOURCE_CONSTANT,
-    ALBEDO_SOURCE_GRID,
-    ALBEDO_SOURCE_SCALED_DN,
-    accel_albedo_facets_numba,
-    normalize_albedo_mode,
-)
-
+from lunaris.physics.third_body_effects import accel_j2_oblate_diff_numba, accel_third_body_numba
 
 # =============================================================================
 # 1.                             SMALL HELPERS
@@ -184,7 +182,7 @@ def _is_surrogate_gravity_provider(obj: Any) -> bool:
     """
 
     return bool(
-        obj is not None 
+        obj is not None
         and getattr(obj, "model_kind", None) == "st_lrps"
         and hasattr(obj, "acceleration_fixed")
     )
@@ -264,7 +262,7 @@ def _select_adaptive_sh_degree(
     return int(n_eval)
 
 
-def extract_gravity_strict(g: Any) -> Tuple[Any, ...]:
+def extract_gravity_strict(g: Any) -> tuple[Any, ...]:
     """
     STRICT gravity contract (aligned with lunaris.physics.spherical_harmonics.GravityModel).
 
@@ -301,7 +299,7 @@ def extract_gravity_strict(g: Any) -> Tuple[Any, ...]:
 
     # Workspace: use preallocated ws if present; else build once via make_workspace().
     if hasattr(g, "ws"):
-        ws_obj = getattr(g, "ws")
+        ws_obj = g.ws
     elif hasattr(g, "make_workspace"):
         ws_obj = g.make_workspace()  # type: ignore[attr-defined]
     else:
@@ -355,7 +353,7 @@ def extract_gravity_strict(g: Any) -> Tuple[Any, ...]:
     )
 
 
-def extract_ephem_tables_strict(ephem: Any) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray]:
+def extract_ephem_tables_strict(ephem: Any) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     """
     STRICT ephemeris contract (aligned with lunaris.physics.ephemeris.EphemerisManager).
 
@@ -433,7 +431,7 @@ def extract_ephem_tables_strict(ephem: Any) -> Tuple[float, np.ndarray, np.ndarr
     return dt_s, sun_tab, earth_tab, q_tab
 
 
-def extract_surface_provider_strict(surface_provider: Any) -> Dict[str, Any]:
+def extract_surface_provider_strict(surface_provider: Any) -> dict[str, Any]:
     """
     STRICT surface provider contract.
 
@@ -470,7 +468,7 @@ def need_ephemeris(flags: PerturbationFlags) -> bool:
     return bool(flags.enable_third_body or flags.enable_srp or flags.enable_albedo or flags.enable_thermal or flags.enable_tides)
 
 
-def require_srp_props(sc: SpacecraftProps) -> Tuple[float, float, float]:
+def require_srp_props(sc: SpacecraftProps) -> tuple[float, float, float]:
     """Validate and return (mass_kg, area_m2, cr) required by SRP/albedo models."""
     if sc.mass_kg <= 0.0:
         raise ValueError(f"mass_kg must be > 0, got {sc.mass_kg}")
@@ -551,8 +549,8 @@ class _GravPack:
     adaptive_power: float = 2.5
     adaptive_min_degree: int = 4
     adaptive_quantization_step: int = 10
-    adaptive_table_alt_km: Optional[F64Array] = None
-    adaptive_table_degree: Optional[np.ndarray] = None
+    adaptive_table_alt_km: F64Array | None = None
+    adaptive_table_degree: np.ndarray | None = None
     adaptive_table_len: int = 0
 
     def __post_init__(self) -> None:
@@ -652,8 +650,8 @@ class _AlbedoPack:
     alb_scale: float = 1.0
     k_lambert: float = 1.0
 
-    grid_alb: Optional[F64Array] = None
-    dn: Optional[F64Array] = None
+    grid_alb: F64Array | None = None
+    dn: F64Array | None = None
 
     n_lines: int = 0
     n_samples: int = 0
@@ -668,10 +666,10 @@ class _AlbedoPack:
     latmax: float = 90.0
 
     # --- lambert_facets backend (precomputed at setup) ---
-    facet_pos_m: Optional[F64Array] = None
-    facet_normals: Optional[F64Array] = None
-    facet_areas_m2: Optional[F64Array] = None
-    facet_albedo: Optional[F64Array] = None
+    facet_pos_m: F64Array | None = None
+    facet_normals: F64Array | None = None
+    facet_areas_m2: F64Array | None = None
+    facet_albedo: F64Array | None = None
     pressure_coefficient: float = 1.0
     solar_flux_1au_W_m2: float = float(SOLAR_FLUX_1AU)
     au_m: float = float(AU)
@@ -902,8 +900,8 @@ class DynamicsEngine:
 
     def __init__(
         self,
-        sc_props: "SpacecraftProps",
-        flags: "PerturbationFlags",
+        sc_props: SpacecraftProps,
+        flags: PerturbationFlags,
         *,
         gravity_model: Any = None,
         gravity_adaptive: Any = None,
@@ -912,7 +910,7 @@ class DynamicsEngine:
         earth_j2: Any = None,
         thermal: Any = None,
         albedo: Any = None,
-        solid_tides: Optional[SolidTideConfig] = None,
+        solid_tides: SolidTideConfig | None = None,
         allow_identity_rotation: bool = False,
     ) -> None:
         self.sc_props = sc_props
@@ -931,15 +929,15 @@ class DynamicsEngine:
         # This only substitutes for frame rotation (q), NOT for Sun/Earth vectors.
         self.allow_identity_rotation = bool(allow_identity_rotation)
 
-        self._rhs_cache: Optional[Callable[[float, np.ndarray], np.ndarray]] = None
-        self._prep: Dict[str, Any] = {}  # debug/reporting packs + requirements
+        self._rhs_cache: Callable[[float, np.ndarray], np.ndarray] | None = None
+        self._prep: dict[str, Any] = {}  # debug/reporting packs + requirements
 
         self._validate_dependencies()
 
     # -------------------------------------------------------------------------
     # Requirements / validation
     # -------------------------------------------------------------------------
-    def _requirements(self) -> Dict[str, bool]:
+    def _requirements(self) -> dict[str, bool]:
         f = self.flags
 
         use_sh = bool(getattr(f, "enable_sh", False))
@@ -1083,7 +1081,7 @@ class DynamicsEngine:
     # -------------------------------------------------------------------------
     # Providers -> prepared packs (strict)
     # -------------------------------------------------------------------------
-    def _prepare_adaptive_gravity_policy(self, nmax: int) -> Dict[str, Any]:
+    def _prepare_adaptive_gravity_policy(self, nmax: int) -> dict[str, Any]:
         """
         Normalize optional adaptive-degree settings into kernel-friendly arrays.
 
@@ -1248,7 +1246,7 @@ class DynamicsEngine:
             adaptive_table_len=int(adaptive_policy["adaptive_table_len"]),
         )
 
-    def _prepare_ephem(self, req: Dict[str, bool]) -> _EphemPack:
+    def _prepare_ephem(self, req: dict[str, bool]) -> _EphemPack:
         if self.ephem is None:
             # Only valid if we do NOT need Sun/Earth vectors AND we allow identity rotation for q_i2f.
             q_ident = np.array([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]], dtype=np.float64)
@@ -1258,7 +1256,7 @@ class DynamicsEngine:
         dt_s, sun_tab, earth_tab, qtab = extract_ephem_tables_strict(self.ephem)
         return _EphemPack(dt_s=float(dt_s), r_sun_tab_m=sun_tab, r_earth_tab_m=earth_tab, q_i2f_tab=qtab)
 
-    def _prepare_albedo(self, req: Dict[str, bool]) -> _AlbedoPack:
+    def _prepare_albedo(self, req: dict[str, bool]) -> _AlbedoPack:
         if not req["use_albedo"]:
             return _AlbedoPack(backend=1, mode=2, alb_const=0.12, alb_scale=1.0, k_lambert=1.0)
 
@@ -1309,7 +1307,7 @@ class DynamicsEngine:
             enable_eclipse=bool(getattr(cfg, "enable_eclipse", True)),
         )
 
-    def _prepare_albedo_simple(self, cfg: "AlbedoConfig") -> _AlbedoPack:
+    def _prepare_albedo_simple(self, cfg: AlbedoConfig) -> _AlbedoPack:
         """Legacy cannonball backend: parameters sourced from the surface provider.
 
         Reproduces the historical albedo behavior (single sub-satellite albedo
@@ -1347,7 +1345,7 @@ class DynamicsEngine:
 
     def _sample_facet_albedo_from_provider(
         self,
-        surf: Dict[str, Any],
+        surf: dict[str, Any],
         source: int,
         lat_c_rad: np.ndarray,
         lon_c_rad: np.ndarray,
@@ -1409,7 +1407,7 @@ class DynamicsEngine:
         np.clip(out, 0.0, 1.0, out=out)
         return out
 
-    def _prepare_earth_j2(self, req: Dict[str, bool]) -> _EarthJ2Pack:
+    def _prepare_earth_j2(self, req: dict[str, bool]) -> _EarthJ2Pack:
         if not req["use_earth_j2"] or (self.earth_j2 is None):
             return _EarthJ2Pack(j2=0.0, r_ref_m=1.0, ax=0.0, ay=0.0, az=1.0)
 
@@ -1419,7 +1417,7 @@ class DynamicsEngine:
         kx, ky, kz = ej2.spin_axis_i
         return _EarthJ2Pack(j2=j2, r_ref_m=r_ref, ax=float(kx), ay=float(ky), az=float(kz))
 
-    def _prepare_solid_tides(self, req: Dict[str, bool]) -> _TidePack:
+    def _prepare_solid_tides(self, req: dict[str, bool]) -> _TidePack:
         if not req["use_tides"]:
             return _TidePack(
                 use_k2=False,
@@ -1449,7 +1447,7 @@ class DynamicsEngine:
             r_ref_m=float(getattr(cfg, "r_ref_m", R_MOON)),
         )
 
-    def _prepare_thermal(self, req: Dict[str, bool]) -> _ThermalPack:
+    def _prepare_thermal(self, req: dict[str, bool]) -> _ThermalPack:
         if not req["use_thermal"]:
             return _ThermalPack(
                 mode=THERMAL_MODE_CONSTANT,
@@ -2245,12 +2243,12 @@ class DynamicsEngine:
     # -------------------------------------------------------------------------
     # Debug / reporting
     # -------------------------------------------------------------------------
-    def get_acceleration_breakdown(self, t: float, y: np.ndarray) -> Dict[str, float]:
+    def get_acceleration_breakdown(self, t: float, y: np.ndarray) -> dict[str, float]:
         """Return acceleration component norms at epoch t (debug/reporting)."""
         if not self._prep:
             self.build_rhs(force_rebuild=False)
 
-        req: Dict[str, bool] = self._prep["req"]
+        req: dict[str, bool] = self._prep["req"]
         gp: _GravPack = self._prep["grav"]
         ep: _EphemPack = self._prep["eph"]
         ap: _AlbedoPack = self._prep["alb"]
@@ -2264,7 +2262,7 @@ class DynamicsEngine:
 
         mu_m = float(gp.gm_m3s2)  # consistent with RHS
 
-        out: Dict[str, float] = {}
+        out: dict[str, float] = {}
 
         # Ephemeris (Python-side fetch)
         sun = np.zeros(3, dtype=float)

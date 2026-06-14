@@ -24,12 +24,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Tuple
 
 import numpy as np
 
 from .type_defs import F64Array
-
 
 # =============================================================================
 # 1.                       STATE UNCERTAINTY
@@ -57,7 +55,7 @@ class StateUncertainty:
     """
     sigma_r_m: float = 1_000.0      # Position 1-sigma [m]
     sigma_v_m_s: float = 1.0        # Velocity 1-sigma [m/s]
-    covariance_6x6: Optional[F64Array] = None  # Overrides diagonal if set
+    covariance_6x6: F64Array | None = None  # Overrides diagonal if set
 
     def __post_init__(self) -> None:
         if self.sigma_r_m < 0.0:
@@ -222,7 +220,7 @@ class MonteCarloConfig:
     mc_backend: str = "auto"
     gpu_device_id: int = 0
     gravity_mode_override: str = "follow_mission"
-    st_lrps_model_dir: Optional[str] = None
+    st_lrps_model_dir: str | None = None
 
     # GPU physics fidelity
     gpu_sh_degree: int = 10         # requested SH degree (numba_cuda_sh true SH only through 24)
@@ -249,7 +247,7 @@ class MonteCarloConfig:
     # Statistical analysis
     compute_impact_probability: bool = True
     impact_alt_km: float = 0.0      # Impact detection threshold [km]
-    sigma_levels: Tuple[float, ...] = (1.0, 2.0, 3.0)
+    sigma_levels: tuple[float, ...] = (1.0, 2.0, 3.0)
 
     def __post_init__(self) -> None:
         if self.n_samples < 2:

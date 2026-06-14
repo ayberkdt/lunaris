@@ -1,5 +1,4 @@
 # ST_LRPS/ui_parts/result_exports_page.py
-# -*- coding: utf-8 -*-
 """
 Results & Export Page (UI Part)
 ===============================
@@ -34,10 +33,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, List, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -52,7 +51,7 @@ except ImportError:
         print("  From the project root, run:", file=sys.stderr)
         print("\n      python -m lunaris.ui.pages.result_exports_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -97,8 +96,8 @@ class ResultsExportPage(QtWidgets.QWidget):
         *,
         project_root: Path,
         create_card: Callable[[str], QtWidgets.QGroupBox],
-        initial_state: Optional[OutputPageState] = None,
-        parent: Optional[QtWidgets.QWidget] = None,
+        initial_state: OutputPageState | None = None,
+        parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._project_root = Path(project_root)
@@ -628,7 +627,7 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         try:
             if recursive:
-                all_entries: List[Path] = [p for p in out_dir.rglob("*") if p.is_file()]
+                all_entries: list[Path] = [p for p in out_dir.rglob("*") if p.is_file()]
             else:
                 all_entries = [p for p in out_dir.iterdir() if p.is_file()]
         except Exception as exc:
@@ -664,8 +663,8 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         entries.sort(key=_mtime, reverse=True)
 
-        plots: List[Path] = []
-        reports: List[Path] = []
+        plots: list[Path] = []
+        reports: list[Path] = []
         data_count = 0
 
         for entry in entries:
@@ -728,7 +727,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         )
         self._update_latest_buttons(plots, reports)
 
-    def _update_latest_buttons(self, plots: List[Path], reports: List[Path]) -> None:
+    def _update_latest_buttons(self, plots: list[Path], reports: list[Path]) -> None:
         """Enable/disable the Open Latest buttons based on what was found."""
         try:
             self.btn_latest_plot.setEnabled(bool(plots))
@@ -798,7 +797,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         elif chosen is act_copy:
             self._on_artifacts_copy_path()
 
-    def _selected_artifact_path(self) -> Optional[str]:
+    def _selected_artifact_path(self) -> str | None:
         item = self.tree_artifacts.currentItem()
         if item is None:
             return None

@@ -91,8 +91,8 @@ def test_split_kind_labels_cover_default_policies():
 
 torch = pytest.importorskip("torch")
 
-from lunaris.surrogate.st_lrps.evaluation.validation_suite import run_field_validation
 from dataset_pipeline_test_utils import write_toy_contract_h5
+from lunaris.surrogate.st_lrps.evaluation.validation_suite import run_field_validation
 from st_lrps_contract_test_utils import make_contract_run
 
 

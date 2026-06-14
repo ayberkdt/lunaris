@@ -7,13 +7,13 @@ Mission Propagation Page (Page 3)
 """
 
 # =============================================================================
-# 0.                                    IMPORTS 
+# 0.                                    IMPORTS
 # =============================================================================
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Any
 
 from PySide6 import QtCore, QtWidgets
 
@@ -23,7 +23,6 @@ from lunaris.common.time_utils import (
 )
 
 try:
-    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, QuickChip, get_icon
     from lunaris.ui.core.solver_policy import (
         DEFAULT_ADAPTIVE_ATOL,
         DEFAULT_ADAPTIVE_RTOL,
@@ -34,6 +33,7 @@ try:
         coerce_positive_float,
         normalize_solver_config_object,
     )
+    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, QuickChip, get_icon
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -45,7 +45,7 @@ except ImportError:
         print("  From the project root, run:", file=sys.stderr)
         print("\n      python -m lunaris.ui.pages.mission_propagation_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -77,7 +77,7 @@ class UISpacecraftConfig:
 
 
 # =============================================================================
-# 2.                           OPTIONAL DIALOGS 
+# 2.                           OPTIONAL DIALOGS
 # =============================================================================
 
 class SolverSettingsDialog(QtWidgets.QDialog):
@@ -285,10 +285,10 @@ class MissionPropagationPage(QtWidgets.QWidget):
 
     def __init__(
         self,
-        mission_epoch: Optional[QtCore.QDateTime] = None,
-        solver_cfg: Optional[UISolverConfig] = None,
-        spacecraft_cfg: Optional[UISpacecraftConfig] = None,
-        parent: Optional[QtWidgets.QWidget] = None,
+        mission_epoch: QtCore.QDateTime | None = None,
+        solver_cfg: UISolverConfig | None = None,
+        spacecraft_cfg: UISpacecraftConfig | None = None,
+        parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
 
@@ -641,7 +641,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
     # -------------------------------------------------------------------------
     # State helpers (preset/save/load)
     # -------------------------------------------------------------------------
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         output_mode = self.cb_output_mode.currentData() or "dt"
         return {
             "timeline": {
@@ -660,7 +660,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
             },
         }
 
-    def _apply_integrator_snapshot(self, integrator: Dict[str, Any]) -> None:
+    def _apply_integrator_snapshot(self, integrator: dict[str, Any]) -> None:
         """
         Apply integrator fields using the shared solver policy instead of raw text.
 
@@ -731,7 +731,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
             }
         )
 
-    def apply_dict(self, data: Dict[str, Any]) -> None:
+    def apply_dict(self, data: dict[str, Any]) -> None:
         tl = data.get("timeline", {})
         epoch_str = tl.get("epoch", self._qdatetime_to_epoch_text(self.dt_epoch.dateTime()))
         try:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for the offline 3D-Moon showcase embed.
 

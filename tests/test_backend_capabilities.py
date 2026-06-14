@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for the central backend capability registry after the GPU SH split.
 

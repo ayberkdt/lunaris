@@ -6,16 +6,24 @@ orbital-blue accent, and semantic colors used only for state.
 
 ## Ownership
 
-- `lunaris.ui.theme.tokens` contains the typed `DESIGN_TOKENS` source of truth:
-  `ColorTokens`, `TypographyTokens`, `SpacingTokens`, `RadiusTokens`,
-  `ControlMetrics`, `LayoutTokens`, and `VisualizationTokens`.
-- `lunaris.ui.core.ui_commons.THEME` is the backward-compatible dictionary
-  facade used by existing pages and plot adapters.
-- `lunaris.ui.theme.stylesheet.build_app_stylesheet` owns global QSS for both
-  desktop studios.
-- `ORBIT_THEME` is a compatibility facade over `VisualizationTokens`; OpenGL
-  widgets still receive their specialized lunar/material roles separately from
-  application chrome.
+`lunaris.ui_foundation` is the single source of truth (SSOT) for the entire UI
+design system. It is **Qt-binding-neutral** (imports no `PySide6`) so the mission
+UI and the ST-LRPS Studio share exactly one palette, token set, and stylesheet
+generator. Everything else is a thin compatibility re-export — do not define or
+edit color literals, tokens, or QSS anywhere else.
+
+| Concern | SSOT (edit here) | Compatibility re-exports (do not add tokens) |
+| --- | --- | --- |
+| Typed `DESIGN_TOKENS` (`ColorTokens`, `TypographyTokens`, `SpacingTokens`, `RadiusTokens`, `ControlMetrics`, `LayoutTokens`, `VisualizationTokens`) | `lunaris.ui_foundation.tokens` | `lunaris.ui.theme.tokens`, `lunaris.ui.theme.__init__` |
+| `THEME` widget palette, `LOG_COLORS`, `ORBIT_THEME`, color helpers (`with_alpha`, `hex_to_rgba_float`, `rgba_css_to_tuple`) | `lunaris.ui_foundation.palette` | `lunaris.ui.core.ui_commons` (dict facade for existing pages and plot adapters) |
+| Global QSS generation (`build_app_stylesheet`) | `lunaris.ui_foundation.stylesheet` | `lunaris.ui.theme.stylesheet`, `lunaris.ui.theme.__init__` |
+
+`THEME` / `LOG_COLORS` remain read-only-compatible dictionary facades over the
+typed tokens. `ORBIT_THEME` is a facade over `VisualizationTokens`; OpenGL
+widgets still receive their specialized lunar/material roles separately from
+application chrome. The `lunaris.ui_foundation` boundary is enforced by an
+import-linter contract (see [pyproject.toml] `[tool.importlinter]`): the
+foundation must never import either desktop application.
 
 Page-local QSS should be limited to runtime plot series, OpenGL materials, or a
 third-party widget that cannot be styled through a property or palette.

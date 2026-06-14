@@ -7,9 +7,9 @@ import json
 import math
 import subprocess
 import time
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
 
@@ -34,7 +34,7 @@ class PerturbationBudgetResult:
     propagation_ablation_csv: Path
     runtime_budget_csv: Path
     summary_md: Path
-    warnings: List[str]
+    warnings: list[str]
 
 
 def _git_commit() -> str:
@@ -69,7 +69,7 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
     if not rows:
         path.write_text("", encoding="utf-8")
         return
-    fieldnames: List[str] = []
+    fieldnames: list[str] = []
     for row in rows:
         for key in row:
             if key not in fieldnames:
@@ -81,8 +81,8 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, object]]) -> None:
             writer.writerow({key: _csv_value(row.get(key, "")) for key in fieldnames})
 
 
-def _median_force_ranking(rows: Iterable[Mapping[str, object]]) -> List[tuple[str, float]]:
-    values: Dict[str, List[float]] = {}
+def _median_force_ranking(rows: Iterable[Mapping[str, object]]) -> list[tuple[str, float]]:
+    values: dict[str, list[float]] = {}
     for row in rows:
         name = str(row.get("force_name", ""))
         if name.startswith("Gravity SH"):
@@ -101,12 +101,12 @@ def _collect_warnings(
     budget_rows: Sequence[Mapping[str, object]],
     sh_rows: Sequence[Mapping[str, object]],
     gravity_warning: str,
-) -> List[str]:
-    warnings: List[str] = []
+) -> list[str]:
+    warnings: list[str] = []
     if gravity_warning:
         warnings.append(gravity_warning)
 
-    by_sample: Dict[str, Dict[str, float]] = {}
+    by_sample: dict[str, dict[str, float]] = {}
     for row in budget_rows:
         sid = str(row.get("sample_id", ""))
         name = str(row.get("force_name", ""))
@@ -133,7 +133,7 @@ def _collect_warnings(
             warnings.append(f"Solid tides exceed 1e-3 x central gravity in {sid}.")
 
     # Broad altitude trend: high-degree increment should generally decrease with altitude.
-    band_alt: Dict[str, Dict[float, List[float]]] = {}
+    band_alt: dict[str, dict[float, list[float]]] = {}
     for row in sh_rows:
         band = str(row.get("band", ""))
         alt = float(row.get("altitude_km", 0.0))
@@ -151,12 +151,12 @@ def _collect_warnings(
 def _sh_uncertainty_comparison_rows(
     sh_rows: Sequence[Mapping[str, object]],
     uncertainty_rows: Sequence[Mapping[str, object]],
-) -> List[Dict[str, object]]:
-    combined_by_sample: Dict[str, float] = {}
+) -> list[dict[str, object]]:
+    combined_by_sample: dict[str, float] = {}
     for row in uncertainty_rows:
         if row.get("model") == "Combined Non-Gravitational RSS":
             combined_by_sample[str(row["sample_id"])] = float(row["uncertainty_norm_m_s2"])
-    rows: List[Dict[str, object]] = []
+    rows: list[dict[str, object]] = []
     for row in sh_rows:
         sample_id = str(row["sample_id"])
         combined = combined_by_sample.get(sample_id, float("nan"))
@@ -190,7 +190,7 @@ def _summary_markdown(
     runtime_s: float,
 ) -> str:
     ranking = _median_force_ranking(budget_rows)
-    lines: List[str] = [
+    lines: list[str] = [
         "# Perturbation Budget Analysis",
         "",
         "This report compares acceleration contributions and first-order force-model uncertainties.",

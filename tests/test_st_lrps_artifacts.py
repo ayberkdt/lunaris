@@ -1,5 +1,4 @@
 import json
-from dataclasses import asdict
 from pathlib import Path
 
 import h5py
@@ -30,11 +29,11 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     write_scaler_json,
 )
 from lunaris.surrogate.st_lrps.evaluation.cli import evaluate, predict_residual_u_a
-from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
 from lunaris.surrogate.st_lrps.networks.models import (
     build_model_from_config,
     compute_architecture_signature,
 )
+from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
 

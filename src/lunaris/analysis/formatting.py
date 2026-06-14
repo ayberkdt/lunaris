@@ -1,5 +1,7 @@
-import numpy as np
 from typing import Any
+
+import numpy as np
+
 
 def safe_float(value: Any) -> float:
     """Best-effort float conversion used by formatting helpers."""

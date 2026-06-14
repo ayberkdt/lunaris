@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Internal module of the lunar gravity-model benchmark harness.
 
 Part of :mod:`lunaris.surrogate.st_lrps.evaluation.compare_gravity_models`;
@@ -9,10 +8,11 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
@@ -40,7 +40,7 @@ class Scenario:
     argp_deg: float
     ta_deg: float
     initial_state: np.ndarray = field(repr=False)
-    raw_unit_sample: Optional[List[float]] = None
+    raw_unit_sample: list[float] | None = None
     sampling_method: str = "random"
 
 
@@ -69,9 +69,9 @@ class TruthTrajectorySet:
     """SH200 DOP853 truth trajectories keyed by scenario id."""
 
     model_name: str
-    t_by_scenario: Dict[int, np.ndarray]
-    y_by_scenario: Dict[int, np.ndarray]
-    runtime_by_scenario: Dict[int, float]
+    t_by_scenario: dict[int, np.ndarray]
+    y_by_scenario: dict[int, np.ndarray]
+    runtime_by_scenario: dict[int, float]
 
     @property
     def total_runtime_s(self) -> float:
@@ -89,7 +89,7 @@ class CachedTrajectory:
     t: np.ndarray
     y: np.ndarray
     runtime_s: float = float("nan")
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -249,7 +249,7 @@ class GravityModelCache:
     def __init__(self, cfg: SimConfig, args: argparse.Namespace) -> None:
         self._cfg  = cfg
         self._args = args
-        self._cache: Dict[str, Any] = {}
+        self._cache: dict[str, Any] = {}
 
     def get(self, model_name: str) -> Any:
         if model_name not in self._cache:
@@ -293,7 +293,7 @@ class GravityModelCache:
                         raise RuntimeError(
                             "CUDA/ST-LRPS GPU mode requested but PyTorch is not installed. "
                             "Install CUDA-enabled PyTorch or use --gpu-fallback cpu."
-                        )
+                        ) from None
                     print("  [cache] PyTorch not installed; loading ST-LRPS on CPU.", flush=True)
 
             print(f"  [cache] Loading ST-LRPS model from {self._args.st_lrps_model_dir} "
@@ -310,7 +310,7 @@ class GravityModelCache:
 
 
 # ---- moved here to keep the import graph acyclic ----
-def _find_st_lrps_weight_file(model_dir: Optional[str]) -> Optional[str]:
+def _find_st_lrps_weight_file(model_dir: str | None) -> str | None:
     """Return the checkpoint path used by the ST-LRPS runtime, if available."""
 
     if not model_dir:

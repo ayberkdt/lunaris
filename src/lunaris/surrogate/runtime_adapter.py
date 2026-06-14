@@ -48,9 +48,10 @@ from __future__ import annotations
 import json
 import logging
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
+from typing import Any
 
 import numpy as np
 
@@ -124,7 +125,7 @@ def find_checkpoint_for_st_lrps_run(run_dir: Path | str) -> Path:
     return _find_checkpoint_for_run(Path(run_dir).expanduser().resolve())
 
 
-def _extract_degree_metadata(config: Dict[str, Any]) -> tuple:
+def _extract_degree_metadata(config: dict[str, Any]) -> tuple:
     """
     Resolve ``degree_min`` and ``degree_max`` from a run ``config.json``.
 
@@ -158,10 +159,10 @@ def _extract_degree_metadata(config: Dict[str, Any]) -> tuple:
     return int(deg_min if deg_min is not None else 0), int(deg_max)
 
 
-def _config_path_value(config: Dict[str, Any], *keys: str) -> Optional[str]:
+def _config_path_value(config: dict[str, Any], *keys: str) -> str | None:
     """Return the first non-empty path-like value from config or dataset_meta."""
 
-    mappings: list[Dict[str, Any]] = [config]
+    mappings: list[dict[str, Any]] = [config]
     dataset_meta = config.get("dataset_meta")
     if isinstance(dataset_meta, dict):
         mappings.append(dataset_meta)
@@ -187,7 +188,7 @@ def _config_path_value(config: Dict[str, Any], *keys: str) -> Optional[str]:
     return None
 
 
-def _resolve_baseline_gravity_path(config: Dict[str, Any]) -> Path:
+def _resolve_baseline_gravity_path(config: dict[str, Any]) -> Path:
     """
     Resolve the SH coefficient file used for the ST-LRPS baseline.
 
@@ -233,7 +234,7 @@ def discover_st_lrps_model_dirs(root: Path | str = DEFAULT_ST_LRPS_RUNS_DIR) -> 
 
     runs_root = Path(root).expanduser().resolve()
     search_dirs = [runs_root]
-    
+
     # Also check the newer `outputs/training` directory if using the default root
     if runs_root == DEFAULT_ST_LRPS_RUNS_DIR.resolve():
         search_dirs.append((_REPO_ROOT / "outputs" / "training").resolve())
@@ -247,12 +248,12 @@ def discover_st_lrps_model_dirs(root: Path | str = DEFAULT_ST_LRPS_RUNS_DIR) -> 
             for p in d.iterdir()
             if _is_valid_surrogate_run(p) and _looks_like_lunar_run(p)
         ])
-        
+
     candidates.sort(key=lambda item: item.stat().st_mtime, reverse=True)
     return candidates
 
 
-def find_latest_st_lrps_model_dir(root: Path | str = DEFAULT_ST_LRPS_RUNS_DIR) -> Optional[Path]:
+def find_latest_st_lrps_model_dir(root: Path | str = DEFAULT_ST_LRPS_RUNS_DIR) -> Path | None:
     """Return the newest valid surrogate run directory, if any."""
 
     candidates = discover_st_lrps_model_dirs(root)
@@ -288,10 +289,10 @@ class _ScalerBundle:
 
     x: _ScaleVector
     u: _ScaleVector
-    a: Optional[_ScaleVector]
+    a: _ScaleVector | None
 
 
-def _normalize_scale_mapping(mapping: Dict[str, Any], expected_dim: int, name: str) -> _ScaleVector:
+def _normalize_scale_mapping(mapping: dict[str, Any], expected_dim: int, name: str) -> _ScaleVector:
     """
     Normalize legacy/new scaler JSON into a common in-memory representation.
 
@@ -324,7 +325,7 @@ def _normalize_scale_mapping(mapping: Dict[str, Any], expected_dim: int, name: s
     return _ScaleVector(mean=mean, scale=scale)
 
 
-def _load_scaler_bundle(model_dir: Path, checkpoint_obj: Dict[str, Any]) -> _ScalerBundle:
+def _load_scaler_bundle(model_dir: Path, checkpoint_obj: dict[str, Any]) -> _ScalerBundle:
     """
     Load scaler metadata from checkpoint first, then ``scaler.json`` as fallback.
 
@@ -466,7 +467,7 @@ class FourierInputEmbedding(nn.Module):
 class PhysicsNet(nn.Module):
     """Inference-time wrapper for optional Fourier preprocessing + backbone."""
 
-    def __init__(self, *, backbone: nn.Module, embedding: Optional[FourierInputEmbedding]) -> None:
+    def __init__(self, *, backbone: nn.Module, embedding: FourierInputEmbedding | None) -> None:
         super().__init__()
         self.backbone = backbone
         self.embedding = embedding
@@ -477,7 +478,7 @@ class PhysicsNet(nn.Module):
         return self.backbone(x_scaled)
 
 
-def _build_model_from_config(cfg: Dict[str, Any]) -> nn.Module:
+def _build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
     """Instantiate the network architecture encoded in ``config.json``."""
 
     if cfg.get("architecture") in ("MultiScale", "Residual") or int(cfg.get("n_bands", 1)) > 1:
@@ -492,7 +493,7 @@ def _build_model_from_config(cfg: Dict[str, Any]) -> nn.Module:
     dropout = float(cfg.get("dropout", 0.0) or 0.0)
     use_fourier = bool(cfg.get("use_fourier", False))
 
-    embedding: Optional[FourierInputEmbedding] = None
+    embedding: FourierInputEmbedding | None = None
     backbone_in_dim = 3
     if use_fourier:
         embedding = FourierInputEmbedding(
@@ -524,7 +525,7 @@ def _build_model_from_config(cfg: Dict[str, Any]) -> nn.Module:
     return PhysicsNet(backbone=backbone, embedding=embedding)
 
 
-def _extract_state_dict(checkpoint_obj: Dict[str, Any]) -> Dict[str, Any]:
+def _extract_state_dict(checkpoint_obj: dict[str, Any]) -> dict[str, Any]:
     """Extract the model state dictionary from a checkpoint payload."""
 
     for key in ("model", "model_state", "state_dict"):
@@ -534,7 +535,7 @@ def _extract_state_dict(checkpoint_obj: Dict[str, Any]) -> Dict[str, Any]:
     raise KeyError("Checkpoint does not contain a model state dictionary.")
 
 
-def _load_checkpoint(path: Path, device: "torch.device") -> Dict[str, Any]:
+def _load_checkpoint(path: Path, device: torch.device) -> dict[str, Any]:
     """Load a checkpoint with compatibility across PyTorch versions."""
 
     try:
@@ -583,16 +584,16 @@ class SurrogateGravityModel:
         *,
         model_dir: Path,
         model: nn.Module,
-        device: "torch.device",
+        device: torch.device,
         scaler: _ScalerBundle,
         training_mode: str,
         a_sign: float,
         mu_m3s2: float,
         r_ref_m: float,
-        config: Dict[str, Any],
-        baseline_gravity_model: Optional[Any] = None,
-        baseline_gravity_path: Optional[Path] = None,
-        force_runtime: Optional[Any] = None,
+        config: dict[str, Any],
+        baseline_gravity_model: Any | None = None,
+        baseline_gravity_path: Path | None = None,
+        force_runtime: Any | None = None,
     ) -> None:
         self.model_dir = Path(model_dir).resolve()
         self.model = model
@@ -608,8 +609,8 @@ class SurrogateGravityModel:
         self.baseline_gravity_model = baseline_gravity_model
         self.baseline_gravity_path = str(baseline_gravity_path) if baseline_gravity_path is not None else None
         self._force_runtime = force_runtime
-        self._baseline_torch_evaluator: Optional[Any] = None
-        self._baseline_torch_signature: Optional[tuple[str, str, int]] = None
+        self._baseline_torch_evaluator: Any | None = None
+        self._baseline_torch_signature: tuple[str, str, int] | None = None
 
         # Degree metadata — required by core.propagator._get_sh_degree() and
         # MC result provenance.  Raised at construction time so the error fires
@@ -650,10 +651,10 @@ class SurrogateGravityModel:
         cls,
         model_dir: Path | str,
         *,
-        mu_override: Optional[float] = None,
-        r_ref_override: Optional[float] = None,
+        mu_override: float | None = None,
+        r_ref_override: float | None = None,
         device_preference: str = "cpu",
-    ) -> "SurrogateGravityModel":
+    ) -> SurrogateGravityModel:
         """
         Load a surrogate gravity provider from a trained run directory.
 
@@ -770,7 +771,7 @@ class SurrogateGravityModel:
         )
 
     @staticmethod
-    def _select_device(preference: str) -> "torch.device":
+    def _select_device(preference: str) -> torch.device:
         """Resolve the requested inference device."""
 
         pref = str(preference or "cpu").strip().lower()
@@ -783,7 +784,7 @@ class SurrogateGravityModel:
         return torch.device("cpu")
 
     @staticmethod
-    def _infer_training_mode(config: Dict[str, Any], scaler: _ScalerBundle) -> str:
+    def _infer_training_mode(config: dict[str, Any], scaler: _ScalerBundle) -> str:
         """
         Infer whether the model predicts the full potential or a residual.
 
@@ -834,24 +835,24 @@ class SurrogateGravityModel:
     # ------------------------------------------------------------------
     # Physics evaluation
     # ------------------------------------------------------------------
-    def _scale_x(self, x_phys: "torch.Tensor") -> "torch.Tensor":
+    def _scale_x(self, x_phys: torch.Tensor) -> torch.Tensor:
         return (x_phys - self._x_mean) / self._x_scale
 
-    def _unscale_u(self, u_scaled: "torch.Tensor") -> "torch.Tensor":
+    def _unscale_u(self, u_scaled: torch.Tensor) -> torch.Tensor:
         return u_scaled * self._u_scale + self._u_mean
 
-    def _base_potential(self, x_phys: "torch.Tensor") -> "torch.Tensor":
+    def _base_potential(self, x_phys: torch.Tensor) -> torch.Tensor:
         # Potential is rarely consumed by the propagator.  We keep the monopole
         # potential as a conservative scalar baseline while acceleration below
         # uses the physically required SH(degree_min) baseline.
         r = torch.linalg.norm(x_phys, dim=1, keepdim=True).clamp_min(1.0)
         return self.a_sign * self._mu_tensor / r
 
-    def _point_mass_acceleration(self, x_phys: "torch.Tensor") -> "torch.Tensor":
+    def _point_mass_acceleration(self, x_phys: torch.Tensor) -> torch.Tensor:
         r = torch.linalg.norm(x_phys, dim=1, keepdim=True).clamp_min(1.0)
         return (-self._mu_tensor.to(device=x_phys.device, dtype=x_phys.dtype) * x_phys) / (r * r * r)
 
-    def _base_acceleration(self, x_phys: "torch.Tensor") -> "torch.Tensor":
+    def _base_acceleration(self, x_phys: torch.Tensor) -> torch.Tensor:
         """Return the CPU-safe baseline acceleration for residual models."""
 
         if self.baseline_gravity_model is None:
@@ -864,7 +865,7 @@ class SurrogateGravityModel:
             out[idx, :] = self.baseline_gravity_model.accel_fixed(row, degree=degree)
         return torch.as_tensor(out, device=x_phys.device, dtype=x_phys.dtype)
 
-    def _base_acceleration_torch(self, x_phys: "torch.Tensor") -> "torch.Tensor":
+    def _base_acceleration_torch(self, x_phys: torch.Tensor) -> torch.Tensor:
         """Return batched SH(degree_min) baseline acceleration on the tensor device."""
 
         if self.baseline_gravity_model is None:
@@ -968,7 +969,7 @@ class SurrogateGravityModel:
     # Batched GPU inference — torch tensor I/O
     # ------------------------------------------------------------------
 
-    def to_device(self, device: "torch.device") -> None:
+    def to_device(self, device: torch.device) -> None:
         """
         Move the model and all cached scaling tensors to *device* in-place.
 
@@ -999,8 +1000,8 @@ class SurrogateGravityModel:
 
     def predict_residual_accel_torch(
         self,
-        x_m: "torch.Tensor",
-    ) -> "torch.Tensor":
+        x_m: torch.Tensor,
+    ) -> torch.Tensor:
         """
         Return the neural residual acceleration ΔA in m/s² as a torch tensor.
 
@@ -1061,8 +1062,8 @@ class SurrogateGravityModel:
 
     def predict_total_accel_torch(
         self,
-        x_m: "torch.Tensor",
-    ) -> "torch.Tensor":
+        x_m: torch.Tensor,
+    ) -> torch.Tensor:
         """
         Return the total acceleration (SH baseline + neural residual) in m/s².
 

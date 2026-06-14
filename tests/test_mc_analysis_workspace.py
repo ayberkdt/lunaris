@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 UI regression tests for the Monte Carlo analysis workspace and log-panel collapse.
 
@@ -24,8 +23,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6 import QtWidgets
 
-from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
 from lunaris.analysis.monte_carlo.plotting import plot_mc_report
+from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
 from lunaris.common.montecarlo_defs import MCRunResult
 from lunaris.ui.app import MainWindow
 from lunaris.ui.components.monte_carlo_analysis_panel import MonteCarloAnalysisPanel

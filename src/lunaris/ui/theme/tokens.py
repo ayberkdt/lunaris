@@ -1,4 +1,9 @@
-"""Compatibility exports for the binding-neutral UI foundation tokens."""
+"""Compatibility exports for the binding-neutral UI foundation tokens.
+
+Do NOT define tokens here. The single source of truth is
+``lunaris.ui_foundation.tokens``; this module only re-exports it so existing
+``lunaris.ui.theme.tokens`` import sites keep working. See docs/UI_THEME.md.
+"""
 
 from lunaris.ui_foundation.tokens import (
     DESIGN_TOKENS,

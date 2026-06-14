@@ -1,5 +1,4 @@
 # ST_LRPS/visualization/orbit_animation.py
-# -*- coding: utf-8 -*-
 """
 ST_LRPS — Scientific-grade 3D orbit animation (Moon-centered)
 
@@ -28,20 +27,20 @@ Key features
 
 from __future__ import annotations
 
-import os
 import math
+import os
 import shutil
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
-import numpy as np
-import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from matplotlib.patches import FancyBboxPatch
 import matplotlib.patheffects as pe
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.patches import FancyBboxPatch
 
 try:
-    from scipy.interpolate import CubicSpline, CubicHermiteSpline  # type: ignore
+    from scipy.interpolate import CubicHermiteSpline, CubicSpline  # type: ignore
     _HAVE_SCIPY = True
 except Exception:
     CubicSpline = None  # type: ignore
@@ -64,7 +63,7 @@ class Theme:
     hud_edge: str = "#2B3555"
     orbit: str = "#5ED0FF"
     orbit_faint: str = "#2B6C80"
-    moon_base: Tuple[float, float, float] = (0.75, 0.76, 0.80)
+    moon_base: tuple[float, float, float] = (0.75, 0.76, 0.80)
     sun: str = "#FFD166"
     star: str = "#D6E2FF"
     trail_cmap: str = "inferno"
@@ -136,7 +135,7 @@ def _unit(v: np.ndarray, axis: int = -1, eps: float = 1e-30) -> np.ndarray:
     return v / np.maximum(n, eps)
 
 
-def _meta_get(meta: Optional[Dict[str, Any]], *keys: str, default: Any = None) -> Any:
+def _meta_get(meta: dict[str, Any] | None, *keys: str, default: Any = None) -> Any:
     if not isinstance(meta, dict):
         return default
     for k in keys:
@@ -145,7 +144,7 @@ def _meta_get(meta: Optional[Dict[str, Any]], *keys: str, default: Any = None) -
     return default
 
 
-def _pick_first(hist: Dict[str, Any], *keys: str, default: Any = None) -> Any:
+def _pick_first(hist: dict[str, Any], *keys: str, default: Any = None) -> Any:
     for k in keys:
         if k in hist and hist[k] is not None:
             return hist[k]
@@ -154,8 +153,8 @@ def _pick_first(hist: Dict[str, Any], *keys: str, default: Any = None) -> Any:
 
 def _ensure_monotonic_time(
     t_s: np.ndarray,
-    arrs: Tuple[np.ndarray, ...],
-) -> Tuple[np.ndarray, Tuple[np.ndarray, ...]]:
+    arrs: tuple[np.ndarray, ...],
+) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
     t_s = _as_np(t_s, float).ravel()
     ok = np.isfinite(t_s)
     if ok.sum() < 2:
@@ -206,7 +205,7 @@ def _resample_vec3(t: np.ndarray, vec3: np.ndarray, t_new: np.ndarray) -> np.nda
 def _resample_pos_with_vel(
     t: np.ndarray,
     r_m: np.ndarray,
-    v_mps: Optional[np.ndarray],
+    v_mps: np.ndarray | None,
     t_new: np.ndarray,
 ) -> np.ndarray:
     r_m = _as_np(r_m, float)
@@ -235,10 +234,10 @@ def _resample_1d(t: np.ndarray, x: np.ndarray, t_new: np.ndarray) -> np.ndarray:
 
 def _compute_orbital_elements_series(
     r_m: np.ndarray,
-    v_mps: Optional[np.ndarray],
+    v_mps: np.ndarray | None,
     R_body_m: float,
-    mu_m3s2: Optional[float] = None,
-) -> Dict[str, np.ndarray]:
+    mu_m3s2: float | None = None,
+) -> dict[str, np.ndarray]:
     """Compute per-sample orbital elements. Returns dict with keys:
     alt_km, inc_deg, e, speed_kmps, sma_km, period_h
     """
@@ -294,7 +293,7 @@ def _compute_orbital_elements_series(
                 speed_kmps=speed_kmps, sma_km=sma_km, period_h=period_h)
 
 
-def _find_extrema(alt_km: np.ndarray) -> Tuple[int, int]:
+def _find_extrema(alt_km: np.ndarray) -> tuple[int, int]:
     """Return (idx_periapsis, idx_apoapsis) — indices of min/max altitude."""
     valid = np.isfinite(alt_km)
     if not valid.any():
@@ -310,7 +309,7 @@ def _find_extrema(alt_km: np.ndarray) -> Tuple[int, int]:
 # API adapter: PropagationResult → hist dict
 # ==========================
 
-def _result_to_hist(result: Any, config: Any) -> Dict[str, Any]:
+def _result_to_hist(result: Any, config: Any) -> dict[str, Any]:
     """Convert a PropagationResult + SimConfig to the internal hist dict format."""
     t_s = np.asarray(getattr(result, "t", []), dtype=float).ravel()
     y = getattr(result, "y", None)
@@ -342,7 +341,7 @@ def _result_to_hist(result: Any, config: Any) -> Dict[str, Any]:
             except Exception:
                 pass
 
-    hist: Dict[str, Any] = {
+    hist: dict[str, Any] = {
         "t_s": t_s,
         "r_m": r_m,
         "v_mps": v_mps,
@@ -358,7 +357,7 @@ def _result_to_hist(result: Any, config: Any) -> Dict[str, Any]:
 # Visual elements
 # ==========================
 
-def _create_moon_mesh(R_km: float, nu: int = 120, nv: int = 60) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _create_moon_mesh(R_km: float, nu: int = 120, nv: int = 60) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     u = np.linspace(0.0, 2.0 * np.pi, nu)
     v = np.linspace(0.0, np.pi, nv)
     x = R_km * np.outer(np.cos(u), np.sin(v))
@@ -376,7 +375,7 @@ def _moon_facecolors(
     ambient: float = 0.06,
     diffuse: float = 0.94,
     gamma: float = 1.05,
-    base_rgb: Tuple[float, float, float] = (0.75, 0.76, 0.80),
+    base_rgb: tuple[float, float, float] = (0.75, 0.76, 0.80),
 ) -> np.ndarray:
     sun = _unit(np.asarray(sun_dir, float).reshape(3,), axis=0)
     xc = 0.25 * (mx[:-1, :-1] + mx[1:, :-1] + mx[:-1, 1:] + mx[1:, 1:])
@@ -501,7 +500,7 @@ def _update_terminator_ring(line: Any, R_body_km: float, sun_dir: np.ndarray) ->
 # Sun direction
 # ==========================
 
-def _try_spice_sun_dir(meta: Dict[str, Any], t_s: np.ndarray) -> Optional[np.ndarray]:
+def _try_spice_sun_dir(meta: dict[str, Any], t_s: np.ndarray) -> np.ndarray | None:
     spice_meta = meta.get("spice") if isinstance(meta, dict) else None
     if not isinstance(spice_meta, dict):
         return None
@@ -529,7 +528,7 @@ def _try_spice_sun_dir(meta: Dict[str, Any], t_s: np.ndarray) -> Optional[np.nda
     return sun_dir
 
 
-def _get_sun_dir_series(hist: Dict[str, Any], t_ref: np.ndarray, t_new: np.ndarray) -> np.ndarray:
+def _get_sun_dir_series(hist: dict[str, Any], t_ref: np.ndarray, t_new: np.ndarray) -> np.ndarray:
     meta = hist.get("meta", {}) if isinstance(hist.get("meta", {}), dict) else {}
 
     sun_spice = _try_spice_sun_dir(meta, t_new)
@@ -553,7 +552,7 @@ def _get_sun_dir_series(hist: Dict[str, Any], t_ref: np.ndarray, t_new: np.ndarr
 # HUD helpers
 # ==========================
 
-def _format_mission_time(t_s: float) -> Tuple[float, float]:
+def _format_mission_time(t_s: float) -> tuple[float, float]:
     days = t_s / 86400.0
     hours = t_s / 3600.0
     return float(days), float(hours)
@@ -576,7 +575,7 @@ def render_orbit_animation(
     config,
     output_file: str = "orbit_3d.mp4",
     **kwargs
-) -> Optional[str]:
+) -> str | None:
     """
     Create a high-quality Moon-centered orbit animation from propagation results.
     """
@@ -603,7 +602,7 @@ def render_orbit_animation_from_history(
     dpi: int = 170,
     crf: int = 18,
     preset: str = "slow",
-) -> Optional[str]:
+) -> str | None:
     """
     Create a high-quality Moon-centered orbit animation from a history dict.
     """
@@ -768,8 +767,8 @@ def render_orbit_animation_from_history(
     )
 
     # Animated trail
-    from mpl_toolkits.mplot3d.art3d import Line3DCollection
     from matplotlib.colors import Normalize
+    from mpl_toolkits.mplot3d.art3d import Line3DCollection
 
     trail_norm = Normalize(vmin=0.0, vmax=1.0)
     trail_coll = Line3DCollection(

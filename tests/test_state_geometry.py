@@ -1,5 +1,4 @@
 # tests/test_state_geometry.py
-# -*- coding: utf-8 -*-
 """
 Orbital-geometry invariants for ``lunaris.core.state``.
 

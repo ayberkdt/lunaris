@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Mapping
+from collections.abc import Iterable, Mapping
 
 import numpy as np
 
@@ -16,8 +16,8 @@ def compute_gravity_degree_sensitivity(
     samples: Iterable[SampleState],
     sh_by_sample: Mapping[str, Mapping[int, np.ndarray]],
     forces_by_sample: Mapping[str, Mapping[str, np.ndarray]],
-) -> List[Dict[str, object]]:
-    rows: List[Dict[str, object]] = []
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
     sample_by_id = {s.sample_id: s for s in samples}
 
     for sample_id, sh_vectors in sh_by_sample.items():

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Internal module of the lunar gravity-model benchmark harness.
 
 Part of :mod:`lunaris.surrogate.st_lrps.evaluation.compare_gravity_models`;
@@ -16,39 +15,41 @@ import os
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-import numpy as np
 import matplotlib
+import numpy as np
+
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 from lunaris.core.config import SimConfig
 from lunaris.physics.ephemeris import EphemerisManager
 
-# --- intra-package wiring (auto-generated split) ---
-from .types import (
-    BENCHMARK_CACHE_SCHEMA_VERSION,
-    CachedTrajectory,
-    GravityModelCache,
-    SCENARIO_MANIFEST_CSV,
-    SCENARIO_MANIFEST_JSON,
-    SCENARIO_UNIT_DIM,
-    Scenario,
-    TruthTrajectorySet,
-    _METRICS_FIELDNAMES,
-    _cfg_with_integrator,
-    _find_st_lrps_weight_file,
-)
 from .compute import (
     _parse_float_list_csv,
     _sobol_note,
     _state_from_elements,
     generate_validation_scenarios,
     propagate_for_scenario,
+)
+
+# --- intra-package wiring (auto-generated split) ---
+from .types import (
+    _METRICS_FIELDNAMES,
+    BENCHMARK_CACHE_SCHEMA_VERSION,
+    SCENARIO_MANIFEST_CSV,
+    SCENARIO_MANIFEST_JSON,
+    SCENARIO_UNIT_DIM,
+    CachedTrajectory,
+    GravityModelCache,
+    Scenario,
+    TruthTrajectorySet,
+    _cfg_with_integrator,
+    _find_st_lrps_weight_file,
 )
 
 # =============================================================================
@@ -60,7 +61,7 @@ def _ensure_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _write_scenarios_csv(scenarios: List[Scenario], out_dir: Path) -> None:
+def _write_scenarios_csv(scenarios: list[Scenario], out_dir: Path) -> None:
     fieldnames = ["scenario_id", "hp_km", "ha_km", "a_km", "e",
                   "inc_deg", "raan_deg", "argp_deg", "ta_deg"]
     p = out_dir / "scenarios.csv"
@@ -80,7 +81,7 @@ def _scenario_count_for_args(args: argparse.Namespace) -> int:
     return count
 
 
-def _sampling_metadata(args: argparse.Namespace, scenario_count: Optional[int] = None) -> Dict[str, Any]:
+def _sampling_metadata(args: argparse.Namespace, scenario_count: int | None = None) -> dict[str, Any]:
     count = _scenario_count_for_args(args) if scenario_count is None else int(scenario_count)
     method = str(getattr(args, "sampling_method", "random"))
     note = _sobol_note(method, int(args.random_scenarios))
@@ -146,7 +147,7 @@ def _scenario_generation_args(args: argparse.Namespace, n: int) -> argparse.Name
     return child
 
 
-def _scenario_numeric_tuple(s: Scenario) -> Tuple[float, ...]:
+def _scenario_numeric_tuple(s: Scenario) -> tuple[float, ...]:
     return (
         float(s.hp_km), float(s.ha_km), float(s.a_km), float(s.e),
         float(s.inc_deg), float(s.raan_deg), float(s.argp_deg), float(s.ta_deg),
@@ -158,11 +159,11 @@ def _scenarios_match(a: Scenario, b: Scenario, atol: float = 1e-9) -> bool:
         return False
     av = _scenario_numeric_tuple(a)
     bv = _scenario_numeric_tuple(b)
-    return all(math.isclose(x, y, rel_tol=0.0, abs_tol=atol) for x, y in zip(av, bv))
+    return all(math.isclose(x, y, rel_tol=0.0, abs_tol=atol) for x, y in zip(av, bv, strict=False))
 
 
-def _renumber_scenarios(scenarios: List[Scenario], start_id: int) -> List[Scenario]:
-    out: List[Scenario] = []
+def _renumber_scenarios(scenarios: list[Scenario], start_id: int) -> list[Scenario]:
+    out: list[Scenario] = []
     for offset, scenario in enumerate(scenarios):
         out.append(replace(scenario, scenario_id=int(start_id + offset)))
     return out
@@ -186,10 +187,10 @@ def _scenario_manifest_row(
     scenario: Scenario,
     args: argparse.Namespace,
     csv_mode: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     raw = scenario.raw_unit_sample
     raw_list = None if raw is None else [float(x) for x in raw]
-    row: Dict[str, Any] = {
+    row: dict[str, Any] = {
         "scenario_id": int(scenario.scenario_id),
         "sampling_method": str(getattr(scenario, "sampling_method", getattr(args, "sampling_method", "random"))),
         "scenario_seed": int(args.scenario_seed),
@@ -213,7 +214,7 @@ def _scenario_manifest_row(
 
 
 def _write_scenario_manifest(
-    scenarios: List[Scenario],
+    scenarios: list[Scenario],
     args: argparse.Namespace,
     out_dir: Path,
 ) -> None:
@@ -264,7 +265,7 @@ def _manifest_values_equal(old: Any, new: Any) -> bool:
 
 
 def _verify_scenario_manifest_matches(
-    manifest: Dict[str, Any],
+    manifest: dict[str, Any],
     args: argparse.Namespace,
     *,
     require_count: bool = True,
@@ -304,7 +305,7 @@ def _verify_scenario_manifest_matches(
             )
 
 
-def _scenario_from_manifest_row(row: Dict[str, Any]) -> Scenario:
+def _scenario_from_manifest_row(row: dict[str, Any]) -> Scenario:
     raw = row.get("raw_unit_sample")
     raw_list = None
     if isinstance(raw, list):
@@ -337,7 +338,7 @@ def _load_scenarios_from_manifest(
     args: argparse.Namespace,
     *,
     require_count: bool = True,
-) -> List[Scenario]:
+) -> list[Scenario]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     _verify_scenario_manifest_matches(manifest, args, require_count=require_count)
     rows = manifest.get("scenarios", [])
@@ -352,7 +353,7 @@ def _load_scenarios_from_manifest(
     return scenarios
 
 
-def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> List[Scenario]:
+def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> list[Scenario]:
     manifest_path = out_dir / SCENARIO_MANIFEST_JSON
     use_existing = (
         bool(getattr(args, "resume", False))
@@ -401,7 +402,7 @@ def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> List[Scenario]
                   "global LHS design.", flush=True)
         else:
             generated = generate_validation_scenarios(_scenario_generation_args(args, target_count))
-            for old, new in zip(existing, generated[:existing_count]):
+            for old, new in zip(existing, generated[:existing_count], strict=False):
                 if not _scenarios_match(old, new):
                     raise ValueError(
                         "Existing scenario_manifest is incompatible with regenerated "
@@ -433,7 +434,7 @@ def prepare_scenarios(args: argparse.Namespace, out_dir: Path) -> List[Scenario]
     return scenarios
 
 
-def _append_metrics_csv(metrics: Dict, path: Path, write_header: bool) -> None:
+def _append_metrics_csv(metrics: dict, path: Path, write_header: bool) -> None:
     _ensure_dir(path)
     with open(path, "a", newline="") as f:
         w = csv.DictWriter(f, fieldnames=_METRICS_FIELDNAMES, extrasaction="ignore")
@@ -442,7 +443,7 @@ def _append_metrics_csv(metrics: Dict, path: Path, write_header: bool) -> None:
         w.writerow(metrics)
 
 
-def _write_csv(rows: List[Dict], path: Path) -> None:
+def _write_csv(rows: list[dict], path: Path) -> None:
     if not rows:
         return
     keys = list(rows[0].keys())
@@ -483,7 +484,7 @@ def _trajectory_cache_path(
     model_type: str,
     model_name: str,
     scenario_id: int,
-    args: Optional[argparse.Namespace] = None,
+    args: argparse.Namespace | None = None,
 ) -> Path:
     if model_type == "truth":
         group = cache_dir / "truth" / _safe_cache_name(model_name)
@@ -492,7 +493,7 @@ def _trajectory_cache_path(
     return group / f"scenario_{int(scenario_id):06d}.npz"
 
 
-def _file_sha256(path: Optional[str]) -> Optional[str]:
+def _file_sha256(path: str | None) -> str | None:
     if not path:
         return None
     p = Path(path)
@@ -505,7 +506,7 @@ def _file_sha256(path: Optional[str]) -> Optional[str]:
     return h.hexdigest()
 
 
-def _cache_metadata(args: argparse.Namespace) -> Dict[str, Any]:
+def _cache_metadata(args: argparse.Namespace) -> dict[str, Any]:
     weight_file = _find_st_lrps_weight_file(getattr(args, "st_lrps_model_dir", None))
     return {
         "cache_schema_version": BENCHMARK_CACHE_SCHEMA_VERSION,
@@ -531,8 +532,8 @@ def _cache_metadata(args: argparse.Namespace) -> Dict[str, Any]:
 def _write_cache_manifest(
     args: argparse.Namespace,
     cache_dir: Path,
-    scenarios: List[Scenario],
-    selected_models: Optional[List[str]] = None,
+    scenarios: list[Scenario],
+    selected_models: list[str] | None = None,
 ) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -554,7 +555,7 @@ def _write_cache_manifest(
 
 def _validate_cache_compatibility(
     args: argparse.Namespace, cache_dir: Path
-) -> List[str]:
+) -> list[str]:
     """Field-by-field + fingerprint cache-compatibility gate.
 
     Returns a list of human-readable warnings (possibly empty). By default any
@@ -563,7 +564,7 @@ def _validate_cache_compatibility(
     warning instead. A cache written before fingerprints existed is allowed
     with a warning (the explicit field checks above still apply).
     """
-    warnings: List[str] = []
+    warnings: list[str] = []
     if getattr(args, "rebuild_metrics", False):
         return warnings
     path = cache_dir / "cache_manifest.json"
@@ -640,7 +641,7 @@ def _save_cached_trajectory(
     *,
     runtime_s: float = float("nan"),
     integrator: str = "",
-    rk4_dt_s: Optional[float] = None,
+    rk4_dt_s: float | None = None,
     dtype: str = "",
     device: str = "",
     backend: str = "",
@@ -695,7 +696,7 @@ def _save_cached_trajectory(
     return path
 
 
-def _load_cached_trajectory(path: Path) -> Optional[CachedTrajectory]:
+def _load_cached_trajectory(path: Path) -> CachedTrajectory | None:
     if path.suffix != ".npz" or not path.exists() or path.name.endswith(".tmp"):
         return None
     try:
@@ -727,10 +728,10 @@ def _cached_model_path(cache_dir: Path, model_name: str, scenario_id: int) -> Pa
 def _truth_cache_completion(
     cache_dir: Path,
     args: argparse.Namespace,
-    scenarios: List[Scenario],
-) -> Tuple[int, List[Scenario]]:
+    scenarios: list[Scenario],
+) -> tuple[int, list[Scenario]]:
     complete = 0
-    missing: List[Scenario] = []
+    missing: list[Scenario] = []
     for scenario in scenarios:
         path = _cached_truth_path(cache_dir, args, scenario.scenario_id)
         if _load_cached_trajectory(path) is not None:
@@ -743,10 +744,10 @@ def _truth_cache_completion(
 def _model_cache_completion(
     cache_dir: Path,
     model_name: str,
-    scenarios: List[Scenario],
-) -> Tuple[int, List[Scenario]]:
+    scenarios: list[Scenario],
+) -> tuple[int, list[Scenario]]:
     complete = 0
-    missing: List[Scenario] = []
+    missing: list[Scenario] = []
     for scenario in scenarios:
         path = _cached_model_path(cache_dir, model_name, scenario.scenario_id)
         if _load_cached_trajectory(path) is not None:
@@ -760,21 +761,21 @@ def _model_cache_completion(
 _METRIC_STRING_KEYS = {"model", "reference", "status", "backend", "device", "failure_reason"}
 
 
-def _read_csv_rows(path: Path) -> List[Dict[str, str]]:
+def _read_csv_rows(path: Path) -> list[dict[str, str]]:
     """Read a metrics CSV into a list of string-valued dict rows (empty if absent)."""
     if not path.exists():
         return []
-    with open(path, "r", newline="", encoding="utf-8") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         return [dict(row) for row in csv.DictReader(f)]
 
 
-def _coerce_numeric_row(row: Dict[str, Any]) -> Dict[str, Any]:
+def _coerce_numeric_row(row: dict[str, Any]) -> dict[str, Any]:
     """Coerce CSV string values to float where possible for aggregation.
 
     Non-numeric / blank values become NaN (so finite-guards skip them); known
     string columns are preserved verbatim.
     """
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     for key, value in row.items():
         if key in _METRIC_STRING_KEYS:
             out[key] = value
@@ -812,7 +813,7 @@ def _ensure_run_id(args: argparse.Namespace) -> str:
     rid = getattr(args, "_run_id", None)
     if not rid:
         rid = uuid.uuid4().hex[:16]
-        setattr(args, "_run_id", rid)
+        args._run_id = rid
     return str(rid)
 
 
@@ -839,7 +840,7 @@ def _run_mode_label(args: argparse.Namespace) -> str:
     return "gpu_batch" if bool(getattr(args, "gpu_batch_compare", False)) else "cpu_sweep"
 
 
-def _device_info(args: argparse.Namespace) -> Dict[str, Any]:
+def _device_info(args: argparse.Namespace) -> dict[str, Any]:
     """Compute-device metadata without forcing a torch import on CPU-only runs.
 
     For GPU-batch requests this performs a guarded lazy ``torch`` import to read
@@ -854,7 +855,7 @@ def _device_info(args: argparse.Namespace) -> Dict[str, Any]:
             "device_name": None,
             "torch_version": None,
         }
-    info: Dict[str, Any] = {
+    info: dict[str, Any] = {
         "backend": "gpu_batch",
         "cuda_available": False,
         "device": None,
@@ -895,7 +896,7 @@ def _config_fingerprint(args: argparse.Namespace) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-def _effective_frame_modes(args: argparse.Namespace) -> Dict[str, str]:
+def _effective_frame_modes(args: argparse.Namespace) -> dict[str, str]:
     """Unambiguous frame-mode reporting for the GPU batch path.
 
     The harness passes ``--batch-frame-mode`` straight to the integrator, so the
@@ -912,20 +913,20 @@ def _effective_frame_modes(args: argparse.Namespace) -> Dict[str, str]:
 
 
 def _model_status_breakdown(
-    requested_display: List[str],
-    status_by_model: Dict[str, str],
-    aggregate_rows: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    requested_display: list[str],
+    status_by_model: dict[str, str],
+    aggregate_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Split requested models into completed/failed/partial/skipped buckets.
 
     ``status_by_model`` maps a display name to ``completed|failed|partial|skipped``.
     ``models_in_metrics`` is the set of identities that contributed aggregate rows.
     """
     in_metrics = sorted({str(r.get("model")) for r in aggregate_rows if r.get("model")})
-    completed: List[str] = []
-    failed: List[str] = []
-    partial: List[str] = []
-    skipped: List[str] = []
+    completed: list[str] = []
+    failed: list[str] = []
+    partial: list[str] = []
+    skipped: list[str] = []
     for name in requested_display:
         st = str(status_by_model.get(name, "skipped"))
         if st == "completed":
@@ -947,10 +948,10 @@ def _model_status_breakdown(
 
 
 def _benchmark_consistency_warnings(
-    breakdown: Dict[str, Any], summary: Dict[str, Any]
-) -> List[str]:
+    breakdown: dict[str, Any], summary: dict[str, Any]
+) -> list[str]:
     """Lightweight end-of-run sanity checks. Returns human warnings (never raises)."""
-    warns: List[str] = []
+    warns: list[str] = []
     requested = breakdown.get("requested_models", [])
     in_metrics = set(breakdown.get("models_in_metrics", []))
     failed = set(breakdown.get("failed_models", []))
@@ -974,12 +975,12 @@ def _benchmark_consistency_warnings(
 
 def _cache_provenance(
     args: argparse.Namespace,
-    cache_dir: Optional[Path],
+    cache_dir: Path | None,
     *,
     enabled: bool,
-    truth_counts: Dict[str, Any],
-    model_entries: Dict[str, Dict[str, Any]],
-) -> Dict[str, Any]:
+    truth_counts: dict[str, Any],
+    model_entries: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     """Assemble the cache-provenance block recorded in the summary (Fix 4)."""
     return {
         "enabled": bool(enabled),
@@ -997,22 +998,22 @@ def _cache_provenance(
 def _build_gpu_batch_summary(
     args: argparse.Namespace,
     *,
-    aggregate_rows: List[Dict[str, Any]],
-    runtime_rows: List[Dict[str, Any]],
-    gpu_models: List[str],
-    requested_display: List[str],
-    status_by_model: Dict[str, str],
+    aggregate_rows: list[dict[str, Any]],
+    runtime_rows: list[dict[str, Any]],
+    gpu_models: list[str],
+    requested_display: list[str],
+    status_by_model: dict[str, str],
     n_scenarios_total: int,
     n_scenarios_new_this_run: int,
-    truth_total_runtime_s: Optional[float],
-    truth_mean_runtime_per_scenario_s: Optional[float],
-    equivalent: Dict[str, Any],
-    selected: Dict[str, Any],
-    cache_provenance: Dict[str, Any],
+    truth_total_runtime_s: float | None,
+    truth_mean_runtime_per_scenario_s: float | None,
+    equivalent: dict[str, Any],
+    selected: dict[str, Any],
+    cache_provenance: dict[str, Any],
     rebuilt_from_cache: bool,
     source: str,
-    extra_warnings: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    extra_warnings: list[str] | None = None,
+) -> dict[str, Any]:
     """Assemble the canonical ``gpu_batch_summary`` payload for every code path.
 
     Centralising this guarantees the live run, the cache rebuild, and the
@@ -1046,7 +1047,7 @@ def _build_gpu_batch_summary(
             bits.append("skipped: " + ", ".join(breakdown["skipped_models"]))
         summary_note = "; ".join(bits) + "."
 
-    summary: Dict[str, Any] = {
+    summary: dict[str, Any] = {
         "schema_version": BENCHMARK_METADATA_SCHEMA_VERSION,
         "run_id": _ensure_run_id(args),
         "timestamp_utc": _utc_now_iso(),
@@ -1102,7 +1103,7 @@ def _build_gpu_batch_summary(
 def _write_run_metadata(
     args: argparse.Namespace,
     out_dir: Path,
-    scenarios: Optional[List[Scenario]] = None,
+    scenarios: list[Scenario] | None = None,
 ) -> None:
     """Persist reproducibility metadata for the validation run."""
 
@@ -1176,7 +1177,7 @@ def _write_run_metadata(
         json.dump(meta, f, indent=4, default=str)
 
 
-def _truth_cache_metadata(args: argparse.Namespace, scenarios: List[Scenario]) -> Dict[str, Any]:
+def _truth_cache_metadata(args: argparse.Namespace, scenarios: list[Scenario]) -> dict[str, Any]:
     return {
         "truth": str(args.truth).lower(),
         "random_scenarios": int(len(scenarios)),
@@ -1206,7 +1207,7 @@ def _truth_cache_metadata(args: argparse.Namespace, scenarios: List[Scenario]) -
     }
 
 
-def _truth_cache_available(cache_dir: Path, args: argparse.Namespace, scenarios: List[Scenario]) -> bool:
+def _truth_cache_available(cache_dir: Path, args: argparse.Namespace, scenarios: list[Scenario]) -> bool:
     """Cheap predicate: would ``_load_truth_cache`` produce a valid hit?
 
     Checks file presence + metadata equality without loading the (large) NPZ.
@@ -1224,7 +1225,7 @@ def _truth_cache_available(cache_dir: Path, args: argparse.Namespace, scenarios:
         return False
 
 
-def _load_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: List[Scenario]) -> Optional[TruthTrajectorySet]:
+def _load_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: list[Scenario]) -> TruthTrajectorySet | None:
     meta_path = cache_dir / "truth_metadata.json"
     npz_path = cache_dir / "sh200_dop853_trajectories.npz"
     if not meta_path.exists() or not npz_path.exists():
@@ -1247,7 +1248,7 @@ def _load_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: List
         return None
 
 
-def _save_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: List[Scenario], truth: TruthTrajectorySet) -> None:
+def _save_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: list[Scenario], truth: TruthTrajectorySet) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     t0 = truth.t_by_scenario[scenarios[0].scenario_id]
     y_all = np.stack([truth.y_by_scenario[s.scenario_id] for s in scenarios], axis=0)
@@ -1261,12 +1262,12 @@ def _save_truth_cache(cache_dir: Path, args: argparse.Namespace, scenarios: List
 
 def build_truth_trajectory_set(
     args: argparse.Namespace,
-    scenarios: List[Scenario],
+    scenarios: list[Scenario],
     cfg_base: SimConfig,
     ephem: Any,
     model_cache: GravityModelCache,
     truth_dir: Path,
-    on_progress: Optional[Any] = None,
+    on_progress: Any | None = None,
 ) -> TruthTrajectorySet:
     """Generate or load SH200 DOP853 truth trajectories for all scenarios.
 
@@ -1291,9 +1292,9 @@ def build_truth_trajectory_set(
 
     cache_enabled = _cache_requested(args) or bool(getattr(args, "cache_truth", False))
     cache_dir = _benchmark_cache_dir(args, Path(args.output_dir))
-    t_by: Dict[int, np.ndarray] = {}
-    y_by: Dict[int, np.ndarray] = {}
-    rt_by: Dict[int, float] = {}
+    t_by: dict[int, np.ndarray] = {}
+    y_by: dict[int, np.ndarray] = {}
+    rt_by: dict[int, float] = {}
     truth_model = str(args.truth).lower()
     truth_integrator = str(getattr(args, "truth_integrator", "DOP853"))
     truth_cfg = _cfg_with_integrator(cfg_base, truth_integrator)
@@ -1419,7 +1420,7 @@ def _parallel_worker_init(args: argparse.Namespace, cfg_base: SimConfig) -> None
     )
     _PARALLEL_STATE["ephem"] = ephem
     _PARALLEL_STATE["cache"] = GravityModelCache(cfg_base, args)
-def _parallel_worker_truth(payload: Tuple[Scenario, str]) -> Dict[str, Any]:
+def _parallel_worker_truth(payload: tuple[Scenario, str]) -> dict[str, Any]:
     """Propagate only the adaptive truth trajectory for one scenario."""
 
     scenario, truth_model = payload
@@ -1464,4 +1465,4 @@ def _parallel_worker_truth(payload: Tuple[Scenario, str]) -> Dict[str, Any]:
         "saved_to_cache": saved,
     }
 
-_PARALLEL_STATE: Dict[str, Any] = {}
+_PARALLEL_STATE: dict[str, Any] = {}

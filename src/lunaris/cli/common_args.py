@@ -14,9 +14,9 @@ from __future__ import annotations
 import argparse
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from lunaris.common.constants import R_MOON, DAY_S
+from lunaris.common.constants import DAY_S, R_MOON
 from lunaris.common.type_defs import SolidTideConfig
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ def str2bool(v: Any) -> bool:
     )
 
 
-def parse_tide_bodies(v: Any) -> Tuple[str, ...]:
+def parse_tide_bodies(v: Any) -> tuple[str, ...]:
     """Parse a comma-separated tide body list into a validated tuple."""
     parts = tuple(p.strip().lower() for p in str(v).split(",") if p.strip())
     try:
@@ -53,7 +53,7 @@ def parse_tide_bodies(v: Any) -> Tuple[str, ...]:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
-def parse_adaptive_table(s: str) -> Optional[Tuple[Tuple[float, int], ...]]:
+def parse_adaptive_table(s: str) -> tuple[tuple[float, int], ...] | None:
     """Parse adaptive-degree table from CLI.
 
     Expected format:
@@ -65,7 +65,7 @@ def parse_adaptive_table(s: str) -> Optional[Tuple[Tuple[float, int], ...]]:
     if s is None or str(s).strip() == "":
         return None
 
-    pairs: list[Tuple[float, int]] = []
+    pairs: list[tuple[float, int]] = []
     for i, chunk in enumerate(str(s).split(",")):
         chunk = chunk.strip()
         if not chunk:
@@ -94,7 +94,7 @@ def parse_adaptive_table(s: str) -> Optional[Tuple[Tuple[float, int], ...]]:
     return tuple(pairs) if pairs else None
 
 
-def resolve_orbit_elements(args: argparse.Namespace) -> Dict[str, float]:
+def resolve_orbit_elements(args: argparse.Namespace) -> dict[str, float]:
     """Resolve orbit COEs from CLI args (strict validation).
 
     Priority:
@@ -148,7 +148,7 @@ def resolve_orbit_elements(args: argparse.Namespace) -> Dict[str, float]:
     }
 
 
-def init_surface_provider(args: argparse.Namespace) -> Optional[Any]:
+def init_surface_provider(args: argparse.Namespace) -> Any | None:
     """Load surface provider strictly when CLI roots are provided.
 
     Contract:
@@ -174,7 +174,7 @@ def init_surface_provider(args: argparse.Namespace) -> Optional[Any]:
     )
 
 
-def need_ephemeris(cfg: "SimConfig", topo_requested: bool) -> bool:
+def need_ephemeris(cfg: SimConfig, topo_requested: bool) -> bool:
     """Return True if any enabled physics (or topo) requires ephemeris tables."""
     f = cfg.flags
     physics_need = (
@@ -193,7 +193,7 @@ def need_ephemeris(cfg: "SimConfig", topo_requested: bool) -> bool:
     return bool(physics_need or topo_requested)
 
 
-def apply_args_to_config(cfg: "SimConfig", args: argparse.Namespace) -> "SimConfig":
+def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
     # Lazy import keeps module import light: common.time_utils transitively
     # pulls numba/scipy, which we only need when actually applying overrides.
     from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string
