@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Dict
 
 from lunaris.ui.core.ui_commons import with_alpha
+from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
 
 def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> str:
@@ -46,6 +47,11 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
     ok_bg, ok_bd = with_alpha(theme["success"], 0.12), with_alpha(theme["success"], 0.32)
     err_bg, err_bd = with_alpha(theme["error"], 0.12), with_alpha(theme["error"], 0.30)
     warn_bg, warn_bd = with_alpha(theme["warning"], 0.12), with_alpha(theme["warning"], 0.32)
+    inactive_bg = with_alpha(theme["inactive"], 0.12)
+    inactive_bd = with_alpha(theme["inactive"], 0.30)
+    metrics = DESIGN_TOKENS.controls
+    layout = DESIGN_TOKENS.layout
+    type_tokens = DESIGN_TOKENS.typography
 
     return f"""
         /* GLOBAL FOUNDATION — flat space-black canvas */
@@ -57,8 +63,8 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
         QWidget {{
             background: transparent;
             color: {theme['fg_main']};
-            font-family: "Segoe UI", "Inter", "Noto Sans", sans-serif;
-            font-size: 10pt;
+            font-family: {type_tokens.family_ui};
+            font-size: {type_tokens.size_body_pt:g}pt;
         }}
         QLabel {{
             background: transparent;
@@ -73,8 +79,27 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
         QToolTip {{
             background: {theme['bg_card_alt']};
             color: {theme['fg_main']};
-            border: 1px solid {theme['border']};
+            border: 1px solid {theme['border_strong']};
             padding: 6px 8px;
+        }}
+
+        QDialog {{
+            background: {theme['bg_space']};
+            color: {theme['fg_main']};
+        }}
+        QDialogButtonBox {{
+            background: transparent;
+            border-top: 1px solid {theme['border_soft']};
+            padding-top: 10px;
+        }}
+        QLabel#dialogTitle {{
+            color: {theme['fg_main']};
+            font-size: 16pt;
+            font-weight: 700;
+        }}
+        QLabel#dialogDescription {{
+            color: {theme['fg_muted']};
+            font-size: 9pt;
         }}
 
         /* MENUS */
@@ -125,6 +150,12 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
             border-radius: 8px;
             padding: 2px 8px;
         }}
+        QFrame#missionStatusBar,
+        QFrame#toolbar {{
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 10px;
+        }}
 
         /* TEXT */
         QLabel#title {{
@@ -141,6 +172,44 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
             color: {theme['fg_muted']};
             font-size: 9pt;
         }}
+        QLabel#pageTitle {{
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_page_title_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#pageDescription,
+        QLabel#sectionDescription,
+        QLabel#fieldHint,
+        QLabel#emptyStateDescription {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
+        QLabel#sectionTitle,
+        QLabel#emptyStateTitle {{
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_section_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        QLabel#fieldLabel, QLabel#keyLabel, QLabel#metricLabel {{
+            color: {theme['fg_muted']};
+        }}
+        QLabel#fieldUnit {{
+            color: {theme['fg_muted']};
+            min-width: 40px;
+        }}
+        QLabel#valueLabel, QLabel#metricValue {{
+            color: {theme['fg_main']};
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        QLabel#statusLabel {{
+            color: {theme['fg_muted']};
+            font-size: 9pt;
+        }}
+        QLabel#statusValue {{
+            color: {theme['fg_soft']};
+            font-size: 9pt;
+            font-weight: 600;
+        }}
 
         /* NAVIGATION — flat shell; active = left border + tinted background */
         QListWidget#navDrawer {{
@@ -149,6 +218,7 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
             border-radius: 12px;
             padding: 10px;
             outline: none;
+            max-width: {layout.nav_width}px;
         }}
         QListWidget#navDrawer::item {{
             background: transparent;
@@ -167,6 +237,40 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
             font-weight: 700;
             border-left: 3px solid {theme['accent']};
         }}
+        QFrame#navSidebar {{
+            background: {theme['bg_shell']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 12px;
+        }}
+        QLabel#navSectionLabel {{
+            color: {theme['fg_muted']};
+            font-size: 9pt;
+            font-weight: 700;
+            padding: 10px 10px 3px 12px;
+        }}
+        QFrame#navGroup {{
+            background: {acc_06};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 9px;
+        }}
+        QPushButton#navButton {{
+            text-align: left;
+            color: {theme['fg_muted']};
+            background: transparent;
+            border: 1px solid transparent;
+            border-left: 3px solid transparent;
+            min-height: 38px;
+            padding: 7px 12px;
+        }}
+        QPushButton#navButton:hover {{
+            color: {theme['fg_main']};
+            background: {acc_06};
+        }}
+        QPushButton#navButton:checked {{
+            color: {theme['fg_main']};
+            background: {acc_dim};
+            border-left: 3px solid {theme['accent']};
+        }}
 
         /* INPUTS — clean, legible, subtle states */
         QLineEdit, QPlainTextEdit, QComboBox, QDoubleSpinBox, QDateTimeEdit, QSpinBox {{
@@ -175,8 +279,13 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
             border: 1px solid {theme['border']};
             border-radius: 8px;
             padding: 7px 10px;
+            min-height: {metrics.minimum_height}px;
             selection-background-color: {theme['accent']};
             selection-color: {theme['bg_space']};
+        }}
+        QLineEdit#compactSearch {{
+            min-height: {metrics.compact_height}px;
+            padding: 3px 9px;
         }}
         QLineEdit:hover, QComboBox:hover, QPlainTextEdit:hover,
         QDoubleSpinBox:hover, QDateTimeEdit:hover, QSpinBox:hover {{
@@ -184,13 +293,24 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
         }}
         QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus,
         QDoubleSpinBox:focus, QDateTimeEdit:focus, QSpinBox:focus {{
-            border: 1px solid {theme['accent']};
+            border: 2px solid {theme['accent']};
             background: {theme['bg_card_alt']};
+        }}
+        QLineEdit:read-only:enabled, QPlainTextEdit:read-only:enabled {{
+            color: {theme['fg_soft']};
+            background: {theme['bg_inset']};
+            border: 1px dashed {theme['border']};
+        }}
+        QLineEdit[ghost="true"] {{
+            color: {theme['fg_muted']};
+            background: {theme['bg_inset']};
+            border: 1px dashed {theme['border_soft']};
+            font-style: italic;
         }}
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled,
         QDoubleSpinBox:disabled, QDateTimeEdit:disabled {{
             color: {theme['text_disabled']};
-            background: {theme['bg_card']};
+            background: {theme['bg_inset']};
             border-color: {theme['border_soft']};
         }}
         QComboBox::drop-down,
@@ -204,6 +324,30 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
             border: 1px solid {theme['border']};
             selection-background-color: {acc_dim};
         }}
+        QProgressBar {{
+            background: {theme['bg_entry']};
+            border: 1px solid {theme['border']};
+            border-radius: 4px;
+            min-height: 12px;
+            max-height: 16px;
+            text-align: center;
+        }}
+        QProgressBar::chunk {{
+            background: {theme['accent']};
+            border-radius: 3px;
+        }}
+        QFrame#appHeaderCard {{
+            background: {theme['bg_shell']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 10px;
+        }}
+        QStatusBar {{
+            background: {theme['bg_shell']};
+            color: {theme['fg_muted']};
+            border-top: 1px solid {theme['border_soft']};
+            min-height: 22px;
+        }}
+        QStatusBar::item {{ border: none; }}
 
         /* CARDS — subtle border + surface contrast */
         QGroupBox {{
@@ -230,6 +374,7 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
             border: 1px solid {theme['border']};
             border-radius: 8px;
             padding: 7px 16px;
+            min-height: {metrics.minimum_height}px;
             font-weight: 600;
         }}
         QPushButton:hover {{
@@ -258,34 +403,46 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
         }}
 
         /* PRIMARY BUTTON (RUN) — the one place a gradient is welcome */
-        QPushButton#primaryBtn {{
-            background: qlineargradient(
-                x1: 0, y1: 0, x2: 1, y2: 0,
-                stop: 0 {theme['accent']},
-                stop: 1 {theme['secondary']}
-            );
+        QPushButton#primaryBtn,
+        QPushButton[kind="primary"] {{
+            background: {theme['accent']};
             border: 1px solid {theme['accent']};
-            color: {theme['bg_space']};
+            color: {theme['fg_inverse']};
             font-weight: 700;
+            min-height: {metrics.primary_height}px;
         }}
-        QPushButton#primaryBtn:hover {{
+        QPushButton#primaryBtn:hover,
+        QPushButton[kind="primary"]:hover {{
             background: {theme['accent_hov']};
             border-color: {theme['accent_hov']};
-            color: {theme['bg_space']};
+            color: {theme['fg_inverse']};
         }}
-        QPushButton#primaryBtn:disabled {{
+        QPushButton#primaryBtn:disabled,
+        QPushButton[kind="primary"]:disabled {{
             background: {theme['bg_entry']};
             border-color: {theme['border']};
             color: {theme['text_disabled']};
         }}
+        QPushButton[kind="ghost"] {{
+            background: transparent;
+            border-color: {theme['border_soft']};
+            color: {theme['fg_soft']};
+        }}
+        QPushButton[kind="ghost"]:hover {{
+            background: {theme['bg_hover']};
+            border-color: {theme['border']};
+            color: {theme['fg_main']};
+        }}
 
         /* DANGER BUTTON (STOP) */
-        QPushButton#dangerBtn {{
+        QPushButton#dangerBtn,
+        QPushButton[kind="danger"] {{
             background: {with_alpha(theme['error'], 0.10)};
             border: 1px solid {with_alpha(theme['error'], 0.26)};
             color: {theme['fg_main']};
         }}
-        QPushButton#dangerBtn:hover {{
+        QPushButton#dangerBtn:hover,
+        QPushButton[kind="danger"]:hover {{
             background: {with_alpha(theme['error'], 0.20)};
             border-color: {theme['error']};
         }}
@@ -304,6 +461,13 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
         QToolButton:hover {{
             background: {acc_dim};
             border-radius: 7px;
+        }}
+        QToolButton#overflowMenuButton {{
+            color: {theme['fg_soft']};
+            border: 1px solid {theme['border']};
+            border-radius: 7px;
+            padding: 5px 10px;
+            min-height: {metrics.compact_height}px;
         }}
         QCheckBox {{
             spacing: 8px;
@@ -335,6 +499,171 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
         QLabel#statusBadge[kind="success"] {{ background: {ok_bg}; color: {theme['success']}; border-color: {ok_bd}; }}
         QLabel#statusBadge[kind="error"] {{ background: {err_bg}; color: {theme['error']}; border-color: {err_bd}; }}
         QLabel#statusBadge[kind="warning"] {{ background: {warn_bg}; color: {theme['warning']}; border-color: {warn_bd}; }}
+        QLabel#statusBadge[kind="idle"],
+        QLabel#statusBadge[kind="inactive"],
+        QLabel#statusBadge[kind="unavailable"],
+        QLabel#statusBadge[kind="cancelled"] {{
+            background: {inactive_bg};
+            color: {theme['fg_muted']};
+            border-color: {inactive_bd};
+        }}
+        QLabel#statusBadge[kind="validating"],
+        QLabel#statusBadge[kind="running"],
+        QLabel#statusBadge[kind="ready"] {{
+            background: {info_bg};
+            color: {theme['accent_hov']};
+            border-color: {info_bd};
+        }}
+        QLabel#statusBadge[kind="completed"] {{
+            background: {ok_bg};
+            color: {theme['success']};
+            border-color: {ok_bd};
+        }}
+        QLabel#statusBadge[kind="failed"],
+        QLabel#statusBadge[kind="critical"] {{
+            background: {err_bg};
+            color: {theme['error']};
+            border-color: {err_bd};
+        }}
+        QLabel#statusBadge[kind="paused"] {{
+            background: {warn_bg};
+            color: {theme['warning']};
+            border-color: {warn_bd};
+        }}
+
+        /* PAGE PRIMITIVES */
+        QWidget#pageShellBody {{
+            background: transparent;
+        }}
+        QFrame#pageHeader {{
+            background: transparent;
+            border-bottom: 1px solid {theme['border_soft']};
+            padding-bottom: 12px;
+        }}
+        QFrame#studioPageHeader {{
+            background: transparent;
+            border-bottom: 1px solid {theme['border_soft']};
+        }}
+        QLabel#pageEyebrow {{
+            color: {theme['accent']};
+            font-size: 9pt;
+            font-weight: 700;
+        }}
+        QFrame[studioSurface="true"] {{
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 10px;
+        }}
+        QFrame#section {{
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 10px;
+        }}
+        QFrame#section[elevated="true"] {{
+            background: {theme['bg_card_alt']};
+            border-color: {theme['border']};
+        }}
+        QFrame#subsection {{
+            background: transparent;
+            border-top: 1px solid {theme['border_soft']};
+        }}
+        QFrame#metricCell {{
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 8px;
+        }}
+        QFrame#orbitMetric,
+        QFrame#metricCard {{
+            background: {theme['bg_card_alt']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 8px;
+        }}
+        QLabel#orbitMetricLabel,
+        QLabel#metricCardLabel {{
+            color: {theme['fg_muted']};
+            font-size: 9pt;
+            font-weight: 600;
+        }}
+        QLabel#orbitMetricValue,
+        QLabel#metricCardValue {{
+            color: {theme['fg_main']};
+            font-size: 12pt;
+            font-weight: 700;
+            font-family: {type_tokens.family_mono};
+        }}
+        QLabel#metricCardSubtitle {{
+            color: {theme['fg_muted']};
+            font-size: 9pt;
+        }}
+        QFrame#metricCard[state="success"] {{ border-color: {ok_bd}; background: {ok_bg}; }}
+        QFrame#metricCard[state="warning"] {{ border-color: {warn_bd}; background: {warn_bg}; }}
+        QFrame#metricCard[state="danger"] {{ border-color: {err_bd}; background: {err_bg}; }}
+        QFrame#inlineNotice {{
+            background: {info_bg};
+            border: 1px solid {info_bd};
+            border-radius: 8px;
+        }}
+        QFrame#inlineNotice[kind="success"] {{ background: {ok_bg}; border-color: {ok_bd}; }}
+        QFrame#inlineNotice[kind="warning"] {{ background: {warn_bg}; border-color: {warn_bd}; }}
+        QFrame#inlineNotice[kind="error"] {{ background: {err_bg}; border-color: {err_bd}; }}
+        QLabel#inlineNoticeLabel {{
+            color: {theme['fg_soft']};
+            background: {info_bg};
+            border: 1px solid {info_bd};
+            border-radius: 8px;
+            padding: 7px 10px;
+        }}
+        QLabel#inlineNoticeLabel[kind="ok"] {{ color: {theme['success']}; background: {ok_bg}; border-color: {ok_bd}; }}
+        QLabel#inlineNoticeLabel[kind="warn"] {{ color: {theme['warning']}; background: {warn_bg}; border-color: {warn_bd}; }}
+        QLabel#inlineNoticeLabel[kind="error"] {{ color: {theme['error']}; background: {err_bg}; border-color: {err_bd}; }}
+        QFrame#actionBar {{
+            background: transparent;
+            border-top: 1px solid {theme['border_soft']};
+        }}
+        QFrame#segmentedControl,
+        QWidget#segmentedControl {{
+            background: {theme['bg_entry']};
+            border: 1px solid {theme['border']};
+            border-radius: 8px;
+        }}
+        QPushButton#segmentButton {{
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            min-height: {metrics.compact_height}px;
+            padding: 4px 12px;
+        }}
+        QPushButton#segmentButton:checked {{
+            background: {acc_dim};
+            color: {theme['fg_main']};
+        }}
+        QFrame#emptyState {{
+            background: {theme['bg_card']};
+            border: 1px dashed {theme['border']};
+            border-radius: 10px;
+        }}
+
+        /* ST-LRPS SHARED HEADER */
+        QFrame#experimentHeader {{
+            background: {theme['bg_shell']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 10px;
+        }}
+        QWidget#headerMetric {{
+            background: {theme['bg_card_alt']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 7px;
+        }}
+        QLabel#headerMetricLabel {{
+            color: {theme['fg_muted']};
+            font-size: 8pt;
+            font-weight: 700;
+        }}
+        QLabel#headerMetricValue {{
+            color: {theme['fg_main']};
+            font-size: 9pt;
+            font-weight: 600;
+        }}
 
         /* RUN DOT */
         QFrame#runDot {{ border-radius: 6px; }}
@@ -380,6 +709,49 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
             border-radius: 10px;
             padding: 8px;
         }}
+        QPlainTextEdit#logConsole {{
+            background: {theme['bg_log']};
+            color: {log_colors['default']};
+            border: 1px solid {theme['border']};
+            border-radius: 10px;
+            padding: 10px;
+            font-family: {type_tokens.family_mono};
+            font-size: 9.5pt;
+        }}
+        QPlainTextEdit#commandPreview {{
+            background: {theme['bg_log']};
+            border: 1px solid {acc_20};
+            border-radius: 10px;
+            color: {theme['fg_main']};
+            padding: 10px 12px;
+            font-family: {type_tokens.family_mono};
+        }}
+        QLabel#logTitle {{
+            color: {theme['fg_soft']};
+            font-weight: 700;
+        }}
+        QLabel#logSubtitle, QLabel#logLatestMessage {{
+            color: {theme['fg_muted']};
+            font-size: 9pt;
+        }}
+        QLabel#logCounter {{
+            color: {theme['fg_muted']};
+            background: {theme['bg_card_alt']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 8px;
+            padding: 2px 8px;
+        }}
+        QLabel#logStatusChip {{
+            color: {theme['fg_muted']};
+            background: {theme['bg_card_alt']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 8px;
+            padding: 2px 8px;
+        }}
+        QPushButton#logToolbarButton {{
+            min-height: {metrics.compact_height}px;
+            padding: 4px 10px;
+        }}
 
         /* SCROLLBARS */
         QScrollBar:vertical, QScrollBar:horizontal {{
@@ -420,6 +792,12 @@ def build_app_stylesheet(theme: Dict[str, str], log_colors: Dict[str, str]) -> s
         }}
         QSplitter#mainSplit::handle:vertical:hover {{
             background: {acc_40};
+        }}
+
+        /* ACCESSIBLE KEYBOARD FOCUS */
+        QPushButton:focus, QToolButton:focus, QCheckBox:focus,
+        QListWidget:focus, QTreeWidget:focus {{
+            border: 1px solid {theme['accent']};
         }}
 
         /* TREE / LIST WIDGETS */

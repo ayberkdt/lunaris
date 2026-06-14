@@ -42,6 +42,7 @@ from typing import Optional
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.core.ui_commons import THEME, find_project_root
+from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
 # --- Optional QtWebEngine import (must never break module import) ------------
 try:
@@ -53,9 +54,8 @@ except Exception:  # pragma: no cover - depends on the install
     HAS_WEBENGINE = False
 
 
-# Background used by every non-WebGL fallback. Matches the web embed's #000000 /
-# the project's deep-space canvas so the transition is seamless.
-_FALLBACK_BG = "#05050A"
+# Background used by every non-WebGL fallback.
+_FALLBACK_BG = DESIGN_TOKENS.visualization.space_bg
 _READY_TIMEOUT_MS = 9000
 
 
@@ -276,9 +276,9 @@ class ShowcaseEmbedWidget(QtWidgets.QWidget):
             QFrame#embedFallback {{
                 background: qlineargradient(
                     x1: 0, y1: 0, x2: 1, y2: 1,
-                    stop: 0 #000000,
+                    stop: 0 {THEME['bg_log']},
                     stop: 0.5 {_FALLBACK_BG},
-                    stop: 1 #0A0F1E
+                    stop: 1 {THEME['bg_shell']}
                 );
             }}
             """

@@ -187,6 +187,7 @@ from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button,
 
 from .data_pages import *
 from .data_pages import _introspect_h5
+from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
 
 def _attr_lookup(attrs: Dict[str, Any], *keys: str) -> Any:
@@ -274,13 +275,6 @@ class MainWindow(QMainWindow):
         else:
             header_card = QFrame()
             header_card.setObjectName("appHeaderCard")
-            header_card.setStyleSheet(
-                "QFrame#appHeaderCard {"
-                "  background: #101A2B;"
-                "  border: 1px solid #26364F;"
-                "  border-radius: 10px;"
-                "}"
-            )
             header_lo = QHBoxLayout()
             header_lo.setContentsMargins(18, 10, 18, 10)
             header_lo.setSpacing(16)
@@ -289,16 +283,11 @@ class MainWindow(QMainWindow):
             title_col.setContentsMargins(0, 0, 0, 0)
             title_col.setSpacing(3)
             lbl_title = QLabel("ST-LRPS Studio")
-            lbl_title.setStyleSheet(
-                "color: #e8ecf8; font-size: 15px; font-weight: 700;"
-                " background: transparent; border: none;"
-            )
+            lbl_title.setObjectName("title")
             lbl_subtitle = QLabel(
                 "Lunar residual-potential surrogate training and evaluation"
             )
-            lbl_subtitle.setStyleSheet(
-                "color: #8892b0; font-size: 12px; background: transparent; border: none;"
-            )
+            lbl_subtitle.setObjectName("pageDescription")
             title_col.addWidget(lbl_title)
             title_col.addWidget(lbl_subtitle)
             header_lo.addLayout(title_col, 1)
@@ -313,6 +302,7 @@ class MainWindow(QMainWindow):
         # --- Sidebar navigation ---
         self._nav_buttons: List[QPushButton] = []
         sidebar = self._build_sidebar()
+        self._sidebar = sidebar
 
         # --- Main content area: sidebar + page stack ---
         content_area = QWidget()
@@ -324,26 +314,24 @@ class MainWindow(QMainWindow):
         content_area.setLayout(content_lo)
 
         root = QWidget()
+        root.setObjectName("centralRoot")
         root_lo = QVBoxLayout()
-        root_lo.setContentsMargins(16, 14, 16, 14)
-        root_lo.setSpacing(12)
+        root_lo.setContentsMargins(
+            DESIGN_TOKENS.layout.shell_margin,
+            DESIGN_TOKENS.layout.shell_margin,
+            DESIGN_TOKENS.layout.shell_margin,
+            DESIGN_TOKENS.layout.shell_margin,
+        )
+        root_lo.setSpacing(DESIGN_TOKENS.layout.shell_gap)
         root_lo.addWidget(header_card)
         root_lo.addWidget(content_area, 1)
         root.setLayout(root_lo)
         self.setCentralWidget(root)
+        self._update_responsive_chrome(self.width())
 
         # --- Status bar: parameter descriptions are shown on hover ---
         sb = self.statusBar()
         sb.setSizeGripEnabled(False)
-        sb.setStyleSheet(
-            "QStatusBar {"
-            "  background: rgba(6, 9, 18, 0.95);"
-            "  border-top: 1px solid rgba(185, 194, 221, 0.09);"
-            "  color: #5a6480; font-size: 11px; padding: 0 12px;"
-            "  min-height: 22px;"
-            "}"
-            "QStatusBar::item { border: none; }"
-        )
         sb.showMessage("Hover over a parameter - its description appears here.")
 
         # Wire every page's input-widget tooltips to the status bar
@@ -370,48 +358,17 @@ class MainWindow(QMainWindow):
     def _build_sidebar(self) -> QFrame:
         sidebar = QFrame()
         sidebar.setObjectName("navSidebar")
-        sidebar.setFixedWidth(238)
-        sidebar.setStyleSheet(
-            "QFrame#navSidebar {"
-            "  background: rgba(8, 13, 26, 0.86);"
-            "  border: 1px solid rgba(185, 194, 221, 0.10);"
-            "  border-radius: 14px;"
-            "}"
-        )
-
-        _NAV_BTN_STYLE = (
-            "QPushButton {"
-            "  text-align: left; padding: 11px 14px 11px 16px;"
-            "  border: 1px solid transparent; border-left: 3px solid transparent;"
-            "  border-radius: 10px; font-size: 13px; font-weight: 650;"
-            "  min-height: 40px;"
-            "  color: #8a98b8; background: transparent;"
-            "}"
-            "QPushButton:hover {"
-            "  color: #d7e1f7; background: rgba(53, 208, 255, 0.07);"
-            "  border-color: rgba(53, 208, 255, 0.12);"
-            "}"
-            "QPushButton:checked {"
-            "  color: #f2f6ff; font-weight: 700;"
-            "  background: rgba(53, 208, 255, 0.14);"
-            "  border-color: rgba(53, 208, 255, 0.26);"
-            "  border-left: 3px solid rgba(53, 208, 255, 0.85);"
-            "}"
-        )
+        sidebar.setFixedWidth(DESIGN_TOKENS.layout.nav_width)
 
         def _section_lbl(text: str) -> QLabel:
             lbl = QLabel(text)
-            lbl.setStyleSheet(
-                "color: rgba(185, 194, 221, 0.32); font-size: 10px; font-weight: 700;"
-                " padding: 12px 12px 4px 16px;"
-                " background: transparent; border: none;"
-            )
+            lbl.setObjectName("navSectionLabel")
             return lbl
 
         def _nav_btn(label: str, page_idx: int) -> QPushButton:
             btn = QPushButton(label)
+            btn.setObjectName("navButton")
             btn.setCheckable(True)
-            btn.setStyleSheet(_NAV_BTN_STYLE)
             btn.clicked.connect(lambda _c, i=page_idx: self._navigate(i))
             self._nav_buttons.append(btn)
             return btn
@@ -419,13 +376,6 @@ class MainWindow(QMainWindow):
         def _group_box() -> "QFrame":
             box = QFrame()
             box.setObjectName("navGroup")
-            box.setStyleSheet(
-                "QFrame#navGroup {"
-                "  background: rgba(53, 208, 255, 0.045);"
-                "  border: 1px solid rgba(53, 208, 255, 0.16);"
-                "  border-radius: 10px;"
-                "}"
-            )
             gl = QVBoxLayout(box)
             gl.setContentsMargins(4, 4, 4, 4)
             gl.setSpacing(2)
@@ -460,6 +410,20 @@ class MainWindow(QMainWindow):
 
         self._navigate(0)
         return sidebar
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_responsive_chrome(event.size().width())
+
+    def _update_responsive_chrome(self, window_width: int) -> None:
+        sidebar = getattr(self, "_sidebar", None)
+        if sidebar is None:
+            return
+        sidebar.setFixedWidth(
+            DESIGN_TOKENS.layout.nav_compact_width
+            if window_width < 1160
+            else DESIGN_TOKENS.layout.nav_width
+        )
 
     def _navigate(self, page_idx: int) -> None:
         self._stack.setCurrentIndex(page_idx)

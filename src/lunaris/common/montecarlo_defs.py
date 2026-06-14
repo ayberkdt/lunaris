@@ -1,4 +1,4 @@
-﻿# lunaris/common/montecarlo_defs.py
+# lunaris/common/montecarlo_defs.py
 """
 Monte Carlo Simulation Configuration Definitions
 =================================================
@@ -180,8 +180,13 @@ class MonteCarloConfig:
 
     ``mc_backend`` is the explicit backend selector.  The default ``"auto"``
     preserves the historical ``use_gpu`` + ``gravity_mode_override`` behavior.
-    Explicit values are ``"cpu_sh"``, ``"gpu_sh"``,
-    ``"gpu_st_lrps_potential"``, and ``"gpu_st_lrps_direct"``.
+    Explicit values are ``"cpu_sh"``, ``"numba_cuda_sh"`` (degree <= 24 Numba
+    CUDA screening kernel; ``"gpu_sh"`` is a legacy alias for it),
+    ``"torch_cuda_sh"`` (high-degree PyTorch CUDA classic-SH, gravity-only),
+    ``"torch_cpu_sh"`` (PyTorch CPU classic-SH, same evaluator as torch_cuda_sh),
+    ``"gpu_st_lrps_potential"``, and ``"gpu_st_lrps_direct"``.  The explicit
+    value is recorded verbatim in provenance and is never silently rewritten to
+    another backend name.
 
     GPU physics model
     -----------------
@@ -220,8 +225,18 @@ class MonteCarloConfig:
     st_lrps_model_dir: Optional[str] = None
 
     # GPU physics fidelity
-    gpu_sh_degree: int = 10         # requested SH degree (GPU supports true SH only through 24)
+    gpu_sh_degree: int = 10         # requested SH degree (numba_cuda_sh true SH only through 24)
     gpu_threads_per_block: int = 128
+
+    # High-degree classic-SH fallback policy when an explicit ``numba_cuda_sh``
+    # request exceeds the degree-24 kernel limit: "compatible_gpu" (try
+    # torch_cuda_sh, else CPU), "cpu" (force CPU), or "error" (raise instead of
+    # substituting).  The requested degree is never clipped.
+    gpu_sh_fallback_policy: str = "compatible_gpu"
+
+    # Torch classic-SH path (torch_cuda_sh) controls.
+    torch_dtype: str = "float64"    # "float32" or "float64" for the torch SH path
+    torch_sh_chunk_size: int = 0    # 0 = auto (VRAM-aware); else samples per GPU chunk
 
     # Fixed-step RK4 integration (GPU path)
     dt_s: float = 60.0              # RK4 step [s]
@@ -250,14 +265,31 @@ class MonteCarloConfig:
         if self.mc_backend not in (
             "auto",
             "cpu_sh",
-            "gpu_sh",
+            "gpu_sh",            # legacy alias -> numba_cuda_sh
+            "numba_cuda_sh",
+            "torch_cuda_sh",
+            "torch_cpu_sh",
             "gpu_st_lrps_potential",
             "gpu_st_lrps_direct",
         ):
             raise ValueError(
                 "mc_backend must be one of: 'auto', 'cpu_sh', 'gpu_sh', "
-                "'gpu_st_lrps_potential', 'gpu_st_lrps_direct'. "
-                f"Got {self.mc_backend!r}"
+                "'numba_cuda_sh', 'torch_cuda_sh', 'torch_cpu_sh', "
+                "'gpu_st_lrps_potential', "
+                f"'gpu_st_lrps_direct'. Got {self.mc_backend!r}"
+            )
+        if self.gpu_sh_fallback_policy not in ("compatible_gpu", "cpu", "error"):
+            raise ValueError(
+                "gpu_sh_fallback_policy must be one of: 'compatible_gpu', 'cpu', "
+                f"'error'. Got {self.gpu_sh_fallback_policy!r}"
+            )
+        if str(self.torch_dtype).lower() not in ("float32", "float64"):
+            raise ValueError(
+                f"torch_dtype must be 'float32' or 'float64', got {self.torch_dtype!r}"
+            )
+        if int(self.torch_sh_chunk_size) < 0:
+            raise ValueError(
+                f"torch_sh_chunk_size must be >= 0 (0 = auto), got {self.torch_sh_chunk_size}"
             )
         st_lrps_model_dir = str(self.st_lrps_model_dir or "").strip()
         if (

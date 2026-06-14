@@ -34,6 +34,8 @@ from typing import Optional
 
 from PySide6 import QtGui, QtCore, QtWidgets
 
+from lunaris.ui.theme.tokens import DESIGN_TOKENS
+
 # Derive lunar constants from the backend SSOT (common.constants).
 # UI code works in km, so we convert here once and export aliases.
 # Fallback literals keep the UI loadable without the backend on PYTHONPATH.
@@ -79,7 +81,7 @@ APP_VERSION = "13.0"
 # teal (#6EE7C8).  Amber is reserved for warning states and periapsis markers, not
 # as a general brand accent.  All tokens below are the single source of truth for
 # Qt widget styling (OpenGL colors live in ORBIT_THEME).
-THEME = {
+_LEGACY_THEME_REFERENCE = {
     # ── Backgrounds ──────────────────────────────────────────────────────────
     "bg_space":    "#05070A",   # deepest canvas / app background
     "bg_shell":    "#0A0F16",   # header / sidebar shell
@@ -128,7 +130,11 @@ THEME = {
 }
 
 # Rich Text Log Colors (HTML) — aligned with the Lunar Graphite palette.
-LOG_COLORS = {
+# Typed tokens are authoritative. This compatibility mapping keeps the existing
+# page API stable while the remaining inline styling migrates to global QSS.
+THEME = DESIGN_TOKENS.colors.as_legacy_dict()
+
+_LEGACY_LOG_COLORS_REFERENCE = {
     "error":     "#FCA5A5",   # soft red — readable on dark bg
     "warning":   "#E7B86A",   # amber
     "success":   "#6EE7C8",   # telemetry teal
@@ -143,25 +149,36 @@ LOG_COLORS = {
 # the Qt ``THEME`` because the 3D preview needs deliberate, slightly different
 # values (true space-black background, regolith greys, marker hues) and is
 # consumed as float RGBA tuples via ``rgba_css_to_tuple`` / ``hex_to_rgba_float``.
+LOG_COLORS = {
+    "error": DESIGN_TOKENS.colors.error,
+    "warning": DESIGN_TOKENS.colors.warning,
+    "success": DESIGN_TOKENS.colors.success,
+    "system": DESIGN_TOKENS.colors.fg_soft,
+    "info": DESIGN_TOKENS.colors.accent_hov,
+    "debug": DESIGN_TOKENS.colors.fg_muted,
+    "timestamp": DESIGN_TOKENS.colors.inactive,
+    "default": DESIGN_TOKENS.colors.fg_main,
+}
+
 ORBIT_THEME = {
-    "space_bg":      "#020408",   # near-black space backdrop
+    "space_bg":      DESIGN_TOKENS.visualization.space_bg,
 
-    "moon_dark":     "#5E6268",   # terminator-side regolith
-    "moon_mid":      "#8D9299",   # mid regolith
-    "moon_light":    "#B7BCC4",   # sunlit regolith
+    "moon_dark":     DESIGN_TOKENS.visualization.moon_dark,
+    "moon_mid":      DESIGN_TOKENS.visualization.moon_mid,
+    "moon_light":    DESIGN_TOKENS.visualization.moon_light,
 
-    "orbit_line":    "#7DB7FF",   # soft orbital blue trajectory
-    "orbit_glow":    "#3B82F6",   # faint underlying glow line
-    "spacecraft":    "#F8FAFC",   # near-white current-position marker
+    "orbit_line":    DESIGN_TOKENS.visualization.orbit_line,
+    "orbit_glow":    DESIGN_TOKENS.visualization.orbit_glow,
+    "spacecraft":    DESIGN_TOKENS.visualization.spacecraft,
 
-    "periapsis":     "#E7B86A",   # amber periapsis marker (warning hue)
-    "apoapsis":      "#6EE7C8",   # telemetry-teal apoapsis marker
+    "periapsis":     DESIGN_TOKENS.visualization.periapsis,
+    "apoapsis":      DESIGN_TOKENS.visualization.apoapsis,
 
-    "orbit_plane":   "rgba(106,169,255,0.08)",  # optional orbit-plane fill
+    "orbit_plane":   DESIGN_TOKENS.visualization.orbit_plane,
 
-    "axis_x":        "rgba(248,113,113,0.70)",   # red — orientation axis
-    "axis_y":        "rgba(110,231,200,0.70)",   # teal — orientation axis
-    "axis_z":        "rgba(125,183,255,0.70)",   # blue — orientation axis
+    "axis_x":        DESIGN_TOKENS.visualization.axis_x,
+    "axis_y":        DESIGN_TOKENS.visualization.axis_y,
+    "axis_z":        DESIGN_TOKENS.visualization.axis_z,
 }
 
 
@@ -507,17 +524,23 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
         self._min = min_value
         self._max = max_value
         self._decimals = int(decimals)
-        
-        # Drag State
+        self._val = self._clamp(self._val)
+
+        # Drag State. ``_drag_armed`` means a press landed in the drag handle but
+        # the pointer has not yet moved far enough to count as a drag — this lets
+        # a plain click in the handle leave the value (and signals) untouched.
         self._dragging = False
+        self._drag_armed = False
         self._drag_start_x = 0
         self._drag_start_val = 0.0
-        
+
         # Setup
         self.setText(self._format(self._val))
         self.setMouseTracking(True) # Required for hover detection
         self.setObjectName("numericDrag")  # For QSS targeting
         self.setMinimumHeight(38)
+        # Commit (and clamp/reformat) on explicit confirmation as well as focus-out.
+        self.returnPressed.connect(self._commit_text)
 
         # Styling — uses the Lunar Graphite orbital-blue accent
         self.setStyleSheet(f"""
@@ -560,79 +583,145 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
 
         return f"{val:.{self._decimals}f}"
     
-    def _parse_and_set(self, text: str):
+    # ---- internal numeric helpers ----
+    def _clamp(self, val: float) -> float:
+        """Apply the configured min/max bounds to *val* (consistent everywhere)."""
+        if self._min is not None:
+            val = max(self._min, val)
+        if self._max is not None:
+            val = min(self._max, val)
+        return val
+
+    def _sync_val_from_text(self) -> bool:
+        """Parse the current text into ``_val`` (clamped). Returns parse success.
+
+        Used to keep the internal numeric state honest after programmatic
+        ``setText`` and before a drag begins. Never emits.
+        """
         try:
-            val = float(text)
-            # Clamp if needed
-            if self._min is not None: val = max(self._min, val)
-            if self._max is not None: val = min(self._max, val)
-            
-            self._val = val
+            val = float(self.text())
+        except (ValueError, TypeError):
+            return False
+        self._val = self._clamp(val)
+        return True
+
+    def _commit_text(self) -> None:
+        """Validate the typed text on commit (Enter / focus-out).
+
+        A valid number is clamped, reformatted, and emitted only if it actually
+        changed. Invalid or temporary text (``""``, ``"-"``, ``"."``, ``"1e"``)
+        leaves the last valid value intact and simply restores the display.
+        """
+        try:
+            val = float(self.text())
+        except (ValueError, TypeError):
+            self.set_value(self._val, emit=False)  # revert display, keep value
+            return
+        self.set_value(val, emit=True)
+
+    def _end_drag(self) -> None:
+        """Reset drag state and restore the cursor (idempotent)."""
+        self._drag_armed = False
+        self._dragging = False
+        self.unsetCursor()
+
+    # ---- public numeric API ----
+    def value(self) -> float:
+        """Return the current committed numeric value."""
+        return self._val
+
+    def set_value(self, value, *, emit: bool = True) -> None:
+        """Programmatically set the value, keeping text and state in sync.
+
+        Clamps to the configured bounds, updates the displayed text, and emits
+        ``value_changed`` only when the value actually changes (and only when
+        signals are not blocked by the caller). Prefer this over ``setText`` for
+        programmatic updates so the internal numeric value never goes stale.
+        """
+        try:
+            val = self._clamp(float(value))
+        except (ValueError, TypeError):
+            return
+        changed = (val != self._val)
+        self._val = val
+        was_blocked = self.blockSignals(True)
+        super().setText(self._format(val))
+        self.blockSignals(was_blocked)
+        if emit and changed:
             self.value_changed.emit(val)
-        except ValueError:
-            pass # Keep old value on invalid input
-    
+
+    def setText(self, text) -> None:
+        """Override so programmatic text updates keep ``_val`` in sync.
+
+        Matches ``QLineEdit`` semantics by not emitting ``value_changed``; the
+        internal numeric value is refreshed from the new text when parseable so
+        a later read or drag starts from the correct base.
+        """
+        super().setText("" if text is None else str(text))
+        self._sync_val_from_text()
+
+    # ---- mouse / focus interaction ----
+    _DRAG_THRESHOLD_PX = 3
+
     def mousePressEvent(self, e: QtGui.QMouseEvent):
-        if e.button() == QtCore.Qt.LeftButton:
-            # Check if user clicked in the "drag zone" (right side or Alt key)
-            is_right_edge = (self.width() - e.pos().x()) < 20
+        if e.button() == QtCore.Qt.LeftButton and self.isEnabled() and not self.isReadOnly():
+            # The drag handle is the right edge of the field, or any Alt+click.
+            is_right_edge = (self.width() - e.pos().x()) < 18
             is_alt = bool(e.modifiers() & QtCore.Qt.AltModifier)
-            
             if is_right_edge or is_alt:
-                self._dragging = True
+                self._drag_armed = True
+                self._dragging = False
                 self._drag_start_x = int(e.globalPosition().x())
-                self._parse_and_set(self.text()) # Sync state before drag
+                self._sync_val_from_text()  # base the drag on the typed value
                 self._drag_start_val = self._val
-                
                 self.setCursor(QtCore.Qt.SizeHorCursor)
                 e.accept()
                 return
-                
         super().mousePressEvent(e)
-    
+
     def mouseMoveEvent(self, e: QtGui.QMouseEvent):
-        if self._dragging:
-            # Calculate Delta
+        if self._drag_armed:
             dx = int(e.globalPosition().x()) - self._drag_start_x
-            
-            # Apply Modifiers
+            if not self._dragging:
+                # Require a deliberate horizontal movement before changing the
+                # value, so a plain click on the handle never nudges it.
+                if abs(dx) < self._DRAG_THRESHOLD_PX:
+                    e.accept()
+                    return
+                self._dragging = True
+
             multiplier = 1.0
             if e.modifiers() & QtCore.Qt.ControlModifier:
                 multiplier = 0.1
             elif e.modifiers() & QtCore.Qt.ShiftModifier:
                 multiplier = 10.0
-            
-            # Update Value
+
             new_val = self._drag_start_val + (dx * self._step * multiplier)
-            
-            # Clamp
-            if self._min is not None: new_val = max(self._min, new_val)
-            if self._max is not None: new_val = min(self._max, new_val)
-            
-            self._val = new_val
-            
-            # Update UI without triggering textEdited loop if needed
-            self.setText(self._format(self._val))
-            self.value_changed.emit(self._val)
-            
+            # set_value clamps and emits only on a real change.
+            self.set_value(new_val)
             e.accept()
             return
-            
         super().mouseMoveEvent(e)
-    
+
     def mouseReleaseEvent(self, e: QtGui.QMouseEvent):
-        if self._dragging:
-            self._dragging = False
-            self.unsetCursor()
+        if self._drag_armed:
+            self._end_drag()
             e.accept()
             return
         super().mouseReleaseEvent(e)
-    
+
     def focusOutEvent(self, e: QtGui.QFocusEvent):
-        # Validate text on finish
-        self._parse_and_set(self.text())
-        self.setText(self._format(self._val)) # Reformat to clean up
+        # A drag should never outlive the focus that started it.
+        self._end_drag()
+        self._commit_text()
         super().focusOutEvent(e)
+
+    def changeEvent(self, e: QtCore.QEvent):
+        # Becoming disabled (e.g. switched to a ghost field) must restore the
+        # cursor and drop any in-progress drag.
+        if e.type() == QtCore.QEvent.EnabledChange and not self.isEnabled():
+            self._end_drag()
+        super().changeEvent(e)
 
 
 class ToggleSwitch(QtWidgets.QAbstractButton):

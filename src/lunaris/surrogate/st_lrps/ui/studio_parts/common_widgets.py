@@ -243,32 +243,17 @@ def _make_page_header(title: str, subtitle: str, eyebrow: str = "ST-LRPS Studio"
     """Compact page header used across long-lived Studio workspaces."""
     frame = QFrame()
     frame.setObjectName("studioPageHeader")
-    frame.setStyleSheet(
-        f"QFrame#studioPageHeader {{"
-        f"  background: transparent;"
-        f"  border: none;"
-        f"  border-bottom: 1px solid {with_alpha(THEME['border_soft'], 0.11)};"
-        f"}}"
-    )
     lo = QVBoxLayout(frame)
     lo.setContentsMargins(0, 0, 0, 14)
     lo.setSpacing(4)
 
     eyebrow_lbl = QLabel(eyebrow.upper())
-    eyebrow_lbl.setStyleSheet(
-        f"color: {THEME['accent']}; font-size: 10px; font-weight: 800; "
-        f"background: transparent; border: none;"
-    )
+    eyebrow_lbl.setObjectName("pageEyebrow")
     title_lbl = QLabel(title)
-    title_lbl.setStyleSheet(
-        f"color: {THEME['fg_main']}; font-size: 22px; font-weight: 800; "
-        f"background: transparent; border: none;"
-    )
+    title_lbl.setObjectName("pageTitle")
     subtitle_lbl = QLabel(subtitle)
     subtitle_lbl.setWordWrap(True)
-    subtitle_lbl.setStyleSheet(
-        f"color: {THEME['fg_soft']}; font-size: 12px; background: transparent; border: none;"
-    )
+    subtitle_lbl.setObjectName("pageDescription")
 
     lo.addWidget(eyebrow_lbl)
     lo.addWidget(title_lbl)
@@ -279,13 +264,7 @@ def _make_page_header(title: str, subtitle: str, eyebrow: str = "ST-LRPS Studio"
 def _style_surface(frame: QFrame, *, object_name: str = "studioSurface", padding: int = 0) -> QFrame:
     """Apply the shared Studio surface treatment to a QFrame."""
     frame.setObjectName(object_name)
-    frame.setStyleSheet(
-        f"QFrame#{object_name} {{"
-        f"  background: {with_alpha(THEME['bg_card'], 0.72)};"
-        f"  border: 1px solid {with_alpha(THEME['border'], 0.12)};"
-        f"  border-radius: 12px;"
-        f"}}"
-    )
+    frame.setProperty("studioSurface", True)
     if padding:
         layout = frame.layout()
         if layout is not None:
@@ -301,32 +280,14 @@ def _style_command_preview(edit: QPlainTextEdit, *, min_h: int = 76, max_h: Opti
     if max_h is not None:
         edit.setMaximumHeight(max_h)
     edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
-    edit.setStyleSheet(
-        f"QPlainTextEdit {{"
-        f"  background: {with_alpha(THEME['bg_log'], 0.92)};"
-        f"  border: 1px solid {with_alpha(THEME['accent'], 0.18)};"
-        f"  border-radius: 10px;"
-        f"  color: {THEME['fg_main']};"
-        f"  padding: 10px 12px;"
-        f"  selection-background-color: {with_alpha(THEME['accent'], 0.35)};"
-        f"}}"
-    )
+    edit.setObjectName("commandPreview")
 
 
 def _make_status_note(text: str = "", *, level: str = "info") -> QLabel:
-    colors = {
-        "info": (THEME["fg_soft"], with_alpha(THEME["accent"], 0.07), with_alpha(THEME["accent"], 0.22)),
-        "ok": (THEME["success"], with_alpha(THEME["success"], 0.08), with_alpha(THEME["success"], 0.25)),
-        "warn": (THEME["warning"], with_alpha(THEME["warning"], 0.08), with_alpha(THEME["warning"], 0.25)),
-        "error": (THEME["error"], with_alpha(THEME["error"], 0.08), with_alpha(THEME["error"], 0.25)),
-    }
-    fg, bg, border = colors.get(level, colors["info"])
     lbl = QLabel(text)
+    lbl.setObjectName("inlineNoticeLabel")
+    lbl.setProperty("kind", level)
     lbl.setWordWrap(True)
-    lbl.setStyleSheet(
-        f"QLabel {{ color: {fg}; font-size: 11px; padding: 7px 10px; "
-        f"background: {bg}; border: 1px solid {border}; border-radius: 8px; }}"
-    )
     return lbl
 
 
@@ -695,6 +656,10 @@ class LiveLossPlot(QWidget):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
         from pyqtgraph.Qt import QtCore as pg_QtCore
+        self.setMinimumWidth(0)
+        self.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
 
         self._epochs: List[int] = []
         self._train_loss: List[float] = []
@@ -733,6 +698,10 @@ class LiveLossPlot(QWidget):
 
         self._card = QFrame()
         self._card.setObjectName("liveLossCard")
+        self._card.setMinimumWidth(0)
+        self._card.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         self._card.setStyleSheet(
             f"""
             QFrame#liveLossCard {{
@@ -1139,6 +1108,10 @@ class LiveLossPlot(QWidget):
             def _titled(title: str, widget, minh: int):
                 box = QFrame()
                 box.setObjectName("plotCell")
+                box.setMinimumWidth(0)
+                box.setSizePolicy(
+                    QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+                )
                 box.setStyleSheet(
                     "QFrame#plotCell { background: transparent; border: none; }"
                 )
@@ -1152,6 +1125,10 @@ class LiveLossPlot(QWidget):
                     f" padding-left: 4px;"
                 )
                 widget.setMinimumHeight(minh)
+                widget.setMinimumWidth(0)
+                widget.setSizePolicy(
+                    QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
+                )
                 v.addWidget(lbl)
                 v.addWidget(widget, 1)
                 return box
@@ -1176,7 +1153,7 @@ class LiveLossPlot(QWidget):
             plots_grid.setColumnStretch(0, 1)
             plots_grid.setColumnStretch(1, 1)
             self._plots_container.setSizePolicy(
-                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
             )
             # Kept for backwards compatibility with set_compact()/references.
             self._plot_tabs = None

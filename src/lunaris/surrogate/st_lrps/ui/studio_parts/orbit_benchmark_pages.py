@@ -754,7 +754,9 @@ class OrbitBenchmarkTab(QWidget):
         cap1 = QLabel("Overall Progress")
         cap1.setStyleSheet("color:#9aa7c7; font-size:11px; font-weight:600;")
         self._overall_value = QLabel("-")
-        self._overall_value.setStyleSheet("color:#34d399; font-size:11px; font-weight:700;")
+        self._overall_value.setStyleSheet(
+            f"color:{THEME['success']}; font-size:11px; font-weight:700;"
+        )
         row1 = QHBoxLayout()
         row1.setContentsMargins(0, 0, 0, 0)
         row1.addWidget(cap1)
@@ -764,13 +766,15 @@ class OrbitBenchmarkTab(QWidget):
         self.overall_bar = QProgressBar()
         self.overall_bar.setTextVisible(False)
         self.overall_bar.setFixedHeight(10)
-        self.overall_bar.setStyleSheet(slim % "#34d399")
+        self.overall_bar.setStyleSheet(slim % THEME["success"])
         v.addWidget(self.overall_bar)
 
         self._phase_caption = QLabel("Current Phase: -")
         self._phase_caption.setStyleSheet("color:#9aa7c7; font-size:11px; font-weight:600;")
         self._phase_value = QLabel("-")
-        self._phase_value.setStyleSheet("color:#35d0ff; font-size:11px; font-weight:700;")
+        self._phase_value.setStyleSheet(
+            f"color:{THEME['accent']}; font-size:11px; font-weight:700;"
+        )
         row2 = QHBoxLayout()
         row2.setContentsMargins(0, 0, 0, 0)
         row2.addWidget(self._phase_caption)
@@ -780,7 +784,7 @@ class OrbitBenchmarkTab(QWidget):
         self.phase_bar = QProgressBar()
         self.phase_bar.setTextVisible(False)
         self.phase_bar.setFixedHeight(10)
-        self.phase_bar.setStyleSheet(slim % "#35d0ff")
+        self.phase_bar.setStyleSheet(slim % THEME["accent"])
         v.addWidget(self.phase_bar)
 
         self._phase_detail = QLabel("")

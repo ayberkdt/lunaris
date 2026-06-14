@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from lunaris.ui.widgets.log_panel import (
     MAX_LOG_LINES,
+    ExecutionConsoleDock,
     ExecutionLogPanel,
     LogEntry,
 )
 
-__all__ = ["ExecutionLogPanel", "LogEntry", "MAX_LOG_LINES"]
+__all__ = ["ExecutionConsoleDock", "ExecutionLogPanel", "LogEntry", "MAX_LOG_LINES"]

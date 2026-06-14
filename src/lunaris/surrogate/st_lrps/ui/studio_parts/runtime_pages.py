@@ -173,7 +173,7 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 
 
 from .common_widgets import *
-from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _inspect_run_artifacts, _NoWheelOnSpinFilter
+from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _style_surface, _inspect_run_artifacts, _NoWheelOnSpinFilter
 
 
 from .data_pages import *
@@ -375,20 +375,14 @@ class STLRPSProfilingTab(QWidget):
         # Actions & Command preview panel
         actions_card = QFrame()
         actions_card.setObjectName("profileActionsCard")
-        actions_card.setStyleSheet(
-            "QFrame#profileActionsCard {"
-            "  background: rgba(8, 13, 26, 0.82);"
-            "  border: 1px solid rgba(53, 208, 255, 0.18);"
-            "  border-radius: 12px;"
-            "}"
-        )
+        _style_surface(actions_card, object_name="profileActionsCard")
         actions_l = QVBoxLayout()
         actions_l.setContentsMargins(12, 10, 12, 10)
         actions_l.setSpacing(8)
         
         # Command preview directly inside actions
         cmd_head = QLabel("Generated CLI Command")
-        cmd_head.setStyleSheet("font-size: 11px; font-weight: 800; color: #35d0ff;")
+        cmd_head.setObjectName("pageEyebrow")
         
         actions_l.addWidget(cmd_head)
         actions_l.addWidget(self.command_preview)

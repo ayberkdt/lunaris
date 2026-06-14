@@ -777,11 +777,15 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.cb_mc_backend = QtWidgets.QComboBox()
         self.cb_mc_backend.addItem("Auto Policy", "auto")
         self.cb_mc_backend.addItem("CPU Spherical Harmonics", "cpu_sh")
-        self.cb_mc_backend.addItem("GPU Spherical Harmonics", "gpu_sh")
+        self.cb_mc_backend.addItem("Numba CUDA SH — degree ≤ 24, low-degree screening", "numba_cuda_sh")
+        self.cb_mc_backend.addItem("Torch CUDA SH — high-degree GPU, gravity-only", "torch_cuda_sh")
+        self.cb_mc_backend.addItem("Torch CPU SH — validation, no CUDA needed", "torch_cpu_sh")
         self.cb_mc_backend.addItem("GPU ST-LRPS Potential", "gpu_st_lrps_potential")
         self.cb_mc_backend.addItem("GPU ST-LRPS Direct", "gpu_st_lrps_direct")
         self.cb_mc_backend.setToolTip(
-            "Explicit backend selector recorded in Monte Carlo metadata.\n"
+            "Explicit backend selector recorded verbatim in Monte Carlo metadata.\n"
+            "Numba CUDA SH: degree ≤ 24 (kernel-workspace limit). Torch CUDA SH: "
+            "arbitrary degree on PyTorch CUDA, gravity-only.\n"
             "Auto uses safe GPU paths when available and records any fallback."
         )
         self.cb_mc_backend.currentIndexChanged.connect(self._on_mc_backend_changed)
@@ -789,8 +793,10 @@ class MonteCarloPage(QtWidgets.QWidget):
         layout.addLayout(backend_row)
 
         backend_hint = _label(
-            "GPU SH is a true CUDA spherical-harmonic path through degree 24 today. "
-            "Higher requested degrees are routed by policy to CPU SH without clipping.",
+            "Numba CUDA SH is a true CUDA path through degree 24 (kernel-workspace "
+            "limit). Degrees above 24 use Torch CUDA SH (PyTorch, gravity-only) when "
+            "available, otherwise fall back to CPU SH — the requested degree is never "
+            "clipped.",
             muted=True,
         )
         backend_hint.setWordWrap(True)
@@ -915,10 +921,9 @@ class MonteCarloPage(QtWidgets.QWidget):
         if gravity_mode_index < 0:
             gravity_mode_index = 0
         self.cb_mc_gravity_mode.setCurrentIndex(gravity_mode_index)
-        backend_index = self.cb_mc_backend.findData(str(getattr(self.mc_cfg, "mc_backend", "auto") or "auto"))
-        if backend_index < 0:
-            backend_index = 0
-        self.cb_mc_backend.setCurrentIndex(backend_index)
+        self.cb_mc_backend.setCurrentIndex(
+            self._mc_backend_combo_index(str(getattr(self.mc_cfg, "mc_backend", "auto") or "auto"))
+        )
         self._on_gravity_mode_changed()
         self._on_backend_changed(self.mc_cfg.use_gpu)
 
@@ -954,6 +959,18 @@ class MonteCarloPage(QtWidgets.QWidget):
         )
         if hasattr(self, "st_lrps_config_frame"):
             self.st_lrps_config_frame.setVisible(is_st_lrps)
+
+    def _mc_backend_combo_index(self, value: str) -> int:
+        """Resolve a stored mc_backend value to a combo index.
+
+        Handles the legacy ``gpu_sh`` alias (it now resolves to the explicit
+        ``numba_cuda_sh`` item) so older saved presets keep selecting the Numba
+        CUDA path instead of silently snapping back to Auto.
+        """
+        idx = self.cb_mc_backend.findData(str(value or "auto"))
+        if idx < 0 and str(value) == "gpu_sh":
+            idx = self.cb_mc_backend.findData("numba_cuda_sh")
+        return idx if idx >= 0 else 0
 
     def _on_mc_backend_changed(self, *_args: Any) -> None:
         if hasattr(self, "cb_mc_backend"):
@@ -1583,10 +1600,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.ent_sigma_cr.setText(_s("sigma_cr", 0.0))
         self.toggle_gpu.setChecked(bool(data.get("use_gpu", True)))
         self.mc_cfg.mc_backend = str(data.get("mc_backend", "auto") or "auto")
-        backend_idx = self.cb_mc_backend.findData(self.mc_cfg.mc_backend)
-        if backend_idx < 0:
-            backend_idx = 0
-        self.cb_mc_backend.setCurrentIndex(backend_idx)
+        self.cb_mc_backend.setCurrentIndex(self._mc_backend_combo_index(self.mc_cfg.mc_backend))
         self.ent_gpu_dev.setText(_s("gpu_device_id", 0))
         self.ent_gpu_sh.setText(_s("gpu_sh_degree", 10))
         self.ent_tpb.setText(_s("gpu_threads_per_block", 128))
@@ -1673,17 +1687,22 @@ class MonteCarloPage(QtWidgets.QWidget):
         mc_backend = str(self.cb_mc_backend.currentData() or "auto")
         st_lrps_dir = self.ent_mc_st_lrps_model_dir.text().strip()
         
-        if gpu_enabled and (gravity_mode == "classic_sh" or mc_backend == "gpu_sh"):
+        if (
+            gpu_enabled
+            and mc_backend != "torch_cuda_sh"  # torch handles degree > 24 natively
+            and (gravity_mode == "classic_sh" or mc_backend in {"gpu_sh", "numba_cuda_sh"})
+        ):
             sh_deg = self._parse_int(self.ent_gpu_sh.text(), 0)
             if sh_deg > 24:
                 warnings.append(
-                    "Requested SH degree > 24: current true GPU classic-SH tier is 24; "
-                    "backend policy records CPU SH fallback without clipping."
+                    "Requested SH degree > 24: numba_cuda_sh tops out at degree 24 "
+                    "(kernel-workspace limit). Degrees above 24 route to torch_cuda_sh "
+                    "(PyTorch CUDA, gravity-only) when available, else CPU SH — never clipped."
                 )
-                
+
         if not gpu_enabled:
             warnings.append("GPU disabled: CPU full-fidelity mode may be slower.")
-            if mc_backend.startswith("gpu_"):
+            if mc_backend.startswith("gpu_") or mc_backend in {"numba_cuda_sh", "torch_cuda_sh"}:
                 warnings.append("Explicit GPU MC backend selected; backend policy will record the resolved fallback or GPU override.")
             
         if (

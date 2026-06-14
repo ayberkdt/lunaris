@@ -415,6 +415,40 @@ def collect_visual_state(
     }
 
 
+def sanitize_splitter_sizes(
+    sizes: Any,
+    total: Optional[int] = None,
+    *,
+    min_panel: int = 1,
+) -> Optional[list[int]]:
+    """Validate/clamp restored splitter sizes; return ``None`` if unusable.
+
+    Restoring raw on-disk splitter values can produce unusable geometry — a
+    panel sized to zero (disappears), a negative size (Qt undefined behavior),
+    or a sum far larger than the current window (content pushed off-screen).
+    This pure helper is the single guard for those cases:
+
+    * rejects non-sequences, fewer than two entries, non-numeric, or negatives;
+    * rejects an all-zero layout (would hide everything);
+    * when *total* (the live splitter extent) is known and the saved layout is
+      larger, scales the sizes proportionally so they fit the current window.
+    """
+    if not isinstance(sizes, (list, tuple)) or len(sizes) < 2:
+        return None
+    try:
+        vals = [int(round(float(s))) for s in sizes]
+    except (TypeError, ValueError):
+        return None
+    if any(v < 0 for v in vals):
+        return None
+    if sum(vals) <= 0:
+        return None
+    if total is not None and total > 0 and sum(vals) > total:
+        scale = total / float(sum(vals))
+        vals = [max(min_panel, int(v * scale)) for v in vals]
+    return vals
+
+
 def apply_visual_state(
     visual: dict[str, Any],
     *,
@@ -434,10 +468,17 @@ def apply_visual_state(
     if active_page_key and main_window is not None:
         _safe_call(None, lambda: main_window._switch_page(active_page_key))
 
-    # Main splitter sizes
+    # Main splitter sizes — validated and clamped to the live window so a stale
+    # or corrupt session can never produce unusable (zero / negative / oversized)
+    # splitter geometry.
     splitter_sizes = visual.get("splitter_sizes")
     if splitter_sizes and main_window is not None:
-        _safe_call(None, lambda: main_window.main_splitter.setSizes(list(splitter_sizes)))
+        splitter = getattr(main_window, "main_splitter", None)
+        if splitter is not None:
+            total = _safe_call(0, lambda: int(splitter.height())) or None
+            sanitized = sanitize_splitter_sizes(splitter_sizes, total)
+            if sanitized is not None:
+                _safe_call(None, lambda: splitter.setSizes(sanitized))
 
     # Log collapsed state
     log_collapsed = bool(visual.get("log_collapsed", False))

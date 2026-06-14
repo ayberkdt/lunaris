@@ -43,8 +43,11 @@ Dependencies:
 # =============================================================================
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+
 import numpy as np
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 # Modern Icon Library
 try:
@@ -96,6 +99,26 @@ except ImportError:
         raise SystemExit(2)
     raise
 
+
+
+# =============================================================================
+# 0b.                       VALIDATED ORBIT STATE
+# =============================================================================
+
+@dataclass(frozen=True)
+class _OrbitState:
+    """A fully validated orbit, derived once and shared by preview and metrics.
+
+    Keeping this separate from any OpenGL call means the validation/derivation
+    logic can be unit-tested without a rendering backend.
+    """
+
+    a_km: float
+    e: float
+    inc_deg: float
+    raan_deg: float
+    argp_deg: float
+    ta_deg: float
 
 
 # =============================================================================
@@ -400,44 +423,49 @@ class OrbitViz3D(QtWidgets.QWidget):
         self.update_orbit()
 
     def update_orbit(self):
-        """Redraw the orbit line, glow underlay, and the three markers."""
+        """Refresh the orbit line, glow underlay, and the three markers.
+
+        GL items are created once and then updated in place — the line/glow via
+        ``setData`` and the markers via a transform — so dragging a parameter
+        reuses existing OpenGL objects instead of churning new ones every frame.
+        The camera is never touched here, so the view stays put as values change.
+        """
         if not HAS_OPENGL or getattr(self, 'gl_widget', None) is None:
             return
 
         inc_rad = np.deg2rad(self._inc_deg)
         raan_rad = np.deg2rad(self._raan_deg)
         argp_rad = np.deg2rad(self._argp_deg)
-        ta_rad = np.deg2rad(self._ta_deg)
 
         try:
             points = self._kepler_to_cartesian(
-                self._a_km, self._e, inc_rad, raan_rad, argp_rad, ta_rad
+                self._a_km, self._e, inc_rad, raan_rad, argp_rad
             )
 
-            # Refresh the trajectory items (glow underlay first, crisp line on top).
-            for attr in ('orbit_glow', 'orbit_line'):
-                item = getattr(self, attr, None)
-                if item is not None:
-                    self.gl_widget.removeItem(item)
-                    setattr(self, attr, None)
+            # Glow underlay first, crisp line on top — reuse via setData().
+            if self.orbit_glow is None:
+                self.orbit_glow = gl.GLLinePlotItem(
+                    pos=points,
+                    color=hex_to_rgba_float(ORBIT_THEME['orbit_glow'], 0.35),
+                    width=8.0,
+                    antialias=True,
+                    glOptions='translucent',
+                )
+                self.gl_widget.addItem(self.orbit_glow)
+            else:
+                self.orbit_glow.setData(pos=points)
 
-            self.orbit_glow = gl.GLLinePlotItem(
-                pos=points,
-                color=hex_to_rgba_float(ORBIT_THEME['orbit_glow'], 0.35),
-                width=8.0,
-                antialias=True,
-                glOptions='translucent',
-            )
-            self.gl_widget.addItem(self.orbit_glow)
-
-            self.orbit_line = gl.GLLinePlotItem(
-                pos=points,
-                color=hex_to_rgba_float(ORBIT_THEME['orbit_line'], 1.0),
-                width=3.2,
-                antialias=True,
-                glOptions='translucent',
-            )
-            self.gl_widget.addItem(self.orbit_line)
+            if self.orbit_line is None:
+                self.orbit_line = gl.GLLinePlotItem(
+                    pos=points,
+                    color=hex_to_rgba_float(ORBIT_THEME['orbit_line'], 1.0),
+                    width=3.2,
+                    antialias=True,
+                    glOptions='translucent',
+                )
+                self.gl_widget.addItem(self.orbit_line)
+            else:
+                self.orbit_line.setData(pos=points)
 
             # Markers at periapsis (nu=0), apoapsis (nu=180), and current nu.
             r_marker = self._marker_radius_km()
@@ -462,24 +490,31 @@ class OrbitViz3D(QtWidgets.QWidget):
         return float(np.clip(0.006 * extent, 12.0, 40.0))
 
     def _update_marker(self, attr: str, point, color_token: str, radius: float):
-        """Create/replace a small shaded sphere marker stored under *attr*."""
-        existing = getattr(self, attr, None)
-        if existing is not None:
-            self.gl_widget.removeItem(existing)
-            setattr(self, attr, None)
+        """Position/size a marker sphere stored under *attr*, reusing the mesh.
 
-        md = gl.MeshData.sphere(rows=12, cols=24, radius=radius)
-        rgba = hex_to_rgba_float(color_token)
-        colors = np.empty((md.faceCount(), 4), dtype=float)
-        colors[:] = rgba
-        md.setFaceColors(colors)
+        The sphere mesh is built once as a unit sphere; subsequent updates only
+        replace the item transform (scale + translate), so we never rebuild
+        marker geometry just because a parameter changed.
+        """
+        marker = getattr(self, attr, None)
+        if marker is None:
+            md = gl.MeshData.sphere(rows=12, cols=24, radius=1.0)
+            rgba = hex_to_rgba_float(color_token)
+            colors = np.empty((md.faceCount(), 4), dtype=float)
+            colors[:] = rgba
+            md.setFaceColors(colors)
+            marker = gl.GLMeshItem(
+                meshdata=md, smooth=True, shader='shaded', glOptions='translucent'
+            )
+            self.gl_widget.addItem(marker)
+            setattr(self, attr, marker)
 
-        marker = gl.GLMeshItem(
-            meshdata=md, smooth=True, shader='shaded', glOptions='translucent'
-        )
-        marker.translate(float(point[0]), float(point[1]), float(point[2]))
-        self.gl_widget.addItem(marker)
-        setattr(self, attr, marker)
+        # Compose M = T * S so the unit sphere is scaled to *radius* then moved
+        # to *point* (QMatrix4x4 post-multiplies, so translate is applied first).
+        transform = QtGui.QMatrix4x4()
+        transform.translate(float(point[0]), float(point[1]), float(point[2]))
+        transform.scale(float(radius), float(radius), float(radius))
+        marker.setTransform(transform)
 
     # -------------------------------------------------------------------------
     # Camera presets
@@ -525,6 +560,19 @@ class OrbitPage(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._updating_ghost = False # Flag to prevent recursive signal loops
+        self._compact_layout = None
+
+        # The last orbit state that validated cleanly. Invalid or partial input
+        # never overwrites it, so the preview keeps showing the last good orbit.
+        self._last_valid_orbit: "_OrbitState | None" = None
+
+        # Debounce timer: many rapid parameter changes (especially dragging)
+        # collapse into a single preview/metric refresh, avoiding redraw stutter.
+        self._orbit_update_timer = QtCore.QTimer(self)
+        self._orbit_update_timer.setSingleShot(True)
+        self._orbit_update_timer.setInterval(40)  # ms
+        self._orbit_update_timer.timeout.connect(self._apply_orbit_update)
+
         self._build_ui()
         
     def _create_card(self, title: str) -> QtWidgets.QGroupBox:
@@ -536,34 +584,23 @@ class OrbitPage(QtWidgets.QWidget):
         """Return a compact ``(frame, value_label)`` metric chip for the info strip."""
         frame = QtWidgets.QFrame()
         frame.setObjectName("orbitMetric")
-        frame.setStyleSheet(
-            f"QFrame#orbitMetric {{"
-            f"  background: {THEME['bg_card_alt']};"
-            f"  border: 1px solid {THEME['border_soft']};"
-            f"  border-radius: 8px;"
-            f"}}"
-        )
         v = QtWidgets.QVBoxLayout(frame)
         v.setContentsMargins(10, 6, 10, 6)
         v.setSpacing(1)
 
         title_lbl = QtWidgets.QLabel(title)
-        title_lbl.setStyleSheet(
-            f"color: {THEME['fg_muted']}; font-size: 8pt; font-weight: 600; border: none;"
-        )
+        title_lbl.setObjectName("orbitMetricLabel")
         v.addWidget(title_lbl)
 
         value_lbl = QtWidgets.QLabel("--")
-        value_lbl.setStyleSheet(
-            f"color: {THEME['fg_soft']}; font-size: 11pt; font-weight: 700;"
-            f" font-family: Consolas, monospace; border: none;"
-        )
+        value_lbl.setObjectName("orbitMetricValue")
         v.addWidget(value_lbl)
         return frame, value_lbl
 
     def _build_ui(self):
         """Constructs the layout of the Orbit Configuration Page."""
         layout = QtWidgets.QGridLayout(self)
+        self._page_layout = layout
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(20)
         layout.setVerticalSpacing(20)
@@ -579,6 +616,38 @@ class OrbitPage(QtWidgets.QWidget):
         # Adjust column ratios (Left slightly wider for inputs, Right for Viz)
         layout.setColumnStretch(0, 11)
         layout.setColumnStretch(1, 9)
+        QtCore.QTimer.singleShot(0, self._update_responsive_layout)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._update_responsive_layout()
+
+    def _update_responsive_layout(self) -> None:
+        """Stack the configuration and preview when the workspace is narrow."""
+        available_width = self.width()
+        ancestor = self.parentWidget()
+        while ancestor is not None:
+            if isinstance(ancestor, QtWidgets.QAbstractScrollArea):
+                available_width = ancestor.viewport().width()
+                break
+            ancestor = ancestor.parentWidget()
+        compact = available_width < 1050
+        if compact == self._compact_layout:
+            return
+        self._compact_layout = compact
+        layout = self._page_layout
+        layout.removeWidget(self.group_params)
+        layout.removeWidget(self.group_viz)
+        if compact:
+            layout.addWidget(self.group_params, 0, 0)
+            layout.addWidget(self.group_viz, 1, 0)
+            layout.setColumnStretch(0, 1)
+            layout.setColumnStretch(1, 0)
+        else:
+            layout.addWidget(self.group_params, 0, 0, 2, 1)
+            layout.addWidget(self.group_viz, 0, 1, 2, 1)
+            layout.setColumnStretch(0, 11)
+            layout.setColumnStretch(1, 9)
 
     def _create_params_group(self) -> QtWidgets.QGroupBox:
         """Orbit parameters card with Modern Segmented Control."""
@@ -589,12 +658,8 @@ class OrbitPage(QtWidgets.QWidget):
         
         # A. Modern Segmented Control for Input Mode
         mode_container = QtWidgets.QWidget()
+        mode_container.setObjectName("segmentedControl")
         mode_container.setFixedHeight(46)
-        mode_container.setStyleSheet(f"""
-            background-color: {THEME['bg_card_alt']};
-            border-radius: 10px;
-            border: 1px solid {THEME['border_soft']};
-        """)
         
         mode_layout = QtWidgets.QHBoxLayout(mode_container)
         mode_layout.setContentsMargins(4, 4, 4, 4)
@@ -606,26 +671,9 @@ class OrbitPage(QtWidgets.QWidget):
         self.btn_mode_circular = QtWidgets.QPushButton("Circular (alt)")
 
         for btn in (self.btn_mode_altitude, self.btn_mode_classical, self.btn_mode_circular):
+            btn.setObjectName("segmentButton")
             btn.setCheckable(True)
             btn.setCursor(QtCore.Qt.PointingHandCursor)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent;
-                    color: {THEME['fg_muted']};
-                    border: none;
-                    border-radius: 8px;
-                    padding: 7px 16px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{
-                    background-color: rgba(255, 255, 255, 0.04);
-                }}
-                QPushButton:checked {{
-                    background-color: {THEME['accent_dim']};
-                    border: 1px solid {with_alpha(THEME['accent'], 0.35)};
-                    color: {THEME['fg_main']};
-                }}
-            """)
             mode_layout.addWidget(btn)
 
         # Create button group for exclusive selection
@@ -800,13 +848,6 @@ class OrbitPage(QtWidgets.QWidget):
         is_alt_mode = self.btn_mode_altitude.isChecked()
         is_circular_mode = self.btn_mode_circular.isChecked()
 
-        ghost_style = (
-            f"background: rgba(255, 255, 255, 0.02);"
-            f"border: 1px dashed {THEME['border_soft']};"
-            f"color: {THEME['fg_muted']};"
-            "font-style: italic;"
-        )
-
         if is_circular_mode:
             # Circular mode: only alt_circular is active; hp/ha/a/e are ghost
             active_fields = [self.ent_alt_circular]
@@ -824,13 +865,19 @@ class OrbitPage(QtWidgets.QWidget):
         for field in active_fields:
             field.setReadOnly(False)
             field.setStyleSheet("")
+            field.setProperty("ghost", False)
             field.setEnabled(True)
+            field.style().unpolish(field)
+            field.style().polish(field)
 
         # Set ghost fields
         for field in ghost_fields:
             field.setReadOnly(True)
-            field.setStyleSheet(ghost_style)
-            field.setEnabled(False)
+            field.setStyleSheet("")
+            field.setProperty("ghost", True)
+            field.setEnabled(True)
+            field.style().unpolish(field)
+            field.style().polish(field)
 
         # Trigger initial ghost calculation
         self._update_ghost_orbit()
@@ -913,79 +960,89 @@ class OrbitPage(QtWidgets.QWidget):
             self._updating_ghost = False
 
     def _update_orbit_3d(self, _=None):
-        """Update the 3D orbit visualizer."""
+        """Schedule a debounced preview/metric refresh.
+
+        Rapid parameter changes (dragging, ghost back-fills, session loads) all
+        funnel through one short single-shot timer so the heavy redraw happens
+        once per burst rather than on every individual ``value_changed``.
+        """
         if not hasattr(self, "orbit_viz_3d"):
             return
+        self._orbit_update_timer.start()
 
+    def _compute_orbit_state(self) -> "_OrbitState | None":
+        """Validate the current inputs into an :class:`_OrbitState`.
+
+        Returns ``None`` when the active-mode inputs are empty, malformed, or
+        physically impossible. Pure (no rendering) so it can be tested directly
+        and so both the 3D preview and the metric strip consume identical state.
+        """
         try:
-            # Get parameters based on current mode
             if self.btn_mode_circular.isChecked():
                 alt_text = self.ent_alt_circular.text().strip()
-                if alt_text:
-                    alt = float(alt_text)
-                    a_km = R_MOON + alt
-                    e = 0.0
-                else:
-                    return
+                if not alt_text:
+                    return None
+                a_km = R_MOON + float(alt_text)
+                e = 0.0
             elif self.btn_mode_altitude.isChecked():
                 hp_text = self.ent_hp.text().strip()
+                if not hp_text:
+                    return None
                 ha_text = self.ent_ha.text().strip()
-
-                if hp_text:
-                    hp = float(hp_text)
-                    ha = float(ha_text) if ha_text else hp
-
-                    R_body = R_MOON
-                    rp = R_body + hp
-                    ra = R_body + ha
-
-                    if rp > ra:
-                        rp, ra = ra, rp
-
-                    a_km = (rp + ra) / 2.0
-                    e = (ra - rp) / (ra + rp) if (ra + rp) > 0 else 0.0
-                else:
-                    return
+                hp = float(hp_text)
+                ha = float(ha_text) if ha_text else hp
+                rp = R_MOON + hp
+                ra = R_MOON + ha
+                if rp > ra:
+                    rp, ra = ra, rp
+                a_km = (rp + ra) / 2.0
+                e = (ra - rp) / (ra + rp) if (ra + rp) > 0 else 0.0
             else:
                 a_text = self.ent_a.text().strip()
+                if not a_text:
+                    return None
+                a_km = float(a_text)
                 e_text = self.ent_e.text().strip()
+                e = float(e_text) if e_text else 0.0
 
-                if a_text:
-                    a_km = float(a_text)
-                    e = float(e_text) if e_text else 0.0
-                else:
-                    return
-            
-            # Get angular elements
             inc_deg = float(self.ent_inc.text() or 90.0)
             raan_deg = float(self.ent_raan.text() or 0.0)
             argp_deg = float(self.ent_argp.text() or 0.0)
             ta_deg = float(self.ent_ta.text() or 0.0)
-            
-            # Update 3D visualizer
-            self.orbit_viz_3d.set_orbit_params(a_km, e, inc_deg, raan_deg, argp_deg, ta_deg)
-            
-            # Update the metric strip (period, geometry, energy).
-            mu = MU_MOON_KM3_S2  # km³/s², derived from lunaris.common.constants
-            if a_km > 0:
-                period_s = 2 * 3.1415926535 * (a_km ** 3 / mu) ** 0.5
-                period_h = period_s / 3600
-                self.lbl_period.setText(f"{period_h:.2f}")
+        except (ValueError, TypeError):
+            return None
 
-                # Periselene / aposelene altitudes back from (a, e).
-                hp_km = a_km * (1.0 - e) - R_MOON
-                ha_km = a_km * (1.0 + e) - R_MOON
-                self.lbl_hp.setText(f"{hp_km:,.0f}")
-                self.lbl_ha.setText(f"{ha_km:,.0f}")
-                self.lbl_ecc.setText(f"{e:.4f}")
-                self.lbl_inc.setText(f"{inc_deg:.1f}")
+        if not math.isfinite(a_km) or a_km <= 0.0:
+            return None
+        e = max(0.0, min(0.999, e))
+        return _OrbitState(a_km, e, inc_deg, raan_deg, argp_deg, ta_deg)
 
-                # Specific orbital energy.
-                energy = -mu / (2 * a_km)
-                self.lbl_energy.setText(f"{energy:.3f}")
+    def _apply_orbit_update(self) -> None:
+        """Apply the latest validated orbit to the preview and metric strip."""
+        if not hasattr(self, "orbit_viz_3d"):
+            return
+        state = self._compute_orbit_state()
+        if state is None:
+            # Keep the last valid preview rather than blanking on partial input.
+            return
+        self._last_valid_orbit = state
+        self.orbit_viz_3d.set_orbit_params(
+            state.a_km, state.e, state.inc_deg,
+            state.raan_deg, state.argp_deg, state.ta_deg,
+        )
+        self._update_metric_strip(state)
 
-        except ValueError:
-            pass
+    def _update_metric_strip(self, state: "_OrbitState") -> None:
+        """Refresh the period/geometry/energy chips from a validated state."""
+        mu = MU_MOON_KM3_S2  # km³/s², derived from lunaris.common.constants
+        a_km, e = state.a_km, state.e
+        period_h = (2.0 * math.pi * (a_km ** 3 / mu) ** 0.5) / 3600.0
+        self.lbl_period.setText(f"{period_h:.2f}")
+        self.lbl_hp.setText(f"{a_km * (1.0 - e) - R_MOON:,.0f}")
+        self.lbl_ha.setText(f"{a_km * (1.0 + e) - R_MOON:,.0f}")
+        self.lbl_ecc.setText(f"{e:.4f}")
+        self.lbl_inc.setText(f"{state.inc_deg:.1f}")
+        self.lbl_energy.setText(f"{-mu / (2.0 * a_km):.3f}")
 
     def _zero_angles(self, _checked: bool = False):
         """Reset orbital angles to zero."""
