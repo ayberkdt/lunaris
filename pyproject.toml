@@ -101,18 +101,18 @@ all = [
 
 [project.scripts]
 lunaris = "lunaris.cli.main:main_entry"
-lunaris-ui = "lunaris.ui.app:main"
-lunaris-launcher = "lunaris.ui.launcher:main"
-lunaris-studio = "lunaris.surrogate.st_lrps.ui.studio:main"
+lunaris-ui = "lunaris.cli.entrypoints:ui_main"
+lunaris-launcher = "lunaris.cli.entrypoints:launcher_main"
+lunaris-studio = "lunaris.cli.entrypoints:studio_main"
 lunaris-mc = "lunaris.core.monte_carlo_engine:mc_entry"
-lunaris-train = "lunaris.surrogate.st_lrps.training.cli:main"
-lunaris-train-force-direct = "lunaris.surrogate.st_lrps.training.force_direct_cli:main"
-lunaris-eval = "lunaris.surrogate.st_lrps.evaluation.cli:main"
-lunaris-eval-force-direct = "lunaris.surrogate.st_lrps.evaluation.force_direct_eval:main"
-lunaris-validate = "lunaris.surrogate.st_lrps.evaluation.validation_suite:main"
+lunaris-train = "lunaris.cli.entrypoints:train_main"
+lunaris-train-force-direct = "lunaris.cli.entrypoints:train_force_direct_main"
+lunaris-eval = "lunaris.cli.entrypoints:eval_main"
+lunaris-eval-force-direct = "lunaris.cli.entrypoints:eval_force_direct_main"
+lunaris-validate = "lunaris.cli.entrypoints:validate_main"
 lunaris-ablation = "lunaris.surrogate.st_lrps.evaluation.ablation:main"
 lunaris-st-lrps-paper-evidence = "lunaris.surrogate.st_lrps.paper_evidence.runner:main"
-lunaris-benchmark = "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models:main"
+lunaris-benchmark = "lunaris.cli.entrypoints:benchmark_main"
 lunaris-data = "lunaris.cli.data:main"
 lunaris-perturbation-budget = "lunaris.analysis.perturbation_budget.cli:main"
 
@@ -206,9 +206,7 @@ forbidden_modules = [
 # The repo is a modular monolith: an engine core (common/physics/core), the
 # ST-LRPS ML subsystem, the desktop UIs, analysis/validation, and cli/loaders.
 # These contracts make the intended dependency direction enforceable instead of
-# documented in prose. The "[2.2 backlog]" contracts below are EXPECTED to be
-# reported as broken today; they pin the two known cross-subsystem couplings as
-# the Phase 2.2 worklist and stay in CI report mode until cleaned.
+# documented only in prose.
 # ---------------------------------------------------------------------------
 
 [[tool.importlinter.contracts]]
@@ -242,13 +240,19 @@ source_modules = ["lunaris.analysis", "lunaris.visualization"]
 forbidden_modules = ["lunaris.ui"]
 
 [[tool.importlinter.contracts]]
-name = "[2.2 backlog] physics should not depend on the ST-LRPS subsystem"
+name = "physics does not depend on the ST-LRPS subsystem"
 type = "forbidden"
 source_modules = ["lunaris.physics"]
 forbidden_modules = ["lunaris.surrogate"]
 
 [[tool.importlinter.contracts]]
-name = "[2.2 backlog] ST-LRPS studio should not import mission-UI internals"
+name = "ST-LRPS studio does not import mission-UI internals"
 type = "forbidden"
 source_modules = ["lunaris.surrogate.st_lrps.ui"]
 forbidden_modules = ["lunaris.ui"]
+
+[[tool.importlinter.contracts]]
+name = "UI foundation stays independent of both desktop applications"
+type = "forbidden"
+source_modules = ["lunaris.ui_foundation"]
+forbidden_modules = ["lunaris.ui", "lunaris.surrogate.st_lrps.ui"]

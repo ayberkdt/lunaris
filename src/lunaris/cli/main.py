@@ -613,7 +613,7 @@ def main() -> int:
     mu = float(MU_MOON)
     try:
         if bool(cfg.flags.enable_sh) and cfg.gravity.uses_st_lrps:
-            from lunaris.physics.surrogate_gravity import SurrogateGravityModel
+            from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
 
             gravity_core = SurrogateGravityModel.from_model_dir(
                 cfg.gravity.st_lrps_model_dir,

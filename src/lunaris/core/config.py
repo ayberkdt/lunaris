@@ -29,7 +29,7 @@ Design Philosophy
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal, Mapping, Optional, Tuple, TYPE_CHECKING
 
@@ -281,6 +281,19 @@ class SimConfig:
             )
 
 
+def replace_sim_config(cfg: SimConfig, **changes: object) -> SimConfig:
+    """Return a validated copy of the simulation SSOT.
+
+    Specialized workflows may need overrides that are not CLI arguments.  They
+    must still pass through this helper so a dataclass replacement cannot bypass
+    ``SimConfig.validate()``.
+    """
+
+    updated = replace(cfg, **changes)
+    updated.validate()
+    return updated
+
+
 # =============================================================================
 # 3) FACTORY
 # =============================================================================
@@ -497,6 +510,7 @@ __all__ = [
     "KERNEL_DIR",
     "GRAV_DIR",
     "SimConfig",
+    "replace_sim_config",
     "VisualConfig",
     "OutputConfig",
     "load_default_config",

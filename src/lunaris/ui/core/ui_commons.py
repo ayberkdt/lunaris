@@ -34,7 +34,7 @@ from typing import Optional
 
 from PySide6 import QtGui, QtCore, QtWidgets
 
-from lunaris.ui.theme.tokens import DESIGN_TOKENS
+from lunaris.ui_foundation.tokens import DESIGN_TOKENS
 
 # Derive lunar constants from the backend SSOT (common.constants).
 # UI code works in km, so we convert here once and export aliases.

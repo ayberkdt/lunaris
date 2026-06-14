@@ -16,10 +16,10 @@ import matplotlib
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-from lunaris.core.config import load_default_config, SimConfig
+from lunaris.core.config import SimConfig, load_default_config, replace_sim_config
 from lunaris.physics.gravity_adapter import adapt_gravity_model
 from lunaris.physics.spherical_harmonics import GravityModel
-from lunaris.physics.surrogate_gravity import (
+from lunaris.surrogate.runtime_adapter import (
     SurrogateGravityModel,
     find_checkpoint_for_st_lrps_run,
 )
@@ -163,7 +163,7 @@ def build_base_config(args: argparse.Namespace) -> SimConfig:
         enable_thermal=False,
         enable_earth_j2=False,
     )
-    return replace(cfg, time=new_time, propagator=new_prop, flags=new_flags)
+    return replace_sim_config(cfg, time=new_time, propagator=new_prop, flags=new_flags)
 
 
 def _cfg_with_integrator(cfg: SimConfig, integrator: str) -> SimConfig:
@@ -172,7 +172,10 @@ def _cfg_with_integrator(cfg: SimConfig, integrator: str) -> SimConfig:
     Used to let the ground-truth reference run a different adaptive integrator
     from the compared models without mutating the shared base config.
     """
-    return replace(cfg, propagator=replace(cfg.propagator, method=str(integrator)))
+    return replace_sim_config(
+        cfg,
+        propagator=replace(cfg.propagator, method=str(integrator)),
+    )
 
 
 # =============================================================================

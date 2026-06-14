@@ -17,7 +17,7 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping, Optional
 
-from lunaris.surrogate.st_lrps.data.dataset_parameters import (
+from lunaris.common.lunar_data import (
     MU_MOON_SI,
     R_MOON_SI,
     is_lunar_body_signature,

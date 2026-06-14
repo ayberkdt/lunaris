@@ -45,7 +45,7 @@ from lunaris.cli.common_args import (                           # noqa: E402
     str2bool,
     parse_adaptive_table,
 )
-from lunaris.core.config import load_default_config                  # noqa: E402
+from lunaris.core.config import load_default_config, replace_sim_config  # noqa: E402
 from lunaris.common.constants import R_MOON, MU_MOON, DEG2RAD  # noqa: E402
 from lunaris.common.montecarlo_defs import (                   # noqa: E402
     MonteCarloConfig,
@@ -310,9 +310,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if str(args.mc_gravity_mode) != "follow_mission":
         try:
             from dataclasses import replace
-
             forced_backend = str(args.mc_gravity_mode)
-            cfg = replace(
+            cfg = replace_sim_config(
                 cfg,
                 gravity=replace(cfg.gravity, backend=forced_backend),
                 flags=replace(cfg.flags, enable_sh=True),
@@ -332,7 +331,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 forced_backend = "st_lrps"
             else:
                 forced_backend = str(getattr(cfg.gravity, "backend", "classic_sh"))
-            cfg = replace(
+            cfg = replace_sim_config(
                 cfg,
                 gravity=replace(cfg.gravity, backend=forced_backend),
                 flags=replace(cfg.flags, enable_sh=True),
@@ -367,7 +366,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
 
             from dataclasses import replace
-            cfg = replace(cfg, initial_state=y0)
+            cfg = replace_sim_config(cfg, initial_state=y0)
         except Exception as exc:
             print(f"[MC][FATAL] Orbit init failed: {exc}", flush=True)
             return 1

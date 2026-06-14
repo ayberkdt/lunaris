@@ -18,7 +18,7 @@ from lunaris.surrogate.st_lrps.runtime.force_model import (
 )
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
-from lunaris.physics.surrogate_gravity import SurrogateGravityModel
+from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
 
 
 def _make_run(tmp_path: Path) -> Path:
@@ -104,3 +104,11 @@ def test_force_model_and_legacy_adapter_return_same_total_accel(tmp_path: Path) 
 def test_force_direct_runtime_class_is_available() -> None:
     assert DirectForceRuntime.runtime_model_kind == "force_direct"
     assert issubclass(DirectForceRuntime, BaseSurrogateRuntime)
+
+
+def test_legacy_physics_import_resolves_to_canonical_runtime_adapter() -> None:
+    from lunaris.physics.surrogate_gravity import (
+        SurrogateGravityModel as LegacySurrogateGravityModel,
+    )
+
+    assert LegacySurrogateGravityModel is SurrogateGravityModel

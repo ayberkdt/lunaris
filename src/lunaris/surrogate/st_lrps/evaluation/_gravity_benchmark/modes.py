@@ -27,7 +27,7 @@ from lunaris.core.config import SimConfig
 from lunaris.core.state import create_state_from_keplerian
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagator import propagate
-from lunaris.physics.surrogate_gravity import (
+from lunaris.surrogate.runtime_adapter import (
     find_latest_st_lrps_model_dir,
 )
 from lunaris.common.constants import MU_MOON, R_MOON
@@ -1729,7 +1729,7 @@ def run_random_scenario_mode(
 def _auto_find_st_lrps_dir() -> Optional[str]:
     """
     Return the newest valid surrogate run directory.
-    Uses models.surrogate_gravity.find_latest_st_lrps_model_dir which requires
+    Uses surrogate.runtime_adapter.find_latest_st_lrps_model_dir which requires
     config.json AND checkpoints/ckpt_best.pt (or ckpt_last.pt).
     """
     result = find_latest_st_lrps_model_dir()

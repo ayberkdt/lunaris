@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from lunaris.common.constants import MU_MOON, R_MOON
-from lunaris.physics.surrogate_gravity import _build_model_from_config
+from lunaris.surrogate.runtime_adapter import _build_model_from_config
 from lunaris.surrogate.st_lrps.data import spatial_cloud_generator as scg
 from lunaris.surrogate.st_lrps.evaluation.cli import _build_ood_region_masks, compute_metrics, evaluate
 from lunaris.surrogate.st_lrps.training.cli import (

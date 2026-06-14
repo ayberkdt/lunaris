@@ -14,7 +14,7 @@ Public API
 
 from __future__ import annotations
 
-from lunaris.ui.theme.tokens import (
+from lunaris.ui_foundation.tokens import (
     DESIGN_TOKENS,
     ColorTokens,
     ControlMetrics,
@@ -29,7 +29,7 @@ from lunaris.ui.theme.tokens import (
 
 def build_app_stylesheet(theme, log_colors):
     """Import the Qt-facing stylesheet builder only when it is requested."""
-    from lunaris.ui.theme.stylesheet import build_app_stylesheet as _build
+    from lunaris.ui_foundation.stylesheet import build_app_stylesheet as _build
 
     return _build(theme, log_colors)
 
