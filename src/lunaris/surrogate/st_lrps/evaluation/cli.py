@@ -269,7 +269,7 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     R_MOON_SI,
     is_lunar_body_signature,
 )
-from lunaris.physics.surrogate_gravity import find_latest_st_lrps_model_dir
+from lunaris.surrogate.runtime_adapter import find_latest_st_lrps_model_dir
 
 
 # -----------------------------

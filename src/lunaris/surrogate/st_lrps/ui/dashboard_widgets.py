@@ -23,8 +23,7 @@ from typing import Any, Dict, List, Optional
 
 import sys
 
-from lunaris.ui.core.ui_commons import with_alpha
-from lunaris.ui.theme.tokens import DESIGN_TOKENS
+from lunaris.ui_foundation import DESIGN_TOKENS, with_alpha
 
 def _pyside6_available() -> bool:
     try:

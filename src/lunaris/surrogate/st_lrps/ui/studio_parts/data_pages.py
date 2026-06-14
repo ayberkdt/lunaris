@@ -64,8 +64,8 @@ import sys
 
 from .qt_common import *
 from .qt_common import _USE_PYSIDE
-from lunaris.ui.core.ui_commons import THEME, with_alpha
-from lunaris.ui.theme.tokens import DESIGN_TOKENS
+from lunaris.ui_foundation import DESIGN_TOKENS, THEME, with_alpha
+from .dataset_introspection import inspect_h5_metadata
 # pyqtgraph — optional, graceful fallback
 try:
     import pyqtgraph as pg
@@ -177,7 +177,7 @@ from .common_widgets import *
 from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _style_surface, _inspect_run_artifacts, _NoWheelOnSpinFilter
 
 
-def _introspect_h5(path: str) -> Optional[Dict[str, Any]]:
+def _legacy_introspect_h5(path: str) -> Optional[Dict[str, Any]]:
     """
     Read metadata from an HDF5 file without loading the full dataset.
     Returns a dict with: rows, cols, col_names (if stored), attrs, is_si.
@@ -251,6 +251,9 @@ def _introspect_h5(path: str) -> Optional[Dict[str, Any]]:
             return info
     except Exception:
         return None
+
+
+_introspect_h5 = inspect_h5_metadata
 
 
 def _attr_lookup(attrs: Dict[str, Any], *keys: str) -> Any:

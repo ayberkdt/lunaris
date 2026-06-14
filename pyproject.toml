@@ -101,18 +101,18 @@ all = [
 
 [project.scripts]
 lunaris = "lunaris.cli.main:main_entry"
-lunaris-ui = "lunaris.ui.app:main"
-lunaris-launcher = "lunaris.ui.launcher:main"
-lunaris-studio = "lunaris.surrogate.st_lrps.ui.studio:main"
+lunaris-ui = "lunaris.cli.entrypoints:ui_main"
+lunaris-launcher = "lunaris.cli.entrypoints:launcher_main"
+lunaris-studio = "lunaris.cli.entrypoints:studio_main"
 lunaris-mc = "lunaris.core.monte_carlo_engine:mc_entry"
-lunaris-train = "lunaris.surrogate.st_lrps.training.cli:main"
-lunaris-train-force-direct = "lunaris.surrogate.st_lrps.training.force_direct_cli:main"
-lunaris-eval = "lunaris.surrogate.st_lrps.evaluation.cli:main"
-lunaris-eval-force-direct = "lunaris.surrogate.st_lrps.evaluation.force_direct_eval:main"
-lunaris-validate = "lunaris.surrogate.st_lrps.evaluation.validation_suite:main"
+lunaris-train = "lunaris.cli.entrypoints:train_main"
+lunaris-train-force-direct = "lunaris.cli.entrypoints:train_force_direct_main"
+lunaris-eval = "lunaris.cli.entrypoints:eval_main"
+lunaris-eval-force-direct = "lunaris.cli.entrypoints:eval_force_direct_main"
+lunaris-validate = "lunaris.cli.entrypoints:validate_main"
 lunaris-ablation = "lunaris.surrogate.st_lrps.evaluation.ablation:main"
 lunaris-st-lrps-paper-evidence = "lunaris.surrogate.st_lrps.paper_evidence.runner:main"
-lunaris-benchmark = "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models:main"
+lunaris-benchmark = "lunaris.cli.entrypoints:benchmark_main"
 lunaris-data = "lunaris.cli.data:main"
 lunaris-perturbation-budget = "lunaris.analysis.perturbation_budget.cli:main"
 
@@ -200,3 +200,59 @@ forbidden_modules = [
   "lunaris.visualization",
   "lunaris.ui",
 ]
+
+# ---------------------------------------------------------------------------
+# Phase 2.1 — subsystem boundary contracts.
+# The repo is a modular monolith: an engine core (common/physics/core), the
+# ST-LRPS ML subsystem, the desktop UIs, analysis/validation, and cli/loaders.
+# These contracts make the intended dependency direction enforceable instead of
+# documented only in prose.
+# ---------------------------------------------------------------------------
+
+[[tool.importlinter.contracts]]
+name = "core does not import the desktop UI or the ST-LRPS ML pipeline"
+type = "forbidden"
+source_modules = ["lunaris.core"]
+forbidden_modules = [
+  "lunaris.ui",
+  "lunaris.surrogate.st_lrps.training",
+  "lunaris.surrogate.st_lrps.evaluation",
+  "lunaris.surrogate.st_lrps.ui",
+  "lunaris.surrogate.st_lrps.data",
+]
+
+[[tool.importlinter.contracts]]
+name = "ST-LRPS runtime (inference path) stays light"
+type = "forbidden"
+source_modules = ["lunaris.surrogate.st_lrps.runtime"]
+forbidden_modules = [
+  "lunaris.surrogate.st_lrps.training",
+  "lunaris.surrogate.st_lrps.evaluation",
+  "lunaris.surrogate.st_lrps.ui",
+  "lunaris.surrogate.st_lrps.paper_evidence",
+  "lunaris.ui",
+]
+
+[[tool.importlinter.contracts]]
+name = "analysis and visualization do not import the desktop UI"
+type = "forbidden"
+source_modules = ["lunaris.analysis", "lunaris.visualization"]
+forbidden_modules = ["lunaris.ui"]
+
+[[tool.importlinter.contracts]]
+name = "physics does not depend on the ST-LRPS subsystem"
+type = "forbidden"
+source_modules = ["lunaris.physics"]
+forbidden_modules = ["lunaris.surrogate"]
+
+[[tool.importlinter.contracts]]
+name = "ST-LRPS studio does not import mission-UI internals"
+type = "forbidden"
+source_modules = ["lunaris.surrogate.st_lrps.ui"]
+forbidden_modules = ["lunaris.ui"]
+
+[[tool.importlinter.contracts]]
+name = "UI foundation stays independent of both desktop applications"
+type = "forbidden"
+source_modules = ["lunaris.ui_foundation"]
+forbidden_modules = ["lunaris.ui", "lunaris.surrogate.st_lrps.ui"]

@@ -18,7 +18,7 @@ import matplotlib
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-from lunaris.core.config import SimConfig
+from lunaris.core.config import SimConfig, replace_sim_config
 from lunaris.core.state import create_state_from_keplerian, calculate_ae_from_altitudes
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagator import propagate
@@ -853,7 +853,7 @@ def propagate_for_scenario(
         # 2. Temporarily overriding grav.degree_max = grav.degree_min so that
         #    _get_sh_degree() returns the base degree (e.g. 10) as a belt-and-suspenders.
         new_prop = replace(cfg_base.propagator, use_nyquist_max_step=False)
-        cfg = replace(cfg_base, propagator=new_prop)
+        cfg = replace_sim_config(cfg_base, propagator=new_prop)
 
         # Belt-and-suspenders: temporarily lower degree_max on the surrogate
         _orig_dmax = getattr(grav, "degree_max", 200)

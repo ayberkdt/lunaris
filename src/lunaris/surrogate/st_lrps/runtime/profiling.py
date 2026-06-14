@@ -672,10 +672,10 @@ def _make_queries(
 
 def _try_load_classic_sh(degree: int) -> tuple[Optional[Any], Optional[str]]:
     try:
+        from lunaris.common.lunar_data import resolve_lunar_gravity_path
         from lunaris.physics.spherical_harmonics import GravityModel
-        from lunaris.surrogate.st_lrps.data.dataset_parameters import DEFAULT_DATASET_CONFIG, resolve_lunar_gravity_path
 
-        path = resolve_lunar_gravity_path(getattr(DEFAULT_DATASET_CONFIG, "gravity_gfc_path"))
+        path = resolve_lunar_gravity_path()
         if not Path(path).exists():
             return None, f"Classic SH comparison skipped: gravity file not found at {path}"
         return GravityModel.from_file(str(path), requested_degree=int(degree)), None

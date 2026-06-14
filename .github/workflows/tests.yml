@@ -62,9 +62,8 @@ jobs:
         run: pytest tests/ -m "not slow and not requires_data and not requires_cuda" -q
 
   guardrails:
-    # Phase-1 hardening checks in REPORT mode: they run and surface findings but
-    # do NOT gate the build yet (continue-on-error). Once a given baseline is
-    # driven to zero during the freeze, drop its continue-on-error so it gates.
+    # Ruff still reports the pre-existing lint baseline. Import-linter reached
+    # zero broken contracts in Phase 2 and now gates the build.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,10 +82,8 @@ jobs:
         continue-on-error: true
         run: ruff check src tests
 
-      - name: import-linter (layer rules) [report]
-        continue-on-error: true
-        # import-linter imports the package, so it needs the runtime deps. Kept
-        # lightweight: no torch/Qt extras — layer checks only touch common/physics.
+      - name: import-linter (architecture gate)
+        # Static graph analysis; torch/Qt extras are not required.
         run: |
           pip install -e .
           lint-imports

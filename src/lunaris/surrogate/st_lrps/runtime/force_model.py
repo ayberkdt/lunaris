@@ -28,7 +28,7 @@ To integrate from an inertial propagation frame you MUST:
     2. evaluate ST-LRPS in the fixed frame,
     3. rotate the fixed-frame acceleration back into the inertial frame.
 The ``*_inertial`` helpers below do exactly this; the dynamics engine performs
-the same rotation around ``acceleration_fixed`` in ``physics/surrogate_gravity.py``.
+the same rotation around ``acceleration_fixed`` in ``surrogate/runtime_adapter.py``.
 
 The legacy ``predict_residual_potential`` / ``predict_residual_accel`` /
 ``predict_total_accel`` names are retained as thin **fixed-frame** wrappers for
@@ -96,17 +96,17 @@ def _rotate_fixed_to_inertial(a_fixed_m: np.ndarray, q_i2f) -> np.ndarray:
     out = a2 @ rot  # R.T @ a per row == a @ R
     return out[0] if single else out
 
+from lunaris.common.lunar_data import MU_MOON_SI, R_MOON_SI
 from lunaris.surrogate.st_lrps.artifacts.manager import (
-    validate_checkpoint_contract,
     load_best_or_last,
     make_run_layout,
     read_run_manifest,
     reload_model_from_run_dir as reload_model_from_artifact_run_dir,
     resolve_run_dir as resolve_run_dir_from_artifacts,
+    validate_checkpoint_contract,
 )
-from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
 from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, TargetContract
-from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
 
 
 def _resolve_run_dir(model_dir: Union[str, Path]) -> Path:
@@ -839,7 +839,7 @@ if __name__ == "__main__":
     print(f"Loaded: degree_min={fm.degree_min}, mu_si={fm.mu_si:.4e}, a_sign={fm.a_sign:+.1f}, frame={fm.frame}")
     print("Frame contract: *_fixed inputs are Moon-fixed Cartesian; use *_inertial(q_i2f) for inertial inputs.")
 
-    from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI as _R_REF
+    from lunaris.common.lunar_data import R_MOON_SI as _R_REF
 
     rng = np.random.default_rng(0)
     r = _R_REF + rng.uniform(30e3, 120e3, (args.n, 1))

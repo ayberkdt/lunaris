@@ -18,11 +18,25 @@ from pathlib import Path
 import pytest
 
 from lunaris.common.constants import MU_MOON, R_MOON
-from lunaris.physics.surrogate_gravity import discover_st_lrps_model_dirs
+from lunaris.common.lunar_data import (
+    DEFAULT_LUNAR_GRAVITY_PATH as COMMON_DEFAULT_LUNAR_GRAVITY_PATH,
+)
+from lunaris.common.lunar_data import (
+    is_lunar_body_signature as common_is_lunar_body_signature,
+)
+from lunaris.common.lunar_data import (
+    looks_like_lunar_run_config as common_looks_like_lunar_run_config,
+)
+from lunaris.common.lunar_data import (
+    resolve_lunar_gravity_path as common_resolve_lunar_gravity_path,
+)
+from lunaris.surrogate.runtime_adapter import discover_st_lrps_model_dirs
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     DEFAULT_DATASET_CONFIG,
+    DEFAULT_LUNAR_GRAVITY_PATH,
     is_lunar_body_signature,
     looks_like_lunar_run_config,
+    resolve_lunar_gravity_path,
 )
 from lunaris.surrogate.st_lrps.data.spatial_cloud_parameters import (
     DEFAULT_SPATIAL_CLOUD_CONFIG,
@@ -36,6 +50,13 @@ def test_default_surrogate_dataset_parameters_point_to_the_moon() -> None:
     assert DEFAULT_DATASET_CONFIG.mu_si == float(MU_MOON)
     assert DEFAULT_DATASET_CONFIG.r_ref_m == float(R_MOON)
     assert Path(DEFAULT_DATASET_CONFIG.gravity_gfc_path).is_file()
+
+
+def test_dataset_parameters_reexports_common_lunar_helpers() -> None:
+    assert DEFAULT_LUNAR_GRAVITY_PATH == COMMON_DEFAULT_LUNAR_GRAVITY_PATH
+    assert resolve_lunar_gravity_path is common_resolve_lunar_gravity_path
+    assert is_lunar_body_signature is common_is_lunar_body_signature
+    assert looks_like_lunar_run_config is common_looks_like_lunar_run_config
 
 
 def test_spatial_cloud_presets_are_lunar_and_default_preset_is_lunar() -> None:

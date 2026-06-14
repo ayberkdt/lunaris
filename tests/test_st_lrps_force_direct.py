@@ -12,7 +12,7 @@ from lunaris.surrogate.st_lrps.evaluation.force_direct_eval import evaluate_forc
 from lunaris.surrogate.st_lrps.networks.models import build_model_from_config, compute_architecture_signature
 from lunaris.surrogate.st_lrps.runtime.force_model import DirectForceRuntime, SurrogateForceModel, load_surrogate_force_model
 from lunaris.surrogate.st_lrps.training.force_direct_cli import train_force_direct
-from lunaris.physics.surrogate_gravity import SurrogateGravityModel
+from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
 from st_lrps_contract_test_utils import make_contract_run, tiny_training_cfg
 
 

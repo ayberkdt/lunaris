@@ -147,8 +147,7 @@ except ImportError:
         QWidget,
     )
 
-from lunaris.ui.core.ui_commons import LOG_COLORS, THEME, with_alpha
-from lunaris.ui.theme import build_app_stylesheet
+from lunaris.ui_foundation import LOG_COLORS, THEME, build_app_stylesheet, with_alpha
 
 QT_BINDING_NAME = "PySide6" if _USE_PYSIDE else "PyQt6"
 if "pyqtgraph" not in sys.modules:
