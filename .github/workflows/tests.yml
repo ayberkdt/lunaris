@@ -60,3 +60,33 @@ jobs:
 
       - name: Run CPU-only test suite
         run: pytest tests/ -m "not slow and not requires_data and not requires_cuda" -q
+
+  guardrails:
+    # Phase-1 hardening checks in REPORT mode: they run and surface findings but
+    # do NOT gate the build yet (continue-on-error). Once a given baseline is
+    # driven to zero during the freeze, drop its continue-on-error so it gates.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install guardrail tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff import-linter
+
+      - name: ruff (lint + import order) [report]
+        continue-on-error: true
+        run: ruff check src tests
+
+      - name: import-linter (layer rules) [report]
+        continue-on-error: true
+        # import-linter imports the package, so it needs the runtime deps. Kept
+        # lightweight: no torch/Qt extras — layer checks only touch common/physics.
+        run: |
+          pip install -e .
+          lint-imports
