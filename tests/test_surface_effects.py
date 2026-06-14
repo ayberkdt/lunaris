@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for lunar surface radiation config + wrappers.
 
 Covers :mod:`lunaris.physics.surface_effects`: the `AlbedoConfig` /
@@ -23,7 +22,6 @@ from lunaris.physics.surface_effects import (
     albedo_accel,
     thermal_accel,
 )
-
 
 # ---------------------------------------------------------------------------
 # AlbedoConfig

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Versioned ST-LRPS dataset contract utilities."""
 
 from __future__ import annotations
@@ -7,15 +6,15 @@ import dataclasses
 import hashlib
 import json
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any
 
 import numpy as np
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
-
 
 DATASET_CONTRACT_SCHEMA_VERSION = 1
 REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
@@ -35,7 +34,7 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def sha256_file(path: str | Path | None) -> Optional[str]:
+def sha256_file(path: str | Path | None) -> str | None:
     if path is None:
         return None
     p = Path(path)
@@ -60,7 +59,7 @@ def content_sha256_for_hdf5_dataset(path: str | Path, dataset_name: str = "data"
     return digest.hexdigest()
 
 
-def stamp_hdf5_content_hash(path: str | Path, dataset_name: str = "data") -> "DatasetContract":
+def stamp_hdf5_content_hash(path: str | Path, dataset_name: str = "data") -> DatasetContract:
     """Compute the HDF5 dataset payload hash and update the embedded contract."""
 
     import h5py  # type: ignore
@@ -80,7 +79,7 @@ def stamp_hdf5_content_hash(path: str | Path, dataset_name: str = "data") -> "Da
     return updated
 
 
-def _repo_commit_sha() -> Optional[str]:
+def _repo_commit_sha() -> str | None:
     try:
         root = Path(__file__).resolve().parents[5]
         completed = subprocess.run(
@@ -134,7 +133,7 @@ def _get_first(mapping: Mapping[str, Any], *keys: str, default: Any = None) -> A
     return default
 
 
-def _as_optional_int(value: Any) -> Optional[int]:
+def _as_optional_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
     try:
@@ -143,7 +142,7 @@ def _as_optional_int(value: Any) -> Optional[int]:
         return None
 
 
-def _as_optional_float(value: Any) -> Optional[float]:
+def _as_optional_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
     try:
@@ -176,39 +175,39 @@ def _columns(value: Any) -> list[str]:
     return [part.strip().strip("'\"") for part in text.split(",") if part.strip()]
 
 
-def _normalize_derivative(value: Any) -> Optional[str]:
+def _normalize_derivative(value: Any) -> str | None:
     return None if value in (None, "") else str(value).strip()
 
 
 @dataclass(frozen=True)
 class DatasetContract:
     schema_version: int = DATASET_CONTRACT_SCHEMA_VERSION
-    dataset_id: Optional[str] = None
+    dataset_id: str | None = None
     dataset_kind: str = "st_lrps_spatial_cloud"
-    created_at_utc: Optional[str] = None
+    created_at_utc: str | None = None
     generator_name: str = "spatial_cloud_generator"
-    generator_version: Optional[str] = None
-    repo_commit_sha: Optional[str] = None
-    random_seed: Optional[int] = None
+    generator_version: str | None = None
+    repo_commit_sha: str | None = None
+    random_seed: int | None = None
     n_samples: int = 0
     coordinate_frame: str = DEFAULT_COORDINATE_FRAME
     units: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_UNITS))
     target_mode: str = "residual"
     baseline_kind: str = "spherical_harmonics"
-    degree_min: Optional[int] = None
-    degree_max: Optional[int] = None
+    degree_min: int | None = None
+    degree_max: int | None = None
     mu_si: float = MU_MOON_SI
     r_ref_m: float = R_MOON_SI
     a_sign: float = 1.0
-    altitude_min_km: Optional[float] = None
-    altitude_max_km: Optional[float] = None
+    altitude_min_km: float | None = None
+    altitude_max_km: float | None = None
     sampling_policy: dict[str, Any] = field(default_factory=dict)
     split_policy: dict[str, Any] = field(default_factory=dict)
-    source_gravity_model: Optional[str] = None
-    source_gravity_file_path: Optional[str] = None
-    source_gravity_file_sha256: Optional[str] = None
-    content_sha256: Optional[str] = None
-    derivative_convention: Optional[str] = REQUIRED_DERIVATIVE_CONVENTION
+    source_gravity_model: str | None = None
+    source_gravity_file_path: str | None = None
+    source_gravity_file_sha256: str | None = None
+    content_sha256: str | None = None
+    derivative_convention: str | None = REQUIRED_DERIVATIVE_CONVENTION
     columns: list[str] = field(default_factory=lambda: ["x", "y", "z", "dU", "dax", "day", "daz"])
     dataset_layout: dict[str, Any] = field(default_factory=lambda: {"dataset_name": "data", "shape": None})
     legacy_inferred: bool = False
@@ -319,7 +318,7 @@ class DatasetContract:
         allow_legacy_dataset_contract: bool = False,
         allow_missing_source_gravity: bool = False,
         allow_legacy_derivative_convention: bool = False,
-    ) -> "DatasetContract":
+    ) -> DatasetContract:
         data = dict(payload)
         if "derivative_convention" not in data and "derivative_convention_version" in data:
             data["derivative_convention"] = data.get("derivative_convention_version")
@@ -342,13 +341,13 @@ class DatasetContract:
         cls,
         attrs: Mapping[str, Any],
         *,
-        n_samples: Optional[int] = None,
+        n_samples: int | None = None,
         dataset_name: str = "data",
-        shape: Optional[tuple[int, ...]] = None,
+        shape: tuple[int, ...] | None = None,
         allow_legacy_dataset_contract: bool = False,
         allow_missing_dataset_contract: bool = False,
         allow_legacy_derivative_convention: bool = False,
-    ) -> "DatasetContract":
+    ) -> DatasetContract:
         mapping = _attrs_to_dict(attrs)
         raw_contract = _get_first(mapping, DATASET_CONTRACT_ATTR, "contract_json", "dataset_contract")
         if isinstance(raw_contract, str) and raw_contract.strip():
@@ -438,7 +437,7 @@ class DatasetContract:
         allow_legacy_dataset_contract: bool = False,
         allow_missing_dataset_contract: bool = False,
         allow_legacy_derivative_convention: bool = False,
-    ) -> "DatasetContract":
+    ) -> DatasetContract:
         import h5py  # type: ignore
 
         with h5py.File(path, "r") as handle:
@@ -471,8 +470,8 @@ class DatasetContract:
         self,
         handle: Any,
         *,
-        generation_config: Optional[Mapping[str, Any]] = None,
-        quality_report: Optional[Mapping[str, Any]] = None,
+        generation_config: Mapping[str, Any] | None = None,
+        quality_report: Mapping[str, Any] | None = None,
     ) -> None:
         payload = self.to_dict()
         text = _json_text(payload)
@@ -505,7 +504,7 @@ class DatasetContract:
         if quality_report is not None:
             _write_scalar_text_dataset(meta, "quality_report_json", _json_text(dict(quality_report)))
 
-    def compatibility_report(self, other: "DatasetContract | Mapping[str, Any]") -> dict[str, Any]:
+    def compatibility_report(self, other: DatasetContract | Mapping[str, Any]) -> dict[str, Any]:
         rhs = other if isinstance(other, DatasetContract) else DatasetContract.from_dict(other)
         errors: list[str] = []
         warnings: list[str] = []
@@ -531,7 +530,7 @@ class DatasetContract:
             "right": rhs.to_dict(),
         }
 
-    def require_compatible(self, other: "DatasetContract | Mapping[str, Any]", *, strict: bool = True) -> dict[str, Any]:
+    def require_compatible(self, other: DatasetContract | Mapping[str, Any], *, strict: bool = True) -> dict[str, Any]:
         report = self.compatibility_report(other)
         if strict and report["errors"]:
             raise DatasetContractError("; ".join(report["errors"]))
@@ -557,7 +556,7 @@ def contract_from_generation_attrs(attrs: Mapping[str, Any], *, n_samples: int, 
 
 def build_contract_payload_for_generator(
     *,
-    dataset_id: Optional[str],
+    dataset_id: str | None,
     n_samples: int,
     degree_min: int,
     degree_max: int,

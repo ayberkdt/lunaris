@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 ST-LRPS Studio.
 
@@ -44,35 +43,22 @@ Run
 
 from __future__ import annotations
 
-import json
-import math
-import os
-import platform
-import re
-import shlex
-import subprocess
-import sys
-import time
-from collections import deque
-from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from lunaris.common.paths import project_root_from_file
-from typing import Any, Callable, Dict, List, Optional, Tuple
 
-import sys
-
-from .qt_common import *
-
-from .data_pages import CloudGenTab, CloudAnalysisTab, DataPage
-from .training_pages import STLRPSTrainTab
-from .evaluation_pages import STLRPSEvalTab, EvaluationPage
-from .runtime_pages import STLRPSProfilingTab, RuntimePerformancePage
+from .data_pages import CloudAnalysisTab, CloudGenTab, DataPage
+from .evaluation_pages import EvaluationPage, STLRPSEvalTab
 from .orbit_benchmark_pages import (
-    OrbitBenchmarkTab, OrbitBenchmarkPage,
-    OrbitBenchmarkPlotsTab, OrbitBenchmarkPlotsPage,
+    OrbitBenchmarkPage,
+    OrbitBenchmarkPlotsPage,
+    OrbitBenchmarkPlotsTab,
+    OrbitBenchmarkTab,
 )
-
+from .qt_common import *
+from .runtime_pages import RuntimePerformancePage, STLRPSProfilingTab
+from .training_pages import STLRPSTrainTab
 
 # pyqtgraph — optional, graceful fallback
 try:
@@ -84,7 +70,7 @@ except ImportError:
 
 # h5py — optional, for dataset introspection
 try:
-    import h5py
+    import h5py  # noqa: F401  # availability probe for _HAS_H5PY
 
     _HAS_H5PY = True
 except ImportError:
@@ -95,9 +81,13 @@ try:
         CHECKPOINT_SCHEMA_VERSION,
         CRITICAL_CONFIG_FIELDS,
         compute_payload_sha256,
-        load_checkpoint as load_artifact_checkpoint,
         make_run_layout,
         read_run_manifest,
+    )
+    from lunaris.surrogate.st_lrps.artifacts.manager import (
+        load_checkpoint as load_artifact_checkpoint,
+    )
+    from lunaris.surrogate.st_lrps.artifacts.manager import (
         resolve_run_dir as resolve_artifact_run_dir,
     )
 except Exception:  # pragma: no cover - UI remains usable without artifact deps
@@ -113,17 +103,6 @@ except Exception:  # pragma: no cover - UI remains usable without artifact deps
 try:
     from lunaris.surrogate.st_lrps.ui.dashboard_widgets import (
         ExperimentHeader,
-        KPIStrip,
-        MetricCard,
-        StructuredLogView,
-        TimeMetricsStrip,
-    )
-    from lunaris.surrogate.st_lrps.ui.training_metrics import (
-        EpochGuard,
-        ETAEstimator,
-        TrainingLogParser,
-        TrainingMetricsStore,
-        compute_auto_log_interval,
     )
     _HAS_DASHBOARD_V2 = True
 except Exception:  # pragma: no cover
@@ -180,14 +159,15 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
     SUITE_PRESETS = {}  # type: ignore[assignment]
 
 
-from .common_widgets import *
-from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _inspect_run_artifacts, _NoWheelOnSpinFilter
-
-
 from lunaris.ui_foundation import DESIGN_TOKENS
 
+from .common_widgets import *
+from .common_widgets import (
+    _apply_status_tips,
+)
 
-def _attr_lookup(attrs: Dict[str, Any], *keys: str) -> Any:
+
+def _attr_lookup(attrs: dict[str, Any], *keys: str) -> Any:
     """Return the first present attribute among ``keys`` (case-insensitive)."""
     if not isinstance(attrs, dict):
         return None
@@ -262,7 +242,7 @@ class MainWindow(QMainWindow):
             try:
                 import torch
                 if torch.cuda.is_available():
-                    dev_name = torch.cuda.get_device_name(0)
+                    torch.cuda.get_device_name(0)
                     mem_total = torch.cuda.get_device_properties(0).total_mem / (1024**3)
                     self._experiment_header.set_device(f"CUDA \u00b7 {mem_total:.1f} GB")
                 else:
@@ -297,7 +277,7 @@ class MainWindow(QMainWindow):
             self._train_tab.set_experiment_header(getattr(self, "_experiment_header", None))
 
         # --- Sidebar navigation ---
-        self._nav_buttons: List[QPushButton] = []
+        self._nav_buttons: list[QPushButton] = []
         sidebar = self._build_sidebar()
         self._sidebar = sidebar
 
@@ -370,7 +350,7 @@ class MainWindow(QMainWindow):
             self._nav_buttons.append(btn)
             return btn
 
-        def _group_box() -> "QFrame":
+        def _group_box() -> QFrame:
             box = QFrame()
             box.setObjectName("navGroup")
             gl = QVBoxLayout(box)
@@ -432,7 +412,7 @@ class MainWindow(QMainWindow):
             titles = getattr(self, "_page_titles", [])
             if 0 <= page_idx < len(titles):
                 hdr.set_page(titles[page_idx])
-                
+
         # Phase 10: Dynamically manage badges visibility on small screen scopes
         if hdr is not None:
             # Hide Preset and Dataset badges on pages where they aren't relevant to save header space

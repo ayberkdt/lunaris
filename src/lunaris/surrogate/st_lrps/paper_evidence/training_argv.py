@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Translate an explicit paper training config into ST-LRPS trainer CLI flags.
 
 The canonical trainer is ``python -m lunaris.surrogate.st_lrps.training.cli``.
@@ -11,8 +10,9 @@ them false.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 TRAINING_MODULE = "lunaris.surrogate.st_lrps.training.cli"
 

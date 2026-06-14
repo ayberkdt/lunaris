@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Regression tests for the main-entry ephemeris bootstrap policy.
 
@@ -9,16 +8,15 @@ lightweight while preserving full ephemeris tables for third-body / SRP cases.
 
 from __future__ import annotations
 
-import pytest
-
 from types import SimpleNamespace
 
-from lunaris.common.type_defs import PerturbationFlags, TimeConfig
-from lunaris.physics.surface_effects import ThermalConfig
-from lunaris.physics.ephemeris import SpiceBuildConfig
+import pytest
 
-from lunaris.core.config import load_default_config
 import lunaris.cli.main as main
+from lunaris.common.type_defs import PerturbationFlags, TimeConfig
+from lunaris.core.config import load_default_config
+from lunaris.physics.ephemeris import SpiceBuildConfig
+from lunaris.physics.surface_effects import ThermalConfig
 
 
 def _make_cfg(*, flags: PerturbationFlags, thermal=None) -> SimpleNamespace:

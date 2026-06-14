@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Shared pre-flight validation service
 ====================================
@@ -31,7 +30,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 from lunaris.core.backend_capabilities import (
     get_capabilities,
@@ -67,36 +66,36 @@ class PreflightReport:
     and info notes do not block a run but should be surfaced and recorded.
     """
 
-    issues: List[PreflightIssue] = field(default_factory=list)
+    issues: list[PreflightIssue] = field(default_factory=list)
 
-    def add(self, issues: "PreflightIssue | List[PreflightIssue]") -> None:
+    def add(self, issues: PreflightIssue | list[PreflightIssue]) -> None:
         if isinstance(issues, PreflightIssue):
             self.issues.append(issues)
         else:
             self.issues.extend(issues)
 
     @property
-    def errors(self) -> List[PreflightIssue]:
+    def errors(self) -> list[PreflightIssue]:
         return [i for i in self.issues if i.severity == ERROR]
 
     @property
-    def warnings(self) -> List[PreflightIssue]:
+    def warnings(self) -> list[PreflightIssue]:
         return [i for i in self.issues if i.severity == WARNING]
 
     @property
-    def infos(self) -> List[PreflightIssue]:
+    def infos(self) -> list[PreflightIssue]:
         return [i for i in self.issues if i.severity == INFO]
 
     @property
     def ok(self) -> bool:
         return not self.errors
 
-    def user_messages(self) -> List[str]:
+    def user_messages(self) -> list[str]:
         """User-facing lines, errors first."""
         order = {ERROR: 0, WARNING: 1, INFO: 2}
         return [i.message for i in sorted(self.issues, key=lambda x: order.get(x.severity, 9))]
 
-    def technical_log(self) -> List[str]:
+    def technical_log(self) -> list[str]:
         """``severity code | detail`` lines for run.log / metadata."""
         return [f"{i.severity} {i.code} | {i.detail or i.message}" for i in self.issues]
 
@@ -111,7 +110,7 @@ def check_backend_capability(
     requested_backend: str,
     requested_sh_degree: int = 0,
     flags: Any = None,
-) -> List[PreflightIssue]:
+) -> list[PreflightIssue]:
     """Validate a concrete backend request against the capability registry.
 
     Returns errors when the named backend is unknown, when the requested SH
@@ -121,7 +120,7 @@ def check_backend_capability(
     are errors; an ``auto`` resolver may instead consult these results to choose
     an explicit, recorded fallback.
     """
-    issues: List[PreflightIssue] = []
+    issues: list[PreflightIssue] = []
 
     try:
         caps = get_capabilities(requested_backend)
@@ -171,7 +170,7 @@ def check_backend_capability(
     return issues
 
 
-def check_output_dir_writable(output_dir: "str | Path | None") -> List[PreflightIssue]:
+def check_output_dir_writable(output_dir: str | Path | None) -> list[PreflightIssue]:
     """Ensure the output directory exists (or can be created) and is writable."""
     text = str(output_dir or "").strip()
     if not text:
@@ -217,7 +216,7 @@ def backend_preflight(
     requested_backend: str,
     requested_sh_degree: int = 0,
     flags: Any = None,
-    output_dir: "str | Path | None" = None,
+    output_dir: str | Path | None = None,
 ) -> PreflightReport:
     """Run the backend-capability checks (and, if given, the output-dir check).
 

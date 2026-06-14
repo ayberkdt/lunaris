@@ -1,5 +1,4 @@
 # ST_LRPS/analysis/__init__.py
-# -*- coding: utf-8 -*-
 """
 ST_LRPS Analysis Package
 =========================
@@ -19,8 +18,8 @@ from __future__ import annotations
 
 # Expose only core post-processing entry points at the root.
 from .postprocess import (
-    process_simulation_results,
     compute_history,
+    process_simulation_results,
     summarize_history,
 )
 

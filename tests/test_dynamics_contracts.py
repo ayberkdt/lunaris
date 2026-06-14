@@ -1,5 +1,4 @@
 # tests/test_dynamics_contracts.py
-# -*- coding: utf-8 -*-
 """
 Dependency / provider *contract* tests for ``lunaris.core.dynamics``.
 

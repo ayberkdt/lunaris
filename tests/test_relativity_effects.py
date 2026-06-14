@@ -13,18 +13,15 @@ import sys
 import numpy as np
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Import the module under test.
 # ---------------------------------------------------------------------------
-
 from lunaris.physics.relativity_effects import (
-    calc_schwarzschild_accel,
-    MU_MOON,
     C_SQ,
     EPS_1E12,
+    MU_MOON,
+    calc_schwarzschild_accel,
 )
-
 
 # ---------------------------------------------------------------------------
 # Pure-Python reference implementation (no numba), same formula as kernel
@@ -146,4 +143,3 @@ if __name__ == "__main__":
     sys.exit(0)
 
 
- 

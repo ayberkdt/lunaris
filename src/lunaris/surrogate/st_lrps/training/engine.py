@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Training engine for the lunar scalar potential surrogate.
 
@@ -25,9 +24,10 @@ import math
 import os
 import random
 import time
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any
 
 import h5py
 import numpy as np
@@ -36,19 +36,6 @@ import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader, Dataset
 
-from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
-from lunaris.surrogate.st_lrps.training.config import TrainConfig, apply_model_preset
-from lunaris.surrogate.st_lrps.training.config_summary import build_experiment_feature_summary
-from lunaris.surrogate.st_lrps.data.datasets import (
-    DTYPE, BlockShuffleSampler, DatasetMeta, H5BlockDataset, TensorMemoryDataset,
-    _discover_dataset_name, _resolve_loader_worker_count,
-    build_dataset_contract,
-    _resolve_lunar_dataset_contract, collate_xyz_u_a, infer_a_sign_from_data,
-    validate_training_dataset_convention,
-)
-from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract
-from lunaris.surrogate.st_lrps.data.dataset_validation import validate_dataset_file
-from lunaris.surrogate.st_lrps.data.splits import build_split_manifest, split_dataset_indices, write_split_manifest
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     atomic_write_json,
     build_checkpoint_payload,
@@ -61,21 +48,52 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     read_run_manifest,
     resolve_resume_checkpoint,
     restore_rng_state,
-    update_run_manifest,
     save_checkpoint,
+    update_run_manifest,
     verify_critical_config_fields_match,
     write_command_txt,
-    write_scaler_json,
     write_run_manifest,
+    write_scaler_json,
 )
+from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract
+from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
+from lunaris.surrogate.st_lrps.data.dataset_validation import validate_dataset_file
+from lunaris.surrogate.st_lrps.data.datasets import (
+    DTYPE,
+    BlockShuffleSampler,
+    DatasetMeta,
+    H5BlockDataset,
+    TensorMemoryDataset,
+    _discover_dataset_name,
+    _resolve_loader_worker_count,
+    _resolve_lunar_dataset_contract,
+    build_dataset_contract,
+    collate_xyz_u_a,
+    infer_a_sign_from_data,
+    validate_training_dataset_convention,
+)
+from lunaris.surrogate.st_lrps.data.splits import (
+    build_split_manifest,
+    split_dataset_indices,
+    write_split_manifest,
+)
+from lunaris.surrogate.st_lrps.networks.models import (
+    MODEL_BUILDER_VERSION,
+    _compute_harmonic_w0_bands,
+    _get_output_head_params,
+    build_model_from_config,
+    compute_architecture_signature,
+)
+from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
+from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming
+from lunaris.surrogate.st_lrps.training.config import TrainConfig, apply_model_preset
+from lunaris.surrogate.st_lrps.training.config_summary import build_experiment_feature_summary
 from lunaris.surrogate.st_lrps.training.losses import (
-    GradNormWeights, LossCurriculum, SobolevLoss, _direction_loss_factor,
+    GradNormWeights,
+    LossCurriculum,
+    SobolevLoss,
+    _direction_loss_factor,
     collocation_laplacian_loss,
-)
-from lunaris.surrogate.st_lrps.training.periodic_eval import (
-    completed_periodic_eval_epochs,
-    resolve_periodic_eval_plan,
-    run_periodic_eval,
 )
 from lunaris.surrogate.st_lrps.training.metrics import (
     HISTORY_FIELDNAMES,
@@ -86,12 +104,11 @@ from lunaris.surrogate.st_lrps.training.metrics import (
     format_epoch_summary,
     normalize_best_metric,
 )
-from lunaris.surrogate.st_lrps.networks.models import (
-    _compute_harmonic_w0_bands, _get_output_head_params, build_model_from_config,
-    MODEL_BUILDER_VERSION, compute_architecture_signature,
+from lunaris.surrogate.st_lrps.training.periodic_eval import (
+    completed_periodic_eval_epochs,
+    resolve_periodic_eval_plan,
+    run_periodic_eval,
 )
-from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming
-from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +146,7 @@ def get_device() -> torch.device:
         return torch.device("mps")
     return torch.device("cpu")
 
-def safe_mkdir(p: Union[str, Path]) -> Path:
+def safe_mkdir(p: str | Path) -> Path:
     path_obj = Path(p)
     path_obj.mkdir(parents=True, exist_ok=True)
     return path_obj
@@ -197,7 +214,7 @@ def _cuda_memory_string(device: torch.device) -> str:
     )
 
 
-def _available_ram_mb() -> Optional[float]:
+def _available_ram_mb() -> float | None:
     """Return available system RAM in MB using psutil, or None if unavailable.
 
     psutil is an optional dependency: when it is missing we simply skip the
@@ -231,8 +248,8 @@ def _decide_preload(
     dataset_mb: float,
     auto_preload_mb: float,
     est_ram_mb: float,
-    avail_ram_mb: Optional[float],
-) -> Tuple[bool, str]:
+    avail_ram_mb: float | None,
+) -> tuple[bool, str]:
     """Resolve whether to RAM-preload the dataset and explain why.
 
     Returns ``(should_preload, reason)``. The 60%-of-available-RAM guard vetoes
@@ -321,7 +338,7 @@ def move_batch_to_device(
     u: torch.Tensor,
     a: torch.Tensor,
     device: torch.device,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Transfer a (x, u, a) batch to device with non_blocking for CUDA."""
     nb = device.type == "cuda"
     return (
@@ -356,11 +373,11 @@ class STLRPSTrainer:
         model: nn.Module,
         loss_fn: nn.Module,
         optimizer: torch.optim.Optimizer,
-        weights: "GradNormWeights",
+        weights: GradNormWeights,
         device: torch.device,
         cfg: TrainConfig,
-        collocation_r_min_m: Optional[float] = None,
-        collocation_r_max_m: Optional[float] = None,
+        collocation_r_min_m: float | None = None,
+        collocation_r_max_m: float | None = None,
     ):
         self.model = model
         self.loss_fn = loss_fn
@@ -374,8 +391,8 @@ class STLRPSTrainer:
             accel_min_factor=float(getattr(cfg, "accel_min_factor", 0.05)),
         )
         # Collocation Laplacian bounds
-        self.collocation_r_min_m: Optional[float] = collocation_r_min_m
-        self.collocation_r_max_m: Optional[float] = collocation_r_max_m
+        self.collocation_r_min_m: float | None = collocation_r_min_m
+        self.collocation_r_max_m: float | None = collocation_r_max_m
         # Whether any Laplacian work is requested at all. When False, the default,
         # all Laplacian paths are skipped (no autograd overhead).
         self.laplacian_requested: bool = _laplacian_requested(cfg)
@@ -385,7 +402,7 @@ class STLRPSTrainer:
         if _lmode == "off" and bool(getattr(cfg, "use_laplacian_regularization", False)):
             _lmode = "diagnostic"
         self.laplacian_mode: str = _lmode
-        
+
         # bfloat16 instead of float16: SIREN sin(w0 · x) overflows fp16 mantissa.
         # bfloat16 has fp32 exponent range; disable AMP entirely if unavailable.
         # Laplacian regularization now uses the Hutchinson trace estimator which only
@@ -414,8 +431,8 @@ class STLRPSTrainer:
         loader: DataLoader,
         is_train: bool,
         epoch: int,
-        max_batches: Optional[int] = None,
-    ) -> Dict[str, float]:
+        max_batches: int | None = None,
+    ) -> dict[str, float]:
         if isinstance(loader.sampler, BlockShuffleSampler):
             loader.sampler.set_epoch(epoch)
 
@@ -437,7 +454,7 @@ class STLRPSTrainer:
         n_batches = 0
         optimizer_steps_done = 0
         samples_done = 0
-        last_stats: Dict[str, float] = {}
+        last_stats: dict[str, float] = {}
 
         if is_train:
             lambda_dir_eff = _direction_loss_factor(epoch, self.cfg)
@@ -560,7 +577,7 @@ class STLRPSTrainer:
                         and self.collocation_r_max_m is not None
                         and optimizer_steps_done % _col_lap_every == 0
                     )
-                    _col_lap_loss_val: Optional[torch.Tensor] = None
+                    _col_lap_loss_val: torch.Tensor | None = None
                     _col_lap_scalar = 0.0
                     if _col_lap_active:
                         _n_pts = max(1, int(getattr(self.cfg, "collocation_laplacian_samples",
@@ -734,9 +751,9 @@ class STLRPSTrainer:
                     eta = max(0.0, spb * (total_batches_est - n_batches))
                     sps = samples_done / max(elapsed, 1e-9)
                     cur_lr = float(self.optimizer.param_groups[0]["lr"])
-                    w_a_cur = float(last_stats.get("w_a_eff", last_stats.get("w_a", self.cfg.w_a)))
+                    float(last_stats.get("w_a_eff", last_stats.get("w_a", self.cfg.w_a)))
                     mem_str = _cuda_memory_string(self.device)
-                    dir_str = (
+                    (
                         f" dir={total_dir/n_batches:.3e} cossim={total_cossim/n_batches:.4f}"
                         f" ang={total_angular_mean_deg/n_batches:.2f}deg"
                         f" mask_frac={total_mask_frac/n_batches:.2f} lam_dir={lambda_dir_eff:.3e}"
@@ -845,7 +862,7 @@ def _lr_multiplier_for_epoch(
     total_epochs: int,
     warmup_epochs: int,
     min_lr_ratio: float,
-    t_max: Optional[int],
+    t_max: int | None,
 ) -> float:
     """
     Warm up linearly, then decay with a cosine schedule to ``min_lr_ratio``.
@@ -871,7 +888,7 @@ def _apply_lr_multiplier(optimizer: torch.optim.Optimizer, multiplier: float) ->
         base_lr = float(group.setdefault("initial_lr", group["lr"]))
         group["lr"] = base_lr * float(multiplier)
 
-def _write_training_history_csv(history: List[Dict[str, float]], path: Path) -> None:
+def _write_training_history_csv(history: list[dict[str, float]], path: Path) -> None:
     if not history:
         return
     extra_fields = sorted({str(k) for row in history for k in row.keys()} - set(HISTORY_FIELDNAMES))
@@ -893,16 +910,16 @@ def _dataset_meta_snapshot(
     meta: DatasetMeta,
     *,
     dataset_name: str,
-    data_path: Optional[Path],
-    train_data_path: Optional[Path],
-    val_data_path: Optional[Path],
-    test_data_path: Optional[str],
-    ood_data_path: Optional[str],
+    data_path: Path | None,
+    train_data_path: Path | None,
+    val_data_path: Path | None,
+    test_data_path: str | None,
+    ood_data_path: str | None,
     target_mode: str,
     central_body: str,
     resolved_mu_si: float,
     resolved_r_ref_m: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     snapshot = {
         "schema_version": 1,
         "dataset_sha256": (
@@ -949,7 +966,7 @@ def _dataset_meta_snapshot(
     )
     return snapshot
 
-def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
+def _save_training_plots(history: list[dict[str, float]], outdir: Path) -> None:
     if not history:
         return
     try:
@@ -970,8 +987,8 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
         logger.warning(f"training-history plots skipped because epoch values could not be read: {exc}")
         return
 
-    def _series(key: str, default: float = float("nan")) -> List[float]:
-        values: List[float] = []
+    def _series(key: str, default: float = float("nan")) -> list[float]:
+        values: list[float] = []
         for item in history:
             try:
                 value = float(item.get(key, default))
@@ -980,8 +997,8 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
             values.append(value if math.isfinite(value) else float("nan"))
         return values
 
-    def _robust_ylim(series_values: List[np.ndarray], *, logy: bool) -> Optional[Tuple[float, float]]:
-        valid: List[np.ndarray] = []
+    def _robust_ylim(series_values: list[np.ndarray], *, logy: bool) -> tuple[float, float] | None:
+        valid: list[np.ndarray] = []
         for arr in series_values:
             finite = arr[np.isfinite(arr)]
             if logy:
@@ -1016,14 +1033,14 @@ def _save_training_plots(history: List[Dict[str, float]], outdir: Path) -> None:
         path: Path,
         title: str,
         y_label: str,
-        series: List[Tuple[str, List[float]]],
+        series: list[tuple[str, list[float]]],
         *,
         logy: bool = False,
-        y_bounds: Optional[Tuple[float, float]] = None,
+        y_bounds: tuple[float, float] | None = None,
     ) -> None:
         try:
             fig, ax = plt.subplots(figsize=(9.2, 5.2), constrained_layout=True)
-            plotted_arrays: List[np.ndarray] = []
+            plotted_arrays: list[np.ndarray] = []
             for label, values in series:
                 arr = np.asarray(values, dtype=float)
                 arr[~np.isfinite(arr)] = np.nan
@@ -1290,14 +1307,14 @@ def train(cfg: TrainConfig) -> None:
     # previous run so the rebuilt model + scaler match the checkpoint exactly.
     # -----------------------------------------------------------------------
     _resume_requested = bool(getattr(cfg, "resume_from", None))
-    _resume_ckpt: Optional[Dict[str, Any]] = None
-    _resume_ckpt_path: Optional[Path] = None
+    _resume_ckpt: dict[str, Any] | None = None
+    _resume_ckpt_path: Path | None = None
     start_epoch = 0
     _resume_best_val = float("inf")
     _resume_best_epoch = -1
     _resume_epochs_without_improve = 0
     _resume_global_step = 0
-    _resume_prev_manifest: Dict[str, Any] = {}
+    _resume_prev_manifest: dict[str, Any] = {}
     if _resume_requested:
         _resume_layout, _resume_ckpt_path, _resume_ckpt = resolve_resume_checkpoint(
             cfg.resume_from,
@@ -1316,7 +1333,7 @@ def train(cfg: TrainConfig) -> None:
         run_created_at = str(_resume_prev_manifest.get("created_at_utc") or run_created_at)
 
         # Load previous resolved config (prefer config.json; fall back to ckpt).
-        _prev_cfg: Dict[str, Any] = {}
+        _prev_cfg: dict[str, Any] = {}
         if layout.config_json.is_file():
             try:
                 _prev_cfg = json.loads(layout.config_json.read_text(encoding="utf-8"))
@@ -1514,8 +1531,8 @@ def train(cfg: TrainConfig) -> None:
     # 2. Dataset Discovery & Validation
     data_path = Path(cfg.data)
     independent_val = cfg.train_data is not None and cfg.val_data is not None
-    train_data_path: Optional[Path] = None
-    val_data_path: Optional[Path] = None
+    train_data_path: Path | None = None
+    val_data_path: Path | None = None
 
     if independent_val:
         train_data_path = Path(cfg.train_data)
@@ -1639,8 +1656,8 @@ def train(cfg: TrainConfig) -> None:
     else:
         # Geometry-aware policies (spatial / OOD / altitude) need positions.
         # Random splits do not, so the xyz read is skipped for them.
-        xyz_all: Optional[np.ndarray] = None
-        altitude_all: Optional[np.ndarray] = None
+        xyz_all: np.ndarray | None = None
+        altitude_all: np.ndarray | None = None
         if split_policy not in {"seeded_random", "random"}:
             with h5py.File(primary_path, "r", swmr=True) as f:
                 xyz_all = np.asarray(f[dset_name][:, 0:3], dtype=np.float64)
@@ -1656,7 +1673,7 @@ def train(cfg: TrainConfig) -> None:
             "ood_holdout_fraction": float(getattr(cfg, "ood_holdout_fraction", 0.2)),
         }
         split_options = {k: v for k, v in _raw_split_options.items() if v is not None}
-        split_info: Dict[str, Any] = {}
+        split_info: dict[str, Any] = {}
         try:
             splits = split_dataset_indices(
                 n_rows=N,
@@ -1755,10 +1772,10 @@ def train(cfg: TrainConfig) -> None:
             _sgn = str(meta.a_sign_convention).strip()
             if _sgn in ("+1", "1"):
                 a_sign = 1.0
-                logger.info(f"Acceleration sign from dataset metadata: a_sign=+1.0")
+                logger.info("Acceleration sign from dataset metadata: a_sign=+1.0")
             elif _sgn == "-1":
                 a_sign = -1.0
-                logger.info(f"Acceleration sign from dataset metadata: a_sign=-1.0")
+                logger.info("Acceleration sign from dataset metadata: a_sign=-1.0")
             else:
                 logger.warning(f"Unrecognised a_sign_convention='{_sgn}'; falling back to auto-inference.")
                 a_sign = infer_a_sign_from_data(
@@ -1792,7 +1809,7 @@ def train(cfg: TrainConfig) -> None:
 
     # 7. Fit isometric scalers on residuals
     scaler_path = layout.scaler_json
-    scaler_hash_info: Dict[str, Any]
+    scaler_hash_info: dict[str, Any]
     if scaler_path.exists():
         logger.info(f"Loading existing scaler from {scaler_path.name}")
         scaler = ScalerPack.load_json(scaler_path)
@@ -1875,7 +1892,7 @@ def train(cfg: TrainConfig) -> None:
         logger.warning(f"Preload RAM-safety: {_preload_reason}")
 
     if should_preload:
-        logger.info(f"Data mode: RAM preload")
+        logger.info("Data mode: RAM preload")
         if independent_val:
             logger.info(f"Loading train ({n_train:,}) from {train_data_path.name}...")
             with h5py.File(train_data_path, "r", libver="latest", swmr=True) as _f:
@@ -1935,7 +1952,7 @@ def train(cfg: TrainConfig) -> None:
             + (f", prefetch_factor={pf}" if pf is not None else "")
         )
 
-        _dl_kw: Dict[str, Any] = dict(
+        _dl_kw: dict[str, Any] = dict(
             batch_size=cfg.batch_size, num_workers=mem_workers, pin_memory=pin,
             persistent_workers=(mem_workers > 0), collate_fn=collate_xyz_u_a,
         )
@@ -1979,12 +1996,12 @@ def train(cfg: TrainConfig) -> None:
             + (f", prefetch_factor={tr_pf}" if tr_pf is not None else "")
         )
 
-        _tr_kw: Dict[str, Any] = dict(
+        _tr_kw: dict[str, Any] = dict(
             batch_size=cfg.batch_size, sampler=train_sampler,
             num_workers=train_workers, pin_memory=pin,
             persistent_workers=(train_workers > 0), collate_fn=collate_xyz_u_a, drop_last=True,
         )
-        _va_kw: Dict[str, Any] = dict(
+        _va_kw: dict[str, Any] = dict(
             batch_size=cfg.batch_size, sampler=val_sampler,
             num_workers=val_workers, pin_memory=pin,
             persistent_workers=(val_workers > 0), collate_fn=collate_xyz_u_a, drop_last=False,
@@ -2133,7 +2150,7 @@ def train(cfg: TrainConfig) -> None:
     head_params = _get_output_head_params(model)
     head_param_ids = {id(param) for param in head_params}
     body_params = [param for param in model.parameters() if id(param) not in head_param_ids]
-    param_groups: List[Dict[str, Any]] = []
+    param_groups: list[dict[str, Any]] = []
     if body_params:
         param_groups.append(
             {
@@ -2210,7 +2227,7 @@ def train(cfg: TrainConfig) -> None:
     atomic_write_json(layout.provenance_dir / "feature_summary.json", feature_summary)
 
     suite_manifest_path = str(getattr(cfg, "suite_manifest", "") or "").strip()
-    suite_manifest: Dict[str, Any] = {}
+    suite_manifest: dict[str, Any] = {}
     if suite_manifest_path:
         try:
             manifest_path = Path(suite_manifest_path)
@@ -2419,8 +2436,8 @@ def train(cfg: TrainConfig) -> None:
     # Resolve collocation altitude bounds — only when a Laplacian is requested.
     # By default no Laplacian is requested, so these stay None and the collocation
     # path is fully skipped (no overhead).
-    _col_r_min_m: Optional[float] = None
-    _col_r_max_m: Optional[float] = None
+    _col_r_min_m: float | None = None
+    _col_r_max_m: float | None = None
     _lap_requested = _laplacian_requested(cfg)
     _col_lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
     if _col_lmode not in ("off", "diagnostic", "train"):
@@ -2462,8 +2479,8 @@ def train(cfg: TrainConfig) -> None:
     best_path = layout.ckpt_best
     last_path = layout.ckpt_last
     log_path = layout.history_jsonl
-    history: List[Dict[str, float]] = []
-    _prev_mse_a: Optional[float] = None  # for epoch-level explosion detection
+    history: list[dict[str, float]] = []
+    _prev_mse_a: float | None = None  # for epoch-level explosion detection
     global_step = 0
     run_status = "completed"
 
@@ -2502,7 +2519,7 @@ def train(cfg: TrainConfig) -> None:
             "checkpoint_selection": dict(checkpoint_selection),
         },
     )
-    logger.info(f"[artifacts] schema=st_lrps_checkpoint_v2")
+    logger.info("[artifacts] schema=st_lrps_checkpoint_v2")
     logger.info(f"[artifacts] architecture_signature={_arch_signature}")
     logger.info("Beginning training loop...")
     # Restore RNG state and decide history append-vs-overwrite for resume.
@@ -2516,7 +2533,7 @@ def train(cfg: TrainConfig) -> None:
             logger.warning("[resume] checkpoint lacks RNG state; continuing with the seeded RNG.")
         if bool(getattr(cfg, "resume_append_history", True)) and log_path.exists():
             try:
-                with open(log_path, "r", encoding="utf-8") as _hf:
+                with open(log_path, encoding="utf-8") as _hf:
                     for _line in _hf:
                         _line = _line.strip()
                         if not _line:
@@ -2701,7 +2718,7 @@ def train(cfg: TrainConfig) -> None:
             )
             verify_critical_config_fields_match(payload_readback, checkpoint_payload["config"])
 
-            checkpoint_info = {
+            {
                 "kind": "last",
                 "score": float(_ckpt_score),
                 "formula": str(checkpoint_report["formula"]),
@@ -2744,7 +2761,7 @@ def train(cfg: TrainConfig) -> None:
                     best_ckpt_hash = compute_file_sha256(best_path)
                     logger.info(f"[artifacts] checkpoint saved: kind=best epoch={epoch + 1}")
                     logger.info(f"[checkpoint] best updated: val_ref={va['loss']:.6e} score={_ckpt_score:.6e} epoch={best_epoch + 1}")
-                    checkpoint_info = {
+                    {
                         "kind": "best",
                         "score": float(_ckpt_score),
                         "formula": str(checkpoint_report["formula"]),

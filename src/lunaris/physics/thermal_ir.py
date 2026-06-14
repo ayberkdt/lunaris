@@ -33,14 +33,12 @@ The supported temperature modes are:
 from __future__ import annotations
 
 import math
-from typing import Tuple
 
 import numpy as np
 import numpy.typing as npt
 from numba import njit
 
 from lunaris.common.constants import AU, C_LIGHT, PI, R_MOON, SIGMA_SB, SOLAR_FLUX_1AU
-
 
 THERMAL_MODE_CONSTANT = 0
 THERMAL_MODE_EQUILIBRIUM = 1
@@ -65,7 +63,7 @@ def build_latlon_facets(
     lat_count: int,
     lon_count: int,
     radius_m: float = R_MOON,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Build spherical latitude-longitude facet centers, normals, and exact areas.
 
@@ -152,7 +150,7 @@ def thermal_ir_single_facet_accel_numba(
     spacecraft_area_m2: float,
     spacecraft_mass_kg: float,
     c_light_m_s: float,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """Acceleration contribution from one Lambertian thermal facet."""
     if (
         area_facet_m2 <= 0.0
@@ -211,7 +209,7 @@ def accel_thermal_ir_facets_numba(
     c_light_m_s: float,
     sigma_sb: float,
     include_sun_distance_scaling: bool,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """Sum Lambertian lunar thermal IR acceleration over precomputed facets."""
     if (
         ir_pressure_coefficient == 0.0

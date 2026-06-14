@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """
 mc_runner.py — CLI entry point for Monte Carlo ensemble propagation.
 
@@ -29,30 +28,29 @@ from __future__ import annotations
 
 import argparse
 import json
-import time
 import math
+import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, Sequence
 
 # ---------------------------------------------------------------------------
 # Shared, pure orbit/physics CLI helpers live in cli.common_args (import-safe;
 # no dependency on the sibling main.py entry point).
 # ---------------------------------------------------------------------------
-from lunaris.cli.common_args import (                           # noqa: E402
+from lunaris.cli.common_args import (  # noqa: E402
     apply_args_to_config,
     init_surface_provider,
+    parse_adaptive_table,
     resolve_orbit_elements,
     str2bool,
-    parse_adaptive_table,
+)
+from lunaris.common.constants import DEG2RAD, MU_MOON, R_MOON  # noqa: E402
+from lunaris.common.montecarlo_defs import (  # noqa: E402
+    MonteCarloConfig,
+    SpacecraftUncertainty,
+    StateUncertainty,
 )
 from lunaris.core.config import load_default_config, replace_sim_config  # noqa: E402
-from lunaris.common.constants import R_MOON, MU_MOON, DEG2RAD  # noqa: E402
-from lunaris.common.montecarlo_defs import (                   # noqa: E402
-    MonteCarloConfig,
-    StateUncertainty,
-    SpacecraftUncertainty,
-)
-
 
 # =============================================================================
 # 1.                            ARGUMENT PARSER
@@ -204,7 +202,7 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return _build_parser().parse_args(args=argv)
 
 
@@ -296,7 +294,7 @@ def _emit_progress_line(payload: dict) -> None:
 # 3.                                 MAIN
 # =============================================================================
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
 
     # ---- Build SimConfig ----------------------------------------------------

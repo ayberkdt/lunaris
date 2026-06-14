@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import importlib
 import math
-from typing import Tuple, Any
 
 import numpy as np
 import pytest
@@ -57,7 +56,7 @@ def tbe():
 
 
 @pytest.fixture(scope="session")
-def constants() -> Tuple[float, float, float, float]:
+def constants() -> tuple[float, float, float, float]:
     """Best-effort import of common constants with safe numeric fallbacks."""
     # Defaults (SI)
     MU_EARTH = 3.986004418e14           # [m^3/s^2]
@@ -67,7 +66,7 @@ def constants() -> Tuple[float, float, float, float]:
 
     try:  # Prefer project SSOT if available
         from lunaris.common.constants import MU_EARTH as _MU_EARTH  # type: ignore
-        from lunaris.common.constants import MU_SUN as _MU_SUN      # type: ignore
+        from lunaris.common.constants import MU_SUN as _MU_SUN  # type: ignore
         # Moon radius name varies a bit across codebases
         try:
             from lunaris.common.constants import R_MOON_MEAN as _R_MOON  # type: ignore

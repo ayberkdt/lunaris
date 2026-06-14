@@ -1,12 +1,9 @@
 import pytest
-import numpy as np
 
-from lunaris.core.state import create_state_from_keplerian
-from lunaris.core.monte_carlo_engine import MonteCarloEngine
-from lunaris.core.mc_backend_policy import resolve_mc_backend_policy
-from lunaris.core.dynamics import extract_surface_provider_strict, DynamicsEngine
-from lunaris.common.type_defs import SpacecraftProps, PerturbationFlags
+from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
+from lunaris.core.dynamics import DynamicsEngine, extract_surface_provider_strict
 from lunaris.physics.surface_effects import ThermalConfig
+
 
 def test_no_legacy_exports():
     import lunaris.core as core
@@ -57,6 +54,6 @@ def test_mc_sample_failure_fast_fail():
     mc_cfg = MonteCarloConfig(
         n_samples=2,
     )
-    
+
     # allow_sample_failures defaults to False
     assert getattr(mc_cfg, "allow_sample_failures", False) is False

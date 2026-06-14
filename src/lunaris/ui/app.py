@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 PySide6 desktop interface for the general Lunaris orbit simulator.
 
@@ -9,28 +8,23 @@ from `lunaris.ui.widgets` into a single desktop workflow.
 
 
 # =============================================================================
-# 0.                                    IMPORTS 
+# 0.                                    IMPORTS
 # =============================================================================
 from __future__ import annotations
 
+import ast
 import json
 import os
-import re
-import sys
-import ast
 import subprocess
+import sys
 import time
-import math
-import numpy as np
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict, Any
-from collections import deque
+from typing import Any
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-
-
+from lunaris.ui.components import PageShell
 
 # =============================================================================
 # 1.                            UI CONFIGURATION
@@ -38,18 +32,23 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from lunaris.ui.core.ui_commons import (
     APP_NAME,
     APP_VERSION,
-    ASSETS_DIR as UI_ASSETS_DIR,
     LOG_COLORS,
     THEME,
     WINDOW_SETTINGS,
 )
+from lunaris.ui.core.ui_commons import (
+    ASSETS_DIR as UI_ASSETS_DIR,
+)
 from lunaris.ui.theme import build_app_stylesheet
-from lunaris.ui.components import PageShell
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
 from lunaris.ui.widgets.log_panel import (
-    ExecutionConsoleDock,
     COLLAPSED_HEIGHT as LOG_COLLAPSED_HEIGHT,
+)
+from lunaris.ui.widgets.log_panel import (
     EXPANDED_MIN_HEIGHT as EXPANDED_MIN_LOG_HEIGHT,
+)
+from lunaris.ui.widgets.log_panel import (
+    ExecutionConsoleDock,
 )
 
 # Navigation entries for the specialized mission-analysis pages.
@@ -97,20 +96,14 @@ ASSETS_DIR = UI_ASSETS_DIR
 # =============================================================================
 # 4.                          ICON UTILITIES
 # =============================================================================
-from lunaris.ui.core.ui_commons import get_icon
-
-
-# =============================================================================
-# 5.                          UTILITY HELPERS
-# =============================================================================
-from lunaris.ui.core.ui_commons import normalize_path
-
-from lunaris.ui.pages.force_models_page import find_best_gravity_file
-from lunaris.ui.core.command_builder import build_command, build_command_preview, build_preflight_snapshot, build_mc_command
-from lunaris.ui.core.preflight_validation import PreFlightWorker
+from lunaris.ui.core.command_builder import (
+    build_command,
+    build_command_preview,
+    build_mc_command,
+    build_preflight_snapshot,
+)
 from lunaris.ui.core.log_stream import LineAssembler
-from lunaris.ui.pages.result_exports_page import OutputPageState, ResultsExportPage
-from lunaris.ui.core.solver_policy import normalize_solver_config_object
+from lunaris.ui.core.preflight_validation import PreFlightWorker
 from lunaris.ui.core.session_persistence import (
     apply_session_snapshot,
     apply_visual_state,
@@ -118,13 +111,20 @@ from lunaris.ui.core.session_persistence import (
     collect_session_snapshot,
     collect_visual_state,
 )
+from lunaris.ui.core.solver_policy import normalize_solver_config_object
 
-
+# =============================================================================
+# 5.                          UTILITY HELPERS
+# =============================================================================
+from lunaris.ui.core.ui_commons import get_icon, normalize_path
+from lunaris.ui.pages.force_models_page import find_best_gravity_file
 
 # =============================================================================
 # 6.                        DATACLASSES (main glue)
 # =============================================================================
 from lunaris.ui.pages.mission_propagation_page import UISolverConfig, UISpacecraftConfig
+from lunaris.ui.pages.result_exports_page import OutputPageState, ResultsExportPage
+
 
 @dataclass
 class SimulationState:
@@ -142,34 +142,21 @@ class SimulationState:
 # =============================================================================
 from lunaris.ui.core.ui_commons import StatusBadge
 
-
 # =============================================================================
 # 10.                       GRAVITY CONFIGURATION
 # =============================================================================
-from lunaris.ui.pages.force_models_page import UIGravityConfig
-
-
+# =============================================================================
+# 15.                       ALBEDO CONFIGURATION
+# =============================================================================
+from lunaris.ui.pages.force_models_page import UIAlbedoConfig, UIGravityConfig
 
 # =============================================================================
 # 11.                       SOLVER SETTINGS DIALOG
 # =============================================================================
-from lunaris.ui.pages.mission_propagation_page import SolverSettingsDialog
-
-
-
 # =============================================================================
 # 12.                       SPACECRAFT BUILDER DIALOG
 # =============================================================================
-from lunaris.ui.pages.mission_propagation_page import SpacecraftBusDialog
-
-
-
-# =============================================================================
-# 15.                       ALBEDO CONFIGURATION
-# =============================================================================
-from lunaris.ui.pages.force_models_page import UIAlbedoConfig
-
-
+from lunaris.ui.pages.mission_propagation_page import SolverSettingsDialog, SpacecraftBusDialog
 
 # =============================================================================
 # 16.                       UI HELPERS
@@ -196,22 +183,22 @@ class MainWindow(QtWidgets.QMainWindow):
     cross-page workflows such as session persistence, command building,
     pre-flight validation, and backend process management.
     """
-    
+
     def __init__(self):
         super().__init__()
-        
+
         # ---------------------------------------------------------------------
         # 1. Window Configuration
         # ---------------------------------------------------------------------
         self.setWindowTitle(WINDOW_SETTINGS["title"])
         self.resize(*WINDOW_SETTINGS["size"])
         self.setMinimumSize(*WINDOW_SETTINGS["min_size"])
-        
+
         # Icon setup
         icon_path = ASSETS_DIR / "icon.ico"
         if icon_path.exists():
             self.setWindowIcon(QtGui.QIcon(str(icon_path)))
-        
+
         # ---------------------------------------------------------------------
         # 2. Path & Session Management
         # ---------------------------------------------------------------------
@@ -221,7 +208,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # works regardless of where `lunaris` is installed.
         _lunaris_pkg = Path(__file__).resolve().parents[1]
         self.main_script_path = _lunaris_pkg / "cli" / "main.py"
-        
+
         # Session Persistence.
         #
         # The app shipped historically as "ST-LRPS Studio" and stored its data
@@ -257,16 +244,16 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         )
         self._legacy_session_path = _legacy_dir / "studio_session.json"
-        
+
         # ---------------------------------------------------------------------
         # 3. Application State & Sub-Configs
         # ---------------------------------------------------------------------
-        self.process: Optional[QtCore.QProcess] = None
-        self.mc_process: Optional[QtCore.QProcess] = None
-        self.preflight_worker: Optional[PreFlightWorker] = None
+        self.process: QtCore.QProcess | None = None
+        self.mc_process: QtCore.QProcess | None = None
+        self.preflight_worker: PreFlightWorker | None = None
         self.mc_script_path   = _lunaris_pkg / "core" / "mc_runner.py"
         self._mc_stdout_buf: str = ""
-        
+
         # UI State Containers (Mutable)
         self.sim_state = SimulationState()
         self.gravity_cfg = UIGravityConfig()
@@ -274,18 +261,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.solver_cfg = UISolverConfig()
         normalize_solver_config_object(self.solver_cfg)
         self.spacecraft_cfg = UISpacecraftConfig()
-        
+
         # Mission Timeline
         self.mission_epoch = QtCore.QDateTime.fromString("2025-10-01 18:00:00", "yyyy-MM-dd HH:mm:ss")
-        
+
         # Data & Files Configuration
         self.ldem_root_path = ""  # LDEM root directory
         self.albedo_root_path = ""  # Albedo root directory
         self.kernel_dir_path = ""  # SPICE kernels directory
         self.ldem_ppd = 4  # Pixels per degree resolution
-        
+
         # Runtime Flags
-        self.recent_presets: List[str] = []
+        self.recent_presets: list[str] = []
         self.last_cmd_preview: str = ""
         self.is_log_collapsed: bool = False
         # Independent partial-line buffers for the two backend streams. Mixing
@@ -297,23 +284,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self._collision_triggered = False
         self._collision_reason = ""
         # Progress tracking
-        self._run_wall_t0: Optional[float] = None
-        self._last_telem_t_s: Optional[float] = None
+        self._run_wall_t0: float | None = None
+        self._last_telem_t_s: float | None = None
         self._progress_is_determinate: bool = False
-        
+
         # ---------------------------------------------------------------------
         # 4. UI Construction
         # ---------------------------------------------------------------------
         self._build_ui()
         self._apply_theme()
-        
+
         # ---------------------------------------------------------------------
         # 5. Initialization & Bootstrapping
         # ---------------------------------------------------------------------
         self._try_prefill_topography_from_config()
         self._try_load_last_session()
         self._bootstrap()
-        
+
         # ---------------------------------------------------------------------
         # 6. Watchdog Timer
         # ---------------------------------------------------------------------
@@ -321,14 +308,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tick_timer.setInterval(250)  # 250ms refresh rate
         self.tick_timer.timeout.connect(self._ui_tick)
         self.tick_timer.start()
-    
+
     # =========================================================================
     # 18. UI CONSTRUCTION & STYLING
     # =========================================================================
-    
+
     def _build_ui(self):
         """Constructs the visual hierarchy of the main window."""
-        
+
         # Central Container
         central = QtWidgets.QWidget()
         central.setObjectName("centralRoot")
@@ -341,7 +328,7 @@ class MainWindow(QtWidgets.QMainWindow):
             DESIGN_TOKENS.layout.shell_margin,
         )
         root.setSpacing(DESIGN_TOKENS.layout.shell_gap)
-        
+
         # ---------------------------------------------------------------------
         # A. Header Bar (Title, Status, Actions)
         # ---------------------------------------------------------------------
@@ -350,18 +337,18 @@ class MainWindow(QtWidgets.QMainWindow):
         h_layout = QtWidgets.QHBoxLayout(header_frame)
         h_layout.setContentsMargins(16, 10, 16, 10)
         h_layout.setSpacing(12)
-        
+
         # App Title
         title_lbl = QtWidgets.QLabel(APP_NAME)
         title_lbl.setObjectName("title")
         h_layout.addWidget(title_lbl)
-        
+
         # Page Indicator (StatusBadge)
         self.badge_page = StatusBadge("Orbit", "info")
         h_layout.addWidget(self.badge_page)
-        
+
         h_layout.addStretch(1)
-        
+
         # Progress Bar in Header
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setFixedWidth(165)
@@ -379,28 +366,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_progress.setMinimumWidth(155)
         h_layout.addWidget(self.lbl_progress)
         h_layout.addSpacing(8)
-        
+
         # Execution State (Dot + Label)
         self.dot_run = QtWidgets.QFrame()
         self.dot_run.setObjectName("runDot")
         self.dot_run.setFixedSize(12, 12)
         self.dot_run.setProperty("kind", "idle")
-        
+
         self.lbl_run_state = QtWidgets.QLabel("")
         self.lbl_run_state.setObjectName("runState")
-        
+
         state_container = QtWidgets.QHBoxLayout()
         state_container.setSpacing(6)
         state_container.addWidget(self.dot_run)
         state_container.addWidget(self.lbl_run_state)
-        
+
         self.state_frame = QtWidgets.QFrame()
         self.state_frame.setObjectName("stateFrame")
         self.state_frame.setLayout(state_container)
         h_layout.addWidget(self.state_frame)
-        
+
         h_layout.addSpacing(16)
-        
+
         # Action Buttons
         self.btn_stop = QtWidgets.QPushButton("Stop")
         self.btn_stop.setObjectName("dangerBtn")
@@ -409,13 +396,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_stop.setEnabled(False)
         self.btn_stop.setVisible(False)
         self.btn_stop.clicked.connect(self._stop_process)
-        
+
         self.btn_run = QtWidgets.QPushButton("Run Analysis")
         self.btn_run.setObjectName("primaryBtn")
         self.btn_run.setCursor(QtCore.Qt.PointingHandCursor)
         self.btn_run.setIcon(get_icon('fa6s.play', THEME['fg_main']))
         self.btn_run.clicked.connect(self._start_preflight_validation)
-        
+
         h_layout.addWidget(self.btn_stop)
 
         # The header stays quieter when the app is idle. Progress and transient
@@ -480,7 +467,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
         self.main_splitter.setObjectName("mainSplit")
         root.addWidget(self.main_splitter, 1)
-        
+
         # Top Section: Navigation Sidebar + Stacked Pages
         content_container = QtWidgets.QWidget()
         content_container.setObjectName("contentRoot")
@@ -492,7 +479,7 @@ class MainWindow(QtWidgets.QMainWindow):
         content_layout = QtWidgets.QHBoxLayout(content_container)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(16)
-        
+
         # 1. Navigation Drawer
         self.nav_list = QtWidgets.QListWidget()
         self.nav_list.setObjectName("navDrawer")
@@ -506,10 +493,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.nav_list.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.nav_list.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self.nav_list.setSpacing(4)
-        
+
         # Populate Nav Items with icons
         self._page_map = {}
-        
+
         for i, (key, label, icon_name) in enumerate(NAV_PAGES):
             item = QtWidgets.QListWidgetItem(label)
             item.setSizeHint(QtCore.QSize(DESIGN_TOKENS.layout.nav_width - 20, 40))
@@ -517,10 +504,10 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setIcon(get_icon(icon_name, THEME['fg_muted']))
             self.nav_list.addItem(item)
             self._page_map[key] = i
-        
+
         self.nav_list.currentRowChanged.connect(self._on_nav_changed)
         content_layout.addWidget(self.nav_list)
-        
+
         # 2. Page Stack
         self.stack_pages = QtWidgets.QStackedWidget()
         self.stack_pages.setObjectName("pages")
@@ -529,7 +516,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QSizePolicy.Expanding,
             QtWidgets.QSizePolicy.Ignored,
         )
-        
+
         # Build individual page widgets
         self.page_orbit = self._build_page_orbit()
         self.page_forces = self._build_page_forces()
@@ -581,10 +568,10 @@ class MainWindow(QtWidgets.QMainWindow):
         }
         for key, _, _ in NAV_PAGES:
             self.stack_pages.addWidget(self.page_shells[key])
-        
+
         content_layout.addWidget(self.stack_pages, 1)
         self.main_splitter.addWidget(content_container)
-        
+
         # ---------------------------------------------------------------------
         # C. Log Panel
         # ---------------------------------------------------------------------
@@ -603,11 +590,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter.setStretchFactor(0, 88)
         self.main_splitter.setStretchFactor(1, 12)
         self.log_panel.set_collapsed(False)
-        
+
         # Build Menu & Status
         self._build_menubar()
         self._build_statusbar()
-        
+
         # Set Initial State
         self._switch_page("Orbit")
         self._update_run_visuals("idle")
@@ -616,73 +603,73 @@ class MainWindow(QtWidgets.QMainWindow):
         self._collision_triggered = False
         self._collision_reason = ""
 
-    
+
     def _build_menubar(self):
         """Constructs the native window menu."""
         mb = self.menuBar()
         mb.setObjectName("menuBar")
-        
+
         # FILE MENU
         m_file = mb.addMenu("&File")
-        
+
         a_load = m_file.addAction("Load Mission Profile...")
         a_load.setShortcut("Ctrl+O")
         a_load.triggered.connect(self._action_load_session)
-        
+
         a_save = m_file.addAction("Save Mission Profile")
         a_save.setShortcut("Ctrl+S")
         a_save.triggered.connect(self._action_save_session)
-        
+
         m_file.addSeparator()
-        
+
         a_open_dir = m_file.addAction("Open Results Folder")
         a_open_dir.setShortcut("Ctrl+Shift+O")
         a_open_dir.triggered.connect(self._action_open_out_dir)
-        
+
         m_file.addSeparator()
         a_exit = m_file.addAction("Exit")
         a_exit.setShortcut("Alt+F4")
         a_exit.triggered.connect(self.close)
-        
+
         # ANALYSIS MENU
         m_run = mb.addMenu("&Analysis")
-        
+
         a_run = m_run.addAction("Start Propagation")
         a_run.setShortcut("F5")
         a_run.triggered.connect(self._start_preflight_validation)
-        
+
         a_stop = m_run.addAction("Abort Propagation")
         a_stop.setShortcut("Shift+F5")
         a_stop.triggered.connect(self._stop_process)
-        
+
         # SETTINGS MENU
         m_settings = mb.addMenu("&Settings")
-        
+
         a_solver = m_settings.addAction("Solver Configuration...")
         a_solver.triggered.connect(self._on_solver_settings)
-        
+
         a_spacecraft = m_settings.addAction("Spacecraft Properties...")
         a_spacecraft.triggered.connect(self._on_spacecraft_settings)
-        
+
         m_settings.addSeparator()
-        
+
         a_gravity = m_settings.addAction("Gravity Model...")
         a_gravity.triggered.connect(self._on_gravity_settings)
-        
+
         a_albedo = m_settings.addAction("Albedo Model...")
         a_albedo.triggered.connect(self._on_albedo_settings)
-        
+
         # VIEW MENU
         m_view = mb.addMenu("&View")
-        
+
         a_log = m_view.addAction("Toggle Log Panel")
         a_log.setShortcuts([QtGui.QKeySequence("Ctrl+`"), QtGui.QKeySequence("Ctrl+L")])
         a_log.triggered.connect(self._toggle_log_collapsed)
-        
+
         a_clear = m_view.addAction("Clear Log")
         a_clear.setShortcut("Ctrl+K")
         a_clear.triggered.connect(self._clear_log)
-    
+
     def _build_statusbar(self):
         """Create a hidden status bar so idle text does not clutter the footer."""
         sb = QtWidgets.QStatusBar()
@@ -691,7 +678,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sb.clearMessage()
         sb.setSizeGripEnabled(False)
         sb.hide()
-    
+
     def _apply_theme(self):
         """
         Applies the global QSS stylesheet using the predefined THEME dictionary.
@@ -710,12 +697,12 @@ class MainWindow(QtWidgets.QMainWindow):
             pal.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor(THEME['fg_inverse']))
             pal.setColor(QtGui.QPalette.Link, QtGui.QColor(THEME['fg_link']))
             app.setPalette(pal)
-        
+
         # 2. Build the global QSS from the Lunar Graphite palette.
         #    The large stylesheet now lives in lunaris.ui.theme.stylesheet
         #    so app.py stays an orchestration layer, not a design-token dump.
         self.setStyleSheet(build_app_stylesheet(THEME, LOG_COLORS))
-    
+
     # =========================================================================
     # 19. PAGE BUILDERS: ORBIT PAGE (PAGE 1)
     # =========================================================================
@@ -728,7 +715,7 @@ class MainWindow(QtWidgets.QMainWindow):
         from lunaris.ui.pages.orbit_config_page import OrbitPage  # local import to avoid circulars
         self.page_orbit = OrbitPage()
         return self.page_orbit
-    
+
 
     # =========================================================================
     # 20. PAGE BUILDERS: FORCES PAGE (PAGE 2)
@@ -739,7 +726,9 @@ class MainWindow(QtWidgets.QMainWindow):
         Page 2: Force Model Settings.
         Delegated to ui_parts.force_models_page.ForceModelsPage
         """
-        from lunaris.ui.pages.force_models_page import ForceModelsPage  # local import to avoid circulars
+        from lunaris.ui.pages.force_models_page import (
+            ForceModelsPage,  # local import to avoid circulars
+        )
 
         # IMPORTANT: pass shared config objects so dialogs mutate the same instances
         self.page_forces = ForceModelsPage(
@@ -748,11 +737,11 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         return self.page_forces
 
-    
+
     # =========================================================================
     # 21. PAGE BUILDERS: PROPAGATION CONFIGURATION (PAGE 3)
     # =========================================================================
-    
+
     def _build_page_propagation(self) -> QtWidgets.QWidget:
         from lunaris.ui.pages.mission_propagation_page import MissionPropagationPage
         self.page_propagation = MissionPropagationPage(
@@ -763,7 +752,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         return self.page_propagation
 
-    
+
     # =========================================================================
     # 22. PAGE BUILDERS: OUTPUT (PAGE 4)
     # =========================================================================
@@ -794,18 +783,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.page_output = page
         return page
-    
+
     def _build_page_telemetry(self) -> QtWidgets.QWidget:
         from lunaris.ui.pages.live_telemetry_page import TelemetryPage
         self.page_telemetry = TelemetryPage()
         return self.page_telemetry
 
-    
+
     # =========================================================================
-    # 24. PAGE BUILDERS: DATA & FILES (PAGE 6) 
+    # 24. PAGE BUILDERS: DATA & FILES (PAGE 6)
     # =========================================================================
     def _build_page_data(self) -> QtWidgets.QWidget:
-        from lunaris.ui.pages.data_files_page import DataPage, DataFilesState
+        from lunaris.ui.pages.data_files_page import DataFilesState, DataPage
 
         # Initial state comes from the values held on MainWindow:
         init = DataFilesState(
@@ -825,7 +814,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         return self.page_data
 
-    
+
     # =========================================================================
     # 24b. PAGE BUILDERS: MONTE CARLO (PAGE 7)
     # =========================================================================
@@ -984,7 +973,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # =========================================================================
     # 25. LOG PANEL BUILDER
     # =========================================================================
-    
+
     def _build_log_panel(self) -> QtWidgets.QWidget:
         """Construct the buffered Execution Console (see widgets.log_panel)."""
         panel = ExecutionConsoleDock(output_dir_provider=self._current_output_dir)
@@ -1086,7 +1075,7 @@ class MainWindow(QtWidgets.QMainWindow):
     # 27. ASYNCHRONOUS PRE-FLIGHT VALIDATION
     # =========================================================================
 
-    def _collect_preflight_data(self) -> Dict[str, Any]:
+    def _collect_preflight_data(self) -> dict[str, Any]:
         """
         Collect the minimal UI snapshot required for pre-flight validation.
 
@@ -1250,11 +1239,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"Pre-flight validation failed:\n\n{message}\n\nPlease check your configuration and try again."
             )
 
-    
+
     # =========================================================================
     # 28. NAVIGATION & LOGIC UPDATES
     # =========================================================================
-    
+
     def _on_nav_changed(self, row: int):
         """Handle sidebar navigation."""
         item = self.nav_list.item(row)
@@ -1272,26 +1261,26 @@ class MainWindow(QtWidgets.QMainWindow):
                 else DESIGN_TOKENS.layout.nav_width
             )
             self.nav_list.setFixedWidth(nav_width)
-    
+
     def _switch_page(self, key: str):
         """Switch between main pages."""
         if key not in self._page_map:
             return
-            
+
         idx = self._page_map[key]
         self.stack_pages.setCurrentIndex(idx)
-        
+
         if self.nav_list.currentRow() != idx:
             self.nav_list.blockSignals(True)
             self.nav_list.setCurrentRow(idx)
             self.nav_list.blockSignals(False)
-            
+
         labels = {item[0]: item[1] for item in NAV_PAGES}
         display_name = labels.get(key, key)
-        
+
         if hasattr(self, "badge_page"):
             self.badge_page.set_status("info", display_name)
-    
+
     def _toggle_log_collapsed(self, _checked: bool = False):
         """Collapse or expand the Execution Console (splitter handled via signal)."""
         self.log_panel.toggle_collapsed()
@@ -1327,7 +1316,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message("[UI] Albedo settings updated.", severity="system")
         except Exception as e:
             self._log_message(f"[Warning] Could not open albedo settings: {e}", severity="warning")
-    
+
     def _on_solver_settings(self, _checked: bool = False):
         """Open Solver Settings Dialog."""
         dlg = SolverSettingsDialog(self, self.solver_cfg)
@@ -1348,19 +1337,19 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg = SpacecraftBusDialog(self, self.spacecraft_cfg)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
             self._log_message("[UI] Spacecraft properties updated.", severity="system")
-    
+
     def _update_gravity_status(self):
         """Delegate gravity summary refresh to the dedicated force-model page."""
         try:
             self.page_forces._update_gravity_summary_ui()
         except Exception:
             pass
-    
+
 
     # =========================================================================
     # 31. COMMAND BUILDING & PROCESS MANAGEMENT
     # =========================================================================
-    def _build_command(self) -> List[str]:
+    def _build_command(self) -> list[str]:
         """
         Build the backend CLI command from the modular page/config state.
 
@@ -1454,7 +1443,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Start process. The run separator above already provides the visual
         # break, so we go straight to the launch line.
-        self._log_message(f"[System] Launching mission analysis...", severity="system")
+        self._log_message("[System] Launching mission analysis...", severity="system")
 
         self.process = QtCore.QProcess(self)
         self.process.readyReadStandardOutput.connect(self._handle_stdout)
@@ -1483,9 +1472,9 @@ class MainWindow(QtWidgets.QMainWindow):
         proc = self.process
         if proc is None:
             return
-        
+
         self._log_message("[System] Sending stop signal...", severity="system")
-        
+
         # Create stop file (signal for backend)
         try:
             out_dir = Path(self.page_output.get_state().output_dir.strip())
@@ -1493,25 +1482,25 @@ class MainWindow(QtWidgets.QMainWindow):
             (out_dir / ".stlrps_stop").touch()
         except Exception as e:
             self._log_message(f"[Warning] Could not create stop file: {e}", severity="warning")
-        
+
         # Step 1: Try graceful termination
         proc.terminate()
-        
+
         # Wait for graceful termination
         if not proc.waitForFinished(2000):  # Wait 2 seconds
             self._log_message("[System] Graceful termination failed -> forcing kill...", severity="error")
-            
+
             # Step 2: Force kill
             proc.kill()
-            
+
             # Wait for kill to complete
             if not proc.waitForFinished(1000):  # Wait 1 more second
                 self._log_message("[System] Kill command may have failed", severity="error")
-        
+
         # Update UI
         self._set_run_state("idle")
         self._dispose_process()
-    
+
 
     # -------------------------------------------------------------------------
     # Collision / impact monitoring
@@ -1542,7 +1531,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if getattr(self, "_collision_triggered", False):
             return
 
-        def first_float(*keys: str) -> Optional[float]:
+        def first_float(*keys: str) -> float | None:
             for key in keys:
                 value = self._try_float(telem.get(key))
                 if value is not None:
@@ -1796,24 +1785,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self._progress_is_determinate = False
         self._set_run_state("idle")
         self._dispose_process()
-    
+
     def _set_run_state(self, state: str):
         """Update UI based on execution state."""
         self.sim_state.status = state
         is_running = (state == "running")
-        
+
         # Buttons
         self.btn_run.setEnabled(not is_running)
         self.btn_stop.setEnabled(is_running)
         self.btn_stop.setVisible(is_running)
-        
+
         self._update_run_visuals(state)
-    
+
     # =========================================================================
     # 33. STATE MANAGEMENT & SERIALIZATION
     # =========================================================================
 
-    def _collect_preset_dict(self) -> Dict[str, Any]:
+    def _collect_preset_dict(self) -> dict[str, Any]:
         """Collect all modular page/config state into a serializable snapshot."""
 
         snapshot = collect_session_snapshot(
@@ -1893,7 +1882,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         return snapshot
 
-    def _apply_preset_dict(self, data: Dict[str, Any]):
+    def _apply_preset_dict(self, data: dict[str, Any]):
         """Apply a saved session payload through the modular restore helpers."""
         try:
             apply_session_snapshot(
@@ -1937,13 +1926,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if path:
             self.page_output.set_output_dir(normalize_path(path))
             self._log_message(f"[UI] Output directory set to: {Path(path).name}", severity="system")
-    
+
     def _action_open_out_dir(self, _checked: bool = False):
         """Open output directory in file explorer."""
         out_dir = self.page_output.get_state().output_dir.strip()
         if not out_dir:
             return
-        
+
         path = Path(out_dir)
         try:
             path.mkdir(parents=True, exist_ok=True)
@@ -1956,7 +1945,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message(f"[UI] Opened output directory: {path}", severity="system")
         except Exception as e:
             self._log_message(f"[Error] Could not open directory: {e}", severity="error")
-    
+
     def _action_load_session(self, _checked: bool = False):
         """Load session from file."""
         current = str(self.app_data_dir) if self.app_data_dir.exists() else str(PROJECT_ROOT)
@@ -1966,9 +1955,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         if not path:
             return
-        
+
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, encoding='utf-8') as f:
                 data = json.load(f)
             self._apply_preset_dict(data)
             self._log_message(f"[UI] Session loaded from: {Path(path).name}", severity="success")
@@ -1978,7 +1967,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self, "Load Error",
                 f"Failed to load session file:\n\n{str(e)}"
             )
-    
+
     def _action_save_session(self, _checked: bool = False):
         """Save session to file."""
         current = str(self.app_data_dir / "mission_profile.json")
@@ -1988,7 +1977,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         if not path:
             return
-        
+
         try:
             data = self._collect_preset_dict()
             with open(path, 'w', encoding='utf-8') as f:
@@ -2000,7 +1989,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self, "Save Error",
                 f"Failed to save session file:\n\n{str(e)}"
             )
-    
+
     def _try_prefill_topography_from_config(self):
         """Auto-detect data roots using the repository-aware persistence helper."""
         try:
@@ -2030,7 +2019,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
 
         try:
-            with open(source_path, 'r', encoding='utf-8') as f:
+            with open(source_path, encoding='utf-8') as f:
                 data = json.load(f)
             self._apply_preset_dict(data)
             if migrating_legacy:
@@ -2049,7 +2038,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._log_message("[UI] Previous session restored.", severity="system")
         except Exception as e:
             self._log_message(f"[Warning] Could not restore last session: {e}", severity="warning")
-    
+
     def _bootstrap(self):
         """Initial bootstrapping tasks."""
         self._log_message(f"[System] {APP_NAME} initialized", severity="system")
@@ -2088,7 +2077,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Auto-detect gravity file in background."""
         if not hasattr(self, "gravity_cfg"):
             return
-        
+
         if not self.gravity_cfg.file_path:
             found = find_best_gravity_file(PROJECT_ROOT, self.gravity_cfg.degree)
             if found:
@@ -2098,13 +2087,13 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.page_forces._update_gravity_summary_ui()
                 except Exception:
                     pass
-    
+
     def _update_run_visuals(self, state: str):
         """Update run state visuals."""
         self.dot_run.setProperty("kind", state)
         self.dot_run.style().unpolish(self.dot_run)
         self.dot_run.style().polish(self.dot_run)
-        
+
         status_map = {
             "idle": "",
             "running": "Propagation active",
@@ -2124,7 +2113,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.progress_bar.setFormat("")
             self.lbl_progress.clear()
             self.lbl_progress.hide()
-    
+
     def _update_status_bar(self) -> None:
         """
         Refresh the mission status summary bar from current UI state.
@@ -2202,7 +2191,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._last_save_time = current_time
         else:
             self._last_save_time = current_time
-    
+
     def _auto_save_session(self, *, notify_on_failure: bool = False) -> bool:
         """
         Auto-save session state and surface failures instead of swallowing them.
@@ -2234,7 +2223,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"{exc}",
                 )
             return False
-    
+
     def closeEvent(self, event):
         """Handle window close event."""
         # Stop any running processes
@@ -2248,7 +2237,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if reply == QtWidgets.QMessageBox.No:
                 event.ignore()
                 return
-            
+
             # Try to stop process
             self._stop_process()
             if self.process is not None:
@@ -2257,7 +2246,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         self.process.kill()
                 except RuntimeError:
                     self.process = None
-        
+
         # Stop preflight worker if running
         if self.preflight_worker and self.preflight_worker.isRunning():
             self.preflight_worker.stop()
@@ -2318,12 +2307,12 @@ class MainWindow(QtWidgets.QMainWindow):
         scroll.viewport().setAutoFillBackground(False)
         scroll.setWidget(container)
         return scroll
-    
+
     # =========================================================================
     # COMMAND PREVIEW (used by Output page)
     # =========================================================================
 
-    def _build_command_preview_safe(self) -> Tuple[str, str]:
+    def _build_command_preview_safe(self) -> tuple[str, str]:
         """Generate shell-safe command string for preview."""
         try:
             return (build_command_preview(self._build_command()), "")
@@ -2371,19 +2360,19 @@ class MainWindow(QtWidgets.QMainWindow):
 
 def main():
     """Application entry point."""
-    
+
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("ST_LRPS")
-    
+
     # Load fonts
     font = load_fonts()
     app.setFont(font)
-    
+
     # Create and show main window
     window = MainWindow()
     window.show()
-    
+
     sys.exit(app.exec())
 
 

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
 from math import sqrt
-from typing import Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
 
@@ -27,7 +27,7 @@ def _thermal_relative_uncertainty(config: PerturbationBudgetConfig) -> float:
     return _rss([config.thermal_uncertainty, temp_rel, config.area_uncertainty, config.mass_uncertainty])
 
 
-def model_relative_uncertainties(config: PerturbationBudgetConfig) -> Dict[str, float]:
+def model_relative_uncertainties(config: PerturbationBudgetConfig) -> dict[str, float]:
     radiation_rel = _rss([config.area_uncertainty, config.mass_uncertainty])
     return {
         "SRP": _rss([config.srp_uncertainty, radiation_rel]),
@@ -43,8 +43,8 @@ def compute_uncertainty_budget(
     config: PerturbationBudgetConfig,
     samples: Iterable[SampleState],
     forces_by_sample: Mapping[str, Mapping[str, np.ndarray]],
-) -> List[Dict[str, object]]:
-    rows: List[Dict[str, object]] = []
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
     rel = model_relative_uncertainties(config)
 
     for sample in samples:
@@ -61,7 +61,7 @@ def compute_uncertainty_budget(
             ),
             "1PN Relativity": forces.get("1PN Relativity", np.zeros(3, dtype=np.float64)),
         }
-        uncertainties: List[float] = []
+        uncertainties: list[float] = []
         for model, vector in model_vectors.items():
             accel_norm = _norm(vector)
             rel_u = float(rel.get(model, 0.0))
@@ -120,9 +120,9 @@ def _percentile(values: Sequence[float], q: float) -> float:
     return float(np.percentile(np.asarray(finite, dtype=np.float64), q))
 
 
-def _combined_uncertainty_by_sample(rows: Iterable[Mapping[str, object]], combination: str) -> Dict[str, float]:
+def _combined_uncertainty_by_sample(rows: Iterable[Mapping[str, object]], combination: str) -> dict[str, float]:
     target = "Combined Non-Gravitational RSS" if combination == "rss" else "Combined Non-Gravitational Linear"
-    out: Dict[str, float] = {}
+    out: dict[str, float] = {}
     for row in rows:
         if row.get("model") == target:
             out[str(row["sample_id"])] = float(row["uncertainty_norm_m_s2"])
@@ -133,14 +133,14 @@ def recommend_gravity_degree_by_altitude(
     config: PerturbationBudgetConfig,
     sh_rows: Iterable[Mapping[str, object]],
     uncertainty_rows: Iterable[Mapping[str, object]],
-) -> List[Dict[str, object]]:
-    sh_by_alt_band: Dict[tuple[float, str], List[Mapping[str, object]]] = defaultdict(list)
+) -> list[dict[str, object]]:
+    sh_by_alt_band: dict[tuple[float, str], list[Mapping[str, object]]] = defaultdict(list)
     for row in sh_rows:
         sh_by_alt_band[(float(row["altitude_km"]), str(row["band"]))].append(row)
 
     combination = "rss" if config.rss_uncertainty_combination else "linear"
     unc_by_sample = _combined_uncertainty_by_sample(uncertainty_rows, combination)
-    unc_by_alt: Dict[float, List[float]] = defaultdict(list)
+    unc_by_alt: dict[float, list[float]] = defaultdict(list)
     for row in sh_rows:
         sid = str(row["sample_id"])
         if sid in unc_by_sample:
@@ -152,17 +152,17 @@ def recommend_gravity_degree_by_altitude(
         "high": {"q": 95.0, "fraction": 0.5 * config.recommendation_uncertainty_fraction},
     }
 
-    rows: List[Dict[str, object]] = []
+    rows: list[dict[str, object]] = []
     for altitude in sorted({float(a) for a, _ in sh_by_alt_band}):
-        rec: Dict[str, object] = {"altitude_km": altitude}
-        limiting: Dict[str, str] = {}
-        reason: Dict[str, str] = {}
+        rec: dict[str, object] = {"altitude_km": altitude}
+        limiting: dict[str, str] = {}
+        reason: dict[str, str] = {}
         unc_stat = _percentile(unc_by_alt.get(altitude, []), 50.0)
         for profile, opts in profiles.items():
             selected = max(config.sh_degrees)
             selected_reason = "No increment met the configured thresholds."
             selected_factor = "max_degree"
-            for low, high in zip(config.sh_degrees[:-1], config.sh_degrees[1:]):
+            for low, high in zip(config.sh_degrees[:-1], config.sh_degrees[1:], strict=False):
                 band = f"Delta SH{low}->{high}"
                 band_rows = sh_by_alt_band.get((altitude, band), [])
                 stat = _percentile([float(r["increment_norm_m_s2"]) for r in band_rows], float(opts["q"]))

@@ -148,11 +148,44 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 # Conservative starter set: pyflakes (F), import sort (I), pycodestyle (E/W),
-# pyupgrade (UP), bugbear (B). Expand once the baseline is clean.
+# pyupgrade (UP), bugbear (B). The baseline is now clean and gated in CI.
 select = ["E", "F", "W", "I", "UP", "B"]
-# E501 (line length) is intentionally not enforced during the freeze to avoid
-# mass reflow churn; revisit once the substantive lint baseline is clean.
-ignore = ["E501"]
+ignore = [
+  # E501 (line length): not enforced to avoid mass reflow churn; revisit later.
+  "E501",
+  # E402 (import-not-at-top): this optional-dependency-heavy codebase pervasively
+  # uses deliberate pre-import bootstraps — Qt platform setup, sys.path fixes for
+  # run-as-script, and guarded optional imports (torch/PySide6/spice/h5py).
+  "E402",
+  # E701/E702 (compound statements / semicolons): the numerical kernels and plot
+  # adapters intentionally write compact one-liners (e.g. vector component
+  # assignment `out[0]=0; out[1]=0; out[2]=0` in numba kernels). Consistent with
+  # the E501 stance above.
+  "E701",
+  "E702",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The ST-LRPS Studio pages share one internal widget/import hub (`qt_common`) via
+# a deliberate `from .qt_common import *`. Star-import diagnostics are expected and
+# intentional only for these page modules; the rest of the tree is fully enforced.
+"src/lunaris/surrogate/st_lrps/ui/studio_parts/*.py" = ["F403", "F405"]
+# qt_common is that hub: it imports the shared Qt surface purely to re-export it
+# through `import *`, so its own imports read as unused (F401) but must be kept.
+"src/lunaris/surrogate/st_lrps/ui/studio_parts/qt_common.py" = ["F401"]
+# studio.py is the Studio facade and training/cli.py the training entry point;
+# both deliberately re-export tabs / CLI helpers / dataset utilities consumed by
+# tests and external callers, so their re-export imports must not be pruned.
+"src/lunaris/surrogate/st_lrps/ui/studio.py" = ["F401"]
+"src/lunaris/surrogate/st_lrps/training/cli.py" = ["F401"]
+# Tests legitimately import for importability assertions ("can this still be
+# imported from its canonical path?"), fixture registration, and import-time
+# side effects, so an unused-import there is signal, not noise. Enforcing F401
+# in tests also tempts autofix into deleting those intentional imports.
+"tests/*" = ["F401"]
+# Qt model/view overrides require the framework signature `def rowCount(self,
+# parent=QModelIndex())`; the default-arg call is idiomatic and unavoidable.
+"src/lunaris/surrogate/st_lrps/ui/dashboard_widgets.py" = ["B008"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -168,12 +201,22 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+# Soft coverage floor (report-then-gate). Measured baseline of the CPU suite
+# (`-m "not slow and not requires_data and not requires_cuda"`) was 58% on
+# 2026-06-15 (1569 tests). The floor is held a few points below the baseline so
+# it guards against catastrophic regressions without blocking routine PRs;
+# ratchet it upward as coverage rises. pytest-cov honors this via fail_under.
+fail_under = 55
 
 # Enforces the documented layering: a layer never imports from a layer above it.
 # Encoded as forbidden contracts (precise and low-risk) rather than a full
 # ``layers`` contract, which keeps the surrogate package out of scope for now.
 [tool.importlinter]
 root_package = "lunaris"
+# Architecture contracts constrain *runtime* coupling. Imports made only inside
+# `if TYPE_CHECKING:` guards impose no runtime dependency, so they are excluded
+# (e.g. shared.scaling references data.datasets.DatasetMeta purely for typing).
+exclude_type_checking_imports = true
 
 [[tool.importlinter.contracts]]
 name = "common stays dependency-light (no upward imports)"

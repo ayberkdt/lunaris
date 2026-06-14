@@ -1,12 +1,12 @@
-# -*- coding: utf-8 -*-
 """Explicit split policies and split-manifest writing for ST-LRPS datasets."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any
 
 import numpy as np
 
@@ -162,7 +162,7 @@ def make_ood_altitude_split(
     *,
     side: str,
     seed: int,
-    threshold_km: Optional[float] = None,
+    threshold_km: float | None = None,
     holdout_fraction: float = 0.2,
     val_fraction: float = 0.1,
     test_fraction: float = 0.0,
@@ -296,10 +296,10 @@ def build_split_manifest(
     splits: Mapping[str, np.ndarray],
     split_policy: str,
     split_seed: int,
-    altitude_km: Optional[np.ndarray] = None,
-    xyz: Optional[np.ndarray] = None,
-    spatial_bins: Optional[Mapping[str, Any]] = None,
-    ood_thresholds: Optional[Mapping[str, Any]] = None,
+    altitude_km: np.ndarray | None = None,
+    xyz: np.ndarray | None = None,
+    spatial_bins: Mapping[str, Any] | None = None,
+    ood_thresholds: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     contract = (
         dataset_contract
@@ -368,10 +368,10 @@ def split_dataset_indices(
     split_seed: int,
     val_fraction: float,
     test_fraction: float = 0.0,
-    altitude_km: Optional[np.ndarray] = None,
-    xyz: Optional[np.ndarray] = None,
-    options: Optional[Mapping[str, Any]] = None,
-    split_info_out: Optional[dict] = None,
+    altitude_km: np.ndarray | None = None,
+    xyz: np.ndarray | None = None,
+    options: Mapping[str, Any] | None = None,
+    split_info_out: dict | None = None,
 ) -> dict[str, np.ndarray]:
     """Dispatch to a split policy.
 
@@ -456,7 +456,7 @@ def split_dataset_indices(
 
 
 def _range_per_split(
-    splits: Mapping[str, np.ndarray], values: Optional[np.ndarray]
+    splits: Mapping[str, np.ndarray], values: np.ndarray | None
 ) -> dict[str, dict[str, float | None]]:
     """Per-split ``{min, max}`` of a scalar field (altitude/lat/lon), or ``{}``.
 

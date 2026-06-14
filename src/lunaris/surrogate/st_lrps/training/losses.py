@@ -1,12 +1,12 @@
-﻿# -*- coding: utf-8 -*-
-"""Sobolev losses and curricula for scalar potential-field training."""
+﻿"""Sobolev losses and curricula for scalar potential-field training."""
 
 from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 import torch
 import torch.nn as nn
@@ -19,9 +19,12 @@ from lunaris.surrogate.st_lrps.shared.scaling import (
     compute_base_potential_from_contract,
 )
 
+if TYPE_CHECKING:
+    from lunaris.surrogate.st_lrps.training.config import TrainConfig
+
 logger = logging.getLogger(__name__)
 
-def _direction_loss_factor(epoch: int, cfg: "TrainConfig") -> float:
+def _direction_loss_factor(epoch: int, cfg: TrainConfig) -> float:
     """Effective direction-loss weight lam_dir for the current epoch.
 
     Ramped linearly from 0 to direction_loss_weight over direction_loss_ramp_epochs,
@@ -62,7 +65,7 @@ def _altitude_balanced_mean_square(
     alt_hi = float(altitude_max_km)
     alt_km = _altitude_km_from_positions(x_phys, r_ref_m=float(r_ref_m))
 
-    bin_terms: List[torch.Tensor] = []
+    bin_terms: list[torch.Tensor] = []
     cursor = alt_lo
     while cursor < alt_hi - 1e-9:
         upper = min(cursor + bin_width, alt_hi)
@@ -85,7 +88,7 @@ def _altitude_balanced_mean_square(
 def _radial_cross_components(
     err_vec: torch.Tensor,
     x_phys: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Decompose acceleration error into radial and cross-radial magnitudes.
 
@@ -142,7 +145,7 @@ class GradNormWeights:
         """Return the active loss-weighting mode."""
         return self.mode
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         """Serialize the mutable loss-weighting state for checkpoint resume.
 
         Captures the live weights and the NTK/EMA bookkeeping so a resumed run
@@ -164,7 +167,7 @@ class GradNormWeights:
             "last_n_grad_a": int(self.last_n_grad_a),
         }
 
-    def load_state_dict(self, state: Optional[Mapping[str, Any]]) -> None:
+    def load_state_dict(self, state: Mapping[str, Any] | None) -> None:
         """Restore mutable state captured by :meth:`state_dict`.
 
         Tolerant of missing keys (older checkpoints) and of ``None``; only the
@@ -187,7 +190,7 @@ class GradNormWeights:
         self,
         loss_u: torch.Tensor,
         loss_a: torch.Tensor,
-        shared_params: List[torch.nn.Parameter],
+        shared_params: list[torch.nn.Parameter],
     ) -> float:
         """Return ‖∂L_U/∂W‖ / ‖∂L_a/∂W‖, clamped to [w_a_min, w_a_max].
 
@@ -255,8 +258,8 @@ class GradNormWeights:
         self,
         loss_u: torch.Tensor,
         loss_a: torch.Tensor,
-        shared_params: List[torch.nn.Parameter],
-    ) -> Tuple[float, float]:
+        shared_params: list[torch.nn.Parameter],
+    ) -> tuple[float, float]:
         mode = self._effective_mode()
 
         if mode == "fixed":
@@ -305,7 +308,7 @@ class GradNormWeights:
         # dynamic: depends on step counter → caller should always try
         return True
 
-    def get_static_weights(self) -> Tuple[float, float]:
+    def get_static_weights(self) -> tuple[float, float]:
         """Return current weights without computing gradients (for val)."""
         return self.w_u, self.w_a
 
@@ -391,14 +394,14 @@ class SobolevLoss(nn.Module):
     """Sobolev loss: w_u·MSE(ΔU_scaled) + w_a·MSE(Δa_scaled). Isometric + GradNorm-ready."""
     def __init__(
         self,
-        scaler: "ScalerPack",
+        scaler: ScalerPack,
         a_sign: float = 1.0,
         mu_si: float = MU_MOON_SI,
         degree_min: int = -1,
         r_ref_m: float = R_MOON_SI,
-        target_contract: Optional[TargetContract | dict] = None,
-        target_mode: Optional[str] = None,
-        degree_max: Optional[int] = None,
+        target_contract: TargetContract | dict | None = None,
+        target_mode: str | None = None,
+        degree_max: int | None = None,
     ):
         super().__init__()
         self.a_sign = float(a_sign)
@@ -550,7 +553,7 @@ class SobolevLoss(nn.Module):
 
     def accel_from_u_scaled(
         self, u_scaled: torch.Tensor, x_scaled: torch.Tensor, *, create_graph: bool
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """Δa_phys = a_sign · ∂(ΔU_scaled)/∂(x_scaled) · (u_scale/x_scale). Scalar factor only."""
         grad_u_scaled = torch.autograd.grad(
             outputs=u_scaled,
@@ -571,7 +574,7 @@ class SobolevLoss(nn.Module):
         x_phys: torch.Tensor,
         u_phys: torch.Tensor,
         a_phys: torch.Tensor,
-        weights: "GradNormWeights",
+        weights: GradNormWeights,
         *,
         is_train: bool,
         accel_factor: float = 1.0,
@@ -590,7 +593,7 @@ class SobolevLoss(nn.Module):
         laplacian_subset_size: int = 512,
         laplacian_n_hutchinson: int = 4,
         laplacian_mode: str = "diagnostic",
-    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+    ) -> tuple[torch.Tensor, dict[str, float]]:
         """
         Compute the staged Sobolev objective and its reference metrics.
 
@@ -656,7 +659,7 @@ class SobolevLoss(nn.Module):
         dir_loss_active = False
         angular_mean_deg_val = 0.0
         angular_p90_deg_val = 0.0
-        loss_dir_t: Optional[torch.Tensor] = None
+        loss_dir_t: torch.Tensor | None = None
         if lambda_dir > 0.0:
             norms_true = delta_a_true.norm(dim=-1, keepdim=True)  # (B,1)
             mask = (norms_true > float(direction_floor_abs)).squeeze(-1)  # (B,)
@@ -770,7 +773,7 @@ class SobolevLoss(nn.Module):
         }
         return loss_opt, stats
 
-def _get_last_hidden_params(model: nn.Module) -> List[nn.Parameter]:
+def _get_last_hidden_params(model: nn.Module) -> list[nn.Parameter]:
     """
     Return the parameters of the last hidden Linear layer for GradNorm computation.
 
@@ -791,7 +794,7 @@ def _get_last_hidden_params(model: nn.Module) -> List[nn.Parameter]:
 
 def collocation_laplacian_loss(
     model: torch.nn.Module,
-    scaler: "ScalerPack",
+    scaler: ScalerPack,
     r_min_m: float,
     r_max_m: float,
     n_points: int,

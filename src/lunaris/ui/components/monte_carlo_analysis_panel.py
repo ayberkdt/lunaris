@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Monte Carlo Analysis Workspace
 ==============================
@@ -31,7 +30,7 @@ from __future__ import annotations
 import io
 import math
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -43,7 +42,7 @@ except ImportError:
         import sys
 
         print("Run as: python -m lunaris.ui.components.monte_carlo_analysis_panel", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -107,7 +106,7 @@ def _entry_style() -> str:
     """
 
 
-def _format_span(seconds: Optional[float]) -> str:
+def _format_span(seconds: float | None) -> str:
     """
     Render short engineering-style durations for metric tables.
 
@@ -126,7 +125,7 @@ def _format_span(seconds: Optional[float]) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-def _format_percent(probability: Optional[float], *, decimals: int = 2) -> str:
+def _format_percent(probability: float | None, *, decimals: int = 2) -> str:
     """Render probabilities as percentages for operator-facing summary cards."""
 
     if probability is None or not math.isfinite(float(probability)):
@@ -134,7 +133,7 @@ def _format_percent(probability: Optional[float], *, decimals: int = 2) -> str:
     return f"{float(probability) * 100.0:.{decimals}f}%"
 
 
-def _format_days(seconds: Optional[float], *, decimals: int = 3) -> str:
+def _format_days(seconds: float | None, *, decimals: int = 3) -> str:
     """Render elapsed seconds as a day-based engineering quantity."""
 
     if seconds is None or not math.isfinite(float(seconds)):
@@ -142,7 +141,7 @@ def _format_days(seconds: Optional[float], *, decimals: int = 3) -> str:
     return f"{float(seconds) / 86400.0:.{decimals}f} d"
 
 
-def _format_km(value: Optional[float], *, decimals: int = 3) -> str:
+def _format_km(value: float | None, *, decimals: int = 3) -> str:
     """Render kilometre-scale values with a consistent suffix."""
 
     if value is None or not math.isfinite(float(value)):
@@ -224,13 +223,13 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
     polished PDF report without re-running the simulation itself.
     """
 
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None) -> None:
+    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
-        self._worker: Optional[MCAnalysisWorker] = None
-        self._result: Optional[Any] = None
-        self._stats: Optional[Any] = None
+        self._worker: MCAnalysisWorker | None = None
+        self._result: Any | None = None
+        self._stats: Any | None = None
         self._current_result_path: str = ""
-        self._last_report_path: Optional[str] = None
+        self._last_report_path: str | None = None
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -401,7 +400,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(14)
 
-        self._summary_labels: Dict[str, QtWidgets.QLabel] = {}
+        self._summary_labels: dict[str, QtWidgets.QLabel] = {}
 
         def _add(row: int, col: int, key: str, title: str) -> None:
             tile = QtWidgets.QFrame()
@@ -775,8 +774,9 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
             return
 
         try:
-            from lunaris.analysis.monte_carlo.plotting import plot_mc_report
             from matplotlib import pyplot as plt
+
+            from lunaris.analysis.monte_carlo.plotting import plot_mc_report
 
             plot_mc_report(self._result, self._stats, output_path=out_path, show=False)
             plt.close("all")
@@ -912,6 +912,8 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
             return
 
         try:
+            from matplotlib import pyplot as plt
+
             from lunaris.analysis.monte_carlo.plotting import (
                 plot_altitude_envelope,
                 plot_covariance_tubes_3d,
@@ -920,7 +922,6 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
                 plot_oe_dispersion,
                 plot_position_covariance_history,
             )
-            from matplotlib import pyplot as plt
 
             title = self.cb_plot.currentText()
             figure = None

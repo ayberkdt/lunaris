@@ -66,9 +66,7 @@ from datetime import datetime, timedelta, timezone
 
 from numba import njit
 
-from .constants import MJD_J2000_TT, DAY_S
-
-
+from .constants import DAY_S, MJD_J2000_TT
 
 # =============================================================================
 # 1.                    JULIAN DATE, MJD, and J2000 (TT) SECONDS

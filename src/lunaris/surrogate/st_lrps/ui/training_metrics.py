@@ -15,10 +15,9 @@ from __future__ import annotations
 import math
 import re
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
-
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any
 
 # ── Phase 7: Auto log interval ────────────────────────────────────────────
 
@@ -62,8 +61,8 @@ class EpochGuard:
     """
 
     def __init__(self) -> None:
-        self._started: Optional[int] = None
-        self._ended: Optional[int] = None
+        self._started: int | None = None
+        self._ended: int | None = None
 
     def reset(self) -> None:
         self._started = None
@@ -107,10 +106,10 @@ class ETAEstimator:
         self._current_epoch: int = 0
         self._batch_progress: float = 0.0  # 0..1 within current epoch
 
-        self._epoch_start: Optional[float] = None
-        self._ema_epoch_s: Optional[float] = None
+        self._epoch_start: float | None = None
+        self._ema_epoch_s: float | None = None
         self._completed_epochs: int = 0
-        self._training_start: Optional[float] = None
+        self._training_start: float | None = None
 
     # ── Public API ───────────────────────────────────────────────────
 
@@ -158,12 +157,12 @@ class ETAEstimator:
                     )
             self._completed_epochs += 1
 
-    def elapsed_seconds(self) -> Optional[float]:
+    def elapsed_seconds(self) -> float | None:
         if self._training_start is None:
             return None
         return time.monotonic() - self._training_start
 
-    def remaining_seconds(self) -> Optional[float]:
+    def remaining_seconds(self) -> float | None:
         """Estimated seconds remaining.  Returns None if insufficient data."""
         if self._total_epochs <= 0:
             return None
@@ -191,20 +190,20 @@ class ETAEstimator:
 
         return None  # Insufficient data
 
-    def estimated_finish_time(self) -> Optional[datetime]:
+    def estimated_finish_time(self) -> datetime | None:
         """Wall-clock datetime when training is expected to finish."""
         rem = self.remaining_seconds()
         if rem is None:
             return None
         return datetime.now() + timedelta(seconds=rem)
 
-    def current_epoch_seconds(self) -> Optional[float]:
+    def current_epoch_seconds(self) -> float | None:
         """Wall-clock seconds spent in the current (in-progress) epoch."""
         if self._epoch_start is None:
             return None
         return max(0.0, time.monotonic() - self._epoch_start)
 
-    def average_epoch_seconds(self) -> Optional[float]:
+    def average_epoch_seconds(self) -> float | None:
         """Smoothed average epoch duration (EMA), or None before any epoch ends."""
         return self._ema_epoch_s
 
@@ -239,7 +238,7 @@ class ETAEstimator:
         return format_finish_time(ft)
 
 
-def format_finish_time(ft: datetime, now: Optional[datetime] = None) -> str:
+def format_finish_time(ft: datetime, now: datetime | None = None) -> str:
     """Format an estimated finish datetime.
 
     HH:MM when the finish is today, otherwise YYYY-MM-DD HH:MM.
@@ -268,25 +267,25 @@ class TrainingRecord:
     phase: str = ""        # "train", "val", "checkpoint", "system"
     batch: int = 0
     total_batches: int = 0
-    progress_pct: Optional[float] = None
-    loss_opt: Optional[float] = None
-    loss_ref: Optional[float] = None
-    loss_u: Optional[float] = None
-    loss_a: Optional[float] = None
-    direction_loss: Optional[float] = None
-    cos_sim: Optional[float] = None
-    angular_deg: Optional[float] = None
-    lr: Optional[float] = None
-    samples_per_s: Optional[float] = None
-    eta_s: Optional[float] = None
+    progress_pct: float | None = None
+    loss_opt: float | None = None
+    loss_ref: float | None = None
+    loss_u: float | None = None
+    loss_a: float | None = None
+    direction_loss: float | None = None
+    cos_sim: float | None = None
+    angular_deg: float | None = None
+    lr: float | None = None
+    samples_per_s: float | None = None
+    eta_s: float | None = None
     memory: str = ""
     event: str = ""        # "batch", "epoch_end", "val_summary", "checkpoint_saved",
                            # "best_updated", "warning", "error", "info"
     message: str = ""
     severity: str = "info"  # "info", "success", "warning", "error"
-    score: Optional[float] = None
-    best_score: Optional[float] = None
-    best_epoch: Optional[int] = None
+    score: float | None = None
+    best_score: float | None = None
+    best_epoch: int | None = None
 
 
 class TrainingLogParser:
@@ -361,7 +360,7 @@ class TrainingLogParser:
         self._current_epoch: int = 0
         self._total_epochs: int = 0
 
-    def parse_line(self, line: str) -> Optional[TrainingRecord]:
+    def parse_line(self, line: str) -> TrainingRecord | None:
         """Parse a single log line into a TrainingRecord, or None if not parseable."""
         line = line.strip()
         if not line:
@@ -504,7 +503,7 @@ class TrainingLogParser:
         return rec
 
 
-def _safe_float(s: str) -> Optional[float]:
+def _safe_float(s: str) -> float | None:
     """Convert string to float, returning None on failure."""
     try:
         v = float(s)
@@ -525,14 +524,14 @@ class TrainingMetricsStore:
     """
 
     def __init__(self, max_records: int = 5000) -> None:
-        self._records: List[TrainingRecord] = []
+        self._records: list[TrainingRecord] = []
         self._max_records = max_records
 
         # Latest values cache for fast KPI lookups
-        self._latest: Dict[str, Any] = {}
+        self._latest: dict[str, Any] = {}
 
     @property
-    def records(self) -> List[TrainingRecord]:
+    def records(self) -> list[TrainingRecord]:
         return self._records
 
     def append(self, record: TrainingRecord) -> int:
@@ -557,22 +556,22 @@ class TrainingMetricsStore:
     def latest(self, key: str, default: Any = None) -> Any:
         return self._latest.get(key, default)
 
-    def latest_train_loss(self) -> Optional[float]:
+    def latest_train_loss(self) -> float | None:
         return self._latest.get("train_loss_opt")
 
-    def latest_val_loss(self) -> Optional[float]:
+    def latest_val_loss(self) -> float | None:
         return self._latest.get("val_loss_ref")
 
-    def latest_lr(self) -> Optional[float]:
+    def latest_lr(self) -> float | None:
         return self._latest.get("lr")
 
     def latest_epoch(self) -> int:
         return self._latest.get("epoch", 0)
 
-    def latest_best_score(self) -> Optional[float]:
+    def latest_best_score(self) -> float | None:
         return self._latest.get("best_score")
 
-    def latest_best_epoch(self) -> Optional[int]:
+    def latest_best_epoch(self) -> int | None:
         return self._latest.get("best_epoch")
 
     def _update_latest(self, rec: TrainingRecord) -> None:

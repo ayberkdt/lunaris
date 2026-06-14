@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for the ST-LRPS surrogate AI/ML training-system upgrade.
 
@@ -33,21 +32,21 @@ from lunaris.surrogate.st_lrps.data.datasets import (
     collate_h5,
     collate_xyz_u_a,
 )
-from lunaris.surrogate.st_lrps.training.config import TrainConfig, parse_args
-from lunaris.surrogate.st_lrps.training.engine import _laplacian_requested
-from lunaris.surrogate.st_lrps.training.losses import (
-    collocation_laplacian_loss,
-    GradNormWeights,
-    SobolevLoss,
-)
 from lunaris.surrogate.st_lrps.networks.models import (
-    build_model_from_config,
-    compute_architecture_signature,
     RadialDecayEncoding,
     RealSHBasisEncoding,
     _compute_harmonic_w0_bands,
+    build_model_from_config,
+    compute_architecture_signature,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
+from lunaris.surrogate.st_lrps.training.config import TrainConfig, parse_args
+from lunaris.surrogate.st_lrps.training.engine import _laplacian_requested
+from lunaris.surrogate.st_lrps.training.losses import (
+    GradNormWeights,
+    SobolevLoss,
+    collocation_laplacian_loss,
+)
 
 R_REF = 1.737e6
 MU = 4.902800066e12

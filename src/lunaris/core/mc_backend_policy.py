@@ -1,5 +1,4 @@
 # ST_LRPS/core/mc_backend_policy.py
-# -*- coding: utf-8 -*-
 """
 Monte Carlo Backend Capability Matrix and Policy Resolver
 =========================================================
@@ -45,8 +44,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, List, Tuple
-
+from typing import Any
 
 # =============================================================================
 # 1.                      CUDA AVAILABILITY PROBES
@@ -103,7 +101,7 @@ def _torch_cuda_device_name() -> str | None:
         return None
 
 
-def _gpu_sh_limits() -> tuple[int, Tuple[int, ...]]:
+def _gpu_sh_limits() -> tuple[int, tuple[int, ...]]:
     """Return current true-GPU classic-SH max degree and supported tiers.
 
     Sourced from the central backend capability registry
@@ -195,7 +193,7 @@ def select_classic_sh_backend(
     # --- Explicit Torch CPU -----------------------------------------------
     if req == "torch_cpu_sh":
         try:
-            import torch  # noqa: F811
+            import torch  # noqa: F401, F811  # availability probe only
             return _decide("torch_cpu_sh")
         except ImportError:
             return _decide("torch_cpu_sh", applied=False, reason="PyTorch not importable for torch_cpu_sh", err=True)
@@ -380,13 +378,13 @@ class MCBackendPlan:
     requested_sh_degree: int = 0
     actual_sh_degree: int | None = None
     gpu_sh_max_degree: int = 24
-    gpu_sh_supported_tiers: Tuple[int, ...] = (24,)
+    gpu_sh_supported_tiers: tuple[int, ...] = (24,)
     runtime_model_kind: str | None = None
     cuda_device_name: str | None = None
     requested_device: str = ""
     actual_device: str = ""
     dtype: str = "float64"
-    warnings: List[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     reason: str = ""
     fallback_applied: bool = False
     fallback_reason: str = ""
@@ -430,7 +428,7 @@ class MCBackendPlan:
 # =============================================================================
 
 
-def _st_lrps_gpu_unsupported_features(flags: Any) -> Tuple[str, ...]:
+def _st_lrps_gpu_unsupported_features(flags: Any) -> tuple[str, ...]:
     """
     Return physics flags that are active but unsupported on the GPU ST-LRPS path.
 
@@ -441,7 +439,7 @@ def _st_lrps_gpu_unsupported_features(flags: Any) -> Tuple[str, ...]:
     if flags is None:
         return ()
 
-    unsupported: List[str] = []
+    unsupported: list[str] = []
     if bool(getattr(flags, "enable_3rd_body_sun", False)):
         unsupported.append("third-body Sun")
     if bool(getattr(flags, "enable_3rd_body_earth", False)):
@@ -490,7 +488,7 @@ def resolve_mc_backend_policy(
         fallback reasons; callers should emit these as ``RuntimeWarning``.
     """
 
-    warns: List[str] = []
+    warns: list[str] = []
 
     # --- Hardware probes ------------------------------------------------------
     torch_cuda = _torch_cuda_available()
@@ -801,7 +799,7 @@ def resolve_mc_backend_policy(
 
     # ----- cpu_sh (explicit, recorded fallback off the classic-SH GPU path) ----
     # Build an honest, specific warning naming the actual cause.
-    blocking: Tuple[str, ...] = ()
+    blocking: tuple[str, ...] = ()
     if numba_cuda and numba_unsupported:
         blocking = numba_unsupported
     elif torch_cuda and torch_unsupported:

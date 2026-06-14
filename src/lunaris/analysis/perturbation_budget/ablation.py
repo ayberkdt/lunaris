@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Dict, List
 
-
-def propagation_ablation_not_run() -> List[Dict[str, str]]:
+def propagation_ablation_not_run() -> list[dict[str, str]]:
     """Return an explicit placeholder row for MVP reports."""
     return [
         {

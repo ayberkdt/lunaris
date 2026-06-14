@@ -1,5 +1,4 @@
 # tests/test_st_lrps_runtime_contracts.py
-# -*- coding: utf-8 -*-
 """
 CPU-only runtime-contract tests for ``lunaris.surrogate.st_lrps.runtime.force_model``.
 
@@ -27,6 +26,9 @@ import pytest
 torch = pytest.importorskip("torch")
 import torch.nn as nn  # noqa: E402
 
+from lunaris.surrogate.st_lrps.data.dataset_parameters import (  # noqa: E402
+    R_MOON_SI,
+)
 from lunaris.surrogate.st_lrps.runtime.force_model import (  # noqa: E402
     DirectForceRuntime,
     SurrogateForceModel,
@@ -34,10 +36,6 @@ from lunaris.surrogate.st_lrps.runtime.force_model import (  # noqa: E402
 from lunaris.surrogate.st_lrps.shared.scaling import (  # noqa: E402
     IsometricScaleParams,
     ScalerPack,
-)
-from lunaris.surrogate.st_lrps.data.dataset_parameters import (  # noqa: E402
-    MU_MOON_SI,
-    R_MOON_SI,
 )
 
 pytestmark = pytest.mark.requires_torch
@@ -182,7 +180,8 @@ def test_residual_sh_baseline_requires_base_accel_fn():
         fm.predict_total_accel(x)  # no baseline provided
 
     # Providing the baseline makes it work and returns the right shape.
-    base_fn = lambda arr: np.zeros((np.asarray(arr).reshape(-1, 3).shape[0], 3))
+    def base_fn(arr):
+        return np.zeros((np.asarray(arr).reshape(-1, 3).shape[0], 3))
     out = fm.predict_total_accel(x, base_fn)
     assert np.asarray(out).shape == (3,)
 

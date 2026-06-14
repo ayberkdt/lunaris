@@ -11,9 +11,8 @@ from lunaris.analysis.perturbation_budget.acceleration_budget import sh_incremen
 from lunaris.analysis.perturbation_budget.cli import main as perturbation_budget_main
 from lunaris.analysis.perturbation_budget.config import PerturbationBudgetConfig
 from lunaris.analysis.perturbation_budget.reporting import run_perturbation_budget
-from lunaris.analysis.perturbation_budget.sampling import decompose_ric
+from lunaris.analysis.perturbation_budget.sampling import SampleState, decompose_ric
 from lunaris.analysis.perturbation_budget.uncertainty_budget import compute_uncertainty_budget
-from lunaris.analysis.perturbation_budget.sampling import SampleState
 
 
 def test_ric_components_reconstruct_vector_norm() -> None:

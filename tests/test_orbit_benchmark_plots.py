@@ -22,7 +22,6 @@ if str(ROOT) not in sys.path:
 
 from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fake-data builders
 # ---------------------------------------------------------------------------
@@ -47,7 +46,7 @@ def _make_args(**over) -> argparse.Namespace:
 def _build(n=4, err_scale_km=5e-4, T=10,
            models=("GPU_SH20_RK4", "GPU_SH80_RK4", "GPU_ST_LRPS_RK4")):
     """Construct a self-consistent fake GPU-batch dataset."""
-    rng = np.random.default_rng(0)
+    np.random.default_rng(0)
     t = np.linspace(0.0, 86400.0, T)
     scenarios, truth_t, truth_y, truth_rt = [], {}, {}, {}
     for sid in range(n):

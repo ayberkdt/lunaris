@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 st_lrps.ui.studio_parts.orbit_benchmark_pages
 
@@ -24,11 +23,6 @@ import time
 from pathlib import Path
 
 from lunaris.common.paths import project_root_from_file
-from typing import List, Optional
-
-from .qt_common import *
-from .qt_common import NoScrollComboBox
-
 from lunaris.surrogate.st_lrps.evaluation import progress as _progress
 
 from .common_widgets import (
@@ -47,6 +41,8 @@ from .common_widgets import (
     _tune_form,
     _tune_inputs,
 )
+from .qt_common import *
+from .qt_common import NoScrollComboBox
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = project_root_from_file(__file__)
@@ -156,7 +152,7 @@ def _is_telemetry_line(line: str) -> bool:
 class OrbitBenchmarkTab(QWidget):
     """Configure and launch the orbit-level gravity benchmark harness."""
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
 
         # -- Run mode ------------------------------------------------------
@@ -202,7 +198,7 @@ class OrbitBenchmarkTab(QWidget):
         grp_models = QGroupBox("Models to Run")
         models_lo = QVBoxLayout()
         self._model_checks: dict[str, QCheckBox] = {}
-        self._custom_models: List[str] = []
+        self._custom_models: list[str] = []
         self._models_grid = QGridLayout()
         self._models_grid.setContentsMargins(0, 0, 0, 0)
         self._model_grid_count = 0
@@ -559,9 +555,9 @@ class OrbitBenchmarkTab(QWidget):
 
         # -- Run-monitor dashboard state ----------------------------------
         self._model_status: dict[str, str] = {}
-        self._pipeline_order: List[str] = []
+        self._pipeline_order: list[str] = []
         self._chips: dict[str, dict] = {}
-        self._current_model: Optional[str] = None
+        self._current_model: str | None = None
         self._pipeline_dynamic = False
         self._hidden_telemetry = 0
 
@@ -869,12 +865,12 @@ class OrbitBenchmarkTab(QWidget):
         sec.set_expanded(False)
         return sec
 
-    def _discover_result_images(self, out_dir: str) -> List[Path]:
+    def _discover_result_images(self, out_dir: str) -> list[Path]:
         """Collect plot images from the output dir and its immediate subdirs."""
         base = Path(out_dir)
         if not base.is_dir():
             return []
-        imgs: List[Path] = list(base.glob("*.png")) + list(base.glob("*.jpg"))
+        imgs: list[Path] = list(base.glob("*.png")) + list(base.glob("*.jpg"))
         for sub in base.glob("*/"):
             if sub.is_dir():
                 imgs += list(sub.glob("*.png")) + list(sub.glob("*.jpg"))
@@ -924,7 +920,7 @@ class OrbitBenchmarkTab(QWidget):
     # ------------------------------------------------------------------
     # Model pipeline chips
     # ------------------------------------------------------------------
-    def _rebuild_pipeline(self, models: List[str]) -> None:
+    def _rebuild_pipeline(self, models: list[str]) -> None:
         """(Re)build the chip strip: Truth, a preview of the selected models, Report.
 
         This is the pre-run preview keyed by UI base names. Once the run starts
@@ -1173,7 +1169,7 @@ class OrbitBenchmarkTab(QWidget):
     # ------------------------------------------------------------------
     # Pipeline state transitions
     # ------------------------------------------------------------------
-    def _on_phase(self, phase: str, model: Optional[str]) -> None:
+    def _on_phase(self, phase: str, model: str | None) -> None:
         """Map a structured phase signal onto pipeline chip transitions."""
         if phase == "truth":
             self._mark_truth_running()
@@ -1324,11 +1320,11 @@ class OrbitBenchmarkTab(QWidget):
     # ------------------------------------------------------------------
     # Command construction
     # ------------------------------------------------------------------
-    def _selected_models(self) -> List[str]:
+    def _selected_models(self) -> list[str]:
         return [name for name, cb in self._model_checks.items() if cb.isChecked()]
 
-    def _build_args(self, show_errors: bool = True) -> Optional[List[str]]:
-        def fail(title: str, message: str) -> Optional[List[str]]:
+    def _build_args(self, show_errors: bool = True) -> list[str] | None:
+        def fail(title: str, message: str) -> list[str] | None:
             if show_errors:
                 QMessageBox.critical(self, title, message)
             else:
@@ -1633,7 +1629,7 @@ class OrbitBenchmarkTab(QWidget):
 class OrbitBenchmarkPage(QWidget):
     """Analysis workspace page: orbit-level gravity model benchmark."""
 
-    def __init__(self, benchmark_tab: QWidget, parent: Optional[QWidget] = None):
+    def __init__(self, benchmark_tab: QWidget, parent: QWidget | None = None):
         super().__init__(parent)
         lo = QVBoxLayout()
         lo.setContentsMargins(22, 20, 22, 20)
@@ -1657,7 +1653,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
     and which models to compare.
     """
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
 
         # -- Models to compare (populated from the chosen folder) ----------
@@ -1878,7 +1874,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
             return (2, 0, n)
         return (1, 0, n)
 
-    def _populate_models(self, names: List[str], checked: Optional[set] = None) -> None:
+    def _populate_models(self, names: list[str], checked: set | None = None) -> None:
         self._clear_model_checks()
         want = set(checked) if checked is not None else set(names)
         for name in names:
@@ -1889,11 +1885,11 @@ class OrbitBenchmarkPlotsTab(QWidget):
         for cb in self._model_checks.values():
             cb.setChecked(value)
 
-    def _selected_models(self) -> List[str]:
+    def _selected_models(self) -> list[str]:
         return [n for n, cb in self._model_checks.items() if cb.isChecked()]
 
     # -- folder scan / auto-detection -------------------------------------
-    def _resolve_cache_dir(self) -> Optional[Path]:
+    def _resolve_cache_dir(self) -> Path | None:
         """Effective cache dir: explicit cache override, else <out_dir>/benchmark_cache.
 
         If the chosen output dir already *is* a cache (holds ``models/`` or a
@@ -1912,7 +1908,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         return out_p / "benchmark_cache"
 
     @staticmethod
-    def _read_manifest(cache_dir: Path) -> Optional[dict]:
+    def _read_manifest(cache_dir: Path) -> dict | None:
         path = cache_dir / "cache_manifest.json"
         if not path.is_file():
             return None
@@ -1921,7 +1917,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         except Exception:
             return None
 
-    def _discover_cached_models(self, cache_dir: Path) -> List[str]:
+    def _discover_cached_models(self, cache_dir: Path) -> list[str]:
         """Base model names that have at least one cached scenario trajectory."""
         root = cache_dir / "models"
         found: set = set()
@@ -1946,7 +1942,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         combo.addItem(sval.upper(), sval)
         combo.setCurrentIndex(combo.count() - 1)
 
-    def _apply_manifest(self, manifest: Optional[dict]) -> None:
+    def _apply_manifest(self, manifest: dict | None) -> None:
         """Auto-fill truth / integrator / step size from the cache manifest."""
         if not isinstance(manifest, dict):
             return
@@ -1956,7 +1952,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         dt_list = meta.get("gpu_rk4_dt_s_list") or []
         rk4 = meta.get("rk4_dt_s")
         if dt_list:
-            self.rk4_dt_list.setText(",".join("%g" % float(v) for v in dt_list))
+            self.rk4_dt_list.setText(",".join(f"{float(v):g}" for v in dt_list))
             try:
                 self.rk4_dt.setValue(float(dt_list[0]))
             except (TypeError, ValueError):
@@ -2020,8 +2016,8 @@ class OrbitBenchmarkPlotsTab(QWidget):
             self._scan_and_populate()
 
     # -- command -----------------------------------------------------------
-    def _build_args(self, show_errors: bool = True) -> Optional[List[str]]:
-        def fail(title: str, message: str) -> Optional[List[str]]:
+    def _build_args(self, show_errors: bool = True) -> list[str] | None:
+        def fail(title: str, message: str) -> list[str] | None:
             if show_errors:
                 QMessageBox.critical(self, title, message)
             else:
@@ -2049,7 +2045,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
                 return fail("Δt list", "Δt list must be comma-separated numbers, e.g. 10,5.")
             if not vals or any(v <= 0 for v in vals):
                 return fail("Δt list", "Δt list values must all be positive, e.g. 10,5.")
-            dt_list_norm = ",".join("%g" % v for v in vals)
+            dt_list_norm = ",".join(f"{v:g}" for v in vals)
 
         args = ["-u", "-m", BENCHMARK_CLI_MODULE,
                 "--gpu-batch-compare", "--rebuild-metrics", "--reuse-cache",
@@ -2117,7 +2113,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         self._save_settings()
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
-    def _discover_result_images(self, out_dir: str, since: Optional[float] = None) -> List[Path]:
+    def _discover_result_images(self, out_dir: str, since: float | None = None) -> list[Path]:
         """Images this run produced, grouped by location priority.
 
         The harness writes figures to ``<out_dir>/plots`` (and ``reports``), so
@@ -2129,7 +2125,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         base = Path(out_dir)
         if not base.is_dir():
             return []
-        search_dirs: List[Path] = []
+        search_dirs: list[Path] = []
         for name in ("plots", "reports"):
             d = base / name
             if d.is_dir():
@@ -2141,7 +2137,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
 
         cutoff = (since - 2.0) if since else None
         seen: set = set()
-        imgs: List[Path] = []
+        imgs: list[Path] = []
         for d in search_dirs:
             candidates = sorted(
                 list(d.glob("*.png")) + list(d.glob("*.jpg")),
@@ -2257,7 +2253,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
 class OrbitBenchmarkPlotsPage(QWidget):
     """Analysis workspace page: regenerate gravity-benchmark plots from cache."""
 
-    def __init__(self, plots_tab: QWidget, parent: Optional[QWidget] = None):
+    def __init__(self, plots_tab: QWidget, parent: QWidget | None = None):
         super().__init__(parent)
         lo = QVBoxLayout()
         lo.setContentsMargins(22, 20, 22, 20)

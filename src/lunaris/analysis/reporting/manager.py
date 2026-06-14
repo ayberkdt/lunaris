@@ -79,20 +79,19 @@ directly and display the returned Matplotlib figures.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Callable
-
 import datetime as _dt
 import os
 import re
+from collections.abc import Callable, Mapping
 from pathlib import Path
-
-import numpy as np
-
-from lunaris.loaders.io_helpers import find_lunar_map_path
+from typing import Any
 
 # --- Matplotlib backend selection (headless-safe) ---
 # IMPORTANT: backend must be selected BEFORE importing pyplot.
 import matplotlib
+import numpy as np
+
+from lunaris.loaders.io_helpers import find_lunar_map_path
 
 _INTERACTIVE = os.environ.get("STLRPS_INTERACTIVE", "0").strip().lower() in {"1", "true", "yes", "y"}
 if not _INTERACTIVE:
@@ -117,47 +116,43 @@ except ImportError:  # styling is optional
 
 
 # --- Postprocess extractors (hard dependency) ---
-from lunaris.analysis.postprocess import (  # type: ignore
-    extract_time_seconds,
-    extract_time_days,
-    extract_altitude_km,
-    extract_elements,
-    extract_invariants,
-    extract_events,
-)
-
 from lunaris.analysis.formatting import (
+    format_count,
     format_days,
     format_duration,
-    format_count,
     format_km,
     format_sci_or_na,
+)
+from lunaris.analysis.postprocess import (  # type: ignore
+    extract_altitude_km,
+    extract_elements,
+    extract_events,
+    extract_invariants,
+    extract_time_days,
+    extract_time_seconds,
 )
 
 # --- Plotting API (hard dependency) ---
 from .plotting import (  # type: ignore
-    # --- Public Figures ---
-    figure_elements_timeseries,
-    figure_invariants,
-    figure_altitude_with_events,
-    figure_relative_drift,
-    figure_ground_track,
-    figure_orbit_3d,
-    figure_eomega,
-    figure_perturbation_magnitude,
-    figure_events_table,
-
-    # --- Layout & Data Helpers (Shared API) ---
-    draw_table,
     draw_kv_block,
     draw_kv_table,
-    metrics_rows,
-
+    # --- Layout & Data Helpers (Shared API) ---
+    draw_table,
     # --- Config Discovery ---
     effects_from_meta_history,
+    figure_altitude_with_events,
+    # --- Public Figures ---
+    figure_elements_timeseries,
+    figure_eomega,
+    figure_events_table,
+    figure_ground_track,
+    figure_invariants,
+    figure_orbit_3d,
+    figure_perturbation_magnitude,
+    figure_relative_drift,
     merge_meta_with_auto_config,
+    metrics_rows,
 )
-
 
 # =============================================================================
 # 1.                                CORE HELPERS
@@ -197,14 +192,14 @@ def _as_1d_float_array(x: Any) -> np.ndarray:
         return np.array([], dtype=float)
 
 
-def _ensure_dir(path: Optional[str]) -> str:
+def _ensure_dir(path: str | None) -> str:
     """Ensure directory exists; return normalized directory path as str."""
     p = Path(path or ".")
     p.mkdir(parents=True, exist_ok=True)
     return str(p)
 
 
-def _find_default_lunar_surface_map() -> Optional[str]:
+def _find_default_lunar_surface_map() -> str | None:
     """
     Compatibility wrapper around the loader-layer lunar-map locator.
 
@@ -216,9 +211,9 @@ def _find_default_lunar_surface_map() -> Optional[str]:
 
 
 def _resolve_out_dir_hint(
-    hint: Optional[str],
-    meta: Optional[Mapping[str, Any]],
-) -> Optional[str]:
+    hint: str | None,
+    meta: Mapping[str, Any] | None,
+) -> str | None:
     """Return a directory path usable for config discovery.
 
     Plotting-side auto-config expects a directory. Callers sometimes pass
@@ -261,10 +256,10 @@ def _resolve_out_dir_hint(
 
 def figure_summary_page(
     history: Mapping[str, Any],
-    meta: Optional[Mapping[str, Any]] = None,
+    meta: Mapping[str, Any] | None = None,
     *,
     ctx: Any = None,
-    pdf_or_out_dir_hint: Optional[str] = None,
+    pdf_or_out_dir_hint: str | None = None,
 ) -> plt.Figure:
     """Build an executive-summary page with decision-oriented metrics and diagnostics."""
     apply_rcparams(DEFAULT_STYLE)
@@ -451,10 +446,10 @@ def figure_summary_page(
 
 def figure_run_config_page(
     history: Mapping[str, Any],
-    meta: Optional[Mapping[str, Any]] = None,
+    meta: Mapping[str, Any] | None = None,
     *,
     ctx: Any = None,
-    pdf_or_out_dir_hint: Optional[str] = None,
+    pdf_or_out_dir_hint: str | None = None,
 ) -> plt.Figure:
     """
     Build the configuration page with cleaner engineering summaries.
@@ -469,7 +464,7 @@ def figure_run_config_page(
     out_dir_hint = _resolve_out_dir_hint(pdf_or_out_dir_hint, meta)
     meta2 = merge_meta_with_auto_config(meta or {}, history, out_dir_hint)
 
-    def _as_dict(obj: Any) -> Dict[str, Any]:
+    def _as_dict(obj: Any) -> dict[str, Any]:
         if obj is None:
             return {}
         if isinstance(obj, dict):
@@ -591,7 +586,7 @@ def _render_and_save(
     - Ensures the created figure is closed to avoid memory leaks.
     - Logs exceptions but does not raise (report generation should be resilient).
     """
-    fig: Optional[plt.Figure] = None
+    fig: plt.Figure | None = None
     try:
         apply_rcparams(DEFAULT_STYLE)
         fig = fig_factory()
@@ -610,13 +605,13 @@ def save_quicklook_pngs(
     history: Mapping[str, Any],
     *,
     prefix: str = "ST_LRPS",
-    meta: Optional[Mapping[str, Any]] = None,
+    meta: Mapping[str, Any] | None = None,
     dpi: int = 300,
     ctx: Any = None,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Generate and save individual PNGs for quick preview."""
     out_path = _ensure_dir(out_dir)
-    saved_files: Dict[str, str] = {}
+    saved_files: dict[str, str] = {}
 
     # Pre-fetch (avoid repeated extraction)
     t_days = _as_1d_float_array(extract_time_days(history))
@@ -661,7 +656,7 @@ def make_report_pdf(
     pdf_path: str,
     history: Mapping[str, Any],
     *,
-    meta: Optional[Mapping[str, Any]] = None,
+    meta: Mapping[str, Any] | None = None,
     ctx: Any = None,
 ) -> str:
     """Compile a multi-page PDF report from simulation history."""
@@ -757,14 +752,14 @@ def plot_all(
     out_dir: str,
     *,
     title_prefix: str = "ST_LRPS",
-    save_pdf: Optional[bool] = None,
-    save_png: Optional[bool] = None,
-    dpi: Optional[int] = None,
-    meta: Optional[Mapping[str, Any]] = None,
+    save_pdf: bool | None = None,
+    save_png: bool | None = None,
+    dpi: int | None = None,
+    meta: Mapping[str, Any] | None = None,
     ctx: Any = None,
     use_run_subdir: bool = True,
     visual_cfg: Any = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Orchestrate the full reporting pipeline (PNGs + PDF)."""
 
     # --- Resolve defaults from visual_cfg (if present) ---
@@ -796,14 +791,14 @@ def plot_all(
     logger.info("Output directory: %s", run_dir)
 
     # --- Metadata (inject directory hint for config discovery) ---
-    meta2: Dict[str, Any] = dict(meta or {})
+    meta2: dict[str, Any] = dict(meta or {})
     meta2["_report_search_dir"] = run_dir
     if not meta2.get("lunar_map_path"):
         lunar_map = _find_default_lunar_surface_map()
         if lunar_map:
             meta2["lunar_map_path"] = lunar_map
 
-    results: Dict[str, Any] = {
+    results: dict[str, Any] = {
         "out_dir": run_dir,
         "pdf": None,
         "pngs": {},

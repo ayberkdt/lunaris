@@ -14,7 +14,7 @@ Architectural Design Principles
    - Reasoning: This ensures that constants can be imported directly into
      Numba JIT-compiled kernels (`@njit`) without triggering compilation overhead
      or type inference conflicts.
-   
+
 2. SI Units: Unless explicitly stated otherwise, all quantities conform to
    the International System of Units (SI):
    - Length: Metres (m)
@@ -40,9 +40,9 @@ Usage Guidelines
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import MappingProxyType
-from typing import Final, Mapping
-
+from typing import Final
 
 # =============================================================================
 # 1.                          UNIVERSAL CONSTANTS
@@ -117,7 +117,7 @@ OMEGA_EARTH: float = 7.292_115_0e-5
 MU_SUN: float = 1.32712440042e+20
 
 # IAU 2015 nominal solar radius [m]
-R_SUN_MEAN: float = 695_700_000.0  
+R_SUN_MEAN: float = 695_700_000.0
 
 # Astronomical Unit [m] (IAU 2012 exact)
 AU: float = 149_597_870_700.0
@@ -243,7 +243,7 @@ __all__ = (
     "M_TO_KM",                   # m -> km factor
     "KM3_TO_M3",                 # km^3 -> m^3 factor
     "M3_TO_KM3",                 # m^3 -> km^3 factor
-    
+
     # 7. Numeric tolerances (scale-explicit)
     "NEARLY_UNIT",
     "EPS_1E6",

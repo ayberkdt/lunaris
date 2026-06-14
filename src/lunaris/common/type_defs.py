@@ -41,13 +41,12 @@ layer that parses them. This module stores configuration only; it does not defin
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple, List, TypeAlias, Annotated
+from typing import Annotated, Any, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
 
 from .constants import DAY_S, R_MOON, R_MOON_MEAN
-
 
 # =============================================================================
 # 1.                            TYPE ALIASES
@@ -144,7 +143,7 @@ class AdaptiveDegreeConfig:
     # Table strategy:
     # Each row: (altitude_threshold_km, degree)
     # The engine selects the first row where current_alt_km <= threshold_km.
-    altitude_table: Optional[Tuple[Tuple[float, int], ...]] = None
+    altitude_table: tuple[tuple[float, int], ...] | None = None
 
     def __post_init__(self) -> None:
         if self.power <= 0.0:
@@ -206,7 +205,7 @@ class GravityConfig:
       (if provided).
     """
     file_path: str
-    degree: Optional[int] = None
+    degree: int | None = None
     use_mmap: bool = True
     backend: str = "classic_sh"
     st_lrps_model_dir: str = ""
@@ -315,9 +314,9 @@ class SolidTideConfig:
     ``k3`` explicitly before enabling ``enable_tides_k3``.
     """
 
-    tide_bodies: Tuple[str, ...] = ("earth", "sun")
+    tide_bodies: tuple[str, ...] = ("earth", "sun")
     k2: float = 0.02416
-    k3: Optional[float] = None
+    k3: float | None = None
     r_ref_m: float = R_MOON
 
     def __post_init__(self) -> None:
@@ -355,7 +354,7 @@ class SolidTideConfig:
 
 
 # =============================================================================
-# 5.                                   TIME 
+# 5.                                   TIME
 # =============================================================================
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -388,7 +387,7 @@ class TimeConfig:
     duration_s: float = DAY_S
 
     # Output sampling: either fixed dt or derived from orbital period.
-    output_dt_s: Optional[float] = 60.0
+    output_dt_s: float | None = 60.0
     samples_per_period: int = 120
 
     # Soft cap to prevent unbounded output arrays for long runs.
@@ -528,7 +527,7 @@ class PropagatorConfig:
 
     # Internal step-size logic
     use_nyquist_max_step: bool = True
-    user_max_step_s: Optional[float] = None
+    user_max_step_s: float | None = None
     nyquist_safety_div: float = 4.0
     nyquist_v_margin: float = 1.10
 
@@ -540,12 +539,12 @@ class PropagatorConfig:
     heartbeat_hours: float = 6.0
 
     # Cooperative stop
-    stop_file: Optional[str] = None
+    stop_file: str | None = None
     stop_event_in_scipy: bool = True
 
     # Chunking / checkpointing
-    chunk_s: Optional[float] = None
-    checkpoint_path: Optional[str] = None
+    chunk_s: float | None = None
+    checkpoint_path: str | None = None
     checkpoint_every_chunk: bool = False
 
     # Baseline run (e.g., 2-body comparison)
@@ -613,8 +612,8 @@ class SimulationHistory:
     vel_km_s: F64Array
     alt_km: F64Array
 
-    coe: Optional[Dict[str, F64Array]] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    coe: dict[str, F64Array] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Normalize dtype + contiguity for stable downstream behavior.
@@ -670,24 +669,24 @@ class PropagationResult:
     ode: Any = None
 
     # Event outputs (mirrors SciPy solve_ivp format: one array per event function)
-    t_events: List[F64Array] = field(default_factory=list)
-    y_events: List[F64Array] = field(default_factory=list)
+    t_events: list[F64Array] = field(default_factory=list)
+    y_events: list[F64Array] = field(default_factory=list)
 
     # Optional impact bookkeeping
     impacted: bool = False
-    t_impact_s: Optional[float] = None
-    y_impact: Optional[F64Array] = None
+    t_impact_s: float | None = None
+    y_impact: F64Array | None = None
 
     # Optional early stop bookkeeping
     stopped_early: bool = False
-    stop_reason: Optional[str] = None
-    t_stop_s: Optional[float] = None
+    stop_reason: str | None = None
+    t_stop_s: float | None = None
 
     # Arbitrary diagnostics (step counts, wall time, error metrics, etc.)
-    diagnostics: Dict[str, Any] = field(default_factory=dict)
+    diagnostics: dict[str, Any] = field(default_factory=dict)
 
     # Optional baseline run output (e.g., 2-body reference)
-    baseline: Optional["PropagationResult"] = field(default=None, repr=False)
+    baseline: PropagationResult | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         # Normalize main arrays.
@@ -724,8 +723,8 @@ class PropagationResult:
         self,
         *,
         r_ref_m: float = R_MOON_MEAN,
-        coe: Optional[Dict[str, F64Array]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        coe: dict[str, F64Array] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SimulationHistory:
         """
         Convert raw propagation output to a plotting-friendly history object.
@@ -780,7 +779,7 @@ __all__ = [
     # Physical properties
     "SpacecraftProps",        # Spacecraft mass/area/aero coefficients + derived BC
 
-    # Gravity configuration 
+    # Gravity configuration
     "GravityConfig",          # SH model file path + max degree + runtime options
     "AdaptiveDegreeConfig",   # Policy for runtime SH degree selection
 

@@ -35,20 +35,19 @@ ST_LRPS Core – UI components.
 """
 
 # =============================================================================
-# 0.                                    IMPORTS 
+# 0.                                    IMPORTS
 # =============================================================================
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional
 
 from PySide6 import QtCore, QtWidgets
 
-
 try:
-    from lunaris.ui.core.ui_commons import THEME, get_icon, StatusBadge, create_hint_label
+    from lunaris.ui.core.ui_commons import THEME, StatusBadge, get_icon
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -60,7 +59,7 @@ except ImportError:
         print("  From the project root, run:", file=sys.stderr)
         print("\n      python -m lunaris.ui.pages.data_files_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -92,7 +91,7 @@ class DataPage(QtWidgets.QWidget):
         normalize_path: Callable[[str], str],
         log_message: Callable[[str], None],
         create_card: Callable[[str], QtWidgets.QGroupBox],
-        initial_state: Optional[DataFilesState] = None,
+        initial_state: DataFilesState | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -489,7 +488,7 @@ class DataPage(QtWidgets.QWidget):
             return ("path_ok", f"{len(all_files)} file(s) found (no .bsp/.tls/.tpc kernels)")
         return ("path_ok", "Directory is empty")
 
-    def _update_badge(self, path_text: str, badge: "StatusBadge") -> None:
+    def _update_badge(self, path_text: str, badge: StatusBadge) -> None:
         """
         Update a path validity badge.
         'NOT SET' → path is blank.
@@ -546,7 +545,7 @@ class DataPage(QtWidgets.QWidget):
             self.lbl_kernel_detail.setVisible(bool(detail))
 
     @staticmethod
-    def _set_badge_from_kind(badge: "StatusBadge", kind: str) -> None:
+    def _set_badge_from_kind(badge: StatusBadge, kind: str) -> None:
         labels = {
             "not_set":   ("warning", "NOT SET"),
             "missing":   ("error",   "MISSING"),
@@ -585,8 +584,8 @@ class DataPage(QtWidgets.QWidget):
 # =============================================================================
 
 if __name__ == "__main__":
-    import sys
     import dataclasses
+    import sys
     from pathlib import Path
 
     # Start the application
@@ -604,7 +603,10 @@ if __name__ == "__main__":
     )
 
     # Helpers required by DataPage
-    from lunaris.ui.core.ui_commons import find_project_root, normalize_path  # keep consistent with your imports
+    from lunaris.ui.core.ui_commons import (  # keep consistent with your imports
+        find_project_root,
+        normalize_path,
+    )
 
     def log_message(msg: str) -> None:
         print(msg)

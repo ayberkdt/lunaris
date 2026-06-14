@@ -34,8 +34,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import Optional
-
 
 # =============================================================================
 # 0.                           KERNEL SUFFIX POLICY
@@ -175,7 +173,7 @@ def resolve_kernel_paths(kernels: Sequence[str], *, auto_fix: bool = True) -> li
             continue
 
         if auto_fix:
-            found: Optional[Path] = None
+            found: Path | None = None
             for candidate in iter_optional_txt_variants(path, base_exts=SPICE_KERNEL_BASE_EXTS):
                 if candidate.is_file():
                     found = candidate
@@ -251,7 +249,7 @@ def maybe_autoinclude_lunar_fk(kernels: Sequence[str], fixed_frame: str) -> list
             return (3, full)
         return (9, full)
 
-    selected: Optional[Path] = None
+    selected: Path | None = None
     for directory in search_dirs:
         try:
             if not directory.is_dir():

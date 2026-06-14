@@ -7,6 +7,7 @@ import json
 import numpy as np
 import pytest
 
+from dataset_pipeline_test_utils import make_toy_dataset_contract
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.data.splits import (
     build_split_manifest,
@@ -14,8 +15,6 @@ from lunaris.surrogate.st_lrps.data.splits import (
     split_dataset_indices,
     write_split_manifest,
 )
-
-from dataset_pipeline_test_utils import make_toy_dataset_contract
 
 
 def _shell_xyz(n: int, *, alt_min_km: float = 50.0, alt_max_km: float = 500.0, seed: int = 0) -> np.ndarray:

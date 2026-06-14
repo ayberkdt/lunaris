@@ -1,5 +1,4 @@
 # ST_LRPS/analysis/plotting.py
-# -*- coding: utf-8 -*-
 """
 Plotting and report-figure utilities for ST_LRPS.
 
@@ -31,15 +30,15 @@ Notes
 
 from __future__ import annotations
 
-import os
-import math
 import json
+import math
+import os
 import re
-from typing import Any, Dict, Mapping, Optional, Tuple, List, Iterable
-
-import numpy as np
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 import matplotlib
+import numpy as np
 
 # --- Matplotlib backend selection ---
 # Must run BEFORE importing pyplot.
@@ -49,12 +48,10 @@ if os.environ.get("STLRPS_INTERACTIVE", "0").strip().lower() not in ("1", "true"
     except Exception:
         pass
 
+import matplotlib.legend
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
-import matplotlib.legend
-
-
 
 # Optional: acceleration reconstruction plots
 try:
@@ -63,28 +60,25 @@ except ImportError:
     make_accel = None
 
 from lunaris.analysis.postprocess import (
-    extract_time_days,
-    extract_invariants,
     _extract_rv_vectors,
     _first_present,
+    extract_invariants,
+    extract_time_days,
 )
+from lunaris.common.math_utils import wrap_lon_deg
 
 from .styling import (
     DEFAULT_STYLE,
     THEME,
-    apply_rcparams,
     add_lunar_background,
-    format_scientific_axis,
+    apply_legend_style,
+    apply_rcparams,
+    apply_standard_colorbar,
     format_log_axis_sci,
+    format_scientific_axis,
     get_accel_color,
     get_series_color,
-    apply_legend_style,
-    apply_standard_colorbar,
 )
-
-from lunaris.common.math_utils import wrap_lon_deg
-
-
 
 # =============================================================================
 # 2.                            CORE PLOT PRIMITIVES
@@ -94,9 +88,9 @@ def _legend(
     ax: plt.Axes,
     *,
     dedupe: bool = True,
-    ignore_labels: Tuple[str, ...] = ("_nolegend_", ""),
+    ignore_labels: tuple[str, ...] = ("_nolegend_", ""),
     **kwargs,
-) -> Optional[matplotlib.legend.Legend]:
+) -> matplotlib.legend.Legend | None:
     """
     Apply a consistent legend style (prefer project styling; fall back to Matplotlib).
 
@@ -117,10 +111,10 @@ def _legend(
     # 1) Filter labels
     kept_h: list = []
     kept_l: list[str] = []
-    for h, l in zip(handles, labels):
-        if l is None:
+    for h, lbl in zip(handles, labels, strict=False):
+        if lbl is None:
             continue
-        s = str(l).strip()
+        s = str(lbl).strip()
         if s in ignore_labels:
             continue
         kept_h.append(h)
@@ -134,12 +128,12 @@ def _legend(
         seen: set[str] = set()
         dh: list = []
         dl: list[str] = []
-        for h, l in zip(kept_h, kept_l):
-            if l in seen:
+        for h, lbl in zip(kept_h, kept_l, strict=False):
+            if lbl in seen:
                 continue
-            seen.add(l)
+            seen.add(lbl)
             dh.append(h)
-            dl.append(l)
+            dl.append(lbl)
         kept_h, kept_l = dh, dl
 
     # Reasonable default if user didn't specify location
@@ -170,7 +164,7 @@ def shade_boolean_intervals(
     *,
     alpha: float = 0.12,
     label: str = "Eclipse",
-    color: Optional[str] = None,
+    color: str | None = None,
     ymin: float = 0.0,
     ymax: float = 1.0,
     min_width: float = 0.0,
@@ -266,7 +260,7 @@ def time_colored_path(
     ax: plt.Axes,
     x: np.ndarray,
     y: np.ndarray,
-    t: Optional[np.ndarray] = None,
+    t: np.ndarray | None = None,
     *,
     cmap: str = "plasma",
     linewidth: float = 1.8,
@@ -279,7 +273,7 @@ def time_colored_path(
     cbar_fraction: float = 0.05,
     autoscale: bool = True,
     zorder: int = 3,
-) -> Tuple[Optional[LineCollection], Optional[matplotlib.colorbar.Colorbar]]:
+) -> tuple[LineCollection | None, matplotlib.colorbar.Colorbar | None]:
     """
     Draw a 2D path colored by time, while breaking discontinuities (e.g., longitude wrap).
 
@@ -329,7 +323,7 @@ def time_colored_path(
     seg_list: list[np.ndarray] = []
     c_list: list[np.ndarray] = []
 
-    for a, b in zip(cuts[:-1], cuts[1:]):
+    for a, b in zip(cuts[:-1], cuts[1:], strict=False):
         if (b - a) < 2:
             continue
 
@@ -433,7 +427,7 @@ def _as_np(
     return arr
 
 
-def _aligned_xy(t: Any, y: Any) -> Tuple[np.ndarray, np.ndarray]:
+def _aligned_xy(t: Any, y: Any) -> tuple[np.ndarray, np.ndarray]:
     """
     Align two 1D series by truncating both to the shorter length.
 
@@ -455,7 +449,7 @@ def _get_body_radius_km(meta: Mapping[str, Any], history: Mapping[str, Any]) -> 
 
     Falls back to the Moon mean radius (1737.4 km) if not found or invalid.
     """
-    def _valid_positive_float(v: Any) -> Optional[float]:
+    def _valid_positive_float(v: Any) -> float | None:
         try:
             f = float(v)
             if math.isfinite(f) and f > 0.0:
@@ -561,7 +555,7 @@ def _wrap(text: str, width: int = 50) -> str:
         return "\n".join(lines)
 
 
-def _nan_stats(x: np.ndarray) -> Dict[str, float]:
+def _nan_stats(x: np.ndarray) -> dict[str, float]:
     """
     Compute start/end/min/max while ignoring NaN and Inf.
 
@@ -623,7 +617,7 @@ def _fmt_sci(x: Any, nd: int = 2) -> str:
 # 4.                        FIGURE BUILDERS (figure_*)
 # =============================================================================
 
-def figure_elements_timeseries(t_days: np.ndarray, elems: Dict[str, np.ndarray]) -> plt.Figure:
+def figure_elements_timeseries(t_days: np.ndarray, elems: dict[str, np.ndarray]) -> plt.Figure:
     """
     Plot a 3x2 grid showing the evolution of Keplerian orbital elements.
 
@@ -742,7 +736,7 @@ def figure_elements_timeseries(t_days: np.ndarray, elems: Dict[str, np.ndarray])
     return fig
 
 
-def figure_invariants(t_days: np.ndarray, inv: Dict[str, np.ndarray]) -> plt.Figure:
+def figure_invariants(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt.Figure:
     """
     Plot state norms and conservation checks (invariants).
 
@@ -824,7 +818,7 @@ def figure_altitude_with_events(
     t_days: np.ndarray,
     alt_km: np.ndarray,
     events: Mapping[str, Any],
-    eclipse: Optional[np.ndarray] = None,
+    eclipse: np.ndarray | None = None,
 ) -> plt.Figure:
     """
     Plot altitude over time and annotate key orbital events.
@@ -932,7 +926,7 @@ def figure_altitude_with_events(
     return fig
 
 
-def figure_relative_drift(t_days: np.ndarray, inv: Dict[str, np.ndarray]) -> plt.Figure:
+def figure_relative_drift(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt.Figure:
     """
     Plot relative drift of conserved quantities vs time.
 
@@ -1003,7 +997,7 @@ def figure_relative_drift(t_days: np.ndarray, inv: Dict[str, np.ndarray]) -> plt
 
 def figure_ground_track(
     history: Mapping[str, Any],
-    meta: Optional[Mapping[str, Any]] = None,
+    meta: Mapping[str, Any] | None = None,
     ctx: Any = None,
 ) -> plt.Figure:
     """
@@ -1103,7 +1097,7 @@ def figure_ground_track(
     return fig
 
 
-def figure_orbit_3d(history: Mapping[str, Any], meta: Optional[Mapping[str, Any]] = None) -> plt.Figure:
+def figure_orbit_3d(history: Mapping[str, Any], meta: Mapping[str, Any] | None = None) -> plt.Figure:
     """
     Render a 3D trajectory view with a reference body wireframe (in kilometers).
 
@@ -1227,7 +1221,7 @@ def figure_orbit_3d(history: Mapping[str, Any], meta: Optional[Mapping[str, Any]
     return fig
 
 
-def figure_eomega(t_days: np.ndarray, elems: Dict[str, np.ndarray]) -> plt.Figure:
+def figure_eomega(t_days: np.ndarray, elems: dict[str, np.ndarray]) -> plt.Figure:
     """
     Plot eccentricity vs argument of periapsis in polar phase space (e-ω),
     colored by time.
@@ -1302,7 +1296,7 @@ def figure_eomega(t_days: np.ndarray, elems: Dict[str, np.ndarray]) -> plt.Figur
 
 
 def figure_perturbation_magnitude(
-    history: Dict[str, Any],
+    history: dict[str, Any],
     ctx: Any,
     *,
     max_points: int = 4000,
@@ -1389,7 +1383,7 @@ def figure_perturbation_magnitude(
     # the real active-force implementation and does not depend on legacy helper
     # factories that may not exist in newer builds.
     if hasattr(ctx, "get_acceleration_breakdown"):
-        series_map: Dict[str, list[float]] = {}
+        series_map: dict[str, list[float]] = {}
         valid_t: list[float] = []
         for i in range(n):
             try:
@@ -1450,7 +1444,7 @@ def figure_perturbation_magnitude(
     if flags is None:
         return _placeholder_figure("Acceleration Budget", "ctx.flags not available; cannot toggle perturbations.")
 
-    def _clone_ctx_with(overrides: Dict[str, bool]):
+    def _clone_ctx_with(overrides: dict[str, bool]):
         import copy
         new_ctx = copy.copy(ctx)
         new_flags = copy.copy(flags)
@@ -1475,7 +1469,7 @@ def figure_perturbation_magnitude(
 
     # Canonical flags expected in strict builds (adjust here to match your flags dataclass)
     # Unknown attributes are ignored. Keep this list short and explicit.
-    groups: Dict[str, tuple[str, ...]] = {
+    groups: dict[str, tuple[str, ...]] = {
         "spherical_harmonics": ("enable_sh",),
         "third_body_sun": ("enable_3rd_body_sun",),
         "third_body_earth": ("enable_3rd_body_earth",),
@@ -1508,7 +1502,7 @@ def figure_perturbation_magnitude(
     # Build an incremental gravity stack
     current = a0.copy()
 
-    def _enable_group(base_overrides: Dict[str, bool], key: str) -> Dict[str, bool]:
+    def _enable_group(base_overrides: dict[str, bool], key: str) -> dict[str, bool]:
         ov = dict(base_overrides)
         for nm in groups.get(key, ()):
             ov[nm] = True
@@ -1616,8 +1610,8 @@ def figure_perturbation_magnitude(
 def draw_table(
     ax: plt.Axes,
     title: str,
-    rows: List[List[str]],
-    col_widths: Optional[List[float]] = None,
+    rows: list[list[str]],
+    col_widths: list[float] | None = None,
 ) -> None:
     """
     Render a polished striped statistics table for PDF reports.
@@ -1674,7 +1668,7 @@ def draw_table(
 def draw_kv_block(
     ax: plt.Axes,
     title: str,
-    items: List[Tuple[str, str]],
+    items: list[tuple[str, str]],
     *,
     ncols: int = 1,
 ) -> None:
@@ -1731,9 +1725,9 @@ def draw_kv_block(
 def draw_kv_table(
     ax: plt.Axes,
     title: str,
-    rows: List[Tuple[str, str]],
+    rows: list[tuple[str, str]],
     *,
-    col_widths: Tuple[float, float] = (0.47, 0.53),
+    col_widths: tuple[float, float] = (0.47, 0.53),
 ) -> None:
     """
     Render a two-column metric table with report-friendly typography.
@@ -1792,7 +1786,7 @@ def _normalize_key(k: str) -> str:
     return re.sub(r"[^a-z0-9]", "", str(k).lower())
 
 
-def _flatten_to_lookup(data: Any, parent: str = "", sep: str = ".") -> Dict[str, Any]:
+def _flatten_to_lookup(data: Any, parent: str = "", sep: str = ".") -> dict[str, Any]:
     """
     Flatten a nested mapping into a lookup table keyed by normalized full paths.
 
@@ -1802,7 +1796,7 @@ def _flatten_to_lookup(data: Any, parent: str = "", sep: str = ".") -> Dict[str,
         {"physics": {"flags": {"enable_srp": True}}}
     ->  {"physics.flags.enable_srp": True}  (stored normalized internally)
     """
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     if not isinstance(data, Mapping):
         return out
 
@@ -1830,7 +1824,7 @@ def effects_from_meta_history(
     history: Mapping[str, Any],
     *,
     ctx: Any = None,
-) -> Tuple[Dict[str, bool], str]:
+) -> tuple[dict[str, bool], str]:
     """
     Determine which physical effects were active (for report labeling only).
 
@@ -1841,7 +1835,7 @@ def effects_from_meta_history(
 
     This function is intentionally conservative: false positives are worse than false negatives.
     """
-    effects: Dict[str, bool] = {
+    effects: dict[str, bool] = {
         "Spherical Harmonics": False,
         "Third-Body Sun": False,
         "Third-Body Earth": False,
@@ -1870,7 +1864,7 @@ def effects_from_meta_history(
         "gr": ("enable_relativity_1pn", "enable_relativity"),
     }
 
-    def _iter_flag_items(flags: Mapping[str, Any]) -> Dict[str, Any]:
+    def _iter_flag_items(flags: Mapping[str, Any]) -> dict[str, Any]:
         # Normalize keys once for stable matching.
         return {_normalize_key(str(k)): v for k, v in flags.items()}
 
@@ -1881,7 +1875,7 @@ def effects_from_meta_history(
                 return True
         return False
 
-    def _find_flags_dict(obj: Any) -> Tuple[Optional[Mapping[str, Any]], Optional[str]]:
+    def _find_flags_dict(obj: Any) -> tuple[Mapping[str, Any] | None, str | None]:
         """
         Breadth-first search for a mapping named 'flags'.
         Returns (flags_mapping, path) if found, else (None, None).
@@ -1982,7 +1976,7 @@ def effects_from_meta_history(
     # ----------------------------
     # 3) Conservative flattened search (last resort)
     # ----------------------------
-    lookup: Dict[str, Any] = {}
+    lookup: dict[str, Any] = {}
 
     # Only flatten well-scoped roots to reduce noise.
     for root_key in ("config", "cfg", "settings", "options", "flags"):
@@ -2030,7 +2024,7 @@ def effects_from_meta_history(
 # 7.                     CONFIG AUTO-DISCOVERY & MERGING
 # =============================================================================
 
-def _try_load_nearby_config(search_dir: str) -> Tuple[Optional[dict], Optional[str]]:
+def _try_load_nearby_config(search_dir: str) -> tuple[dict | None, str | None]:
     """
     Scan a directory for a likely ST_LRPS run configuration (JSON).
 
@@ -2042,7 +2036,7 @@ def _try_load_nearby_config(search_dir: str) -> Tuple[Optional[dict], Optional[s
         return None, None
 
     # Candidate file collection (fast I/O; avoid large JSON dumps)
-    candidates: List[str] = []
+    candidates: list[str] = []
     try:
         for fn in os.listdir(search_dir):
             if not fn.lower().endswith(".json"):
@@ -2125,8 +2119,8 @@ def _try_load_nearby_config(search_dir: str) -> Tuple[Optional[dict], Optional[s
 
         return score
 
-    best_cfg: Optional[dict] = None
-    best_path: Optional[str] = None
+    best_cfg: dict | None = None
+    best_path: str | None = None
     best_score = -10**9
 
     # Deterministic iteration: sort file names so ties resolve consistently
@@ -2138,7 +2132,7 @@ def _try_load_nearby_config(search_dir: str) -> Tuple[Optional[dict], Optional[s
             continue
 
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except Exception:
             continue
@@ -2162,8 +2156,8 @@ def _try_load_nearby_config(search_dir: str) -> Tuple[Optional[dict], Optional[s
 def merge_meta_with_auto_config(
     meta: Mapping[str, Any],
     history: Mapping[str, Any],
-    output_dir: Optional[str] = None,
-) -> Dict[str, Any]:
+    output_dir: str | None = None,
+) -> dict[str, Any]:
     """
     Merge explicit runtime metadata with an auto-discovered on-disk config.
 
@@ -2172,7 +2166,7 @@ def merge_meta_with_auto_config(
       2) Overlay explicit meta (explicit always wins).
       3) Fill *missing* spacecraft fields from history (as a last resort).
     """
-    merged: Dict[str, Any] = {}
+    merged: dict[str, Any] = {}
 
     # 1) Disk config base (optional)
     cfg_path = None
@@ -2256,7 +2250,7 @@ def _placeholder_figure(title: str, message: str) -> plt.Figure:
     return fig
 
 
-def _make_row(name: str, arr: np.ndarray, unit: str, nd: int, sci: bool = False) -> List[str]:
+def _make_row(name: str, arr: np.ndarray, unit: str, nd: int, sci: bool = False) -> list[str]:
     """
     Compute (start, end, delta, min, max) summary for a series and return formatted row cells.
     """
@@ -2285,8 +2279,8 @@ def _make_row(name: str, arr: np.ndarray, unit: str, nd: int, sci: bool = False)
 
 def metrics_rows(
     history: Mapping[str, Any],
-    elems: Dict[str, np.ndarray],
-) -> Tuple[List[List[str]], List[List[str]]]:
+    elems: dict[str, np.ndarray],
+) -> tuple[list[list[str]], list[list[str]]]:
     """
     Build report-table rows using ASCII-safe, reader-friendly metric labels.
 
@@ -2300,7 +2294,7 @@ def metrics_rows(
     raan = _as_np(elems.get("raan_deg", [])).astype(float)
     argp = _as_np(elems.get("argp_deg", [])).astype(float)
 
-    orbital_rows: List[List[str]] = []
+    orbital_rows: list[list[str]] = []
     if a.size:
         orbital_rows.append(_make_row("Semi-major axis a", a, "km", 3))
     if e.size:
@@ -2321,7 +2315,7 @@ def metrics_rows(
             orbital_rows.append(_make_row("Apoapsis radius ra", aa * (1.0 + ee), "km", 3))
 
     inv = extract_invariants(history)
-    inv_rows: List[List[str]] = []
+    inv_rows: list[list[str]] = []
     r = _as_np(inv.get("r_norm_km", []))
     if r.size:
         inv_rows.append(_make_row("Position norm |r|", r, "km", 3))
@@ -2368,7 +2362,7 @@ def figure_events_table(events: Mapping[str, Any], t_days: np.ndarray) -> plt.Fi
         idx = np.unique(np.sort(idx))
         return idx
 
-    def _sanitize_impact(x: Any) -> Optional[int]:
+    def _sanitize_impact(x: Any) -> int | None:
         """Return a single valid impact index if present."""
         if x is None:
             return None
@@ -2406,7 +2400,7 @@ def figure_events_table(events: Mapping[str, Any], t_days: np.ndarray) -> plt.Fi
         # Use fixed notation unless very large
         return _fmt_fixed(sec, 2) if abs(sec) < 1e7 else _fmt_sci(sec, 3)
 
-    def _time_cells(idx: int) -> Tuple[str, str]:
+    def _time_cells(idx: int) -> tuple[str, str]:
         """(days, seconds) strings for a given index."""
         if not (0 <= idx < t_days.size):
             return "—", "—"
@@ -2422,7 +2416,7 @@ def figure_events_table(events: Mapping[str, Any], t_days: np.ndarray) -> plt.Fi
             return "—"
         return _fmt_fixed(d1 - d0, 6)
 
-    rows: List[Tuple[str, str]] = []
+    rows: list[tuple[str, str]] = []
 
     # Metadata / detection flags (if provided)
     detect_peri_apo = events.get("detect_peri_apo", None)

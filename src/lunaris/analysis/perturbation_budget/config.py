@@ -2,19 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 
-def _float_list(values: Iterable[float]) -> List[float]:
+def _float_list(values: Iterable[float]) -> list[float]:
     out = [float(v) for v in values]
     if not out:
         raise ValueError("list cannot be empty")
     return out
 
 
-def _int_list(values: Iterable[int]) -> List[int]:
+def _int_list(values: Iterable[int]) -> list[int]:
     out = sorted({int(v) for v in values})
     if not out:
         raise ValueError("list cannot be empty")
@@ -33,17 +34,17 @@ class PerturbationBudgetConfig:
     label this clearly; production studies should pass a real gravity model.
     """
 
-    altitudes_km: List[float] = field(default_factory=lambda: [50.0, 100.0, 300.0, 1000.0, 3000.0])
-    inclinations_deg: List[float] = field(default_factory=lambda: [0.0, 30.0, 60.0, 90.0])
-    true_anomalies_deg: List[float] = field(default_factory=lambda: [0.0, 90.0, 180.0, 270.0])
-    epochs_utc: List[str] = field(
+    altitudes_km: list[float] = field(default_factory=lambda: [50.0, 100.0, 300.0, 1000.0, 3000.0])
+    inclinations_deg: list[float] = field(default_factory=lambda: [0.0, 30.0, 60.0, 90.0])
+    true_anomalies_deg: list[float] = field(default_factory=lambda: [0.0, 90.0, 180.0, 270.0])
+    epochs_utc: list[str] = field(
         default_factory=lambda: [
             "2026-01-01T00:00:00Z",
             "2026-04-01T00:00:00Z",
             "2026-07-01T00:00:00Z",
         ]
     )
-    sh_degrees: List[int] = field(default_factory=lambda: [20, 30, 60, 100, 200])
+    sh_degrees: list[int] = field(default_factory=lambda: [20, 30, 60, 100, 200])
     reference_sh_degree: int = 200
 
     include_srp: bool = True
@@ -56,7 +57,7 @@ class PerturbationBudgetConfig:
 
     use_ephemeris: bool = False
     use_synthetic_geometry_fallback: bool = True
-    gravity_model_path: Optional[str] = None
+    gravity_model_path: str | None = None
 
     spacecraft_area_m2: float = 2.0
     spacecraft_mass_kg: float = 1000.0
@@ -109,19 +110,19 @@ class PerturbationBudgetConfig:
     def output_path(self) -> Path:
         return Path(self.output_dir)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-def parse_csv_floats(value: str) -> List[float]:
+def parse_csv_floats(value: str) -> list[float]:
     return [float(part.strip()) for part in str(value).split(",") if part.strip()]
 
 
-def parse_csv_ints(value: str) -> List[int]:
+def parse_csv_ints(value: str) -> list[int]:
     return [int(part.strip()) for part in str(value).split(",") if part.strip()]
 
 
-def parse_csv_strings(value: str) -> List[str]:
+def parse_csv_strings(value: str) -> list[str]:
     return [part.strip() for part in str(value).split(",") if part.strip()]
 
 

@@ -1,5 +1,4 @@
 ﻿# ST_LRPS/ui_parts/surrogate_artifacts.py
-# -*- coding: utf-8 -*-
 """
 Shared ST-LRPS surrogate gravity run artifact resolver.
 
@@ -32,8 +31,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple
-
 
 # ---------------------------------------------------------------------------
 # Result dataclass
@@ -46,9 +43,9 @@ class SurrogateArtifacts:
     run_dir: Path
     checkpoint_path: Path
     checkpoint_kind: str               # "best" | "last"
-    config_path: Optional[Path] = None
-    scaler_path: Optional[Path] = None
-    warnings: List[str] = field(default_factory=list)
+    config_path: Path | None = None
+    scaler_path: Path | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -83,7 +80,7 @@ def _resolve_run_dir(path: Path) -> Path:
     return p
 
 
-def _find_checkpoint(run_dir: Path) -> Tuple[Optional[Path], str]:
+def _find_checkpoint(run_dir: Path) -> tuple[Path | None, str]:
     """
     Return the best available checkpoint under *run_dir/checkpoints/*.
 
@@ -106,8 +103,8 @@ def _find_checkpoint(run_dir: Path) -> Tuple[Optional[Path], str]:
 # ---------------------------------------------------------------------------
 
 def resolve_surrogate_artifacts(
-    path: "str | Path",
-) -> Tuple[Optional[SurrogateArtifacts], List[str]]:
+    path: str | Path,
+) -> tuple[SurrogateArtifacts | None, list[str]]:
     """
     Resolve a user-supplied path into a ``SurrogateArtifacts`` object.
 
@@ -119,8 +116,8 @@ def resolve_surrogate_artifacts(
         Non-fatal issues are recorded in ``artifacts.warnings``.
     """
 
-    errors: List[str] = []
-    warnings_list: List[str] = []
+    errors: list[str] = []
+    warnings_list: list[str] = []
 
     run_dir = _resolve_run_dir(Path(path))
 
@@ -151,7 +148,7 @@ def resolve_surrogate_artifacts(
     # config.json — soft-required (warn if absent)
     cfg_path = run_dir / "config.json"
     if cfg_path.is_file():
-        config_out: Optional[Path] = cfg_path
+        config_out: Path | None = cfg_path
     else:
         config_out = None
         warnings_list.append(
@@ -162,7 +159,7 @@ def resolve_surrogate_artifacts(
     # scaler.json — soft-required (warn if absent)
     scaler_path = run_dir / "scaler.json"
     if scaler_path.is_file():
-        scaler_out: Optional[Path] = scaler_path
+        scaler_out: Path | None = scaler_path
     else:
         scaler_out = None
         warnings_list.append(
@@ -181,7 +178,7 @@ def resolve_surrogate_artifacts(
     return artifacts, errors
 
 
-def is_valid_surrogate_run(path: "str | Path") -> bool:
+def is_valid_surrogate_run(path: str | Path) -> bool:
     """
     Return ``True`` when the path resolves to a usable surrogate run.
 
@@ -192,7 +189,7 @@ def is_valid_surrogate_run(path: "str | Path") -> bool:
     return artifacts is not None and not errors
 
 
-def resolve_st_lrps_model_dir(path: "str | Path") -> Path:
+def resolve_st_lrps_model_dir(path: str | Path) -> Path:
     """
     Return the canonical run directory for any supported path form.
 
@@ -203,8 +200,8 @@ def resolve_st_lrps_model_dir(path: "str | Path") -> Path:
 
 
 def validate_surrogate_run_preflight(
-    path: "str | Path",
-) -> Tuple[bool, str, List[str]]:
+    path: str | Path,
+) -> tuple[bool, str, list[str]]:
     """
     Full preflight check suitable for ``PreFlightWorker``.
 
@@ -247,7 +244,7 @@ def validate_surrogate_run_preflight(
     )
 
 
-def looks_like_lunar_surrogate_run(path: "str | Path") -> bool:
+def looks_like_lunar_surrogate_run(path: str | Path) -> bool:
     """
     Return ``True`` when the run's config.json indicates a Moon-targeted model.
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Validation checks for benchmark output artifacts."""
 
 from __future__ import annotations
@@ -7,11 +6,11 @@ import csv
 import json
 import math
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from .benchmark_config import canonical_json_text
-
 
 REQUIRED_OUTPUT_FILES = (
     "benchmark_manifest.json",
@@ -187,7 +186,7 @@ def _check_scenario_ids(
     raw_ids = [row.get("scenario_id") for row in rows if row.get("scenario_id") not in {None, ""}]
     int_ids = [_to_int(v) for v in raw_ids]
     if any(v is None for v in int_ids):
-        bad = [raw for raw, parsed in zip(raw_ids, int_ids) if parsed is None]
+        bad = [raw for raw, parsed in zip(raw_ids, int_ids, strict=False) if parsed is None]
         errors.append(f"scenario_results.csv has non-integer scenario_id values, e.g. {bad[:5]}")
         return
     unique = sorted(set(int_ids))

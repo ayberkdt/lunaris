@@ -1,11 +1,11 @@
-# -*- coding: utf-8 -*-
 """Lightweight ST-LRPS dataset validation and report writing."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any
 
 import numpy as np
 
@@ -46,8 +46,8 @@ def validate_dataset_file(
     n_check: int = 1024,
     seed: int = 0,
     strict: bool = True,
-    truth_fn: Optional[GravityFn] = None,
-    baseline_fn: Optional[GravityFn] = None,
+    truth_fn: GravityFn | None = None,
+    baseline_fn: GravityFn | None = None,
     potential_atol: float = 1e-8,
     accel_atol: float = 1e-10,
     allow_legacy_dataset_contract: bool = False,
@@ -106,7 +106,7 @@ def validate_dataset_file(
         data, _ = _read_subset(path, dataset_name, idx)
     checked.append("shape")
 
-    finite_mask = np.isfinite(data)
+    np.isfinite(data)
     nan_count = int(np.isnan(data).sum())
     inf_count = int(np.isinf(data).sum())
     if nan_count:
@@ -133,8 +133,8 @@ def validate_dataset_file(
                 warnings.append(msg)
     checked.append("altitude_envelope")
 
-    residual_potential_max_abs_error: Optional[float] = None
-    residual_accel_max_abs_error: Optional[float] = None
+    residual_potential_max_abs_error: float | None = None
+    residual_accel_max_abs_error: float | None = None
     if truth_fn is not None:
         u_truth, a_truth = truth_fn(data[:, 0:3])
         if baseline_fn is not None:

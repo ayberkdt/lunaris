@@ -1,5 +1,4 @@
 # tests/test_type_defs_contracts.py
-# -*- coding: utf-8 -*-
 """
 Configuration / dataclass *contract* tests for ``lunaris.common.type_defs``.
 
@@ -33,7 +32,6 @@ from lunaris.common.type_defs import (
     SolidTideConfig,
     SpacecraftProps,
 )
-
 
 # =============================================================================
 # SpacecraftProps — ballistic coefficient & validation edges

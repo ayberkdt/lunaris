@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Dataset, HDF5 streaming, and strict lunar metadata validation."""
 
 from __future__ import annotations
@@ -6,30 +5,34 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any
 
 import h5py
 import numpy as np
 import torch
-import random
 from torch.utils.data import Dataset, Sampler
 
-from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI, is_lunar_body_signature
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    REQUIRED_DERIVATIVE_CONVENTION,
     DatasetContract,
     DatasetContractError,
-    REQUIRED_DERIVATIVE_CONVENTION,
 )
-
+from lunaris.surrogate.st_lrps.data.dataset_parameters import (
+    MU_MOON_SI,
+    R_MOON_SI,
+    is_lunar_body_signature,
+)
 
 logger = logging.getLogger(__name__)
 DTYPE = torch.float32
 
 def collate_xyz_u_a(
-    batch: List[Tuple[Any, Any, Any]],
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    batch: list[tuple[Any, Any, Any]],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Pickle-safe collate for (x, u, a) samples from either dataset backend.
 
@@ -65,7 +68,7 @@ def _resolve_loader_worker_count(
     data_path: Path,
     requested_workers: int,
     *,
-    os_name: Optional[str] = None,
+    os_name: str | None = None,
 ) -> int:
     """
     Return a safe DataLoader worker count for the dataset backend in use.
@@ -96,7 +99,7 @@ def _resolve_loader_worker_count(
 
 # --- Dataset Metadata ---
 
-def _safe_float(d: Dict[str, Any], key: str) -> Optional[float]:
+def _safe_float(d: dict[str, Any], key: str) -> float | None:
     val = d.get(key)
     if val is None:
         return None
@@ -105,7 +108,7 @@ def _safe_float(d: Dict[str, Any], key: str) -> Optional[float]:
     except (ValueError, TypeError):
         return None
 
-def _safe_str(d: Dict[str, Any], key: str) -> Optional[str]:
+def _safe_str(d: dict[str, Any], key: str) -> str | None:
     val = d.get(key)
     if val is None:
         return None
@@ -117,7 +120,7 @@ def _safe_str(d: Dict[str, Any], key: str) -> Optional[str]:
     except (ValueError, TypeError, UnicodeDecodeError):
         return None
 
-def _parse_bool(x: Any) -> Optional[bool]:
+def _parse_bool(x: Any) -> bool | None:
     if x is None:
         return None
     if isinstance(x, bool):
@@ -141,26 +144,26 @@ def _parse_bool(x: Any) -> Optional[bool]:
 class DatasetMeta:
     """Metadata read from HDF5 attrs: units, physical constants, degree range, altitude bounds."""
     unit_system: str  # Expected: "si", "canonical", or "unknown"
-    mu_si: Optional[float]
-    r_ref_m: Optional[float]
-    DU_m: Optional[float]
-    TU_s: Optional[float]
-    VU_m_s: Optional[float]
-    requested_degree: Optional[int]
-    degree_min: Optional[int]
-    gravity_model_path: Optional[str]
-    include_potential: Optional[bool]
-    raw_attrs: Dict[str, Any]
+    mu_si: float | None
+    r_ref_m: float | None
+    DU_m: float | None
+    TU_s: float | None
+    VU_m_s: float | None
+    requested_degree: int | None
+    degree_min: int | None
+    gravity_model_path: str | None
+    include_potential: bool | None
+    raw_attrs: dict[str, Any]
     # Cloud generation parameters (from cloud_config_json HDF5 attr)
-    alt_min_km: Optional[float] = None
-    alt_max_km: Optional[float] = None
-    cloud_config: Optional[Dict[str, Any]] = None
-    degree_max: Optional[int] = None
-    target_mode: Optional[str] = None
-    a_sign_convention: Optional[str] = None
-    columns: Optional[str] = None
-    derivative_convention_version: Optional[str] = None
-    central_body: Optional[str] = None
+    alt_min_km: float | None = None
+    alt_max_km: float | None = None
+    cloud_config: dict[str, Any] | None = None
+    degree_max: int | None = None
+    target_mode: str | None = None
+    a_sign_convention: str | None = None
+    columns: str | None = None
+    derivative_convention_version: str | None = None
+    central_body: str | None = None
 
     def can_convert_to_si(self) -> bool:
         return bool(
@@ -175,7 +178,7 @@ class DatasetMeta:
 
     def convert_xyz_U_a_to_si(
         self, x: np.ndarray, u: np.ndarray, a: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Convert canonical (nondimensional) arrays to SI. Returns copies; never mutates."""
         if self.unit_system != "canonical":
             return x, u, a
@@ -192,11 +195,11 @@ class DatasetMeta:
         x_si = x * DU
         a_si = a * (DU / (TU * TU))
         u_si = u * (VU * VU)
-        
+
         return x_si, u_si, a_si
 
     @classmethod
-    def from_h5(cls, h5_path: Path) -> "DatasetMeta":
+    def from_h5(cls, h5_path: Path) -> DatasetMeta:
         with h5py.File(h5_path, "r") as f:
             attrs = {str(k): f.attrs[k] for k in f.attrs.keys()}
 
@@ -204,7 +207,7 @@ class DatasetMeta:
         if unit_system not in ("si", "canonical"):
             unit_system = "unknown"
 
-        def _parse_int(key: str) -> Optional[int]:
+        def _parse_int(key: str) -> int | None:
             val = attrs.get(key)
             if val is None:
                 return None
@@ -218,7 +221,7 @@ class DatasetMeta:
         deg_max = _parse_int("degree_max")
 
         # Parse cloud_config_json if present (written by spatial_cloud_generator)
-        cloud_cfg: Optional[Dict[str, Any]] = None
+        cloud_cfg: dict[str, Any] | None = None
         cloud_cfg_raw = attrs.get("cloud_config_json")
         if cloud_cfg_raw is not None:
             try:
@@ -257,8 +260,8 @@ class DatasetMeta:
                 except (TypeError, ValueError):
                     pass
 
-        alt_min: Optional[float] = None
-        alt_max: Optional[float] = None
+        alt_min: float | None = None
+        alt_max: float | None = None
         if cloud_cfg is not None:
             try:
                 alt_min = float(cloud_cfg.get("alt_min_km", attrs.get("alt_min_km", None) or 0))
@@ -286,7 +289,7 @@ class DatasetMeta:
             attrs.get("central_body"),
             (cloud_cfg or {}).get("central_body") if cloud_cfg is not None else None,
         ]
-        resolved_central_body: Optional[str] = None
+        resolved_central_body: str | None = None
         for _cb in _cb_candidates:
             _cb_s = str(_cb or "").strip().lower()
             if _cb_s:
@@ -322,7 +325,7 @@ class DatasetMeta:
 # -----------------------------------------------------------------------------
 _LUNAR_ALIASES = {"moon", "lunar", "selene"}
 
-def _normalized_dataset_body_name(meta: DatasetMeta) -> Optional[str]:
+def _normalized_dataset_body_name(meta: DatasetMeta) -> str | None:
     """
     Return the dataset's declared central-body name, if any.
 
@@ -341,7 +344,7 @@ def _normalized_dataset_body_name(meta: DatasetMeta) -> Optional[str]:
             return name
     return None
 
-def _resolve_lunar_dataset_contract(meta: DatasetMeta, *, data_path: Path) -> Tuple[str, float, float]:
+def _resolve_lunar_dataset_contract(meta: DatasetMeta, *, data_path: Path) -> tuple[str, float, float]:
     """
     Validate that an HDF5 dataset really belongs to the lunar surrogate stack.
 
@@ -395,9 +398,9 @@ def build_dataset_contract(
     meta: DatasetMeta,
     *,
     data_path: Path,
-    n_samples: Optional[int] = None,
-    dataset_sha256: Optional[str] = None,
-) -> Dict[str, Any]:
+    n_samples: int | None = None,
+    dataset_sha256: str | None = None,
+) -> dict[str, Any]:
     """Build the versioned dataset-contract block used by artifacts."""
 
     raw_contract = meta.raw_attrs.get("dataset_contract_json") or meta.raw_attrs.get("contract_json")
@@ -473,7 +476,7 @@ def build_dataset_contract(
     return payload
 
 
-def _safe_int(value: Any) -> Optional[int]:
+def _safe_int(value: Any) -> int | None:
     if value in (None, ""):
         return None
     try:
@@ -487,7 +490,7 @@ def read_dataset_contract_from_h5(
     *,
     dataset_name: str = "data",
     allow_legacy_dataset_contract: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Read dataset metadata and return the normalized dataset contract."""
 
     path = Path(h5_path)
@@ -501,7 +504,7 @@ def read_dataset_contract_from_h5(
         ).to_dict()
     except Exception:
         meta = DatasetMeta.from_h5(path)
-        n_samples: Optional[int] = None
+        n_samples: int | None = None
         try:
             with h5py.File(path, "r") as handle:
                 name = dataset_name if dataset_name in handle else _discover_dataset_name(path, dataset_name)
@@ -519,7 +522,7 @@ def validate_dataset_contract(
     allow_legacy_target_mode_inference: bool = False,
     allow_missing_dataset_contract: bool = False,
     allow_legacy_dataset_contract: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Validate dataset metadata and return a normalized dataset contract."""
 
     validate_training_dataset_convention(
@@ -529,7 +532,7 @@ def validate_dataset_contract(
         allow_legacy_target_mode_inference=allow_legacy_target_mode_inference,
         allow_missing_dataset_contract=allow_missing_dataset_contract,
     )
-    n_samples: Optional[int] = None
+    n_samples: int | None = None
     try:
         with h5py.File(data_path, "r") as handle:
             name = "data" if "data" in handle else _discover_dataset_name(data_path)
@@ -682,7 +685,7 @@ def validate_training_dataset_convention(
 def _discover_dataset_name(h5_path: Path, preferred: str = "data") -> str:
     dataset_name = None
 
-    def visitor(name: str, obj: object) -> Optional[bool]:
+    def visitor(name: str, obj: object) -> bool | None:
         nonlocal dataset_name
         if isinstance(obj, h5py.Dataset):
             dataset_name = name
@@ -709,7 +712,7 @@ class H5BlockDataset(Dataset):
         meta: DatasetMeta,
         use_si: bool = True,
         cache_rows: int = 65536,
-        indices: Optional[np.ndarray] = None,
+        indices: np.ndarray | None = None,
     ):
         self.h5_path = Path(h5_path)
         self.dset_name = str(dset_name)
@@ -722,15 +725,15 @@ class H5BlockDataset(Dataset):
 
         assert 0 <= self.start < self.end, "Invalid dataset slice boundaries."
 
-        self._h5: Optional[h5py.File] = None
-        self._dset: Optional[h5py.Dataset] = None
+        self._h5: h5py.File | None = None
+        self._dset: h5py.Dataset | None = None
 
         self._cache_start = -1
         self._cache_end = -1
-        
-        self._cache_x: Optional[np.ndarray] = None
-        self._cache_u: Optional[np.ndarray] = None
-        self._cache_a: Optional[np.ndarray] = None
+
+        self._cache_x: np.ndarray | None = None
+        self._cache_u: np.ndarray | None = None
+        self._cache_a: np.ndarray | None = None
 
         with h5py.File(self.h5_path, "r") as f:
             ds = f[self.dset_name]
@@ -756,12 +759,12 @@ class H5BlockDataset(Dataset):
 
     def _load_cache_for(self, global_index: int) -> None:
         assert self._dset is not None
-        
+
         block_start = (global_index // self.cache_rows) * self.cache_rows
         block_end = min(block_start + self.cache_rows, self.end)
-        
+
         arr = np.asarray(self._dset[block_start:block_end, :])
-        
+
         x = arr[:, 0:3]
         u = arr[:, 3:4]
         a = arr[:, 4:7]
@@ -776,11 +779,11 @@ class H5BlockDataset(Dataset):
         self._cache_x = np.ascontiguousarray(x, dtype=np.float32)
         self._cache_u = np.ascontiguousarray(u, dtype=np.float32)
         self._cache_a = np.ascontiguousarray(a, dtype=np.float32)
-        
+
         self._cache_start = block_start
         self._cache_end = block_end
 
-    def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def __getitem__(self, idx: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         self._ensure_open()
         local_query_idx = int(idx)
         if self.indices is not None:
@@ -789,7 +792,7 @@ class H5BlockDataset(Dataset):
             global_idx = int(self.indices[local_query_idx])
         else:
             global_idx = self.start + local_query_idx
-        
+
         if not (self.start <= global_idx < self.end):
             raise IndexError(f"Index {idx} out of bounds.")
 
@@ -797,7 +800,7 @@ class H5BlockDataset(Dataset):
             self._load_cache_for(global_idx)
 
         local_idx = global_idx - self._cache_start
-        
+
         return (
             self._cache_x[local_idx],
             self._cache_u[local_idx],
@@ -863,7 +866,7 @@ class TensorMemoryDataset(Dataset):
     def __len__(self) -> int:
         return int(self._x.shape[0])
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Return torch tensors directly: the previous ``.numpy()`` round-trip was
         # pure overhead because the collate function only re-wrapped them as
         # tensors again. Returning tensors keeps the all-in-RAM path tensor-native
@@ -875,7 +878,7 @@ class TensorMemoryDataset(Dataset):
 # sin(w0 · (Wx + b)) avoids spectral bias for high-frequency mascon fields.
 # Init: first layer W~U(-1/n, 1/n); hidden W~U(-sqrt(6/n)/w0, sqrt(6/n)/w0).
 
-def _build_train_val_indices(n_rows: int, val_fraction: float, seed: int) -> Tuple[np.ndarray, np.ndarray]:
+def _build_train_val_indices(n_rows: int, val_fraction: float, seed: int) -> tuple[np.ndarray, np.ndarray]:
     """
     Build a deterministic shuffled split while preserving ascending row order.
 
@@ -900,7 +903,7 @@ def _build_train_val_indices(n_rows: int, val_fraction: float, seed: int) -> Tup
     train_idx = np.sort(perm[n_val:].astype(np.int64, copy=False))
     return train_idx, val_idx
 
-def _find_latest_dataset(start_dir: Path) -> Optional[Path]:
+def _find_latest_dataset(start_dir: Path) -> Path | None:
     """
     Return the newest lunar-compatible HDF5 dataset near ``start_dir``.
 
@@ -909,7 +912,7 @@ def _find_latest_dataset(start_dir: Path) -> Optional[Path]:
     safe dataset or nothing at all.
     """
 
-    def _candidate_score(path: Path) -> Optional[Tuple[int, float]]:
+    def _candidate_score(path: Path) -> tuple[int, float] | None:
         try:
             dset_name = _discover_dataset_name(path, preferred="data")
             with h5py.File(path, "r") as handle:
@@ -929,7 +932,7 @@ def _find_latest_dataset(start_dir: Path) -> Optional[Path]:
             return None
         return None
 
-    candidates: List[Tuple[int, float, Path]] = []
+    candidates: list[tuple[int, float, Path]] = []
     search_dirs = ["runs", "run", "outputs", "output", "data", "datasets", "out", "."]
     for rel in search_dirs:
         p = start_dir / rel
@@ -950,7 +953,7 @@ def _find_latest_dataset(start_dir: Path) -> Optional[Path]:
 def infer_a_sign_from_data(
     h5_path: Path,
     dset_name: str,
-    meta: "DatasetMeta",
+    meta: DatasetMeta,
     use_si: bool,
     n_probe: int = 50_000,
     seed: int = 0,
@@ -959,7 +962,7 @@ def infer_a_sign_from_data(
     Automatically infers the mathematical sign convention of the dataset.
     """
     rng = np.random.default_rng(seed)
-    
+
     with h5py.File(h5_path, "r", libver="latest", swmr=True) as f:
         ds = f[dset_name]
         total_rows = int(ds.shape[0])

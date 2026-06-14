@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Live Monte Carlo backend dispatch for torch_cuda_sh (task §15 / §10 / §16E).
 
@@ -23,7 +22,6 @@ import pytest
 from lunaris.common.montecarlo_defs import MonteCarloConfig
 from lunaris.common.type_defs import PerturbationFlags
 from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -219,7 +217,6 @@ def test_cuda_unavailable_compatible_gpu_does_not_fall_back_to_cpu(monkeypatch) 
 def _torch_plan_engine(monkeypatch, tmp_path, *, mc_backend="torch_cuda_sh", degree=100):
     """Build an engine stub whose policy resolves to GPU_TORCH_SH."""
     import lunaris.core.mc_propagator as mc_prop
-    import lunaris.core.mc_backend_policy as policy_mod
     import lunaris.core.torch_sh_propagator as torch_sh_mod
     from lunaris.core.monte_carlo_engine import MonteCarloEngine
 

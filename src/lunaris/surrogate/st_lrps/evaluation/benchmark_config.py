@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Config loading for reproducible ST-LRPS benchmark runs."""
 
 from __future__ import annotations
@@ -7,9 +6,9 @@ import copy
 import json
 import os
 import re
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping
-
+from typing import Any
 
 SUPPORTED_DTYPES = {"float32", "float64"}
 SUPPORTED_SCENARIO_TYPES = {"bounded_keplerian", "near_circular_altitude"}

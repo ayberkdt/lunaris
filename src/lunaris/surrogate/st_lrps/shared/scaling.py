@@ -1,13 +1,13 @@
-# -*- coding: utf-8 -*-
 """Origin-fixed isometric scaling for the lunar potential surrogate."""
 
 from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import numpy as np
@@ -16,16 +16,18 @@ import torch
 from lunaris.common.lunar_data import R_MOON_SI
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 
+if TYPE_CHECKING:
+    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
 
 logger = logging.getLogger(__name__)
 
 @dataclass
 class IsometricScaleParams:
     """Per-axis mean + single global characteristic scale for one quantity."""
-    mean: List[float]       # per-axis mean (centroid)
+    mean: list[float]       # per-axis mean (centroid)
     scale: float            # single global characteristic scale
 
-    def to_tensors(self, device: torch.device, dtype: torch.dtype) -> Tuple[torch.Tensor, torch.Tensor]:
+    def to_tensors(self, device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
         mean_t = torch.tensor(self.mean, device=device, dtype=dtype, requires_grad=False)
         scale_t = torch.tensor([self.scale], device=device, dtype=dtype, requires_grad=False)
         return mean_t, scale_t
@@ -43,8 +45,8 @@ class ScalerPack:
             json.dump(asdict(self), f, indent=2)
 
     @staticmethod
-    def load_json(path: Path) -> "ScalerPack":
-        with open(path, "r", encoding="utf-8") as f:
+    def load_json(path: Path) -> ScalerPack:
+        with open(path, encoding="utf-8") as f:
             d = json.load(f)
         return ScalerPack(
             x=IsometricScaleParams(**d["x"]),
@@ -54,11 +56,11 @@ class ScalerPack:
         )
 
     @staticmethod
-    def load(path: Path, device: torch.device, dtype: torch.dtype) -> "ScalerPack":
+    def load(path: Path, device: torch.device, dtype: torch.dtype) -> ScalerPack:
         """Load the historical scaler.json format and cache device tensors."""
         return ScalerPack.load_json(path).to_tensors(device=device, dtype=dtype)
 
-    def to_tensors(self, device: torch.device, dtype: torch.dtype) -> "ScalerPack":
+    def to_tensors(self, device: torch.device, dtype: torch.dtype) -> ScalerPack:
         self._x_mean, self._x_scale = self.x.to_tensors(device, dtype)
         self._u_mean, self._u_scale = self.u.to_tensors(device, dtype)
         self._a_mean, self._a_scale = self.a.to_tensors(device, dtype)
@@ -145,7 +147,7 @@ class OnlineIsometricStats:
         *,
         mode: str = "max",
         multiplier: float = 1.0,
-    ) -> Tuple[np.ndarray, float]:
+    ) -> tuple[np.ndarray, float]:
         """
         Return ``(mean, scale)`` using a physically motivated single-scalar rule.
 
@@ -263,7 +265,7 @@ def compute_base_accel_from_contract(
 def fit_scaler_streaming(
     h5_path: Path,
     dset_name: str,
-    meta: "DatasetMeta",
+    meta: DatasetMeta,
     use_si: bool,
     mu_si: float,
     a_sign: float,
@@ -271,15 +273,15 @@ def fit_scaler_streaming(
     seed: int = 0,
     chunk_rows: int = 131_072,
     degree_min: int = -1,
-    target_mode: "Optional[str]" = None,
-    degree_max: "Optional[int]" = None,
+    target_mode: str | None = None,
+    degree_max: int | None = None,
     u_scale_mode: str = "hybrid",
     a_scale_mode: str = "hybrid",
     target_scale_multiplier: float = 6.0,
-    target_contract: Optional[TargetContract] = None,
-    indices: Optional[np.ndarray] = None,
-    split_provenance: Optional[Mapping[str, Any]] = None,
-) -> "ScalerPack":
+    target_contract: TargetContract | None = None,
+    indices: np.ndarray | None = None,
+    split_provenance: Mapping[str, Any] | None = None,
+) -> ScalerPack:
     """Stream-fit isometric scalers on residuals ΔU/Δa (baseline already subtracted).
 
     Parameters
@@ -309,7 +311,7 @@ def fit_scaler_streaming(
         explicit ``fit_scope``). The caller owns these values so this layer
         never needs to import the split machinery.
     """
-    idx_train: Optional[np.ndarray] = None
+    idx_train: np.ndarray | None = None
     if indices is not None:
         idx_train = np.asarray(indices, dtype=np.int64).reshape(-1)
         if idx_train.size == 0:
@@ -338,7 +340,7 @@ def fit_scaler_streaming(
         f"u_scale_mode={u_scale_mode}, a_scale_mode={a_scale_mode}, mult={target_scale_multiplier}"
     )
     rng = np.random.default_rng(seed)
-    
+
     x_stats = OnlineIsometricStats(3)
     u_stats = OnlineIsometricStats(1)   # will receive ΔU = U - U_base
     a_stats = OnlineIsometricStats(3)   # will receive Δa = a - a_base

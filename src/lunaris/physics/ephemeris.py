@@ -130,25 +130,25 @@ Typical usage
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-
 from dataclasses import dataclass
-from collections.abc import Sequence, Iterator
-from typing import Optional, Tuple, Mapping, Any
+from typing import Any
 
 import numpy as np
-
-from numba import njit
-
 import spiceypy as spice
+from numba import njit
 from spiceypy.utils.exceptions import SpiceyError
 
-from lunaris.common.constants import MU_EARTH, MU_SUN, KM_TO_M, KM3_TO_M3
+from lunaris.common.constants import KM3_TO_M3, KM_TO_M, MU_EARTH, MU_SUN
+from lunaris.common.math_utils import (
+    interp_quat_slerp,
+    interp_vec3_catmull,
+    quat_conj,
+    quat_rotate_vec,
+)
 from lunaris.common.type_defs import F64Array, TimeConfig
-from lunaris.common.math_utils import quat_rotate_vec, quat_conj, interp_quat_slerp, interp_vec3_catmull
 from lunaris.loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_kernel_paths
-
-
 
 # =============================================================================
 # 1.                           CONSTANTS & CONFIG
@@ -179,7 +179,7 @@ class SpiceBuildConfig:
     This recipe defines which kernels to load and what frames to use.
     Simulation duration and step size belong to TimeConfig.
     """
-    kernels: Tuple[str, ...] = (
+    kernels: tuple[str, ...] = (
         "naif0012.tls",
         "de440.bsp",
         "moon_pa_de440_200625.bpc",
@@ -250,7 +250,7 @@ class EphemerisTables:
 
 def get_body_gm_m3s2(
     body_name: str,
-    fallback_m3s2: Optional[float] = None,
+    fallback_m3s2: float | None = None,
     *,
     allow_fallback: bool = True,
     warn_on_fallback: bool = True,
@@ -582,7 +582,7 @@ class EphemerisManager:
         *,
         auto_fix_kernel_paths: bool = True,
         need_moon_fixed_rotation: bool = True,
-    ) -> "EphemerisManager":
+    ) -> EphemerisManager:
         tables = build_spice_tables(
             time_cfg,
             spice_cfg,
@@ -592,7 +592,7 @@ class EphemerisManager:
         return cls(tables)
 
     @classmethod
-    def from_tables(cls, tables: EphemerisTables) -> "EphemerisManager":
+    def from_tables(cls, tables: EphemerisTables) -> EphemerisManager:
         return cls(tables)
 
     # --- Canonical provider (no aliases) ----------------------------------
@@ -633,13 +633,13 @@ class EphemerisManager:
         return arr
 
     @staticmethod
-    def _write_vec3(out: Optional[F64Array], x: float, y: float, z: float) -> F64Array:
+    def _write_vec3(out: F64Array | None, x: float, y: float, z: float) -> F64Array:
         if out is None:
             out = np.empty(3, dtype=np.float64)
         out[0], out[1], out[2] = x, y, z
         return out
 
-    def _interp_vec3_table(self, t_s: float, tab: np.ndarray, *, out: Optional[F64Array]) -> F64Array:
+    def _interp_vec3_table(self, t_s: float, tab: np.ndarray, *, out: F64Array | None) -> F64Array:
         # third-body disabled: table holds a single zero row
         if tab.shape[0] == 1:
             if out is None:
@@ -660,7 +660,7 @@ class EphemerisManager:
         self,
         t_s: float,
         *,
-        out: Optional[F64Array] = None,
+        out: F64Array | None = None,
     ) -> F64Array:
         w, x, y, z = self._interp_quat_i2f(t_s)
         if out is None:
@@ -672,7 +672,7 @@ class EphemerisManager:
         self,
         t_s: float,
         *,
-        out: Optional[F64Array] = None,
+        out: F64Array | None = None,
     ) -> F64Array:
         return self._interp_vec3_table(t_s, self.tables.r_earth_tab_m, out=out)
 
@@ -680,7 +680,7 @@ class EphemerisManager:
         self,
         t_s: float,
         *,
-        out: Optional[F64Array] = None,
+        out: F64Array | None = None,
     ) -> F64Array:
         return self._interp_vec3_table(t_s, self.tables.r_sun_tab_m, out=out)
 
@@ -691,7 +691,7 @@ class EphemerisManager:
         t_s: float,
         v_inertial: F64Array,
         *,
-        out: Optional[F64Array] = None,
+        out: F64Array | None = None,
     ) -> F64Array:
         v = self._ensure_vec3(v_inertial, name="v_inertial")
 
@@ -707,7 +707,7 @@ class EphemerisManager:
         t_s: float,
         v_fixed: F64Array,
         *,
-        out: Optional[F64Array] = None,
+        out: F64Array | None = None,
     ) -> F64Array:
         v = self._ensure_vec3(v_fixed, name="v_fixed")
 
@@ -727,17 +727,17 @@ class EphemerisManager:
 # =============================================================================
 
 @njit(cache=True, nogil=True, inline="always")
-def _row3(tab: np.ndarray, i: int) -> Tuple[float, float, float]:
+def _row3(tab: np.ndarray, i: int) -> tuple[float, float, float]:
     return float(tab[i, 0]), float(tab[i, 1]), float(tab[i, 2])
 
 
 @njit(cache=True, nogil=True, inline="always")
-def _row4(tab: np.ndarray, i: int) -> Tuple[float, float, float, float]:
+def _row4(tab: np.ndarray, i: int) -> tuple[float, float, float, float]:
     return float(tab[i, 0]), float(tab[i, 1]), float(tab[i, 2]), float(tab[i, 3])
 
 
 @njit(cache=True, nogil=True, inline="always")
-def _clamp_u_to_index_and_frac(u: float, n: int) -> Tuple[int, float]:
+def _clamp_u_to_index_and_frac(u: float, n: int) -> tuple[int, float]:
     """
     For a table of length n (n>=2), clamp u to [0, n-1] and return:
       i0 in [0, n-2] and frac f in [0,1], so that i0+1 is valid.
@@ -763,7 +763,7 @@ def _lerp(a: float, b: float, f: float) -> float:
 
 
 @njit(cache=True, nogil=True)
-def interp_vec3_safe(t_s: float, dt_s: float, tab: np.ndarray) -> Tuple[float, float, float]:
+def interp_vec3_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, float, float]:
     """
     Safe vec3 interpolation:
       - n<=1 or dt<=0 : constant tab[0]
@@ -788,7 +788,7 @@ def interp_vec3_safe(t_s: float, dt_s: float, tab: np.ndarray) -> Tuple[float, f
 
 
 @njit(cache=True, nogil=True)
-def interp_quat_safe(t_s: float, dt_s: float, tab: np.ndarray) -> Tuple[float, float, float, float]:
+def interp_quat_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, float, float, float]:
     """
     Safe quaternion interpolation:
       - n<=1 or dt<=0 : constant tab[0]
@@ -807,7 +807,7 @@ def get_ephem_state(
     sun_tab_m: np.ndarray,
     earth_tab_m: np.ndarray,
     q_i2f_tab: np.ndarray,
-) -> Tuple[float, float, float, float, float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float, float, float, float, float]:
     """
     Unified, allocation-free ephemeris sampler for Numba loops.
 

@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Optional
 
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from lunaris.ui.core.ui_commons import StatusBadge
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
@@ -17,9 +16,9 @@ class PageHeader(QtWidgets.QFrame):
         title: str,
         description: str = "",
         *,
-        status: Optional[QtWidgets.QWidget] = None,
-        action: Optional[QtWidgets.QWidget] = None,
-        parent: Optional[QtWidgets.QWidget] = None,
+        status: QtWidgets.QWidget | None = None,
+        action: QtWidgets.QWidget | None = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("pageHeader")
@@ -55,11 +54,11 @@ class PageShell(QtWidgets.QWidget):
         title: str,
         description: str = "",
         *,
-        content: Optional[QtWidgets.QWidget] = None,
-        status: Optional[QtWidgets.QWidget] = None,
-        action: Optional[QtWidgets.QWidget] = None,
+        content: QtWidgets.QWidget | None = None,
+        status: QtWidgets.QWidget | None = None,
+        action: QtWidgets.QWidget | None = None,
         scrollable: bool = True,
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("pageShell")
@@ -67,7 +66,7 @@ class PageShell(QtWidgets.QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        self.scroll_area: Optional[QtWidgets.QScrollArea] = None
+        self.scroll_area: QtWidgets.QScrollArea | None = None
         if scrollable:
             self.scroll_area = QtWidgets.QScrollArea()
             self.scroll_area.setObjectName("pageScroll")
@@ -116,7 +115,7 @@ class Section(QtWidgets.QFrame):
         description: str = "",
         *,
         elevated: bool = False,
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("section")
@@ -150,7 +149,7 @@ class Subsection(Section):
 
 
 class FormGrid(QtWidgets.QWidget):
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
+    def __init__(self, parent: QtWidgets.QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("formGrid")
         self.grid = QtWidgets.QGridLayout(self)
@@ -193,7 +192,7 @@ class LabeledField(QtWidgets.QWidget):
         field: QtWidgets.QWidget,
         *,
         hint: str = "",
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         layout = QtWidgets.QVBoxLayout(self)
@@ -216,7 +215,7 @@ class UnitField(QtWidgets.QWidget):
         self,
         field: QtWidgets.QWidget,
         unit: str,
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         layout = QtWidgets.QHBoxLayout(self)
@@ -232,7 +231,7 @@ class KeyValueList(QtWidgets.QWidget):
     def __init__(
         self,
         items: Iterable[tuple[str, str]] = (),
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("keyValueList")
@@ -260,7 +259,7 @@ class MetricRow(QtWidgets.QFrame):
     def __init__(
         self,
         metrics: Iterable[tuple[str, str]] = (),
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("metricRow")
@@ -291,7 +290,7 @@ class InlineNotice(QtWidgets.QFrame):
         self,
         text: str,
         kind: str = "info",
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("inlineNotice")
@@ -306,7 +305,7 @@ class InlineNotice(QtWidgets.QFrame):
 
 
 class ActionBar(QtWidgets.QFrame):
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
+    def __init__(self, parent: QtWidgets.QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("actionBar")
         self.action_layout = QtWidgets.QHBoxLayout(self)
@@ -319,7 +318,7 @@ class ActionBar(QtWidgets.QFrame):
 
 
 class Toolbar(QtWidgets.QFrame):
-    def __init__(self, parent: Optional[QtWidgets.QWidget] = None):
+    def __init__(self, parent: QtWidgets.QWidget | None = None):
         super().__init__(parent)
         self.setObjectName("toolbar")
         self.toolbar_layout = QtWidgets.QHBoxLayout(self)
@@ -336,7 +335,7 @@ class SegmentedControl(QtWidgets.QFrame):
     def __init__(
         self,
         labels: Iterable[str],
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("segmentedControl")
@@ -372,8 +371,8 @@ class EmptyState(QtWidgets.QFrame):
         title: str,
         description: str = "",
         *,
-        action: Optional[QtWidgets.QWidget] = None,
-        parent: Optional[QtWidgets.QWidget] = None,
+        action: QtWidgets.QWidget | None = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("emptyState")
@@ -399,7 +398,7 @@ class CompactSearchField(QtWidgets.QLineEdit):
     def __init__(
         self,
         placeholder: str = "Search",
-        parent: Optional[QtWidgets.QWidget] = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("compactSearch")
@@ -413,8 +412,8 @@ class CompactSearchField(QtWidgets.QLineEdit):
 class OverflowMenuButton(QtWidgets.QToolButton):
     def __init__(
         self,
-        menu: Optional[QtWidgets.QMenu] = None,
-        parent: Optional[QtWidgets.QWidget] = None,
+        menu: QtWidgets.QMenu | None = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
         self.setObjectName("overflowMenuButton")

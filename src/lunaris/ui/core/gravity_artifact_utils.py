@@ -1,5 +1,4 @@
 ﻿# ST_LRPS/ui_parts/gravity_artifact_utils.py
-# -*- coding: utf-8 -*-
 """
 Pure gravity artifact helper functions for UI modules.
 
@@ -16,16 +15,18 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import List, Optional
 
 try:
-    from lunaris.ui.core.ui_commons import normalize_path, find_project_root
-    from lunaris.ui.core.surrogate_artifacts import is_valid_surrogate_run, looks_like_lunar_surrogate_run
+    from lunaris.ui.core.surrogate_artifacts import (
+        is_valid_surrogate_run,
+        looks_like_lunar_surrogate_run,
+    )
+    from lunaris.ui.core.ui_commons import find_project_root, normalize_path
 except ImportError:
     if __name__ == "__main__":
         import sys
         print("Run as: python -m lunaris.ui.core.gravity_artifact_utils", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -35,7 +36,7 @@ ST_LRPS_RUNS_DIR = PROJECT_ROOT / "st_lrps" / "runs"
 GRAVITY_EXTENSIONS = (".shbdr", ".dat", ".txt", ".tab", ".gfc")
 
 
-def extract_sh_degree(filename: str) -> Optional[int]:
+def extract_sh_degree(filename: str) -> int | None:
     """
     Heuristic to extract the SH degree from a gravity model filename.
     Matches patterns like 'GRGM1200B', 'deg100', 'L180'.
@@ -58,8 +59,8 @@ def extract_sh_degree(filename: str) -> Optional[int]:
 
 
 def find_best_gravity_file(
-    root_dir: Path, preferred_degree: Optional[int] = None
-) -> Optional[str]:
+    root_dir: Path, preferred_degree: int | None = None
+) -> str | None:
     """
     Automatically scan the project for gravity model files.
     Scores candidates by extension, degree match, and file size.
@@ -103,7 +104,7 @@ def find_best_gravity_file(
     return normalize_path(candidates[0][4])
 
 
-def list_st_lrps_model_dirs(root_dir: Path = ST_LRPS_RUNS_DIR) -> List[Path]:
+def list_st_lrps_model_dirs(root_dir: Path = ST_LRPS_RUNS_DIR) -> list[Path]:
     """
     Discover available surrogate gravity runs sorted newest-first.
 

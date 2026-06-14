@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for ST-LRPS resume-training support.
 
@@ -32,18 +31,21 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 # ---------------------------------------------------------------------------
 
 def _make_min_run(run_dir: Path):
+    from lunaris.surrogate.st_lrps.artifacts.manager import (
+        atomic_write_json,
+        build_checkpoint_payload,
+        build_resolved_config,
+        capture_rng_state,
+        ensure_run_layout,
+        save_checkpoint,
+    )
+    from lunaris.surrogate.st_lrps.networks.models import (
+        build_model_from_config,
+        compute_architecture_signature,
+    )
+    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
     from lunaris.surrogate.st_lrps.training.config import TrainConfig
     from lunaris.surrogate.st_lrps.training.losses import GradNormWeights
-    from lunaris.surrogate.st_lrps.networks.models import build_model_from_config, compute_architecture_signature
-    from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
-    from lunaris.surrogate.st_lrps.artifacts.manager import (
-        ensure_run_layout,
-        build_resolved_config,
-        build_checkpoint_payload,
-        save_checkpoint,
-        atomic_write_json,
-        capture_rng_state,
-    )
 
     layout = ensure_run_layout(run_dir)
     cfg = TrainConfig(

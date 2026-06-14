@@ -1,5 +1,4 @@
 # tests/test_time_utils.py
-# -*- coding: utf-8 -*-
 """
 Unit tests for common.time_utils
 ================================
@@ -14,11 +13,9 @@ Run:
 from __future__ import annotations
 
 import math
-import os
 import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 

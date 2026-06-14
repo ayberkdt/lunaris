@@ -35,15 +35,16 @@ import json
 import sys
 import textwrap
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-from matplotlib.lines import Line2D
-from matplotlib.colors import LogNorm
 import numpy as np
+from matplotlib.colors import LogNorm
+from matplotlib.lines import Line2D
 
 try:
     import pandas as pd
@@ -97,7 +98,7 @@ def _require(path: Path) -> Path:
     return path
 
 
-def _load_run(run_dir: Path) -> Dict[str, Any]:
+def _load_run(run_dir: Path) -> dict[str, Any]:
     """Load the per-scenario / aggregate / runtime frames for one run dir."""
     m = run_dir / "metrics"
     return {
@@ -109,7 +110,7 @@ def _load_run(run_dir: Path) -> Dict[str, Any]:
     }
 
 
-def _model_frame(per: "pd.DataFrame", display: str) -> "pd.DataFrame":
+def _model_frame(per: pd.DataFrame, display: str) -> pd.DataFrame:
     sub = per[per["model"] == display].copy().reset_index(drop=True)
     if sub.empty:
         raise SystemExit(
@@ -137,7 +138,7 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
     st_agg = st["agg"]
     st_rt = st["rt"]
     scenarios = st["scenarios"]
-    selected: Dict[str, Any] = {}
+    selected: dict[str, Any] = {}
     if st["selected_path"].exists():
         selected = json.loads(st["selected_path"].read_text(encoding="utf-8"))
 
@@ -203,11 +204,11 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
                       widths=0.4, patch_artist=True, showfliers=False,
                       medianprops=dict(color="k", lw=1.2),
                       whiskerprops=dict(lw=0.8), capprops=dict(lw=0.8))
-    for patch, col in zip(bp["boxes"], colors_ordered):
+    for patch, col in zip(bp["boxes"], colors_ordered, strict=False):
         patch.set_facecolor(col); patch.set_alpha(0.3)
         patch.set_edgecolor(col); patch.set_linewidth(1.0)
     rng = np.random.default_rng(42)
-    for pos, k, col in zip(positions, keys_ordered, colors_ordered):
+    for pos, k, col in zip(positions, keys_ordered, colors_ordered, strict=False):
         jitter = rng.uniform(-0.15, 0.15, size=len(model_errs[k]))
         ax2a.scatter(pos + jitter, model_errs[k], s=8, color=col, alpha=0.6,
                      edgecolors="none", zorder=4)
@@ -215,7 +216,7 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
     ax2a.set_xticks(positions); ax2a.set_xticklabels(keys_ordered, fontsize=8)
     ax2a.set_ylabel("RMS position error [m]")
     ax2a.set_title("(a)", loc="left", fontsize=9, pad=4)
-    for k, col, ls in zip(keys_ordered, colors_ordered, [LS["SH20"], LS["STLRPS"], LS["SH60"]]):
+    for k, col, ls in zip(keys_ordered, colors_ordered, [LS["SH20"], LS["STLRPS"], LS["SH60"]], strict=False):
         vals = np.sort(model_errs[k])
         ecdf = np.arange(1, len(vals) + 1) / len(vals)
         ax2b.step(vals, ecdf, where="post", color=col, lw=1.5, ls=ls, label=k)
@@ -233,7 +234,7 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
     panel_list = [("(a) SH20", sh20_per, "SH20"),
                   ("(b) ST-LRPS", st_per_model, "STLRPS"),
                   ("(c) SH60", sh60_per, "SH60")]
-    for ax, (title, df, mkey) in zip(axes3, panel_list):
+    for ax, (title, df, mkey) in zip(axes3, panel_list, strict=False):
         err_m = df["rms_pos_err_km"].values * KM2M
         finite = err_m[np.isfinite(err_m) & (err_m > 0)]
         vmin = float(np.percentile(finite, 2)) if finite.size else 1e-3
@@ -284,10 +285,10 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
     y_offsets = [-0.15, 0.0, 0.15]
     for panel_ax, stat_func, panel_title in [(ax4a, np.median, "(a) Median"),
                                              (ax4b, lambda x: np.percentile(x, 95), "(b) 95th percentile")]:
-        for (name, df, col, mk), dy in zip(model_specs, y_offsets):
+        for (name, df, col, mk), dy in zip(model_specs, y_offsets, strict=False):
             vals = [stat_func(df[v].values) * KM2M for v in ric_cols.values()]
             yy = y_pos + dy
-            for yi, vi in zip(yy, vals):
+            for yi, vi in zip(yy, vals, strict=False):
                 panel_ax.plot([0, vi], [yi, yi], color=col, lw=0.4, alpha=0.4, zorder=2)
             panel_ax.scatter(vals, yy, marker=mk, s=28, color=col, edgecolors="k",
                              linewidths=0.2, zorder=5, label=name)

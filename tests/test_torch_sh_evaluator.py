@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Torch spherical-harmonic evaluator: high-degree construction + canonicalization.
 
@@ -56,7 +55,7 @@ class _SyntheticGravityModel:
         self.scale_m = scale_m
 
 
-def _sample_positions() -> "torch.Tensor":
+def _sample_positions() -> torch.Tensor:
     pts = np.array(
         [
             [R_REF + 1.0e5, 0.0, 0.0],

@@ -163,6 +163,7 @@ def test_global_stylesheet_has_shared_component_selectors() -> None:
 def test_shared_primitives_construct_offscreen() -> None:
     pytest.importorskip("PySide6")
     from PySide6 import QtWidgets
+
     from lunaris.ui.components import (
         CompactSearchField,
         EmptyState,

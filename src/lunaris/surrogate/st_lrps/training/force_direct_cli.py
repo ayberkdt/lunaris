@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Minimal direct-force ST-LRPS trainer.
 
 This module intentionally does not reuse the Sobolev potential training loop.
@@ -16,10 +15,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from dataclasses import asdict
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 import torch

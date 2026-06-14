@@ -1,5 +1,4 @@
 # tests/test_state.py
-# -*- coding: utf-8 -*-
 """
 Test Suite for Core State & Geometry Engine
 ===========================================
@@ -12,12 +11,12 @@ Run with:
 """
 
 import math
-import numpy as np
 import sys
 from pathlib import Path
+
+import numpy as np
 import pytest
 from numpy.testing import assert_allclose, assert_array_equal
-
 
 # -----------------------------------------------------------------------------
 # Import helper (run from repo root without installing)
@@ -31,26 +30,19 @@ if str(_REPO_ROOT) not in sys.path:
 from lunaris.core.state import (
     # Constants
     STATE_SIZE,
-    
+    ClassicalElements,
     # Containers
     OrbitState,
-    ClassicalElements,
-    
+    # Geometry Helpers
+    calculate_ae_from_altitudes,
+    calculate_altitudes_from_ae,
+    cartesian_to_keplerian,
+    create_state_from_keplerian,
+    # Coordinate Transformations
+    keplerian_to_cartesian,
     # Packing
     pack_orbital_state,
     unpack_orbital_state,
-    
-    # Coordinate Transformations
-    keplerian_to_cartesian,
-    cartesian_to_keplerian,
-    keplerian_to_state_vector,
-    create_state_from_keplerian,
-    
-    # Geometry Helpers
-    calculate_periapsis_apoapsis_radii,
-    calculate_ae_from_radii,
-    calculate_ae_from_altitudes,
-    calculate_altitudes_from_ae
 )
 
 # --- Test Constants (Lunar Context) ---
@@ -69,7 +61,7 @@ def test_pack_unpack_integrity():
 
     # Pack
     state_vec = pack_orbital_state(r_in, v_in)
-    
+
     assert state_vec.shape == (STATE_SIZE,)
     assert state_vec.dtype == np.float64
     assert_array_equal(state_vec[:3], r_in)
@@ -91,10 +83,10 @@ def test_validation_helpers_reject_bad_inputs():
     """Ensures input validators catch NaNs and wrong shapes."""
     bad_vec = np.array([1.0, np.nan, 3.0])
     short_vec = np.array([1.0, 2.0])
-    
+
     with pytest.raises(ValueError, match="non-finite"):
         pack_orbital_state(bad_vec, [0,0,0])
-        
+
     with pytest.raises(ValueError, match="elements"):
         pack_orbital_state(short_vec, [0,0,0])
 
@@ -108,11 +100,11 @@ def test_elliptic_geometry_conversions():
     # Case: 100 km x 100 km circular orbit
     hp_in = 100.0
     ha_in = 100.0
-    
+
     a, e = calculate_ae_from_altitudes(R_MOON, hp_in, ha_in)
     assert np.isclose(e, 0.0)
     assert np.isclose(a, R_MOON + 100_000.0)
-    
+
     hp_out, ha_out = calculate_altitudes_from_ae(R_MOON, a, e)
     assert np.isclose(hp_out, hp_in)
     assert np.isclose(ha_out, ha_in)
@@ -120,10 +112,10 @@ def test_elliptic_geometry_conversions():
     # Case: 100 km x 5000 km elliptic orbit
     hp_in = 100.0
     ha_in = 5000.0
-    
+
     a, e = calculate_ae_from_altitudes(R_MOON, hp_in, ha_in)
     assert 0.0 < e < 1.0
-    
+
     hp_out, ha_out = calculate_altitudes_from_ae(R_MOON, a, e)
     assert_allclose([hp_out, ha_out], [hp_in, ha_in], rtol=1e-12)
 
@@ -158,17 +150,17 @@ def test_keplerian_cartesian_roundtrip():
     assert_allclose(a_out, a_in, rtol=1e-12)
     assert_allclose(e_out, e_in, atol=1e-12)
     assert_allclose(inc_out, inc_in, atol=1e-12)
-    
+
     # 4. Final verification: Convert back to Cartesian and compare vectors (Physical Truth)
     r2, v2 = keplerian_to_cartesian(a_out, e_out, inc_out, raan_out, argp_out, ta_out, mu=MU_MOON)
-    
+
     assert_allclose(r2, r, rtol=1e-12, atol=1e-6)
     assert_allclose(v2, v, rtol=1e-12, atol=1e-9)
 
 
 def test_singularity_guards():
     """Test that invalid orbits raise appropriate errors."""
-    
+
     # Parabolic singularity (e=1.0)
     with pytest.raises(ValueError, match="Parabolic"):
         keplerian_to_cartesian(10000e3, 1.0, 0, 0, 0, 0)
@@ -190,17 +182,17 @@ def test_orbit_state_behavior():
     """Test the OOP wrapper 'OrbitState'."""
     r = np.array([R_MOON + 1000.0, 0.0, 0.0])
     v = np.array([0.0, 1600.0, 0.0])
-    
+
     state = OrbitState(r, v)
-    
+
     # Check properties
     assert np.isclose(state.r_mag, R_MOON + 1000.0)
     assert np.isclose(state.v_mag, 1600.0)
-    
+
     # Check energy
     expected_energy = 0.5 * 1600**2 - MU_MOON / (R_MOON + 1000.0)
     assert np.isclose(state.compute_specific_energy(MU_MOON), expected_energy)
-    
+
     # Check y-property
     y = state.y
     assert y.shape == (6,)
@@ -212,12 +204,12 @@ def test_classical_elements_behavior():
     ce = ClassicalElements(
         a=8000e3, e=0.1, inc=0.5, raan=0.1, argp=0.2, ta=0.0
     )
-    
+
     # Check normalization returns a new instance
     ce_norm = ce.normalized()
     assert isinstance(ce_norm, ClassicalElements)
     assert ce_norm is not ce
-    
+
     # Check conversion to OrbitState
     os = ce.to_orbit_state(mu=MU_MOON)
     assert isinstance(os, OrbitState)
@@ -230,11 +222,11 @@ def test_classical_elements_behavior():
 def test_create_state_factory():
     """Test the 'overloaded' factory function."""
     args = (8000e3, 0.0, 0.0, 0.0, 0.0, 0.0)
-    
+
     # Return Object
     obj = create_state_from_keplerian(*args, mu=MU_MOON, return_array=False)
     assert isinstance(obj, OrbitState)
-    
+
     # Return Array
     arr = create_state_from_keplerian(*args, mu=MU_MOON, return_array=True)
     assert isinstance(arr, np.ndarray)

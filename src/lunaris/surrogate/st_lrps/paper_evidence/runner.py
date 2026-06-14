@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Staged runner for the ST-LRPS paper evidence pipeline (Part 1).
 
 Only the ``train`` stage is implemented in Part 1. The other stages exist as
@@ -22,8 +21,9 @@ import json
 import shutil
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 from lunaris.common.paths import project_root_from_file
 from lunaris.surrogate.st_lrps.paper_evidence.config_validation import (
@@ -296,7 +296,7 @@ def _render_training_summary(run_dir: Path, config: Mapping[str, Any], checkpoin
         f"- Seed: {config.get('seed')}  |  split seed: {split.get('split_seed')}",
         f"- Split policy: {split.get('split_policy')}",
         f"- Target mode: {target.get('target_mode')}  |  base SH degree: {target.get('base_sh_degree')}  |  target SH degree: {target.get('target_sh_degree')}",
-        f"- Scaler fit scope: train_only (verified)",
+        "- Scaler fit scope: train_only (verified)",
         f"- Epochs (target): {config.get('epochs')}  |  batch size: {config.get('batch_size')}",
         f"- Best epoch: {manifest.get('best_epoch')}  |  best score: {manifest.get('best_score')} ({manifest.get('best_metric') or manifest.get('best_score_name')})",
         f"- Status: {manifest.get('status')}",
@@ -316,9 +316,9 @@ def _render_training_summary(run_dir: Path, config: Mapping[str, Any], checkpoin
 def run_train_stage(
     config_path: str | Path,
     *,
-    seed: Optional[int] = None,
-    out_dir: Optional[str | Path] = None,
-    evidence_root: Optional[str | Path] = None,
+    seed: int | None = None,
+    out_dir: str | Path | None = None,
+    evidence_root: str | Path | None = None,
     dry_run: bool = False,
     skip_existing: bool = False,
     require_clean_git: bool = False,
@@ -465,7 +465,7 @@ def _safe_name(name: Any) -> str:
     return text or "run"
 
 
-def _resolve_config(stage: str, config_arg: Optional[str]) -> Optional[Path]:
+def _resolve_config(stage: str, config_arg: str | None) -> Path | None:
     if config_arg:
         return Path(config_arg)
     default = _DEFAULT_CONFIGS.get(stage)
@@ -499,13 +499,13 @@ def _record_stage(
     stage: str,
     run_key: str,
     *,
-    config_path: Optional[str | Path] = None,
-    config: Optional[Mapping[str, Any]] = None,
-    out_dir: Optional[str | Path] = None,
-    artifacts: Optional[Mapping[str, str | Path | None]] = None,
-    command: Optional[list[str]] = None,
+    config_path: str | Path | None = None,
+    config: Mapping[str, Any] | None = None,
+    out_dir: str | Path | None = None,
+    artifacts: Mapping[str, str | Path | None] | None = None,
+    command: list[str] | None = None,
     dry_run: bool = False,
-    extra: Optional[Mapping[str, Any]] = None,
+    extra: Mapping[str, Any] | None = None,
 ) -> None:
     manifest_path = Path(evidence_root) / "manifests" / "evidence_manifest.json"
     entry = build_evidence_manifest(
@@ -522,7 +522,7 @@ def _record_stage(
 def run_field_validation_stage(
     config_path: str | Path,
     *,
-    model_dir: Optional[str | Path] = None,
+    model_dir: str | Path | None = None,
     evidence_root: Path,
     dry_run: bool = False,
 ) -> int:
@@ -552,7 +552,9 @@ def run_field_validation_stage(
         return 2
 
     from lunaris.surrogate.st_lrps.evaluation.validation_suite import (
-        DEFAULT_FIELD_POLICIES, run_field_validation, write_field_validation_csvs,
+        DEFAULT_FIELD_POLICIES,
+        run_field_validation,
+        write_field_validation_csvs,
     )
 
     report = run_field_validation(
@@ -579,7 +581,7 @@ def run_field_validation_stage(
 def run_orbit_benchmark_stage(
     config_paths: Sequence[str | Path],
     *,
-    model_dir: Optional[str | Path] = None,
+    model_dir: str | Path | None = None,
     evidence_root: Path,
     dry_run: bool = False,
 ) -> int:
@@ -659,7 +661,9 @@ def run_worst_case_stage(config_path: str | Path, *, evidence_root: Path, dry_ru
         print("[paper-evidence] ERROR worst-case: fill benchmark_dir before running.", file=sys.stderr)
         return 2
 
-    from lunaris.surrogate.st_lrps.paper_evidence.worst_case import run_worst_case_from_benchmark_dir
+    from lunaris.surrogate.st_lrps.paper_evidence.worst_case import (
+        run_worst_case_from_benchmark_dir,
+    )
 
     paths = run_worst_case_from_benchmark_dir(
         benchmark_dir, out_dir,
@@ -681,7 +685,7 @@ def run_worst_case_stage(config_path: str | Path, *, evidence_root: Path, dry_ru
 # ---------------------------------------------------------------------------
 
 def run_ablation_stage(
-    config_path: str | Path, *, evidence_root: Path, dry_run: bool = False, execute_override: Optional[bool] = None
+    config_path: str | Path, *, evidence_root: Path, dry_run: bool = False, execute_override: bool | None = None
 ) -> int:
     cfg = _load_json(config_path)
     ds = cfg.get("dataset", {}) if isinstance(cfg.get("dataset"), Mapping) else {}
@@ -717,7 +721,9 @@ def run_ablation_stage(
 
 def run_multi_seed_stage(*, evidence_root: Path, dry_run: bool = False) -> int:
     from lunaris.surrogate.st_lrps.paper_evidence.multi_seed import (
-        aggregate_multi_seed, collect_seed_entry, write_multi_seed_outputs,
+        aggregate_multi_seed,
+        collect_seed_entry,
+        write_multi_seed_outputs,
     )
 
     out_dir = evidence_root / "tables"
@@ -731,7 +737,7 @@ def run_multi_seed_stage(*, evidence_root: Path, dry_run: bool = False) -> int:
     entries: list[dict[str, Any]] = []
     if manifest_path.exists():
         manifest = _load_json(manifest_path)
-        for run_key, rec in (manifest.get("runs", {}) or {}).items():
+        for _run_key, rec in (manifest.get("runs", {}) or {}).items():
             if rec.get("stage") != "train":
                 continue
             seed = (rec.get("config", {}) or {}).get("seed")
@@ -762,7 +768,8 @@ def run_multi_seed_stage(*, evidence_root: Path, dry_run: bool = False) -> int:
 
 def run_tables_stage(*, evidence_root: Path, dry_run: bool = False) -> int:
     from lunaris.surrogate.st_lrps.paper_evidence.paper_tables import (
-        generate_paper_figures, generate_paper_tables,
+        generate_paper_figures,
+        generate_paper_tables,
     )
 
     if dry_run:
@@ -853,7 +860,7 @@ def _dispatch_stage(stage: str, args, evidence_root: Path) -> int:
     return run_placeholder_stage(stage)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
 
     if args.mark_pre_hygiene:

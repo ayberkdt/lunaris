@@ -1,5 +1,4 @@
 # ST_LRPS/analysis/monte_carlo/statistics.py
-# -*- coding: utf-8 -*-
 """
 Monte Carlo Statistical Analysis
 ==================================
@@ -32,15 +31,13 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
 
 import numpy as np
 
+from lunaris.common.constants import R_MOON
 from lunaris.common.montecarlo_defs import MCRunResult
 from lunaris.common.type_defs import F64Array
 from lunaris.core.state import cartesian_to_keplerian
-from lunaris.common.constants import R_MOON
-
 
 # =============================================================================
 # 1.              HELPER FUNCTIONS
@@ -58,7 +55,7 @@ def _cov6(Y_t: F64Array) -> F64Array:
     return np.cov(Y_t.T, ddof=1).astype(np.float64)
 
 
-def _position_ellipsoid_axes(P_pos: F64Array) -> Tuple[F64Array, F64Array]:
+def _position_ellipsoid_axes(P_pos: F64Array) -> tuple[F64Array, F64Array]:
     """
     Compute 3-σ semi-axes and orientation of the position error ellipsoid.
 
@@ -82,7 +79,7 @@ def _position_ellipsoid_axes(P_pos: F64Array) -> Tuple[F64Array, F64Array]:
 
 
 
-def _binomial_ci_wilson(k: int, n: int, z: float = 1.96) -> Tuple[float, float]:
+def _binomial_ci_wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """
     Wilson score 95% confidence interval for a Binomial proportion k/n.
 
@@ -123,7 +120,7 @@ class EnsembleStatistics:
     alt_mean:   F64Array
     alt_std:    F64Array
 
-    def sigma_bounds(self, n: float = 3.0) -> Tuple[F64Array, F64Array]:
+    def sigma_bounds(self, n: float = 3.0) -> tuple[F64Array, F64Array]:
         """Return (mean - n*std, mean + n*std) bounds for all 6 state components."""
         return self.mean - n * self.std, self.mean + n * self.std
 
@@ -177,7 +174,7 @@ class ImpactStatistics:
     n_total:        int
     n_impacts:      int
     p_impact:       float
-    p_impact_ci95:  Tuple[float, float]
+    p_impact_ci95:  tuple[float, float]
     t_impact_mean:  float
     t_impact_std:   float
     lat_deg:        F64Array
@@ -210,10 +207,10 @@ class MCStatistics:
     ensemble:   EnsembleStatistics
     ellipsoids: ErrorEllipsoids
     impacts:    ImpactStatistics
-    oe_disp:    Optional[OEDispersion] = None
+    oe_disp:    OEDispersion | None = None
 
     # Raw result reference (not serialised by default)
-    _raw: Optional[MCRunResult] = field(default=None, repr=False)
+    _raw: MCRunResult | None = field(default=None, repr=False)
 
 
 # =============================================================================
@@ -249,7 +246,7 @@ def compute_ensemble_statistics(
         if mask.sum() < 2:
             warnings.warn(
                 "[mc_analysis] Fewer than 2 survived samples; using full ensemble.",
-                RuntimeWarning,
+                RuntimeWarning, stacklevel=2,
             )
             mask = np.ones(result.n_samples, dtype=bool)
         Y = Y[:, mask, :]

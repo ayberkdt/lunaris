@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import asdict, is_dataclass
-from typing import Any, Mapping
+from typing import Any
 
 
 def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:

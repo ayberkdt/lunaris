@@ -7,10 +7,12 @@ torch = pytest.importorskip("torch")
 
 from lunaris.surrogate.st_lrps.artifacts.manager import validate_checkpoint_contract
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
-from lunaris.surrogate.st_lrps.runtime.force_model import DirectForceRuntime, load_surrogate_force_model
+from lunaris.surrogate.st_lrps.runtime.force_model import (
+    DirectForceRuntime,
+    load_surrogate_force_model,
+)
 from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContractError
 from st_lrps_contract_test_utils import make_contract_run
-
 
 pytestmark = pytest.mark.requires_torch
 

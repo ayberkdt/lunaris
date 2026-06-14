@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 ST-LRPS Studio.
 
@@ -44,26 +43,12 @@ Run
 
 from __future__ import annotations
 
-import json
-import math
-import os
-import platform
-import re
-import shlex
-import subprocess
 import sys
-import time
-from collections import deque
-from datetime import datetime
 from pathlib import Path
 
 from lunaris.common.paths import project_root_from_file
-from typing import Any, Callable, Dict, List, Optional, Tuple
-
-import sys
 
 from .qt_common import *
-
 
 # pyqtgraph — optional, graceful fallback
 try:
@@ -79,9 +64,13 @@ try:
         CHECKPOINT_SCHEMA_VERSION,
         CRITICAL_CONFIG_FIELDS,
         compute_payload_sha256,
-        load_checkpoint as load_artifact_checkpoint,
         make_run_layout,
         read_run_manifest,
+    )
+    from lunaris.surrogate.st_lrps.artifacts.manager import (
+        load_checkpoint as load_artifact_checkpoint,
+    )
+    from lunaris.surrogate.st_lrps.artifacts.manager import (
         resolve_run_dir as resolve_artifact_run_dir,
     )
 except Exception:  # pragma: no cover - UI remains usable without artifact deps
@@ -95,20 +84,6 @@ except Exception:  # pragma: no cover - UI remains usable without artifact deps
 
 # Dashboard widgets and training metrics (Phase 1-8 redesign)
 try:
-    from lunaris.surrogate.st_lrps.ui.dashboard_widgets import (
-        ExperimentHeader,
-        KPIStrip,
-        MetricCard,
-        StructuredLogView,
-        TimeMetricsStrip,
-    )
-    from lunaris.surrogate.st_lrps.ui.training_metrics import (
-        EpochGuard,
-        ETAEstimator,
-        TrainingLogParser,
-        TrainingMetricsStore,
-        compute_auto_log_interval,
-    )
     _HAS_DASHBOARD_V2 = True
 except Exception:  # pragma: no cover
     _HAS_DASHBOARD_V2 = False
@@ -165,14 +140,27 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 
 
 from .common_widgets import *
-from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _style_surface, _inspect_run_artifacts, _NoWheelOnSpinFilter
-
-
-from .dataset_introspection import inspect_h5_metadata as _introspect_h5
+from .common_widgets import (
+    _default_runtime_output_dir,
+    _format_command,
+    _inspect_run_artifacts,
+    _make_page_header,
+    _mono_font,
+    _norm_path,
+    _read_json_if_exists,
+    _row_lineedit_with_button,
+    _scroll_wrap,
+    _settings,
+    _split_cli_args,
+    _style_command_preview,
+    _style_surface,
+    _tune_form,
+    _tune_inputs,
+)
 
 
 class STLRPSProfilingTab(QWidget):
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setMinimumHeight(520)
 
@@ -310,7 +298,7 @@ class STLRPSProfilingTab(QWidget):
         # We refactor the profiling dashboard to place Configuration in a scrollable panel,
         # Action controls in a dedicated row, and output logs + markdown preview + plots
         # in a spacious splitter workspace below.
-        
+
         # Top Config Container (Model and Sweep parameters stacked vertically or in two-column cards)
         config_card = QFrame()
         config_card.setObjectName("profileConfigCard")
@@ -357,7 +345,7 @@ class STLRPSProfilingTab(QWidget):
         upper_setup_lo.addWidget(launch_card, 1)
         upper_setup_lo.addWidget(config_card, 1)
         upper_setup.setLayout(upper_setup_lo)
-        
+
         # Wrap upper config in a roomy scroll area
         scroll_config = _scroll_wrap(upper_setup)
         scroll_config.setMinimumHeight(300)
@@ -370,11 +358,11 @@ class STLRPSProfilingTab(QWidget):
         actions_l = QVBoxLayout()
         actions_l.setContentsMargins(12, 10, 12, 10)
         actions_l.setSpacing(8)
-        
+
         # Command preview directly inside actions
         cmd_head = QLabel("Generated CLI Command")
         cmd_head.setObjectName("pageEyebrow")
-        
+
         actions_l.addWidget(cmd_head)
         actions_l.addWidget(self.command_preview)
         actions_l.addWidget(self.command_warning)
@@ -387,16 +375,16 @@ class STLRPSProfilingTab(QWidget):
         self.runner.btn_start.clicked.connect(self._start)
         self.runner.set_finished_hook(self._on_profile_finished)
         self.runner.set_stop_hint("")
-        
+
         self.btn_run_profiling = QPushButton("Run Profiling")
         self.btn_run_profiling.setProperty("kind", "primary")
         self.btn_run_profiling.clicked.connect(self._start)
-        
+
         self.btn_stop_profiling = QPushButton("Stop")
         self.btn_stop_profiling.setProperty("kind", "danger")
         self.btn_stop_profiling.setEnabled(False)
         self.btn_stop_profiling.clicked.connect(lambda: (setattr(self, "_user_stopped_profile", True), self.runner.stop()))
-        
+
         self.btn_clear_profiling = QPushButton("Clear Log")
         self.btn_clear_profiling.setProperty("kind", "ghost")
         self.btn_clear_profiling.clicked.connect(self.runner.log.clear)
@@ -426,7 +414,7 @@ class STLRPSProfilingTab(QWidget):
         main_splitter = QSplitter(Qt.Orientation.Vertical)
         main_splitter.addWidget(scroll_config)
         main_splitter.addWidget(actions_card)
-        
+
         lower_workspace = QWidget()
         lower_workspace_lo = QVBoxLayout()
         lower_workspace_lo.setContentsMargins(0, 0, 0, 0)
@@ -434,7 +422,7 @@ class STLRPSProfilingTab(QWidget):
         lower_workspace_lo.addLayout(profiling_bar)
         lower_workspace_lo.addWidget(bottom_tabs, 1)
         lower_workspace.setLayout(lower_workspace_lo)
-        
+
         main_splitter.addWidget(lower_workspace)
         main_splitter.setStretchFactor(0, 3)
         main_splitter.setStretchFactor(1, 0)
@@ -565,8 +553,8 @@ class STLRPSProfilingTab(QWidget):
         self.profile_extra_args.setText(_st("profile_extra_args", ""))
         s.endGroup()
 
-    def _build_profile_args(self, show_errors: bool = True) -> Optional[List[str]]:
-        def fail(title: str, message: str) -> Optional[List[str]]:
+    def _build_profile_args(self, show_errors: bool = True) -> list[str] | None:
+        def fail(title: str, message: str) -> list[str] | None:
             if show_errors:
                 QMessageBox.critical(self, title, message)
             else:
@@ -733,7 +721,7 @@ class STLRPSProfilingTab(QWidget):
 class RuntimePerformancePage(QWidget):
     """Runtime inference performance workspace."""
 
-    def __init__(self, profile_tab: QWidget, parent: Optional[QWidget] = None):
+    def __init__(self, profile_tab: QWidget, parent: QWidget | None = None):
         super().__init__(parent)
         lo = QVBoxLayout()
         lo.setContentsMargins(22, 20, 22, 20)
@@ -750,7 +738,7 @@ class RuntimePerformancePage(QWidget):
 class ModelReportPanel(QWidget):
     """Read-only artifact report for a trained ST-LRPS run directory."""
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
 
         title = QLabel("Model Report")
@@ -842,7 +830,7 @@ class ModelReportPanel(QWidget):
                     return src[k]
             return default
 
-        lines: List[str] = []
+        lines: list[str] = []
         lines.append(f"Run directory : {root}")
         lines.append(f"Run status    : {manifest.get('status', 'not available') if manifest else 'not available'}")
         lines.append("")

@@ -743,6 +743,7 @@ def test_backend_lhs_extension_requires_explicit_blockwise_opt_in(tmp_path):
 
 def test_backend_atomic_cache_save_load_and_corrupt_recompute_detection(tmp_path):
     import numpy as np
+
     from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=1)
@@ -774,6 +775,7 @@ def test_backend_atomic_cache_save_load_and_corrupt_recompute_detection(tmp_path
 
 def test_backend_truth_and_model_cache_completion_counts(tmp_path):
     import numpy as np
+
     from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=2)
@@ -813,6 +815,7 @@ def test_backend_cache_duration_mismatch_rejects_reuse(tmp_path):
 
 def test_backend_rebuild_gpu_metrics_from_cached_trajectories(tmp_path):
     import numpy as np
+
     from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=1, strict_complete=True)
@@ -850,6 +853,7 @@ def test_backend_rebuild_gpu_metrics_from_cached_trajectories(tmp_path):
 
 def test_backend_strict_complete_rejects_missing_model_cache(tmp_path):
     import numpy as np
+
     from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     args = _sampling_args(random_scenarios=1, strict_complete=True)
@@ -874,7 +878,10 @@ def test_backend_strict_complete_rejects_missing_model_cache(tmp_path):
 # Accumulation helpers (CSV reload / numeric coercion)
 # ---------------------------------------------------------------------------
 def test_metric_row_coercion_and_read(tmp_path):
-    from lunaris.surrogate.st_lrps.evaluation.compare_gravity_models import _coerce_numeric_row, _read_csv_rows
+    from lunaris.surrogate.st_lrps.evaluation.compare_gravity_models import (
+        _coerce_numeric_row,
+        _read_csv_rows,
+    )
 
     coerced = _coerce_numeric_row({
         "scenario_id": "3", "model": "GPU_SH20_RK4", "status": "ok",
@@ -1210,7 +1217,10 @@ def test_no_secondary_plot_page(qapp):
 
 def test_results_section_present_on_same_page(qapp):
     from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
-    from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import CollapsibleSection, ImageGallery
+    from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import (
+        CollapsibleSection,
+        ImageGallery,
+    )
 
     tab = OrbitBenchmarkTab()
     assert isinstance(tab._results_section, CollapsibleSection)
@@ -1256,10 +1266,10 @@ def test_gallery_persistent_across_toggle(qapp):
 
 def test_refresh_results_loads_plots_in_place(qapp, tmp_path):
     """Refresh re-scans the output dir and expands the in-place section."""
-    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
-
     # Write a tiny valid PNG into the output dir.
     import base64
+
+    from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
     png = base64.b64decode(
         b"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
     (tmp_path / "plot_one.png").write_bytes(png)
@@ -1409,6 +1419,7 @@ def test_plots_page_rejects_malformed_dt_list(qapp, tmp_path):
 def test_plots_page_failure_is_not_silent(qapp):
     """A non-zero / crashed harness exit shows an error banner and opens logs."""
     from PySide6.QtCore import QProcess
+
     from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
 
     tab = OrbitBenchmarkPlotsTab()
@@ -1427,7 +1438,9 @@ def test_plots_page_excludes_stale_images(qapp, tmp_path):
     """Only figures written by the current run are shown — old plots from a
     previous (now-failed/partial) run must not resurface."""
     import time as _time
+
     from PySide6.QtGui import QImage
+
     from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
 
     def _png(p):
@@ -1461,6 +1474,7 @@ def test_plots_page_excludes_stale_images(qapp, tmp_path):
 
 def test_cli_accepts_precomputed_slerp_frame_mode(monkeypatch):
     import sys as _sys
+
     from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm
 
     monkeypatch.setattr(_sys, "argv", [

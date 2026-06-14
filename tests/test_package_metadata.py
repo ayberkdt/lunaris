@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Package metadata regression tests."""
 
 from __future__ import annotations

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Worst-case ST-LRPS orbit-scenario analysis.
 
 Reads scenario-level orbit benchmark results (``scenario_results.csv``) and,
@@ -17,8 +16,9 @@ from __future__ import annotations
 import csv
 import json
 import math
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 # Lunar GM for the orbital-period estimate (SI). Imported lazily-safe.
 try:
@@ -37,7 +37,7 @@ WORST_BY = {
 }
 
 
-def _to_float(value: Any) -> Optional[float]:
+def _to_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     try:
@@ -53,7 +53,7 @@ def _read_csv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
-def _orbital_period_s(a_km: Optional[float]) -> Optional[float]:
+def _orbital_period_s(a_km: float | None) -> float | None:
     if a_km is None or a_km <= 0:
         return None
     a_m = a_km * 1000.0
@@ -73,9 +73,9 @@ def analyze_worst_cases(
     scenario_rows: Sequence[Mapping[str, Any]],
     *,
     model: str = "ST-LRPS",
-    scenario_defs: Optional[Sequence[Mapping[str, Any]]] = None,
-    train_alt_min_km: Optional[float] = None,
-    train_alt_max_km: Optional[float] = None,
+    scenario_defs: Sequence[Mapping[str, Any]] | None = None,
+    train_alt_min_km: float | None = None,
+    train_alt_max_km: float | None = None,
     top_n: int = 5,
 ) -> dict[str, Any]:
     """Rank the worst scenarios for ``model`` and flag their failure modes."""
@@ -112,8 +112,8 @@ def analyze_worst_cases(
 def _scenario_record(
     row: Mapping[str, Any],
     defs: Mapping[str, Mapping[str, Any]],
-    train_alt_min_km: Optional[float],
-    train_alt_max_km: Optional[float],
+    train_alt_min_km: float | None,
+    train_alt_max_km: float | None,
 ) -> dict[str, Any]:
     sid = str(row.get("scenario_id"))
     sdef = defs.get(sid, {})
@@ -196,7 +196,7 @@ def write_worst_case_outputs(analysis: Mapping[str, Any], out_dir: str | Path) -
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(_OUTPUT_COLUMNS)
-        for name, ranked in analysis.get("rankings", {}).items():
+        for _name, ranked in analysis.get("rankings", {}).items():
             for rec in ranked:
                 writer.writerow([rec.get(col) for col in _OUTPUT_COLUMNS])
 
@@ -264,8 +264,8 @@ def run_worst_case_from_benchmark_dir(
     out_dir: str | Path,
     *,
     model: str = "ST-LRPS",
-    train_alt_min_km: Optional[float] = None,
-    train_alt_max_km: Optional[float] = None,
+    train_alt_min_km: float | None = None,
+    train_alt_max_km: float | None = None,
     top_n: int = 5,
 ) -> dict[str, Path]:
     """Load a benchmark output dir and write the worst-case analysis."""

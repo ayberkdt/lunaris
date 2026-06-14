@@ -1,5 +1,4 @@
 ﻿# ST_LRPS/ui_parts/preflight_validation.py
-# -*- coding: utf-8 -*-
 """
 Asynchronous pre-flight validation helpers for the desktop UI.
 
@@ -16,9 +15,10 @@ window can focus on orchestration rather than background validation mechanics.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, List, Mapping, Tuple
+from typing import Any
 
 from PySide6 import QtCore
 
@@ -30,7 +30,7 @@ try:
     from lunaris.ui.core.surrogate_artifacts import validate_surrogate_run_preflight
 except ImportError:
     if __name__ == "__main__":
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -49,7 +49,7 @@ _SNAPSHOT_FLAG_MAP = {
 }
 
 
-def backend_request_from_snapshot(command_data: Mapping[str, Any]) -> Tuple[str, SimpleNamespace]:
+def backend_request_from_snapshot(command_data: Mapping[str, Any]) -> tuple[str, SimpleNamespace]:
     """Translate a UI preflight snapshot into a (backend_name, flags) request.
 
     The desktop mission-propagation run uses the CPU full-fidelity path, so the
@@ -236,7 +236,7 @@ class PreFlightWorker(QtCore.QThread):
         except (TypeError, ValueError):
             return False
 
-    def _validate_gravity_files(self) -> Tuple[bool, str]:
+    def _validate_gravity_files(self) -> tuple[bool, str]:
         """
         Verify that the chosen gravity model file exists and looks usable.
 
@@ -304,7 +304,7 @@ class PreFlightWorker(QtCore.QThread):
             return True, f"Gravity file size: {file_size_mb:.1f} MB"
         return True, f"Gravity file validated: {path.name}"
 
-    def _validate_albedo_files(self) -> Tuple[bool, str]:
+    def _validate_albedo_files(self) -> tuple[bool, str]:
         """
         Validate the albedo surface raster when a grid albedo source is selected.
 
@@ -330,7 +330,7 @@ class PreFlightWorker(QtCore.QThread):
 
         return True, f"Albedo grid root validated: {root.name}"
 
-    def _validate_backend_capability(self) -> Tuple[bool, str]:
+    def _validate_backend_capability(self) -> tuple[bool, str]:
         """
         Check the requested backend against the central capability registry.
 
@@ -353,7 +353,7 @@ class PreFlightWorker(QtCore.QThread):
             return False, errors[0].message
         return True, f"Backend '{backend}' supports the selected force models"
 
-    def _validate_output_directory(self) -> Tuple[bool, str]:
+    def _validate_output_directory(self) -> tuple[bool, str]:
         """
         Ensure the selected output directory can be created and written to.
 
@@ -371,7 +371,7 @@ class PreFlightWorker(QtCore.QThread):
 
         return True, f"Output directory ready: {Path(output_dir)}"
 
-    def _validate_numeric_ranges(self) -> Tuple[bool, str]:
+    def _validate_numeric_ranges(self) -> tuple[bool, str]:
         """
         Validate the non-orbit numeric parameters needed for a stable run.
 

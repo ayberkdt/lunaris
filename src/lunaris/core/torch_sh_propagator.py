@@ -1,5 +1,4 @@
 # ST_LRPS/core/torch_sh_propagator.py
-# -*- coding: utf-8 -*-
 """
 Torch Classic-SH Batch Monte Carlo Propagator (``torch_cuda_sh`` / ``torch_cpu_sh`` runtime)
 =========================================================================
@@ -46,7 +45,8 @@ from __future__ import annotations
 
 import math
 import time
-from typing import Any, Callable, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
@@ -183,7 +183,7 @@ class TorchSHBatchPropagator:
         *,
         device: Any = None,
         dtype: Any = None,
-        chunk_size: Optional[int] = None,
+        chunk_size: int | None = None,
     ) -> None:
         try:
             import torch
@@ -238,7 +238,7 @@ class TorchSHBatchPropagator:
                 f"higher-degree coefficient file or lower gpu_sh_degree."
             )
         # Verify the coefficient arrays are actually dimensioned for the request.
-        c_arr = np.asarray(getattr(grav, "Cnm"))
+        c_arr = np.asarray(grav.Cnm)
         if c_arr.ndim < 2 or c_arr.shape[0] < (requested + 1) or c_arr.shape[1] < (requested + 1):
             raise TorchSHPreflightError(
                 f"Cnm array shape {c_arr.shape} is too small for requested degree {requested}."
@@ -293,7 +293,7 @@ class TorchSHBatchPropagator:
         workspace_elems = 2 * (d + 1) * (d + 2) + 6 * (d + 1) + 60
         return int(workspace_elems * self._dtype_bytes() * _VRAM_SAFETY_FACTOR)
 
-    def _query_device_memory(self) -> Tuple[int, int]:
+    def _query_device_memory(self) -> tuple[int, int]:
         torch = self._torch
         if self._device.type != "cuda":
             return (0, 0)
@@ -340,7 +340,7 @@ class TorchSHBatchPropagator:
     # Public interface (matches GPUBatchPropagator / TorchBatchPropagator)
     # ------------------------------------------------------------------
 
-    def recommended_max_batch(self, requested_max_batch: Optional[int] = None) -> int:
+    def recommended_max_batch(self, requested_max_batch: int | None = None) -> int:
         """Return the engine sub-batch cap.
 
         The torch SH path does its own VRAM-aware chunking internally, so the
@@ -430,8 +430,8 @@ class TorchSHBatchPropagator:
         crs: np.ndarray,           # (N,)  — accepted but unused
         duration_s: float,
         output_dt_s: float,
-        callback: Optional[Callable[[float], None]] = None,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        callback: Callable[[float], None] | None = None,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """Propagate ``N`` samples with fixed-step RK4 + per-stage SH gravity.
 
         Returns ``(t_out, Y_out, impact_flags, t_impact)`` with ``Y_out`` shaped

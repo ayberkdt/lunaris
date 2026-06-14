@@ -1,5 +1,4 @@
 ﻿# ST_LRPS/ui_parts/force_models_page.py
-# -*- coding: utf-8 -*-
 
 """
 Force Models Page (UI Part) for Lunaris Mission Studio.
@@ -84,29 +83,38 @@ are purely UI-local into this page (e.g., toggle dependency sync such as
 
 
 # =============================================================================
-# 0.                                    IMPORTS 
+# 0.                                    IMPORTS
 # =============================================================================
 from __future__ import annotations
 
-import os
-import re
 import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Any
 
 from PySide6 import QtCore, QtWidgets
 
-
 try:
-    from lunaris.ui.core.ui_commons import normalize_path, THEME, QuickChip, ToggleSwitch, get_icon, find_project_root, CostIndicator
-    from lunaris.ui.core.surrogate_artifacts import is_valid_surrogate_run, looks_like_lunar_surrogate_run
     from lunaris.ui.core.gravity_artifact_utils import (
-        GRAVITY_EXTENSIONS,
+        ST_LRPS_RUNS_DIR as _ST_LRPS_RUNS_DIR_UTIL,
+    )
+    from lunaris.ui.core.gravity_artifact_utils import (
         extract_sh_degree,
         find_best_gravity_file,
         list_st_lrps_model_dirs,
-        ST_LRPS_RUNS_DIR as _ST_LRPS_RUNS_DIR_UTIL,
+    )
+    from lunaris.ui.core.surrogate_artifacts import (
+        is_valid_surrogate_run,
+        looks_like_lunar_surrogate_run,
+    )
+    from lunaris.ui.core.ui_commons import (
+        THEME,
+        CostIndicator,
+        QuickChip,
+        ToggleSwitch,
+        find_project_root,
+        get_icon,
+        normalize_path,
     )
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
@@ -119,7 +127,7 @@ except ImportError:
         print("  From the project root, run:", file=sys.stderr)
         print("\n      python -m lunaris.ui.pages.force_models_page\n", file=sys.stderr)
         print("!" * 60 + "\n", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -198,10 +206,10 @@ class UIGravityConfig:
     st_lrps_model_dir: str = ""
     adaptive_enabled: bool = False
     adaptive_preset: str = "Balanced (Scientific)"
-    adaptive_table: List[Tuple[float, int]] = field(default_factory=lambda: [
+    adaptive_table: list[tuple[float, int]] = field(default_factory=lambda: [
         (10.0, 1000), (50.0, 660), (200.0, 140), (1000.0, 20)
     ])
-    
+
     def sort_and_validate(self):
         """
         Normalize the adaptive table into a backend-safe altitude schedule.
@@ -228,7 +236,7 @@ class UIGravityConfig:
                 continue
         cleaned.sort(key=lambda x: x[0])
         self.adaptive_table = cleaned
-    
+
     def apply_preset(self, preset_name: str):
         """Apply predefined adaptive gravity profile."""
         if preset_name not in ADAPTIVE_GRAVITY_PROFILES:
@@ -237,12 +245,12 @@ class UIGravityConfig:
         self.adaptive_preset = preset_name
         self.adaptive_table = [tuple(row) for row in profile.get("table_km", [])]
         self.sort_and_validate()
-    
-    def to_dict(self) -> Dict[str, Any]:
+
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return dataclasses.asdict(self)
 
-    def from_dict(self, data: Dict[str, Any]):
+    def from_dict(self, data: dict[str, Any]):
         """Load from dictionary."""
         if not data:
             return
@@ -266,7 +274,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
     Advanced configuration dialog for Lunar Gravity models.
     Consolidates all gravity settings in one place.
     """
-    
+
     def __init__(self, parent: QtWidgets.QWidget, cfg: UIGravityConfig):
         super().__init__(parent)
         self.setWindowTitle("Gravity Field Configuration")
@@ -275,17 +283,17 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         self.resize(750, 600)
         self.setMinimumSize(640, 500)
         self._cfg = cfg  # Reference to mutable config object
-        
+
         # Main Layout
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
-        
+
         # --- HEADER ---
         header = QtWidgets.QLabel("Lunar Gravity Field Configuration")
         header.setObjectName("dialogTitle")
         layout.addWidget(header)
-        
+
         desc = QtWidgets.QLabel(
             "Choose either the classical spherical-harmonics field or a trained "
             "surrogate model for the Moon's central gravity model."
@@ -293,46 +301,46 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         desc.setObjectName("dialogDescription")
         desc.setWordWrap(True)
         layout.addWidget(desc)
-        
+
         # --- TABS ---
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setDocumentMode(True)
         self._apply_tab_style()
-        
+
         # Tab 1: Basic Settings
         self.tab_basic = self._create_basic_tab()
         self.tabs.addTab(self.tab_basic, "Basic")
-        
+
         # Tab 2: Adaptive Optimization
         self.tab_adaptive = self._create_adaptive_tab()
         self.tabs.addTab(self.tab_adaptive, "Adaptive")
-        
+
         layout.addWidget(self.tabs, 1)
-        
+
         # --- BUTTONS ---
         btn_layout = QtWidgets.QHBoxLayout()
         btn_layout.addStretch()
-        
+
         self.btn_cancel = QtWidgets.QPushButton("Cancel")
         self.btn_save = QtWidgets.QPushButton("Apply Settings")
-        
+
         for btn in (self.btn_cancel, self.btn_save):
             btn.setCursor(QtCore.Qt.PointingHandCursor)
             btn.setMinimumHeight(34)
         self.btn_cancel.setProperty("kind", "ghost")
         self.btn_save.setProperty("kind", "primary")
-        
+
         btn_layout.addWidget(self.btn_cancel)
         btn_layout.addWidget(self.btn_save)
         layout.addLayout(btn_layout)
-        
+
         # Signals
         self.btn_cancel.clicked.connect(self.reject)
         self.btn_save.clicked.connect(self._on_save)
-        
+
         # Initialize UI
         self._load_current_config()
-    
+
     def _apply_tab_style(self):
         self.tabs.setStyleSheet(f"""
             QTabWidget::pane {{
@@ -355,13 +363,13 @@ class GravitySettingsDialog(QtWidgets.QDialog):
                 border-bottom: 1px solid {THEME['bg_card']};
             }}
         """)
-    
+
     def _create_basic_tab(self) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(20)
-        
+
         # Enable/Disable Toggle
         self.chk_enabled = QtWidgets.QCheckBox("Enable Gravity Model")
         self.chk_enabled.setChecked(self._cfg.enabled)
@@ -389,14 +397,14 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         self.degree_group = QtWidgets.QGroupBox("Maximum Spherical Harmonic Degree")
         self.degree_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         deg_layout = QtWidgets.QHBoxLayout(self.degree_group)
-        
+
         self.sp_degree = QtWidgets.QSpinBox()
         self.sp_degree.setRange(0, 2000)
         self.sp_degree.setValue(self._cfg.degree)
         self.sp_degree.setFixedWidth(100)
         self.sp_degree.valueChanged.connect(self._on_degree_changed)
         deg_layout.addWidget(self.sp_degree)
-        
+
         # Quick chips
         chip_container = QtWidgets.QHBoxLayout()
         chip_container.setSpacing(6)
@@ -404,7 +412,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
             btn = QuickChip(str(d))
             btn.clicked.connect(lambda _, x=int(d): self.sp_degree.setValue(x))
             chip_container.addWidget(btn)
-        
+
         chip_container.addStretch()
         deg_layout.addLayout(chip_container, 1)
         layout.addWidget(self.degree_group)
@@ -413,11 +421,11 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         self.file_group = QtWidgets.QGroupBox("Gravity Model File")
         self.file_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         file_layout = QtWidgets.QVBoxLayout(self.file_group)
-        
+
         self.ent_file = QtWidgets.QLineEdit(self._cfg.file_path)
         self.ent_file.setPlaceholderText("Path to .shbdr / .tab file...")
         file_layout.addWidget(self.ent_file)
-        
+
         btn_row = QtWidgets.QHBoxLayout()
         btn_browse = QtWidgets.QPushButton("Browse")
         btn_browse.setIcon(get_icon("fa6s.folder-open", THEME['fg_main']))
@@ -425,12 +433,12 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         btn_auto = QtWidgets.QPushButton("Auto-Detect")
         btn_auto.setIcon(get_icon("fa6s.wand-magic-sparkles", THEME['accent']))
         btn_auto.clicked.connect(self._auto_detect_file)
-        
+
         btn_row.addWidget(btn_browse)
         btn_row.addWidget(btn_auto)
         btn_row.addStretch()
         file_layout.addLayout(btn_row)
-        
+
         layout.addWidget(self.file_group)
 
         # Surrogate Run Selection
@@ -469,62 +477,62 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         layout.addStretch(1)
 
         return page
-    
+
     def _create_adaptive_tab(self) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(page)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(20)
-        
+
         # Enable Adaptive
         adaptive_header = QtWidgets.QHBoxLayout()
-        
+
         self.toggle_adaptive = ToggleSwitch()
         self.toggle_adaptive.setChecked(self._cfg.adaptive_enabled)
         adaptive_header.addWidget(self.toggle_adaptive)
-        
+
         lbl_adaptive = QtWidgets.QLabel("Enable Adaptive Degree Optimization")
         lbl_adaptive.setStyleSheet(f"font-weight: bold; color: {THEME['fg_main']};")
         adaptive_header.addWidget(lbl_adaptive)
         adaptive_header.addStretch()
-        
+
         layout.addLayout(adaptive_header)
-        
+
         # Preset Selection
         presets_group = QtWidgets.QGroupBox("Optimization Profile")
         presets_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         presets_layout = QtWidgets.QVBoxLayout(presets_group)
-        
+
         self.cb_preset = QtWidgets.QComboBox()
         self.cb_preset.addItems(list(ADAPTIVE_GRAVITY_PROFILES.keys()) + [ADAPTIVE_CUSTOM_ID])
         self.cb_preset.currentTextChanged.connect(self._on_preset_change)
         presets_layout.addWidget(self.cb_preset)
-        
+
         layout.addWidget(presets_group)
-        
+
         # Table Preview
         table_group = QtWidgets.QGroupBox("Altitude vs Degree Rules")
         table_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         table_layout = QtWidgets.QVBoxLayout(table_group)
-        
+
         self.table_preview = QtWidgets.QTableWidget()
         self.table_preview.setColumnCount(2)
         self.table_preview.setHorizontalHeaderLabels(["Altitude (km)", "Max Degree"])
         self.table_preview.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self.table_preview.verticalHeader().setVisible(False)
         self.table_preview.setEditTriggers(QtWidgets.QTableWidget.NoEditTriggers)
-        
+
         table_layout.addWidget(self.table_preview)
-        
+
         btn_edit = QtWidgets.QPushButton("Edit Rules Table")
         btn_edit.setIcon(get_icon("fa6s.pen-to-square", THEME['fg_main']))
         btn_edit.clicked.connect(self._edit_adaptive_table)
         table_layout.addWidget(btn_edit)
-        
+
         layout.addWidget(table_group, 1)
-        
+
         return page
-    
+
     def _load_current_config(self):
         """Initialize UI with current config values."""
         self.chk_enabled.setChecked(self._cfg.enabled)
@@ -545,7 +553,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
 
         self._update_table_preview()
         self._sync_backend_mode_ui()
-    
+
     def _update_table_preview(self):
         """Update the table preview with current adaptive rules."""
         self.table_preview.setRowCount(0)
@@ -603,7 +611,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
                 "Uses the classical spherical-harmonic gravity field with the selected "
                 "coefficient file and optional adaptive degree schedule."
             )
-    
+
     def _browse_gravity_file(self, _checked: bool = False):
         """Open file dialog for gravity model."""
         current = self.ent_file.text() or str(PROJECT_ROOT)
@@ -613,7 +621,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         )
         if path:
             self.ent_file.setText(normalize_path(path))
-    
+
     def _auto_detect_file(self, _checked: bool = False):
         """Auto-detect gravity file based on selected degree."""
         target_degree = self.sp_degree.value()
@@ -621,12 +629,12 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         if found:
             self.ent_file.setText(found)
             QtWidgets.QMessageBox.information(
-                self, "Auto-Detect", 
+                self, "Auto-Detect",
                 f"Found: {Path(found).name}\nDetected degree: {extract_sh_degree(found) or 'Unknown'}"
             )
         else:
             QtWidgets.QMessageBox.warning(
-                self, "Auto-Detect", 
+                self, "Auto-Detect",
                 "No suitable gravity model files found in project directories."
             )
 
@@ -661,7 +669,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
             "Surrogate Gravity",
             f"Selected latest run: {picked.name}",
         )
-    
+
     def _on_preset_change(self, text: str):
         """Handle preset selection change."""
         if text == ADAPTIVE_CUSTOM_ID:
@@ -669,7 +677,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         if text in ADAPTIVE_GRAVITY_PROFILES:
             self._cfg.apply_preset(text)
             self._update_table_preview()
-    
+
     def _edit_adaptive_table(self, _checked: bool = False):
         """
         Open the detailed adaptive-rule editor using an isolated working copy.
@@ -681,7 +689,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
 
         from dataclasses import replace
         temp_cfg = replace(self._cfg, adaptive_table=[tuple(row) for row in self._cfg.adaptive_table])
-        
+
         # Create and execute adaptive dialog
         dlg = AdaptiveDegreeDialog(self, temp_cfg)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
@@ -690,7 +698,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
             self._cfg.adaptive_preset = ADAPTIVE_CUSTOM_ID
             self.cb_preset.setCurrentText(ADAPTIVE_CUSTOM_ID)
             self._update_table_preview()
-    
+
     def _on_save(self, _checked: bool = False):
         """Validate and commit gravity settings back to the shared config object."""
 
@@ -722,7 +730,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         self._cfg.adaptive_enabled = self.toggle_adaptive.isChecked()
         self._cfg.adaptive_preset = self.cb_preset.currentText()
         self._cfg.sort_and_validate()
-        
+
         self.accept()
 
 
@@ -736,10 +744,10 @@ class UIAdaptiveConfig:
     preset_name: str = "Balanced (Scientific)"
     interp_method: str = "smoothstep"
     blend_width_km: float = 5.0
-    table_km: List[Tuple[float, int]] = field(default_factory=lambda: [
+    table_km: list[tuple[float, int]] = field(default_factory=lambda: [
         (10.0, 1000), (50.0, 660), (200.0, 140), (1000.0, 20)
     ])
-    
+
     def sort_and_validate(self):
         """Ensures the table is sorted by altitude and contains valid numbers."""
         cleaned = []
@@ -752,7 +760,7 @@ class UIAdaptiveConfig:
                 continue
         cleaned.sort(key=lambda x: x[0])
         self.table_km = cleaned
-    
+
     def apply_preset(self, preset_name: str):
         if preset_name not in ADAPTIVE_GRAVITY_PROFILES:
             return
@@ -769,7 +777,7 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
     Editor for the Altitude-vs-Degree lookup table.
     Allows users to define performance/accuracy trade-offs.
     """
-    
+
     def __init__(self, parent: QtWidgets.QWidget, cfg: UIAdaptiveConfig):
         super().__init__(parent)
         self.setWindowTitle("Adaptive Gravity Configuration")
@@ -778,17 +786,17 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         self.resize(700, 500)
         self.setMinimumSize(600, 460)
         self._cfg = cfg
-        
+
         # Main Layout
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
-        
+
         # --- Header ---
         header = QtWidgets.QLabel("Adaptive Gravity Logic")
         header.setObjectName("dialogTitle")
         layout.addWidget(header)
-        
+
         desc = QtWidgets.QLabel(
             "Automatically reduce Spherical Harmonic degree at higher altitudes to save computation time.\n"
             "Define thresholds below. The engine interpolates between steps."
@@ -796,37 +804,37 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         desc.setObjectName("dialogDescription")
         desc.setWordWrap(True)
         layout.addWidget(desc)
-        
+
         # --- Settings Form ---
         form_frame = QtWidgets.QFrame()
         form_frame.setStyleSheet(f"background-color: {THEME['bg_card']}; border-radius: 8px; border: 1px solid {THEME['border']};")
         form_layout = QtWidgets.QGridLayout(form_frame)
         form_layout.setContentsMargins(15, 15, 15, 15)
         form_layout.setVerticalSpacing(12)
-        
+
         # Preset Selector
         self.cb_preset = QtWidgets.QComboBox()
         self.cb_preset.addItems(list(ADAPTIVE_GRAVITY_PROFILES.keys()) + [ADAPTIVE_CUSTOM_ID])
         self.cb_preset.setCurrentText(cfg.preset_name if cfg.preset_name in ADAPTIVE_GRAVITY_PROFILES else ADAPTIVE_CUSTOM_ID)
         self.cb_preset.currentTextChanged.connect(self._on_preset_change)
-        
+
         # Interpolation Method
         self.cb_interp = QtWidgets.QComboBox()
         self.cb_interp.addItems(["linear", "smoothstep"])
         self.cb_interp.setCurrentText(cfg.interp_method)
-        
+
         # Blend Width
         self.sp_blend = QtWidgets.QDoubleSpinBox()
         self.sp_blend.setRange(0.0, 500.0)
         self.sp_blend.setValue(cfg.blend_width_km)
         self.sp_blend.setSuffix(" km")
-        
+
         self._add_form_row(form_layout, 0, "Load Profile:", self.cb_preset)
         self._add_form_row(form_layout, 1, "Interpolation:", self.cb_interp)
         self._add_form_row(form_layout, 2, "Blend Width:", self.sp_blend)
-        
+
         layout.addWidget(form_frame)
-        
+
         # --- Table Editor ---
         self.table = QtWidgets.QTableWidget()
         self.table.setColumnCount(2)
@@ -834,7 +842,7 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         self.table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
-        
+
         # Table Styling
         self.table.setStyleSheet(f"""
             QTableWidget {{
@@ -850,41 +858,41 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
                 color: {THEME['fg_muted']};
             }}
         """)
-        
+
         layout.addWidget(self.table, 1)
-        
+
         # --- Table Actions ---
         action_layout = QtWidgets.QHBoxLayout()
-        
+
         btn_add = self._create_btn("Add Step", self._add_row)
         btn_remove = self._create_btn("Remove Selected", self._remove_row)
-        
+
         action_layout.addWidget(btn_add)
         action_layout.addWidget(btn_remove)
         action_layout.addStretch()
-        
+
         layout.addLayout(action_layout)
-        
+
         # --- Dialog Buttons ---
         footer = QtWidgets.QHBoxLayout()
         footer.addStretch()
-        
+
         btn_cancel = self._create_btn("Cancel", self.reject, primary=False)
         btn_save = self._create_btn("Save Configuration", self._save_and_close, primary=True)
-        
+
         footer.addWidget(btn_cancel)
         footer.addWidget(btn_save)
         layout.addLayout(footer)
-        
+
         # Initialize Data
         self._load_table_data()
-    
+
     def _add_form_row(self, layout, row, label, widget):
         lbl = QtWidgets.QLabel(label)
         lbl.setStyleSheet(f"color: {THEME['fg_main']};")
         layout.addWidget(lbl, row, 0)
         layout.addWidget(widget, row, 1)
-    
+
     def _create_btn(self, text, callback, primary=False):
         btn = QtWidgets.QPushButton(text)
         btn.setCursor(QtCore.Qt.PointingHandCursor)
@@ -892,46 +900,46 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         btn.setProperty("kind", "primary" if primary else "ghost")
         btn.clicked.connect(callback)
         return btn
-    
+
     def _on_preset_change(self, text):
         """Auto-fill form when a preset is selected."""
         if text == ADAPTIVE_CUSTOM_ID:
             return
-            
+
         if text in ADAPTIVE_GRAVITY_PROFILES:
             profile = ADAPTIVE_GRAVITY_PROFILES[text]
             self.cb_interp.setCurrentText(profile.get("interp", "smoothstep"))
             self.sp_blend.setValue(profile.get("blend_km", 5.0))
-            
+
             # Update internal config temporarily to load table
             self._cfg.table_km = [tuple(r) for r in profile.get("table_km", [])]
             self._load_table_data()
-    
+
     def _load_table_data(self):
         """Populates the QTableWidget from the config object."""
         self.table.setRowCount(0)
         for alt, deg in self._cfg.table_km:
             self._insert_table_row(alt, deg)
-    
+
     def _insert_table_row(self, alt: float, deg: int):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        
+
         item_alt = QtWidgets.QTableWidgetItem(f"{alt:.1f}")
         item_deg = QtWidgets.QTableWidgetItem(str(deg))
-        
+
         item_alt.setTextAlignment(QtCore.Qt.AlignCenter)
         item_deg.setTextAlignment(QtCore.Qt.AlignCenter)
-        
+
         self.table.setItem(row, 0, item_alt)
         self.table.setItem(row, 1, item_deg)
-    
+
     def _add_row(self):
         """Adds a default row and switches preset to Custom."""
         self._insert_table_row(0.0, 100)
         self.cb_preset.setCurrentText(ADAPTIVE_CUSTOM_ID)
         self.table.scrollToBottom()
-    
+
     def _remove_row(self):
         """Removes selected rows."""
         rows = sorted(set(index.row() for index in self.table.selectedIndexes()), reverse=True)
@@ -939,8 +947,8 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
             for r in rows:
                 self.table.removeRow(r)
             self.cb_preset.setCurrentText(ADAPTIVE_CUSTOM_ID)
-    
-    def _read_table(self) -> List[Tuple[float, int]]:
+
+    def _read_table(self) -> list[tuple[float, int]]:
         """Parses table content into a list of tuples."""
         data = []
         for r in range(self.table.rowCount()):
@@ -953,24 +961,24 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
             except ValueError:
                 continue
         return data
-    
+
     def _save_and_close(self):
         """Validates input, updates config, and closes dialog."""
         raw_data = self._read_table()
-        
+
         if len(raw_data) < 1:
             QtWidgets.QMessageBox.warning(self, "Invalid Config", "Please define at least one altitude step.")
             return
-        
+
         # Commit changes to config object
         self._cfg.preset_name = self.cb_preset.currentText()
         self._cfg.interp_method = self.cb_interp.currentText()
         self._cfg.blend_width_km = self.sp_blend.value()
         self._cfg.table_km = raw_data
-        
+
         # Auto-sort and cleanup
         self._cfg.sort_and_validate()
-        
+
         self.accept()
 
 
@@ -1166,15 +1174,15 @@ class ForceModelsPage(QtWidgets.QWidget):
 
     def __init__(
         self,
-        gravity_cfg: Optional["UIGravityConfig"] = None,
-        albedo_cfg: Optional["UIAlbedoConfig"] = None,
-        parent: Optional[QtWidgets.QWidget] = None,
+        gravity_cfg: UIGravityConfig | None = None,
+        albedo_cfg: UIAlbedoConfig | None = None,
+        parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
 
         # Keep references so dialogs update the SAME objects MainWindow uses
-        self.gravity_cfg: "UIGravityConfig" = gravity_cfg if gravity_cfg is not None else UIGravityConfig()
-        self.albedo_cfg: "UIAlbedoConfig" = albedo_cfg if albedo_cfg is not None else UIAlbedoConfig()
+        self.gravity_cfg: UIGravityConfig = gravity_cfg if gravity_cfg is not None else UIGravityConfig()
+        self.albedo_cfg: UIAlbedoConfig = albedo_cfg if albedo_cfg is not None else UIAlbedoConfig()
 
         # Build UI into self
         self._build_page_forces()
@@ -1183,7 +1191,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self._sync_albedo_settings_button()
         self._sync_force_dependencies()
 
-    def get_data(self) -> Dict[str, Any]:
+    def get_data(self) -> dict[str, Any]:
         """
         Return a host-friendly snapshot of the currently selected force models.
 
@@ -1209,7 +1217,7 @@ class ForceModelsPage(QtWidgets.QWidget):
             "relativity_1pn": bool(self.sw_relativity_1pn.isChecked()),
         }
 
-    def load_data(self, data: Dict[str, Any]) -> None:
+    def load_data(self, data: dict[str, Any]) -> None:
         """
         Restore a previously saved force-model snapshot onto the page.
 
@@ -1745,7 +1753,7 @@ if __name__ == "__main__":
 
     window.show()
 
-    def dump_force_state(p: "ForceModelsPage") -> dict:
+    def dump_force_state(p: ForceModelsPage) -> dict:
         return {
             "toggles": {
                 "gravity": p.sw_gravity.isChecked(),

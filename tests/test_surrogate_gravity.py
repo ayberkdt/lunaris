@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Regression tests for the surrogate gravity runtime wrapper.
 
@@ -25,7 +24,6 @@ from lunaris.surrogate.runtime_adapter import (
     _extract_degree_metadata,
     _is_valid_surrogate_run,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers

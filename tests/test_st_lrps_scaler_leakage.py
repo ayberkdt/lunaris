@@ -11,11 +11,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
-from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
-from lunaris.surrogate.st_lrps.shared.scaling import fit_scaler_streaming
-
 from dataset_pipeline_test_utils import write_toy_contract_h5
+from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
+from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
+from lunaris.surrogate.st_lrps.shared.scaling import fit_scaler_streaming
 
 
 def _make_rows(n: int, *, u_value: float, a_value: float, seed: int) -> np.ndarray:

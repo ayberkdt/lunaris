@@ -1,8 +1,8 @@
 """
 Spherical Harmonic Gravity Kernels (High-Performance Lunar Engine)
 
-This module serves as the primary numerical engine for evaluating gravitational 
-acceleration using Spherical Harmonic models. It is strictly 'compute-only', 
+This module serves as the primary numerical engine for evaluating gravitational
+acceleration using Spherical Harmonic models. It is strictly 'compute-only',
 meaning it contains no I/O, file parsing, or dataset management.
 
 Core Philosophy:
@@ -32,7 +32,7 @@ Data Flow & Design:
 -------------------
 - Input: Position (x, y, z) in the BODY-FIXED frame.
 - Output: Acceleration vector (ax, ay, az) in the BODY-FIXED frame.
-- Rotations: Frame transformations (Inertial <-> Body-Fixed) must be handled 
+- Rotations: Frame transformations (Inertial <-> Body-Fixed) must be handled
   upstream by specialized frame/attitude modules.
 
 Numerical Specifications:
@@ -62,17 +62,16 @@ Dependencies:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import Optional, Tuple, TypeAlias
-
 import math
-import numpy as np
+from dataclasses import dataclass
+from typing import TypeAlias
 
+import numpy as np
 from numba import njit, prange
 
 from lunaris.common.constants import EPS_1E12, EPS_1E24, NEARLY_UNIT
-from lunaris.common.type_defs import Vec3, Arr1, Arr2, F64
 from lunaris.common.math_utils import clamp
+from lunaris.common.type_defs import F64, Arr1, Arr2, Vec3
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +90,7 @@ class SHWorkspace:
     sin_m: Arr1  # (N+1,)
 
 
-def build_legendre_coeffs(n_max: int) -> Tuple[Arr1, Arr1, Arr2, Arr2, Arr1]:
+def build_legendre_coeffs(n_max: int) -> tuple[Arr1, Arr1, Arr2, Arr2, Arr1]:
     """
     Precompute recurrence constants for fully-normalized associated Legendre functions (P̄_n^m).
 
@@ -172,7 +171,7 @@ def slice_gravity_model(
     Cnm_full: np.ndarray,
     Snm_full: np.ndarray,
     degree: int,
-) -> Tuple[Arr2, Arr2]:
+) -> tuple[Arr2, Arr2]:
     """
     Extract coefficient matrices up to degree N and return strict square blocks.
 
@@ -241,12 +240,12 @@ def make_sh_workspace(degree: int) -> SHWorkspace:
 
 
 # Cache: degree -> (diag, subdiag, A, B, scale_m)
-_LEGENDRE_CACHE: dict[int, Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+_LEGENDRE_CACHE: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
 
 
 def _get_legendre_tables(
     degree: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Cached access to Legendre recurrence constants for a given degree.
 
@@ -299,7 +298,7 @@ def _compute_stable_m_limit(cos_phi: float, max_degree: int) -> int:
 
     # abs_cos_phi represents the magnitude of the cosine of geocentric latitude
     abs_cos_phi = abs(cos_phi)
-    
+
     # Handle singularities: exact pole (cos=0) or equator (cos=1)
     if abs_cos_phi == 0.0:
         return 0
@@ -310,7 +309,7 @@ def _compute_stable_m_limit(cos_phi: float, max_degree: int) -> int:
     # We require: cos(phi)^m > exp(LOG_UNDERFLOW_LIMIT)
     # m * ln|cos_phi| > LOG_UNDERFLOW_LIMIT
     # m < LOG_UNDERFLOW_LIMIT / ln|cos_phi|
-    
+
     ln_cos_phi = math.log(abs_cos_phi)
     m_suggested = int(LOG_UNDERFLOW_LIMIT / ln_cos_phi)
 
@@ -320,10 +319,10 @@ def _compute_stable_m_limit(cos_phi: float, max_degree: int) -> int:
 
 @njit(cache=True)
 def _fill_longitude_trig_tables(
-    cos_lon: float, 
-    sin_lon: float, 
+    cos_lon: float,
+    sin_lon: float,
     max_order: int,
-    cos_m_lon: np.ndarray, 
+    cos_m_lon: np.ndarray,
     sin_m_lon: np.ndarray
 ) -> None:
     """
@@ -333,7 +332,7 @@ def _fill_longitude_trig_tables(
     # Base case: m = 0
     cos_m_lon[0] = 1.0
     sin_m_lon[0] = 0.0
-    
+
     if max_order <= 0:
         return
 
@@ -347,24 +346,24 @@ def _fill_longitude_trig_tables(
     for m in range(2, max_order + 1):
         cos_prev = cos_m_lon[m - 1]
         sin_prev = sin_m_lon[m - 1]
-        
+
         cos_m_lon[m] = cos_prev * cos_lon - sin_prev * sin_lon
         sin_m_lon[m] = sin_prev * cos_lon + cos_prev * sin_lon
 
 
 @njit(cache=True)
 def _apply_legendre_normalization(
-    p_matrix: np.ndarray, 
+    p_matrix: np.ndarray,
     dp_matrix: np.ndarray,
-    max_degree: int, 
-    max_order: int, 
+    max_degree: int,
+    max_order: int,
     stable_m_limit: int,
     scale_m_table: np.ndarray
 ) -> None:
     """
     Applies per-order scaling (sqrt(2) and Condon–Shortley phase) in-place.
-    
-    This final step adjusts the ALFs and their derivatives to match the 
+
+    This final step adjusts the ALFs and their derivatives to match the
     fully-normalized geodesy convention.
     """
     for n in range(max_degree + 1):
@@ -387,23 +386,23 @@ def _apply_legendre_normalization(
 
 @njit(cache=True)
 def _compute_legendre_polynomials_inplace(
-    sin_phi: float, 
+    sin_phi: float,
     cos_phi: float,
-    max_degree: int, 
-    max_order: int, 
+    max_degree: int,
+    max_order: int,
     stable_m_limit: int,
-    diag_coeffs: np.ndarray, 
+    diag_coeffs: np.ndarray,
     subdiag_coeffs: np.ndarray,
-    A_coeffs: np.ndarray, 
-    B_coeffs: np.ndarray, 
+    A_coeffs: np.ndarray,
+    B_coeffs: np.ndarray,
     scale_m_table: np.ndarray,
-    p_matrix: np.ndarray, 
+    p_matrix: np.ndarray,
     dp_matrix: np.ndarray
 ) -> None:
     """
-    Computes fully-normalized associated Legendre polynomials (ALFs) and their 
+    Computes fully-normalized associated Legendre polynomials (ALFs) and their
     derivatives dP/dphi using stable recursive algorithms.
-    
+
     This is the core numerical hot-path. It performs zero heap allocations.
     """
 
@@ -411,7 +410,7 @@ def _compute_legendre_polynomials_inplace(
     workspace_n_max = p_matrix.shape[0] - 1
     max_degree = int(clamp(max_degree, 0, workspace_n_max))
 
-    # Derivative dP[n,m] requires P[n,m+1]. 
+    # Derivative dP[n,m] requires P[n,m+1].
     # We must ensure max_order is sufficient for derivative calculation.
     safe_order_for_deriv = _imin(stable_m_limit + 1, max_degree)
     max_order = _imax(max_order, safe_order_for_deriv)
@@ -424,7 +423,7 @@ def _compute_legendre_polynomials_inplace(
     for n in range(1, max_degree + 1):
         p_curr = p_matrix[n]
         p_prev = p_matrix[n - 1]
-        
+
         # Sectoral terms (Diagonal): P[n,n]
         if n <= max_order:
             p_curr[n] = diag_coeffs[n] * cos_phi * p_prev[n - 1]
@@ -469,8 +468,8 @@ def _compute_legendre_polynomials_inplace(
     # 5. Final Normalization Scaling
     # Apply sqrt(2) and phase factor to bring ALFs to the geodesy convention.
     _apply_legendre_normalization(
-        p_matrix, dp_matrix, 
-        max_degree, max_order, stable_m_limit, 
+        p_matrix, dp_matrix,
+        max_degree, max_order, stable_m_limit,
         scale_m_table
     )
 
@@ -492,9 +491,9 @@ def _determine_effective_degree(c_coeffs: np.ndarray, s_coeffs: np.ndarray) -> i
 
     # Max usable index is (size - 1) for 0-based indexing.
     # We find the global minimum across all four dimensions to stay within bounds.
-    min_dim = _imin(_imin(n_rows_c, m_cols_c), 
+    min_dim = _imin(_imin(n_rows_c, m_cols_c),
                     _imin(n_rows_s, m_cols_s))
-    
+
     max_safe_degree = min_dim - 1
 
     return _imax(0, max_safe_degree)
@@ -503,7 +502,7 @@ def _determine_effective_degree(c_coeffs: np.ndarray, s_coeffs: np.ndarray) -> i
 @njit(cache=True)
 def _transform_cartesian_to_spherical_basis(x: float, y: float, z: float):
     """
-    Transforms Cartesian (x, y, z) to Spherical components and calculates 
+    Transforms Cartesian (x, y, z) to Spherical components and calculates
     the radial (u_r) and meridional (u_phi) basis vectors.
     """
     # Radial distance calculation
@@ -513,9 +512,9 @@ def _transform_cartesian_to_spherical_basis(x: float, y: float, z: float):
 
     # Collision/Center Guard: Avoid division by zero near the origin
     if r <= 1.0:
-        return (False, 
-                0.0, 0.0, 0.0, 0.0, 
-                0.0, 0.0, 1.0, 0.0, 
+        return (False,
+                0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, 1.0, 0.0,
                 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
     # Precompute inverses for performance
@@ -523,7 +522,7 @@ def _transform_cartesian_to_spherical_basis(x: float, y: float, z: float):
     inv_r_sq = inv_r * inv_r
 
     rho = math.sqrt(rho_sq)
-    
+
     # Latitude components (sin_phi is z-component, cos_phi is planar component)
     sin_phi = z * inv_r
     cos_phi = rho * inv_r
@@ -561,16 +560,16 @@ def _transform_cartesian_to_spherical_basis(x: float, y: float, z: float):
 def _compute_pole_safe_inv_rho_sq(rho_sq: float, r: float) -> float:
     """
     Computes 1/rho^2 safely near the planetary poles.
-    
+
     Uses a relative softening factor (epsilon) based on radial distance.
-    If the position is too close to the pole, it nullifies the term to prevent 
+    If the position is too close to the pole, it nullifies the term to prevent
     numerical spikes in the longitudinal acceleration.
     """
-    
+
     # If we are effectively at the pole, return 0 to bypass longitudinal forces
     if rho_sq < EPS_1E24:
         return 0.0
-    
+
     # Standard inverse with a small softening constant to ensure stability
     return 1.0 / (rho_sq + EPS_1E24)
 
@@ -582,15 +581,15 @@ def _convert_spherical_gradients_to_cartesian(
     dv_dr: float, dv_dphi: float, dv_dlambda: float,
     u_r_x: float, u_r_y: float, u_r_z: float,
     u_phi_x: float, u_phi_y: float, u_phi_z: float
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
-    Converts spherical potential gradients (dV/dr, dV/dphi, dV/dlambda) 
+    Converts spherical potential gradients (dV/dr, dV/dphi, dV/dlambda)
     into Cartesian acceleration components (ax, ay, az).
     """
     # 1. Radial and Meridional scaling
     # The meridional (phi) gradient is scaled by 1/r
     phi_factor = dv_dphi * inv_r
-    
+
     # 2. Longitudinal scaling (The most sensitive part near poles)
     # The term (1 / rho^2) is used to project the dV/dlambda component
     inv_rho_sq = _compute_pole_safe_inv_rho_sq(rho_sq, r)
@@ -600,7 +599,7 @@ def _convert_spherical_gradients_to_cartesian(
     ax = dv_dr * u_r_x + phi_factor * u_phi_x - dv_dlambda * y * inv_rho_sq
     ay = dv_dr * u_r_y + phi_factor * u_phi_y + dv_dlambda * x * inv_rho_sq
     az = dv_dr * u_r_z + phi_factor * u_phi_z
-    
+
     return ax, ay, az
 
 
@@ -608,23 +607,23 @@ def _convert_spherical_gradients_to_cartesian(
 def _kahan_sum_step(running_sum: float, error_compensation: float, value: float):
     """
     Performs one step of Kahan Summation to minimize floating-point errors.
-    
-    This is critical for high-degree models where thousands of small 
+
+    This is critical for high-degree models where thousands of small
     harmonic terms are accumulated.
     """
     # 1. Adjust the current value by subtracting the previously accumulated error
     # (Note: error_compensation is subtracted because it's effectively a 'loss')
     corrected_value = value - error_compensation
-    
-    # 2. Add the corrected value to the running total. 
+
+    # 2. Add the corrected value to the running total.
     # High-order bits are stored in 'new_sum'.
     new_sum = running_sum + corrected_value
-    
+
     # 3. Calculate the new error compensation.
     # (new_sum - running_sum) gives the actual increase seen by the large number.
     # Subtracting corrected_value from this recovery gives the lost low-order bits.
     new_error = (new_sum - running_sum) - corrected_value
-    
+
     return new_sum, new_error
 
 
@@ -634,36 +633,36 @@ def _prepare_evaluation_tables(
     cos_lon: float, sin_lon: float,
     max_degree: int,
     diag_coeffs: np.ndarray, subdiag_coeffs: np.ndarray,
-    A_coeffs: np.ndarray, B_coeffs: np.ndarray, 
+    A_coeffs: np.ndarray, B_coeffs: np.ndarray,
     scale_m_table: np.ndarray,
     p_matrix: np.ndarray, dp_matrix: np.ndarray,
     cos_m_table: np.ndarray, sin_m_table: np.ndarray
 ) -> int:
     """
     Coordinates the computation of all reusable tables (Legendre and Trigonometric).
-    
+
     1. Computes the stability limit (m_cutoff) for the current latitude.
     2. Fills Legendre polynomials (P) and their derivatives (dP) in-place.
     3. Fills the longitude recurrence tables (cos/sin m*lambda) in-place.
     """
-    
+
     # 1. Determine the stable order limit for this latitude
     stable_m_limit = _compute_stable_m_limit(cos_phi, max_degree)
 
-    # 2. Derivative dP[n,m] needs P[n,m+1]. 
+    # 2. Derivative dP[n,m] needs P[n,m+1].
     # We ensure P is computed up to (m_limit + 1) to avoid index errors or zeroed derivatives.
     max_required_order = _imin(stable_m_limit + 1, max_degree)
-    
+
     # 3. Compute Legendre Polynomials (In-place)
     _compute_legendre_polynomials_inplace(
         sin_phi, cos_phi, max_degree, max_required_order, stable_m_limit,
-        diag_coeffs, subdiag_coeffs, A_coeffs, B_coeffs, scale_m_table, 
+        diag_coeffs, subdiag_coeffs, A_coeffs, B_coeffs, scale_m_table,
         p_matrix, dp_matrix
     )
 
     # 4. Compute Trigonometric Longitude Tables (In-place)
     _fill_longitude_trig_tables(
-        cos_lon, sin_lon, stable_m_limit, 
+        cos_lon, sin_lon, stable_m_limit,
         cos_m_table, sin_m_table
     )
 
@@ -677,16 +676,16 @@ def _prepare_simulation_preamble(
     c_coeffs: np.ndarray, s_coeffs: np.ndarray
 ):
     """
-    Common setup for gravity evaluation. 
+    Common setup for gravity evaluation.
     Validates position, transforms coordinates, and determines safe evaluation degree.
 
     Returns a flat tuple of all geometric and administrative constants.
     """
     # 1. Coordinate transformation and basis vector calculation
     # Refactored call to our previously optimized basis function
-    (valid_position, r, inv_r, inv_r_sq, rho_sq, 
+    (valid_position, r, inv_r, inv_r_sq, rho_sq,
      sin_phi, cos_phi, cos_lon, sin_lon,
-     u_r_x, u_r_y, u_r_z, 
+     u_r_x, u_r_y, u_r_z,
      u_phi_x, u_phi_y, u_phi_z) = _transform_cartesian_to_spherical_basis(x, y, z)
 
     # 2. Safety Guard: If position is invalid (e.g., too close to center)
@@ -705,7 +704,7 @@ def _prepare_simulation_preamble(
     return (True,
             r, inv_r, inv_r_sq, rho_sq,
             sin_phi, cos_phi, cos_lon, sin_lon,
-            u_r_x, u_r_y, u_r_z, 
+            u_r_x, u_r_y, u_r_z,
             u_phi_x, u_phi_y, u_phi_z,
             effective_eval_degree)
 
@@ -718,22 +717,22 @@ def _compute_sh_acceleration_serial(
     r_ref: float, mu: float,
     c_coeffs: np.ndarray, s_coeffs: np.ndarray,
     diag_coeffs: np.ndarray, subdiag_coeffs: np.ndarray,
-    a_coeffs: np.ndarray, b_coeffs: np.ndarray, 
+    a_coeffs: np.ndarray, b_coeffs: np.ndarray,
     scale_m_table: np.ndarray,
     p_matrix: np.ndarray, dp_matrix: np.ndarray,
     cos_m_table: np.ndarray, sin_m_table: np.ndarray
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
-    Computes the gravitational acceleration vector using a high-degree 
-    Spherical Harmonics model. Optimized for serial execution with 
+    Computes the gravitational acceleration vector using a high-degree
+    Spherical Harmonics model. Optimized for serial execution with
     Kahan summation for double-precision stability.
     """
 
     # 1. Preamble: Coordinate transformation and degree validation
-    (is_valid, r, inv_r, inv_r_sq, rho_sq, 
+    (is_valid, r, inv_r, inv_r_sq, rho_sq,
      sin_phi, cos_phi, cos_lon, sin_lon,
-     u_r_x, u_r_y, u_r_z, 
-     u_phi_x, u_phi_y, u_phi_z, 
+     u_r_x, u_r_y, u_r_z,
+     u_phi_x, u_phi_y, u_phi_z,
      eval_degree) = _prepare_simulation_preamble(x, y, z, requested_degree, c_coeffs, s_coeffs)
 
     if not is_valid:
@@ -759,7 +758,7 @@ def _compute_sh_acceleration_serial(
 
         r_ratio_base = r_ref * inv_r
         # r_ratio starts at (R_ref/r)^2 for degree n=2
-        r_ratio_n = r_ratio_base * r_ratio_base 
+        r_ratio_n = r_ratio_base * r_ratio_base
         mu_inv_r = mu * inv_r
         mu_inv_r_sq = mu * inv_r_sq
 
@@ -830,22 +829,22 @@ def _compute_sh_acceleration_parallel(
     r_ref: float, mu: float,
     c_coeffs: np.ndarray, s_coeffs: np.ndarray,
     diag_coeffs: np.ndarray, subdiag_coeffs: np.ndarray,
-    a_coeffs: np.ndarray, b_coeffs: np.ndarray, 
+    a_coeffs: np.ndarray, b_coeffs: np.ndarray,
     scale_m_table: np.ndarray,
     p_matrix: np.ndarray, dp_matrix: np.ndarray,
     cos_m_table: np.ndarray, sin_m_table: np.ndarray
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
-    Parallel implementation of SH acceleration. 
-    Distributes degree-blocks across multiple CPU cores using a race-free 
+    Parallel implementation of SH acceleration.
+    Distributes degree-blocks across multiple CPU cores using a race-free
     partial-sum reduction strategy.
     """
 
     # 1. Preamble and Setup
-    (is_valid, r, inv_r, inv_r_sq, rho_sq, 
+    (is_valid, r, inv_r, inv_r_sq, rho_sq,
      sin_phi, cos_phi, cos_lon, sin_lon,
-     u_r_x, u_r_y, u_r_z, 
-     u_phi_x, u_phi_y, u_phi_z, 
+     u_r_x, u_r_y, u_r_z,
+     u_phi_x, u_phi_y, u_phi_z,
      eval_degree) = _prepare_simulation_preamble(x, y, z, requested_degree, c_coeffs, s_coeffs)
 
     if not is_valid:
@@ -893,7 +892,7 @@ def _compute_sh_acceleration_parallel(
 
             for n in range(deg_0, deg_1):
                 m_limit = _imin(m_cutoff, n)
-                
+
                 c_row, s_row = c_coeffs[n], s_coeffs[n]
                 p_row, dp_row = p_matrix[n], dp_matrix[n]
 
@@ -951,7 +950,7 @@ SERIAL_PARALLEL_THRESHOLD = 80  # degrees; heuristic
 @njit(cache=True)
 def _apply_smoothstep(t: float) -> float:
     """
-    Applies Cubic Hermite interpolation. 
+    Applies Cubic Hermite interpolation.
     Expects t in [0, 1]. Clamps internally to ensure stability.
     """
     # Clamp t to [0, 1] using the existing clamp helper.
@@ -969,18 +968,18 @@ def sh_accel_fixed(
     r_ref: float, mu: float,
     c_coeffs: np.ndarray, s_coeffs: np.ndarray,
     diag_coeffs: np.ndarray, subdiag_coeffs: np.ndarray,
-    a_coeffs: np.ndarray, b_coeffs: np.ndarray, 
+    a_coeffs: np.ndarray, b_coeffs: np.ndarray,
     scale_m_table: np.ndarray,
     p_matrix: np.ndarray, dp_matrix: np.ndarray,
     cos_m_table: np.ndarray, sin_m_table: np.ndarray,
     *,
     use_parallel: bool = False,
     parallel_threshold: int = SERIAL_PARALLEL_THRESHOLD,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Fixed-degree acceleration with explicit caller-controlled dispatch.
-    
-    Chooses between the high-precision Serial kernel (Kahan) and the 
+
+    Chooses between the high-precision Serial kernel (Kahan) and the
     high-speed Parallel kernel (Fastmath) based on the degree threshold.
     """
     # 1. Determine safe evaluation degree
@@ -1013,13 +1012,13 @@ def sh_accel_fixed_numba(
     r_ref: float, mu: float,
     c_coeffs: np.ndarray, s_coeffs: np.ndarray,
     diag_coeffs: np.ndarray, subdiag_coeffs: np.ndarray,
-    a_coeffs: np.ndarray, b_coeffs: np.ndarray, 
+    a_coeffs: np.ndarray, b_coeffs: np.ndarray,
     scale_m_table: np.ndarray,
     p_matrix: np.ndarray, dp_matrix: np.ndarray,
     cos_m_table: np.ndarray, sin_m_table: np.ndarray
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
-    Jit-compatible fixed-degree wrapper. Always uses the serial kernel 
+    Jit-compatible fixed-degree wrapper. Always uses the serial kernel
     to ensure deterministic results when called from within other Numba kernels.
     """
     # Quick limit check
@@ -1043,24 +1042,24 @@ def _compute_sh_acceleration_dual_numba(
     r_ref: float, mu: float,
     c_coeffs: np.ndarray, s_coeffs: np.ndarray,
     diag_coeffs: np.ndarray, subdiag_coeffs: np.ndarray,
-    a_coeffs: np.ndarray, b_coeffs: np.ndarray, 
+    a_coeffs: np.ndarray, b_coeffs: np.ndarray,
     scale_m_table: np.ndarray,
     p_matrix: np.ndarray, dp_matrix: np.ndarray,
     cos_m_table: np.ndarray, sin_m_table: np.ndarray
-) -> Tuple[float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float]:
     """
-    Computes two different gravity solutions (Low-Degree and High-Degree) 
-    simultaneously in a single pass. 
-    
-    Optimized for blending/interpolation between different model resolutions 
+    Computes two different gravity solutions (Low-Degree and High-Degree)
+    simultaneously in a single pass.
+
+    Optimized for blending/interpolation between different model resolutions
     without redundant Legendre or Trigonometric calculations.
     """
 
     # 1. Preamble (Calculates coordinates and validates the highest degree)
-    (is_valid, r, inv_r, inv_r_sq, rho_sq, 
+    (is_valid, r, inv_r, inv_r_sq, rho_sq,
      sin_phi, cos_phi, cos_lon, sin_lon,
-     u_r_x, u_r_y, u_r_z, 
-     u_phi_x, u_phi_y, u_phi_z, 
+     u_r_x, u_r_y, u_r_z,
+     u_phi_x, u_phi_y, u_phi_z,
      max_safe_degree) = _prepare_simulation_preamble(x, y, z, degree_high, c_coeffs, s_coeffs)
 
     if not is_valid:
@@ -1095,7 +1094,7 @@ def _compute_sh_acceleration_dual_numba(
         # 3. Main Loop: Unified Summation
         for n in range(2, n_hi + 1):
             m_limit = _imin(m_cutoff, n)
-            
+
             c_row, s_row = c_coeffs[n], s_coeffs[n]
             p_row, dp_row = p_matrix[n], dp_matrix[n]
 
@@ -1157,14 +1156,14 @@ def sh_accel_adaptive_blend_numba(
     r_ref: float, mu: float,
     c_coeffs: np.ndarray, s_coeffs: np.ndarray,
     diag_coeffs: np.ndarray, subdiag_coeffs: np.ndarray,
-    a_coeffs: np.ndarray, b_coeffs: np.ndarray, 
+    a_coeffs: np.ndarray, b_coeffs: np.ndarray,
     scale_m_table: np.ndarray,
     p_matrix: np.ndarray, dp_matrix: np.ndarray,
     cos_m_table: np.ndarray, sin_m_table: np.ndarray
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Computes gravity acceleration with a dynamic degree that scales with altitude.
-    Uses 'Dual-Fidelity' evaluation to blend between two discrete degrees for 
+    Uses 'Dual-Fidelity' evaluation to blend between two discrete degrees for
     numerical continuity (C1-smoothness).
     """
 
@@ -1172,7 +1171,7 @@ def sh_accel_adaptive_blend_numba(
     max_safe_n = _determine_effective_degree(c_coeffs, s_coeffs)
     n_min = int(clamp(degree_far, 0, max_safe_n))
     n_max = int(clamp(degree_near, n_min, max_safe_n))
-    
+
     step = _imax(1, int(degree_step))
 
     # 2. Geometry: Distance and Altitude
@@ -1231,7 +1230,7 @@ def sh_accel_adaptive_blend_numba(
     weight = clamp(weight, 0.0, 1.0)
 
     # Execute both degrees in a single optimized pass
-    (ax_lo, ay_lo, az_lo, 
+    (ax_lo, ay_lo, az_lo,
      ax_hi, ay_hi, az_hi) = _compute_sh_acceleration_dual_numba(
         x, y, z, deg_lo, deg_hi, r_ref, mu, c_coeffs, s_coeffs,
         diag_coeffs, subdiag_coeffs, a_coeffs, b_coeffs, scale_m_table,
@@ -1242,7 +1241,7 @@ def sh_accel_adaptive_blend_numba(
     ax = (1.0 - weight) * ax_lo + weight * ax_hi
     ay = (1.0 - weight) * ay_lo + weight * ay_hi
     az = (1.0 - weight) * az_lo + weight * az_hi
-    
+
     return ax, ay, az
 
 
@@ -1253,18 +1252,18 @@ def sh_accel_adaptive_blend_numba(
 
 @njit(cache=True)
 def compute_point_mass_acceleration(
-    x: float, y: float, z: float, 
+    x: float, y: float, z: float,
     mu: float
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Computes the standard Newtonian point-mass acceleration (monopole).
-    
-    This serves as the baseline gravity model, representing the planet 
+
+    This serves as the baseline gravity model, representing the planet
     as a single point mass at the origin.
     """
     # Calculate squared distance to avoid early square root
     dist_sq = x*x + y*y + z*z
-    
+
     # Numerical Safety Guard: Avoid singularity at the center (r -> 0)
     # Using a threshold (e.g., 1e-24 m^2) to prevent division by zero.
     if dist_sq <= EPS_1E24:
@@ -1273,10 +1272,10 @@ def compute_point_mass_acceleration(
     # Optimization: Calculate 1/r first, then cube it to minimize divisions.
     inv_dist = 1.0 / math.sqrt(dist_sq)
     inv_dist_cubed = inv_dist * inv_dist * inv_dist
-    
+
     # Gravitational magnitude factor: -mu / r^3
     accel_factor = -mu * inv_dist_cubed
-    
+
     # Return Cartesian components
     return accel_factor * x, accel_factor * y, accel_factor * z
 
@@ -1292,8 +1291,8 @@ Workspace: TypeAlias = "SHWorkspace"
 class GravityModel:
     """
     High-level container for a spherical-harmonic gravity model.
-    
-    Coordinates the numerical kernels, manages precomputed recurrence tables, 
+
+    Coordinates the numerical kernels, manages precomputed recurrence tables,
     and handles thread-local workspaces for orbital simulations.
     """
 
@@ -1320,35 +1319,35 @@ class GravityModel:
     @property
     def R_ref_m(self) -> float:
         return self.r_ref
-        
+
     @property
     def GM_m3s2(self) -> float:
         return self.mu
-        
+
     @property
     def Cnm(self) -> np.ndarray:
         return self.c_coeffs
-        
+
     @property
     def Snm(self) -> np.ndarray:
         return self.s_coeffs
-        
+
     @property
     def diag(self) -> np.ndarray:
         return self.diag_coeffs
-        
+
     @property
     def subdiag(self) -> np.ndarray:
         return self.subdiag_coeffs
-        
+
     @property
     def A(self) -> np.ndarray:
         return self.a_coeffs
-        
+
     @property
     def B(self) -> np.ndarray:
         return self.b_coeffs
-        
+
     @property
     def scale_m(self) -> np.ndarray:
         return self.scale_m_table
@@ -1368,8 +1367,8 @@ class GravityModel:
     def from_file(
         cls,
         path: str,
-        requested_degree: Optional[int] = None,
-    ) -> "GravityModel":
+        requested_degree: int | None = None,
+    ) -> GravityModel:
         """
         Factory: Loads coefficients from a file and prepares kernel arrays.
         Separation of concerns: parsing is handled by loaders.io_gravity.
@@ -1395,7 +1394,7 @@ class GravityModel:
         mu: float,
         c_coeffs_full: np.ndarray,
         s_coeffs_full: np.ndarray,
-    ) -> "GravityModel":
+    ) -> GravityModel:
         """
         Factory: Build a model from in-memory arrays and precompute tables.
         """
@@ -1409,7 +1408,7 @@ class GravityModel:
         # 2. Slice and precompute tables
         c_sliced, s_sliced = slice_gravity_model(c_full, s_full, final_degree)
         diag, subdiag, a, b, scale_m = _get_legendre_tables(final_degree)
-        
+
         # 3. Allocation
         ws = make_sh_workspace(final_degree)
 
@@ -1433,7 +1432,7 @@ class GravityModel:
         """Allocates an independent workspace. Essential for multi-threaded solvers."""
         return make_sh_workspace(self.max_degree)
 
-    def _resolve_ws(self, ws: Optional[Workspace]) -> Workspace:
+    def _resolve_ws(self, ws: Workspace | None) -> Workspace:
         """Selects between the default workspace or a user-provided one."""
         return self.workspace if ws is None else ws
 
@@ -1442,8 +1441,8 @@ class GravityModel:
     def accel_fixed(
         self,
         r_body_fixed: Vec3,
-        degree: Optional[int] = None,
-        workspace: Optional[Workspace] = None,
+        degree: int | None = None,
+        workspace: Workspace | None = None,
     ) -> np.ndarray:
         """
         Fixed-degree gravity acceleration in the Body-Fixed frame.
@@ -1452,7 +1451,7 @@ class GravityModel:
         x = float(r_body_fixed[0])
         y = float(r_body_fixed[1])
         z = float(r_body_fixed[2])
-        
+
         n_eval = int(clamp(degree if degree is not None else self.max_degree, 0, self.max_degree))
         ws = self._resolve_ws(workspace)
 
@@ -1474,7 +1473,7 @@ class GravityModel:
         alt_far: float,
         alt_near: float,
         degree_step: int = 10,
-        workspace: Optional[Workspace] = None,
+        workspace: Workspace | None = None,
     ) -> np.ndarray:
         """
         Altitude-based adaptive blending (smooth transitions between resolutions).
@@ -1482,7 +1481,7 @@ class GravityModel:
         x = float(r_body_fixed[0])
         y = float(r_body_fixed[1])
         z = float(r_body_fixed[2])
-        
+
         ws = self._resolve_ws(workspace)
 
         ax, ay, az = sh_accel_adaptive_blend_numba(

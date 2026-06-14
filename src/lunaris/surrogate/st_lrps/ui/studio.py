@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 ST-LRPS Studio.
 
@@ -10,28 +9,28 @@ import os
 import sys
 
 from lunaris.common.paths import project_root_from_file
-
+from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import _NoWheelOnSpinFilter
+from lunaris.surrogate.st_lrps.ui.studio_parts.evaluation_pages import STLRPSEvalTab
+from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import MainWindow
+from lunaris.surrogate.st_lrps.ui.studio_parts.orbit_benchmark_pages import (
+    BENCHMARK_CLI_MODULE,
+    OrbitBenchmarkPage,
+    OrbitBenchmarkPlotsPage,
+    OrbitBenchmarkPlotsTab,
+    OrbitBenchmarkTab,
+)
 from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import (
+    PROFILE_CLI_MODULE,
+    SCRIPT_DIR,
+    TRAIN_CLI_MODULE,
     QApplication,
     QGuiApplication,
     Qt,
-    SCRIPT_DIR,
     apply_premium_dark_theme,
 )
-from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import _NoWheelOnSpinFilter
-from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import MainWindow
-
-from lunaris.surrogate.st_lrps.ui.studio_parts.training_pages import STLRPSTrainTab
 from lunaris.surrogate.st_lrps.ui.studio_parts.runtime_pages import STLRPSProfilingTab
-from lunaris.surrogate.st_lrps.ui.studio_parts.evaluation_pages import STLRPSEvalTab
-from lunaris.surrogate.st_lrps.ui.studio_parts.orbit_benchmark_pages import (
-    OrbitBenchmarkTab,
-    OrbitBenchmarkPage,
-    OrbitBenchmarkPlotsTab,
-    OrbitBenchmarkPlotsPage,
-    BENCHMARK_CLI_MODULE,
-)
-from lunaris.surrogate.st_lrps.ui.studio_parts.qt_common import TRAIN_CLI_MODULE, PROFILE_CLI_MODULE
+from lunaris.surrogate.st_lrps.ui.studio_parts.training_pages import STLRPSTrainTab
+
 
 def main() -> None:
     try:

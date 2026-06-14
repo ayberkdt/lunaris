@@ -1,5 +1,4 @@
 # tests/conftest.py
-# -*- coding: utf-8 -*-
 """
 Shared pytest configuration for the Lunaris test suite.
 

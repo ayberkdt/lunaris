@@ -59,17 +59,32 @@ jobs:
         run: pytest tests/test_benchmark_config.py tests/test_benchmark_provenance.py tests/test_benchmark_validation.py tests/test_benchmark_pipeline_smoke.py -q
 
       - name: Run CPU-only test suite (coverage + randomized order)
-        # Coverage is REPORT mode for now (no --cov-fail-under gate yet); it
-        # establishes the authoritative baseline + per-PR trend. pytest-randomly
+        # Soft coverage floor: --cov-fail-under guards against catastrophic
+        # regressions while staying below the measured baseline so it does not
+        # block routine PRs. Ratchet the floor up as coverage rises (the value is
+        # documented in pyproject.toml [tool.coverage.report]). pytest-randomly
         # (installed via the dev extra) shuffles test order every run to surface
         # order-dependent state leakage like the earlier Qt-binding pollution.
         run: >-
           pytest tests/ -m "not slow and not requires_data and not requires_cuda" -q
-          --cov=lunaris --cov-report=term-missing:skip-covered --cov-report=xml
+          --cov=lunaris --cov-report=term-missing:skip-covered
+          --cov-report=xml --cov-report=html
+
+      - name: Upload coverage report (xml + html)
+        # Per-PR / per-matrix artifact so the coverage trend is inspectable
+        # without a third-party coverage service.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: |
+            coverage.xml
+            htmlcov/
+          retention-days: 30
 
   guardrails:
-    # Ruff still reports the pre-existing lint baseline. Import-linter reached
-    # zero broken contracts in Phase 2 and now gates the build.
+    # Ruff baseline is clean and now gates the build. Import-linter reached zero
+    # broken contracts in Phase 2 and also gates.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -84,8 +99,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff import-linter
 
-      - name: ruff (lint + import order) [report]
-        continue-on-error: true
+      - name: ruff (lint + import order) [gate]
         run: ruff check src tests
 
       - name: import-linter (architecture gate)

@@ -1,5 +1,7 @@
 import os
+
 import pytest
+
 
 def get_banned_strings():
     # Use dynamic strings to avoid this test file breaking its own checks
@@ -53,7 +55,7 @@ def test_no_stale_paths(doc_paths):
     for path in doc_paths:
         if not os.path.exists(path):
             continue
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             content = f.read()
             for banned in banned_strings:
                 assert banned not in content, f"Found stale string '{banned}' in {path}"
@@ -67,7 +69,7 @@ def test_gravity_readme_command_sanity(doc_paths):
     """
     gravity_readme = doc_paths[1]
     if os.path.exists(gravity_readme):
-        with open(gravity_readme, "r", encoding="utf-8") as f:
+        with open(gravity_readme, encoding="utf-8") as f:
             content = f.read()
             assert "python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models" in content, "Missing expected command in gravity README"
 
@@ -75,7 +77,7 @@ def test_output_schema_field_sanity(doc_paths):
     """Assert output_schema.md contains key fields."""
     output_schema = doc_paths[2]
     if os.path.exists(output_schema):
-        with open(output_schema, "r", encoding="utf-8") as f:
+        with open(output_schema, encoding="utf-8") as f:
             content = f.read()
             required_fields = get_required_fields()
             for field in required_fields:
@@ -85,7 +87,7 @@ def test_boundary_statement_sanity(doc_paths):
     """Assert validation/README.md mentions all three layers."""
     top_readme = doc_paths[0]
     if os.path.exists(top_readme):
-        with open(top_readme, "r", encoding="utf-8") as f:
+        with open(top_readme, encoding="utf-8") as f:
             content = f.read()
             boundary_layers = get_boundary_layers()
             for layer in boundary_layers:

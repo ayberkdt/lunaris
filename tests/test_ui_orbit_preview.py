@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for the orbit-preview update logic (objective 3).
 
@@ -21,8 +20,8 @@ pytest.importorskip("PySide6")
 
 from PySide6 import QtWidgets
 
-from lunaris.ui.pages.orbit_config_page import OrbitPage, OrbitViz3D, _OrbitState
 from lunaris.ui.core.ui_commons import R_MOON_KM as R
+from lunaris.ui.pages.orbit_config_page import OrbitPage, OrbitViz3D, _OrbitState
 
 
 def _app() -> QtWidgets.QApplication:

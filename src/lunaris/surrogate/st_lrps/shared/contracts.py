@@ -14,15 +14,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
-from typing import Any, Mapping, Optional
+from typing import Any
 
 from lunaris.common.lunar_data import (
     MU_MOON_SI,
     R_MOON_SI,
     is_lunar_body_signature,
 )
-
 
 REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
 LUNAR_BODY_ALIASES = frozenset({"moon", "lunar", "selene"})
@@ -144,7 +144,7 @@ class TargetContract:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "TargetContract":
+    def from_dict(cls, payload: Mapping[str, Any]) -> TargetContract:
         return cls(
             central_body=payload.get("central_body", "moon"),
             target_mode=payload.get("target_mode", "residual"),
@@ -172,7 +172,7 @@ class TargetContract:
         *,
         allow_inferred_target_mode: bool = False,
         allow_legacy_derivative_convention: bool = False,
-    ) -> "TargetContract":
+    ) -> TargetContract:
         target_mode = getattr(meta, "target_mode", None)
         base_degree = _as_int(getattr(meta, "degree_min", None), -1)
         if not target_mode:
@@ -210,10 +210,10 @@ class TargetContract:
         cls,
         config: Mapping[str, Any],
         *,
-        resolved_mu_si: Optional[float] = None,
-        resolved_r_ref_m: Optional[float] = None,
-        a_sign: Optional[float] = None,
-    ) -> "TargetContract":
+        resolved_mu_si: float | None = None,
+        resolved_r_ref_m: float | None = None,
+        a_sign: float | None = None,
+    ) -> TargetContract:
         """Reconstruct a target contract from old flat config fields."""
 
         if isinstance(config.get("target_contract"), Mapping):
@@ -372,13 +372,13 @@ class ArtifactContract:
     mu_si: float
     r_ref_m: float
     a_sign: float
-    altitude_min_km: Optional[float]
-    altitude_max_km: Optional[float]
+    altitude_min_km: float | None
+    altitude_max_km: float | None
     input_encoding: dict[str, Any]
     scaler_contract: dict[str, Any]
     dataset_contract: dict[str, Any]
     output_dim: int = 1
-    architecture_signature: Optional[str] = None
+    architecture_signature: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "schema_version", int(self.schema_version))
@@ -482,7 +482,7 @@ class ArtifactContract:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> "ArtifactContract":
+    def from_dict(cls, payload: Mapping[str, Any]) -> ArtifactContract:
         return cls(
             schema_version=_as_int(payload.get("schema_version"), ARTIFACT_CONTRACT_SCHEMA_VERSION),
             target_mode=payload.get("target_mode", ""),
@@ -511,10 +511,10 @@ class ArtifactContract:
         cls,
         config: Mapping[str, Any],
         *,
-        scaler_payload: Optional[Mapping[str, Any]] = None,
-        dataset_contract: Optional[Mapping[str, Any]] = None,
-        architecture_signature: Optional[str] = None,
-    ) -> "ArtifactContract":
+        scaler_payload: Mapping[str, Any] | None = None,
+        dataset_contract: Mapping[str, Any] | None = None,
+        architecture_signature: str | None = None,
+    ) -> ArtifactContract:
         if isinstance(config.get("artifact_contract"), Mapping):
             return cls.from_dict(config["artifact_contract"])
         target = TargetContract.from_legacy_config(config)
@@ -590,7 +590,7 @@ class ArtifactContract:
         )
 
     @classmethod
-    def from_benchmark_config(cls, config: Mapping[str, Any]) -> "ArtifactContract":
+    def from_benchmark_config(cls, config: Mapping[str, Any]) -> ArtifactContract:
         scenario = _mapping(config.get("scenario"))
         truth = _mapping(config.get("truth"))
         surrogate = _mapping(config.get("surrogate"))
@@ -630,7 +630,7 @@ class ArtifactContract:
 
     def compatibility_report(
         self,
-        other: "ArtifactContract | Mapping[str, Any]",
+        other: ArtifactContract | Mapping[str, Any],
         *,
         strict_domain: bool = False,
     ) -> dict[str, Any]:
@@ -710,7 +710,7 @@ class ArtifactContract:
 
     def require_compatible(
         self,
-        other: "ArtifactContract | Mapping[str, Any]",
+        other: ArtifactContract | Mapping[str, Any],
         *,
         strict: bool = True,
         strict_domain: bool = False,

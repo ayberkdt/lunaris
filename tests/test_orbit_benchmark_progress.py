@@ -19,7 +19,6 @@ if str(ROOT) not in sys.path:
 
 from lunaris.surrogate.st_lrps.evaluation import progress as P  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # 1. Progress line parsing
 # ---------------------------------------------------------------------------
@@ -190,7 +189,7 @@ def test_overall_progress_is_monotonic():
     seq.append(ov.update("gpu", 1.0))
     seq.append(ov.update("report", 0.5))
     seq.append(ov.update("report", 1.0))
-    assert all(b >= a - 1e-9 for a, b in zip(seq, seq[1:])), seq
+    assert all(b >= a - 1e-9 for a, b in zip(seq, seq[1:], strict=False)), seq
     assert seq[-1] == pytest.approx(100.0)
 
 

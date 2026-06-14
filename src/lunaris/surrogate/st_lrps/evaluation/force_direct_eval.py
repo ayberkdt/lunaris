@@ -1,16 +1,19 @@
-# -*- coding: utf-8 -*-
 """Field-level evaluation for ST-LRPS force_direct artifacts."""
 
 from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 import numpy as np
 
-from lunaris.surrogate.st_lrps.runtime.force_model import DirectForceRuntime, load_surrogate_force_model
+from lunaris.surrogate.st_lrps.runtime.force_model import (
+    DirectForceRuntime,
+    load_surrogate_force_model,
+)
 
 
 def _json_text(payload: Mapping[str, Any]) -> str:

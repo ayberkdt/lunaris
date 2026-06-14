@@ -1,5 +1,4 @@
-﻿# -*- coding: utf-8 -*-
-"""
+﻿"""
 ST_LRPS - main entry point (STRICT, config.py + common.type_defs aligned)
 
 Contract
@@ -19,19 +18,12 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, replace
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-
-from lunaris.core.config import load_default_config, SimConfig  # noqa: E402
-
-# Common layer is dependency-light and safe to import at module import time.
-from lunaris.common.constants import R_MOON, MU_MOON, DEG2RAD, DAY_S  # noqa: E402
-from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string  # noqa: E402
-from lunaris.common.type_defs import InitialState, PropagationResult  # noqa: E402
-from lunaris.physics.gravity_adapter import adapt_gravity_model as _shared_adapt_gravity_model  # noqa: E402
 
 # Shared, pure CLI helpers (import-safe; heavy imports are lazy inside them).
 from lunaris.cli.common_args import (  # noqa: E402
@@ -42,6 +34,15 @@ from lunaris.cli.common_args import (  # noqa: E402
     parse_tide_bodies,
     resolve_orbit_elements,
     str2bool,
+)
+
+# Common layer is dependency-light and safe to import at module import time.
+from lunaris.common.constants import DAY_S, DEG2RAD, MU_MOON, R_MOON  # noqa: E402
+from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string  # noqa: E402
+from lunaris.common.type_defs import InitialState, PropagationResult  # noqa: E402
+from lunaris.core.config import SimConfig, load_default_config  # noqa: E402
+from lunaris.physics.gravity_adapter import (
+    adapt_gravity_model as _shared_adapt_gravity_model,  # noqa: E402
 )
 
 # Heavy modules (physics/core/loaders/analysis) are intentionally NOT imported
@@ -64,7 +65,7 @@ if TYPE_CHECKING:
 # remain in this module.
 
 
-def init_ephemeris(cfg: SimConfig, tf_s: float) -> "EphemerisManager":
+def init_ephemeris(cfg: SimConfig, tf_s: float) -> EphemerisManager:
     """Build ephemeris tables using strict EphemerisManager factory.
 
     Notes:
@@ -114,7 +115,7 @@ def init_ephemeris(cfg: SimConfig, tf_s: float) -> "EphemerisManager":
 
 def _extract_rv6(
     y0: Any,
-) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float], Optional[float], Optional[float]]:
+) -> tuple[float | None, float | None, float | None, float | None, float | None, float | None]:
     """Extract (rx, ry, rz, vx, vy, vz) from strict initial-state container styles.
 
     Supported:
@@ -131,32 +132,32 @@ def _extract_rv6(
 
         # SSOT initial state dataclass (common.type_defs.InitialState)
         if hasattr(y0, "to_array"):
-            arr = getattr(y0, "to_array")()
+            arr = y0.to_array()
             return (float(arr[0]), float(arr[1]), float(arr[2]), float(arr[3]), float(arr[4]), float(arr[5]))
 
         if all(hasattr(y0, k) for k in ("x", "y", "z", "vx", "vy", "vz")):
             return (
-                float(getattr(y0, "x")),
-                float(getattr(y0, "y")),
-                float(getattr(y0, "z")),
-                float(getattr(y0, "vx")),
-                float(getattr(y0, "vy")),
-                float(getattr(y0, "vz")),
+                float(y0.x),
+                float(y0.y),
+                float(y0.z),
+                float(y0.vx),
+                float(y0.vy),
+                float(y0.vz),
             )
 
         # Other state containers
         if hasattr(y0, "position") and hasattr(y0, "velocity"):
-            r = getattr(y0, "position")
-            v = getattr(y0, "velocity")
+            r = y0.position
+            v = y0.velocity
             return (float(r[0]), float(r[1]), float(r[2]), float(v[0]), float(v[1]), float(v[2]))
 
         if hasattr(y0, "r_m") and hasattr(y0, "v_ms"):
-            r = getattr(y0, "r_m")
-            v = getattr(y0, "v_ms")
+            r = y0.r_m
+            v = y0.v_ms
             return (float(r[0]), float(r[1]), float(r[2]), float(v[0]), float(v[1]), float(v[2]))
 
         if hasattr(y0, "y"):
-            y = getattr(y0, "y")
+            y = y0.y
             return (float(y[0]), float(y[1]), float(y[2]), float(y[3]), float(y[4]), float(y[5]))
 
         y = y0  # assume array-like
@@ -165,7 +166,7 @@ def _extract_rv6(
         return (None, None, None, None, None, None)
 
 
-def print_summary(cfg: SimConfig, orbit_params: Optional[Dict[str, float]], y0: Any) -> None:
+def print_summary(cfg: SimConfig, orbit_params: dict[str, float] | None, y0: Any) -> None:
     """Pretty-print a run summary (CLI-oriented)."""
     f = cfg.flags
     sc = cfg.spacecraft
@@ -236,7 +237,7 @@ def print_summary(cfg: SimConfig, orbit_params: Optional[Dict[str, float]], y0: 
     print("=" * 64)
 
 
-def median_dt(t_arr: Any) -> Optional[float]:
+def median_dt(t_arr: Any) -> float | None:
     """Median sampling interval for a time array."""
     try:
         t = np.asarray(t_arr, dtype=float).ravel()
@@ -255,7 +256,7 @@ def median_dt(t_arr: Any) -> Optional[float]:
 # 2.                                  CLI
 # =============================================================================
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="ST_LRPS Runner (STRICT; config.py + common.type_defs aligned)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -541,7 +542,9 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         # the run was trained on a lunar gravity config. Not covered by the
         # artifact helper, so it is kept here and clearly separated.
         try:
-            from lunaris.surrogate.st_lrps.data.dataset_parameters import looks_like_lunar_run_config
+            from lunaris.surrogate.st_lrps.data.dataset_parameters import (
+                looks_like_lunar_run_config,
+            )
         except ImportError:
             looks_like_lunar_run_config = None
         if looks_like_lunar_run_config is not None:
@@ -564,16 +567,16 @@ def _y0_to_array(y0: Any) -> np.ndarray:
 
     # common.type_defs.InitialState
     if hasattr(y0, "to_array"):
-        arr = np.asarray(getattr(y0, "to_array")(), dtype=float).reshape(-1)
+        arr = np.asarray(y0.to_array(), dtype=float).reshape(-1)
     # core.state.OrbitState (or similar): packed vector via `.y`
     elif hasattr(y0, "y"):
-        arr = np.asarray(getattr(y0, "y"), dtype=float).reshape(-1)
+        arr = np.asarray(y0.y, dtype=float).reshape(-1)
     # Plain object with x,y,z,vx,vy,vz
     elif all(hasattr(y0, k) for k in ("x", "y", "z", "vx", "vy", "vz")):
         arr = np.asarray(
             (
-                getattr(y0, "x"), getattr(y0, "y"), getattr(y0, "z"),
-                getattr(y0, "vx"), getattr(y0, "vy"), getattr(y0, "vz"),
+                y0.x, y0.y, y0.z,
+                y0.vx, y0.vy, y0.vz,
             ),
             dtype=float,
         ).reshape(-1)
@@ -640,7 +643,7 @@ def main() -> int:
 
     # Surface grids (CLI-requested only)
     topo_requested = bool(args.ldem_root or args.albedo_root)
-    surface_provider: Optional[Any] = None
+    surface_provider: Any | None = None
     thermal_mode = (
         str(getattr(cfg.thermal, "thermal_mode", "constant_temperature")).strip().lower()
         if cfg.thermal is not None
@@ -686,7 +689,7 @@ def main() -> int:
             topo_grid = None
 
     # Ephemeris if needed
-    ephem_mgr: Optional[EphemerisManager] = None
+    ephem_mgr: EphemerisManager | None = None
     if need_ephemeris(cfg, topo_requested=topo_requested):
         try:
             ephem_mgr = init_ephemeris(cfg, tf_s=float(cfg.time.duration_s))
@@ -695,7 +698,7 @@ def main() -> int:
             return 1
 
     # Initial state: if orbit init flags provided -> COE -> Cartesian; else cfg.initial_state
-    orbit_params: Optional[Dict[str, float]] = None
+    orbit_params: dict[str, float] | None = None
     y0: InitialState = cfg.initial_state
 
     orbit_init_requested = any(

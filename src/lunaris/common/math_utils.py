@@ -1,5 +1,4 @@
 # lunaris/common/math_utils.py
-# -*- coding: utf-8 -*-
 """
 Numba-Accelerated Math Utilities
 ================================
@@ -86,14 +85,12 @@ Usage
 from __future__ import annotations
 
 import math
+from typing import Literal
+
 import numpy as np
-from typing import Literal, Tuple
+from numba import njit, prange
 
-from numba import njit, prange  
-
-from .constants import (RAD2DEG, TWO_PI,
-                        EPS_1E12, EPS_1E15, EPS_1E18, EPS_1E30)
-
+from .constants import EPS_1E12, EPS_1E15, EPS_1E18, EPS_1E30, RAD2DEG, TWO_PI
 
 # =============================================================================
 # 1.                              SMALL HELPERS
@@ -151,7 +148,7 @@ def wrap_angle_2pi(angle_rad: float) -> float:
 
 # Used by: ephemeris
 @njit(cache=True)
-def quat_conj(q0: float, q1: float, q2: float, q3: float) -> Tuple[float, float, float, float]:
+def quat_conj(q0: float, q1: float, q2: float, q3: float) -> tuple[float, float, float, float]:
     """
     Returns the conjugate of a quaternion.
 
@@ -163,7 +160,7 @@ def quat_conj(q0: float, q1: float, q2: float, q3: float) -> Tuple[float, float,
 # Used by: math_utils, ephemeris, dynamics, postprocess
 @njit(cache=True)
 def quat_rotate_vec(q0: float, q1: float, q2: float, q3: float,
-                    vx: float, vy: float, vz: float) -> Tuple[float, float, float]:
+                    vx: float, vy: float, vz: float) -> tuple[float, float, float]:
     """
     Rotates a 3D vector v by a unit quaternion q (scalar-first).
 
@@ -220,7 +217,7 @@ def quat_rotate_np(q: np.ndarray, v: np.ndarray) -> np.ndarray:
 
 # Used by: math_utils
 @njit(cache=True)
-def _quat_normalize_kernel(q0: float, q1: float, q2: float, q3: float) -> Tuple[float, float, float, float]:
+def _quat_normalize_kernel(q0: float, q1: float, q2: float, q3: float) -> tuple[float, float, float, float]:
     """
     Normalizes a quaternion to unit length.
 
@@ -235,11 +232,11 @@ def _quat_normalize_kernel(q0: float, q1: float, q2: float, q3: float) -> Tuple[
     # Fast check: avoid sqrt if already nearly unit length
     if abs(n2 - 1.0) < EPS_1E12:
         return q0, q1, q2, q3
-    
+
     # Safety against division by ~0
     if n2 < EPS_1E30:
         return 1.0, 0.0, 0.0, 0.0
-    
+
     n = math.sqrt(n2)
 
     inv = 1.0 / n
@@ -250,7 +247,7 @@ def _quat_normalize_kernel(q0: float, q1: float, q2: float, q3: float) -> Tuple[
 @njit(cache=True)
 def _quat_slerp(qA0: float, qA1: float, qA2: float, qA3: float,
                qB0: float, qB1: float, qB2: float, qB3: float,
-               t: float) -> Tuple[float, float, float, float]:
+               t: float) -> tuple[float, float, float, float]:
     """
     Spherical Linear Interpolation (SLERP) between two unit quaternions.
 
@@ -353,12 +350,12 @@ def quat_slerp_np(qA: np.ndarray, qB: np.ndarray, t: float) -> np.ndarray:
 
 
 # =============================================================================
-# 3.                         TABLE INTERPOLATIONS 
+# 3.                         TABLE INTERPOLATIONS
 # =============================================================================
 
 # Used by: math_utils
 @njit(cache=True)
-def _table_index_frac(t: float, dt: float, n: int) -> Tuple[int, float]:
+def _table_index_frac(t: float, dt: float, n: int) -> tuple[int, float]:
     """
     Converts continuous time `t` to a discrete table segment index and a fractional coordinate.
 
@@ -430,7 +427,7 @@ def _table_endpoint_index(t: float, dt: float, n: int) -> int:
 
 # Used by: ephemeris
 @njit(cache=True)
-def interp_quat_slerp(t: float, dt: float, q_tab: np.ndarray) -> Tuple[float, float, float, float]:
+def interp_quat_slerp(t: float, dt: float, q_tab: np.ndarray) -> tuple[float, float, float, float]:
     """
     Interpolates a quaternion time series using SLERP on a constant-step table.
 
@@ -485,7 +482,7 @@ def interp_quat_slerp(t: float, dt: float, q_tab: np.ndarray) -> Tuple[float, fl
 
 # Used by: ephemeris
 @njit(cache=True)
-def interp_vec3_catmull(t: float, dt: float, v_tab: np.ndarray) -> Tuple[float, float, float]:
+def interp_vec3_catmull(t: float, dt: float, v_tab: np.ndarray) -> tuple[float, float, float]:
     """
     Interpolates a 3D vector time series using Catmull-Rom cubic splines (C1 continuous).
 
@@ -558,8 +555,8 @@ def interp_vec3_catmull(t: float, dt: float, v_tab: np.ndarray) -> Tuple[float, 
 
 
 
-# ============================================================================= 
-# 4.                           STEP SIZE & SAMPLING 
+# =============================================================================
+# 4.                           STEP SIZE & SAMPLING
 # =============================================================================
 
 # Used by: propagator
@@ -635,8 +632,8 @@ def nyquist_max_step_s(
 
 
 
-# ============================================================================= 
-# 5.                           ORBITAL FUNCTIONS 
+# =============================================================================
+# 5.                           ORBITAL FUNCTIONS
 # =============================================================================
 
 # Used by: math_utils
@@ -645,7 +642,7 @@ def _rv_to_coe_kernel(
     rx: float, ry: float, rz: float,
     vx: float, vy: float, vz: float,
     mu: float,
-) -> Tuple[float, float, float, float, float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float, float, float, float, float]:
     """
     High-performance kernel: Cartesian state (r,v) -> classical orbital elements (COE).
 
@@ -811,7 +808,7 @@ def rv_to_coe_select(
     mu: float,
     *,
     mode: Literal["coe6", "coe10", "kepler5"] = "coe6",
-) -> Tuple[float, ...]:
+) -> tuple[float, ...]:
     """
     Public API: single-point RV -> selected element set.
 
@@ -863,7 +860,7 @@ MAX_SAFE_SIZE: int = 10_000_000   # safety cap for batch allocations
 
 # Used by: math_utils
 @njit(parallel=True, cache=True)
-def _batch_y_to_coe_kernel(y: np.ndarray, mu: float) -> Tuple[np.ndarray, ...]:
+def _batch_y_to_coe_kernel(y: np.ndarray, mu: float) -> tuple[np.ndarray, ...]:
     """
     Numba parallel kernel: (6,N) state history -> 10 element arrays.
 
@@ -917,7 +914,7 @@ def batch_y_to_elements(
     mu: float,
     *,
     mode: Literal["coe10", "coe6", "kepler5"] = "kepler5",
-) -> Tuple[np.ndarray, ...]:
+) -> tuple[np.ndarray, ...]:
     """
     Public API: batch converter for a state history y of shape (6, N).
 
@@ -1010,7 +1007,7 @@ def latlon_from_xyz_m(
     y_m: float,
     z_m: float,
     lon_0_360: bool = True
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Kernel: Cartesian (body-fixed) -> Spherical (geocentric lat, lon, r).
 

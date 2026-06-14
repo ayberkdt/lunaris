@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 force_model.py - Propagator-ready inference API for the lunar residual potential surrogate.
 
@@ -38,9 +37,9 @@ backward compatibility and behave identically to their ``*_fixed`` counterparts.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Callable, Optional, Union
 
 import numpy as np
 import torch
@@ -53,7 +52,7 @@ logger = logging.getLogger(__name__)
 SUPPORTED_RUNTIME_FRAME = "moon_fixed_cartesian"
 
 
-def _quat_to_rotation_matrix(q_i2f: Union[np.ndarray, "tuple"]) -> np.ndarray:
+def _quat_to_rotation_matrix(q_i2f: np.ndarray | tuple) -> np.ndarray:
     """Scalar-first unit quaternion ``q_i2f`` -> 3x3 inertial->fixed rotation matrix.
 
     Matches ``lunaris.common.math_utils.quat_rotate_vec`` exactly: for a position
@@ -101,15 +100,19 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     load_best_or_last,
     make_run_layout,
     read_run_manifest,
-    reload_model_from_run_dir as reload_model_from_artifact_run_dir,
-    resolve_run_dir as resolve_run_dir_from_artifacts,
     validate_checkpoint_contract,
+)
+from lunaris.surrogate.st_lrps.artifacts.manager import (
+    reload_model_from_run_dir as reload_model_from_artifact_run_dir,
+)
+from lunaris.surrogate.st_lrps.artifacts.manager import (
+    resolve_run_dir as resolve_run_dir_from_artifacts,
 )
 from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
 
 
-def _resolve_run_dir(model_dir: Union[str, Path]) -> Path:
+def _resolve_run_dir(model_dir: str | Path) -> Path:
     """
     Accept run dir, checkpoint dir, or direct checkpoint path.
     Returns the run directory (parent of checkpoints/).
@@ -124,7 +127,7 @@ def _find_checkpoint(run_dir: Path) -> Path:
     return ckpt_path
 
 
-def _to_tensor(x: Union[np.ndarray, torch.Tensor], device: torch.device) -> torch.Tensor:
+def _to_tensor(x: np.ndarray | torch.Tensor, device: torch.device) -> torch.Tensor:
     """Accept numpy or torch, return float32 tensor on device with shape (N,3)."""
     if isinstance(x, torch.Tensor):
         t = x.to(device=device, dtype=torch.float32)
@@ -150,7 +153,7 @@ class BaseSurrogateRuntime:
     def predict_residual_accel(self, x_m):  # pragma: no cover - interface
         raise NotImplementedError
 
-    def predict_total_accel(self, x_m, base_accel_fn: Optional[Callable] = None):  # pragma: no cover
+    def predict_total_accel(self, x_m, base_accel_fn: Callable | None = None):  # pragma: no cover
         raise NotImplementedError
 
 
@@ -191,12 +194,12 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         cfg: dict,
         device: torch.device,
         chunk_size: int = 8192,
-        checkpoint_path: Optional[str] = None,
-        checkpoint_epoch: Optional[int] = None,
-        architecture_signature: Optional[str] = None,
-        artifact_contract: Optional[ArtifactContract | dict] = None,
+        checkpoint_path: str | None = None,
+        checkpoint_epoch: int | None = None,
+        architecture_signature: str | None = None,
+        artifact_contract: ArtifactContract | dict | None = None,
         legacy_contract: bool = False,
-        run_manifest: Optional[dict] = None,
+        run_manifest: dict | None = None,
         strict_domain: bool = False,
     ):
         self.model = model.eval()
@@ -276,8 +279,8 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         # Priority 1: explicit top-level config fields
         # Priority 2: dataset_meta block
         # Priority 3: scaler provenance
-        self._train_alt_min_km: Optional[float] = None
-        self._train_alt_max_km: Optional[float] = None
+        self._train_alt_min_km: float | None = None
+        self._train_alt_max_km: float | None = None
 
         # Priority 1: explicit config fields
         _v = cfg.get("altitude_min_km")
@@ -332,7 +335,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         return delta_u.detach().cpu().numpy(), delta_a.detach().cpu().numpy()
 
     def _chunked_predict(
-        self, x: Union[np.ndarray, torch.Tensor]
+        self, x: np.ndarray | torch.Tensor
     ) -> tuple:
         """Chunked inference over arbitrary-length inputs."""
         x_t = _to_tensor(x, self.device)
@@ -387,7 +390,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         result = u_out.reshape(-1)
         return float(result[0]) if single else result
 
-    def _enforce_domain(self, x_m: Union[np.ndarray, torch.Tensor], *, caller: str) -> dict:
+    def _enforce_domain(self, x_m: np.ndarray | torch.Tensor, *, caller: str) -> dict:
         """Run the domain check; raise when strict, otherwise warn-once on extrapolation.
 
         Returns the ``domain_status`` dict so callers can reuse it if needed.
@@ -410,7 +413,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         return status
 
     def predict_residual_accel_fixed(
-        self, r_fixed_m: Union[np.ndarray, torch.Tensor]
+        self, r_fixed_m: np.ndarray | torch.Tensor
     ) -> np.ndarray:
         """
         Predict residual acceleration Delta_a = a_sign * grad(DeltaU) in m/s^2.
@@ -443,7 +446,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         _, da = self._chunked_predict(x_m)
         return da[0] if single else da
 
-    def domain_status(self, x_m: Union[np.ndarray, torch.Tensor]) -> dict:
+    def domain_status(self, x_m: np.ndarray | torch.Tensor) -> dict:
         """
         Return a domain-validity report for the given input positions.
 
@@ -502,9 +505,9 @@ class SurrogateForceModel(PotentialAutogradRuntime):
 
     def predict_total_accel_with_status(
         self,
-        x_m: Union[np.ndarray, torch.Tensor],
-        base_accel_fn: Optional[Callable] = None,
-    ) -> "tuple[np.ndarray, dict]":
+        x_m: np.ndarray | torch.Tensor,
+        base_accel_fn: Callable | None = None,
+    ) -> tuple[np.ndarray, dict]:
         """predict_total_accel() + domain_status() in one call."""
         status = self.domain_status(x_m)
         a_total = self.predict_total_accel(x_m, base_accel_fn)
@@ -512,8 +515,8 @@ class SurrogateForceModel(PotentialAutogradRuntime):
 
     def predict_total_accel_fixed(
         self,
-        r_fixed_m: Union[np.ndarray, torch.Tensor],
-        base_accel_fixed_fn: Optional[Callable] = None,
+        r_fixed_m: np.ndarray | torch.Tensor,
+        base_accel_fixed_fn: Callable | None = None,
     ) -> np.ndarray:
         """
         Predict total acceleration a_total = a_base(r) + Delta_a_NN(r), all fixed-frame.
@@ -589,14 +592,14 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         """
         return self.predict_residual_potential_fixed(x_m)
 
-    def predict_residual_accel(self, x_m: Union[np.ndarray, torch.Tensor]) -> np.ndarray:
+    def predict_residual_accel(self, x_m: np.ndarray | torch.Tensor) -> np.ndarray:
         """Fixed-frame alias of :meth:`predict_residual_accel_fixed`."""
         return self.predict_residual_accel_fixed(x_m)
 
     def predict_total_accel(
         self,
-        x_m: Union[np.ndarray, torch.Tensor],
-        base_accel_fn: Optional[Callable] = None,
+        x_m: np.ndarray | torch.Tensor,
+        base_accel_fn: Callable | None = None,
     ) -> np.ndarray:
         """Fixed-frame alias of :meth:`predict_total_accel_fixed`."""
         return self.predict_total_accel_fixed(x_m, base_accel_fn)
@@ -605,7 +608,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
     # Inertial-frame helpers: rotate in -> evaluate fixed -> rotate out
     # ------------------------------------------------------------------
     def predict_residual_potential_inertial(
-        self, r_inertial_m: Union[np.ndarray, torch.Tensor], q_i2f
+        self, r_inertial_m: np.ndarray | torch.Tensor, q_i2f
     ):
         """Residual potential for inertial position(s) via the ``q_i2f`` rotation.
 
@@ -616,7 +619,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         return self.predict_residual_potential_fixed(r_fixed)
 
     def predict_residual_accel_inertial(
-        self, r_inertial_m: Union[np.ndarray, torch.Tensor], q_i2f
+        self, r_inertial_m: np.ndarray | torch.Tensor, q_i2f
     ) -> np.ndarray:
         """Residual acceleration expressed in the inertial frame.
 
@@ -637,9 +640,9 @@ class SurrogateForceModel(PotentialAutogradRuntime):
 
     def predict_total_accel_inertial(
         self,
-        r_inertial_m: Union[np.ndarray, torch.Tensor],
+        r_inertial_m: np.ndarray | torch.Tensor,
         q_i2f,
-        base_accel_fixed_fn: Optional[Callable] = None,
+        base_accel_fixed_fn: Callable | None = None,
     ) -> np.ndarray:
         """Total acceleration expressed in the inertial frame.
 
@@ -718,7 +721,7 @@ class DirectForceRuntime(SurrogateForceModel):
 
 
 def load_surrogate_force_model(
-    model_dir: Union[str, Path],
+    model_dir: str | Path,
     device: str = "auto",
     chunk_size: int = 8192,
     allow_config_mismatch: bool = False,

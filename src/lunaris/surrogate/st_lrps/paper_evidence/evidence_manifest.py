@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Evidence manifest + provenance helpers for the ST-LRPS paper pipeline.
 
 The evidence manifest makes a run reproducible and auditable: it records the
@@ -15,15 +14,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any
 
 # Reuse the benchmark provenance collectors so environment/git capture is
 # consistent across the whole ST-LRPS evidence stack.
 from lunaris.surrogate.st_lrps.evaluation.provenance import (
     artifact_record as _benchmark_artifact_record,
+)
+from lunaris.surrogate.st_lrps.evaluation.provenance import (
     collect_environment as _collect_env,
+)
+from lunaris.surrogate.st_lrps.evaluation.provenance import (
     collect_git_info,
 )
 
@@ -34,7 +38,7 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def compute_file_sha256(path: str | Path | None) -> Optional[str]:
+def compute_file_sha256(path: str | Path | None) -> str | None:
     """SHA-256 of a file, or ``None`` if the path is missing/not a file."""
     if path is None:
         return None
@@ -72,13 +76,13 @@ def build_evidence_manifest(
     stage: str,
     run_key: str,
     config_path: str | Path | None,
-    config: Optional[Mapping[str, Any]],
+    config: Mapping[str, Any] | None,
     out_dir: str | Path | None,
-    artifacts: Optional[Mapping[str, str | Path | None]] = None,
-    command: Optional[list[str]] = None,
+    artifacts: Mapping[str, str | Path | None] | None = None,
+    command: list[str] | None = None,
     dry_run: bool = False,
-    environment: Optional[Mapping[str, Any]] = None,
-    extra: Optional[Mapping[str, Any]] = None,
+    environment: Mapping[str, Any] | None = None,
+    extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble a single-run evidence entry.
 

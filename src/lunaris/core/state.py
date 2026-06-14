@@ -1,10 +1,9 @@
 # ST_LRPS/core/state.py
-# -*- coding: utf-8 -*-
 """
 Orbital State & Coordinate Transformation Engine
 
-This module serves as the single source of truth for the 6-DOF Cartesian state 
-vector used in the lunar simulation. It provides a robust bridge between 
+This module serves as the single source of truth for the 6-DOF Cartesian state
+vector used in the lunar simulation. It provides a robust bridge between
 numerical integration arrays and geometric Keplerian representations.
 
 Canonical State Definition (SI Units):
@@ -46,24 +45,16 @@ Design Constraints & Scope:
 
 from __future__ import annotations
 
-
-from dataclasses import dataclass
-from numpy.typing import ArrayLike, NDArray
-from typing import Tuple, Union, overload, Literal
-
 import math
+from dataclasses import dataclass
+from typing import Literal, overload
+
 import numpy as np
+from numpy.typing import ArrayLike, NDArray
 
-from lunaris.common.constants import (MU_MOON,
-                              KM_TO_M, M_TO_KM,
-                              EPS_1E12, EPS_1E15)
-
-
-from lunaris.common.math_utils import norm3, wrap_angle_2pi, rv_to_coe_select
-
+from lunaris.common.constants import EPS_1E12, EPS_1E15, KM_TO_M, M_TO_KM, MU_MOON
+from lunaris.common.math_utils import norm3, rv_to_coe_select, wrap_angle_2pi
 from lunaris.common.type_defs import Vec3
-
-
 
 STATE_SIZE: int = 6
 
@@ -73,15 +64,15 @@ STATE_SIZE: int = 6
 # =============================================================================
 
 def _ensure_1d_float_array(
-    source_data: ArrayLike, 
-    expected_length: int, 
-    *, 
+    source_data: ArrayLike,
+    expected_length: int,
+    *,
     param_name: str
 ) -> NDArray[np.float64]:
     """
     Standardizes input into a 1D float64 NumPy array and validates data integrity.
 
-    Converts the input to a flat array, verifies that the length matches the 
+    Converts the input to a flat array, verifies that the length matches the
     expected dimension, and ensures no non-finite values (NaN/Inf) are present.
     """
     # Force conversion to float64 and flatten to 1D
@@ -111,7 +102,7 @@ def _calculate_vec3_norm(vector: ArrayLike, name: str = "vector") -> float:
     """
     Computes the Euclidean norm (magnitude) of a 3-element vector.
 
-    Note: Bridges the gap between array-based inputs and the scalar-optimized 
+    Note: Bridges the gap between array-based inputs and the scalar-optimized
     math_utils.norm3 function.
     """
     v_clean = as_vec3(data=vector, name=name)
@@ -121,7 +112,7 @@ def _calculate_vec3_norm(vector: ArrayLike, name: str = "vector") -> float:
 
 
 # =============================================================================
-# 2.                      STATE PACKING & UNPACKING 
+# 2.                      STATE PACKING & UNPACKING
 # =============================================================================
 
 def pack_orbital_state(position: ArrayLike, velocity: ArrayLike) -> NDArray[np.float64]:
@@ -129,7 +120,7 @@ def pack_orbital_state(position: ArrayLike, velocity: ArrayLike) -> NDArray[np.f
     Packs separate position and velocity vectors into a single 6-element state vector.
 
     Creates a standardized flat array suitable for numerical integration (ODE solvers).
-    The resulting structure follows the convention: 
+    The resulting structure follows the convention:
     $$ y = [r_x, r_y, r_z, v_x, v_y, v_z]^T $$
 
     Parameters
@@ -152,15 +143,15 @@ def pack_orbital_state(position: ArrayLike, velocity: ArrayLike) -> NDArray[np.f
     state_vector = np.empty(STATE_SIZE, dtype=np.float64)
     state_vector[:3] = r_clean
     state_vector[3:] = v_clean
-    
+
     return state_vector
 
 
 def unpack_orbital_state(
-    state_vector: ArrayLike, 
-    *, 
+    state_vector: ArrayLike,
+    *,
     copy: bool = True
-) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
     """
     Decomposes a 6-element state vector back into position and velocity components.
 
@@ -188,7 +179,7 @@ def unpack_orbital_state(
 
     if copy:
         return position.copy(), velocity.copy()
-    
+
     return position, velocity
 
 
@@ -201,9 +192,9 @@ def unpack_orbital_state(
 class OrbitState:
     """
     Cartesian State Vector container (r, v) in the Body-Fixed or Inertial frame.
-    
-    This class acts as a high-level wrapper around raw NumPy arrays, providing 
-    convenient access to orbital invariants like energy, angular momentum, 
+
+    This class acts as a high-level wrapper around raw NumPy arrays, providing
+    convenient access to orbital invariants like energy, angular momentum,
     and Keplerian transformations.
     """
     position: Vec3       # Radius vector [m]
@@ -223,12 +214,12 @@ class OrbitState:
         return pack_orbital_state(self.position, self.velocity)
 
     @classmethod
-    def from_y(cls, state_vector: ArrayLike) -> "OrbitState":
+    def from_y(cls, state_vector: ArrayLike) -> OrbitState:
         """Factory: Creates an OrbitState instance from a flat (6,) array."""
         r, v = unpack_orbital_state(state_vector, copy=True)
         return cls(r, v)
 
-    def copy(self) -> "OrbitState":
+    def copy(self) -> OrbitState:
         """Returns a deep copy of the current state instance."""
         return OrbitState(self.position.copy(), self.velocity.copy())
 
@@ -245,43 +236,43 @@ class OrbitState:
     def compute_specific_energy(self, mu: float = float(MU_MOON)) -> float:
         """
         Calculates the specific orbital energy ($J/kg$).
-        
+
         Formula:
         $$ \\epsilon = \\frac{v^2}{2} - \\frac{\\mu}{r} $$
         """
         # Using built-in max() to guard against singularity at the center
-        r_safe = max(self.r_mag, 1e-6) 
+        r_safe = max(self.r_mag, 1e-6)
         return 0.5 * (self.v_mag**2) - (mu / r_safe)
 
     def compute_angular_momentum(self) -> Vec3:
         """
         Calculates the specific angular momentum vector.
-        
+
         Formula:
         $$ \\vec{h} = \\vec{r} \\times \\vec{v} $$
         """
         return np.cross(self.position, self.velocity)
 
-    def to_keplerian(self, mu: float = float(MU_MOON)) -> "ClassicalElements":
+    def to_keplerian(self, mu: float = float(MU_MOON)) -> ClassicalElements:
         """
         Transforms the Cartesian state into Classical Orbital Elements (COE).
         Returns a ClassicalElements instance.
         """
         kepler_tuple = cartesian_to_keplerian(
-            self.position, 
-            self.velocity, 
+            self.position,
+            self.velocity,
             mu=mu,
             wrap_angles=True
         )
         return ClassicalElements(*kepler_tuple)
-    
+
 
 @dataclass(frozen=True, slots=True)
 class ClassicalElements:
     """
     Classical Orbital Elements (COE) — Keplerian representation.
-    
-    This class defines the orbital geometry using six fundamental parameters. 
+
+    This class defines the orbital geometry using six fundamental parameters.
     All angular elements are stored in radians.
     """
     a: float     # Semi-major axis [m]
@@ -291,7 +282,7 @@ class ClassicalElements:
     argp: float  # Argument of Perigee [rad]
     ta: float    # True Anomaly [rad]
 
-    def normalized(self) -> "ClassicalElements":
+    def normalized(self) -> ClassicalElements:
         """
         Returns a new instance with all angular components wrapped to [0, 2π).
         Useful for long-term propagations where angles may accumulate.
@@ -305,13 +296,13 @@ class ClassicalElements:
             wrap_angle_2pi(self.ta),
         )
 
-    def to_cartesian(self, mu: float = float(MU_MOON)) -> Tuple[Vec3, Vec3]:
+    def to_cartesian(self, mu: float = float(MU_MOON)) -> tuple[Vec3, Vec3]:
         """
         Transforms Keplerian elements into Cartesian Position and Velocity vectors.
         Returns a tuple of (r, v).
         """
         return keplerian_to_cartesian(
-            self.a, self.e, self.inc, self.raan, self.argp, self.ta, 
+            self.a, self.e, self.inc, self.raan, self.argp, self.ta,
             mu=mu
         )
 
@@ -323,7 +314,7 @@ class ClassicalElements:
         r, v = self.to_cartesian(mu=mu)
         return pack_orbital_state(r, v)
 
-    def to_orbit_state(self, mu: float = float(MU_MOON)) -> "OrbitState":
+    def to_orbit_state(self, mu: float = float(MU_MOON)) -> OrbitState:
         """
         Converts elements into a high-level OrbitState instance.
         Enables immediate access to energy, momentum, and other properties.
@@ -340,8 +331,8 @@ class ClassicalElements:
 def _validate_gravitational_parameter(mu: float) -> float:
     """
     Validates the gravitational parameter (mu).
-    
-    Ensures mu is finite and strictly positive, as negative gravity 
+
+    Ensures mu is finite and strictly positive, as negative gravity
     is physically non-permitted in this simulation context.
     """
     mu_val = float(mu)
@@ -350,7 +341,7 @@ def _validate_gravitational_parameter(mu: float) -> float:
     return mu_val
 
 
-def _validate_orbital_geometry(semi_major_axis: float, eccentricity: float) -> Tuple[float, float]:
+def _validate_orbital_geometry(semi_major_axis: float, eccentricity: float) -> tuple[float, float]:
     """
     Validates the semi-major axis (a) and eccentricity (e) relationship.
 
@@ -379,14 +370,14 @@ def _validate_orbital_geometry(semi_major_axis: float, eccentricity: float) -> T
     # Conic section consistency checks
     if e < 1.0 and a <= 0.0:
         raise ValueError(f"Elliptic orbit (e < 1) requires a positive semi-major axis (a > 0). Got a={a}")
-    
+
     if e > 1.0 and a >= 0.0:
         raise ValueError(f"Hyperbolic orbit (e > 1) requires a negative semi-major axis (a < 0). Got a={a}")
 
     return a, e
 
 
-def _ensure_finite_angles(*angles: float) -> Tuple[float, ...]:
+def _ensure_finite_angles(*angles: float) -> tuple[float, ...]:
     """
     Verifies that all provided angular values (inclination, RAAN, etc.) are finite.
     """
@@ -404,13 +395,13 @@ def keplerian_to_cartesian(
     argp: float,
     true_anomaly: float,
     mu: float = float(MU_MOON),
-) -> Tuple[Vec3, Vec3]:
+) -> tuple[Vec3, Vec3]:
     """
     Transforms Classical Orbital Elements (COE) to Cartesian state vectors.
 
     Converts geometry into Position (r) and Velocity (v) in an inertial frame.
     Supports elliptic (e < 1) and hyperbolic (e > 1) trajectories.
-    
+
     Rotation Logic:
     Perifocal (PQW) -> Inertial (IJK) via $$ R_z(\\Omega) R_x(i) R_z(\\omega) $$
     """
@@ -426,12 +417,12 @@ def keplerian_to_cartesian(
         raise ValueError("Invalid orbital geometry: Semi-latus rectum (p) must be > 0.")
 
     cos_ta, sin_ta = math.cos(ta), math.sin(ta)
-    
+
     # Radius magnitude in the orbital plane
     denom = 1.0 + e * cos_ta
     if abs(denom) <= EPS_1E15:
         raise ValueError("Trajectory singularity: 1 + e*cos(ta) is near zero (hyperbolic asymptote).")
-    
+
     r_mag = p / denom
 
     # 3. Position and Velocity in Perifocal Frame (PQW)
@@ -478,7 +469,7 @@ def keplerian_to_state_vector(
     """
     Converts Classical Orbital Elements (COE) directly to a packed Cartesian state vector.
 
-    This is a convenience wrapper that combines coordinate transformation and 
+    This is a convenience wrapper that combines coordinate transformation and
     state packing into a single call, typically used to initialize ODE integrators.
 
     The resulting vector follows the convention:
@@ -508,12 +499,12 @@ def keplerian_to_state_vector(
     """
     # 1. Transform geometry to Cartesian vectors
     position, velocity = keplerian_to_cartesian(
-        semi_major_axis, 
-        eccentricity, 
-        inclination, 
-        raan, 
-        argp, 
-        true_anomaly, 
+        semi_major_axis,
+        eccentricity,
+        inclination,
+        raan,
+        argp,
+        true_anomaly,
         mu=mu
     )
 
@@ -526,7 +517,7 @@ def create_state_from_keplerian(
     semi_major_axis: float, eccentricity: float, inclination: float,
     raan: float, argp: float, true_anomaly: float,
     mu: float = float(MU_MOON), *, return_array: Literal[False] = False,
-) -> "OrbitState": ...
+) -> OrbitState: ...
 
 @overload
 def create_state_from_keplerian(
@@ -546,20 +537,20 @@ def create_state_from_keplerian(
     mu: float = float(MU_MOON),
     *,
     return_array: bool = False,
-) -> Union["OrbitState", NDArray[np.float64]]:
+) -> OrbitState | NDArray[np.float64]:
     """
     Main entry point for creating orbital states from Keplerian elements.
-    
+
     Can return either a high-level OrbitState object or a raw packed (6,) NumPy array.
     """
     r, v = keplerian_to_cartesian(
-        semi_major_axis, eccentricity, inclination, 
+        semi_major_axis, eccentricity, inclination,
         raan, argp, true_anomaly, mu=mu
     )
 
     if return_array:
         return pack_orbital_state(r, v)
-    
+
     return OrbitState(r, v)
 
 
@@ -569,10 +560,10 @@ def cartesian_to_keplerian(
     *,
     mu: float = float(MU_MOON),
     wrap_angles: bool = True,
-) -> Tuple[float, float, float, float, float, float]:
+) -> tuple[float, float, float, float, float, float]:
     """
     Transforms Cartesian Position (r) and Velocity (v) to Keplerian elements.
-    
+
     Returns
     -------
     (a, e, i, Ω, ω, ν) : tuple
@@ -588,7 +579,7 @@ def cartesian_to_keplerian(
 
     # Optional angle normalization
     if wrap_angles:
-        inc  = wrap_angle_2pi(inc) 
+        inc  = wrap_angle_2pi(inc)
         raan = wrap_angle_2pi(raan)
         argp = wrap_angle_2pi(argp)
         ta   = wrap_angle_2pi(ta)
@@ -612,33 +603,33 @@ def _ensure_positive_finite(value: float, name: str) -> float:
     return val
 
 
-def _validate_elliptic_geometry(semi_major_axis: float, eccentricity: float) -> Tuple[float, float]:
+def _validate_elliptic_geometry(semi_major_axis: float, eccentricity: float) -> tuple[float, float]:
     """
     Validates that the provided (a, e) parameters describe a valid elliptic orbit.
-    
+
     Requirements:
     1. 0 <= eccentricity < 1
     2. semi_major_axis > 0
     """
     a = float(semi_major_axis)
     e = float(eccentricity)
-    
+
     if not (math.isfinite(a) and math.isfinite(e)):
         raise ValueError(f"Orbital parameters must be finite. Got a={a}, e={e}")
-        
+
     if not (0.0 <= e < 1.0):
         raise ValueError(f"Eccentricity must be in range [0, 1) for elliptic orbits. Got: {e}")
-        
+
     if a <= 0.0:
         raise ValueError(f"Semi-major axis must be positive for elliptic orbits. Got: {a}")
-        
+
     return a, e
 
 
 def calculate_periapsis_apoapsis_radii(
-    semi_major_axis: float, 
+    semi_major_axis: float,
     eccentricity: float
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Calculates periapsis and apoapsis radii from semi-major axis and eccentricity.
 
@@ -651,17 +642,17 @@ def calculate_periapsis_apoapsis_radii(
     periapsis_radius, apoapsis_radius : float [m]
     """
     a, e = _validate_elliptic_geometry(semi_major_axis, eccentricity)
-    
+
     periapsis_radius = a * (1.0 - e)
     apoapsis_radius = a * (1.0 + e)
-    
+
     return periapsis_radius, apoapsis_radius
 
 
 def calculate_ae_from_radii(
-    periapsis_radius: float, 
+    periapsis_radius: float,
     apoapsis_radius: float
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Computes semi-major axis and eccentricity from periapsis and apoapsis radii.
 
@@ -678,15 +669,15 @@ def calculate_ae_from_radii(
 
     semi_major_axis = 0.5 * (rp + ra)
     eccentricity = (ra - rp) / (ra + rp)  # Safe since rp, ra > 0
-    
+
     return semi_major_axis, eccentricity
 
 
 def calculate_ae_from_altitudes(
-    reference_radius: float, 
-    periapsis_alt_km: float, 
+    reference_radius: float,
+    periapsis_alt_km: float,
     apoapsis_alt_km: float
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Derives (a, e) from altitudes above a reference radius.
 
@@ -701,15 +692,15 @@ def calculate_ae_from_altitudes(
     # Convert altitudes to radii in meters
     periapsis_radius = r_ref + float(periapsis_alt_km) * KM_TO_M
     apoapsis_radius = r_ref + float(apoapsis_alt_km) * KM_TO_M
-    
+
     return calculate_ae_from_radii(periapsis_radius, apoapsis_radius)
 
 
 def calculate_altitudes_from_ae(
-    reference_radius: float, 
-    semi_major_axis: float, 
+    reference_radius: float,
+    semi_major_axis: float,
     eccentricity: float
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """
     Calculates periapsis and apoapsis altitudes [km] from orbital elements.
     """
@@ -718,11 +709,11 @@ def calculate_altitudes_from_ae(
     periapsis_radius, apoapsis_radius = calculate_periapsis_apoapsis_radii(
         semi_major_axis, eccentricity
     )
-    
+
     # Convert radii back to altitudes in km
     periapsis_alt_km = (periapsis_radius - r_ref) * M_TO_KM
     apoapsis_alt_km = (apoapsis_radius - r_ref) * M_TO_KM
-    
+
     return periapsis_alt_km, apoapsis_alt_km
 
 

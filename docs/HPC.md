@@ -55,10 +55,24 @@ Edit `environment.yml` first to select the `pytorch-cuda` version that matches
 the CUDA module on your cluster (e.g. `pytorch-cuda=12.1`).
 
 The `.[hpc]` extra installs PyTorch + h5py on top of the core dependencies and
-omits all GUI packages. A flat, pinned `requirements_hpc.txt` is also available
-as an alternative dependency list (`pip install -r requirements_hpc.txt`), but
-the preferred install is the editable `python -m pip install -e ".[hpc]"` so the
-console entry points are registered.
+omits all GUI packages. `requirements_hpc.txt` is a convenience shortcut that
+resolves to the same `.[hpc]` extra (version *ranges* from `pyproject.toml`), so
+the preferred install remains the editable `python -m pip install -e ".[hpc]"` so
+the console entry points are registered.
+
+### Option C: Fully pinned, reproducible install (Paper-evidence runs)
+
+For runs that must be byte-for-byte reproducible (paper benchmarks, audited HPC
+jobs), install from the hash-verified lock instead of the version ranges:
+
+```bash
+pip install --require-hashes -r locks/requirements-hpc-linux-py311.lock.txt
+pip install --no-deps -e .   # register console entry points
+```
+
+The lock pins every transitive dependency for **Linux + CPython 3.11** (the CI /
+paper-evidence target). See [`locks/README.md`](../locks/README.md) for the CUDA
+note and how to regenerate the locks after a dependency change.
 
 Verify the headless entry points are available:
 

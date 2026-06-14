@@ -1,11 +1,11 @@
-# -*- coding: utf-8 -*-
 """Dataset quality statistics for ST-LRPS HDF5 clouds."""
 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -130,7 +130,7 @@ def _markdown_summary(report: Mapping[str, Any]) -> str:
     alt = report.get("altitude_km", {})
     acc = report.get("residual_acceleration_magnitude", {})
     lines = [
-        f"# Dataset Quality Summary",
+        "# Dataset Quality Summary",
         "",
         f"- Dataset: {report.get('data_path')}",
         f"- Samples: {report.get('n_samples')}",

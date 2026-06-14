@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Session-restore safety and splitter/collapse stability (objectives 5 & 6).
 

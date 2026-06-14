@@ -5,12 +5,11 @@ import json
 import h5py
 import pytest
 
+from dataset_pipeline_test_utils import make_toy_residual_rows, write_toy_contract_h5
 from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContractError
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 from lunaris.surrogate.st_lrps.training.config import TrainConfig
 from lunaris.surrogate.st_lrps.training.engine import train
-
-from dataset_pipeline_test_utils import make_toy_residual_rows, write_toy_contract_h5
 
 pytest.importorskip("torch")
 

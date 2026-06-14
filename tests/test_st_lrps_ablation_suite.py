@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from lunaris.surrogate.st_lrps.evaluation import ablation as ram
 
 

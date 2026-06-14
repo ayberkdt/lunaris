@@ -43,10 +43,9 @@ Design goals
 from __future__ import annotations
 
 import os
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Sequence
-
 
 # =============================================================================
 # 0.                                 TYPES
@@ -309,7 +308,7 @@ def prefer_dedicated_albedo_root(project_root: PathLike, hints: DataRootHints) -
 
 def autodetect_repository_data_roots(
     project_root: PathLike,
-    current: Optional[DataRootHints] = None,
+    current: DataRootHints | None = None,
 ) -> tuple[DataRootHints, list[str]]:
     """
     Discover likely repository data directories for surface and SPICE assets.
@@ -458,7 +457,7 @@ def project_root_from_path(start_path: PathLike, *, max_levels: int = 6, strict:
 
 
 def iter_lunar_map_candidates(
-    explicit_path: Optional[str] = None,
+    explicit_path: str | None = None,
     *,
     start_dir: PathLike | None = None,
 ) -> list[Path]:
@@ -540,10 +539,10 @@ def iter_lunar_map_candidates(
 
 
 def find_lunar_map_path(
-    explicit_path: Optional[str] = None,
+    explicit_path: str | None = None,
     *,
     start_dir: PathLike | None = None,
-) -> Optional[str]:
+) -> str | None:
     """
     Return the first readable lunar texture path discovered on disk.
 

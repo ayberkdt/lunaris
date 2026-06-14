@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import cos, pi, sin, sqrt
-from typing import Iterable, List, Tuple
 
 import numpy as np
 
@@ -31,7 +31,7 @@ def _deg2rad(value: float) -> float:
     return float(value) * pi / 180.0
 
 
-def _synthetic_sun_earth(epoch_index: int, epoch_utc: str) -> Tuple[np.ndarray, np.ndarray]:
+def _synthetic_sun_earth(epoch_index: int, epoch_utc: str) -> tuple[np.ndarray, np.ndarray]:
     """Return deterministic representative Moon-centered Sun/Earth vectors."""
     # Spread epochs through geometry without depending on SPICE kernels.
     phase = 2.0 * pi * (epoch_index % 12) / 12.0
@@ -50,7 +50,7 @@ def _synthetic_sun_earth(epoch_index: int, epoch_utc: str) -> Tuple[np.ndarray, 
     return sun, earth
 
 
-def circular_state(altitude_km: float, inclination_deg: float, true_anomaly_deg: float) -> Tuple[np.ndarray, np.ndarray]:
+def circular_state(altitude_km: float, inclination_deg: float, true_anomaly_deg: float) -> tuple[np.ndarray, np.ndarray]:
     """Generate a simple circular lunar orbit state in an inertial frame."""
     radius_m = float(R_MOON_MEAN) + float(altitude_km) * 1000.0
     inc = _deg2rad(inclination_deg)
@@ -71,8 +71,8 @@ def circular_state(altitude_km: float, inclination_deg: float, true_anomaly_deg:
     return rot @ r_pf, rot @ v_pf
 
 
-def generate_sample_states(config: PerturbationBudgetConfig) -> List[SampleState]:
-    samples: List[SampleState] = []
+def generate_sample_states(config: PerturbationBudgetConfig) -> list[SampleState]:
+    samples: list[SampleState] = []
     geometry_source = "synthetic_geometry"
     for epoch_index, epoch in enumerate(config.epochs_utc):
         sun, earth = _synthetic_sun_earth(epoch_index, epoch)
@@ -109,7 +109,7 @@ def _unit(vec: np.ndarray, name: str) -> np.ndarray:
     return np.asarray(vec, dtype=np.float64) / norm
 
 
-def ric_frame(r_m: Iterable[float], v_m_s: Iterable[float]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def ric_frame(r_m: Iterable[float], v_m_s: Iterable[float]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Return radial, along-track/transverse, and cross-track unit vectors."""
     r = np.asarray(r_m, dtype=np.float64)
     v = np.asarray(v_m_s, dtype=np.float64)
@@ -121,7 +121,7 @@ def ric_frame(r_m: Iterable[float], v_m_s: Iterable[float]) -> Tuple[np.ndarray,
     return r_hat, t_hat, h_hat
 
 
-def decompose_ric(accel_m_s2: Iterable[float], r_m: Iterable[float], v_m_s: Iterable[float]) -> Tuple[float, float, float]:
+def decompose_ric(accel_m_s2: Iterable[float], r_m: Iterable[float], v_m_s: Iterable[float]) -> tuple[float, float, float]:
     a = np.asarray(accel_m_s2, dtype=np.float64)
     if a.shape != (3,):
         raise ValueError("accel_m_s2 must have shape (3,)")

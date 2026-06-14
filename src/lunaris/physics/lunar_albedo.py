@@ -58,7 +58,6 @@ scattering, or local topography. Per-facet albedo is the only spatial input.
 from __future__ import annotations
 
 import math
-from typing import Tuple
 
 import numpy as np
 import numpy.typing as npt
@@ -71,7 +70,6 @@ from lunaris.physics.solar_effects import earth_shadow_factor_conical
 # discretization with exact band areas). Reusing it keeps the two surface
 # radiation models consistent and avoids duplicating the cell-area math.
 from lunaris.physics.thermal_ir import build_latlon_facets
-
 
 # Albedo source modes describe how the per-facet albedo array A_i is built at
 # setup time. They are setup/config concerns only: the Numba kernels below are
@@ -119,7 +117,7 @@ def albedo_single_facet_accel_numba(
     au_m: float,
     c_light_m_s: float,
     include_sun_distance_scaling: bool,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """Acceleration contribution from one Lambertian reflecting facet.
 
     All vectors are Moon-fixed. Returns ``(0, 0, 0)`` unless the facet is both
@@ -205,7 +203,7 @@ def accel_albedo_facets_numba(
     r_earth_m: float,
     include_sun_distance_scaling: bool,
     enable_eclipse: bool,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """Sum Lambertian lunar albedo acceleration over precomputed facets.
 
     Inputs are Moon-fixed. ``facet_albedo`` is the per-facet bolometric albedo

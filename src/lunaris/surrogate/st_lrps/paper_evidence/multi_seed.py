@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Multi-seed comparison for ST-LRPS final candidates.
 
 Aggregates per-seed field-validation and orbit-benchmark numbers into a summary
@@ -12,8 +11,9 @@ from __future__ import annotations
 import csv
 import json
 import statistics
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any
 
 # Numeric per-seed metrics aggregated across seeds (lower is better for errors).
 AGGREGATED_METRICS = (
@@ -32,7 +32,7 @@ AGGREGATED_METRICS = (
 )
 
 
-def _to_float(value: Any) -> Optional[float]:
+def _to_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
     try:
@@ -52,10 +52,10 @@ def _read_csv(path: str | Path) -> list[dict[str, str]]:
 def collect_seed_entry(
     seed: int,
     *,
-    field_metrics_csv: Optional[str | Path] = None,
-    benchmark_metrics: Optional[Mapping[str, str | Path]] = None,
-    artifact_hash: Optional[str] = None,
-    best_val_epoch: Optional[int] = None,
+    field_metrics_csv: str | Path | None = None,
+    benchmark_metrics: Mapping[str, str | Path] | None = None,
+    artifact_hash: str | None = None,
+    best_val_epoch: int | None = None,
     surrogate_model: str = "ST-LRPS",
 ) -> dict[str, Any]:
     """Build one per-seed entry from a seed's field + benchmark CSV outputs.
@@ -106,7 +106,7 @@ def aggregate_multi_seed(
     """Aggregate per-seed entries into mean/std/best/median/worst statistics."""
     entries = [dict(e) for e in entries]
     n = len(entries)
-    stats: dict[str, dict[str, Optional[float]]] = {}
+    stats: dict[str, dict[str, float | None]] = {}
     for metric in AGGREGATED_METRICS:
         values = [v for v in (_to_float(e.get(metric)) for e in entries) if v is not None]
         if values:

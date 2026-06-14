@@ -5,8 +5,14 @@ from types import SimpleNamespace
 import pytest
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
-from lunaris.surrogate.st_lrps.shared.contracts import REQUIRED_DERIVATIVE_CONVENTION, TargetContract
-from lunaris.surrogate.st_lrps.shared.scaling import compute_base_accel_from_contract, compute_base_potential_from_contract
+from lunaris.surrogate.st_lrps.shared.contracts import (
+    REQUIRED_DERIVATIVE_CONVENTION,
+    TargetContract,
+)
+from lunaris.surrogate.st_lrps.shared.scaling import (
+    compute_base_accel_from_contract,
+    compute_base_potential_from_contract,
+)
 from lunaris.surrogate.st_lrps.training.config import TrainConfig
 from lunaris.surrogate.st_lrps.training.config_summary import build_experiment_feature_summary
 

@@ -9,8 +9,12 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
-from lunaris.surrogate.st_lrps.networks.models import build_model_from_config, compute_architecture_signature
+from lunaris.surrogate.st_lrps.networks.models import (
+    build_model_from_config,
+    compute_architecture_signature,
+)
 from lunaris.surrogate.st_lrps.runtime.force_model import (
     BaseSurrogateRuntime,
     DirectForceRuntime,
@@ -18,7 +22,6 @@ from lunaris.surrogate.st_lrps.runtime.force_model import (
 )
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
-from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
 
 
 def _make_run(tmp_path: Path) -> Path:

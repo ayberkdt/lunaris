@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 st_lrps.evaluation.cli  –  Evaluate a trained residual gravity model from lunaris.surrogate.st_lrps.training.cli.
 
@@ -28,20 +27,21 @@ from __future__ import annotations
 
 import argparse
 import csv
+import heapq
 import json
 import math
-import time
-from dataclasses import dataclass
 import os
+import time
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Tuple
+from typing import Any
 
 import h5py
-import heapq
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import matplotlib.pyplot as plt
 
 
 class _StreamingMetrics:
@@ -151,19 +151,19 @@ class _StreamingMetrics:
         rmse_a_mag = math.sqrt(self.sum_sq_a_mag / n)
         alt_bin_rmse_a_vec = [
             math.sqrt(sq / max(cnt, 1))
-            for sq, cnt in zip(self.alt_bin_sum_sq_a_vec, self.alt_bin_count)
+            for sq, cnt in zip(self.alt_bin_sum_sq_a_vec, self.alt_bin_count, strict=False)
         ]
         alt_bin_mae_a_vec = [
             ab / max(cnt, 1)
-            for ab, cnt in zip(self.alt_bin_sum_abs_a_vec, self.alt_bin_count)
+            for ab, cnt in zip(self.alt_bin_sum_abs_a_vec, self.alt_bin_count, strict=False)
         ]
         alt_bin_rmse_a_mag = [
             math.sqrt(sq / max(cnt, 1))
-            for sq, cnt in zip(self.alt_bin_sum_sq_a_mag, self.alt_bin_count)
+            for sq, cnt in zip(self.alt_bin_sum_sq_a_mag, self.alt_bin_count, strict=False)
         ]
         alt_bin_mae_a_mag = [
             ab / max(cnt, 1)
-            for ab, cnt in zip(self.alt_bin_sum_abs_a_mag, self.alt_bin_count)
+            for ab, cnt in zip(self.alt_bin_sum_abs_a_mag, self.alt_bin_count, strict=False)
         ]
         return {
             "count": self.count,
@@ -264,12 +264,12 @@ class _TopKErrors:
                   "abs_a_error,rel_a_error,altitude_km,cos_sim,angular_deg")
         np.savetxt(str(path), arr, delimiter=",", header=header, comments="")
 
+from lunaris.surrogate.runtime_adapter import find_latest_st_lrps_model_dir
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     MU_MOON_SI,
     R_MOON_SI,
     is_lunar_body_signature,
 )
-from lunaris.surrogate.runtime_adapter import find_latest_st_lrps_model_dir
 
 
 # -----------------------------
@@ -314,10 +314,12 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     load_best_or_last,
     load_checkpoint,
     make_run_layout,
-    reload_model_from_run_dir as reload_model_from_artifact_run_dir,
     resolve_run_dir,
     write_eval_manifest,
     write_evaluate_summary,
+)
+from lunaris.surrogate.st_lrps.artifacts.manager import (
+    reload_model_from_run_dir as reload_model_from_artifact_run_dir,
 )
 from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
@@ -330,7 +332,7 @@ from lunaris.surrogate.st_lrps.shared.scaling import (
 )
 
 
-def infer_r_ref_m_from_dataset(path: Path, dataset_name: str = "data") -> Optional[float]:
+def infer_r_ref_m_from_dataset(path: Path, dataset_name: str = "data") -> float | None:
     """Read the lunar reference radius from dataset metadata when available."""
     if Path(path).suffix.lower() not in {".h5", ".hdf5"}:
         return None
@@ -341,7 +343,7 @@ def infer_r_ref_m_from_dataset(path: Path, dataset_name: str = "data") -> Option
     return float(meta.r_ref_m) if meta.r_ref_m is not None else None
 
 
-def _read_eval_dataset_meta(path: Path, dataset_name: str = "data") -> Dict[str, Any]:
+def _read_eval_dataset_meta(path: Path, dataset_name: str = "data") -> dict[str, Any]:
     """Return evaluation dataset metadata in the existing evaluator dict shape."""
     if Path(path).suffix.lower() not in {".h5", ".hdf5"}:
         return {"unit_system": "unknown"}
@@ -381,13 +383,13 @@ def _read_eval_dataset_meta(path: Path, dataset_name: str = "data") -> Dict[str,
     return out
 
 
-def load_checkpoint_state(path: Path, device: torch.device) -> Dict[str, Any]:
+def load_checkpoint_state(path: Path, device: torch.device) -> dict[str, Any]:
     """Load a training checkpoint across PyTorch versions."""
     ckpt = load_checkpoint(path, device)
     return ckpt["model_state_dict"]
 
 
-def load_full_checkpoint(path: Path, device: torch.device) -> Dict[str, Any]:
+def load_full_checkpoint(path: Path, device: torch.device) -> dict[str, Any]:
     """Load the full checkpoint payload (model + config + provenance)."""
     return load_checkpoint(path, device)
 
@@ -398,7 +400,7 @@ def reload_model_from_run_dir(
     *,
     prefer: str = "best",
     allow_config_mismatch: bool = False,
-) -> Tuple[nn.Module, "ScalerPack", Dict[str, Any], Dict[str, Any]]:
+) -> tuple[nn.Module, ScalerPack, dict[str, Any], dict[str, Any]]:
     """Reload a trained model + scaler using the canonical evaluation path.
 
     Returns ``(model, scaler, merged_cfg, report)``. ``report`` carries the
@@ -430,7 +432,7 @@ def iter_h5_batches(
     *,
     batch_size: int,
     start: int = 0,
-    end: Optional[int] = None,
+    end: int | None = None,
 ) -> Iterator[np.ndarray]:
     with h5py.File(path, "r") as handle:
         ds = handle[dataset_name]
@@ -445,7 +447,7 @@ def iter_pt_batches(
     *,
     batch_size: int,
     start: int = 0,
-    end: Optional[int] = None,
+    end: int | None = None,
 ) -> Iterator[np.ndarray]:
     obj = torch.load(path, map_location="cpu")
     if isinstance(obj, dict):
@@ -467,7 +469,7 @@ def _canonical_to_si_batch(
     DU_m: float,
     TU_s: float,
     VU_m_s: float,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     x_si = np.asarray(x, dtype=np.float64) * float(DU_m)
     u_si = np.asarray(u, dtype=np.float64) * (float(VU_m_s) ** 2)
     a_si = np.asarray(a, dtype=np.float64) * (float(DU_m) / (float(TU_s) ** 2))
@@ -477,7 +479,7 @@ def _canonical_to_si_batch(
 def _accel_error_radial_cross_components(
     err_vec: np.ndarray,
     x_phys: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Radial/cross-radial error split plus approximate T/N axes without velocity."""
     r = np.asarray(x_phys, dtype=np.float64)
     e = np.asarray(err_vec, dtype=np.float64)
@@ -514,8 +516,8 @@ def predict_u_and_a(
     a_sign: float = 1.0,
     mu_si: float = MU_MOON_SI,
     degree_min: int = -1,
-    target_contract: Optional[TargetContract | dict] = None,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+    target_contract: TargetContract | dict | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Predict total U and a via hierarchical residual superposition.
 
     Returns U_pred_phys (B,1) and a_pred_phys (B,3):
@@ -558,10 +560,10 @@ def predict_u_and_a(
 
 def predict_residual_u_a(
     model: nn.Module,
-    scaler: "ScalerPack",
+    scaler: ScalerPack,
     x_phys: torch.Tensor,
     a_sign: float = 1.0,
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor]:
     """Predict the network's RESIDUAL ΔU (B,1) and Δa (B,3) (no base added).
 
     This is the exact residual path used both at training time (loss) and at
@@ -652,7 +654,7 @@ def compute_metrics(
     err: np.ndarray,
     ref: np.ndarray,
     eps: float = 1e-12,
-    rel_floor_abs: Optional[float] = None,
+    rel_floor_abs: float | None = None,
 ) -> MetricPack:
     err = np.asarray(err, dtype=np.float64).reshape(-1)
     ref = np.asarray(ref, dtype=np.float64).reshape(-1)
@@ -676,14 +678,14 @@ def compute_metrics(
     )
 
 
-def _build_eval_warnings(sm_res: Dict[str, Any], recon_report: Dict[str, Any]) -> List[str]:
+def _build_eval_warnings(sm_res: dict[str, Any], recon_report: dict[str, Any]) -> list[str]:
     """Surface red-flag diagnostics so a bad model cannot read as good.
 
     Flags: directional collapse (cos_sim ~ 0 / angle ~ 90 deg), the tell-tale
     'good magnitude but bad vector' signature, and any config/checkpoint
     architecture mismatch that was force-overridden.
     """
-    warnings: List[str] = []
+    warnings: list[str] = []
     cos = float(sm_res.get("mean_cos_sim", 1.0))
     ang = float(sm_res.get("mean_ang_deg", 0.0))
     mae_vec = float(sm_res.get("mae_a_vec", 0.0))
@@ -723,7 +725,7 @@ def _build_ood_region_masks(
     alt_lo: float,
     alt_hi: float,
     margin_fraction: float = 0.10,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Build immediate OOD masks just outside the training altitude band.
     """
@@ -749,7 +751,7 @@ def spatial_rmse_by_altitude(
     alt_km: np.ndarray,
     err: np.ndarray,
     bin_km: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     alt_km = np.asarray(alt_km, dtype=np.float64).reshape(-1)
     err = np.asarray(err, dtype=np.float64).reshape(-1)
 
@@ -762,7 +764,7 @@ def spatial_rmse_by_altitude(
     stop = math.ceil(hi / bin_km) * bin_km
     edges = np.arange(start, stop + bin_km, bin_km, dtype=np.float64)
 
-    bins_out: List[Dict[str, Any]] = []
+    bins_out: list[dict[str, Any]] = []
     for i in range(len(edges) - 1):
         a0, a1 = edges[i], edges[i + 1]
         mask = (alt_km >= a0) & (alt_km < a1)
@@ -781,8 +783,8 @@ def spatial_mape_by_altitude(
     pred: np.ndarray,
     bin_km: float,
     eps: float = 1e-12,
-    rel_floor_abs: Optional[float] = None,
-) -> Dict[str, Any]:
+    rel_floor_abs: float | None = None,
+) -> dict[str, Any]:
     """Bounded mean absolute percentage error per altitude bin."""
     alt_km = np.asarray(alt_km, dtype=np.float64).reshape(-1)
     ref    = np.asarray(ref,    dtype=np.float64).reshape(-1)
@@ -799,7 +801,7 @@ def spatial_mape_by_altitude(
     stop  = math.ceil(hi / bin_km) * bin_km
     edges = np.arange(start, stop + bin_km, bin_km, dtype=np.float64)
 
-    bins_out: List[Dict[str, Any]] = []
+    bins_out: list[dict[str, Any]] = []
     for i in range(len(edges) - 1):
         a0, a1 = edges[i], edges[i + 1]
         mask = (alt_km >= a0) & (alt_km < a1)
@@ -855,12 +857,12 @@ def save_parity_plot(y_true: np.ndarray, y_pred: np.ndarray, path: Path, title: 
     mn = float(min(y_true.min(), y_pred.min()))
     mx = float(max(y_true.max(), y_pred.max()))
     plt.plot([mn, mx], [mn, mx], color="#C44E52", linestyle="--", linewidth=2.0, label="Perfect Agreement (y=x)")
-    
+
     ss_res = np.sum((y_true - y_pred)**2)
     ss_tot = np.sum((y_true - np.mean(y_true))**2)
     r2 = 1 - (ss_res / max(ss_tot, 1e-12))
     plt.plot([], [], ' ', label=f"R² = {r2:.4f}")
-    
+
     plt.xlabel("True Values", labelpad=8)
     plt.ylabel("Predicted Values", labelpad=8)
     plt.title(title, pad=12)
@@ -915,13 +917,13 @@ def save_log_hist(errors: np.ndarray, path: Path, title: str) -> None:
     lo = max(lo, 1e-18)
     hi = max(hi, lo * 10)
     bins = np.logspace(np.log10(lo), np.log10(hi), 80)
-    
+
     plt.hist(e, bins=bins, color="#8172B3", edgecolor="white", alpha=0.85)
     mean_e = np.mean(e)
     median_e = np.median(e)
     plt.axvline(mean_e, color="#C44E52", linestyle="--", linewidth=1.5, label=f"Mean: {mean_e:.2e}")
     plt.axvline(median_e, color="#2C3E50", linestyle=":", linewidth=1.5, label=f"Median: {median_e:.2e}")
-    
+
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Absolute Error", labelpad=8)
@@ -936,7 +938,7 @@ def save_pct_error_hist(
     rel_err_pct: np.ndarray,
     path: Path,
     title: str,
-    percentiles: Tuple[float, float] = (0.1, 99.9),
+    percentiles: tuple[float, float] = (0.1, 99.9),
 ) -> None:
     """Histogram of percentage relative error with log-frequency axis."""
     apply_professional_style()
@@ -1053,12 +1055,12 @@ def save_hist_angular_deg(deg: np.ndarray, path: Path, title: str) -> None:
     plt.figure(figsize=(8, 5))
     bins = np.linspace(0.0, 180.0, 181)
     plt.hist(d, bins=bins, color="#64B5CD", edgecolor="white", alpha=0.85)
-    
+
     mean_d = np.mean(d)
     median_d = np.median(d)
     plt.axvline(mean_d, color="#C44E52", linestyle="--", linewidth=1.5, label=f"Mean: {mean_d:.2f}°")
     plt.axvline(median_d, color="#2C3E50", linestyle=":", linewidth=1.5, label=f"Median: {median_d:.2f}°")
-    
+
     plt.yscale("log")
     plt.xlabel("Angular Error [deg]", labelpad=8)
     plt.ylabel("Frequency", labelpad=8)
@@ -1254,7 +1256,7 @@ def _save_evaluation_plots(a_mag_err, a_pred_mag, a_pred_vec_np, a_rel_floor_abs
                 _bars = _ax.bar(_ood_labels, _ood_vals, color=_colors, alpha=0.85, edgecolor="white")
                 _ax.set_ylabel("Accel RMSE [m/s²]")
                 _ax.set_title("|a| RMSE by Altitude Region (OOD ±10%)", pad=12)
-                for _b, _v in zip(_bars, _ood_vals):
+                for _b, _v in zip(_bars, _ood_vals, strict=False):
                     if _v > 0:
                         _ax.text(_b.get_x() + _b.get_width() / 2, _v * 1.02, f"{_v:.3e}",
                                  ha="center", va="bottom", fontsize=8)
@@ -1304,7 +1306,9 @@ def _save_evaluation_plots(a_mag_err, a_pred_mag, a_pred_vec_np, a_rel_floor_abs
         print(f"[warn] cossim_by_altitude.png failed: {_csp_err}")
 
 def _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec_np, a_vec_err_norm_np, alt_bin_km, alt_km_all, ang_deg_all, directional_metrics, metrics, norm_binned_ang, ood_table, out_dir, spatial_a_mag, spatial_a_mape, spatial_a_vec, spatial_u, spatial_u_mape):
-    def write_bins_csv(bins: Dict[str, Any], path: Path, extra_cols: List[str] = []) -> None:
+    def write_bins_csv(bins: dict[str, Any], path: Path, extra_cols: list[str] = None) -> None:
+        if extra_cols is None:
+            extra_cols = []
         header = "alt_km_lo,alt_km_hi,n,rmse"
         if extra_cols:
             header += "," + ",".join(extra_cols)
@@ -1316,7 +1320,7 @@ def _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec
             rows.append(row)
         path.write_text("\n".join(rows), encoding="utf-8")
 
-    def write_mape_csv(bins: Dict[str, Any], path: Path) -> None:
+    def write_mape_csv(bins: dict[str, Any], path: Path) -> None:
         rows = ["alt_km_lo,alt_km_hi,n,mape_pct,p50_pct,p90_pct"]
         for b in bins.get("bins", []):
             rows.append(
@@ -1476,7 +1480,7 @@ def _print_evaluation_summary(data_path, device, latency_ms_batch1, metrics, mod
     print(f"Points    : {metrics['n_points']}")
     print(f"a_sign    : {metrics['a_sign']:+.1f}")
     print(f"mu_si     : {metrics['mu_si']:.6e} m^3/s^2")
-    def _fmt(d: Dict[str, Any]) -> str:
+    def _fmt(d: dict[str, Any]) -> str:
         return (f"MAE={d['mae']:.4e}  RMSE={d['rmse']:.4e}  "
                 f"Rel(mean)={d['rel_mean_pct']:.3f}%  NRMSE={d['nrmse_pct']:.3f}%  L_inf={d['linf']:.4e}")
     print("--- U ---")
@@ -1540,11 +1544,11 @@ def evaluate(
     alt_bin_km: float,
     dataset_name: str = "data",
     start: int = 0,
-    end: Optional[int] = None,
+    end: int | None = None,
     max_points_for_plots: int = 500_000,
     streaming: bool = False,
     topk_errors: int = 0,
-    save_error_points: Optional[Path] = None,
+    save_error_points: Path | None = None,
     plot_sample_limit: int = 500_000,
     allow_config_mismatch: bool = False,
     prefer: str = "best",
@@ -1554,7 +1558,7 @@ def evaluate(
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    def _as_optional_int(value: Any) -> Optional[int]:
+    def _as_optional_int(value: Any) -> int | None:
         if value is None:
             return None
         try:
@@ -1562,7 +1566,7 @@ def evaluate(
         except (TypeError, ValueError):
             return None
 
-    def _as_optional_float(value: Any) -> Optional[float]:
+    def _as_optional_float(value: Any) -> float | None:
         if value is None:
             return None
         try:
@@ -1570,7 +1574,7 @@ def evaluate(
         except (TypeError, ValueError):
             return None
 
-    def _model_degree_max_from_cfg(cfg_payload: Mapping[str, Any]) -> Optional[int]:
+    def _model_degree_max_from_cfg(cfg_payload: Mapping[str, Any]) -> int | None:
         model_meta = cfg_payload.get("dataset_meta") or {}
         if not isinstance(model_meta, Mapping):
             model_meta = {}
@@ -1581,7 +1585,7 @@ def evaluate(
             model_degree = _as_optional_int(model_meta.get("requested_degree"))
         return model_degree
 
-    def _dataset_degree_max_from_meta(dataset_meta: Mapping[str, Any]) -> Optional[int]:
+    def _dataset_degree_max_from_meta(dataset_meta: Mapping[str, Any]) -> int | None:
         dataset_degree = _as_optional_int(dataset_meta.get("degree_max"))
         if dataset_degree is None:
             dataset_degree = _as_optional_int(dataset_meta.get("requested_degree"))
@@ -1590,7 +1594,7 @@ def evaluate(
     def _validate_degree_max_compat(
         cfg_payload: Mapping[str, Any],
         dataset_meta: Mapping[str, Any],
-    ) -> Tuple[Optional[int], Optional[int]]:
+    ) -> tuple[int | None, int | None]:
         model_degree = _model_degree_max_from_cfg(cfg_payload)
         dataset_degree = _dataset_degree_max_from_meta(dataset_meta)
         if model_degree is not None and dataset_degree is not None and model_degree != dataset_degree:
@@ -1631,9 +1635,9 @@ def evaluate(
 
     # Dataset metadata for unit conversion and consistency checks
     ds_unit_system = str(ds_meta.get("unit_system", "unknown")).lower()
-    ds_DU_m: Optional[float] = None
-    ds_TU_s: Optional[float] = None
-    ds_VU_m_s: Optional[float] = None
+    ds_DU_m: float | None = None
+    ds_TU_s: float | None = None
+    ds_VU_m_s: float | None = None
     if ds_unit_system == "canonical":
         try:
             ds_DU_m = float(ds_meta["DU_m"])
@@ -1643,7 +1647,7 @@ def evaluate(
             raise ValueError(
                 "Canonical dataset requires DU_m, TU_s, and VU_m_s for SI conversion. "
                 f"Got DU_m={ds_meta.get('DU_m')}, TU_s={ds_meta.get('TU_s')}, VU_m_s={ds_meta.get('VU_m_s')}."
-            )
+            ) from None
 
     mu_si = float(cfg.get("resolved_mu_si", MU_MOON_SI))
     # Backward-compat: old models stored degree_min only inside dataset_meta
@@ -1665,8 +1669,8 @@ def evaluate(
 
     # Training altitude range - used to build OOD metric table
     _dm_meta_block = cfg.get("dataset_meta") or {}
-    _train_alt_min_km: Optional[float] = None
-    _train_alt_max_km: Optional[float] = None
+    _train_alt_min_km: float | None = None
+    _train_alt_max_km: float | None = None
     try:
         _v = _dm_meta_block.get("alt_min_km")
         if _v is not None:
@@ -1818,29 +1822,29 @@ def evaluate(
     # Streaming mode: use _StreamingMetrics for online accumulation without keeping full arrays
     # Non-streaming mode: accumulate full arrays (existing behaviour)
     _evaluation_mode = "streaming" if streaming else "in_memory"
-    _sm: Optional[_StreamingMetrics] = None
-    _tk: Optional[_TopKErrors] = None
+    _sm: _StreamingMetrics | None = None
+    _tk: _TopKErrors | None = None
     if streaming:
         _alt_span_km = max(1.0, float(alt_bin_km) * 20)  # rough estimate for bins
         _sm = _StreamingMetrics(n_alt_bins=20, alt_min_km=0.0, alt_max_km=_alt_span_km)
     _effective_topk = int(topk_errors) if int(topk_errors) > 0 else 100
     _tk = _TopKErrors(_effective_topk)
 
-    u_true_all: List[np.ndarray] = []
-    u_pred_all: List[np.ndarray] = []
-    a_true_mag_all: List[np.ndarray] = []
-    a_pred_mag_all: List[np.ndarray] = []
-    alt_all: List[np.ndarray] = []
-    x_all: List[np.ndarray] = []           # positions for RTN decomposition
-    a_err_vec_all: List[np.ndarray] = []   # vectorial acceleration error for RTN
-    ang_all: List[np.ndarray] = []
-    a_pred_vec_all: List[np.ndarray] = []  # full predicted acceleration vector
-    a_true_vec_all: List[np.ndarray] = []  # full true acceleration vector
+    u_true_all: list[np.ndarray] = []
+    u_pred_all: list[np.ndarray] = []
+    a_true_mag_all: list[np.ndarray] = []
+    a_pred_mag_all: list[np.ndarray] = []
+    alt_all: list[np.ndarray] = []
+    x_all: list[np.ndarray] = []           # positions for RTN decomposition
+    a_err_vec_all: list[np.ndarray] = []   # vectorial acceleration error for RTN
+    ang_all: list[np.ndarray] = []
+    a_pred_vec_all: list[np.ndarray] = []  # full predicted acceleration vector
+    a_true_vec_all: list[np.ndarray] = []  # full true acceleration vector
 
     # bounded buffers for plots
-    u_err_plot: List[np.ndarray] = []
-    a_rel_plot: List[np.ndarray] = []
-    ang_deg_plot: List[np.ndarray] = []
+    u_err_plot: list[np.ndarray] = []
+    a_rel_plot: list[np.ndarray] = []
+    ang_deg_plot: list[np.ndarray] = []
 
     # streaming angular stats
     ang_sum_deg = 0.0
@@ -1940,7 +1944,7 @@ def evaluate(
     inference_samples_per_sec = float(total / inference_time_s)
 
     # Export top-K error points if requested
-    _topk_export_path: Optional[Path] = Path(save_error_points).resolve() if save_error_points is not None else (out_dir / "topk_worst.csv")
+    _topk_export_path: Path | None = Path(save_error_points).resolve() if save_error_points is not None else (out_dir / "topk_worst.csv")
     if _tk is not None and _topk_export_path is not None:
         _topk_export_path.parent.mkdir(parents=True, exist_ok=True)
         _tk.save_csv(_topk_export_path)
@@ -1948,7 +1952,7 @@ def evaluate(
 
     if streaming and _sm is not None:
         _sm_res = _sm.finalize()
-        metrics: Dict[str, Any] = {
+        metrics: dict[str, Any] = {
             "evaluation_mode": "streaming",
             "memory_safe": True,
             "n_points": _sm_res["count"],
@@ -2133,7 +2137,7 @@ def evaluate(
     if degree_min < 0:
         # In full-field mode, ang_deg_all already IS the total angular error.
         total_ang_note = "same_as_residual_ang_in_full_field_mode"
-        ang_total_deg: Optional[np.ndarray] = None
+        ang_total_deg: np.ndarray | None = None
     else:
         # Residual mode: add point-mass baseline (degree_min=-1) to approximate totals.
         # True total requires SH(degree_min) which needs the GFC model at eval time.
@@ -2152,8 +2156,8 @@ def evaluate(
     # ---- Norm-binned angular error by ||a_true|| magnitude ----
     NORM_BINS = [0.0, 1e-10, 1e-9, 1e-8, 1e-7, float("inf")]
     norm_bin_labels = ["<1e-10", "1e-10-1e-9", "1e-9-1e-8", "1e-8-1e-7", ">1e-7"]
-    norm_binned_ang: List[Dict[str, Any]] = []
-    for _i_bin, (_lo_n, _hi_n) in enumerate(zip(NORM_BINS[:-1], NORM_BINS[1:])):
+    norm_binned_ang: list[dict[str, Any]] = []
+    for _i_bin, (_lo_n, _hi_n) in enumerate(zip(NORM_BINS[:-1], NORM_BINS[1:], strict=False)):
         _nb_mask = (a_true_norms >= _lo_n) & (a_true_norms < _hi_n)
         _n_bin = int(np.sum(_nb_mask))
         if _n_bin == 0:
@@ -2174,7 +2178,7 @@ def evaluate(
     a_r, a_cross, approx_t, approx_n = _accel_error_radial_cross_components(
         a_err_vec_np.astype(np.float64), x_all_np.astype(np.float64)
     )
-    directional_metrics: Dict[str, Any] = {
+    directional_metrics: dict[str, Any] = {
         "frame": "approximate_rtn_like_without_velocity",
         "accel_err_radial_mae": float(np.mean(np.abs(a_r))),
         "accel_err_radial_rmse": float(np.sqrt(np.mean(a_r ** 2))),
@@ -2185,13 +2189,13 @@ def evaluate(
     }
 
     # OOD table - test points around or outside the training altitude band.
-    ood_table: Optional[Dict[str, Any]] = None
+    ood_table: dict[str, Any] | None = None
     if _train_alt_min_km is not None and _train_alt_max_km is not None:
         alt_lo = float(_train_alt_min_km)
         alt_hi = float(_train_alt_max_km)
         mask_pack = _build_ood_region_masks(alt_km_all.reshape(-1), alt_lo=alt_lo, alt_hi=alt_hi, margin_fraction=0.10)
 
-        def _region_stats(mask: np.ndarray, label: str) -> Dict[str, Any]:
+        def _region_stats(mask: np.ndarray, label: str) -> dict[str, Any]:
             n = int(np.sum(mask))
             if n == 0:
                 return {"region": label, "N": 0}
@@ -2316,7 +2320,7 @@ def evaluate(
     _ang_masked_mean = float(np.mean(masked_ang_deg)) if masked_ang_deg.size > 0 else None
     _ang_masked_p50 = float(np.median(masked_ang_deg)) if masked_ang_deg.size > 0 else None
     _ang_masked_p90 = float(np.percentile(masked_ang_deg, 90)) if masked_ang_deg.size > 0 else None
-    _angular_metrics: Dict[str, Any] = {
+    _angular_metrics: dict[str, Any] = {
         "residual_all": {
             "mean_deg": float(ang_sum_deg / max(ang_count, 1)),
             "max_deg": float(ang_max_deg),
@@ -2367,7 +2371,7 @@ def evaluate(
         "p99": float(np.percentile(a_vec_err_norm_np, 99)),
         "max": float(np.max(a_vec_err_norm_np)),
     }
-    metrics: Dict[str, Any] = {
+    metrics: dict[str, Any] = {
         "U": compute_metrics(u_err, u_true.reshape(-1), rel_floor_abs=u_rel_floor_abs).__dict__,
         "|a|": {
             **compute_metrics(
@@ -2477,8 +2481,8 @@ def evaluate(
         t = obj["data"] if isinstance(obj, dict) and "data" in obj else obj
         x_for_bench = t[0:bench_n, 0:3].float().contiguous().numpy()
 
-    throughput_points_per_sec: Dict[str, float] = {}
-    latency_ms_batch1: Dict[str, float] = {}
+    throughput_points_per_sec: dict[str, float] = {}
+    latency_ms_batch1: dict[str, float] = {}
 
     # current device
     throughput_points_per_sec[str(device)] = benchmark_throughput(
@@ -2645,7 +2649,7 @@ def parse_args() -> argparse.Namespace:
     return ap.parse_args()
 
 
-def _dataset_path_from_config(model_dir: Path, key: str) -> Optional[Path]:
+def _dataset_path_from_config(model_dir: Path, key: str) -> Path | None:
     cfg_path = make_run_layout(resolve_run_dir(model_dir)).config_json
     if not cfg_path.is_file():
         return None
@@ -2667,7 +2671,7 @@ def _dataset_path_from_config(model_dir: Path, key: str) -> Optional[Path]:
     return None
 
 
-def _auto_find_model_dir(script_dir: Path) -> Optional[Path]:
+def _auto_find_model_dir(script_dir: Path) -> Path | None:
     """Return the newest valid surrogate run directory, or ``None``.
 
     Honors the pre-reorg layout by searching the package-relative
@@ -2679,7 +2683,7 @@ def _auto_find_model_dir(script_dir: Path) -> Optional[Path]:
     return found if found is not None else find_latest_st_lrps_model_dir()
 
 
-def _auto_find_testset(model_dir: Path) -> Optional[Path]:
+def _auto_find_testset(model_dir: Path) -> Path | None:
     """Fallback: try to recover a test dataset from config.json."""
     return _dataset_path_from_config(model_dir, "test_data_path")
 
@@ -2695,7 +2699,7 @@ def _safe_get(mapping: Mapping[str, Any], *keys: str, default: Any = None) -> An
     return cur
 
 
-def _summary_row_from_report(split: str, report_path: Path, alt_bin_km: float) -> Dict[str, Any]:
+def _summary_row_from_report(split: str, report_path: Path, alt_bin_km: float) -> dict[str, Any]:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     metrics = report.get("metrics") or {}
     u = metrics.get("U") or {}
@@ -2742,7 +2746,7 @@ def _summary_row_from_report(split: str, report_path: Path, alt_bin_km: float) -
     return row
 
 
-def _write_rows_csv(path: Path, rows: List[Mapping[str, Any]], fieldnames: List[str]) -> None:
+def _write_rows_csv(path: Path, rows: list[Mapping[str, Any]], fieldnames: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
@@ -2751,11 +2755,11 @@ def _write_rows_csv(path: Path, rows: List[Mapping[str, Any]], fieldnames: List[
             writer.writerow(dict(row))
 
 
-def _aggregate_altitude_csv(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
+def _aggregate_altitude_csv(split: str, eval_dir: Path) -> list[dict[str, Any]]:
     path = eval_dir / "altitude_binned_metrics.csv"
     if not path.exists():
         return []
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     with path.open("r", newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             rows.append(
@@ -2778,33 +2782,33 @@ def _aggregate_altitude_csv(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
     return rows
 
 
-def _aggregate_angular_csv(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
+def _aggregate_angular_csv(split: str, eval_dir: Path) -> list[dict[str, Any]]:
     path = eval_dir / "angular_error_by_altitude.csv"
     if not path.exists():
         return []
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     with path.open("r", newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             rows.append({"split": split, **row})
     return rows
 
 
-def _aggregate_radial_cross_csv(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
+def _aggregate_radial_cross_csv(split: str, eval_dir: Path) -> list[dict[str, Any]]:
     path = eval_dir / "acceleration_decomposition.csv"
     if not path.exists():
         return []
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     with path.open("r", newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             rows.append({"split": split, **row})
     return rows
 
 
-def _aggregate_worst_cases(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
+def _aggregate_worst_cases(split: str, eval_dir: Path) -> list[dict[str, Any]]:
     path = eval_dir / "topk_worst.csv"
     if not path.exists():
         return []
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     with path.open("r", newline="", encoding="utf-8") as handle:
         for rank, row in enumerate(csv.DictReader(handle), start=1):
             try:
@@ -2843,17 +2847,17 @@ def _aggregate_worst_cases(split: str, eval_dir: Path) -> List[Dict[str, Any]]:
 
 def _write_publication_eval_suite(
     out_root: Path,
-    completed_jobs: List[Tuple[str, Path, Path]],
+    completed_jobs: list[tuple[str, Path, Path]],
     *,
     model_dir: Path,
     alt_bin_km: float,
 ) -> None:
     out_root.mkdir(parents=True, exist_ok=True)
-    summary_rows: List[Dict[str, Any]] = []
-    altitude_rows: List[Dict[str, Any]] = []
-    angular_rows: List[Dict[str, Any]] = []
-    radial_rows: List[Dict[str, Any]] = []
-    worst_rows: List[Dict[str, Any]] = []
+    summary_rows: list[dict[str, Any]] = []
+    altitude_rows: list[dict[str, Any]] = []
+    angular_rows: list[dict[str, Any]] = []
+    radial_rows: list[dict[str, Any]] = []
+    worst_rows: list[dict[str, Any]] = []
     for split, _data_path, eval_dir in completed_jobs:
         report_path = eval_dir / "eval_report.json"
         if not report_path.exists():
@@ -2926,7 +2930,7 @@ def main() -> None:
     args = parse_args()
 
     # --- model dir auto-detect ---
-    model_dir: Optional[Path] = resolve_run_dir(Path(args.model_dir).resolve()) if args.model_dir else None
+    model_dir: Path | None = resolve_run_dir(Path(args.model_dir).resolve()) if args.model_dir else None
     if model_dir is None:
         env_md = os.environ.get("ST_LRPS_MODEL_DIR")
         if env_md:
@@ -2970,9 +2974,9 @@ def main() -> None:
             )
         print(f"[auto] Using dataset: {data_path}")
 
-    
+
     # --- reference radius (altitude) ---
-    r_ref_m_resolved: Optional[float] = float(args.r_ref_m) if args.r_ref_m is not None else None
+    r_ref_m_resolved: float | None = float(args.r_ref_m) if args.r_ref_m is not None else None
     if r_ref_m_resolved is None:
         inferred = infer_r_ref_m_from_dataset(data_path, dataset_name=str(args.dataset_name))
         if inferred is not None:
@@ -2988,7 +2992,7 @@ def main() -> None:
 
     # --max-samples is a lightweight alternative to --end: evaluate at most N rows
     # starting from --start. Explicit --end wins when both are provided.
-    resolved_end: Optional[int] = int(args.end) if args.end is not None else None
+    resolved_end: int | None = int(args.end) if args.end is not None else None
     if resolved_end is None and getattr(args, "max_samples", None) is not None:
         resolved_end = int(args.start) + int(args.max_samples)
 
@@ -2998,7 +3002,7 @@ def main() -> None:
             return default_eval_output_dir(run_layout, path, timestamp=eval_timestamp)
         return out_root if primary else out_root / label
 
-    jobs: List[Tuple[str, Path, Path]] = []
+    jobs: list[tuple[str, Path, Path]] = []
     jobs.append(("primary", data_path, _job_out("primary", data_path, primary=True)))
     train_sample_path = Path(args.train_sample_data).resolve() if args.train_sample_data else None
     val_path = Path(args.val_data).resolve() if args.val_data else None
@@ -3023,7 +3027,7 @@ def main() -> None:
             raise FileNotFoundError(maybe_path)
         jobs.append((label, maybe_path, _job_out(label, maybe_path)))
 
-    completed_jobs: List[Tuple[str, Path, Path]] = []
+    completed_jobs: list[tuple[str, Path, Path]] = []
     for label, job_data_path, job_out_dir in jobs:
         print(f"[eval:{label}] dataset={job_data_path}")
         evaluate(

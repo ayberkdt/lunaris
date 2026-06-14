@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Reload-safety / evaluation-correctness regression tests for the ST-LRPS surrogate.
 
@@ -22,6 +21,13 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from lunaris.surrogate.st_lrps.evaluation.cli import (
+    _build_eval_warnings,
+    _StreamingMetrics,
+    _TopKErrors,
+    predict_residual_u_a,
+    reload_model_from_run_dir,
+)
 from lunaris.surrogate.st_lrps.networks.models import (
     build_model_from_config,
     compute_architecture_signature,
@@ -31,14 +37,6 @@ from lunaris.surrogate.st_lrps.shared.scaling import (
     IsometricScaleParams,
     ScalerPack,
     fit_scaler_streaming,
-    OnlineIsometricStats,
-)
-from lunaris.surrogate.st_lrps.evaluation.cli import (
-    _StreamingMetrics,
-    _TopKErrors,
-    _build_eval_warnings,
-    predict_residual_u_a,
-    reload_model_from_run_dir,
 )
 
 R_REF = 1.737e6
@@ -477,7 +475,8 @@ def _write_conv_h5(tmp_path, *, deriv_conv, degree_min=20, degree_max=100, name=
 
 def test_missing_derivative_convention_raises(tmp_path):
     from lunaris.surrogate.st_lrps.data.datasets import (
-        DatasetMeta, validate_training_dataset_convention,
+        DatasetMeta,
+        validate_training_dataset_convention,
     )
     p = _write_conv_h5(tmp_path, deriv_conv=None)
     meta = DatasetMeta.from_h5(p)
@@ -487,7 +486,8 @@ def test_missing_derivative_convention_raises(tmp_path):
 
 def test_wrong_derivative_convention_raises(tmp_path):
     from lunaris.surrogate.st_lrps.data.datasets import (
-        DatasetMeta, validate_training_dataset_convention,
+        DatasetMeta,
+        validate_training_dataset_convention,
     )
     p = _write_conv_h5(tmp_path, deriv_conv="legacy_v0")
     meta = DatasetMeta.from_h5(p)
@@ -497,7 +497,8 @@ def test_wrong_derivative_convention_raises(tmp_path):
 
 def test_allow_legacy_derivative_convention_only_with_flag(tmp_path):
     from lunaris.surrogate.st_lrps.data.datasets import (
-        DatasetMeta, validate_training_dataset_convention,
+        DatasetMeta,
+        validate_training_dataset_convention,
     )
     p = _write_conv_h5(tmp_path, deriv_conv=None)
     meta = DatasetMeta.from_h5(p)
@@ -511,6 +512,7 @@ def test_allow_legacy_derivative_convention_only_with_flag(tmp_path):
 
 def test_degree_zero_parse_does_not_become_silent_none(tmp_path):
     import h5py
+
     from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
     p = tmp_path / "deg0.h5"
     with h5py.File(p, "w") as hf:
@@ -525,7 +527,8 @@ def test_degree_zero_parse_does_not_become_silent_none(tmp_path):
 
 def test_degree_max_not_greater_than_min_raises(tmp_path):
     from lunaris.surrogate.st_lrps.data.datasets import (
-        DatasetMeta, validate_training_dataset_convention,
+        DatasetMeta,
+        validate_training_dataset_convention,
     )
     p = _write_conv_h5(tmp_path, deriv_conv="dP_dphi_corrected_v1",
                        degree_min=50, degree_max=50)
@@ -549,6 +552,7 @@ def test_report_warns_when_magnitude_good_but_direction_bad():
 
 def test_evaluation_report_contains_architecture_and_metric_blocks(tmp_path):
     import h5py
+
     from lunaris.surrogate.st_lrps.evaluation.cli import evaluate
     # tiny single-scale residual run + matching tiny dataset
     cfg = _base_cfg(n_bands=1, degree_min=10, degree_max=60)
@@ -597,9 +601,9 @@ def test_evaluation_report_contains_architecture_and_metric_blocks(tmp_path):
 # ---------------------------------------------------------------------------
 
 def _make_lap_trainer(mode):
-    from lunaris.surrogate.st_lrps.training.engine import STLRPSTrainer
     from lunaris.surrogate.st_lrps.training.config import TrainConfig
-    from lunaris.surrogate.st_lrps.training.losses import SobolevLoss, GradNormWeights
+    from lunaris.surrogate.st_lrps.training.engine import STLRPSTrainer
+    from lunaris.surrogate.st_lrps.training.losses import GradNormWeights, SobolevLoss
     sp = _tiny_scaler().to_tensors(torch.device("cpu"), torch.float32)
     model = torch.nn.Sequential(torch.nn.Linear(3, 8), torch.nn.Tanh(), torch.nn.Linear(8, 1))
     cfg = TrainConfig(data="/tmp/x.h5", out="/tmp/o", epochs=1, batch_size=8,
@@ -701,6 +705,7 @@ def test_active_refinement_requires_altitude_bounds(tmp_path):
 
 def test_active_refinement_uses_dataset_altitude_metadata(tmp_path):
     import h5py
+
     from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import _resolve_active_alt_bounds
     src = tmp_path / "src.h5"
     with h5py.File(src, "w") as hf:

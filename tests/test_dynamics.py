@@ -3,12 +3,9 @@ from __future__ import annotations
 
 import math
 import os
-from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 import pytest
-
 
 # -----------------------------------------------------------------------------
 # Imports (skip cleanly if the package layout isn't available in this context)
@@ -19,7 +16,7 @@ except Exception as e:  # pragma: no cover
     pytest.skip(f"core.dynamics not importable: {e}", allow_module_level=True)
 
 try:
-    from lunaris.common.type_defs import SpacecraftProps, PerturbationFlags
+    from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
 except Exception as e:  # pragma: no cover
     pytest.skip(f"common.type_defs not importable: {e}", allow_module_level=True)
 
@@ -41,7 +38,7 @@ def _build_default_state(*, r_km: float = 1837.4, v_ms: float = 1600.0) -> np.nd
 
 
 @pytest.fixture(scope="module")
-def engine_point_mass() -> Tuple[DynamicsEngine, callable]:
+def engine_point_mass() -> tuple[DynamicsEngine, callable]:
     """
     Build a minimal engine configuration with point-mass gravity only.
     Keeps compilation cost to a minimum by reusing the same RHS for the module.
@@ -81,7 +78,7 @@ def engine_point_mass() -> Tuple[DynamicsEngine, callable]:
 # -----------------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------------
-def test_rhs_shape_and_inward_acceleration(engine_point_mass: Tuple[DynamicsEngine, callable]) -> None:
+def test_rhs_shape_and_inward_acceleration(engine_point_mass: tuple[DynamicsEngine, callable]) -> None:
     eng, rhs = engine_point_mass
 
     t0 = 0.0
@@ -103,7 +100,7 @@ def test_rhs_shape_and_inward_acceleration(engine_point_mass: Tuple[DynamicsEngi
     assert dot_ar < 0.0
 
 
-def test_one_step_consistency_smoke(engine_point_mass: Tuple[DynamicsEngine, callable]) -> None:
+def test_one_step_consistency_smoke(engine_point_mass: tuple[DynamicsEngine, callable]) -> None:
     _, rhs = engine_point_mass
 
     t0 = 0.0
@@ -140,7 +137,7 @@ def test_extract_ephem_tables_accepts_constant_vector_rows_with_full_quaternion_
     assert q_tab.shape == (8, 4)
 
 
-def test_acceleration_breakdown_smoke(engine_point_mass: Tuple[DynamicsEngine, callable]) -> None:
+def test_acceleration_breakdown_smoke(engine_point_mass: tuple[DynamicsEngine, callable]) -> None:
     eng, _ = engine_point_mass
 
     if not hasattr(eng, "get_acceleration_breakdown"):
@@ -157,7 +154,7 @@ def test_acceleration_breakdown_smoke(engine_point_mass: Tuple[DynamicsEngine, c
     assert has_gravity
 
     # All norms should be finite and non-negative.
-    for k, v in comp.items():
+    for _k, v in comp.items():
         assert math.isfinite(float(v))
         assert float(v) >= 0.0
 
@@ -200,8 +197,8 @@ def test_surrogate_gravity_provider_can_drive_python_rhs() -> None:
 
 
 @pytest.mark.skipif(os.getenv("RUN_SLOW") != "1", reason="Set RUN_SLOW=1 to run slow integration test.")
-def test_solve_ivp_mini_run(engine_point_mass: Tuple[DynamicsEngine, callable]) -> None:
-    scipy = pytest.importorskip("scipy")
+def test_solve_ivp_mini_run(engine_point_mass: tuple[DynamicsEngine, callable]) -> None:
+    pytest.importorskip("scipy")
     from scipy.integrate import solve_ivp  # type: ignore
 
     _, rhs = engine_point_mass

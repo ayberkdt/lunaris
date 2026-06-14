@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Torch spherical-harmonic gravity evaluator.
 
@@ -39,39 +38,39 @@ class TorchSHGravityEvaluator:
         self.device = device
         self.dtype = dtype
         self.backend = "torch_sh"
-        self.r_ref = torch.tensor(float(getattr(gravity_model, "R_ref_m")), device=device, dtype=dtype)
-        self.mu = torch.tensor(float(getattr(gravity_model, "GM_m3s2")), device=device, dtype=dtype)
+        self.r_ref = torch.tensor(float(gravity_model.R_ref_m), device=device, dtype=dtype)
+        self.mu = torch.tensor(float(gravity_model.GM_m3s2), device=device, dtype=dtype)
         self.C = torch.as_tensor(
-            np.array(getattr(gravity_model, "Cnm"), dtype=np.float64, copy=True),
+            np.array(gravity_model.Cnm, dtype=np.float64, copy=True),
             device=device,
             dtype=dtype,
         )
         self.S = torch.as_tensor(
-            np.array(getattr(gravity_model, "Snm"), dtype=np.float64, copy=True),
+            np.array(gravity_model.Snm, dtype=np.float64, copy=True),
             device=device,
             dtype=dtype,
         )
         self.diag = torch.as_tensor(
-            np.array(getattr(gravity_model, "diag"), dtype=np.float64, copy=True),
+            np.array(gravity_model.diag, dtype=np.float64, copy=True),
             device=device,
             dtype=dtype,
         )
         self.subdiag = torch.as_tensor(
-            np.array(getattr(gravity_model, "subdiag"), dtype=np.float64, copy=True),
+            np.array(gravity_model.subdiag, dtype=np.float64, copy=True),
             device=device,
             dtype=dtype,
         )
         self.A = torch.as_tensor(
-            np.array(getattr(gravity_model, "A"), dtype=np.float64, copy=True),
+            np.array(gravity_model.A, dtype=np.float64, copy=True),
             device=device,
             dtype=dtype,
         )
         self.B = torch.as_tensor(
-            np.array(getattr(gravity_model, "B"), dtype=np.float64, copy=True),
+            np.array(gravity_model.B, dtype=np.float64, copy=True),
             device=device,
             dtype=dtype,
         )
-        scale_np = np.asarray(getattr(gravity_model, "scale_m"), dtype=np.float64)
+        scale_np = np.asarray(gravity_model.scale_m, dtype=np.float64)
         scale_pad = np.ones(self.degree + 2, dtype=np.float64)
         scale_pad[: min(scale_np.size, scale_pad.size)] = scale_np[: min(scale_np.size, scale_pad.size)]
         self.scale = torch.as_tensor(scale_pad, device=device, dtype=dtype)

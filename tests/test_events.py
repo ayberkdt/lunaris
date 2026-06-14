@@ -1,5 +1,4 @@
 # tests/test_events.py
-# -*- coding: utf-8 -*-
 """
 Direct unit tests for the SciPy-compatible event factories in ``lunaris.core.events``.
 
@@ -20,8 +19,8 @@ from lunaris.core.events import (
     make_altitude_crossing_event,
     make_aposelene_event,
     make_escape_event,
-    make_impact_event,
     make_hybrid_impact_event,
+    make_impact_event,
     make_periselene_event,
     make_radius_event,
 )

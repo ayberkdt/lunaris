@@ -1,5 +1,4 @@
 ﻿# tests/test_type_defs.py
-# -*- coding: utf-8 -*-
 """
 Unit tests for common.type_defs
 ==============================
@@ -29,20 +28,20 @@ if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 try:
+    from lunaris.common.constants import DAY_S, R_MOON_MEAN
     from lunaris.common.type_defs import (
-        SpacecraftProps,
         AdaptiveDegreeConfig,
-        GravityConfig,
-        PerturbationFlags,
-        SolidTideConfig,
-        TimeConfig,
-        InitialState,
         EventConfig,
+        GravityConfig,
+        InitialState,
+        PerturbationFlags,
+        PropagationResult,
         PropagatorConfig,
         SimulationHistory,
-        PropagationResult,
+        SolidTideConfig,
+        SpacecraftProps,
+        TimeConfig,
     )
-    from lunaris.common.constants import DAY_S, R_MOON_MEAN
 except Exception as e:  # pragma: no cover
     raise RuntimeError(
         "Could not import 'common.type_defs'. "

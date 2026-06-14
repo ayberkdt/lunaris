@@ -6,9 +6,8 @@ No Qt, GPU, SPICE, or data files required.
 
 from __future__ import annotations
 
-import time
-
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -19,7 +18,6 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from lunaris.surrogate.st_lrps.ui.training_metrics import (
-
     EpochGuard,
     ETAEstimator,
     TrainingLogParser,
@@ -27,7 +25,6 @@ from lunaris.surrogate.st_lrps.ui.training_metrics import (
     TrainingRecord,
     compute_auto_log_interval,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Auto log interval
@@ -496,6 +493,7 @@ class TestEpochGuard:
 class TestCLILogEveryMode:
     def _parse(self, argv):
         import sys as _sys
+
         from lunaris.surrogate.st_lrps.training.config import parse_args
         old = _sys.argv
         _sys.argv = ["prog"] + argv
@@ -545,6 +543,7 @@ class TestAutoLogIntervalEngineRule:
 class TestFinishTimeFormatting:
     def test_today_is_hh_mm(self):
         from datetime import datetime
+
         from lunaris.surrogate.st_lrps.ui.training_metrics import format_finish_time
         now = datetime(2026, 5, 25, 9, 0, 0)
         ft = datetime(2026, 5, 25, 18, 30, 0)
@@ -552,6 +551,7 @@ class TestFinishTimeFormatting:
 
     def test_other_day_is_full_date(self):
         from datetime import datetime
+
         from lunaris.surrogate.st_lrps.ui.training_metrics import format_finish_time
         now = datetime(2026, 5, 25, 23, 0, 0)
         ft = datetime(2026, 5, 27, 4, 15, 0)

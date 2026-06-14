@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared metric naming and checkpoint-score helpers for ST-LRPS.
 
 This module is deliberately small: it centralizes the scalar score used for
@@ -10,7 +9,8 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ def _metric(
     required: bool = False,
     fallback_keys: Iterable[str] = (),
     fallback_value: Any = None,
-) -> Optional[float]:
+) -> float | None:
     if key in stats and stats.get(key) is not None:
         return _finite_float(stats.get(key), name=key)
     for fb in fallback_keys:
@@ -142,9 +142,9 @@ def checkpoint_formula(best_metric: Any, cfg: Any = None) -> str:
 def checkpoint_selection_block(
     cfg: Any,
     *,
-    start_epoch: Optional[int] = None,
-    reason: Optional[str] = None,
-) -> Dict[str, Any]:
+    start_epoch: int | None = None,
+    reason: str | None = None,
+) -> dict[str, Any]:
     """Serializable checkpoint-selection description for config/manifest/logs."""
     metric = normalize_best_metric(_cfg_get(cfg, "best_metric", "hybrid"))
     alpha = float(_cfg_get(cfg, "hybrid_direction_alpha", 0.30))
@@ -161,7 +161,7 @@ def checkpoint_selection_block(
     return block
 
 
-def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> Tuple[float, Dict[str, Any]]:
+def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> tuple[float, dict[str, Any]]:
     """Compute the scalar score used for best-checkpoint selection.
 
     Supported canonical ``best_metric`` values are ``val_total_loss``,
@@ -206,7 +206,7 @@ def compute_checkpoint_score(val_stats: Mapping[str, Any], cfg: Any) -> Tuple[fl
     return float(score), report
 
 
-def _optional_float(stats: Mapping[str, Any], *keys: str, default: Optional[float] = None) -> Optional[float]:
+def _optional_float(stats: Mapping[str, Any], *keys: str, default: float | None = None) -> float | None:
     for key in keys:
         value = stats.get(key)
         if value is not None:
@@ -223,7 +223,7 @@ def flatten_epoch_metrics(
     val_stats: Mapping[str, Any],
     checkpoint_report: Mapping[str, Any],
     cfg: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a flat, stable row for history CSV/JSONL and UI consumers."""
     train_base = _optional_float(
         train_stats,
@@ -246,7 +246,7 @@ def flatten_epoch_metrics(
         ),
     )
 
-    row: Dict[str, Any] = {
+    row: dict[str, Any] = {
         "epoch": int(epoch),
         "epoch_display": int(epoch) + 1,
         "train_loss_total": train_total,
@@ -321,7 +321,7 @@ def _fmt(value: Any, default: str = "n/a") -> str:
     return f"{f:.3e}"
 
 
-def format_epoch_summary(row: Mapping[str, Any], *, total_epochs: Optional[int] = None) -> str:
+def format_epoch_summary(row: Mapping[str, Any], *, total_epochs: int | None = None) -> str:
     """Return one compact human-readable epoch summary line."""
     epoch_display = int(row.get("epoch_display", int(row.get("epoch", 0)) + 1))
     total = int(total_epochs) if total_epochs is not None else None
@@ -355,9 +355,9 @@ def format_batch_summary(
     loss_u: float,
     loss_a: float,
     lr: float,
-    eta_s: Optional[float] = None,
-    samples_per_s: Optional[float] = None,
-    loss_dir: Optional[float] = None,
+    eta_s: float | None = None,
+    samples_per_s: float | None = None,
+    loss_dir: float | None = None,
     memory: str = "",
 ) -> str:
     """Return a compact one-line batch progress summary."""

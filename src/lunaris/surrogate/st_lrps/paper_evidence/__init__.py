@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """ST-LRPS Paper Evidence Pipeline — reproducible training/evidence infrastructure.
 
 Part 1 provides:
@@ -25,11 +24,6 @@ from lunaris.surrogate.st_lrps.paper_evidence.evidence_manifest import (
     compute_json_hash,
     write_evidence_manifest,
 )
-from lunaris.surrogate.st_lrps.paper_evidence.training_argv import build_training_argv
-from lunaris.surrogate.st_lrps.paper_evidence.worst_case import (
-    analyze_worst_cases,
-    write_worst_case_outputs,
-)
 from lunaris.surrogate.st_lrps.paper_evidence.multi_seed import (
     aggregate_multi_seed,
     collect_seed_entry,
@@ -39,6 +33,11 @@ from lunaris.surrogate.st_lrps.paper_evidence.paper_tables import (
     csv_to_markdown_table,
     generate_paper_figures,
     generate_paper_tables,
+)
+from lunaris.surrogate.st_lrps.paper_evidence.training_argv import build_training_argv
+from lunaris.surrogate.st_lrps.paper_evidence.worst_case import (
+    analyze_worst_cases,
+    write_worst_case_outputs,
 )
 
 __all__ = [

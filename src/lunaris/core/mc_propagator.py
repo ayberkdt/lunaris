@@ -1,5 +1,4 @@
 # ST_LRPS/core/mc_propagator.py
-# -*- coding: utf-8 -*-
 """
 Batch Monte Carlo Propagators (GPU + CPU)
 =========================================
@@ -51,14 +50,14 @@ from __future__ import annotations
 import math
 import os
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
 from lunaris.common.constants import AU, MU_EARTH, MU_MOON, MU_SUN, P_SUN_1AU, R_EARTH_MEAN, R_MOON
 from lunaris.common.type_defs import F64Array
-
 
 # =============================================================================
 # 0.                     CUDA AVAILABILITY GUARD
@@ -66,9 +65,12 @@ from lunaris.common.type_defs import F64Array
 
 _CUDA_AVAILABLE: bool = False
 try:
-    from numba import cuda, float64 as nb_f64  # type: ignore[attr-defined]
-    from numba import njit  # noqa: F401 – used in CPU helpers
     import numba
+    from numba import (  # type: ignore[attr-defined]
+        cuda,
+        njit,  # noqa: F401 – used in CPU helpers
+    )
+    from numba import float64 as nb_f64
     _CUDA_AVAILABLE = bool(cuda.is_available())
 except ImportError:
     cuda = None  # type: ignore[assignment]
@@ -81,10 +83,10 @@ except ImportError:
 # or another backend; this kernel must never silently clip the requested degree.
 _GPU_WS: int = 26
 GPU_SH_MAX_DEGREE: int = _GPU_WS - 2
-GPU_SH_SUPPORTED_TIERS: Tuple[int, ...] = (GPU_SH_MAX_DEGREE,)
+GPU_SH_SUPPORTED_TIERS: tuple[int, ...] = (GPU_SH_MAX_DEGREE,)
 
 
-def gpu_unsupported_features(flags: Any) -> Tuple[str, ...]:
+def gpu_unsupported_features(flags: Any) -> tuple[str, ...]:
     """
     Return the active physics options that the current CUDA backend cannot model.
 
@@ -93,7 +95,7 @@ def gpu_unsupported_features(flags: Any) -> Tuple[str, ...]:
     require the CPU full-fidelity propagator.
     """
 
-    unsupported: List[str] = []
+    unsupported: list[str] = []
     if bool(getattr(flags, "enable_albedo", False)):
         unsupported.append("albedo")
     if bool(getattr(flags, "enable_thermal", False)):
@@ -103,7 +105,7 @@ def gpu_unsupported_features(flags: Any) -> Tuple[str, ...]:
     return tuple(unsupported)
 
 
-def gpu_sh_capability() -> Dict[str, Any]:
+def gpu_sh_capability() -> dict[str, Any]:
     """Return the true classic-SH capability of the current Numba CUDA kernel."""
 
     return {
@@ -945,7 +947,7 @@ class GPUBatchPropagator:
                 d_scale_m=cuda.to_device(np.ascontiguousarray(scale_m, dtype=np.float64)),
             )
 
-    def _build_earth_j2_pack(self, dyn: Any) -> Dict[str, float]:
+    def _build_earth_j2_pack(self, dyn: Any) -> dict[str, float]:
         """
         Normalize optional Earth-J2 parameters into GPU-friendly scalars.
 
@@ -1009,13 +1011,13 @@ class GPUBatchPropagator:
         budget = max(1.0, min(cfg_budget, live_budget))
         return max(1, int(budget / max(1, bytes_per_sample)))
 
-    def recommended_max_batch(self, requested_max_batch: Optional[int] = None) -> int:
+    def recommended_max_batch(self, requested_max_batch: int | None = None) -> int:
         """Return the backend-specific batch cap after device-memory tuning."""
 
         requested = int(requested_max_batch) if requested_max_batch is not None else int(self._recommended_max_batch)
         return max(1, min(requested, int(self._recommended_max_batch)))
 
-    def diagnostics_snapshot(self) -> Dict[str, Any]:
+    def diagnostics_snapshot(self) -> dict[str, Any]:
         """Expose lightweight runtime diagnostics for logs, reports, and tests."""
 
         return {
@@ -1049,8 +1051,8 @@ class GPUBatchPropagator:
         crs: F64Array,              # (N,)
         duration_s: float,
         output_dt_s: float,
-        callback: Optional[Callable[[float], None]] = None,
-    ) -> Tuple[F64Array, F64Array, F64Array, F64Array]:
+        callback: Callable[[float], None] | None = None,
+    ) -> tuple[F64Array, F64Array, F64Array, F64Array]:
         """
         Propagate N samples from t=0 to t=duration_s with fixed RK4 step dt_s.
 
@@ -1160,7 +1162,7 @@ class GPUBatchPropagator:
 # 3.              CPU BATCH PROPAGATOR (full-fidelity multiprocessing)
 # =============================================================================
 
-def _build_cpu_time_and_solver_config(sim_cfg: Any, mc_cfg: Any, duration_s: float, output_dt_s: float) -> Tuple[Any, Any]:
+def _build_cpu_time_and_solver_config(sim_cfg: Any, mc_cfg: Any, duration_s: float, output_dt_s: float) -> tuple[Any, Any]:
     """
     Clone the nominal run configs with MC-specific time and impact settings applied.
 
@@ -1207,10 +1209,10 @@ class CPUBatchPropagator:
         self,
         sim_cfg: Any,
         mc_cfg: Any,
-        dynamics_template: Optional[Any] = None,
+        dynamics_template: Any | None = None,
         surface_provider: Any = None,
         topo_grid: Any = None,
-        max_workers: Optional[int] = None,
+        max_workers: int | None = None,
     ) -> None:
         """
         Parameters
@@ -1322,8 +1324,8 @@ class CPUBatchPropagator:
         crs: F64Array,          # (N,)
         duration_s: float,
         output_dt_s: float,
-        callback: Optional[Callable[[float], None]] = None,
-    ) -> Tuple[F64Array, F64Array, F64Array, F64Array]:
+        callback: Callable[[float], None] | None = None,
+    ) -> tuple[F64Array, F64Array, F64Array, F64Array]:
         """
         Propagate N samples on CPU using the full-fidelity single-run solver.
 
@@ -1342,7 +1344,7 @@ class CPUBatchPropagator:
             output_dt_s=float(output_dt_s),
         )
 
-        results_by_idx: Dict[int, Tuple[Optional[np.ndarray], Optional[np.ndarray], bool, float]] = {}
+        results_by_idx: dict[int, tuple[np.ndarray | None, np.ndarray | None, bool, float]] = {}
         for i in range(N):
             try:
                 dyn = self._make_sample_dynamics(
@@ -1367,7 +1369,7 @@ class CPUBatchPropagator:
             except Exception as exc:
                 if not getattr(self._mc, "allow_sample_failures", False):
                     raise RuntimeError(f"Monte Carlo CPU sample {i} failed: {exc}") from exc
-                warnings.warn(f"[MC][CPU] Sample {i} failed: {exc}", RuntimeWarning)
+                warnings.warn(f"[MC][CPU] Sample {i} failed: {exc}", RuntimeWarning, stacklevel=2)
                 results_by_idx[i] = (None, None, False, float("nan"))
 
             if callback is not None:

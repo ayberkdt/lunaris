@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Provenance capture for reproducible benchmark runs."""
 
 from __future__ import annotations
@@ -7,9 +6,10 @@ import hashlib
 import platform
 import subprocess
 import sys
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from .benchmark_config import canonical_json_text
 

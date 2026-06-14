@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Regression tests for the ST-LRPS package rename + artifact cleanup (Part 1).
 

@@ -1,5 +1,4 @@
 # ST_LRPS/ui_parts/monte_carlo_page.py
-# -*- coding: utf-8 -*-
 """
 Monte Carlo Analysis Page (Page 7)
 ====================================
@@ -37,26 +36,32 @@ Integration with the rest of the application
 
 from __future__ import annotations
 
-import os
 import math
+import os
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
-    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, ToggleSwitch, get_icon, with_alpha
     from lunaris.ui.components.monte_carlo_analysis_panel import MonteCarloAnalysisPanel
+    from lunaris.ui.core.ui_commons import (
+        THEME,
+        NumericDragLineEdit,
+        ToggleSwitch,
+        get_icon,
+        with_alpha,
+    )
     from lunaris.ui.pages.force_models_page import ST_LRPS_RUNS_DIR, list_st_lrps_model_dirs
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
         import sys
         print("Run as:  python -m lunaris.ui.pages.monte_carlo_page", file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None
     raise
 
 
@@ -157,14 +162,14 @@ def _normalize_output_path_for_format(path_text: str, fmt: str) -> str:
 
     current = Path(raw)
     lower_name = current.name.lower()
-    
+
     for known in (".h5", ".hdf5", ".npz"):
         if lower_name.endswith(known):
             if known == ".hdf5" and str(fmt).strip().lower() == "hdf5":
                 return raw
             base = current.name[:-len(known)]
             return str(current.with_name(base + suffix))
-            
+
     return raw
 
 def _card(title: str) -> QtWidgets.QGroupBox:
@@ -209,7 +214,7 @@ def _metric_row(key: str, value: str = "—") -> QtWidgets.QHBoxLayout:
     return row, val_lbl
 
 
-def _format_clock_span(seconds: Optional[float]) -> str:
+def _format_clock_span(seconds: float | None) -> str:
     """
     Convert a duration in seconds to a compact human-readable clock string.
 
@@ -249,14 +254,14 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def __init__(
         self,
-        mc_cfg: Optional[UIMonteCarloConfig] = None,
-        parent: Optional[QtWidgets.QWidget] = None,
+        mc_cfg: UIMonteCarloConfig | None = None,
+        parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         if mc_cfg is None:
             mc_cfg = UIMonteCarloConfig(use_gpu=_detect_cuda_available())
         self.mc_cfg = mc_cfg
-        self._last_progress_payload: Dict[str, Any] = {}
+        self._last_progress_payload: dict[str, Any] = {}
         self._build_ui()
         self._setup_validation_signals()
         self._update_validation()
@@ -436,7 +441,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             ("ST-LRPS",  "surrogate", "st_lrps",  "On",  "outputs/monte_carlo/preview_stlrps.h5"),
         ]
         self.tbl_backend_compare.setRowCount(len(rows))
-        self._backend_compare_meta: List[Dict[str, Any]] = []
+        self._backend_compare_meta: list[dict[str, Any]] = []
         for r, (name, deg, mode, gpu, out_path) in enumerate(rows):
             for c, text in enumerate((name, deg, mode, gpu, out_path)):
                 item = QtWidgets.QTableWidgetItem(str(text))
@@ -521,9 +526,9 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         # Best-effort: pull the project root from the surrogate runs dir
         try:
-            project_root = ST_LRPS_RUNS_DIR.parent.parent
+            pass
         except Exception:
-            project_root = Path.cwd()
+            Path.cwd()
 
         runner = str((Path(__file__).resolve().parents[2] / "core" / "mc_runner.py").resolve())
         try:
@@ -542,7 +547,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         except Exception:
             pass
 
-        cmd: List[str] = [python_exec, runner]
+        cmd: list[str] = [python_exec, runner]
         cmd.extend(["--n-samples", n_samples])
         cmd.extend(["--mc-gravity-mode", gravity_mode])
         cmd.extend(["--enable-sh", "on"])
@@ -581,9 +586,9 @@ class MonteCarloPage(QtWidgets.QWidget):
     def _copy_all_backend_commands(self) -> None:
         """Generate and copy all backend preview commands to clipboard."""
         try:
-            project_root = ST_LRPS_RUNS_DIR.parent.parent
+            pass
         except Exception:
-            project_root = Path.cwd()
+            Path.cwd()
         runner = str((Path(__file__).resolve().parents[2] / "core" / "mc_runner.py").resolve())
         python_exec = sys.executable
         n_samples = "100"
@@ -591,13 +596,13 @@ class MonteCarloPage(QtWidgets.QWidget):
             n_samples = str(int(float(self.ent_n_samples.text())))
         except Exception:
             pass
-        all_cmds: List[str] = []
+        all_cmds: list[str] = []
         for meta in getattr(self, "_backend_compare_meta", []):
             gravity_mode = str(meta.get("mode", "classic_sh"))
             degree = meta.get("degree", "20")
             gpu_on = bool(meta.get("gpu_on", True))
             out_path = str(meta.get("output_path", "outputs/monte_carlo/preview.h5"))
-            cmd: List[str] = [python_exec, runner]
+            cmd: list[str] = [python_exec, runner]
             cmd.extend(["--n-samples", n_samples])
             cmd.extend(["--mc-gravity-mode", gravity_mode])
             cmd.extend(["--enable-sh", "on"])
@@ -1273,7 +1278,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         layout.setContentsMargins(16, 20, 16, 16)
         layout.setSpacing(6)
 
-        self._metric_labels: Dict[str, QtWidgets.QLabel] = {}
+        self._metric_labels: dict[str, QtWidgets.QLabel] = {}
 
         def _add(key: str, label: str) -> None:
             row_layout, val_lbl = _metric_row(label)
@@ -1305,7 +1310,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.btn_open_report.clicked.connect(self._open_report)
         layout.addWidget(self.btn_open_report)
 
-        self._last_report_path: Optional[str] = None
+        self._last_report_path: str | None = None
         return gb
 
     def _open_report(self) -> None:
@@ -1384,7 +1389,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             except Exception:
                 pass
 
-    def update_progress_payload(self, payload: Dict[str, Any]) -> None:
+    def update_progress_payload(self, payload: dict[str, Any]) -> None:
         """
         Render a structured backend progress payload in the MC control card.
 
@@ -1435,7 +1440,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         scenario_prefix = "~" if approx_done and stage == "propagating" else ""
         scenario_text = f"{scenario_prefix}{done_samples} / {total_samples} scenarios"
-        meta_parts: List[str] = [scenario_text]
+        meta_parts: list[str] = [scenario_text]
         if batch_index is not None and batch_count is not None and batch_index >= 1:
             meta_parts.append(f"Batch {batch_index}/{batch_count}")
         if eta_s is not None:
@@ -1450,8 +1455,8 @@ class MonteCarloPage(QtWidgets.QWidget):
         self,
         exit_code: int,
         output_path: str,
-        report_path: Optional[str] = None,
-        metrics: Optional[Dict[str, Any]] = None,
+        report_path: str | None = None,
+        metrics: dict[str, Any] | None = None,
     ) -> None:
         """
         Called by MainWindow when the MC subprocess exits.
@@ -1508,7 +1513,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         if hasattr(self, "analysis_panel"):
             self.analysis_panel.shutdown()
 
-    def update_results(self, metrics: Dict[str, Any]) -> None:
+    def update_results(self, metrics: dict[str, Any]) -> None:
         """
         Populate the metrics panel from a dict returned by the MC engine.
 
@@ -1557,7 +1562,7 @@ class MonteCarloPage(QtWidgets.QWidget):
     # Serialization (session persistence + command builder)
     # -------------------------------------------------------------------------
 
-    def get_data(self) -> Dict[str, Any]:
+    def get_data(self) -> dict[str, Any]:
         """Return current UI state as a plain dict (JSON-serializable)."""
         return {
             "n_samples":             self._parse_int(self.ent_n_samples.text(), 500),
@@ -1585,7 +1590,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             "impact_alt_km":         self._parse_float(self.ent_impact_alt.text(), 0.0),
         }
 
-    def load_data(self, data: Dict[str, Any]) -> None:
+    def load_data(self, data: dict[str, Any]) -> None:
         """Restore UI state from a plain dict (e.g., loaded from JSON session)."""
         def _s(key: str, default) -> str:
             return str(data.get(key, default))
@@ -1644,49 +1649,49 @@ class MonteCarloPage(QtWidgets.QWidget):
         except Exception:
             return default
 
-    def validate_page_inputs(self) -> tuple[bool, List[str], List[str]]:
+    def validate_page_inputs(self) -> tuple[bool, list[str], list[str]]:
         ok = True
-        errors: List[str] = []
-        warnings: List[str] = []
-        
+        errors: list[str] = []
+        warnings: list[str] = []
+
         # 1. Ensemble
         n_samples = self._parse_int(self.ent_n_samples.text(), 0)
         seed = self._parse_int(self.ent_seed.text(), -1)
-        
+
         if n_samples < 2:
             errors.append("Ensemble must have at least 2 samples.")
             ok = False
         if seed < 0:
             errors.append("Random seed must be non-negative.")
             ok = False
-            
+
         # 2. State uncertainty
         sigma_r = self._parse_float(self.ent_sigma_r.text(), -1.0)
         sigma_v = self._parse_float(self.ent_sigma_v.text(), -1.0)
-        
+
         if sigma_r < 0:
             errors.append("Position uncertainty (σ_r) must be non-negative.")
             ok = False
         if sigma_v < 0:
             errors.append("Velocity uncertainty (σ_v) must be non-negative.")
             ok = False
-            
+
         # 3. Spacecraft uncertainty
         sigma_mass = self._parse_float(self.ent_sigma_mass.text(), -1.0)
         sigma_area = self._parse_float(self.ent_sigma_area.text(), -1.0)
         sigma_cd = self._parse_float(self.ent_sigma_cd.text(), -1.0)
         sigma_cr = self._parse_float(self.ent_sigma_cr.text(), -1.0)
-        
+
         if any(v < 0 for v in (sigma_mass, sigma_area, sigma_cd, sigma_cr)):
             errors.append("Spacecraft property uncertainties must be non-negative.")
             ok = False
-            
+
         # 4. Backend
         gpu_enabled = self.toggle_gpu.isChecked()
         gravity_mode = self.cb_mc_gravity_mode.currentData() or "follow_mission"
         mc_backend = str(self.cb_mc_backend.currentData() or "auto")
         st_lrps_dir = self.ent_mc_st_lrps_model_dir.text().strip()
-        
+
         if (
             gpu_enabled
             and mc_backend != "torch_cuda_sh"  # torch handles degree > 24 natively
@@ -1704,13 +1709,13 @@ class MonteCarloPage(QtWidgets.QWidget):
             warnings.append("GPU disabled: CPU full-fidelity mode may be slower.")
             if mc_backend.startswith("gpu_") or mc_backend in {"numba_cuda_sh", "torch_cuda_sh"}:
                 warnings.append("Explicit GPU MC backend selected; backend policy will record the resolved fallback or GPU override.")
-            
+
         if (
             gravity_mode == "st_lrps"
             or mc_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
         ) and not st_lrps_dir:
             warnings.append("ST-LRPS model dir is blank. MC will fall back to main Force Models setting.")
-            
+
         # 5. Integration
         dt_s = self._parse_float(self.ent_dt.text(), 0.0)
         if dt_s <= 0:
@@ -1720,11 +1725,11 @@ class MonteCarloPage(QtWidgets.QWidget):
             warnings.append("Large dt (> 300s) may reduce accuracy or cause numerical instability.")
         elif dt_s < 1:
             warnings.append("Small dt (< 1s) will produce heavy output and increase runtime.")
-            
+
         # 6. Output
         out_path = self.ent_output.text().strip()
         fmt = self.cb_format.currentText()
-        
+
         if not out_path:
             errors.append("Output path must not be empty.")
             ok = False
@@ -1741,7 +1746,7 @@ class MonteCarloPage(QtWidgets.QWidget):
                     pass
                 else:
                     warnings.append(f"Output path suffix does not match selected format '{fmt}'.")
-            
+
         return ok, errors, warnings
 
     def _setup_validation_signals(self) -> None:
@@ -1768,11 +1773,11 @@ class MonteCarloPage(QtWidgets.QWidget):
     def _update_validation(self) -> None:
         ok, errors, warnings = self.validate_page_inputs()
         if not ok:
-            self.lbl_validation.setText(f"⚠ Errors:\n" + "\n".join(errors))
+            self.lbl_validation.setText("⚠ Errors:\n" + "\n".join(errors))
             self.lbl_validation.setStyleSheet(f"color: {THEME['error']}; font-weight: 600; font-size: 9pt;")
             self.btn_run_mc.setEnabled(False)
         elif warnings:
-            self.lbl_validation.setText(f"⚠ Warnings:\n" + "\n".join(warnings))
+            self.lbl_validation.setText("⚠ Warnings:\n" + "\n".join(warnings))
             self.lbl_validation.setStyleSheet(f"color: {THEME['warning']}; font-weight: 600; font-size: 9pt;")
             self.btn_run_mc.setEnabled(True)
         else:

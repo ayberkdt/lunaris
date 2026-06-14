@@ -1,5 +1,4 @@
 # ST_LRPS/ui_parts/session_persistence.py
-# -*- coding: utf-8 -*-
 """
 Session capture, restore, and data-path auto-detection helpers.
 
@@ -20,9 +19,10 @@ Design goals
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from lunaris.ui.core.ui_commons import APP_NAME
 
@@ -38,7 +38,7 @@ SESSION_APP_NAME = APP_NAME
 def migrate_session_payload(
     payload: dict[str, Any],
     *,
-    log_warning: Optional[Callable[[str], None]] = None,
+    log_warning: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """
     Upgrade any saved session payload to the current canonical schema.
@@ -102,14 +102,13 @@ from lunaris.loaders.io_helpers import (
     autodetect_repository_data_roots,
     prefer_dedicated_albedo_root,
 )
-
-from lunaris.ui.pages.data_files_page import DataFilesState
-from lunaris.ui.pages.result_exports_page import OutputPageState
 from lunaris.ui.core.solver_policy import (
     DEFAULT_SOLVER_METHOD,
     coerce_positive_float,
     normalize_solver_config_object,
 )
+from lunaris.ui.pages.data_files_page import DataFilesState
+from lunaris.ui.pages.result_exports_page import OutputPageState
 
 
 def _prefer_dedicated_albedo_root(project_root: Path, state: DataFilesState) -> DataFilesState:
@@ -164,7 +163,7 @@ def collect_session_snapshot(
     solver_cfg: Any,
     spacecraft_cfg: Any,
     app_version: str,
-    mc_page: Optional[Any] = None,
+    mc_page: Any | None = None,
 ) -> dict[str, Any]:
     """
     Collect a full UI session payload suitable for JSON persistence.
@@ -262,8 +261,8 @@ def apply_session_snapshot(
     solver_cfg: Any,
     spacecraft_cfg: Any,
     project_root: Path,
-    log_warning: Optional[Callable[[str], None]] = None,
-    mc_page: Optional[Any] = None,
+    log_warning: Callable[[str], None] | None = None,
+    mc_page: Any | None = None,
 ) -> None:
     """
     Restore a previously saved payload back into the modular UI.
@@ -389,7 +388,7 @@ def apply_session_snapshot(
 def collect_visual_state(
     *,
     active_page_key: str = "",
-    splitter_sizes: Optional[list[int]] = None,
+    splitter_sizes: list[int] | None = None,
     log_collapsed: bool = False,
     telemetry_plot_type: str = "",
     telemetry_time_unit: str = "",
@@ -417,10 +416,10 @@ def collect_visual_state(
 
 def sanitize_splitter_sizes(
     sizes: Any,
-    total: Optional[int] = None,
+    total: int | None = None,
     *,
     min_panel: int = 1,
-) -> Optional[list[int]]:
+) -> list[int] | None:
     """Validate/clamp restored splitter sizes; return ``None`` if unusable.
 
     Restoring raw on-disk splitter values can produce unusable geometry — a

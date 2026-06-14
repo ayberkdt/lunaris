@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for the rebuilt Execution Console (lunaris.ui.widgets.log_panel).
 

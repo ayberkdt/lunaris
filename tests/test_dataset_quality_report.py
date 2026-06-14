@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import json
 
-from lunaris.surrogate.st_lrps.data.quality_report import build_dataset_quality_report
-
 from dataset_pipeline_test_utils import write_toy_contract_h5
+from lunaris.surrogate.st_lrps.data.quality_report import build_dataset_quality_report
 
 
 def test_dataset_quality_report_writes_json_and_markdown(tmp_path):

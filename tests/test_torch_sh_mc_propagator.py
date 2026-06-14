@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Torch classic-SH Monte Carlo propagator: scientific validation (task §16).
 
@@ -27,12 +26,12 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from lunaris.common.type_defs import PerturbationFlags  # noqa: E402
-from lunaris.physics.spherical_harmonics import GravityModel  # noqa: E402
-from lunaris.physics.torch_spherical_harmonics import TorchSHGravityEvaluator  # noqa: E402
 from lunaris.core.torch_sh_propagator import (  # noqa: E402
     TorchSHBatchPropagator,
     TorchSHPreflightError,
 )
+from lunaris.physics.spherical_harmonics import GravityModel  # noqa: E402
+from lunaris.physics.torch_spherical_harmonics import TorchSHGravityEvaluator  # noqa: E402
 
 R_REF = 1.738e6
 GM = 4.9028e12
@@ -291,8 +290,6 @@ def test_cuda_matches_cpu_trajectory_float64() -> None:
     np.testing.assert_allclose(Y_cuda, Y_cpu, rtol=1e-10, atol=1e-4)
 
 
-import math
-import numpy as np
 
 class MockRotEphemeris:
     """Mock ephemeris that rotates 90 degrees around Z axis every 100 seconds."""
@@ -315,10 +312,10 @@ class MockRotEphemeris:
     # Required interface methods
     def get_moon_state(self, t_s: float) -> np.ndarray:
         return np.zeros(6)
-        
+
     def get_sun_state(self, t_s: float) -> np.ndarray:
         return np.zeros(6)
-        
+
     def get_earth_state(self, t_s: float) -> np.ndarray:
         return np.zeros(6)
 
@@ -331,10 +328,11 @@ class MockRotEphemeris:
 def test_frame_rotation_slerp() -> None:
     """Test frame interpolation and transformation mathematically."""
     from types import SimpleNamespace
+
     from lunaris.core.torch_sh_propagator import _TorchMoonFrame
 
     dyn = SimpleNamespace(ephem=MockRotEphemeris())
-    flags = PerturbationFlags(enable_sh=True)
+    PerturbationFlags(enable_sh=True)
     frame = _TorchMoonFrame(dyn.ephem, device=torch.device("cpu"), dtype=torch.float64)
 
     # 1. Test SLERP endpoints
@@ -383,33 +381,32 @@ def test_throughput_metrics_and_impact_stability() -> None:
     """Test the newly added throughput metrics and impact masking logic."""
     degree = 20
     grav = _make_gravity_model(degree, seed=8)
-    
+
     # Create N=5 trajectories, 3 of which are definitely impacting (R < R_REF)
     y_safe = _circular_state(100.0)
     y_impact = _circular_state(-10.0)  # Inside the moon
-    
+
     Y0 = np.stack([y_safe, y_impact, y_safe, y_impact, y_impact])
     prop = _make_propagator(grav, degree, chunk_size=2)  # Use small chunk to test accumulation
-    
+
     duration = 300.0
     dt = 60.0
-    n_snaps = 1
     steps_per_snap = int(duration / dt)
     t_out, Y_out, impact, t_imp = prop.propagate(
         Y0, np.zeros(5), np.zeros(5), np.zeros(5), np.zeros(5),
         duration_s=duration, output_dt_s=duration,
     )
-    
+
     diag = prop.diagnostics_snapshot()
-    
+
     # 1. Verify throughput metrics exist
     assert "active_state_steps_per_second" in diag
     assert "raw_batch_state_steps_per_second" in diag
     assert diag["total_raw_state_steps"] == 5 * steps_per_snap
-    
+
     # Active steps should be strictly less than raw steps because 3 samples impact immediately
     assert diag["total_active_state_steps"] < diag["total_raw_state_steps"]
-    
+
     # 2. Verify impact stability
     assert np.sum(impact) == 3.0
     assert impact[1] == 1.0
@@ -417,7 +414,7 @@ def test_throughput_metrics_and_impact_stability() -> None:
     assert impact[4] == 1.0
     assert impact[0] == 0.0
     assert impact[2] == 0.0
-    
+
     # 3. Verify no NaNs in output (impacted trajectories freeze or stay finite)
     assert np.all(np.isfinite(Y_out))
 
