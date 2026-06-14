@@ -2,7 +2,7 @@
 """
 ST-LRPS Studio.
 
-PyQt6 dashboard for the lunar scalar-potential surrogate codebase. This module is
+PySide6 dashboard for the lunar scalar-potential surrogate codebase. This module is
 a thin launcher that wires together the structured UI components.
 """
 

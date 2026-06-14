@@ -25,61 +25,30 @@ import sys
 
 from lunaris.ui_foundation import DESIGN_TOKENS, with_alpha
 
-def _pyside6_available() -> bool:
-    try:
-        import PySide6  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-# Prefer PySide6 deterministically (see studio_parts/qt_common.py for the full
-# rationale): the binding must not depend on whether PyQt6 was imported first.
-_USE_PYSIDE = _pyside6_available()
-
+# Lunaris standardizes on PySide6 (Phase 3 consolidation; PyQt6 dropped). The
+# try/except keeps graceful degradation: when PySide6 is absent the module still
+# imports with _HAS_QT = False and the widgets are simply unavailable.
 try:
-    if _USE_PYSIDE:
-        from PySide6.QtCore import (
-            QAbstractTableModel,
-            QModelIndex,
-            QTimer,
-            Qt,
-        )
-        from PySide6.QtGui import QColor, QFont
-        from PySide6.QtWidgets import (
-            QFrame,
-            QGridLayout,
-            QHBoxLayout,
-            QHeaderView,
-            QLabel,
-            QPlainTextEdit,
-            QSizePolicy,
-            QTabWidget,
-            QTableView,
-            QVBoxLayout,
-            QWidget,
-        )
-    else:
-        from PyQt6.QtCore import (
-            QAbstractTableModel,
-            QModelIndex,
-            QTimer,
-            Qt,
-        )
-        from PyQt6.QtGui import QColor, QFont
-        from PyQt6.QtWidgets import (
-            QFrame,
-            QGridLayout,
-            QHBoxLayout,
-            QHeaderView,
-            QLabel,
-            QPlainTextEdit,
-            QSizePolicy,
-            QTabWidget,
-            QTableView,
-            QVBoxLayout,
-            QWidget,
-        )
+    from PySide6.QtCore import (
+        QAbstractTableModel,
+        QModelIndex,
+        QTimer,
+        Qt,
+    )
+    from PySide6.QtGui import QColor, QFont
+    from PySide6.QtWidgets import (
+        QFrame,
+        QGridLayout,
+        QHBoxLayout,
+        QHeaderView,
+        QLabel,
+        QPlainTextEdit,
+        QSizePolicy,
+        QTabWidget,
+        QTableView,
+        QVBoxLayout,
+        QWidget,
+    )
     _HAS_QT = True
 except ImportError:
     _HAS_QT = False

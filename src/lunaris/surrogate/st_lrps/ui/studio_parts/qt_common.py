@@ -6,150 +6,75 @@ import os
 import sys
 from pathlib import Path
 
-def _pyside6_available() -> bool:
-    try:
-        import PySide6  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
-# Prefer PySide6 (the binding the rest of Lunaris uses) whenever it is installed,
-# independent of import order. The previous ``"PyQt6" not in sys.modules`` heuristic
-# made the binding order-dependent: a test that imported PyQt6 first flipped the
-# studio to PyQt6, which then clashed with the PySide6 main-app QApplication
-# (e.g. ``QApplication.setFont`` rejecting a PyQt6 ``QFont``). PyQt6 stays as a
-# fallback only for environments where PySide6 is genuinely absent.
-_USE_PYSIDE = _pyside6_available()
-
-try:
-    if not _USE_PYSIDE:
-        raise ImportError
-    from PySide6.QtCore import (
-        QEasingCurve,
-        QEvent,
-        QObject,
-        QProcess,
-        QProcessEnvironment,
-        QPropertyAnimation,
-        QSettings,
-        QSize,
-        Qt,
-        QTimer,
-        QUrl,
-        Signal as pyqtSignal,
-    )
-    from PySide6.QtGui import (
-        QColor,
-        QDesktopServices,
-        QFont,
-        QGuiApplication,
-        QIcon,
-        QPalette,
-        QPixmap,
-        QSyntaxHighlighter,
-        QTextCharFormat,
-        QTextDocument,
-    )
-    from PySide6.QtWidgets import (
-        QAbstractSpinBox,
-        QApplication,
-        QBoxLayout,
-        QCheckBox,
-        QComboBox,
-        QDoubleSpinBox,
-        QFileDialog,
-        QFormLayout,
-        QFrame,
-        QGridLayout,
-        QGroupBox,
-        QHBoxLayout,
-        QInputDialog,
-        QLabel,
-        QLineEdit,
-        QListWidget,
-        QListWidgetItem,
-        QMainWindow,
-        QMessageBox,
-        QPlainTextEdit,
-        QProgressBar,
-        QPushButton,
-        QScrollArea,
-        QSizePolicy,
-        QSpinBox,
-        QSplitter,
-        QStackedWidget,
-        QSystemTrayIcon,
-        QTabWidget,
-        QToolButton,
-        QVBoxLayout,
-        QWidget,
-    )
-except ImportError:
-    from PyQt6.QtCore import (
-        QEasingCurve,
-        QEvent,
-        QObject,
-        QProcess,
-        QProcessEnvironment,
-        QPropertyAnimation,
-        QSettings,
-        QSize,
-        Qt,
-        QTimer,
-        QUrl,
-        pyqtSignal,
-    )
-    from PyQt6.QtGui import (
-        QColor,
-        QDesktopServices,
-        QFont,
-        QGuiApplication,
-        QIcon,
-        QPalette,
-        QPixmap,
-        QSyntaxHighlighter,
-        QTextCharFormat,
-        QTextDocument,
-    )
-    from PyQt6.QtWidgets import (
-        QAbstractSpinBox,
-        QApplication,
-        QBoxLayout,
-        QCheckBox,
-        QComboBox,
-        QDoubleSpinBox,
-        QFileDialog,
-        QFormLayout,
-        QFrame,
-        QGridLayout,
-        QGroupBox,
-        QHBoxLayout,
-        QInputDialog,
-        QLabel,
-        QLineEdit,
-        QListWidget,
-        QListWidgetItem,
-        QMainWindow,
-        QMessageBox,
-        QPlainTextEdit,
-        QProgressBar,
-        QPushButton,
-        QScrollArea,
-        QSizePolicy,
-        QSpinBox,
-        QSplitter,
-        QStackedWidget,
-        QSystemTrayIcon,
-        QTabWidget,
-        QToolButton,
-        QVBoxLayout,
-        QWidget,
-    )
+# Lunaris standardizes on PySide6 for all Qt UI (mission app + ST-LRPS studio).
+# PyQt6 support was removed in the Phase 3 consolidation: a single binding
+# eliminates the order-dependent binding-pollution bug class (mixed PySide6/PyQt6
+# QApplication / QFont / QIcon TypeErrors). ``Signal`` is aliased to ``pyqtSignal``
+# so existing studio code that uses that name reads unchanged.
+from PySide6.QtCore import (
+    QEasingCurve,
+    QEvent,
+    QObject,
+    QProcess,
+    QProcessEnvironment,
+    QPropertyAnimation,
+    QSettings,
+    QSize,
+    Qt,
+    QTimer,
+    QUrl,
+    Signal as pyqtSignal,
+)
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFont,
+    QGuiApplication,
+    QIcon,
+    QPalette,
+    QPixmap,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+    QTextDocument,
+)
+from PySide6.QtWidgets import (
+    QAbstractSpinBox,
+    QApplication,
+    QBoxLayout,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpinBox,
+    QSplitter,
+    QStackedWidget,
+    QSystemTrayIcon,
+    QTabWidget,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from lunaris.ui_foundation import LOG_COLORS, THEME, build_app_stylesheet, with_alpha
 
-QT_BINDING_NAME = "PySide6" if _USE_PYSIDE else "PyQt6"
+QT_BINDING_NAME = "PySide6"
 if "pyqtgraph" not in sys.modules:
     os.environ.setdefault("PYQTGRAPH_QT_LIB", QT_BINDING_NAME)
 
