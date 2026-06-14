@@ -75,6 +75,7 @@ from PySide6.QtWidgets import (
 from lunaris.ui_foundation import LOG_COLORS, THEME, build_app_stylesheet, with_alpha
 
 QT_BINDING_NAME = "PySide6"
+
 if "pyqtgraph" not in sys.modules:
     os.environ.setdefault("PYQTGRAPH_QT_LIB", QT_BINDING_NAME)
 

@@ -25,6 +25,7 @@ import sys
 
 from lunaris.ui_foundation import DESIGN_TOKENS, with_alpha
 
+
 # Lunaris standardizes on PySide6 (Phase 3 consolidation; PyQt6 dropped). The
 # try/except keeps graceful degradation: when PySide6 is absent the module still
 # imports with _HAS_QT = False and the widgets are simply unavailable.

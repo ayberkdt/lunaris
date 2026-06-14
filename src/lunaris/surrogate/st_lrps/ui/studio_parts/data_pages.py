@@ -63,6 +63,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import sys
 
 from .qt_common import *
+
 from lunaris.ui_foundation import DESIGN_TOKENS, THEME, with_alpha
 from .dataset_introspection import inspect_h5_metadata
 # pyqtgraph — optional, graceful fallback
