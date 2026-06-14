@@ -6,7 +6,21 @@ import os
 import sys
 from pathlib import Path
 
-_USE_PYSIDE = "PyQt6" not in sys.modules
+def _pyside6_available() -> bool:
+    try:
+        import PySide6  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# Prefer PySide6 (the binding the rest of Lunaris uses) whenever it is installed,
+# independent of import order. The previous ``"PyQt6" not in sys.modules`` heuristic
+# made the binding order-dependent: a test that imported PyQt6 first flipped the
+# studio to PyQt6, which then clashed with the PySide6 main-app QApplication
+# (e.g. ``QApplication.setFont`` rejecting a PyQt6 ``QFont``). PyQt6 stays as a
+# fallback only for environments where PySide6 is genuinely absent.
+_USE_PYSIDE = _pyside6_available()
 
 try:
     if not _USE_PYSIDE:

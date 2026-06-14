@@ -44,19 +44,19 @@ def test_harness_file_moved_on_disk():
 
 
 # ---------------------------------------------------------------------------
-# UI command builders (skipped without PyQt6)
+# UI command builders (skipped without PySide6)
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def _clear_settings():
-    from PyQt6.QtCore import QSettings
+    from PySide6.QtCore import QSettings
     QSettings("ST_LRPS_Project", "ST_LRPS_Dashboard").clear()
 
 
 @pytest.fixture(scope="module")
 def qapp():
-    pytest.importorskip("PyQt6")
+    pytest.importorskip("PySide6")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
     from lunaris.surrogate.st_lrps.ui.studio_parts.common_widgets import _settings
@@ -1408,7 +1408,7 @@ def test_plots_page_rejects_malformed_dt_list(qapp, tmp_path):
 
 def test_plots_page_failure_is_not_silent(qapp):
     """A non-zero / crashed harness exit shows an error banner and opens logs."""
-    from PyQt6.QtCore import QProcess
+    from PySide6.QtCore import QProcess
     from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
 
     tab = OrbitBenchmarkPlotsTab()
@@ -1427,7 +1427,7 @@ def test_plots_page_excludes_stale_images(qapp, tmp_path):
     """Only figures written by the current run are shown — old plots from a
     previous (now-failed/partial) run must not resurface."""
     import time as _time
-    from PyQt6.QtGui import QImage
+    from PySide6.QtGui import QImage
     from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkPlotsTab
 
     def _png(p):

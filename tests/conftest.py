@@ -18,6 +18,17 @@ belt-and-suspenders that keeps an *unfiltered* no-data run green too.
 
 from __future__ import annotations
 
+import os
+
+# Pin the Qt binding for the whole test process BEFORE any Qt-aware library is
+# imported. qtawesome / qtpy / pyqtgraph otherwise bind to whichever Qt wrapper
+# was imported first, so a test that imports PyQt6 could make icon and theme code
+# return PyQt6 objects that then fail against the PySide6 main-app widgets
+# (order-dependent ``setIcon`` / ``setFont`` TypeErrors). Lunaris standardizes on
+# PySide6; this keeps the binding deterministic regardless of test order.
+os.environ.setdefault("QT_API", "pyside6")
+os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
+
 from pathlib import Path
 
 import pytest

@@ -26,7 +26,17 @@ import sys
 from lunaris.ui.core.ui_commons import with_alpha
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
-_USE_PYSIDE = "PyQt6" not in sys.modules
+def _pyside6_available() -> bool:
+    try:
+        import PySide6  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# Prefer PySide6 deterministically (see studio_parts/qt_common.py for the full
+# rationale): the binding must not depend on whether PyQt6 was imported first.
+_USE_PYSIDE = _pyside6_available()
 
 try:
     if _USE_PYSIDE:

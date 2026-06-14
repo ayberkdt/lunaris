@@ -202,9 +202,12 @@ python -m pip install -e .            # core dependencies only
 python -m pip install -e ".[all]"     # core + ML + UI + reports + dev extras
 ```
 
-Optional dependency groups are declared in `pyproject.toml`: `core`, `ml`, `hpc`,
-`ui`, `reports`, `dev`, and `all`. A pinned `requirements.txt` is also provided
-for environments that prefer a flat dependency list.
+Optional dependency groups are declared in `pyproject.toml`: `ml`, `hpc`, `ui`,
+`reports`, `dev`, and `all`. Every dependency carries both a lower and an upper
+version bound, so an install or CI run cannot silently pull in an incompatible
+major release. `requirements.txt` installs the package with the full optional
+stack (equivalent to `.[all]`) and `requirements_hpc.txt` installs the headless
+HPC stack (`.[hpc]`); both defer to `pyproject.toml` for the actual versions.
 
 **For HPC and cluster deployments**, use the headless `.[hpc]` extra and the Slurm templates under `hpc/`; keep GUI dependencies off compute nodes. The primary cluster workflows are ST-LRPS dataset generation, training, evaluation, and large orbit-level validation runs. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for details.
 
@@ -431,11 +434,26 @@ lunaris --help
 lunaris-mc --help
 ```
 
-Monte Carlo backend names are explicit: `auto`, `cpu_sh`, `gpu_sh`,
-`gpu_st_lrps_potential`, and `gpu_st_lrps_direct`. The current true classic-SH
-GPU tier is degree 24; higher requested `--gpu-sh-degree` values are not clipped
-and are recorded as CPU SH fallback metadata. Use high-degree `cpu_sh` runs for
-truth/reference and ST-LRPS GPU backends for 512-orbit throughput experiments.
+Monte Carlo backend names are explicit:
+
+- `auto` — resolve the best available backend from the policy.
+- `cpu_sh` — SciPy DOP853 per-sample CPU reference (full-fidelity physics).
+- `numba_cuda_sh` (alias `gpu_sh`) — Numba CUDA classic-SH RK4; degree ≤ 24 is a
+  kernel-workspace limit, not a physical one.
+- `torch_cuda_sh` — PyTorch CUDA classic-SH RK4 at arbitrary degree (gravity-only
+  first form); this is the high-degree GPU path.
+- `torch_cpu_sh` — the same PyTorch RK4 classic-SH path on CPU (no CUDA needed),
+  useful for validation and machines without a GPU.
+- `gpu_st_lrps_potential`, `gpu_st_lrps_direct` — PyTorch CUDA ST-LRPS surrogate.
+
+The requested `--gpu-sh-degree` is never clipped. Degrees above the Numba
+degree-24 limit route to `torch_cuda_sh` when PyTorch CUDA is available; otherwise
+the run falls back per the configured `--gpu-sh-fallback-policy`
+(`compatible_gpu`, `cpu`, or `error`). Backend selection is resolved centrally by
+`lunaris.core.mc_backend_policy`, and the requested vs. effective backend, device,
+integrator, and any fallback reason are recorded in `MCRunResult.diagnostics`
+rather than applied silently. Use high-degree `cpu_sh` runs for truth/reference
+and the GPU backends for throughput experiments.
 
 Canonical analysis modules:
 
