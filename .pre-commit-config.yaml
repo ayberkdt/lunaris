@@ -1,0 +1,26 @@
+# Phase-1 hardening guardrails (local, opt-in).
+#   pip install -e ".[dev]" && pre-commit install     # enable on this machine
+#   pre-commit run --all-files                         # one-off sweep
+#
+# These hooks prevent the kinds of junk that recently slipped into the repo:
+# a 0.5 MB committed diff dump, UTF-16/CRLF gitignore lines, and merge markers.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files     # blocks accidental binaries like changes.diff
+        args: ["--maxkb=512"]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.0
+    hooks:
+      - id: ruff
+        args: ["--fix"]
