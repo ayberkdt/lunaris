@@ -183,13 +183,11 @@ satellite path in the preview is a *demo orbit*, not solver output.)
 
 ### Desktop theme — *Lunar Graphite*
 
-The desktop UI uses a single calm, mission-control dark theme called **Lunar
-Graphite**: flat surfaces, a restrained orbital-blue accent, telemetry-teal
-highlights, and amber reserved for warnings and periapsis markers. All Qt widget
-colors flow from the `THEME` palette in `lunaris.ui.core.ui_commons`, the global
-stylesheet is built by `lunaris.ui.theme.build_app_stylesheet`, and the OpenGL
-orbit preview uses the separate `ORBIT_THEME` palette. See
-[docs/UI_THEME.md](docs/UI_THEME.md) for the design goals and token reference.
+The desktop UI uses a unified dark theme called **Lunar Graphite**. All Qt widget
+colors and design tokens flow from the single source of truth in `lunaris.ui_foundation`.
+The global stylesheet is managed by `lunaris.ui.theme`, and the OpenGL
+orbit preview uses a separate `ORBIT_THEME` palette. See
+[docs/UI_THEME.md](docs/UI_THEME.md) for the token reference.
 
 ## Installation
 
@@ -209,7 +207,9 @@ major release. `requirements.txt` installs the package with the full optional
 stack (equivalent to `.[all]`) and `requirements_hpc.txt` installs the headless
 HPC stack (`.[hpc]`); both defer to `pyproject.toml` for the actual versions.
 
-**For HPC and cluster deployments**, use the headless `.[hpc]` extra and the Slurm templates under `hpc/`; keep GUI dependencies off compute nodes. The primary cluster workflows are ST-LRPS dataset generation, training, evaluation, and large orbit-level validation runs. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for details.
+**For reproducible environments**, exact package versions are tracked via lock files in the `locks/` directory (e.g., `requirements-hpc-linux-py311.lock.txt`). These are generated using `uv` to ensure deterministic builds.
+
+**For HPC and cluster deployments**, use the headless `.[hpc]` extra (or the HPC lock file) and the Slurm templates under `hpc/`; keep GUI dependencies off compute nodes. The primary cluster workflows are ST-LRPS dataset generation, training, evaluation, and large orbit-level validation runs. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for details.
 
 Large mission data files are not bundled. Place local SPICE kernels, gravity coefficient files, topography grids, and albedo grids under `data/` or another local path configured at runtime.
 
@@ -607,6 +607,8 @@ Run the full test suite when making code changes:
 ```bash
 pytest tests/
 ```
+
+The CI pipeline enforces a minimum test coverage baseline (e.g., `fail_under=55`), ensuring that new additions maintain test density. HTML coverage reports are automatically uploaded as CI artifacts.
 
 ## License
 
