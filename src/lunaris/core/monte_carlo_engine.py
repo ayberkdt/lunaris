@@ -89,6 +89,25 @@ def _state_to_array(state_like: Any) -> np.ndarray:
     return np.ascontiguousarray(arr[:6], dtype=np.float64)
 
 
+def _active_physics_capabilities(sim_cfg: Any) -> list[str]:
+    """Return the canonical force models active in ``sim_cfg.flags`` for provenance.
+
+    Recorded in the run manifest so a reader can see exactly which physics the run
+    requested — and, paired with ``actual_mc_backend``, whether the chosen backend
+    could honor them.
+    """
+    from lunaris.core.backend_capabilities import FORCE_MODEL_FLAG_ATTR
+
+    flags = getattr(sim_cfg, "flags", None)
+    if flags is None:
+        return []
+    active: list[str] = []
+    for canonical, attr in FORCE_MODEL_FLAG_ATTR.items():
+        if bool(getattr(flags, attr, False)):
+            active.append(canonical)
+    return active
+
+
 def _surface_topography_requested(surface_provider: Any, topo_grid: Any) -> bool:
     """
     Return True when the MC run needs Moon-fixed ephemeris because terrain is active.
@@ -532,7 +551,7 @@ class MonteCarloEngine:
 
         cfg = self._sim_cfg
         mc_backend = str(getattr(self._mc, "mc_backend", "auto") or "auto")
-        mc_forces_classic_sh = mc_backend in {"cpu_sh", "gpu_sh"}
+        mc_forces_classic_sh = mc_backend in {"cpu_sh", "gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
         mc_forces_st_lrps = mc_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
         grav_model = None
         ephem_manager = None
@@ -669,7 +688,7 @@ class MonteCarloEngine:
                 warnings.warn(note, RuntimeWarning)
 
         # ----------------------------------------------------------------
-        # GPU classic-SH path — Numba CUDA fixed-step RK4
+        # GPU classic-SH path — Numba CUDA fixed-step RK4 (torch_cuda_sh's sibling)
         # ----------------------------------------------------------------
         elif plan.final_backend == MCBackend.GPU_CLASSIC_SH:
             try:
@@ -687,6 +706,63 @@ class MonteCarloEngine:
                 )
                 self._backend_note = note
                 warnings.warn(note, RuntimeWarning)
+                self._downgrade_plan_to_cpu(plan, note)
+
+        # ----------------------------------------------------------------
+        # GPU torch classic-SH path — PyTorch fixed-step RK4 (high-degree)
+        # ----------------------------------------------------------------
+        elif plan.final_backend == MCBackend.GPU_TORCH_SH:
+            from lunaris.core.torch_sh_propagator import (
+                TorchSHBatchPropagator,
+                TorchSHPreflightError,
+            )
+
+            try:
+                return TorchSHBatchPropagator(
+                    self._dyn,
+                    self._mc,
+                    self._sim_cfg.flags,
+                )
+            except TorchSHPreflightError:
+                # Hard contract violation (degree above the coefficient file,
+                # unsupported physics, missing model). Never silently fall back —
+                # surface it so the requested degree is not quietly reduced.
+                raise
+            except Exception as exc:
+                note = (
+                    f"[MC] torch_cuda_sh backend initialization failed ({exc}). "
+                    "Falling back to the CPU full-fidelity backend."
+                )
+                self._backend_note = note
+                warnings.warn(note, RuntimeWarning)
+                self._downgrade_plan_to_cpu(plan, note)
+
+        # ----------------------------------------------------------------
+        # Torch CPU classic-SH path — PyTorch fixed-step RK4 on CPU
+        # ----------------------------------------------------------------
+        elif plan.final_backend == MCBackend.TORCH_CPU_SH:
+            from lunaris.core.torch_sh_propagator import (
+                TorchSHBatchPropagator,
+                TorchSHPreflightError,
+            )
+
+            try:
+                return TorchSHBatchPropagator(
+                    self._dyn,
+                    self._mc,
+                    self._sim_cfg.flags,
+                    device="cpu",
+                )
+            except TorchSHPreflightError:
+                raise
+            except Exception as exc:
+                note = (
+                    f"[MC] torch_cpu_sh backend initialization failed ({exc}). "
+                    "Falling back to the CPU full-fidelity backend."
+                )
+                self._backend_note = note
+                warnings.warn(note, RuntimeWarning)
+                self._downgrade_plan_to_cpu(plan, note)
 
         # ----------------------------------------------------------------
         # CPU path (default / fallback)
@@ -698,6 +774,35 @@ class MonteCarloEngine:
             surface_provider=self._surface_provider,
             topo_grid=self._topo_grid,
         )
+
+    @staticmethod
+    def _downgrade_plan_to_cpu(plan: Any, reason: str) -> None:
+        """Rewrite a backend plan to CPU after a GPU propagator failed to build.
+
+        Keeps provenance honest: a run that actually executes on CPU must not be
+        labeled with a GPU backend, device, or integrator (task §13).
+        """
+        from lunaris.core.mc_backend_policy import MCBackend
+
+        plan.final_backend = MCBackend.CPU
+        plan.use_gpu = False
+        plan.actual_backend = "cpu_st_lrps" if plan.gravity_backend == "st_lrps" else "cpu_sh"
+        plan.actual_sh_degree = None
+        plan.actual_device = "cpu"
+        plan.cuda_device_name = None
+        plan.dtype = "float64"
+        plan.integrator = "adaptive (DOP853)"
+        plan.fallback_applied = True
+        plan.fallback_reason = reason
+        # Refresh family/implementation labels for the new actual backend.
+        try:
+            from lunaris.core.backend_capabilities import get_capabilities
+
+            caps = get_capabilities(plan.actual_backend)
+            plan.backend_family = caps.family
+            plan.backend_implementation = caps.implementation
+        except Exception:
+            pass
 
     # ----------------------------------------------------------------
     # Public: run
@@ -777,6 +882,8 @@ class MonteCarloEngine:
         _cls = prop.__class__.__name__
         if _cls == "TorchBatchPropagator":
             backend_name = "GPU-ST-LRPS"
+        elif _cls == "TorchSHBatchPropagator":
+            backend_name = "GPU-TORCH-SH"
         elif _cls.startswith("GPU"):
             backend_name = "GPU"
         else:
@@ -942,9 +1049,14 @@ class MonteCarloEngine:
                 "requested_mc_backend": getattr(_plan, "requested_backend", "auto"),
                 "actual_mc_backend": getattr(_plan, "actual_backend", _plan.final_backend.value),
                 "mc_backend": _plan.final_backend.value,
+                "backend_family": getattr(_plan, "backend_family", ""),
+                "backend_implementation": backend_diag.get("backend_implementation")
+                    or getattr(_plan, "backend_implementation", ""),
                 "requested_use_gpu": bool(mc.use_gpu),
                 "final_use_gpu": _plan.use_gpu,
                 "plan_gravity_backend": _plan.gravity_backend,   # renamed: avoids collision with _st_lrps_meta["gravity_backend"]
+                "requested_device": getattr(_plan, "requested_device", ""),
+                "actual_device": backend_diag.get("device_name") or getattr(_plan, "actual_device", ""),
                 "requested_sh_degree": getattr(_plan, "requested_sh_degree", int(mc.gpu_sh_degree)),
                 "actual_sh_degree": actual_sh_degree,
                 "gpu_sh_max_degree": getattr(_plan, "gpu_sh_max_degree", None),
@@ -957,9 +1069,12 @@ class MonteCarloEngine:
                 "numba_cuda_available": _plan.numba_cuda_available,
                 "cuda_device_name": backend_diag.get("device_name") or getattr(_plan, "cuda_device_name", None),
                 "dtype": backend_diag.get("dtype") or getattr(_plan, "dtype", "float64"),
-                "integrator": _plan.integrator,
+                "integrator": backend_diag.get("integrator") or _plan.integrator,
                 "batch_size": max_batch,
+                "chunk_size": backend_diag.get("chunk_size", max_batch),
+                "fallback_applied": bool(getattr(_plan, "fallback_applied", False)),
                 "fallback_reason": getattr(_plan, "fallback_reason", "") or (_plan.reason if not _plan.use_gpu else ""),
+                "physics_capabilities": _active_physics_capabilities(self._sim_cfg),
             }
         except Exception:
             _plan_meta = {
@@ -1043,6 +1158,9 @@ class MonteCarloEngine:
                 "backend_note": self._backend_note,
                 "output_path": str(mc.output_path_resolved),
                 "backend_diagnostics": backend_diag,
+                # Throughput metrics from the batched propagator (if available)
+                "raw_batch_state_steps_per_second": backend_diag.get("raw_batch_state_steps_per_second"),
+                "active_state_steps_per_second": backend_diag.get("active_state_steps_per_second"),
                 "requested_mc_backend": _plan_meta.get("requested_mc_backend"),
                 "actual_mc_backend": _plan_meta.get("actual_mc_backend"),
                 "requested_sh_degree": _plan_meta.get("requested_sh_degree"),

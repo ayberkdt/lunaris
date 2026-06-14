@@ -44,8 +44,10 @@ from lunaris.ui.core.ui_commons import (
     WINDOW_SETTINGS,
 )
 from lunaris.ui.theme import build_app_stylesheet
+from lunaris.ui.components import PageShell
+from lunaris.ui.theme.tokens import DESIGN_TOKENS
 from lunaris.ui.widgets.log_panel import (
-    ExecutionLogPanel,
+    ExecutionConsoleDock,
     COLLAPSED_HEIGHT as LOG_COLLAPSED_HEIGHT,
     EXPANDED_MIN_HEIGHT as EXPANDED_MIN_LOG_HEIGHT,
 )
@@ -60,6 +62,16 @@ NAV_PAGES = [
     ("Data",        "Data & Files",      "fa6s.database"),
     ("MonteCarlo",  "Monte Carlo",       "fa6s.dice"),
 ]
+
+PAGE_DESCRIPTIONS = {
+    "Orbit": "Define the initial lunar orbit and review its derived geometry.",
+    "Forces": "Select and configure the physical models used by the propagator.",
+    "Propagation": "Set the mission timeline, integrator, and output cadence.",
+    "Output": "Choose result destinations and inspect generated artifacts.",
+    "Telemetry": "Monitor the active run and compare live engineering signals.",
+    "Data": "Locate, validate, and manage mission data sources.",
+    "MonteCarlo": "Configure uncertainty, execute batches, and inspect distributions.",
+}
 
 # Default UI values (Internal SI units convention)
 DEFAULT_UI_STATE = {
@@ -96,6 +108,7 @@ from lunaris.ui.core.ui_commons import normalize_path
 from lunaris.ui.pages.force_models_page import find_best_gravity_file
 from lunaris.ui.core.command_builder import build_command, build_command_preview, build_preflight_snapshot, build_mc_command
 from lunaris.ui.core.preflight_validation import PreFlightWorker
+from lunaris.ui.core.log_stream import LineAssembler
 from lunaris.ui.pages.result_exports_page import OutputPageState, ResultsExportPage
 from lunaris.ui.core.solver_policy import normalize_solver_config_object
 from lunaris.ui.core.session_persistence import (
@@ -218,8 +231,15 @@ class MainWindow(QtWidgets.QMainWindow):
         # profile survives the rename instead of silently disappearing.
         app_data_loc = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.AppDataLocation)
         _base_dir = Path(app_data_loc) if app_data_loc else Path.home()
+        _app_data_override = os.environ.get("LUNARIS_APP_DATA_DIR", "").strip()
         self.app_data_dir = (
-            _base_dir / "LunarisMissionStudio" if app_data_loc else _base_dir / ".lunaris_studio"
+            Path(_app_data_override).expanduser()
+            if _app_data_override
+            else (
+                _base_dir / "LunarisMissionStudio"
+                if app_data_loc
+                else _base_dir / ".lunaris_studio"
+            )
         )
         self.app_data_dir.mkdir(parents=True, exist_ok=True)
 
@@ -228,7 +248,13 @@ class MainWindow(QtWidgets.QMainWindow):
         # Legacy app-data location, kept only for one-time backward-compatible
         # session migration (see _try_load_last_session).
         _legacy_dir = (
-            _base_dir / "STLRPSStudio" if app_data_loc else _base_dir / ".stlrps_studio"
+            self.app_data_dir
+            if _app_data_override
+            else (
+                _base_dir / "STLRPSStudio"
+                if app_data_loc
+                else _base_dir / ".stlrps_studio"
+            )
         )
         self._legacy_session_path = _legacy_dir / "studio_session.json"
         
@@ -261,9 +287,12 @@ class MainWindow(QtWidgets.QMainWindow):
         # Runtime Flags
         self.recent_presets: List[str] = []
         self.last_cmd_preview: str = ""
-        self.is_log_collapsed: bool = False
-        self._stdout_buf = ""
-        self._stderr_buf = ""
+        self.is_log_collapsed: bool = True
+        # Independent partial-line buffers for the two backend streams. Mixing
+        # stdout and stderr fragments would interleave half-written lines, so
+        # each stream owns a dedicated assembler.
+        self._stdout_assembler = LineAssembler()
+        self._stderr_assembler = LineAssembler()
         # Reset impact monitoring for this run
         self._collision_triggered = False
         self._collision_reason = ""
@@ -305,8 +334,13 @@ class MainWindow(QtWidgets.QMainWindow):
         central.setObjectName("centralRoot")
         self.setCentralWidget(central)
         root = QtWidgets.QVBoxLayout(central)
-        root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(12)
+        root.setContentsMargins(
+            DESIGN_TOKENS.layout.shell_margin,
+            DESIGN_TOKENS.layout.shell_margin,
+            DESIGN_TOKENS.layout.shell_margin,
+            DESIGN_TOKENS.layout.shell_margin,
+        )
+        root.setSpacing(DESIGN_TOKENS.layout.shell_gap)
         
         # ---------------------------------------------------------------------
         # A. Header Bar (Title, Status, Actions)
@@ -338,29 +372,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setFormat("")
         self.progress_bar.setValue(0)
         self._progress_is_determinate = False
-        self.progress_bar.setStyleSheet(f"""
-            QProgressBar {{
-                border: 1px solid {THEME['border']};
-                border-radius: 3px;
-                background: {THEME['bg_entry']};
-                text-align: center;
-                color: {THEME['fg_main']};
-                font-size: 9pt;
-            }}
-            QProgressBar::chunk {{
-                background: qlineargradient(
-                    x1: 0, y1: 0, x2: 1, y2: 0,
-                    stop: 0 {THEME['accent']},
-                    stop: 1 {THEME['secondary']}
-                );
-                border-radius: 2px;
-            }}
-        """)
         h_layout.addWidget(self.progress_bar)
         # Extra progress text (t/T + ETA)
         self.lbl_progress = QtWidgets.QLabel("")
         self.lbl_progress.setObjectName("progressText")
-        self.lbl_progress.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
         self.lbl_progress.setMinimumWidth(155)
         h_layout.addWidget(self.lbl_progress)
         h_layout.addSpacing(8)
@@ -387,21 +402,21 @@ class MainWindow(QtWidgets.QMainWindow):
         h_layout.addSpacing(16)
         
         # Action Buttons
-        self.btn_stop = QtWidgets.QPushButton("  Stop")
+        self.btn_stop = QtWidgets.QPushButton("Stop")
         self.btn_stop.setObjectName("dangerBtn")
         self.btn_stop.setCursor(QtCore.Qt.PointingHandCursor)
         self.btn_stop.setIcon(get_icon('fa6s.stop', THEME['fg_main']))
         self.btn_stop.setEnabled(False)
+        self.btn_stop.setVisible(False)
         self.btn_stop.clicked.connect(self._stop_process)
         
-        self.btn_run = QtWidgets.QPushButton("  Run Mission Analysis")
+        self.btn_run = QtWidgets.QPushButton("Run Analysis")
         self.btn_run.setObjectName("primaryBtn")
         self.btn_run.setCursor(QtCore.Qt.PointingHandCursor)
         self.btn_run.setIcon(get_icon('fa6s.play', THEME['fg_main']))
         self.btn_run.clicked.connect(self._start_preflight_validation)
         
         h_layout.addWidget(self.btn_stop)
-        h_layout.addWidget(self.btn_run)
 
         # The header stays quieter when the app is idle. Progress and transient
         # execution state indicators are only shown while something actionable
@@ -417,43 +432,41 @@ class MainWindow(QtWidgets.QMainWindow):
         # ---------------------------------------------------------------------
         status_bar_frame = QtWidgets.QFrame()
         status_bar_frame.setObjectName("missionStatusBar")
-        status_bar_frame.setStyleSheet(f"""
-            QFrame#missionStatusBar {{
-                background: {THEME['bg_card_alt']};
-                border: 1px solid {THEME['border_soft']};
-                border-radius: 8px;
-            }}
-        """)
         sb_layout = QtWidgets.QHBoxLayout(status_bar_frame)
         sb_layout.setContentsMargins(12, 6, 12, 6)
         sb_layout.setSpacing(16)
 
-        _label_style = f"color: {THEME['fg_muted']}; font-size: 9pt;"
-        _value_style = f"color: {THEME['fg_soft']}; font-size: 9pt; font-weight: 600;"
-
-        sb_layout.addWidget(_make_lbl("Gravity:", _label_style))
+        gravity_label = _make_lbl("Gravity:")
+        gravity_label.setObjectName("statusLabel")
+        sb_layout.addWidget(gravity_label)
         self.lbl_gravity_status = QtWidgets.QLabel("SH [100]")
-        self.lbl_gravity_status.setStyleSheet(_value_style)
+        self.lbl_gravity_status.setObjectName("statusValue")
         sb_layout.addWidget(self.lbl_gravity_status)
 
-        sb_layout.addWidget(_make_lbl("|", f"color: {THEME['border']}; font-size: 9pt;"))
+        sb_layout.addWidget(_make_lbl("|"))
 
-        sb_layout.addWidget(_make_lbl("Output:", _label_style))
+        output_label = _make_lbl("Output:")
+        output_label.setObjectName("statusLabel")
+        sb_layout.addWidget(output_label)
         self.lbl_output_status = QtWidgets.QLabel("Not set")
-        self.lbl_output_status.setStyleSheet(_value_style)
+        self.lbl_output_status.setObjectName("statusValue")
         self.lbl_output_status.setMaximumWidth(200)
         sb_layout.addWidget(self.lbl_output_status)
 
-        sb_layout.addWidget(_make_lbl("|", f"color: {THEME['border']}; font-size: 9pt;"))
+        sb_layout.addWidget(_make_lbl("|"))
 
-        sb_layout.addWidget(_make_lbl("Preflight:", _label_style))
+        preflight_label = _make_lbl("Preflight:")
+        preflight_label.setObjectName("statusLabel")
+        sb_layout.addWidget(preflight_label)
         self.lbl_preflight_status = StatusBadge("IDLE", "info")
         self.lbl_preflight_status.setFixedWidth(70)
         sb_layout.addWidget(self.lbl_preflight_status)
 
-        sb_layout.addWidget(_make_lbl("|", f"color: {THEME['border']}; font-size: 9pt;"))
+        sb_layout.addWidget(_make_lbl("|"))
 
-        sb_layout.addWidget(_make_lbl("Run:", _label_style))
+        run_label = _make_lbl("Run:")
+        run_label.setObjectName("statusLabel")
+        sb_layout.addWidget(run_label)
         self.lbl_run_status = StatusBadge("IDLE", "info")
         self.lbl_run_status.setFixedWidth(70)
         sb_layout.addWidget(self.lbl_run_status)
@@ -483,7 +496,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # 1. Navigation Drawer
         self.nav_list = QtWidgets.QListWidget()
         self.nav_list.setObjectName("navDrawer")
-        self.nav_list.setFixedWidth(246)
+        self.nav_list.setFixedWidth(DESIGN_TOKENS.layout.nav_width)
         self.nav_list.setMinimumHeight(0)
         self.nav_list.setSizePolicy(
             QtWidgets.QSizePolicy.Fixed,
@@ -499,7 +512,7 @@ class MainWindow(QtWidgets.QMainWindow):
         
         for i, (key, label, icon_name) in enumerate(NAV_PAGES):
             item = QtWidgets.QListWidgetItem(label)
-            item.setSizeHint(QtCore.QSize(226, 40))
+            item.setSizeHint(QtCore.QSize(DESIGN_TOKENS.layout.nav_width - 20, 40))
             item.setData(QtCore.Qt.UserRole, key)
             item.setIcon(get_icon(icon_name, THEME['fg_muted']))
             self.nav_list.addItem(item)
@@ -526,14 +539,48 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_data = self._build_page_data()
         self.page_mc = self._build_page_mc()
 
-        # Wrap pages in scroll areas (except telemetry and MC, which have their own)
-        self.stack_pages.addWidget(self._wrap_scroll(self.page_orbit))
-        self.stack_pages.addWidget(self._wrap_scroll(self.page_forces))
-        self.stack_pages.addWidget(self._wrap_scroll(self.page_propagation))
-        self.stack_pages.addWidget(self._wrap_scroll(self.page_output))
-        self.stack_pages.addWidget(self.page_telemetry)  # Telemetry doesn't need scroll
-        self.stack_pages.addWidget(self._wrap_scroll(self.page_data))
-        self.stack_pages.addWidget(self.page_mc)         # MC has internal scrolls
+        self.page_shells = {
+            "Orbit": PageShell(
+                "Orbit Setup",
+                PAGE_DESCRIPTIONS["Orbit"],
+                content=self.page_orbit,
+                action=self.btn_run,
+            ),
+            "Forces": PageShell(
+                "Force Models",
+                PAGE_DESCRIPTIONS["Forces"],
+                content=self.page_forces,
+            ),
+            "Propagation": PageShell(
+                "Propagation",
+                PAGE_DESCRIPTIONS["Propagation"],
+                content=self.page_propagation,
+            ),
+            "Output": PageShell(
+                "Results & Export",
+                PAGE_DESCRIPTIONS["Output"],
+                content=self.page_output,
+            ),
+            "Telemetry": PageShell(
+                "Live Telemetry",
+                PAGE_DESCRIPTIONS["Telemetry"],
+                content=self.page_telemetry,
+                scrollable=False,
+            ),
+            "Data": PageShell(
+                "Data & Files",
+                PAGE_DESCRIPTIONS["Data"],
+                content=self.page_data,
+            ),
+            "MonteCarlo": PageShell(
+                "Monte Carlo",
+                PAGE_DESCRIPTIONS["MonteCarlo"],
+                content=self.page_mc,
+                scrollable=False,
+            ),
+        }
+        for key, _, _ in NAV_PAGES:
+            self.stack_pages.addWidget(self.page_shells[key])
         
         content_layout.addWidget(self.stack_pages, 1)
         self.main_splitter.addWidget(content_container)
@@ -542,7 +589,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # C. Log Panel
         # ---------------------------------------------------------------------
         self.log_panel = self._build_log_panel()
-        self.log_panel.setMinimumHeight(EXPANDED_MIN_LOG_HEIGHT)
+        self.log_panel.setMinimumHeight(LOG_COLLAPSED_HEIGHT)
         self.log_panel.setSizePolicy(
             QtWidgets.QSizePolicy.Preferred,
             QtWidgets.QSizePolicy.Expanding,
@@ -553,8 +600,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter.setHandleWidth(8)   # wide enough to grab reliably
         self.main_splitter.setCollapsible(0, False)
         self.main_splitter.setCollapsible(1, False)  # prevent log from disappearing
-        self.main_splitter.setStretchFactor(0, 68)
-        self.main_splitter.setStretchFactor(1, 32)
+        self.main_splitter.setStretchFactor(0, 88)
+        self.main_splitter.setStretchFactor(1, 12)
+        self.log_panel.set_collapsed(True)
         
         # Build Menu & Status
         self._build_menubar()
@@ -628,7 +676,7 @@ class MainWindow(QtWidgets.QMainWindow):
         m_view = mb.addMenu("&View")
         
         a_log = m_view.addAction("Toggle Log Panel")
-        a_log.setShortcut("Ctrl+L")
+        a_log.setShortcuts([QtGui.QKeySequence("Ctrl+`"), QtGui.QKeySequence("Ctrl+L")])
         a_log.triggered.connect(self._toggle_log_collapsed)
         
         a_clear = m_view.addAction("Clear Log")
@@ -659,6 +707,8 @@ class MainWindow(QtWidgets.QMainWindow):
             pal.setColor(QtGui.QPalette.Button, QtGui.QColor(THEME['bg_card']))
             pal.setColor(QtGui.QPalette.ButtonText, QtGui.QColor(THEME['fg_main']))
             pal.setColor(QtGui.QPalette.Highlight, QtGui.QColor(THEME['accent']))
+            pal.setColor(QtGui.QPalette.HighlightedText, QtGui.QColor(THEME['fg_inverse']))
+            pal.setColor(QtGui.QPalette.Link, QtGui.QColor(THEME['fg_link']))
             app.setPalette(pal)
         
         # 2. Build the global QSS from the Lunar Graphite palette.
@@ -937,7 +987,7 @@ class MainWindow(QtWidgets.QMainWindow):
     
     def _build_log_panel(self) -> QtWidgets.QWidget:
         """Construct the buffered Execution Console (see widgets.log_panel)."""
-        panel = ExecutionLogPanel(output_dir_provider=self._current_output_dir)
+        panel = ExecutionConsoleDock(output_dir_provider=self._current_output_dir)
         panel.setMinimumHeight(EXPANDED_MIN_LOG_HEIGHT)
         panel.collapsed_changed.connect(self._on_log_collapsed_changed)
         return panel
@@ -977,16 +1027,28 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter.setSizes([top_size, bottom_size])
 
     def _on_log_collapsed_changed(self, collapsed: bool) -> None:
-        """React to the console collapse toggle by resizing the splitter."""
+        """React to the console collapse toggle by resizing the splitter.
+
+        The last genuinely-expanded geometry is remembered so expanding restores
+        it; a window resize while collapsed cannot clobber that memory because we
+        only capture sizes that look expanded. Expanding always lands on a usable
+        height, falling back to a sensible default when no memory exists.
+        """
         self.is_log_collapsed = bool(collapsed)
         if collapsed:
-            self._log_expanded_sizes = self.main_splitter.sizes()
+            sizes = self.main_splitter.sizes()
+            # Only remember a genuinely expanded layout (ignore not-yet-laid-out
+            # or already-collapsed geometry), so the saved height survives resizes.
+            if len(sizes) == 2 and sizes[1] > LOG_COLLAPSED_HEIGHT + 4:
+                self._log_expanded_sizes = sizes
             self.log_panel.setMinimumHeight(LOG_COLLAPSED_HEIGHT)
-            self.main_splitter.setSizes([10_000, LOG_COLLAPSED_HEIGHT])
+            # A large top value is clamped by Qt to the available space, leaving
+            # the console at exactly the collapsed header height (never zero).
+            self.main_splitter.setSizes([max(1, self.height()), LOG_COLLAPSED_HEIGHT])
         else:
             self.log_panel.setMinimumHeight(EXPANDED_MIN_LOG_HEIGHT)
             sizes = getattr(self, "_log_expanded_sizes", None)
-            if sizes and len(sizes) == 2 and sizes[1] > 60:
+            if sizes and len(sizes) == 2 and sizes[1] >= EXPANDED_MIN_LOG_HEIGHT:
                 self.main_splitter.setSizes(sizes)
             else:
                 self._apply_default_log_splitter_sizes()
@@ -1199,6 +1261,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if item:
             key = item.data(QtCore.Qt.UserRole)
             self._switch_page(key)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        """Keep shell chrome compact without changing the navigation model."""
+        super().resizeEvent(event)
+        if hasattr(self, "nav_list"):
+            nav_width = (
+                DESIGN_TOKENS.layout.nav_compact_width
+                if event.size().width() < 1160
+                else DESIGN_TOKENS.layout.nav_width
+            )
+            self.nav_list.setFixedWidth(nav_width)
     
     def _switch_page(self, key: str):
         """Switch between main pages."""
@@ -1323,9 +1396,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._log_message(f"[Error] Failed to build command: {e}", severity="error")
             return
 
-        # Prep UI
+        # Prep UI. A new run inserts a labeled separator instead of wiping the
+        # console, so the pre-flight output and prior context stay visible. The
+        # user can still clear explicitly (toolbar / Ctrl+K).
         self._set_run_state("running")
-        self.log_panel.clear()
+        self.log_panel.append_run_separator()
 
         # Telemetry reset (TelemetryPage owns the plot)
         try:
@@ -1334,8 +1409,8 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
         self.progress_bar.setValue(0)
-        self._stdout_buf = ""
-        self._stderr_buf = ""
+        self._stdout_assembler.clear()
+        self._stderr_assembler.clear()
         self._run_wall_t0 = time.time()
         self._last_telem_t_s = None
         self._progress_is_determinate = False
@@ -1377,8 +1452,8 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             self._log_message(f"[Warning] Could not prepare output dir: {e}", severity="warning")
 
-        # Start process
-        self._log_separator()
+        # Start process. The run separator above already provides the visual
+        # break, so we go straight to the launch line.
         self._log_message(f"[System] Launching mission analysis...", severity="system")
 
         self.process = QtCore.QProcess(self)
@@ -1535,7 +1610,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 pass
 
     def _handle_stdout(self):
-        """Handle stdout from process."""
+        """Assemble complete stdout lines and route them (telemetry or log)."""
         if self.process is None:
             return
 
@@ -1543,87 +1618,105 @@ class MainWindow(QtWidgets.QMainWindow):
         if not chunk:
             return
 
-        self._stdout_buf += chunk
+        for line in self._stdout_assembler.push(chunk):
+            self._consume_stdout_line(line)
 
-        # Process complete lines
-        while "\n" in self._stdout_buf:
-            line, self._stdout_buf = self._stdout_buf.split("\n", 1)
-            clean_line = line.rstrip("\r").strip()
-            if not clean_line:
-                continue
+    def _consume_stdout_line(self, line: str) -> None:
+        """Route one complete stdout line to telemetry parsing or the log.
 
-            # Check for telemetry JSON
-            if clean_line.startswith("{") and ("\"t\"" in clean_line or "\"t_s\"" in clean_line):
-                try:
-                    telem = json.loads(clean_line)
-                except json.JSONDecodeError:
-                    try:
-                        telem = ast.literal_eval(clean_line)
-                    except (ValueError, SyntaxError):
-                        telem = None
+        A line that *looks* like a telemetry payload is parsed in isolation: any
+        malformed payload is surfaced as a single warning rather than being
+        allowed to break the log stream or crash the UI.
+        """
+        clean_line = line.strip()
+        if not clean_line:
+            return
 
-                if isinstance(telem, dict):
-                    # Pass to enhanced telemetry system (TelemetryPage owns the plot)
-                    try:
-                        self.page_telemetry.telemetry_multiplot.add_datapoint(telem)
-                    except Exception:
-                        pass
+        if clean_line.startswith("{") and ('"t"' in clean_line or '"t_s"' in clean_line):
+            try:
+                if self._handle_telemetry_line(clean_line):
+                    return
+            except Exception:
+                self._log_message(clean_line, severity="warning")
+                return
 
-                    # impact monitoring
-                    self._check_collision(telem)
+        self._log_message(clean_line)
 
-                    # Update progress based on time
-                    t_s = None
-                    for t_key in ["t_s", "t_sec", "t"]:
-                        if t_key in telem:
-                            t_s = float(telem[t_key])
-                            # Handle unit conversion if 't' is used without explicit unit
-                            if t_key == "t":
-                                unit = str(telem.get("t_unit", "")).strip().lower()
-                                if unit.startswith("h"):
-                                    t_s *= 3600.0
-                                elif unit.startswith("d"):
-                                    t_s *= 86400.0
-                            break
+    def _handle_telemetry_line(self, clean_line: str) -> bool:
+        """Parse and apply a telemetry line. Returns True if it was telemetry.
 
-                    if t_s is not None:
-                        self._last_telem_t_s = float(t_s)
+        Returning False means the line only resembled telemetry but did not
+        parse into a dict, so the caller should log it as an ordinary message.
+        """
+        try:
+            telem = json.loads(clean_line)
+        except json.JSONDecodeError:
+            try:
+                telem = ast.literal_eval(clean_line)
+            except (ValueError, SyntaxError):
+                telem = None
 
-                    if t_s is not None and self.sim_state.total_duration > 0:
-                        total = float(self.sim_state.total_duration)
-                        frac = 0.0 if total <= 0 else (float(t_s) / total)
-                        frac = max(0.0, min(1.0, frac))
+        if not isinstance(telem, dict):
+            return False
 
-                        # determinate range is always 0..1000 for stability
-                        if not self._progress_is_determinate:
-                            self.progress_bar.setRange(0, 1000)
-                            self.progress_bar.setTextVisible(True)
-                            self._progress_is_determinate = True
+        # Pass to the telemetry plot (TelemetryPage owns the plot).
+        try:
+            self.page_telemetry.telemetry_multiplot.add_datapoint(telem)
+        except Exception:
+            pass
 
-                        self.progress_bar.setValue(int(frac * 1000.0))
-                        self.progress_bar.setFormat(f"{(frac*100.0):4.1f}%")
+        # impact monitoring
+        self._check_collision(telem)
 
-                        # Extra text: t/T and ETA
-                        if hasattr(self, "lbl_progress"):
-                            t_days = float(t_s) / 86400.0
-                            T_days = total / 86400.0
-                            eta_txt = ""
-                            if self._run_wall_t0 is not None and frac > 1e-6:
-                                elapsed = max(0.0, time.time() - float(self._run_wall_t0))
-                                eta_s = elapsed * (1.0 - frac) / max(frac, 1e-6)
-                                if eta_s >= 3600:
-                                    eta_txt = f" | ETA {eta_s/3600.0:.1f} h"
-                                elif eta_s >= 60:
-                                    eta_txt = f" | ETA {eta_s/60.0:.1f} min"
-                                else:
-                                    eta_txt = f" | ETA {eta_s:.0f} s"
-                            self.lbl_progress.setText(f"{t_days:.2f}/{T_days:.2f} d{eta_txt}")
+        # Update progress based on time
+        t_s = None
+        for t_key in ["t_s", "t_sec", "t"]:
+            if t_key in telem:
+                t_s = float(telem[t_key])
+                # Handle unit conversion if 't' is used without explicit unit
+                if t_key == "t":
+                    unit = str(telem.get("t_unit", "")).strip().lower()
+                    if unit.startswith("h"):
+                        t_s *= 3600.0
+                    elif unit.startswith("d"):
+                        t_s *= 86400.0
+                break
 
-                    # Skip logging telemetry JSON to prevent log spam
-                    continue
+        if t_s is not None:
+            self._last_telem_t_s = float(t_s)
 
-            # Regular log message
-            self._log_message(clean_line)
+        if t_s is not None and self.sim_state.total_duration > 0:
+            total = float(self.sim_state.total_duration)
+            frac = 0.0 if total <= 0 else (float(t_s) / total)
+            frac = max(0.0, min(1.0, frac))
+
+            # determinate range is always 0..1000 for stability
+            if not self._progress_is_determinate:
+                self.progress_bar.setRange(0, 1000)
+                self.progress_bar.setTextVisible(True)
+                self._progress_is_determinate = True
+
+            self.progress_bar.setValue(int(frac * 1000.0))
+            self.progress_bar.setFormat(f"{(frac*100.0):4.1f}%")
+
+            # Extra text: t/T and ETA
+            if hasattr(self, "lbl_progress"):
+                t_days = float(t_s) / 86400.0
+                T_days = total / 86400.0
+                eta_txt = ""
+                if self._run_wall_t0 is not None and frac > 1e-6:
+                    elapsed = max(0.0, time.time() - float(self._run_wall_t0))
+                    eta_s = elapsed * (1.0 - frac) / max(frac, 1e-6)
+                    if eta_s >= 3600:
+                        eta_txt = f" | ETA {eta_s/3600.0:.1f} h"
+                    elif eta_s >= 60:
+                        eta_txt = f" | ETA {eta_s/60.0:.1f} min"
+                    else:
+                        eta_txt = f" | ETA {eta_s:.0f} s"
+                self.lbl_progress.setText(f"{t_days:.2f}/{T_days:.2f} d{eta_txt}")
+
+        # Telemetry payloads are not echoed to the log to prevent spam.
+        return True
 
     @staticmethod
     def _classify_stderr_line(line: str) -> str:
@@ -1638,32 +1731,33 @@ class MainWindow(QtWidgets.QMainWindow):
         return "warning" if is_warning else "error"
 
     def _handle_stderr(self):
-        """Handle stderr with per-line buffering and warning/error classification."""
+        """Assemble complete stderr lines with warning/error classification.
+
+        Per-stream buffering means a chunk boundary never splits a message
+        mid-line during high-volume output; only complete lines are logged.
+        """
         if self.process is None:
             return
         data = self.process.readAllStandardError().data().decode('utf-8', errors='ignore')
         if not data:
             return
 
-        # Buffer partial lines until a newline so chunk boundaries never split a
-        # message mid-line during high-volume output.
-        self._stderr_buf += data
-        while "\n" in self._stderr_buf:
-            line, self._stderr_buf = self._stderr_buf.split("\n", 1)
-            line = line.rstrip("\r")
-            if not line.strip():
-                continue
-            self._log_message(line, severity=self._classify_stderr_line(line))
+        for line in self._stderr_assembler.push(data):
+            if line.strip():
+                self._log_message(line, severity=self._classify_stderr_line(line))
 
     def _flush_stream_buffers(self):
-        """Emit any trailing partial stdout/stderr lines left without a newline."""
-        tail_err = (self._stderr_buf or "").strip()
-        self._stderr_buf = ""
-        if tail_err:
-            self._log_message(tail_err, severity=self._classify_stderr_line(tail_err))
-        # A trailing stdout fragment is usually a partial telemetry payload; drop
-        # it rather than logging noise, but reset the buffer for the next run.
-        self._stdout_buf = ""
+        """Flush trailing partial stdout/stderr lines left without a newline.
+
+        Called when the process exits so the final unterminated line of each
+        stream is not lost. The stdout tail still passes through telemetry
+        parsing in case the run ended mid-payload.
+        """
+        for line in self._stderr_assembler.flush():
+            if line.strip():
+                self._log_message(line, severity=self._classify_stderr_line(line))
+        for line in self._stdout_assembler.flush():
+            self._consume_stdout_line(line)
 
     def _on_process_finished(self, exit_code, exit_status):
         """
@@ -1711,6 +1805,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Buttons
         self.btn_run.setEnabled(not is_running)
         self.btn_stop.setEnabled(is_running)
+        self.btn_stop.setVisible(is_running)
         
         self._update_run_visuals(state)
     

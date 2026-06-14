@@ -221,8 +221,8 @@ mc_cfg = MonteCarloConfig(
     n_samples=500,
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
     use_gpu=True,
-    mc_backend="auto",   # auto, cpu_sh, gpu_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
-    gpu_sh_degree=10,    # requested SH degree; true GPU classic-SH currently supports <=24
+    mc_backend="auto",   # auto, cpu_sh, numba_cuda_sh (alias gpu_sh), torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
+    gpu_sh_degree=10,    # requested SH degree; numba_cuda_sh supports <=24, torch_cuda_sh is high-degree
     output_format="hdf5",
     output_path="outputs/monte_carlo/run.h5",
 )
@@ -233,20 +233,33 @@ figs = plot_mc_report(result, stats, output_path="outputs/monte_carlo/report.pdf
 
 Reload a saved run with `from lunaris.core.monte_carlo_engine import load_mc_result`.
 
-### GPU kernel constraints
-- The current classic-SH CUDA kernel workspace uses compile-time fixed `(26 x 26)`
-  per-thread arrays, so the only true GPU SH tier is degree 24. Higher requested
-  degrees are not clipped; `mc_backend="auto"` and `mc_backend="gpu_sh"` route
-  them to CPU SH and record `requested_sh_degree`, `actual_sh_degree`, and
-  `fallback_reason` metadata.
-- Use `mc_backend="cpu_sh"` for high-fidelity CPU truth, `mc_backend="gpu_sh"` for
-  the degree-24 CUDA SH tier, and `mc_backend="gpu_st_lrps_potential"` or
-  `mc_backend="gpu_st_lrps_direct"` for PyTorch CUDA ST-LRPS propagation.
-- The GPU paths do not support albedo, thermal IR, or solid tides; use the CPU
-  path for those models.
-- CUDA SH requires `numba` plus a CUDA-capable GPU; ST-LRPS GPU requires PyTorch
-  CUDA. The engine falls back to CPU with a warning and metadata when the
-  requested GPU path is unavailable.
+### GPU classic-SH backends (Numba vs. Torch)
+- Two distinct classic-SH GPU runtimes exist and are kept separate everywhere:
+  - **`numba_cuda_sh`** (alias `gpu_sh`) — the Numba CUDA RK4 kernel. Its workspace
+    uses compile-time fixed `(26 x 26)` per-thread arrays, so its degree ceiling is
+    **24**. That ceiling is a kernel-workspace limit, **not** a physical one. Best
+    for low-degree, high-throughput screening.
+  - **`torch_cuda_sh`** — the PyTorch CUDA RK4 path
+    (`lunaris.core.torch_sh_propagator.TorchSHBatchPropagator`) using the canonical
+    `TorchSHGravityEvaluator`. Arbitrary degree, bounded only by the loaded
+    coefficient file, VRAM, batch size, dtype, and step. This first runtime form is
+    **gravity-only** (lunar SH + per-RK-stage Moon inertial↔fixed frame transform).
+- **`degree > 24` with PyTorch CUDA available now uses `torch_cuda_sh`** (when the
+  requested physics is supported), instead of falling back to CPU. The requested
+  degree is never clipped — `requested_sh_degree` and `actual_sh_degree` are
+  recorded separately, and a successful SH100 run reports `actual_sh_degree=100`.
+- Backend selection is a single source of truth: `select_classic_sh_backend()`
+  (in `mc_backend_policy`) decides between `numba_cuda_sh` / `torch_cuda_sh` /
+  `cpu_sh`; `resolve_mc_backend_policy()` consumes that decision directly.
+- An explicit `numba_cuda_sh` request above degree 24 obeys `gpu_sh_fallback_policy`:
+  `compatible_gpu` (try `torch_cuda_sh`, else CPU), `cpu`, or `error`.
+- The GPU paths do not support albedo, thermal IR, or solid tides; `torch_cuda_sh`
+  additionally does not yet model third-body, Earth J2, SRP, or relativity (those
+  force an explicit, recorded fallback). Use the CPU path for those models.
+- `numba_cuda_sh` requires `numba` plus a CUDA GPU; `torch_cuda_sh` and the ST-LRPS
+  GPU paths require PyTorch CUDA. The engine falls back to CPU with a warning and
+  metadata when the requested GPU path is unavailable — and a CPU run is never
+  labeled with a GPU backend/device in provenance.
 
 ## Performance notes
 

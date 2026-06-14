@@ -367,25 +367,35 @@ class LauncherWindow(QtWidgets.QWidget):
 
     def _apply_theme(self) -> None:
         """Instance-level stylesheet so workspace windows are never restyled."""
+        glass_bg = with_alpha(THEME["bg_shell"], 0.85)
+        overlay_bg = with_alpha(THEME["bg_log"], 0.55)
+        opening_bg = with_alpha(THEME["bg_shell"], 0.94)
+        quiet_border = with_alpha(THEME["border_strong"], 0.16)
+        quiet_border_hover = with_alpha(THEME["border_strong"], 0.30)
+        divider_bg = with_alpha(THEME["border_strong"], 0.14)
+        card_bg = with_alpha(THEME["bg_card_alt"], 0.72)
+        card_hover_bg = with_alpha(THEME["bg_hover"], 0.86)
+        scene_bg = with_alpha(THEME["bg_shell"], 0.78)
+        scene_border = with_alpha(THEME["border_strong"], 0.18)
         self.setStyleSheet(
             f"""
             LauncherWindow {{
-                background: #000000;
+                background: {THEME['bg_log']};
             }}
             QWidget {{
                 color: {THEME['fg_main']};
                 font-family: "Segoe UI", "Inter", "Noto Sans", sans-serif;
             }}
             QFrame#glassPanel {{
-                background: rgba(7, 11, 20, 0.85);
-                border: 1px solid rgba(120, 150, 190, 0.16);
+                background: {glass_bg};
+                border: 1px solid {quiet_border};
                 border-radius: 22px;
             }}
             QFrame#openingOverlay {{
-                background: rgba(3, 6, 12, 0.55);
+                background: {overlay_bg};
             }}
             QLabel#openingCard {{
-                background: rgba(7, 11, 20, 0.94);
+                background: {opening_bg};
                 color: {THEME['fg_soft']};
                 border: 1px solid {with_alpha(THEME['accent'], 0.35)};
                 border-radius: 14px;
@@ -406,7 +416,7 @@ class LauncherWindow(QtWidgets.QWidget):
                 margin: 14px 4px 14px 0;
             }}
             QScrollArea#panelScroll QScrollBar::handle:vertical {{
-                background: rgba(120, 150, 190, 0.30);
+                background: {quiet_border_hover};
                 border-radius: 3px;
                 min-height: 28px;
             }}
@@ -439,16 +449,16 @@ class LauncherWindow(QtWidgets.QWidget):
             }}
             QFrame#headerDivider {{
                 border: none;
-                background: rgba(120, 150, 190, 0.14);
+                background: {divider_bg};
             }}
             QFrame#launchCard {{
-                background: rgba(15, 23, 39, 0.72);
+                background: {card_bg};
                 border: 1px solid {THEME['border']};
                 border-radius: 14px;
             }}
             QFrame#launchCard:hover {{
                 border: 1px solid {THEME['accent']};
-                background: rgba(20, 31, 52, 0.86);
+                background: {card_hover_bg};
             }}
             QFrame#launchCard[accent="{THEME['secondary']}"]:hover {{
                 border: 1px solid {THEME['secondary']};
@@ -492,8 +502,8 @@ class LauncherWindow(QtWidgets.QWidget):
                 color: {THEME['accent']};
             }}
             QFrame#sceneControls {{
-                background: rgba(7, 11, 20, 0.78);
-                border: 1px solid rgba(120, 150, 190, 0.18);
+                background: {scene_bg};
+                border: 1px solid {scene_border};
                 border-radius: 13px;
             }}
             QFrame#toggleSep {{
@@ -528,7 +538,7 @@ class LauncherWindow(QtWidgets.QWidget):
             }}
             QSlider#reliefSlider::groove:horizontal {{
                 height: 3px;
-                background: rgba(120, 150, 190, 0.30);
+                background: {quiet_border_hover};
                 border-radius: 2px;
             }}
             QSlider#reliefSlider::sub-page:horizontal {{

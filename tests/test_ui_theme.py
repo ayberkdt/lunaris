@@ -45,14 +45,19 @@ UI_DIR = REPO_ROOT / "src" / "lunaris" / "ui"
 # ---------------------------------------------------------------------------
 
 THEME_REQUIRED_KEYS = [
-    "bg_space", "bg_shell", "bg_card", "bg_card_alt", "bg_entry", "bg_log",
-    "fg_main", "fg_soft", "fg_muted",
+    "bg_space", "bg_shell", "bg_card", "bg_card_alt", "bg_inset", "bg_entry", "bg_log",
+    "fg_main", "fg_soft", "fg_muted", "fg_disabled", "fg_inverse",
     "accent", "accent_hov", "accent_dim",
     "secondary", "secondary_hov", "secondary_dim",
-    "success", "warning", "error", "info",
-    "border", "border_soft",
+    "success", "warning", "error", "critical", "info", "inactive",
+    "border", "border_soft", "border_strong",
     "primary", "primary_hover", "selected_bg", "panel_shadow",
     "plot_bg", "grid_color", "text_disabled", "accent_deep",
+    "surface_app", "surface_shell", "surface_card", "surface_elevated",
+    "surface_inset", "surface_input", "surface_terminal", "surface_selected",
+    "surface_hover", "surface_overlay",
+    "text_primary", "text_secondary", "text_muted", "text_inverse", "text_link",
+    "border_quiet", "border_standard", "border_focus", "border_selected", "divider",
 ]
 
 ORBIT_THEME_REQUIRED_KEYS = [
@@ -93,8 +98,8 @@ def test_theme_primary_aliases_track_accent() -> None:
 
 def test_theme_accent_is_lunar_graphite_blue() -> None:
     # The Lunar Graphite primary accent is orbital blue, not the old ion-cyan.
-    assert THEME["accent"].lower() == "#6aa9ff"
-    assert THEME["secondary"].lower() == "#6ee7c8"
+    assert THEME["accent"].lower() == "#4f8cff"
+    assert THEME["secondary"].lower() == "#22d3b6"
 
 
 def test_theme_has_no_legacy_neon_or_gold() -> None:
@@ -185,7 +190,7 @@ def test_build_app_stylesheet_has_no_legacy_neon() -> None:
     assert "#35d0ff" not in qss and "#8b7cff" not in qss
     assert "53,208,255" not in qss and "139,124,255" not in qss
     # The new orbital-blue accent should be present (as hex and/or rgb triple).
-    assert "#6aa9ff" in qss or "106,169,255" in qss
+    assert "#4f8cff" in qss or "79,140,255" in qss
 
 
 def test_build_app_stylesheet_reserves_gradients_for_primary_action() -> None:

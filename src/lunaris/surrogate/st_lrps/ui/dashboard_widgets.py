@@ -23,6 +23,9 @@ from typing import Any, Dict, List, Optional
 
 import sys
 
+from lunaris.ui.core.ui_commons import with_alpha
+from lunaris.ui.theme.tokens import DESIGN_TOKENS
+
 _USE_PYSIDE = "PyQt6" not in sys.modules
 
 try:
@@ -36,6 +39,7 @@ try:
         from PySide6.QtGui import QColor, QFont
         from PySide6.QtWidgets import (
             QFrame,
+            QGridLayout,
             QHBoxLayout,
             QHeaderView,
             QLabel,
@@ -56,6 +60,7 @@ try:
         from PyQt6.QtGui import QColor, QFont
         from PyQt6.QtWidgets import (
             QFrame,
+            QGridLayout,
             QHBoxLayout,
             QHeaderView,
             QLabel,
@@ -73,38 +78,46 @@ except ImportError:
 if _HAS_QT:
     from lunaris.surrogate.st_lrps.ui.training_metrics import TrainingRecord
 
+    def _qt_color_alpha(color: str, alpha: int) -> QColor:
+        value = QColor(color)
+        value.setAlpha(alpha)
+        return value
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Design tokens (consistent with studio.py's apply_premium_dark_theme)
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _alpha(color: str, alpha: float) -> str:
+    return with_alpha(color, alpha)
+
+
+_C = DESIGN_TOKENS.colors
 _COLORS = {
-    "app_bg": "#070B14",
-    "panel_bg": "#101A2B",
-    "panel_bg_alt": "#0A1020",
-    "input_bg": "#0D1626",
-    "border": "#26364F",
-    "border_soft": "#1A2940",
-    "text_main": "#E6EDF7",
-    "text_secondary": "#BFD2EA",
-    "text_muted": "#7F91AC",
-    "cyan": "#35D0FF",
-    "violet": "#8B7CFF",
-    "purple": "#7c5cff",
-    "success": "#2DD4BF",
-    "warning": "#F6C177",
-    "danger": "#FF6B7A",
-    "info_bg": "rgba(53, 208, 255, 0.08)",
-    "success_bg": "rgba(45, 212, 191, 0.08)",
-    "warning_bg": "rgba(246, 193, 119, 0.08)",
-    "danger_bg": "rgba(255, 107, 122, 0.08)",
+    "app_bg": _C.bg_space,
+    "panel_bg": _C.bg_card,
+    "panel_bg_alt": _C.bg_shell,
+    "input_bg": _C.bg_entry,
+    "border": _C.border,
+    "border_soft": _C.border_soft,
+    "text_main": _C.fg_main,
+    "text_secondary": _C.fg_soft,
+    "text_muted": _C.fg_muted,
+    "accent": _C.accent,
+    "success": _C.success,
+    "warning": _C.warning,
+    "danger": _C.error,
+    "info_bg": _alpha(_C.accent, 0.08),
+    "success_bg": _alpha(_C.success, 0.08),
+    "warning_bg": _alpha(_C.warning, 0.08),
+    "danger_bg": _alpha(_C.error, 0.08),
 }
 
 _STATUS_STYLES = {
-    "IDLE": {"color": _COLORS["text_muted"], "bg": "rgba(127, 145, 172, 0.12)", "border": "rgba(127, 145, 172, 0.25)"},
-    "TRAINING": {"color": _COLORS["cyan"], "bg": "rgba(53, 208, 255, 0.12)", "border": "rgba(53, 208, 255, 0.35)"},
-    "COMPLETED": {"color": _COLORS["success"], "bg": "rgba(45, 212, 191, 0.12)", "border": "rgba(45, 212, 191, 0.35)"},
-    "FAILED": {"color": _COLORS["danger"], "bg": "rgba(255, 107, 122, 0.14)", "border": "rgba(255, 107, 122, 0.40)"},
-    "INTERRUPTED": {"color": _COLORS["warning"], "bg": "rgba(246, 193, 119, 0.12)", "border": "rgba(246, 193, 119, 0.35)"},
+    "IDLE": {"color": _COLORS["text_muted"], "bg": _alpha(_C.fg_muted, 0.12), "border": _alpha(_C.fg_muted, 0.25)},
+    "TRAINING": {"color": _COLORS["accent"], "bg": _alpha(_C.accent, 0.12), "border": _alpha(_C.accent, 0.35)},
+    "COMPLETED": {"color": _COLORS["success"], "bg": _alpha(_C.success, 0.12), "border": _alpha(_C.success, 0.35)},
+    "FAILED": {"color": _COLORS["danger"], "bg": _alpha(_C.error, 0.14), "border": _alpha(_C.error, 0.40)},
+    "INTERRUPTED": {"color": _COLORS["warning"], "bg": _alpha(_C.warning, 0.12), "border": _alpha(_C.warning, 0.35)},
 }
 
 
@@ -119,25 +132,24 @@ if _HAS_QT:
 
         def __init__(self, initial: str = "IDLE", parent: Optional[QWidget] = None):
             super().__init__(parent)
+            self.setObjectName("statusBadge")
             self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.setAccessibleName("Training status")
             self.set_status(initial)
 
         def set_status(self, status: str) -> None:
             status = status.upper()
-            style = _STATUS_STYLES.get(status, _STATUS_STYLES["IDLE"])
             self.setText(status)
-            self.setStyleSheet(
-                f"QLabel {{"
-                f"  color: {style['color']};"
-                f"  background: {style['bg']};"
-                f"  border: 1px solid {style['border']};"
-                f"  border-radius: 9px;"
-                f"  padding: 3px 12px;"
-                f"  font-size: 11px;"
-                f"  font-weight: 700;"
-                f"  letter-spacing: 1.2px;"
-                f"}}"
-            )
+            kind_map = {
+                "IDLE": "idle",
+                "TRAINING": "running",
+                "COMPLETED": "completed",
+                "FAILED": "failed",
+                "INTERRUPTED": "paused",
+            }
+            self.setProperty("kind", kind_map.get(status, "idle"))
+            self.style().unpolish(self)
+            self.style().polish(self)
 
     # ═══════════════════════════════════════════════════════════════════════
     # HeaderMetric
@@ -153,23 +165,17 @@ if _HAS_QT:
             parent: Optional[QWidget] = None,
         ):
             super().__init__(parent)
+            self.setObjectName("headerMetric")
             layout = QHBoxLayout()
             layout.setContentsMargins(9, 3, 9, 3)
             layout.setSpacing(6)
 
             self._label = QLabel(label.upper())
-            self._label.setStyleSheet(
-                f"color: {_COLORS['text_muted']}; font-size: 9px; font-weight: 700;"
-                " letter-spacing: 0.8px; background: transparent; border: none;"
-            )
+            self._label.setObjectName("headerMetricLabel")
             self._label.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
             self._value = QLabel(initial_value)
-            self._value.setStyleSheet(
-                f"color: {_COLORS['text_main']}; font-size: 11px; font-weight: 600;"
-                " font-family: 'Segoe UI', Arial, sans-serif;"
-                " background: transparent; border: none;"
-            )
+            self._value.setObjectName("headerMetricValue")
             self._value.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
             layout.addWidget(self._label)
@@ -177,14 +183,6 @@ if _HAS_QT:
             self.setLayout(layout)
             self.setMaximumHeight(28)
             self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-            self.setStyleSheet(
-                "QWidget {"
-                "  background: rgba(255, 255, 255, 0.035);"
-                "  border: 1px solid rgba(185, 194, 221, 0.10);"
-                "  border-radius: 7px;"
-                "}"
-                "QLabel { background: transparent; border: none; }"
-            )
 
         def set_value(self, value: str) -> None:
             self._value.setText(value)
@@ -208,14 +206,7 @@ if _HAS_QT:
         def __init__(self, parent: Optional[QWidget] = None):
             super().__init__(parent)
             self.setObjectName("experimentHeader")
-            # Restrained dark panel — no large decorative gradients.
-            self.setStyleSheet(
-                "QFrame#experimentHeader {"
-                "  background: #0f1726;"
-                "  border: 1px solid rgba(185, 194, 221, 0.12);"
-                "  border-radius: 8px;"
-                "}"
-            )
+            self.setAccessibleName("ST-LRPS workspace header")
             self.setMinimumHeight(56)
             self.setMaximumHeight(64)
 
@@ -233,10 +224,7 @@ if _HAS_QT:
             title_row.setSpacing(10)
 
             self._title = QLabel("ST-LRPS Studio")
-            self._title.setStyleSheet(
-                f"color: {_COLORS['text_main']}; font-size: 14px; font-weight: 700;"
-                " letter-spacing: 0; background: transparent; border: none;"
-            )
+            self._title.setObjectName("title")
             title_row.addWidget(self._title)
             self._status_pill = StatusPill("IDLE")
             title_row.addWidget(self._status_pill)
@@ -245,10 +233,7 @@ if _HAS_QT:
             self._subtitle = QLabel(
                 "Lunar residual-potential surrogate training and evaluation"
             )
-            self._subtitle.setStyleSheet(
-                f"color: {_COLORS['text_muted']}; font-size: 10px;"
-                " background: transparent; border: none;"
-            )
+            self._subtitle.setObjectName("pageDescription")
 
             left_col.addLayout(title_row)
             left_col.addWidget(self._subtitle)
@@ -267,7 +252,15 @@ if _HAS_QT:
             self._remaining = HeaderMetric("ETA", "—")
             self._finish = HeaderMetric("FINISH", "—")
 
-            for hidden_metric in (self._dataset, self._preset, self._checkpoint, self._elapsed, self._finish):
+            for hidden_metric in (
+                self._run,
+                self._dataset,
+                self._preset,
+                self._checkpoint,
+                self._elapsed,
+                self._remaining,
+                self._finish,
+            ):
                 hidden_metric.setVisible(False)
 
             badges = QHBoxLayout()
@@ -291,7 +284,9 @@ if _HAS_QT:
             self._page.set_value(text or "—")
 
         def set_run(self, text: str) -> None:
-            self._run.set_value(_short(text))
+            value = _short(text)
+            self._run.set_value(value)
+            self._run.setVisible(value != "—")
 
         def set_dataset(self, text: str) -> None:
             self._dataset.set_value(_short(text, 16))
@@ -311,6 +306,7 @@ if _HAS_QT:
 
         def set_remaining(self, text: str) -> None:
             self._remaining.set_value(text)
+            self._remaining.setVisible(bool(text and text != "—"))
 
         def set_finish(self, text: str) -> None:
             self._finish.set_value(text)
@@ -340,12 +336,15 @@ if _HAS_QT:
             layout.setSpacing(2)
 
             self._label = QLabel(label.upper())
+            self._label.setObjectName("metricCardLabel")
             self._label.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
             self._value = QLabel(initial_value)
+            self._value.setObjectName("metricCardValue")
             self._value.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
             self._subtitle = QLabel("")
+            self._subtitle.setObjectName("metricCardSubtitle")
             self._subtitle.setAlignment(Qt.AlignmentFlag.AlignLeft)
             self._subtitle.setVisible(False)
 
@@ -375,50 +374,23 @@ if _HAS_QT:
                 self._apply_style()
 
         def _apply_style(self) -> None:
-            state_colors = {
-                "normal": (_COLORS["text_muted"], "rgba(255, 255, 255, 0.04)", "rgba(185, 194, 221, 0.12)"),
-                "success": (_COLORS["success"], _COLORS["success_bg"], "rgba(45, 212, 191, 0.22)"),
-                "warning": (_COLORS["warning"], _COLORS["warning_bg"], "rgba(246, 193, 119, 0.22)"),
-                "danger": (_COLORS["danger"], _COLORS["danger_bg"], "rgba(255, 107, 122, 0.22)"),
-            }
-            label_color, bg, border = state_colors.get(
-                self._state, state_colors["normal"]
-            )
-
-            self.setStyleSheet(
-                f"QFrame#metricCard {{"
-                f"  background: {bg};"
-                f"  border: 1px solid {border};"
-                f"  border-radius: 10px;"
-                f"}}"
-            )
-            self._label.setStyleSheet(
-                f"color: {label_color}; font-size: 10px; font-weight: 600;"
-                " letter-spacing: 1px; background: transparent; border: none;"
-            )
-            self._value.setStyleSheet(
-                f"color: {_COLORS['text_main']}; font-size: 15px; font-weight: 600;"
-                " font-family: Consolas, 'Courier New', monospace;"
-                " background: transparent; border: none;"
-            )
-            self._subtitle.setStyleSheet(
-                f"color: {_COLORS['text_muted']}; font-size: 10px;"
-                " background: transparent; border: none;"
-            )
+            self.setProperty("state", self._state)
+            self.style().unpolish(self)
+            self.style().polish(self)
 
     # ═══════════════════════════════════════════════════════════════════════
     # KPIStrip
     # ═══════════════════════════════════════════════════════════════════════
 
     class KPIStrip(QWidget):
-        """Horizontal strip of MetricCard widgets for training KPIs."""
+        """Responsive grid of MetricCard widgets for training KPIs."""
 
         def __init__(self, parent: Optional[QWidget] = None):
             super().__init__(parent)
 
-            layout = QHBoxLayout()
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(8)
+            self._layout = QGridLayout()
+            self._layout.setContentsMargins(0, 0, 0, 0)
+            self._layout.setSpacing(8)
 
             self.epoch = MetricCard("Epoch", "— / —")
             self.phase = MetricCard("Phase", "Waiting")
@@ -429,13 +401,25 @@ if _HAS_QT:
             self.direction = MetricCard("Direction", "—")
             self.device = MetricCard("Device", "CPU")
 
-            for card in (
+            self._cards = (
                 self.epoch, self.phase, self.train_loss, self.val_loss,
                 self.best_score, self.lr, self.direction, self.device,
-            ):
-                layout.addWidget(card, 1)
+            )
+            self._columns = 0
+            self.setLayout(self._layout)
+            self._relayout(4)
 
-            self.setLayout(layout)
+        def _relayout(self, columns: int) -> None:
+            if columns == self._columns:
+                return
+            self._columns = columns
+            for card in self._cards:
+                self._layout.removeWidget(card)
+            for index, card in enumerate(self._cards):
+                row, column = divmod(index, columns)
+                self._layout.addWidget(card, row, column)
+            for column in range(columns):
+                self._layout.setColumnStretch(column, 1)
 
         def reset(self) -> None:
             """Reset all cards to default values."""
@@ -453,13 +437,13 @@ if _HAS_QT:
     # ═══════════════════════════════════════════════════════════════════════
 
     class TimeMetricsStrip(QWidget):
-        """Horizontal strip of time-oriented MetricCards for the Live Monitor."""
+        """Responsive grid of time-oriented MetricCards for the Live Monitor."""
 
         def __init__(self, parent: Optional[QWidget] = None):
             super().__init__(parent)
-            layout = QHBoxLayout()
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(8)
+            self._layout = QGridLayout()
+            self._layout.setContentsMargins(0, 0, 0, 0)
+            self._layout.setSpacing(8)
 
             self.elapsed = MetricCard("Elapsed", "--:--:--")
             self.eta = MetricCard("ETA Remaining", "—")
@@ -469,12 +453,25 @@ if _HAS_QT:
             self.avg_epoch = MetricCard("Avg Epoch", "—")
             self.samples_per_s = MetricCard("Samples/s", "—")
 
-            for card in (
+            self._cards = (
                 self.elapsed, self.eta, self.finish, self.started,
                 self.epoch_duration, self.avg_epoch, self.samples_per_s,
-            ):
-                layout.addWidget(card, 1)
-            self.setLayout(layout)
+            )
+            self._columns = 0
+            self.setLayout(self._layout)
+            self._relayout(4)
+
+        def _relayout(self, columns: int) -> None:
+            if columns == self._columns:
+                return
+            self._columns = columns
+            for card in self._cards:
+                self._layout.removeWidget(card)
+            for index, card in enumerate(self._cards):
+                row, column = divmod(index, columns)
+                self._layout.addWidget(card, row, column)
+            for column in range(columns):
+                self._layout.setColumnStretch(column, 1)
 
         def reset(self) -> None:
             self.elapsed.set_value("--:--:--")
@@ -504,9 +501,9 @@ if _HAS_QT:
 
     _SEVERITY_COLORS = {
         "info": None,
-        "success": QColor(45, 212, 191, 30),
-        "warning": QColor(246, 193, 119, 30),
-        "error": QColor(255, 107, 122, 35),
+        "success": _qt_color_alpha(_C.success, 30),
+        "warning": _qt_color_alpha(_C.warning, 30),
+        "error": _qt_color_alpha(_C.error, 35),
     }
 
     class ProgressTableModel(QAbstractTableModel):
@@ -547,9 +544,9 @@ if _HAS_QT:
                     return severity_color
                 # Highlight validation rows
                 if rec.phase == "val":
-                    return QColor(124, 92, 255, 18)
+                    return _qt_color_alpha(_C.accent, 18)
                 if rec.phase == "checkpoint":
-                    return QColor(45, 212, 191, 18)
+                    return _qt_color_alpha(_C.success, 18)
                 return None
 
             if role == Qt.ItemDataRole.ForegroundRole:
@@ -801,7 +798,7 @@ if _HAS_QT:
                 "}"
                 "QTableView::item { padding: 4px 8px; }"
                 "QTableView::item:selected {"
-                "  background-color: rgba(124, 92, 255, 0.22);"
+                f"  background-color: {with_alpha(_C.accent, 0.22)};"
                 "}"
                 "QHeaderView::section {"
                 f"  background-color: {_COLORS['panel_bg']};"

@@ -33,7 +33,10 @@ from typing import Callable, Optional
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from lunaris.ui.components.primitives import CompactSearchField, OverflowMenuButton
+from lunaris.ui.core.log_stream import is_near_bottom
 from lunaris.ui.core.ui_commons import LOG_COLORS, THEME, find_project_root, get_icon
+from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
 # Maximum number of retained log lines. A long propagation run must never make
 # the UI unusable, so older lines are trimmed once this bound is exceeded.
@@ -44,8 +47,8 @@ MAX_LOG_LINES = 10000
 _FLUSH_INTERVAL_MS = 80
 
 # Header-only height when collapsed, and the minimum height when expanded.
-COLLAPSED_HEIGHT = 46
-EXPANDED_MIN_HEIGHT = 200
+COLLAPSED_HEIGHT = DESIGN_TOKENS.layout.console_collapsed_height
+EXPANDED_MIN_HEIGHT = DESIGN_TOKENS.layout.console_expanded_min_height
 
 # Short, scannable severity labels for the tag column.
 _SEVERITY_LABELS = {
@@ -59,6 +62,24 @@ _SEVERITY_LABELS = {
 
 # Width the bracketed tag is padded to so the message column stays aligned.
 _TAG_WIDTH = 9
+
+# Total character width of a console divider rule.
+_SEPARATOR_WIDTH = 56
+
+
+def _separator_text(label: str = "") -> str:
+    """Return a divider rule, optionally with a centered *label*.
+
+    Plain rule: ``────────…────────``.
+    Labeled:    ``──────── New Mission Run ────────``.
+    """
+    if not label:
+        return "─" * _SEPARATOR_WIDTH
+    tag = f" {label.strip()} "
+    fill = max(2, _SEPARATOR_WIDTH - len(tag))
+    left = fill // 2
+    right = fill - left
+    return "─" * left + tag + "─" * right
 
 
 @dataclass
@@ -89,7 +110,7 @@ def detect_severity(text: str) -> str:
     return "info"
 
 
-class ExecutionLogPanel(QtWidgets.QWidget):
+class ExecutionConsoleDock(QtWidgets.QWidget):
     """A batched, themed execution-log console widget."""
 
     collapsed_changed = QtCore.Signal(bool)
@@ -115,10 +136,10 @@ class ExecutionLogPanel(QtWidgets.QWidget):
         self._paused = False
         self._show_timestamps = True
         self._status_revert_timer: Optional[QtCore.QTimer] = None
+        self._severity_counts = {"warning": 0, "error": 0}
 
         self._build_ui()
         self._build_formats()
-        self._apply_style()
 
         # Flush timer: batches inserts so streaming output stays smooth.
         self._flush_timer = QtCore.QTimer(self)
@@ -130,82 +151,132 @@ class ExecutionLogPanel(QtWidgets.QWidget):
     def _build_ui(self) -> None:
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(8)
+        outer.setSpacing(DESIGN_TOKENS.spacing.sm)
 
-        # --- Header ("Execution Console") -----------------------------------
+        # The compact strip remains visible when the console body is collapsed.
         self.header = QtWidgets.QFrame()
         self.header.setObjectName("logHeader")
-        self.header.setMinimumHeight(COLLAPSED_HEIGHT)
+        self.header.setFixedHeight(COLLAPSED_HEIGHT)
         hl = QtWidgets.QHBoxLayout(self.header)
-        hl.setContentsMargins(12, 6, 12, 6)
-        hl.setSpacing(10)
+        hl.setContentsMargins(10, 5, 10, 5)
+        hl.setSpacing(DESIGN_TOKENS.spacing.sm)
 
         self.btn_collapse = QtWidgets.QToolButton()
         self.btn_collapse.setObjectName("logCollapseButton")
         self.btn_collapse.setCursor(QtCore.Qt.PointingHandCursor)
         self.btn_collapse.setIcon(get_icon("fa6s.chevron-down", THEME["fg_soft"]))
         self.btn_collapse.setToolTip("Collapse console")
-        self.btn_collapse.setStyleSheet("border: none; background: transparent;")
         self.btn_collapse.clicked.connect(self.toggle_collapsed)
         hl.addWidget(self.btn_collapse)
 
-        title_box = QtWidgets.QVBoxLayout()
-        title_box.setContentsMargins(0, 0, 0, 0)
-        title_box.setSpacing(0)
         self.lbl_title = QtWidgets.QLabel("Execution Console")
         self.lbl_title.setObjectName("logTitle")
+        hl.addWidget(self.lbl_title)
+
         self.lbl_subtitle = QtWidgets.QLabel("Live process output")
         self.lbl_subtitle.setObjectName("logSubtitle")
-        title_box.addWidget(self.lbl_title)
-        title_box.addWidget(self.lbl_subtitle)
-        hl.addLayout(title_box)
+        self.lbl_subtitle.hide()
+
+        self.lbl_latest = QtWidgets.QLabel("No output yet")
+        self.lbl_latest.setObjectName("logLatestMessage")
+        self.lbl_latest.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.lbl_latest.setSizePolicy(
+            QtWidgets.QSizePolicy.Expanding,
+            QtWidgets.QSizePolicy.Preferred,
+        )
+        hl.addWidget(self.lbl_latest, 1)
 
         self.status_chip = QtWidgets.QLabel("Idle")
         self.status_chip.setObjectName("logStatusChip")
         self.status_chip.setAlignment(QtCore.Qt.AlignCenter)
         hl.addWidget(self.status_chip)
 
-        hl.addStretch(1)
+        self.lbl_warning_count = QtWidgets.QLabel("W 0")
+        self.lbl_warning_count.setObjectName("logCounter")
+        self.lbl_warning_count.setToolTip("Warning count")
+        hl.addWidget(self.lbl_warning_count)
+        self.lbl_error_count = QtWidgets.QLabel("E 0")
+        self.lbl_error_count.setObjectName("logCounter")
+        self.lbl_error_count.setToolTip("Error count")
+        hl.addWidget(self.lbl_error_count)
+        outer.addWidget(self.header)
 
-        # Toggles
-        self.chk_autoscroll = QtWidgets.QCheckBox("Auto-scroll")
+        self.body = QtWidgets.QWidget()
+        self.body.setObjectName("logBody")
+        body_layout = QtWidgets.QVBoxLayout(self.body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(DESIGN_TOKENS.spacing.sm)
+
+        self.toolbar = QtWidgets.QFrame()
+        self.toolbar.setObjectName("toolbar")
+        tl = QtWidgets.QHBoxLayout(self.toolbar)
+        tl.setContentsMargins(8, 6, 8, 6)
+        tl.setSpacing(DESIGN_TOKENS.spacing.sm)
+
+        self.search_field = CompactSearchField("Search console")
+        self.search_field.textChanged.connect(self._rebuild_console)
+        tl.addWidget(self.search_field, 1)
+
+        self.severity_filter = QtWidgets.QComboBox()
+        self.severity_filter.setAccessibleName("Severity filter")
+        self.severity_filter.addItems(
+            ["All levels", "Errors", "Warnings", "Info", "System", "Success", "Debug"]
+        )
+        self.severity_filter.currentIndexChanged.connect(self._rebuild_console)
+        tl.addWidget(self.severity_filter)
+
+        self.chk_autoscroll = QtWidgets.QCheckBox("Follow output")
         self.chk_autoscroll.setChecked(True)
         self.chk_autoscroll.setToolTip("Keep the latest output in view")
-        hl.addWidget(self.chk_autoscroll)
+        tl.addWidget(self.chk_autoscroll)
 
         self.chk_wrap = QtWidgets.QCheckBox("Wrap")
         self.chk_wrap.setChecked(False)
         self.chk_wrap.setToolTip("Wrap long lines to the console width")
         self.chk_wrap.toggled.connect(self._on_wrap_toggled)
-        hl.addWidget(self.chk_wrap)
 
         self.chk_timestamps = QtWidgets.QCheckBox("Timestamps")
         self.chk_timestamps.setChecked(True)
         self.chk_timestamps.setToolTip("Show the [HH:MM:SS] prefix")
         self.chk_timestamps.toggled.connect(self._on_timestamps_toggled)
-        hl.addWidget(self.chk_timestamps)
 
-        # Action buttons
         self.btn_pause = self._toolbar_button("Pause", "Pause live output (buffered)")
         self.btn_pause.setCheckable(True)
         self.btn_pause.toggled.connect(self._on_pause_toggled)
-        hl.addWidget(self.btn_pause)
+        self.btn_pause.hide()
 
         self.btn_copy = self._toolbar_button("Copy", "Copy console text to clipboard")
         self.btn_copy.clicked.connect(self.copy_to_clipboard)
-        hl.addWidget(self.btn_copy)
+        tl.addWidget(self.btn_copy)
 
         self.btn_clear = self._toolbar_button("Clear", "Clear the console")
         self.btn_clear.clicked.connect(self._on_clear_clicked)
-        hl.addWidget(self.btn_clear)
+        tl.addWidget(self.btn_clear)
 
         self.btn_save = self._toolbar_button("Save", "Save console text to a file")
         self.btn_save.clicked.connect(self._on_save_clicked)
-        hl.addWidget(self.btn_save)
+        self.btn_save.hide()
 
-        outer.addWidget(self.header)
+        menu = QtWidgets.QMenu(self)
+        self.action_pause = menu.addAction("Pause output")
+        self.action_pause.setCheckable(True)
+        self.action_pause.toggled.connect(self.btn_pause.setChecked)
+        self.btn_pause.toggled.connect(self.action_pause.setChecked)
+        self.action_wrap = menu.addAction("Wrap long lines")
+        self.action_wrap.setCheckable(True)
+        self.action_wrap.toggled.connect(self.chk_wrap.setChecked)
+        self.chk_wrap.toggled.connect(self.action_wrap.setChecked)
+        self.action_timestamps = menu.addAction("Show timestamps")
+        self.action_timestamps.setCheckable(True)
+        self.action_timestamps.setChecked(True)
+        self.action_timestamps.toggled.connect(self.chk_timestamps.setChecked)
+        self.chk_timestamps.toggled.connect(self.action_timestamps.setChecked)
+        menu.addSeparator()
+        menu.addAction("Save log...", self._on_save_clicked)
+        self.btn_more = OverflowMenuButton(menu)
+        tl.addWidget(self.btn_more)
+        body_layout.addWidget(self.toolbar)
 
-        # --- Console body ----------------------------------------------------
         self.console = QtWidgets.QPlainTextEdit()
         self.console.setObjectName("logConsole")
         self.console.setReadOnly(True)
@@ -216,7 +287,8 @@ class ExecutionLogPanel(QtWidgets.QWidget):
         self.console.setSizePolicy(
             QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding
         )
-        outer.addWidget(self.console, 1)
+        body_layout.addWidget(self.console, 1)
+        outer.addWidget(self.body, 1)
 
     def _toolbar_button(self, text: str, tooltip: str) -> QtWidgets.QPushButton:
         btn = QtWidgets.QPushButton(text)
@@ -244,67 +316,6 @@ class ExecutionLogPanel(QtWidgets.QWidget):
             for sev in ("error", "warning", "success", "system", "info", "debug")
         }
 
-    def _apply_style(self) -> None:
-        self.setStyleSheet(
-            f"""
-            QFrame#logHeader {{
-                background: {THEME['bg_shell']};
-                border: 1px solid {THEME['border_soft']};
-                border-radius: 10px;
-            }}
-            QLabel#logTitle {{
-                color: {THEME['fg_soft']};
-                font-size: 10.5pt;
-                font-weight: 700;
-            }}
-            QLabel#logSubtitle {{
-                color: {THEME['fg_muted']};
-                font-size: 8pt;
-            }}
-            QLabel#logStatusChip {{
-                color: {THEME['fg_muted']};
-                background: {THEME['bg_card_alt']};
-                border: 1px solid {THEME['border_soft']};
-                border-radius: 8px;
-                padding: 2px 10px;
-                font-size: 8.5pt;
-                font-weight: 600;
-            }}
-            QPushButton#logToolbarButton {{
-                background: {THEME['bg_card_alt']};
-                color: {THEME['fg_soft']};
-                border: 1px solid {THEME['border']};
-                border-radius: 7px;
-                padding: 4px 12px;
-                font-size: 9pt;
-                font-weight: 600;
-            }}
-            QPushButton#logToolbarButton:hover {{
-                border-color: {THEME['accent_deep']};
-                color: {THEME['fg_main']};
-            }}
-            QPushButton#logToolbarButton:checked {{
-                background: {THEME['accent_dim']};
-                border-color: {THEME['accent']};
-                color: {THEME['fg_main']};
-            }}
-            QCheckBox {{
-                color: {THEME['fg_muted']};
-                font-size: 9pt;
-                spacing: 6px;
-            }}
-            QPlainTextEdit#logConsole {{
-                background: {THEME['bg_log']};
-                color: {THEME['fg_main']};
-                border: 1px solid {THEME['border']};
-                border-radius: 10px;
-                padding: 10px;
-                font-family: "Cascadia Mono", "Consolas", "Courier New", monospace;
-                font-size: 9.5pt;
-            }}
-            """
-        )
-
     # ---------------------------------------------------------------- public
     def append(self, message: str, severity: str = "auto", source: str = "") -> None:
         """Queue a log line. Safe to call from a worker thread.
@@ -327,24 +338,43 @@ class ExecutionLogPanel(QtWidgets.QWidget):
         with self._lock:
             self._pending.append(entry)
 
-    def append_separator(self) -> None:
-        """Queue a muted divider rule."""
+    def append_separator(self, label: str = "") -> None:
+        """Queue a muted divider rule, optionally with a centered *label*."""
         with self._lock:
             self._pending.append(
                 LogEntry(
                     timestamp=datetime.now().strftime("%H:%M:%S"),
                     severity="separator",
                     source="",
-                    message="",
+                    message=str(label or ""),
                 )
             )
 
+    def append_run_separator(self, label: str = "New Mission Run") -> None:
+        """Queue a labeled separator marking the start of a new run.
+
+        Starting a run inserts this divider instead of clearing the console, so
+        useful pre-flight and prior context is preserved. Explicit ``clear`` is
+        still available as a deliberate user action.
+        """
+        self.append_separator(label)
+
     def clear(self) -> None:
-        """Clear the console and the retained model."""
+        """Clear the console: pending queue, retained model, and the view.
+
+        After a clear, no previously queued entry can reappear — the pending
+        queue is emptied under the same lock that ``append`` uses, so anything
+        enqueued *before* the clear is discarded while anything enqueued *after*
+        renders normally on the next flush.
+        """
         with self._lock:
             self._pending.clear()
         self._entries.clear()
         self.console.clear()
+        self._severity_counts = {"warning": 0, "error": 0}
+        self.lbl_warning_count.setText("W 0")
+        self.lbl_error_count.setText("E 0")
+        self.lbl_latest.setText("No output yet")
 
     def copy_to_clipboard(self) -> bool:
         text = self._plain_text(with_timestamps=self._show_timestamps)
@@ -382,13 +412,20 @@ class ExecutionLogPanel(QtWidgets.QWidget):
             return
         self._collapsed = collapsed
 
+        self.body.setVisible(not collapsed)
         self.console.setVisible(not collapsed)
-        for w in (
-            self.chk_autoscroll, self.chk_wrap, self.chk_timestamps,
-            self.btn_pause, self.btn_copy, self.btn_clear, self.btn_save,
-            self.status_chip,
-        ):
-            w.setVisible(not collapsed)
+        if collapsed:
+            self.setMaximumHeight(COLLAPSED_HEIGHT)
+            self.setSizePolicy(
+                QtWidgets.QSizePolicy.Preferred,
+                QtWidgets.QSizePolicy.Fixed,
+            )
+        else:
+            self.setMaximumHeight(16_777_215)
+            self.setSizePolicy(
+                QtWidgets.QSizePolicy.Preferred,
+                QtWidgets.QSizePolicy.Expanding,
+            )
 
         icon = "fa6s.chevron-up" if collapsed else "fa6s.chevron-down"
         self.btn_collapse.setIcon(get_icon(icon, THEME["fg_soft"]))
@@ -403,7 +440,9 @@ class ExecutionLogPanel(QtWidgets.QWidget):
             self._set_status("Paused")
         else:
             self._set_status("Live process output")
-            self._flush()  # catch up on anything buffered while paused
+            # Resume: drain everything buffered while paused, committing and
+            # rendering it exactly once, in order.
+            self._flush()
 
     def _on_wrap_toggled(self, checked: bool) -> None:
         self.console.setLineWrapMode(
@@ -443,7 +482,15 @@ class ExecutionLogPanel(QtWidgets.QWidget):
             self.save_to_file(path)
 
     def _flush(self) -> None:
-        """Drain the pending queue into the console (GUI thread)."""
+        """Drain the pending queue into the model and append it to the view.
+
+        ``_entries`` is the single source of truth for *retained* lines and is
+        bounded by :data:`MAX_LOG_LINES`. While paused the drain is held back
+        entirely, so buffered lines stay queued in order and are committed +
+        rendered exactly once on resume — never duplicated, never reordered. The
+        live path appends only the new batch (no full re-render per tick), which
+        keeps high-volume streaming smooth.
+        """
         if self._paused:
             return
         with self._lock:
@@ -452,47 +499,103 @@ class ExecutionLogPanel(QtWidgets.QWidget):
             batch = list(self._pending)
             self._pending.clear()
 
-        cursor = self.console.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.End)
-        cursor.beginEditBlock()
         for entry in batch:
             self._entries.append(entry)
-            self._insert_entry(cursor, entry)
-        cursor.endEditBlock()
+            if entry.severity in self._severity_counts:
+                self._severity_counts[entry.severity] += 1
+            if entry.severity != "separator":
+                self.lbl_latest.setText(entry.message)
 
-        if self.chk_autoscroll.isChecked():
-            self.console.moveCursor(QtGui.QTextCursor.End)
-            self.console.ensureCursorVisible()
+        self.lbl_warning_count.setText(f"W {self._severity_counts['warning']}")
+        self.lbl_error_count.setText(f"E {self._severity_counts['error']}")
 
-    def _insert_entry(self, cursor: QtGui.QTextCursor, entry: LogEntry) -> None:
+        self._append_entries_to_view(batch)
+
+    def _is_near_bottom(self) -> bool:
+        """True when the console viewport is already at (or near) the bottom."""
+        sb = self.console.verticalScrollBar()
+        return is_near_bottom(sb.value(), sb.maximum())
+
+    def _should_autoscroll(self, was_at_bottom: bool) -> bool:
+        """Auto-scroll only when following is enabled *and* the user was at end.
+
+        Combining the explicit toggle with the live scroll position means manual
+        upward scrolling is respected — new output never yanks the viewport back
+        down — while returning to the bottom transparently resumes following.
+        """
+        return bool(self.chk_autoscroll.isChecked()) and bool(was_at_bottom)
+
+    def _scroll_to_bottom(self) -> None:
+        self.console.moveCursor(QtGui.QTextCursor.End)
+        self.console.ensureCursorVisible()
+
+    def _insert_entry(self, cursor: QtGui.QTextCursor, entry: LogEntry, *, leading_newline: bool) -> None:
+        """Insert one entry as a single block (no trailing blank line)."""
+        if leading_newline:
+            cursor.insertText("\n", self._fmt_body)
         if entry.severity == "separator":
-            cursor.insertText("─" * 56 + "\n", self._fmt_sep)
+            cursor.insertText(_separator_text(entry.message), self._fmt_sep)
             return
         if self._show_timestamps:
             cursor.insertText(f"[{entry.timestamp}] ", self._fmt_ts)
         tag = entry.source.upper() if entry.source else _SEVERITY_LABELS.get(entry.severity, "INFO")
         sev_fmt = self._fmt_sev.get(entry.severity, self._fmt_body)
         cursor.insertText(f"[{tag}]".ljust(_TAG_WIDTH), sev_fmt)
-        cursor.insertText(entry.message + "\n", self._fmt_body)
+        cursor.insertText(entry.message, self._fmt_body)
 
-    def _rebuild_console(self) -> None:
-        """Re-render the whole model (used when the timestamp toggle changes)."""
+    def _append_entries_to_view(self, entries) -> None:
+        """Append already-modelled *entries* to the widget, respecting filters."""
+        visible = [e for e in entries if self._entry_matches_filters(e)]
+        if not visible:
+            return
+        was_at_bottom = self._is_near_bottom()
+        doc_nonempty = not self.console.document().isEmpty()
+        cursor = self.console.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        cursor.beginEditBlock()
+        for index, entry in enumerate(visible):
+            self._insert_entry(cursor, entry, leading_newline=doc_nonempty or index > 0)
+        cursor.endEditBlock()
+        if self._should_autoscroll(was_at_bottom):
+            self._scroll_to_bottom()
+
+    def _rebuild_console(self, *_args) -> None:
+        """Re-render the retained model using the active query and severity."""
+        was_at_bottom = self._is_near_bottom()
         self.console.clear()
         cursor = self.console.textCursor()
         cursor.movePosition(QtGui.QTextCursor.End)
         cursor.beginEditBlock()
+        first = True
         for entry in list(self._entries):
-            self._insert_entry(cursor, entry)
+            if self._entry_matches_filters(entry):
+                self._insert_entry(cursor, entry, leading_newline=not first)
+                first = False
         cursor.endEditBlock()
-        if self.chk_autoscroll.isChecked():
-            self.console.moveCursor(QtGui.QTextCursor.End)
-            self.console.ensureCursorVisible()
+        if self._should_autoscroll(was_at_bottom):
+            self._scroll_to_bottom()
+
+    def _entry_matches_filters(self, entry: LogEntry) -> bool:
+        query = self.search_field.text().strip().casefold()
+        if query and query not in f"{entry.source} {entry.message}".casefold():
+            return False
+        selected = self.severity_filter.currentText()
+        severity_map = {
+            "Errors": "error",
+            "Warnings": "warning",
+            "Info": "info",
+            "System": "system",
+            "Success": "success",
+            "Debug": "debug",
+        }
+        expected = severity_map.get(selected)
+        return expected is None or entry.severity == expected
 
     def _plain_text(self, *, with_timestamps: bool) -> str:
         lines = []
         for entry in list(self._entries):
             if entry.severity == "separator":
-                lines.append("─" * 56)
+                lines.append(_separator_text(entry.message))
                 continue
             prefix = f"[{entry.timestamp}] " if with_timestamps else ""
             tag = entry.source.upper() if entry.source else _SEVERITY_LABELS.get(entry.severity, "INFO")
@@ -513,3 +616,7 @@ class ExecutionLogPanel(QtWidgets.QWidget):
             lambda: self._set_status("Paused" if self._paused else "Live process output")
         )
         self._status_revert_timer.start(revert_ms)
+
+
+# Historical name retained for all existing imports and tests.
+ExecutionLogPanel = ExecutionConsoleDock

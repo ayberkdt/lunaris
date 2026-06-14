@@ -270,8 +270,10 @@ class GravitySettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent: QtWidgets.QWidget, cfg: UIGravityConfig):
         super().__init__(parent)
         self.setWindowTitle("Gravity Field Configuration")
+        self.setObjectName("settingsDialog")
         self.setModal(True)
         self.resize(750, 600)
+        self.setMinimumSize(640, 500)
         self._cfg = cfg  # Reference to mutable config object
         
         # Main Layout
@@ -279,19 +281,16 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
         
-        # Style the dialog
-        self.setStyleSheet(f"background-color: {THEME['bg_space']}; color: {THEME['fg_main']};")
-        
         # --- HEADER ---
         header = QtWidgets.QLabel("Lunar Gravity Field Configuration")
-        header.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {THEME['accent']};")
+        header.setObjectName("dialogTitle")
         layout.addWidget(header)
         
         desc = QtWidgets.QLabel(
             "Choose either the classical spherical-harmonics field or a trained "
             "surrogate model for the Moon's central gravity model."
         )
-        desc.setStyleSheet(f"color: {THEME['fg_muted']};")
+        desc.setObjectName("dialogDescription")
         desc.setWordWrap(True)
         layout.addWidget(desc)
         
@@ -319,30 +318,9 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         
         for btn in (self.btn_cancel, self.btn_save):
             btn.setCursor(QtCore.Qt.PointingHandCursor)
-            btn.setFixedHeight(32)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {THEME['bg_entry']};
-                    border: 1px solid {THEME['border']};
-                    border-radius: 6px;
-                    color: {THEME['fg_main']};
-                    padding: 0 16px;
-                }}
-                QPushButton:hover {{
-                    background-color: {THEME['border']};
-                }}
-            """)
-        
-        # Highlight Save button
-        self.btn_save.setStyleSheet(self.btn_save.styleSheet() + f"""
-            QPushButton {{
-                background-color: {THEME['accent']};
-                border: 1px solid {THEME['accent']};
-            }}
-            QPushButton:hover {{
-                background-color: {THEME['accent_hov']};
-            }}
-        """)
+            btn.setMinimumHeight(34)
+        self.btn_cancel.setProperty("kind", "ghost")
+        self.btn_save.setProperty("kind", "primary")
         
         btn_layout.addWidget(self.btn_cancel)
         btn_layout.addWidget(self.btn_save)
@@ -795,8 +773,10 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
     def __init__(self, parent: QtWidgets.QWidget, cfg: UIAdaptiveConfig):
         super().__init__(parent)
         self.setWindowTitle("Adaptive Gravity Configuration")
+        self.setObjectName("settingsDialog")
         self.setModal(True)
         self.resize(700, 500)
+        self.setMinimumSize(600, 460)
         self._cfg = cfg
         
         # Main Layout
@@ -804,19 +784,16 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
         
-        # Apply Theme
-        self.setStyleSheet(f"background-color: {THEME['bg_space']}; color: {THEME['fg_main']};")
-        
         # --- Header ---
         header = QtWidgets.QLabel("Adaptive Gravity Logic")
-        header.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {THEME['accent']};")
+        header.setObjectName("dialogTitle")
         layout.addWidget(header)
         
         desc = QtWidgets.QLabel(
             "Automatically reduce Spherical Harmonic degree at higher altitudes to save computation time.\n"
             "Define thresholds below. The engine interpolates between steps."
         )
-        desc.setStyleSheet(f"color: {THEME['fg_muted']};")
+        desc.setObjectName("dialogDescription")
         desc.setWordWrap(True)
         layout.addWidget(desc)
         
@@ -911,23 +888,9 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
     def _create_btn(self, text, callback, primary=False):
         btn = QtWidgets.QPushButton(text)
         btn.setCursor(QtCore.Qt.PointingHandCursor)
+        btn.setMinimumHeight(34)
+        btn.setProperty("kind", "primary" if primary else "ghost")
         btn.clicked.connect(callback)
-        
-        bg = THEME['accent'] if primary else THEME['bg_entry']
-        border = THEME['accent'] if primary else THEME['border']
-        
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {bg};
-                border: 1px solid {border};
-                border-radius: 4px;
-                padding: 6px 12px;
-                color: {THEME['fg_main']};
-            }}
-            QPushButton:hover {{
-                background-color: {THEME['accent_hov'] if primary else THEME['border']};
-            }}
-        """)
         return btn
     
     def _on_preset_change(self, text):
@@ -1050,17 +1013,17 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent: QtWidgets.QWidget, cfg: UIAlbedoConfig):
         super().__init__(parent)
         self.setWindowTitle("Albedo Model Configuration")
+        self.setObjectName("settingsDialog")
         self.setModal(True)
         self.resize(620, 540)
+        self.setMinimumSize(560, 500)
         self._cfg = cfg
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
-        self.setStyleSheet(f"background-color: {THEME['bg_space']}; color: {THEME['fg_main']};")
-
         header = QtWidgets.QLabel("Lunar Albedo (Reflected Solar) Model")
-        header.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {THEME['accent']};")
+        header.setObjectName("dialogTitle")
         layout.addWidget(header)
 
         desc = QtWidgets.QLabel(
@@ -1069,7 +1032,7 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
             "sunlit and visible. This is reflected solar radiation, not gravity."
         )
         desc.setWordWrap(True)
-        desc.setStyleSheet(f"color: {THEME['fg_muted']};")
+        desc.setObjectName("dialogDescription")
         layout.addWidget(desc)
 
         form_frame = QtWidgets.QFrame()
@@ -1136,19 +1099,9 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
         self.btn_save = QtWidgets.QPushButton("Apply Settings")
         for btn in (self.btn_cancel, self.btn_save):
             btn.setCursor(QtCore.Qt.PointingHandCursor)
-            btn.setFixedHeight(32)
-            btn.setStyleSheet(
-                f"QPushButton {{ background-color: {THEME['bg_entry']}; "
-                f"border: 1px solid {THEME['border']}; border-radius: 6px; "
-                f"color: {THEME['fg_main']}; padding: 0 16px; }}"
-                f"QPushButton:hover {{ background-color: {THEME['border']}; }}"
-            )
-        self.btn_save.setStyleSheet(
-            self.btn_save.styleSheet()
-            + f"QPushButton {{ background-color: {THEME['accent']}; "
-            f"border: 1px solid {THEME['accent']}; }}"
-            f"QPushButton:hover {{ background-color: {THEME['accent_hov']}; }}"
-        )
+            btn.setMinimumHeight(34)
+        self.btn_cancel.setProperty("kind", "ghost")
+        self.btn_save.setProperty("kind", "primary")
         btn_layout.addWidget(self.btn_cancel)
         btn_layout.addWidget(self.btn_save)
         layout.addLayout(btn_layout)

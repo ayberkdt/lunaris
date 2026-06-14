@@ -65,6 +65,7 @@ import sys
 from .qt_common import *
 from .qt_common import _USE_PYSIDE
 from lunaris.ui.core.ui_commons import THEME, with_alpha
+from lunaris.ui.theme.tokens import DESIGN_TOKENS
 # pyqtgraph — optional, graceful fallback
 try:
     import pyqtgraph as pg
@@ -278,8 +279,8 @@ def _data_action_card(
     card.setObjectName(object_name)
     card.setStyleSheet(
         f"QFrame#{object_name} {{"
-        f"  background: {{with_alpha(THEME['bg_card'], 0.84)}};"
-        f"  border: 1px solid {{with_alpha(THEME['accent'], 0.18)}};"
+        f"  background: {with_alpha(THEME['bg_card'], 0.84)};"
+        f"  border: 1px solid {with_alpha(THEME['accent'], 0.18)};"
         f"  border-radius: 14px;"
         f"}}"
     )
@@ -296,13 +297,13 @@ def _data_action_card(
     text_col.setSpacing(3)
     title_lbl = QLabel(title)
     title_lbl.setStyleSheet(
-        f"color: {{THEME['fg_main']}}; font-size: 16px; font-weight: 800; "
+        f"color: {THEME['fg_main']}; font-size: 16px; font-weight: 800; "
         f"background: transparent; border: none;"
     )
     subtitle_lbl = QLabel(subtitle)
     subtitle_lbl.setWordWrap(True)
     subtitle_lbl.setStyleSheet(
-        f"color: {{THEME['fg_soft']}}; font-size: 12px; background: transparent; border: none;"
+        f"color: {THEME['fg_soft']}; font-size: 12px; background: transparent; border: none;"
     )
     text_col.addWidget(title_lbl)
     text_col.addWidget(subtitle_lbl)
@@ -335,9 +336,9 @@ def _compact_path_label(empty_text: str) -> QLabel:
     label.setWordWrap(True)
     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     label.setStyleSheet(
-        f"QLabel {{ color: {{THEME['fg_muted']}}; font-size: 11px; padding: 8px 10px;"
-        f" background: {{with_alpha(THEME['bg_shell'], 0.55)}};"
-        f" border: 1px solid {{with_alpha(THEME['border'], 0.12)}};"
+        f"QLabel {{ color: {THEME['fg_muted']}; font-size: 11px; padding: 8px 10px;"
+        f" background: {with_alpha(THEME['bg_shell'], 0.55)};"
+        f" border: 1px solid {with_alpha(THEME['border'], 0.12)};"
         f" border-radius: 9px; }}"
     )
     return label
@@ -387,7 +388,7 @@ class CloudGenTab(QWidget):
         mode_bar.setContentsMargins(0, 0, 0, 4)
         mode_bar.setSpacing(8)
         mode_lbl = QLabel("Workflow")
-        mode_lbl.setStyleSheet(f"font-weight: 700; color: {{THEME['fg_soft']}};")
+        mode_lbl.setStyleSheet(f"font-weight: 700; color: {THEME['fg_soft']};")
         self._mode_combo = QComboBox()
         self._mode_combo.addItem("Single Cloud", self._MODE_SINGLE)
         self._mode_combo.addItem("Dataset Suite", self._MODE_SUITE)
@@ -404,8 +405,8 @@ class CloudGenTab(QWidget):
         self._sync_banner = QLabel("")
         self._sync_banner.setWordWrap(True)
         self._sync_banner.setStyleSheet(
-            f"QLabel {{ color: {{THEME['success']}}; background: {{with_alpha(THEME['success'], 0.08)}}; "
-            f"border: 1px solid {{with_alpha(THEME['success'], 0.3)}}; border-radius: 8px; "
+            f"QLabel {{ color: {THEME['success']}; background: {with_alpha(THEME['success'], 0.08)}; "
+            f"border: 1px solid {with_alpha(THEME['success'], 0.3)}; border-radius: 8px; "
             f"padding: 6px 12px; font-size: 11px; }}"
         )
         self._sync_banner.setVisible(False)
@@ -745,7 +746,9 @@ class CloudGenTab(QWidget):
         self.s_train_bb_n.setToolTip("Number of boundary-buffer points (lower/upper altitude edges).")
 
         self._suite_total_lbl = QLabel("")
-        self._suite_total_lbl.setStyleSheet("color: #7c8dc7; font-weight: bold;")
+        self._suite_total_lbl.setStyleSheet(
+            f"color: {THEME['accent_hov']}; font-weight: bold;"
+        )
 
         for sb in (self.s_train_su_n, self.s_train_ir2_n, self.s_train_rm_n, self.s_train_bb_n):
             sb.valueChanged.connect(self._update_suite_total_label)
@@ -1512,7 +1515,9 @@ class CloudGenTab(QWidget):
                 t.applied_suite_manifest_path = str(manifest_path.resolve())
             if hasattr(t, "_suite_manifest_label"):
                 t._suite_manifest_label.setText(str(manifest_path.resolve()))
-                t._suite_manifest_label.setStyleSheet("color: #6ee7b7; font-size: 10px;")
+                t._suite_manifest_label.setStyleSheet(
+                    f"color: {THEME['success']}; font-size: 10px;"
+                )
             # -- Trigger dependent UI updates --
             if hasattr(t, "_on_dataset_mode_changed"):
                 t._on_dataset_mode_changed()
@@ -2277,8 +2282,8 @@ class DatasetInspectionPanel(QWidget):
         self._summary.setTextFormat(Qt.TextFormat.RichText)
         self._summary.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         self._summary.setStyleSheet(
-            f"background: {{with_alpha(THEME['bg_card'], 0.72)}}; border: 1px solid {{with_alpha(THEME['border'], 0.12)}};"
-            f" border-radius: 10px; padding: 12px; color: {{THEME['fg_main']}}; font-size: 12px;"
+            f"background: {with_alpha(THEME['bg_card'], 0.72)}; border: 1px solid {with_alpha(THEME['border'], 0.12)};"
+            f" border-radius: 10px; padding: 12px; color: {THEME['fg_main']}; font-size: 12px;"
         )
         self._summary.setMinimumHeight(140)
 
@@ -2379,8 +2384,8 @@ class DatasetInspectionPanel(QWidget):
         for label, value in fields:
             shown = "-" if value is None else str(value)
             html_rows.append(
-                f"<tr><td style='color:#7f91ac;padding:2px 14px 2px 0;'>{label}</td>"
-                f"<td style='color:#e6edf7;font-family:Consolas,monospace;'>{shown}</td></tr>"
+                f"<tr><td style='color:{THEME['fg_muted']};padding:2px 14px 2px 0;'>{label}</td>"
+                f"<td style='color:{THEME['fg_main']};font-family:Consolas,monospace;'>{shown}</td></tr>"
             )
         self._summary.setText("<table>" + "".join(html_rows) + "</table>")
 
@@ -2418,14 +2423,15 @@ class DataPage(QWidget):
         self._stack.addWidget(cloud_tab)
         self._stack.addWidget(analysis_tab)
         self._section_buttons: List[QPushButton] = []
+        self._compact_layout = False
 
         nav = QFrame()
         nav.setObjectName("dataSectionNav")
-        nav.setMaximumWidth(260)
+        nav.setMaximumWidth(DESIGN_TOKENS.layout.nested_nav_width)
         nav.setStyleSheet(
             f"QFrame#dataSectionNav {{"
-            f"  background: {{with_alpha(THEME['bg_card'], 0.74)}};"
-            f"  border: 1px solid {{with_alpha(THEME['border'], 0.12)}};"
+            f"  background: {with_alpha(THEME['bg_card'], 0.74)};"
+            f"  border: 1px solid {with_alpha(THEME['border'], 0.12)};"
             f"  border-radius: 14px;"
             f"}}"
         )
@@ -2441,15 +2447,15 @@ class DataPage(QWidget):
             btn.setStyleSheet(
                 f"QPushButton {{"
                 f"  text-align: left; padding: 0 14px;"
-                f"  border: 1px solid {{with_alpha(THEME['border'], 0.10)}};"
-                f"  border-radius: 10px; background: {{with_alpha('#ffffff', 0.025)}};"
-                f"  color: {{THEME['fg_soft']}}; font-weight: 750; font-size: 13px;"
+                f"  border: 1px solid {with_alpha(THEME['border'], 0.10)};"
+                f"  border-radius: 10px; background: {with_alpha(THEME['fg_main'], 0.025)};"
+                f"  color: {THEME['fg_soft']}; font-weight: 750; font-size: 13px;"
                 f"}}"
-                f"QPushButton:hover {{ background: {{with_alpha(THEME['accent'], 0.06)}}; color: {{THEME['fg_main']}}; }}"
+                f"QPushButton:hover {{ background: {with_alpha(THEME['accent'], 0.06)}; color: {THEME['fg_main']}; }}"
                 f"QPushButton:checked {{"
-                f"  background: {{with_alpha(THEME['accent'], 0.12)}};"
-                f"  border-color: {{with_alpha(THEME['accent'], 0.35)}};"
-                f"  color: {{THEME['fg_main']}};"
+                f"  background: {with_alpha(THEME['accent'], 0.12)};"
+                f"  border-color: {with_alpha(THEME['accent'], 0.35)};"
+                f"  color: {THEME['fg_main']};"
                 f"}}"
             )
             btn.clicked.connect(lambda _c=False, i=idx: self._show_section(i))
@@ -2457,7 +2463,7 @@ class DataPage(QWidget):
             return btn
 
         nav_title = QLabel("Data")
-        nav_title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {{THEME['fg_main']}};")
+        nav_title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {THEME['fg_main']};")
         nav_l.addWidget(nav_title)
         nav_l.addWidget(_nav_btn("Inspect", "Readiness and metadata", 0))
         nav_l.addWidget(_nav_btn("Generate", "Single cloud or train/val/test/OOD suite", 1))
@@ -2471,6 +2477,8 @@ class DataPage(QWidget):
         workspace.setSpacing(14)
         workspace.addWidget(nav)
         workspace.addWidget(self._stack, 1)
+        self._section_nav = nav
+        self._workspace_layout = workspace
 
         lo = QVBoxLayout()
         lo.setContentsMargins(22, 20, 22, 20)
@@ -2483,6 +2491,26 @@ class DataPage(QWidget):
         lo.addLayout(workspace, 1)
         self.setLayout(lo)
         self._show_section(0)
+        QTimer.singleShot(0, self._update_responsive_layout)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_responsive_layout()
+
+    def _update_responsive_layout(self) -> None:
+        """Move the secondary Data navigation above content on narrow pages."""
+        compact = self.width() < 850
+        if compact == self._compact_layout:
+            return
+        self._compact_layout = compact
+        if compact:
+            self._workspace_layout.setDirection(QBoxLayout.Direction.TopToBottom)
+            self._section_nav.setMaximumWidth(16777215)
+            self._section_nav.setMaximumHeight(196)
+        else:
+            self._workspace_layout.setDirection(QBoxLayout.Direction.LeftToRight)
+            self._section_nav.setMaximumWidth(DESIGN_TOKENS.layout.nested_nav_width)
+            self._section_nav.setMaximumHeight(16777215)
 
     def _show_section(self, idx: int) -> None:
         self._stack.setCurrentIndex(idx)

@@ -1,0 +1,41 @@
+"""Shared desktop UI components."""
+
+from lunaris.ui.components.primitives import (
+    ActionBar,
+    CompactSearchField,
+    EmptyState,
+    FormGrid,
+    InlineNotice,
+    KeyValueList,
+    LabeledField,
+    MetricRow,
+    OverflowMenuButton,
+    PageHeader,
+    PageShell,
+    Section,
+    SegmentedControl,
+    StatusBadge,
+    Subsection,
+    Toolbar,
+    UnitField,
+)
+
+__all__ = [
+    "ActionBar",
+    "CompactSearchField",
+    "EmptyState",
+    "FormGrid",
+    "InlineNotice",
+    "KeyValueList",
+    "LabeledField",
+    "MetricRow",
+    "OverflowMenuButton",
+    "PageHeader",
+    "PageShell",
+    "Section",
+    "SegmentedControl",
+    "StatusBadge",
+    "Subsection",
+    "Toolbar",
+    "UnitField",
+]

@@ -85,25 +85,25 @@ class SolverSettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent: QtWidgets.QWidget, cfg: UISolverConfig):
         super().__init__(parent)
         self.setWindowTitle("Solver Configuration")
+        self.setObjectName("settingsDialog")
         self.setModal(True)
         self.resize(500, 400)
+        self.setMinimumSize(460, 360)
         self._cfg = cfg
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
-        self.setStyleSheet(f"background-color: {THEME['bg_space']}; color: {THEME['fg_main']};")
-
         header = QtWidgets.QLabel("Numerical Solver Settings")
-        header.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {THEME['accent']};")
+        header.setObjectName("dialogTitle")
         layout.addWidget(header)
 
         desc = QtWidgets.QLabel(
             "Configure integration tolerances for adaptive solvers. Blank or "
             "invalid values are normalized to a safe default pair before launch."
         )
-        desc.setStyleSheet(f"color: {THEME['fg_muted']};")
+        desc.setObjectName("dialogDescription")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
@@ -151,29 +151,9 @@ class SolverSettingsDialog(QtWidgets.QDialog):
 
         for btn in (self.btn_cancel, self.btn_save):
             btn.setCursor(QtCore.Qt.PointingHandCursor)
-            btn.setFixedHeight(32)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {THEME['bg_entry']};
-                    border: 1px solid {THEME['border']};
-                    border-radius: 6px;
-                    color: {THEME['fg_main']};
-                    padding: 0 16px;
-                }}
-                QPushButton:hover {{
-                    background-color: {THEME['border']};
-                }}
-            """)
-
-        self.btn_save.setStyleSheet(self.btn_save.styleSheet() + f"""
-            QPushButton {{
-                background-color: {THEME['accent']};
-                border: 1px solid {THEME['accent']};
-            }}
-            QPushButton:hover {{
-                background-color: {THEME['accent_hov']};
-            }}
-        """)
+            btn.setMinimumHeight(34)
+        self.btn_cancel.setProperty("kind", "ghost")
+        self.btn_save.setProperty("kind", "primary")
 
         btn_layout.addWidget(self.btn_cancel)
         btn_layout.addWidget(self.btn_save)
@@ -203,22 +183,22 @@ class SpacecraftBusDialog(QtWidgets.QDialog):
     def __init__(self, parent: QtWidgets.QWidget, cfg: UISpacecraftConfig):
         super().__init__(parent)
         self.setWindowTitle("Spacecraft Properties")
+        self.setObjectName("settingsDialog")
         self.setModal(True)
         self.resize(500, 400)
+        self.setMinimumSize(460, 360)
         self._cfg = cfg
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
-        self.setStyleSheet(f"background-color: {THEME['bg_space']}; color: {THEME['fg_main']};")
-
         header = QtWidgets.QLabel("Spacecraft Physical Properties")
-        header.setStyleSheet(f"font-size: 16px; font-weight: bold; color: {THEME['accent']};")
+        header.setObjectName("dialogTitle")
         layout.addWidget(header)
 
         desc = QtWidgets.QLabel("Configure spacecraft mass, dimensions, and force coefficients.")
-        desc.setStyleSheet(f"color: {THEME['fg_muted']};")
+        desc.setObjectName("dialogDescription")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
@@ -264,29 +244,9 @@ class SpacecraftBusDialog(QtWidgets.QDialog):
 
         for btn in (self.btn_cancel, self.btn_save):
             btn.setCursor(QtCore.Qt.PointingHandCursor)
-            btn.setFixedHeight(32)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {THEME['bg_entry']};
-                    border: 1px solid {THEME['border']};
-                    border-radius: 6px;
-                    color: {THEME['fg_main']};
-                    padding: 0 16px;
-                }}
-                QPushButton:hover {{
-                    background-color: {THEME['border']};
-                }}
-            """)
-
-        self.btn_save.setStyleSheet(self.btn_save.styleSheet() + f"""
-            QPushButton {{
-                background-color: {THEME['accent']};
-                border: 1px solid {THEME['accent']};
-            }}
-            QPushButton:hover {{
-                background-color: {THEME['accent_hov']};
-            }}
-        """)
+            btn.setMinimumHeight(34)
+        self.btn_cancel.setProperty("kind", "ghost")
+        self.btn_save.setProperty("kind", "primary")
 
         btn_layout.addWidget(self.btn_cancel)
         btn_layout.addWidget(self.btn_save)

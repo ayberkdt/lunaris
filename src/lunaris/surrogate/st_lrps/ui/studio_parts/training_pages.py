@@ -174,7 +174,7 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 
 
 from .common_widgets import *
-from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _inspect_run_artifacts, _NoWheelOnSpinFilter
+from .common_widgets import _tune_form, _tune_inputs, _row_lineedit_with_button, _scroll_wrap, _settings, _read_json_if_exists, _split_cli_args, _format_command, _send_os_notification, _apply_status_tips, _cfg_value, _norm_path, _timestamp_slug, _safe_slug, _default_training_output_dir, _default_runtime_output_dir, _default_dataset_report_dir, _output_standard_text, _mono_font, _make_page_header, _style_command_preview, _style_surface, _inspect_run_artifacts, _NoWheelOnSpinFilter
 
 
 from .data_pages import *
@@ -1735,13 +1735,7 @@ class STLRPSTrainTab(QWidget):
         # ── 3. Horizontal Launch Plan Strip (Phase 1) ──
         launch_strip = QFrame()
         launch_strip.setObjectName("setupLaunchStrip")
-        launch_strip.setStyleSheet(
-            "QFrame#setupLaunchStrip {"
-            "  background: rgba(8, 13, 26, 0.82);"
-            "  border: 1px solid rgba(53, 208, 255, 0.18);"
-            "  border-radius: 12px;"
-            "}"
-        )
+        _style_surface(launch_strip, object_name="setupLaunchStrip")
         launch_l = QHBoxLayout()
         launch_l.setContentsMargins(16, 12, 16, 12)
         launch_l.setSpacing(16)
@@ -1850,10 +1844,10 @@ class STLRPSTrainTab(QWidget):
 
         # Compact status strips.
         if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
-            self._kpi_strip.setMaximumHeight(96)
+            self._kpi_strip.setMaximumHeight(176)
             self._kpi_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         if _HAS_DASHBOARD_V2 and self._time_strip is not None:
-            self._time_strip.setMaximumHeight(96)
+            self._time_strip.setMaximumHeight(176)
             self._time_strip.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         # Chart card + structured log get generous fixed heights in the column.
@@ -2078,11 +2072,11 @@ class STLRPSTrainTab(QWidget):
         bar = QFrame()
         bar.setObjectName("trainRunBar")
         bar.setStyleSheet(
-            "QFrame#trainRunBar {"
-            "  background: rgba(11, 16, 32, 0.80);"
-            "  border: 1px solid rgba(124, 92, 255, 0.22);"
-            "  border-radius: 10px;"
-            "}"
+            f"QFrame#trainRunBar {{"
+            f"  background: {with_alpha(THEME['bg_card'], 0.88)};"
+            f"  border: 1px solid {with_alpha(THEME['accent'], 0.22)};"
+            f"  border-radius: 10px;"
+            f"}}"
         )
 
         # Flag a user-requested stop so the finish hook can show INTERRUPTED.
@@ -2125,21 +2119,39 @@ class STLRPSTrainTab(QWidget):
         top_row.addWidget(self.runner.btn_start)      # primary
         top_row.addWidget(self.runner.btn_stop)       # danger
         top_row.addWidget(self.runner.progress, 1)    # compact, expanding
-        top_row.addWidget(self.btn_enqueue_monitor)   # secondary (Add to Queue)
-        top_row.addWidget(self.btn_clear_log_monitor)
-        top_row.addWidget(self.btn_open_run_monitor)
-        top_row.addWidget(self.btn_preview_cmd_monitor)
-        top_row.addWidget(self.btn_copy_cmd_monitor)
+
+        secondary_row = QGridLayout()
+        secondary_row.setContentsMargins(0, 0, 0, 0)
+        secondary_row.setSpacing(8)
+        for index, button in enumerate(
+            (
+                self.btn_enqueue_monitor,
+                self.btn_clear_log_monitor,
+                self.btn_open_run_monitor,
+                self.btn_preview_cmd_monitor,
+                self.btn_copy_cmd_monitor,
+            )
+        ):
+            row, column = divmod(index, 3)
+            secondary_row.addWidget(button, row, column)
+        secondary_row.setColumnStretch(3, 1)
 
         # Run/output info row.
         self._run_dir_label = QLabel(f"Output: {TRAINING_OUTPUT_ROOT}/st_lrps_train_<timestamp>")
-        self._run_dir_label.setStyleSheet("color: #7f91ac; font-size: 11px;")
+        self._run_dir_label.setStyleSheet(
+            f"color: {THEME['fg_muted']}; font-size: 11px;"
+        )
         self._run_dir_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
+        self._run_dir_label.setWordWrap(True)
+        self._run_dir_label.setMinimumWidth(0)
+        self._run_dir_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         self._workflow_label = QLabel("")
         self._workflow_label.setStyleSheet(
-            "color: #8b7cff; font-size: 11px; font-weight: 600;"
+            f"color: {THEME['accent']}; font-size: 11px; font-weight: 600;"
         )
         info_row = QHBoxLayout()
         info_row.setContentsMargins(2, 0, 2, 0)
@@ -2151,6 +2163,7 @@ class STLRPSTrainTab(QWidget):
         lo.setContentsMargins(10, 8, 10, 8)
         lo.setSpacing(6)
         lo.addLayout(top_row)
+        lo.addLayout(secondary_row)
         lo.addLayout(info_row)
         bar.setLayout(lo)
         return bar
