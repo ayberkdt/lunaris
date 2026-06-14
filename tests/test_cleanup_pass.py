@@ -1,7 +1,10 @@
 import argparse
-import pytest
 from unittest.mock import patch
-from lunaris.surrogate.st_lrps.evaluation.ablation import parse_args, build_matrix
+
+import pytest
+
+from lunaris.surrogate.st_lrps.evaluation.ablation import build_matrix, parse_args
+
 
 def test_ablation_run_eval_flags():
     """Verify that --run-eval-after-training and --eval-streaming flags are parsed."""
@@ -24,15 +27,15 @@ def test_ablation_eval_commands_generation():
     assert len(entries) == 1
     entry = entries[0]
     assert "eval_commands" in entry
-    
+
     # Expecting two eval commands: one for test-data, one for ood-data
     assert len(entry["eval_commands"]) == 2
-    
+
     cmd_test = entry["eval_commands"][0]
     assert "--streaming" in cmd_test
     assert "--data" in cmd_test
     assert "test.h5" in cmd_test
-    
+
     cmd_ood = entry["eval_commands"][1]
     assert "--streaming" in cmd_ood
     assert "--data" in cmd_ood
