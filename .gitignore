@@ -15,8 +15,15 @@ __pycache__/
 *.pyo
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 .ipynb_checkpoints/
 *.egg-info/
+
+# Coverage artifacts (Phase 4 tooling)
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 
 # IDE / OS
 .vscode/
