@@ -2,7 +2,7 @@
 """
 ST-LRPS Studio.
 
-PyQt6 dashboard for the lunar scalar potential surrogate codebase.
+PySide6 dashboard for the lunar scalar potential surrogate codebase.
 
 The model predicts residual potential dU(x); residual acceleration da is
 computed from the gradient of that scalar field. ST-LRPS is a Sobolev-trained
@@ -63,7 +63,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import sys
 
 from .qt_common import *
-from .qt_common import _USE_PYSIDE
 
 
 # pyqtgraph — optional, graceful fallback
@@ -302,35 +301,19 @@ def _tune_form(form: QFormLayout) -> None:
 
 
 def _tune_inputs(root: QWidget, h: int = 38) -> None:
-    # PySide6 does not support passing a tuple of types to findChildren and prints
-    # a warning (FIXME qt_isinstance...) to standard error if attempted.
-    if _USE_PYSIDE:
-        inputs = []
-        for cls in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox):
-            inputs.extend(root.findChildren(cls))
-    else:
-        try:
-            inputs = root.findChildren((QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox))
-        except TypeError:
-            inputs = []
-            for cls in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox):
-                inputs.extend(root.findChildren(cls))
+    # PySide6 does not support passing a tuple of types to findChildren (it prints
+    # a "FIXME qt_isinstance..." warning to stderr), so query one class at a time.
+    inputs = []
+    for cls in (QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox):
+        inputs.extend(root.findChildren(cls))
 
     for w in inputs:
         w.setMinimumHeight(h)
         w.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-    if _USE_PYSIDE:
-        spinboxes = []
-        for cls in (QSpinBox, QDoubleSpinBox):
-            spinboxes.extend(root.findChildren(cls))
-    else:
-        try:
-            spinboxes = root.findChildren((QSpinBox, QDoubleSpinBox))
-        except TypeError:
-            spinboxes = []
-            for cls in (QSpinBox, QDoubleSpinBox):
-                spinboxes.extend(root.findChildren(cls))
+    spinboxes = []
+    for cls in (QSpinBox, QDoubleSpinBox):
+        spinboxes.extend(root.findChildren(cls))
 
     for sb in spinboxes:
         sb.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.UpDownArrows)

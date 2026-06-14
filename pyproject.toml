@@ -64,11 +64,10 @@ hpc = [
   "torch>=2.0,<3",
   "h5py>=3.8,<4",
 ]
-# Both Qt bindings are required: the main UI uses PySide6, the ST-LRPS studio
-# imports PyQt6. Do not drop either.
+# Single Qt binding: both the mission UI and the ST-LRPS studio use PySide6
+# (Phase 3 consolidation; PyQt6 was dropped to remove the dual-binding bug class).
 ui = [
   "PySide6>=6.5,<7",
-  "PyQt6>=6.5,<7",
   "pyqtgraph>=0.13,<0.16",
 ]
 reports = [
@@ -87,7 +86,6 @@ all = [
   "torch>=2.0,<3",
   "h5py>=3.8,<4",
   "PySide6>=6.5,<7",
-  "PyQt6>=6.5,<7",
   "pyqtgraph>=0.13,<0.16",
   "reportlab>=4.0,<5",
   "pytest>=7.2,<10",

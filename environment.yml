@@ -1,4 +1,7 @@
 name: lunaris
+# Conda environment for GPU/cluster use. Version bounds are kept in sync with
+# pyproject.toml (the single source of truth): every package carries a lower and
+# an upper bound so a solve cannot silently pull in an incompatible major release.
 channels:
   - pytorch
   - nvidia
@@ -6,18 +9,18 @@ channels:
   - defaults
 dependencies:
   - python>=3.10
-  - numpy>=1.20.0
-  - numba>=0.55.0
-  - scipy>=1.8.0
+  - numpy>=1.24,<3
+  - numba>=0.59,<0.65
+  - scipy>=1.10,<2
   # Uncomment the pytorch-cuda version that matches your cluster's loaded CUDA module.
   # For example, if you load a module with CUDA 12.1, use pytorch-cuda=12.1.
-  - pytorch>=2.0.0
+  - pytorch>=2.0,<3
   - pytorch-cuda=12.1
-  - h5py>=3.0.0
-  - matplotlib>=3.5.0
-  - pandas>=1.3.0
-  - tqdm>=4.60.0
+  - h5py>=3.8,<4
+  - matplotlib>=3.7,<4
+  - pandas>=2.0,<3
+  - tqdm>=4.64,<5
   - pip
   - pip:
-      - spiceypy>=5.0.0
-      - pytest>=7.0.0
+      - spiceypy>=5.1,<9
+      - pytest>=7.2,<10

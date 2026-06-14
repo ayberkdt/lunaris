@@ -2,7 +2,7 @@
 """
 ST-LRPS Studio.
 
-PyQt6 dashboard for the lunar scalar potential surrogate codebase.
+PySide6 dashboard for the lunar scalar potential surrogate codebase.
 
 The model predicts residual potential dU(x); residual acceleration da is
 computed from the gradient of that scalar field. ST-LRPS is a Sobolev-trained
@@ -63,7 +63,6 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import sys
 
 from .qt_common import *
-from .qt_common import _USE_PYSIDE
 
 
 # pyqtgraph — optional, graceful fallback
