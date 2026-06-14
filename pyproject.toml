@@ -76,6 +76,12 @@ reports = [
 ]
 dev = [
   "pytest>=7.2,<10",
+  "pytest-cov>=4.1,<7",
+  "pytest-randomly>=3.12,<4",
+  "ruff>=0.6,<0.13",
+  "mypy>=1.8,<2",
+  "import-linter>=2.0,<3",
+  "pre-commit>=3.5,<5",
 ]
 all = [
   "torch>=2.0,<3",
@@ -85,6 +91,12 @@ all = [
   "pyqtgraph>=0.13,<0.16",
   "reportlab>=4.0,<5",
   "pytest>=7.2,<10",
+  "pytest-cov>=4.1,<7",
+  "pytest-randomly>=3.12,<4",
+  "ruff>=0.6,<0.13",
+  "mypy>=1.8,<2",
+  "import-linter>=2.0,<3",
+  "pre-commit>=3.5,<5",
 ]
 
 [project.scripts]
@@ -119,4 +131,72 @@ markers = [
   "requires_data: needs large external data (SPICE kernels, gravity/topography files)",
   "requires_cuda: needs an NVIDIA CUDA device",
   "requires_torch: needs PyTorch installed (skipped cleanly otherwise)",
+]
+# pytest-randomly shuffles test order every run. This catches order-dependent
+# state leakage (e.g. the Qt-binding pollution that produced setFont/setIcon
+# failures). Pin a default seed locally if a shuffle exposes a real ordering bug
+# you need to reproduce: `pytest -p randomly --randomly-seed=<n>`.
+
+# ---------------------------------------------------------------------------
+# Phase-1 hardening guardrails. All start in "report" mode (run in CI, not yet
+# gating) so the freeze cleanup can drive each baseline to zero before the CI
+# step is flipped to fail-on-error.
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+# Conservative starter set: pyflakes (F), import sort (I), pycodestyle (E/W),
+# pyupgrade (UP), bugbear (B). Expand once the baseline is clean.
+select = ["E", "F", "W", "I", "UP", "B"]
+# E501 (line length) is intentionally not enforced during the freeze to avoid
+# mass reflow churn; revisit once the substantive lint baseline is clean.
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true
+# Kademeli adoption: start with the dependency-light SSOT layers, then widen.
+files = ["src/lunaris/common", "src/lunaris/core"]
+
+[tool.coverage.run]
+source = ["lunaris"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+# Enforces the documented layering: a layer never imports from a layer above it.
+# Encoded as forbidden contracts (precise and low-risk) rather than a full
+# ``layers`` contract, which keeps the surrogate package out of scope for now.
+[tool.importlinter]
+root_package = "lunaris"
+
+[[tool.importlinter.contracts]]
+name = "common stays dependency-light (no upward imports)"
+type = "forbidden"
+source_modules = ["lunaris.common"]
+forbidden_modules = [
+  "lunaris.physics",
+  "lunaris.core",
+  "lunaris.analysis",
+  "lunaris.visualization",
+  "lunaris.ui",
+  "lunaris.surrogate",
+]
+
+[[tool.importlinter.contracts]]
+name = "physics never imports core/analysis/visualization/ui"
+type = "forbidden"
+source_modules = ["lunaris.physics"]
+forbidden_modules = [
+  "lunaris.core",
+  "lunaris.analysis",
+  "lunaris.visualization",
+  "lunaris.ui",
 ]
