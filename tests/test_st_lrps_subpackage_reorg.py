@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Regression tests for the ST-LRPS Part 2 subpackage reorganization.
 
@@ -99,15 +98,15 @@ def test_top_level_import_is_lightweight() -> None:
 # ---------------------------------------------------------------------------
 
 def test_canonical_public_imports() -> None:
+    from lunaris.surrogate.st_lrps.artifacts.manager import make_run_layout
+    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
+    from lunaris.surrogate.st_lrps.networks.models import PhysicsNet, build_model_from_config
+    from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
+    from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
     from lunaris.surrogate.st_lrps.training.config import TrainConfig
     from lunaris.surrogate.st_lrps.training.engine import STLRPSTrainer
     from lunaris.surrogate.st_lrps.training.losses import SobolevLoss
     from lunaris.surrogate.st_lrps.training.metrics import normalize_best_metric
-    from lunaris.surrogate.st_lrps.networks.models import PhysicsNet, build_model_from_config
-    from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
-    from lunaris.surrogate.st_lrps.artifacts.manager import make_run_layout
-    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
-    from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
 
     for obj in (
         TrainConfig, STLRPSTrainer, SobolevLoss, normalize_best_metric,

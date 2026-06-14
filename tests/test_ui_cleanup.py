@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Regression tests for the UI-layer cleanup (root launcher + lunaris.ui.widgets).
 
@@ -163,7 +162,7 @@ def test_build_command_targets_main_with_canonical_flags() -> None:
 
 
 def test_build_mc_command_targets_runner_with_canonical_flags() -> None:
-    from lunaris.ui.core.command_builder import build_mc_command, build_command_preview
+    from lunaris.ui.core.command_builder import build_command_preview, build_mc_command
 
     cmd = build_mc_command(
         python_executable="python",
@@ -368,8 +367,8 @@ def test_mainwindow_has_no_legacy_aliases() -> None:
 
 def test_theme_package_exposes_stylesheet_builder() -> None:
     """The global QSS now lives in lunaris.ui.theme, not inline in app.py."""
-    from lunaris.ui.theme import build_app_stylesheet
     from lunaris.ui.core.ui_commons import LOG_COLORS, THEME
+    from lunaris.ui.theme import build_app_stylesheet
 
     qss = build_app_stylesheet(THEME, LOG_COLORS)
     assert isinstance(qss, str) and "QMainWindow" in qss
