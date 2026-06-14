@@ -420,3 +420,113 @@ def test_throughput_metrics_and_impact_stability() -> None:
     
     # 3. Verify no NaNs in output (impacted trajectories freeze or stay finite)
     assert np.all(np.isfinite(Y_out))
+
+
+def test_throughput_no_impact_raw_equals_active() -> None:
+    """No-impact case: every sample is alive at every step, so the raw and active
+    state-step counts (and therefore the two throughput rates) must coincide."""
+    degree = 20
+    grav = _make_gravity_model(degree, seed=14)
+    Y0 = np.repeat(_circular_state(120.0)[None, :], 4, axis=0)  # circular -> no impact
+    prop = _make_propagator(grav, degree, chunk_size=2)  # >1 chunk: exercise aggregation
+    prop.propagate(
+        Y0, *([np.ones(4)] * 4), duration_s=600.0, output_dt_s=300.0,
+    )
+    diag = prop.diagnostics_snapshot()
+    assert diag["impacted_sample_count"] == 0
+    assert diag["active_sample_count"] == 4
+    assert diag["total_active_state_steps"] == diag["total_raw_state_steps"]
+    assert diag["active_state_steps_per_second"] == pytest.approx(
+        diag["raw_batch_state_steps_per_second"], rel=1e-9
+    )
+
+
+# ---------------------------------------------------------------------------
+# G. Autograd inference safety (task §1 MAJOR)
+# ---------------------------------------------------------------------------
+
+def test_rk4_step_builds_no_autograd_graph() -> None:
+    """Inside the propagator's no-grad RK4 scope, stepping an input that *requires*
+    grad must not build an autograd graph: the output has no grad_fn and does not
+    require grad. Proves the loop never depends on autograd (acceleration is analytic)."""
+    degree = 20
+    grav = _make_gravity_model(degree, seed=11)
+    prop = _make_propagator(grav, degree)
+
+    s = torch.as_tensor(_circular_state(100.0)[None, :], dtype=torch.float64)
+    s.requires_grad_(True)
+    with torch.no_grad():
+        rhs = prop._rhs(0.0, s)
+        out = prop._rk4_step(s, 0.0, 60.0)
+    assert rhs.grad_fn is None and rhs.requires_grad is False
+    assert out.grad_fn is None and out.requires_grad is False
+
+
+def test_propagation_is_nograd_under_outer_enable_grad() -> None:
+    """An outer torch.enable_grad() must NOT reactivate graph construction inside
+    the RK4 loop. Results must be bitwise-identical to the default call and finite."""
+    degree = 30
+    grav = _make_gravity_model(degree, seed=12)
+    prop = _make_propagator(grav, degree)
+
+    Y0 = np.repeat(_circular_state(120.0)[None, :], 3, axis=0)
+    args = dict(duration_s=600.0, output_dt_s=300.0)
+
+    _, Y_default, _, _ = prop.propagate(Y0, *([np.ones(3)] * 4), **args)
+    with torch.enable_grad():
+        _, Y_enabled, _, _ = prop.propagate(Y0, *([np.ones(3)] * 4), **args)
+
+    np.testing.assert_allclose(Y_enabled, Y_default, rtol=0.0, atol=0.0)
+    assert np.all(np.isfinite(Y_enabled))
+
+
+# ---------------------------------------------------------------------------
+# H. Quaternion sign equivalence + convention (task §16 MISSING EVIDENCE)
+# ---------------------------------------------------------------------------
+
+class MockSignFlipEphemeris:
+    """Ephemeris whose second quaternion is the SIGN-FLIPPED 90 deg z-rotation.
+
+    ``-q`` and ``q`` describe the same rotation; the SLERP must take the shortest
+    path across the sign flip rather than the long way around.
+    """
+
+    def get_data_provider(self):
+        c45 = math.cos(math.pi / 4.0)
+        return {
+            "q_i2f_tab": np.array(
+                [[1.0, 0.0, 0.0, 0.0], [-c45, 0.0, 0.0, -c45]], dtype=np.float64
+            ),
+            "dt_s": 100.0,
+        }
+
+
+def test_quaternion_sign_equivalence_and_convention() -> None:
+    """q and -q rotate a vector identically (same rotation); the active i2f
+    convention maps +x -> +y for a 90 deg +z rotation."""
+    from lunaris.core.torch_sh_propagator import _quat_rotate
+
+    c45 = math.cos(math.pi / 4.0)
+    q = torch.tensor([c45, 0.0, 0.0, c45], dtype=torch.float64)
+    v = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float64)
+    v_q = _quat_rotate(q, v)
+    v_negq = _quat_rotate(-q, v)
+    np.testing.assert_allclose(v_q.numpy(), v_negq.numpy(), atol=1e-12)
+    # Convention: active 90 deg z-rotation maps +x -> +y.
+    np.testing.assert_allclose(v_q.numpy()[0], [0.0, 1.0, 0.0], atol=1e-12)
+
+
+def test_slerp_takes_shortest_path_across_sign_flip() -> None:
+    """SLERP midpoint between identity and the sign-flipped 90 deg rotation must be
+    the 45 deg rotation (compared via |dot| ≈ 1 to absorb the q/-q ambiguity)."""
+    from lunaris.core.torch_sh_propagator import _TorchMoonFrame
+
+    frame = _TorchMoonFrame(
+        MockSignFlipEphemeris(), device=torch.device("cpu"), dtype=torch.float64
+    )
+    q_50 = frame.quat_i2f(50.0).numpy()
+    c225 = math.cos(math.pi / 8.0)
+    s225 = math.sin(math.pi / 8.0)
+    expected = np.array([c225, 0.0, 0.0, s225])
+    np.testing.assert_allclose(abs(float(np.dot(q_50, expected))), 1.0, atol=1e-9)
+    np.testing.assert_allclose(float(np.linalg.norm(q_50)), 1.0, atol=1e-10)

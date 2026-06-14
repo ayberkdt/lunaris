@@ -157,6 +157,61 @@ def test_low_degree_auto_still_prefers_numba(monkeypatch) -> None:
     assert plan.actual_backend == "numba_cuda_sh"
 
 
+# ---------------------------------------------------------------------------
+# 1b. torch_cpu_sh selection matrix (§2 / §7 backend policy)
+# ---------------------------------------------------------------------------
+
+def test_explicit_torch_cpu_sh_uses_torch_on_cpu(monkeypatch) -> None:
+    """backend=torch_cpu_sh → TORCH_CPU_SH plan on CPU, fixed-step RK4, no GPU."""
+    pytest.importorskip("torch")
+    _patch_availability(monkeypatch, torch_avail=False, numba_avail=False)
+    plan = resolve_mc_backend_policy(_mc(mc_backend="torch_cpu_sh", gpu_sh_degree=50), _sim())
+    assert plan.final_backend == MCBackend.TORCH_CPU_SH
+    assert plan.actual_backend == "torch_cpu_sh"
+    assert plan.use_gpu is False
+    assert plan.actual_device == "cpu"
+    assert plan.integrator == "fixed-step RK4"
+    assert plan.actual_sh_degree == 50
+
+
+def test_cuda_unavailable_cpu_policy_falls_back_to_torch_cpu(monkeypatch) -> None:
+    """torch_cuda_sh + CUDA unavailable + fallback_policy=cpu → torch_cpu_sh, recorded."""
+    pytest.importorskip("torch")
+    _patch_availability(monkeypatch, torch_avail=False, numba_avail=False)
+    plan = resolve_mc_backend_policy(
+        _mc(mc_backend="torch_cuda_sh", gpu_sh_degree=80, gpu_sh_fallback_policy="cpu"),
+        _sim(),
+    )
+    assert plan.final_backend == MCBackend.TORCH_CPU_SH
+    assert plan.actual_backend == "torch_cpu_sh"
+    assert plan.fallback_applied is True
+    assert plan.fallback_reason  # must record why it fell back
+
+
+def test_cuda_unavailable_error_policy_raises(monkeypatch) -> None:
+    """torch_cuda_sh + CUDA unavailable + fallback_policy=error → hard error."""
+    _patch_availability(monkeypatch, torch_avail=False, numba_avail=False)
+    with pytest.raises(RuntimeError):
+        resolve_mc_backend_policy(
+            _mc(mc_backend="torch_cuda_sh", gpu_sh_degree=80, gpu_sh_fallback_policy="error"),
+            _sim(),
+        )
+
+
+def test_cuda_unavailable_compatible_gpu_does_not_fall_back_to_cpu(monkeypatch) -> None:
+    """torch_cuda_sh + CUDA unavailable + compatible_gpu → raise (NO silent CPU fallback)."""
+    _patch_availability(monkeypatch, torch_avail=False, numba_avail=False)
+    with pytest.raises(RuntimeError):
+        resolve_mc_backend_policy(
+            _mc(
+                mc_backend="torch_cuda_sh",
+                gpu_sh_degree=80,
+                gpu_sh_fallback_policy="compatible_gpu",
+            ),
+            _sim(),
+        )
+
+
 # ===========================================================================
 # 2. Engine dispatch (§10 / §16E)
 # ===========================================================================
@@ -231,6 +286,56 @@ def test_engine_explicit_numba_high_degree_dispatches_torch(monkeypatch, tmp_pat
     prop = MonteCarloEngine._build_propagator(engine)
     assert isinstance(prop, DummyTorchSH)
     assert engine._backend_plan.actual_backend == "torch_cuda_sh"
+
+
+def test_engine_dispatches_torch_cpu_sh_with_cpu_device(monkeypatch, tmp_path: Path) -> None:
+    """An explicit torch_cpu_sh request builds the Torch propagator with device='cpu'
+    and must NOT construct the SciPy CPU or Numba GPU propagators."""
+    pytest.importorskip("torch")
+    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.core.torch_sh_propagator as torch_sh_mod
+    from lunaris.core.monte_carlo_engine import MonteCarloEngine
+
+    captured: dict[str, object] = {}
+
+    class DummyCPU:
+        def __init__(self, *a, **k) -> None:
+            raise AssertionError("SciPy CPU propagator must not be built for torch_cpu_sh.")
+
+    class DummyNumbaGPU:
+        def __init__(self, *a, **k) -> None:
+            raise AssertionError("Numba GPU propagator must not be built for torch_cpu_sh.")
+
+    class DummyTorchSH:
+        def __init__(self, dyn, mc_cfg, flags, **k) -> None:
+            captured["device"] = k.get("device")
+
+    _patch_availability(monkeypatch, torch_avail=False, numba_avail=False)
+    monkeypatch.setattr(mc_prop, "CPUBatchPropagator", DummyCPU)
+    monkeypatch.setattr(mc_prop, "GPUBatchPropagator", DummyNumbaGPU)
+    monkeypatch.setattr(torch_sh_mod, "TorchSHBatchPropagator", DummyTorchSH)
+
+    engine = MonteCarloEngine.__new__(MonteCarloEngine)
+    engine._mc = MonteCarloConfig(
+        n_samples=2,
+        use_gpu=True,
+        mc_backend="torch_cpu_sh",
+        gpu_sh_degree=50,
+        output_format="npz",
+        output_path=str(tmp_path / "mc_torch_cpu.npz"),
+    )
+    engine._sim_cfg = _sim()
+    engine._dyn = SimpleNamespace(grav=SimpleNamespace(degree_max=50), ephem=None)
+    engine._surface_provider = None
+    engine._topo_grid = None
+    engine._backend_note = ""
+    engine._backend_plan = None
+
+    prop = MonteCarloEngine._build_propagator(engine)
+    assert isinstance(prop, DummyTorchSH)
+    assert captured["device"] == "cpu"
+    assert engine._backend_plan.final_backend == MCBackend.TORCH_CPU_SH
+    assert engine._backend_plan.actual_backend == "torch_cpu_sh"
 
 
 def test_engine_torch_preflight_error_is_not_silently_downgraded(monkeypatch, tmp_path: Path) -> None:

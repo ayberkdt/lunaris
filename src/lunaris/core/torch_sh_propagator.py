@@ -532,10 +532,17 @@ class TorchSHBatchPropagator:
 
         Y_out[0, a:b, :] = state.detach().cpu().numpy().astype(np.float64)
 
-        # Device-side accumulator: avoids per-step host synchronization.
+        # Device-side accumulators: avoid per-step host synchronization. Both the
+        # active-step count and the first-impact step index are tracked on device
+        # and converted to host scalars exactly once, at the end of the chunk
+        # (task §3: no per-step .item()/CPU<->GPU sync in the RK4 hot loop — a
+        # device-to-host sync every step would distort the very throughput we are
+        # trying to measure on CUDA).
         active_steps_acc = torch.zeros((), dtype=torch.int64, device=device)
+        impact_step = torch.full((n,), -1, dtype=torch.int64, device=device)
 
         t_curr = 0.0
+        global_step = 0
         # TODO(perf): Benchmark masking or compacting impacted samples so they
         # no longer participate in SH evaluation. Deferred to preserve fixed
         # batch shapes and avoid gather/scatter overhead until profiling shows
@@ -546,16 +553,27 @@ class TorchSHBatchPropagator:
                     active_steps_acc += alive.sum()
                     state = self._rk4_step(state, t_curr, dt_eff)
                     t_curr += dt_eff
+                    global_step += 1
                     r_mag = torch.linalg.norm(state[:, :3], dim=1)
                     newly = alive & (r_mag <= self._impact_r)
-                    if bool(newly.any()):
-                        for li in newly.nonzero(as_tuple=False).view(-1).cpu().tolist():
-                            gi = a + int(li)
-                            if impact_flags[gi] == 0.0:
-                                impact_flags[gi] = 1.0
-                                t_impact[gi] = t_curr
-                        alive = alive & ~newly
+                    # Record the 1-based step index of first impact on device;
+                    # already-impacted samples keep their earlier index. No host
+                    # sync here — the bookkeeping is resolved once below.
+                    impact_step = torch.where(
+                        newly, torch.full_like(impact_step, global_step), impact_step
+                    )
+                    alive = alive & ~newly
                 Y_out[snap_idx + 1, a:b, :] = state.detach().cpu().numpy().astype(np.float64)
+
+        # Single host sync per chunk: resolve impact bookkeeping. ``step * dt_eff``
+        # equals the ``t_curr`` value immediately after the impacting step, so the
+        # recorded impact epoch is identical to the per-step accounting it replaces.
+        impact_step_host = impact_step.detach().cpu().numpy()
+        for li in np.nonzero(impact_step_host >= 0)[0].tolist():
+            gi = a + int(li)
+            if impact_flags[gi] == 0.0:
+                impact_flags[gi] = 1.0
+                t_impact[gi] = float(impact_step_host[li]) * dt_eff
 
         return int(active_steps_acc.item())
 
