@@ -287,7 +287,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Runtime Flags
         self.recent_presets: List[str] = []
         self.last_cmd_preview: str = ""
-        self.is_log_collapsed: bool = True
+        self.is_log_collapsed: bool = False
         # Independent partial-line buffers for the two backend streams. Mixing
         # stdout and stderr fragments would interleave half-written lines, so
         # each stream owns a dedicated assembler.
@@ -602,7 +602,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter.setCollapsible(1, False)  # prevent log from disappearing
         self.main_splitter.setStretchFactor(0, 88)
         self.main_splitter.setStretchFactor(1, 12)
-        self.log_panel.set_collapsed(True)
+        self.log_panel.set_collapsed(False)
         
         # Build Menu & Status
         self._build_menubar()

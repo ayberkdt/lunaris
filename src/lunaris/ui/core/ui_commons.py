@@ -34,7 +34,12 @@ from typing import Optional
 
 from PySide6 import QtGui, QtCore, QtWidgets
 
-from lunaris.ui_foundation.tokens import DESIGN_TOKENS
+from lunaris.ui_foundation import (
+    DESIGN_TOKENS,
+    LOG_COLORS as FOUNDATION_LOG_COLORS,
+    ORBIT_THEME as FOUNDATION_ORBIT_THEME,
+    THEME as FOUNDATION_THEME,
+)
 
 # Derive lunar constants from the backend SSOT (common.constants).
 # UI code works in km, so we convert here once and export aliases.
@@ -132,7 +137,7 @@ _LEGACY_THEME_REFERENCE = {
 # Rich Text Log Colors (HTML) — aligned with the Lunar Graphite palette.
 # Typed tokens are authoritative. This compatibility mapping keeps the existing
 # page API stable while the remaining inline styling migrates to global QSS.
-THEME = DESIGN_TOKENS.colors.as_legacy_dict()
+THEME = FOUNDATION_THEME
 
 _LEGACY_LOG_COLORS_REFERENCE = {
     "error":     "#FCA5A5",   # soft red — readable on dark bg
@@ -149,37 +154,8 @@ _LEGACY_LOG_COLORS_REFERENCE = {
 # the Qt ``THEME`` because the 3D preview needs deliberate, slightly different
 # values (true space-black background, regolith greys, marker hues) and is
 # consumed as float RGBA tuples via ``rgba_css_to_tuple`` / ``hex_to_rgba_float``.
-LOG_COLORS = {
-    "error": DESIGN_TOKENS.colors.error,
-    "warning": DESIGN_TOKENS.colors.warning,
-    "success": DESIGN_TOKENS.colors.success,
-    "system": DESIGN_TOKENS.colors.fg_soft,
-    "info": DESIGN_TOKENS.colors.accent_hov,
-    "debug": DESIGN_TOKENS.colors.fg_muted,
-    "timestamp": DESIGN_TOKENS.colors.inactive,
-    "default": DESIGN_TOKENS.colors.fg_main,
-}
-
-ORBIT_THEME = {
-    "space_bg":      DESIGN_TOKENS.visualization.space_bg,
-
-    "moon_dark":     DESIGN_TOKENS.visualization.moon_dark,
-    "moon_mid":      DESIGN_TOKENS.visualization.moon_mid,
-    "moon_light":    DESIGN_TOKENS.visualization.moon_light,
-
-    "orbit_line":    DESIGN_TOKENS.visualization.orbit_line,
-    "orbit_glow":    DESIGN_TOKENS.visualization.orbit_glow,
-    "spacecraft":    DESIGN_TOKENS.visualization.spacecraft,
-
-    "periapsis":     DESIGN_TOKENS.visualization.periapsis,
-    "apoapsis":      DESIGN_TOKENS.visualization.apoapsis,
-
-    "orbit_plane":   DESIGN_TOKENS.visualization.orbit_plane,
-
-    "axis_x":        DESIGN_TOKENS.visualization.axis_x,
-    "axis_y":        DESIGN_TOKENS.visualization.axis_y,
-    "axis_z":        DESIGN_TOKENS.visualization.axis_z,
-}
+LOG_COLORS = FOUNDATION_LOG_COLORS
+ORBIT_THEME = FOUNDATION_ORBIT_THEME
 
 
 def hex_to_rgba_float(color: str, alpha: float = 1.0) -> "tuple[float, float, float, float]":
