@@ -44,6 +44,7 @@ This module is **layer 3** (core); it may import from ``common`` and
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import json
 import math
@@ -83,6 +84,46 @@ _BACKEND_DISPLAY_NAMES = {
     "gpu_st_lrps_potential": "GPU-ST-LRPS",
     "gpu_st_lrps_direct": "GPU-ST-LRPS",
 }
+
+# Manifest fields that a schema-v2 Monte Carlo archive must carry. Enforced by
+# ``load_mc_result(strict=True)`` so a truncated, hand-edited, or pre-contract
+# archive cannot masquerade as a complete, provenance-bearing v2 result. Every
+# listed field is always written with a non-null value by ``MonteCarloEngine.run``.
+REQUIRED_ARCHIVE_V2_FIELDS: tuple[str, ...] = (
+    "archive_schema_version",
+    "n_samples",
+    "seed",
+    "duration_s",
+    "output_dt_s",
+    "backend",
+    "requested_mc_backend",
+    "actual_mc_backend",
+    "mc_backend",
+    "detect_impact",
+    "compute_impact_statistics",
+)
+
+
+def _sha256_file(path: Any) -> str | None:
+    """Return the SHA-256 hex digest of a file, or ``None`` when unavailable.
+
+    Used to stamp artifact / coefficient / kernel provenance into the archive
+    manifest. Never raises: missing or unreadable files yield ``None`` so
+    provenance capture cannot abort a completed run.
+    """
+    if not path:
+        return None
+    try:
+        p = Path(path)
+        if not p.is_file():
+            return None
+        digest = hashlib.sha256()
+        with p.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except Exception:
+        return None
 
 # =============================================================================
 # 0.                    LOCAL BOOTSTRAP / COMPAT HELPERS
@@ -228,17 +269,21 @@ def _impact_positions_fixed(
     ephem: Any,
     t_impact: np.ndarray,
     positions_inertial: np.ndarray,
-    *,
-    allow_identity: bool,
 ) -> np.ndarray:
-    """Rotate per-sample inertial impact positions at their impact epochs."""
+    """Rotate per-sample inertial impact positions into the Moon-fixed frame.
+
+    Returns an all-NaN array when no ephemeris is available. Without the
+    inertial->Moon-fixed rotation table there is no physically meaningful
+    Moon-fixed impact position, so the engine must NOT fabricate one by treating
+    inertial coordinates as if they were body-fixed: that silently produces a
+    wrong geographic impact distribution (lat/lon) with no error signal.
+    Consumers detect the NaN and skip lat/lon reporting instead.
+    """
     out = np.full_like(positions_inertial, np.nan, dtype=np.float64)
+    if ephem is None:
+        return out
     finite = np.isfinite(t_impact) & np.isfinite(positions_inertial).all(axis=1)
     if not np.any(finite):
-        return out
-    if ephem is None:
-        if allow_identity:
-            out[finite] = positions_inertial[finite]
         return out
 
     provider = ephem.get_data_provider()
@@ -1141,8 +1186,26 @@ class MonteCarloEngine:
                 )
 
         # -----------------------------------------------------------------
-        # 3) Sub-batch loop (VRAM budget)
+        # 3) Sub-batch loop (VRAM + host-RAM budget)
         # -----------------------------------------------------------------
+        # The per-batch host buffer is (T, b_n, 6) float64. A batch that fits in
+        # VRAM can still exhaust host RAM for long / high-cadence runs because the
+        # VRAM cap only accounts for a single state vector per sample, not the full
+        # snapshot history kept on the host. Bound the sample batch by the host
+        # memory budget as well so max_batch never blows out resident memory.
+        host_bytes_per_sample = len(t_out_contract) * 6 * np.dtype(np.float64).itemsize
+        host_batch_cap = max(
+            1, int(memory_limit_bytes / max(1, host_bytes_per_sample))
+        )
+        if host_batch_cap < max_batch:
+            print(
+                f"[MC] Host-RAM cap reduced batch {max_batch} -> {host_batch_cap} "
+                f"(per-batch host buffer ~{host_bytes_per_sample / 1e6:.1f} MB/sample "
+                f"x T={len(t_out_contract)}).",
+                flush=True,
+            )
+            max_batch = host_batch_cap
+
         n_batches = math.ceil(N / max_batch)
         self._publish_progress(
             stage="propagating",
@@ -1280,9 +1343,6 @@ class MonteCarloEngine:
                 getattr(self._dyn, "ephem", None),
                 np.asarray(t_imp_b, dtype=np.float64),
                 batch_impact_positions,
-                allow_identity=bool(
-                    getattr(self._dyn, "allow_identity_rotation", False)
-                ),
             )
 
             try:
@@ -1390,10 +1450,47 @@ class MonteCarloEngine:
                 "physics_capabilities": _active_physics_capabilities(self._sim_cfg),
             }
         except Exception:
+            # Even on the degenerate provenance path the required v2 manifest
+            # fields must be present (and non-null) so the archive still loads
+            # under load_mc_result(strict=True).
+            _fallback_backend = str(getattr(mc, "mc_backend", "auto") or "auto")
             _plan_meta = {
-                "requested_mc_backend": str(getattr(mc, "mc_backend", "auto") or "auto"),
+                "requested_mc_backend": _fallback_backend,
+                "actual_mc_backend": _fallback_backend,
+                "mc_backend": _fallback_backend,
                 "requested_sh_degree": int(mc.gpu_sh_degree),
             }
+
+        # Artifact + coefficient + kernel hash provenance: a path string alone is
+        # not reproducible evidence. Stamp content hashes so a reader can verify
+        # exactly which weights, gravity coefficients, and GPU kernel produced
+        # this archive. _sha256_file never raises (missing file -> None, dropped).
+        _provenance_hashes: dict[str, Any] = {}
+        if getattr(_grav_model, "model_kind", None) == "st_lrps":
+            _force_runtime = getattr(_grav_model, "_force_runtime", None)
+            _ckpt_path = getattr(_force_runtime, "checkpoint_path", None)
+            if _ckpt_path:
+                _provenance_hashes["st_lrps_checkpoint_sha256"] = _sha256_file(_ckpt_path)
+            _model_dir = getattr(_grav_model, "model_dir", None)
+            if _model_dir:
+                _provenance_hashes["st_lrps_config_sha256"] = _sha256_file(
+                    Path(_model_dir) / "config.json"
+                )
+            _run_manifest = getattr(_force_runtime, "run_manifest", {}) or {}
+            for _key in ("checkpoint_hash", "scaler_hash", "training_config_hash"):
+                _val = _run_manifest.get(_key)
+                if _val:
+                    _provenance_hashes[f"st_lrps_{_key}"] = _val
+        _grav_file = getattr(getattr(cfg, "gravity", None), "file_path", None)
+        if _grav_file:
+            _provenance_hashes["sh_coefficient_sha256"] = _sha256_file(_grav_file)
+        try:
+            _provenance_hashes["kernel_module"] = str(getattr(type(prop), "__module__", "") or "")
+            _provenance_hashes["kernel_source_sha256"] = _sha256_file(
+                inspect.getsourcefile(type(prop))
+            )
+        except Exception:
+            pass
 
         try:
             writer.write_metadata(
@@ -1411,6 +1508,8 @@ class MonteCarloEngine:
                 estimated_result_bytes=result_bytes,
                 detect_impact=bool(mc.impact_detection_enabled),
                 compute_impact_statistics=bool(mc.impact_statistics_enabled),
+                impact_frame_available=bool(getattr(self._dyn, "ephem", None) is not None),
+                **_provenance_hashes,
                 **_st_lrps_meta,
                 **_plan_meta,
             )
@@ -1491,6 +1590,7 @@ class MonteCarloEngine:
                 "impact_fraction": impact_fraction,
                 "impact_detection_enabled": bool(mc.impact_detection_enabled),
                 "impact_statistics_enabled": bool(mc.impact_statistics_enabled),
+                "impact_frame_available": bool(getattr(self._dyn, "ephem", None) is not None),
                 "backend": backend_name,
                 "backend_note": self._backend_note,
                 "output_path": str(mc.output_path_resolved),
@@ -1525,7 +1625,33 @@ def _infer_valid_mask_from_dataset(dataset: Any, chunk_size: int = 256) -> np.nd
     return valid
 
 
-def load_mc_result(path: str, *, lazy: bool = False) -> MCRunResult:
+def _validate_archive_v2_manifest(metadata: dict[str, Any]) -> None:
+    """Enforce required manifest fields for schema-v2 Monte Carlo archives.
+
+    Pre-v2 / legacy archives (missing ``archive_schema_version`` or < 2) are
+    exempt and loaded best-effort. A v2 archive missing any required field is
+    rejected so incomplete provenance never passes silently as a valid result.
+    """
+    raw_version = metadata.get("archive_schema_version")
+    if raw_version is None:
+        return
+    try:
+        version = int(raw_version)
+    except (TypeError, ValueError):
+        return
+    if version < 2:
+        return
+    missing = [f for f in REQUIRED_ARCHIVE_V2_FIELDS if f not in metadata]
+    if missing:
+        raise ValueError(
+            f"Monte Carlo archive declares schema v{version} but is missing required "
+            f"manifest field(s): {', '.join(sorted(missing))}. The archive is incomplete "
+            "or was not produced by a current MonteCarloEngine run. Pass strict=False to "
+            "load it as a best-effort legacy archive."
+        )
+
+
+def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCRunResult:
     """
     Reload a saved ``MCRunResult`` from HDF5 or NPZ file.
 
@@ -1533,6 +1659,14 @@ def load_mc_result(path: str, *, lazy: bool = False) -> MCRunResult:
     ----------
     path : str
         Path produced by ``MonteCarloEngine.run()``.
+    lazy : bool
+        Return a disk-backed, read-only trajectory view instead of loading the
+        full ``Y`` ensemble into memory (HDF5 only).
+    strict : bool
+        When True (default), schema-v2 archives must carry every field in
+        ``REQUIRED_ARCHIVE_V2_FIELDS`` or a ``ValueError`` is raised. Pre-v2
+        archives are always loaded best-effort. Pass ``strict=False`` to load a
+        partial/legacy archive without manifest enforcement.
 
     Returns
     -------
@@ -1575,6 +1709,8 @@ def load_mc_result(path: str, *, lazy: bool = False) -> MCRunResult:
                 str(key): _decode_metadata_value(value)
                 for key, value in dict(f.attrs).items()
             }
+        if strict:
+            _validate_archive_v2_manifest(diagnostics)
         return MCRunResult(
             t=t_arr, Y=Y_arr, sc_samples=sc,
             impact_mask=imask, t_impact=t_imp,
@@ -1590,6 +1726,8 @@ def load_mc_result(path: str, *, lazy: bool = False) -> MCRunResult:
             diagnostics = {}
             if "metadata_json" in data.files:
                 diagnostics = _decode_archive_metadata(data["metadata_json"])
+            if strict:
+                _validate_archive_v2_manifest(diagnostics)
             return MCRunResult(
                 t=data["t"],
                 Y=data["Y"],

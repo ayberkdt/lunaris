@@ -286,8 +286,13 @@ class TorchBatchPropagator:
         r0 = torch.linalg.norm(state[:, :3], dim=1)
         hit0 = r0 <= r_impact_t
         impact_step = torch.full((N,), -1, dtype=torch.int64, device=device)
+        # Interpolated crossing time / inertial position (NaN until a sample hits).
+        impact_time_t = torch.full((N,), float("nan"), dtype=self._dtype, device=device)
+        impact_pos_t = torch.full((N, 3), float("nan"), dtype=self._dtype, device=device)
         if detect_impact:
             impact_step = torch.where(hit0, torch.zeros_like(impact_step), impact_step)
+            impact_time_t = torch.where(hit0, torch.zeros_like(impact_time_t), impact_time_t)
+            impact_pos_t = torch.where(hit0.unsqueeze(1), state[:, :3], impact_pos_t)
             alive = alive & ~hit0
 
         t_curr = 0.0
@@ -304,19 +309,37 @@ class TorchBatchPropagator:
                 # impacted sample holds its last state (no propagation through
                 # the Moon). Fixed batch shape is preserved (no compaction).
                 active_steps_acc += alive.sum()
+                prev_state = state
                 candidate = _rk4(t_curr, state, dt_eff)
                 state = torch.where(alive.unsqueeze(1), candidate, state)
                 t_curr += dt_eff
                 global_step += 1
 
-                # Impact detection on GPU — only alive samples
+                # Impact detection on GPU — only alive samples. The crossing is
+                # linearly interpolated between the pre-step and post-step radius
+                # so the recorded impact time/position resolve the exact sub-step
+                # crossing rather than the coarse fixed-step endpoint.
                 if detect_impact:
                     r_mag = torch.linalg.norm(state[:, :3], dim=1)  # [N]
                     newly_hit = alive & (r_mag <= r_impact_t)
+                    r_prev = torch.linalg.norm(prev_state[:, :3], dim=1)
+                    denom = r_prev - r_mag
+                    safe_denom = torch.where(
+                        denom.abs() < 1e-12, torch.ones_like(denom), denom
+                    )
+                    frac = ((r_prev - r_impact_t) / safe_denom).clamp(0.0, 1.0)
+                    t_cross = (float(global_step - 1) + frac) * dt_eff
+                    pos_cross = prev_state[:, :3] + frac.unsqueeze(1) * (
+                        state[:, :3] - prev_state[:, :3]
+                    )
                     impact_step = torch.where(
                         newly_hit,
                         torch.full_like(impact_step, global_step),
                         impact_step,
+                    )
+                    impact_time_t = torch.where(newly_hit, t_cross, impact_time_t)
+                    impact_pos_t = torch.where(
+                        newly_hit.unsqueeze(1), pos_cross, impact_pos_t
                     )
                     alive = alive & ~newly_hit
 
@@ -333,9 +356,7 @@ class TorchBatchPropagator:
         impact_step_host = impact_step.detach().cpu().numpy()
         hit_indices = np.nonzero(impact_step_host >= 0)[0]
         impact_flags[hit_indices] = 1.0
-        t_impact_arr[hit_indices] = (
-            impact_step_host[hit_indices].astype(np.float64) * dt_eff
-        )
+        t_impact_arr = impact_time_t.detach().cpu().numpy().astype(np.float64)
         total_raw_steps = N * total_steps
         total_active_steps = int(active_steps_acc.item())
         traj_steps_per_s = total_raw_steps / max(t_prop, 1e-9)
@@ -346,9 +367,10 @@ class TorchBatchPropagator:
             "active_state_steps_per_second": float(total_active_steps) / max(t_prop, 1e-9),
             "propagation_elapsed_s": float(t_prop),
             "impacted_sample_count": int(hit_indices.size),
+            "impact_position_method": "rk4_crossing_interpolated",
+            "impact_time_resolution_s": float(dt_eff),
         }
-        impact_positions = np.full((N, 3), np.nan, dtype=np.float64)
-        impact_positions[hit_indices] = Y_out[-1, hit_indices, :3]
+        impact_positions = impact_pos_t.detach().cpu().numpy().astype(np.float64)
         self._last_impact_positions_inertial = impact_positions
         print(
             f"[MC][GPU-STLRPS] propagation complete: "

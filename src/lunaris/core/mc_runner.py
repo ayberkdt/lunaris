@@ -250,6 +250,40 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
     hit_times = t_impact[np.isfinite(t_impact) & valid & (impact > 0.5)]
     t_imp_mean_days = float(np.mean(hit_times) / 86400.0) if hit_times.size > 0 else None
 
+    # Honor the compute_impact_statistics contract. When enabled, run the
+    # canonical analysis-layer statistics (Wilson CI + geographic impact-site
+    # availability) and surface their outputs; when disabled, skip the
+    # computation entirely and record *why*, so the flag is observable rather
+    # than inert provenance. (The richer statistics live in the analysis layer,
+    # which the headless runner — an entry point — is allowed to import.)
+    if mc_cfg.impact_statistics_enabled:
+        try:
+            from lunaris.analysis.monte_carlo.statistics import compute_impact_statistics
+
+            imp = compute_impact_statistics(result)
+            p_imp = float(imp.p_impact)
+            ci_lo, ci_hi = float(imp.p_impact_ci95[0]), float(imp.p_impact_ci95[1])
+            t_imp_mean_days = (
+                float(imp.t_impact_mean / 86400.0)
+                if math.isfinite(imp.t_impact_mean)
+                else None
+            )
+            impact_stats_block: dict = {
+                "impact_statistics_computed": True,
+                "impact_geographic_available": bool(imp.lat_deg.size > 0),
+                "n_impact_sites": int(imp.lat_deg.size),
+            }
+        except Exception as exc:
+            impact_stats_block = {
+                "impact_statistics_computed": False,
+                "impact_statistics_skip_reason": f"computation failed: {exc}",
+            }
+    else:
+        impact_stats_block = {
+            "impact_statistics_computed": False,
+            "impact_statistics_skip_reason": "compute_impact_statistics disabled in config",
+        }
+
     # Altitude at t=0 and t=-1
     def _alt_stats(step: int):
         if n_valid < 1:
@@ -288,6 +322,7 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
         "actual_sh_degree": diagnostics.get("actual_sh_degree"),
         "device_name":      str(backend_diag.get("device_name", "") or ""),
         "threads_per_block": backend_diag.get("threads_per_block"),
+        **impact_stats_block,
         "output_path":      str(mc_cfg.output_path_resolved),
     }
 

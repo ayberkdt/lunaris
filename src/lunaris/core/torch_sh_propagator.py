@@ -451,6 +451,8 @@ class TorchSHBatchPropagator:
             "total_raw_state_steps": total_raw_state_steps,
             "total_active_state_steps": total_active_state_steps,
             "propagation_elapsed_s": float(elapsed),
+            "impact_position_method": "rk4_crossing_interpolated",
+            "impact_time_resolution_s": float(dt_eff),
         }
         print(
             f"[MC][{log_backend}] done: {elapsed:.2f}s  "
@@ -498,15 +500,20 @@ class TorchSHBatchPropagator:
         # trying to measure on CUDA).
         active_steps_acc = torch.zeros((), dtype=torch.int64, device=device)
         impact_step = torch.full((n,), -1, dtype=torch.int64, device=device)
+        # Interpolated crossing time / inertial position (NaN until a sample hits).
+        impact_time = torch.full((n,), float("nan"), dtype=self._dtype, device=device)
+        impact_pos = torch.full((n, 3), float("nan"), dtype=self._dtype, device=device)
 
         # t=0 surface check: a sample already at/under the impact radius before
-        # any step has impacted at t=0. Flag it (step index 0 -> t_impact=0.0 in
-        # the host resolution below) and mark it not-alive so it is frozen from
-        # the start instead of being propagated through the body.
+        # any step has impacted at t=0. Flag it (t_impact=0.0, position = initial
+        # state) and mark it not-alive so it is frozen from the start instead of
+        # being propagated through the body.
         r0 = torch.linalg.norm(state[:, :3], dim=1)
         at_surface0 = r0 <= self._impact_r
         if self._detect_impact:
             impact_step = torch.where(at_surface0, torch.zeros_like(impact_step), impact_step)
+            impact_time = torch.where(at_surface0, torch.zeros_like(impact_time), impact_time)
+            impact_pos = torch.where(at_surface0.unsqueeze(1), state[:, :3], impact_pos)
             alive = alive & ~at_surface0
 
         t_curr = 0.0
@@ -522,6 +529,7 @@ class TorchSHBatchPropagator:
                     # Freeze impacted samples: only alive trajectories advance;
                     # impacted ones hold their last state (no propagation through
                     # the Moon). Fixed batch shape is preserved (no compaction).
+                    prev_state = state
                     candidate = self._rk4_step(state, t_curr, dt_eff)
                     state = torch.where(alive.unsqueeze(1), candidate, state)
                     t_curr += dt_eff
@@ -529,26 +537,42 @@ class TorchSHBatchPropagator:
                     if self._detect_impact:
                         r_mag = torch.linalg.norm(state[:, :3], dim=1)
                         newly = alive & (r_mag <= self._impact_r)
-                    # Record the 1-based step index of first impact on device;
-                    # already-impacted samples keep their earlier index. No host
-                    # sync here — the bookkeeping is resolved once below.
+                        # Linearly interpolate the crossing between the pre-step
+                        # and post-step radius so the recorded impact time/position
+                        # resolve the exact sub-step crossing rather than the
+                        # coarse fixed-step endpoint.
+                        r_prev = torch.linalg.norm(prev_state[:, :3], dim=1)
+                        denom = r_prev - r_mag
+                        safe_denom = torch.where(
+                            denom.abs() < 1e-12, torch.ones_like(denom), denom
+                        )
+                        frac = ((r_prev - self._impact_r) / safe_denom).clamp(0.0, 1.0)
+                        t_cross = (float(global_step - 1) + frac) * dt_eff
+                        pos_cross = prev_state[:, :3] + frac.unsqueeze(1) * (
+                            state[:, :3] - prev_state[:, :3]
+                        )
                         impact_step = torch.where(
                             newly, torch.full_like(impact_step, global_step), impact_step
+                        )
+                        impact_time = torch.where(newly, t_cross, impact_time)
+                        impact_pos = torch.where(
+                            newly.unsqueeze(1), pos_cross, impact_pos
                         )
                         alive = alive & ~newly
                 Y_out[snap_idx + 1, a:b, :] = state.detach().cpu().numpy().astype(np.float64)
 
-        # Single host sync per chunk: resolve impact bookkeeping. ``step * dt_eff``
-        # equals the ``t_curr`` value immediately after the impacting step, so the
-        # recorded impact epoch is identical to the per-step accounting it replaces.
+        # Single host sync per chunk: resolve impact bookkeeping. The crossing
+        # time/position were interpolated on device, so they resolve the exact
+        # sub-step crossing instead of the coarse fixed-step endpoint.
         impact_step_host = impact_step.detach().cpu().numpy()
-        state_host = state.detach().cpu().numpy().astype(np.float64)
+        impact_time_host = impact_time.detach().cpu().numpy().astype(np.float64)
+        impact_pos_host = impact_pos.detach().cpu().numpy().astype(np.float64)
         for li in np.nonzero(impact_step_host >= 0)[0].tolist():
             gi = a + int(li)
             if impact_flags[gi] == 0.0:
                 impact_flags[gi] = 1.0
-                t_impact[gi] = float(impact_step_host[li]) * dt_eff
-                impact_positions[gi] = state_host[li, :3]
+                t_impact[gi] = float(impact_time_host[li])
+                impact_positions[gi] = impact_pos_host[li]
 
         return int(active_steps_acc.item())
 
