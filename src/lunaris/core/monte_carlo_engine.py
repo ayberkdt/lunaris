@@ -1200,15 +1200,24 @@ class MonteCarloEngine:
             t_out_ref = np.array([0.0], dtype=np.float64)
             Y_all = np.zeros((1, N, 6), dtype=np.float64)
 
+        # Validity contract: a sample whose entire trajectory is NaN failed to
+        # propagate (CPU partial failure under allow_sample_failures). Surface a
+        # valid_mask so consumers exclude failed samples from ensemble statistics
+        # rather than treating NaN-filled trajectories as real states.
+        valid_mask = (~np.isnan(Y_all).all(axis=(0, 2))).astype(np.float64)
+        n_failed = int(np.sum(valid_mask < 0.5))
+
         return MCRunResult(
             t=t_out_ref,
             Y=Y_all,
             sc_samples=sc_samples,
             impact_mask=impact_all,
             t_impact=t_impact_all,
+            valid_mask=valid_mask,
             diagnostics={
                 "wall_time_s": float(t_wall),
                 "n_samples": N,
+                "n_failed_samples": n_failed,
                 "n_impacts": n_hit,
                 "impact_fraction": float(n_hit) / N,
                 "backend": backend_name,

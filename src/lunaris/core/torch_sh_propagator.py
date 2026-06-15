@@ -551,6 +551,16 @@ class TorchSHBatchPropagator:
         active_steps_acc = torch.zeros((), dtype=torch.int64, device=device)
         impact_step = torch.full((n,), -1, dtype=torch.int64, device=device)
 
+        # t=0 surface check: a sample already at/under the impact radius before
+        # any step has impacted at t=0. Flag it (step index 0 -> t_impact=0.0 in
+        # the host resolution below) and mark it not-alive so it is frozen from
+        # the start instead of being propagated through the body.
+        r0 = torch.linalg.norm(state[:, :3], dim=1)
+        at_surface0 = r0 <= self._impact_r
+        if bool(at_surface0.any()):
+            impact_step = torch.where(at_surface0, torch.zeros_like(impact_step), impact_step)
+            alive = alive & ~at_surface0
+
         t_curr = 0.0
         global_step = 0
         # TODO(perf): Benchmark masking or compacting impacted samples so they
@@ -561,7 +571,11 @@ class TorchSHBatchPropagator:
             for snap_idx in range(n_snaps):
                 for _ in range(steps_per_snap):
                     active_steps_acc += alive.sum()
-                    state = self._rk4_step(state, t_curr, dt_eff)
+                    # Freeze impacted samples: only alive trajectories advance;
+                    # impacted ones hold their last state (no propagation through
+                    # the Moon). Fixed batch shape is preserved (no compaction).
+                    candidate = self._rk4_step(state, t_curr, dt_eff)
+                    state = torch.where(alive.unsqueeze(1), candidate, state)
                     t_curr += dt_eff
                     global_step += 1
                     r_mag = torch.linalg.norm(state[:, :3], dim=1)

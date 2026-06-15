@@ -1394,6 +1394,10 @@ class CPUBatchPropagator:
         for i in range(N):
             t_i, y_i, imp, t_imp = results_by_idx.get(i, (None, None, False, np.nan))
             if t_i is None or y_i is None:
+                # Failed sample: NaN-fill the whole trajectory so it cannot enter
+                # ensemble statistics as a spurious all-zero state. The engine
+                # derives the run's valid_mask from these all-NaN columns.
+                Y_out[:, i, :] = np.nan
                 continue
             # Resample to ref_t grid
             for state_col in range(6):

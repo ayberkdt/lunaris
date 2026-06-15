@@ -439,6 +439,35 @@ def test_throughput_metrics_and_impact_stability() -> None:
     assert np.all(np.isfinite(Y_out))
 
 
+def test_impacted_sample_is_frozen_not_propagated_through_body() -> None:
+    """After a sample crosses the impact radius it FREEZES (reviewer §6) instead
+    of integrating through the Moon. A sample starting below the surface impacts
+    at t=0 and holds its initial state for every snapshot."""
+    degree = 20
+    grav = _make_gravity_model(degree, seed=11)
+    prop = _make_propagator(grav, degree)
+
+    y_safe = _circular_state(100.0)
+    y_below = _circular_state(-10.0)  # r < impact radius -> impacts at t=0
+    Y0 = np.stack([y_safe, y_below])
+
+    _, Y_out, impact, t_imp = prop.propagate(
+        Y0, np.ones(2), np.ones(2), np.ones(2), np.ones(2),
+        duration_s=600.0, output_dt_s=120.0,
+    )
+
+    # Below-surface sample: impacts at t=0 and is frozen at its initial state.
+    assert impact[1] == 1.0
+    assert t_imp[1] == 0.0
+    np.testing.assert_array_equal(
+        Y_out[:, 1, :], np.broadcast_to(y_below, Y_out[:, 1, :].shape)
+    )
+    # Safe sample: does not impact and does move; nothing diverges to NaN/inf.
+    assert impact[0] == 0.0
+    assert not np.allclose(Y_out[0, 0, :], Y_out[-1, 0, :])
+    assert np.all(np.isfinite(Y_out))
+
+
 def test_throughput_no_impact_raw_equals_active() -> None:
     """No-impact case: every sample is alive at every step, so the raw and active
     state-step counts (and therefore the two throughput rates) must coincide."""
