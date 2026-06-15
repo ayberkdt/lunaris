@@ -61,7 +61,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
-from scipy.integrate import solve_ivp  # type: ignore
+from scipy.integrate import solve_ivp
 
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.math_utils import nyquist_max_step_s, quat_rotate_np, quat_slerp_np
@@ -587,15 +587,15 @@ def build_events(
             ev_imp = make_impact_event(R_ref_m=float(R_ref), impact_alt_m=float(impact_alt_m), terminal=True)
 
         ev_imp6 = _wrap_event_first6(ev_imp)
-        ev_imp6._event_role = "impact"
+        ev_imp6._event_role = "impact"  # type: ignore[attr-defined]
         events.append(ev_imp6)
 
     # Peri/Apo events (non-terminal)
     if _get_enable_peri_apo_events(cfg):
         ev_peri = _wrap_event_first6(make_periselene_event(terminal=False))
         ev_apo = _wrap_event_first6(make_aposelene_event(terminal=False))
-        ev_peri._event_role = "peri"
-        ev_apo._event_role = "apo"
+        ev_peri._event_role = "peri"  # type: ignore[attr-defined]
+        ev_apo._event_role = "apo"  # type: ignore[attr-defined]
         events.append(ev_peri)
         events.append(ev_apo)
 
@@ -608,7 +608,7 @@ def build_events(
             return -1.0 if _stop_requested(str(stop_file)) else 1.0
         _stop_ev.terminal = True           # type: ignore[attr-defined]
         _stop_ev.direction = 0.0           # type: ignore[attr-defined]
-        _stop_ev._event_role = "stop"
+        _stop_ev._event_role = "stop"  # type: ignore[attr-defined]
         events.append(_stop_ev)
 
     return events
@@ -1174,14 +1174,15 @@ def propagate(
     if nyq_max is None or (not np.isfinite(nyq_max)) or nyq_max <= 0.0:
         nyq_max = float(dt_out)
 
-    if getattr(cfg, "user_max_step_s", None) is None:
+    user_max_step_s = getattr(cfg, "user_max_step_s", None)
+    if user_max_step_s is None:
         max_step = float(nyq_max)
         if verbose:
             print(f"[STEP] Nyquist max_step_s={max_step:.6f} (deg={degree})", flush=True)
     else:
-        max_step = min(float(cfg.user_max_step_s), float(nyq_max))
+        max_step = min(float(user_max_step_s), float(nyq_max))
         if verbose:
-            print(f"[STEP] user_max_step={float(cfg.user_max_step_s):g}s, nyquist={nyq_max:.6f}s -> using {max_step:.6f}s", flush=True)
+            print(f"[STEP] user_max_step={float(user_max_step_s):g}s, nyquist={nyq_max:.6f}s -> using {max_step:.6f}s", flush=True)
 
     # -------------------------------------------------------------------------
     # 4) Events
@@ -1271,7 +1272,7 @@ def propagate(
                 chunk_s = None
 
         stopped_early = False
-        stop_reason: str | None = None
+        stop_reason = None
         chunk_idx = 0
 
         if chunk_s is None:

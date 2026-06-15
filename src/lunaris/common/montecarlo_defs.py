@@ -97,7 +97,7 @@ class StateUncertainty:
         P = self.to_covariance()
         # Regularise very small diagonal entries to avoid near-singular Cholesky.
         P = P + np.eye(6, dtype=np.float64) * 1e-30
-        return np.linalg.cholesky(P)
+        return np.asarray(np.linalg.cholesky(P), dtype=np.float64)
 
     @property
     def sigma_summary(self) -> str:

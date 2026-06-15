@@ -47,11 +47,17 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from lunaris.common.constants import R_MOON
+
+if TYPE_CHECKING:
+    # Annotation-only alias. The runtime ``torch`` handle is the per-instance
+    # ``self._torch`` (optional dependency), which shadows a module import; a
+    # dedicated name keeps the type annotations resolvable.
+    from torch import Tensor
 
 
 class TorchBatchPropagator:
@@ -178,14 +184,14 @@ class TorchBatchPropagator:
         # Inner helpers (closures capture `model` and `device`)
         # ------------------------------------------------------------------
 
-        def _rhs(s: torch.Tensor) -> torch.Tensor:
+        def _rhs(s: Tensor) -> Tensor:
             """Evaluate [v; a] for state [N, 6]."""
             r = s[:, :3]                               # positions [N, 3]
             v = s[:, 3:]                               # velocities [N, 3]
             a = model.predict_total_accel_torch(r)     # [N, 3]
             return torch.cat([v, a], dim=1)
 
-        def _rk4(s: torch.Tensor, h: float) -> torch.Tensor:
+        def _rk4(s: Tensor, h: float) -> Tensor:
             k1 = _rhs(s)
             k2 = _rhs(s + (h * 0.5) * k1)
             k3 = _rhs(s + (h * 0.5) * k2)

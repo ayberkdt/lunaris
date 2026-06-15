@@ -134,9 +134,9 @@ def build_legendre_coeffs(n_max: int) -> tuple[Arr1, Arr1, Arr2, Arr2, Arr1]:
 
     # 1) Diagonal & sub-diagonal coefficients
     if N >= 1:
-        n = np.arange(1, N + 1, dtype=F64)
-        diag[1:] = np.sqrt((2.0 * n + 1.0) / (2.0 * n))
-        subdiag[1:] = np.sqrt(2.0 * n + 1.0)
+        n_arr = np.arange(1, N + 1, dtype=F64)
+        diag[1:] = np.sqrt((2.0 * n_arr + 1.0) / (2.0 * n_arr))
+        subdiag[1:] = np.sqrt(2.0 * n_arr + 1.0)
 
     # 2) Vertical recursion coefficients A, B for n>=2 and m=0..n-2
     for n_int in range(2, N + 1):

@@ -192,7 +192,8 @@ python_version = "3.10"
 ignore_missing_imports = true
 warn_unused_ignores = true
 # Kademeli adoption: start with the dependency-light SSOT layers, then widen.
-files = ["src/lunaris/common", "src/lunaris/core"]
+# common+core are clean; physics is now type-checked too (engine force models).
+files = ["src/lunaris/common", "src/lunaris/core", "src/lunaris/physics"]
 
 [tool.coverage.run]
 source = ["lunaris"]

@@ -251,7 +251,7 @@ class OrbitState:
         Formula:
         $$ \\vec{h} = \\vec{r} \\times \\vec{v} $$
         """
-        return np.cross(self.position, self.velocity)
+        return np.asarray(np.cross(self.position, self.velocity), dtype=np.float64)
 
     def to_keplerian(self, mu: float = float(MU_MOON)) -> ClassicalElements:
         """

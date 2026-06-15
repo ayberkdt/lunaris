@@ -84,7 +84,8 @@ jobs:
 
   guardrails:
     # Ruff baseline is clean and now gates the build. Import-linter reached zero
-    # broken contracts in Phase 2 and also gates.
+    # broken contracts in Phase 2 and also gates. Mypy (common+core+physics)
+    # reached zero errors during the freeze cleanup and now gates as well.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +98,7 @@ jobs:
       - name: Install guardrail tooling
         run: |
           python -m pip install --upgrade pip
-          pip install ruff import-linter
+          pip install ruff import-linter mypy
 
       - name: ruff (lint + import order) [gate]
         run: ruff check src tests
@@ -107,3 +108,9 @@ jobs:
         run: |
           pip install -e .
           lint-imports
+
+      - name: mypy (type gate)
+        # Scoped to the typed layers declared in pyproject [tool.mypy] files
+        # (common + core + physics); baseline is zero so this gates the build.
+        # ignore_missing_imports keeps torch/Qt/spice extras out of scope.
+        run: mypy

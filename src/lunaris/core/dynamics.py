@@ -301,7 +301,7 @@ def extract_gravity_strict(g: Any) -> tuple[Any, ...]:
     if hasattr(g, "ws"):
         ws_obj = g.ws
     elif hasattr(g, "make_workspace"):
-        ws_obj = g.make_workspace()  # type: ignore[attr-defined]
+        ws_obj = g.make_workspace()
     else:
         raise AttributeError("gravity_model must define `ws` or `make_workspace()`.")
 
@@ -375,7 +375,7 @@ def extract_ephem_tables_strict(ephem: Any) -> tuple[float, np.ndarray, np.ndarr
     if not hasattr(ephem, "get_data_provider"):
         raise TypeError("ephem_manager must implement get_data_provider().")
 
-    d = ephem.get_data_provider()  # type: ignore[attr-defined]
+    d = ephem.get_data_provider()
     if not isinstance(d, Mapping):
         raise TypeError("ephem_manager.get_data_provider() must return a mapping/dict.")
 
@@ -448,7 +448,7 @@ def extract_surface_provider_strict(surface_provider: Any) -> dict[str, Any]:
         return dict(surface_provider)
 
     if hasattr(surface_provider, "as_numba_dict"):
-        p = surface_provider.as_numba_dict()  # type: ignore[attr-defined]
+        p = surface_provider.as_numba_dict()
         if not isinstance(p, Mapping):
             raise TypeError("surface_provider.as_numba_dict() must return a mapping/dict.")
         return dict(p)
@@ -937,7 +937,7 @@ class DynamicsEngine:
     # -------------------------------------------------------------------------
     # Requirements / validation
     # -------------------------------------------------------------------------
-    def _requirements(self) -> dict[str, bool]:
+    def _requirements(self) -> dict[str, Any]:
         f = self.flags
 
         use_sh = bool(getattr(f, "enable_sh", False))
@@ -1474,7 +1474,7 @@ class DynamicsEngine:
         lon_count = int(getattr(cfg, "facet_lon_count", 36))
         pos, normals, areas, _lat, _lon = build_latlon_facets(lat_count, lon_count, radius_m=float(R_MOON))
 
-        temps = np.zeros(1, dtype=np.float64)
+        temps: np.ndarray = np.zeros(1, dtype=np.float64)
         if mode == THERMAL_MODE_TEMPERATURE_GRID:
             surf = extract_surface_provider_strict(self.surf)
             raw_temps = None
@@ -2230,7 +2230,7 @@ class DynamicsEngine:
                 dydt[6] = 0.0
             return dydt
 
-        def rhs(t: float, y: np.ndarray) -> np.ndarray:
+        def rhs(t: float, y: np.ndarray) -> np.ndarray:  # type: ignore[no-redef]
             return _rhs_kernel_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
 
         self._rhs_cache = rhs
