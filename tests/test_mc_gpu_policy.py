@@ -400,6 +400,42 @@ def test_policy_explicit_st_lrps_direct_backend(monkeypatch) -> None:
     assert "no-grad" in plan.batch_note.lower()
 
 
+@pytest.mark.parametrize(
+    ("requested", "artifact_kind"),
+    [
+        ("gpu_st_lrps_potential", "force_direct"),
+        ("gpu_st_lrps_direct", "potential_autograd"),
+    ],
+)
+def test_policy_rejects_explicit_st_lrps_artifact_kind_mismatch(
+    monkeypatch,
+    requested: str,
+    artifact_kind: str,
+) -> None:
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import resolve_mc_backend_policy
+
+    monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
+    monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
+    monkeypatch.setattr(
+        policy_mod,
+        "_read_st_lrps_runtime_kind",
+        lambda mc_cfg, sim_cfg: artifact_kind,
+    )
+    mc_cfg = SimpleNamespace(
+        use_gpu=True,
+        mc_backend=requested,
+        gravity_mode_override="follow_mission",
+        gpu_sh_degree=0,
+    )
+    sim_cfg = SimpleNamespace(
+        flags=PerturbationFlags(enable_sh=True),
+        gravity=SimpleNamespace(uses_st_lrps=False),
+    )
+    with pytest.raises(ValueError, match="requires"):
+        resolve_mc_backend_policy(mc_cfg, sim_cfg)
+
+
 def test_policy_no_contradictory_command_args_st_lrps_gpu(monkeypatch) -> None:
     """GPU_ST_LRPS plan emits use_gpu=True, gravity_backend='st_lrps'."""
     import lunaris.core.mc_backend_policy as policy_mod

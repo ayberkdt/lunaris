@@ -108,8 +108,12 @@ class UIMonteCarloConfig:
     # Output
     output_format: str = "hdf5"    # "hdf5" or "npz"
     output_path: str = "outputs/monte_carlo/mc_output.h5"
+    result_storage_mode: str = "auto"
+    max_result_memory_gb: float = 1.0
 
     # Impact detection
+    detect_impact: bool = True
+    compute_impact_statistics: bool = True
     impact_alt_km: float = 0.0
 
 
@@ -435,14 +439,14 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.tbl_backend_compare.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
 
         rows = [
-            ("SH-20",    "20",      "classic_sh", "On",  "outputs/monte_carlo/preview_sh20.h5"),
-            ("SH-60",    "60",      "classic_sh", "On",  "outputs/monte_carlo/preview_sh60.h5"),
-            ("SH-100",   "100",     "classic_sh", "Off", "outputs/monte_carlo/preview_sh100.h5"),
-            ("ST-LRPS",  "surrogate", "st_lrps",  "On",  "outputs/monte_carlo/preview_stlrps.h5"),
+            ("SH-20", "20", "classic_sh", "On", "numba_cuda_sh", "outputs/monte_carlo/preview_sh20.h5"),
+            ("SH-60", "60", "classic_sh", "On", "torch_cuda_sh", "outputs/monte_carlo/preview_sh60.h5"),
+            ("SH-100", "100", "classic_sh", "Off", "cpu_sh", "outputs/monte_carlo/preview_sh100.h5"),
+            ("ST-LRPS", "surrogate", "st_lrps", "On", "gpu_st_lrps_potential", "outputs/monte_carlo/preview_stlrps.h5"),
         ]
         self.tbl_backend_compare.setRowCount(len(rows))
         self._backend_compare_meta: list[dict[str, Any]] = []
-        for r, (name, deg, mode, gpu, out_path) in enumerate(rows):
+        for r, (name, deg, mode, gpu, backend, out_path) in enumerate(rows):
             for c, text in enumerate((name, deg, mode, gpu, out_path)):
                 item = QtWidgets.QTableWidgetItem(str(text))
                 if c == 0:
@@ -454,6 +458,7 @@ class MonteCarloPage(QtWidgets.QWidget):
                 "degree": deg,
                 "mode": mode,
                 "gpu_on": gpu.lower() == "on",
+                "mc_backend": backend,
                 "output_path": out_path,
             })
 
@@ -524,12 +529,6 @@ class MonteCarloPage(QtWidgets.QWidget):
         except Exception:
             return
 
-        # Best-effort: pull the project root from the surrogate runs dir
-        try:
-            pass
-        except Exception:
-            Path.cwd()
-
         runner = str((Path(__file__).resolve().parents[2] / "core" / "mc_runner.py").resolve())
         try:
             python_exec = sys.executable
@@ -550,10 +549,12 @@ class MonteCarloPage(QtWidgets.QWidget):
         cmd: list[str] = [python_exec, runner]
         cmd.extend(["--n-samples", n_samples])
         cmd.extend(["--mc-gravity-mode", gravity_mode])
+        cmd.extend(["--mc-backend", str(meta.get("mc_backend", "auto"))])
         cmd.extend(["--enable-sh", "on"])
         if gravity_mode == "classic_sh":
             try:
                 cmd.extend(["--degree", str(int(degree))])
+                cmd.extend(["--gpu-sh-degree", str(int(degree))])
             except Exception:
                 pass
         cmd.extend(["--use-gpu", "on" if gpu_on else "off"])
@@ -585,10 +586,6 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def _copy_all_backend_commands(self) -> None:
         """Generate and copy all backend preview commands to clipboard."""
-        try:
-            pass
-        except Exception:
-            Path.cwd()
         runner = str((Path(__file__).resolve().parents[2] / "core" / "mc_runner.py").resolve())
         python_exec = sys.executable
         n_samples = "100"
@@ -605,10 +602,12 @@ class MonteCarloPage(QtWidgets.QWidget):
             cmd: list[str] = [python_exec, runner]
             cmd.extend(["--n-samples", n_samples])
             cmd.extend(["--mc-gravity-mode", gravity_mode])
+            cmd.extend(["--mc-backend", str(meta.get("mc_backend", "auto"))])
             cmd.extend(["--enable-sh", "on"])
             if gravity_mode == "classic_sh":
                 try:
                     cmd.extend(["--degree", str(int(degree))])
+                    cmd.extend(["--gpu-sh-degree", str(int(degree))])
                 except Exception:
                     pass
             cmd.extend(["--use-gpu", "on" if gpu_on else "off"])
@@ -1587,6 +1586,10 @@ class MonteCarloPage(QtWidgets.QWidget):
                 self.ent_output.text(),
                 self.cb_format.currentText(),
             ),
+            "result_storage_mode":   self.mc_cfg.result_storage_mode,
+            "max_result_memory_gb":  self.mc_cfg.max_result_memory_gb,
+            "detect_impact":         self.mc_cfg.detect_impact,
+            "compute_impact_statistics": self.mc_cfg.compute_impact_statistics,
             "impact_alt_km":         self._parse_float(self.ent_impact_alt.text(), 0.0),
         }
 
@@ -1627,6 +1630,16 @@ class MonteCarloPage(QtWidgets.QWidget):
                 str(data.get("output_path", "outputs/monte_carlo/mc_output.h5")),
                 fmt,
             )
+        )
+        self.mc_cfg.result_storage_mode = str(
+            data.get("result_storage_mode", "auto") or "auto"
+        )
+        self.mc_cfg.max_result_memory_gb = float(
+            data.get("max_result_memory_gb", 1.0)
+        )
+        self.mc_cfg.detect_impact = bool(data.get("detect_impact", True))
+        self.mc_cfg.compute_impact_statistics = bool(
+            data.get("compute_impact_statistics", True)
         )
         self.ent_impact_alt.setText(_s("impact_alt_km", 0.0))
         self._update_sigma_summary()

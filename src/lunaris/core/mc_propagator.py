@@ -151,6 +151,23 @@ def _sanitize_gpu_threads_per_block(
     return min(value, hard_max)
 
 
+def _initial_impact_bookkeeping(
+    Y0: np.ndarray,
+    r_impact: float,
+    *,
+    detect_impact: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build host-side t=0 impact flags before launching the CUDA kernel."""
+    n_samples = int(Y0.shape[0])
+    flags = np.zeros(n_samples, dtype=np.int32)
+    times = np.full(n_samples, np.nan, dtype=np.float64)
+    if detect_impact:
+        at_surface = np.linalg.norm(Y0[:, :3], axis=1) <= float(r_impact)
+        flags[at_surface] = 1
+        times[at_surface] = 0.0
+    return flags, times
+
+
 # =============================================================================
 # 1.              CUDA DEVICE FUNCTIONS (physics primitives)
 # =============================================================================
@@ -643,6 +660,7 @@ if _CUDA_AVAILABLE:
         # Impact detection
         impact_flags,   # (N,) int32 – set to 1 on impact
         impact_times,   # (N,) float64 – first step-crossing time, NaN if untouched
+        detect_impact,  # int32 boolean
         r_impact,       # impact radius [m]
     ):
         """
@@ -654,7 +672,7 @@ if _CUDA_AVAILABLE:
         i = cuda.grid(1)
         if i >= Y.shape[0]:
             return
-        if impact_flags[i] != 0:
+        if detect_impact == 1 and impact_flags[i] != 0:
             return   # this sample already impacted
 
         # Load state
@@ -730,7 +748,7 @@ if _CUDA_AVAILABLE:
 
         # Impact detection
         r_sc = math.sqrt(y[0] * y[0] + y[1] * y[1] + y[2] * y[2])
-        if r_sc <= r_impact:
+        if detect_impact == 1 and r_sc <= r_impact:
             impact_flags[i] = 1
             if math.isnan(impact_times[i]):
                 impact_times[i] = t_val + dt
@@ -843,6 +861,7 @@ class GPUBatchPropagator:
         self._r_earth  = float(R_EARTH_MEAN)
         self._au       = float(AU)
         self._p1au     = float(P_SUN_1AU)
+        self._detect_impact = bool(getattr(mc_cfg, "impact_detection_enabled", True))
 
     # ----------------------------------------------------------------
     # Setup helpers
@@ -1104,8 +1123,13 @@ class GPUBatchPropagator:
             d_masses = cuda.to_device(np.ascontiguousarray(masses, dtype=np.float64), stream=stream)
             d_areas  = cuda.to_device(np.ascontiguousarray(areas,  dtype=np.float64), stream=stream)
             d_crs    = cuda.to_device(np.ascontiguousarray(crs,    dtype=np.float64), stream=stream)
-            d_impact = cuda.to_device(np.zeros(N, dtype=np.int32), stream=stream)
-            d_t_impact = cuda.to_device(np.full(N, np.nan, dtype=np.float64), stream=stream)
+            impact_init, t_impact_init = _initial_impact_bookkeeping(
+                Y0,
+                r_impact,
+                detect_impact=self._detect_impact,
+            )
+            d_impact = cuda.to_device(impact_init, stream=stream)
+            d_t_impact = cuda.to_device(t_impact_init, stream=stream)
             stream.synchronize()
 
             for snap_idx in range(n_snaps):
@@ -1143,6 +1167,7 @@ class GPUBatchPropagator:
                         np.float64(self._p1au),
                         d_impact,
                         d_t_impact,
+                        np.int32(1 if self._detect_impact else 0),
                         np.float64(r_impact),
                     )
                     t_curr += dt_eff
@@ -1157,7 +1182,18 @@ class GPUBatchPropagator:
             t_impact_host = d_t_impact.copy_to_host(stream=stream).astype(np.float64)
             stream.synchronize()
 
+        impact_positions = np.full((N, 3), np.nan, dtype=np.float64)
+        impacted = impact_host > 0.5
+        impact_positions[impacted] = Y_out[-1, impacted, :3]
+        self._last_impact_positions_inertial = impact_positions
         return t_out, Y_out, impact_host, t_impact_host
+
+    def last_impact_positions_inertial(self) -> F64Array:
+        """Return fixed-step endpoint impact positions for the latest batch."""
+        return np.asarray(
+            getattr(self, "_last_impact_positions_inertial", np.empty((0, 3))),
+            dtype=np.float64,
+        )
 
 
 # =============================================================================
@@ -1181,7 +1217,7 @@ def _build_cpu_time_and_solver_config(sim_cfg: Any, mc_cfg: Any, duration_s: flo
     )
     events_cfg = replace(
         sim_cfg.propagator.events,
-        detect_impact=bool(getattr(mc_cfg, "compute_impact_probability", True)),
+        detect_impact=bool(getattr(mc_cfg, "impact_detection_enabled", True)),
         impact_alt_km=float(getattr(mc_cfg, "impact_alt_km", 0.0)),
     )
     prop_cfg = replace(sim_cfg.propagator, events=events_cfg)
@@ -1346,7 +1382,16 @@ class CPUBatchPropagator:
             output_dt_s=float(output_dt_s),
         )
 
-        results_by_idx: dict[int, tuple[np.ndarray | None, np.ndarray | None, bool, float]] = {}
+        results_by_idx: dict[
+            int,
+            tuple[
+                np.ndarray | None,
+                np.ndarray | None,
+                bool,
+                float,
+                np.ndarray | None,
+            ],
+        ] = {}
         for i in range(N):
             try:
                 dyn = self._make_sample_dynamics(
@@ -1367,12 +1412,17 @@ class CPUBatchPropagator:
                     np.asarray(result.y, dtype=np.float64),
                     bool(result.impacted),
                     float(result.t_impact_s) if result.t_impact_s is not None else float("nan"),
+                    (
+                        np.asarray(result.y_impact[:3], dtype=np.float64)
+                        if result.y_impact is not None
+                        else None
+                    ),
                 )
             except Exception as exc:
                 if not getattr(self._mc, "allow_sample_failures", False):
                     raise RuntimeError(f"Monte Carlo CPU sample {i} failed: {exc}") from exc
                 warnings.warn(f"[MC][CPU] Sample {i} failed: {exc}", RuntimeWarning, stacklevel=2)
-                results_by_idx[i] = (None, None, False, float("nan"))
+                results_by_idx[i] = (None, None, False, float("nan"), None)
 
             if callback is not None:
                 callback(float(i + 1) / float(max(N, 1)))
@@ -1390,9 +1440,12 @@ class CPUBatchPropagator:
         Y_out = np.zeros((T, N, 6), dtype=np.float64)
         impact_flags = np.zeros(N, dtype=np.float64)
         t_impact = np.full(N, np.nan, dtype=np.float64)
+        impact_positions = np.full((N, 3), np.nan, dtype=np.float64)
 
         for i in range(N):
-            t_i, y_i, imp, t_imp = results_by_idx.get(i, (None, None, False, np.nan))
+            t_i, y_i, imp, t_imp, y_imp = results_by_idx.get(
+                i, (None, None, False, np.nan, None)
+            )
             if t_i is None or y_i is None:
                 # Failed sample: NaN-fill the whole trajectory so it cannot enter
                 # ensemble statistics as a spurious all-zero state. The engine
@@ -1406,8 +1459,20 @@ class CPUBatchPropagator:
                 impact_flags[i] = 1.0
                 if np.isfinite(float(t_imp)):
                     t_impact[i] = float(t_imp)
+                if y_imp is not None and np.asarray(y_imp).shape == (3,):
+                    impact_positions[i] = np.asarray(y_imp, dtype=np.float64)
+                else:
+                    impact_positions[i] = y_i[-1, :3]
 
+        self._last_impact_positions_inertial = impact_positions
         return ref_t, Y_out, impact_flags, t_impact
+
+    def last_impact_positions_inertial(self) -> F64Array:
+        """Return exact CPU event positions from the most recent batch."""
+        return np.asarray(
+            getattr(self, "_last_impact_positions_inertial", np.empty((0, 3))),
+            dtype=np.float64,
+        )
 
 
 # =============================================================================

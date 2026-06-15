@@ -23,6 +23,7 @@ from lunaris.core.config import SimConfig, replace_sim_config
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagator import propagate
 from lunaris.core.state import calculate_ae_from_altitudes, create_state_from_keplerian
+from lunaris.core.torch_frame import quat_rotate_torch as _quat_rotate_torch
 from lunaris.surrogate.st_lrps.evaluation import progress
 
 # --- intra-package wiring (auto-generated split) ---
@@ -123,27 +124,6 @@ def _build_gpu_batch_tasks(gpu_models: list[str], args: argparse.Namespace) -> l
 def _torch_dtype_from_name(dtype_name: str) -> Any:
     import torch
     return torch.float64 if str(dtype_name).lower() == "float64" else torch.float32
-
-
-def _quat_rotate_torch(q: Any, v: Any) -> Any:
-    """Rotate a batch of vectors by scalar-first quaternion q."""
-
-    q0, q1, q2, q3 = q[0], q[1], q[2], q[3]
-    vx, vy, vz = v[:, 0], v[:, 1], v[:, 2]
-    tx = 2.0 * (q2 * vz - q3 * vy)
-    ty = 2.0 * (q3 * vx - q1 * vz)
-    tz = 2.0 * (q1 * vy - q2 * vx)
-    cx = q2 * tz - q3 * ty
-    cy = q3 * tx - q1 * tz
-    cz = q1 * ty - q2 * tx
-    return v + torch_stack_like(v, (q0 * tx + cx, q0 * ty + cy, q0 * tz + cz))
-
-
-def torch_stack_like(reference: Any, cols: tuple[Any, Any, Any]) -> Any:
-    """Stack columns using the torch module that owns *reference*."""
-
-    import torch
-    return torch.stack(cols, dim=1).to(device=reference.device, dtype=reference.dtype)
 
 
 @dataclass

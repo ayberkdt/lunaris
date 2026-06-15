@@ -53,6 +53,12 @@ import numpy as np
 from lunaris.common.constants import R_MOON
 from lunaris.common.montecarlo_defs import build_mc_output_grid
 from lunaris.core.backend_capabilities import unsupported_force_models
+from lunaris.core.torch_frame import (
+    TorchFrameError,
+    TorchMoonFrame,
+    quat_conjugate_torch,
+    quat_rotate_torch,
+)
 
 
 class TorchSHPreflightError(RuntimeError):
@@ -76,84 +82,8 @@ _VRAM_SAFE_FRACTION = 0.80
 _DEFAULT_CHUNK = 1024
 
 
-def _quat_rotate(q: Any, v: Any) -> Any:
-    """Rotate a batch of vectors ``v`` (``[N, 3]``) by scalar-first quaternion ``q`` (``[4]``).
-
-    Active rotation ``v' = v + 2 q0 (q_vec x v) + 2 q_vec x (q_vec x v)``; matches
-    ``_quat_rot_cuda`` in :mod:`lunaris.core.mc_propagator` and ``_quat_rotate_torch``
-    in the ST-LRPS benchmark.
-    """
-    import torch
-
-    q0, q1, q2, q3 = q[0], q[1], q[2], q[3]
-    vx, vy, vz = v[:, 0], v[:, 1], v[:, 2]
-    tx = 2.0 * (q2 * vz - q3 * vy)
-    ty = 2.0 * (q3 * vx - q1 * vz)
-    tz = 2.0 * (q1 * vy - q2 * vx)
-    rx = vx + q0 * tx + (q2 * tz - q3 * ty)
-    ry = vy + q0 * ty + (q3 * tx - q1 * tz)
-    rz = vz + q0 * tz + (q1 * ty - q2 * tx)
-    return torch.stack((rx, ry, rz), dim=1)
-
-
-class _TorchMoonFrame:
-    """Moon inertial<->fixed frame provider for the torch SH RK4 path.
-
-    Reads the ``q_i2f`` (inertial->fixed, scalar-first) quaternion timeline from
-    an :class:`~lunaris.physics.ephemeris.EphemerisManager` data provider and
-    SLERP-interpolates it at arbitrary RK-stage epochs.  When no ephemeris is
-    supplied the frame is the identity (body-fixed == inertial), matching
-    ``DynamicsEngine(allow_identity_rotation=True)``.
-    """
-
-    def __init__(self, ephem: Any, *, device: Any, dtype: Any) -> None:
-        import torch
-
-        self.device = device
-        self.dtype = dtype
-        if ephem is None:
-            self.uses_rotation = False
-            self.dt_s = 1.0
-            self.q_tab = torch.tensor([[1.0, 0.0, 0.0, 0.0]], device=device, dtype=dtype)
-            return
-
-        provider = ephem.get_data_provider()
-        q_np = np.asarray(provider["q_i2f_tab"], dtype=np.float64)
-        if q_np.ndim != 2 or q_np.shape[1] != 4:
-            raise TorchSHPreflightError(
-                f"ephemeris q_i2f_tab must have shape (N, 4); got {q_np.shape}."
-            )
-        self.dt_s = float(provider["dt_s"])
-        self.q_tab = torch.as_tensor(q_np, device=device, dtype=dtype)
-        self.uses_rotation = bool(self.q_tab.shape[0] >= 1)
-
-    def quat_i2f(self, t_s: float) -> Any:
-        """Return the SLERP-interpolated ``q_i2f`` quaternion ``[4]`` at time ``t_s``."""
-        import torch
-
-        if self.q_tab.shape[0] <= 1:
-            return self.q_tab[0]
-        u = max(0.0, float(t_s) / max(self.dt_s, 1e-12))
-        i0 = int(math.floor(u))
-        if i0 >= self.q_tab.shape[0] - 1:
-            return self.q_tab[-1]
-        frac = torch.tensor(u - i0, device=self.device, dtype=self.dtype)
-        qa = self.q_tab[i0]
-        qb = self.q_tab[i0 + 1]
-        dot = torch.dot(qa, qb)
-        sign = torch.where(dot < 0.0, -torch.ones_like(dot), torch.ones_like(dot))
-        qb = qb * sign
-        dot = torch.clamp(dot * sign, -1.0, 1.0)
-        q_linear = (1.0 - frac) * qa + frac * qb
-        theta_0 = torch.acos(dot)
-        sin_theta_0 = torch.sin(theta_0).clamp_min(1e-30)
-        theta = theta_0 * frac
-        s0 = torch.sin(theta_0 - theta) / sin_theta_0
-        s1 = torch.sin(theta) / sin_theta_0
-        q_slerp = s0 * qa + s1 * qb
-        # Near-parallel quaternions: linear blend avoids 0/0 in the SLERP weights.
-        q = torch.where(dot > 0.9995, q_linear, q_slerp)
-        return q / torch.linalg.norm(q).clamp_min(1e-30)
+_quat_rotate = quat_rotate_torch
+_TorchMoonFrame = TorchMoonFrame
 
 
 class TorchSHBatchPropagator:
@@ -223,6 +153,7 @@ class TorchSHBatchPropagator:
 
         self._dt = float(getattr(mc_cfg, "dt_s", 60.0))
         self._impact_r = float(R_MOON) + float(getattr(mc_cfg, "impact_alt_km", 0.0)) * 1_000.0
+        self._detect_impact = bool(getattr(mc_cfg, "impact_detection_enabled", True))
 
         # --- Physics preflight: gravity-only --------------------------------
         unsupported = unsupported_force_models("torch_cuda_sh", flags) if flags is not None else ()
@@ -266,9 +197,15 @@ class TorchSHBatchPropagator:
         self._evaluator = TorchSHGravityEvaluator(
             grav, degree=self._actual_degree, device=self._device, dtype=self._dtype
         )
-        self._frame = _TorchMoonFrame(
-            getattr(dynamics_engine, "ephem", None), device=self._device, dtype=self._dtype
-        )
+        try:
+            self._frame = TorchMoonFrame(
+                getattr(dynamics_engine, "ephem", None),
+                device=self._device,
+                dtype=self._dtype,
+                allow_identity=bool(getattr(dynamics_engine, "allow_identity_rotation", True)),
+            )
+        except TorchFrameError as exc:
+            raise TorchSHPreflightError(str(exc)) from exc
 
         # --- GPU memory preflight + chunk sizing (task §11/§12) --------------
         requested_chunk = (
@@ -412,11 +349,9 @@ class TorchSHBatchPropagator:
         v_i = s[:, 3:]
         if self._frame.uses_rotation:
             q = self._frame.quat_i2f(t_s)
-            r_f = _quat_rotate(q, r_i)
+            r_f = quat_rotate_torch(q, r_i)
             a_f = self._evaluator.acceleration(r_f)
-            q_conj = q.clone()
-            q_conj[1:] = -q_conj[1:]
-            a_i = _quat_rotate(q_conj, a_f)
+            a_i = quat_rotate_torch(quat_conjugate_torch(q), a_f)
         else:
             a_i = self._evaluator.acceleration(r_i)
         return torch.cat((v_i, a_i), dim=1)
@@ -459,6 +394,7 @@ class TorchSHBatchPropagator:
         Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
         impact_flags = np.zeros(N, dtype=np.float64)
         t_impact = np.full(N, np.nan, dtype=np.float64)
+        impact_positions = np.full((N, 3), np.nan, dtype=np.float64)
 
         chunk = max(1, int(self._chunk_size))
         n_chunks = int(math.ceil(N / chunk))
@@ -466,10 +402,11 @@ class TorchSHBatchPropagator:
         total_raw_state_steps = 0
         total_active_state_steps = 0
         total_steps_per_sample = n_snaps * steps_per_snap
+        log_backend = "torch_cuda_sh" if self._device.type == "cuda" else "torch_cpu_sh"
 
         t_start = time.perf_counter()
         print(
-            f"[MC][torch_cuda_sh] N={N}  device={self._device} ({self._device_name})  "
+            f"[MC][{log_backend}] N={N}  device={self._device} ({self._device_name})  "
             f"degree={self._actual_degree}  dtype={str(self._dtype).replace('torch.', '')}  "
             f"chunk={chunk}  chunks={n_chunks}  dt={dt_eff:.1f}s  snaps={n_snaps}  "
             f"frame={'moon-fixed' if self._frame.uses_rotation else 'identity'}",
@@ -481,7 +418,16 @@ class TorchSHBatchPropagator:
             b = min(N, a + chunk)
             chunk_n = b - a
             active_steps = self._propagate_chunk(
-                Y0[a:b], a, b, steps_per_snap, dt_eff, n_snaps, Y_out, impact_flags, t_impact
+                Y0[a:b],
+                a,
+                b,
+                steps_per_snap,
+                dt_eff,
+                n_snaps,
+                Y_out,
+                impact_flags,
+                t_impact,
+                impact_positions,
             )
             total_raw_state_steps += chunk_n * total_steps_per_sample
             total_active_state_steps += active_steps
@@ -507,11 +453,12 @@ class TorchSHBatchPropagator:
             "propagation_elapsed_s": float(elapsed),
         }
         print(
-            f"[MC][torch_cuda_sh] done: {elapsed:.2f}s  "
+            f"[MC][{log_backend}] done: {elapsed:.2f}s  "
             f"{self._throughput_metrics['raw_batch_state_steps_per_second']:,.0f} raw-steps/s  "
             f"{self._throughput_metrics['active_state_steps_per_second']:,.0f} active-steps/s",
             flush=True,
         )
+        self._last_impact_positions_inertial = impact_positions
         return t_out, Y_out, impact_flags, t_impact
 
     def _propagate_chunk(
@@ -525,6 +472,7 @@ class TorchSHBatchPropagator:
         Y_out: np.ndarray,
         impact_flags: np.ndarray,
         t_impact: np.ndarray,
+        impact_positions: np.ndarray,
     ) -> int:
         """Propagate one chunk of samples through the RK4 loop.
 
@@ -557,7 +505,7 @@ class TorchSHBatchPropagator:
         # the start instead of being propagated through the body.
         r0 = torch.linalg.norm(state[:, :3], dim=1)
         at_surface0 = r0 <= self._impact_r
-        if bool(at_surface0.any()):
+        if self._detect_impact:
             impact_step = torch.where(at_surface0, torch.zeros_like(impact_step), impact_step)
             alive = alive & ~at_surface0
 
@@ -578,28 +526,38 @@ class TorchSHBatchPropagator:
                     state = torch.where(alive.unsqueeze(1), candidate, state)
                     t_curr += dt_eff
                     global_step += 1
-                    r_mag = torch.linalg.norm(state[:, :3], dim=1)
-                    newly = alive & (r_mag <= self._impact_r)
+                    if self._detect_impact:
+                        r_mag = torch.linalg.norm(state[:, :3], dim=1)
+                        newly = alive & (r_mag <= self._impact_r)
                     # Record the 1-based step index of first impact on device;
                     # already-impacted samples keep their earlier index. No host
                     # sync here — the bookkeeping is resolved once below.
-                    impact_step = torch.where(
-                        newly, torch.full_like(impact_step, global_step), impact_step
-                    )
-                    alive = alive & ~newly
+                        impact_step = torch.where(
+                            newly, torch.full_like(impact_step, global_step), impact_step
+                        )
+                        alive = alive & ~newly
                 Y_out[snap_idx + 1, a:b, :] = state.detach().cpu().numpy().astype(np.float64)
 
         # Single host sync per chunk: resolve impact bookkeeping. ``step * dt_eff``
         # equals the ``t_curr`` value immediately after the impacting step, so the
         # recorded impact epoch is identical to the per-step accounting it replaces.
         impact_step_host = impact_step.detach().cpu().numpy()
+        state_host = state.detach().cpu().numpy().astype(np.float64)
         for li in np.nonzero(impact_step_host >= 0)[0].tolist():
             gi = a + int(li)
             if impact_flags[gi] == 0.0:
                 impact_flags[gi] = 1.0
                 t_impact[gi] = float(impact_step_host[li]) * dt_eff
+                impact_positions[gi] = state_host[li, :3]
 
         return int(active_steps_acc.item())
+
+    def last_impact_positions_inertial(self) -> np.ndarray:
+        """Return fixed-step endpoint impact positions for the latest batch."""
+        return np.asarray(
+            getattr(self, "_last_impact_positions_inertial", np.empty((0, 3))),
+            dtype=np.float64,
+        )
 
 
 __all__ = ["TorchSHBatchPropagator", "TorchSHPreflightError"]

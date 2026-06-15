@@ -166,7 +166,7 @@ def plot_mc_summary(
     ensemble = mc_stats.ensemble
     ellipsoids = mc_stats.ellipsoids
 
-    total_samples = int(result.n_samples)
+    total_samples = int(impacts.n_total)
     n_impacts = int(impacts.n_impacts)
     n_survivors = max(0, total_samples - n_impacts)
     t_start = float(result.t[0]) if len(result.t) else 0.0
@@ -314,10 +314,10 @@ def plot_altitude_envelope(
     t_days = _days(stats.t)
 
     # Individual trajectories (random subset)
-    N = result.n_samples
-    n_show = min(max_traj, N)
+    valid_indices = np.where(result.valid_sample_mask())[0]
+    n_show = min(max_traj, int(valid_indices.size))
     rng = np.random.default_rng(1)
-    indices = rng.choice(N, size=n_show, replace=False)
+    indices = rng.choice(valid_indices, size=n_show, replace=False)
 
     for i in indices:
         alt_i = (_km(np.linalg.norm(result.Y[:, i, :3], axis=1))
@@ -388,7 +388,7 @@ def plot_covariance_tubes_3d(
     ax  = fig.add_subplot(111, projection="3d")
 
     T = int(result.t.shape[0])
-    N = result.n_samples
+    valid_indices = np.where(result.valid_sample_mask())[0]
 
     # Default epoch selection
     if ellipsoid_epochs is None:
@@ -396,9 +396,9 @@ def plot_covariance_tubes_3d(
         ellipsoid_epochs = list(range(0, T, step))[:6]
 
     # Individual trajectories
-    n_show = min(max_traj, N)
+    n_show = min(max_traj, int(valid_indices.size))
     rng = np.random.default_rng(2)
-    idx_show = rng.choice(N, size=n_show, replace=False)
+    idx_show = rng.choice(valid_indices, size=n_show, replace=False)
 
     for i in idx_show:
         pos_km = _km(result.Y[:, i, :3])
@@ -408,7 +408,7 @@ def plot_covariance_tubes_3d(
                 color=c, alpha=0.15, linewidth=0.6)
 
     # Mean trajectory
-    mean_km = _km(np.mean(result.Y[:, :, :3], axis=1))
+    mean_km = _km(ellipsoids.centres)
     ax.plot(mean_km[:, 0], mean_km[:, 1], mean_km[:, 2],
             color="#1a3a6a", linewidth=2.0, label="Mean trajectory", zorder=5)
 
@@ -507,9 +507,14 @@ def plot_impact_map(
     """
     _require_mpl()
 
-    if impacts.n_impacts == 0:
+    if impacts.n_impacts == 0 or impacts.lat_deg.size == 0:
         fig, ax = plt.subplots(figsize=figsize or _default_figsize())
-        ax.text(0.5, 0.5, "No impacts detected", ha="center", va="center",
+        message = (
+            "No impacts detected"
+            if impacts.n_impacts == 0
+            else "Impact locations unavailable in this archive"
+        )
+        ax.text(0.5, 0.5, message, ha="center", va="center",
                 transform=ax.transAxes, fontsize=13)
         ax.set_title(title, fontsize=11, fontweight="bold")
         return fig
@@ -522,7 +527,7 @@ def plot_impact_map(
 
     sc = ax.scatter(
         lon_rad, lat_rad,
-        c=np.arange(impacts.n_impacts),
+        c=np.arange(impacts.lat_deg.size),
         cmap="plasma",
         s=20, alpha=0.75,
         zorder=4,
@@ -564,7 +569,8 @@ def plot_impact_time_histogram(
     _require_mpl()
     fig, ax = plt.subplots(figsize=figsize or _default_figsize())
 
-    t_hit = result.t_impact[result.impact_mask > 0.5]
+    mask = result.valid_sample_mask() & (result.impact_mask > 0.5)
+    t_hit = result.t_impact[mask]
     t_hit = t_hit[np.isfinite(t_hit)] / DAY_S    # convert to days
 
     if len(t_hit) == 0:

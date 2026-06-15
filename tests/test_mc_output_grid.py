@@ -43,6 +43,13 @@ def test_grid_minimum_one_snapshot() -> None:
     assert list(t) == [0.0, 100.0]
 
 
+def test_grid_realized_spacing_never_exceeds_request() -> None:
+    t, n_snaps, snap = build_mc_output_grid(149.0, 100.0)
+    assert n_snaps == 2
+    assert snap == pytest.approx(74.5)
+    assert np.max(np.diff(t)) <= 100.0
+
+
 @pytest.mark.parametrize("bad", [0.0, -1.0])
 def test_grid_rejects_nonpositive_duration(bad: float) -> None:
     with pytest.raises(ValueError):

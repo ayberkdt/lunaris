@@ -38,6 +38,8 @@ def test_valid_mask_defaults_to_all_valid() -> None:
 def test_valid_mask_counts_only_valid_samples() -> None:
     r = _result(valid_mask=np.array([1.0, 0.0, 1.0]))
     assert r.n_valid == 2
+    assert r.n_survived == 2
+    assert r.impact_fraction == 0.0
     # The failed sample's trajectory is NaN, not a spurious zero state.
     assert np.isnan(r.Y[:, 1, :]).all()
     assert np.isfinite(r.Y[:, 0, :]).all()

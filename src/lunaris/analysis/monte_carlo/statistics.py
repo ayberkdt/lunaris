@@ -47,11 +47,11 @@ def _cov6(Y_t: F64Array) -> F64Array:
     """
     Compute 6×6 sample covariance matrix of Y_t of shape (N, 6).
 
-    Uses ddof=1 (unbiased estimator).  Returns zeros if N < 2.
+    Uses ddof=1 (unbiased estimator).
     """
     N = int(Y_t.shape[0])
     if N < 2:
-        return np.zeros((6, 6), dtype=np.float64)
+        raise ValueError("insufficient valid samples for covariance: need at least 2")
     return np.cov(Y_t.T, ddof=1).astype(np.float64)
 
 
@@ -238,34 +238,31 @@ def compute_ensemble_statistics(
     -------
     EnsembleStatistics
     """
-    Y = result.Y          # (T, N, 6)
     t = result.t          # (T,)
-
+    mask = result.valid_sample_mask()
     if use_survived_only:
-        mask = result.impact_mask < 0.5
-        if mask.sum() < 2:
-            warnings.warn(
-                "[mc_analysis] Fewer than 2 survived samples; using full ensemble.",
-                RuntimeWarning, stacklevel=2,
-            )
-            mask = np.ones(result.n_samples, dtype=bool)
-        Y = Y[:, mask, :]
+        mask &= result.impact_mask < 0.5
+    indices = np.where(mask)[0]
+    if indices.size < 2:
+        raise ValueError(
+            "insufficient valid samples for ensemble statistics: need at least 2"
+        )
 
-    T = int(Y.shape[0])
-    N = int(Y.shape[1])
-
-    mean  = np.mean(Y, axis=1)           # (T, 6)
-    std   = np.std(Y, axis=1, ddof=1)    # (T, 6)
+    T = int(result.Y.shape[0])
+    mean = np.zeros((T, 6), dtype=np.float64)
+    std = np.zeros((T, 6), dtype=np.float64)
     cov   = np.zeros((T, 6, 6), dtype=np.float64)
+    alt_mean = np.zeros(T, dtype=np.float64)
+    alt_std = np.zeros(T, dtype=np.float64)
 
     for k in range(T):
-        cov[k] = _cov6(Y[k])
-
-    # Altitude statistics
-    pos_norms = np.linalg.norm(Y[:, :, :3], axis=2)   # (T, N)
-    alt_km    = (pos_norms - r_ref_m) / 1_000.0        # (T, N)
-    alt_mean  = np.mean(alt_km, axis=1)                # (T,)
-    alt_std   = np.std(alt_km, axis=1, ddof=1 if N > 1 else 0)  # (T,)
+        Y_k = np.asarray(result.Y[k, indices, :], dtype=np.float64)
+        mean[k] = np.mean(Y_k, axis=0)
+        std[k] = np.std(Y_k, axis=0, ddof=1)
+        cov[k] = _cov6(Y_k)
+        alt_km = (np.linalg.norm(Y_k[:, :3], axis=1) - r_ref_m) / 1_000.0
+        alt_mean[k] = np.mean(alt_km)
+        alt_std[k] = np.std(alt_km, ddof=1)
 
     return EnsembleStatistics(
         t=np.ascontiguousarray(t, dtype=np.float64),
@@ -327,8 +324,11 @@ def compute_impact_statistics(
     -------
     ImpactStatistics
     """
-    N     = result.n_samples
-    mask  = result.impact_mask > 0.5
+    valid = result.valid_sample_mask()
+    N = int(np.sum(valid))
+    if N == 0:
+        raise ValueError("impact statistics are undefined: no valid samples")
+    mask  = valid & (result.impact_mask > 0.5)
     n_hit = int(mask.sum())
     p_mle = float(n_hit) / max(1, N)
     ci95  = _binomial_ci_wilson(n_hit, N)
@@ -338,18 +338,34 @@ def compute_impact_statistics(
     t_mean = float(np.mean(t_hit)) if len(t_hit) > 0 else math.nan
     t_std  = float(np.std(t_hit, ddof=1)) if len(t_hit) > 1 else 0.0
 
-    # Impact lat/lon: use last known position for impacting samples
-    lat_arr = np.zeros(n_hit, dtype=np.float64)
-    lon_arr = np.zeros(n_hit, dtype=np.float64)
-
-    hit_indices = np.where(mask)[0]
-    for j, i in enumerate(hit_indices):
-        # Last snapshot position (proxy for impact site)
-        r = result.Y[-1, i, :3]
-        r_n = float(np.linalg.norm(r))
-        if r_n > 0.0:
-            lat_arr[j] = math.degrees(math.asin(float(np.clip(r[2] / r_n, -1.0, 1.0))))
-            lon_arr[j] = math.degrees(math.atan2(float(r[1]), float(r[0])))
+    lat_arr = np.empty(0, dtype=np.float64)
+    lon_arr = np.empty(0, dtype=np.float64)
+    if n_hit > 0:
+        if result.impact_position_fixed_m is None:
+            warnings.warn(
+                "Impact locations unavailable: archive has no Moon-fixed impact positions.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        else:
+            positions = np.asarray(result.impact_position_fixed_m[mask], dtype=np.float64)
+            finite = np.isfinite(positions).all(axis=1)
+            if not np.all(finite):
+                warnings.warn(
+                    "Some impact locations are unavailable because their Moon-fixed "
+                    "positions were not recorded.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            positions = positions[finite]
+            radii = np.linalg.norm(positions, axis=1)
+            nonzero = radii > 0.0
+            positions = positions[nonzero]
+            radii = radii[nonzero]
+            lat_arr = np.degrees(
+                np.arcsin(np.clip(positions[:, 2] / radii, -1.0, 1.0))
+            )
+            lon_arr = np.degrees(np.arctan2(positions[:, 1], positions[:, 0]))
 
     return ImpactStatistics(
         n_total=N,
@@ -384,13 +400,15 @@ def compute_oe_dispersion(
     -------
     OEDispersion
     """
-    Y = result.Y     # (T, N, 6)
     t = result.t     # (T,)
     T = int(t.shape[0])
-    N = int(Y.shape[1])
-
-    sub = min(N, max_samples)
-    idx = np.random.default_rng(0).choice(N, size=sub, replace=False)
+    valid_idx = np.where(result.valid_sample_mask())[0]
+    if valid_idx.size < 2:
+        raise ValueError(
+            "insufficient valid samples for orbital-element dispersion: need at least 2"
+        )
+    sub = min(int(valid_idx.size), max_samples)
+    idx = np.random.default_rng(0).choice(valid_idx, size=sub, replace=False)
 
     a_mean  = np.zeros(T); a_std  = np.zeros(T)
     e_mean  = np.zeros(T); e_std  = np.zeros(T)
@@ -400,7 +418,10 @@ def compute_oe_dispersion(
         a_arr   = np.zeros(sub); e_arr   = np.zeros(sub); inc_arr = np.zeros(sub)
         for j, i in enumerate(idx):
             try:
-                a_m, e_val, inc_rad, _, _, _ = cartesian_to_keplerian(Y[k, i, :3], Y[k, i, 3:], mu=mu)
+                state = np.asarray(result.Y[k, int(i), :], dtype=np.float64)
+                a_m, e_val, inc_rad, _, _, _ = cartesian_to_keplerian(
+                    state[:3], state[3:], mu=mu
+                )
                 a_arr[j]   = (a_m / 1000.0) if math.isfinite(a_m) else math.nan
                 e_arr[j]   = e_val          if math.isfinite(e_val) else math.nan
                 inc_arr[j] = math.degrees(inc_rad) if math.isfinite(inc_rad) else math.nan

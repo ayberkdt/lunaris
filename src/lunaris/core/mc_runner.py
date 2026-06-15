@@ -197,6 +197,14 @@ def _build_parser() -> argparse.ArgumentParser:
                    default="hdf5")
     g.add_argument("--mc-output-path",        type=str,
                    default="outputs/monte_carlo/mc_output.h5")
+    g.add_argument(
+        "--result-storage-mode",
+        choices=["auto", "memory", "disk"],
+        default="auto",
+    )
+    g.add_argument("--max-result-memory-gb", type=float, default=1.0)
+    g.add_argument("--detect-impact", type=str2bool, default=True)
+    g.add_argument("--compute-impact-statistics", type=str2bool, default=True)
     g.add_argument("--impact-alt-km",         type=float, default=0.0,
                    help="Impact detection threshold altitude [km]")
 
@@ -230,19 +238,23 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
     impact     = result.impact_mask  # (N,)
     t_impact   = result.t_impact     # (N,)
 
-    N     = int(Y.shape[1])
-    n_hit = int(np.sum(impact > 0.5))
-    p_imp = n_hit / N if N > 0 else 0.0
+    N = int(Y.shape[1])
+    valid = result.valid_sample_mask()
+    n_valid = int(np.sum(valid))
+    n_hit = int(np.sum(valid & (impact > 0.5)))
+    p_imp = n_hit / n_valid if n_valid > 0 else math.nan
 
-    ci_lo, ci_hi = _wilson_ci(n_hit, N)
+    ci_lo, ci_hi = _wilson_ci(n_hit, n_valid)
 
     # Mean impact time [days]
-    hit_times = t_impact[np.isfinite(t_impact) & (impact > 0.5)]
+    hit_times = t_impact[np.isfinite(t_impact) & valid & (impact > 0.5)]
     t_imp_mean_days = float(np.mean(hit_times) / 86400.0) if hit_times.size > 0 else None
 
     # Altitude at t=0 and t=-1
     def _alt_stats(step: int):
-        r = np.linalg.norm(Y[step, :, :3], axis=1)   # (N,)
+        if n_valid < 1:
+            raise ValueError("altitude metrics require at least one valid MC sample")
+        r = np.linalg.norm(Y[step, np.where(valid)[0], :3], axis=1)
         alt_km = (r - float(R_MOON)) / 1000.0
         return float(np.mean(alt_km)), float(np.std(alt_km))
 
@@ -256,6 +268,7 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
 
     return {
         "n_samples":        N,
+        "n_valid_samples":  n_valid,
         "n_impacts":        n_hit,
         "p_impact":         p_imp,
         "p_impact_ci95":    [round(ci_lo, 6), round(ci_hi, 6)],
@@ -403,6 +416,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_vram_gb           = float(args.max_vram_gb),
             output_format         = str(args.mc_output_format),
             output_path           = str(args.mc_output_path),
+            result_storage_mode   = str(args.result_storage_mode),
+            max_result_memory_gb  = float(args.max_result_memory_gb),
+            detect_impact         = bool(args.detect_impact),
+            compute_impact_statistics = bool(args.compute_impact_statistics),
             impact_alt_km         = float(args.impact_alt_km),
         )
     except Exception as exc:

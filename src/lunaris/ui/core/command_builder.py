@@ -545,6 +545,13 @@ def build_mc_command(
     command.extend(["--mc-output-format",      str(mc_data.get("output_format", "hdf5"))])
     command.extend(["--mc-output-path",        str(mc_data.get("output_path",
                                                                "outputs/monte_carlo/mc_output.h5"))])
+    command.extend(["--result-storage-mode",   str(mc_data.get("result_storage_mode", "auto"))])
+    command.extend(["--max-result-memory-gb",  str(mc_data.get("max_result_memory_gb", 1.0))])
+    command.extend(["--detect-impact",          bool_to_onoff(bool(mc_data.get("detect_impact", True)))])
+    command.extend([
+        "--compute-impact-statistics",
+        bool_to_onoff(bool(mc_data.get("compute_impact_statistics", True))),
+    ])
     command.extend(["--impact-alt-km",         str(mc_data.get("impact_alt_km", 0.0))])
 
     return [str(item) for item in command]
