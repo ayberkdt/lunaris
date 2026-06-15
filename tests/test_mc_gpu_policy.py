@@ -253,6 +253,33 @@ def test_policy_st_lrps_torch_cuda_false_falls_back(monkeypatch) -> None:
     assert not plan.use_gpu
     assert len(plan.warnings) > 0
     assert any("st-lrps" in w.lower() for w in plan.warnings)
+    # Provenance must be honest: this is a real GPU->CPU fallback (reviewer §1b).
+    assert plan.fallback_applied is True
+    assert plan.requested_device == "cuda"
+    assert plan.actual_device == "cpu"
+    assert plan.fallback_reason  # must record why
+
+
+def test_policy_st_lrps_unsupported_physics_records_fallback_provenance(monkeypatch) -> None:
+    """ST-LRPS + torch CUDA + unsupported physics → CPU with honest fallback fields."""
+    import lunaris.core.mc_backend_policy as policy_mod
+    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+
+    monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
+    monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
+
+    mc_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
+    sim_cfg = SimpleNamespace(
+        flags=PerturbationFlags(enable_sh=True, enable_srp=True),
+        gravity=SimpleNamespace(uses_st_lrps=True),
+    )
+    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
+    assert plan.final_backend == MCBackend.CPU
+    assert plan.actual_backend == "cpu_st_lrps"
+    assert plan.fallback_applied is True
+    assert plan.requested_device == "cuda"
+    assert plan.actual_device == "cpu"
+    assert "srp" in plan.fallback_reason.lower()
 
 
 def test_policy_st_lrps_gpu_with_third_body_falls_back(monkeypatch) -> None:

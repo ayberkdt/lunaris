@@ -369,3 +369,99 @@ def test_engine_torch_preflight_error_is_not_silently_downgraded(monkeypatch, tm
 
     with pytest.raises(TorchSHPreflightError):
         MonteCarloEngine._build_propagator(engine)
+
+
+def test_engine_torch_cuda_sh_passes_explicit_cuda_device(monkeypatch, tmp_path: Path) -> None:
+    """The GPU torch_cuda_sh branch must construct the propagator with an explicit
+    CUDA device (cuda:<id>) so it cannot silently degrade to CPU inside the
+    propagator's own device-resolution fallback (reviewer §3)."""
+    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.core.torch_sh_propagator as torch_sh_mod
+    from lunaris.core.monte_carlo_engine import MonteCarloEngine
+
+    captured: dict[str, object] = {}
+
+    class DummyTorchSH:
+        def __init__(self, dyn, mc_cfg, flags, **k) -> None:
+            captured["device"] = k.get("device")
+
+    _patch_availability(monkeypatch, torch_avail=True, numba_avail=True)
+    monkeypatch.setattr(mc_prop, "_CUDA_AVAILABLE", True)
+    monkeypatch.setattr(torch_sh_mod, "TorchSHBatchPropagator", DummyTorchSH)
+
+    engine = MonteCarloEngine.__new__(MonteCarloEngine)
+    engine._mc = MonteCarloConfig(
+        n_samples=2, use_gpu=True, mc_backend="torch_cuda_sh", gpu_sh_degree=100,
+        gpu_device_id=2, output_format="npz", output_path=str(tmp_path / "mc_cuda_dev.npz"),
+    )
+    engine._sim_cfg = _sim()
+    engine._dyn = SimpleNamespace(grav=SimpleNamespace(degree_max=100), ephem=None)
+    engine._surface_provider = None
+    engine._topo_grid = None
+    engine._backend_note = ""
+    engine._backend_plan = None
+
+    prop = MonteCarloEngine._build_propagator(engine)
+    assert isinstance(prop, DummyTorchSH)
+    assert captured["device"] == "cuda:2"
+
+
+def test_engine_st_lrps_build_failure_downgrades_plan_to_cpu(monkeypatch, tmp_path: Path) -> None:
+    """If the GPU ST-LRPS propagator fails to construct, the engine must fall back
+    to CPU AND rewrite the plan provenance — a CPU run must never keep a GPU label
+    (reviewer §1a). Mirrors the numba/torch branches which already downgrade."""
+    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.core.torch_batch_propagator as tbp_mod
+    from lunaris.core.monte_carlo_engine import MonteCarloEngine
+
+    built: dict[str, object] = {}
+
+    class DummyCPU:
+        def __init__(self, *a, **k) -> None:
+            built["cpu"] = True
+
+    class RaisingTorchBatch:
+        def __init__(self, *a, **k) -> None:
+            raise RuntimeError("CUDA OOM while building ST-LRPS propagator")
+
+    _patch_availability(monkeypatch, torch_avail=True, numba_avail=False)
+    monkeypatch.setattr(mc_prop, "CPUBatchPropagator", DummyCPU)
+    monkeypatch.setattr(tbp_mod, "TorchBatchPropagator", RaisingTorchBatch)
+
+    engine = MonteCarloEngine.__new__(MonteCarloEngine)
+    engine._mc = MonteCarloConfig(
+        n_samples=2, use_gpu=True, mc_backend="gpu_st_lrps_potential", gpu_sh_degree=0,
+        st_lrps_model_dir=str(tmp_path / "surrogate_run"),
+        output_format="npz", output_path=str(tmp_path / "mc_stlrps_fail.npz"),
+    )
+    engine._sim_cfg = _sim()
+    engine._dyn = SimpleNamespace(
+        grav=SimpleNamespace(model_kind="st_lrps", model_dir="x", degree_min=2, degree_max=50),
+        ephem=None,
+    )
+    engine._surface_provider = None
+    engine._topo_grid = None
+    engine._backend_note = ""
+    engine._backend_plan = None
+
+    prop = MonteCarloEngine._build_propagator(engine)
+    assert isinstance(prop, DummyCPU)
+    assert built.get("cpu") is True
+    plan = engine._backend_plan
+    assert plan.final_backend == MCBackend.CPU
+    assert plan.actual_backend == "cpu_st_lrps"
+    assert plan.actual_device == "cpu"
+    assert plan.fallback_applied is True
+    assert plan.fallback_reason  # records why the GPU build was abandoned
+
+
+def test_backend_display_name_distinguishes_torch_cpu_from_cuda() -> None:
+    """The run label is derived from plan.actual_backend, not the propagator class
+    name (reviewer §2). torch_cpu_sh and torch_cuda_sh share one class, so the
+    mapping must keep CPU labeled CPU."""
+    from lunaris.core.monte_carlo_engine import _BACKEND_DISPLAY_NAMES
+
+    assert _BACKEND_DISPLAY_NAMES["torch_cpu_sh"] == "CPU-TORCH-SH"
+    assert _BACKEND_DISPLAY_NAMES["torch_cuda_sh"] == "GPU-TORCH-SH"
+    assert _BACKEND_DISPLAY_NAMES["cpu_st_lrps"] == "CPU-ST-LRPS"
+    assert _BACKEND_DISPLAY_NAMES["torch_cpu_sh"] != _BACKEND_DISPLAY_NAMES["torch_cuda_sh"]
