@@ -249,7 +249,6 @@ def compute_ensemble_statistics(
         )
 
     T = int(result.Y.shape[0])
-    N = int(indices.size)
     mean = np.zeros((T, 6), dtype=np.float64)
     std = np.zeros((T, 6), dtype=np.float64)
     cov   = np.zeros((T, 6, 6), dtype=np.float64)

@@ -44,8 +44,8 @@ This module is **layer 3** (core); it may import from ``common`` and
 
 from __future__ import annotations
 
-import json
 import inspect
+import json
 import math
 import time
 import warnings
