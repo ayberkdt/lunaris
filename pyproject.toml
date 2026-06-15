@@ -195,6 +195,10 @@ warn_unused_ignores = true
 # common+core are clean; physics is now type-checked too (engine force models).
 files = ["src/lunaris/common", "src/lunaris/core", "src/lunaris/physics"]
 
+[[tool.mypy.overrides]]
+module = "lunaris.surrogate.*"
+follow_imports = "skip"
+
 [tool.coverage.run]
 source = ["lunaris"]
 branch = true

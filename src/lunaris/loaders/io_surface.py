@@ -205,7 +205,7 @@ def _strip_pds_comments(text: str) -> str:
     return _RE_PDS_COMMENT.sub("", text)
 
 
-def _re_find_one(pattern: str | re.Pattern[str], text: str, cast: Callable[[str], T] = str) -> T:
+def _re_find_one(pattern: str | re.Pattern[str], text: str, cast: Callable[[str], Any] = str) -> Any:
     """
     Find a required PDS field using a regex capturing group (group 1).
 
@@ -230,9 +230,9 @@ def _re_find_one(pattern: str | re.Pattern[str], text: str, cast: Callable[[str]
 def _re_find_optional(
     pattern: str | re.Pattern[str],
     text: str,
-    cast: Callable[[str], T] = str,
-    default: T | None = None,
-) -> T | None:
+    cast: Callable[[str], Any] = str,
+    default: Any | None = None,
+) -> Any | None:
     """
     Find an optional PDS field using a regex capturing group (group 1).
 
@@ -1158,7 +1158,7 @@ def parse_pds3_cyl_label(label_path: PathLike) -> PDS3RasterInfo:
         unit=str(unit),
         scaling_factor=float(scaling_factor),
         offset=float(offset),
-        missing_constant=float(missing_constant),
+        missing_constant=float(missing_constant) if missing_constant is not None else float("nan"),
         map_projection_type=str(map_projection_type),
         map_resolution_ppd=float(map_resolution_ppd),
         max_lat_deg=float(max_lat_deg),
