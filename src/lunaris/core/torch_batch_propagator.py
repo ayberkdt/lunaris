@@ -235,6 +235,17 @@ class TorchBatchPropagator:
         # ------------------------------------------------------------------
         Y_out[0] = state.detach().cpu().numpy().astype(np.float64)
 
+        # t=0 surface check: samples already at/under the impact radius impact at
+        # t=0 and are frozen there instead of being propagated through the body.
+        r0 = torch.linalg.norm(state[:, :3], dim=1)
+        hit0 = r0 <= r_impact_t
+        if bool(hit0.any()):
+            for idx in hit0.nonzero(as_tuple=False).view(-1).cpu().tolist():
+                if impact_flags[idx] == 0.0:
+                    impact_flags[idx] = 1.0
+                    t_impact_arr[idx] = 0.0
+            alive = alive & ~hit0
+
         t_curr = 0.0
         t_prop_start = time.perf_counter()
 
@@ -243,7 +254,11 @@ class TorchBatchPropagator:
         # ------------------------------------------------------------------
         for snap_idx in range(n_snaps):
             for _ in range(steps_per_snap):
-                state = _rk4(state, dt_eff)
+                # Freeze impacted samples: only alive trajectories advance; an
+                # impacted sample holds its last state (no propagation through
+                # the Moon). Fixed batch shape is preserved (no compaction).
+                candidate = _rk4(state, dt_eff)
+                state = torch.where(alive.unsqueeze(1), candidate, state)
                 t_curr += dt_eff
 
                 # Impact detection on GPU — only alive samples

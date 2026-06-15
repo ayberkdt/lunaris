@@ -411,6 +411,12 @@ class MCRunResult:
     impact_mask: F64Array                    # (N,) bool-like float64 (0/1)
     t_impact: F64Array                       # (N,) NaN if no impact
     diagnostics: dict = field(default_factory=dict)
+    # (N,) 1.0=valid sample, 0.0=failed/invalid (e.g. a CPU sample that raised
+    # and was NaN-filled under allow_sample_failures). ``None`` means "all
+    # samples valid" — the batch GPU/torch paths never partially fail. Lets
+    # consumers exclude failed samples from ensemble statistics instead of
+    # treating NaN-filled trajectories as if they were real states.
+    valid_mask: F64Array | None = None
 
     def __post_init__(self) -> None:
         self.t = np.ascontiguousarray(self.t, dtype=np.float64)
@@ -418,6 +424,8 @@ class MCRunResult:
         self.sc_samples = np.ascontiguousarray(self.sc_samples, dtype=np.float64)
         self.impact_mask = np.ascontiguousarray(self.impact_mask, dtype=np.float64)
         self.t_impact = np.ascontiguousarray(self.t_impact, dtype=np.float64)
+        if self.valid_mask is not None:
+            self.valid_mask = np.ascontiguousarray(self.valid_mask, dtype=np.float64)
 
         n_t = self.t.shape[0]
         n_samp = self.Y.shape[1] if self.Y.ndim == 3 else 0
@@ -442,10 +450,21 @@ class MCRunResult:
             raise ValueError(
                 f"t_impact must be (N,), got {self.t_impact.shape}"
             )
+        if self.valid_mask is not None and self.valid_mask.shape != (n_samp,):
+            raise ValueError(
+                f"valid_mask must be (N,), got {self.valid_mask.shape}"
+            )
 
     @property
     def n_samples(self) -> int:
         return int(self.Y.shape[1])
+
+    @property
+    def n_valid(self) -> int:
+        """Number of valid (non-failed) samples; all samples when no mask is set."""
+        if self.valid_mask is None:
+            return int(self.Y.shape[1])
+        return int(np.sum(self.valid_mask > 0.5))
 
     @property
     def n_steps(self) -> int:
