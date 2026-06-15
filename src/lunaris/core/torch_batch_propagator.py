@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from lunaris.common.constants import R_MOON
+from lunaris.common.montecarlo_defs import build_mc_output_grid
 
 if TYPE_CHECKING:
     # Annotation-only alias. The runtime ``torch`` handle is the per-instance
@@ -162,15 +163,11 @@ class TorchBatchPropagator:
 
         N = int(Y0.shape[0])
         dt = self._dt
-        snap_interval = float(output_dt_s)
-        total_time = float(duration_s)
 
-        # Derive integration plan
+        # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform.
+        t_out, n_snaps, snap_interval = build_mc_output_grid(duration_s, output_dt_s)
         steps_per_snap = max(1, round(snap_interval / dt))
         dt_eff = snap_interval / steps_per_snap  # may differ slightly from dt
-        n_snaps = max(1, round(total_time / snap_interval))
-
-        t_out = np.linspace(0.0, n_snaps * snap_interval, n_snaps + 1, dtype=np.float64)
         Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
         impact_flags = np.zeros(N, dtype=np.float64)
         t_impact_arr = np.full(N, np.nan, dtype=np.float64)

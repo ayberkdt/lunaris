@@ -955,6 +955,13 @@ class MonteCarloEngine:
         impact_all   = np.zeros(N, dtype=np.float64)
         t_impact_all = np.full(N, np.nan, dtype=np.float64)
 
+        # Throughput accumulators across engine sub-batches. Aggregated as
+        # total_state_steps / total_propagation_time (NOT an average of per-batch
+        # rates) so the recorded diagnostics match the work actually done.
+        _agg_raw_steps = 0
+        _agg_active_steps = 0
+        _agg_elapsed_s = 0.0
+
         for b_idx in range(n_batches):
             b_start = b_idx * max_batch
             b_end   = min(N, b_start + max_batch)
@@ -999,6 +1006,14 @@ class MonteCarloEngine:
                 callback=_batch_progress,
             )
 
+            # Accumulate this batch's throughput counters (only backends that
+            # expose them populate these keys; others contribute nothing).
+            if hasattr(prop, "diagnostics_snapshot"):
+                _bd = prop.diagnostics_snapshot()
+                _agg_raw_steps += int(_bd.get("total_raw_state_steps", 0) or 0)
+                _agg_active_steps += int(_bd.get("total_active_state_steps", 0) or 0)
+                _agg_elapsed_s += float(_bd.get("propagation_elapsed_s", 0.0) or 0.0)
+
             # First batch defines the reference time grid
             if t_out_ref is None:
                 t_out_ref = t_b
@@ -1031,6 +1046,20 @@ class MonteCarloEngine:
                 batch_count=n_batches,
                 detail=f"Batch {b_idx + 1}/{n_batches} complete",
             )
+
+        # -----------------------------------------------------------------
+        # 3b) Refresh diagnostics AFTER propagation (throughput is only known
+        #     post-run) and fold in the cross-batch aggregate. The pre-run
+        #     snapshot above carried static device info but no throughput.
+        # -----------------------------------------------------------------
+        if hasattr(prop, "diagnostics_snapshot"):
+            backend_diag = dict(prop.diagnostics_snapshot())
+            if _agg_elapsed_s > 0.0:
+                backend_diag["total_raw_state_steps"] = _agg_raw_steps
+                backend_diag["total_active_state_steps"] = _agg_active_steps
+                backend_diag["propagation_elapsed_s"] = _agg_elapsed_s
+                backend_diag["raw_batch_state_steps_per_second"] = _agg_raw_steps / _agg_elapsed_s
+                backend_diag["active_state_steps_per_second"] = _agg_active_steps / _agg_elapsed_s
 
         # -----------------------------------------------------------------
         # 4) Compute impact times (t_impact_s)
