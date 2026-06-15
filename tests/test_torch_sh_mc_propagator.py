@@ -468,34 +468,76 @@ def test_impacted_sample_is_frozen_not_propagated_through_body() -> None:
     assert np.all(np.isfinite(Y_out))
 
 
-def test_impact_crossing_is_interpolated_not_step_snapped() -> None:
-    """C1 (reviewer §6): the GPU/torch fixed-step path interpolates the impact
-    crossing. For a purely radial inward fall the interpolated impact position
-    lies ON the impact sphere (|r| == r_impact), not overshot below it, and the
-    impact time is a sub-step value rather than snapped to the dt grid."""
+def test_impact_crossing_is_interpolated_and_freezes_on_surface() -> None:
+    """1A (reviewer BLOCKER): the GPU/torch path uses the true line-sphere
+    crossing for radial AND oblique impacts, and freezes the trajectory ON the
+    surface afterwards (never sub-surface). Impact time is a sub-step value."""
     degree = 20
     grav = _make_gravity_model(degree, seed=21)
     prop = _make_propagator(grav, degree)  # impact_alt_km=0 -> r_impact = R_REF
 
     r0 = R_REF + 60_000.0
-    # Radial inward fall (velocity along -x only); gravity is ~radial so the
-    # trajectory stays essentially on the x-axis and crosses R_REF mid-step.
-    Y0 = np.array([[r0, 0.0, 0.0, -700.0, 0.0, 0.0]], dtype=np.float64)
+    # Sample 0: radial inward fall. Sample 1: oblique (inward + tangential).
+    Y0 = np.array(
+        [
+            [r0, 0.0, 0.0, -700.0, 0.0, 0.0],
+            [r0, 0.0, 0.0, -500.0, 300.0, 0.0],
+        ],
+        dtype=np.float64,
+    )
     duration, out_dt = 600.0, 60.0  # dt_eff = 60 s -> grid multiples of 60
-    _, _, impact, t_imp = prop.propagate(
-        Y0, np.ones(1), np.ones(1), np.ones(1), np.ones(1),
-        duration_s=duration, output_dt_s=out_dt,
+    _, Y_out, impact, t_imp = prop.propagate(
+        Y0, *([np.ones(2)] * 4), duration_s=duration, output_dt_s=out_dt,
+    )
+
+    assert impact[0] == 1.0 and impact[1] == 1.0
+    pos = prop.last_impact_positions_inertial()
+    for i in (0, 1):
+        # True line-sphere crossing sits exactly on the impact sphere even for
+        # the oblique sample; the old step-endpoint method overshot below it.
+        assert abs(float(np.linalg.norm(pos[i])) - R_REF) < 1.0
+        # Impact time is a sub-step value, not snapped to the 60 s grid.
+        assert 0.0 < t_imp[i] < duration
+        grid_dist = min(abs(float(t_imp[i]) - k * 60.0) for k in range(int(duration / 60.0) + 1))
+        assert grid_dist > 1e-3
+        # After impact the trajectory freezes ON the surface, never sub-surface.
+        final_r = float(np.linalg.norm(Y_out[-1, i, :3]))
+        assert abs(final_r - R_REF) < 1.0
+
+
+def test_impact_detection_catches_outside_to_outside_step() -> None:
+    """1B: a large fixed step cannot tunnel through the impact sphere."""
+    degree = 20
+    grav = _make_gravity_model(degree, seed=22)
+    prop = _make_propagator(grav, degree)
+
+    y_offset = 0.98 * R_REF
+    x_offset = 0.30 * R_REF
+    duration = 60.0
+    Y0 = np.array(
+        [[x_offset, y_offset, 0.0, -2.0 * x_offset / duration, 0.0, 0.0]],
+        dtype=np.float64,
+    )
+    assert np.linalg.norm(Y0[0, :3]) > R_REF
+    candidate = prop._rk4_step(
+        torch.as_tensor(Y0, dtype=torch.float64),
+        0.0,
+        duration,
+    )
+    assert float(torch.linalg.norm(candidate[0, :3])) > R_REF
+
+    _, Y_out, impact, t_imp = prop.propagate(
+        Y0,
+        *([np.ones(1)] * 4),
+        duration_s=duration,
+        output_dt_s=duration,
     )
 
     assert impact[0] == 1.0
-    pos = prop.last_impact_positions_inertial()[0]
-    # Interpolated crossing sits on the impact sphere; the old step-endpoint
-    # method would have recorded a position hundreds of metres below it.
-    assert abs(float(np.linalg.norm(pos)) - R_REF) < 100.0
-    # Interpolated impact time is inside the run and NOT snapped to the 60 s grid.
     assert 0.0 < t_imp[0] < duration
-    grid_dist = min(abs(float(t_imp[0]) - k * 60.0) for k in range(int(duration / 60.0) + 1))
-    assert grid_dist > 1e-3
+    pos = prop.last_impact_positions_inertial()[0]
+    assert abs(float(np.linalg.norm(pos)) - R_REF) < 1.0
+    np.testing.assert_allclose(Y_out[-1, 0, :3], pos, atol=1e-9, rtol=0.0)
 
 
 def test_throughput_no_impact_raw_equals_active() -> None:

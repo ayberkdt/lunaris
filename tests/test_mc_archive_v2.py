@@ -72,6 +72,38 @@ def test_hdf5_archive_v2_batch_streaming_and_lazy_load(tmp_path) -> None:
     assert eager.diagnostics["archive_schema_version"] == 2
 
 
+def test_hdf5_writer_rejects_incomplete_or_out_of_order_stream(tmp_path) -> None:
+    path = tmp_path / "incomplete.h5"
+    t, Y, *_ = _archive_arrays()
+    writer = _HDF5Writer(path, n_samples=4, t_grid=t)
+    writer.write_sample_batch(0, 2, Y[:, :2, :])
+
+    with pytest.raises(ValueError, match="expected start=2"):
+        writer.write_sample_batch(3, 4, Y[:, 3:4, :])
+    with pytest.raises(RuntimeError, match="incomplete HDF5 trajectory stream"):
+        writer.finalize()
+
+    assert not path.exists()
+    assert (tmp_path / "incomplete.h5.part").exists()
+    writer.abort()
+    assert not (tmp_path / "incomplete.h5.part").exists()
+
+
+def test_hdf5_writer_does_not_swallow_metadata_errors(tmp_path) -> None:
+    class BrokenMetadata:
+        def __str__(self) -> str:
+            raise RuntimeError("cannot serialize")
+
+    path = tmp_path / "bad_metadata.h5"
+    writer = _HDF5Writer(path, n_samples=4, t_grid=np.array([0.0]))
+    with pytest.raises(ValueError, match="'broken'"):
+        writer.write_metadata(broken=BrokenMetadata())
+    writer.abort()
+
+    assert not path.exists()
+    assert not (tmp_path / "bad_metadata.h5.part").exists()
+
+
 def test_legacy_npz_infers_valid_mask_and_missing_impact_positions(tmp_path) -> None:
     path = tmp_path / "legacy.npz"
     t, Y, sc, impact, t_impact, *_ = _archive_arrays()
@@ -112,8 +144,7 @@ def test_archive_v2_strict_rejects_missing_required_field(tmp_path) -> None:
 
 
 def test_lazy_oe_dispersion_matches_eager_block_read(tmp_path) -> None:
-    """C2 (reviewer §8): compute_oe_dispersion reads one block per epoch so a
-    disk-backed (lazy) trajectory yields identical numbers to the eager array."""
+    """C2: disk-backed OE dispersion matches the eager trajectory result."""
     from lunaris.analysis.monte_carlo.statistics import compute_oe_dispersion
 
     path = tmp_path / "oe.h5"

@@ -189,10 +189,10 @@ def test_real_numba_cuda_sh_impact_positions_on_impact_sphere(tmp_path) -> None:
     assert finite.any(), "expected at least one impact in this steep scenario"
     radii = np.linalg.norm(ip[finite], axis=1)
     r_impact = float(R_MOON)  # impact_alt_km = 0
-    # Interpolated crossings sit on the impact sphere within a few metres.
-    assert float(np.max(np.abs(radii - r_impact))) < 50.0
+    # Line-sphere quadratic crossings sit exactly on the impact sphere.
+    assert float(np.max(np.abs(radii - r_impact))) < 1.0
     diag = result.diagnostics.get("backend_diagnostics", {})
-    assert diag.get("impact_position_method") == "rk4_crossing_interpolated"
+    assert diag.get("impact_position_method") == "line_sphere_quadratic"
 
 
 # ---------------------------------------------------------------------------

@@ -50,7 +50,7 @@ import json
 import math
 import time
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -429,6 +429,57 @@ def _decode_metadata_value(raw: Any) -> Any:
     return _metadata_value_to_jsonable(raw)
 
 
+def _resolve_result_storage(
+    mc_cfg: MonteCarloConfig,
+    n_steps: int,
+) -> tuple[str, int, int]:
+    """Resolve eager versus disk-backed result storage before opening a writer."""
+    result_bytes = mc_cfg.estimated_result_bytes(n_steps)
+    memory_limit_bytes = int(float(mc_cfg.max_result_memory_gb) * (1024.0 ** 3))
+    storage_mode = str(mc_cfg.result_storage_mode)
+    if storage_mode == "auto":
+        storage_mode = (
+            "disk"
+            if mc_cfg.output_format == "hdf5" and result_bytes > memory_limit_bytes
+            else "memory"
+        )
+    if storage_mode not in {"memory", "disk"}:
+        raise ValueError(f"Unsupported result storage mode: {storage_mode!r}")
+    if (
+        mc_cfg.output_format == "npz"
+        and result_bytes > memory_limit_bytes
+        and mc_cfg.result_storage_mode == "auto"
+    ):
+        raise MemoryError(
+            "Estimated eager Monte Carlo trajectory size "
+            f"({result_bytes / (1024.0 ** 3):.2f} GiB) exceeds "
+            f"max_result_memory_gb={mc_cfg.max_result_memory_gb:g}. "
+            "Use HDF5 output for disk-backed streaming or explicitly choose "
+            "result_storage_mode='memory'."
+        )
+    return storage_mode, result_bytes, memory_limit_bytes
+
+
+def _allocate_result_buffer(
+    storage_mode: str,
+    writer_buffer: Any,
+    shape: tuple[int, int, int],
+) -> np.ndarray | None:
+    """Allocate the full ensemble only for the explicit eager result path."""
+    if storage_mode == "disk":
+        return None
+    if storage_mode != "memory":
+        raise ValueError(f"Unsupported result storage mode: {storage_mode!r}")
+    if isinstance(writer_buffer, np.ndarray):
+        if tuple(writer_buffer.shape) != tuple(shape):
+            raise ValueError(
+                f"Writer result buffer must have shape {shape}, "
+                f"got {writer_buffer.shape}"
+            )
+        return writer_buffer
+    return np.empty(shape, dtype=np.float64)
+
+
 class HDF5TrajectoryView:
     """Read-only, path-backed view of an HDF5 trajectory dataset."""
 
@@ -452,6 +503,24 @@ class HDF5TrajectoryView:
 
         with h5py.File(str(self.path), "r") as f:
             return np.asarray(f[self.dataset][key], dtype=np.float64)
+
+    def iter_epoch_sample_blocks(
+        self,
+        sample_indices: np.ndarray,
+    ) -> Iterator[np.ndarray]:
+        """Yield one ``(n_samples, 6)`` block per epoch using one file handle."""
+        import h5py
+
+        indices = np.asarray(sample_indices, dtype=np.int64)
+        if indices.ndim != 1:
+            raise ValueError("sample_indices must be one-dimensional")
+        if indices.size > 1 and np.any(np.diff(indices) <= 0):
+            raise ValueError("sample_indices must be strictly increasing")
+
+        with h5py.File(str(self.path), "r") as f:
+            dataset = f[self.dataset]
+            for epoch in range(self.shape[0]):
+                yield np.asarray(dataset[epoch, indices, :], dtype=np.float64)
 
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
         import h5py
@@ -491,6 +560,8 @@ class _HDF5Writer:
         self._n = n_samples
         self._s = n_state
         self._t = np.ascontiguousarray(t_grid, dtype=np.float64)
+        self._next_sample = 0
+        self._final_payload_written = False
         self._ds_t = self._f.create_dataset("t", data=self._t)
         self._ds_Y = self._f.create_dataset(
             "Y", shape=(len(self._t), n_samples, n_state),
@@ -501,10 +572,22 @@ class _HDF5Writer:
 
     def write_sample_batch(self, start: int, end: int, Y: np.ndarray) -> None:
         """Write ``Y[:, start:end, :]`` without retaining the full ensemble."""
+        start = int(start)
+        end = int(end)
+        if start != self._next_sample:
+            raise ValueError(
+                "HDF5 sample batches must be contiguous and ordered: "
+                f"expected start={self._next_sample}, got {start}"
+            )
+        if end <= start or end > self._n:
+            raise ValueError(
+                f"HDF5 sample batch [{start}:{end}] is outside [0:{self._n}]"
+            )
         expected = (len(self._t), int(end - start), self._s)
         if tuple(Y.shape) != expected:
             raise ValueError(f"HDF5 batch must have shape {expected}, got {Y.shape}")
         self._ds_Y[:, start:end, :] = Y
+        self._next_sample = end
 
     @property
     def memory_buffer(self) -> None:
@@ -514,11 +597,15 @@ class _HDF5Writer:
         for k, v in kwargs.items():
             try:
                 payload = _metadata_value_to_jsonable(v)
+                if payload is None:
+                    continue
                 if isinstance(payload, (dict, list)):
                     payload = json.dumps(payload, sort_keys=True)
                 self._f.attrs[k] = payload
-            except Exception:
-                pass
+            except Exception as exc:
+                raise ValueError(
+                    f"Could not write HDF5 metadata field {k!r}"
+                ) from exc
 
     def write_final(
         self,
@@ -529,6 +616,29 @@ class _HDF5Writer:
         impact_position_inertial_m: np.ndarray,
         impact_position_fixed_m: np.ndarray,
     ) -> None:
+        expected_shapes = {
+            "sc_samples": (self._n, 4),
+            "impact_flags": (self._n,),
+            "t_impact": (self._n,),
+            "valid_mask": (self._n,),
+            "impact_position_inertial_m": (self._n, 3),
+            "impact_position_fixed_m": (self._n, 3),
+        }
+        values = {
+            "sc_samples": sc_samples,
+            "impact_flags": impact_flags,
+            "t_impact": t_impact,
+            "valid_mask": valid_mask,
+            "impact_position_inertial_m": impact_position_inertial_m,
+            "impact_position_fixed_m": impact_position_fixed_m,
+        }
+        for name, expected in expected_shapes.items():
+            actual = tuple(np.shape(values[name]))
+            if actual != expected:
+                raise ValueError(
+                    f"HDF5 final payload {name!r} must have shape "
+                    f"{expected}, got {actual}"
+                )
         self._f.create_dataset("sc_samples",  data=sc_samples)
         self._f.create_dataset("impact_flags", data=impact_flags)
         self._f.create_dataset("t_impact",    data=t_impact)
@@ -537,8 +647,18 @@ class _HDF5Writer:
             "impact_position_inertial_m", data=impact_position_inertial_m
         )
         self._f.create_dataset("impact_position_fixed_m", data=impact_position_fixed_m)
+        self._final_payload_written = True
 
     def finalize(self) -> None:
+        if self._next_sample != self._n:
+            raise RuntimeError(
+                "Cannot finalize incomplete HDF5 trajectory stream: "
+                f"wrote samples [0:{self._next_sample}], expected [0:{self._n}]"
+            )
+        if not self._final_payload_written:
+            raise RuntimeError(
+                "Cannot finalize HDF5 archive before final result arrays are written"
+            )
         self._f.attrs["archive_schema_version"] = 2
         self._f.flush()
         self._f.close()
@@ -1144,27 +1264,10 @@ class MonteCarloEngine:
         duration_s  = float(cfg.time.duration_s)
         output_dt_s = float(cfg.time.output_dt_s or mc.dt_s * 10)
         t_out_contract, _, _ = build_mc_output_grid(duration_s, output_dt_s)
-        result_bytes = mc.estimated_result_bytes(len(t_out_contract))
-        memory_limit_bytes = int(float(mc.max_result_memory_gb) * (1024.0 ** 3))
-        storage_mode = str(mc.result_storage_mode)
-        if storage_mode == "auto":
-            storage_mode = (
-                "disk"
-                if mc.output_format == "hdf5" and result_bytes > memory_limit_bytes
-                else "memory"
-            )
-        if (
-            mc.output_format == "npz"
-            and result_bytes > memory_limit_bytes
-            and mc.result_storage_mode == "auto"
-        ):
-            raise MemoryError(
-                "Estimated eager Monte Carlo trajectory size "
-                f"({result_bytes / (1024.0 ** 3):.2f} GiB) exceeds "
-                f"max_result_memory_gb={mc.max_result_memory_gb:g}. "
-                "Use HDF5 output for disk-backed streaming or explicitly choose "
-                "result_storage_mode='memory'."
-            )
+        storage_mode, result_bytes, memory_limit_bytes = _resolve_result_storage(
+            mc,
+            len(t_out_contract),
+        )
         writer = _make_writer(mc, N, t_out_contract)
 
         print(
@@ -1222,13 +1325,11 @@ class MonteCarloEngine:
         # sample batch directly into the final HDF5 trajectory dataset.
         t_out_ref = t_out_contract
         writer_buffer = getattr(writer, "memory_buffer", None)
-        Y_all: np.ndarray | None = None
-        if storage_mode == "memory":
-            Y_all = (
-                writer_buffer
-                if isinstance(writer_buffer, np.ndarray)
-                else np.empty((len(t_out_ref), N, 6), dtype=np.float64)
-            )
+        Y_all = _allocate_result_buffer(
+            storage_mode,
+            writer_buffer,
+            (len(t_out_ref), N, 6),
+        )
         impact_all   = np.zeros(N, dtype=np.float64)
         t_impact_all = np.full(N, np.nan, dtype=np.float64)
         valid_all = np.zeros(N, dtype=np.float64)

@@ -7,7 +7,7 @@ labels each one ``trusted`` / ``quarantined`` / ``rerun_required`` with explicit
 item-tagged reasons:
 
   * §3  impact_frame_available — Moon-fixed impact geography requires real ephemeris.
-  * §6  impact_position_method — interpolated crossing vs coarse fixed-step endpoint.
+  * §6  impact_position_method — exact line-sphere crossing vs approximate/step endpoint.
   * §7  artifact / coefficient / kernel hash provenance.
   * v2  archive schema — pre-v2 archives predate the provenance manifest entirely.
 
@@ -33,10 +33,24 @@ _PROVENANCE_HASH_KEYS = (
     "st_lrps_checkpoint_sha256",
     "st_lrps_config_sha256",
 )
+_SHA256_HEX_LENGTH = 64
 
 TRUSTED = "trusted"
 QUARANTINED = "quarantined"
 RERUN = "rerun_required"
+
+
+def _has_valid_provenance_hash(metadata: dict[str, Any]) -> bool:
+    """Return whether the manifest contains at least one usable SHA-256 digest."""
+    for key in _PROVENANCE_HASH_KEYS:
+        value = metadata.get(key)
+        if not isinstance(value, str):
+            continue
+        digest = value.strip().lower()
+        is_hex = all(ch in "0123456789abcdef" for ch in digest)
+        if len(digest) == _SHA256_HEX_LENGTH and is_hex:
+            return True
+    return False
 
 
 def classify_mc_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tuple[str, list[str]]:
@@ -60,15 +74,21 @@ def classify_mc_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tuple
     backend_diag = backend_diag if isinstance(backend_diag, dict) else {}
     impact_method = backend_diag.get("impact_position_method")
     impact_frame = metadata.get("impact_frame_available")
-    has_hashes = any(k in metadata for k in _PROVENANCE_HASH_KEYS)
+    has_hashes = _has_valid_provenance_hash(metadata)
 
     geography_broken = False
     if has_impacts:
         if impact_frame is not True:
-            reasons.append("impacts present but Moon-fixed frame unavailable (§3: geography unreliable)")
+            reasons.append(
+                "impacts present but Moon-fixed frame unavailable "
+                "(§3: geography unreliable)"
+            )
             geography_broken = True
-        if impact_method != "rk4_crossing_interpolated":
-            reasons.append("impact crossing not interpolated (§6: step-resolution time/position)")
+        if impact_method != "line_sphere_quadratic":
+            reasons.append(
+                "impact crossing is not the exact line-sphere solution "
+                "(§6: oblique impact time/position unreliable)"
+            )
             geography_broken = True
 
     if not has_hashes:
@@ -88,8 +108,12 @@ def classify_st_lrps_run(config: dict[str, Any], *, has_checkpoint: bool) -> tup
     """Classify one ST-LRPS run directory from its ``config.json`` content."""
     if not has_checkpoint:
         return RERUN, ["no checkpoint (ckpt_best.pt / ckpt_last.pt) present"]
-    if "artifact_contract" not in config:
-        return RERUN, ["no artifact_contract in config: not loadable by current runtime (pre-contract)"]
+    contract = config.get("artifact_contract")
+    if not isinstance(contract, dict) or not contract:
+        return RERUN, [
+            "missing or invalid artifact_contract in config: "
+            "not loadable by current runtime (pre-contract)"
+        ]
     return TRUSTED, []
 
 

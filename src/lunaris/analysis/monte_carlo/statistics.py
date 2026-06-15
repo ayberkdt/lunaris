@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import math
 import warnings
+from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -53,6 +55,23 @@ def _cov6(Y_t: F64Array) -> F64Array:
     if N < 2:
         raise ValueError("insufficient valid samples for covariance: need at least 2")
     return np.cov(Y_t.T, ddof=1).astype(np.float64)
+
+
+def _iter_epoch_state_blocks(
+    trajectory: Any,
+    sample_indices: np.ndarray,
+) -> Iterator[np.ndarray]:
+    """Yield selected state blocks without materializing a lazy trajectory."""
+    iterator = getattr(trajectory, "iter_epoch_sample_blocks", None)
+    if callable(iterator):
+        yield from iterator(sample_indices)
+        return
+
+    for epoch in range(int(trajectory.shape[0])):
+        yield np.asarray(
+            trajectory[epoch, sample_indices, :],
+            dtype=np.float64,
+        )
 
 
 def _position_ellipsoid_axes(P_pos: F64Array) -> tuple[F64Array, F64Array]:
@@ -255,8 +274,7 @@ def compute_ensemble_statistics(
     alt_mean = np.zeros(T, dtype=np.float64)
     alt_std = np.zeros(T, dtype=np.float64)
 
-    for k in range(T):
-        Y_k = np.asarray(result.Y[k, indices, :], dtype=np.float64)
+    for k, Y_k in enumerate(_iter_epoch_state_blocks(result.Y, indices)):
         mean[k] = np.mean(Y_k, axis=0)
         std[k] = np.std(Y_k, axis=0, ddof=1)
         cov[k] = _cov6(Y_k)
@@ -418,10 +436,7 @@ def compute_oe_dispersion(
     e_mean  = np.zeros(T); e_std  = np.zeros(T)
     inc_mean= np.zeros(T); inc_std= np.zeros(T)
 
-    for k in range(T):
-        # Single block read for this epoch: (sub, 6). For HDF5TrajectoryView this
-        # is one __getitem__ (one file open) rather than ``sub`` scalar reads.
-        block = np.asarray(result.Y[k, idx, :], dtype=np.float64)
+    for k, block in enumerate(_iter_epoch_state_blocks(result.Y, idx)):
         a_arr   = np.zeros(sub); e_arr   = np.zeros(sub); inc_arr = np.zeros(sub)
         for j in range(sub):
             try:
