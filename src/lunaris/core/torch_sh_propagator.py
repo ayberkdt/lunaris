@@ -202,6 +202,17 @@ class TorchSHBatchPropagator:
                 torch.device(f"cuda:{dev_id}") if torch.cuda.is_available() else torch.device("cpu")
             )
 
+        # Honest device contract: an explicit CUDA device must never silently
+        # degrade to CPU. If CUDA is unavailable, raise so the MC engine performs
+        # a *recorded* fallback (downgrade_plan_to_cpu) instead of a hidden CPU
+        # run mislabeled as torch_cuda_sh. This is a plain RuntimeError (not a
+        # TorchSHPreflightError) precisely so the engine catches it and falls back.
+        if self._device.type == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError(
+                f"torch_cuda_sh requested CUDA device {self._device}, but PyTorch "
+                "CUDA is unavailable; refusing to silently run on CPU."
+            )
+
         # --- Resolve dtype ---------------------------------------------------
         if dtype is not None:
             self._dtype = dtype

@@ -63,6 +63,20 @@ from lunaris.physics.gravity_adapter import adapt_gravity_model
 if TYPE_CHECKING:
     from lunaris.core.mc_backend_policy import MCBackendPlan
 
+# Canonical backend name -> human-readable run label. Sourced from the resolved
+# plan's ``actual_backend`` (the single source of truth for what executes) so a
+# CPU run is never labeled GPU. ``torch_cpu_sh`` and ``torch_cuda_sh`` share one
+# propagator class, which is exactly why class-name inference is unsafe here.
+_BACKEND_DISPLAY_NAMES = {
+    "cpu_sh": "CPU",
+    "cpu_st_lrps": "CPU-ST-LRPS",
+    "numba_cuda_sh": "GPU-CLASSIC-SH",
+    "torch_cuda_sh": "GPU-TORCH-SH",
+    "torch_cpu_sh": "CPU-TORCH-SH",
+    "gpu_st_lrps_potential": "GPU-ST-LRPS",
+    "gpu_st_lrps_direct": "GPU-ST-LRPS",
+}
+
 # =============================================================================
 # 0.                    LOCAL BOOTSTRAP / COMPAT HELPERS
 # =============================================================================
@@ -688,6 +702,7 @@ class MonteCarloEngine:
                 )
                 self._backend_note = note
                 warnings.warn(note, RuntimeWarning, stacklevel=2)
+                self._downgrade_plan_to_cpu(plan, note)
 
         # ----------------------------------------------------------------
         # GPU classic-SH path — Numba CUDA fixed-step RK4 (torch_cuda_sh's sibling)
@@ -724,6 +739,7 @@ class MonteCarloEngine:
                     self._dyn,
                     self._mc,
                     self._sim_cfg.flags,
+                    device=f"cuda:{int(getattr(self._mc, 'gpu_device_id', 0) or 0)}",
                 )
             except TorchSHPreflightError:
                 # Hard contract violation (degree above the coefficient file,
@@ -881,15 +897,14 @@ class MonteCarloEngine:
                 writer.close()
                 raise
 
-        _cls = prop.__class__.__name__
-        if _cls == "TorchBatchPropagator":
-            backend_name = "GPU-ST-LRPS"
-        elif _cls == "TorchSHBatchPropagator":
-            backend_name = "GPU-TORCH-SH"
-        elif _cls.startswith("GPU"):
-            backend_name = "GPU"
-        else:
-            backend_name = "CPU"
+        # Human-readable backend label derived from the *resolved plan's* actual
+        # backend — never from the propagator class name. The class name cannot
+        # distinguish torch_cuda_sh from torch_cpu_sh (same TorchSHBatchPropagator
+        # class) and would mislabel a CPU run as GPU. After a GPU-build failure the
+        # plan has already been downgraded to CPU (see _downgrade_plan_to_cpu), so
+        # this label stays consistent with what actually executes.
+        _plan_actual = str(getattr(self._backend_plan, "actual_backend", "") or "")
+        backend_name = _BACKEND_DISPLAY_NAMES.get(_plan_actual, "CPU")
         backend_diag = prop.diagnostics_snapshot() if hasattr(prop, "diagnostics_snapshot") else {}
         backend_plan = getattr(self, "_backend_plan", None)
         requested_max_batch = mc.effective_max_batch()
