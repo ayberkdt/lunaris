@@ -216,16 +216,32 @@ class OEDispersion:
     inc_std_deg:  F64Array
 
 
+# Impact-statistics contract states (2B). These distinguish a genuine
+# "0 % of valid samples impacted" (``EVALUATED`` with ``n_impacts == 0``) from
+# "impact detection was switched off for this run" (``DISABLED``) and "detection
+# was requested but statistics could not be produced" (``NOT_EVALUATED``, e.g.
+# no valid samples). Only ``EVALUATED`` carries a trustworthy impact probability;
+# the other two mean the run never measured impacts and must not be read as 0 %.
+IMPACT_EVALUATED = "evaluated"
+IMPACT_DISABLED = "disabled"
+IMPACT_NOT_EVALUATED = "not_evaluated"
+
+
 @dataclass
 class MCStatistics:
     """
     Complete Monte Carlo analysis output.
 
     Produced by :func:`compute_mc_statistics`.
+
+    ``impacts`` is ``None`` unless ``impact_status == IMPACT_EVALUATED``; consult
+    ``impact_status`` before reading impact probability so a run that never
+    measured impacts is not silently reported as 0 %.
     """
     ensemble:   EnsembleStatistics
     ellipsoids: ErrorEllipsoids
-    impacts:    ImpactStatistics
+    impacts:    ImpactStatistics | None = None
+    impact_status: str = IMPACT_EVALUATED
     oe_disp:    OEDispersion | None = None
 
     # Raw result reference (not serialised by default)
@@ -467,6 +483,24 @@ def compute_oe_dispersion(
     )
 
 
+def _impact_detection_was_enabled(result: MCRunResult) -> bool | None:
+    """Whether this run requested impact statistics, read from its manifest.
+
+    Returns ``None`` when the archive predates the impact contract (no flag
+    recorded), so callers can fall back to evaluating for backward compatibility.
+    """
+    diag = getattr(result, "diagnostics", None) or {}
+    for key in ("compute_impact_statistics", "detect_impact"):
+        if key not in diag:
+            continue
+        val = diag[key]
+        if isinstance(val, str):
+            return val.strip().lower() in {"true", "1", "yes", "on"}
+        if isinstance(val, (bool, np.bool_, int, float, np.integer, np.floating)):
+            return bool(val)
+    return None
+
+
 def compute_mc_statistics(
     result: MCRunResult,
     *,
@@ -474,6 +508,7 @@ def compute_mc_statistics(
     r_ref_m: float = R_MOON,
     compute_oe: bool = True,
     use_survived_only: bool = False,
+    compute_impacts: bool | None = None,
 ) -> MCStatistics:
     """
     Master function: runs all analyses and returns ``MCStatistics``.
@@ -489,6 +524,12 @@ def compute_mc_statistics(
         Whether to compute orbital element dispersion (can be slow for large N).
     use_survived_only : bool
         Exclude impacting samples from ensemble statistics.
+    compute_impacts : bool or None
+        Honor the impact-statistics contract. ``True``/``False`` force/skip the
+        impact analysis; ``None`` (default) infers it from the run manifest
+        (``compute_impact_statistics`` / ``detect_impact``). When detection was
+        off the result carries ``impacts=None`` and ``impact_status=DISABLED``
+        rather than a misleading 0 % impact probability.
 
     Returns
     -------
@@ -496,10 +537,34 @@ def compute_mc_statistics(
     """
     ens   = compute_ensemble_statistics(result, use_survived_only=use_survived_only, r_ref_m=r_ref_m)
     ell   = compute_error_ellipsoids(ens)
-    imps  = compute_impact_statistics(result, r_ref_m=r_ref_m)
+
+    if compute_impacts is None:
+        enabled = _impact_detection_was_enabled(result)
+        # Legacy archives without the flag default to evaluating (prior behavior).
+        compute_impacts = True if enabled is None else enabled
+
+    imps: ImpactStatistics | None = None
+    if not compute_impacts:
+        impact_status = IMPACT_DISABLED
+    else:
+        try:
+            imps = compute_impact_statistics(result, r_ref_m=r_ref_m)
+            impact_status = IMPACT_EVALUATED
+        except ValueError:
+            # Detection was requested but the ensemble cannot support impact
+            # statistics (e.g. no valid samples): "not evaluated", not "0 %".
+            impact_status = IMPACT_NOT_EVALUATED
+
     oe    = compute_oe_dispersion(result, mu=mu) if compute_oe else None
 
-    return MCStatistics(ensemble=ens, ellipsoids=ell, impacts=imps, oe_disp=oe, _raw=result)
+    return MCStatistics(
+        ensemble=ens,
+        ellipsoids=ell,
+        impacts=imps,
+        impact_status=impact_status,
+        oe_disp=oe,
+        _raw=result,
+    )
 
 
 # =============================================================================
@@ -560,6 +625,10 @@ __all__ = [
     "ImpactStatistics",
     "OEDispersion",
     "MCStatistics",
+    # Impact-statistics contract states
+    "IMPACT_EVALUATED",
+    "IMPACT_DISABLED",
+    "IMPACT_NOT_EVALUATED",
     # Analysis functions
     "compute_ensemble_statistics",
     "compute_error_ellipsoids",

@@ -319,6 +319,7 @@ class TorchSHBatchPropagator:
             "gpu_free_mem_bytes": int(self._free_mem_bytes),
             "gpu_total_mem_bytes": int(self._total_mem_bytes),
             "frame_mode": "moon_fixed_slerp" if self._frame.uses_rotation else "identity",
+            "frame_interpolation": "slerp_shortest_path",
             "uses_frame_rotation": bool(self._frame.uses_rotation),
         }
         diag.update(self._throughput_metrics)

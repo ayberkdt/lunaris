@@ -219,7 +219,13 @@ if _CUDA_AVAILABLE:
 
     @cuda.jit(device=True, inline=True)
     def _interp4_cuda(t, dt_s, tab, n_tab, result):
-        """Linear interpolation of a (N, 4) pre-tabulated quaternion at time t."""
+        """Shortest-path SLERP of a (N, 4) pre-tabulated quaternion at time t.
+
+        Mirrors :meth:`TorchMoonFrame.quat_i2f`: flip the second quaternion to the
+        nearer hemisphere (dot >= 0), SLERP along the great-circle arc, and fall
+        back to nlerp only when the endpoints are near-parallel (dot > 0.9995),
+        where ``sin(theta_0)`` underflows and the linear blend is more accurate.
+        """
         u = t / dt_s
         i = int(u)
         if i < 0:
@@ -227,20 +233,41 @@ if _CUDA_AVAILABLE:
         if i >= n_tab - 1:
             i = n_tab - 2
         a = u - float(i)
-        b = 1.0 - a
-        result[0] = tab[i, 0] * b + tab[i + 1, 0] * a
-        result[1] = tab[i, 1] * b + tab[i + 1, 1] * a
-        result[2] = tab[i, 2] * b + tab[i + 1, 2] * a
-        result[3] = tab[i, 3] * b + tab[i + 1, 3] * a
+        a0 = tab[i, 0]; a1 = tab[i, 1]; a2 = tab[i, 2]; a3 = tab[i, 3]
+        b0 = tab[i + 1, 0]; b1 = tab[i + 1, 1]
+        b2 = tab[i + 1, 2]; b3 = tab[i + 1, 3]
+        # Shortest path: take the endpoint hemisphere with non-negative dot.
+        dot = a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3
+        if dot < 0.0:
+            b0 = -b0; b1 = -b1; b2 = -b2; b3 = -b3
+            dot = -dot
+        if dot > 1.0:
+            dot = 1.0
+        if dot > 0.9995:
+            # Near-parallel: nlerp avoids the sin(theta_0) -> 0 division.
+            r0 = a0 + a * (b0 - a0)
+            r1 = a1 + a * (b1 - a1)
+            r2 = a2 + a * (b2 - a2)
+            r3 = a3 + a * (b3 - a3)
+        else:
+            theta_0 = math.acos(dot)
+            sin_theta_0 = math.sin(theta_0)
+            theta = theta_0 * a
+            s_a = math.sin(theta_0 - theta) / sin_theta_0
+            s_b = math.sin(theta) / sin_theta_0
+            r0 = s_a * a0 + s_b * b0
+            r1 = s_a * a1 + s_b * b1
+            r2 = s_a * a2 + s_b * b2
+            r3 = s_a * a3 + s_b * b3
         # Renormalise (avoid drift)
-        nrm = math.sqrt(
-            result[0] * result[0] + result[1] * result[1]
-            + result[2] * result[2] + result[3] * result[3]
-        )
+        nrm = math.sqrt(r0 * r0 + r1 * r1 + r2 * r2 + r3 * r3)
         if nrm > 1e-15:
             inv_n = 1.0 / nrm
-            result[0] *= inv_n; result[1] *= inv_n
-            result[2] *= inv_n; result[3] *= inv_n
+            result[0] = r0 * inv_n; result[1] = r1 * inv_n
+            result[2] = r2 * inv_n; result[3] = r3 * inv_n
+        else:
+            result[0] = a0; result[1] = a1
+            result[2] = a2; result[3] = a3
 
     @cuda.jit(device=True, inline=True)
     def _quat_rot_cuda(q0, q1, q2, q3, vx, vy, vz, out):
@@ -1099,6 +1126,7 @@ class GPUBatchPropagator:
             "gpu_sh_workspace_policy": "compile_time_thread_local",
             "supports_earth_j2": bool(self._earth_j2_pack["enabled"]),
             "impact_position_method": "line_sphere_quadratic",
+            "frame_interpolation": "slerp_shortest_path",
         }
 
     # ----------------------------------------------------------------

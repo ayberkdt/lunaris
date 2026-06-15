@@ -19,6 +19,9 @@ __pycache__/
 .ipynb_checkpoints/
 *.egg-info/
 
+# uv lockfile: canonical lock is locks/*.lock.txt (see locks/README.md)
+uv.lock
+
 # Coverage artifacts (Phase 4 tooling)
 .coverage
 .coverage.*

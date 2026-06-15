@@ -824,14 +824,18 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         _set("archive", path.name)
         _set("format", path.suffix.lower().lstrip(".") or "—")
         _set("n_samples", str(self._result.n_samples))
-        _set("n_impacts", f"{impacts.n_impacts} / {impacts.n_total}")
-        _set("p_impact", f"{impacts.p_impact:.4f}")
-        _set("p_ci95", f"[{impacts.p_impact_ci95[0]:.4f}, {impacts.p_impact_ci95[1]:.4f}]")
-
-        mean_impact = "No impacts"
-        if math.isfinite(float(impacts.t_impact_mean)):
-            mean_impact = f"{impacts.t_impact_mean / DAY_S:.3f} d"
-        _set("mean_impact_time", mean_impact)
+        if impacts is not None:
+            _set("n_impacts", f"{impacts.n_impacts} / {impacts.n_total}")
+            _set("p_impact", f"{impacts.p_impact:.4f}")
+            _set("p_ci95", f"[{impacts.p_impact_ci95[0]:.4f}, {impacts.p_impact_ci95[1]:.4f}]")
+            mean_impact = "No impacts"
+            if math.isfinite(float(impacts.t_impact_mean)):
+                mean_impact = f"{impacts.t_impact_mean / DAY_S:.3f} d"
+            _set("mean_impact_time", mean_impact)
+        else:
+            # Impact detection not evaluated for this run: do not imply 0 %.
+            for key in ("n_impacts", "p_impact", "p_ci95", "mean_impact_time"):
+                _set(key, "Not evaluated")
 
         duration = float(self._result.t[-1]) if len(self._result.t) > 0 else 0.0
         _set("duration", f"{duration / DAY_S:.3f} d ({_format_span(duration)})")
@@ -866,25 +870,29 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
                 lbl.setText(value)
 
         total_samples = int(self._result.n_samples)
-        impact_rate = impacts.n_impacts / max(1, impacts.n_total)
         duration_s = float(self._result.t[-1] - self._result.t[0]) if len(self._result.t) > 1 else 0.0
 
         _set("archive", path.name)
         _set("format", path.suffix.lower().lstrip(".") or "N/A")
         _set("n_samples", f"{total_samples:,} scenarios")
-        _set("n_impacts", f"{impacts.n_impacts:,} ({_format_percent(impact_rate)})")
-        _set("p_impact", _format_percent(impacts.p_impact))
-        _set(
-            "p_ci95",
-            f"{_format_percent(impacts.p_impact_ci95[0])} to {_format_percent(impacts.p_impact_ci95[1])}",
-        )
-
-        mean_impact = "No impacts"
-        if math.isfinite(float(impacts.t_impact_mean)):
-            mean_impact = _format_days(impacts.t_impact_mean)
-            if math.isfinite(float(impacts.t_impact_std)):
-                mean_impact = f"{mean_impact} +/- {_format_days(impacts.t_impact_std)}"
-        _set("mean_impact_time", mean_impact)
+        if impacts is not None:
+            impact_rate = impacts.n_impacts / max(1, impacts.n_total)
+            _set("n_impacts", f"{impacts.n_impacts:,} ({_format_percent(impact_rate)})")
+            _set("p_impact", _format_percent(impacts.p_impact))
+            _set(
+                "p_ci95",
+                f"{_format_percent(impacts.p_impact_ci95[0])} to {_format_percent(impacts.p_impact_ci95[1])}",
+            )
+            mean_impact = "No impacts"
+            if math.isfinite(float(impacts.t_impact_mean)):
+                mean_impact = _format_days(impacts.t_impact_mean)
+                if math.isfinite(float(impacts.t_impact_std)):
+                    mean_impact = f"{mean_impact} +/- {_format_days(impacts.t_impact_std)}"
+            _set("mean_impact_time", mean_impact)
+        else:
+            # Impact detection not evaluated for this run: do not imply 0 %.
+            for key in ("n_impacts", "p_impact", "p_ci95", "mean_impact_time"):
+                _set(key, "Not evaluated")
 
         _set("duration", f"{_format_days(duration_s)} ({_format_span(duration_s)})")
         _set("final_alt_mean", _format_km(float(ensemble.alt_mean[-1]) if ensemble.alt_mean.size else math.nan))

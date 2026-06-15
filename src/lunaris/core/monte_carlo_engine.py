@@ -429,6 +429,29 @@ def _decode_metadata_value(raw: Any) -> Any:
     return _metadata_value_to_jsonable(raw)
 
 
+# Fraction of the host RAM that is *free right now* an eager result (or a single
+# per-batch host buffer) may occupy. Leaves headroom for the OS, other processes,
+# and transient copies so a generous ``max_result_memory_gb`` — or a busy host —
+# cannot push the run into swap/OOM. Applied only when psutil can measure RAM.
+_HOST_MEMORY_SAFETY_FACTOR = 0.8
+
+
+def _available_host_memory_bytes() -> int | None:
+    """Bytes of host RAM available right now, or ``None`` if it cannot be measured.
+
+    Uses psutil when present; degrades gracefully (returns ``None``) so the memory
+    safety factor is a best-effort guard, never a hard dependency.
+    """
+    try:
+        import psutil
+    except Exception:
+        return None
+    try:
+        return int(psutil.virtual_memory().available)
+    except Exception:
+        return None
+
+
 def _resolve_result_storage(
     mc_cfg: MonteCarloConfig,
     n_steps: int,
@@ -436,28 +459,55 @@ def _resolve_result_storage(
     """Resolve eager versus disk-backed result storage before opening a writer."""
     result_bytes = mc_cfg.estimated_result_bytes(n_steps)
     memory_limit_bytes = int(float(mc_cfg.max_result_memory_gb) * (1024.0 ** 3))
+    # Effective host budget: the configured cap, further bounded by a safety
+    # fraction of the RAM actually free now (when measurable). This is the budget
+    # the auto storage decision and the per-batch host buffer must both respect.
+    available = _available_host_memory_bytes()
+    host_budget_bytes = memory_limit_bytes
+    if available is not None:
+        host_budget_bytes = min(memory_limit_bytes, int(available * _HOST_MEMORY_SAFETY_FACTOR))
     storage_mode = str(mc_cfg.result_storage_mode)
     if storage_mode == "auto":
         storage_mode = (
             "disk"
-            if mc_cfg.output_format == "hdf5" and result_bytes > memory_limit_bytes
+            if mc_cfg.output_format == "hdf5" and result_bytes > host_budget_bytes
             else "memory"
         )
     if storage_mode not in {"memory", "disk"}:
         raise ValueError(f"Unsupported result storage mode: {storage_mode!r}")
     if (
         mc_cfg.output_format == "npz"
-        and result_bytes > memory_limit_bytes
+        and result_bytes > host_budget_bytes
         and mc_cfg.result_storage_mode == "auto"
     ):
+        limit_gib = host_budget_bytes / (1024.0 ** 3)
+        budget_note = (
+            f"host memory safety budget ({limit_gib:.2f} GiB = "
+            f"{_HOST_MEMORY_SAFETY_FACTOR:.0%} of free RAM)"
+            if available is not None and host_budget_bytes < memory_limit_bytes
+            else f"max_result_memory_gb={mc_cfg.max_result_memory_gb:g}"
+        )
         raise MemoryError(
             "Estimated eager Monte Carlo trajectory size "
-            f"({result_bytes / (1024.0 ** 3):.2f} GiB) exceeds "
-            f"max_result_memory_gb={mc_cfg.max_result_memory_gb:g}. "
+            f"({result_bytes / (1024.0 ** 3):.2f} GiB) exceeds {budget_note}. "
             "Use HDF5 output for disk-backed streaming or explicitly choose "
             "result_storage_mode='memory'."
         )
-    return storage_mode, result_bytes, memory_limit_bytes
+    if (
+        storage_mode == "memory"
+        and available is not None
+        and result_bytes > int(available * _HOST_MEMORY_SAFETY_FACTOR)
+    ):
+        warnings.warn(
+            "Eager Monte Carlo result "
+            f"({result_bytes / (1024.0 ** 3):.2f} GiB) exceeds the host memory "
+            f"safety budget ({_HOST_MEMORY_SAFETY_FACTOR:.0%} of "
+            f"{available / (1024.0 ** 3):.2f} GiB free RAM); the run may exhaust "
+            "host memory. Prefer HDF5 disk-backed output for large ensembles.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    return storage_mode, result_bytes, host_budget_bytes
 
 
 def _allocate_result_buffer(
@@ -1295,7 +1345,9 @@ class MonteCarloEngine:
         # VRAM can still exhaust host RAM for long / high-cadence runs because the
         # VRAM cap only accounts for a single state vector per sample, not the full
         # snapshot history kept on the host. Bound the sample batch by the host
-        # memory budget as well so max_batch never blows out resident memory.
+        # memory budget as well so max_batch never blows out resident memory. The
+        # budget already folds in the available-RAM safety factor (see
+        # _resolve_result_storage), so a busy host tightens the batch cap too.
         host_bytes_per_sample = len(t_out_contract) * 6 * np.dtype(np.float64).itemsize
         host_batch_cap = max(
             1, int(memory_limit_bytes / max(1, host_bytes_per_sample))
