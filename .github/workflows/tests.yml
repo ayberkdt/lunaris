@@ -114,3 +114,37 @@ jobs:
         # (common + core + physics); baseline is zero so this gates the build.
         # ignore_missing_imports keeps torch/Qt/spice extras out of scope.
         run: mypy
+
+  locks:
+    # Dependency-lock freshness gate. The committed locks/ files are hash-pinned
+    # resolutions of pyproject.toml for Linux + CPython 3.11 (paper-evidence / HPC
+    # reproducibility). Regenerate them here and fail if they drift from
+    # pyproject.toml so "changed a dependency range but forgot to refresh the
+    # locks" is caught before it breaks a reproducible install. Only the pinned
+    # requirements + hashes are compared (comment headers are stripped, so a uv
+    # version bump alone does not fail the gate).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Verify lock freshness (linux + py3.11)
+        run: |
+          set -euo pipefail
+          uv pip compile pyproject.toml --extra hpc \
+            --python-version 3.11 --python-platform linux --generate-hashes \
+            -o /tmp/hpc.lock.txt
+          uv pip compile pyproject.toml --extra all \
+            --python-version 3.11 --python-platform linux --generate-hashes \
+            -o /tmp/all.lock.txt
+          diff <(grep -v '^#' locks/requirements-hpc-linux-py311.lock.txt) <(grep -v '^#' /tmp/hpc.lock.txt) \
+            || { echo "::error::locks/requirements-hpc-linux-py311.lock.txt is stale; regenerate per locks/README.md"; exit 1; }
+          diff <(grep -v '^#' locks/requirements-all-linux-py311.lock.txt) <(grep -v '^#' /tmp/all.lock.txt) \
+            || { echo "::error::locks/requirements-all-linux-py311.lock.txt is stale; regenerate per locks/README.md"; exit 1; }

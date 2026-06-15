@@ -455,6 +455,74 @@ def test_engine_st_lrps_build_failure_downgrades_plan_to_cpu(monkeypatch, tmp_pa
     assert plan.fallback_reason  # records why the GPU build was abandoned
 
 
+def _patch_dynamics_gravity_capture(monkeypatch) -> dict:
+    """Patch the gravity/dynamics stack so _build_dynamics runs without real data
+    and capture the requested coefficient degree passed to GravityModel.from_file."""
+    import lunaris.core.dynamics as dyn_mod
+    import lunaris.core.monte_carlo_engine as mce
+    import lunaris.physics.spherical_harmonics as sh_mod
+
+    captured: dict = {}
+
+    class _FakeGrav:
+        @staticmethod
+        def from_file(*, path, requested_degree):
+            captured["degree"] = requested_degree
+            return object()
+
+    monkeypatch.setattr(sh_mod, "GravityModel", _FakeGrav)
+    monkeypatch.setattr(mce, "adapt_gravity_model", lambda g: g)
+    monkeypatch.setattr(dyn_mod, "DynamicsEngine", lambda **k: SimpleNamespace(**k))
+    monkeypatch.setattr(mce, "_need_ephemeris", lambda cfg, topo_requested: False)
+    monkeypatch.setattr(mce, "_surface_topography_requested", lambda sp, tg: False)
+    return captured
+
+
+def _engine_for_dynamics(mc_backend: str, *, use_gpu: bool, gpu_sh_degree: int, degree: int = 25):
+    from lunaris.core.monte_carlo_engine import MonteCarloEngine
+
+    cfg = SimpleNamespace(
+        flags=PerturbationFlags(enable_sh=True),
+        gravity=SimpleNamespace(
+            uses_st_lrps=False, degree=degree, file_path="grav.tab",
+            st_lrps_model_dir="", adaptive=None,
+        ),
+        spacecraft=SimpleNamespace(), earth_j2=None, thermal=None, solid_tides=None,
+    )
+    engine = MonteCarloEngine.__new__(MonteCarloEngine)
+    engine._sim_cfg = cfg
+    engine._mc = MonteCarloConfig(
+        n_samples=2, use_gpu=use_gpu, mc_backend=mc_backend, gpu_sh_degree=gpu_sh_degree,
+        output_format="npz", output_path="x.npz",
+    )
+    engine._surface_provider = None
+    engine._topo_grid = None
+    return engine
+
+
+def test_build_dynamics_loads_gpu_sh_degree_for_gpu_classic_path(monkeypatch) -> None:
+    """A classic-SH GPU batch request (torch_cuda_sh) loads coefficients to at
+    least mc.gpu_sh_degree, not just the mission degree, so the propagator
+    preflight does not reject a high gpu_sh_degree (reviewer #9)."""
+    from lunaris.core.monte_carlo_engine import MonteCarloEngine
+
+    captured = _patch_dynamics_gravity_capture(monkeypatch)
+    engine = _engine_for_dynamics("torch_cuda_sh", use_gpu=True, gpu_sh_degree=100, degree=25)
+    MonteCarloEngine._build_dynamics(engine)
+    assert captured["degree"] == 100  # max(25, 100), not 25
+
+
+def test_build_dynamics_keeps_mission_degree_for_cpu_path(monkeypatch) -> None:
+    """A pure-CPU request must NOT inflate the loaded degree to gpu_sh_degree; the
+    mission degree is preserved so CPU physics is unchanged (reviewer #9)."""
+    from lunaris.core.monte_carlo_engine import MonteCarloEngine
+
+    captured = _patch_dynamics_gravity_capture(monkeypatch)
+    engine = _engine_for_dynamics("cpu_sh", use_gpu=False, gpu_sh_degree=100, degree=25)
+    MonteCarloEngine._build_dynamics(engine)
+    assert captured["degree"] == 25
+
+
 def test_backend_display_name_distinguishes_torch_cpu_from_cuda() -> None:
     """The run label is derived from plan.actual_backend, not the propagator class
     name (reviewer §2). torch_cpu_sh and torch_cuda_sh share one class, so the
