@@ -56,6 +56,7 @@ from lunaris.core.backend_capabilities import unsupported_force_models
 from lunaris.core.torch_frame import (
     TorchFrameError,
     TorchMoonFrame,
+    line_sphere_intersection,
     quat_conjugate_torch,
     quat_rotate_torch,
 )
@@ -451,7 +452,7 @@ class TorchSHBatchPropagator:
             "total_raw_state_steps": total_raw_state_steps,
             "total_active_state_steps": total_active_state_steps,
             "propagation_elapsed_s": float(elapsed),
-            "impact_position_method": "rk4_crossing_interpolated",
+            "impact_position_method": "line_sphere_quadratic",
             "impact_time_resolution_s": float(dt_eff),
         }
         print(
@@ -535,29 +536,26 @@ class TorchSHBatchPropagator:
                     t_curr += dt_eff
                     global_step += 1
                     if self._detect_impact:
-                        r_mag = torch.linalg.norm(state[:, :3], dim=1)
-                        newly = alive & (r_mag <= self._impact_r)
-                        # Linearly interpolate the crossing between the pre-step
-                        # and post-step radius so the recorded impact time/position
-                        # resolve the exact sub-step crossing rather than the
-                        # coarse fixed-step endpoint.
-                        r_prev = torch.linalg.norm(prev_state[:, :3], dim=1)
-                        denom = r_prev - r_mag
-                        safe_denom = torch.where(
-                            denom.abs() < 1e-12, torch.ones_like(denom), denom
+                        # True line-sphere intersection over the step segment, then
+                        # replace the main state with the crossing state so impacted
+                        # trajectories freeze ON the surface (position+velocity), not
+                        # at the sub-surface step endpoint.
+                        segment_hit, alpha = line_sphere_intersection(
+                            prev_state[:, :3],
+                            state[:, :3],
+                            self._impact_r,
                         )
-                        frac = ((r_prev - self._impact_r) / safe_denom).clamp(0.0, 1.0)
-                        t_cross = (float(global_step - 1) + frac) * dt_eff
-                        pos_cross = prev_state[:, :3] + frac.unsqueeze(1) * (
-                            state[:, :3] - prev_state[:, :3]
-                        )
+                        newly = alive & segment_hit
+                        cross_state = prev_state + alpha.unsqueeze(1) * (state - prev_state)
+                        t_cross = (float(global_step - 1) + alpha) * dt_eff
                         impact_step = torch.where(
                             newly, torch.full_like(impact_step, global_step), impact_step
                         )
                         impact_time = torch.where(newly, t_cross, impact_time)
                         impact_pos = torch.where(
-                            newly.unsqueeze(1), pos_cross, impact_pos
+                            newly.unsqueeze(1), cross_state[:, :3], impact_pos
                         )
+                        state = torch.where(newly.unsqueeze(1), cross_state, state)
                         alive = alive & ~newly
                 Y_out[snap_idx + 1, a:b, :] = state.detach().cpu().numpy().astype(np.float64)
 

@@ -749,31 +749,50 @@ if _CUDA_AVAILABLE:
         for j in range(6):
             y[j] += w * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j])
 
-        # Impact detection with linear crossing interpolation. Y[i, :3] still
-        # holds the pre-step position (write-back happens below), so the exact
-        # sub-step where the radius crosses r_impact is recovered instead of the
-        # coarse fixed-step endpoint.
-        r_sc = math.sqrt(y[0] * y[0] + y[1] * y[1] + y[2] * y[2])
-        if detect_impact == 1 and r_sc <= r_impact:
-            impact_flags[i] = 1
-            if math.isnan(impact_times[i]):
-                rxp = Y[i, 0]
-                ryp = Y[i, 1]
-                rzp = Y[i, 2]
-                r_prev = math.sqrt(rxp * rxp + ryp * ryp + rzp * rzp)
-                denom = r_prev - r_sc
-                if denom > 1e-12:
-                    frac = (r_prev - r_impact) / denom
-                    if frac < 0.0:
-                        frac = 0.0
-                    elif frac > 1.0:
-                        frac = 1.0
-                else:
-                    frac = 1.0
-                impact_times[i] = t_val + frac * dt
-                impact_positions[i, 0] = rxp + frac * (y[0] - rxp)
-                impact_positions[i, 1] = ryp + frac * (y[1] - ryp)
-                impact_positions[i, 2] = rzp + frac * (y[2] - rzp)
+        # Swept-segment impact detection. Checking only the post-step radius can
+        # miss a large step that enters and exits the Moon between its endpoints.
+        # Y[i, :3] is still the pre-step position because write-back happens below.
+        if detect_impact == 1:
+            dx = y[0] - Y[i, 0]
+            dy = y[1] - Y[i, 1]
+            dz = y[2] - Y[i, 2]
+            aa = dx * dx + dy * dy + dz * dz
+            bb = 2.0 * (Y[i, 0] * dx + Y[i, 1] * dy + Y[i, 2] * dz)
+            cc = (
+                Y[i, 0] * Y[i, 0]
+                + Y[i, 1] * Y[i, 1]
+                + Y[i, 2] * Y[i, 2]
+                - r_impact * r_impact
+            )
+            segment_hit = 0
+            alpha = 1.0
+            if aa > 1e-18:
+                disc = bb * bb - 4.0 * aa * cc
+                disc_scale = bb * bb + abs(4.0 * aa * cc)
+                if disc_scale < 1.0:
+                    disc_scale = 1.0
+                disc_tol = 64.0 * 2.220446049250313e-16 * disc_scale
+                if disc >= -disc_tol:
+                    if disc < 0.0:
+                        disc = 0.0
+                    alpha = (-bb - math.sqrt(disc)) / (2.0 * aa)
+                    if alpha >= -1e-12 and alpha <= 1.0 + 1e-12:
+                        segment_hit = 1
+                        if alpha < 0.0:
+                            alpha = 0.0
+                        elif alpha > 1.0:
+                            alpha = 1.0
+
+            if segment_hit == 1:
+                impact_flags[i] = 1
+                impact_times[i] = t_val + alpha * dt
+                # Interpolate position + velocity to the crossing and overwrite y
+                # so the write-back below freezes the state on the surface.
+                for j in range(6):
+                    y[j] = Y[i, j] + alpha * (y[j] - Y[i, j])
+                impact_positions[i, 0] = y[0]
+                impact_positions[i, 1] = y[1]
+                impact_positions[i, 2] = y[2]
 
         # Write back
         for j in range(6):
@@ -1079,7 +1098,7 @@ class GPUBatchPropagator:
             "gpu_sh_workspace": f"{_GPU_WS}x{_GPU_WS}",
             "gpu_sh_workspace_policy": "compile_time_thread_local",
             "supports_earth_j2": bool(self._earth_j2_pack["enabled"]),
-            "impact_position_method": "rk4_crossing_interpolated",
+            "impact_position_method": "line_sphere_quadratic",
         }
 
     # ----------------------------------------------------------------

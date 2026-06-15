@@ -34,6 +34,50 @@ def quat_conjugate_torch(q: Any) -> Any:
     return torch.cat((q[:1], -q[1:]))
 
 
+def line_sphere_intersection(
+    p_prev: Any,
+    p_curr: Any,
+    r_impact: Any,
+) -> tuple[Any, Any]:
+    """Return per-row segment-hit mask and entering fraction for a sphere.
+
+    Solves ``||p_prev + alpha*(p_curr - p_prev)||^2 = r_impact^2`` and returns the
+    entering (smaller) root. Unlike an endpoint-radius check, the hit mask also
+    catches a segment whose two endpoints are outside while its interior crosses
+    the sphere. Invalid or degenerate rows receive ``alpha=1``.
+    """
+    import torch
+
+    dp = p_curr - p_prev
+    a = (dp * dp).sum(dim=1)
+    b = 2.0 * (p_prev * dp).sum(dim=1)
+    c = (p_prev * p_prev).sum(dim=1) - r_impact * r_impact
+    disc = b * b - 4.0 * a * c
+    disc_scale = (b * b + (4.0 * a * c).abs()).clamp_min(1.0)
+    disc_tol = 32.0 * torch.finfo(a.dtype).eps * disc_scale
+    has_real_root = disc >= -disc_tol
+    sqrt_disc = disc.clamp_min(0.0).sqrt()
+    one = a.new_ones(())
+    nondegenerate = a.abs() >= 1e-18
+    a_safe = a.where(nondegenerate, one)
+    alpha_raw = (-b - sqrt_disc) / (2.0 * a_safe)
+    alpha_tol = 32.0 * torch.finfo(a.dtype).eps
+    hit = (
+        nondegenerate
+        & has_real_root
+        & (alpha_raw >= -alpha_tol)
+        & (alpha_raw <= 1.0 + alpha_tol)
+    )
+    alpha = alpha_raw.clamp(0.0, 1.0).where(hit, one)
+    return hit, alpha
+
+
+def line_sphere_alpha(p_prev: Any, p_curr: Any, r_impact: Any) -> Any:
+    """Backward-compatible entering fraction for known crossing segments."""
+    _, alpha = line_sphere_intersection(p_prev, p_curr, r_impact)
+    return alpha
+
+
 class TorchMoonFrame:
     """SLERP-interpolated Moon inertial-to-fixed quaternion timeline."""
 
@@ -130,6 +174,8 @@ class TorchMoonFrame:
 __all__ = [
     "TorchFrameError",
     "TorchMoonFrame",
+    "line_sphere_alpha",
+    "line_sphere_intersection",
     "quat_conjugate_torch",
     "quat_rotate_torch",
 ]
