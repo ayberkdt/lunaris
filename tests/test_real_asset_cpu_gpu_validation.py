@@ -25,7 +25,14 @@ from lunaris.common.constants import MU_MOON, R_MOON  # noqa: E402
 from lunaris.common.lunar_data import resolve_lunar_gravity_path  # noqa: E402
 
 CUDA = torch.cuda.is_available()
-pytestmark = pytest.mark.skipif(not CUDA, reason="real CPU/GPU validation needs a CUDA device")
+# Genuinely needs a CUDA device and the real shipped data set; mark so CI's
+# ``-m "not requires_cuda and not requires_data"`` selection deselects the whole
+# module, while local full runs still skip cleanly when CUDA is absent.
+pytestmark = [
+    pytest.mark.requires_cuda,
+    pytest.mark.requires_data,
+    pytest.mark.skipif(not CUDA, reason="real CPU/GPU validation needs a CUDA device"),
+]
 
 
 def _real_gravity_path() -> Path | None:
