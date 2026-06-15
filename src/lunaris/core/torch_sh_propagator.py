@@ -51,6 +51,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.constants import R_MOON
+from lunaris.common.montecarlo_defs import build_mc_output_grid
 from lunaris.core.backend_capabilities import unsupported_force_models
 
 
@@ -450,13 +451,11 @@ class TorchSHBatchPropagator:
         """
         N = int(Y0.shape[0])
         dt = float(self._dt)
-        out_dt = float(output_dt_s)
 
-        steps_per_snap = max(1, int(round(out_dt / dt)))
-        dt_eff = out_dt / steps_per_snap
-        n_snaps = max(1, int(round(float(duration_s) / out_dt)))
-
-        t_out = np.linspace(0.0, n_snaps * out_dt, n_snaps + 1, dtype=np.float64)
+        # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform.
+        t_out, n_snaps, snap_interval = build_mc_output_grid(duration_s, output_dt_s)
+        steps_per_snap = max(1, int(round(snap_interval / dt)))
+        dt_eff = snap_interval / steps_per_snap
         Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
         impact_flags = np.zeros(N, dtype=np.float64)
         t_impact = np.full(N, np.nan, dtype=np.float64)

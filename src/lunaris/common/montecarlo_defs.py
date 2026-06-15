@@ -30,6 +30,55 @@ import numpy as np
 from .type_defs import F64Array
 
 # =============================================================================
+# 0.                    SHARED MONTE CARLO OUTPUT GRID
+# =============================================================================
+
+
+def build_mc_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Array, int, float]:
+    """Single source of truth for the Monte Carlo output time grid.
+
+    Every MC backend (CPU DOP853, Numba CUDA classic SH, torch_cuda_sh /
+    torch_cpu_sh, and the ST-LRPS torch path) must emit its snapshots on THIS
+    grid so that ``Y[k]`` means the same epoch across backends and trajectories
+    are index-comparable for benchmarking and error metrics.
+
+    Contract
+    --------
+    - ``t[0]  == 0.0``                 (the initial state is always snapshot 0)
+    - ``t[-1] == duration_s``          (exact final epoch; never an overshoot)
+    - ``np.all(np.diff(t) > 0.0)``     (strictly increasing, uniform spacing)
+    - ``len(t) == n_snaps + 1``
+
+    Parameters
+    ----------
+    duration_s : total propagation span [s] (> 0).
+    output_dt_s : requested snapshot interval [s] (> 0). The realized interval
+        ``snap_interval_s = duration_s / n_snaps`` may differ slightly so the
+        last sample lands exactly on ``duration_s`` instead of overshooting.
+
+    Returns
+    -------
+    (t_out, n_snaps, snap_interval_s)
+        ``t_out`` is the ``(n_snaps + 1,)`` grid; ``snap_interval_s`` is the
+        realized spacing. Fixed-step backends derive their stepping from it:
+        ``steps_per_snap = max(1, round(snap_interval_s / dt))`` and
+        ``dt_eff = snap_interval_s / steps_per_snap`` so steps align with grid
+        points exactly.
+    """
+    duration = float(duration_s)
+    out_dt = float(output_dt_s)
+    if not (duration > 0.0):
+        raise ValueError(f"duration_s must be > 0, got {duration_s!r}")
+    if not (out_dt > 0.0):
+        raise ValueError(f"output_dt_s must be > 0, got {output_dt_s!r}")
+
+    n_snaps = max(1, int(round(duration / out_dt)))
+    t_out = np.linspace(0.0, duration, n_snaps + 1, dtype=np.float64)
+    snap_interval_s = duration / n_snaps
+    return t_out, n_snaps, snap_interval_s
+
+
+# =============================================================================
 # 1.                       STATE UNCERTAINTY
 # =============================================================================
 
@@ -423,6 +472,7 @@ class MCRunResult:
 # =============================================================================
 
 __all__ = [
+    "build_mc_output_grid",
     "StateUncertainty",
     "SpacecraftUncertainty",
     "MonteCarloConfig",

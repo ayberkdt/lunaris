@@ -183,6 +183,26 @@ def test_single_trajectory_matches_reference_rk4() -> None:
 # C. Batch consistency — N-sample batch == per-sample runs
 # ---------------------------------------------------------------------------
 
+def test_propagate_emits_shared_output_grid_endpoints() -> None:
+    """The propagator emits the shared grid: t[0]=0 and t[-1]=duration exactly,
+    even when duration is not an integer multiple of output_dt (reviewer §5).
+    The old code overshot the final epoch to n_snaps*output_dt (1200 here)."""
+    degree = 20
+    grav = _make_gravity_model(degree, seed=7)
+    prop = _make_propagator(grav, degree)
+
+    Y0 = _circular_state(100.0)[None, :].copy()
+    t_out, Y_out, _, _ = prop.propagate(
+        Y0, np.ones(1), np.ones(1), np.ones(1), np.ones(1),
+        duration_s=1000.0, output_dt_s=600.0,
+    )
+
+    assert t_out[0] == 0.0
+    assert t_out[-1] == pytest.approx(1000.0)
+    assert Y_out.shape[0] == len(t_out)
+    assert np.all(np.diff(t_out) > 0.0)
+
+
 def test_batch_matches_individual_runs() -> None:
     degree = 40
     grav = _make_gravity_model(degree, seed=5)

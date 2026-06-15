@@ -57,6 +57,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.constants import AU, MU_EARTH, MU_MOON, MU_SUN, P_SUN_1AU, R_EARTH_MEAN, R_MOON
+from lunaris.common.montecarlo_defs import build_mc_output_grid
 from lunaris.common.type_defs import F64Array
 
 # =============================================================================
@@ -1079,11 +1080,13 @@ class GPUBatchPropagator:
         """
         N   = int(Y0.shape[0])
         dt  = float(self._mc.dt_s)
-        T   = float(duration_s)
-        out_dt = float(output_dt_s)
 
-        steps_per_snap = max(1, int(round(out_dt / dt)))
-        n_snaps = max(1, int(round(T / out_dt)))
+        # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform. Steps
+        # use dt_eff (grid-aligned) so snapshots land exactly on grid points and
+        # the initial state is snapshot 0 (parity with the torch/CPU backends).
+        t_out, n_snaps, snap_interval = build_mc_output_grid(duration_s, output_dt_s)
+        steps_per_snap = max(1, int(round(snap_interval / dt)))
+        dt_eff = snap_interval / steps_per_snap
 
         ep = self._ephem_pack
         gp = self._grav_pack
@@ -1092,8 +1095,8 @@ class GPUBatchPropagator:
 
         r_impact = float(R_MOON) + float(self._mc.impact_alt_km) * 1_000.0
 
-        t_out = np.empty(n_snaps, dtype=np.float64)
-        Y_out = np.empty((n_snaps, N, 6), dtype=np.float64)
+        Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
+        Y_out[0] = np.ascontiguousarray(Y0, dtype=np.float64)  # initial state = snapshot 0
         t_curr = 0.0
         with cuda.gpus[self._device_id]:
             stream = cuda.stream()
@@ -1110,7 +1113,7 @@ class GPUBatchPropagator:
                     _rk4_batch_kernel[bpg, tpb, stream](
                         d_Y,
                         np.float64(t_curr),
-                        np.float64(dt),
+                        np.float64(dt_eff),
                         np.float64(ep.dt_s),
                         ep.d_sun, ep.d_earth, ep.d_quat,
                         np.int32(ep.n_rows),
@@ -1142,11 +1145,10 @@ class GPUBatchPropagator:
                         d_t_impact,
                         np.float64(r_impact),
                     )
-                    t_curr += dt
+                    t_curr += dt_eff
 
-                d_Y.copy_to_host(ary=Y_out[snap_idx], stream=stream)
+                d_Y.copy_to_host(ary=Y_out[snap_idx + 1], stream=stream)
                 stream.synchronize()
-                t_out[snap_idx] = t_curr
 
                 if callback is not None:
                     callback(float(snap_idx + 1) / float(max(n_snaps, 1)))
@@ -1375,17 +1377,15 @@ class CPUBatchPropagator:
             if callback is not None:
                 callback(float(i + 1) / float(max(N, 1)))
 
-        # Use first successful sample's time grid as reference
-        ref_t = None
-        for i in range(N):
-            t_i, y_i, _, _ = results_by_idx.get(i, (None, None, None, None))
-            if t_i is not None and len(t_i) >= 2:
-                ref_t = t_i
-                break
-
-        if ref_t is None:
+        # Reference grid is the shared MC output grid (t[0]=0, t[-1]=duration_s),
+        # not the first successful sample's solver grid, so the CPU ensemble is
+        # index-comparable with the GPU/torch backends. Each sample's native
+        # solver output is linearly resampled onto it below. Still require at
+        # least one successful sample.
+        if not any(results_by_idx.get(i, (None,))[0] is not None for i in range(N)):
             raise RuntimeError("All MC samples failed in CPUBatchPropagator.")
 
+        ref_t, _, _ = build_mc_output_grid(duration_s, output_dt_s)
         T = len(ref_t)
         Y_out = np.zeros((T, N, 6), dtype=np.float64)
         impact_flags = np.zeros(N, dtype=np.float64)
