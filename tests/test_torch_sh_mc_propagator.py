@@ -468,6 +468,36 @@ def test_impacted_sample_is_frozen_not_propagated_through_body() -> None:
     assert np.all(np.isfinite(Y_out))
 
 
+def test_impact_crossing_is_interpolated_not_step_snapped() -> None:
+    """C1 (reviewer §6): the GPU/torch fixed-step path interpolates the impact
+    crossing. For a purely radial inward fall the interpolated impact position
+    lies ON the impact sphere (|r| == r_impact), not overshot below it, and the
+    impact time is a sub-step value rather than snapped to the dt grid."""
+    degree = 20
+    grav = _make_gravity_model(degree, seed=21)
+    prop = _make_propagator(grav, degree)  # impact_alt_km=0 -> r_impact = R_REF
+
+    r0 = R_REF + 60_000.0
+    # Radial inward fall (velocity along -x only); gravity is ~radial so the
+    # trajectory stays essentially on the x-axis and crosses R_REF mid-step.
+    Y0 = np.array([[r0, 0.0, 0.0, -700.0, 0.0, 0.0]], dtype=np.float64)
+    duration, out_dt = 600.0, 60.0  # dt_eff = 60 s -> grid multiples of 60
+    _, _, impact, t_imp = prop.propagate(
+        Y0, np.ones(1), np.ones(1), np.ones(1), np.ones(1),
+        duration_s=duration, output_dt_s=out_dt,
+    )
+
+    assert impact[0] == 1.0
+    pos = prop.last_impact_positions_inertial()[0]
+    # Interpolated crossing sits on the impact sphere; the old step-endpoint
+    # method would have recorded a position hundreds of metres below it.
+    assert abs(float(np.linalg.norm(pos)) - R_REF) < 100.0
+    # Interpolated impact time is inside the run and NOT snapped to the 60 s grid.
+    assert 0.0 < t_imp[0] < duration
+    grid_dist = min(abs(float(t_imp[0]) - k * 60.0) for k in range(int(duration / 60.0) + 1))
+    assert grid_dist > 1e-3
+
+
 def test_throughput_no_impact_raw_equals_active() -> None:
     """No-impact case: every sample is alive at every step, so the raw and active
     state-step counts (and therefore the two throughput rates) must coincide."""

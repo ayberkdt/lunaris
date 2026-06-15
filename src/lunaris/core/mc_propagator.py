@@ -156,16 +156,18 @@ def _initial_impact_bookkeeping(
     r_impact: float,
     *,
     detect_impact: bool,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Build host-side t=0 impact flags before launching the CUDA kernel."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build host-side t=0 impact flags/time/position before launching the kernel."""
     n_samples = int(Y0.shape[0])
     flags = np.zeros(n_samples, dtype=np.int32)
     times = np.full(n_samples, np.nan, dtype=np.float64)
+    positions = np.full((n_samples, 3), np.nan, dtype=np.float64)
     if detect_impact:
         at_surface = np.linalg.norm(Y0[:, :3], axis=1) <= float(r_impact)
         flags[at_surface] = 1
         times[at_surface] = 0.0
-    return flags, times
+        positions[at_surface] = np.asarray(Y0[at_surface, :3], dtype=np.float64)
+    return flags, times, positions
 
 
 # =============================================================================
@@ -658,10 +660,11 @@ if _CUDA_AVAILABLE:
         # Constants
         mu_sun, mu_earth, earth_j2_r_ref, earth_j2_j2, earth_j2_kx, earth_j2_ky, earth_j2_kz, r_moon, r_earth, au, p1au,
         # Impact detection
-        impact_flags,   # (N,) int32 – set to 1 on impact
-        impact_times,   # (N,) float64 – first step-crossing time, NaN if untouched
-        detect_impact,  # int32 boolean
-        r_impact,       # impact radius [m]
+        impact_flags,      # (N,) int32 – set to 1 on impact
+        impact_times,      # (N,) float64 – interpolated crossing time, NaN if untouched
+        impact_positions,  # (N, 3) float64 – interpolated crossing position, NaN if untouched
+        detect_impact,     # int32 boolean
+        r_impact,          # impact radius [m]
     ):
         """
         One RK4 step for all N samples in parallel.
@@ -746,12 +749,31 @@ if _CUDA_AVAILABLE:
         for j in range(6):
             y[j] += w * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j])
 
-        # Impact detection
+        # Impact detection with linear crossing interpolation. Y[i, :3] still
+        # holds the pre-step position (write-back happens below), so the exact
+        # sub-step where the radius crosses r_impact is recovered instead of the
+        # coarse fixed-step endpoint.
         r_sc = math.sqrt(y[0] * y[0] + y[1] * y[1] + y[2] * y[2])
         if detect_impact == 1 and r_sc <= r_impact:
             impact_flags[i] = 1
             if math.isnan(impact_times[i]):
-                impact_times[i] = t_val + dt
+                rxp = Y[i, 0]
+                ryp = Y[i, 1]
+                rzp = Y[i, 2]
+                r_prev = math.sqrt(rxp * rxp + ryp * ryp + rzp * rzp)
+                denom = r_prev - r_sc
+                if denom > 1e-12:
+                    frac = (r_prev - r_impact) / denom
+                    if frac < 0.0:
+                        frac = 0.0
+                    elif frac > 1.0:
+                        frac = 1.0
+                else:
+                    frac = 1.0
+                impact_times[i] = t_val + frac * dt
+                impact_positions[i, 0] = rxp + frac * (y[0] - rxp)
+                impact_positions[i, 1] = ryp + frac * (y[1] - ryp)
+                impact_positions[i, 2] = rzp + frac * (y[2] - rzp)
 
         # Write back
         for j in range(6):
@@ -1024,6 +1046,7 @@ class GPUBatchPropagator:
             + 3 * 8  # mass / area / cr
             + 4      # impact flag
             + 8      # impact time
+            + 3 * 8  # interpolated impact position
             + 32     # launch / scratch safety margin
         )
         cfg_budget = float(getattr(self._mc, "max_vram_gb", 4.0)) * (1024.0 ** 3) * 0.80
@@ -1056,6 +1079,7 @@ class GPUBatchPropagator:
             "gpu_sh_workspace": f"{_GPU_WS}x{_GPU_WS}",
             "gpu_sh_workspace_policy": "compile_time_thread_local",
             "supports_earth_j2": bool(self._earth_j2_pack["enabled"]),
+            "impact_position_method": "rk4_crossing_interpolated",
         }
 
     # ----------------------------------------------------------------
@@ -1095,7 +1119,7 @@ class GPUBatchPropagator:
         t_out : (T,) snapshot times [s]
         Y_out : (T, N, 6) state snapshots
         impact_flags : (N,) float64 – 1.0 if impacted, else 0.0
-        t_impact : (N,) float64 – NaN on GPU path (exact event time unavailable)
+        t_impact : (N,) float64 – linearly interpolated crossing time (NaN if no impact)
         """
         N   = int(Y0.shape[0])
         dt  = float(self._mc.dt_s)
@@ -1123,13 +1147,14 @@ class GPUBatchPropagator:
             d_masses = cuda.to_device(np.ascontiguousarray(masses, dtype=np.float64), stream=stream)
             d_areas  = cuda.to_device(np.ascontiguousarray(areas,  dtype=np.float64), stream=stream)
             d_crs    = cuda.to_device(np.ascontiguousarray(crs,    dtype=np.float64), stream=stream)
-            impact_init, t_impact_init = _initial_impact_bookkeeping(
+            impact_init, t_impact_init, impact_pos_init = _initial_impact_bookkeeping(
                 Y0,
                 r_impact,
                 detect_impact=self._detect_impact,
             )
             d_impact = cuda.to_device(impact_init, stream=stream)
             d_t_impact = cuda.to_device(t_impact_init, stream=stream)
+            d_impact_pos = cuda.to_device(impact_pos_init, stream=stream)
             stream.synchronize()
 
             for snap_idx in range(n_snaps):
@@ -1167,6 +1192,7 @@ class GPUBatchPropagator:
                         np.float64(self._p1au),
                         d_impact,
                         d_t_impact,
+                        d_impact_pos,
                         np.int32(1 if self._detect_impact else 0),
                         np.float64(r_impact),
                     )
@@ -1180,12 +1206,12 @@ class GPUBatchPropagator:
 
             impact_host = d_impact.copy_to_host(stream=stream).astype(np.float64)
             t_impact_host = d_t_impact.copy_to_host(stream=stream).astype(np.float64)
+            impact_pos_host = d_impact_pos.copy_to_host(stream=stream).astype(np.float64)
             stream.synchronize()
 
-        impact_positions = np.full((N, 3), np.nan, dtype=np.float64)
-        impacted = impact_host > 0.5
-        impact_positions[impacted] = Y_out[-1, impacted, :3]
-        self._last_impact_positions_inertial = impact_positions
+        # Interpolated crossing positions come straight from the kernel; no need
+        # to fall back to the coarse fixed-step endpoint (Y_out[-1]).
+        self._last_impact_positions_inertial = impact_pos_host
         return t_out, Y_out, impact_host, t_impact_host
 
     def last_impact_positions_inertial(self) -> F64Array:

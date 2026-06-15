@@ -718,6 +718,19 @@ class SurrogateGravityModel:
         if r_ref_guess is None:
             r_ref_guess = r_ref_override if r_ref_override is not None else R_MOON
 
+        # Declared runtime kind decides whether a legacy fallback is even legal.
+        # The legacy local path (_build_model_from_config) only ever builds a
+        # scalar-potential MLP and evaluates it via autograd. That is the WRONG
+        # physics for a force_direct artifact (which predicts residual
+        # acceleration directly from a 3-output head), so a force_direct artifact
+        # must NEVER silently fall back to it — it has to load through the
+        # canonical runtime or fail loudly.
+        declared_runtime_kind = str(
+            config.get("runtime_model_kind")
+            or (config.get("artifact_contract") or {}).get("runtime_model_kind")
+            or ""
+        ).strip().lower()
+
         force_runtime = None
         try:
             from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
@@ -730,9 +743,17 @@ class SurrogateGravityModel:
             model = force_runtime.model
             logger.info("models.surrogate_gravity delegated neural inference to st_lrps.runtime.force_model.")
         except Exception as exc:
+            if declared_runtime_kind == "force_direct":
+                raise RuntimeError(
+                    "force_direct ST-LRPS artifact could not be loaded through the canonical "
+                    "runtime (st_lrps.runtime.force_model) and has NO legacy fallback: the "
+                    "legacy local path builds a scalar-potential model, which is the wrong "
+                    "physics for a direct residual-acceleration artifact. Fix the artifact / "
+                    f"contract instead of degrading to a potential model. Original error: {exc}"
+                ) from exc
             logger.warning(
                 "Could not initialize canonical st_lrps.runtime.force_model adapter; "
-                "falling back to the legacy local runtime path: %s",
+                "falling back to the legacy local runtime path (potential_autograd only): %s",
                 exc,
             )
             model = _build_model_from_config(config).to(device=device, dtype=torch.float32)

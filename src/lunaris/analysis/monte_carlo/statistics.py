@@ -409,16 +409,23 @@ def compute_oe_dispersion(
         )
     sub = min(int(valid_idx.size), max_samples)
     idx = np.random.default_rng(0).choice(valid_idx, size=sub, replace=False)
+    # Sort the sample indices so a disk-backed (lazy HDF5) trajectory can be read
+    # one contiguous block per timestep instead of one file open per (k, sample)
+    # element. Order does not affect the per-epoch mean/std dispersion statistics.
+    idx = np.sort(idx)
 
     a_mean  = np.zeros(T); a_std  = np.zeros(T)
     e_mean  = np.zeros(T); e_std  = np.zeros(T)
     inc_mean= np.zeros(T); inc_std= np.zeros(T)
 
     for k in range(T):
+        # Single block read for this epoch: (sub, 6). For HDF5TrajectoryView this
+        # is one __getitem__ (one file open) rather than ``sub`` scalar reads.
+        block = np.asarray(result.Y[k, idx, :], dtype=np.float64)
         a_arr   = np.zeros(sub); e_arr   = np.zeros(sub); inc_arr = np.zeros(sub)
-        for j, i in enumerate(idx):
+        for j in range(sub):
             try:
-                state = np.asarray(result.Y[k, int(i), :], dtype=np.float64)
+                state = block[j]
                 a_m, e_val, inc_rad, _, _, _ = cartesian_to_keplerian(
                     state[:3], state[3:], mu=mu
                 )
