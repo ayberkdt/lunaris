@@ -310,19 +310,19 @@ def make_hybrid_impact_event(
                 def _r_m(lat_rad: float, lon_rad: float) -> float:
                     lat_deg = math.degrees(lat_rad)
                     lon_deg = math.degrees(lon_rad) % 360.0
-                    return float(nearest(lat_deg, lon_deg, kind="radius_m"))  # type: ignore[misc]
+                    return float(nearest(lat_deg, lon_deg, kind="radius_m"))
                 radius_sampler = _r_m
             elif callable(bilinear):
                 def _r_m(lat_rad: float, lon_rad: float) -> float:
                     lat_deg = math.degrees(lat_rad)
                     lon_deg = math.degrees(lon_rad) % 360.0
-                    return float(bilinear(lat_deg, lon_deg, kind="radius_m"))  # type: ignore[misc]
+                    return float(bilinear(lat_deg, lon_deg, kind="radius_m"))
                 radius_sampler = _r_m
             elif callable(nearest):
                 def _r_m(lat_rad: float, lon_rad: float) -> float:
                     lat_deg = math.degrees(lat_rad)
                     lon_deg = math.degrees(lon_rad) % 360.0
-                    return float(nearest(lat_deg, lon_deg, kind="radius_m"))  # type: ignore[misc]
+                    return float(nearest(lat_deg, lon_deg, kind="radius_m"))
                 radius_sampler = _r_m
 
         if radius_sampler is None and hasattr(topo, "radius_m_deg"):
@@ -331,7 +331,7 @@ def make_hybrid_impact_event(
                 def _r_m(lat_rad: float, lon_rad: float) -> float:
                     lat_deg = math.degrees(lat_rad)
                     lon_deg = math.degrees(lon_rad) % 360.0
-                    return float(fn(lat_deg, lon_deg))  # type: ignore[misc]
+                    return float(fn(lat_deg, lon_deg))
                 radius_sampler = _r_m
 
         if radius_sampler is None and hasattr(topo, "radius_m"):
@@ -339,7 +339,7 @@ def make_hybrid_impact_event(
             if callable(fn):
                 def _r_m(lat_rad: float, lon_rad: float) -> float:
                     # Expect radians
-                    return float(fn(float(lat_rad), float(lon_rad)))  # type: ignore[misc]
+                    return float(fn(float(lat_rad), float(lon_rad)))
                 radius_sampler = _r_m
 
         if radius_sampler is None:
@@ -988,10 +988,10 @@ if __name__ == "__main__":
 
     try:
         from scipy.integrate import solve_ivp
-    except Exception as e:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover
         print("\n[ERROR] SciPy is required for this self-test.", file=sys.stderr)
         print("Install with:  pip install scipy\n", file=sys.stderr)
-        raise SystemExit(2) from e
+        raise SystemExit(2) from exc
 
     # -----------------------------
     # Constants (approx, deterministic)
@@ -1015,7 +1015,7 @@ if __name__ == "__main__":
     # Geometry providers (test stubs)
     # -----------------------------
     # For testing: assume inertial == Moon-fixed, so transform is identity.
-    def r_i_to_bf(t: float, vec: np.ndarray) -> np.ndarray:
+    def r_i_to_bf(t: float, vec: ArrayLike) -> np.ndarray:
         return np.asarray(vec, dtype=float)
 
     # Sun direction: constant +X

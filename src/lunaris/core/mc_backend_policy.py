@@ -64,7 +64,7 @@ def _torch_cuda_available() -> bool:
 def _numba_cuda_available() -> bool:
     """Return True when Numba CUDA is installed and sees a device."""
     try:
-        from numba import cuda  # type: ignore
+        from numba import cuda
 
         return bool(cuda.is_available())
     except Exception:
@@ -75,7 +75,7 @@ def _numba_cuda_device_name() -> str | None:
     """Best-effort CUDA device name for provenance metadata."""
 
     try:
-        from numba import cuda  # type: ignore
+        from numba import cuda
 
         if not cuda.is_available():
             return None

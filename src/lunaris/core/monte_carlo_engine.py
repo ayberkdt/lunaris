@@ -51,7 +51,7 @@ import warnings
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -59,6 +59,9 @@ from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 from lunaris.common.montecarlo_defs import MCRunResult, MonteCarloConfig, StateUncertainty
 from lunaris.common.type_defs import F64Array
 from lunaris.physics.gravity_adapter import adapt_gravity_model
+
+if TYPE_CHECKING:
+    from lunaris.core.mc_backend_policy import MCBackendPlan
 
 # =============================================================================
 # 0.                    LOCAL BOOTSTRAP / COMPAT HELPERS
@@ -470,10 +473,10 @@ class MonteCarloEngine:
         self._surface_provider = surface_provider
         self._topo_grid = topo_grid
         self._backend_note = ""
-        self._backend_plan = None
+        self._backend_plan: MCBackendPlan | None = None
         if self._topo_grid is None and self._surface_provider is not None and hasattr(self._surface_provider, "grids"):
             try:
-                self._topo_grid = self._surface_provider.grids().topo  # type: ignore[attr-defined]
+                self._topo_grid = self._surface_provider.grids().topo
             except Exception:
                 self._topo_grid = None
         self._dyn     = dynamics_engine or self._build_dynamics()
@@ -933,7 +936,7 @@ class MonteCarloEngine:
 
         # Accumulators for the full ensemble
         t_out_ref: np.ndarray | None = None
-        Y_all     = None   # will be (T, N, 6) after first batch
+        Y_all: np.ndarray | None = None   # will be (T, N, 6) after first batch
         impact_all   = np.zeros(N, dtype=np.float64)
         t_impact_all = np.full(N, np.nan, dtype=np.float64)
 
@@ -985,6 +988,8 @@ class MonteCarloEngine:
             if t_out_ref is None:
                 t_out_ref = t_b
                 Y_all = np.zeros((len(t_b), N, 6), dtype=np.float64)
+            # Y_all is allocated on the first batch and persists across batches.
+            assert Y_all is not None
 
             # Resample to reference grid if needed
             if len(t_b) == len(t_out_ref) and np.allclose(t_b, t_out_ref, rtol=1e-6):
@@ -1016,6 +1021,7 @@ class MonteCarloEngine:
         # 4) Compute impact times (t_impact_s)
         # -----------------------------------------------------------------
         r_impact = float(R_MOON) + float(mc.impact_alt_km) * 1_000.0
+        assert Y_all is not None
         for i in range(N):
             if impact_all[i] > 0.5 and not np.isfinite(float(t_impact_all[i])):
                 # Find first time the spacecraft crossed the impact sphere

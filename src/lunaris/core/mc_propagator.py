@@ -66,16 +66,16 @@ from lunaris.common.type_defs import F64Array
 _CUDA_AVAILABLE: bool = False
 try:
     import numba
-    from numba import (  # type: ignore[attr-defined]
+    from numba import (
         cuda,
         njit,  # noqa: F401 – used in CPU helpers
     )
     from numba import float64 as nb_f64
     _CUDA_AVAILABLE = bool(cuda.is_available())
 except ImportError:
-    cuda = None  # type: ignore[assignment]
+    cuda = None
     nb_f64 = None
-    numba = None  # type: ignore[assignment]
+    numba = None
 
 
 # Compile-time workspace size: supports SH degree up to _GPU_WS-2 = 24.
@@ -862,8 +862,8 @@ class GPUBatchPropagator:
         if ep is None:
             # Minimal stub: 2-row tables at t=0
             rows = 2
-            sun_h   = np.zeros((rows, 3), dtype=np.float64)
-            earth_h = np.zeros((rows, 3), dtype=np.float64)
+            sun_h: np.ndarray   = np.zeros((rows, 3), dtype=np.float64)
+            earth_h: np.ndarray = np.zeros((rows, 3), dtype=np.float64)
             q_h     = np.tile([1.0, 0.0, 0.0, 0.0], (rows, 1)).astype(np.float64)
             dt_s    = 1.0
         else:

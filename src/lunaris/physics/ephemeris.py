@@ -436,9 +436,9 @@ def build_tables(
 
     # Import here to avoid hard dependency at module import time in some environments.
     try:
-        from spiceypy.utils.exceptions import SpiceyError  # type: ignore
+        from spiceypy.utils.exceptions import SpiceyError
     except Exception:  # pragma: no cover
-        SpiceyError = Exception  # type: ignore
+        SpiceyError = Exception
 
     with _spice_kernels_loaded(
         k_list,

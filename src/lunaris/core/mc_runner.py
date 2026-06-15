@@ -46,6 +46,7 @@ from lunaris.cli.common_args import (  # noqa: E402
 )
 from lunaris.common.constants import DEG2RAD, MU_MOON, R_MOON  # noqa: E402
 from lunaris.common.montecarlo_defs import (  # noqa: E402
+    MCRunResult,
     MonteCarloConfig,
     SpacecraftUncertainty,
     StateUncertainty,
@@ -221,7 +222,7 @@ def _wilson_ci(k: int, n: int, z: float = 1.96):
     return (max(0.0, centre - margin), min(1.0, centre + margin))
 
 
-def _build_metrics(result: object, wall_time_s: float, mc_cfg: MonteCarloConfig) -> dict:
+def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloConfig) -> dict:
     """Extract summary statistics from an MCRunResult for the UI metrics panel."""
     import numpy as np
 
@@ -415,7 +416,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         surface_provider = init_surface_provider(args)
         if surface_provider is not None and hasattr(surface_provider, "grids"):
             try:
-                topo_grid = surface_provider.grids().topo  # type: ignore[attr-defined]
+                topo_grid = surface_provider.grids().topo
             except Exception:
                 topo_grid = None
     except Exception as exc:

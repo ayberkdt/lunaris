@@ -32,7 +32,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 # --- Local Imports: Common (dependency-light) ---
 from lunaris.common.constants import DAY_S
@@ -165,7 +165,8 @@ class VisualConfig:
 
     def get_figure_size(self, name: FigureSizeName | None = None) -> tuple[float, float]:
         key = name or self.figure_size_default
-        return tuple(self.figure_sizes[key])
+        w, h = self.figure_sizes[key]
+        return (w, h)
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,7 +283,7 @@ class SimConfig:
             )
 
 
-def replace_sim_config(cfg: SimConfig, **changes: object) -> SimConfig:
+def replace_sim_config(cfg: SimConfig, **changes: Any) -> SimConfig:
     """Return a validated copy of the simulation SSOT.
 
     Specialized workflows may need overrides that are not CLI arguments.  They
