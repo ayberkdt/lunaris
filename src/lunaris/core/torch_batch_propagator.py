@@ -138,7 +138,8 @@ class TorchBatchPropagator:
         model_dtype = "float32"
         try:
             model_obj = getattr(runtime, "model", None)
-            model_dtype = str(next(model_obj.parameters()).dtype).replace("torch.", "")
+            if model_obj is not None:
+                model_dtype = str(next(model_obj.parameters()).dtype).replace("torch.", "")
         except Exception:
             pass
         diagnostics = {
