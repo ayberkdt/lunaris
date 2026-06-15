@@ -602,6 +602,27 @@ class MonteCarloEngine:
                     from lunaris.physics.spherical_harmonics import GravityModel
 
                     requested_degree = int(cfg.gravity.degree) if cfg.gravity.degree is not None else None
+
+                    # The classic-SH GPU batch paths (numba_cuda_sh /
+                    # torch_cuda_sh / torch_cpu_sh, or use_gpu auto) evaluate SH
+                    # up to mc.gpu_sh_degree. Load coefficients to at least that
+                    # degree (clamped to the file's own max by the loader) so a
+                    # high gpu_sh_degree is not rejected by the propagator
+                    # preflight merely because the mission's nominal degree is
+                    # lower. Pure-CPU runs keep the mission degree unchanged so
+                    # their physics is not silently altered.
+                    mc_gpu_degree = int(getattr(self._mc, "gpu_sh_degree", 0) or 0)
+                    gpu_sh_path_requested = (
+                        mc_backend in {"gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
+                        or (mc_backend == "auto" and bool(getattr(self._mc, "use_gpu", False)))
+                    )
+                    if gpu_sh_path_requested and mc_gpu_degree > 0:
+                        requested_degree = (
+                            mc_gpu_degree
+                            if requested_degree is None
+                            else max(requested_degree, mc_gpu_degree)
+                        )
+
                     grav_model = adapt_gravity_model(
                         GravityModel.from_file(
                             path=str(cfg.gravity.file_path),
