@@ -40,14 +40,18 @@ def test_force_direct_artifact_has_no_legacy_fallback(tmp_path, monkeypatch) -> 
 def test_potential_autograd_artifact_still_allows_fallback(tmp_path, monkeypatch) -> None:
     # Default fixture is potential_autograd. When the canonical loader fails the
     # legacy fallback path is still permitted, so the force_direct guard must NOT
-    # fire (any error raised here must be something other than the guard).
-    art = make_contract_run(tmp_path)
+    # fire. degree_min < 2 keeps the fallback off the SH-baseline branch so the
+    # test never touches the (data-only) lunar gravity coefficient file.
+    art = make_contract_run(tmp_path, degree_min=1)
 
     import lunaris.surrogate.st_lrps.runtime.force_model as fm
 
     monkeypatch.setattr(fm, "load_surrogate_force_model", _raise_canonical_failure)
 
+    # The fallback may still fail for an unrelated reason (e.g. a state-dict
+    # mismatch); the only invariant under test is that the force_direct hard-fail
+    # guard does NOT fire for a potential_autograd artifact.
     try:
         SurrogateGravityModel.from_model_dir(str(art["run_dir"]), device_preference="cpu")
-    except RuntimeError as exc:
+    except Exception as exc:
         assert "force_direct ST-LRPS artifact could not be loaded" not in str(exc)
