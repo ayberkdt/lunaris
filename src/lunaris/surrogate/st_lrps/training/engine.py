@@ -109,6 +109,11 @@ from lunaris.surrogate.st_lrps.training.periodic_eval import (
     resolve_periodic_eval_plan,
     run_periodic_eval,
 )
+from lunaris.surrogate.st_lrps.training.preflight import (
+    PreflightError,
+    run_preflight,
+    write_preflight_report,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,14 +124,28 @@ def _log_section(title: str, values: Mapping[str, Any]) -> None:
         logger.info(f"{str(key):24s}: {value}")
 
 
-def set_seed(seed: int = 42, *, deterministic: bool = True, benchmark: bool = False) -> None:
+def set_seed(
+    seed: int = 42, *, deterministic: bool = True, benchmark: bool = False
+) -> dict[str, Any]:
     """
     Fixes all random number generator (RNG) seeds for reproducibility.
 
     ``deterministic`` / ``benchmark`` control cuDNN behavior. Defaults preserve
     the historical deterministic configuration; pass ``deterministic=False`` /
     ``benchmark=True`` for throughput at the cost of run-to-run reproducibility.
+
+    In ``deterministic`` mode this also (a) enables
+    ``torch.use_deterministic_algorithms(warn_only=True)`` so non-cuDNN CUDA ops
+    take a reproducible path where one exists, (b) pins TF32 off so matmul/conv
+    numerics match across Ampere+ GPUs, and (c) sets the cuBLAS workspace /
+    ``PYTHONHASHSEED`` env vars the deterministic toggle and worker subprocesses
+    require. Returns the applied flags so the caller can record them in the run
+    provenance.
     """
+    # PYTHONHASHSEED only affects interpreters started *after* it is set (e.g.
+    # 'spawn' DataLoader workers), not this live process — set it for the workers
+    # and for provenance, not for in-process hash randomization.
+    os.environ["PYTHONHASHSEED"] = str(int(seed))
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -134,6 +153,59 @@ def set_seed(seed: int = 42, *, deterministic: bool = True, benchmark: bool = Fa
 
     torch.backends.cudnn.deterministic = bool(deterministic)
     torch.backends.cudnn.benchmark = bool(benchmark)
+
+    applied: dict[str, Any] = {
+        "seed": int(seed),
+        "cudnn_deterministic": bool(deterministic),
+        "cudnn_benchmark": bool(benchmark),
+        "pythonhashseed": str(int(seed)),
+    }
+
+    # TF32 changes matmul/conv numerics on Ampere+; pin it OFF in deterministic
+    # mode so a run reproduces across hardware. Best-effort (older torch).
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = not deterministic
+        torch.backends.cudnn.allow_tf32 = not deterministic
+        applied["allow_tf32"] = not deterministic
+    except Exception:  # pragma: no cover - depends on torch/build
+        applied["allow_tf32"] = None
+
+    if deterministic:
+        # use_deterministic_algorithms raises at the first nondeterministic CUDA
+        # op unless cuBLAS has a fixed workspace; set it before the toggle.
+        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        applied["cublas_workspace_config"] = os.environ["CUBLAS_WORKSPACE_CONFIG"]
+        try:
+            # warn_only: surface any op without a deterministic kernel instead of
+            # hard-failing a long training run.
+            torch.use_deterministic_algorithms(True, warn_only=True)
+            applied["use_deterministic_algorithms"] = "warn_only"
+        except Exception as exc:  # pragma: no cover - torch/version dependent
+            logger.warning("set_seed: use_deterministic_algorithms unavailable: %s", exc)
+            applied["use_deterministic_algorithms"] = False
+    else:
+        try:
+            torch.use_deterministic_algorithms(False)
+        except Exception:  # pragma: no cover
+            pass
+        applied["use_deterministic_algorithms"] = False
+
+    logger.info("set_seed applied determinism flags: %s", applied)
+    return applied
+
+
+def _seed_dataloader_worker(worker_id: int) -> None:
+    """Seed numpy + Python RNG per DataLoader worker for reproducible draws.
+
+    PyTorch reseeds each worker's torch RNG automatically (``base_seed +
+    worker_id``) but leaves numpy/Python untouched, so any ``np.random`` /
+    ``random`` use inside a dataset's ``__getitem__`` would be nondeterministic
+    across runs. Derive both from torch's per-worker base seed.
+    """
+    base = int(torch.initial_seed()) % (2**32)
+    worker_seed = (base + int(worker_id)) % (2**32)
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 def get_device() -> torch.device:
     """
@@ -1283,7 +1355,7 @@ def train(cfg: TrainConfig) -> None:
             "`python -m lunaris.surrogate.st_lrps.training.force_direct_cli`; "
             "the main Sobolev trainer remains scalar-potential/autograd only."
         )
-    set_seed(
+    _determinism_flags = set_seed(
         cfg.seed,
         deterministic=bool(getattr(cfg, "deterministic", True)),
         benchmark=bool(getattr(cfg, "benchmark_cudnn", False)),
@@ -1469,6 +1541,7 @@ def train(cfg: TrainConfig) -> None:
         "last_checkpoint_path": str(layout.ckpt_last),
         "history_csv_path": str(layout.history_csv),
         "history_jsonl_path": str(layout.history_jsonl),
+        "determinism": _determinism_flags,
         "warnings": [],
         "evaluations": [],
     }
@@ -1872,6 +1945,47 @@ def train(cfg: TrainConfig) -> None:
         },
     )
 
+    # 7b. Single pre-training preflight gate (go/no-go). Runs after the dataset,
+    # splits, and train-only scaler exist but BEFORE model/optimizer build and the
+    # training loop, so a failure aborts before any GPU training hours are spent.
+    if not bool(getattr(cfg, "skip_preflight", False)):
+        _cuda_free: int | None = None
+        if device.type == "cuda":
+            try:
+                _cuda_free = int(torch.cuda.mem_get_info()[0])
+            except Exception:  # pragma: no cover - driver/version dependent
+                _cuda_free = None
+        _preflight = run_preflight(
+            out_dir=layout.run_dir,
+            deterministic=bool(getattr(cfg, "deterministic", True)),
+            benchmark_cudnn=bool(getattr(cfg, "benchmark_cudnn", False)),
+            device_type=device.type,
+            cuda_free_bytes=_cuda_free,
+            validation_report=validation_report,
+            splits=(splits if not independent_val else None),
+            split_policy=split_policy,
+            split_manifest=split_manifest if isinstance(split_manifest, dict) else None,
+            scaler_provenance=getattr(scaler, "provenance", None),
+            determinism_flags=_determinism_flags,
+        )
+        _preflight_path = write_preflight_report(layout.provenance_dir, _preflight)
+        update_run_manifest(
+            layout,
+            {
+                "preflight_passed": bool(_preflight.go),
+                "preflight_report_path": str(_preflight_path),
+            },
+        )
+        logger.info(
+            "[preflight] go=%s — %s", _preflight.go, _preflight.summary()
+        )
+        if not _preflight.go and not bool(getattr(cfg, "allow_preflight_fail", False)):
+            raise PreflightError(
+                "pre-training preflight gate failed: " + _preflight.summary()
+                + " (pass --allow-preflight-fail to record and continue, or "
+                "--skip-preflight to bypass)."
+            )
+
     # 8. Construct DataLoaders
     dataset_mb = bytes_est / (1024.0 * 1024.0)
     # Resolve the preload policy. --preload-data is a convenience alias for "always".
@@ -1955,10 +2069,19 @@ def train(cfg: TrainConfig) -> None:
         _dl_kw: dict[str, Any] = dict(
             batch_size=cfg.batch_size, num_workers=mem_workers, pin_memory=pin,
             persistent_workers=(mem_workers > 0), collate_fn=collate_xyz_u_a,
+            worker_init_fn=_seed_dataloader_worker,
         )
         if pf is not None:
             _dl_kw["prefetch_factor"] = pf
-        train_loader = DataLoader(train_ds, shuffle=True,  drop_last=True,  **_dl_kw)
+        # Seed the shuffle RNG explicitly so the per-epoch ordering is reproducible
+        # (and resumable via the checkpointed RNG state) instead of riding on the
+        # global torch RNG.
+        _loader_generator = torch.Generator()
+        _loader_generator.manual_seed(int(cfg.seed))
+        train_loader = DataLoader(
+            train_ds, shuffle=True, drop_last=True,
+            generator=_loader_generator, **_dl_kw,
+        )
         val_loader   = DataLoader(val_ds,   shuffle=False, drop_last=False, **_dl_kw)
     else:
         logger.info("Data mode: HDF5 streaming")
@@ -2000,11 +2123,13 @@ def train(cfg: TrainConfig) -> None:
             batch_size=cfg.batch_size, sampler=train_sampler,
             num_workers=train_workers, pin_memory=pin,
             persistent_workers=(train_workers > 0), collate_fn=collate_xyz_u_a, drop_last=True,
+            worker_init_fn=_seed_dataloader_worker,
         )
         _va_kw: dict[str, Any] = dict(
             batch_size=cfg.batch_size, sampler=val_sampler,
             num_workers=val_workers, pin_memory=pin,
             persistent_workers=(val_workers > 0), collate_fn=collate_xyz_u_a, drop_last=False,
+            worker_init_fn=_seed_dataloader_worker,
         )
         if tr_pf is not None:
             _tr_kw["prefetch_factor"] = tr_pf

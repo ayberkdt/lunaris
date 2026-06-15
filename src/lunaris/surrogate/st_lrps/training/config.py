@@ -304,6 +304,10 @@ class TrainConfig:
     allow_missing_dataset_contract: bool = False
     allow_dataset_validation_fail: bool = False
 
+    # Pre-training preflight gate (single go/no-go before training starts).
+    skip_preflight: bool = False
+    allow_preflight_fail: bool = False
+
     # Determinism / cuDNN. Defaults preserve prior behavior.
     deterministic: bool = True
     benchmark_cudnn: bool = False
@@ -947,6 +951,10 @@ def parse_args() -> TrainConfig:
     group_safety.add_argument("--allow-dataset-validation-fail", action="store_true",
                               default=False,
                               help="Record but do not abort when lightweight dataset validation fails.")
+    group_safety.add_argument("--skip-preflight", action="store_true", default=False,
+                              help="Skip the single pre-training preflight go/no-go gate entirely.")
+    group_safety.add_argument("--allow-preflight-fail", action="store_true", default=False,
+                              help="Run the preflight gate and write its report, but do not abort on failure.")
     det_group = group_safety.add_mutually_exclusive_group()
     det_group.add_argument("--deterministic", action="store_true", dest="deterministic",
                            help="Set deterministic cuDNN (default: True).")
@@ -1350,6 +1358,8 @@ def parse_args() -> TrainConfig:
         allow_legacy_dataset_contract=bool(a.allow_legacy_dataset_contract),
         allow_missing_dataset_contract=bool(a.allow_missing_dataset_contract),
         allow_dataset_validation_fail=bool(a.allow_dataset_validation_fail),
+        skip_preflight=bool(a.skip_preflight),
+        allow_preflight_fail=bool(a.allow_preflight_fail),
         deterministic=bool(a.deterministic),
         benchmark_cudnn=bool(a.benchmark_cudnn),
         laplacian_mode=str(a.laplacian_mode),

@@ -776,9 +776,15 @@ class RealSHBasisEncoding(nn.Module):
 
     Experimental: off by default; intended for angular-generalization ablations.
 
-    TODO: validate low-degree normalization/order against an external SH
-    reference; the optional SciPy-gated check in
-    tests/test_surrogate_architecture_upgrades.py must remain optional.
+    Validation
+    ----------
+    The 4π normalization, column ordering, and Condon-Shortley-free sign are
+    pinned in ``tests/test_surrogate_architecture_upgrades.py``:
+    ``test_real_sh_basis_is_4pi_orthonormal_by_quadrature`` (library-free
+    spherical-quadrature Gram = 4π·I) and
+    ``test_real_sh_basis_degree1_closed_form_order_and_sign`` always run;
+    ``test_real_sh_basis_matches_geodesy_4pi_scipy_elementwise_if_available``
+    cross-checks elementwise against scipy and stays optional (skips without it).
     """
 
     def __init__(

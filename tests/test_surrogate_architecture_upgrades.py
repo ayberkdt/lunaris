@@ -515,3 +515,118 @@ def test_real_sh_basis_matches_scipy_subspace_if_available():
     resid = A - B @ coef
     rel = float(np.linalg.norm(resid) / max(np.linalg.norm(A), 1e-12))
     assert rel < 1e-3, f"RealSH basis not in scipy SH span (rel residual={rel:.2e})"
+
+
+# ---------------------------------------------------------------------------
+# 5b — RealSHBasisEncoding exact normalization + order (no external dependency)
+# ---------------------------------------------------------------------------
+
+def _sh_column_labels(L: int) -> list[tuple[int, int, str]]:
+    """Documented per-(l,m) output order: [Y_{l,0}, Y_{l,m}^cos, Y_{l,m}^sin]."""
+    labels: list[tuple[int, int, str]] = []
+    for l in range(L + 1):  # noqa: E741 — l = SH degree (standard notation)
+        labels.append((l, 0, "cos"))
+        for m in range(1, l + 1):
+            labels.append((l, m, "cos"))
+            labels.append((l, m, "sin"))
+    return labels
+
+
+def test_real_sh_basis_is_4pi_orthonormal_by_quadrature():
+    """Definitively pin the 4π geodesy normalization + ordering, no SH library.
+
+    Integrating ``Y_i · Y_j`` over the sphere with a Gauss-Legendre (colatitude)
+    × uniform-longitude quadrature must give ``4π·δ_ij``. A diagonal Gram of 4π
+    proves every documented column is 4π-normalized and mutually orthogonal —
+    the normalization the TODO asked to validate — without trusting scipy.
+    """
+    L = 3
+    enc = RealSHBasisEncoding(degree_max=L, append_raw=False, include_radial=False)
+    n_cols = (L + 1) ** 2
+    assert enc.out_dim == n_cols
+
+    n_t, n_phi = 16, 64
+    t_nodes, t_weights = np.polynomial.legendre.leggauss(n_t)  # ∫_{-1}^{1} dt
+    phi = np.arange(n_phi) * (2.0 * np.pi / n_phi)
+    dphi = 2.0 * np.pi / n_phi
+
+    sin_th = np.sqrt(np.clip(1.0 - t_nodes**2, 0.0, 1.0))
+    nx = sin_th[:, None] * np.cos(phi)[None, :]
+    ny = sin_th[:, None] * np.sin(phi)[None, :]
+    nz = np.broadcast_to(t_nodes[:, None], (n_t, n_phi))
+    dirs = np.stack([nx, ny, nz], axis=-1).reshape(-1, 3)
+    # ∫ f dΩ = Σ_a Σ_b w_t[a]·dφ·f  (since sinθ dθ = -dt cancels the Jacobian).
+    weights = np.broadcast_to(t_weights[:, None] * dphi, (n_t, n_phi)).reshape(-1)
+
+    y = enc(torch.tensor(dirs, dtype=torch.float64)).detach().numpy()
+    gram = y.T @ (weights[:, None] * y)
+    np.testing.assert_allclose(gram, 4.0 * np.pi * np.eye(n_cols), atol=1e-8)
+
+
+def test_real_sh_basis_degree1_closed_form_order_and_sign():
+    """Degree-0/1 closed forms pin column identity, sign, and 4π scale exactly.
+
+    In the 4π geodesy convention: Y_{0,0}=1, Y_{1,0}=√3·z, Y_{1,1}^cos=√3·x,
+    Y_{1,1}^sin=√3·y on the unit sphere. This nails the documented ordering and
+    the Condon-Shortley-free sign without any external library.
+    """
+    enc = RealSHBasisEncoding(degree_max=1, append_raw=False, include_radial=False)
+    assert _sh_column_labels(1) == [(0, 0, "cos"), (1, 0, "cos"), (1, 1, "cos"), (1, 1, "sin")]
+
+    rng = np.random.default_rng(3)
+    v = rng.standard_normal((32, 3))
+    v /= np.linalg.norm(v, axis=1, keepdims=True)
+    y = enc(torch.tensor(v, dtype=torch.float64)).detach().numpy()
+
+    s3 = np.sqrt(3.0)
+    np.testing.assert_allclose(y[:, 0], 1.0, atol=1e-12)          # Y_{0,0}
+    np.testing.assert_allclose(y[:, 1], s3 * v[:, 2], atol=1e-12)  # Y_{1,0} = √3 z
+    np.testing.assert_allclose(y[:, 2], s3 * v[:, 0], atol=1e-12)  # Y_{1,1}^cos = √3 x
+    np.testing.assert_allclose(y[:, 3], s3 * v[:, 1], atol=1e-12)  # Y_{1,1}^sin = √3 y
+
+
+def test_real_sh_basis_matches_geodesy_4pi_scipy_elementwise_if_available():
+    """Optional external cross-check: exact elementwise match to scipy SH.
+
+    Builds the 4π geodesy real SH (Condon-Shortley omitted) from scipy's
+    orthonormal complex SH and requires an elementwise match to our basis. Unlike
+    the subspace test above this pins normalization, ordering, AND sign. Skips if
+    scipy (or a usable SH function) is unavailable.
+    """
+    sp = pytest.importorskip("scipy.special")
+
+    L = 3
+    rng = np.random.default_rng(1)
+    v = rng.standard_normal((256, 3))
+    v /= np.linalg.norm(v, axis=1, keepdims=True)
+    nx, ny, nz = v[:, 0], v[:, 1], v[:, 2]
+    colat = np.arccos(np.clip(nz, -1.0, 1.0))   # polar angle θ
+    az = np.arctan2(ny, nx)                      # azimuth φ
+
+    if hasattr(sp, "sph_harm_y"):
+        def sph(m, l):  # noqa: E741 — l = SH degree (scipy convention)
+            return np.asarray(sp.sph_harm_y(l, m, colat, az), dtype=np.complex128)
+    elif hasattr(sp, "sph_harm"):  # pragma: no cover - older scipy
+        def sph(m, l):  # noqa: E741 — l = SH degree (scipy convention)
+            return np.asarray(sp.sph_harm(m, l, az, colat), dtype=np.complex128)
+    else:  # pragma: no cover - scipy without an SH function
+        pytest.skip("scipy spherical-harmonic API not usable in this environment")
+
+    # Geodesy 4π real SH from scipy's orthonormal complex SH. The factorial parts
+    # cancel in the ratio, leaving: m=0 -> √(4π)·Re; m>0 -> (-1)^m·√(8π)·{Re,Im}.
+    # The (-1)^m removes scipy's Condon-Shortley phase (our basis omits it).
+    ref_cols: list[np.ndarray] = []
+    try:
+        for l in range(L + 1):  # noqa: E741 — l = SH degree (scipy convention)
+            ref_cols.append(np.sqrt(4.0 * np.pi) * sph(0, l).real)
+            for m in range(1, l + 1):
+                scale = ((-1.0) ** m) * np.sqrt(8.0 * np.pi)
+                ref_cols.append(scale * sph(m, l).real)
+                ref_cols.append(scale * sph(m, l).imag)
+    except Exception:  # pragma: no cover - scipy API mismatch
+        pytest.skip("scipy spherical-harmonic API not usable in this environment")
+    ref = np.stack(ref_cols, axis=1)
+
+    enc = RealSHBasisEncoding(degree_max=L, append_raw=False, include_radial=False)
+    got = enc(torch.tensor(v, dtype=torch.float64)).detach().numpy()
+    np.testing.assert_allclose(got, ref, atol=1e-9, rtol=0.0)
