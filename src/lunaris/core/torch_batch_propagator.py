@@ -160,6 +160,7 @@ class TorchBatchPropagator:
             "model_dtype": model_dtype,
             "acceleration_output_dtype": str(self._dtype).replace("torch.", ""),
             "frame_mode": "moon_fixed_slerp" if self._frame.uses_rotation else "identity",
+            "frame_interpolation": "slerp_shortest_path",
             "uses_frame_rotation": bool(self._frame.uses_rotation),
         }
         diagnostics.update(self._throughput_metrics)

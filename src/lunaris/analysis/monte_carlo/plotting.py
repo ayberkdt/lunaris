@@ -166,9 +166,36 @@ def plot_mc_summary(
     ensemble = mc_stats.ensemble
     ellipsoids = mc_stats.ellipsoids
 
-    total_samples = int(impacts.n_total)
-    n_impacts = int(impacts.n_impacts)
-    n_survivors = max(0, total_samples - n_impacts)
+    # When impact detection was not evaluated (disabled or unavailable), report
+    # "Not evaluated" rather than a misleading 0 % impact / 100 % survival.
+    _NOT_EVAL = "Not evaluated"
+    if impacts is not None:
+        total_samples = int(impacts.n_total)
+        n_impacts = int(impacts.n_impacts)
+        n_survivors = max(0, total_samples - n_impacts)
+        impact_prob_str = format_percent(impacts.p_impact)
+        survival_str = format_percent(n_survivors / max(1, total_samples))
+        impacted_samples_str = f"{n_impacts:,} ({format_percent(impacts.p_impact)})"
+        wilson_ci_str = (
+            f"{format_percent(impacts.p_impact_ci95[0])} to "
+            f"{format_percent(impacts.p_impact_ci95[1])}"
+        )
+        mean_epoch_str = (
+            "No impacts"
+            if not math.isfinite(safe_float(impacts.t_impact_mean))
+            else format_days(impacts.t_impact_mean)
+        )
+        impact_sigma_str = format_days(impacts.t_impact_std)
+    else:
+        total_samples = int(getattr(result, "n_samples", 0) or 0)
+        n_impacts = 0
+        n_survivors = total_samples
+        impact_prob_str = _NOT_EVAL
+        survival_str = _NOT_EVAL
+        impacted_samples_str = _NOT_EVAL
+        wilson_ci_str = _NOT_EVAL
+        mean_epoch_str = _NOT_EVAL
+        impact_sigma_str = _NOT_EVAL
     t_start = float(result.t[0]) if len(result.t) else 0.0
     t_end = float(result.t[-1]) if len(result.t) else 0.0
     duration_s = max(0.0, t_end - t_start)
@@ -189,8 +216,8 @@ def plot_mc_summary(
     )
 
     kpi_specs = [
-        ("Impact Probability", format_percent(impacts.p_impact), "#C65151"),
-        ("Survival Rate", format_percent(n_survivors / max(1, total_samples)), "#1E7A57"),
+        ("Impact Probability", impact_prob_str, "#C65151"),
+        ("Survival Rate", survival_str, "#1E7A57"),
         ("Peak 3-sigma Tube", format_km(peak_tube_km), "#355CBE"),
     ]
     for idx, (label, value, accent) in enumerate(kpi_specs):
@@ -213,10 +240,10 @@ def plot_mc_summary(
 
     left_metrics = [
         ("Scenarios", f"{total_samples:,}"),
-        ("Impacted Samples", f"{n_impacts:,} ({format_percent(impacts.p_impact)})"),
-        ("95% Wilson CI", f"{format_percent(impacts.p_impact_ci95[0])} to {format_percent(impacts.p_impact_ci95[1])}"),
-        ("Mean Impact Epoch", "No impacts" if not math.isfinite(safe_float(impacts.t_impact_mean)) else format_days(impacts.t_impact_mean)),
-        ("Impact Time 1-sigma", format_days(impacts.t_impact_std)),
+        ("Impacted Samples", impacted_samples_str),
+        ("95% Wilson CI", wilson_ci_str),
+        ("Mean Impact Epoch", mean_epoch_str),
+        ("Impact Time 1-sigma", impact_sigma_str),
         ("Output Epochs", f"{int(len(result.t)):,}"),
     ]
     right_metrics = [
@@ -493,7 +520,7 @@ def plot_position_covariance_history(
 # =============================================================================
 
 def plot_impact_map(
-    impacts: ImpactStatistics,
+    impacts: ImpactStatistics | None,
     *,
     figsize: tuple[float, float] | None = None,
     title: str = "Monte Carlo Impact Site Distribution",
@@ -501,11 +528,21 @@ def plot_impact_map(
     """
     Mollweide projection of lunar surface impact sites.
 
+    ``impacts is None`` means impact detection was not evaluated for this run
+    (disabled or unavailable); the figure says so rather than implying 0 impacts.
+
     Returns
     -------
     matplotlib Figure
     """
     _require_mpl()
+
+    if impacts is None:
+        fig, ax = plt.subplots(figsize=figsize or _default_figsize())
+        ax.text(0.5, 0.5, "Impact statistics not evaluated", ha="center",
+                va="center", transform=ax.transAxes, fontsize=13)
+        ax.set_title(title, fontsize=11, fontweight="bold")
+        return fig
 
     if impacts.n_impacts == 0 or impacts.lat_deg.size == 0:
         fig, ax = plt.subplots(figsize=figsize or _default_figsize())
@@ -552,7 +589,7 @@ def plot_impact_map(
 # =============================================================================
 
 def plot_impact_time_histogram(
-    impacts: ImpactStatistics,
+    impacts: ImpactStatistics | None,
     result: MCRunResult,
     *,
     n_bins: int = 30,
@@ -562,12 +599,22 @@ def plot_impact_time_histogram(
     """
     Histogram of impact times across the ensemble.
 
+    ``impacts is None`` means impact detection was not evaluated for this run;
+    the figure says so rather than implying an empty impact-time distribution.
+
     Returns
     -------
     matplotlib Figure
     """
     _require_mpl()
     fig, ax = plt.subplots(figsize=figsize or _default_figsize())
+
+    if impacts is None:
+        ax.text(0.5, 0.5, "Impact statistics not evaluated", ha="center",
+                va="center", transform=ax.transAxes, fontsize=13)
+        _style_ax(ax, xlabel="Impact time [days]", ylabel="Count", title=title)
+        fig.tight_layout()
+        return fig
 
     mask = result.valid_sample_mask() & (result.impact_mask > 0.5)
     t_hit = result.t_impact[mask]
