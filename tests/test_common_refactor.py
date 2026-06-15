@@ -43,6 +43,33 @@ def test_monte_carlo_config_no_fs_check():
     assert cfg.gpu_sh_degree == 80
 
 
+def test_monte_carlo_impact_and_storage_contracts() -> None:
+    cfg = MonteCarloConfig(
+        n_samples=10,
+        detect_impact=False,
+        compute_impact_statistics=True,
+        result_storage_mode="auto",
+        max_result_memory_gb=0.5,
+    )
+    assert cfg.impact_detection_enabled is False
+    assert cfg.impact_statistics_enabled is True
+    assert cfg.estimated_result_bytes(20) == 20 * 10 * 6 * 8
+
+    with pytest.raises(ValueError, match="requires output_format='hdf5'"):
+        MonteCarloConfig(
+            n_samples=10,
+            output_format="npz",
+            result_storage_mode="disk",
+        )
+
+
+def test_legacy_compute_impact_probability_maps_to_both_flags() -> None:
+    with pytest.warns(DeprecationWarning):
+        cfg = MonteCarloConfig(n_samples=10, compute_impact_probability=False)
+    assert cfg.impact_detection_enabled is False
+    assert cfg.impact_statistics_enabled is False
+
+
 def test_validate_st_lrps_model_dir(tmp_path: Path):
     model_dir = tmp_path / "mock_model"
 

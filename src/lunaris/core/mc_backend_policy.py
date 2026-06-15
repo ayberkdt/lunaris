@@ -520,9 +520,19 @@ def resolve_mc_backend_policy(
 
     runtime_model_kind = _read_st_lrps_runtime_kind(mc_cfg, sim_cfg) if is_st_lrps else None
     if requested_backend == "gpu_st_lrps_potential":
-        runtime_model_kind = runtime_model_kind or "potential_autograd"
+        if runtime_model_kind not in (None, "potential_autograd"):
+            raise ValueError(
+                "mc_backend='gpu_st_lrps_potential' requires a potential_autograd "
+                f"artifact, but config.json declares {runtime_model_kind!r}."
+            )
+        runtime_model_kind = "potential_autograd"
     elif requested_backend == "gpu_st_lrps_direct":
-        runtime_model_kind = runtime_model_kind or "force_direct"
+        if runtime_model_kind not in (None, "force_direct"):
+            raise ValueError(
+                "mc_backend='gpu_st_lrps_direct' requires a force_direct artifact, "
+                f"but config.json declares {runtime_model_kind!r}."
+            )
+        runtime_model_kind = "force_direct"
 
     # Log availability (always useful for diagnostics)
     _avail_str = (

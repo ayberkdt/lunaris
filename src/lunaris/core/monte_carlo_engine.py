@@ -45,6 +45,7 @@ This module is **layer 3** (core); it may import from ``common`` and
 from __future__ import annotations
 
 import json
+import inspect
 import math
 import time
 import warnings
@@ -56,7 +57,13 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
-from lunaris.common.montecarlo_defs import MCRunResult, MonteCarloConfig, StateUncertainty
+from lunaris.common.math_utils import quat_rotate_np, quat_slerp_np
+from lunaris.common.montecarlo_defs import (
+    MCRunResult,
+    MonteCarloConfig,
+    StateUncertainty,
+    build_mc_output_grid,
+)
 from lunaris.common.type_defs import F64Array
 from lunaris.physics.gravity_adapter import adapt_gravity_model
 
@@ -217,6 +224,40 @@ def _build_ephemeris_manager(cfg: Any) -> Any:
     )
 
 
+def _impact_positions_fixed(
+    ephem: Any,
+    t_impact: np.ndarray,
+    positions_inertial: np.ndarray,
+    *,
+    allow_identity: bool,
+) -> np.ndarray:
+    """Rotate per-sample inertial impact positions at their impact epochs."""
+    out = np.full_like(positions_inertial, np.nan, dtype=np.float64)
+    finite = np.isfinite(t_impact) & np.isfinite(positions_inertial).all(axis=1)
+    if not np.any(finite):
+        return out
+    if ephem is None:
+        if allow_identity:
+            out[finite] = positions_inertial[finite]
+        return out
+
+    provider = ephem.get_data_provider()
+    q_tab = np.asarray(
+        provider.get("q_i2f_tab", provider.get("rot_table")),
+        dtype=np.float64,
+    )
+    dt_s = float(provider.get("dt_s", provider.get("dt")))
+    for idx in np.where(finite)[0]:
+        u = max(0.0, float(t_impact[idx]) / max(dt_s, 1e-12))
+        i0 = min(int(math.floor(u)), q_tab.shape[0] - 1)
+        if i0 >= q_tab.shape[0] - 1:
+            q = q_tab[-1]
+        else:
+            q = quat_slerp_np(q_tab[i0], q_tab[i0 + 1], u - i0)
+        out[idx] = quat_rotate_np(q, positions_inertial[idx])
+    return out
+
+
 # =============================================================================
 # 1.                      SAMPLE GENERATION
 # =============================================================================
@@ -323,10 +364,70 @@ def _decode_archive_metadata(raw: Any) -> dict[str, Any]:
     except Exception:
         return {}
 
-class _HDF5Writer:
-    """Streaming HDF5 writer.  Opens the file once, appends snapshot blocks."""
 
-    def __init__(self, path: Path, n_samples: int, n_state: int = 6) -> None:
+def _decode_metadata_value(raw: Any) -> Any:
+    """Normalize HDF5/NPZ metadata while preserving ordinary strings."""
+    if isinstance(raw, np.generic):
+        raw = raw.item()
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="replace")
+    if isinstance(raw, str):
+        text = raw.strip()
+        if text.startswith(("{", "[")):
+            try:
+                return json.loads(text)
+            except Exception:
+                return raw
+        return raw
+    if isinstance(raw, np.ndarray):
+        return [_decode_metadata_value(item) for item in raw.tolist()]
+    return _metadata_value_to_jsonable(raw)
+
+
+class HDF5TrajectoryView:
+    """Read-only, path-backed view of an HDF5 trajectory dataset."""
+
+    _lunaris_lazy_trajectory = True
+
+    def __init__(self, path: str | Path, dataset: str = "Y") -> None:
+        self.path = Path(path).expanduser().resolve()
+        self.dataset = str(dataset)
+        try:
+            import h5py
+        except ImportError:
+            raise ImportError("h5py required for lazy HDF5 MC results.") from None
+        with h5py.File(str(self.path), "r") as f:
+            ds = f[self.dataset]
+            self.shape = tuple(int(v) for v in ds.shape)
+            self.ndim = int(ds.ndim)
+            self.dtype = np.dtype(ds.dtype)
+
+    def __getitem__(self, key: Any) -> np.ndarray:
+        import h5py
+
+        with h5py.File(str(self.path), "r") as f:
+            return np.asarray(f[self.dataset][key], dtype=np.float64)
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        import h5py
+
+        with h5py.File(str(self.path), "r") as f:
+            arr = np.asarray(f[self.dataset], dtype=dtype or np.float64)
+        if copy:
+            return arr.copy()
+        return arr
+
+
+class _HDF5Writer:
+    """Atomic HDF5 writer with sample-axis batch streaming."""
+
+    def __init__(
+        self,
+        path: Path,
+        n_samples: int,
+        t_grid: np.ndarray,
+        n_state: int = 6,
+    ) -> None:
         try:
             import h5py
             self._h5py = h5py
@@ -337,31 +438,32 @@ class _HDF5Writer:
             ) from None
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._f = h5py.File(str(path), "w")
+        self._path = path
+        self._part_path = Path(f"{path}.part")
+        if self._part_path.exists():
+            self._part_path.unlink()
+        self._f = h5py.File(str(self._part_path), "w")
         self._n = n_samples
         self._s = n_state
-
-        # Extendable datasets (chunked along time axis)
-        self._ds_t = self._f.create_dataset(
-            "t", shape=(0,), maxshape=(None,), dtype=np.float64,
-            chunks=(256,), compression="lzf",
-        )
+        self._t = np.ascontiguousarray(t_grid, dtype=np.float64)
+        self._ds_t = self._f.create_dataset("t", data=self._t)
         self._ds_Y = self._f.create_dataset(
-            "Y", shape=(0, n_samples, n_state),
-            maxshape=(None, n_samples, n_state),
+            "Y", shape=(len(self._t), n_samples, n_state),
             dtype=np.float64,
-            chunks=(16, min(n_samples, 128), n_state),
+            chunks=(min(len(self._t), 16), min(n_samples, 128), n_state),
             compression="lzf",
         )
-        self._row = 0
 
-    def write_snapshot(self, t: float, Y: np.ndarray) -> None:
-        """Append one time snapshot (Y shape: (N, 6))."""
-        self._ds_t.resize(self._row + 1, axis=0)
-        self._ds_Y.resize(self._row + 1, axis=0)
-        self._ds_t[self._row] = t
-        self._ds_Y[self._row] = Y
-        self._row += 1
+    def write_sample_batch(self, start: int, end: int, Y: np.ndarray) -> None:
+        """Write ``Y[:, start:end, :]`` without retaining the full ensemble."""
+        expected = (len(self._t), int(end - start), self._s)
+        if tuple(Y.shape) != expected:
+            raise ValueError(f"HDF5 batch must have shape {expected}, got {Y.shape}")
+        self._ds_Y[:, start:end, :] = Y
+
+    @property
+    def memory_buffer(self) -> None:
+        return None
 
     def write_metadata(self, **kwargs: Any) -> None:
         for k, v in kwargs.items():
@@ -378,32 +480,58 @@ class _HDF5Writer:
         sc_samples: np.ndarray,
         impact_flags: np.ndarray,
         t_impact: np.ndarray,
+        valid_mask: np.ndarray,
+        impact_position_inertial_m: np.ndarray,
+        impact_position_fixed_m: np.ndarray,
     ) -> None:
         self._f.create_dataset("sc_samples",  data=sc_samples)
         self._f.create_dataset("impact_flags", data=impact_flags)
         self._f.create_dataset("t_impact",    data=t_impact)
+        self._f.create_dataset("valid_mask", data=valid_mask)
+        self._f.create_dataset(
+            "impact_position_inertial_m", data=impact_position_inertial_m
+        )
+        self._f.create_dataset("impact_position_fixed_m", data=impact_position_fixed_m)
 
-    def close(self) -> None:
+    def finalize(self) -> None:
+        self._f.attrs["archive_schema_version"] = 2
+        self._f.flush()
+        self._f.close()
+        self._part_path.replace(self._path)
+
+    def abort(self) -> None:
         try:
-            self._f.flush()
             self._f.close()
+        except Exception:
+            pass
+        try:
+            self._part_path.unlink(missing_ok=True)
         except Exception:
             pass
 
 
 class _NPZWriter:
-    """Accumulates snapshots in RAM and writes a single NPZ at the end."""
+    """Writes an eager trajectory archive in one compressed NPZ operation."""
 
-    def __init__(self, path: Path, n_samples: int, n_state: int = 6) -> None:
+    def __init__(
+        self,
+        path: Path,
+        n_samples: int,
+        t_grid: np.ndarray,
+        n_state: int = 6,
+    ) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
-        self._t_list: list[float] = []
-        self._Y_list: list[np.ndarray] = []
+        self._t = np.ascontiguousarray(t_grid, dtype=np.float64)
+        self._Y = np.empty((len(self._t), n_samples, n_state), dtype=np.float64)
         self._metadata: dict[str, Any] = {}
 
-    def write_snapshot(self, t: float, Y: np.ndarray) -> None:
-        self._t_list.append(t)
-        self._Y_list.append(Y.copy())
+    def write_sample_batch(self, start: int, end: int, Y: np.ndarray) -> None:
+        self._Y[:, start:end, :] = Y
+
+    @property
+    def memory_buffer(self) -> np.ndarray:
+        return self._Y
 
     def write_metadata(self, **kwargs: Any) -> None:
         for key, value in kwargs.items():
@@ -414,29 +542,40 @@ class _NPZWriter:
         sc_samples: np.ndarray,
         impact_flags: np.ndarray,
         t_impact: np.ndarray,
+        valid_mask: np.ndarray,
+        impact_position_inertial_m: np.ndarray,
+        impact_position_fixed_m: np.ndarray,
     ) -> None:
-        t_arr = np.asarray(self._t_list, dtype=np.float64)
-        Y_arr = np.stack(self._Y_list, axis=0)  # (T, N, 6)
         np.savez_compressed(
             str(self._path),
-            t=t_arr,
-            Y=Y_arr,
+            t=self._t,
+            Y=self._Y,
             sc_samples=sc_samples,
             impact_flags=impact_flags,
             t_impact=t_impact,
+            valid_mask=valid_mask,
+            impact_position_inertial_m=impact_position_inertial_m,
+            impact_position_fixed_m=impact_position_fixed_m,
             metadata_json=np.asarray(json.dumps(self._metadata, sort_keys=True), dtype=np.str_),
         )
 
-    def close(self) -> None:
+    def finalize(self) -> None:
+        pass
+
+    def abort(self) -> None:
         pass
 
 
-def _make_writer(mc_cfg: MonteCarloConfig, n_samples: int) -> Any:
+def _make_writer(
+    mc_cfg: MonteCarloConfig,
+    n_samples: int,
+    t_grid: np.ndarray,
+) -> Any:
     """Factory: return the appropriate writer based on output_format."""
     p = mc_cfg.output_path_resolved
     if mc_cfg.output_format == "hdf5":
-        return _HDF5Writer(p, n_samples)
-    return _NPZWriter(p, n_samples)
+        return _HDF5Writer(p, n_samples, t_grid)
+    return _NPZWriter(p, n_samples, t_grid)
 
 
 # =============================================================================
@@ -571,6 +710,7 @@ class MonteCarloEngine:
         mc_forces_st_lrps = mc_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
         grav_model = None
         ephem_manager = None
+        use_st_lrps_gravity = False
         surface_provider = self._surface_provider
         topo_requested = _surface_topography_requested(surface_provider, self._topo_grid)
 
@@ -654,7 +794,7 @@ class MonteCarloEngine:
             flags=cfg.flags,
             gravity_model=grav_model,
             gravity_adaptive=(
-                None if bool(getattr(cfg.gravity, "uses_st_lrps", False))
+                None if use_st_lrps_gravity
                 else getattr(cfg.gravity, "adaptive", None)
             ),
             ephem_manager=ephem_manager,
@@ -696,7 +836,10 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         if plan.final_backend == MCBackend.GPU_ST_LRPS:
             try:
-                from lunaris.core.torch_batch_propagator import TorchBatchPropagator
+                from lunaris.core.torch_batch_propagator import (
+                    TorchBatchPropagator,
+                    TorchSTLRPSPreflightError,
+                )
 
                 grav_model = getattr(self._dyn, "grav", None)
                 if grav_model is None or getattr(grav_model, "model_kind", None) != "st_lrps":
@@ -711,11 +854,35 @@ class MonteCarloEngine:
                     f"degree_max={deg_max}  model_dir={grav_model.model_dir}",
                     flush=True,
                 )
-                return TorchBatchPropagator(
-                    surrogate_model=grav_model,
-                    mc_cfg=self._mc,
-                    device_id=int(getattr(self._mc, "gpu_device_id", 0)),
-                )
+                actual_runtime_kind = str(
+                    getattr(getattr(grav_model, "_force_runtime", None), "runtime_model_kind", "")
+                    or getattr(grav_model, "config", {}).get("runtime_model_kind", "")
+                ).strip()
+                expected_runtime_kind = str(getattr(plan, "runtime_model_kind", "") or "").strip()
+                if (
+                    expected_runtime_kind
+                    and actual_runtime_kind
+                    and actual_runtime_kind != expected_runtime_kind
+                ):
+                    raise TorchSTLRPSPreflightError(
+                        "GPU ST-LRPS artifact kind mismatch: backend policy expects "
+                        f"{expected_runtime_kind!r}, loaded runtime is {actual_runtime_kind!r}."
+                    )
+                prop_kwargs: dict[str, Any] = {
+                    "surrogate_model": grav_model,
+                    "mc_cfg": self._mc,
+                    "device_id": int(getattr(self._mc, "gpu_device_id", 0)),
+                }
+                constructor_params = inspect.signature(TorchBatchPropagator).parameters
+                if "ephem" in constructor_params:
+                    prop_kwargs["ephem"] = getattr(self._dyn, "ephem", None)
+                if "allow_identity_rotation" in constructor_params:
+                    prop_kwargs["allow_identity_rotation"] = bool(
+                        getattr(self._dyn, "allow_identity_rotation", False)
+                    )
+                return TorchBatchPropagator(**prop_kwargs)
+            except TorchSTLRPSPreflightError:
+                raise
             except Exception as exc:
                 note = (
                     f"[MC] GPU ST-LRPS backend initialization failed ({exc}). "
@@ -903,20 +1070,15 @@ class MonteCarloEngine:
         )
 
         # -----------------------------------------------------------------
-        # 2) Output writer + propagator
+        # 2) Propagator + output storage contract
         # -----------------------------------------------------------------
-        writer = _make_writer(mc, N)
         prop   = self._build_propagator()
 
         # Fail-fast: validate gravity model contract before entering the sample
         # loop.  Without this check the CPU propagator catches the same missing-
         # attribute error N times and prints N identical "Sample i failed" lines.
         if hasattr(prop, "validate_gravity_assets"):
-            try:
-                prop.validate_gravity_assets()
-            except RuntimeError:
-                writer.close()
-                raise
+            prop.validate_gravity_assets()
 
         # Human-readable backend label derived from the *resolved plan's* actual
         # backend — never from the propagator class name. The class name cannot
@@ -936,6 +1098,29 @@ class MonteCarloEngine:
 
         duration_s  = float(cfg.time.duration_s)
         output_dt_s = float(cfg.time.output_dt_s or mc.dt_s * 10)
+        t_out_contract, _, _ = build_mc_output_grid(duration_s, output_dt_s)
+        result_bytes = mc.estimated_result_bytes(len(t_out_contract))
+        memory_limit_bytes = int(float(mc.max_result_memory_gb) * (1024.0 ** 3))
+        storage_mode = str(mc.result_storage_mode)
+        if storage_mode == "auto":
+            storage_mode = (
+                "disk"
+                if mc.output_format == "hdf5" and result_bytes > memory_limit_bytes
+                else "memory"
+            )
+        if (
+            mc.output_format == "npz"
+            and result_bytes > memory_limit_bytes
+            and mc.result_storage_mode == "auto"
+        ):
+            raise MemoryError(
+                "Estimated eager Monte Carlo trajectory size "
+                f"({result_bytes / (1024.0 ** 3):.2f} GiB) exceeds "
+                f"max_result_memory_gb={mc.max_result_memory_gb:g}. "
+                "Use HDF5 output for disk-backed streaming or explicitly choose "
+                "result_storage_mode='memory'."
+            )
+        writer = _make_writer(mc, N, t_out_contract)
 
         print(
             f"[MC] N={N}  backend={backend_name}  "
@@ -950,7 +1135,7 @@ class MonteCarloEngine:
             tpb = backend_diag.get("threads_per_block")
             if device_name:
                 print(
-                    f"[MC] GPU device={device_name}  tpb={tpb}  "
+                    f"[MC] runtime device={device_name}  tpb={tpb}  "
                     f"batch_cap~{max_batch}",
                     flush=True,
                 )
@@ -970,11 +1155,22 @@ class MonteCarloEngine:
             detail="Propagation starting",
         )
 
-        # Accumulators for the full ensemble
-        t_out_ref: np.ndarray | None = None
-        Y_all: np.ndarray | None = None   # will be (T, N, 6) after first batch
+        # Result arrays stay eager only in memory mode. Disk mode writes each
+        # sample batch directly into the final HDF5 trajectory dataset.
+        t_out_ref = t_out_contract
+        writer_buffer = getattr(writer, "memory_buffer", None)
+        Y_all: np.ndarray | None = None
+        if storage_mode == "memory":
+            Y_all = (
+                writer_buffer
+                if isinstance(writer_buffer, np.ndarray)
+                else np.empty((len(t_out_ref), N, 6), dtype=np.float64)
+            )
         impact_all   = np.zeros(N, dtype=np.float64)
         t_impact_all = np.full(N, np.nan, dtype=np.float64)
+        valid_all = np.zeros(N, dtype=np.float64)
+        impact_position_inertial = np.full((N, 3), np.nan, dtype=np.float64)
+        impact_position_fixed = np.full((N, 3), np.nan, dtype=np.float64)
 
         # Throughput accumulators across engine sub-batches. Aggregated as
         # total_state_steps / total_propagation_time (NOT an average of per-batch
@@ -1016,16 +1212,20 @@ class MonteCarloEngine:
                     detail=f"Batch {_b_idx + 1}/{n_batches}",
                 )
 
-            t_b, Y_b, imp_b, t_imp_b = prop.propagate(
-                Y0[b_start:b_end],
-                masses[b_start:b_end],
-                areas[b_start:b_end],
-                cds[b_start:b_end],
-                crs[b_start:b_end],
-                duration_s=duration_s,
-                output_dt_s=output_dt_s,
-                callback=_batch_progress,
-            )
+            try:
+                t_b, Y_b, imp_b, t_imp_b = prop.propagate(
+                    Y0[b_start:b_end],
+                    masses[b_start:b_end],
+                    areas[b_start:b_end],
+                    cds[b_start:b_end],
+                    crs[b_start:b_end],
+                    duration_s=duration_s,
+                    output_dt_s=output_dt_s,
+                    callback=_batch_progress,
+                )
+            except Exception:
+                writer.abort()
+                raise
 
             # Accumulate this batch's throughput counters (only backends that
             # expose them populate these keys; others contribute nothing).
@@ -1035,26 +1235,63 @@ class MonteCarloEngine:
                 _agg_active_steps += int(_bd.get("total_active_state_steps", 0) or 0)
                 _agg_elapsed_s += float(_bd.get("propagation_elapsed_s", 0.0) or 0.0)
 
-            # First batch defines the reference time grid
-            if t_out_ref is None:
-                t_out_ref = t_b
-                Y_all = np.zeros((len(t_b), N, 6), dtype=np.float64)
-            # Y_all is allocated on the first batch and persists across batches.
-            assert Y_all is not None
-
             # Resample to reference grid if needed
             if len(t_b) == len(t_out_ref) and np.allclose(t_b, t_out_ref, rtol=1e-6):
-                Y_all[:, b_start:b_end, :] = Y_b
+                Y_ref = np.ascontiguousarray(Y_b, dtype=np.float64)
             else:
                 # Linear interpolation to reference grid
+                Y_ref = np.empty((len(t_out_ref), b_n, 6), dtype=np.float64)
                 for j in range(b_n):
                     for c in range(6):
-                        Y_all[:, b_start + j, c] = np.interp(
+                        Y_ref[:, j, c] = np.interp(
                             t_out_ref, t_b, Y_b[:, j, c]
                         )
 
             impact_all[b_start:b_end] = imp_b
+            valid_b = np.isfinite(Y_ref).all(axis=(0, 2))
+            valid_all[b_start:b_end] = valid_b.astype(np.float64)
+
+            batch_impact_positions = np.full((b_n, 3), np.nan, dtype=np.float64)
+            if hasattr(prop, "last_impact_positions_inertial"):
+                candidate_positions = np.asarray(
+                    prop.last_impact_positions_inertial(), dtype=np.float64
+                )
+                if candidate_positions.shape == (b_n, 3):
+                    batch_impact_positions[:] = candidate_positions
+            for j in range(b_n):
+                if (
+                    imp_b[j] > 0.5
+                    and not np.isfinite(batch_impact_positions[j]).all()
+                ):
+                    if np.isfinite(t_imp_b[j]):
+                        hit_idx = int(np.argmin(np.abs(t_b - float(t_imp_b[j]))))
+                    else:
+                        radii = np.linalg.norm(Y_b[:, j, :3], axis=1)
+                        hits = np.where(
+                            radii
+                            <= float(R_MOON) + float(mc.impact_alt_km) * 1_000.0
+                        )[0]
+                        hit_idx = int(hits[0]) if hits.size else len(t_b) - 1
+                        t_imp_b[j] = float(t_b[hit_idx])
+                    batch_impact_positions[j] = Y_b[hit_idx, j, :3]
             t_impact_all[b_start:b_end] = t_imp_b
+            impact_position_inertial[b_start:b_end] = batch_impact_positions
+            impact_position_fixed[b_start:b_end] = _impact_positions_fixed(
+                getattr(self._dyn, "ephem", None),
+                np.asarray(t_imp_b, dtype=np.float64),
+                batch_impact_positions,
+                allow_identity=bool(
+                    getattr(self._dyn, "allow_identity_rotation", False)
+                ),
+            )
+
+            try:
+                writer.write_sample_batch(b_start, b_end, Y_ref)
+            except Exception:
+                writer.abort()
+                raise
+            if Y_all is not None and Y_all is not writer_buffer:
+                Y_all[:, b_start:b_end, :] = Y_ref
 
             self._publish_progress(
                 stage="propagating",
@@ -1083,20 +1320,7 @@ class MonteCarloEngine:
                 backend_diag["active_state_steps_per_second"] = _agg_active_steps / _agg_elapsed_s
 
         # -----------------------------------------------------------------
-        # 4) Compute impact times (t_impact_s)
-        # -----------------------------------------------------------------
-        r_impact = float(R_MOON) + float(mc.impact_alt_km) * 1_000.0
-        assert Y_all is not None
-        for i in range(N):
-            if impact_all[i] > 0.5 and not np.isfinite(float(t_impact_all[i])):
-                # Find first time the spacecraft crossed the impact sphere
-                r_history = np.linalg.norm(Y_all[:, i, :3], axis=1)
-                hit_idx = np.argmax(r_history <= r_impact)
-                if hit_idx > 0 and t_out_ref is not None:
-                    t_impact_all[i] = float(t_out_ref[hit_idx])
-
-        # -----------------------------------------------------------------
-        # 5) Write to disk
+        # 4) Finalize archive metadata
         # -----------------------------------------------------------------
         # Collect ST-LRPS provenance metadata when the surrogate backend is active.
         _grav_model = getattr(self._dyn, "grav", None)
@@ -1147,11 +1371,22 @@ class MonteCarloEngine:
                 "numba_cuda_available": _plan.numba_cuda_available,
                 "cuda_device_name": backend_diag.get("device_name") or getattr(_plan, "cuda_device_name", None),
                 "dtype": backend_diag.get("dtype") or getattr(_plan, "dtype", "float64"),
+                "state_dtype": backend_diag.get("state_dtype")
+                    or backend_diag.get("dtype")
+                    or getattr(_plan, "dtype", "float64"),
+                "model_dtype": backend_diag.get("model_dtype"),
+                "acceleration_output_dtype": backend_diag.get("acceleration_output_dtype"),
+                "frame_mode": backend_diag.get("frame_mode", "unknown"),
                 "integrator": backend_diag.get("integrator") or _plan.integrator,
                 "batch_size": max_batch,
                 "chunk_size": backend_diag.get("chunk_size", max_batch),
                 "fallback_applied": bool(getattr(_plan, "fallback_applied", False)),
-                "fallback_reason": getattr(_plan, "fallback_reason", "") or (_plan.reason if not _plan.use_gpu else ""),
+                "fallback_reason": (
+                    getattr(_plan, "fallback_reason", "")
+                    if bool(getattr(_plan, "fallback_applied", False))
+                    else ""
+                ),
+                "selection_reason": getattr(_plan, "reason", ""),
                 "physics_capabilities": _active_physics_capabilities(self._sim_cfg),
             }
         except Exception:
@@ -1160,46 +1395,58 @@ class MonteCarloEngine:
                 "requested_sh_degree": int(mc.gpu_sh_degree),
             }
 
-        writer.write_metadata(
-            n_samples=N,
-            seed=int(mc.seed),
-            duration_s=duration_s,
-            output_dt_s=output_dt_s,
-            requested_backend="GPU" if bool(mc.use_gpu) else "CPU",
-            gpu_sh_degree=int(mc.gpu_sh_degree),
-            backend=backend_name,
-            backend_note=self._backend_note,
-            backend_diagnostics=backend_diag,
-            **_st_lrps_meta,
-            **_plan_meta,
-        )
-        if t_out_ref is not None and Y_all is not None:
-            total_rows = max(int(len(t_out_ref)), 1)
-            for k, t_k in enumerate(t_out_ref):
-                writer.write_snapshot(float(t_k), Y_all[k])
-                if k == 0 or (k + 1) == total_rows or ((k + 1) % max(1, total_rows // 20) == 0):
-                    self._publish_progress(
-                        stage="writing",
-                        stage_fraction=(float(k + 1) / float(total_rows)),
-                        total_samples=N,
-                        done_samples=float(N),
-                        elapsed_s=time.perf_counter() - t_wall0,
-                        backend=backend_name,
-                        batch_index=n_batches,
-                        batch_count=n_batches,
-                        detail=f"Writing snapshots {k + 1}/{total_rows}",
-                    )
-
         try:
-            writer.write_final(sc_samples, impact_all, t_impact_all)
-        finally:
-            writer.close()
+            writer.write_metadata(
+                archive_schema_version=2,
+                n_samples=N,
+                seed=int(mc.seed),
+                duration_s=duration_s,
+                output_dt_s=output_dt_s,
+                requested_backend="GPU" if bool(mc.use_gpu) else "CPU",
+                gpu_sh_degree=int(mc.gpu_sh_degree),
+                backend=backend_name,
+                backend_note=self._backend_note,
+                backend_diagnostics=backend_diag,
+                result_storage_mode=storage_mode,
+                estimated_result_bytes=result_bytes,
+                detect_impact=bool(mc.impact_detection_enabled),
+                compute_impact_statistics=bool(mc.impact_statistics_enabled),
+                **_st_lrps_meta,
+                **_plan_meta,
+            )
+            writer.write_final(
+                sc_samples,
+                impact_all,
+                t_impact_all,
+                valid_all,
+                impact_position_inertial,
+                impact_position_fixed,
+            )
+            self._publish_progress(
+                stage="writing",
+                stage_fraction=1.0,
+                total_samples=N,
+                done_samples=float(N),
+                elapsed_s=time.perf_counter() - t_wall0,
+                backend=backend_name,
+                batch_index=n_batches,
+                batch_count=n_batches,
+                detail="Finalizing archive",
+            )
+            writer.finalize()
+        except Exception:
+            writer.abort()
+            raise
 
         t_wall = time.perf_counter() - t_wall0
-        n_hit  = int(np.sum(impact_all > 0.5))
+        valid_bool = valid_all > 0.5
+        n_valid = int(np.sum(valid_bool))
+        n_hit = int(np.sum(valid_bool & (impact_all > 0.5)))
+        impact_fraction = float(n_hit) / n_valid if n_valid else math.nan
         print(
             f"[MC] Done. Wall={t_wall:.1f}s  "
-            f"impacts={n_hit}/{N} ({100.0 * n_hit / N:.1f}%)",
+            f"impacts={n_hit}/{n_valid} "
+            f"({100.0 * impact_fraction:.1f}%)",
             flush=True,
         )
         self._publish_progress(
@@ -1215,32 +1462,35 @@ class MonteCarloEngine:
         )
 
         # -----------------------------------------------------------------
-        # 6) Build result
+        # 5) Build result
         # -----------------------------------------------------------------
-        if t_out_ref is None or Y_all is None:
-            t_out_ref = np.array([0.0], dtype=np.float64)
-            Y_all = np.zeros((1, N, 6), dtype=np.float64)
-
-        # Validity contract: a sample whose entire trajectory is NaN failed to
-        # propagate (CPU partial failure under allow_sample_failures). Surface a
-        # valid_mask so consumers exclude failed samples from ensemble statistics
-        # rather than treating NaN-filled trajectories as real states.
-        valid_mask = (~np.isnan(Y_all).all(axis=(0, 2))).astype(np.float64)
-        n_failed = int(np.sum(valid_mask < 0.5))
+        if storage_mode == "disk":
+            Y_result: Any = HDF5TrajectoryView(mc.output_path_resolved)
+        else:
+            if Y_all is None:
+                raise RuntimeError("Eager MC result buffer was not initialized.")
+            Y_result = Y_all
+        n_failed = int(np.sum(valid_all < 0.5))
 
         return MCRunResult(
             t=t_out_ref,
-            Y=Y_all,
+            Y=Y_result,
             sc_samples=sc_samples,
             impact_mask=impact_all,
             t_impact=t_impact_all,
-            valid_mask=valid_mask,
+            valid_mask=valid_all,
+            impact_position_inertial_m=impact_position_inertial,
+            impact_position_fixed_m=impact_position_fixed,
+            archive_path=str(mc.output_path_resolved),
             diagnostics={
                 "wall_time_s": float(t_wall),
                 "n_samples": N,
+                "n_valid_samples": n_valid,
                 "n_failed_samples": n_failed,
                 "n_impacts": n_hit,
-                "impact_fraction": float(n_hit) / N,
+                "impact_fraction": impact_fraction,
+                "impact_detection_enabled": bool(mc.impact_detection_enabled),
+                "impact_statistics_enabled": bool(mc.impact_statistics_enabled),
                 "backend": backend_name,
                 "backend_note": self._backend_note,
                 "output_path": str(mc.output_path_resolved),
@@ -1254,6 +1504,8 @@ class MonteCarloEngine:
                 "actual_sh_degree": _plan_meta.get("actual_sh_degree"),
                 "runtime_model_kind": _plan_meta.get("runtime_model_kind"),
                 "fallback_reason": _plan_meta.get("fallback_reason"),
+                "selection_reason": _plan_meta.get("selection_reason"),
+                "result_storage_mode": storage_mode,
             },
         )
 
@@ -1262,7 +1514,18 @@ class MonteCarloEngine:
 # 4.             LOADER: read back a previously saved run
 # =============================================================================
 
-def load_mc_result(path: str) -> MCRunResult:
+def _infer_valid_mask_from_dataset(dataset: Any, chunk_size: int = 256) -> np.ndarray:
+    """Infer legacy validity without materializing the full trajectory."""
+    n_samples = int(dataset.shape[1])
+    valid = np.zeros(n_samples, dtype=np.float64)
+    for start in range(0, n_samples, chunk_size):
+        end = min(n_samples, start + chunk_size)
+        block = np.asarray(dataset[:, start:end, :], dtype=np.float64)
+        valid[start:end] = np.isfinite(block).all(axis=(0, 2)).astype(np.float64)
+    return valid
+
+
+def load_mc_result(path: str, *, lazy: bool = False) -> MCRunResult:
     """
     Reload a saved ``MCRunResult`` from HDF5 or NPZ file.
 
@@ -1285,17 +1548,40 @@ def load_mc_result(path: str) -> MCRunResult:
             raise ImportError("h5py required to read HDF5 MC output.") from None
         with h5py.File(str(p), "r") as f:
             t_arr  = np.asarray(f["t"],           dtype=np.float64)
-            Y_arr  = np.asarray(f["Y"],           dtype=np.float64)
+            Y_arr: Any = (
+                HDF5TrajectoryView(p)
+                if lazy
+                else np.asarray(f["Y"], dtype=np.float64)
+            )
             sc     = np.asarray(f["sc_samples"],  dtype=np.float64)
             imask  = np.asarray(f["impact_flags"], dtype=np.float64)
             t_imp  = np.asarray(f["t_impact"],    dtype=np.float64)
+            valid = (
+                np.asarray(f["valid_mask"], dtype=np.float64)
+                if "valid_mask" in f
+                else _infer_valid_mask_from_dataset(f["Y"])
+            )
+            impact_i = (
+                np.asarray(f["impact_position_inertial_m"], dtype=np.float64)
+                if "impact_position_inertial_m" in f
+                else None
+            )
+            impact_f = (
+                np.asarray(f["impact_position_fixed_m"], dtype=np.float64)
+                if "impact_position_fixed_m" in f
+                else None
+            )
             diagnostics = {
-                str(key): _metadata_value_to_jsonable(value)
+                str(key): _decode_metadata_value(value)
                 for key, value in dict(f.attrs).items()
             }
         return MCRunResult(
             t=t_arr, Y=Y_arr, sc_samples=sc,
             impact_mask=imask, t_impact=t_imp,
+            valid_mask=valid,
+            impact_position_inertial_m=impact_i,
+            impact_position_fixed_m=impact_f,
+            archive_path=str(p),
             diagnostics=diagnostics,
         )
 
@@ -1310,6 +1596,22 @@ def load_mc_result(path: str) -> MCRunResult:
                 sc_samples=data["sc_samples"],
                 impact_mask=data["impact_flags"],
                 t_impact=data["t_impact"],
+                valid_mask=(
+                    data["valid_mask"]
+                    if "valid_mask" in data.files
+                    else np.isfinite(data["Y"]).all(axis=(0, 2)).astype(np.float64)
+                ),
+                impact_position_inertial_m=(
+                    data["impact_position_inertial_m"]
+                    if "impact_position_inertial_m" in data.files
+                    else None
+                ),
+                impact_position_fixed_m=(
+                    data["impact_position_fixed_m"]
+                    if "impact_position_fixed_m" in data.files
+                    else None
+                ),
+                archive_path=str(p),
                 diagnostics=diagnostics,
             )
 
@@ -1331,6 +1633,7 @@ __all__ = [
     "MonteCarloEngine",
     "sample_initial_states",
     "sample_spacecraft_props",
+    "HDF5TrajectoryView",
     "load_mc_result",
     "mc_entry",
 ]

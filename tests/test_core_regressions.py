@@ -42,15 +42,25 @@ def test_single_sample_quaternion_table_still_builds_fixed_frame_mapper() -> Non
 
 def test_load_mc_result_restores_npz_metadata_into_diagnostics(tmp_path: Path) -> None:
     output_path = tmp_path / "mc_metadata.npz"
-    writer = _NPZWriter(output_path, n_samples=1)
+    t = np.asarray([0.0, 30.0], dtype=np.float64)
+    writer = _NPZWriter(output_path, n_samples=1, t_grid=t)
     writer.write_metadata(seed=7, output_dt_s=30.0, backend="cpu")
-    writer.write_snapshot(0.0, np.zeros((1, 6), dtype=np.float64))
-    writer.write_snapshot(30.0, np.ones((1, 6), dtype=np.float64))
+    writer.write_sample_batch(
+        0,
+        1,
+        np.asarray(
+            [np.zeros((1, 6), dtype=np.float64), np.ones((1, 6), dtype=np.float64)]
+        ),
+    )
     writer.write_final(
         sc_samples=np.asarray([[1000.0, 5.0, 2.2, 1.5]], dtype=np.float64),
         impact_flags=np.asarray([0.0], dtype=np.float64),
         t_impact=np.asarray([np.nan], dtype=np.float64),
+        valid_mask=np.asarray([1.0], dtype=np.float64),
+        impact_position_inertial_m=np.full((1, 3), np.nan),
+        impact_position_fixed_m=np.full((1, 3), np.nan),
     )
+    writer.finalize()
 
     loaded = load_mc_result(str(output_path))
 

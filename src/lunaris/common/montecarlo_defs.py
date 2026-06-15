@@ -22,8 +22,11 @@ Units
 
 from __future__ import annotations
 
+import math
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -52,9 +55,9 @@ def build_mc_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Arra
     Parameters
     ----------
     duration_s : total propagation span [s] (> 0).
-    output_dt_s : requested snapshot interval [s] (> 0). The realized interval
-        ``snap_interval_s = duration_s / n_snaps`` may differ slightly so the
-        last sample lands exactly on ``duration_s`` instead of overshooting.
+    output_dt_s : maximum requested snapshot interval [s] (> 0). The realized
+        interval ``snap_interval_s = duration_s / ceil(duration_s/output_dt_s)``
+        never exceeds it, while the last sample lands exactly on ``duration_s``.
 
     Returns
     -------
@@ -72,7 +75,7 @@ def build_mc_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Arra
     if not (out_dt > 0.0):
         raise ValueError(f"output_dt_s must be > 0, got {output_dt_s!r}")
 
-    n_snaps = max(1, int(round(duration / out_dt)))
+    n_snaps = max(1, int(math.ceil(duration / out_dt)))
     t_out = np.linspace(0.0, duration, n_snaps + 1, dtype=np.float64)
     snap_interval_s = duration / n_snaps
     return t_out, n_snaps, snap_interval_s
@@ -292,9 +295,13 @@ class MonteCarloConfig:
     output_format: str = "hdf5"     # "hdf5" or "npz"
     output_path: str = "outputs/monte_carlo/mc_output.h5"
     max_vram_gb: float = 4.0        # VRAM budget (caps batch size automatically)
+    result_storage_mode: str = "auto"  # "auto", "memory", or "disk"
+    max_result_memory_gb: float = 1.0
 
     # Statistical analysis
-    compute_impact_probability: bool = True
+    detect_impact: bool | None = None
+    compute_impact_statistics: bool | None = None
+    compute_impact_probability: bool | None = None
     impact_alt_km: float = 0.0      # Impact detection threshold [km]
     sigma_levels: tuple[float, ...] = (1.0, 2.0, 3.0)
 
@@ -360,10 +367,28 @@ class MonteCarloConfig:
             raise ValueError(
                 f"output_format must be 'hdf5' or 'npz', got {self.output_format!r}"
             )
+        if self.result_storage_mode not in ("auto", "memory", "disk"):
+            raise ValueError(
+                "result_storage_mode must be 'auto', 'memory', or 'disk', "
+                f"got {self.result_storage_mode!r}"
+            )
+        if self.result_storage_mode == "disk" and self.output_format != "hdf5":
+            raise ValueError("result_storage_mode='disk' requires output_format='hdf5'.")
+        if self.max_result_memory_gb <= 0.0:
+            raise ValueError(
+                f"max_result_memory_gb must be > 0, got {self.max_result_memory_gb}"
+            )
         if self.max_vram_gb <= 0.0:
             raise ValueError(f"max_vram_gb must be > 0, got {self.max_vram_gb}")
         if self.impact_alt_km < 0.0:
             raise ValueError(f"impact_alt_km must be >= 0, got {self.impact_alt_km}")
+        if self.compute_impact_probability is not None:
+            warnings.warn(
+                "compute_impact_probability is deprecated; use detect_impact and "
+                "compute_impact_statistics.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     @property
     def output_path_resolved(self) -> Path:
@@ -381,6 +406,26 @@ class MonteCarloConfig:
         budget = self.max_vram_gb * 1e9 * 0.80
         return max(1, int(budget / max(1, state_bytes_per_sample)))
 
+    @property
+    def impact_detection_enabled(self) -> bool:
+        if self.detect_impact is not None:
+            return bool(self.detect_impact)
+        if self.compute_impact_probability is not None:
+            return bool(self.compute_impact_probability)
+        return True
+
+    @property
+    def impact_statistics_enabled(self) -> bool:
+        if self.compute_impact_statistics is not None:
+            return bool(self.compute_impact_statistics)
+        if self.compute_impact_probability is not None:
+            return bool(self.compute_impact_probability)
+        return True
+
+    def estimated_result_bytes(self, n_steps: int) -> int:
+        """Estimated bytes for an eager ``(T, N, 6)`` float64 trajectory."""
+        return int(n_steps) * int(self.n_samples) * 6 * np.dtype(np.float64).itemsize
+
 
 # =============================================================================
 # 4.                          RESULT CONTAINERS
@@ -395,7 +440,7 @@ class MCRunResult:
     -----------------
     - ``t``  : (T,)       — output time grid [s]
     - ``Y``  : (T, N, 6)  — state ensemble [m, m/s]
-    - ``sc_samples`` : (N, 4)  — sampled [mass_kg, cd, cr, area_m2] per run
+    - ``sc_samples`` : (N, 4)  — sampled [mass_kg, area_m2, cd, cr] per run
 
     ``Y[k, i, :]`` is the state of sample ``i`` at time step ``k``.
 
@@ -406,7 +451,7 @@ class MCRunResult:
     - ``t_impact[i]`` is the impact time (NaN if no impact).
     """
     t: F64Array                              # (T,)
-    Y: F64Array                              # (T, N, 6)
+    Y: Any                                   # ndarray or read-only lazy trajectory view
     sc_samples: F64Array                     # (N, 4) [mass_kg, area_m2, cd, cr]
     impact_mask: F64Array                    # (N,) bool-like float64 (0/1)
     t_impact: F64Array                       # (N,) NaN if no impact
@@ -417,15 +462,28 @@ class MCRunResult:
     # consumers exclude failed samples from ensemble statistics instead of
     # treating NaN-filled trajectories as if they were real states.
     valid_mask: F64Array | None = None
+    impact_position_inertial_m: F64Array | None = None
+    impact_position_fixed_m: F64Array | None = None
+    archive_path: str | None = None
 
     def __post_init__(self) -> None:
         self.t = np.ascontiguousarray(self.t, dtype=np.float64)
-        self.Y = np.ascontiguousarray(self.Y, dtype=np.float64)
+        is_lazy = bool(getattr(self.Y, "_lunaris_lazy_trajectory", False))
+        if not is_lazy:
+            self.Y = np.ascontiguousarray(self.Y, dtype=np.float64)
         self.sc_samples = np.ascontiguousarray(self.sc_samples, dtype=np.float64)
         self.impact_mask = np.ascontiguousarray(self.impact_mask, dtype=np.float64)
         self.t_impact = np.ascontiguousarray(self.t_impact, dtype=np.float64)
         if self.valid_mask is not None:
             self.valid_mask = np.ascontiguousarray(self.valid_mask, dtype=np.float64)
+        if self.impact_position_inertial_m is not None:
+            self.impact_position_inertial_m = np.ascontiguousarray(
+                self.impact_position_inertial_m, dtype=np.float64
+            )
+        if self.impact_position_fixed_m is not None:
+            self.impact_position_fixed_m = np.ascontiguousarray(
+                self.impact_position_fixed_m, dtype=np.float64
+            )
 
         n_t = self.t.shape[0]
         n_samp = self.Y.shape[1] if self.Y.ndim == 3 else 0
@@ -454,6 +512,12 @@ class MCRunResult:
             raise ValueError(
                 f"valid_mask must be (N,), got {self.valid_mask.shape}"
             )
+        for name, value in (
+            ("impact_position_inertial_m", self.impact_position_inertial_m),
+            ("impact_position_fixed_m", self.impact_position_fixed_m),
+        ):
+            if value is not None and value.shape != (n_samp, 3):
+                raise ValueError(f"{name} must be (N, 3), got {value.shape}")
 
     @property
     def n_samples(self) -> int:
@@ -466,6 +530,12 @@ class MCRunResult:
             return int(self.Y.shape[1])
         return int(np.sum(self.valid_mask > 0.5))
 
+    def valid_sample_mask(self) -> np.ndarray:
+        """Canonical boolean validity mask used by analysis and reporting."""
+        if self.valid_mask is None:
+            return np.ones(self.n_samples, dtype=bool)
+        return np.asarray(self.valid_mask > 0.5, dtype=bool)
+
     @property
     def n_steps(self) -> int:
         return int(self.t.shape[0])
@@ -473,17 +543,25 @@ class MCRunResult:
     @property
     def n_survived(self) -> int:
         """Number of samples that completed without impact."""
-        return int(np.sum(self.impact_mask == 0))
+        return int(np.sum(self.valid_sample_mask() & (self.impact_mask < 0.5)))
 
     @property
     def impact_fraction(self) -> float:
         """Fraction of samples that impacted the surface."""
-        return float(np.mean(self.impact_mask > 0.5))
+        valid = self.valid_sample_mask()
+        n_valid = int(np.sum(valid))
+        if n_valid == 0:
+            raise ValueError("impact fraction is undefined: no valid samples")
+        return float(np.sum(valid & (self.impact_mask > 0.5)) / n_valid)
 
     def survived_trajectories(self) -> F64Array:
         """Return Y[:, mask, :] for non-impacting samples only."""
-        mask = self.impact_mask < 0.5
+        mask = self.valid_sample_mask() & (self.impact_mask < 0.5)
         return self.Y[:, mask, :]
+
+    @property
+    def is_lazy(self) -> bool:
+        return bool(getattr(self.Y, "_lunaris_lazy_trajectory", False))
 
 
 # =============================================================================
