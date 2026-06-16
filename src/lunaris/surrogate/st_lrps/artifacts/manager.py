@@ -20,6 +20,7 @@ from typing import Any, Literal
 import numpy as np
 import torch
 
+from lunaris.common.hashing import canonical_json_sha256, canonical_json_text
 from lunaris.surrogate.st_lrps.networks.models import (
     ARCH_SIGNATURE_FIELDS,
     MODEL_BUILDER_VERSION,
@@ -36,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 CHECKPOINT_SCHEMA_VERSION = "st_lrps_checkpoint_v2"
 RUN_MANIFEST_SCHEMA_VERSION = "st_lrps_run_manifest_v1"
+# Reproducibility/provenance block recorded into config.json, the run manifest,
+# and every checkpoint. Bump when the required field set changes; the audit gate
+# (lunaris.analysis.monte_carlo.result_audit.classify_st_lrps_run) keys off this.
+ST_LRPS_PROVENANCE_VERSION = "st_lrps_run_provenance_v1"
 CHECKPOINTS_MANIFEST_SCHEMA_VERSION = "st_lrps_checkpoints_manifest_v1"
 EVAL_MANIFEST_SCHEMA_VERSION = "st_lrps_eval_manifest_v1"
 
@@ -159,13 +164,9 @@ def _json_safe(value: Any) -> Any:
 
 
 def _canonical_json_text(payload: Mapping[str, Any], *, indent: int = 2) -> str:
-    return json.dumps(
-        _json_safe(dict(payload)),
-        indent=indent,
-        sort_keys=True,
-        ensure_ascii=True,
-        default=str,
-    ) + "\n"
+    # _json_safe normalizes torch/numpy/Path; the byte format itself is owned by
+    # lunaris.common.hashing so the auditor recomputes identical digests.
+    return canonical_json_text(_json_safe(dict(payload)), indent=indent)
 
 
 def atomic_write_json(path: Path, payload: dict, *, indent: int = 2) -> None:
@@ -240,6 +241,100 @@ def _compute_payload_sha256(payload: Mapping[str, Any]) -> str:
 
 def compute_payload_sha256(payload: Mapping[str, Any]) -> str:
     return _compute_payload_sha256(payload)
+
+
+def resolve_git_commit() -> str | None:
+    """Best-effort current git commit SHA for run provenance.
+
+    The ``GIT_COMMIT`` environment variable wins so CI can pin provenance without
+    a working tree; otherwise we fall back to ``git rev-parse HEAD``. Returns
+    ``None`` when neither is available (e.g. running outside a checkout).
+    """
+    env_commit = _coerce_str_or_none(os.environ.get("GIT_COMMIT"))
+    if env_commit:
+        return env_commit
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception:  # pragma: no cover - git missing / sandboxed
+        return None
+    if proc.returncode != 0:
+        return None
+    return _coerce_str_or_none(proc.stdout)
+
+
+def _resolve_cuda_versions() -> dict[str, Any]:
+    """Capture the torch/CUDA build identity for run provenance.
+
+    ``cuda_version``/``cudnn_version`` stay ``None`` on CPU-only hosts; that is a
+    legitimate value, not a provenance gap.
+    """
+    cuda_version: str | None
+    try:
+        cuda_version = _coerce_str_or_none(getattr(getattr(torch, "version", None), "cuda", None))
+    except Exception:  # pragma: no cover - defensive
+        cuda_version = None
+    cudnn_version: int | None = None
+    try:
+        if torch.cuda.is_available() and torch.backends.cudnn.is_available():
+            cudnn_version = _coerce_int_or_none(torch.backends.cudnn.version())
+    except Exception:  # pragma: no cover - defensive
+        cudnn_version = None
+    try:
+        cuda_available = bool(torch.cuda.is_available())
+    except Exception:  # pragma: no cover - defensive
+        cuda_available = False
+    return {
+        "cuda_available": cuda_available,
+        "cuda_version": cuda_version,
+        "cudnn_version": cudnn_version,
+    }
+
+
+def build_run_provenance(
+    *,
+    artifact_contract: Mapping[str, Any] | None,
+    split_manifest: Mapping[str, Any] | None,
+    determinism: Mapping[str, Any] | None,
+    runtime_model_kind: str | None,
+    training_config_hash: str | None = None,
+) -> dict[str, Any]:
+    """Single-source-of-truth reproducibility block for an ST-LRPS run.
+
+    Recorded identically into ``config.json``, the run manifest, and every
+    checkpoint so a result can be traced back to its code, hardware, determinism
+    settings, split, and contract. The audit gate
+    (:func:`lunaris.analysis.monte_carlo.result_audit.classify_st_lrps_run`)
+    requires these fields to *trust* a run; the two SHA-256 digests must be
+    valid, while ``git_commit``/``cuda_version`` may legitimately be ``None``.
+    """
+    cuda = _resolve_cuda_versions()
+    contract = dict(artifact_contract) if isinstance(artifact_contract, Mapping) and artifact_contract else None
+    split = dict(split_manifest) if isinstance(split_manifest, Mapping) and split_manifest else None
+    model_kind = _coerce_str_or_none(runtime_model_kind) or "potential_autograd"
+    return {
+        "provenance_version": ST_LRPS_PROVENANCE_VERSION,
+        "created_at_utc": _utcnow_iso(),
+        "git_commit": resolve_git_commit(),
+        "python_version": sys.version.replace("\n", " "),
+        "platform": platform.platform(),
+        "torch_version": getattr(torch, "__version__", "unknown"),
+        "cuda_available": cuda["cuda_available"],
+        "cuda_version": cuda["cuda_version"],
+        "cudnn_version": cuda["cudnn_version"],
+        "determinism": dict(determinism) if isinstance(determinism, Mapping) else None,
+        "model_kind": model_kind,
+        # Digests use the shared canonical_json_sha256 so result_audit can recompute
+        # and verify them without re-implementing the canonicalization.
+        "artifact_contract_sha256": canonical_json_sha256(contract) if contract is not None else None,
+        "split_manifest_sha256": canonical_json_sha256(split) if split is not None else None,
+        "training_config_hash": _coerce_str_or_none(training_config_hash),
+    }
 
 
 def _coerce_int(value: Any, *, default: int = 0) -> int:
@@ -515,6 +610,12 @@ def normalize_legacy_checkpoint(ckpt: dict) -> dict:
         normalized["config"].setdefault("artifact_contract", dict(ckpt["artifact_contract"]))
     elif isinstance(normalized["config"].get("artifact_contract"), dict):
         normalized["artifact_contract"] = dict(normalized["config"]["artifact_contract"])
+    # Preserve the reproducibility block through normalization (top-level wins,
+    # falling back to the embedded config copy) so strict validation can require it.
+    if isinstance(ckpt.get("run_provenance"), dict):
+        normalized["run_provenance"] = dict(ckpt["run_provenance"])
+    elif isinstance(normalized["config"].get("run_provenance"), dict):
+        normalized["run_provenance"] = dict(normalized["config"]["run_provenance"])
     if "model" in ckpt or "model_state_dict" not in ckpt:
         normalized["model"] = state_dict
     return normalized
@@ -591,6 +692,11 @@ def validate_checkpoint_schema(ckpt: dict, *, strict: bool = True) -> dict:
         raise RuntimeError("Canonical checkpoints must record created_at_utc.")
     if strict and not isinstance(normalized.get("artifact_contract"), dict):
         raise RuntimeError("Canonical checkpoints must record artifact_contract.")
+    if strict and not isinstance(normalized.get("run_provenance"), dict):
+        raise RuntimeError(
+            "Canonical checkpoints must record run_provenance "
+            "(reproducibility block: git/cuda/determinism/split/contract identity)."
+        )
 
     normalized["epoch"] = _coerce_int(normalized.get("epoch"), default=0)
     normalized["epoch_display"] = _coerce_int(
@@ -957,6 +1063,8 @@ def build_resolved_config(
     model: torch.nn.Module,
     scaler: Any,
     architecture_signature: str,
+    *,
+    determinism: Mapping[str, Any] | None = None,
 ) -> dict:
     cfg_dict = dict(asdict(cfg) if dataclasses.is_dataclass(cfg) else cfg)
     ds_meta = dict(dataset_meta or {})
@@ -1034,8 +1142,14 @@ def build_resolved_config(
         or _build_dataset_block_from_cfg(cfg_dict)
     )
     cfg_dict["dataset_contract"] = _json_safe(dataset_contract)
+    # run_provenance carries a timestamp / git commit, so it must never feed the
+    # config-identity hash (otherwise two identical configs hash differently).
     cfg_dict["training_config_hash"] = _compute_payload_sha256(
-        {k: v for k, v in cfg_dict.items() if k not in {"artifact_contract", "training_config_hash"}}
+        {
+            k: v
+            for k, v in cfg_dict.items()
+            if k not in {"artifact_contract", "training_config_hash", "run_provenance"}
+        }
     )
     cfg_dict["artifact_contract"] = ArtifactContract.from_legacy_config(
         cfg_dict,
@@ -1043,6 +1157,13 @@ def build_resolved_config(
         dataset_contract=cfg_dict["dataset_contract"],
         architecture_signature=architecture_signature,
     ).to_dict()
+    cfg_dict["run_provenance"] = build_run_provenance(
+        artifact_contract=cfg_dict["artifact_contract"],
+        split_manifest=ds_meta.get("split_manifest") if isinstance(ds_meta, Mapping) else None,
+        determinism=determinism if determinism is not None else cfg_dict.get("determinism"),
+        runtime_model_kind=cfg_dict.get("runtime_model_kind"),
+        training_config_hash=cfg_dict.get("training_config_hash"),
+    )
     return _json_safe(cfg_dict)
 
 
@@ -1315,6 +1436,21 @@ def build_checkpoint_payload(
         "model_builder_version": cfg_dict.get("model_builder_version", MODEL_BUILDER_VERSION),
         "scoring": scoring,
         "training_state": training_state,
+        "run_provenance": (
+            dict(cfg_dict["run_provenance"])
+            if isinstance(cfg_dict.get("run_provenance"), Mapping)
+            else build_run_provenance(
+                artifact_contract=cfg_dict.get("artifact_contract"),
+                # split_manifest is carried on the dataset_meta snapshot, not the
+                # dataset_contract block.
+                split_manifest=(dataset_meta or {}).get("split_manifest")
+                if isinstance(dataset_meta, Mapping)
+                else None,
+                determinism=cfg_dict.get("determinism"),
+                runtime_model_kind=cfg_dict.get("runtime_model_kind"),
+                training_config_hash=cfg_dict.get("training_config_hash"),
+            )
+        ),
         "created_at_utc": _utcnow_iso(),
     }
     return validate_checkpoint_schema(payload, strict=True)

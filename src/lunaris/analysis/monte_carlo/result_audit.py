@@ -39,6 +39,8 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.hashing import canonical_json_sha256
+
 # Hash-provenance keys written by MonteCarloEngine.run (§7). Presence of any one
 # means the archive carries verifiable artifact/coefficient/kernel provenance.
 _PROVENANCE_HASH_KEYS = (
@@ -67,23 +69,41 @@ _REQUIRED_V2_FIELDS = (
     "compute_impact_statistics",
 )
 
+# ST-LRPS run_provenance contract (mirrors
+# ``lunaris.surrogate.st_lrps.artifacts.manager.build_run_provenance``). Two
+# tiers, matching the trust buckets:
+#  * CORE — written by *every* training path; a missing/corrupt core field means
+#    the block is corrupt, not a real run -> INVALID.
+#  * REPRO — full reproducibility evidence (determinism flags + split digest).
+#    Present only on the canonical engine path; absent on lighter experimental
+#    harnesses, which are real but not fully verifiable -> QUARANTINED.
+# ``git_commit``/``cuda_version`` are intentionally NOT required: they are
+# legitimately ``None`` outside a checkout or on CPU-only hosts.
+_ST_LRPS_PROVENANCE_CORE_FIELDS = (
+    "provenance_version",
+    "created_at_utc",
+    "torch_version",
+    "model_kind",
+)
+_ST_LRPS_VALID_MODEL_KINDS = ("potential_autograd", "force_direct")
+
 INVALID = "invalid"
 TRUSTED = "trusted"
 QUARANTINED = "quarantined"
 RERUN = "rerun_required"
 
 
+def _is_valid_sha256(value: Any) -> bool:
+    """Return whether ``value`` is a syntactically valid lowercase SHA-256 hex digest."""
+    if not isinstance(value, str):
+        return False
+    digest = value.strip().lower()
+    return len(digest) == _SHA256_HEX_LENGTH and all(ch in "0123456789abcdef" for ch in digest)
+
+
 def _has_valid_provenance_hash(metadata: dict[str, Any]) -> bool:
     """Return whether the manifest contains at least one usable SHA-256 digest."""
-    for key in _PROVENANCE_HASH_KEYS:
-        value = metadata.get(key)
-        if not isinstance(value, str):
-            continue
-        digest = value.strip().lower()
-        is_hex = all(ch in "0123456789abcdef" for ch in digest)
-        if len(digest) == _SHA256_HEX_LENGTH and is_hex:
-            return True
-    return False
+    return any(_is_valid_sha256(metadata.get(key)) for key in _PROVENANCE_HASH_KEYS)
 
 
 def classify_mc_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tuple[str, list[str]]:
@@ -160,7 +180,18 @@ def classify_mc_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tuple
 
 
 def classify_st_lrps_run(config: dict[str, Any], *, has_checkpoint: bool) -> tuple[str, list[str]]:
-    """Classify one ST-LRPS run directory from its ``config.json`` content."""
+    """Classify one ST-LRPS run directory from its ``config.json`` content.
+
+    Trust ladder:
+      * no checkpoint / no artifact_contract -> RERUN (not loadable, pre-contract).
+      * artifact_contract present but no ``run_provenance`` block -> QUARANTINED
+        (pre-provenance run: loadable, but reproducibility cannot be verified).
+      * ``run_provenance`` present but a CORE field is missing/corrupt -> INVALID
+        (every training path writes the core block; absence means corruption).
+      * core valid but reproducibility evidence (determinism flags + split digest)
+        missing/invalid -> QUARANTINED (real run, not fully verifiable).
+      * core + reproducibility evidence all valid -> TRUSTED.
+    """
     if not has_checkpoint:
         return RERUN, ["no checkpoint (ckpt_best.pt / ckpt_last.pt) present"]
     contract = config.get("artifact_contract")
@@ -169,6 +200,58 @@ def classify_st_lrps_run(config: dict[str, Any], *, has_checkpoint: bool) -> tup
             "missing or invalid artifact_contract in config: "
             "not loadable by current runtime (pre-contract)"
         ]
+
+    provenance = config.get("run_provenance")
+    if not isinstance(provenance, dict) or not provenance:
+        return QUARANTINED, [
+            "artifact_contract present but run_provenance block missing "
+            "(pre-provenance run); quarantined pending provenance backfill"
+        ]
+
+    missing_core = [
+        f for f in _ST_LRPS_PROVENANCE_CORE_FIELDS
+        if provenance.get(f) in (None, "", {}, [])
+    ]
+    if missing_core:
+        return INVALID, [
+            "run_provenance present but missing core field(s): "
+            + ", ".join(sorted(missing_core))
+            + " (corrupt provenance block, not a complete run)"
+        ]
+    if provenance.get("model_kind") not in _ST_LRPS_VALID_MODEL_KINDS:
+        return INVALID, [
+            f"run_provenance.model_kind is not a known runtime kind "
+            f"({provenance.get('model_kind')!r}): corrupt provenance block"
+        ]
+    recorded_contract_sha = provenance.get("artifact_contract_sha256")
+    if not _is_valid_sha256(recorded_contract_sha):
+        return INVALID, [
+            "run_provenance.artifact_contract_sha256 is not a valid SHA-256 digest: "
+            "corrupt provenance block"
+        ]
+    # Recompute the contract digest from the contract actually stored in config.json
+    # (same canonicalization training used). A mismatch means the config was edited
+    # after training, or the contract/hash drifted -> the run no longer self-describes.
+    if canonical_json_sha256(contract) != recorded_contract_sha:
+        return INVALID, [
+            "artifact_contract does not match run_provenance.artifact_contract_sha256: "
+            "config.json was modified after training or the digest drifted "
+            "(run no longer self-consistent)"
+        ]
+
+    reasons: list[str] = []
+    determinism = provenance.get("determinism")
+    if not isinstance(determinism, dict) or not determinism:
+        reasons.append(
+            "run_provenance.determinism flags absent (reproducibility not captured)"
+        )
+    if not _is_valid_sha256(provenance.get("split_manifest_sha256")):
+        reasons.append(
+            "run_provenance.split_manifest_sha256 missing/invalid "
+            "(train/val/test split not pinned)"
+        )
+    if reasons:
+        return QUARANTINED, reasons
     return TRUSTED, []
 
 

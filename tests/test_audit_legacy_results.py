@@ -10,6 +10,7 @@ from lunaris.analysis.monte_carlo.result_audit import (
     classify_mc_archive,
     classify_st_lrps_run,
 )
+from lunaris.common.hashing import canonical_json_sha256
 
 # Minimal complete v2 manifest backbone (mirrors the strict-loader contract).
 _V2_BACKBONE = {
@@ -122,10 +123,84 @@ def test_st_lrps_run_without_contract_is_rerun() -> None:
     assert any("artifact_contract" in r for r in reasons)
 
 
-def test_st_lrps_run_with_contract_is_trusted() -> None:
-    status, reasons = classify_st_lrps_run({"artifact_contract": {"x": 1}}, has_checkpoint=True)
+# Contract used across the ST-LRPS classifier tests; the provenance digest must
+# match a fresh recompute (the auditor verifies it), so derive it for real.
+_CONTRACT = {"x": 1}
+
+# Complete run_provenance block (mirrors build_run_provenance's TRUSTED contract).
+_FULL_PROVENANCE = {
+    "provenance_version": "st_lrps_run_provenance_v1",
+    "created_at_utc": "2026-06-16T00:00:00Z",
+    "git_commit": None,  # legitimately None outside a checkout
+    "torch_version": "2.4.0",
+    "cuda_version": None,  # legitimately None on CPU-only hosts
+    "model_kind": "potential_autograd",
+    "determinism": {"use_deterministic_algorithms": True},
+    "artifact_contract_sha256": canonical_json_sha256(_CONTRACT),
+    "split_manifest_sha256": "b" * 64,
+}
+
+
+def _st_lrps_config(provenance=None, *, contract=_CONTRACT):
+    cfg = {"artifact_contract": dict(contract)}
+    if provenance is not None:
+        cfg["run_provenance"] = dict(provenance)
+    return cfg
+
+
+def test_st_lrps_run_with_contract_but_no_provenance_is_quarantined() -> None:
+    status, reasons = classify_st_lrps_run(_st_lrps_config(), has_checkpoint=True)
+    assert status == QUARANTINED
+    assert any("run_provenance" in r for r in reasons)
+
+
+def test_st_lrps_run_with_full_provenance_is_trusted() -> None:
+    status, reasons = classify_st_lrps_run(
+        _st_lrps_config(_FULL_PROVENANCE), has_checkpoint=True
+    )
     assert status == TRUSTED
     assert reasons == []
+
+
+def test_st_lrps_run_missing_core_provenance_field_is_invalid() -> None:
+    prov = dict(_FULL_PROVENANCE)
+    del prov["torch_version"]
+    status, reasons = classify_st_lrps_run(_st_lrps_config(prov), has_checkpoint=True)
+    assert status == INVALID
+    assert any("torch_version" in r for r in reasons)
+
+
+def test_st_lrps_run_unknown_model_kind_is_invalid() -> None:
+    prov = dict(_FULL_PROVENANCE, model_kind="magic")
+    status, reasons = classify_st_lrps_run(_st_lrps_config(prov), has_checkpoint=True)
+    assert status == INVALID
+    assert any("model_kind" in r for r in reasons)
+
+
+def test_st_lrps_run_corrupt_contract_hash_is_invalid() -> None:
+    prov = dict(_FULL_PROVENANCE, artifact_contract_sha256="not-a-hash")
+    status, reasons = classify_st_lrps_run(_st_lrps_config(prov), has_checkpoint=True)
+    assert status == INVALID
+    assert any("artifact_contract_sha256" in r for r in reasons)
+
+
+def test_st_lrps_run_contract_hash_mismatch_is_invalid() -> None:
+    # Valid-format digest, but it does not match the stored contract: config.json
+    # was edited after training, or the contract/hash drifted.
+    prov = dict(_FULL_PROVENANCE, artifact_contract_sha256=canonical_json_sha256({"x": 2}))
+    status, reasons = classify_st_lrps_run(_st_lrps_config(prov), has_checkpoint=True)
+    assert status == INVALID
+    assert any("does not match" in r for r in reasons)
+
+
+def test_st_lrps_run_without_determinism_or_split_is_quarantined() -> None:
+    # Real run from a lighter harness: core valid, reproducibility evidence absent.
+    for drop in ("determinism", "split_manifest_sha256"):
+        prov = dict(_FULL_PROVENANCE)
+        del prov[drop]
+        status, reasons = classify_st_lrps_run(_st_lrps_config(prov), has_checkpoint=True)
+        assert status == QUARANTINED, drop
+        assert any(drop.split("_")[0] in r for r in reasons)
 
 
 def test_st_lrps_run_with_empty_or_malformed_contract_is_rerun() -> None:

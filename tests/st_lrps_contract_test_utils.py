@@ -7,6 +7,7 @@ from typing import Any
 
 import torch
 
+from lunaris.common.hashing import canonical_json_sha256
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     build_checkpoint_payload,
     build_resolved_config,
@@ -200,6 +201,16 @@ def make_contract_run(
         payload["artifact_contract"] = contract
         payload["config"]["artifact_contract"] = contract
         resolved_cfg["artifact_contract"] = contract
+        # Keep run_provenance self-consistent: the auditor recomputes this digest
+        # from the (now overridden) contract, so resync it everywhere it appears.
+        new_sha = canonical_json_sha256(contract)
+        for prov in (
+            resolved_cfg.get("run_provenance"),
+            payload.get("run_provenance"),
+            payload["config"].get("run_provenance"),
+        ):
+            if isinstance(prov, dict):
+                prov["artifact_contract_sha256"] = new_sha
     if not include_contract:
         payload.pop("artifact_contract", None)
         payload.pop("schema_version", None)

@@ -46,6 +46,7 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     compute_payload_sha256,
     ensure_run_layout,
     read_run_manifest,
+    resolve_git_commit,
     resolve_resume_checkpoint,
     restore_rng_state,
     save_checkpoint,
@@ -1526,7 +1527,7 @@ def train(cfg: TrainConfig) -> None:
         "command_line": command_line,
         "command_path": str(layout.command_txt),
         "script_version": "st_lrps_engine",
-        "git_commit": os.environ.get("GIT_COMMIT") or None,
+        "git_commit": resolve_git_commit(),
         "data_paths": {
             "data": str(cfg.data),
             "train_data": str(cfg.train_data) if cfg.train_data else None,
@@ -2502,6 +2503,7 @@ def train(cfg: TrainConfig) -> None:
         model,
         scaler,
         _arch_signature,
+        determinism=_determinism_flags,
     )
     atomic_write_json(config_path, payload)
     payload_readback = json.loads(config_path.read_text(encoding="utf-8"))
@@ -2539,7 +2541,9 @@ def train(cfg: TrainConfig) -> None:
                 "target_contract",
                 "artifact_contract",
                 "training_config_hash",
+                "run_provenance",
             )},
+            "run_provenance": payload.get("run_provenance"),
             "feature_summary_path": str(layout.provenance_dir / "feature_summary.json"),
             "dataset_validation_report_path": str(layout.provenance_dir / "dataset_validation_report.json"),
             "split_manifest_path": str(split_manifest_path),
