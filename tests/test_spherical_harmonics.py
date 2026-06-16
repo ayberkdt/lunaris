@@ -526,6 +526,94 @@ def test_legendre_derivative_matches_finite_difference(sh):
             )
 
 
+# -----------------------------------------------------------------------------
+# GravityModel high-level API: properties, factories, and the object-oriented
+# acceleration methods (the lower-level kernels are tested above; these wrappers
+# were previously uncovered).
+# -----------------------------------------------------------------------------
+
+
+def test_gravity_model_properties_expose_underlying_arrays(sh, constants):
+    R_ref, GM = constants
+    model = _make_model(sh, 3, constants, c20=-9.0e-5)
+    assert model.degree_max == 3
+    assert model.R_ref_m == R_ref
+    assert model.GM_m3s2 == GM
+    # Property aliases must return the backing kernel arrays unchanged.
+    assert model.Cnm is model.c_coeffs
+    assert model.Snm is model.s_coeffs
+    assert model.diag is model.diag_coeffs
+    assert model.subdiag is model.subdiag_coeffs
+    assert model.A is model.a_coeffs
+    assert model.B is model.b_coeffs
+    assert model.scale_m is model.scale_m_table
+
+
+def test_gravity_model_from_arrays_rejects_nonfinite_params(sh, constants):
+    R_ref, GM = constants
+    C = np.zeros((3, 3))
+    S = np.zeros_like(C)
+    with pytest.raises(ValueError):
+        sh.GravityModel.from_arrays(2, math.inf, GM, C, S)
+    with pytest.raises(ValueError):
+        sh.GravityModel.from_arrays(2, R_ref, math.nan, C, S)
+
+
+def test_gravity_model_accel_fixed_matches_point_mass_for_zero_coeffs(sh, constants):
+    R_ref, GM = constants
+    model = _make_model(sh, 2, constants)  # all coeffs zero -> point mass
+    r = np.array([R_ref + 200_000.0, 0.0, 0.0])
+    a = model.accel_fixed(r)
+    assert a.shape == (3,)
+    expected_mag = GM / (r[0] ** 2)
+    assert np.linalg.norm(a) == pytest.approx(expected_mag, rel=1e-6)
+    # acceleration points inward (toward the body)
+    assert a[0] < 0.0
+    # degree=0 explicitly and a user-supplied workspace exercise both branches
+    ws = model.make_workspace()
+    a0 = model.accel_fixed(r, degree=0, workspace=ws)
+    assert np.linalg.norm(a0) == pytest.approx(expected_mag, rel=1e-6)
+
+
+def test_compute_point_mass_acceleration_origin_guard_and_inverse_square(sh, constants):
+    _, GM = constants
+    # At/near the origin the monopole returns zero (singularity guard).
+    assert sh.compute_point_mass_acceleration(0.0, 0.0, 0.0, GM) == (0.0, 0.0, 0.0)
+    # Off-origin: magnitude = GM/r^2, pointing inward.
+    r = 2.0e6
+    ax, ay, az = sh.compute_point_mass_acceleration(r, 0.0, 0.0, GM)
+    assert (ax**2 + ay**2 + az**2) ** 0.5 == pytest.approx(GM / r**2, rel=1e-12)
+    assert ax < 0.0
+
+
+def test_slice_gravity_model_validation(sh):
+    good = np.zeros((4, 4))
+    with pytest.raises(ValueError):
+        sh.slice_gravity_model(good, good, -1)              # negative degree
+    with pytest.raises(ValueError):
+        sh.slice_gravity_model(np.zeros(4), good, 2)        # not 2D
+    with pytest.raises(ValueError):
+        sh.slice_gravity_model(good, np.zeros((4, 3)), 2)   # shape mismatch
+    with pytest.raises(ValueError):
+        sh.slice_gravity_model(good, good, 10)              # not enough rows
+    # Rectangular input is zero-padded in the order dimension to a square block.
+    C = np.ones((3, 2))
+    cS, sS = sh.slice_gravity_model(C, C, 2)
+    assert cS.shape == (3, 3) and sS.shape == (3, 3)
+    assert cS[0, 2] == 0.0  # padded column
+
+
+def test_gravity_model_accel_adaptive_runs_and_is_finite(sh, constants):
+    R_ref, GM = constants
+    model = _make_model(sh, 4, constants, c20=-9.0e-5)
+    r = np.array([0.0, R_ref + 150_000.0, 0.0])
+    a = model.accel_adaptive(
+        r, degree_far=2, degree_near=4, alt_far=300_000.0, alt_near=50_000.0, degree_step=2
+    )
+    assert a.shape == (3,)
+    assert np.all(np.isfinite(a))
+
+
 if __name__ == "__main__":
     print("This is a pytest test module. Run it with:")
     print("  python -m pytest -vv -rA --durations=10 tests/test_spherical_harmonics.py")

@@ -206,6 +206,16 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+# Exclude code that is never part of the importable library under test, so the
+# coverage number reflects real tested logic rather than script-only or
+# type-checking-only lines. `exclude_also` ADDS to coverage's defaults (which
+# already include `pragma: no cover`).
+exclude_also = [
+  "if __name__ == .__main__.:",       # module self-test blocks (run via `python mod.py`, never imported)
+  "if TYPE_CHECKING:",                  # import-only type hints
+  "raise NotImplementedError",          # abstract stubs
+  "@(abc\\.)?abstractmethod",           # abstract methods
+]
 # Soft coverage floor (report-then-gate). Measured baseline of the CPU suite
 # (`-m "not slow and not requires_data and not requires_cuda"`) was 58% on
 # 2026-06-15 (1569 tests). The floor is held a few points below the baseline so

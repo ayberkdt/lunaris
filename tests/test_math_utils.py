@@ -617,6 +617,162 @@ def test_sampler_shape_mismatch_raises(fn_name, good_args, bad_data):
 
 
 
+# ---------------------------------------------------------------------------
+# Coverage hardening: defensive guards and edge branches in the numba kernels.
+# Several of these are reachable only by calling the private kernels directly
+# (the public wrappers validate first), so we exercise them explicitly. All
+# tests pass with or without NUMBA_DISABLE_JIT.
+# ---------------------------------------------------------------------------
+
+
+def test_quat_normalize_kernel_zero_norm_returns_identity():
+    # A (near-)zero quaternion must fall back to identity, never NaN/Inf.
+    q = math_utils._quat_normalize_kernel(1e-200, 0.0, 0.0, 0.0)
+    assert tuple(q) == (1.0, 0.0, 0.0, 0.0)
+    # Already-unit fast path returns the input untouched.
+    assert tuple(math_utils._quat_normalize_kernel(1.0, 0.0, 0.0, 0.0)) == (1.0, 0.0, 0.0, 0.0)
+    # Non-unit, non-zero input takes the sqrt-normalize path and returns unit length.
+    nx, ny, nz, nw = math_utils._quat_normalize_kernel(0.0, 0.0, 0.0, 2.0)
+    assert (nx, ny, nz, nw) == pytest.approx((0.0, 0.0, 0.0, 1.0))
+
+
+@pytest.mark.parametrize("bad", [np.zeros(3), np.zeros(5)])
+def test_quat_slerp_np_rejects_non_quaternion(bad):
+    good = np.array([1.0, 0.0, 0.0, 0.0])
+    with pytest.raises(ValueError):
+        math_utils.quat_slerp_np(bad, good, 0.5)
+    with pytest.raises(ValueError):
+        math_utils.quat_slerp_np(good, bad, 0.5)
+
+
+def test_table_index_frac_edge_branches():
+    # dt <= 0 or n < 2 -> safe (0, 0.0)
+    assert math_utils._table_index_frac(5.0, 0.0, 3) == (0, 0.0)
+    assert math_utils._table_index_frac(5.0, 1.0, 1) == (0, 0.0)
+    # negative t clamps index and fraction to the low edge
+    i, f = math_utils._table_index_frac(-3.0, 1.0, 4)
+    assert i == 0 and f == 0.0
+    # t beyond the table clamps to the last interpolable segment (n-2) with f=1
+    i, f = math_utils._table_index_frac(100.0, 1.0, 4)
+    assert i == 2 and f == 1.0
+
+
+def test_table_endpoint_index_rules():
+    assert math_utils._table_endpoint_index(0.0, 1.0, 0) == -1   # n <= 0 defensive
+    assert math_utils._table_endpoint_index(-1.0, 1.0, 5) == 0   # t <= 0
+    assert math_utils._table_endpoint_index(0.0, 1.0, 1) == 0    # single sample
+    assert math_utils._table_endpoint_index(100.0, 1.0, 5) == 4  # t >= tmax -> last
+    assert math_utils._table_endpoint_index(1.5, 1.0, 5) == -1   # interior -> interpolate
+
+
+def test_rv_to_coe_kernel_degenerate_states():
+    # Degenerate returns mark the orbit as ill-defined: a=inf and eps=NaN
+    # (index 6 in the 10-tuple a,e,inc,raan,argp,nu,eps,rnorm,vnorm,hnorm).
+    # |r| ~ 0
+    a, e, inc, raan, argp, nu, eps, rn, vn, hn = math_utils._rv_to_coe_kernel(
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0
+    )
+    assert a == math.inf and math.isnan(eps)
+    # invalid mu (kernel may be called directly, bypassing the public guard)
+    res = math_utils._rv_to_coe_kernel(1.0e6, 0.0, 0.0, 0.0, 1.0e3, 0.0, -1.0)
+    assert res[0] == math.inf and math.isnan(res[6])
+    # purely radial motion (v parallel to r) -> |h| ~ 0
+    res = math_utils._rv_to_coe_kernel(1.0e7, 0.0, 0.0, 1.0e3, 0.0, 0.0, 4.9e12)
+    assert res[0] == math.inf and math.isnan(res[6])
+
+
+def test_rv_to_coe_select_parabolic_and_modes():
+    # Parabolic energy (eps ~ 0) -> semi-major axis is infinite. Unit values keep
+    # the float cancellation below EPS so the branch is deterministic.
+    r = np.array([1.0, 0.0, 0.0])
+    v = np.array([0.0, math.sqrt(2.0), 0.0])
+    a = math_utils.rv_to_coe_select(r, v, 1.0, mode="coe6")[0]
+    assert a == math.inf
+    # mode selection
+    assert len(math_utils.rv_to_coe_select(r, v, 1.0, mode="coe10")) == 10
+    assert len(math_utils.rv_to_coe_select(r, v, 1.0, mode="kepler5")) == 5
+    with pytest.raises(ValueError):
+        math_utils.rv_to_coe_select(r, v, 1.0, mode="nope")  # type: ignore[arg-type]
+
+
+def test_batch_y_to_elements_modes_and_validation():
+    mu = 4.9e12
+    y = np.array(
+        [[7.0e6, 7.1e6], [0.0, 1.0e5], [0.0, 0.0],
+         [0.0, 10.0], [1.0e3, 1.0e3], [0.0, 5.0]],
+        dtype=np.float64,
+    )
+    assert len(math_utils.batch_y_to_elements(y, mu, mode="coe10")) == 10
+    assert len(math_utils.batch_y_to_elements(y, mu, mode="coe6")) == 6
+    with pytest.raises(ValueError):
+        math_utils.batch_y_to_elements(y, -1.0, mode="kepler5")
+    with pytest.raises(ValueError):
+        math_utils.batch_y_to_elements(y, mu, mode="bogus")  # type: ignore[arg-type]
+
+
+def test_validate_grid_data_error_branches():
+    # flat size mismatch
+    with pytest.raises(ValueError):
+        math_utils._validate_grid_data(np.zeros(5), 2, 2)
+    # ndim > 2
+    with pytest.raises(ValueError):
+        math_utils._validate_grid_data(np.zeros((2, 2, 2)), 2, 2)
+
+
+def test_sampler_kernels_reject_nonpositive_dims_directly():
+    # The public wrappers validate first, so hit the kernel guards directly.
+    dummy = np.zeros((1, 1))
+    assert math.isnan(math_utils._sample_2d_nearest_kernel(dummy, 0.0, 0.0, 0, 1))
+    assert math.isnan(math_utils._sample_2d_bilinear_kernel(dummy, 0.0, 0.0, 0, 1))
+    assert math.isnan(
+        math_utils._sample_grid_bilinear_kernel(0.0, 0.0, dummy, 0, 1, 1.0, 0.0, 0.0)
+    )
+    assert math.isnan(
+        math_utils._sample_2d_scaled_nearest_kernel(dummy, 0.0, 0.0, 0, 1, 1.0, 0.0, -9999.0)
+    )
+    assert math.isnan(
+        math_utils._sample_2d_scaled_bilinear_kernel(dummy, 0.0, 0.0, 0, 1, 1.0, 0.0, -9999.0)
+    )
+
+
+def test_bilinear_row_clamp_edges():
+    data = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float64)
+    # row_f below 0 and above last both clamp to an edge row (no extrapolation)
+    below = math_utils.sample_2d_bilinear(data, -5.0, 0.0, 2, 2)
+    above = math_utils.sample_2d_bilinear(data, 99.0, 0.0, 2, 2)
+    assert below == 0.0  # top row
+    assert above == 2.0  # bottom row
+
+
+def test_sample_grid_bilinear_input_validation():
+    data = np.zeros((2, 2))
+    with pytest.raises(ValueError):
+        math_utils.sample_grid_bilinear(0.0, 0.0, data, 0, 2, 1.0, 0.0, 0.0)
+    with pytest.raises(ValueError):
+        math_utils.sample_grid_bilinear(0.0, 0.0, data, 2, 2, 0.0, 0.0, 0.0)
+
+
+def test_scaled_nearest_row_clamp_and_scaling():
+    data = np.array([[10.0, 20.0], [30.0, 40.0]], dtype=np.float64)
+    # row clamps: negative -> top row, huge -> bottom row; DN scaled to physical
+    top = math_utils.sample_2d_scaled_nearest(data, -2.0, 0.0, 2, 2, 2.0, 1.0, -9999.0)
+    bot = math_utils.sample_2d_scaled_nearest(data, 50.0, 0.0, 2, 2, 2.0, 1.0, -9999.0)
+    assert top == 10.0 * 2.0 + 1.0
+    assert bot == 30.0 * 2.0 + 1.0
+
+
+def test_scaled_bilinear_interpolates_when_no_missing():
+    data = np.array([[0.0, 0.0], [10.0, 10.0]], dtype=np.float64)
+    # In-range, no missing neighbors -> exercises the real bilinear interpolation
+    # (scale/offset applied), plus the row<=0 and row>=last clamp edges.
+    mid = math_utils.sample_2d_scaled_bilinear(data, 0.5, 0.0, 2, 2, 1.0, 0.0, -9999.0)
+    assert mid == pytest.approx(5.0)
+    edge_low = math_utils.sample_2d_scaled_bilinear(data, -1.0, 0.0, 2, 2, 1.0, 0.0, -9999.0)
+    edge_high = math_utils.sample_2d_scaled_bilinear(data, 9.0, 0.0, 2, 2, 1.0, 0.0, -9999.0)
+    assert edge_low == pytest.approx(0.0)
+    assert edge_high == pytest.approx(10.0)
+
+
 if __name__ == "__main__":
     import sys
 

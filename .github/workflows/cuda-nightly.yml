@@ -1,0 +1,69 @@
+name: cuda-nightly
+
+# GPU validation that the main CPU `tests.yml` workflow cannot run.
+#
+# GitHub-hosted runners have no NVIDIA GPU, so this workflow targets a
+# SELF-HOSTED runner labelled `gpu` (register one with: Settings -> Actions ->
+# Runners, and add the `gpu` label on a machine with a CUDA device + driver).
+# Until such a runner exists the scheduled job simply stays queued/again-skipped;
+# it never blocks PRs because it is decoupled from `tests.yml`.
+#
+# It runs the `requires_cuda` suite — CPU/GPU trajectory parity, the float32/
+# float64 drift bound, and (when the real assets are present) the real-artifact
+# CPU/GPU validation, which self-skip if their data is absent.
+
+on:
+  schedule:
+    # 06:00 UTC every Monday. Adjust the cadence as the GPU runner allows.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: cuda-nightly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gpu-tests:
+    # Requires a self-hosted runner with a CUDA device and the `gpu` label.
+    runs-on: [self-hosted, gpu]
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: GPU diagnostics
+        run: nvidia-smi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install CUDA PyTorch
+        # cu121 wheels; align the index with the runner's installed driver.
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cu121
+
+      - name: Install Lunaris (full stack + dev/test deps)
+        run: pip install -e ".[all]"
+
+      - name: Fail loudly if CUDA is not actually visible
+        # Without this guard every `requires_cuda` test would SKIP and the job
+        # would be falsely green while validating nothing.
+        run: |
+          python - <<'PY'
+          import sys
+          import torch
+          if not torch.cuda.is_available():
+              print("::error::CUDA device not visible to PyTorch on this runner.")
+              sys.exit(1)
+          print(f"CUDA OK: {torch.cuda.get_device_name(0)}")
+          PY
+
+      - name: Run the requires_cuda suite
+        # Data-dependent CUDA tests self-skip when their assets are absent, so
+        # this is safe on a GPU runner without the full scientific data set.
+        run: pytest tests/ -m "requires_cuda" -q -rs

@@ -6,8 +6,14 @@ import numpy as np
 import pytest
 
 from dataset_pipeline_test_utils import make_toy_dataset_contract
+from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.data.splits import (
     build_split_manifest,
+    make_altitude_stratified_split,
+    make_ood_altitude_split,
+    make_seeded_random_split,
+    make_spatial_block_split,
+    make_spatial_plus_altitude_split,
     split_dataset_indices,
     write_split_manifest,
 )
@@ -78,4 +84,57 @@ def test_ood_low_altitude_requires_altitude():
             split_policy="ood_low_altitude",
             split_seed=0,
             val_fraction=0.2,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Low-level split makers: input-validation (ValueError) branches.
+# ---------------------------------------------------------------------------
+
+def test_split_counts_rejects_no_training_samples():
+    # A single row with a validation fraction forces n_val=1, leaving no training.
+    with pytest.raises(ValueError, match="no training"):
+        make_seeded_random_split(1, val_fraction=0.5, seed=0)
+
+
+def test_altitude_stratified_rejects_empty_altitude():
+    with pytest.raises(ValueError, match="altitude array is empty"):
+        make_altitude_stratified_split(
+            np.asarray([], dtype=np.float64), val_fraction=0.2, seed=0
+        )
+
+
+def test_spatial_block_rejects_empty_positions():
+    with pytest.raises(ValueError, match="non-empty position"):
+        make_spatial_block_split(np.zeros((0, 3)), val_block_fraction=0.2, seed=0)
+
+
+def test_spatial_plus_altitude_rejects_mismatched_arrays():
+    with pytest.raises(ValueError, match="matching xyz/altitude"):
+        make_spatial_plus_altitude_split(
+            np.zeros((5, 3)), np.zeros(3), val_block_fraction=0.2, seed=0
+        )
+
+
+def test_ood_altitude_validation_branches():
+    alt = np.linspace(100.0, 300.0, 50)
+    with pytest.raises(ValueError, match="non-empty"):
+        make_ood_altitude_split(np.asarray([]), side="low", seed=0)
+    with pytest.raises(ValueError, match="finite"):
+        make_ood_altitude_split(np.full(5, np.nan), side="low", seed=0)
+    with pytest.raises(ValueError, match="low.*high|side"):
+        make_ood_altitude_split(alt, side="sideways", seed=0)
+
+
+def test_split_dataset_indices_spatial_block_requires_xyz():
+    with pytest.raises(ValueError, match="spatial_block split requires xyz"):
+        split_dataset_indices(
+            n_rows=20, split_policy="spatial_block", split_seed=0, val_fraction=0.2
+        )
+
+
+def test_split_dataset_indices_altitude_stratified_requires_altitude():
+    with pytest.raises(ValueError, match="altitude_stratified split requires"):
+        split_dataset_indices(
+            n_rows=20, split_policy="altitude_stratified", split_seed=0, val_fraction=0.2
         )
