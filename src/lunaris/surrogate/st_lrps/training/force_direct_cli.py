@@ -33,11 +33,13 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
 )
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
+from lunaris.surrogate.st_lrps.data.splits import build_split_manifest, write_split_manifest
 from lunaris.surrogate.st_lrps.networks.models import (
     build_model_from_config,
     compute_architecture_signature,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
+from lunaris.surrogate.st_lrps.training.engine import set_seed
 
 
 def _json_text(payload: Mapping[str, Any]) -> str:
@@ -132,13 +134,15 @@ def _dataset_meta_block(
     r_ref_m: float,
     alt_min_km: float | None,
     alt_max_km: float | None,
+    n_samples: int,
 ) -> dict[str, Any]:
+    baseline_kind = "spherical_harmonics" if target_mode == "residual" else "point_mass"
     contract = {
         "schema_version": 1,
         "dataset_kind": "st_lrps_direct_force_training",
         "dataset_name": dataset_name,
         "target_mode": target_mode,
-        "baseline_kind": "spherical_harmonics" if target_mode == "residual" else "point_mass",
+        "baseline_kind": baseline_kind,
         "degree_min": int(degree_min),
         "degree_max": int(degree_max),
         "mu_si": float(mu_si),
@@ -146,10 +150,15 @@ def _dataset_meta_block(
         "a_sign": 1.0,
         "altitude_min_km": alt_min_km,
         "altitude_max_km": alt_max_km,
+        "n_samples": int(n_samples),
         "coordinate_frame": "moon_fixed_cartesian",
         "units": {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
         "derivative_convention_version": meta.derivative_convention_version or "dP_dphi_corrected_v1",
     }
+    if target_mode == "residual":
+        # Residual targets are Δa against the spherical-harmonics baseline; record
+        # which model that is so the contract validates without a legacy bypass.
+        contract["source_gravity_model"] = f"spherical_harmonics_deg{int(degree_min)}_{int(degree_max)}"
     return {
         "schema_version": 1,
         "dataset_name": dataset_name,
@@ -172,8 +181,9 @@ def _dataset_meta_block(
 
 
 def train_force_direct(args: argparse.Namespace) -> Path:
-    torch.manual_seed(int(args.seed))
-    np.random.seed(int(args.seed))
+    # Canonical determinism setup (same flags the main engine records) so the
+    # artifact carries a real run_provenance.determinism block.
+    determinism_flags = set_seed(int(args.seed))
 
     data_path = Path(args.data).expanduser().resolve()
     arr, meta = _read_dataset(data_path, args.dataset_name, args.max_samples, int(args.seed))
@@ -274,8 +284,28 @@ def train_force_direct(args: argparse.Namespace) -> Path:
         r_ref_m=r_ref_m,
         alt_min_km=meta.alt_min_km,
         alt_max_km=meta.alt_max_km,
+        n_samples=int(arr.shape[0]),
     )
-    resolved_cfg = build_resolved_config(cfg, dataset_meta, model, scaler, arch_sig)
+    # Pin the train/val split so the artifact is reproducibility-verifiable
+    # (TRUSTED-eligible) rather than quarantined for a missing split digest.
+    split_indices = {
+        "train": np.asarray(train_idx, dtype=np.int64),
+        "val": np.asarray(val_idx, dtype=np.int64),
+        "test": np.asarray([], dtype=np.int64),
+        "ood": np.asarray([], dtype=np.int64),
+    }
+    split_manifest = build_split_manifest(
+        dataset_contract=dataset_meta["dataset_contract"],
+        splits=split_indices,
+        split_policy="random_holdout",
+        split_seed=int(args.seed),
+        xyz=np.asarray(arr[:, 0:3], dtype=np.float64),
+    )
+    dataset_meta["split_manifest"] = split_manifest
+
+    resolved_cfg = build_resolved_config(
+        cfg, dataset_meta, model, scaler, arch_sig, determinism=determinism_flags
+    )
 
     x_t = torch.as_tensor(arr[:, 0:3], dtype=torch.float32, device=device)
     y_t = torch.as_tensor(target_a, dtype=torch.float32, device=device)
@@ -319,6 +349,7 @@ def train_force_direct(args: argparse.Namespace) -> Path:
     if args.timestamped:
         run_dir = run_dir / f"force_direct_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     layout = ensure_run_layout(run_dir)
+    write_split_manifest(layout.provenance_dir / "split_manifest.json", split_manifest)
     layout.config_json.write_text(_json_text(resolved_cfg), encoding="utf-8")
     scaler.save_json(layout.scaler_json)
     layout.history_jsonl.write_text(

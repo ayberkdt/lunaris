@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -7,6 +8,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
+from lunaris.analysis.monte_carlo.result_audit import TRUSTED, classify_st_lrps_run
 from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.evaluation.force_direct_eval import evaluate_force_direct
@@ -182,11 +184,22 @@ def test_force_direct_training_roundtrip(tmp_path):
     )
     run_dir = train_force_direct(args)
     history = [
-        __import__("json").loads(line)
+        json.loads(line)
         for line in (run_dir / "history.jsonl").read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     assert history[-1]["val_loss"] <= history[0]["val_loss"]
+
+    # B3: the minimal trainer now records determinism + a pinned split, so the
+    # artifact is reproducibility-verifiable and the auditor TRUSTs it.
+    assert (run_dir / "provenance" / "split_manifest.json").is_file()
+    config = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+    prov = config["run_provenance"]
+    assert prov["model_kind"] == "force_direct"
+    assert prov["determinism"]
+    assert prov["split_manifest_sha256"]
+    status, reasons = classify_st_lrps_run(config, has_checkpoint=True)
+    assert status == TRUSTED, reasons
 
     fm = load_surrogate_force_model(run_dir, device="cpu")
     assert isinstance(fm, DirectForceRuntime)
