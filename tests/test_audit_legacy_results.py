@@ -27,6 +27,7 @@ _V2_BACKBONE = {
     "compute_impact_statistics": True,
 }
 
+
 _FULL_V2 = {
     **_V2_BACKBONE,
     "impact_frame_available": True,
