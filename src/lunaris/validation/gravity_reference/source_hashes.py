@@ -36,7 +36,7 @@ def sha256_file(path: str | os.PathLike[str]) -> str:
     """
     p = Path(path)
     digest = hashlib.sha256()
-    
+
     if p.suffix in {".csv", ".json"}:
         with p.open("r", encoding="utf-8", newline="") as handle:
             for line in handle:
