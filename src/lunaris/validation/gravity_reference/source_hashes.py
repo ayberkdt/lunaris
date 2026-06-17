@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import tempfile
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,7 @@ from lunaris.common.hashing import canonical_json_text
 
 def utc_now_iso() -> str:
     """Return a stable UTC timestamp string."""
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def find_repo_root(start: str | os.PathLike[str] | None = None) -> Path:
