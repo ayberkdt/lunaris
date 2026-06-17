@@ -3,5 +3,12 @@ title: "Lunaris"
 message: "If you use Lunaris (or its ST-LRPS surrogate-gravity model) in scientific work, please cite the repository and associated publications."
 type: software
 authors:
-  - name: "Lunaris contributors"
+  - family-names: "Demirkanat"
+    given-names: "Ayberk"
+    email: "ayberkdemirkanat@gmail.com"
+    # orcid: "https://orcid.org/0000-0000-0000-0000"  # add when available
+repository-code: "https://github.com/ayberkdt/lunaris"
+url: "https://github.com/ayberkdt/lunaris"
 license: "MIT"
+# A Zenodo DOI can be added here once a tagged release is archived:
+# doi: "10.5281/zenodo.XXXXXXX"

@@ -34,6 +34,8 @@ def build_experiment_feature_summary(
 
     return {
         "model_preset": str(_cfg_get(cfg, "model_preset", "custom")),
+        "run_preset": str(_cfg_get(cfg, "run_preset", "custom")),
+        "split_policy": str(_cfg_get(cfg, "split_policy", "seeded_random")),
         "input_encoding": str(getattr(model, "embedding_type", _cfg_get(cfg, "embedding_type", "raw"))),
         "input_feature_dim": int(getattr(model, "input_feature_dim", _cfg_get(cfg, "input_feature_dim", 3))),
         "runtime_model_kind": str(_cfg_get(cfg, "runtime_model_kind", "potential_autograd")),

@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
-  { name = "Lunaris contributors" }
+  { name = "Ayberk Demirkanat", email = "ayberkdemirkanat@gmail.com" }
+]
+maintainers = [
+  { name = "Ayberk Demirkanat", email = "ayberkdemirkanat@gmail.com" }
 ]
 keywords = [
   "lunar",
@@ -97,6 +100,12 @@ all = [
   "pre-commit>=3.5,<5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ayberkdt/lunaris"
+Repository = "https://github.com/ayberkdt/lunaris"
+Issues = "https://github.com/ayberkdt/lunaris/issues"
+Changelog = "https://github.com/ayberkdt/lunaris/blob/main/CHANGELOG.md"
+
 [project.scripts]
 lunaris = "lunaris.cli.main:main_entry"
 lunaris-ui = "lunaris.cli.entrypoints:ui_main"
@@ -129,6 +138,7 @@ markers = [
   "requires_data: needs large external data (SPICE kernels, gravity/topography files)",
   "requires_cuda: needs an NVIDIA CUDA device",
   "requires_torch: needs PyTorch installed (skipped cleanly otherwise)",
+  "requires_pyshtools: needs the optional pyshtools library (skipped cleanly otherwise)",
 ]
 # pytest-randomly shuffles test order every run. This catches order-dependent
 # state leakage (e.g. the Qt-binding pollution that produced setFont/setIcon

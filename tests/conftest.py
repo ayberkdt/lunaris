@@ -61,14 +61,29 @@ def _lunaris_data_available() -> bool:
     return bool(gravity_ok and kernels_ok)
 
 
+def _pyshtools_available() -> bool:
+    """Return True only when the optional ``pyshtools`` library is importable."""
+    try:
+        import pyshtools  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
 def pytest_collection_modifyitems(config, items):
-    """Auto-skip ``requires_data`` tests when external data is unavailable."""
-    if _lunaris_data_available():
-        return
+    """Auto-skip ``requires_data`` / ``requires_pyshtools`` tests when their
+    prerequisites are unavailable, so an unfiltered run stays green."""
+    data_available = _lunaris_data_available()
+    pyshtools_available = _pyshtools_available()
     skip_no_data = pytest.mark.skip(
         reason="external data unavailable (SPICE kernels / gravity coefficients); "
         "set LUNARIS_DATA_DIR or run `lunaris-data download`."
     )
+    skip_no_pyshtools = pytest.mark.skip(
+        reason="optional dependency 'pyshtools' is not installed."
+    )
     for item in items:
-        if "requires_data" in item.keywords:
+        if not data_available and "requires_data" in item.keywords:
             item.add_marker(skip_no_data)
+        if not pyshtools_available and "requires_pyshtools" in item.keywords:
+            item.add_marker(skip_no_pyshtools)
