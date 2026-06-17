@@ -97,7 +97,7 @@ def build_legendre_coeffs(n_max: int) -> tuple[Arr1, Arr1, Arr2, Arr2, Arr1]:
     Convention
     ----------
     - Normalization: fully-normalized (4π, geodesy convention)
-    - Condon–Shortley phase: (-1)^m is applied via `scale_m`
+    - Condon–Shortley phase: NOT applied (geodesy/GRAIL convention)
     - Real-harmonic scaling: m>0 multiplied by sqrt(2)
 
     Parameters
@@ -121,7 +121,7 @@ def build_legendre_coeffs(n_max: int) -> tuple[Arr1, Arr1, Arr2, Arr2, Arr1]:
         Vertical recursion coefficient B[n, m] valid for n>=2, m<=n-2.
     scale_m:
         (N+1,) float64
-        Per-order scaling = sqrt(2) for m>0 and (-1)^m sign (Condon–Shortley).
+        Per-order scaling = sqrt(2) for m>0 (no Condon–Shortley phase).
     """
     N = int(n_max)
     if N < 0:
@@ -155,14 +155,18 @@ def build_legendre_coeffs(n_max: int) -> tuple[Arr1, Arr1, Arr2, Arr2, Arr1]:
         A[n_int, : n_int - 1] = anm
         B[n_int, : n_int - 1] = bnm
 
-    # 3) Order scaling: sqrt(2) for m>0 and (-1)^m sign
+    # 3) Order scaling: sqrt(2) for m>0 (real-harmonic 4pi normalization).
+    #
+    # NO Condon-Shortley (-1)^m phase is applied. Lunar/geodesy gravity models
+    # (GRAIL JGGRX, EGM, GRACE, ICGEM) define their fully-normalized coefficients
+    # WITHOUT the Condon-Shortley phase, and the normalized recurrence above
+    # already produces a positive sectoral seed. Multiplying scale_m by (-1)^m
+    # would flip every odd-order term and corrupt the tesseral/sectoral field
+    # (verified against pyshtools and an independent oracle, which both exclude
+    # the phase; m=0 zonal terms are unaffected so J2 tests do not catch it).
     scale_m: Arr1 = np.ones(N + 1, dtype=F64)
     if N >= 1:
         scale_m[1:] *= math.sqrt(2.0)
-
-    m_idx = np.arange(N + 1, dtype=np.int64)
-    sign = 1.0 - 2.0 * (m_idx & 1)  # even->+1, odd->-1
-    scale_m *= sign.astype(F64)
 
     return diag, subdiag, A, B, scale_m
 

@@ -13,12 +13,13 @@ hard-fails. Callers check :data:`PYSHTOOLS_AVAILABLE` or call
 
 Convention note (pinned by the gated test, not assumed)
 -------------------------------------------------------
-Lunaris stores 4π fully-normalized coefficients whose ALFs carry the
-Condon–Shortley phase (verified in :mod:`validation.independent.independent_sh`).
-The matching pyshtools settings are ``normalization='4pi'`` and ``csphase=-1``
-(phase included). The gated cross-check compares pyshtools against the scipy
-reference and will fail loudly if these flags are wrong on a given pyshtools
-release, at which point they should be corrected here.
+Lunaris stores 4π fully-normalized coefficients whose ALFs carry NO
+Condon–Shortley phase (geodesy/GRAIL convention; verified in
+:mod:`validation.independent.independent_sh`). The matching pyshtools settings
+are ``normalization='4pi'`` and ``csphase=1`` (no phase), which is pyshtools'
+default for ``MakeGravGridPoint``. The gated cross-check compares pyshtools
+against the scipy reference and will fail loudly if these flags are wrong on a
+given pyshtools release, at which point they should be corrected here.
 """
 
 from __future__ import annotations
@@ -62,9 +63,10 @@ def acceleration(
     """Body-fixed gravitational acceleration ``a = +∇U`` via ``pyshtools``.
 
     ``c_coeffs``/``s_coeffs`` are ``(N+1, N+1)`` 4π-normalized matrices in the
-    Lunaris convention (Condon–Shortley phase included). The result is returned
-    in Cartesian body-fixed components (m/s²) to match the Lunaris
-    :meth:`GravityModel.accel_fixed` output.
+    Lunaris convention (no Condon–Shortley phase, matching geodesy/GRAIL and
+    pyshtools' default). The result is returned in Cartesian body-fixed
+    components (m/s²) to match the Lunaris :meth:`GravityModel.accel_fixed`
+    output.
     """
     require_pyshtools()
 
@@ -89,13 +91,9 @@ def acceleration(
     lat_deg = float(np.degrees(np.arcsin(z / r)))
     lon_deg = float(np.degrees(np.arctan2(y, x)))
 
-    # MakeGravGridPoint expects 4pi-normalized coefficients WITHOUT the
-    # Condon-Shortley phase (csphase=1). Since Lunaris coefficients include
-    # the C-S phase (csphase=-1), we must strip it manually before calling by
-    # multiplying the m-dependent terms by (-1)^m.
-    for m in range(lmax + 1):
-        if m % 2 != 0:
-            cilm[:, :, m] = -cilm[:, :, m]
+    # MakeGravGridPoint uses 4pi-normalized coefficients WITHOUT the
+    # Condon-Shortley phase (csphase=1), which is exactly the Lunaris/GRAIL
+    # convention, so the coefficients are passed through unchanged.
 
     # MakeGravGridPoint returns the spherical gravity components (g_r, g_theta,
     # g_phi) of -∇U; we negate to report a = +∇U and rotate to Cartesian.

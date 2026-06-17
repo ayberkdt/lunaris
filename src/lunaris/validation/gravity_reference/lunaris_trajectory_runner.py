@@ -26,12 +26,16 @@ from __future__ import annotations
 import platform
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-from lunaris.validation.gravity_reference.independent_field_oracle import coefficients_from_json
+from lunaris.validation.gravity_reference.independent_field_oracle import (
+    coefficients_from_json,
+    geopotential,
+)
 from lunaris.validation.gravity_reference.manifest import (
     STATUS_INCOMPLETE_CLASSES,
     ResolvedTrajectoryManifest,
@@ -94,7 +98,14 @@ def _run_provenance(manifest: ResolvedTrajectoryManifest, out_dir: Path) -> dict
     }
 
 
-def _load_gravity_model(manifest: ResolvedTrajectoryManifest) -> Any:
+def _load_gravity(manifest: ResolvedTrajectoryManifest) -> tuple[Any, Callable[[np.ndarray], float]]:
+    """Return (Lunaris GravityModel, independent potential fn) for the manifest.
+
+    The potential function is the *independent* numpy oracle (no Condon-Shortley
+    phase, matching the geodesy/GRAIL convention), so the energy invariant is
+    evaluated against a reference that does not share the Lunaris kernel and does
+    not depend on any (optional) engine potential API.
+    """
     from lunaris.physics.spherical_harmonics import GravityModel
 
     gravity = manifest.payload["gravity"]
@@ -104,14 +115,26 @@ def _load_gravity_model(manifest: ResolvedTrajectoryManifest) -> Any:
         from lunaris.validation.gravity_reference.source_hashes import find_repo_root
 
         coeff_path = find_repo_root(manifest.path) / coeff_path
-    if coeff_path.suffix.lower() == ".json":
-        _deg, r_ref, mu, c, s = coefficients_from_json(load_json(coeff_path))
-        model = GravityModel.from_arrays(degree, r_ref, mu, c, s)
-    else:
-        model = GravityModel.from_file(str(coeff_path), requested_degree=degree)
+    if coeff_path.suffix.lower() != ".json":
+        raise ValueError("Trajectory gravity coefficient_file must be a JSON fixture.")
+    _deg, r_ref, mu, c, s = coefficients_from_json(load_json(coeff_path))
+    model = GravityModel.from_arrays(degree, r_ref, mu, c, s)
     if int(model.degree_max) != degree:
         raise ValueError(f"Loaded degree {model.degree_max} != manifest degree {degree}.")
-    return model
+
+    def potential_fn(r: np.ndarray) -> float:
+        return float(
+            geopotential(
+                np.asarray(r, dtype=np.float64),
+                mu_m3_s2=mu,
+                reference_radius_m=r_ref,
+                c_coeffs=c,
+                s_coeffs=s,
+                degree=degree,
+            )
+        )
+
+    return model, potential_fn
 
 
 def _propagate_lunaris(
@@ -212,7 +235,7 @@ def run_trajectory_validation(manifest_path: str | Path, out_dir: str | Path) ->
     reference = load_trajectory_csv(manifest.reference_path)
     epochs = reference["epoch_s"]
     ref_states = reference["state"]
-    model = _load_gravity_model(manifest)
+    model, potential_fn = _load_gravity(manifest)
 
     integration = payload.get("integration", {}) if isinstance(payload.get("integration"), dict) else {}
     rtol = float(integration.get("rtol", 1e-12))
@@ -222,12 +245,8 @@ def run_trajectory_validation(manifest_path: str | Path, out_dir: str | Path) ->
     lunaris_states = _propagate_lunaris(model, y0, epochs, rtol=rtol, atol=atol)
 
     metrics = compute_trajectory_metrics(ref_states, lunaris_states)
-    metrics["lunaris_energy_drift"] = specific_energy_drift(
-        lunaris_states, lambda r: model.potential_fixed(r)
-    )
-    metrics["reference_energy_drift"] = specific_energy_drift(
-        ref_states, lambda r: model.potential_fixed(r)
-    )
+    metrics["lunaris_energy_drift"] = specific_energy_drift(lunaris_states, potential_fn)
+    metrics["reference_energy_drift"] = specific_energy_drift(ref_states, potential_fn)
 
     status = classify_trajectory_metrics(metrics, payload["comparison"])
     provenance = _run_provenance(manifest, out)

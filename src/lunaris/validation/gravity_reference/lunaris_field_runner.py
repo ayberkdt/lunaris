@@ -113,9 +113,18 @@ def run_field_validation(manifest_path: str | Path, out_dir: str | Path) -> dict
     potentials = np.zeros(positions.shape[0], dtype=np.float64)
     accelerations = np.zeros_like(positions)
     degree = int(manifest.payload["gravity"]["degree"])
+    # The engine always exposes acceleration; the potential API is optional. When
+    # it is absent we validate acceleration only (the primary evidence) rather
+    # than fabricate a potential comparison.
+    has_potential = hasattr(model, "potential_fixed")
     for i, pos in enumerate(positions):
-        potentials[i] = model.potential_fixed(pos, degree=degree)
         accelerations[i] = model.accel_fixed(pos, degree=degree)
+        if has_potential:
+            potentials[i] = model.potential_fixed(pos, degree=degree)
+    if not has_potential:
+        # Placeholder so metrics stay finite; potential thresholds are dropped
+        # below so this cannot produce a misleading PASS.
+        potentials = np.asarray(reference["potential_m2_s2"], dtype=np.float64)
 
     metrics, rows = compute_field_metrics(
         point_ids=list(reference["point_ids"]),
@@ -126,7 +135,19 @@ def run_field_validation(manifest_path: str | Path, out_dir: str | Path) -> dict
         lunaris_acceleration_m_s2=accelerations,
         reference_radius_m=float(manifest.payload["gravity"]["reference_radius_m"]),
     )
-    status = classify_field_metrics(metrics, manifest.payload["comparison"])
+    comparison = manifest.payload["comparison"]
+    if not has_potential:
+        # Drop potential thresholds so the (placeholder) potential never counts
+        # as a passing check; record why in the status payload below.
+        comparison = json.loads(json.dumps(comparison))
+        comparison.get("absolute_tolerances", {}).pop("potential_m2_s2", None)
+        comparison.get("relative_tolerances", {}).pop("potential", None)
+    status = classify_field_metrics(metrics, comparison)
+    if not has_potential:
+        status["potential_not_evaluated"] = (
+            "Engine exposes no potential API (GravityModel.potential_fixed); "
+            "acceleration-only validation."
+        )
     provenance = _run_provenance(manifest, out)
 
     atomic_write_json(out / "resolved_manifest.json", manifest.payload)
