@@ -115,6 +115,8 @@ def tiny_dataset_meta(
         "a_sign": 1.0,
         "a_sign_convention": "+1",
         "derivative_convention_version": "dP_dphi_corrected_v1",
+        "spherical_harmonic_convention": "4pi_geodesy_no_condon_shortley_v1",
+        "gravity_label_engine_version": "lunaris_sh_v2",
         "coordinate_frame": "moon_fixed_cartesian",
         "units": {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
         "dataset_contract": {
@@ -133,6 +135,8 @@ def tiny_dataset_meta(
             "coordinate_frame": "moon_fixed_cartesian",
             "units": {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
             "source_gravity_file_sha256": "1" * 64,
+            "spherical_harmonic_convention": "4pi_geodesy_no_condon_shortley_v1",
+            "gravity_label_engine_version": "lunaris_sh_v2",
         },
     }
 

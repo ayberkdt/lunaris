@@ -18,6 +18,14 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON
 
 DATASET_CONTRACT_SCHEMA_VERSION = 1
 REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
+# Spherical-harmonic phase/normalization convention used to generate the gravity
+# labels. Must match the runtime engine (lunaris.physics.spherical_harmonics):
+# 4pi geodesy normalization with NO Condon-Shortley phase. Datasets generated
+# before this was enforced (the generator used a negative sectoral recurrence =
+# (-1)^m phase) have sign-flipped odd-order labels and MUST be regenerated; they
+# are rejected unless an explicit legacy override is passed.
+REQUIRED_SH_PHASE_CONVENTION = "4pi_geodesy_no_condon_shortley_v1"
+GRAVITY_LABEL_ENGINE_VERSION = "lunaris_sh_v2"
 TARGET_MODES = frozenset({"residual", "full"})
 BASELINE_KINDS = frozenset({"none", "point_mass", "spherical_harmonics"})
 DEFAULT_COORDINATE_FRAME = "moon_fixed_cartesian"
@@ -208,6 +216,10 @@ class DatasetContract:
     source_gravity_file_sha256: str | None = None
     content_sha256: str | None = None
     derivative_convention: str | None = REQUIRED_DERIVATIVE_CONVENTION
+    # Default None (not the required value) so datasets predating phase enforcement
+    # fail closed: only freshly generated datasets carry the stamped convention.
+    spherical_harmonic_convention: str | None = None
+    gravity_label_engine_version: str | None = None
     columns: list[str] = field(default_factory=lambda: ["x", "y", "z", "dU", "dax", "day", "daz"])
     dataset_layout: dict[str, Any] = field(default_factory=lambda: {"dataset_name": "data", "shape": None})
     legacy_inferred: bool = False
@@ -288,6 +300,17 @@ class DatasetContract:
             msg = (
                 f"derivative_convention={self.derivative_convention!r} is unsafe; "
                 f"expected {REQUIRED_DERIVATIVE_CONVENTION!r}"
+            )
+            if allow_legacy_derivative_convention:
+                warnings.append(msg)
+            else:
+                errors.append(msg)
+        if self.spherical_harmonic_convention != REQUIRED_SH_PHASE_CONVENTION:
+            msg = (
+                f"spherical_harmonic_convention={self.spherical_harmonic_convention!r} is unsafe; "
+                f"expected {REQUIRED_SH_PHASE_CONVENTION!r}. Datasets generated before the "
+                "Condon-Shortley phase fix have sign-flipped odd-order gravity labels and must "
+                "be regenerated."
             )
             if allow_legacy_derivative_convention:
                 warnings.append(msg)
@@ -417,6 +440,12 @@ class DatasetContract:
                 "derivative_convention",
                 "derivative_convention_version",
             ),
+            spherical_harmonic_convention=_get_first(
+                mapping,
+                "spherical_harmonic_convention",
+                "spherical_harmonic_convention_version",
+            ),
+            gravity_label_engine_version=_get_first(mapping, "gravity_label_engine_version"),
             columns=columns,
             dataset_layout={"dataset_name": dataset_name, "shape": list(shape) if shape is not None else None},
             legacy_inferred=True,

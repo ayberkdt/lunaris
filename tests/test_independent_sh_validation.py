@@ -196,3 +196,23 @@ def test_pyshtools_agrees_with_scipy_reference():
         a_pysh = pysh.acceleration(pos, mu=MU, r_ref=R_REF, c_coeffs=c, s_coeffs=s, degree=6)
         rel = np.linalg.norm(a_pysh - a_scipy) / np.linalg.norm(a_scipy)
         assert rel < 1e-6, f"pyshtools vs scipy rel error {rel:.3e}"
+
+
+@pytest.mark.requires_tudatpy
+def test_tudatpy_agrees_with_scipy_reference():
+    """Independent industry-grade (TU Delft Tudat) SH cross-check.
+
+    Skipped cleanly unless tudatpy is installed. A ``NotImplementedError`` here
+    means the tudatpy point-gradient API differs on this release and the adapter
+    in ``validation/independent/tudatpy_reference.py`` must be confirmed before
+    the cross-check is trusted — it never silently passes on a wrong API.
+    """
+    from validation.independent import tudatpy_reference as tud
+
+    model = _build_synthetic_model(6, seed=7)
+    c = np.array(model.c_coeffs); s = np.array(model.s_coeffs)
+    for pos in _spread_points():
+        a_scipy = iref.acceleration(pos, mu=MU, r_ref=R_REF, c_coeffs=c, s_coeffs=s, degree=6)
+        a_tud = tud.acceleration(pos, mu=MU, r_ref=R_REF, c_coeffs=c, s_coeffs=s, degree=6)
+        rel = np.linalg.norm(a_tud - a_scipy) / np.linalg.norm(a_scipy)
+        assert rel < 1e-6, f"tudatpy vs scipy rel error {rel:.3e}"

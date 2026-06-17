@@ -13,6 +13,7 @@ from lunaris.validation.gravity_reference.thresholds import (
 _BENCH = Path(__file__).resolve().parent.parent / "validation" / "gravity_reference" / "benchmarks"
 FIELD_MANIFEST = Path("validation/gravity_reference/benchmarks/field/synthetic_degree4_oracle.json")
 GRAIL_FIELD_MANIFEST = _BENCH / "field" / "grail_degree120_pyshtools_oracle.json"
+SOBOL_FIELD_MANIFEST = _BENCH / "field" / "grail_degree120_pyshtools_sobol.json"
 TRAJECTORY_MANIFEST = _BENCH / "trajectory" / "grail_degree32_pyshtools_trajectory.json"
 
 
@@ -40,6 +41,27 @@ def test_grail_field_validation_end_to_end(tmp_path: Path) -> None:
     assert (out / "field_metrics_summary.json").exists()
     assert (out / "field_samples.csv").exists()
     assert (out / "comparison_report.md").exists()
+
+
+def test_grail_sobol_statistical_field_validation(tmp_path: Path) -> None:
+    """Statistical field validation over thousands of Sobol + strata points.
+
+    Far stronger than the 8-point smoke: it bounds the engine across the sphere
+    and all altitude bands, and emits latitude/altitude-binned error tables.
+    """
+    result = run_field_validation(SOBOL_FIELD_MANIFEST, tmp_path / "field_sobol")
+    assert result["status"] == PASS
+    metrics = result["metrics"]
+    assert metrics["n_points"] >= 2000
+    # Matches pyshtools to ~machine precision even at the worst point/region.
+    assert metrics["acceleration_norm_error_m_s2"]["max"] < 1e-8
+    assert metrics["acceleration_norm_error_m_s2"]["p99"] < 1e-9
+    region = metrics["error_by_region"]
+    assert region["by_latitude_deg"] and region["by_altitude_km"]
+    # Every populated band must stay within tolerance (no hidden weak region).
+    for row in region["by_altitude_km"] + region["by_latitude_deg"]:
+        if row["count"]:
+            assert row["max"] < 1e-8, f"weak region {row['bin']}: {row['max']:.2e}"
 
 
 def test_trajectory_runner_fails_closed_for_incomplete_reference(tmp_path: Path) -> None:

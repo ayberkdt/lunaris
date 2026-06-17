@@ -144,6 +144,7 @@ markers = [
   "requires_cuda: needs an NVIDIA CUDA device",
   "requires_torch: needs PyTorch installed (skipped cleanly otherwise)",
   "requires_pyshtools: needs the optional pyshtools library (skipped cleanly otherwise)",
+  "requires_tudatpy: needs the optional tudatpy library (skipped cleanly otherwise)",
 ]
 # pytest-randomly shuffles test order every run. This catches order-dependent
 # state leakage (e.g. the Qt-binding pollution that produced setFont/setIcon

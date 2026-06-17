@@ -228,15 +228,25 @@ benchmark CLI compares ST-LRPS against spherical-harmonic baselines:
 python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
 ```
 
+> [!WARNING]
+> **Accuracy results below are invalidated and pending regeneration.** They
+> predate the correction of the spherical-harmonic Condon–Shortley phase
+> convention (the runtime engine and the ST-LRPS label generator now both use
+> the no-phase geodesy/GRAIL convention). The datasets, truth trajectories,
+> trained artifacts, and SH comparisons behind these numbers were produced under
+> the old convention and **must be regenerated and retrained before being used
+> as scientific evidence.** Only the relative runtime/throughput figures remain
+> approximately indicative.
+
 Selected results (consumer workstation, Intel CPU + GTX 1660 Ti; see
 [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) for full tables, scenario
 counts, and reproduction):
 
 | Benchmark | ST-LRPS median RMS position error | Note |
 |-----------|-----------------------------------|------|
-| 5-day general stability (128 scenarios, `float32`) | **1.106 km** | ≈2× faster wall-clock than `SH50` at higher accuracy |
-| 1-day high-degree comparison (100 scenarios, `float64`) | **0.626 km** | 29.1× lower error than `SH20`; 8.32× faster than `SH200` |
-| 1-day near-circular mapping (100 scenarios, `float64`) | **15.83 cm** | 2.25× speedup vs. sequential CPU truth |
+| 5-day general stability (128 scenarios, `float32`) | **1.106 km** *(invalidated)* | ≈2× faster wall-clock than `SH50` at higher accuracy |
+| 1-day high-degree comparison (100 scenarios, `float64`) | **0.626 km** *(invalidated)* | 29.1× lower error than `SH20`; 8.32× faster than `SH200` |
+| 1-day near-circular mapping (100 scenarios, `float64`) | **15.83 cm** *(invalidated)* | 2.25× speedup vs. sequential CPU truth |
 
 Numbers are run-specific evidence for the stated configuration, not a blanket
 performance guarantee.

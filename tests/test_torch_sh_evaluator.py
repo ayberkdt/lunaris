@@ -19,7 +19,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from lunaris.physics.spherical_harmonics import build_legendre_coeffs  # noqa: E402
+from lunaris.physics.spherical_harmonics import GravityModel, build_legendre_coeffs  # noqa: E402
 from lunaris.physics.torch_spherical_harmonics import (  # noqa: E402
     TorchSHGravityEvaluator as CanonicalEvaluator,
 )
@@ -88,6 +88,54 @@ def test_point_mass_matches_keplerian() -> None:
     norm = np.linalg.norm(r, axis=1, keepdims=True)
     expected = -GM * r / norm**3
     np.testing.assert_allclose(accel, expected, rtol=1e-6, atol=1e-9)
+
+
+def _tesseral_arrays(degree: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """Random field that includes odd-order (m=1,3,...) tesseral/sectoral terms."""
+    rng = np.random.default_rng(seed)
+    c = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    s = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    c[0, 0] = 1.0
+    for n in range(2, degree + 1):
+        for m in range(0, n + 1):
+            c[n, m] = 1e-4 * rng.standard_normal() / (n * n)
+            if m > 0:
+                s[n, m] = 1e-4 * rng.standard_normal() / (n * n)
+    return c, s
+
+
+@pytest.mark.parametrize("degree", [8, 60, 120, 200])
+def test_torch_evaluator_matches_numba_engine_on_tesseral_field(degree: int) -> None:
+    """The GPU/ST-LRPS torch SH path must equal the validated numba engine.
+
+    The numba ``GravityModel.accel_fixed`` is cross-validated against pyshtools to
+    ~machine precision (no Condon-Shortley phase) up to degree 120. This pins the
+    *independent torch assembly* to that same field on a field WITH odd-order
+    terms — the exact case a zonal/finite-only check (which previously hid the
+    phase bug) cannot catch. Both share the engine's recurrence tables, so any
+    divergence is a torch-side sign/derivative/summation defect.
+    """
+    c, s = _tesseral_arrays(degree, seed=degree)
+    model = GravityModel.from_arrays(degree, R_REF, GM, c, s)
+    ev = CanonicalEvaluator(model, degree=degree, device=torch.device("cpu"), dtype=torch.float64)
+    # Off-axis points only. The exact pole (x=y=0) is the SH coordinate
+    # singularity where the two implementations legitimately regularize the
+    # longitude differently; real orbits never sit on the axis.
+    pos = torch.as_tensor(
+        np.array([
+            [R_REF + 1.0e5, 0.0, 0.0],
+            [0.0, R_REF + 1.2e5, 0.0],
+            [1.0e6, 1.0e6, 8.0e5],
+            [-0.5e6, 0.7e6, -1.3e6],
+            [0.62e6, 0.41e6, 1.5e6],
+        ], dtype=np.float64),
+        dtype=torch.float64,
+    )
+    a_torch = ev.acceleration(pos).numpy()
+    a_numba = np.array([model.accel_fixed(np.asarray(p), degree=degree) for p in pos.numpy()])
+    # Sanity: the field must actually exercise odd-m terms, else this passes vacuously.
+    assert np.any(np.abs(c[3, 1::2]) > 0) or np.any(np.abs(s[3, 1::2]) > 0)
+    np.testing.assert_allclose(a_torch, a_numba, rtol=1e-9, atol=1e-9)
 
 
 def test_benchmark_evaluator_matches_canonical() -> None:

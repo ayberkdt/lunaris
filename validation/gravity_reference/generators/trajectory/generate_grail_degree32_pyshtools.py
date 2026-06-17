@@ -1,12 +1,14 @@
 """Generate an independent gravity-only reference trajectory (GRAIL degree 32).
 
-The reference force is computed with **pyshtools** (an external, globally
-recognised spherical-harmonic library) and the orbit is integrated with an
-**independent** high-order solver (SciPy ``DOP853`` at tighter tolerances than
-the Lunaris run it will validate). The committed artifact therefore exercises
-Lunaris' full propagation pipeline — force evaluation inside the RHS, the
-integrator, and the state plumbing — against software that does not share
-Lunaris code.
+The reference force is an **independent implementation** — **pyshtools** (an
+external, globally recognised spherical-harmonic library), which does not share
+Lunaris code. The integrator is NOT independent: both this reference and the
+Lunaris run use SciPy ``DOP853`` (here at tighter tolerances), so this is an
+*independent force model with a separately-configured DOP853 integration*, not a
+fully independent integrator cross-check. It still exercises Lunaris' full
+propagation pipeline — RHS force evaluation, frame/state plumbing, and step
+control — and a genuinely independent integrator (Tudat/Orekit/GMAT) is the
+documented next step.
 
 Honesty note
 ------------
@@ -146,7 +148,7 @@ def main() -> int:
         "schema_version": "lunaris_gravity_trajectory_reference_v1",
         "benchmark_id": BENCHMARK_ID,
         "reference_class": "external_tool_generated_trajectory",
-        "title": "GRAIL JGGRX_1800F degree-32 gravity-only arc (pyshtools force, SciPy DOP853, non-rotating)",
+        "title": "GRAIL JGGRX_1800F degree-32 gravity-only arc (independent pyshtools force, separately-configured SciPy DOP853, non-rotating frozen field)",
         "source": {
             "organization": "NASA/JPL (coefficients), SHTOOLS + SciPy (reference integration)",
             "project": "Independent gravity-only trajectory reference",
@@ -179,9 +181,12 @@ def main() -> int:
         },
         "frames": {
             "state_center": "MOON",
-            "state_frame": "MOON_PA",
-            "gravity_fixed_frame": "MOON_PA",
-            "comparison_frame": "MOON_PA",
+            # Non-rotating idealization: the field is held fixed in the integration
+            # frame (no SPICE lunar rotation). The name makes that explicit so this
+            # is not mistaken for a physical rotating MOON_PA propagation.
+            "state_frame": "NONROTATING_FROZEN_BODY_FIXED",
+            "gravity_fixed_frame": "NONROTATING_FROZEN_BODY_FIXED",
+            "comparison_frame": "NONROTATING_FROZEN_BODY_FIXED",
         },
         "initial_state": {
             "representation": "cartesian",

@@ -1116,11 +1116,14 @@ def propagate(
             telem_surface_radius_m = None
 
     # Optional: stream compact JSON telemetry for UI live plots/progress.
-    # Controlled explicitly via config (no env-var "magic").
-    # Telemetry is always enabled (project-wide default).
-    # Cadence can be tuned via cfg.telem_cadence_s; if <=0, a sensible default is derived.
-    enable_telem_json = True
-    telem_cadence_s: float = float(getattr(cfg, "telem_cadence_s", getattr(cfg, "telemetry_cadence_s", 0.0)) or 0.0)
+    # Controlled explicitly via config (no env-var "magic"). Opt-in: a library
+    # caller (validation harness, batch job, test) must not have stdout polluted
+    # with JSON lines unless it asks for telemetry. The desktop UI sets
+    # ``cfg.enable_telemetry = True``. Back-compat: a positive ``telem_cadence_s``
+    # also enables it.
+    _telem_cadence_cfg = float(getattr(cfg, "telem_cadence_s", getattr(cfg, "telemetry_cadence_s", 0.0)) or 0.0)
+    enable_telem_json = bool(getattr(cfg, "enable_telemetry", False)) or _telem_cadence_cfg > 0.0
+    telem_cadence_s: float = _telem_cadence_cfg
     if enable_telem_json and telem_cadence_s <= 0.0:
         hb_h = float(getattr(cfg, "heartbeat_hours", 0.0) or 0.0)
         if hb_h > 0.0:
@@ -1281,6 +1284,10 @@ def propagate(
             y_cat = np.asarray(sol.y, dtype=np.float64)
             t_events = [np.asarray(te, dtype=np.float64) for te in (sol.t_events or [])]
             y_events = [np.asarray(ye, dtype=np.float64) for ye in (sol.y_events or [])]
+            # Keep stopped_early consistent with a terminal-event stop (status==1)
+            # so callers never see stop_reason set while stopped_early is False.
+            if int(getattr(sol, "status", 0)) == 1:
+                stopped_early = True
         else:
             t_parts: list[np.ndarray] = []
             y_parts: list[np.ndarray] = []
@@ -1320,6 +1327,12 @@ def propagate(
                         t_events_acc[i].append(np.asarray(te, dtype=np.float64))
                         y_events_acc[i].append(np.asarray(ye, dtype=np.float64))
 
+                # Advance the running state to the END of this completed chunk
+                # BEFORE checkpointing, so a "latest/state/last" checkpoint records
+                # the chunk end (a valid resume point) rather than its start.
+                y_curr = np.asarray(sol_k.y[:, -1], dtype=np.float64).copy()
+                t_curr = float(sol_k.t[-1])
+
                 if checkpoint_path and bool(getattr(cfg, "checkpoint_every_chunk", False)):
                     try:
                         ck_mode = str(getattr(cfg, "checkpoint_mode", "full")).strip().lower()
@@ -1356,8 +1369,7 @@ def propagate(
                     stop_reason = "integration failed"
                     break
 
-                y_curr = np.asarray(sol_k.y[:, -1], dtype=np.float64).copy()
-                t_curr = float(sol_k.t[-1])
+                # y_curr/t_curr were already advanced to the chunk end above.
                 chunk_idx += 1
 
             t_cat = np.concatenate(t_parts) if t_parts else np.array([t0], dtype=np.float64)

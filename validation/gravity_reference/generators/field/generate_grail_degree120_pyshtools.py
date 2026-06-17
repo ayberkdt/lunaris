@@ -19,7 +19,6 @@ from lunaris.validation.gravity_reference.independent_field_oracle import (
 )
 from lunaris.validation.gravity_reference.source_hashes import sha256_file
 
-
 REPO = Path(__file__).resolve().parents[4]
 BENCHMARK_ID = "grail_degree120_pyshtools_oracle"
 DEGREE = 120
@@ -32,7 +31,7 @@ def _unit(vector: tuple[float, float, float]) -> np.ndarray:
     return arr / np.linalg.norm(arr)
 
 def parse_grail_coefficients(tab_path: Path, max_degree: int) -> dict:
-    with open(tab_path, "r", encoding="utf-8") as f:
+    with open(tab_path, encoding="utf-8") as f:
         header = f.readline()
         parts = [p.strip() for p in header.split(",")]
         r_ref_km = float(parts[0])
@@ -51,12 +50,12 @@ def parse_grail_coefficients(tab_path: Path, max_degree: int) -> dict:
             m = int(parts[1])
             c = float(parts[2])
             s = float(parts[3])
-            
+
             if n > max_degree:
                 continue
-                
+
             coeffs.append({"n": n, "m": m, "c": c, "s": s})
-            
+
     return {
         "schema_version": "lunaris_synthetic_sh_coefficients_v1",
         "title": f"Truncated GRAIL JGGRX_1800F (Degree {max_degree})",
@@ -89,17 +88,17 @@ def evaluate_pyshtools(
     degree: int,
 ) -> tuple[float, np.ndarray]:
     r = np.linalg.norm(position)
-    
+
     # Calculate latitude and longitude
     lat_rad = np.arcsin(position[2] / r)
     lon_rad = np.arctan2(position[1], position[0])
     lat_deg = np.degrees(lat_rad)
     lon_deg = np.degrees(lon_rad)
-    
+
     # Calculate acceleration vector in spherical coordinates (r, theta, phi)
     accel_sph = pysh.gravmag.MakeGravGridPoint(clm, mu_m3_s2, reference_radius_m, r, lat_deg, lon_deg)
     a_r, a_theta, a_phi = accel_sph[0], accel_sph[1], accel_sph[2]
-    
+
     # MakeGravGridPoint convention for theta:
     # "The output components of the gravity are in spherical coordinates (r, theta, phi)."
     # Pyshtools docs for theta component state it is the southward pointing component.
@@ -108,21 +107,21 @@ def evaluate_pyshtools(
     # First convert latitude to colatitude (0 at north pole)
     colat_rad = np.pi/2.0 - lat_rad
     phi_rad = lon_rad
-    
+
     # Unit vectors for (r, theta, phi) where theta is colatitude
     e_r = np.array([np.sin(colat_rad)*np.cos(phi_rad), np.sin(colat_rad)*np.sin(phi_rad), np.cos(colat_rad)])
     e_theta = np.array([np.cos(colat_rad)*np.cos(phi_rad), np.cos(colat_rad)*np.sin(phi_rad), -np.sin(colat_rad)])
     e_phi = np.array([-np.sin(phi_rad), np.cos(phi_rad), 0.0])
-    
+
     a_cart = a_r * e_r + a_theta * e_theta + a_phi * e_phi
-    
+
     # Calculate potential U using MakeGridPoint
     clm_scaled = np.zeros_like(clm)
-    for l in range(degree + 1):
-        clm_scaled[:, l, :] = clm[:, l, :] * (reference_radius_m / r)**l
+    for ell in range(degree + 1):
+        clm_scaled[:, ell, :] = clm[:, ell, :] * (reference_radius_m / r) ** ell
     val = pysh.expand.MakeGridPoint(clm_scaled, lat=lat_deg, lon=lon_deg)
     potential = (mu_m3_s2 / r) * val
-    
+
     return potential, a_cart
 
 def main() -> int:
@@ -136,7 +135,7 @@ def main() -> int:
     coeff_path.write_text(json.dumps(coeff_payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     degree, r_ref, mu, c, s = coefficients_from_json(coeff_payload)
-    
+
     # Prepare SHTOOLS array
     clm = np.zeros((2, degree + 1, degree + 1), dtype=np.float64)
     for n in range(degree + 1):
@@ -183,7 +182,7 @@ def main() -> int:
     manifest = {
         "schema_version": "lunaris_gravity_field_reference_v1",
         "benchmark_id": BENCHMARK_ID,
-        "reference_class": "published_field_vectors",
+        "reference_class": "independent_high_precision_field_oracle",
         "title": "Truncated GRAIL JGGRX_1800F (Degree 120) field validation (pyshtools external truth)",
         "source": {
             "organization": "NASA/JPL (data), SHTOOLS (computation)",

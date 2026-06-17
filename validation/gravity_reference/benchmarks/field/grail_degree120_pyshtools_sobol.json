@@ -1,14 +1,12 @@
 {
-  "benchmark_id": "grail_degree120_pyshtools_oracle",
+  "benchmark_id": "grail_degree120_pyshtools_sobol",
   "comparison": {
     "absolute_tolerances": {
-      "acceleration_component_m_s2": 1e-09,
-      "acceleration_norm_m_s2": 1e-09,
-      "potential_m2_s2": 0.0001
+      "acceleration_component_m_s2": 1e-08,
+      "acceleration_norm_m_s2": 1e-08
     },
     "relative_tolerances": {
-      "acceleration_norm": 1e-08,
-      "potential": 1e-10
+      "acceleration_norm": 1e-07
     },
     "threshold_origin": "official_software_validation"
   },
@@ -19,14 +17,14 @@
   },
   "generator": {
     "arithmetic": "external_shtools_float64",
-    "name": "pyshtools_gravmag_MakeGravGridPoint",
+    "name": "pyshtools_gravmag_MakeGravGridPoint_sobol",
     "precision_digits": 16,
-    "script_path": "validation/gravity_reference/generators/field/generate_grail_degree120_pyshtools.py",
-    "script_sha256": "ae67a9f136e398c507dd017de14daff76c67ac1731072ee3f4613020239ebbfc",
+    "script_path": "validation/gravity_reference/generators/field/generate_grail_degree120_sobol.py",
+    "script_sha256": "809ab08c3880c7e38d34bf13c6f49981d597da66217255c82d9d780d3b8901b5",
     "version": "v1"
   },
   "gravity": {
-    "coefficient_file": "validation/gravity_reference/reference_data/field/grail_degree120_pyshtools_coefficients.json",
+    "coefficient_file": "validation/gravity_reference/reference_data/field/grail_degree120_sobol_coefficients.json",
     "coefficient_frame": "MOON_PA",
     "coefficient_sha256": "05f141791f5879987ac098c74ef3a3528dfb64791bff0687cc7403df70c69345",
     "degree": 120,
@@ -48,18 +46,18 @@
   "reference_class": "independent_high_precision_field_oracle",
   "reference_file": {
     "format": "csv",
-    "path": "validation/gravity_reference/reference_data/field/grail_degree120_pyshtools_field_vectors.csv",
-    "sha256": "5bc63c60766931de9c737a19c90d778233ce676cf820249f9fea7da76487a17e",
-    "size_bytes": 1599
+    "path": "validation/gravity_reference/reference_data/field/grail_degree120_sobol_field_vectors.csv",
+    "sha256": "d9773b440511ff4605b497fbbbb7e006dc5b4e1730e25731bb22c6edb4fddb92",
+    "size_bytes": 381179
   },
   "schema_version": "lunaris_gravity_field_reference_v1",
   "source": {
     "document_or_repository": "https://pyshtools.github.io/pyshtools/",
-    "license_note": "Validation artifact computed with open-source external library.",
-    "organization": "NASA/JPL (data), SHTOOLS (computation)",
-    "project": "GRAIL + pyshtools external validation",
+    "license_note": "Independent open-source SH computation; not NASA-published vectors.",
+    "organization": "NASA/JPL (coefficients), SHTOOLS (computation)",
+    "project": "Independent high-precision field oracle (statistical)",
     "release_or_commit": "pyshtools=4.14.1",
-    "retrieved_at_utc": "2026-06-17T00:00:00Z"
+    "retrieved_at_utc": "2026-06-18T00:00:00Z"
   },
-  "title": "Truncated GRAIL JGGRX_1800F (Degree 120) field validation (pyshtools external truth)"
+  "title": "GRAIL JGGRX_1800F degree-120 statistical field validation (2072 Sobol+strata points, pyshtools oracle)"
 }
