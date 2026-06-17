@@ -6,9 +6,10 @@ acceleration with a hand-written, Kahan-compensated, pole-safe Numba recurrence
 for the fully-normalized associated Legendre functions (ALFs). To validate it
 *independently* this module:
 
-1. evaluates the geopotential ``U`` using a different ALF source
-   (:func:`scipy.special.lpmn`) and an explicitly written 4π-normalization
-   factor, and
+1. evaluates the geopotential ``U`` using a different ALF source — a
+   self-contained classical associated-Legendre recurrence (NOT the optimized
+   fully-normalized Numba recurrence under test) — and an explicitly written
+   4π-normalization factor, and
 2. obtains the acceleration as the **numerical gradient** of ``U``
    (a high-order central-difference stencil), never the analytic recurrence.
 
@@ -23,8 +24,8 @@ Conventions (verified against closed-form anchors in the tests)
   frame. Upstream rotations are out of scope (identical to the Lunaris module).
 * Latitude is geocentric: ``sin φ = z / r``. Longitude ``λ = atan2(y, x)``.
 * ALFs are fully 4π-normalized including the Condon–Shortley phase, matching the
-  Lunaris ``scale_m`` table. ``scipy.special.lpmn`` already carries that phase
-  (``P_1^1 < 0``), so no extra phase factor is applied — see the note on
+  Lunaris ``scale_m`` table. The recurrence here bakes the ``(-1)^m`` phase into
+  the sectoral term (``P_1^1 < 0``), so no extra phase factor is applied — see
   :func:`normalized_alf_column`. This is pinned by the cross-check tests against
   the analytic Lunaris accelerations and the J2/(2,2) closed forms.
 * Potential:
@@ -45,7 +46,6 @@ from math import lgamma
 from typing import Any
 
 import numpy as np
-from scipy.special import lpmn
 
 __all__ = [
     "normalized_alf_column",
@@ -66,24 +66,48 @@ def _normalization_factor(n: int, m: int) -> float:
     return float(np.sqrt((2.0 - delta) * (2.0 * n + 1.0) * np.exp(log_fac)))
 
 
+def _associated_legendre_all(n_max: int, t: float) -> np.ndarray:
+    """Un-normalized associated Legendre functions ``P_n^m(t)`` as ``P[n, m]``.
+
+    A self-contained classical recurrence (deliberately independent of both the
+    Lunaris fully-normalized recurrence and any ``scipy.special`` helper, which
+    keeps this reference version-proof). The Condon–Shortley ``(-1)^m`` phase is
+    folded into the sectoral term, matching the Lunaris convention. Valid for the
+    moderate degrees used in cross-checks (``|t| <= 1``).
+    """
+    p = np.zeros((n_max + 1, n_max + 1), dtype=np.float64)
+    p[0, 0] = 1.0
+    somx2 = float(np.sqrt(max(0.0, 1.0 - t * t)))  # sin(colatitude)
+    # Sectoral terms P_m^m = (-1)^m (2m-1)!! (1 - t^2)^(m/2).
+    for m in range(1, n_max + 1):
+        p[m, m] = -(2 * m - 1) * somx2 * p[m - 1, m - 1]
+    # First off-diagonal P_{m+1}^m = t (2m+1) P_m^m.
+    for m in range(n_max):
+        p[m + 1, m] = t * (2 * m + 1) * p[m, m]
+    # Vertical recurrence P_n^m = [(2n-1) t P_{n-1}^m - (n+m-1) P_{n-2}^m] / (n-m).
+    for m in range(n_max + 1):
+        for n in range(m + 2, n_max + 1):
+            p[n, m] = ((2 * n - 1) * t * p[n - 1, m] - (n + m - 1) * p[n - 2, m]) / (n - m)
+    return p
+
+
 def normalized_alf_column(n_max: int, sin_phi: float) -> np.ndarray:
     """Return the 4π-normalized ALF matrix ``P̄[n, m]`` for ``n,m = 0..n_max``.
 
-    Built from :func:`scipy.special.lpmn` (an independent ALF implementation),
-    then scaled by :func:`_normalization_factor`. ``scipy.special.lpmn`` already
-    includes the Condon–Shortley ``(-1)^m`` phase, which matches the Lunaris
-    convention, so NO extra phase is applied here. Entries with ``m > n`` are
-    zero.
+    Built from the self-contained :func:`_associated_legendre_all` recurrence
+    (an independent ALF source, version-proof — no ``scipy.special`` dependency),
+    then scaled by :func:`_normalization_factor`. The recurrence already carries
+    the Condon–Shortley ``(-1)^m`` phase that matches the Lunaris convention, so
+    NO extra phase is applied here. Entries with ``m > n`` are zero.
     """
     n_max = int(n_max)
     if n_max < 0:
         raise ValueError(f"n_max must be >= 0, got {n_max}")
-    # lpmn returns P[m, n] of shape (n_max+1, n_max+1) (orders along axis 0).
-    p_mn, _ = lpmn(n_max, n_max, float(sin_phi))
+    p_nm = _associated_legendre_all(n_max, float(sin_phi))
     p_bar = np.zeros((n_max + 1, n_max + 1), dtype=np.float64)
     for n in range(n_max + 1):
         for m in range(n + 1):
-            p_bar[n, m] = _normalization_factor(n, m) * p_mn[m, n]
+            p_bar[n, m] = _normalization_factor(n, m) * p_nm[n, m]
     return p_bar
 
 

@@ -132,6 +132,11 @@ include = ["lunaris*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the repo root on sys.path so the top-level `validation/` harness package is
+# importable under a bare `pytest` invocation (CI uses `pytest tests/`, which —
+# unlike `python -m pytest` — does not add the CWD). `validation/` is a dev/
+# research package and is intentionally NOT installed (packages.find = lunaris*).
+pythonpath = ["."]
 markers = [
   "slow: long-running tests (deselect with -m 'not slow')",
   "integration: end-to-end tests that exercise multiple layers together",
