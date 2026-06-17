@@ -87,7 +87,15 @@ from lunaris.surrogate.st_lrps.networks.models import (
 )
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming
-from lunaris.surrogate.st_lrps.training.config import TrainConfig, apply_model_preset
+from lunaris.surrogate.st_lrps.training.checkpoint_manager import (
+    BestCheckpointTracker,
+    resolve_best_ckpt_start_epoch,
+)
+from lunaris.surrogate.st_lrps.training.config import (
+    TrainConfig,
+    apply_model_preset,
+    apply_run_preset,
+)
 from lunaris.surrogate.st_lrps.training.config_summary import build_experiment_feature_summary
 from lunaris.surrogate.st_lrps.training.losses import (
     GradNormWeights,
@@ -1261,6 +1269,8 @@ def _log_dataset_and_model_summary(N, _effective_target, bytes_est, cfg, data_pa
     logger.info(f"{'model.hidden':24s}: {cfg.hidden}")
     logger.info(f"{'model.depth':24s}: {cfg.depth}")
     logger.info(f"{'model.preset':24s}: {getattr(cfg, 'model_preset', 'custom')}")
+    logger.info(f"{'run.preset':24s}: {getattr(cfg, 'run_preset', 'custom')}")
+    logger.info(f"{'data.split_policy':24s}: {getattr(cfg, 'split_policy', 'seeded_random')}")
     logger.info(f"{'model.n_bands':24s}: {_n_bands_log}")
     logger.info(f"{'model.w0_first':24s}: {cfg.w0_first}")
     logger.info(f"{'model.w0_hidden':24s}: {cfg.w0_hidden}")
@@ -1348,6 +1358,11 @@ def train(cfg: TrainConfig) -> None:
     """
 
     # 1. Initialization
+    # Run-level preset first (may enforce split policy / determinism / preflight
+    # posture), then the architecture preset. apply_run_preset is idempotent for
+    # configs already resolved by parse_args; for programmatically built configs
+    # it enforces the 'paper' posture before set_seed reads the flags below.
+    apply_run_preset(cfg)
     apply_model_preset(cfg)
     if str(getattr(cfg, "runtime_model_kind", "potential_autograd")) == "force_direct":
         raise NotImplementedError(
@@ -2367,28 +2382,11 @@ def train(cfg: TrainConfig) -> None:
 
     capture_environment_snapshot(layout, extra={"device": str(device), "run_id": outdir.name})
 
-    _raw_ckpt_start = int(getattr(cfg, "best_ckpt_start_epoch", -1))
-    _direction_ready_epoch = (
-        int(cfg.direction_loss_start_epoch)
-        + int(cfg.direction_loss_ramp_epochs)
-        + int(getattr(cfg, "checkpoint_settle_epochs", 5))
-    )
-    if _raw_ckpt_start < 0:
-        if float(cfg.direction_loss_weight) > 0.0:
-            _ckpt_start = _direction_ready_epoch
-            _ckpt_start_reason = "waits until direction loss ramp is active and settled"
-        else:
-            _ckpt_start = 0
-            _ckpt_start_reason = "direction loss disabled; checkpoint tracking starts immediately"
-    else:
-        _ckpt_start = _raw_ckpt_start
-        _ckpt_start_reason = "manual best_ckpt_start_epoch"
-        if float(cfg.direction_loss_weight) > 0.0 and _ckpt_start < _direction_ready_epoch:
-            logger.warning(
-                "Manual best_ckpt_start_epoch is earlier than the direction-ready epoch "
-                f"({_ckpt_start} < {_direction_ready_epoch}). The run is allowed, but auto "
-                "mode is safer for production checkpoints."
-            )
+    _ckpt_start_res = resolve_best_ckpt_start_epoch(cfg)
+    _ckpt_start = _ckpt_start_res.start_epoch
+    _ckpt_start_reason = _ckpt_start_res.reason
+    if _ckpt_start_res.warning:
+        logger.warning(_ckpt_start_res.warning)
     _best_metric_canonical = normalize_best_metric(getattr(cfg, "best_metric", "hybrid"))
     checkpoint_selection = checkpoint_selection_block(
         cfg,
@@ -2533,6 +2531,8 @@ def train(cfg: TrainConfig) -> None:
                 "embedding_type",
                 "input_feature_dim",
                 "model_preset",
+                "run_preset",
+                "split_policy",
                 "runtime_model_kind",
                 "architecture_signature",
                 "degree_min",
@@ -2600,9 +2600,14 @@ def train(cfg: TrainConfig) -> None:
         collocation_r_max_m=_col_r_max_m,
     )
 
-    best_val = float("inf")
-    best_epoch = -1
-    epochs_without_improve = 0
+    # Best-checkpoint selection + early-stopping policy (CheckpointManager).
+    # The tracker owns the decision state; the local best_* mirrors below are kept
+    # in sync after every tracker mutation so the existing payload / manifest /
+    # summary read-sites continue to work unchanged.
+    tracker = BestCheckpointTracker(start_epoch=int(_ckpt_start), patience=int(cfg.patience))
+    best_val = tracker.best_val
+    best_epoch = tracker.best_epoch
+    epochs_without_improve = tracker.epochs_without_improve
     _prev_val_cossim = 1.0   # for direction drift detection
     _prev_val_mse_a = float("inf")
     best_path = layout.ckpt_best
@@ -2614,9 +2619,14 @@ def train(cfg: TrainConfig) -> None:
     run_status = "completed"
 
     if _resume_requested:
-        best_val = _resume_best_val
-        best_epoch = _resume_best_epoch
-        epochs_without_improve = _resume_epochs_without_improve
+        tracker.restore(
+            best_val=_resume_best_val,
+            best_epoch=_resume_best_epoch,
+            epochs_without_improve=_resume_epochs_without_improve,
+        )
+        best_val = tracker.best_val
+        best_epoch = tracker.best_epoch
+        epochs_without_improve = tracker.epochs_without_improve
         global_step = _resume_global_step
         logger.info(
             "[resume] restored counters: "
@@ -2858,7 +2868,13 @@ def train(cfg: TrainConfig) -> None:
             checkpoint_report["is_best_update"] = False
             checkpoint_report["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
             checkpoint_report["best_score"] = float(best_val) if math.isfinite(best_val) else None
-            if epoch < _ckpt_start:
+            # Advance the best-checkpoint / patience policy (CheckpointManager),
+            # then mirror its state into the local names the rest of the loop reads.
+            _best_update = tracker.update(epoch=epoch, score=_ckpt_score)
+            best_val = tracker.best_val
+            best_epoch = tracker.best_epoch
+            epochs_without_improve = tracker.epochs_without_improve
+            if not _best_update.eligible:
                 # Burn-in phase: save last checkpoint but do not update best or count patience.
                 logger.info(f"[checkpoint] waiting: epoch {epoch+1} < start epoch {_ckpt_start + 1}")
                 if epoch == _ckpt_start - 1:
@@ -2867,10 +2883,7 @@ def train(cfg: TrainConfig) -> None:
                         f"Best-checkpoint tracking and patience counter start from next epoch."
                     )
             else:
-                if _ckpt_score < best_val:
-                    best_val = _ckpt_score
-                    best_epoch = int(epoch)
-                    epochs_without_improve = 0
+                if _best_update.is_best:
                     checkpoint_payload["scoring"]["score"] = float(_ckpt_score)
                     checkpoint_payload["config"]["best_val_loss"] = float(best_val)
                     checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1)
@@ -2914,8 +2927,8 @@ def train(cfg: TrainConfig) -> None:
                             },
                         },
                     )
-                else:
-                    epochs_without_improve += 1
+                # Non-improving eligible epochs: the tracker already advanced
+                # epochs_without_improve (mirrored into the local above).
 
             checkpoint_payload["config"]["best_val_loss"] = float(best_val) if math.isfinite(best_val) else None
             checkpoint_payload["config"]["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
@@ -3015,7 +3028,7 @@ def train(cfg: TrainConfig) -> None:
             )
             logger.info(format_epoch_summary(row, total_epochs=int(cfg.epochs)))
 
-            if epochs_without_improve >= int(cfg.patience):
+            if tracker.should_early_stop():
                 logger.info(
                     f"Early stopping triggered after {epochs_without_improve} epochs without validation improvement. "
                     f"Best epoch: {best_epoch + 1} | best_val_loss={best_val:.6e}"

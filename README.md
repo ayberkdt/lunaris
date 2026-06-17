@@ -6,23 +6,40 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://pypi.org/classifiers/)
 
-Lunaris is a Python framework for lunar-orbit propagation and gravity modeling. It bundles spherical-harmonic lunar gravity, configurable physical force models, orbit propagation, Monte Carlo analysis, validation harnesses, visualization tools, and a PySide6 desktop UI.
+Lunaris is a Python framework for lunar-orbit propagation and gravity modeling. It
+bundles spherical-harmonic lunar gravity, configurable physical force models, orbit
+propagation, Monte Carlo analysis, validation harnesses, visualization tools, and a
+PySide6 desktop UI.
 
-It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) — a neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a residual scalar potential above a lower-degree spherical-harmonic baseline, with its own training, evaluation, and Studio UI.
+It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) — a
+neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a
+residual scalar potential above a lower-degree spherical-harmonic baseline, with its
+own training, evaluation, and Studio UI.
 
 > **Project status.** Lunaris is an **alpha-stage research prototype**
-> (`Development Status :: 3 - Alpha`). It is intended for research
-> and experimentation: APIs, trained artifacts, and reported benchmark numbers
-> may change between versions, and some experimental runtime paths are still
-> reserved for future work.
+> (`Development Status :: 3 - Alpha`). APIs, trained artifacts, and reported
+> benchmark numbers may change between versions. Treat validation outputs as
+> run-specific evidence, not a blanket guarantee.
 
-## Overview
+## Documentation
 
-Lunaris supports lunar-orbit propagation with configurable physical force models (spherical-harmonic gravity, third-body, Earth J2, solar radiation pressure, lunar albedo, thermal IR, solid tides, relativity — see [Force models](#force-models)), Monte Carlo workflows, validation harnesses, report generation, and PySide6-based desktop workflows. When the ST-LRPS surrogate is enabled, runtime acceleration is obtained from the learned potential gradient and combined with the lower-degree spherical-harmonic baseline.
+This README is a landing page; the canonical detail lives in `docs/`.
 
-Accuracy, runtime, and stability depend on the selected data, force-model configuration, trained artifacts, and validation scenario. Treat validation outputs as run-specific evidence rather than a blanket guarantee.
+| Document | Contents |
+|----------|----------|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, **force-model / perturbation flags**, Monte Carlo internals, ST-LRPS surrogate |
+| [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD split policies, runtime frame safety, paper-safe benchmarks, validation + ablation suites |
+| [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
+| [docs/REPRODUCIBLE_BENCHMARKS.md](docs/REPRODUCIBLE_BENCHMARKS.md) | Config-driven benchmark runs, provenance manifests, validation reports, and CI smoke mode |
+| [docs/DATASET_PIPELINE.md](docs/DATASET_PIPELINE.md) | ST-LRPS dataset contract, validation, quality reports, split manifests, and strict training ingestion |
+| [docs/CONFIG_AND_ARTIFACT_CONTRACTS.md](docs/CONFIG_AND_ARTIFACT_CONTRACTS.md) | ST-LRPS dataset, training, checkpoint, runtime, and benchmark contract rules |
+| [docs/PERTURBATION_BUDGET.md](docs/PERTURBATION_BUDGET.md) | Perturbation-budget assumptions, outputs, and interpretation |
+| [docs/HPC.md](docs/HPC.md) | Cluster/headless install, Conda environment, Slurm templates, scenario arrays |
+| [docs/profiling.md](docs/profiling.md) | ST-LRPS runtime profiling and timing interpretation |
+| [validation/README.md](validation/README.md) | Independent physics/orbit/gravity validation harnesses |
+| [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) | Dev setup + quality gates · vulnerability reporting |
 
-### Force models
+## Force models
 
 Implemented and wired into the propagator (`lunaris.core.dynamics`):
 
@@ -35,212 +52,51 @@ Implemented and wired into the propagator (`lunaris.core.dynamics`):
 - Elastic lunar solid-body tides (`k2`, optional explicit `k3`; Earth and/or Sun raised)
 - First-order post-Newtonian relativity
 
-Solid tides use `lunaris.physics.solid_tides`: the Moon-fixed disturbing
-potential is evaluated with configurable Love numbers and differentiated
-analytically, then the acceleration is rotated back to the inertial integration
-frame. The default `SolidTideConfig.k2=0.02416` follows the GRAIL/LRO monthly
-lunar `k2` value reported by Williams & Boggs (2015) in
-[NASA PGDA product 96](https://pgda.gsfc.nasa.gov/products/96);
-`k3` has no default and must be set explicitly for `--tides-kind k3`.
-Supported tide-raising bodies are `earth`, `sun`, or both. This is an elastic
-instantaneous solid-body model only: no time lag/dissipation, ocean tide, or
-thermal tide is included.
-
-CLI example:
+Each model is configurable from the `lunaris` CLI; see
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full flag reference,
+assumptions, and limitations. Example:
 
 ```bash
 lunaris --enable-tides on --tides-kind k2 --tide-bodies earth,sun
-lunaris --enable-tides on --tides-kind k3 --tide-k3 0.01 --tide-bodies earth
-```
-
-Thermal IR uses `lunaris.physics.thermal_ir`: the lunar surface is discretized
-into Lambertian facets and each visible facet contributes radiation pressure in
-the spacecraft direction. Supported modes are `constant_temperature`,
-`equilibrium_temperature` (instantaneous solar incidence, no thermal inertia),
-and `temperature_grid` (caller/provider-supplied facet temperatures).
-
-```bash
-lunaris --enable-thermal on --thermal-mode constant_temperature --thermal-temperature-k 250
-lunaris --enable-thermal on --thermal-mode equilibrium_temperature --thermal-night-temperature-k 100
-```
-
-Lunar albedo uses `lunaris.physics.lunar_albedo`: a non-gravitational
-*reflected-solar* radiation pressure (sunlight reflected off the lunar surface),
-not a gravity term. The Moon is discretized into Lambertian facets, and each
-facet that is both sunlit and visible to the spacecraft reflects sunlight toward
-it; the summed acceleration is rotated back to the inertial frame. Per-facet
-albedo is set by `--albedo-mode`: `constant_albedo` (provider-free, uses
-`--albedo-const`), `albedo_grid`, or `scaled_dn_grid` (the latter two sample a
-LOLA-style grid supplied via `--albedo-root`). It uses a dedicated
-`--albedo-pressure-coefficient` (C_R_albedo), not the SRP `cr`. The legacy
-cannonball model stays available via `--albedo-model simple`. The facet model is
-Lambertian only: no non-Lambertian BRDF, wavelength dependence, surface
-roughness, terrain self-shadowing beyond the incidence/visibility cutoffs,
-photometric phase functions, multiple scattering, or local topography.
-
-```bash
-lunaris --enable-albedo on --albedo-const 0.12
+lunaris --enable-thermal on --thermal-mode equilibrium_temperature
 lunaris --enable-albedo on --albedo-mode scaled_dn_grid --albedo-root data/albedo_models
 ```
 
-## Documentation
-
-| Document | Contents |
-|----------|----------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, perturbation flags, Monte Carlo internals, ST-LRPS surrogate |
-| [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD split policies, runtime frame safety, paper-safe benchmarks, validation + ablation suites |
-| [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
-| [docs/REPRODUCIBLE_BENCHMARKS.md](docs/REPRODUCIBLE_BENCHMARKS.md) | Config-driven benchmark runs, provenance manifests, validation reports, and CI smoke mode |
-| [docs/DATASET_PIPELINE.md](docs/DATASET_PIPELINE.md) | ST-LRPS dataset contract, validation, quality reports, split manifests, and strict training ingestion |
-| [docs/CONFIG_AND_ARTIFACT_CONTRACTS.md](docs/CONFIG_AND_ARTIFACT_CONTRACTS.md) | ST-LRPS dataset, training, checkpoint, runtime, and benchmark contract rules |
-| [docs/HPC.md](docs/HPC.md) | Cluster/headless install, Conda environment, Slurm templates |
-| [docs/profiling.md](docs/profiling.md) | ST-LRPS runtime profiling and timing interpretation |
-| [validation/README.md](validation/README.md) | Independent physics/orbit/gravity validation harness |
-
-## Repository Architecture
-
-The repository uses a `src/` package layout. The propagation framework is
-organized into **four strict layers** — a layer never imports from a layer above
-it — with a few dependency-light support packages alongside them. ST-LRPS remains
-a named surrogate family under `lunaris.surrogate.st_lrps`. The map below is a
-quick orientation; see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
-canonical layered design, data flow, configuration model, perturbation flags, and
-Monte Carlo internals.
-
-```text
-src/lunaris/
-  common/          [layer 1] shared constants, config dataclasses, math/time helpers
-  physics/         [layer 2] Numba force-model kernels, ephemeris (SPICE), gravity adapters
-  core/            [layer 3] config (SimConfig SSOT), dynamics RHS, propagator, events, Monte Carlo
-  analysis/        [layer 4] post-processing, reports, Monte Carlo analysis
-  visualization/   [layer 4] standalone visualization tools
-  ui/              [layer 4] Lunar Orbit Simulator desktop UI (PySide6)
-    widgets/                 desktop UI page components
-  loaders/         (support) gravity / topography / ephemeris / data loading for layers 2–3
-  cli/             (support) console entry points and shared CLI argument helpers
-  surrogate/
-    st_lrps/       Sobolev-Trained Lunar Residual Potential Surrogate family
-      data/        dataset definitions, spatial cloud generation, dataset loading
-      training/    ST-LRPS training config, CLI, engine, losses, metrics
-      networks/    neural network architecture definitions
-      artifacts/   run layout, checkpoints, manifests, artifact validation
-      evaluation/  trained-model evaluation, ablation, and orbit-level benchmark CLIs
-      runtime/     propagator-facing ST-LRPS force model API
-      shared/      shared scaling utilities
-      ui/          ST-LRPS Studio desktop UI
-validation/        independent physics/orbit/gravity validation docs and schemas
-tests/             unit and regression tests
-data/              local input data such as SPICE kernels, gravity, topography
-hpc/               example Slurm templates for cluster use
-```
-
-Console entry points (installed via `pip install -e .`):
-
-```text
-lunaris           single-run propagation CLI
-lunaris-mc        Monte Carlo runner
-lunaris-launcher  welcome hub (picks a workspace; optional 3D Moon preview)
-lunaris-ui        mission desktop UI (Lunaris Mission Studio)
-lunaris-studio    ST-LRPS Studio UI
-lunaris-train     ST-LRPS training CLI
-lunaris-train-force-direct
-                  minimal direct residual-acceleration training CLI
-lunaris-eval      ST-LRPS evaluation CLI
-lunaris-eval-force-direct
-                  field-level acceleration evaluation for force_direct artifacts
-lunaris-benchmark ST-LRPS orbit-level gravity benchmark / validation CLI
-lunaris-data      external-data download / verify CLI
-lunaris-perturbation-budget
-                  acceleration and force-model uncertainty budget analysis
-```
-
-### Desktop launcher & 3D web preview
-
-`lunaris-launcher` is the top-level welcome hub. It presents two workspaces —
-**Lunar Propagation** (`lunaris-ui`) and **ST-LRPS Studio** (`lunaris-studio`) —
-as glassmorphic cards, and opens the chosen one in its own window. Each workspace
-is imported lazily, so launching one never loads the other's dependencies; both
-`lunaris-ui` and `lunaris-studio` also remain usable directly.
-
-Behind the cards, the launcher can show an optional, **offline** interactive 3D
-Moon (a Sobolev/visual and gravity-anomaly texture toggle, plus a small demo
-orbit). The visual is a Next.js / Three.js scene under
-`src/lunaris/ui/web`, statically exported and served from a local
-loopback HTTP server — no internet and no Node runtime are required at app run
-time. Build it once:
-
-```bash
-cd src/lunaris/ui/web
-npm install
-npm run build      # writes ./out (embed route at out/embed/index.html)
-```
-
-The preview is entirely optional. If the build is missing, QtWebEngine is not
-installed, or the GPU lacks WebGL, the launcher falls back to a dark background
-and still opens normally — the 3D scene never blocks the app. Point the launcher
-at a custom build with the `LUNARIS_WEB_EMBED_DIR` environment variable. (The
-satellite path in the preview is a *demo orbit*, not solver output.)
-
-### Desktop theme — *Lunar Graphite*
-
-The desktop UI uses a unified dark theme called **Lunar Graphite**. All Qt widget
-colors and design tokens flow from the single source of truth in `lunaris.ui_foundation`.
-The global stylesheet is managed by `lunaris.ui.theme`, and the OpenGL
-orbit preview uses a separate `ORBIT_THEME` palette. See
-[docs/UI_THEME.md](docs/UI_THEME.md) for the token reference.
-
 ## Installation
 
-Install the package in editable mode from the repository root. This wires up the
-console entry points (`lunaris`, `lunaris-ui`, …) and lets code changes take
-effect without reinstalling:
+Install in editable mode from the repository root to wire up the console entry
+points and pick up code changes without reinstalling:
 
 ```bash
 python -m pip install -e .            # core dependencies only
 python -m pip install -e ".[all]"     # core + ML + UI + reports + dev extras
 ```
 
-Optional dependency groups are declared in `pyproject.toml`: `ml`, `hpc`, `ui`,
-`reports`, `dev`, and `all`. Every dependency carries both a lower and an upper
-version bound, so an install or CI run cannot silently pull in an incompatible
-major release. `requirements.txt` installs the package with the full optional
-stack (equivalent to `.[all]`) and `requirements_hpc.txt` installs the headless
-HPC stack (`.[hpc]`); both defer to `pyproject.toml` for the actual versions.
+Optional dependency groups (`pyproject.toml`): `ml`, `hpc`, `ui`, `reports`,
+`dev`, `all`. Every dependency carries lower and upper version bounds so a build
+cannot silently pull in an incompatible major release. For reproducible
+environments, exact pins live in `locks/*.lock.txt` (generated with `uv`). For
+clusters, use the headless `.[hpc]` extra and the Slurm templates in `hpc/`; see
+the [HPC guide](docs/HPC.md).
 
-**For reproducible environments**, exact package versions are tracked via lock files in the `locks/` directory (e.g., `requirements-hpc-linux-py311.lock.txt`). These are generated using `uv` to ensure deterministic builds.
-
-**For HPC and cluster deployments**, use the headless `.[hpc]` extra (or the HPC lock file) and the Slurm templates under `hpc/`; keep GUI dependencies off compute nodes. The primary cluster workflows are ST-LRPS dataset generation, training, evaluation, and large orbit-level validation runs. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for details.
-
-Large mission data files are not bundled. Place local SPICE kernels, gravity coefficient files, topography grids, and albedo grids under `data/` or another local path configured at runtime.
-
-Common data locations:
-
-| Directory | Contents |
-|-----------|----------|
-| `data/ephemeris_models/` | SPICE leap-second, planetary, constants, and lunar orientation kernels |
-| `data/gravity_models/` | Lunar spherical-harmonic coefficient files |
-| `data/topography_models/` | LOLA/LDEM topography rasters |
-| `data/albedo_models/` | Optional lunar albedo grids |
-| `data/thermal_models/` | Optional thermal temperature/property grids |
-
-### Acquiring external data
-
-Large files (gravity coefficients, SPICE kernels, topography, albedo) are not bundled. Use the headless `lunaris-data` tool to fetch and verify them into `LUNARIS_DATA_DIR` (or the repository `data/` folder):
+Large mission data (SPICE kernels, gravity coefficients, topography, albedo) is
+**not bundled**. Fetch and verify it with the headless `lunaris-data` tool into
+`LUNARIS_DATA_DIR` (or the repo `data/` folder):
 
 ```bash
 lunaris-data list
 lunaris-data download --group ephemeris
 lunaris-data verify
-lunaris-data inspect --data outputs/datasets/cloud.h5
-lunaris-data validate --data outputs/datasets/cloud.h5 --out outputs/dataset_reports/cloud
-lunaris-data report --data outputs/datasets/cloud.h5 --out outputs/dataset_reports/cloud
 ```
 
-The catalogue is `data/data_sources.json`; entries without an official pinned URL print manual-placement instructions. See the [HPC and Cluster Deployment Guide](docs/HPC.md) for the cluster data workflow.
+The catalogue is `data/data_sources.json`; entries without a pinned URL print
+manual-placement instructions. Common locations: `data/ephemeris_models/`,
+`data/gravity_models/`, `data/topography_models/`, `data/albedo_models/`,
+`data/thermal_models/`.
 
 ## Quickstart
 
-These checks do not require private local datasets.
+These checks do not require private local datasets:
 
 ```bash
 python -m pip install -e ".[hpc]"
@@ -256,359 +112,170 @@ python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
 python -m lunaris.visualization.surface_explorer --help
 ```
 
-Data-dependent examples such as full propagation, ST-LRPS training, gravity validation runs, and topography plots require local gravity, SPICE, or LOLA files.
+Data-dependent workflows (full propagation, ST-LRPS training, gravity validation,
+topography plots) require local gravity, SPICE, or LOLA files.
 
-## Perturbation Budget Analysis
+## Repository architecture
 
-`lunaris-perturbation-budget` quantifies instantaneous acceleration
-contributions, spherical-harmonic degree increments, and first-order
-force-model uncertainty assumptions. It is a mission-analysis / validation tool,
-not an electrical power analysis and not a new propagation force model.
+A `src/` package layout organized into **four strict layers** (a layer never
+imports from a layer above it) plus dependency-light support packages. See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the canonical design.
 
-```bash
-lunaris-perturbation-budget \
-  --altitudes-km 50,100,300,1000,3000 \
-  --sh-degrees 20,30,60,100,200 \
-  --gravity-model path/to/lunar_gravity_model.tab \
-  --out-dir outputs/perturbation_budget/default
+```text
+src/lunaris/
+  common/          [layer 1] shared constants, config dataclasses, math/time helpers
+  physics/         [layer 2] Numba force-model kernels, ephemeris (SPICE), gravity adapters
+  core/            [layer 3] config (SimConfig SSOT), dynamics RHS, propagator, events, Monte Carlo
+  analysis/        [layer 4] post-processing, reports, Monte Carlo analysis
+  visualization/   [layer 4] standalone visualization tools
+  ui/              [layer 4] Lunar Orbit Simulator desktop UI (PySide6)
+  loaders/         (support) gravity / topography / ephemeris / data loading
+  cli/             (support) console entry points and shared CLI helpers
+  surrogate/st_lrps/   Sobolev-Trained Lunar Residual Potential Surrogate family
+      data/ training/ networks/ artifacts/ evaluation/ runtime/ shared/ ui/
+validation/        independent physics/orbit/gravity validation harnesses + docs
+tests/             unit and regression tests
+data/              local input data (SPICE kernels, gravity, topography)
+hpc/               example Slurm templates for cluster use
 ```
 
-If no gravity model is provided, the command uses clearly labeled synthetic
-gravity coefficients for smoke testing only. See
-[`docs/PERTURBATION_BUDGET.md`](docs/PERTURBATION_BUDGET.md) for assumptions,
-outputs, limitations, and interpretation guidance.
+Console entry points (installed via `pip install -e .`):
 
-## ST-LRPS Commands
+```text
+lunaris           single-run propagation CLI
+lunaris-mc        Monte Carlo runner
+lunaris-launcher  welcome hub (picks a workspace; optional offline 3D Moon preview)
+lunaris-ui        mission desktop UI (Lunaris Mission Studio)
+lunaris-studio    ST-LRPS Studio UI
+lunaris-train / lunaris-train-force-direct      ST-LRPS training CLIs
+lunaris-eval  / lunaris-eval-force-direct       ST-LRPS evaluation CLIs
+lunaris-benchmark ST-LRPS orbit-level gravity benchmark / validation CLI
+lunaris-data      external-data download / verify CLI
+lunaris-perturbation-budget   acceleration / force-model uncertainty budget
+```
 
-Spatial cloud generation:
+The desktop UI uses a unified dark theme, **Lunar Graphite**, whose tokens flow
+from `lunaris.ui_foundation` (see [docs/UI_THEME.md](docs/UI_THEME.md)). The
+launcher can show an optional, **offline** Three.js Moon preview (built from
+`src/lunaris/ui/web`); it never blocks the app and falls back gracefully when
+absent.
+
+## ST-LRPS at a glance
 
 ```bash
+# dataset generation, training, evaluation, ablation
 python -m lunaris.surrogate.st_lrps.data.spatial_cloud_generator --help
-```
-
-Training:
-
-```bash
 python -m lunaris.surrogate.st_lrps.training.cli --help
-```
-
-Evaluation:
-
-```bash
 python -m lunaris.surrogate.st_lrps.evaluation.cli --help
-```
-
-Ablation:
-
-```bash
 python -m lunaris.surrogate.st_lrps.evaluation.ablation --help
 ```
 
-Runtime import example:
+At runtime ST-LRPS supports two artifact contracts: the default
+`potential_autograd` (learned scalar residual potential, acceleration via
+autograd; validation-safe) and the experimental `force_direct` (3-output
+direct residual acceleration, not conservative by construction — requires curl
+and orbit-level validation before scientific claims). Versioned
+`artifact_contract` / `dataset_contract` blocks record target semantics, baseline
+degree, altitude envelope, scaler contract, encoding, and runtime kind.
 
-```python
-from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
-```
-
-At runtime ST-LRPS supports two artifact contracts. The default
-`runtime_model_kind="potential_autograd"` evaluates a learned **scalar residual
-potential** and obtains residual acceleration by autograd differentiation before
-adding the lower-degree spherical-harmonic baseline. The newer
-`runtime_model_kind="force_direct"` (`DirectForceRuntime`) loads a 3-output
-student artifact that predicts residual acceleration directly, with no autograd
-during inference. Direct-force artifacts do not predict `DeltaU`, are not
-conservative by construction, and require acceleration, curl, and orbit-level
-validation before scientific claims.
-
-For throughput Monte Carlo, keep `potential_autograd` as the validation-safe
-ST-LRPS default and use `force_direct` as an experimental/deployment runtime
-until orbit drift is benchmarked for the target scenario set. See
-[docs/OPTIMIZATION_ROADMAP.md](docs/OPTIMIZATION_ROADMAP.md) for the current
-method-selection policy.
-
-**Reproducible HPC sweeps.** Self-describing experiment definitions live under
-[`hpc/scenarios/`](hpc/scenarios/) as JSONL files (one experiment per line).
-Submit them as Slurm arrays via `hpc/slurm_train_scenario_array.sbatch` to run
-clean, parallel ablation / capacity / encoding / force-direct sweeps. Scenario
-names are intentionally long and self-describing (e.g.
-`PotentialAutograd_A6FullRecommended_3Band_RawXYZ_DirectionW020_Seed42`) and
-double as the run-directory name. See the
-[HPC scenario-arrays guide](docs/HPC.md#1b-st-lrps-scenario-arrays-reproducible-sweeps).
-
-Model target semantics are recorded explicitly through versioned
-`artifact_contract` and `dataset_contract` blocks in new configs/checkpoints.
-The contract distinguishes residual labels from full-field labels, records the
-baseline degree/kind, target degree, altitude envelope, scaler contract, input
-encoding, architecture signature, and runtime model kind. See
-[docs/CONFIG_AND_ARTIFACT_CONTRACTS.md](docs/CONFIG_AND_ARTIFACT_CONTRACTS.md)
-for the strict runtime and benchmark compatibility rules.
-
-Model presets:
-
-```text
-baseline_raw                         raw xyz control representation
-recommended_physical_radial_decay    physically informed R_ref/r radial decay encoding
-ablation_radial_separation           radial/direction feature ablation
-ablation_radial_decay_scaled         legacy scaled inverse-radius ablation
-ablation_real_sh_low_degree          real spherical-harmonic basis ablation
-custom                               manual encoding flags
-```
-
-Raw xyz remains the baseline. The physical radial-decay preset is intended for
-benchmarking as a recommended representation, not as an automatic performance
-claim.
-
-Runtime profiling:
-
-```bash
-python -m lunaris.surrogate.st_lrps.runtime.profiling \
-    --model-dir outputs/training/st_lrps_train_xxx \
-    --batch-sizes 1,16,128,1024,8192 \
-    --n-warmup 10 \
-    --n-repeat 50 \
-    --out-dir outputs/runtime/st_lrps_runtime_xxx
-```
-
-See `docs/profiling.md` for synthetic and dataset-backed profiling, CPU/CUDA timing, chunk-size sensitivity, and output interpretation.
-
-Lightweight benchmark scaffolds:
-
-```bash
-python -m lunaris.surrogate.st_lrps.evaluation.runtime_benchmark --help
-python -m lunaris.surrogate.st_lrps.evaluation.orbit_benchmark --help
-```
-
-Reproducible config-driven benchmark runs:
+Run-level posture is selected with `--run-preset {development,quick,paper}`;
+`paper` enforces a generalization split, deterministic execution, and the
+preflight gate. Reproducible config-driven benchmarks:
 
 ```bash
 lunaris-benchmark --config configs/benchmarks/st_lrps_1day_high_degree.json
-lunaris-benchmark \
-  --config configs/benchmarks/st_lrps_1day_high_degree.json \
-  --model-dir outputs/training/st_lrps_train_YYYYMMDD_HHMMSS \
-  --out outputs/gravity_benchmark/st_lrps_1day_high_degree
 lunaris-benchmark --config configs/benchmarks/st_lrps_1day_high_degree.json --quick
 ```
 
-See [docs/REPRODUCIBLE_BENCHMARKS.md](docs/REPRODUCIBLE_BENCHMARKS.md) for
-the manifest, resolved config, validation report, and standardized output
-layout.
+See [docs/CONFIG_AND_ARTIFACT_CONTRACTS.md](docs/CONFIG_AND_ARTIFACT_CONTRACTS.md),
+[docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md), and
+[docs/HPC.md](docs/HPC.md#1b-st-lrps-scenario-arrays-reproducible-sweeps) for
+contracts, validation hygiene, and reproducible HPC sweeps.
 
-Generated outputs use the repository-level `outputs/` convention by default. Do not place generated runs inside source package directories.
+**Resuming training.** Runs are checkpointed every epoch; continue with
+`--resume-from <run-dir | checkpoints/ | ckpt.pt>`. Note that `--epochs` is the
+**TOTAL** target epoch count, not additional epochs, and resume restores
+optimizer / LR-schedule / GradNorm / RNG state (not just weights). Full semantics
+are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Resuming ST-LRPS Training
+## Propagation, Monte Carlo, and analysis
 
-Training is checkpointed every epoch. If a run stops (Ctrl+C, machine shutdown), continue it from the last completed epoch instead of restarting:
-
-```bash
-python -m lunaris.surrogate.st_lrps.training.cli \
-    --resume-from outputs/training/st_lrps_train_YYYYMMDD_HHMMSS \
-    --epochs 300
-```
-
-`--resume-from` accepts a run directory, its `checkpoints/` directory, or a specific `.pt` checkpoint.
-
-Key points:
-
-- **`--epochs` is the TOTAL target epoch count, not additional epochs.** If a run completed epoch 100 and you resume with `--epochs 300`, training continues at epoch 101 and stops after epoch 300. To run 200 more epochs after epoch 100, pass `--epochs 300`.
-- Resume defaults to **`ckpt_last.pt`** (it carries the optimizer, GradNorm, and RNG state needed to continue). `ckpt_best.pt` is for evaluation/selection; use `--resume-checkpoint best` only for fine-tuning.
-- Resume restores model weights **and** optimizer state, the LR schedule position, loss-weighting (GradNorm) state, best-checkpoint tracking, `global_step`, and RNG state — not just the model weights.
-- `--data` and `--out` are inferred from the previous run when omitted.
-- History is **appended** by default (use `--resume-overwrite-history` to start fresh). The run manifest records the resume event (`resumed: true`, `resume_start_epoch`, `previous_latest_epoch`, `target_epochs`).
-- Architecture, encoding, scaler, and dataset-identity settings are locked to the previous run; a critical mismatch fails in strict mode. Use `--resume-nonstrict` to allow non-critical differences.
-- Resume is **epoch-level**: if interrupted mid-epoch, it resumes from the last fully completed (saved) epoch. RNG state is restored, but exact DataLoader worker ordering is not bitwise-guaranteed. There is no mid-batch resume.
-
-Resuming from a specific checkpoint file:
-
-```bash
-python -m lunaris.surrogate.st_lrps.training.cli \
-    --resume-from outputs/training/st_lrps_train_YYYYMMDD_HHMMSS/checkpoints/ckpt_last.pt \
-    --epochs 300
-```
-
-## Propagation And Analysis
-
-Single-run propagation is driven by the `lunaris` command; Monte Carlo workflows are driven by `lunaris-mc`. These commands are data-dependent and should be configured with local input files and output paths:
-
-```bash
-lunaris --help
-lunaris-mc --help
-```
-
-Monte Carlo backend names are explicit:
-
-- `auto` — resolve the best available backend from the policy.
-- `cpu_sh` — SciPy DOP853 per-sample CPU reference (full-fidelity physics).
-- `numba_cuda_sh` (alias `gpu_sh`) — Numba CUDA classic-SH RK4; degree ≤ 24 is a
-  kernel-workspace limit, not a physical one.
-- `torch_cuda_sh` — PyTorch CUDA classic-SH RK4 at arbitrary degree (gravity-only
-  first form); this is the high-degree GPU path.
-- `torch_cpu_sh` — the same PyTorch RK4 classic-SH path on CPU (no CUDA needed),
-  useful for validation and machines without a GPU.
-- `gpu_st_lrps_potential`, `gpu_st_lrps_direct` — PyTorch CUDA ST-LRPS surrogate.
-
-The requested `--gpu-sh-degree` is never clipped. Degrees above the Numba
-degree-24 limit route to `torch_cuda_sh` when PyTorch CUDA is available; otherwise
-the run falls back per the configured `--gpu-sh-fallback-policy`
-(`compatible_gpu`, `cpu`, or `error`). Backend selection is resolved centrally by
+Single-run propagation is driven by `lunaris`; Monte Carlo workflows by
+`lunaris-mc` (both data-dependent). Monte Carlo backends are explicit (`cpu_sh`
+truth reference, `numba_cuda_sh`, `torch_cuda_sh`, `torch_cpu_sh`,
+`gpu_st_lrps_potential`, `gpu_st_lrps_direct`); selection is resolved centrally by
 `lunaris.core.mc_backend_policy`, and the requested vs. effective backend, device,
 integrator, and any fallback reason are recorded in `MCRunResult.diagnostics`
-rather than applied silently. Use high-degree `cpu_sh` runs for truth/reference
-and the GPU backends for throughput experiments.
+rather than applied silently. The perturbation budget tool quantifies
+acceleration contributions and force-model uncertainty:
 
-Canonical analysis modules:
+```bash
+lunaris-perturbation-budget --altitudes-km 50,100,300,1000 --sh-degrees 20,60,200 \
+  --gravity-model path/to/lunar_gravity_model.tab --out-dir outputs/perturbation_budget/default
+```
 
-| Purpose | Module |
-|---------|--------|
-| Post-processing | `lunaris.analysis.postprocess` |
-| Report management | `lunaris.analysis.reporting.manager` |
-| Report plotting | `lunaris.analysis.reporting.plotting` |
-| Report styling | `lunaris.analysis.reporting.styling` |
-| Monte Carlo statistics | `lunaris.analysis.monte_carlo.statistics` |
-| Monte Carlo plotting | `lunaris.analysis.monte_carlo.plotting` |
+Post-processing, reporting, and Monte Carlo statistics/plotting live under
+`lunaris.analysis.*`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Validation
+## Validation and benchmarks
 
-The validation layer is for independent physics, orbit, and cross-model checks. The current gravity validation harness is:
+The validation layer provides independent physics, orbit, and cross-model checks,
+including external-reference harnesses (`scipy`/`pyshtools` SH cross-checks and
+direct NAIF/SPICE ephemeris checks) under `validation/independent/`. The gravity
+benchmark CLI compares ST-LRPS against spherical-harmonic baselines:
 
 ```bash
 python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
 ```
 
-Gravity validation commonly uses a high-degree spherical-harmonic model such as SH200 as the truth/reference, lower-degree spherical-harmonic models as baselines, and optional ST-LRPS comparison when a trained artifact directory is supplied. See [validation/README.md](validation/README.md) and [validation/gravity/README.md](validation/gravity/README.md) for details.
+Selected results (consumer workstation, Intel CPU + GTX 1660 Ti; see
+[docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) for full tables, scenario
+counts, and reproduction):
 
-### Orbit-Level Gravity Benchmark (128 scenarios, 5-day propagation)
+| Benchmark | ST-LRPS median RMS position error | Note |
+|-----------|-----------------------------------|------|
+| 5-day general stability (128 scenarios, `float32`) | **1.106 km** | ≈2× faster wall-clock than `SH50` at higher accuracy |
+| 1-day high-degree comparison (100 scenarios, `float64`) | **0.626 km** | 29.1× lower error than `SH20`; 8.32× faster than `SH200` |
+| 1-day near-circular mapping (100 scenarios, `float64`) | **15.83 cm** | 2.25× speedup vs. sequential CPU truth |
 
-Validation of the ST-LRPS surrogate against spherical-harmonic (SH) baselines over 128 randomized orbits, run on a consumer workstation (Intel CPU + GTX 1660 Ti). In this benchmark configuration:
-
-* Median RMS position error of **1.106 km** over ~**704,160 km** of total traveled distance (relative error ~**0.00015%**), below the listed lower-degree SH baselines for this scenario set.
-* Radial (altitude) error of **41 m** and cross-track error of **6 m** after 5 days of unguided propagation.
-* Runtime, for this scenario set:
-  * ≈**2x** faster wall-clock than the `SH50` model (3,377 s vs. 6,620 s) at higher accuracy in this configuration.
-  * ≈**6%** wall-clock overhead relative to the lightweight `SH20` model.
-  * **9.55x** wall-clock speedup versus the sequential CPU truth reference.
-
-### High-Degree SH Comparison (100 scenarios, 1-day propagation)
-
-ST-LRPS compared against high-degree spherical harmonics (`SH100`, `SH200`) under general elliptic orbits ($100\text{ km}$ to $1000\text{ km}$ altitude). In this benchmark configuration:
-
-* Median RMS position error of **0.626 km** — below `SH30` (**1.450 km**) and `SH20` (**18.217 km**), and close to `SH100` (**0.461 km**) and `SH200` (**0.461 km**) for this scenario set.
-* On the lightweight `SH20` baseline, the Sobolev-trained residual reduced median RMS position error by a factor of **29.1x** (18.217 km → 0.626 km).
-* On GPU, **8.32x** faster wall-clock than `SH200` (665 s vs. 5,540 s) and **3.64x** faster than `SH100` (665 s vs. 2,423 s).
-
-### Near-Circular Double-Precision Benchmark (100 scenarios, 1-day propagation)
-
-Dense low-lunar mapping envelopes ($200\text{ km}$ to $400\text{ km}$ altitude) with double-precision GPU propagation. In this benchmark configuration:
-
-* Median RMS position error of **15.83 cm** over a full day of unguided propagation.
-* Radial (altitude) error within **4.58 cm** and cross-track within **2.00 cm** over the 1-day period.
-* In `float64` GPU mode, **2.25x** wall-clock speedup versus sequential CPU truth generation.
-
-### Side-by-side comparison
-
-Results under different numerical precision (`float64`), integration step size ($\Delta t$), and orbit envelopes:
-
-| Criterion / Metric | 5-Day General Stability Test | 1-Day High-Degree Comparison | 1-Day Near-Circular Benchmark |
-| :--- | :---: | :---: | :---: |
-| **Orbit Type** | Bounded Keplerian (Circular/Elliptic) | Bounded Keplerian (Circular/Elliptic) | Near-Circular (Low Circular Orbit) |
-| **Numerical Precision (Dtype)** | Single-Precision `float32` | Double-Precision `float64` | Double-Precision `float64` |
-| **Integration Step ($\Delta t$)** | $30.0\text{ s}$ | $30.0\text{ s}$ | $10.0\text{ s}$ |
-| **ST-LRPS Median RMS Position Error** | **1.106 km** | **0.626 km** *(626.4 m)* | **15.83 cm** |
-| **SH20 Baseline Median RMS Error** | **1.570 km** | **18.217 km** (Physical decay) | **1.821 km** (Destabilized orbit) |
-| **Radial (Altitude) Median RMS** | **41 meters** | **7.20 cm** | **4.58 cm** |
-| **Cross-Track (Inclination) Median RMS**| **6 meters** | **4.87 cm** | **2.00 cm** |
-| **Along-Track (Phase) Median RMS** | **1.102 km** | **62.12 cm** | **15.03 cm** |
-| **GPU Speedup (vs. Truth)** | **9.55x** speedup (vs. CPU) | **5.59x** speedup (**8.32x** vs. SH200) | **2.25x** speedup (vs. CPU) |
-
-
+Numbers are run-specific evidence for the stated configuration, not a blanket
+performance guarantee.
 
 ## Visualization
 
-Standalone visualization tools live under `src/lunaris/visualization/`.
-
-| Purpose | Module |
-|---------|--------|
-| Orbit animation and trajectory visualization | `lunaris.visualization.orbit_animation.render_orbit_animation` |
-| Topography and albedo exploration | `lunaris.visualization.surface_explorer` |
-
-Surface explorer help:
-
-```bash
-python -m lunaris.visualization.surface_explorer --help
-```
-
-Example topography render:
+Standalone tools live under `src/lunaris/visualization/` (orbit animation via
+`lunaris.visualization.orbit_animation.render_orbit_animation`; topography/albedo
+via `lunaris.visualization.surface_explorer`):
 
 ```bash
 python -m lunaris.visualization.surface_explorer \
     --topo-label data/topography_models/ldem_64_float.lbl \
     --topo-img data/topography_models/ldem_64_float.img \
-    --out-dir outputs/surface_explorer \
-    --plot-2d --plot-3d
+    --out-dir outputs/surface_explorer --plot-2d --plot-3d
 ```
 
-Large LOLA grids can be memory-heavy. Use `--stride-2d`, `--stride-3d`, or `--stride-albedo` for quick previews.
+Large LOLA grids are memory-heavy; use `--stride-2d`/`--stride-3d`/`--stride-albedo`
+for quick previews.
 
-## Generated Output Policy
+## Generated output policy
 
-Generated outputs should not be committed. New tools should write generated products under `outputs/` unless the user explicitly chooses an external scratch directory.
-
-Canonical generated-output layout:
-
-```text
-outputs/
-  simulations/          core orbit propagation runs (CLI / GUI)
-  monte_carlo/          Monte Carlo batch runs and reports
-  missions/             GUI "mission" propagation outputs
-  gravity_benchmark/    orbit-level gravity-model benchmark (CLI + Studio)
-  training/             ST-LRPS training run directories
-    st_lrps_train_<timestamp>/
-      checkpoints/      model checkpoints for that run
-      plots/            training curves and diagnostics
-      evals/            evaluations attached to that trained run
-      provenance/       run metadata and dataset snapshots
-  evaluations/          standalone evaluation reports not attached to a run
-  runtime/              ST-LRPS runtime profiling and benchmark reports
-  dataset_reports/      generated cloud/dataset analysis reports
-  datasets/
-    cloud_suites/       generated train/val/test/OOD dataset suites
-  validation/           validation harness outputs
-  visualization/        standalone visualization outputs
-```
-
-The `evals/` directory is intentionally run-local: if an evaluation is launched for a selected training run and no output directory is provided, it is written below that run so the model artifact and quality report travel together.
-
-Examples of generated paths and files:
-
-```text
-outputs/
-checkpoints/
-evals/
-history.jsonl
-run_manifest.json
-metrics_summary.csv
-topk_worst.csv
-ood_metrics.csv
-```
-
-Source packages such as `src/lunaris/surrogate/st_lrps/`, `src/lunaris/analysis/`, `validation/`, and `src/lunaris/visualization/` should contain source code and documentation, not generated run artifacts, checkpoints, plots, or evaluation tables.
+Generated products are not committed; tools write under `outputs/` (git-ignored)
+unless an external scratch directory is chosen. Source packages
+(`src/lunaris/...`, `validation/`) hold source and documentation, never run
+artifacts, checkpoints, plots, or evaluation tables. The standard layout
+(`outputs/{simulations,monte_carlo,missions,gravity_benchmark,training,evaluations,runtime,dataset_reports,datasets,validation,visualization}/`)
+keeps a trained run's checkpoints, plots, evals, and provenance together.
 
 ## Testing
 
-Run lightweight documentation and visualization checks:
-
 ```bash
-pytest tests/test_repo_hygiene.py
-pytest tests/test_validation_docs.py
-pytest tests/test_surface_explorer_visualization.py
+pytest tests/                       # full suite
+pytest tests/test_repo_hygiene.py   # lightweight docs/hygiene checks
 ```
 
-Run the full test suite when making code changes:
-
-```bash
-pytest tests/
-```
-
-The CI pipeline enforces a minimum test coverage baseline (e.g., `fail_under=55`), ensuring that new additions maintain test density. HTML coverage reports are automatically uploaded as CI artifacts.
+CI enforces a coverage baseline and uploads HTML coverage reports as artifacts.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full quality gates (`ruff`,
+`mypy`, `lint-imports`, test markers).
 
 ## License
 

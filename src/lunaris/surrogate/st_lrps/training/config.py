@@ -62,6 +62,14 @@ class TrainConfig:
     ood_data: str | None = None
     suite_manifest: str | None = None  # path to suite manifest.json (provenance only)
 
+    # Run-level preset (orthogonal to model_preset, which is architecture-only).
+    # "custom" (default) applies nothing and preserves every other default, so it
+    # is fully backward-compatible. "development" is the fast interpolation default,
+    # "quick" is a pipeline smoke test, and "paper" is the scientifically defensible
+    # posture (generalization split + deterministic + enforced preflight + no AMP).
+    # See RUN_PRESETS / apply_run_preset.
+    run_preset: str = "custom"
+
     seed: int = 42
     epochs: int = 200
     batch_size: int = 8192
@@ -408,6 +416,150 @@ def apply_model_preset(cfg: TrainConfig) -> TrainConfig:
     return cfg
 
 
+# Run-level presets. These are ORTHOGONAL to MODEL_PRESETS: model_preset selects
+# the input-encoding architecture, run_preset selects the reproducibility /
+# evaluation posture of the run. "custom" applies nothing.
+RUN_PRESETS = (
+    "custom",
+    "development",
+    "quick",
+    "paper",
+)
+
+# Interpolation splits sample train/val/test from the same spatial+altitude
+# distribution; generalization splits hold out a region (spatial block) or an
+# altitude band (OOD). A "paper" run must use a generalization split so the
+# reported error is not an in-distribution interpolation number.
+_INTERPOLATION_SPLIT_POLICIES = frozenset(
+    {"seeded_random", "random", "altitude_stratified"}
+)
+_GENERALIZATION_SPLIT_POLICIES = frozenset(
+    {
+        "spatial_block",
+        "ood_low_altitude",
+        "ood_high_altitude",
+        "spatial_plus_altitude_stratified",
+    }
+)
+
+# CLI flags that, when present, mark a run-preset-governed field as explicitly
+# set by the user. Used to decide whether the "paper" preset should defer to the
+# user (and only raise on a genuine conflict) instead of silently overriding.
+RUN_PRESET_EXPLICIT_FLAGS: dict[str, tuple[str, ...]] = {
+    "split_policy": ("--split-policy",),
+    "deterministic": ("--deterministic", "--no-deterministic"),
+    "benchmark_cudnn": ("--benchmark-cudnn",),
+    "amp": ("--amp", "--no-amp"),
+    "quick_check": ("--quick-check",),
+    "skip_preflight": ("--skip-preflight",),
+    "allow_preflight_fail": ("--allow-preflight-fail",),
+    "allow_dataset_validation_fail": ("--allow-dataset-validation-fail",),
+    "allow_legacy_derivative_convention": ("--allow-legacy-derivative-convention",),
+    "allow_legacy_target_mode_inference": ("--allow-legacy-target-mode-inference",),
+    "allow_legacy_dataset_contract": ("--allow-legacy-dataset-contract",),
+    "allow_missing_dataset_contract": ("--allow-missing-dataset-contract",),
+}
+
+# Boolean posture for the "paper" preset: (field -> required value). These are
+# authoritative — an explicit conflicting CLI flag is a hard error so a "paper"
+# run can never silently disable a reproducibility guard.
+_PAPER_BOOL_POSTURE: dict[str, bool] = {
+    "deterministic": True,
+    "benchmark_cudnn": False,
+    "amp": False,
+    "quick_check": False,
+    "skip_preflight": False,
+    "allow_preflight_fail": False,
+    "allow_dataset_validation_fail": False,
+    "allow_legacy_derivative_convention": False,
+    "allow_legacy_target_mode_inference": False,
+    "allow_legacy_dataset_contract": False,
+    "allow_missing_dataset_contract": False,
+}
+
+
+def detect_explicit_run_preset_fields(argv_tokens: list[str]) -> set[str]:
+    """Return the set of run-preset-governed field names explicitly set on argv."""
+
+    explicit: set[str] = set()
+    for field, flags in RUN_PRESET_EXPLICIT_FLAGS.items():
+        for token in argv_tokens:
+            if token.split("=", 1)[0] in flags:
+                explicit.add(field)
+                break
+    return explicit
+
+
+def _enforce_paper_bool(
+    cfg: TrainConfig, explicit: set[str], field: str, target: bool
+) -> None:
+    current = bool(getattr(cfg, field, target))
+    if field in explicit and current != target:
+        raise ValueError(
+            f"run_preset='paper' requires {field}={target} but it was explicitly "
+            f"set to {current}. Remove the conflicting flag or use "
+            f"--run-preset custom for a non-paper run."
+        )
+    setattr(cfg, field, target)
+
+
+def apply_run_preset(
+    cfg: TrainConfig, explicit_fields: set[str] | None = None
+) -> TrainConfig:
+    """Apply a named run-level preset in-place and return ``cfg``.
+
+    ``explicit_fields`` lists the run-preset-governed fields the user set
+    explicitly (from the CLI). For the authoritative "paper" preset an explicit
+    conflicting value is a hard error; soft presets ("development"/"quick") defer
+    to an explicit user value. When called programmatically with
+    ``explicit_fields=None`` nothing is treated as explicit, so "paper" enforces
+    its full posture (this makes engine re-application idempotent and safe).
+    """
+
+    preset = str(getattr(cfg, "run_preset", "custom") or "custom").strip().lower()
+    if preset not in RUN_PRESETS:
+        raise ValueError(
+            f"Unknown run_preset={preset!r}; expected one of {RUN_PRESETS}."
+        )
+    cfg.run_preset = preset
+    if preset == "custom":
+        return cfg
+
+    explicit = set(explicit_fields or ())
+
+    if preset == "development":
+        # Fast interpolation default: only soft-default the split policy.
+        if "split_policy" not in explicit:
+            cfg.split_policy = "seeded_random"
+        return cfg
+
+    if preset == "quick":
+        # Pipeline smoke test: run the quick-check path and never let preflight
+        # resource/headroom checks block a deliberate smoke run.
+        if "quick_check" not in explicit:
+            cfg.quick_check = True
+        if "allow_preflight_fail" not in explicit:
+            cfg.allow_preflight_fail = True
+        return cfg
+
+    # preset == "paper": authoritative, reproducibility-defensible posture.
+    sp = str(getattr(cfg, "split_policy", "") or "").strip().lower()
+    if "split_policy" in explicit:
+        if sp in _INTERPOLATION_SPLIT_POLICIES:
+            raise ValueError(
+                f"run_preset='paper' requires a generalization split "
+                f"(one of {sorted(_GENERALIZATION_SPLIT_POLICIES)}), but "
+                f"--split-policy {sp} is an interpolation split. A paper result "
+                f"must not be reported on an in-distribution interpolation split."
+            )
+        # An explicit generalization split is respected.
+    elif sp not in _GENERALIZATION_SPLIT_POLICIES:
+        cfg.split_policy = "spatial_block"
+    for field, target in _PAPER_BOOL_POSTURE.items():
+        _enforce_paper_bool(cfg, explicit, field, target)
+    return cfg
+
+
 import dataclasses as _dataclasses
 
 _TC_DEFAULTS: dict = {
@@ -485,6 +637,21 @@ def parse_args() -> TrainConfig:
                             help="ood_high_altitude: hold out altitudes >= this value (km). Overrides --ood-holdout-fraction.")
     group_data.add_argument("--ood-holdout-fraction", type=float, default=_TC_DEFAULTS.get("ood_holdout_fraction", 0.2),
                             help="ood_*_altitude: fraction of the altitude range held out when no explicit threshold is given.")
+
+    group_data.add_argument(
+        "--run-preset",
+        choices=RUN_PRESETS,
+        default=_TC_DEFAULTS.get("run_preset", "custom"),
+        help=(
+            "Run-level reproducibility/evaluation posture (orthogonal to "
+            "--model-preset). 'custom' (default) changes nothing. 'development' "
+            "uses the fast seeded_random interpolation split. 'quick' runs the "
+            "pipeline smoke check. 'paper' enforces a scientifically defensible "
+            "run: a generalization split (spatial_block by default), deterministic "
+            "execution, an enforced preflight gate, and no AMP/quick/legacy "
+            "shortcuts (a conflicting explicit flag is a hard error)."
+        ),
+    )
 
     # Architecture
     group_arch = ap.add_argument_group("Model Architecture")
@@ -1246,6 +1413,7 @@ def parse_args() -> TrainConfig:
         suite_manifest=a.suite_manifest,
         out=str(out_dir),
         dataset_name=a.dataset_name,
+        run_preset=str(a.run_preset),
         seed=a.seed,
         epochs=a.epochs,
         batch_size=a.batch_size,
@@ -1399,6 +1567,10 @@ def parse_args() -> TrainConfig:
         )
         sys.exit(1)
     cfg._model_preset_explicit = bool(preset_explicit)
+    # Run-level preset is applied BEFORE the architecture preset. It may flip the
+    # split policy and reproducibility flags; an explicit conflicting flag under
+    # --run-preset paper is a hard error (see apply_run_preset).
+    apply_run_preset(cfg, detect_explicit_run_preset_fields(argv_tokens))
     return apply_model_preset(cfg)
 
 
@@ -1415,4 +1587,12 @@ if __name__ == "__main__":
     print(_json.dumps(_asdict(_cfg), indent=2, default=str))
 
 
-__all__ = ['TrainConfig', 'parse_args']
+__all__ = [
+    'TrainConfig',
+    'parse_args',
+    'MODEL_PRESETS',
+    'apply_model_preset',
+    'RUN_PRESETS',
+    'apply_run_preset',
+    'detect_explicit_run_preset_fields',
+]

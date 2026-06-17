@@ -10,7 +10,10 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [
-  { name = "Lunaris contributors" }
+  { name = "Ayberk Demirkanat", email = "ayberkdemirkanat@gmail.com" }
+]
+maintainers = [
+  { name = "Ayberk Demirkanat", email = "ayberkdemirkanat@gmail.com" }
 ]
 keywords = [
   "lunar",
@@ -97,6 +100,12 @@ all = [
   "pre-commit>=3.5,<5",
 ]
 
+[project.urls]
+Homepage = "https://github.com/ayberkdt/lunaris"
+Repository = "https://github.com/ayberkdt/lunaris"
+Issues = "https://github.com/ayberkdt/lunaris/issues"
+Changelog = "https://github.com/ayberkdt/lunaris/blob/main/CHANGELOG.md"
+
 [project.scripts]
 lunaris = "lunaris.cli.main:main_entry"
 lunaris-ui = "lunaris.cli.entrypoints:ui_main"
@@ -123,12 +132,18 @@ include = ["lunaris*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Put the repo root on sys.path so the top-level `validation/` harness package is
+# importable under a bare `pytest` invocation (CI uses `pytest tests/`, which —
+# unlike `python -m pytest` — does not add the CWD). `validation/` is a dev/
+# research package and is intentionally NOT installed (packages.find = lunaris*).
+pythonpath = ["."]
 markers = [
   "slow: long-running tests (deselect with -m 'not slow')",
   "integration: end-to-end tests that exercise multiple layers together",
   "requires_data: needs large external data (SPICE kernels, gravity/topography files)",
   "requires_cuda: needs an NVIDIA CUDA device",
   "requires_torch: needs PyTorch installed (skipped cleanly otherwise)",
+  "requires_pyshtools: needs the optional pyshtools library (skipped cleanly otherwise)",
 ]
 # pytest-randomly shuffles test order every run. This catches order-dependent
 # state leakage (e.g. the Qt-binding pollution that produced setFont/setIcon
