@@ -89,6 +89,12 @@ evals/
 mc_results/
 mission_results/
 
+# Ad-hoc validation run outputs (committed artifacts live under validation/, not the repo root)
+out_grail/
+out_pysh/
+coverage_output.txt
+runs.json
+
 # Profiling outputs
 benchmarks/output/
 profiling_results/

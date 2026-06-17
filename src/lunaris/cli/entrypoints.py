@@ -122,6 +122,10 @@ def eval_force_direct_main() -> Any:
 
 
 def validate_main() -> Any:
+    if len(sys.argv) > 1 and sys.argv[1] in {"gravity-field", "gravity-trajectory", "-h", "--help"}:
+        from lunaris.validation.gravity_reference.cli import main as gravity_reference_main
+
+        return gravity_reference_main(sys.argv[1:])
     return _run_optional(
         module_name="lunaris.surrogate.st_lrps.evaluation.validation_suite",
         description="Run the ST-LRPS validation suite",

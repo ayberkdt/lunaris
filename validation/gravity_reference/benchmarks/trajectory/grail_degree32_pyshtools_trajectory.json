@@ -1,0 +1,91 @@
+{
+  "benchmark_id": "grail_degree32_pyshtools_trajectory",
+  "comparison": {
+    "absolute_tolerances": {
+      "position_m": 0.01,
+      "velocity_m_s": 1e-05
+    },
+    "relative_tolerances": {
+      "energy_relative_drift": 1e-10
+    },
+    "threshold_origin": "convergence_derived_and_frozen"
+  },
+  "dynamics": {
+    "albedo": false,
+    "empirical_accelerations": false,
+    "gravity_only": true,
+    "maneuvers": false,
+    "relativity": false,
+    "solar_radiation_pressure": false,
+    "solid_tides": false,
+    "thermal_ir": false,
+    "third_body": false,
+    "thrust": false
+  },
+  "frames": {
+    "comparison_frame": "MOON_PA",
+    "gravity_fixed_frame": "MOON_PA",
+    "state_center": "MOON",
+    "state_frame": "MOON_PA"
+  },
+  "generator": {
+    "integrator": "scipy.solve_ivp DOP853 rtol=1e-13 atol=1e-16",
+    "name": "pyshtools_force_scipy_dop853",
+    "script_path": "validation/gravity_reference/generators/trajectory/generate_grail_degree32_pyshtools.py",
+    "script_sha256": "bebf207a218d7175e5df5ae11a4903aeb03fa826ee57ba61e0b2cbd4e76d7fb7",
+    "version": "v1"
+  },
+  "gravity": {
+    "coefficient_file": "validation/gravity_reference/reference_data/trajectory/grail_degree32_coefficients.json",
+    "coefficient_frame": "MOON_PA",
+    "coefficient_sha256": "bbb3ea98720b999967529a8077e2b1327395a971c103c48f7ab6e177e5f0d131",
+    "degree": 32,
+    "model_name": "jggrx_1800f_truncated32",
+    "model_release": "v1",
+    "mu_m3_s2": 4902800306330.2,
+    "normalization": "fully_normalized_4pi",
+    "order": 32,
+    "reference_radius_m": 1738000.0,
+    "tide_system": "tide_free"
+  },
+  "initial_state": {
+    "position_unit": "m",
+    "representation": "cartesian",
+    "state": [
+      1838000.0,
+      0.0,
+      0.0,
+      0.0,
+      1154.8733268498115,
+      1154.8733268498115
+    ],
+    "velocity_unit": "m/s"
+  },
+  "integration": {
+    "atol": 1e-15,
+    "rtol": 1e-12
+  },
+  "reference_class": "external_tool_generated_trajectory",
+  "reference_file": {
+    "format": "csv",
+    "path": "validation/gravity_reference/reference_data/trajectory/grail_degree32_trajectory.csv",
+    "sha256": "ab3788319ca55ae20698347a01f6894e4f9e34442e80313207309e5f8eb6a45d",
+    "size_bytes": 77091
+  },
+  "schema_version": "lunaris_gravity_trajectory_reference_v1",
+  "source": {
+    "document_or_repository": "https://pyshtools.github.io/pyshtools/",
+    "license_note": "Independent-tool-generated gravity-only arc; NOT NASA-published truth. Mission ephemerides are not gravity-only and are not used here.",
+    "organization": "NASA/JPL (coefficients), SHTOOLS + SciPy (reference integration)",
+    "project": "Independent gravity-only trajectory reference",
+    "release_or_commit": "pyshtools=4.14.1",
+    "retrieved_at_utc": "2026-06-17T00:00:00Z"
+  },
+  "time": {
+    "duration_s": 14400.0,
+    "initial_epoch": "2026-06-17T00:00:00Z",
+    "output_step_s": 30.0,
+    "time_scale": "TDB"
+  },
+  "title": "GRAIL JGGRX_1800F degree-32 gravity-only arc (pyshtools force, SciPy DOP853, non-rotating)"
+}

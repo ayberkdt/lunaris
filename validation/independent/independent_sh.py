@@ -23,9 +23,9 @@ Conventions (verified against closed-form anchors in the tests)
 * Frame: body-fixed Cartesian ``(x, y, z)``; output acceleration in the same
   frame. Upstream rotations are out of scope (identical to the Lunaris module).
 * Latitude is geocentric: ``sin φ = z / r``. Longitude ``λ = atan2(y, x)``.
-* ALFs are fully 4π-normalized including the Condon–Shortley phase, matching the
-  Lunaris ``scale_m`` table. The recurrence here bakes the ``(-1)^m`` phase into
-  the sectoral term (``P_1^1 < 0``), so no extra phase factor is applied — see
+* ALFs are fully 4π-normalized WITHOUT the Condon–Shortley phase, matching the
+  geodesy/GRAIL convention (and the Lunaris ``scale_m`` table, which also omits
+  the phase). The sectoral seed is positive (``P_1^1 > 0``) — see
   :func:`normalized_alf_column`. This is pinned by the cross-check tests against
   the analytic Lunaris accelerations and the J2/(2,2) closed forms.
 * Potential:
@@ -71,16 +71,17 @@ def _associated_legendre_all(n_max: int, t: float) -> np.ndarray:
 
     A self-contained classical recurrence (deliberately independent of both the
     Lunaris fully-normalized recurrence and any ``scipy.special`` helper, which
-    keeps this reference version-proof). The Condon–Shortley ``(-1)^m`` phase is
-    folded into the sectoral term, matching the Lunaris convention. Valid for the
-    moderate degrees used in cross-checks (``|t| <= 1``).
+    keeps this reference version-proof). NO Condon–Shortley ``(-1)^m`` phase is
+    applied (geodesy/GRAIL convention, matching Lunaris). Valid for the moderate
+    degrees used in cross-checks (``|t| <= 1``).
     """
     p = np.zeros((n_max + 1, n_max + 1), dtype=np.float64)
     p[0, 0] = 1.0
     somx2 = float(np.sqrt(max(0.0, 1.0 - t * t)))  # sin(colatitude)
-    # Sectoral terms P_m^m = (-1)^m (2m-1)!! (1 - t^2)^(m/2).
+    # Sectoral terms P_m^m = (2m-1)!! (1 - t^2)^(m/2), with a POSITIVE seed:
+    # geodesy/GRAIL gravity coefficients carry no Condon-Shortley (-1)^m phase.
     for m in range(1, n_max + 1):
-        p[m, m] = -(2 * m - 1) * somx2 * p[m - 1, m - 1]
+        p[m, m] = (2 * m - 1) * somx2 * p[m - 1, m - 1]
     # First off-diagonal P_{m+1}^m = t (2m+1) P_m^m.
     for m in range(n_max):
         p[m + 1, m] = t * (2 * m + 1) * p[m, m]
@@ -96,9 +97,9 @@ def normalized_alf_column(n_max: int, sin_phi: float) -> np.ndarray:
 
     Built from the self-contained :func:`_associated_legendre_all` recurrence
     (an independent ALF source, version-proof — no ``scipy.special`` dependency),
-    then scaled by :func:`_normalization_factor`. The recurrence already carries
-    the Condon–Shortley ``(-1)^m`` phase that matches the Lunaris convention, so
-    NO extra phase is applied here. Entries with ``m > n`` are zero.
+    then scaled by :func:`_normalization_factor`. NO Condon–Shortley ``(-1)^m``
+    phase is applied (geodesy/GRAIL convention, matching Lunaris). Entries with
+    ``m > n`` are zero.
     """
     n_max = int(n_max)
     if n_max < 0:

@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ayberkdt/lunaris/schemas/gravity-field-reference-v1.json",
+  "title": "Lunaris gravity field reference manifest v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "reference_class",
+    "title",
+    "source",
+    "reference_file",
+    "generator",
+    "coordinates",
+    "gravity",
+    "quantities",
+    "comparison"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "lunaris_gravity_field_reference_v1"
+    },
+    "benchmark_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reference_class": {
+      "enum": [
+        "published_field_vectors",
+        "independent_high_precision_field_oracle"
+      ]
+    },
+    "reference_file": {
+      "type": "object",
+      "required": ["path", "format", "sha256", "size_bytes"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "format": {"enum": ["csv", "json", "npz"]},
+        "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "coordinates": {
+      "type": "object",
+      "required": ["center", "frame", "position_unit"],
+      "properties": {
+        "center": {"const": "MOON"},
+        "frame": {"type": "string", "minLength": 1},
+        "position_unit": {"const": "m"}
+      }
+    },
+    "gravity": {
+      "type": "object",
+      "required": [
+        "model_name",
+        "model_release",
+        "coefficient_file",
+        "coefficient_sha256",
+        "degree",
+        "order",
+        "normalization",
+        "mu_m3_s2",
+        "reference_radius_m",
+        "tide_system",
+        "coefficient_frame"
+      ],
+      "properties": {
+        "coefficient_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+        "degree": {"type": "integer", "minimum": 0},
+        "order": {"type": "integer", "minimum": 0},
+        "normalization": {
+          "enum": ["fully_normalized_4pi", "fully_normalized", "unnormalized"]
+        },
+        "mu_m3_s2": {"type": "number", "exclusiveMinimum": 0},
+        "reference_radius_m": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "required": ["absolute_tolerances", "relative_tolerances", "threshold_origin"],
+      "properties": {
+        "threshold_origin": {
+          "enum": [
+            "published",
+            "official_software_validation",
+            "convergence_derived_and_frozen",
+            "report_only"
+          ]
+        }
+      }
+    }
+  }
+}
+

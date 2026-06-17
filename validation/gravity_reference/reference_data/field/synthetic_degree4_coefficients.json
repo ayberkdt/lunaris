@@ -1,0 +1,59 @@
+{
+  "coefficients": [
+    {
+      "c": 1.0,
+      "m": 0,
+      "n": 0,
+      "s": 0.0
+    },
+    {
+      "c": -9.08e-05,
+      "m": 0,
+      "n": 2,
+      "s": 0.0
+    },
+    {
+      "c": 2e-05,
+      "m": 2,
+      "n": 2,
+      "s": -1.3e-05
+    },
+    {
+      "c": 8e-06,
+      "m": 1,
+      "n": 3,
+      "s": -5e-06
+    },
+    {
+      "c": 2.5e-06,
+      "m": 3,
+      "n": 3,
+      "s": 1.1e-06
+    },
+    {
+      "c": 1e-06,
+      "m": 0,
+      "n": 4,
+      "s": 0.0
+    },
+    {
+      "c": -7e-07,
+      "m": 2,
+      "n": 4,
+      "s": 4e-07
+    },
+    {
+      "c": 5e-07,
+      "m": 4,
+      "n": 4,
+      "s": -2e-07
+    }
+  ],
+  "degree": 4,
+  "mu_m3_s2": 4904869500000.0,
+  "normalization": "fully_normalized_4pi",
+  "order": 4,
+  "reference_radius_m": 1738000.0,
+  "schema_version": "lunaris_synthetic_sh_coefficients_v1",
+  "title": "Synthetic fully normalized degree-4 lunar-like SH fixture"
+}

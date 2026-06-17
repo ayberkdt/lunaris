@@ -1,0 +1,65 @@
+{
+  "benchmark_id": "grail_degree120_pyshtools_oracle",
+  "comparison": {
+    "absolute_tolerances": {
+      "acceleration_component_m_s2": 1e-09,
+      "acceleration_norm_m_s2": 1e-09,
+      "potential_m2_s2": 0.0001
+    },
+    "relative_tolerances": {
+      "acceleration_norm": 1e-08,
+      "potential": 1e-10
+    },
+    "threshold_origin": "official_software_validation"
+  },
+  "coordinates": {
+    "center": "MOON",
+    "frame": "MOON_PA",
+    "position_unit": "m"
+  },
+  "generator": {
+    "arithmetic": "external_shtools_float64",
+    "name": "pyshtools_gravmag_MakeGravGridPoint",
+    "precision_digits": 16,
+    "script_path": "validation/gravity_reference/generators/field/generate_grail_degree120_pyshtools.py",
+    "script_sha256": "37919bacedc6f908215a9048f30ee83997bbc93b524f34c3989c70f902eac28d",
+    "version": "v1"
+  },
+  "gravity": {
+    "coefficient_file": "validation/gravity_reference/reference_data/field/grail_degree120_pyshtools_coefficients.json",
+    "coefficient_frame": "MOON_PA",
+    "coefficient_sha256": "05f141791f5879987ac098c74ef3a3528dfb64791bff0687cc7403df70c69345",
+    "degree": 120,
+    "model_name": "jggrx_1800f_truncated120",
+    "model_release": "v1",
+    "mu_m3_s2": 4902800306330.2,
+    "normalization": "fully_normalized_4pi",
+    "order": 120,
+    "reference_radius_m": 1738000.0,
+    "tide_system": "tide_free"
+  },
+  "quantities": {
+    "acceleration": true,
+    "acceleration_sign_convention": "a_equals_positive_gradient_U",
+    "gradient_or_hessian": false,
+    "potential": true,
+    "potential_sign_convention": "positive_geodesy_mu_over_r"
+  },
+  "reference_class": "published_field_vectors",
+  "reference_file": {
+    "format": "csv",
+    "path": "validation/gravity_reference/reference_data/field/grail_degree120_pyshtools_field_vectors.csv",
+    "sha256": "5bc63c60766931de9c737a19c90d778233ce676cf820249f9fea7da76487a17e",
+    "size_bytes": 1599
+  },
+  "schema_version": "lunaris_gravity_field_reference_v1",
+  "source": {
+    "document_or_repository": "https://pyshtools.github.io/pyshtools/",
+    "license_note": "Validation artifact computed with open-source external library.",
+    "organization": "NASA/JPL (data), SHTOOLS (computation)",
+    "project": "GRAIL + pyshtools external validation",
+    "release_or_commit": "pyshtools=4.14.1",
+    "retrieved_at_utc": "2026-06-17T00:00:00Z"
+  },
+  "title": "Truncated GRAIL JGGRX_1800F (Degree 120) field validation (pyshtools external truth)"
+}

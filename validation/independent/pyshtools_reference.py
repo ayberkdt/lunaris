@@ -13,12 +13,13 @@ hard-fails. Callers check :data:`PYSHTOOLS_AVAILABLE` or call
 
 Convention note (pinned by the gated test, not assumed)
 -------------------------------------------------------
-Lunaris stores 4π fully-normalized coefficients whose ALFs carry the
-Condon–Shortley phase (verified in :mod:`validation.independent.independent_sh`).
-The matching pyshtools settings are ``normalization='4pi'`` and ``csphase=-1``
-(phase included). The gated cross-check compares pyshtools against the scipy
-reference and will fail loudly if these flags are wrong on a given pyshtools
-release, at which point they should be corrected here.
+Lunaris stores 4π fully-normalized coefficients whose ALFs carry NO
+Condon–Shortley phase (geodesy/GRAIL convention; verified in
+:mod:`validation.independent.independent_sh`). The matching pyshtools settings
+are ``normalization='4pi'`` and ``csphase=1`` (no phase), which is pyshtools'
+default for ``MakeGravGridPoint``. The gated cross-check compares pyshtools
+against the scipy reference and will fail loudly if these flags are wrong on a
+given pyshtools release, at which point they should be corrected here.
 """
 
 from __future__ import annotations
@@ -62,9 +63,10 @@ def acceleration(
     """Body-fixed gravitational acceleration ``a = +∇U`` via ``pyshtools``.
 
     ``c_coeffs``/``s_coeffs`` are ``(N+1, N+1)`` 4π-normalized matrices in the
-    Lunaris convention (Condon–Shortley phase included). The result is returned
-    in Cartesian body-fixed components (m/s²) to match the Lunaris
-    :meth:`GravityModel.accel_fixed` output.
+    Lunaris convention (no Condon–Shortley phase, matching geodesy/GRAIL and
+    pyshtools' default). The result is returned in Cartesian body-fixed
+    components (m/s²) to match the Lunaris :meth:`GravityModel.accel_fixed`
+    output.
     """
     require_pyshtools()
 
@@ -89,6 +91,10 @@ def acceleration(
     lat_deg = float(np.degrees(np.arcsin(z / r)))
     lon_deg = float(np.degrees(np.arctan2(y, x)))
 
+    # MakeGravGridPoint uses 4pi-normalized coefficients WITHOUT the
+    # Condon-Shortley phase (csphase=1), which is exactly the Lunaris/GRAIL
+    # convention, so the coefficients are passed through unchanged.
+
     # MakeGravGridPoint returns the spherical gravity components (g_r, g_theta,
     # g_phi) of -∇U; we negate to report a = +∇U and rotate to Cartesian.
     g_r, g_theta, g_phi = _pysh.gravmag.MakeGravGridPoint(
@@ -100,11 +106,9 @@ def acceleration(
         lon=lon_deg,
         lmax=lmax,
         omega=0.0,
-        normalization="4pi",
-        csphase=-1,
     )
-    # pyshtools returns the gravity (downward) vector; potential gradient is its
-    # negation. Convert spherical (r, theta=colatitude, phi) -> Cartesian.
+    # MakeGravGridPoint documentation states "the gravitational acceleration is B = Grad V"
+    # so it already returns +∇U (plus centrifugal, which is 0 here since omega=0).
     colat = np.radians(90.0 - lat_deg)
     lam = np.radians(lon_deg)
     st, ct = np.sin(colat), np.cos(colat)
@@ -114,4 +118,4 @@ def acceleration(
     e_theta = np.array([ct * cl, ct * sl, -st])
     e_phi = np.array([-sl, cl, 0.0])
     g_vec = g_r * e_r + g_theta * e_theta + g_phi * e_phi
-    return -g_vec
+    return g_vec
