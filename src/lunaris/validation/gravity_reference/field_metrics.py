@@ -24,6 +24,54 @@ def _percentiles(values: np.ndarray) -> dict[str, float]:
     }
 
 
+def _binned(
+    labels: np.ndarray,
+    errors: np.ndarray,
+    edges: np.ndarray,
+    *,
+    unit: str,
+) -> list[dict[str, Any]]:
+    """Per-bin error statistics (count, mean, p95, max) over ``edges``."""
+    rows: list[dict[str, Any]] = []
+    idx = np.digitize(labels, edges) - 1
+    for b in range(len(edges) - 1):
+        sel = errors[idx == b]
+        rows.append({
+            "bin": f"[{edges[b]:.1f}, {edges[b + 1]:.1f}) {unit}",
+            "count": int(sel.size),
+            "mean": float(np.mean(sel)) if sel.size else None,
+            "p95": float(np.percentile(sel, 95)) if sel.size else None,
+            "max": float(np.max(sel)) if sel.size else None,
+        })
+    return rows
+
+
+def latitude_altitude_error_tables(
+    positions_m: np.ndarray,
+    accel_norm_error_m_s2: np.ndarray,
+    *,
+    reference_radius_m: float,
+) -> dict[str, Any]:
+    """Acceleration-norm error binned by geocentric latitude and altitude.
+
+    Surfaces where (if anywhere) the engine is weakest — near-pole vs equatorial
+    bands, low vs high altitude — which a single max/percentile number hides.
+    """
+    pos = np.asarray(positions_m, dtype=np.float64)
+    err = np.asarray(accel_norm_error_m_s2, dtype=np.float64).reshape(-1)
+    r = np.linalg.norm(pos, axis=1)
+    lat_deg = np.degrees(np.arcsin(np.clip(pos[:, 2] / np.maximum(r, 1e-30), -1.0, 1.0)))
+    alt_km = (r - float(reference_radius_m)) / 1000.0
+    lat_edges = np.array([-90.0, -60.0, -30.0, 0.0, 30.0, 60.0, 90.0001])
+    alt_edges = np.array(
+        [0.0, 50.0, 100.0, 200.0, 300.0, 500.0, 1000.0, 2000.0, max(2000.0001, float(alt_km.max()) + 1.0)]
+    )
+    return {
+        "by_latitude_deg": _binned(lat_deg, err, lat_edges, unit="deg"),
+        "by_altitude_km": _binned(alt_km, err, alt_edges, unit="km"),
+    }
+
+
 def compute_field_metrics(
     *,
     point_ids: list[str],
@@ -129,6 +177,9 @@ def compute_field_metrics(
             "point_id": point_ids[int(np.argmax(accel_norm))],
             "acceleration_norm_error_m_s2": float(np.max(accel_norm)),
         },
+        "error_by_region": latitude_altitude_error_tables(
+            positions, accel_norm, reference_radius_m=float(reference_radius_m)
+        ),
     }
     return metrics, rows
 

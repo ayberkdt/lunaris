@@ -61,6 +61,46 @@ from lunaris.validation.gravity_reference.trajectory_metrics import (
 from lunaris.validation.gravity_reference.trajectory_reference_io import load_trajectory_csv
 
 
+class _ContractViolation(ValueError):
+    """A manifest/reference contract the runner refuses to compare across."""
+
+
+def _enforce_trajectory_contract(payload: dict[str, Any], epochs_s: np.ndarray) -> None:
+    """Fail closed unless the reference grid and frames honour the manifest.
+
+    The runner never silently papers over a mismatch (no interpolation, no frame
+    coercion); a violation here surfaces as ``INCOMPLETE_CONTRACT`` instead of a
+    misleading PASS/FAIL.
+    """
+    frames = payload["frames"]
+    if str(frames["comparison_frame"]) != str(frames["state_frame"]):
+        raise _ContractViolation(
+            f"comparison_frame={frames['comparison_frame']!r} must equal "
+            f"state_frame={frames['state_frame']!r}; RIC/Cartesian errors are computed "
+            "in the state frame."
+        )
+
+    epochs = np.asarray(epochs_s, dtype=np.float64)
+    if epochs.shape[0] < 2:
+        raise _ContractViolation("reference trajectory needs at least two epochs.")
+    steps = np.diff(epochs)
+    declared_step = float(payload["time"]["output_step_s"])
+    declared_duration = float(payload["time"]["duration_s"])
+    tol = max(declared_step * 1e-6, 1e-6)
+    if not np.allclose(steps, declared_step, atol=tol, rtol=0.0):
+        raise _ContractViolation(
+            "reference epochs are not uniformly spaced at the manifest "
+            f"output_step_s={declared_step}: observed step range "
+            f"[{float(steps.min())}, {float(steps.max())}]."
+        )
+    observed_duration = float(epochs[-1] - epochs[0])
+    if abs(observed_duration - declared_duration) > max(declared_step, 1e-6):
+        raise _ContractViolation(
+            f"reference duration {observed_duration} s does not match manifest "
+            f"duration_s={declared_duration}."
+        )
+
+
 def _git_value(args: list[str], cwd: Path) -> str | None:
     try:
         proc = subprocess.run(
@@ -176,18 +216,20 @@ def _propagate_lunaris(
 
     t_out = np.asarray(result.t, dtype=np.float64)
     states = np.asarray(result.y, dtype=np.float64)
-    rel = step * 1e-6
+    # Fail closed: the comparison is only meaningful when Lunaris is sampled on
+    # the exact reference epoch grid. We do NOT silently interpolate (that would
+    # inject an alignment error and mask a real disagreement); instead we require
+    # the propagator's output grid to match the reference epochs.
+    atol = max(step * 1e-6, 1e-6)
     if t_out.shape[0] != epochs_s.shape[0] or not np.allclose(
-        t_out - t_out[0], epochs_s - epochs_s[0], atol=max(rel, 1e-6), rtol=0.0
+        t_out - t_out[0], epochs_s - epochs_s[0], atol=atol, rtol=0.0
     ):
-        # Reference epochs are not on the propagator's native grid; interpolate
-        # each component with a cubic so the comparison stays epoch-aligned.
-        aligned = np.empty((epochs_s.shape[0], 6), dtype=np.float64)
-        rel_ref = epochs_s - epochs_s[0]
-        rel_out = t_out - t_out[0]
-        for j in range(6):
-            aligned[:, j] = np.interp(rel_ref, rel_out, states[:, j])
-        return aligned
+        raise _ContractViolation(
+            "Lunaris output grid does not align with the reference epochs "
+            f"(got {t_out.shape[0]} samples, expected {epochs_s.shape[0]}); the "
+            "reference must be on a uniform grid whose step and duration match the "
+            "manifest so no interpolation is needed."
+        )
     return states
 
 
@@ -235,14 +277,21 @@ def run_trajectory_validation(manifest_path: str | Path, out_dir: str | Path) ->
     reference = load_trajectory_csv(manifest.reference_path)
     epochs = reference["epoch_s"]
     ref_states = reference["state"]
-    model, potential_fn = _load_gravity(manifest)
 
-    integration = payload.get("integration", {}) if isinstance(payload.get("integration"), dict) else {}
-    rtol = float(integration.get("rtol", 1e-12))
-    atol = float(integration.get("atol", 1e-15))
-
-    y0 = np.asarray(payload["initial_state"]["state"], dtype=np.float64)
-    lunaris_states = _propagate_lunaris(model, y0, epochs, rtol=rtol, atol=atol)
+    try:
+        _enforce_trajectory_contract(payload, epochs)
+        model, potential_fn = _load_gravity(manifest)
+        integration = payload.get("integration", {}) if isinstance(payload.get("integration"), dict) else {}
+        rtol = float(integration.get("rtol", 1e-12))
+        atol = float(integration.get("atol", 1e-15))
+        y0 = np.asarray(payload["initial_state"]["state"], dtype=np.float64)
+        lunaris_states = _propagate_lunaris(model, y0, epochs, rtol=rtol, atol=atol)
+    except _ContractViolation as exc:
+        status = {"status": INCOMPLETE_CONTRACT, "reason": str(exc)}
+        atomic_write_json(out / "resolved_manifest.json", payload)
+        atomic_write_json(out / "validation_status.json", status)
+        atomic_write_json(out / "run_provenance.json", _run_provenance(manifest, out))
+        return {"status": status["status"], "out_dir": str(out), "reason": status["reason"]}
 
     metrics = compute_trajectory_metrics(ref_states, lunaris_states)
     metrics["lunaris_energy_drift"] = specific_energy_drift(lunaris_states, potential_fn)

@@ -71,6 +71,8 @@ def test_training_rejects_hdf5_without_dataset_contract(tmp_path):
         handle.attrs["alt_max_km"] = 500.0
         handle.attrs["a_sign_convention"] = "+1"
         handle.attrs["derivative_convention_version"] = "dP_dphi_corrected_v1"
+        handle.attrs["spherical_harmonic_convention"] = "4pi_geodesy_no_condon_shortley_v1"
+        handle.attrs["gravity_label_engine_version"] = "lunaris_sh_v2"
         handle.attrs["columns"] = "[x,y,z,dU,dax,day,daz]"
 
     cfg = _tiny_train_cfg(data_path, tmp_path / "run_missing_contract")

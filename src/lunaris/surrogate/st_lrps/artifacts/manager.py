@@ -452,6 +452,8 @@ def _extract_config_block(ckpt: Mapping[str, Any]) -> dict[str, Any]:
         "alt_min_km",
         "alt_max_km",
         "derivative_convention_version",
+        "spherical_harmonic_convention",
+        "gravity_label_engine_version",
         "a_sign_convention",
     ):
         if dataset_meta.get(key) is None and cfg.get(key) is not None:
@@ -516,6 +518,8 @@ def _build_dataset_block_from_cfg(cfg: Mapping[str, Any]) -> dict[str, Any]:
         "alt_min_km": _coerce_float_or_none(dataset_meta.get("alt_min_km")),
         "alt_max_km": _coerce_float_or_none(dataset_meta.get("alt_max_km")),
         "derivative_convention_version": _coerce_str_or_none(dataset_meta.get("derivative_convention_version")),
+        "spherical_harmonic_convention": _coerce_str_or_none(dataset_meta.get("spherical_harmonic_convention")),
+        "gravity_label_engine_version": _coerce_str_or_none(dataset_meta.get("gravity_label_engine_version")),
         "a_sign_convention": _coerce_str_or_none(dataset_meta.get("a_sign_convention")),
     }
 
@@ -1364,6 +1368,8 @@ def build_checkpoint_payload(
             "alt_min_km": _coerce_float_or_none((dataset_meta or {}).get("alt_min_km")),
             "alt_max_km": _coerce_float_or_none((dataset_meta or {}).get("alt_max_km")),
             "derivative_convention_version": _coerce_str_or_none((dataset_meta or {}).get("derivative_convention_version")),
+            "spherical_harmonic_convention": _coerce_str_or_none((dataset_meta or {}).get("spherical_harmonic_convention")),
+            "gravity_label_engine_version": _coerce_str_or_none((dataset_meta or {}).get("gravity_label_engine_version")),
             "a_sign_convention": _coerce_str_or_none((dataset_meta or {}).get("a_sign_convention")),
             "target_contract": cfg_dict.get("target_contract"),
         }

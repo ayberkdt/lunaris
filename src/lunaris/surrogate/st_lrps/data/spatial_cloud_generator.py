@@ -249,11 +249,19 @@ def _sh_potential_accel_batch_serial(
             for i in range(n + 1):
                 P_n[i] = 0.0
 
+            # Fully-normalized ALFs WITHOUT the Condon-Shortley phase (geodesy/
+            # GRAIL convention), matching lunaris.physics.spherical_harmonics. The
+            # sectoral seed and sectoral recurrence use a POSITIVE sign; a negative
+            # sign here would re-introduce the (-1)^m phase and flip every odd-m
+            # (tesseral/sectoral) label relative to the runtime engine. The first
+            # sub-diagonal and the vertical recurrence keep m fixed, so they are
+            # phase-agnostic and unchanged. (Guarded by the parity test against
+            # GravityModel; zonal-only checks cannot catch a phase error.)
             if n == 1:
                 P_n[0] = math.sqrt(3.0) * s
-                P_n[1] = -math.sqrt(3.0) * c
+                P_n[1] = math.sqrt(3.0) * c
             else:
-                P_n[n] = -diag_f[n] * c * P_nm1[n - 1]
+                P_n[n] = diag_f[n] * c * P_nm1[n - 1]
                 P_n[n - 1] = subdiag_f[n] * s * P_nm1[n - 1]
                 for m in range(0, n - 1):
                     if m <= n - 2:
@@ -876,6 +884,8 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
         "columns": columns_str,
         "a_sign_convention": "+1",
         "derivative_convention_version": "dP_dphi_corrected_v1",
+        "spherical_harmonic_convention": "4pi_geodesy_no_condon_shortley_v1",
+        "gravity_label_engine_version": "lunaris_sh_v2",
         "gravity_model_path": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
         "source_gravity_model": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
         "source_gravity_file_path": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
@@ -1143,6 +1153,8 @@ def _build_suite_attrs(
         "source_gravity_file_path": str(globals_blob.get("gfc_path", "")),
         "source_gravity_file_sha256": str(globals_blob.get("source_gravity_file_sha256", "")),
         "derivative_convention_version": "dP_dphi_corrected_v1",
+        "spherical_harmonic_convention": "4pi_geodesy_no_condon_shortley_v1",
+        "gravity_label_engine_version": "lunaris_sh_v2",
         "DU_m": str(DU),
         "TU_s": str(TU),
         "VU_m_s": str(VU),
@@ -2234,6 +2246,8 @@ def _run_active_refinement(a, ap) -> None:
         hf.attrs["source_gravity_file_path"] = str(gfc_path)
         hf.attrs["source_gravity_file_sha256"] = str(_file_sha256(gfc_path) or "")
         hf.attrs["derivative_convention_version"] = "dP_dphi_corrected_v1"
+        hf.attrs["spherical_harmonic_convention"] = "4pi_geodesy_no_condon_shortley_v1"
+        hf.attrs["gravity_label_engine_version"] = "lunaris_sh_v2"
         hf.attrs["seed"] = int(getattr(a, "active_seed", 42))
         hf.attrs["created_by"] = "spatial_cloud_generator._run_active_refinement"
         contract = contract_from_generation_attrs(

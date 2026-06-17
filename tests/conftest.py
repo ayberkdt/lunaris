@@ -70,11 +70,22 @@ def _pyshtools_available() -> bool:
     return True
 
 
+def _tudatpy_available() -> bool:
+    """Return True only when the optional ``tudatpy`` library is importable."""
+    try:
+        import tudatpy  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
 def pytest_collection_modifyitems(config, items):
-    """Auto-skip ``requires_data`` / ``requires_pyshtools`` tests when their
-    prerequisites are unavailable, so an unfiltered run stays green."""
+    """Auto-skip ``requires_data`` / ``requires_pyshtools`` / ``requires_tudatpy``
+    tests when their prerequisites are unavailable, so an unfiltered run stays
+    green."""
     data_available = _lunaris_data_available()
     pyshtools_available = _pyshtools_available()
+    tudatpy_available = _tudatpy_available()
     skip_no_data = pytest.mark.skip(
         reason="external data unavailable (SPICE kernels / gravity coefficients); "
         "set LUNARIS_DATA_DIR or run `lunaris-data download`."
@@ -82,8 +93,13 @@ def pytest_collection_modifyitems(config, items):
     skip_no_pyshtools = pytest.mark.skip(
         reason="optional dependency 'pyshtools' is not installed."
     )
+    skip_no_tudatpy = pytest.mark.skip(
+        reason="optional dependency 'tudatpy' is not installed."
+    )
     for item in items:
         if not data_available and "requires_data" in item.keywords:
             item.add_marker(skip_no_data)
         if not pyshtools_available and "requires_pyshtools" in item.keywords:
             item.add_marker(skip_no_pyshtools)
+        if not tudatpy_available and "requires_tudatpy" in item.keywords:
+            item.add_marker(skip_no_tudatpy)

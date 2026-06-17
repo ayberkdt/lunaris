@@ -33,6 +33,8 @@ def _write_h5(path: Path, **attrs) -> Path:
             "alt_max_km": 1000.0,
             "a_sign_convention": "+1",
             "derivative_convention_version": "dP_dphi_corrected_v1",
+            "spherical_harmonic_convention": "4pi_geodesy_no_condon_shortley_v1",
+            "gravity_label_engine_version": "lunaris_sh_v2",
             "columns": "[x,y,z,dU,dax,day,daz]",
         }
         base.update(attrs)
@@ -105,6 +107,7 @@ def test_dataset_contract_content_hash_can_be_stamped(tmp_path):
             source_gravity_model="toy",
             source_gravity_file_path="toy.gfc",
             source_gravity_file_sha256="a" * 64,
+            spherical_harmonic_convention="4pi_geodesy_no_condon_shortley_v1",
             dataset_layout={"dataset_name": "data", "shape": [3, 7]},
         )
         contract.write_hdf5_attrs(handle)

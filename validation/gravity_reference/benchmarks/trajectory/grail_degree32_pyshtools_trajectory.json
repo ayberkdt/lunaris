@@ -23,16 +23,16 @@
     "thrust": false
   },
   "frames": {
-    "comparison_frame": "MOON_PA",
-    "gravity_fixed_frame": "MOON_PA",
+    "comparison_frame": "NONROTATING_FROZEN_BODY_FIXED",
+    "gravity_fixed_frame": "NONROTATING_FROZEN_BODY_FIXED",
     "state_center": "MOON",
-    "state_frame": "MOON_PA"
+    "state_frame": "NONROTATING_FROZEN_BODY_FIXED"
   },
   "generator": {
     "integrator": "scipy.solve_ivp DOP853 rtol=1e-13 atol=1e-16",
     "name": "pyshtools_force_scipy_dop853",
     "script_path": "validation/gravity_reference/generators/trajectory/generate_grail_degree32_pyshtools.py",
-    "script_sha256": "bebf207a218d7175e5df5ae11a4903aeb03fa826ee57ba61e0b2cbd4e76d7fb7",
+    "script_sha256": "15ca6defcb0ba96d1a72e157a8bc8422b3224e3c2f5015e9fc01b0fbfc81cdba",
     "version": "v1"
   },
   "gravity": {
@@ -87,5 +87,5 @@
     "output_step_s": 30.0,
     "time_scale": "TDB"
   },
-  "title": "GRAIL JGGRX_1800F degree-32 gravity-only arc (pyshtools force, SciPy DOP853, non-rotating)"
+  "title": "GRAIL JGGRX_1800F degree-32 gravity-only arc (independent pyshtools force, separately-configured SciPy DOP853, non-rotating frozen field)"
 }

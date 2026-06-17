@@ -1,5 +1,18 @@
 # ST-LRPS: Orbit-Level Gravity Model Benchmark Results
 
+> [!WARNING]
+> **These accuracy results are invalidated and must be regenerated before being
+> used as scientific evidence.** They predate the correction of the
+> spherical-harmonic Condon–Shortley phase convention. The runtime engine
+> (`lunaris.physics.spherical_harmonics`) had applied the `(-1)^m` phase to
+> GRAIL/geodesy coefficients (which carry no such phase), and the ST-LRPS label
+> generator (`spatial_cloud_generator`) used a matching phase; both are now fixed
+> to the no-phase convention. Every number below therefore rests on a
+> sign-flipped odd-order field: datasets must be regenerated, the model
+> retrained, and the benchmarks re-run. Relative runtime/throughput figures
+> remain approximately indicative; accuracy figures do not. Old checkpoints are
+> incompatible with the corrected runtime.
+
 This document reports validation and performance benchmark results for the **Sobolev-Trained Lunar Residual Potential Surrogate (ST-LRPS)** against classical Spherical Harmonic (SH) baselines. All figures are run-specific evidence for the benchmark configurations described below, not blanket guarantees: values depend on the trained artifact, scenario set, integrator, numerical precision, and hardware.
 
 The analysis evaluates physical orbit propagation accuracy, runtime throughput, and directional error characteristics under highly perturbed low Lunar orbits.

@@ -78,6 +78,8 @@ def make_toy_dataset_contract(
         "source_gravity_file_path": "toy.gfc",
         "source_gravity_file_sha256": "a" * 64,
         "content_sha256": "b" * 64,
+        "spherical_harmonic_convention": "4pi_geodesy_no_condon_shortley_v1",
+        "gravity_label_engine_version": "lunaris_sh_v2",
         "dataset_layout": {"dataset_name": "data", "shape": [int(n), 7]},
     }
     payload.update(overrides)

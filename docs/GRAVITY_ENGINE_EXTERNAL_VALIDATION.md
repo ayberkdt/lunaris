@@ -112,3 +112,59 @@ Do not label a generated trajectory as NASA-published truth. Use wording such as
 `Reference trajectory generated with NASA GMAT Rxxxx from the committed,
 checksummed gravity-only script.`
 
+## Independent Cross-Validation Strategy
+
+No single reference is trusted on its own; correctness is argued from *agreement
+across independent implementations* plus model-free physics invariants.
+
+**Why not "just use the real orbit".** There is no public NASA/JPL *gravity-only
+truth trajectory*: every released mission product (SPK/OEM, reconstructed orbits)
+carries third-body, SRP, tides, and orbit-determination estimates, so it cannot
+serve as a clean gravity-only reference. The industry-standard substitute is
+cross-validation against independent high-fidelity tools, which is what this
+layer does.
+
+Reference tiers, by independence from Lunaris:
+
+| Reference | Independence | Status |
+|---|---|---|
+| `independent_field_oracle` (in-repo, numpy) | Different algorithm, shares language | **Verified** (~1e-12, low degree) |
+| **pyshtools** (`validation/independent/pyshtools_reference.py`) | Separate SH library, C/Fortran core | **Verified** — matches Lunaris to ~1.9e-13 m/s^2 at GRAIL degree 120 |
+| **tudatpy** (`validation/independent/tudatpy_reference.py`) | Separate toolkit, C++ core, different team | **Scaffold** — gated `requires_tudatpy`; install (`conda install -c tudat-team tudatpy`) and confirm the point-gradient API on first run |
+| Orekit / GMAT | Separate ecosystems (Java / C++) | Not yet wired; natural further references |
+| Energy / angular-momentum invariants | Model-free physics | **Verified** (~1e-15 relative over the committed arc) |
+
+**Field** is cross-validated to machine precision against pyshtools (the
+strongest currently-installed independent SH library). Beyond the 8-point smoke
+benchmark, `grail_degree120_pyshtools_sobol` is a **statistical** benchmark: a
+deterministic Sobol cloud (~2000 points) over the sphere and across altitude
+strata (50–2000 km), plus explicit polar/equatorial sets. The field runner
+reports max/P95/P99 and **latitude/altitude-binned** error tables; Lunaris
+matches pyshtools to ~machine precision in every band (worst ~8e-11 m/s^2, near
+the pole at low altitude — the expected `1/cos φ` regime, well inside tolerance).
+Frame handling is additionally pinned by model-free invariants in
+`tests/test_sh_frame_invariants.py` (z-rotation equivariance of a zonal field;
+zero longitudinal acceleration; pure-radial monopole) — these need no kernels.
+
+**Trajectory** uses an independent *force* model (pyshtools) but — honestly —
+**not** an independent *integrator*: both the reference and the Lunaris run use
+SciPy `DOP853`, so it is an "independent force model with a separately-configured
+DOP853 integration". The frames are named `NONROTATING_FROZEN_BODY_FIXED` to make
+explicit that this is a well-posed frozen-field regression test, not a physical
+rotating `MOON_PA` propagation.
+
+**What is still missing (and why).** Two stronger references are scaffolded but
+blocked on this environment, and are NOT faked:
+
+- *Independent integrator (tudatpy/Orekit/GMAT).* tudatpy is not installed
+  (conda-only); the gated `tudatpy_reference.py` slot runs once it is.
+- *Physical rotating-frame gravity-only reference.* This needs SPICE lunar
+  orientation, which requires two NAIF kernels not present here: a leapseconds
+  kernel (`naif00xx.tls`, for UTC→ET) and a lunar frame kernel
+  (`moon_de440_*.tf`, to resolve the `MOON_PA` frame). The repo ships
+  `de440.bsp`, `de440s.bsp`, and `moon_pa_de440_200625.bpc` (orientation *data*)
+  but not the `.tls`/`.tf` needed to *name and time* the frame, so a rotating-Moon
+  reference cannot be built or verified here. Add those kernels (or run
+  `lunaris-data download`) to enable it; the rotating-frame manifest path already
+  fails closed (`INCOMPLETE_CONTRACT`) rather than approximating.
+

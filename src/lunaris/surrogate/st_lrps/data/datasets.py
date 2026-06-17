@@ -463,6 +463,8 @@ def build_dataset_contract(
         source_gravity_file_sha256=meta.raw_attrs.get("source_gravity_file_sha256"),
         content_sha256=dataset_sha256 or meta.raw_attrs.get("content_sha256") or meta.raw_attrs.get("dataset_sha256"),
         derivative_convention=meta.derivative_convention_version,
+        spherical_harmonic_convention=meta.raw_attrs.get("spherical_harmonic_convention"),
+        gravity_label_engine_version=meta.raw_attrs.get("gravity_label_engine_version"),
         columns=[c.strip() for c in str(meta.columns or "[x,y,z,dU,dax,day,daz]").strip("[]").split(",") if c.strip()],
         dataset_layout={"dataset_name": meta.raw_attrs.get("dataset_name") or "data", "shape": None},
         legacy_inferred=legacy_inferred,
