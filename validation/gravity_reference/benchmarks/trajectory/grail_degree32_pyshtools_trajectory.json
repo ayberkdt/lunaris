@@ -38,7 +38,7 @@
   "gravity": {
     "coefficient_file": "validation/gravity_reference/reference_data/trajectory/grail_degree32_coefficients.json",
     "coefficient_frame": "MOON_PA",
-    "coefficient_sha256": "a204706cf0136de9312292786bd904b7331e7bdbf35f5a27c43023baea38ae02",
+    "coefficient_sha256": "bbb3ea98720b999967529a8077e2b1327395a971c103c48f7ab6e177e5f0d131",
     "degree": 32,
     "model_name": "jggrx_1800f_truncated32",
     "model_release": "v1",
@@ -69,7 +69,7 @@
   "reference_file": {
     "format": "csv",
     "path": "validation/gravity_reference/reference_data/trajectory/grail_degree32_trajectory.csv",
-    "sha256": "b1104f7169c034c6928a3498d980139fa4c6df9eb0ae3f6fedcc6de474bb34e5",
+    "sha256": "ab3788319ca55ae20698347a01f6894e4f9e34442e80313207309e5f8eb6a45d",
     "size_bytes": 77091
   },
   "schema_version": "lunaris_gravity_trajectory_reference_v1",

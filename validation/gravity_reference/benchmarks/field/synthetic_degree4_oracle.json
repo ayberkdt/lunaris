@@ -28,7 +28,7 @@
   "gravity": {
     "coefficient_file": "validation/gravity_reference/reference_data/field/synthetic_degree4_coefficients.json",
     "coefficient_frame": "MOON_FIXED_SYNTHETIC",
-    "coefficient_sha256": "041c268deeb1b4776a02c5ea58eee2dfe29cd683906f5911bde141e9ae82bb95",
+    "coefficient_sha256": "c92f8024267aea66adcbf7b3f590025b7aaa324c2160abe9bea7e8f201df55d9",
     "degree": 4,
     "model_name": "synthetic_degree4",
     "model_release": "v1",
@@ -49,7 +49,7 @@
   "reference_file": {
     "format": "csv",
     "path": "validation/gravity_reference/reference_data/field/synthetic_degree4_field_vectors.csv",
-    "sha256": "818efcd56ed41f365efaa4a47f499ecbfe4714be6cb9d3595f0b9137ab8d951d",
+    "sha256": "bdfe943764c85817fb054d479678366013eb6f603f87d784c1debac90a414c2c",
     "size_bytes": 1602
   },
   "schema_version": "lunaris_gravity_field_reference_v1",

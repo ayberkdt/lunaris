@@ -28,7 +28,7 @@
   "gravity": {
     "coefficient_file": "validation/gravity_reference/reference_data/field/grail_degree120_pyshtools_coefficients.json",
     "coefficient_frame": "MOON_PA",
-    "coefficient_sha256": "d552c62f6f5e81616af7f8c96abf9b2910ff10bdb9422178faa624b6ca1ee4be",
+    "coefficient_sha256": "05f141791f5879987ac098c74ef3a3528dfb64791bff0687cc7403df70c69345",
     "degree": 120,
     "model_name": "jggrx_1800f_truncated120",
     "model_release": "v1",
@@ -49,7 +49,7 @@
   "reference_file": {
     "format": "csv",
     "path": "validation/gravity_reference/reference_data/field/grail_degree120_pyshtools_field_vectors.csv",
-    "sha256": "6991715b6029be310e868a1150aea811aff38dffa4446b1ede52908aaa324827",
+    "sha256": "5bc63c60766931de9c737a19c90d778233ce676cf820249f9fea7da76487a17e",
     "size_bytes": 1599
   },
   "schema_version": "lunaris_gravity_field_reference_v1",

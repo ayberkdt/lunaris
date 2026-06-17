@@ -30,11 +30,21 @@ def find_repo_root(start: str | os.PathLike[str] | None = None) -> Path:
 
 
 def sha256_file(path: str | os.PathLike[str]) -> str:
-    """Return the SHA-256 hex digest of a file's exact bytes."""
+    """Return the SHA-256 hex digest of a file's exact bytes.
+    For text files (.csv, .json), CRLF is normalized to LF before hashing
+    to ensure cross-platform stability (e.g., Windows vs Linux in CI).
+    """
+    p = Path(path)
     digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
+    
+    if p.suffix in {".csv", ".json"}:
+        with p.open("r", encoding="utf-8", newline="") as handle:
+            for line in handle:
+                digest.update(line.replace("\r\n", "\n").encode("utf-8"))
+    else:
+        with p.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
     return digest.hexdigest()
 
 
