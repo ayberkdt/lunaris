@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ayberkdt/lunaris/schemas/gravity-trajectory-reference-v1.json",
+  "title": "Lunaris gravity trajectory reference manifest v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "reference_class",
+    "title",
+    "reference_file",
+    "time",
+    "frames",
+    "initial_state",
+    "dynamics",
+    "comparison"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "lunaris_gravity_trajectory_reference_v1"
+    },
+    "reference_class": {
+      "enum": [
+        "published_truth_trajectory",
+        "external_tool_generated_trajectory",
+        "mission_ephemeris_non_gravity_only",
+        "incomplete_reference"
+      ]
+    },
+    "time": {
+      "type": "object",
+      "required": ["initial_epoch", "time_scale", "duration_s", "output_step_s"],
+      "properties": {
+        "time_scale": {"enum": ["UTC", "TAI", "TT", "TDB", "ET"]},
+        "duration_s": {"type": "number", "minimum": 0},
+        "output_step_s": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "frames": {
+      "type": "object",
+      "required": ["state_center", "state_frame", "gravity_fixed_frame", "comparison_frame"],
+      "properties": {
+        "state_center": {"const": "MOON"}
+      }
+    },
+    "initial_state": {
+      "type": "object",
+      "required": ["representation", "position_unit", "velocity_unit", "state"],
+      "properties": {
+        "representation": {"const": "cartesian"},
+        "position_unit": {"const": "m"},
+        "velocity_unit": {"const": "m/s"},
+        "state": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": {"type": "number"}
+        }
+      }
+    },
+    "comparison": {
+      "type": "object",
+      "required": ["threshold_origin"],
+      "properties": {
+        "threshold_origin": {
+          "enum": [
+            "published",
+            "official_software_validation",
+            "convergence_derived_and_frozen",
+            "report_only"
+          ]
+        }
+      }
+    }
+  }
+}
+

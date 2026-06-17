@@ -25,7 +25,7 @@ import os
 import random
 import time
 from collections.abc import Mapping
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -1348,8 +1348,847 @@ def _log_data_loading_policy(N, _avail_ram_mb, _est_ram_mb, _policy, _preload_re
     logger.info(f"  reason                 : {_preload_reason}")
 
 
-def train(cfg: TrainConfig) -> None:
-    """Main execution pipeline for the Physics-Informed setup and training.
+@dataclass
+class _SplitResult:
+    """Outputs of the data-splitting phase, consumed by the rest of ``train()``."""
+
+    split_seed: int
+    split_policy: str
+    train_indices: np.ndarray | None
+    val_indices: np.ndarray | None
+    n_train: int
+    n_val: int
+    split_manifest: dict[str, Any]
+    split_manifest_path: Path
+    splits: dict[str, np.ndarray] | None
+
+
+def _resolve_data_splits(
+    cfg: TrainConfig,
+    *,
+    meta: DatasetMeta,
+    N: int,
+    independent_val: bool,
+    N_train_file: int | None,
+    N_val_file: int | None,
+    primary_path: Path,
+    dset_name: str,
+    dataset_contract_obj: DatasetContract,
+    validation_report: Mapping[str, Any],
+    layout: Any,
+) -> _SplitResult:
+    """Resolve train/val splits and write the split manifest.
+
+    Extracted verbatim from ``train()`` phase 4; behaviour is identical.
+    Independent train/val files bypass index splitting; in-file datasets use
+    the configured ``split_policy`` (geometry-aware policies read positions).
+    """
+    split_seed = int(cfg.split_seed if cfg.split_seed is not None else cfg.seed)
+    split_policy = str(getattr(cfg, "split_policy", "seeded_random") or "seeded_random")
+    splits: dict[str, np.ndarray] | None = None
+    if independent_val:
+        train_indices = None
+        val_indices = None
+        n_train = N_train_file
+        n_val = N_val_file
+        split_manifest = {
+            "schema_version": 1,
+            "dataset_id": dataset_contract_obj.dataset_id,
+            "split_policy": "independent_files",
+            "split_seed": split_seed,
+            "train_count": int(n_train),
+            "val_count": int(n_val),
+            "test_count": 0,
+            "ood_count": 0,
+            "index_hashes": {},
+            "altitude_range_per_split": {},
+            "created_at_utc": validation_report.get("created_at_utc"),
+        }
+    else:
+        # Geometry-aware policies (spatial / OOD / altitude) need positions.
+        # Random splits do not, so the xyz read is skipped for them.
+        xyz_all: np.ndarray | None = None
+        altitude_all: np.ndarray | None = None
+        if split_policy not in {"seeded_random", "random"}:
+            with h5py.File(primary_path, "r", swmr=True) as f:
+                xyz_all = np.asarray(f[dset_name][:, 0:3], dtype=np.float64)
+            altitude_all = (np.linalg.norm(xyz_all, axis=1) - float(meta.r_ref_m or R_MOON_SI)) / 1000.0
+        _raw_split_options = {
+            "spatial_lon_bins": int(getattr(cfg, "spatial_lon_bins", 12)),
+            "spatial_lat_bins": int(getattr(cfg, "spatial_lat_bins", 6)),
+            "spatial_val_block_fraction": getattr(cfg, "spatial_val_block_fraction", None),
+            "spatial_test_block_fraction": getattr(cfg, "spatial_test_block_fraction", None),
+            "spatial_altitude_bins": int(getattr(cfg, "spatial_altitude_bins", 4)),
+            "ood_low_altitude_max_km": getattr(cfg, "ood_low_altitude_max_km", None),
+            "ood_high_altitude_min_km": getattr(cfg, "ood_high_altitude_min_km", None),
+            "ood_holdout_fraction": float(getattr(cfg, "ood_holdout_fraction", 0.2)),
+        }
+        split_options = {k: v for k, v in _raw_split_options.items() if v is not None}
+        split_info: dict[str, Any] = {}
+        try:
+            splits = split_dataset_indices(
+                n_rows=N,
+                split_policy=split_policy,
+                split_seed=split_seed,
+                val_fraction=float(cfg.val_ratio),
+                test_fraction=float(getattr(cfg, "test_fraction", 0.0)),
+                altitude_km=altitude_all,
+                xyz=xyz_all,
+                options=split_options,
+                split_info_out=split_info,
+            )
+        except (ValueError, NotImplementedError) as exc:
+            raise ValueError(f"Unsupported/invalid training split_policy={split_policy!r}: {exc}") from exc
+        train_indices = splits["train"]
+        val_indices = splits["val"]
+        n_train = int(train_indices.size)
+        n_val = int(val_indices.size)
+        if n_train == 0 or n_val == 0:
+            raise ValueError(
+                f"split_policy={split_policy!r} produced an empty train ({n_train}) or "
+                f"val ({n_val}) split; adjust split fractions/thresholds."
+            )
+        split_manifest = build_split_manifest(
+            dataset_contract=dataset_contract_obj,
+            splits=splits,
+            split_policy=split_policy,
+            split_seed=split_seed,
+            altitude_km=altitude_all,
+            xyz=xyz_all,
+            spatial_bins=split_info.get("spatial_bins"),
+            ood_thresholds=split_info.get("ood_thresholds"),
+        )
+    split_manifest_path = write_split_manifest(layout.provenance_dir / "split_manifest.json", split_manifest)
+    return _SplitResult(
+        split_seed=split_seed,
+        split_policy=split_policy,
+        train_indices=train_indices,
+        val_indices=val_indices,
+        n_train=n_train,
+        n_val=n_val,
+        split_manifest=split_manifest,
+        split_manifest_path=split_manifest_path,
+        splits=splits,
+    )
+
+
+def _fit_residual_scalers(
+    cfg: TrainConfig,
+    *,
+    layout: Any,
+    meta: DatasetMeta,
+    primary_path: Path,
+    dset_name: str,
+    mu_val: float,
+    a_sign: float,
+    degree_min_val: int,
+    effective_target: str,
+    target_contract: TargetContract,
+    independent_val: bool,
+    train_indices: np.ndarray | None,
+    split_policy: str,
+    split_seed: int,
+    n_train: int,
+    n_val: int,
+    split_manifest: dict[str, Any],
+    dataset_contract_obj: DatasetContract,
+) -> ScalerPack:
+    """Fit (or load) the residual ΔU/Δa scalers and record their provenance.
+
+    Extracted verbatim from ``train()`` phase 7; behaviour is identical. The
+    leakage-safe contract is preserved exactly: scalers are fit on TRAIN ROWS
+    ONLY (``indices=train_indices`` for single-file datasets; the dedicated
+    train file for independent-file datasets), and the train-only ``fit_scope``
+    provenance is written alongside.
+    """
+    scaler_path = layout.scaler_json
+    scaler_hash_info: dict[str, Any]
+    if scaler_path.exists():
+        logger.info(f"Loading existing scaler from {scaler_path.name}")
+        scaler = ScalerPack.load_json(scaler_path)
+        scaler_hash_info = {
+            "scaler_hash": compute_payload_sha256(asdict(scaler)),
+            "scaler_file_sha256": compute_file_sha256(scaler_path),
+            "scaler_payload": asdict(scaler),
+        }
+    else:
+        # Leakage-safe scaler provenance. Scalers (including the residual
+        # ΔU/Δa target scalers) are fit on TRAIN ROWS ONLY: for single-file
+        # datasets we pass train_indices so validation/test/OOD target rows
+        # never influence the mean/scale; for independent files primary_path is
+        # already the dedicated train file (indices=None, still train-only).
+        _split_index_hashes = (
+            split_manifest.get("index_hashes", {}) if isinstance(split_manifest, dict) else {}
+        ) or {}
+        try:
+            _dataset_contract_hash = compute_payload_sha256(dataset_contract_obj.to_dict())
+        except Exception:
+            _dataset_contract_hash = None
+        _dataset_content_sha256 = getattr(dataset_contract_obj, "content_sha256", None) or (
+            split_manifest.get("dataset_content_sha256") if isinstance(split_manifest, dict) else None
+        )
+        scaler_split_provenance = {
+            "fit_scope": "train_only",
+            "split_policy": ("independent_files" if independent_val else split_policy),
+            "split_seed": int(split_seed),
+            "train_count": int(n_train),
+            "val_count": int(n_val),
+            "test_count": int(split_manifest.get("test_count", 0)) if isinstance(split_manifest, dict) else 0,
+            "train_index_hash": _split_index_hashes.get("train"),
+            "val_index_hash": _split_index_hashes.get("val"),
+            "test_index_hash": _split_index_hashes.get("test"),
+            "dataset_content_sha256": _dataset_content_sha256,
+            "dataset_contract_hash": _dataset_contract_hash,
+        }
+        scaler = fit_scaler_streaming(
+            h5_path=primary_path, dset_name=dset_name, meta=meta,
+            use_si=cfg.use_si, mu_si=mu_val, a_sign=a_sign,
+            n_fit=cfg.fit_rows, seed=cfg.fit_seed, chunk_rows=cfg.fit_chunk_rows,
+            degree_min=degree_min_val,
+            target_mode=effective_target,
+            degree_max=int(meta.degree_max if meta.degree_max is not None else (meta.requested_degree or -1)),
+            u_scale_mode=str(getattr(cfg, "u_scale_mode", "hybrid")),
+            a_scale_mode=str(getattr(cfg, "a_scale_mode", "hybrid")),
+            target_scale_multiplier=float(getattr(cfg, "target_scale_multiplier", 6.0)),
+            target_contract=target_contract,
+            indices=(None if independent_val else train_indices),
+            split_provenance=scaler_split_provenance,
+        )
+        scaler_hash_info = write_scaler_json(layout, scaler)
+    logger.info(f"[artifacts] scaler_hash={scaler_hash_info['scaler_hash']}")
+    update_run_manifest(
+        layout,
+        {
+            "scaler_path": str(layout.scaler_json),
+            "scaler_hash": scaler_hash_info["scaler_hash"],
+            "scaler_file_sha256": scaler_hash_info["scaler_file_sha256"],
+        },
+    )
+    return scaler
+
+
+@dataclass
+class _LoaderResult:
+    """Outputs of the DataLoader-construction phase."""
+
+    train_loader: DataLoader
+    val_loader: DataLoader
+    n_train: int
+    n_val: int
+
+
+def _build_dataloaders(
+    cfg: TrainConfig,
+    *,
+    meta: DatasetMeta,
+    device: torch.device,
+    bytes_est: int,
+    N: int,
+    independent_val: bool,
+    data_path: Path,
+    train_data_path: Path | None,
+    val_data_path: Path | None,
+    dset_name: str,
+    n_train: int,
+    n_val: int,
+    train_indices: np.ndarray | None,
+    val_indices: np.ndarray | None,
+) -> _LoaderResult:
+    """Construct the train/val DataLoaders (RAM-preload or HDF5 streaming).
+
+    Extracted verbatim from ``train()`` phase 8; behaviour is identical. The
+    determinism guarantees are preserved exactly: ``worker_init_fn`` seeding on
+    every loader and the explicit per-epoch shuffle ``torch.Generator`` (seeded
+    from ``cfg.seed``) in the RAM-preload path, so ordering stays reproducible
+    and resumable via the checkpointed RNG state.
+    """
+    dataset_mb = bytes_est / (1024.0 * 1024.0)
+    # Resolve the preload policy. --preload-data is a convenience alias for "always".
+    _policy = str(getattr(cfg, "preload_policy", "auto")).strip().lower()
+    if bool(getattr(cfg, "preload_data", False)) and _policy != "never":
+        _policy = "always"
+    _est_ram_mb = _estimate_preload_ram_mb(int(N))
+    _avail_ram_mb = _available_ram_mb()
+    should_preload, _preload_reason = _decide_preload(
+        _policy,
+        dataset_mb=dataset_mb,
+        auto_preload_mb=float(getattr(cfg, "auto_preload_mb", 2048.0)),
+        est_ram_mb=_est_ram_mb,
+        avail_ram_mb=_avail_ram_mb,
+    )
+    _log_data_loading_policy(N, _avail_ram_mb, _est_ram_mb, _policy, _preload_reason, cfg, dataset_mb, should_preload)
+    if should_preload and "WARNING" in _preload_reason:
+        logger.warning(f"Preload RAM-safety: {_preload_reason}")
+
+    if should_preload:
+        logger.info("Data mode: RAM preload")
+        if independent_val:
+            logger.info(f"Loading train ({n_train:,}) from {train_data_path.name}...")
+            with h5py.File(train_data_path, "r", libver="latest", swmr=True) as _f:
+                _arr_train = np.asarray(_f[dset_name][:], dtype=np.float64)
+            logger.info(f"Loading val ({n_val:,}) from {val_data_path.name}...")
+            with h5py.File(val_data_path, "r", libver="latest", swmr=True) as _f:
+                _arr_val = np.asarray(_f[dset_name][:], dtype=np.float64)
+
+            _xt, _ut, _at = _arr_train[:, 0:3], _arr_train[:, 3:4], _arr_train[:, 4:7]
+            _xv, _uv, _av = _arr_val[:, 0:3], _arr_val[:, 3:4], _arr_val[:, 4:7]
+            del _arr_train, _arr_val
+
+            if cfg.use_si and meta.unit_system == "canonical":
+                _xt, _ut, _at = meta.convert_xyz_U_a_to_si(_xt, _ut, _at)
+                _xv, _uv, _av = meta.convert_xyz_U_a_to_si(_xv, _uv, _av)
+
+            train_ds: Dataset = TensorMemoryDataset(
+                _xt.astype(np.float32), _ut.astype(np.float32), _at.astype(np.float32)
+            )
+            val_ds: Dataset = TensorMemoryDataset(
+                _xv.astype(np.float32), _uv.astype(np.float32), _av.astype(np.float32)
+            )
+            del _xt, _ut, _at, _xv, _uv, _av
+        else:
+            logger.info(f"Loading {N:,} rows into CPU memory (~{dataset_mb:.2f} MB)...")
+            with h5py.File(data_path, "r", libver="latest", swmr=True) as _f:
+                _arr = np.asarray(_f[dset_name][:], dtype=np.float64)
+
+            _x_mem = _arr[:, 0:3]
+            _u_mem = _arr[:, 3:4]
+            _a_mem = _arr[:, 4:7]
+            del _arr
+
+            if cfg.use_si and meta.unit_system == "canonical":
+                _x_mem, _u_mem, _a_mem = meta.convert_xyz_U_a_to_si(_x_mem, _u_mem, _a_mem)
+
+            _x_mem = _x_mem.astype(np.float32)
+            _u_mem = _u_mem.astype(np.float32)
+            _a_mem = _a_mem.astype(np.float32)
+
+            train_ds = TensorMemoryDataset(
+                _x_mem[train_indices], _u_mem[train_indices], _a_mem[train_indices]
+            )
+            val_ds = TensorMemoryDataset(
+                _x_mem[val_indices], _u_mem[val_indices], _a_mem[val_indices]
+            )
+            del _x_mem, _u_mem, _a_mem
+
+        n_train = len(train_ds)
+        n_val   = len(val_ds)
+        pin = cfg.pin_memory and device.type == "cuda"
+        mem_workers = max(0, cfg.num_workers)
+        pf = cfg.prefetch_factor if (mem_workers > 0 and cfg.prefetch_factor is not None) else None
+        logger.info(f"Train/val split: {n_train:,} / {n_val:,}")
+        logger.info(
+            f"pin_memory={pin}, non_blocking={pin}, num_workers={mem_workers} (requested={cfg.num_workers})"
+            + (f", prefetch_factor={pf}" if pf is not None else "")
+        )
+
+        _dl_kw: dict[str, Any] = dict(
+            batch_size=cfg.batch_size, num_workers=mem_workers, pin_memory=pin,
+            persistent_workers=(mem_workers > 0), collate_fn=collate_xyz_u_a,
+            worker_init_fn=_seed_dataloader_worker,
+        )
+        if pf is not None:
+            _dl_kw["prefetch_factor"] = pf
+        # Seed the shuffle RNG explicitly so the per-epoch ordering is reproducible
+        # (and resumable via the checkpointed RNG state) instead of riding on the
+        # global torch RNG.
+        _loader_generator = torch.Generator()
+        _loader_generator.manual_seed(int(cfg.seed))
+        train_loader = DataLoader(
+            train_ds, shuffle=True, drop_last=True,
+            generator=_loader_generator, **_dl_kw,
+        )
+        val_loader   = DataLoader(val_ds,   shuffle=False, drop_last=False, **_dl_kw)
+    else:
+        logger.info("Data mode: HDF5 streaming")
+        if independent_val:
+            train_ds = H5BlockDataset(
+                train_data_path, dset_name, 0, n_train, meta, cfg.use_si, cfg.cache_rows, indices=None
+            )
+            val_ds = H5BlockDataset(
+                val_data_path, dset_name, 0, n_val, meta, cfg.use_si, cfg.cache_rows, indices=None
+            )
+        else:
+            train_ds = H5BlockDataset(
+                data_path, dset_name, 0, N, meta, cfg.use_si, cfg.cache_rows, indices=train_indices
+            )
+            val_ds = H5BlockDataset(
+                data_path, dset_name, 0, N, meta, cfg.use_si, cfg.cache_rows, indices=val_indices
+            )
+
+        train_sampler = BlockShuffleSampler(len(train_ds), cfg.sampler_block_size, cfg.seed + 100)
+        val_sampler   = BlockShuffleSampler(len(val_ds),   cfg.sampler_block_size, cfg.seed + 200)
+        _streaming_path = train_data_path if independent_val else data_path
+        train_workers = _resolve_loader_worker_count(_streaming_path, cfg.num_workers)
+        if train_workers == 0 and int(cfg.num_workers) > 0:
+            logger.warning(
+                "Windows HDF5 safety: num_workers forced to 0 for HDF5 streaming. "
+                "Use --preload-data (or --auto-preload-mb) for multi-worker loading."
+            )
+        val_workers = max(0, train_workers // 2)
+        pin = cfg.pin_memory and device.type == "cuda"
+        tr_pf = cfg.prefetch_factor if (train_workers > 0 and cfg.prefetch_factor is not None) else None
+        va_pf = cfg.prefetch_factor if (val_workers   > 0 and cfg.prefetch_factor is not None) else None
+        logger.info(
+            f"pin_memory={pin}, train_workers={train_workers} (requested={cfg.num_workers}),"
+            f" val_workers={val_workers}"
+            + (f", prefetch_factor={tr_pf}" if tr_pf is not None else "")
+        )
+
+        _tr_kw: dict[str, Any] = dict(
+            batch_size=cfg.batch_size, sampler=train_sampler,
+            num_workers=train_workers, pin_memory=pin,
+            persistent_workers=(train_workers > 0), collate_fn=collate_xyz_u_a, drop_last=True,
+            worker_init_fn=_seed_dataloader_worker,
+        )
+        _va_kw: dict[str, Any] = dict(
+            batch_size=cfg.batch_size, sampler=val_sampler,
+            num_workers=val_workers, pin_memory=pin,
+            persistent_workers=(val_workers > 0), collate_fn=collate_xyz_u_a, drop_last=False,
+            worker_init_fn=_seed_dataloader_worker,
+        )
+        if tr_pf is not None:
+            _tr_kw["prefetch_factor"] = tr_pf
+        if va_pf is not None:
+            _va_kw["prefetch_factor"] = va_pf
+        train_loader = DataLoader(train_ds, **_tr_kw)
+        val_loader   = DataLoader(val_ds,   **_va_kw)
+
+    return _LoaderResult(
+        train_loader=train_loader,
+        val_loader=val_loader,
+        n_train=n_train,
+        n_val=n_val,
+    )
+
+
+@dataclass
+class _DatasetContext:
+    """Outputs of the dataset discovery + metadata + contract/validation phases."""
+
+    data_path: Path
+    independent_val: bool
+    train_data_path: Path | None
+    val_data_path: Path | None
+    primary_path: Path
+    dset_name: str
+    meta: DatasetMeta
+    N: int
+    N_train_file: int | None
+    N_val_file: int | None
+    bytes_est: int
+    dataset_contract_obj: DatasetContract
+    validation_report: dict[str, Any]
+    allow_legacy_dataset_contract: bool
+    allow_missing_dataset_contract: bool
+
+
+def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
+    """Resolve dataset paths, read metadata (SSOT), and load+validate the contract.
+
+    Extracted verbatim from ``train()`` phases 2-3; behaviour is identical.
+    Independent train/val files are matched on their lunar gravity contract;
+    in-file datasets read the row count directly. ``N_train_file``/``N_val_file``
+    are populated only for independent-file datasets (``None`` otherwise).
+    """
+    # 2. Dataset Discovery & Validation
+    data_path = Path(cfg.data)
+    independent_val = cfg.train_data is not None and cfg.val_data is not None
+    train_data_path: Path | None = None
+    val_data_path: Path | None = None
+    N_train_file: int | None = None
+    N_val_file: int | None = None
+
+    if independent_val:
+        train_data_path = Path(cfg.train_data)
+        val_data_path = Path(cfg.val_data)
+        if not train_data_path.exists():
+            raise FileNotFoundError(f"Train dataset not found: {train_data_path}")
+        if not val_data_path.exists():
+            raise FileNotFoundError(f"Val dataset not found: {val_data_path}")
+        primary_path = train_data_path
+    else:
+        if not data_path.exists():
+            raise FileNotFoundError(f"Dataset not found: {data_path}")
+        primary_path = data_path
+
+    dset_name = cfg.dataset_name
+    try:
+        with h5py.File(primary_path, "r") as f:
+            _ = f[dset_name]
+    except (KeyError, OSError):
+        dset_name = _discover_dataset_name(primary_path, preferred=cfg.dataset_name)
+
+    # 3. Read Metadata (SSOT)
+    meta = DatasetMeta.from_h5(primary_path)
+
+    if independent_val:
+        with h5py.File(train_data_path, "r", swmr=True) as f:
+            N_train_file = int(f[dset_name].shape[0])
+            bytes_est_train = N_train_file * 7 * (4 if str(f[dset_name].dtype) == "float32" else 8)
+        with h5py.File(val_data_path, "r", swmr=True) as f:
+            N_val_file = int(f[dset_name].shape[0])
+            bytes_est_val = N_val_file * 7 * (4 if str(f[dset_name].dtype) == "float32" else 8)
+        bytes_est = bytes_est_train + bytes_est_val
+        N = N_train_file + N_val_file
+        meta_val = DatasetMeta.from_h5(val_data_path)
+        _resolve_lunar_dataset_contract(meta_val, data_path=val_data_path)
+
+        def _require_meta_match(name: str, left: Any, right: Any) -> None:
+            if left is None or right is None:
+                return
+            if isinstance(left, float) or isinstance(right, float):
+                if abs(float(left) - float(right)) <= 1.0:
+                    return
+            elif left == right:
+                return
+            raise ValueError(
+                f"Train/Val metadata mismatch for {name}: {left!r} vs {right!r}. "
+                "Independent train/validation clouds must use the same lunar gravity contract."
+            )
+
+        _require_meta_match("central_body", meta.central_body, meta_val.central_body)
+        _require_meta_match("mu_si", meta.mu_si, meta_val.mu_si)
+        _require_meta_match("r_ref_m", meta.r_ref_m, meta_val.r_ref_m)
+        _require_meta_match("unit_system", meta.unit_system, meta_val.unit_system)
+        _require_meta_match("degree_min", meta.degree_min, meta_val.degree_min)
+        _require_meta_match("requested_degree", meta.requested_degree, meta_val.requested_degree)
+        _require_meta_match("target_mode", meta.target_mode, meta_val.target_mode)
+        if meta_val.mu_si is not None and meta.mu_si is not None:
+            if abs(meta_val.mu_si - meta.mu_si) > 1.0:
+                logger.warning(f"Train/Val mu_si mismatch: {meta.mu_si} vs {meta_val.mu_si}")
+        if meta_val.r_ref_m is not None and meta.r_ref_m is not None:
+            if abs(meta_val.r_ref_m - meta.r_ref_m) > 1.0:
+                logger.warning(f"Train/Val r_ref_m mismatch: {meta.r_ref_m} vs {meta_val.r_ref_m}")
+        if meta.unit_system != meta_val.unit_system:
+            logger.warning(f"Train/Val unit_system mismatch: {meta.unit_system} vs {meta_val.unit_system}")
+        if meta.degree_min != meta_val.degree_min:
+            logger.warning(f"Train/Val degree_min mismatch: {meta.degree_min} vs {meta_val.degree_min}")
+    else:
+        with h5py.File(data_path, "r", swmr=True) as f:
+            N = int(f[dset_name].shape[0])
+            bytes_est = N * 7 * (4 if str(f[dset_name].dtype) == "float32" else 8)
+
+    if cfg.use_si and meta.unit_system == "canonical" and not meta.can_convert_to_si():
+        raise ValueError("Configuration demands SI units, but dataset is missing DU_m/TU_s/VU_m_s attributes.")
+
+    allow_legacy_dataset_contract = bool(getattr(cfg, "allow_legacy_dataset_contract", False))
+    allow_missing_dataset_contract = bool(getattr(cfg, "allow_missing_dataset_contract", False))
+    dataset_contract_obj = DatasetContract.from_hdf5(
+        primary_path,
+        dataset_name=dset_name,
+        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
+        allow_missing_dataset_contract=allow_missing_dataset_contract,
+        allow_legacy_derivative_convention=bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
+    )
+    validation_report = validate_dataset_file(
+        primary_path,
+        out_dir=layout.provenance_dir,
+        dataset_name=dset_name,
+        n_check=min(1024, int(N)),
+        seed=int(cfg.split_seed if cfg.split_seed is not None else cfg.seed),
+        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
+        allow_missing_dataset_contract=allow_missing_dataset_contract,
+        allow_legacy_derivative_convention=bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
+    )
+    if not validation_report.get("passed") and not bool(getattr(cfg, "allow_dataset_validation_fail", False)):
+        raise ValueError(
+            "Dataset validation failed before training: "
+            + "; ".join(str(item) for item in validation_report.get("errors", []))
+        )
+    return _DatasetContext(
+        data_path=data_path,
+        independent_val=independent_val,
+        train_data_path=train_data_path,
+        val_data_path=val_data_path,
+        primary_path=primary_path,
+        dset_name=dset_name,
+        meta=meta,
+        N=N,
+        N_train_file=N_train_file,
+        N_val_file=N_val_file,
+        bytes_est=bytes_est,
+        dataset_contract_obj=dataset_contract_obj,
+        validation_report=validation_report,
+        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
+        allow_missing_dataset_contract=allow_missing_dataset_contract,
+    )
+
+
+@dataclass
+class _ModelBundle:
+    """Outputs of the model/optimizer/loss build phase."""
+
+    model: nn.Module
+    opt: AdamW
+    weights: GradNormWeights
+    loss_fn: nn.Module
+    arch_signature: str
+    degree_max_val: int
+    emb_type_built: str
+    in_fdim_built: int
+    total_params: int
+
+
+def _build_model_and_optim(
+    cfg: TrainConfig,
+    *,
+    meta: DatasetMeta,
+    degree_min_val: int,
+    resolved_r_ref_m: float,
+    scaler: ScalerPack,
+    device: torch.device,
+    a_sign: float,
+    mu_val: float,
+    target_contract: TargetContract,
+    _resume_requested: bool,
+    _resume_ckpt: dict[str, Any] | None,
+    _resume_ckpt_path: Path | None,
+) -> _ModelBundle:
+    """Build the model, GradNorm weights, Sobolev loss, and AdamW optimizer.
+
+    Extracted verbatim from ``train()`` phase 9; behaviour is identical. The
+    reload-safety contract is preserved: the dataset degree range and the
+    multi-scale band frequencies are resolved INTO ``cfg`` before the model is
+    built and before ``config.json`` is written, so training and evaluation
+    reconstruct the identical spectrum. Resume restores (model/GradNorm/optimizer
+    state) are applied here when ``_resume_requested``.
+    """
+    # 9. Build model via the shared factory (build_model_from_config) — authoritative builder
+    # used by evaluator and force model. This ensures SH/radial encoding flags are honoured.
+    # The SIREN+Fourier mutual exclusion check is inside build_model_from_config().
+    #
+    # CRITICAL (reload-safety): resolve the dataset's degree range and the
+    # multi-scale band frequencies INTO cfg before building, and BEFORE writing
+    # config.json. Previously the model was built from cfg (which had no degree
+    # fields → silent 0/50 defaults) while config.json recorded the meta-derived
+    # degrees. For n_bands>1 that produced a model whose SIREN band frequencies
+    # differed from what evaluation reconstructed: the state_dict matched by
+    # shape but the functional model was wrong. Resolving here makes training
+    # and evaluation build the identical spectrum.
+    degree_max_val = int(
+        meta.degree_max if meta.degree_max is not None
+        else (meta.requested_degree if meta.requested_degree is not None else -1)
+    )
+    cfg.degree_min = int(degree_min_val)
+    cfg.degree_max = int(degree_max_val)
+    cfg.resolved_r_ref_m = float(resolved_r_ref_m)
+    cfg.x_scale_m = float(scaler.x.scale)
+    if cfg.activation.lower() == "sine" and int(getattr(cfg, "n_bands", 1)) > 1:
+        if cfg.degree_max <= 0:
+            raise ValueError(
+                "Multi-scale SIREN (n_bands>1) requires a known degree_max from the "
+                f"dataset metadata, but resolved degree_max={cfg.degree_max}. "
+                "Regenerate the dataset with degree_max recorded, or use n_bands=1."
+            )
+        cfg.w0_bands = [
+            float(w) for w in _compute_harmonic_w0_bands(
+                int(cfg.n_bands), int(cfg.degree_min), int(cfg.degree_max)
+            )
+        ]
+    else:
+        cfg.w0_bands = None
+
+    model = build_model_from_config(
+        cfg,
+        in_dim=3,
+        device=device,
+        dtype=DTYPE,
+    )
+
+    if _resume_requested and _resume_ckpt is not None:
+        _msd = _resume_ckpt.get("model_state_dict") or _resume_ckpt.get("model")
+        if _msd is None:
+            raise RuntimeError("[resume] checkpoint has no model_state_dict.")
+        _load_res = model.load_state_dict(_msd, strict=bool(getattr(cfg, "resume_strict", True)))
+        _missing = list(getattr(_load_res, "missing_keys", []) or [])
+        _unexpected = list(getattr(_load_res, "unexpected_keys", []) or [])
+        if _missing or _unexpected:
+            logger.warning(f"[resume] non-strict model load: missing={_missing} unexpected={_unexpected}")
+        logger.info(f"[resume] model weights restored from {_resume_ckpt_path}")
+
+    # Log architecture details (equivalent to old manual logging, but from the built model)
+    _n_bands_built = max(1, int(getattr(cfg, "n_bands", 1)))
+    _use_res_built = bool(getattr(cfg, "use_residual_blocks", False))
+    if cfg.use_fourier:
+        logger.info(
+            f"Fourier embedding: n_features={cfg.fourier_n_features}, "
+            f"sigma={cfg.fourier_sigma}, append_raw={cfg.fourier_append_raw}"
+        )
+    if cfg.activation.lower() == "sine":
+        if _n_bands_built > 1:
+            # Log the EXACT bands the model was built with (resolved into cfg above),
+            # not an independently recomputed value that could silently diverge.
+            logger.info(
+                f"Built Multi-Scale SIREN: n_bands={_n_bands_built}, w0_bands={cfg.w0_bands}, "
+                f"degree_min={cfg.degree_min}, degree_max={cfg.degree_max}, "
+                f"depth={cfg.depth}, hidden={cfg.hidden}"
+            )
+            # Defensive cross-check: the model's resolved bands must equal cfg's.
+            _model_bands = list(getattr(model, "w0_bands", []) or [])
+            if _model_bands and [round(b, 4) for b in _model_bands] != [round(b, 4) for b in (cfg.w0_bands or [])]:
+                raise RuntimeError(
+                    f"Internal error: model w0_bands {_model_bands} != cfg.w0_bands {cfg.w0_bands}. "
+                    "Refusing to train a model whose spectrum cannot be reproduced from config."
+                )
+        else:
+            logger.info(
+                f"Built SIREN backbone: depth={cfg.depth}, hidden={cfg.hidden}, "
+                f"w0_first={cfg.w0_first}, w0_hidden={cfg.w0_hidden}, "
+                f"residual_blocks={_use_res_built}"
+            )
+    else:
+        logger.info(
+            f"Built MLP backbone: depth={cfg.depth}, hidden={cfg.hidden}, activation={cfg.activation}"
+        )
+    _total_params = sum(p.numel() for p in model.parameters())
+    logger.info(f"Total parameters: {_total_params:,}")
+
+    # Capture model-derived architecture metadata for config.json / checkpoint
+    # persistence below. (Previously this block tried to rewrite config.json
+    # before it had been created, so the metadata was silently lost every run.)
+    _emb_type_built = str(getattr(model, "embedding_type", "raw"))
+    _in_fdim_built = int(getattr(model, "input_feature_dim", 3))
+    _arch_signature = compute_architecture_signature(cfg)
+    logger.info(
+        f"Encoding: embedding_type={_emb_type_built}  input_feature_dim={_in_fdim_built}  "
+        f"builder={MODEL_BUILDER_VERSION}  arch_signature={_arch_signature}"
+    )
+
+    weights = GradNormWeights(
+        w_u=cfg.w_u,
+        w_a=cfg.w_a,
+        mode=cfg.gradnorm_mode,
+        w_a_min=cfg.gradnorm_w_a_min,
+        w_a_max=cfg.gradnorm_w_a_max,
+    )
+    logger.info(f"Loss weighting: mode={cfg.gradnorm_mode}  w_u={cfg.w_u:.2f}  w_a_init={cfg.w_a:.2f}")
+
+    if _resume_requested:
+        _gnw_state = (_resume_ckpt.get("training_state") or {}).get("gradnorm_weights")
+        if _gnw_state:
+            weights.load_state_dict(_gnw_state)
+            logger.info(
+                f"[resume] GradNorm state restored (w_a={weights.w_a:.4f}, ntk_done={weights._ntk_done})."
+            )
+        else:
+            logger.warning(
+                "[resume] checkpoint lacks GradNorm state; continuing with a fresh GradNorm "
+                "(NTK init may recompute on the first resumed step)."
+            )
+
+    loss_fn = SobolevLoss(
+        scaler=scaler,
+        a_sign=a_sign,
+        mu_si=mu_val,
+        r_ref_m=resolved_r_ref_m,
+        degree_min=degree_min_val,
+        degree_max=degree_max_val,
+        target_contract=target_contract,
+    ).to(device=device, dtype=DTYPE)
+    logger.info(f"Residual baseline: {target_contract.baseline_description}")
+
+    head_params = _get_output_head_params(model)
+    head_param_ids = {id(param) for param in head_params}
+    body_params = [param for param in model.parameters() if id(param) not in head_param_ids]
+    param_groups: list[dict[str, Any]] = []
+    if body_params:
+        param_groups.append(
+            {
+                "params": body_params,
+                "lr": cfg.lr,
+                "weight_decay": cfg.weight_decay,
+            }
+        )
+    param_groups.append(
+        {
+            "params": head_params,
+            "lr": cfg.lr * float(cfg.output_head_lr_mult),
+            "weight_decay": 0.0,
+        }
+    )
+    opt = AdamW(param_groups)
+    logger.info(
+        f"Optimizer groups: body_lr={cfg.lr:.2e}, body_wd={cfg.weight_decay:.2e}, "
+        f"head_lr={cfg.lr * float(cfg.output_head_lr_mult):.2e}, head_wd=0.00e+00"
+    )
+    for group in opt.param_groups:
+        group["initial_lr"] = float(group["lr"])
+
+    if _resume_requested:
+        _osd = _resume_ckpt.get("optimizer_state_dict")
+        if _osd is not None:
+            try:
+                opt.load_state_dict(_osd)
+                logger.info("[resume] optimizer state restored.")
+            except Exception as _oexc:
+                if bool(getattr(cfg, "resume_strict", True)):
+                    raise RuntimeError(f"[resume] optimizer state restore failed: {_oexc}") from _oexc
+                logger.warning(f"[resume] optimizer restore failed (non-strict); continuing fresh: {_oexc}")
+        elif bool(getattr(cfg, "resume_strict", True)):
+            raise RuntimeError(
+                "[resume] checkpoint has no optimizer_state_dict (strict). "
+                "Use --resume-nonstrict to continue with a fresh optimizer."
+            )
+        else:
+            logger.warning("[resume] checkpoint has no optimizer_state_dict; continuing with a fresh optimizer.")
+        # Re-assert the manual-cosine base LR per group (load_state_dict may not carry it).
+        for group in opt.param_groups:
+            group.setdefault("initial_lr", float(group["lr"]))
+
+    return _ModelBundle(
+        model=model,
+        opt=opt,
+        weights=weights,
+        loss_fn=loss_fn,
+        arch_signature=_arch_signature,
+        degree_max_val=degree_max_val,
+        emb_type_built=_emb_type_built,
+        in_fdim_built=_in_fdim_built,
+        total_params=_total_params,
+    )
+
+
+@dataclass
+class _TrainingSession:
+    """Everything ``build_training_session`` (setup phases 1-10) produces that the
+    training loop (phase 11, ``_run_training_loop``) consumes.
+
+    The field set is exactly the boundary of locals that cross from setup into
+    the loop; nothing else flows between the two halves of ``train()``.
+    """
+
+    cfg: TrainConfig
+    model: nn.Module
+    opt: AdamW
+    weights: GradNormWeights
+    loss_fn: nn.Module
+    device: torch.device
+    scaler: ScalerPack
+    train_loader: DataLoader
+    val_loader: DataLoader
+    layout: Any
+    outdir: Path
+    config_path: Path
+    payload: dict[str, Any]
+    payload_readback: dict[str, Any]
+    dataset_snapshot: dict[str, Any]
+    checkpoint_selection: Mapping[str, Any]
+    dset_name: str
+    resolved_r_ref_m: float
+    start_epoch: int
+    _arch_signature: str
+    _best_metric_canonical: str
+    _ckpt_start: int
+    _resume_requested: bool
+    _resume_ckpt: dict[str, Any] | None
+    _resume_best_val: float
+    _resume_best_epoch: int
+    _resume_epochs_without_improve: int
+    _resume_global_step: int
+
+
+def build_training_session(cfg: TrainConfig) -> _TrainingSession:
+    """Run setup phases 1-10 and return the assembled :class:`_TrainingSession`.
 
     This is a scalar residual potential surrogate, NOT a classical q,p
     Sobolev-Trained Lunar Residual Potential Surrogate.  The model learns DeltaU(x) and acceleration
@@ -1617,186 +2456,47 @@ def train(cfg: TrainConfig) -> None:
         cfg.max_train_batches = cfg.max_train_batches if cfg.max_train_batches is not None else 5
         cfg.max_val_batches   = cfg.max_val_batches   if cfg.max_val_batches   is not None else 2
 
-    # 2. Dataset Discovery & Validation
-    data_path = Path(cfg.data)
-    independent_val = cfg.train_data is not None and cfg.val_data is not None
-    train_data_path: Path | None = None
-    val_data_path: Path | None = None
-
-    if independent_val:
-        train_data_path = Path(cfg.train_data)
-        val_data_path = Path(cfg.val_data)
-        if not train_data_path.exists():
-            raise FileNotFoundError(f"Train dataset not found: {train_data_path}")
-        if not val_data_path.exists():
-            raise FileNotFoundError(f"Val dataset not found: {val_data_path}")
-        primary_path = train_data_path
-    else:
-        if not data_path.exists():
-            raise FileNotFoundError(f"Dataset not found: {data_path}")
-        primary_path = data_path
-
-    dset_name = cfg.dataset_name
-    try:
-        with h5py.File(primary_path, "r") as f:
-            _ = f[dset_name]
-    except (KeyError, OSError):
-        dset_name = _discover_dataset_name(primary_path, preferred=cfg.dataset_name)
-
-    # 3. Read Metadata (SSOT)
-    meta = DatasetMeta.from_h5(primary_path)
-
-    if independent_val:
-        with h5py.File(train_data_path, "r", swmr=True) as f:
-            N_train_file = int(f[dset_name].shape[0])
-            bytes_est_train = N_train_file * 7 * (4 if str(f[dset_name].dtype) == "float32" else 8)
-        with h5py.File(val_data_path, "r", swmr=True) as f:
-            N_val_file = int(f[dset_name].shape[0])
-            bytes_est_val = N_val_file * 7 * (4 if str(f[dset_name].dtype) == "float32" else 8)
-        bytes_est = bytes_est_train + bytes_est_val
-        N = N_train_file + N_val_file
-        meta_val = DatasetMeta.from_h5(val_data_path)
-        _resolve_lunar_dataset_contract(meta_val, data_path=val_data_path)
-
-        def _require_meta_match(name: str, left: Any, right: Any) -> None:
-            if left is None or right is None:
-                return
-            if isinstance(left, float) or isinstance(right, float):
-                if abs(float(left) - float(right)) <= 1.0:
-                    return
-            elif left == right:
-                return
-            raise ValueError(
-                f"Train/Val metadata mismatch for {name}: {left!r} vs {right!r}. "
-                "Independent train/validation clouds must use the same lunar gravity contract."
-            )
-
-        _require_meta_match("central_body", meta.central_body, meta_val.central_body)
-        _require_meta_match("mu_si", meta.mu_si, meta_val.mu_si)
-        _require_meta_match("r_ref_m", meta.r_ref_m, meta_val.r_ref_m)
-        _require_meta_match("unit_system", meta.unit_system, meta_val.unit_system)
-        _require_meta_match("degree_min", meta.degree_min, meta_val.degree_min)
-        _require_meta_match("requested_degree", meta.requested_degree, meta_val.requested_degree)
-        _require_meta_match("target_mode", meta.target_mode, meta_val.target_mode)
-        if meta_val.mu_si is not None and meta.mu_si is not None:
-            if abs(meta_val.mu_si - meta.mu_si) > 1.0:
-                logger.warning(f"Train/Val mu_si mismatch: {meta.mu_si} vs {meta_val.mu_si}")
-        if meta_val.r_ref_m is not None and meta.r_ref_m is not None:
-            if abs(meta_val.r_ref_m - meta.r_ref_m) > 1.0:
-                logger.warning(f"Train/Val r_ref_m mismatch: {meta.r_ref_m} vs {meta_val.r_ref_m}")
-        if meta.unit_system != meta_val.unit_system:
-            logger.warning(f"Train/Val unit_system mismatch: {meta.unit_system} vs {meta_val.unit_system}")
-        if meta.degree_min != meta_val.degree_min:
-            logger.warning(f"Train/Val degree_min mismatch: {meta.degree_min} vs {meta_val.degree_min}")
-    else:
-        with h5py.File(data_path, "r", swmr=True) as f:
-            N = int(f[dset_name].shape[0])
-            bytes_est = N * 7 * (4 if str(f[dset_name].dtype) == "float32" else 8)
-
-    if cfg.use_si and meta.unit_system == "canonical" and not meta.can_convert_to_si():
-        raise ValueError("Configuration demands SI units, but dataset is missing DU_m/TU_s/VU_m_s attributes.")
-
-    allow_legacy_dataset_contract = bool(getattr(cfg, "allow_legacy_dataset_contract", False))
-    allow_missing_dataset_contract = bool(getattr(cfg, "allow_missing_dataset_contract", False))
-    dataset_contract_obj = DatasetContract.from_hdf5(
-        primary_path,
-        dataset_name=dset_name,
-        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-        allow_missing_dataset_contract=allow_missing_dataset_contract,
-        allow_legacy_derivative_convention=bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
-    )
-    validation_report = validate_dataset_file(
-        primary_path,
-        out_dir=layout.provenance_dir,
-        dataset_name=dset_name,
-        n_check=min(1024, int(N)),
-        seed=int(cfg.split_seed if cfg.split_seed is not None else cfg.seed),
-        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-        allow_missing_dataset_contract=allow_missing_dataset_contract,
-        allow_legacy_derivative_convention=bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
-    )
-    if not validation_report.get("passed") and not bool(getattr(cfg, "allow_dataset_validation_fail", False)):
-        raise ValueError(
-            "Dataset validation failed before training: "
-            + "; ".join(str(item) for item in validation_report.get("errors", []))
-        )
+    # 2-3. Dataset discovery, metadata (SSOT), contract load + validation
+    _dsctx = _load_dataset_context(cfg, layout=layout)
+    data_path = _dsctx.data_path
+    independent_val = _dsctx.independent_val
+    train_data_path = _dsctx.train_data_path
+    val_data_path = _dsctx.val_data_path
+    primary_path = _dsctx.primary_path
+    dset_name = _dsctx.dset_name
+    meta = _dsctx.meta
+    N = _dsctx.N
+    N_train_file = _dsctx.N_train_file
+    N_val_file = _dsctx.N_val_file
+    bytes_est = _dsctx.bytes_est
+    dataset_contract_obj = _dsctx.dataset_contract_obj
+    validation_report = _dsctx.validation_report
+    allow_legacy_dataset_contract = _dsctx.allow_legacy_dataset_contract
+    allow_missing_dataset_contract = _dsctx.allow_missing_dataset_contract
 
     # 4. Data Splitting
-    split_seed = int(cfg.split_seed if cfg.split_seed is not None else cfg.seed)
-    split_policy = str(getattr(cfg, "split_policy", "seeded_random") or "seeded_random")
-    if independent_val:
-        train_indices = None
-        val_indices = None
-        n_train = N_train_file
-        n_val = N_val_file
-        split_manifest = {
-            "schema_version": 1,
-            "dataset_id": dataset_contract_obj.dataset_id,
-            "split_policy": "independent_files",
-            "split_seed": split_seed,
-            "train_count": int(n_train),
-            "val_count": int(n_val),
-            "test_count": 0,
-            "ood_count": 0,
-            "index_hashes": {},
-            "altitude_range_per_split": {},
-            "created_at_utc": validation_report.get("created_at_utc"),
-        }
-    else:
-        # Geometry-aware policies (spatial / OOD / altitude) need positions.
-        # Random splits do not, so the xyz read is skipped for them.
-        xyz_all: np.ndarray | None = None
-        altitude_all: np.ndarray | None = None
-        if split_policy not in {"seeded_random", "random"}:
-            with h5py.File(primary_path, "r", swmr=True) as f:
-                xyz_all = np.asarray(f[dset_name][:, 0:3], dtype=np.float64)
-            altitude_all = (np.linalg.norm(xyz_all, axis=1) - float(meta.r_ref_m or R_MOON_SI)) / 1000.0
-        _raw_split_options = {
-            "spatial_lon_bins": int(getattr(cfg, "spatial_lon_bins", 12)),
-            "spatial_lat_bins": int(getattr(cfg, "spatial_lat_bins", 6)),
-            "spatial_val_block_fraction": getattr(cfg, "spatial_val_block_fraction", None),
-            "spatial_test_block_fraction": getattr(cfg, "spatial_test_block_fraction", None),
-            "spatial_altitude_bins": int(getattr(cfg, "spatial_altitude_bins", 4)),
-            "ood_low_altitude_max_km": getattr(cfg, "ood_low_altitude_max_km", None),
-            "ood_high_altitude_min_km": getattr(cfg, "ood_high_altitude_min_km", None),
-            "ood_holdout_fraction": float(getattr(cfg, "ood_holdout_fraction", 0.2)),
-        }
-        split_options = {k: v for k, v in _raw_split_options.items() if v is not None}
-        split_info: dict[str, Any] = {}
-        try:
-            splits = split_dataset_indices(
-                n_rows=N,
-                split_policy=split_policy,
-                split_seed=split_seed,
-                val_fraction=float(cfg.val_ratio),
-                test_fraction=float(getattr(cfg, "test_fraction", 0.0)),
-                altitude_km=altitude_all,
-                xyz=xyz_all,
-                options=split_options,
-                split_info_out=split_info,
-            )
-        except (ValueError, NotImplementedError) as exc:
-            raise ValueError(f"Unsupported/invalid training split_policy={split_policy!r}: {exc}") from exc
-        train_indices = splits["train"]
-        val_indices = splits["val"]
-        n_train = int(train_indices.size)
-        n_val = int(val_indices.size)
-        if n_train == 0 or n_val == 0:
-            raise ValueError(
-                f"split_policy={split_policy!r} produced an empty train ({n_train}) or "
-                f"val ({n_val}) split; adjust split fractions/thresholds."
-            )
-        split_manifest = build_split_manifest(
-            dataset_contract=dataset_contract_obj,
-            splits=splits,
-            split_policy=split_policy,
-            split_seed=split_seed,
-            altitude_km=altitude_all,
-            xyz=xyz_all,
-            spatial_bins=split_info.get("spatial_bins"),
-            ood_thresholds=split_info.get("ood_thresholds"),
-        )
-    split_manifest_path = write_split_manifest(layout.provenance_dir / "split_manifest.json", split_manifest)
+    _split = _resolve_data_splits(
+        cfg,
+        meta=meta,
+        N=N,
+        independent_val=independent_val,
+        N_train_file=N_train_file if independent_val else None,
+        N_val_file=N_val_file if independent_val else None,
+        primary_path=primary_path,
+        dset_name=dset_name,
+        dataset_contract_obj=dataset_contract_obj,
+        validation_report=validation_report,
+        layout=layout,
+    )
+    split_seed = _split.split_seed
+    split_policy = _split.split_policy
+    train_indices = _split.train_indices
+    val_indices = _split.val_indices
+    n_train = _split.n_train
+    n_val = _split.n_val
+    split_manifest = _split.split_manifest
+    split_manifest_path = _split.split_manifest_path
+    splits = _split.splits
 
     # 4b. Validate metadata contract
     degree_min_val = int(meta.degree_min) if meta.degree_min is not None else -1
@@ -1897,68 +2597,25 @@ def train(cfg: TrainConfig) -> None:
     )
 
     # 7. Fit isometric scalers on residuals
-    scaler_path = layout.scaler_json
-    scaler_hash_info: dict[str, Any]
-    if scaler_path.exists():
-        logger.info(f"Loading existing scaler from {scaler_path.name}")
-        scaler = ScalerPack.load_json(scaler_path)
-        scaler_hash_info = {
-            "scaler_hash": compute_payload_sha256(asdict(scaler)),
-            "scaler_file_sha256": compute_file_sha256(scaler_path),
-            "scaler_payload": asdict(scaler),
-        }
-    else:
-        # Leakage-safe scaler provenance. Scalers (including the residual
-        # ΔU/Δa target scalers) are fit on TRAIN ROWS ONLY: for single-file
-        # datasets we pass train_indices so validation/test/OOD target rows
-        # never influence the mean/scale; for independent files primary_path is
-        # already the dedicated train file (indices=None, still train-only).
-        _split_index_hashes = (
-            split_manifest.get("index_hashes", {}) if isinstance(split_manifest, dict) else {}
-        ) or {}
-        try:
-            _dataset_contract_hash = compute_payload_sha256(dataset_contract_obj.to_dict())
-        except Exception:
-            _dataset_contract_hash = None
-        _dataset_content_sha256 = getattr(dataset_contract_obj, "content_sha256", None) or (
-            split_manifest.get("dataset_content_sha256") if isinstance(split_manifest, dict) else None
-        )
-        scaler_split_provenance = {
-            "fit_scope": "train_only",
-            "split_policy": ("independent_files" if independent_val else split_policy),
-            "split_seed": int(split_seed),
-            "train_count": int(n_train),
-            "val_count": int(n_val),
-            "test_count": int(split_manifest.get("test_count", 0)) if isinstance(split_manifest, dict) else 0,
-            "train_index_hash": _split_index_hashes.get("train"),
-            "val_index_hash": _split_index_hashes.get("val"),
-            "test_index_hash": _split_index_hashes.get("test"),
-            "dataset_content_sha256": _dataset_content_sha256,
-            "dataset_contract_hash": _dataset_contract_hash,
-        }
-        scaler = fit_scaler_streaming(
-            h5_path=primary_path, dset_name=dset_name, meta=meta,
-            use_si=cfg.use_si, mu_si=mu_val, a_sign=a_sign,
-            n_fit=cfg.fit_rows, seed=cfg.fit_seed, chunk_rows=cfg.fit_chunk_rows,
-            degree_min=degree_min_val,
-            target_mode=_effective_target,
-            degree_max=int(meta.degree_max if meta.degree_max is not None else (meta.requested_degree or -1)),
-            u_scale_mode=str(getattr(cfg, "u_scale_mode", "hybrid")),
-            a_scale_mode=str(getattr(cfg, "a_scale_mode", "hybrid")),
-            target_scale_multiplier=float(getattr(cfg, "target_scale_multiplier", 6.0)),
-            target_contract=target_contract,
-            indices=(None if independent_val else train_indices),
-            split_provenance=scaler_split_provenance,
-        )
-        scaler_hash_info = write_scaler_json(layout, scaler)
-    logger.info(f"[artifacts] scaler_hash={scaler_hash_info['scaler_hash']}")
-    update_run_manifest(
-        layout,
-        {
-            "scaler_path": str(layout.scaler_json),
-            "scaler_hash": scaler_hash_info["scaler_hash"],
-            "scaler_file_sha256": scaler_hash_info["scaler_file_sha256"],
-        },
+    scaler = _fit_residual_scalers(
+        cfg,
+        layout=layout,
+        meta=meta,
+        primary_path=primary_path,
+        dset_name=dset_name,
+        mu_val=mu_val,
+        a_sign=a_sign,
+        degree_min_val=degree_min_val,
+        effective_target=_effective_target,
+        target_contract=target_contract,
+        independent_val=independent_val,
+        train_indices=train_indices,
+        split_policy=split_policy,
+        split_seed=split_seed,
+        n_train=n_train,
+        n_val=n_val,
+        split_manifest=split_manifest,
+        dataset_contract_obj=dataset_contract_obj,
     )
 
     # 7b. Single pre-training preflight gate (go/no-go). Runs after the dataset,
@@ -2003,338 +2660,51 @@ def train(cfg: TrainConfig) -> None:
             )
 
     # 8. Construct DataLoaders
-    dataset_mb = bytes_est / (1024.0 * 1024.0)
-    # Resolve the preload policy. --preload-data is a convenience alias for "always".
-    _policy = str(getattr(cfg, "preload_policy", "auto")).strip().lower()
-    if bool(getattr(cfg, "preload_data", False)) and _policy != "never":
-        _policy = "always"
-    _est_ram_mb = _estimate_preload_ram_mb(int(N))
-    _avail_ram_mb = _available_ram_mb()
-    should_preload, _preload_reason = _decide_preload(
-        _policy,
-        dataset_mb=dataset_mb,
-        auto_preload_mb=float(getattr(cfg, "auto_preload_mb", 2048.0)),
-        est_ram_mb=_est_ram_mb,
-        avail_ram_mb=_avail_ram_mb,
-    )
-    _log_data_loading_policy(N, _avail_ram_mb, _est_ram_mb, _policy, _preload_reason, cfg, dataset_mb, should_preload)
-    if should_preload and "WARNING" in _preload_reason:
-        logger.warning(f"Preload RAM-safety: {_preload_reason}")
-
-    if should_preload:
-        logger.info("Data mode: RAM preload")
-        if independent_val:
-            logger.info(f"Loading train ({n_train:,}) from {train_data_path.name}...")
-            with h5py.File(train_data_path, "r", libver="latest", swmr=True) as _f:
-                _arr_train = np.asarray(_f[dset_name][:], dtype=np.float64)
-            logger.info(f"Loading val ({n_val:,}) from {val_data_path.name}...")
-            with h5py.File(val_data_path, "r", libver="latest", swmr=True) as _f:
-                _arr_val = np.asarray(_f[dset_name][:], dtype=np.float64)
-
-            _xt, _ut, _at = _arr_train[:, 0:3], _arr_train[:, 3:4], _arr_train[:, 4:7]
-            _xv, _uv, _av = _arr_val[:, 0:3], _arr_val[:, 3:4], _arr_val[:, 4:7]
-            del _arr_train, _arr_val
-
-            if cfg.use_si and meta.unit_system == "canonical":
-                _xt, _ut, _at = meta.convert_xyz_U_a_to_si(_xt, _ut, _at)
-                _xv, _uv, _av = meta.convert_xyz_U_a_to_si(_xv, _uv, _av)
-
-            train_ds: Dataset = TensorMemoryDataset(
-                _xt.astype(np.float32), _ut.astype(np.float32), _at.astype(np.float32)
-            )
-            val_ds: Dataset = TensorMemoryDataset(
-                _xv.astype(np.float32), _uv.astype(np.float32), _av.astype(np.float32)
-            )
-            del _xt, _ut, _at, _xv, _uv, _av
-        else:
-            logger.info(f"Loading {N:,} rows into CPU memory (~{dataset_mb:.2f} MB)...")
-            with h5py.File(data_path, "r", libver="latest", swmr=True) as _f:
-                _arr = np.asarray(_f[dset_name][:], dtype=np.float64)
-
-            _x_mem = _arr[:, 0:3]
-            _u_mem = _arr[:, 3:4]
-            _a_mem = _arr[:, 4:7]
-            del _arr
-
-            if cfg.use_si and meta.unit_system == "canonical":
-                _x_mem, _u_mem, _a_mem = meta.convert_xyz_U_a_to_si(_x_mem, _u_mem, _a_mem)
-
-            _x_mem = _x_mem.astype(np.float32)
-            _u_mem = _u_mem.astype(np.float32)
-            _a_mem = _a_mem.astype(np.float32)
-
-            train_ds = TensorMemoryDataset(
-                _x_mem[train_indices], _u_mem[train_indices], _a_mem[train_indices]
-            )
-            val_ds = TensorMemoryDataset(
-                _x_mem[val_indices], _u_mem[val_indices], _a_mem[val_indices]
-            )
-            del _x_mem, _u_mem, _a_mem
-
-        n_train = len(train_ds)
-        n_val   = len(val_ds)
-        pin = cfg.pin_memory and device.type == "cuda"
-        mem_workers = max(0, cfg.num_workers)
-        pf = cfg.prefetch_factor if (mem_workers > 0 and cfg.prefetch_factor is not None) else None
-        logger.info(f"Train/val split: {n_train:,} / {n_val:,}")
-        logger.info(
-            f"pin_memory={pin}, non_blocking={pin}, num_workers={mem_workers} (requested={cfg.num_workers})"
-            + (f", prefetch_factor={pf}" if pf is not None else "")
-        )
-
-        _dl_kw: dict[str, Any] = dict(
-            batch_size=cfg.batch_size, num_workers=mem_workers, pin_memory=pin,
-            persistent_workers=(mem_workers > 0), collate_fn=collate_xyz_u_a,
-            worker_init_fn=_seed_dataloader_worker,
-        )
-        if pf is not None:
-            _dl_kw["prefetch_factor"] = pf
-        # Seed the shuffle RNG explicitly so the per-epoch ordering is reproducible
-        # (and resumable via the checkpointed RNG state) instead of riding on the
-        # global torch RNG.
-        _loader_generator = torch.Generator()
-        _loader_generator.manual_seed(int(cfg.seed))
-        train_loader = DataLoader(
-            train_ds, shuffle=True, drop_last=True,
-            generator=_loader_generator, **_dl_kw,
-        )
-        val_loader   = DataLoader(val_ds,   shuffle=False, drop_last=False, **_dl_kw)
-    else:
-        logger.info("Data mode: HDF5 streaming")
-        if independent_val:
-            train_ds = H5BlockDataset(
-                train_data_path, dset_name, 0, n_train, meta, cfg.use_si, cfg.cache_rows, indices=None
-            )
-            val_ds = H5BlockDataset(
-                val_data_path, dset_name, 0, n_val, meta, cfg.use_si, cfg.cache_rows, indices=None
-            )
-        else:
-            train_ds = H5BlockDataset(
-                data_path, dset_name, 0, N, meta, cfg.use_si, cfg.cache_rows, indices=train_indices
-            )
-            val_ds = H5BlockDataset(
-                data_path, dset_name, 0, N, meta, cfg.use_si, cfg.cache_rows, indices=val_indices
-            )
-
-        train_sampler = BlockShuffleSampler(len(train_ds), cfg.sampler_block_size, cfg.seed + 100)
-        val_sampler   = BlockShuffleSampler(len(val_ds),   cfg.sampler_block_size, cfg.seed + 200)
-        _streaming_path = train_data_path if independent_val else data_path
-        train_workers = _resolve_loader_worker_count(_streaming_path, cfg.num_workers)
-        if train_workers == 0 and int(cfg.num_workers) > 0:
-            logger.warning(
-                "Windows HDF5 safety: num_workers forced to 0 for HDF5 streaming. "
-                "Use --preload-data (or --auto-preload-mb) for multi-worker loading."
-            )
-        val_workers = max(0, train_workers // 2)
-        pin = cfg.pin_memory and device.type == "cuda"
-        tr_pf = cfg.prefetch_factor if (train_workers > 0 and cfg.prefetch_factor is not None) else None
-        va_pf = cfg.prefetch_factor if (val_workers   > 0 and cfg.prefetch_factor is not None) else None
-        logger.info(
-            f"pin_memory={pin}, train_workers={train_workers} (requested={cfg.num_workers}),"
-            f" val_workers={val_workers}"
-            + (f", prefetch_factor={tr_pf}" if tr_pf is not None else "")
-        )
-
-        _tr_kw: dict[str, Any] = dict(
-            batch_size=cfg.batch_size, sampler=train_sampler,
-            num_workers=train_workers, pin_memory=pin,
-            persistent_workers=(train_workers > 0), collate_fn=collate_xyz_u_a, drop_last=True,
-            worker_init_fn=_seed_dataloader_worker,
-        )
-        _va_kw: dict[str, Any] = dict(
-            batch_size=cfg.batch_size, sampler=val_sampler,
-            num_workers=val_workers, pin_memory=pin,
-            persistent_workers=(val_workers > 0), collate_fn=collate_xyz_u_a, drop_last=False,
-            worker_init_fn=_seed_dataloader_worker,
-        )
-        if tr_pf is not None:
-            _tr_kw["prefetch_factor"] = tr_pf
-        if va_pf is not None:
-            _va_kw["prefetch_factor"] = va_pf
-        train_loader = DataLoader(train_ds, **_tr_kw)
-        val_loader   = DataLoader(val_ds,   **_va_kw)
-
-    # 9. Build model via the shared factory (build_model_from_config) — authoritative builder
-    # used by evaluator and force model. This ensures SH/radial encoding flags are honoured.
-    # The SIREN+Fourier mutual exclusion check is inside build_model_from_config().
-    #
-    # CRITICAL (reload-safety): resolve the dataset's degree range and the
-    # multi-scale band frequencies INTO cfg before building, and BEFORE writing
-    # config.json. Previously the model was built from cfg (which had no degree
-    # fields → silent 0/50 defaults) while config.json recorded the meta-derived
-    # degrees. For n_bands>1 that produced a model whose SIREN band frequencies
-    # differed from what evaluation reconstructed: the state_dict matched by
-    # shape but the functional model was wrong. Resolving here makes training
-    # and evaluation build the identical spectrum.
-    degree_max_val = int(
-        meta.degree_max if meta.degree_max is not None
-        else (meta.requested_degree if meta.requested_degree is not None else -1)
-    )
-    cfg.degree_min = int(degree_min_val)
-    cfg.degree_max = int(degree_max_val)
-    cfg.resolved_r_ref_m = float(resolved_r_ref_m)
-    cfg.x_scale_m = float(scaler.x.scale)
-    if cfg.activation.lower() == "sine" and int(getattr(cfg, "n_bands", 1)) > 1:
-        if cfg.degree_max <= 0:
-            raise ValueError(
-                "Multi-scale SIREN (n_bands>1) requires a known degree_max from the "
-                f"dataset metadata, but resolved degree_max={cfg.degree_max}. "
-                "Regenerate the dataset with degree_max recorded, or use n_bands=1."
-            )
-        cfg.w0_bands = [
-            float(w) for w in _compute_harmonic_w0_bands(
-                int(cfg.n_bands), int(cfg.degree_min), int(cfg.degree_max)
-            )
-        ]
-    else:
-        cfg.w0_bands = None
-
-    model = build_model_from_config(
+    _loaders = _build_dataloaders(
         cfg,
-        in_dim=3,
+        meta=meta,
         device=device,
-        dtype=DTYPE,
+        bytes_est=bytes_est,
+        N=N,
+        independent_val=independent_val,
+        data_path=data_path,
+        train_data_path=train_data_path,
+        val_data_path=val_data_path,
+        dset_name=dset_name,
+        n_train=n_train,
+        n_val=n_val,
+        train_indices=train_indices,
+        val_indices=val_indices,
     )
+    train_loader = _loaders.train_loader
+    val_loader = _loaders.val_loader
+    n_train = _loaders.n_train
+    n_val = _loaders.n_val
 
-    if _resume_requested and _resume_ckpt is not None:
-        _msd = _resume_ckpt.get("model_state_dict") or _resume_ckpt.get("model")
-        if _msd is None:
-            raise RuntimeError("[resume] checkpoint has no model_state_dict.")
-        _load_res = model.load_state_dict(_msd, strict=bool(getattr(cfg, "resume_strict", True)))
-        _missing = list(getattr(_load_res, "missing_keys", []) or [])
-        _unexpected = list(getattr(_load_res, "unexpected_keys", []) or [])
-        if _missing or _unexpected:
-            logger.warning(f"[resume] non-strict model load: missing={_missing} unexpected={_unexpected}")
-        logger.info(f"[resume] model weights restored from {_resume_ckpt_path}")
-
-    # Log architecture details (equivalent to old manual logging, but from the built model)
-    _n_bands_built = max(1, int(getattr(cfg, "n_bands", 1)))
-    _use_res_built = bool(getattr(cfg, "use_residual_blocks", False))
-    if cfg.use_fourier:
-        logger.info(
-            f"Fourier embedding: n_features={cfg.fourier_n_features}, "
-            f"sigma={cfg.fourier_sigma}, append_raw={cfg.fourier_append_raw}"
-        )
-    if cfg.activation.lower() == "sine":
-        if _n_bands_built > 1:
-            # Log the EXACT bands the model was built with (resolved into cfg above),
-            # not an independently recomputed value that could silently diverge.
-            logger.info(
-                f"Built Multi-Scale SIREN: n_bands={_n_bands_built}, w0_bands={cfg.w0_bands}, "
-                f"degree_min={cfg.degree_min}, degree_max={cfg.degree_max}, "
-                f"depth={cfg.depth}, hidden={cfg.hidden}"
-            )
-            # Defensive cross-check: the model's resolved bands must equal cfg's.
-            _model_bands = list(getattr(model, "w0_bands", []) or [])
-            if _model_bands and [round(b, 4) for b in _model_bands] != [round(b, 4) for b in (cfg.w0_bands or [])]:
-                raise RuntimeError(
-                    f"Internal error: model w0_bands {_model_bands} != cfg.w0_bands {cfg.w0_bands}. "
-                    "Refusing to train a model whose spectrum cannot be reproduced from config."
-                )
-        else:
-            logger.info(
-                f"Built SIREN backbone: depth={cfg.depth}, hidden={cfg.hidden}, "
-                f"w0_first={cfg.w0_first}, w0_hidden={cfg.w0_hidden}, "
-                f"residual_blocks={_use_res_built}"
-            )
-    else:
-        logger.info(
-            f"Built MLP backbone: depth={cfg.depth}, hidden={cfg.hidden}, activation={cfg.activation}"
-        )
-    _total_params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Total parameters: {_total_params:,}")
-
-    # Capture model-derived architecture metadata for config.json / checkpoint
-    # persistence below. (Previously this block tried to rewrite config.json
-    # before it had been created, so the metadata was silently lost every run.)
-    _emb_type_built = str(getattr(model, "embedding_type", "raw"))
-    _in_fdim_built = int(getattr(model, "input_feature_dim", 3))
-    _arch_signature = compute_architecture_signature(cfg)
-    logger.info(
-        f"Encoding: embedding_type={_emb_type_built}  input_feature_dim={_in_fdim_built}  "
-        f"builder={MODEL_BUILDER_VERSION}  arch_signature={_arch_signature}"
-    )
-
-    weights = GradNormWeights(
-        w_u=cfg.w_u,
-        w_a=cfg.w_a,
-        mode=cfg.gradnorm_mode,
-        w_a_min=cfg.gradnorm_w_a_min,
-        w_a_max=cfg.gradnorm_w_a_max,
-    )
-    logger.info(f"Loss weighting: mode={cfg.gradnorm_mode}  w_u={cfg.w_u:.2f}  w_a_init={cfg.w_a:.2f}")
-
-    if _resume_requested:
-        _gnw_state = (_resume_ckpt.get("training_state") or {}).get("gradnorm_weights")
-        if _gnw_state:
-            weights.load_state_dict(_gnw_state)
-            logger.info(
-                f"[resume] GradNorm state restored (w_a={weights.w_a:.4f}, ntk_done={weights._ntk_done})."
-            )
-        else:
-            logger.warning(
-                "[resume] checkpoint lacks GradNorm state; continuing with a fresh GradNorm "
-                "(NTK init may recompute on the first resumed step)."
-            )
-
-    loss_fn = SobolevLoss(
+    # 9. Build model, GradNorm weights, Sobolev loss, and optimizer
+    _mb = _build_model_and_optim(
+        cfg,
+        meta=meta,
+        degree_min_val=degree_min_val,
+        resolved_r_ref_m=resolved_r_ref_m,
         scaler=scaler,
+        device=device,
         a_sign=a_sign,
-        mu_si=mu_val,
-        r_ref_m=resolved_r_ref_m,
-        degree_min=degree_min_val,
-        degree_max=degree_max_val,
+        mu_val=mu_val,
         target_contract=target_contract,
-    ).to(device=device, dtype=DTYPE)
-    logger.info(f"Residual baseline: {target_contract.baseline_description}")
-
-    head_params = _get_output_head_params(model)
-    head_param_ids = {id(param) for param in head_params}
-    body_params = [param for param in model.parameters() if id(param) not in head_param_ids]
-    param_groups: list[dict[str, Any]] = []
-    if body_params:
-        param_groups.append(
-            {
-                "params": body_params,
-                "lr": cfg.lr,
-                "weight_decay": cfg.weight_decay,
-            }
-        )
-    param_groups.append(
-        {
-            "params": head_params,
-            "lr": cfg.lr * float(cfg.output_head_lr_mult),
-            "weight_decay": 0.0,
-        }
+        _resume_requested=_resume_requested,
+        _resume_ckpt=_resume_ckpt,
+        _resume_ckpt_path=_resume_ckpt_path,
     )
-    opt = AdamW(param_groups)
-    logger.info(
-        f"Optimizer groups: body_lr={cfg.lr:.2e}, body_wd={cfg.weight_decay:.2e}, "
-        f"head_lr={cfg.lr * float(cfg.output_head_lr_mult):.2e}, head_wd=0.00e+00"
-    )
-    for group in opt.param_groups:
-        group["initial_lr"] = float(group["lr"])
-
-    if _resume_requested:
-        _osd = _resume_ckpt.get("optimizer_state_dict")
-        if _osd is not None:
-            try:
-                opt.load_state_dict(_osd)
-                logger.info("[resume] optimizer state restored.")
-            except Exception as _oexc:
-                if bool(getattr(cfg, "resume_strict", True)):
-                    raise RuntimeError(f"[resume] optimizer state restore failed: {_oexc}") from _oexc
-                logger.warning(f"[resume] optimizer restore failed (non-strict); continuing fresh: {_oexc}")
-        elif bool(getattr(cfg, "resume_strict", True)):
-            raise RuntimeError(
-                "[resume] checkpoint has no optimizer_state_dict (strict). "
-                "Use --resume-nonstrict to continue with a fresh optimizer."
-            )
-        else:
-            logger.warning("[resume] checkpoint has no optimizer_state_dict; continuing with a fresh optimizer.")
-        # Re-assert the manual-cosine base LR per group (load_state_dict may not carry it).
-        for group in opt.param_groups:
-            group.setdefault("initial_lr", float(group["lr"]))
+    model = _mb.model
+    opt = _mb.opt
+    weights = _mb.weights
+    loss_fn = _mb.loss_fn
+    _arch_signature = _mb.arch_signature
+    degree_max_val = _mb.degree_max_val
+    _emb_type_built = _mb.emb_type_built
+    _in_fdim_built = _mb.in_fdim_built
+    _total_params = _mb.total_params
 
     # 10. Save canonical config + provenance snapshot
     config_path = layout.config_json
@@ -2560,6 +2930,73 @@ def train(cfg: TrainConfig) -> None:
             "status": "running",
         },
     )
+
+    return _TrainingSession(
+        cfg=cfg,
+        model=model,
+        opt=opt,
+        weights=weights,
+        loss_fn=loss_fn,
+        device=device,
+        scaler=scaler,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        layout=layout,
+        outdir=outdir,
+        config_path=config_path,
+        payload=payload,
+        payload_readback=payload_readback,
+        dataset_snapshot=dataset_snapshot,
+        checkpoint_selection=checkpoint_selection,
+        dset_name=dset_name,
+        resolved_r_ref_m=resolved_r_ref_m,
+        start_epoch=start_epoch,
+        _arch_signature=_arch_signature,
+        _best_metric_canonical=_best_metric_canonical,
+        _ckpt_start=_ckpt_start,
+        _resume_requested=_resume_requested,
+        _resume_ckpt=_resume_ckpt,
+        _resume_best_val=_resume_best_val,
+        _resume_best_epoch=_resume_best_epoch,
+        _resume_epochs_without_improve=_resume_epochs_without_improve,
+        _resume_global_step=_resume_global_step,
+    )
+
+
+def _run_training_loop(session: _TrainingSession) -> None:
+    """Execute the Sobolev training loop (phase 11) for a built session.
+
+    Unpacks the session into the same local names the original ``train()`` body
+    used, so the loop logic below is byte-for-byte identical to before the split.
+    """
+    cfg = session.cfg
+    model = session.model
+    opt = session.opt
+    weights = session.weights
+    loss_fn = session.loss_fn
+    device = session.device
+    scaler = session.scaler
+    train_loader = session.train_loader
+    val_loader = session.val_loader
+    layout = session.layout
+    outdir = session.outdir
+    config_path = session.config_path
+    payload = session.payload
+    payload_readback = session.payload_readback
+    dataset_snapshot = session.dataset_snapshot
+    checkpoint_selection = session.checkpoint_selection
+    dset_name = session.dset_name
+    resolved_r_ref_m = session.resolved_r_ref_m
+    start_epoch = session.start_epoch
+    _arch_signature = session._arch_signature
+    _best_metric_canonical = session._best_metric_canonical
+    _ckpt_start = session._ckpt_start
+    _resume_requested = session._resume_requested
+    _resume_ckpt = session._resume_ckpt
+    _resume_best_val = session._resume_best_val
+    _resume_best_epoch = session._resume_best_epoch
+    _resume_epochs_without_improve = session._resume_epochs_without_improve
+    _resume_global_step = session._resume_global_step
 
     # 11. Train
     # Resolve collocation altitude bounds — only when a Laplacian is requested.
@@ -3106,6 +3543,13 @@ def train(cfg: TrainConfig) -> None:
             "eval_suggestion": eval_suggestion,
         },
     )
+
+
+def train(cfg: TrainConfig) -> None:
+    """Main execution pipeline: build the training session (setup phases 1-10),
+    then run the Sobolev training loop (phase 11)."""
+    session = build_training_session(cfg)
+    _run_training_loop(session)
 
 
 # ---------------------------------------------------------------------------

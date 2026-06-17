@@ -1533,6 +1533,147 @@ def _print_evaluation_summary(data_path, device, latency_ms_batch1, metrics, mod
     print("======================================================\n")
 
 
+def _finalize_evaluation_report(
+    *,
+    metrics,
+    evaluation_mode,
+    streaming,
+    total,
+    topk_export_path,
+    degree_min,
+    model_degree_max,
+    ds_meta,
+    dataset_degree_min,
+    ds_degree_max,
+    model_body,
+    ds_body,
+    train_alt_min_km,
+    train_alt_max_km,
+    ood_table,
+    spatial_u,
+    spatial_a_vec,
+    spatial_a_mag,
+    spatial_u_mape,
+    spatial_a_mape,
+    throughput_points_per_sec,
+    latency_ms_batch1,
+    model_dir,
+    data_path,
+    layout,
+    ckpt_path,
+    out_dir,
+    plots_dir,
+    device,
+    recon_report,
+    directional_metrics,
+    norm_binned_ang,
+    a_cross,
+    a_pred_vec_np,
+    a_r,
+    a_true_norms,
+    a_true_vec_np,
+    a_vec_err_norm_np,
+    alt_bin_km,
+    alt_km_all,
+    ang_deg_all,
+):
+    """Assemble the evaluation report, write JSON/CSV artifacts, and print the summary.
+
+    Extracted verbatim from the tail of ``evaluate()``; behaviour is identical.
+    This is the output-only finalization stage (it returns nothing and no state
+    flows back), mirroring the existing ``_save_evaluation_plots`` /
+    ``_write_evaluation_csvs`` / ``_print_evaluation_summary`` helpers.
+    """
+    report = {
+        "metrics": metrics,
+        "evaluation_mode": evaluation_mode,
+        "memory_safe": streaming,
+        "n_evaluated": int(total),
+        "topk_export_path": str(topk_export_path) if topk_export_path is not None else None,
+        "evaluation_contract": {
+            "model_degree_min": int(degree_min),
+            "model_degree_max": (int(model_degree_max) if model_degree_max is not None else None),
+            "dataset_degree_min": dataset_degree_min,
+            "dataset_degree_max": (int(ds_degree_max) if ds_degree_max is not None else None),
+            "central_body": (model_body or ds_body or "moon"),
+            "train_alt_range_km": ([train_alt_min_km, train_alt_max_km] if train_alt_min_km is not None and train_alt_max_km is not None else None),
+            "ood_band_definitions": (ood_table.get("definitions") if isinstance(ood_table, dict) else None),
+            "directional_frame": "approximate_rtn_like_without_velocity",
+        },
+        "spatial_breakdown": {
+            "U_rmse_by_alt":  spatial_u,
+            "a_vec_rmse_by_alt": spatial_a_vec,
+            "|a|_rmse_by_alt": spatial_a_mag,
+            "U_mape_by_alt":  spatial_u_mape,
+            "|a|_mape_by_alt": spatial_a_mape,
+        },
+        "throughput_points_per_sec": throughput_points_per_sec,
+        "latency_ms_batch1": latency_ms_batch1,
+        "artifacts": {
+            "model_dir": str(model_dir),
+            "data_path": str(data_path),
+            "config": str(layout.config_json),
+            "scaler": str(layout.scaler_json),
+            "checkpoint": str(ckpt_path),
+            "out_dir": str(out_dir),
+            "run_manifest": str(layout.run_manifest_json) if layout.run_manifest_json.exists() else None,
+        },
+    }
+    report_path = out_dir / "eval_report.json"
+    metrics_path = out_dir / "evaluate_metrics.json"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+    _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec_np, a_vec_err_norm_np, alt_bin_km, alt_km_all, ang_deg_all, directional_metrics, metrics, norm_binned_ang, ood_table, out_dir, spatial_a_mag, spatial_a_mape, spatial_a_vec, spatial_u, spatial_u_mape)
+
+    _print_evaluation_summary(data_path, device, latency_ms_batch1, metrics, model_dir, plots_dir, report_path, spatial_a_mape, spatial_u_mape, throughput_points_per_sec)
+
+    write_evaluate_summary(
+        out_dir,
+        [
+            f"dataset={data_path}",
+            f"checkpoint={recon_report.get('checkpoint_path')}",
+            f"schema={recon_report.get('checkpoint_schema_version')}",
+            f"kind={recon_report.get('checkpoint_kind')}",
+            f"epoch={recon_report.get('checkpoint_epoch_display')}",
+            f"target_mode={metrics.get('target_mode')}",
+            f"u_rmse={metrics.get('U', {}).get('rmse')}",
+            f"a_vec_rmse={metrics.get('residual_vector_metrics', {}).get('rmse')}",
+            f"ang_mean_deg={metrics.get('residual_angular_metrics', {}).get('mean_deg')}",
+        ],
+    )
+    write_eval_manifest(
+        out_dir,
+        {
+            "source_run_dir": str(layout.run_dir),
+            "checkpoint_path": recon_report.get("checkpoint_path"),
+            "checkpoint_hash": recon_report.get("checkpoint_hash"),
+            "checkpoint_kind": recon_report.get("checkpoint_kind"),
+            "checkpoint_epoch": recon_report.get("checkpoint_epoch"),
+            "dataset_path": str(data_path),
+            "metrics_path": str(metrics_path),
+            "report_path": str(report_path),
+            "plot_paths": [str(p) for p in sorted(plots_dir.glob("*.png"))],
+            "topk_worst_csv": str(topk_export_path) if topk_export_path else None,
+        },
+    )
+    append_run_evaluation(
+        layout,
+        {
+            "dataset": str(data_path),
+            "out_dir": str(out_dir),
+            "checkpoint_kind": recon_report.get("checkpoint_kind"),
+            "checkpoint_epoch": recon_report.get("checkpoint_epoch"),
+            "metrics_summary": {
+                "u_rmse": metrics.get("U", {}).get("rmse"),
+                "a_vec_rmse": metrics.get("residual_vector_metrics", {}).get("rmse"),
+                "mean_ang_deg": metrics.get("residual_angular_metrics", {}).get("mean_deg"),
+            },
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        },
+    )
+
+
 def evaluate(
     model_dir: Path,
     data_path: Path,
@@ -2512,93 +2653,48 @@ def evaluate(
         a_sign=a_sign, mu_si=mu_si, degree_min=degree_min,
     )
 
-    report = {
-        "metrics": metrics,
-        "evaluation_mode": _evaluation_mode,
-        "memory_safe": streaming,
-        "n_evaluated": int(total),
-        "topk_export_path": str(_topk_export_path) if _topk_export_path is not None else None,
-        "evaluation_contract": {
-            "model_degree_min": int(degree_min),
-            "model_degree_max": (int(model_degree_max) if model_degree_max is not None else None),
-            "dataset_degree_min": _as_optional_int(ds_meta.get("degree_min")),
-            "dataset_degree_max": (int(ds_degree_max) if ds_degree_max is not None else None),
-            "central_body": (model_body or ds_body or "moon"),
-            "train_alt_range_km": ([_train_alt_min_km, _train_alt_max_km] if _train_alt_min_km is not None and _train_alt_max_km is not None else None),
-            "ood_band_definitions": (ood_table.get("definitions") if isinstance(ood_table, dict) else None),
-            "directional_frame": "approximate_rtn_like_without_velocity",
-        },
-        "spatial_breakdown": {
-            "U_rmse_by_alt":  spatial_u,
-            "a_vec_rmse_by_alt": spatial_a_vec,
-            "|a|_rmse_by_alt": spatial_a_mag,
-            "U_mape_by_alt":  spatial_u_mape,
-            "|a|_mape_by_alt": spatial_a_mape,
-        },
-        "throughput_points_per_sec": throughput_points_per_sec,
-        "latency_ms_batch1": latency_ms_batch1,
-        "artifacts": {
-            "model_dir": str(model_dir),
-            "data_path": str(data_path),
-            "config": str(layout.config_json),
-            "scaler": str(layout.scaler_json),
-            "checkpoint": str(ckpt_path),
-            "out_dir": str(out_dir),
-            "run_manifest": str(layout.run_manifest_json) if layout.run_manifest_json.exists() else None,
-        },
-    }
-    report_path = out_dir / "eval_report.json"
-    metrics_path = out_dir / "evaluate_metrics.json"
-    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-
-    _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec_np, a_vec_err_norm_np, alt_bin_km, alt_km_all, ang_deg_all, directional_metrics, metrics, norm_binned_ang, ood_table, out_dir, spatial_a_mag, spatial_a_mape, spatial_a_vec, spatial_u, spatial_u_mape)
-
-    _print_evaluation_summary(data_path, device, latency_ms_batch1, metrics, model_dir, plots_dir, report_path, spatial_a_mape, spatial_u_mape, throughput_points_per_sec)
-
-    write_evaluate_summary(
-        out_dir,
-        [
-            f"dataset={data_path}",
-            f"checkpoint={_recon_report.get('checkpoint_path')}",
-            f"schema={_recon_report.get('checkpoint_schema_version')}",
-            f"kind={_recon_report.get('checkpoint_kind')}",
-            f"epoch={_recon_report.get('checkpoint_epoch_display')}",
-            f"target_mode={metrics.get('target_mode')}",
-            f"u_rmse={metrics.get('U', {}).get('rmse')}",
-            f"a_vec_rmse={metrics.get('residual_vector_metrics', {}).get('rmse')}",
-            f"ang_mean_deg={metrics.get('residual_angular_metrics', {}).get('mean_deg')}",
-        ],
-    )
-    write_eval_manifest(
-        out_dir,
-        {
-            "source_run_dir": str(layout.run_dir),
-            "checkpoint_path": _recon_report.get("checkpoint_path"),
-            "checkpoint_hash": _recon_report.get("checkpoint_hash"),
-            "checkpoint_kind": _recon_report.get("checkpoint_kind"),
-            "checkpoint_epoch": _recon_report.get("checkpoint_epoch"),
-            "dataset_path": str(data_path),
-            "metrics_path": str(metrics_path),
-            "report_path": str(report_path),
-            "plot_paths": [str(p) for p in sorted(plots_dir.glob("*.png"))],
-            "topk_worst_csv": str(_topk_export_path) if _topk_export_path else None,
-        },
-    )
-    append_run_evaluation(
-        layout,
-        {
-            "dataset": str(data_path),
-            "out_dir": str(out_dir),
-            "checkpoint_kind": _recon_report.get("checkpoint_kind"),
-            "checkpoint_epoch": _recon_report.get("checkpoint_epoch"),
-            "metrics_summary": {
-                "u_rmse": metrics.get("U", {}).get("rmse"),
-                "a_vec_rmse": metrics.get("residual_vector_metrics", {}).get("rmse"),
-                "mean_ang_deg": metrics.get("residual_angular_metrics", {}).get("mean_deg"),
-            },
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        },
+    _finalize_evaluation_report(
+        metrics=metrics,
+        evaluation_mode=_evaluation_mode,
+        streaming=streaming,
+        total=total,
+        topk_export_path=_topk_export_path,
+        degree_min=degree_min,
+        model_degree_max=model_degree_max,
+        ds_meta=ds_meta,
+        dataset_degree_min=_as_optional_int(ds_meta.get("degree_min")),
+        ds_degree_max=ds_degree_max,
+        model_body=model_body,
+        ds_body=ds_body,
+        train_alt_min_km=_train_alt_min_km,
+        train_alt_max_km=_train_alt_max_km,
+        ood_table=ood_table,
+        spatial_u=spatial_u,
+        spatial_a_vec=spatial_a_vec,
+        spatial_a_mag=spatial_a_mag,
+        spatial_u_mape=spatial_u_mape,
+        spatial_a_mape=spatial_a_mape,
+        throughput_points_per_sec=throughput_points_per_sec,
+        latency_ms_batch1=latency_ms_batch1,
+        model_dir=model_dir,
+        data_path=data_path,
+        layout=layout,
+        ckpt_path=ckpt_path,
+        out_dir=out_dir,
+        plots_dir=plots_dir,
+        device=device,
+        recon_report=_recon_report,
+        directional_metrics=directional_metrics,
+        norm_binned_ang=norm_binned_ang,
+        a_cross=a_cross,
+        a_pred_vec_np=a_pred_vec_np,
+        a_r=a_r,
+        a_true_norms=a_true_norms,
+        a_true_vec_np=a_true_vec_np,
+        a_vec_err_norm_np=a_vec_err_norm_np,
+        alt_bin_km=alt_bin_km,
+        alt_km_all=alt_km_all,
+        ang_deg_all=ang_deg_all,
     )
 
 

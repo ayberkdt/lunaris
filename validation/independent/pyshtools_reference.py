@@ -89,6 +89,14 @@ def acceleration(
     lat_deg = float(np.degrees(np.arcsin(z / r)))
     lon_deg = float(np.degrees(np.arctan2(y, x)))
 
+    # MakeGravGridPoint expects 4pi-normalized coefficients WITHOUT the
+    # Condon-Shortley phase (csphase=1). Since Lunaris coefficients include
+    # the C-S phase (csphase=-1), we must strip it manually before calling by
+    # multiplying the m-dependent terms by (-1)^m.
+    for m in range(lmax + 1):
+        if m % 2 != 0:
+            cilm[:, :, m] = -cilm[:, :, m]
+
     # MakeGravGridPoint returns the spherical gravity components (g_r, g_theta,
     # g_phi) of -∇U; we negate to report a = +∇U and rotate to Cartesian.
     g_r, g_theta, g_phi = _pysh.gravmag.MakeGravGridPoint(
@@ -100,11 +108,9 @@ def acceleration(
         lon=lon_deg,
         lmax=lmax,
         omega=0.0,
-        normalization="4pi",
-        csphase=-1,
     )
-    # pyshtools returns the gravity (downward) vector; potential gradient is its
-    # negation. Convert spherical (r, theta=colatitude, phi) -> Cartesian.
+    # MakeGravGridPoint documentation states "the gravitational acceleration is B = Grad V"
+    # so it already returns +∇U (plus centrifugal, which is 0 here since omega=0).
     colat = np.radians(90.0 - lat_deg)
     lam = np.radians(lon_deg)
     st, ct = np.sin(colat), np.cos(colat)
@@ -114,4 +120,4 @@ def acceleration(
     e_theta = np.array([ct * cl, ct * sl, -st])
     e_phi = np.array([-sl, cl, 0.0])
     g_vec = g_r * e_r + g_theta * e_theta + g_phi * e_phi
-    return -g_vec
+    return g_vec

@@ -1,0 +1,65 @@
+{
+  "benchmark_id": "synthetic_degree4_oracle",
+  "comparison": {
+    "absolute_tolerances": {
+      "acceleration_component_m_s2": 1e-07,
+      "acceleration_norm_m_s2": 1e-07,
+      "potential_m2_s2": 0.0001
+    },
+    "relative_tolerances": {
+      "acceleration_norm": 1e-07,
+      "potential": 1e-11
+    },
+    "threshold_origin": "convergence_derived_and_frozen"
+  },
+  "coordinates": {
+    "center": "MOON",
+    "frame": "MOON_FIXED_SYNTHETIC",
+    "position_unit": "m"
+  },
+  "generator": {
+    "arithmetic": "float64_direct_formula_plus_4th_order_finite_difference",
+    "name": "lunaris_independent_direct_formula_oracle",
+    "precision_digits": 16,
+    "script_path": "validation/gravity_reference/generators/field/generate_synthetic_degree4.py",
+    "script_sha256": "364bfd48590890cfcf4e9196545c21a9027f2cc6e6b935cacf305692f7841504",
+    "version": "v1"
+  },
+  "gravity": {
+    "coefficient_file": "validation/gravity_reference/reference_data/field/synthetic_degree4_coefficients.json",
+    "coefficient_frame": "MOON_FIXED_SYNTHETIC",
+    "coefficient_sha256": "041c268deeb1b4776a02c5ea58eee2dfe29cd683906f5911bde141e9ae82bb95",
+    "degree": 4,
+    "model_name": "synthetic_degree4",
+    "model_release": "v1",
+    "mu_m3_s2": 4904869500000.0,
+    "normalization": "fully_normalized_4pi",
+    "order": 4,
+    "reference_radius_m": 1738000.0,
+    "tide_system": "not_applicable_synthetic"
+  },
+  "quantities": {
+    "acceleration": true,
+    "acceleration_sign_convention": "a_equals_positive_gradient_U",
+    "gradient_or_hessian": false,
+    "potential": true,
+    "potential_sign_convention": "positive_geodesy_mu_over_r"
+  },
+  "reference_class": "independent_high_precision_field_oracle",
+  "reference_file": {
+    "format": "csv",
+    "path": "validation/gravity_reference/reference_data/field/synthetic_degree4_field_vectors.csv",
+    "sha256": "818efcd56ed41f365efaa4a47f499ecbfe4714be6cb9d3595f0b9137ab8d951d",
+    "size_bytes": 1602
+  },
+  "schema_version": "lunaris_gravity_field_reference_v1",
+  "source": {
+    "document_or_repository": "https://github.com/ayberkdt/lunaris",
+    "license_note": "Synthetic data generated in-tree under the repository license.",
+    "organization": "Lunaris project",
+    "project": "gravity_reference",
+    "release_or_commit": "generated from committed script",
+    "retrieved_at_utc": "2026-06-17T00:00:00Z"
+  },
+  "title": "Synthetic degree-4 field oracle smoke benchmark"
+}
