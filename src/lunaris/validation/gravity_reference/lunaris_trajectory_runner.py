@@ -37,6 +37,7 @@ from lunaris.validation.gravity_reference.independent_field_oracle import (
     geopotential,
 )
 from lunaris.validation.gravity_reference.manifest import (
+    ManifestError,
     STATUS_INCOMPLETE_CLASSES,
     ResolvedTrajectoryManifest,
     load_trajectory_manifest,
@@ -87,6 +88,19 @@ def _enforce_trajectory_contract(payload: dict[str, Any], epochs_s: np.ndarray) 
     declared_step = float(payload["time"]["output_step_s"])
     declared_duration = float(payload["time"]["duration_s"])
     tol = max(declared_step * 1e-6, 1e-6)
+    expected_intervals = int(round(declared_duration / declared_step))
+    expected_duration = float(expected_intervals) * declared_step
+    if abs(expected_duration - declared_duration) > tol:
+        raise _ContractViolation(
+            "manifest time.duration_s must be an integer multiple of "
+            f"output_step_s={declared_step}; got duration_s={declared_duration}."
+        )
+    expected_count = expected_intervals + 1
+    if epochs.shape[0] != expected_count:
+        raise _ContractViolation(
+            f"reference sample count {epochs.shape[0]} does not match manifest "
+            f"duration_s/output_step_s grid: expected {expected_count} samples."
+        )
     if not np.allclose(steps, declared_step, atol=tol, rtol=0.0):
         raise _ContractViolation(
             "reference epochs are not uniformly spaced at the manifest "
@@ -94,7 +108,7 @@ def _enforce_trajectory_contract(payload: dict[str, Any], epochs_s: np.ndarray) 
             f"[{float(steps.min())}, {float(steps.max())}]."
         )
     observed_duration = float(epochs[-1] - epochs[0])
-    if abs(observed_duration - declared_duration) > max(declared_step, 1e-6):
+    if abs(observed_duration - declared_duration) > tol:
         raise _ContractViolation(
             f"reference duration {observed_duration} s does not match manifest "
             f"duration_s={declared_duration}."
@@ -136,6 +150,31 @@ def _run_provenance(manifest: ResolvedTrajectoryManifest, out_dir: Path) -> dict
         "dtype": "float64",
         "backend": "cpu",
     }
+
+
+def _manifest_contract_failure(
+    manifest_path: Path,
+    out_dir: Path,
+    reason: str,
+) -> dict[str, Any]:
+    try:
+        payload = load_json(manifest_path)
+    except Exception:
+        payload = {}
+    status = {"status": INCOMPLETE_CONTRACT, "reason": reason}
+    manifest_sha256 = sha256_file(manifest_path) if manifest_path.exists() else None
+    atomic_write_json(out_dir / "resolved_manifest.json", payload)
+    atomic_write_json(out_dir / "validation_status.json", status)
+    atomic_write_json(
+        out_dir / "run_provenance.json",
+        {
+            "created_at_utc": utc_now_iso(),
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": manifest_sha256,
+            "output_dir": str(out_dir),
+        },
+    )
+    return {"status": status["status"], "out_dir": str(out_dir), "reason": reason}
 
 
 def _load_gravity(manifest: ResolvedTrajectoryManifest) -> tuple[Any, Callable[[np.ndarray], float]]:
@@ -235,9 +274,14 @@ def _propagate_lunaris(
 
 def run_trajectory_validation(manifest_path: str | Path, out_dir: str | Path) -> dict[str, Any]:
     """Validate a gravity-only trajectory contract against an external reference."""
-    manifest = load_trajectory_manifest(manifest_path)
     out = Path(out_dir).resolve()
     out.mkdir(parents=True, exist_ok=True)
+    manifest_path = Path(manifest_path).resolve()
+    try:
+        manifest = load_trajectory_manifest(manifest_path)
+    except ManifestError as exc:
+        return _manifest_contract_failure(manifest_path, out, str(exc))
+
     payload = manifest.payload
     reference_class = payload["reference_class"]
 

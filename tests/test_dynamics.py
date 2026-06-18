@@ -17,6 +17,8 @@ except Exception as e:  # pragma: no cover
 
 try:
     from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
+    from lunaris.common.math_utils import quat_rotate_np
+    from lunaris.physics.spherical_harmonics import GravityModel
 except Exception as e:  # pragma: no cover
     pytest.skip(f"common.type_defs not importable: {e}", allow_module_level=True)
 
@@ -194,6 +196,61 @@ def test_surrogate_gravity_provider_can_drive_python_rhs() -> None:
 
     comp = eng.get_acceleration_breakdown(0.0, y0)
     assert "Gravity (ST-LRPS)" in comp
+
+
+def test_cpu_sh_rhs_uses_i2f_then_conjugate_frame_bridge() -> None:
+    """Classical CPU SH must evaluate in fixed frame and rotate acceleration back."""
+
+    class _ConstantQuaternionEphem:
+        def __init__(self, q_i2f: np.ndarray) -> None:
+            self.q_i2f = np.asarray(q_i2f, dtype=np.float64)
+
+        def get_data_provider(self):
+            zeros = np.zeros((1, 3), dtype=np.float64)
+            return {
+                "dt_s": 1.0,
+                "r_sun_tab_m": zeros,
+                "r_earth_tab_m": zeros,
+                "q_i2f_tab": np.vstack([self.q_i2f, self.q_i2f]),
+            }
+
+    degree = 4
+    r_ref = 1_737_400.0
+    gm = 4.904_869_5e12
+    c = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    s = np.zeros_like(c)
+    c[2, 0] = -9.0e-5
+    c[2, 2] = 1.5e-5
+    s[3, 1] = -2.0e-6
+    c[4, 3] = 7.5e-7
+    gravity = GravityModel.from_arrays(degree, r_ref, gm, c, s)
+
+    c45 = math.sqrt(0.5)
+    q_i2f = np.array([c45, 0.0, 0.0, c45], dtype=np.float64)
+    q_f2i = np.array([q_i2f[0], -q_i2f[1], -q_i2f[2], -q_i2f[3]], dtype=np.float64)
+    state = np.array(
+        [r_ref + 160_000.0, 120_000.0, -75_000.0, 12.0, 1550.0, -30.0],
+        dtype=np.float64,
+    )
+
+    engine = DynamicsEngine(
+        sc_props=SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3),
+        flags=PerturbationFlags(enable_sh=True),
+        gravity_model=gravity,
+        ephem_manager=_ConstantQuaternionEphem(q_i2f),
+        surface_provider=None,
+        earth_j2=None,
+        allow_identity_rotation=False,
+    )
+    rhs = engine.build_rhs(force_rebuild=True)
+    dy = np.asarray(rhs(0.0, state), dtype=np.float64)
+
+    fixed_position = quat_rotate_np(q_i2f, state[:3])
+    fixed_accel = gravity.accel_fixed(fixed_position, degree=degree)
+    expected_inertial_accel = quat_rotate_np(q_f2i, fixed_accel)
+
+    np.testing.assert_allclose(dy[:3], state[3:], rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(dy[3:6], expected_inertial_accel, rtol=1e-12, atol=1e-12)
 
 
 @pytest.mark.skipif(os.getenv("RUN_SLOW") != "1", reason="Set RUN_SLOW=1 to run slow integration test.")

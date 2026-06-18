@@ -39,6 +39,8 @@ THRESHOLD_ORIGINS = {
 }
 
 TIME_SCALES = {"UTC", "TAI", "TT", "TDB", "ET"}
+FROZEN_BODY_FIXED_FRAME = "NONROTATING_FROZEN_BODY_FIXED"
+FROZEN_ORIENTATION_MODELS = {"identity_regression_fixture"}
 
 
 class ManifestError(ValueError):
@@ -145,6 +147,41 @@ def _validate_gravity(payload: dict[str, Any], *, manifest_path: Path) -> Path:
     )
     _verify_hash(coefficient_path, str(gravity["coefficient_sha256"]), label="coefficient_file")
     return coefficient_path
+
+
+def _validate_frozen_frame_contract(
+    payload: dict[str, Any],
+    *,
+    frames: dict[str, Any],
+    reference_class: str,
+) -> None:
+    frame_keys = ("state_frame", "gravity_fixed_frame", "comparison_frame")
+    frozen_keys = [key for key in frame_keys if str(frames.get(key)) == FROZEN_BODY_FIXED_FRAME]
+    if not frozen_keys:
+        return
+
+    if len(frozen_keys) != len(frame_keys):
+        raise ManifestError(
+            f"{FROZEN_BODY_FIXED_FRAME} must be used consistently for "
+            "frames.state_frame, frames.gravity_fixed_frame, and frames.comparison_frame."
+        )
+
+    frozen_from = _required_str(frames, "frozen_from_frame", where="frames")
+    _required_str(frames, "freeze_epoch", where="frames")
+    orientation_model = _required_str(frames, "orientation_model", where="frames")
+    if orientation_model not in FROZEN_ORIENTATION_MODELS:
+        raise ManifestError(f"Unsupported frames.orientation_model: {orientation_model}")
+
+    if reference_class in STATUS_INCOMPLETE_CLASSES:
+        return
+
+    gravity = _mapping(payload, "gravity")
+    coefficient_frame = _required_str(gravity, "coefficient_frame", where="gravity")
+    if frozen_from != coefficient_frame:
+        raise ManifestError(
+            "frames.frozen_from_frame must match gravity.coefficient_frame "
+            f"for {FROZEN_BODY_FIXED_FRAME} references."
+        )
 
 
 def load_field_manifest(
@@ -256,6 +293,7 @@ def load_trajectory_manifest(
         _required_str(frames, key, where="frames")
     if frames["state_center"] != "MOON":
         raise ManifestError("frames.state_center must be MOON.")
+    _validate_frozen_frame_contract(payload, frames=frames, reference_class=reference_class)
 
     initial_state = _mapping(payload, "initial_state")
     if _required_str(initial_state, "representation", where="initial_state") != "cartesian":
@@ -301,4 +339,3 @@ def load_trajectory_manifest(
         payload=payload,
         reference_path=reference_path,
     )
-

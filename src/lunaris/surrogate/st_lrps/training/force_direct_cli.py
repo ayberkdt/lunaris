@@ -31,6 +31,11 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     write_command_txt,
     write_run_manifest,
 )
+from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    DATASET_CONTRACT_ATTR,
+    GRAVITY_LABEL_ENGINE_VERSION,
+    REQUIRED_SH_PHASE_CONVENTION,
+)
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
 from lunaris.surrogate.st_lrps.data.splits import build_split_manifest, write_split_manifest
@@ -73,6 +78,115 @@ def _read_dataset(path: Path, dataset_name: str, max_samples: int | None, seed: 
     if not np.all(np.isfinite(arr)):
         raise ValueError("Dataset contains non-finite values.")
     return arr, meta
+
+
+def _as_contract_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, bytes):
+        try:
+            value = value.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    text = str(value).strip()
+    return text or None
+
+
+def _parse_contract_payload(raw: Any) -> dict[str, Any] | None:
+    text = _as_contract_text(raw)
+    if not text:
+        return None
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return None
+    return dict(payload) if isinstance(payload, Mapping) else None
+
+
+def _iter_contract_payloads(
+    meta: DatasetMeta,
+    *,
+    data_path: Path,
+    invalid_sources: list[str] | None = None,
+) -> list[tuple[str, dict[str, Any]]]:
+    payloads: list[tuple[str, dict[str, Any]]] = []
+    for key in (DATASET_CONTRACT_ATTR, "contract_json", "dataset_contract"):
+        source = f"attrs.{key}"
+        raw = meta.raw_attrs.get(key)
+        text = _as_contract_text(raw)
+        if not text:
+            continue
+        payload = _parse_contract_payload(text)
+        if payload is not None:
+            payloads.append((source, payload))
+        elif invalid_sources is not None:
+            invalid_sources.append(source)
+
+    try:
+        import h5py  # type: ignore
+
+        with h5py.File(data_path, "r") as handle:
+            if "metadata" in handle and "contract_json" in handle["metadata"]:
+                source = "metadata.contract_json"
+                raw = handle["metadata"]["contract_json"][()]
+                text = _as_contract_text(raw)
+                payload = _parse_contract_payload(text)
+                if payload is not None:
+                    payloads.append((source, payload))
+                elif text and invalid_sources is not None:
+                    invalid_sources.append(source)
+    except Exception:
+        pass
+    return payloads
+
+
+def _declared_gravity_label_values(
+    meta: DatasetMeta,
+    *,
+    data_path: Path,
+    key: str,
+    payloads: list[tuple[str, dict[str, Any]]] | None = None,
+) -> list[tuple[str, str]]:
+    values: list[tuple[str, str]] = []
+    top_level = _as_contract_text(meta.raw_attrs.get(key))
+    if top_level is not None:
+        values.append((f"attrs.{key}", top_level))
+    if payloads is None:
+        payloads = _iter_contract_payloads(meta, data_path=data_path)
+    for source, payload in payloads:
+        value = _as_contract_text(payload.get(key))
+        if value is not None:
+            values.append((f"{source}.{key}", value))
+    return values
+
+
+def _validate_input_gravity_label_contract(meta: DatasetMeta, *, data_path: Path) -> None:
+    expected = {
+        "spherical_harmonic_convention": REQUIRED_SH_PHASE_CONVENTION,
+        "gravity_label_engine_version": GRAVITY_LABEL_ENGINE_VERSION,
+    }
+    errors: list[str] = []
+    invalid_sources: list[str] = []
+    payloads = _iter_contract_payloads(meta, data_path=data_path, invalid_sources=invalid_sources)
+    for source in invalid_sources:
+        errors.append(f"{source} could not be parsed as JSON")
+    for key, expected_value in expected.items():
+        values = _declared_gravity_label_values(meta, data_path=data_path, key=key, payloads=payloads)
+        if not values:
+            errors.append(f"{key} is missing")
+            continue
+        mismatches = [(source, value) for source, value in values if value != expected_value]
+        if mismatches:
+            source, value = mismatches[0]
+            errors.append(f"{source}={value!r}, expected {expected_value!r}")
+    if errors:
+        details = "; ".join(errors)
+        raise ValueError(
+            f"Dataset {str(data_path)!r} has an unsafe gravity label contract: {details}. "
+            "Regenerate the dataset with the current Lunaris spherical-harmonic label engine before training."
+        )
 
 
 def _point_mass_accel(x_m: np.ndarray, mu_si: float) -> np.ndarray:
@@ -154,6 +268,8 @@ def _dataset_meta_block(
         "coordinate_frame": "moon_fixed_cartesian",
         "units": {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
         "derivative_convention_version": meta.derivative_convention_version or "dP_dphi_corrected_v1",
+        "spherical_harmonic_convention": REQUIRED_SH_PHASE_CONVENTION,
+        "gravity_label_engine_version": GRAVITY_LABEL_ENGINE_VERSION,
     }
     if target_mode == "residual":
         # Residual targets are Δa against the spherical-harmonics baseline; record
@@ -175,6 +291,8 @@ def _dataset_meta_block(
         "a_sign": 1.0,
         "a_sign_convention": "+1",
         "derivative_convention_version": contract["derivative_convention_version"],
+        "spherical_harmonic_convention": REQUIRED_SH_PHASE_CONVENTION,
+        "gravity_label_engine_version": GRAVITY_LABEL_ENGINE_VERSION,
         "coordinate_frame": "moon_fixed_cartesian",
         "dataset_contract": contract,
     }
@@ -187,6 +305,7 @@ def train_force_direct(args: argparse.Namespace) -> Path:
 
     data_path = Path(args.data).expanduser().resolve()
     arr, meta = _read_dataset(data_path, args.dataset_name, args.max_samples, int(args.seed))
+    _validate_input_gravity_label_contract(meta, data_path=data_path)
     mu_si = float(args.mu_si or meta.mu_si or MU_MOON_SI)
     r_ref_m = float(args.r_ref_m or meta.r_ref_m or R_MOON_SI)
     degree_min = int(args.degree_min if args.degree_min is not None else (meta.degree_min if meta.degree_min is not None else 0))

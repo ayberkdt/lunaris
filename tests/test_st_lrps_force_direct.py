@@ -10,6 +10,10 @@ torch = pytest.importorskip("torch")
 
 from lunaris.analysis.monte_carlo.result_audit import TRUSTED, classify_st_lrps_run
 from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
+from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    GRAVITY_LABEL_ENGINE_VERSION,
+    REQUIRED_SH_PHASE_CONVENTION,
+)
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.evaluation.force_direct_eval import evaluate_force_direct
 from lunaris.surrogate.st_lrps.networks.models import (
@@ -152,6 +156,8 @@ def test_force_direct_training_roundtrip(tmp_path):
         handle.attrs["alt_min_km"] = 100.0
         handle.attrs["alt_max_km"] = 250.0
         handle.attrs["derivative_convention_version"] = "dP_dphi_corrected_v1"
+        handle.attrs["spherical_harmonic_convention"] = REQUIRED_SH_PHASE_CONVENTION
+        handle.attrs["gravity_label_engine_version"] = GRAVITY_LABEL_ENGINE_VERSION
 
     args = SimpleNamespace(
         data=str(data_path),
@@ -212,3 +218,31 @@ def test_force_direct_training_roundtrip(tmp_path):
     assert report["potential_metrics"]["rmse_u"] is None
     assert report["acceleration_metrics"]["rmse_a_vec"] >= 0.0
     assert "mean_deg" in report["angular_metrics"]
+
+
+def test_force_direct_training_rejects_missing_gravity_label_contract(tmp_path):
+    h5py = pytest.importorskip("h5py")
+    data_path = tmp_path / "legacy_force_direct.h5"
+    arr = np.zeros((8, 7), dtype=np.float64)
+    arr[:, 0] = R_MOON_SI + 150_000.0
+    with h5py.File(data_path, "w") as handle:
+        handle.create_dataset("data", data=arr)
+        handle.attrs["unit_system"] = "si"
+        handle.attrs["target_mode"] = "residual"
+        handle.attrs["degree_min"] = 0
+        handle.attrs["degree_max"] = 2
+        handle.attrs["requested_degree"] = 2
+        handle.attrs["mu_si"] = 4.9048695e12
+        handle.attrs["r_ref_m"] = R_MOON_SI
+        handle.attrs["alt_min_km"] = 100.0
+        handle.attrs["alt_max_km"] = 250.0
+        handle.attrs["derivative_convention_version"] = "dP_dphi_corrected_v1"
+
+    args = SimpleNamespace(
+        data=str(data_path),
+        dataset_name="data",
+        max_samples=None,
+        seed=7,
+    )
+    with pytest.raises(ValueError, match="unsafe gravity label contract"):
+        train_force_direct(args)

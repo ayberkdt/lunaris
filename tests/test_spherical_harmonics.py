@@ -28,6 +28,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from lunaris.validation.gravity_reference.independent_field_oracle import acceleration as independent_oracle_acceleration
+
 
 # -----------------------------------------------------------------------------
 # Import helper
@@ -210,6 +212,21 @@ def _make_model(sh, deg: int, constants, *, c20: float = 0.0, extra_terms=()):
     return sh.GravityModel.from_arrays(int(deg), float(R_ref), float(GM), C, S)
 
 
+def _position_from_lat_lon_alt(constants, lat_deg: float, lon_deg: float, alt_km: float) -> np.ndarray:
+    R_ref, _GM = constants
+    r = float(R_ref) + float(alt_km) * 1000.0
+    lat = math.radians(float(lat_deg))
+    lon = math.radians(float(lon_deg))
+    return np.array(
+        [
+            r * math.cos(lat) * math.cos(lon),
+            r * math.cos(lat) * math.sin(lon),
+            r * math.sin(lat),
+        ],
+        dtype=np.float64,
+    )
+
+
 # -----------------------------------------------------------------------------
 # Fixtures
 # -----------------------------------------------------------------------------
@@ -301,6 +318,62 @@ def test_harmonic_perturbation_detected(sh, constants):
     d0 = _norm3(*diff)
 
     assert (d0 / max(1e-30, a0)) > 1e-12, "Perturbation too small / not detected"
+
+
+def test_cpu_sh_matches_independent_finite_difference_oracle_on_tesseral_field(sh, constants):
+    """Pin the CPU SH acceleration against an independent U -> grad(U) oracle.
+
+    This is deliberately not a zonal-only field: odd-order tesseral/sectoral
+    terms exercise the no-Condon-Shortley phase convention that a C20/J2 smoke
+    test cannot see.
+    """
+    R_ref, GM = constants
+    degree = 8
+    C = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    S = np.zeros_like(C)
+    terms = (
+        ("C", 2, 0, -9.0e-5),
+        ("C", 2, 2, 1.3e-5),
+        ("S", 2, 2, -1.1e-5),
+        ("C", 3, 1, 2.2e-6),
+        ("S", 3, 1, -1.7e-6),
+        ("C", 4, 3, -8.0e-7),
+        ("S", 5, 5, 5.0e-7),
+        ("C", 7, 3, -2.0e-7),
+        ("S", 8, 1, 1.5e-7),
+    )
+    for kind, n, m, value in terms:
+        (C if kind == "C" else S)[n, m] = float(value)
+    assert np.any(np.abs(C[3:, 1::2]) > 0.0) or np.any(np.abs(S[3:, 1::2]) > 0.0)
+
+    model = sh.GravityModel.from_arrays(degree, R_ref, GM, C, S)
+    sample_points = (
+        (0.0, 0.0, 50.0),
+        (0.0, 45.0, 100.0),
+        (37.0, 120.0, 500.0),
+        (-60.0, 200.0, 2000.0),
+        (82.0, 15.0, 100.0),
+    )
+
+    rows = []
+    for lat_deg, lon_deg, alt_km in sample_points:
+        pos = _position_from_lat_lon_alt(constants, lat_deg, lon_deg, alt_km)
+        analytic = np.asarray(model.accel_fixed(pos, degree=degree), dtype=np.float64)
+        numerical = independent_oracle_acceleration(
+            pos,
+            mu_m3_s2=GM,
+            reference_radius_m=R_ref,
+            c_coeffs=C,
+            s_coeffs=S,
+            degree=degree,
+            rel_step=3.0e-4,
+        )
+        rel_err = float(np.linalg.norm(analytic - numerical) / max(np.linalg.norm(analytic), 1e-30))
+        abs_err = float(np.max(np.abs(analytic - numerical)))
+        rows.append((lat_deg, lon_deg, alt_km, rel_err, abs_err))
+
+    max_rel = max(row[3] for row in rows)
+    assert max_rel < 1.0e-9, f"CPU SH vs independent oracle mismatch: {rows!r}"
 
 
 def test_serial_parallel_consistency_high_degree(sh, constants, rng):
@@ -461,6 +534,9 @@ def _py_func(f):
 def test_legendre_derivative_matches_finite_difference(sh):
     """
     Directly test the internal Legendre derivative table `dP` against a finite-difference derivative of `P`.
+
+    This covers all valid (n, m) orders, not only m=0; odd-order tesseral terms
+    depend on these derivatives and are exactly where phase/sign regressions hide.
     """
     max_degree = 40
     delta = 1e-7
@@ -482,6 +558,9 @@ def test_legendre_derivative_matches_finite_difference(sh):
     test_phis = [-0.9, -0.3, 0.3, 0.7]
 
     for phi in test_phis:
+        for arr in (P0, dP0, Pm, dPm, Pp, dPp):
+            arr.fill(0.0)
+
         # P, dP @ phi
         sin_phi = math.sin(phi)
         cos_phi = math.cos(phi)
@@ -512,15 +591,14 @@ def test_legendre_derivative_matches_finite_difference(sh):
         # Finite difference
         dP_fd = (Pp - Pm) / (2.0 * delta)
 
-        # We only check m=0 initially as per instructions.
-        m = 0
-        mask = np.abs(dP_fd[:, m]) > 1e-10
+        valid_triangle = np.fromfunction(lambda n, m: m <= n, P0.shape, dtype=int)
+        mask = valid_triangle & (np.abs(dP_fd) > 1e-9)
 
         if np.any(mask):
             np.testing.assert_allclose(
-                dP0[mask, m],
-                dP_fd[mask, m],
-                rtol=1e-5,
+                dP0[mask],
+                dP_fd[mask],
+                rtol=1e-6,
                 atol=1e-7,
                 err_msg=f"Legendre derivative mismatch at phi={phi}"
             )

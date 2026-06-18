@@ -187,6 +187,9 @@ def main() -> int:
             "state_frame": "NONROTATING_FROZEN_BODY_FIXED",
             "gravity_fixed_frame": "NONROTATING_FROZEN_BODY_FIXED",
             "comparison_frame": "NONROTATING_FROZEN_BODY_FIXED",
+            "frozen_from_frame": "MOON_PA",
+            "freeze_epoch": CREATED_AT_UTC,
+            "orientation_model": "identity_regression_fixture",
         },
         "initial_state": {
             "representation": "cartesian",
