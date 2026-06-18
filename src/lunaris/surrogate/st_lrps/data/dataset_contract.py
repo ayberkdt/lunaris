@@ -7,7 +7,7 @@ import hashlib
 import json
 import subprocess
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -223,8 +223,9 @@ class DatasetContract:
     columns: list[str] = field(default_factory=lambda: ["x", "y", "z", "dU", "dax", "day", "daz"])
     dataset_layout: dict[str, Any] = field(default_factory=lambda: {"dataset_name": "data", "shape": None})
     legacy_inferred: bool = False
+    _skip_initial_validation: InitVar[bool] = False
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _skip_initial_validation: bool) -> None:
         object.__setattr__(self, "schema_version", int(self.schema_version))
         object.__setattr__(self, "dataset_kind", str(self.dataset_kind or "st_lrps_spatial_cloud"))
         object.__setattr__(self, "generator_name", str(self.generator_name or "spatial_cloud_generator"))
@@ -247,11 +248,12 @@ class DatasetContract:
         object.__setattr__(self, "columns", _columns(self.columns))
         object.__setattr__(self, "dataset_layout", dict(self.dataset_layout or {}))
         object.__setattr__(self, "legacy_inferred", bool(self.legacy_inferred))
-        self.validate(
-            allow_legacy_dataset_contract=bool(self.legacy_inferred),
-            allow_missing_source_gravity=bool(self.legacy_inferred),
-            allow_legacy_derivative_convention=bool(self.legacy_inferred),
-        )
+        if not _skip_initial_validation:
+            self.validate(
+                allow_legacy_dataset_contract=bool(self.legacy_inferred),
+                allow_missing_source_gravity=bool(self.legacy_inferred),
+                allow_legacy_derivative_convention=bool(self.legacy_inferred),
+            )
 
     def validate(
         self,
@@ -316,6 +318,15 @@ class DatasetContract:
                 warnings.append(msg)
             else:
                 errors.append(msg)
+        if self.gravity_label_engine_version != GRAVITY_LABEL_ENGINE_VERSION:
+            msg = (
+                f"gravity_label_engine_version={self.gravity_label_engine_version!r} is unsafe; "
+                f"expected {GRAVITY_LABEL_ENGINE_VERSION!r}"
+            )
+            if allow_legacy_derivative_convention:
+                warnings.append(msg)
+            else:
+                errors.append(msg)
         if self.target_mode == "residual" and self.baseline_kind == "none":
             errors.append("residual datasets require a non-none baseline_kind")
         if self.target_mode == "residual" and not (self.source_gravity_model or self.source_gravity_file_path):
@@ -351,7 +362,10 @@ class DatasetContract:
             data["altitude_max_km"] = data.get("alt_max_km")
         if "random_seed" not in data and "seed" in data:
             data["random_seed"] = data.get("seed")
-        obj = cls(**{k: v for k, v in data.items() if k in {f.name for f in dataclasses.fields(cls)}})
+        obj = cls(
+            **{k: v for k, v in data.items() if k in {f.name for f in dataclasses.fields(cls)}},
+            _skip_initial_validation=True,
+        )
         obj.validate(
             allow_legacy_dataset_contract=allow_legacy_dataset_contract,
             allow_missing_source_gravity=allow_missing_source_gravity,
@@ -521,6 +535,8 @@ class DatasetContract:
         handle.attrs["coordinate_frame"] = self.coordinate_frame
         handle.attrs["units"] = json.dumps(self.units, sort_keys=True)
         handle.attrs["derivative_convention_version"] = self.derivative_convention or ""
+        handle.attrs["spherical_harmonic_convention"] = self.spherical_harmonic_convention or ""
+        handle.attrs["gravity_label_engine_version"] = self.gravity_label_engine_version or ""
         handle.attrs["columns"] = "[" + ",".join(self.columns) + "]"
         handle.attrs["source_gravity_model"] = self.source_gravity_model or ""
         handle.attrs["source_gravity_file_path"] = self.source_gravity_file_path or ""
@@ -547,6 +563,9 @@ class DatasetContract:
             errors.append("units mismatch")
         if self.derivative_convention != rhs.derivative_convention:
             errors.append("derivative_convention mismatch")
+        for key in ("spherical_harmonic_convention", "gravity_label_engine_version"):
+            if getattr(self, key) != getattr(rhs, key):
+                errors.append(f"{key} mismatch: {getattr(self, key)!r} != {getattr(rhs, key)!r}")
         if self.content_sha256 and rhs.content_sha256 and self.content_sha256 != rhs.content_sha256:
             errors.append("content_sha256 mismatch")
         if not self.source_gravity_file_sha256:
@@ -623,6 +642,8 @@ def build_contract_payload_for_generator(
         source_gravity_model=source_gravity_model,
         source_gravity_file_path=source_gravity_file_path,
         source_gravity_file_sha256=source_gravity_file_sha256,
+        spherical_harmonic_convention=REQUIRED_SH_PHASE_CONVENTION,
+        gravity_label_engine_version=GRAVITY_LABEL_ENGINE_VERSION,
         columns=columns,
         dataset_layout={"dataset_name": "data", "shape": [int(n_samples), 7]},
     ).to_dict()
@@ -651,7 +672,9 @@ __all__ = [
     "DEFAULT_UNITS",
     "DatasetContract",
     "DatasetContractError",
+    "GRAVITY_LABEL_ENGINE_VERSION",
     "REQUIRED_DERIVATIVE_CONVENTION",
+    "REQUIRED_SH_PHASE_CONVENTION",
     "TARGET_MODES",
     "build_contract_payload_for_generator",
     "content_sha256_for_hdf5_dataset",

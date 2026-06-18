@@ -18,6 +18,7 @@ propagator's internal reference values agree.
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -250,3 +251,141 @@ def test_checkpoint_npz_is_written(tmp_path):
     with np.load(ckpt) as data:
         assert "t" in data and "y_row" in data
         assert data["t"].shape[0] == res.t.shape[0]
+
+
+def test_failed_adaptive_chunk_is_not_checkpointed(monkeypatch, tmp_path):
+    ckpt = tmp_path / "failed_chunk.npz"
+    y0, _, _ = _circular_state(150e3)
+    tc = TimeConfig(duration_s=40.0, output_dt_s=10.0, samples_per_period=4)
+    cfg = _cfg(
+        events=EventConfig(detect_impact=False, enable_peri_apo_events=False),
+        checkpoint_path=str(ckpt),
+        checkpoint_every_chunk=True,
+        chunk_s=20.0,
+    )
+
+    def fake_solve_ivp(*, t_span, y0, **_kwargs):
+        return SimpleNamespace(
+            t=np.asarray([t_span[0], t_span[1]], dtype=np.float64),
+            y=np.column_stack([np.asarray(y0, dtype=np.float64), np.asarray(y0, dtype=np.float64)]),
+            t_events=[],
+            y_events=[],
+            success=False,
+            status=-1,
+            message="synthetic failure",
+            nfev=1,
+        )
+
+    monkeypatch.setattr("lunaris.core.propagator.solve_ivp", fake_solve_ivp)
+
+    res = propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc)
+
+    assert not ckpt.exists()
+    assert res.stopped_early is True
+    assert res.stop_reason == "integration failed"
+    assert res.ode.success is False
+    assert res.ode.status == -1
+    np.testing.assert_allclose(res.t, [0.0])
+    np.testing.assert_allclose(res.y[0], y0)
+
+
+def test_terminal_adaptive_chunk_checkpoint_uses_event_endpoint(monkeypatch, tmp_path):
+    ckpt = tmp_path / "terminal_chunk.npz"
+    y0, _, _ = _circular_state(150e3)
+    event_state = y0.copy()
+    event_state[0] += 123.0
+    tc = TimeConfig(duration_s=40.0, output_dt_s=10.0, samples_per_period=4)
+    cfg = _cfg(
+        events=EventConfig(detect_impact=False, enable_peri_apo_events=False),
+        checkpoint_path=str(ckpt),
+        checkpoint_every_chunk=True,
+        checkpoint_mode="latest",
+        chunk_s=20.0,
+    )
+
+    def terminal_event(_t, _y):
+        return 1.0
+
+    terminal_event.terminal = True  # type: ignore[attr-defined]
+    terminal_event.direction = 0.0  # type: ignore[attr-defined]
+
+    def fake_solve_ivp(*, t_span, y0, **_kwargs):
+        y_start = np.asarray(y0, dtype=np.float64)
+        y_end = y_start.copy()
+        y_end[0] += 999.0
+        return SimpleNamespace(
+            t=np.asarray([t_span[0], t_span[1]], dtype=np.float64),
+            y=np.column_stack([y_start, y_end]),
+            t_events=[np.asarray([4.0], dtype=np.float64)],
+            y_events=[event_state.reshape(1, -1)],
+            success=True,
+            status=1,
+            message="terminal event",
+            nfev=1,
+        )
+
+    monkeypatch.setattr("lunaris.core.propagator.solve_ivp", fake_solve_ivp)
+
+    res = propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc, extra_events=[terminal_event])
+
+    assert ckpt.exists()
+    with np.load(ckpt) as data:
+        np.testing.assert_allclose(data["t"], [4.0])
+        np.testing.assert_allclose(data["y_row"], event_state.reshape(1, -1))
+    assert res.stopped_early is True
+    assert res.stop_reason == "event"
+    np.testing.assert_allclose(res.t[-1], 4.0)
+    np.testing.assert_allclose(res.y[-1], event_state)
+
+
+def test_chunked_adaptive_impact_event_reports_impact_reason(monkeypatch, tmp_path):
+    ckpt = tmp_path / "impact_chunk.npz"
+    y0, _, _ = _circular_state(150e3)
+    impact_state = y0.copy()
+    impact_state[0] = R
+    tc = TimeConfig(duration_s=40.0, output_dt_s=10.0, samples_per_period=4)
+    cfg = _cfg(
+        checkpoint_path=str(ckpt),
+        checkpoint_every_chunk=True,
+        checkpoint_mode="latest",
+        chunk_s=20.0,
+    )
+
+    def fake_solve_ivp(*, t_span, y0, **_kwargs):
+        y_start = np.asarray(y0, dtype=np.float64)
+        y_end = y_start.copy()
+        y_end[0] -= 999.0
+        return SimpleNamespace(
+            t=np.asarray([t_span[0], t_span[1]], dtype=np.float64),
+            y=np.column_stack([y_start, y_end]),
+            t_events=[
+                np.asarray([4.0], dtype=np.float64),
+                np.asarray([], dtype=np.float64),
+                np.asarray([], dtype=np.float64),
+            ],
+            y_events=[
+                impact_state.reshape(1, -1),
+                np.zeros((0, y0.size), dtype=np.float64),
+                np.zeros((0, y0.size), dtype=np.float64),
+            ],
+            success=True,
+            status=1,
+            message="impact event",
+            nfev=1,
+        )
+
+    monkeypatch.setattr("lunaris.core.propagator.solve_ivp", fake_solve_ivp)
+
+    res = propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc)
+
+    assert ckpt.exists()
+    with np.load(ckpt) as data:
+        np.testing.assert_allclose(data["t"], [4.0])
+        np.testing.assert_allclose(data["y_row"], impact_state.reshape(1, -1))
+    assert res.impacted is True
+    assert res.stopped_early is True
+    assert res.stop_reason == "impact"
+    assert res.t_impact_s == pytest.approx(4.0)
+    np.testing.assert_allclose(res.y_impact, impact_state)
+    np.testing.assert_allclose(res.t[-1], 4.0)
+    np.testing.assert_allclose(res.y[-1], impact_state)

@@ -7,7 +7,12 @@ import numpy as np
 import pytest
 
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    GRAVITY_LABEL_ENGINE_VERSION,
+    REQUIRED_DERIVATIVE_CONVENTION,
+    REQUIRED_SH_PHASE_CONVENTION,
     DatasetContract,
+    DatasetContractError,
+    build_contract_payload_for_generator,
     stamp_hdf5_content_hash,
 )
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
@@ -42,6 +47,30 @@ def _write_h5(path: Path, **attrs) -> Path:
             if value is not None:
                 handle.attrs[key] = value
     return path
+
+
+def _contract_payload(**overrides) -> dict:
+    payload = {
+        "dataset_id": "contract-test",
+        "n_samples": 4,
+        "target_mode": "residual",
+        "baseline_kind": "spherical_harmonics",
+        "degree_min": 2,
+        "degree_max": 4,
+        "mu_si": MU_MOON_SI,
+        "r_ref_m": R_MOON_SI,
+        "altitude_min_km": 100.0,
+        "altitude_max_km": 200.0,
+        "source_gravity_model": "toy",
+        "source_gravity_file_path": "toy.gfc",
+        "source_gravity_file_sha256": "a" * 64,
+        "derivative_convention": REQUIRED_DERIVATIVE_CONVENTION,
+        "spherical_harmonic_convention": REQUIRED_SH_PHASE_CONVENTION,
+        "gravity_label_engine_version": GRAVITY_LABEL_ENGINE_VERSION,
+        "dataset_layout": {"dataset_name": "data", "shape": [4, 7]},
+    }
+    payload.update(overrides)
+    return payload
 
 
 def test_synthetic_hdf5_metadata_is_read_correctly(tmp_path):
@@ -108,6 +137,7 @@ def test_dataset_contract_content_hash_can_be_stamped(tmp_path):
             source_gravity_file_path="toy.gfc",
             source_gravity_file_sha256="a" * 64,
             spherical_harmonic_convention="4pi_geodesy_no_condon_shortley_v1",
+            gravity_label_engine_version="lunaris_sh_v2",
             dataset_layout={"dataset_name": "data", "shape": [3, 7]},
         )
         contract.write_hdf5_attrs(handle)
@@ -117,3 +147,65 @@ def test_dataset_contract_content_hash_can_be_stamped(tmp_path):
 
     assert updated.content_sha256
     assert reread["content_sha256"] == updated.content_sha256
+
+
+def test_generator_contract_payload_stamps_gravity_label_contract():
+    payload = build_contract_payload_for_generator(
+        dataset_id="generator-contract",
+        n_samples=4,
+        degree_min=2,
+        degree_max=4,
+        target_mode="residual",
+        baseline_kind="spherical_harmonics",
+        mu_si=MU_MOON_SI,
+        r_ref_m=R_MOON_SI,
+        altitude_min_km=100.0,
+        altitude_max_km=200.0,
+        random_seed=7,
+        sampling_policy={"name": "toy"},
+        source_gravity_model="toy",
+        source_gravity_file_path="toy.gfc",
+        source_gravity_file_sha256="a" * 64,
+        generator_version="test",
+        columns=["x", "y", "z", "dU", "dax", "day", "daz"],
+    )
+
+    assert payload["spherical_harmonic_convention"] == REQUIRED_SH_PHASE_CONVENTION
+    assert payload["gravity_label_engine_version"] == GRAVITY_LABEL_ENGINE_VERSION
+
+
+def test_gravity_label_engine_version_is_required():
+    payload = _contract_payload()
+    payload.pop("gravity_label_engine_version")
+
+    with pytest.raises(DatasetContractError, match="gravity_label_engine_version"):
+        DatasetContract.from_dict(payload)
+
+
+def test_legacy_from_dict_override_applies_before_validation():
+    payload = _contract_payload(derivative_convention="legacy")
+    payload.pop("spherical_harmonic_convention")
+    payload.pop("gravity_label_engine_version")
+
+    contract = DatasetContract.from_dict(payload, allow_legacy_derivative_convention=True)
+
+    assert contract.derivative_convention == "legacy"
+    assert contract.spherical_harmonic_convention is None
+    assert contract.gravity_label_engine_version is None
+
+
+def test_compatibility_report_rejects_gravity_label_contract_mismatch():
+    current = DatasetContract.from_dict(_contract_payload())
+    legacy = DatasetContract.from_dict(
+        _contract_payload(
+            spherical_harmonic_convention="legacy_csphase",
+            gravity_label_engine_version="lunaris_sh_v1",
+        ),
+        allow_legacy_derivative_convention=True,
+    )
+
+    report = current.compatibility_report(legacy)
+
+    assert report["compatible"] is False
+    assert any("spherical_harmonic_convention" in error for error in report["errors"])
+    assert any("gravity_label_engine_version" in error for error in report["errors"])

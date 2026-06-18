@@ -2,8 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+import pytest
+
 from lunaris.validation.gravity_reference.lunaris_field_runner import run_field_validation
-from lunaris.validation.gravity_reference.lunaris_trajectory_runner import run_trajectory_validation
+from lunaris.validation.gravity_reference.lunaris_trajectory_runner import (
+    _ContractViolation,
+    _enforce_trajectory_contract,
+    run_trajectory_validation,
+)
 from lunaris.validation.gravity_reference.thresholds import (
     INCOMPLETE_CONTRACT,
     PASS,
@@ -106,6 +113,22 @@ def test_trajectory_runner_fails_closed_for_incomplete_reference(tmp_path: Path)
     )
     result = run_trajectory_validation(manifest, tmp_path / "trajectory")
     assert result["status"] == REFERENCE_GENERATION_REQUIRED
+
+
+def test_trajectory_contract_rejects_missing_final_epoch() -> None:
+    payload = {
+        "time": {"duration_s": 600.0, "output_step_s": 60.0},
+        "frames": {
+            "state_center": "MOON",
+            "state_frame": "NONROTATING_FROZEN_BODY_FIXED",
+            "gravity_fixed_frame": "NONROTATING_FROZEN_BODY_FIXED",
+            "comparison_frame": "NONROTATING_FROZEN_BODY_FIXED",
+        },
+    }
+    epochs = np.arange(0.0, 600.0, 60.0, dtype=np.float64)
+
+    with pytest.raises(_ContractViolation, match="sample count"):
+        _enforce_trajectory_contract(payload, epochs)
 
 
 def test_trajectory_validation_end_to_end(tmp_path: Path) -> None:

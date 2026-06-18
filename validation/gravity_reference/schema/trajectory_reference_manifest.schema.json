@@ -41,7 +41,13 @@
       "type": "object",
       "required": ["state_center", "state_frame", "gravity_fixed_frame", "comparison_frame"],
       "properties": {
-        "state_center": {"const": "MOON"}
+        "state_center": {"const": "MOON"},
+        "state_frame": {"type": "string"},
+        "gravity_fixed_frame": {"type": "string"},
+        "comparison_frame": {"type": "string"},
+        "frozen_from_frame": {"type": "string", "minLength": 1},
+        "freeze_epoch": {"type": "string", "minLength": 1},
+        "orientation_model": {"type": "string", "minLength": 1}
       }
     },
     "initial_state": {
@@ -73,6 +79,49 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "frames": {
+            "anyOf": [
+              {
+                "properties": {
+                  "state_frame": {"const": "NONROTATING_FROZEN_BODY_FIXED"}
+                }
+              },
+              {
+                "properties": {
+                  "gravity_fixed_frame": {"const": "NONROTATING_FROZEN_BODY_FIXED"}
+                }
+              },
+              {
+                "properties": {
+                  "comparison_frame": {"const": "NONROTATING_FROZEN_BODY_FIXED"}
+                }
+              }
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "frames": {
+            "required": [
+              "frozen_from_frame",
+              "freeze_epoch",
+              "orientation_model"
+            ],
+            "properties": {
+              "state_frame": {"const": "NONROTATING_FROZEN_BODY_FIXED"},
+              "gravity_fixed_frame": {"const": "NONROTATING_FROZEN_BODY_FIXED"},
+              "comparison_frame": {"const": "NONROTATING_FROZEN_BODY_FIXED"},
+              "orientation_model": {"const": "identity_regression_fixture"}
+            }
+          }
+        }
+      }
+    }
+  ]
 }
-

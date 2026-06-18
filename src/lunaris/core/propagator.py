@@ -551,6 +551,50 @@ def _find_event_index(events: list[Callable[[float, np.ndarray], float]] | None,
     return None
 
 
+def _terminal_event_endpoint(
+    sol: Any,
+    events: list[Callable[[float, np.ndarray], float]] | None,
+    *,
+    state_size: int,
+) -> tuple[float, np.ndarray] | None:
+    """Return the earliest terminal event endpoint recorded by a SciPy solution."""
+    if not events or getattr(sol, "t_events", None) is None:
+        return None
+
+    y_events_raw = getattr(sol, "y_events", None)
+    if y_events_raw is None:
+        return None
+
+    best: tuple[float, np.ndarray] | None = None
+    for i, ev in enumerate(events):
+        if not bool(getattr(ev, "terminal", False)):
+            continue
+        try:
+            t_ev = np.asarray(sol.t_events[i], dtype=np.float64).reshape(-1)
+        except Exception:
+            continue
+        if t_ev.size == 0 or i >= len(y_events_raw):
+            continue
+
+        try:
+            y_ev = np.asarray(y_events_raw[i], dtype=np.float64)
+        except Exception:
+            continue
+        if y_ev.size == 0:
+            continue
+        if y_ev.ndim == 1:
+            y_ev = y_ev.reshape(1, -1)
+
+        t0 = float(t_ev[0])
+        y0 = np.asarray(y_ev[0], dtype=np.float64).reshape(-1)
+        if y0.size != state_size or not np.isfinite(t0) or not np.all(np.isfinite(y0)):
+            continue
+        if best is None or t0 < best[0]:
+            best = (t0, y0)
+
+    return best
+
+
 def build_events(
     dynamics: DynamicsEngine,
     cfg: PropagatorConfig,
@@ -1274,6 +1318,9 @@ def propagate(
             if chunk_s <= 0.0 or chunk_s >= total_span:
                 chunk_s = None
 
+        checkpoint_every_chunk = bool(getattr(cfg, "checkpoint_every_chunk", False))
+        integration_failed = False
+        integration_failure_message: str | None = None
         stopped_early = False
         stop_reason = None
         chunk_idx = 0
@@ -1288,6 +1335,11 @@ def propagate(
             # so callers never see stop_reason set while stopped_early is False.
             if int(getattr(sol, "status", 0)) == 1:
                 stopped_early = True
+            elif not bool(getattr(sol, "success", True)):
+                stopped_early = True
+                stop_reason = "integration failed"
+                integration_failed = True
+                integration_failure_message = str(getattr(sol, "message", "integration failed"))
         else:
             t_parts: list[np.ndarray] = []
             y_parts: list[np.ndarray] = []
@@ -1313,12 +1365,45 @@ def propagate(
 
                 sol_k = _solve_span(t_curr, t_next, y_curr, t_eval_span)
 
+                sol_k_status = int(getattr(sol_k, "status", 0))
+                if sol_k_status != 1 and not bool(getattr(sol_k, "success", True)):
+                    stopped_early = True
+                    stop_reason = "integration failed"
+                    integration_failed = True
+                    integration_failure_message = str(getattr(sol_k, "message", "integration failed"))
+                    break
+
+                sol_t = np.asarray(sol_k.t, dtype=np.float64)
+                sol_y = np.asarray(sol_k.y, dtype=np.float64)
+                if sol_t.size == 0 or sol_y.ndim != 2 or sol_y.shape[1] != sol_t.size:
+                    stopped_early = True
+                    stop_reason = "integration failed"
+                    integration_failed = True
+                    integration_failure_message = "solve_ivp returned an invalid chunk shape"
+                    break
+
+                terminal_endpoint = (
+                    _terminal_event_endpoint(sol_k, events, state_size=y0_arr.size)
+                    if sol_k_status == 1
+                    else None
+                )
+                if terminal_endpoint is not None:
+                    t_terminal, y_terminal = terminal_endpoint
+                    keep = sol_t <= (t_terminal + 1e-9)
+                    sol_t = sol_t[keep]
+                    sol_y = sol_y[:, keep]
+                    if sol_t.size == 0 or abs(float(sol_t[-1]) - t_terminal) > 1e-9:
+                        sol_t = np.concatenate([sol_t, np.asarray([t_terminal], dtype=np.float64)])
+                        sol_y = np.concatenate([sol_y, y_terminal.reshape(-1, 1)], axis=1)
+                    else:
+                        sol_y[:, -1] = y_terminal
+
                 if not t_parts:
-                    t_parts.append(np.asarray(sol_k.t, dtype=np.float64))
-                    y_parts.append(np.asarray(sol_k.y, dtype=np.float64))
+                    t_parts.append(sol_t)
+                    y_parts.append(sol_y)
                 else:
-                    t_parts.append(np.asarray(sol_k.t[1:], dtype=np.float64))
-                    y_parts.append(np.asarray(sol_k.y[:, 1:], dtype=np.float64))
+                    t_parts.append(sol_t[1:])
+                    y_parts.append(sol_y[:, 1:])
 
                 if getattr(sol_k, "t_events", None) is not None:
                     for i in range(n_ev):
@@ -1330,10 +1415,10 @@ def propagate(
                 # Advance the running state to the END of this completed chunk
                 # BEFORE checkpointing, so a "latest/state/last" checkpoint records
                 # the chunk end (a valid resume point) rather than its start.
-                y_curr = np.asarray(sol_k.y[:, -1], dtype=np.float64).copy()
-                t_curr = float(sol_k.t[-1])
+                y_curr = np.asarray(sol_y[:, -1], dtype=np.float64).copy()
+                t_curr = float(sol_t[-1])
 
-                if checkpoint_path and bool(getattr(cfg, "checkpoint_every_chunk", False)):
+                if checkpoint_path and checkpoint_every_chunk:
                     try:
                         ck_mode = str(getattr(cfg, "checkpoint_mode", "full")).strip().lower()
                         if ck_mode in ("latest", "state", "last"):
@@ -1345,7 +1430,7 @@ def propagate(
                         elif ck_mode in ("chunks", "chunk"):
                             base = str(checkpoint_path)
                             chunk_path = f"{base}.chunk{chunk_idx:06d}.npz"
-                            _atomic_save_npz(chunk_path, t=np.asarray(sol_k.t, dtype=np.float64), y_row=np.asarray(sol_k.y, dtype=np.float64).T)
+                            _atomic_save_npz(chunk_path, t=sol_t, y_row=sol_y.T)
                             _atomic_save_npz(
                                 checkpoint_path,
                                 t=np.asarray([t_curr], dtype=np.float64),
@@ -1359,14 +1444,9 @@ def propagate(
                         import warnings
                         warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
-                if int(getattr(sol_k, "status", 0)) == 1:
+                if sol_k_status == 1:
                     stopped_early = True
                     stop_reason = "event"
-                    break
-
-                if not bool(getattr(sol_k, "success", True)):
-                    stopped_early = True
-                    stop_reason = "integration failed"
                     break
 
                 # y_curr/t_curr were already advanced to the chunk end above.
@@ -1383,9 +1463,13 @@ def propagate(
                 y=y_cat,
                 t_events=t_events,
                 y_events=y_events,
-                success=True,
-                status=(1 if stopped_early else 0),
-                message=("chunked ok" if not stopped_early else "stopped early"),
+                success=not integration_failed,
+                status=(-1 if integration_failed else (1 if stopped_early else 0)),
+                message=(
+                    integration_failure_message
+                    if integration_failed
+                    else ("chunked ok" if not stopped_early else "stopped early")
+                ),
                 nfev=np.nan,
             )
 
@@ -1404,22 +1488,21 @@ def propagate(
             except Exception:
                 pass
 
-        if stop_reason is None:
-            try:
-                if impacted:
-                    stop_reason = "impact"
-                else:
-                    idx_stop = _find_event_index(events, "stop")
-                    if (
-                        stop_file and bool(getattr(cfg, "stop_event_in_scipy", False))
-                        and idx_stop is not None and idx_stop < len(t_events)
-                        and np.asarray(t_events[idx_stop]).size > 0
-                    ):
-                        stop_reason = "stop file"
+        try:
+            if impacted:
+                stop_reason = "impact"
+            elif stop_reason is None:
+                idx_stop = _find_event_index(events, "stop")
+                if (
+                    stop_file and bool(getattr(cfg, "stop_event_in_scipy", False))
+                    and idx_stop is not None and idx_stop < len(t_events)
+                    and np.asarray(t_events[idx_stop]).size > 0
+                ):
+                    stop_reason = "stop file"
                 if stop_reason is None and any((te is not None and np.asarray(te).size > 0) for te in t_events):
                     stop_reason = "event"
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         t_stop = None
         if stop_file and bool(getattr(cfg, "stop_event_in_scipy", False)) and (not impacted):
@@ -1431,7 +1514,7 @@ def propagate(
                 except Exception:
                     pass
 
-        if checkpoint_path:
+        if checkpoint_path and (not integration_failed) and not (chunk_s is not None and checkpoint_every_chunk):
             try:
                 _atomic_save_npz(checkpoint_path, t=np.asarray(t_cat, dtype=np.float64), y_row=y_row)
             except Exception as exc:

@@ -13,6 +13,7 @@ from lunaris.validation.gravity_reference.manifest import (
 )
 
 FIELD_MANIFEST = Path("validation/gravity_reference/benchmarks/field/synthetic_degree4_oracle.json")
+TRAJECTORY_MANIFEST = Path("validation/gravity_reference/benchmarks/trajectory/grail_degree32_pyshtools_trajectory.json")
 
 
 def _payload_with_absolute_paths() -> dict:
@@ -23,6 +24,14 @@ def _payload_with_absolute_paths() -> dict:
     payload["gravity"]["coefficient_file"] = str(
         Path("validation/gravity_reference/reference_data/field/synthetic_degree4_coefficients.json").resolve()
     )
+    return payload
+
+
+def _trajectory_payload_with_absolute_paths() -> dict:
+    payload = json.loads(TRAJECTORY_MANIFEST.read_text(encoding="utf-8"))
+    repo = Path.cwd()
+    payload["reference_file"]["path"] = str((repo / payload["reference_file"]["path"]).resolve())
+    payload["gravity"]["coefficient_file"] = str((repo / payload["gravity"]["coefficient_file"]).resolve())
     return payload
 
 
@@ -93,3 +102,32 @@ def test_incomplete_trajectory_manifest_is_loadable_for_fail_closed_runner(tmp_p
     manifest = load_trajectory_manifest(path)
     assert manifest.payload["reference_class"] == "incomplete_reference"
     assert manifest.reference_path is None
+
+
+def test_frozen_trajectory_manifest_declares_frame_contract() -> None:
+    manifest = load_trajectory_manifest(TRAJECTORY_MANIFEST)
+    frames = manifest.payload["frames"]
+    assert frames["state_frame"] == "NONROTATING_FROZEN_BODY_FIXED"
+    assert frames["frozen_from_frame"] == manifest.payload["gravity"]["coefficient_frame"]
+    assert frames["freeze_epoch"] == manifest.payload["time"]["initial_epoch"]
+    assert frames["orientation_model"] == "identity_regression_fixture"
+
+
+def test_frozen_trajectory_manifest_rejects_missing_freeze_contract(tmp_path: Path) -> None:
+    payload = _trajectory_payload_with_absolute_paths()
+    payload["frames"].pop("freeze_epoch")
+    bad = tmp_path / "missing_frozen_contract.json"
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="frames.freeze_epoch"):
+        load_trajectory_manifest(bad)
+
+
+def test_frozen_trajectory_manifest_rejects_coefficient_frame_mismatch(tmp_path: Path) -> None:
+    payload = _trajectory_payload_with_absolute_paths()
+    payload["frames"]["frozen_from_frame"] = "MOON_ME"
+    bad = tmp_path / "mismatched_frozen_contract.json"
+    bad.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="frozen_from_frame"):
+        load_trajectory_manifest(bad)

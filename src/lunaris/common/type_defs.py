@@ -546,6 +546,7 @@ class PropagatorConfig:
     chunk_s: float | None = None
     checkpoint_path: str | None = None
     checkpoint_every_chunk: bool = False
+    checkpoint_mode: str = "full"
 
     # Baseline run (e.g., 2-body comparison)
     compute_2body_baseline: bool = True
@@ -580,6 +581,10 @@ class PropagatorConfig:
 
         if self.chunk_s is not None and self.chunk_s <= 0.0:
             raise ValueError(f"chunk_s must be > 0 if set, got {self.chunk_s!r}")
+
+        checkpoint_mode = str(self.checkpoint_mode).strip().lower()
+        if checkpoint_mode not in {"full", "latest", "state", "last", "chunks", "chunk"}:
+            raise ValueError(f"Unsupported checkpoint_mode: {self.checkpoint_mode!r}")
 
         if self.compute_2body_baseline and (self.baseline_rtol <= 0.0 or self.baseline_atol <= 0.0):
             raise ValueError(
