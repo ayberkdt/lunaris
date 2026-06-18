@@ -28,7 +28,9 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lunaris.validation.gravity_reference.independent_field_oracle import acceleration as independent_oracle_acceleration
+from lunaris.validation.gravity_reference.independent_field_oracle import (
+    acceleration as independent_oracle_acceleration,
+)
 
 
 # -----------------------------------------------------------------------------

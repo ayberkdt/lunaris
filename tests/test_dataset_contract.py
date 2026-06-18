@@ -7,11 +7,11 @@ import numpy as np
 import pytest
 
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
-    DatasetContract,
-    DatasetContractError,
     GRAVITY_LABEL_ENGINE_VERSION,
     REQUIRED_DERIVATIVE_CONVENTION,
     REQUIRED_SH_PHASE_CONVENTION,
+    DatasetContract,
+    DatasetContractError,
     build_contract_payload_for_generator,
     stamp_hdf5_content_hash,
 )

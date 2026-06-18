@@ -37,8 +37,8 @@ from lunaris.validation.gravity_reference.independent_field_oracle import (
     geopotential,
 )
 from lunaris.validation.gravity_reference.manifest import (
-    ManifestError,
     STATUS_INCOMPLETE_CLASSES,
+    ManifestError,
     ResolvedTrajectoryManifest,
     load_trajectory_manifest,
 )

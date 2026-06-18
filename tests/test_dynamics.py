@@ -16,8 +16,8 @@ except Exception as e:  # pragma: no cover
     pytest.skip(f"core.dynamics not importable: {e}", allow_module_level=True)
 
 try:
-    from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
     from lunaris.common.math_utils import quat_rotate_np
+    from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
     from lunaris.physics.spherical_harmonics import GravityModel
 except Exception as e:  # pragma: no cover
     pytest.skip(f"common.type_defs not importable: {e}", allow_module_level=True)
