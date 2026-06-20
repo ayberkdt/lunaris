@@ -96,8 +96,10 @@ def test_theme_primary_aliases_track_accent() -> None:
 
 def test_theme_accent_is_lunar_graphite_blue() -> None:
     # The Lunar Graphite primary accent is orbital blue, not the old ion-cyan.
-    assert THEME["accent"].lower() == "#4f8cff"
-    assert THEME["secondary"].lower() == "#22d3b6"
+    # v2 (premium) refined the orbital blue to #5790FF and split the teal
+    # secondary (#2DD4BF) from the success state color.
+    assert THEME["accent"].lower() == "#3b86ff"
+    assert THEME["secondary"].lower() == "#15d6a6"
 
 
 def test_theme_has_no_legacy_neon_or_gold() -> None:
@@ -188,7 +190,7 @@ def test_build_app_stylesheet_has_no_legacy_neon() -> None:
     assert "#35d0ff" not in qss and "#8b7cff" not in qss
     assert "53,208,255" not in qss and "139,124,255" not in qss
     # The new orbital-blue accent should be present (as hex and/or rgb triple).
-    assert "#4f8cff" in qss or "79,140,255" in qss
+    assert "#3b86ff" in qss or "59,134,255" in qss
 
 
 def test_build_app_stylesheet_reserves_gradients_for_primary_action() -> None:

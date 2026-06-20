@@ -103,6 +103,7 @@ try:
         find_best_gravity_file,
         list_st_lrps_model_dirs,
     )
+    from lunaris.ui.components.primitives import InlineNotice, Section
     from lunaris.ui.core.surrogate_artifacts import (
         is_valid_surrogate_run,
         looks_like_lunar_surrogate_run,
@@ -1254,36 +1255,17 @@ class ForceModelsPage(QtWidgets.QWidget):
     # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------
-    def _create_card(self, title: str) -> QtWidgets.QGroupBox:
+    def _create_card(self, title: str) -> Section:
         """
-        Create a force-page card whose title stays fully visible inside scroll areas.
+        Create a force-page card using the shared ``Section`` primitive.
 
-        The old negative title offset occasionally clipped the first row of
-        cards. Keeping the title inside the card margin is less flashy but much
-        more robust across different window sizes and font metrics.
+        Surface, border, radius, and title typography come from the global
+        stylesheet (``QFrame#section`` / ``QLabel#sectionTitle``) instead of
+        per-card inline QSS, so every page card stays visually consistent and
+        token-driven.
         """
 
-        gb = QtWidgets.QGroupBox(title)
-        gb.setStyleSheet(f"""
-            QGroupBox {{
-                background-color: {THEME['bg_card']};
-                border: 1px solid {THEME['border']};
-                border-radius: 10px;
-                margin-top: 18px;
-                padding-top: 10px;
-                color: {THEME['fg_main']};
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 8px;
-                left: 12px;
-                top: 0px;
-                color: {THEME['fg_main']};
-                font-weight: 700;
-            }}
-        """)
-        return gb
+        return Section(title)
 
     def _estimate_gravity_cost_level(self) -> str:
         """
@@ -1398,12 +1380,10 @@ class ForceModelsPage(QtWidgets.QWidget):
         layout.addStretch(1)
         return self
 
-    def _group_gravity_force(self) -> QtWidgets.QGroupBox:
+    def _group_gravity_force(self) -> Section:
         """Gravity force card with settings dialog button."""
         gb = self._create_card("Central Body Gravity")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(15)
+        layout = gb.content_layout
 
         # Header with toggle and settings button
         header = QtWidgets.QHBoxLayout()
@@ -1412,9 +1392,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.sw_gravity.setChecked(True)
         header.addWidget(self.sw_gravity)
 
-        lbl = QtWidgets.QLabel("Lunar Gravity Field")
-        lbl.setStyleSheet(f"font-weight: bold; color: {THEME['fg_main']};")
-        header.addWidget(lbl)
+        header.addWidget(QtWidgets.QLabel("Lunar Gravity Field"))
 
         header.addStretch()
 
@@ -1423,6 +1401,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.btn_gravity_settings.setFixedSize(32, 32)
         self.btn_gravity_settings.setIcon(get_icon("fa6s.gear", THEME["fg_main"]))
         self.btn_gravity_settings.setToolTip("Configure Gravity Model")
+        self.btn_gravity_settings.setAccessibleName("Configure gravity model")
         self.btn_gravity_settings.clicked.connect(self._on_gravity_settings)
         header.addWidget(self.btn_gravity_settings)
 
@@ -1430,9 +1409,14 @@ class ForceModelsPage(QtWidgets.QWidget):
 
         # Status indicator
         self.lbl_gravity_status = QtWidgets.QLabel("Default model loaded")
-        self.lbl_gravity_status.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
+        self.lbl_gravity_status.setObjectName("statusLabel")
         self.lbl_gravity_status.setWordWrap(True)
         layout.addWidget(self.lbl_gravity_status)
+
+        # Push the cost summary to the bottom so this sparser card fills its
+        # (stretched) height intentionally and aligns with the denser
+        # third-body card beside it, rather than leaving a dead gap below.
+        layout.addStretch(1)
 
         # Cost indicator
         cost_row = QtWidgets.QHBoxLayout()
@@ -1452,17 +1436,10 @@ class ForceModelsPage(QtWidgets.QWidget):
 
         return gb
 
-    def _group_thirdbody_force(self) -> QtWidgets.QGroupBox:
+    def _group_thirdbody_force(self) -> Section:
         """Third-body perturbations card."""
         gb = self._create_card("Third-Body Perturbations")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(15)
-
-        # Header
-        header = QtWidgets.QLabel("Solar System Perturbers")
-        header.setStyleSheet(f"font-weight: bold; color: {THEME['fg_main']}; margin-bottom: 10px;")
-        layout.addWidget(header)
+        layout = gb.content_layout
 
         # Sun perturbation
         sun_row = QtWidgets.QHBoxLayout()
@@ -1470,9 +1447,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.sw_sun.setChecked(True)
         sun_row.addWidget(self.sw_sun)
 
-        sun_lbl = QtWidgets.QLabel("Sun (Point Mass)")
-        sun_lbl.setStyleSheet(f"color: {THEME['fg_main']};")
-        sun_row.addWidget(sun_lbl)
+        sun_row.addWidget(QtWidgets.QLabel("Sun (Point Mass)"))
         sun_row.addStretch()
 
         self.ind_sun_cost = CostIndicator("medium")
@@ -1485,9 +1460,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.sw_earth.setChecked(True)
         earth_row.addWidget(self.sw_earth)
 
-        earth_lbl = QtWidgets.QLabel("Earth (Point Mass)")
-        earth_lbl.setStyleSheet(f"color: {THEME['fg_main']};")
-        earth_row.addWidget(earth_lbl)
+        earth_row.addWidget(QtWidgets.QLabel("Earth (Point Mass)"))
         earth_row.addStretch()
 
         self.ind_earth_cost = CostIndicator("medium")
@@ -1500,22 +1473,18 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.sw_earth_j2.setChecked(False)
         earth_j2_row.addWidget(self.sw_earth_j2)
 
-        earth_j2_lbl = QtWidgets.QLabel("Earth J2 (Oblateness)")
-        earth_j2_lbl.setStyleSheet(f"color: {THEME['fg_main']};")
-        earth_j2_row.addWidget(earth_j2_lbl)
+        earth_j2_row.addWidget(QtWidgets.QLabel("Earth J2 (Oblateness)"))
         earth_j2_row.addStretch()
 
         self.ind_earth_j2_cost = CostIndicator("low")
         earth_j2_row.addWidget(self.ind_earth_j2_cost)
         layout.addLayout(earth_j2_row)
 
-        # Warning label: Earth J2 requires Earth third-body
-        self.lbl_warn_earth_j2 = QtWidgets.QLabel("Warning: Earth J2 requires Earth third-body to be enabled.")
-        self.lbl_warn_earth_j2.setStyleSheet(
-            f"color: {THEME['warning']}; font-size: 9pt; font-style: italic;"
+        # Warning: Earth J2 requires Earth third-body
+        self.lbl_warn_earth_j2 = InlineNotice(
+            "Earth J2 requires the Earth third-body perturbation to be enabled.",
+            "warning",
         )
-        self.lbl_warn_earth_j2.setWordWrap(True)
-        self.lbl_warn_earth_j2.setMinimumHeight(22)
         self.lbl_warn_earth_j2.setVisible(False)
         layout.addWidget(self.lbl_warn_earth_j2)
 
@@ -1526,70 +1495,71 @@ class ForceModelsPage(QtWidgets.QWidget):
 
         return gb
 
-    def _group_nongrav_force(self) -> QtWidgets.QGroupBox:
+    def _group_nongrav_force(self) -> Section:
         """Non-gravitational forces card."""
         gb = self._create_card("Non-Gravitational Forces")
-        layout = QtWidgets.QGridLayout(gb)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setHorizontalSpacing(20)
-        layout.setVerticalSpacing(15)
+        grid = QtWidgets.QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(20)
+        grid.setVerticalSpacing(15)
+        # Let the label column absorb the slack so the cost indicator and the
+        # per-row settings button stay grouped at the right edge instead of the
+        # four columns spreading apart (which left the lone gear button adrift).
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 0)
+        grid.setColumnStretch(3, 0)
 
         # SRP
         self.sw_srp = ToggleSwitch()
         self.sw_srp.setChecked(False)
-        layout.addWidget(self.sw_srp, 0, 0)
+        grid.addWidget(self.sw_srp, 0, 0)
 
-        lbl_srp = QtWidgets.QLabel("Solar Radiation Pressure")
-        lbl_srp.setStyleSheet(f"color: {THEME['fg_main']};")
-        layout.addWidget(lbl_srp, 0, 1)
+        grid.addWidget(QtWidgets.QLabel("Solar Radiation Pressure"), 0, 1)
 
         self.ind_srp_cost = CostIndicator("medium")
-        layout.addWidget(self.ind_srp_cost, 0, 2)
+        grid.addWidget(self.ind_srp_cost, 0, 2)
 
         # Albedo
         self.sw_albedo = ToggleSwitch()
         self.sw_albedo.setChecked(False)
-        layout.addWidget(self.sw_albedo, 1, 0)
+        grid.addWidget(self.sw_albedo, 1, 0)
 
-        lbl_albedo = QtWidgets.QLabel("Lunar Albedo")
-        lbl_albedo.setStyleSheet(f"color: {THEME['fg_main']};")
-        layout.addWidget(lbl_albedo, 1, 1)
+        grid.addWidget(QtWidgets.QLabel("Lunar Albedo"), 1, 1)
 
         # Albedo uses the same lat-lon facet machinery as thermal IR (default
         # 18x36 facets), so its per-step cost sits alongside thermal, not above it.
         self.ind_albedo_cost = CostIndicator("medium")
-        layout.addWidget(self.ind_albedo_cost, 1, 2)
+        grid.addWidget(self.ind_albedo_cost, 1, 2)
 
         # Albedo settings button
         self.btn_albedo_settings = QtWidgets.QPushButton()
         self.btn_albedo_settings.setFixedSize(28, 28)
         self.btn_albedo_settings.setIcon(get_icon("fa6s.gear", THEME["fg_main"]))
         self.btn_albedo_settings.setToolTip("Configure Albedo Model")
+        self.btn_albedo_settings.setAccessibleName("Configure albedo model")
         self.btn_albedo_settings.clicked.connect(self._on_albedo_settings)
-        layout.addWidget(self.btn_albedo_settings, 1, 3)
+        grid.addWidget(self.btn_albedo_settings, 1, 3)
 
         # Thermal
         self.sw_thermal = ToggleSwitch()
         self.sw_thermal.setChecked(False)
-        layout.addWidget(self.sw_thermal, 2, 0)
+        grid.addWidget(self.sw_thermal, 2, 0)
 
-        lbl_thermal = QtWidgets.QLabel("Thermal Re-radiation")
-        lbl_thermal.setStyleSheet(f"color: {THEME['fg_main']};")
-        layout.addWidget(lbl_thermal, 2, 1)
+        grid.addWidget(QtWidgets.QLabel("Thermal Re-radiation"), 2, 1)
 
         self.ind_thermal_cost = CostIndicator("medium")
-        layout.addWidget(self.ind_thermal_cost, 2, 2)
+        grid.addWidget(self.ind_thermal_cost, 2, 2)
 
-        # Warning label: SRP/Albedo/Thermal require Sun position
-        self.lbl_warn_srp_sun = QtWidgets.QLabel(
-            "Warning: SRP/Albedo/Thermal require Sun position (enable Sun perturbation)."
+        gb.content_layout.addLayout(grid)
+
+        # Warning: SRP/Albedo/Thermal require Sun position
+        self.lbl_warn_srp_sun = InlineNotice(
+            "SRP, albedo, and thermal re-radiation require the Sun perturbation to be enabled.",
+            "warning",
         )
-        self.lbl_warn_srp_sun.setStyleSheet(
-            f"color: {THEME['warning']}; font-size: 9pt; font-style: italic;"
-        )
-        self.lbl_warn_srp_sun.setWordWrap(True)
         self.lbl_warn_srp_sun.setVisible(False)
-        layout.addWidget(self.lbl_warn_srp_sun, 3, 0, 1, 4)
+        gb.content_layout.addWidget(self.lbl_warn_srp_sun)
 
         # Connect SRP/Albedo to require Sun perturbation
         self.sw_srp.toggled.connect(self._sync_srp_requirement)
@@ -1599,17 +1569,10 @@ class ForceModelsPage(QtWidgets.QWidget):
 
         return gb
 
-    def _group_tides_force(self) -> QtWidgets.QGroupBox:
+    def _group_tides_force(self) -> Section:
         """Solid tides force card."""
         gb = self._create_card("Solid Body Tides")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(15)
-
-        # Header
-        header = QtWidgets.QLabel("Lunar Solid Tides")
-        header.setStyleSheet(f"font-weight: bold; color: {THEME['fg_main']}; margin-bottom: 10px;")
-        layout.addWidget(header)
+        layout = gb.content_layout
 
         # k2 Love number
         k2_row = QtWidgets.QHBoxLayout()
@@ -1617,9 +1580,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.sw_tides_k2.setChecked(True)
         k2_row.addWidget(self.sw_tides_k2)
 
-        k2_lbl = QtWidgets.QLabel("k2 Love Number (Degree 2)")
-        k2_lbl.setStyleSheet(f"color: {THEME['fg_main']};")
-        k2_row.addWidget(k2_lbl)
+        k2_row.addWidget(QtWidgets.QLabel("k2 Love Number (Degree 2)"))
         k2_row.addStretch()
 
         self.ind_tides_k2_cost = CostIndicator("low")
@@ -1632,9 +1593,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.sw_tides_k3.setChecked(False)
         k3_row.addWidget(self.sw_tides_k3)
 
-        k3_lbl = QtWidgets.QLabel("k3 Love Number (Degree 3)")
-        k3_lbl.setStyleSheet(f"color: {THEME['fg_main']};")
-        k3_row.addWidget(k3_lbl)
+        k3_row.addWidget(QtWidgets.QLabel("k3 Love Number (Degree 3)"))
         k3_row.addStretch()
 
         self.ind_tides_k3_cost = CostIndicator("low")
@@ -1648,24 +1607,16 @@ class ForceModelsPage(QtWidgets.QWidget):
 
         # Info note
         note = QtWidgets.QLabel("Note: Love numbers represent the Moon's elastic response to tidal forces. K3 implies K2.")
-        note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt; font-style: italic;")
+        note.setObjectName("fieldHint")
         note.setWordWrap(True)
-        note.setMinimumHeight(36)
         layout.addWidget(note)
 
         return gb
 
-    def _group_relativity_force(self) -> QtWidgets.QGroupBox:
+    def _group_relativity_force(self) -> Section:
         """General Relativity force card."""
         gb = self._create_card("General Relativity")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(15)
-
-        # Header
-        header = QtWidgets.QLabel("Post-Newtonian Corrections")
-        header.setStyleSheet(f"font-weight: bold; color: {THEME['fg_main']}; margin-bottom: 10px;")
-        layout.addWidget(header)
+        layout = gb.content_layout
 
         # 1PN correction
         pn_row = QtWidgets.QHBoxLayout()
@@ -1673,9 +1624,7 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.sw_relativity_1pn.setChecked(False)
         pn_row.addWidget(self.sw_relativity_1pn)
 
-        pn_lbl = QtWidgets.QLabel("1PN Force (Post-Newtonian)")
-        pn_lbl.setStyleSheet(f"color: {THEME['fg_main']};")
-        pn_row.addWidget(pn_lbl)
+        pn_row.addWidget(QtWidgets.QLabel("1PN Force (Post-Newtonian)"))
         pn_row.addStretch()
 
         self.ind_relativity_cost = CostIndicator("low")
@@ -1684,9 +1633,8 @@ class ForceModelsPage(QtWidgets.QWidget):
 
         # Info note
         note = QtWidgets.QLabel("Note: First-order post-Newtonian correction for high-precision lunar orbits.")
-        note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt; font-style: italic;")
+        note.setObjectName("fieldHint")
         note.setWordWrap(True)
-        note.setMinimumHeight(36)
         layout.addWidget(note)
 
         return gb

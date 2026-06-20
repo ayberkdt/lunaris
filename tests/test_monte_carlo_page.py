@@ -95,3 +95,33 @@ def test_stale_identity_not_present():
     if page_path.exists():
         content = page_path.read_text(encoding="utf-8")
         assert "LUNAR_SIMULATION" not in content, "Stale LUNAR_SIMULATION identity found in monte_carlo_page.py"
+
+
+def test_status_badge_and_validation_kinds(mc_page):
+    """Migrated dynamic styling drives status via the global ``kind`` property."""
+    # Validation maps to inline-notice kinds.
+    mc_page._update_validation()
+    assert mc_page.lbl_validation.objectName() == "inlineNoticeLabel"
+    assert mc_page.lbl_validation.property("kind") in {"ok", "warn", "error"}
+
+    # Badge is a statusBadge whose semantic kind changes with run state.
+    mc_page._set_running(True)
+    assert mc_page.badge_mc.property("kind") == "running"
+
+    mc_page.update_progress_payload({
+        "stage": "propagating", "percent": 42.0,
+        "total_samples": 500, "done_samples": 210, "backend": "torch",
+    })
+    assert "Propagating" in mc_page.lbl_progress_summary.text()
+    assert "210 / 500" in mc_page.lbl_progress_meta.text()
+
+    mc_page.on_run_finished(0, "x.h5", None, {"n_samples": 500})
+    assert mc_page.badge_mc.property("kind") == "completed"
+
+    mc_page.on_run_finished(1, "", None, None)
+    assert mc_page.badge_mc.property("kind") == "failed"
+
+
+def test_st_lrps_panel_uses_inline_notice_surface(mc_page):
+    assert mc_page.st_lrps_config_frame.objectName() == "inlineNotice"
+    assert mc_page.st_lrps_config_frame.property("kind") == "warning"

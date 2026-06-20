@@ -195,7 +195,7 @@ class MCAnalysisWorker(QtCore.QThread):
 
             if self._is_cancelled():
                 return
-            self.analysis_progress.emit("Loading Monte Carlo archive...")
+            self.analysis_progress.emit("Loading ensemble archive...")
             result = load_mc_result(self.result_path)
 
             if self._is_cancelled():
@@ -301,7 +301,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         layout.setSpacing(14)
 
         intro = _label(
-            "Load a completed Monte Carlo result archive to compute ensemble "
+            "Load a completed ensemble result archive to compute ensemble "
             "statistics, inspect uncertainty growth, review impact risk, and "
             "export a multi-plot PDF report.",
             muted=True,
@@ -314,7 +314,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         path_row.setSpacing(12)
         path_row.addWidget(_label("Result Archive:"))
         self.ent_result_path = QtWidgets.QLineEdit()
-        self.ent_result_path.setPlaceholderText("Select a Monte Carlo .npz or .h5 archive")
+        self.ent_result_path.setPlaceholderText("Select an ensemble .npz or .h5 archive")
         self.ent_result_path.setMinimumHeight(40)
         self.ent_result_path.setStyleSheet(
             f"""
@@ -622,14 +622,14 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
     # ------------------------------------------------------------------
 
     def _browse_result_file(self) -> None:
-        """Open a file dialog for selecting a saved Monte Carlo archive."""
+        """Open a file dialog for selecting a saved ensemble archive."""
 
         current = self.ent_result_path.text().strip() or str(Path.cwd())
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self,
-            "Open Monte Carlo Result Archive",
+            "Open Ensemble Result Archive",
             current,
-            "Monte Carlo Archives (*.npz *.h5 *.hdf5);;All Files (*.*)",
+            "Ensemble Archives (*.npz *.h5 *.hdf5);;All Files (*.*)",
         )
         if path:
             self.ent_result_path.setText(path)
@@ -642,7 +642,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(
                 self,
                 "No Archive Selected",
-                "Select or analyze a Monte Carlo archive first.",
+                "Select or analyze an ensemble archive first.",
             )
             return
 
@@ -671,7 +671,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(
                 self,
                 "Result Archive Required",
-                "Choose a Monte Carlo .npz or .h5 archive to analyze.",
+                "Choose an ensemble .npz or .h5 archive to analyze.",
             )
             return
 
@@ -680,7 +680,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(
                 self,
                 "Archive Not Found",
-                f"The selected Monte Carlo archive does not exist:\n{resolved}",
+                f"The selected ensemble archive does not exist:\n{resolved}",
             )
             return
 
@@ -693,7 +693,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
             return
 
         self._set_busy(True)
-        self._set_status("ANALYZING", "Initializing Monte Carlo analysis...", accent=THEME["warning"])
+        self._set_status("ANALYZING", "Initializing ensemble analysis...", accent=THEME["warning"])
         self.btn_export_report.setEnabled(False)
         self.btn_refresh_plot.setEnabled(False)
         self._set_plot_message("Computing analysis bundle...", "Statistical post-processing is running in the background.")
@@ -758,7 +758,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.information(
                 self,
                 "No Analysis Available",
-                "Analyze a Monte Carlo archive before exporting a PDF report.",
+                "Analyze an ensemble archive before exporting a PDF report.",
             )
             return
 
@@ -766,7 +766,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         default_pdf = src.with_name(src.stem + "_analysis_report.pdf")
         out_path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self,
-            "Export Monte Carlo PDF Report",
+            "Export Ensemble PDF Report",
             str(default_pdf),
             "PDF Files (*.pdf)",
         )
@@ -790,7 +790,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(
                 self,
                 "PDF Export Failed",
-                f"Could not export the Monte Carlo report:\n\n{exc}",
+                f"Could not export the ensemble report:\n\n{exc}",
             )
 
     # ------------------------------------------------------------------

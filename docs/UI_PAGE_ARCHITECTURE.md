@@ -29,7 +29,7 @@ persistence. Pages own scientific state and page-local interactions.
 4. Results & Export
 5. Live Telemetry
 6. Data & Files
-7. Monte Carlo
+7. Batch Propagation
 
 ### ST-LRPS Studio
 
@@ -72,11 +72,13 @@ Separate destination/settings from generated artifacts. Empty output folders use
 Plots remain the visual priority. Controls use a compact toolbar and metrics use
 one comparison row. Plot internals are not wrapped in nested cards.
 
-### Monte Carlo
+### Batch Propagation
 
-Keep Setup, Run, and Results tabs. Backend selection and compatibility messaging
-remain intact. Run status uses badges/notices; result tables and metrics share
-the global comparison components.
+Keep Setup, Run, and Results tabs. Sampling is explicit: random is the Monte
+Carlo option, while LHS/Sobol are validation-oriented batch designs. Backend
+selection and compatibility messaging remain intact. Run status uses
+badges/notices; result tables and metrics share the global comparison
+components.
 
 ### Data
 

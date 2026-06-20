@@ -444,8 +444,8 @@ def build_mc_command(
                 command.extend(["--surrogate-gravity-model-dir", surrogate_dir])
             elif log_warning is not None:
                 log_warning(
-                    "Monte Carlo surrogate gravity mode is selected, but no surrogate run "
-                    "directory was provided. Set one in the MC page or Force Models page."
+                    "Batch surrogate gravity mode is selected, but no surrogate run "
+                    "directory was provided. Set one in the Batch page or Force Models page."
                 )
         else:
             degree = getattr(gravity_cfg, "degree", None)
@@ -522,6 +522,7 @@ def build_mc_command(
     command.extend(["--atol", f"{float(atol_value):g}"])
 
     command.extend(["--n-samples",             str(mc_data.get("n_samples",  500))])
+    command.extend(["--sampling-method",       str(mc_data.get("sampling_method", "random"))])
     command.extend(["--seed",                  str(mc_data.get("seed",        42))])
     command.extend(["--sigma-r-m",             str(mc_data.get("sigma_r_m", 500.0))])
     command.extend(["--sigma-v-m-s",           str(mc_data.get("sigma_v_m_s", 0.5))])

@@ -43,8 +43,9 @@ def test_log_panel_collapse_reduces_splitter_footprint() -> None:
     win.show()
     app.processEvents()
 
-    win._toggle_log_collapsed()
-    app.processEvents()
+    if not win.log_panel.is_collapsed:
+        win._toggle_log_collapsed()
+        app.processEvents()
 
     collapsed_sizes = win.main_splitter.sizes()
     assert collapsed_sizes[1] <= 60

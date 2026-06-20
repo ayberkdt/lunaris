@@ -8,8 +8,8 @@
 
 Lunaris is a Python framework for lunar-orbit propagation and gravity modeling. It
 bundles spherical-harmonic lunar gravity, configurable physical force models, orbit
-propagation, Monte Carlo analysis, validation harnesses, visualization tools, and a
-PySide6 desktop UI.
+propagation, batch/ensemble uncertainty analysis, validation harnesses,
+visualization tools, and a PySide6 desktop UI.
 
 It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) — a
 neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a
@@ -27,7 +27,7 @@ This README is a landing page; the canonical detail lives in `docs/`.
 
 | Document | Contents |
 |----------|----------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, **force-model / perturbation flags**, Monte Carlo internals, ST-LRPS surrogate |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, **force-model / perturbation flags**, batch/ensemble propagation internals, ST-LRPS surrogate |
 | [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD split policies, runtime frame safety, paper-safe benchmarks, validation + ablation suites |
 | [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
 | [docs/REPRODUCIBLE_BENCHMARKS.md](docs/REPRODUCIBLE_BENCHMARKS.md) | Config-driven benchmark runs, provenance manifests, validation reports, and CI smoke mode |
@@ -104,6 +104,7 @@ python -c "import lunaris; print(lunaris.__version__)"
 lunaris-train --help
 lunaris-eval --help
 lunaris-benchmark --help
+lunaris-batch --help
 lunaris-mc --help
 lunaris-perturbation-budget --help
 python -m lunaris.surrogate.st_lrps.training.cli --help
@@ -125,8 +126,8 @@ imports from a layer above it) plus dependency-light support packages. See
 src/lunaris/
   common/          [layer 1] shared constants, config dataclasses, math/time helpers
   physics/         [layer 2] Numba force-model kernels, ephemeris (SPICE), gravity adapters
-  core/            [layer 3] config (SimConfig SSOT), dynamics RHS, propagator, events, Monte Carlo
-  analysis/        [layer 4] post-processing, reports, Monte Carlo analysis
+  core/            [layer 3] config (SimConfig SSOT), dynamics RHS, propagator, events, batch ensembles
+  analysis/        [layer 4] post-processing, reports, ensemble uncertainty analysis
   visualization/   [layer 4] standalone visualization tools
   ui/              [layer 4] Lunar Orbit Simulator desktop UI (PySide6)
   loaders/         (support) gravity / topography / ephemeris / data loading
@@ -143,7 +144,8 @@ Console entry points (installed via `pip install -e .`):
 
 ```text
 lunaris           single-run propagation CLI
-lunaris-mc        Monte Carlo runner
+lunaris-batch     batch/ensemble propagation runner
+lunaris-mc        backward-compatible alias for the batch runner
 lunaris-launcher  welcome hub (picks a workspace; optional offline 3D Moon preview)
 lunaris-ui        mission desktop UI (Lunaris Mission Studio)
 lunaris-studio    ST-LRPS Studio UI
@@ -198,23 +200,26 @@ contracts, validation hygiene, and reproducible HPC sweeps.
 optimizer / LR-schedule / GradNorm / RNG state (not just weights). Full semantics
 are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Propagation, Monte Carlo, and analysis
+## Propagation, Batch Ensembles, And Analysis
 
-Single-run propagation is driven by `lunaris`; Monte Carlo workflows by
-`lunaris-mc` (both data-dependent). Monte Carlo backends are explicit (`cpu_sh`
-truth reference, `numba_cuda_sh`, `torch_cuda_sh`, `torch_cpu_sh`,
-`gpu_st_lrps_potential`, `gpu_st_lrps_direct`); selection is resolved centrally by
-`lunaris.core.mc_backend_policy`, and the requested vs. effective backend, device,
-integrator, and any fallback reason are recorded in `MCRunResult.diagnostics`
-rather than applied silently. The perturbation budget tool quantifies
-acceleration contributions and force-model uncertainty:
+Single-run propagation is driven by `lunaris`; ensemble propagation by
+`lunaris-batch` (`lunaris-mc` remains a compatibility alias). The ensemble
+sampling design is explicit: `random` is the classical Monte Carlo option, while
+`lhs`, `sobol`, and `sobol_scrambled` are space-filling designs better suited to
+validation and benchmark coverage. Batch backends are explicit (`cpu_sh` truth
+reference, `numba_cuda_sh`, `torch_cuda_sh`, `torch_cpu_sh`,
+`gpu_st_lrps_potential`, `gpu_st_lrps_direct`); selection is resolved centrally
+by `lunaris.core.mc_backend_policy`, and the requested vs. effective backend,
+device, integrator, sampling method, and any fallback reason are recorded in
+`MCRunResult.diagnostics` rather than applied silently. The perturbation budget
+tool quantifies acceleration contributions and force-model uncertainty:
 
 ```bash
 lunaris-perturbation-budget --altitudes-km 50,100,300,1000 --sh-degrees 20,60,200 \
   --gravity-model path/to/lunar_gravity_model.tab --out-dir outputs/perturbation_budget/default
 ```
 
-Post-processing, reporting, and Monte Carlo statistics/plotting live under
+Post-processing, reporting, and ensemble statistics/plotting live under
 `lunaris.analysis.*`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Validation and benchmarks

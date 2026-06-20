@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any
 
 from lunaris.common.paths import project_root_from_file
+from lunaris.ui_foundation import DESIGN_TOKENS
 
 from .qt_common import *
 
@@ -227,8 +228,8 @@ def _make_page_header(title: str, subtitle: str, eyebrow: str = "ST-LRPS Studio"
     frame = QFrame()
     frame.setObjectName("studioPageHeader")
     lo = QVBoxLayout(frame)
-    lo.setContentsMargins(0, 0, 0, 14)
-    lo.setSpacing(4)
+    lo.setContentsMargins(0, 0, 0, 10)
+    lo.setSpacing(3)
 
     eyebrow_lbl = QLabel(eyebrow.upper())
     eyebrow_lbl.setObjectName("pageEyebrow")
@@ -778,7 +779,7 @@ class LiveLossPlot(QWidget):
             "Best metric selects ckpt_best.pt. Hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
         )
         self._help_label.setWordWrap(True)
-        self._help_label.setStyleSheet("color: #7f8ab0; font-size: 10px;")
+        self._help_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
         self._help_label.setToolTip(
             "Best metric is the scalar score used to select ckpt_best.pt. "
             "For hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
@@ -788,7 +789,7 @@ class LiveLossPlot(QWidget):
         # status label (bottom-aligned)
         self._lbl_status = QLabel("Waiting for training…")
         self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._lbl_status.setStyleSheet("color: #5a647a; font-size: 11px;")
+        self._lbl_status.setStyleSheet(f"color: {THEME['fg_disabled']}; font-size: 11px;")
 
         # ----------------------------
         # Plot body
@@ -908,7 +909,7 @@ class LiveLossPlot(QWidget):
             "Best metric selects ckpt_best.pt. Hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
         )
         self._help_label.setWordWrap(True)
-        self._help_label.setStyleSheet("color: #7f8ab0; font-size: 10px;")
+        self._help_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
         self._help_label.setToolTip(
             "Best metric is the scalar score used to select ckpt_best.pt. "
             "For hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
@@ -918,7 +919,7 @@ class LiveLossPlot(QWidget):
         # status label (bottom-aligned)
         self._lbl_status = QLabel("Waiting for training…")
         self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._lbl_status.setStyleSheet("color: #5a647a; font-size: 11px;")
+        self._lbl_status.setStyleSheet(f"color: {THEME['fg_disabled']}; font-size: 11px;")
 
         # ----------------------------
         # Plot body
@@ -1196,7 +1197,7 @@ class LiveLossPlot(QWidget):
                     plot.setMinimumHeight(140)
 
     def _metric_label(self, name: str, value: str = "—") -> QLabel:
-        lbl = QLabel(f"<span style='color:#7480a8;font-size:10px'>{name}</span><br>"
+        lbl = QLabel(f"<span style='color:{THEME['fg_muted']};font-size:10px'>{name}</span><br>"
                      f"<span style='font-family:Consolas,monospace;font-size:11px'>{value}</span>")
         lbl.setProperty("metric", True)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -1573,10 +1574,10 @@ class LiveLossPlot(QWidget):
         if not plot:
             return
         if has_data:
-            plot.setTitle(title, color="#dbe4ff", size="10pt")
+            plot.setTitle(title, color=THEME["fg_soft"], size="10pt")
         else:
             message = "Waiting for history/log data..." if not self._epochs else "No data for this metric yet."
-            plot.setTitle(message, color="#7f8ab0", size="10pt")
+            plot.setTitle(message, color=THEME["fg_muted"], size="10pt")
 
     def _range_for_values(
         self,
@@ -1740,7 +1741,7 @@ class LiveLossPlot(QWidget):
         self._latest_val_ref = latest_val if latest_val is not None else self._latest_val_ref
         def _chip(name: str, value: str) -> str:
             return (
-                f"<span style='color:#7480a8;font-size:10px'>{name}</span><br>"
+                f"<span style='color:{THEME['fg_muted']};font-size:10px'>{name}</span><br>"
                 f"<span style='font-family:Consolas,monospace;font-size:11px'>{value}</span>"
             )
 
@@ -1778,14 +1779,14 @@ class LiveLossPlot(QWidget):
             self._plot_widget.setLabel(
                 "left",
                 "Loss (log)" if checked else "Loss",
-                color="#aeb8d8",
+                color=THEME["fg_soft"],
                 size="10pt",
             )
             if getattr(self, "_direction_plot", None) is not None:
                 self._direction_plot.setLabel(
                     "left",
                     "Loss (log)" if checked else "Loss",
-                    color="#aeb8d8",
+                    color=THEME["fg_soft"],
                     size="10pt",
                 )
             self._update_plot()
@@ -1895,7 +1896,7 @@ class ImageGallery(QWidget):
         super().__init__(parent)
         self._header = QLabel("Result Plots")
         self._header.setStyleSheet(
-            "font-weight: 800; color: #e8ecf8; font-size: 13px; padding: 2px 2px;"
+            f"font-weight: 800; color: {THEME['fg_main']}; font-size: 13px; padding: 2px 2px;"
         )
         self._tabs = QTabWidget()
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
@@ -1910,10 +1911,10 @@ class ImageGallery(QWidget):
         )
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._placeholder.setStyleSheet(
-            "QLabel { color: #7f91ac; padding: 36px; font-size: 12px;"
-            " background: rgba(7, 11, 20, 0.45);"
-            " border: 1px dashed rgba(185, 194, 221, 0.16);"
-            " border-radius: 12px; }"
+            f"QLabel {{ color: {THEME['fg_muted']}; padding: 36px; font-size: 12px;"
+            f" background: {with_alpha(THEME['bg_log'], 0.45)};"
+            f" border: 1px dashed {with_alpha(THEME['border_strong'], 0.16)};"
+            f" border-radius: {DESIGN_TOKENS.radii.shell}px; }}"
         )
         lo = QVBoxLayout()
         lo.setContentsMargins(0, 8, 0, 0)
@@ -2039,7 +2040,7 @@ class ProcessPane(QWidget):
         self._auto_scroll.setChecked(True)
         self._auto_scroll.setToolTip("When enabled, scrolls to the bottom as new lines arrive.")
         self._auto_scroll.setStyleSheet(
-            "QCheckBox { font-size: 11px; color: #7480a8; }"
+            f"QCheckBox {{ font-size: 11px; color: {THEME['fg_muted']}; }}"
         )
 
         self.btn_start = QPushButton("Start")
@@ -2066,14 +2067,14 @@ class ProcessPane(QWidget):
         btn_row.addWidget(self.btn_clear)
 
         self.status.setStyleSheet(
-            "QLabel { color: #9aa7c7; font-size: 12px; font-weight: 600; padding: 2px 0; }"
+            f"QLabel {{ color: {THEME['fg_soft']}; font-size: 12px; font-weight: 600; padding: 2px 0; }}"
         )
 
         _log_sep = QFrame()
         _log_sep.setFrameShape(QFrame.Shape.HLine)
         _log_sep.setFixedHeight(1)
         _log_sep.setStyleSheet(
-            "background: rgba(185, 194, 221, 0.10); border: none; margin: 2px 0;"
+            f"background: {with_alpha(THEME['border_strong'], 0.10)}; border: none; margin: 2px 0;"
         )
 
         layout = QVBoxLayout()

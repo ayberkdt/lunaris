@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """
-mc_runner.py — CLI entry point for Monte Carlo ensemble propagation.
+mc_runner.py — CLI entry point for batch/Monte Carlo ensemble propagation.
 
 This script mirrors main.py's orbit/physics/timeline argument interface and
-adds Monte Carlo-specific flags.  It is invoked by the GUI as a subprocess
+adds batch uncertainty-propagation flags.  It is invoked by the GUI as a subprocess
 so that progress can be streamed line-by-line and the main application stays
 responsive.
 
@@ -46,6 +46,7 @@ from lunaris.cli.common_args import (  # noqa: E402
 )
 from lunaris.common.constants import DEG2RAD, MU_MOON, R_MOON  # noqa: E402
 from lunaris.common.montecarlo_defs import (  # noqa: E402
+    BATCH_SAMPLING_METHODS,
     MCRunResult,
     MonteCarloConfig,
     SpacecraftUncertainty,
@@ -60,7 +61,7 @@ from lunaris.core.config import load_default_config, replace_sim_config  # noqa:
 def _build_parser() -> argparse.ArgumentParser:
     """Return the combined sim + MC argument parser."""
     p = argparse.ArgumentParser(
-        description="ST_LRPS Monte Carlo Runner",
+        description="Lunaris batch propagation / Monte Carlo runner",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -136,10 +137,20 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--rtol",             type=float)
     g.add_argument("--atol",             type=float)
 
-    # ---- Monte Carlo --------------------------------------------------------
-    g = p.add_argument_group("Monte Carlo")
+    # ---- Batch / Monte Carlo ------------------------------------------------
+    g = p.add_argument_group("Batch / Monte Carlo")
     g.add_argument("--n-samples",             type=int,   default=500,
-                   help="Number of MC trajectories (>= 2)")
+                   help="Number of ensemble trajectories (>= 2)")
+    g.add_argument(
+        "--sampling-method",
+        choices=BATCH_SAMPLING_METHODS,
+        default="random",
+        help=(
+            "Ensemble sampling design. 'random' is the classical Monte Carlo "
+            "option; 'lhs' and Sobol variants are space-filling designs for "
+            "validation and benchmark coverage."
+        ),
+    )
     g.add_argument("--seed",                  type=int,   default=42,
                    help="RNG seed for reproducibility")
     g.add_argument("--sigma-r-m",             type=float, default=500.0,
@@ -160,7 +171,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ],
         default="auto",
         help=(
-            "Explicit Monte Carlo backend. 'auto' preserves use-gpu + gravity-mode "
+            "Explicit batch propagation backend. 'auto' preserves use-gpu + gravity-mode "
             "routing. 'numba_cuda_sh' (alias 'gpu_sh') is the degree<=24 Numba CUDA "
             "screening kernel; 'torch_cuda_sh' is the high-degree PyTorch CUDA "
             "classic-SH path (gravity-only). Requested SH degree is never clipped."
@@ -188,7 +199,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--mc-gravity-mode",
         choices=["follow_mission", "classic_sh", "st_lrps"],
         default="follow_mission",
-        help="Whether Monte Carlo follows the mission gravity setup or forces classical/ST-LRPS gravity.",
+        help="Whether batch propagation follows the mission gravity setup or forces classical/ST-LRPS gravity.",
     )
     g.add_argument("--mc-dt-s",               type=float, default=60.0,
                    help="Fixed RK4 step size [s]")
@@ -302,6 +313,8 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
 
     return {
         "n_samples":        N,
+        "sampling_method":  str(getattr(mc_cfg, "sampling_method", "random")),
+        "sampling_note":    str(diagnostics.get("sampling_note", "") or ""),
         "n_valid_samples":  n_valid,
         "n_impacts":        n_hit,
         "p_impact":         p_imp,
@@ -433,6 +446,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sigma_cr      = float(args.sigma_cr),
                 sigma_area_m2 = float(args.sigma_area_m2),
             ),
+            sampling_method       = str(args.sampling_method),
             use_gpu               = bool(args.use_gpu),
             mc_backend            = str(args.mc_backend),
             gpu_device_id         = int(args.gpu_device_id),

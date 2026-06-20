@@ -32,26 +32,27 @@ third-party widget that cannot be styled through a property or palette.
 
 | Token | Value | Role |
 | --- | --- | --- |
-| `bg_space` | `#070B11` | application canvas |
-| `bg_shell` | `#0C121B` | top bar, navigation, console strip |
-| `bg_card` | `#121A25` | sections and primary surfaces |
-| `bg_card_alt` | `#192433` | elevated surfaces |
-| `bg_inset` | `#0D151F` | read-only and disabled surfaces |
-| `bg_entry` | `#0A121C` | input controls |
-| `bg_log` | `#05080D` | console canvas |
-| `fg_main` | `#F3F6FB` | primary text |
-| `fg_soft` | `#C5D0DE` | secondary text |
-| `fg_muted` | `#94A3B8` | metadata and hints |
-| `fg_disabled` | `#728298` | inactive control text |
-| `accent` | `#4F8CFF` | selection, focus, primary action |
-| `success` | `#22D3B6` | success and completed state |
-| `warning` | `#E7B86A` | warning state |
-| `error` | `#F87171` | failure and destructive action |
-| `critical` | `#FB7185` | critical state |
-| `info` | `#60A5FA` | informational state |
-| `border` | `#465A73` | control and standard surface border |
-| `border_soft` | `#253246` | separators and quiet surfaces |
-| `border_strong` | `#60758F` | focus-adjacent and elevated borders |
+| `bg_space` | `#090C12` | application canvas |
+| `bg_shell` | `#0F141C` | top bar, navigation, console strip |
+| `bg_card` | `#171E29` | sections and primary surfaces |
+| `bg_card_alt` | `#212B38` | elevated surfaces |
+| `bg_inset` | `#0C1016` | read-only and disabled surfaces |
+| `bg_entry` | `#0E131B` | input controls |
+| `bg_log` | `#06090E` | console canvas |
+| `fg_main` | `#EEF2F8` | primary text |
+| `fg_soft` | `#BCC7D6` | secondary text |
+| `fg_muted` | `#8C99AA` | metadata and hints |
+| `fg_disabled` | `#79848F` | inactive control text |
+| `accent` | `#3B86FF` | selection, focus, primary action |
+| `secondary` | `#15D6A6` | comparison series, secondary accent |
+| `success` | `#14D49E` | success and completed state |
+| `warning` | `#F5B43C` | warning state |
+| `error` | `#FF5D6C` | failure and destructive action |
+| `critical` | `#FF7088` | critical state |
+| `info` | `#4A9DFF` | informational state |
+| `border` | `#3A4756` | control and standard surface border |
+| `border_soft` | `#1F2833` | separators and quiet surfaces |
+| `border_strong` | `#46545F` | focus-adjacent and elevated borders |
 
 Decorative gradients are not used. Translucent variants are derived from tokens
 with `with_alpha(...)`.

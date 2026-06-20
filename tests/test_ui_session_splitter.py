@@ -185,6 +185,25 @@ def test_missing_session_file_allows_startup(tmp_path, monkeypatch) -> None:
         app.processEvents()
 
 
+def test_fresh_start_keeps_terminal_collapsed(main_window) -> None:
+    win, app = main_window
+    app.processEvents()
+    assert win.log_panel.is_collapsed is True
+    assert win.main_splitter.sizes()[1] <= COLLAPSED_HEIGHT + 4
+
+
+def test_expanded_visual_state_restores_splitter_size(main_window) -> None:
+    win, app = main_window
+    apply_visual_state(
+        {"log_collapsed": False, "splitter_sizes": [620, 260]},
+        main_window=win,
+    )
+    app.processEvents()
+    sizes = win.main_splitter.sizes()
+    assert win.log_panel.is_collapsed is False
+    assert sizes[1] >= EXPANDED_MIN_HEIGHT
+
+
 def test_corrupt_session_file_allows_startup_without_overwrite(tmp_path, monkeypatch) -> None:
     appdir = tmp_path / "appdata"
     appdir.mkdir(parents=True)

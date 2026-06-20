@@ -1,10 +1,11 @@
 # ST_LRPS/ui_parts/monte_carlo_page.py
 """
-Monte Carlo Analysis Page (Page 7)
-====================================
+Batch Propagation Analysis Page (Page 7)
+========================================
 
 Provides a dedicated PySide6 page for configuring, launching, and monitoring
-Monte Carlo orbital uncertainty propagation runs.
+batch orbital uncertainty propagation runs. Random sampling is the Monte Carlo
+option; LHS and Sobol designs support validation-oriented coverage.
 
 Layout
 ------
@@ -20,7 +21,7 @@ The page is split into two workspace tabs:
    Right column (40%) — run controls + live metrics
 
 2. **Result Analysis**
-   A dedicated post-processing workspace for loading Monte Carlo archives,
+   A dedicated post-processing workspace for loading ensemble archives,
    computing statistics, previewing plots, and exporting a PDF report.
 
 Integration with the rest of the application
@@ -49,12 +50,12 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
     from lunaris.ui.components.monte_carlo_analysis_panel import MonteCarloAnalysisPanel
+    from lunaris.ui.components.primitives import InlineNotice, Section
     from lunaris.ui.core.ui_commons import (
         THEME,
         NumericDragLineEdit,
         ToggleSwitch,
         get_icon,
-        with_alpha,
     )
     from lunaris.ui.pages.force_models_page import ST_LRPS_RUNS_DIR, list_st_lrps_model_dirs
 except ImportError:
@@ -81,6 +82,7 @@ class UIMonteCarloConfig:
     # Ensemble
     n_samples: int = 500
     seed: int = 42
+    sampling_method: str = "random"
 
     # State uncertainty
     sigma_r_m: float = 500.0    # position 1-sigma [m]
@@ -176,35 +178,30 @@ def _normalize_output_path_for_format(path_text: str, fmt: str) -> str:
 
     return raw
 
-def _card(title: str) -> QtWidgets.QGroupBox:
-    """Styled card GroupBox following the project-wide QSS pattern."""
-    gb = QtWidgets.QGroupBox(title)
-    gb.setStyleSheet(f"""
-        QGroupBox {{
-            border: 1px solid {THEME['border']};
-            border-radius: 10px;
-            margin-top: 14px;
-            padding-top: 6px;
-            background: {THEME['bg_card']};
-        }}
-        QGroupBox::title {{
-            subcontrol-origin: margin;
-            subcontrol-position: top left;
-            left: 12px;
-            padding: 0 6px;
-            color: {THEME['fg_main']};
-            font-weight: 700;
-            font-size: 10pt;
-        }}
-    """)
-    return gb
+def _card(title: str) -> Section:
+    """Card built from the shared ``Section`` primitive.
+
+    Surface, border, radius, and title typography come from the global
+    stylesheet (``QFrame#section`` / ``QLabel#sectionTitle``) instead of
+    per-card inline QSS, keeping every page card token-driven and consistent.
+    """
+    return Section(title)
 
 
 def _label(text: str, muted: bool = False) -> QtWidgets.QLabel:
     lbl = QtWidgets.QLabel(text)
     if muted:
-        lbl.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
+        # ``QLabel#fieldHint`` is the global muted-caption style (fg_muted, 9pt).
+        lbl.setObjectName("fieldHint")
     return lbl
+
+
+def _repolish(widget: QtWidgets.QWidget) -> None:
+    """Re-evaluate a widget's QSS after a dynamic property (e.g. ``kind``) change."""
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
 
 
 def _metric_row(key: str, value: str = "—") -> QtWidgets.QHBoxLayout:
@@ -244,12 +241,12 @@ def _format_clock_span(seconds: float | None) -> str:
 
 class MonteCarloPage(QtWidgets.QWidget):
     """
-    Page 7: Monte Carlo Analysis — configuration + live metrics.
+    Page 7: Batch propagation analysis - configuration + live metrics.
 
     Signals
     -------
     run_requested :
-        Emitted when the user clicks "Run Monte Carlo".  The main window
+        Emitted when the user clicks "Run Batch".  The main window
         collects all page states, builds the CLI command, and spawns the
         backend process.
     """
@@ -281,37 +278,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setDocumentMode(True)
-        self.tabs.setStyleSheet(
-            f"""
-            QTabWidget::pane {{
-                border: 1px solid {THEME['border']};
-                border-radius: 10px;
-                background: transparent;
-                margin-top: 6px;
-            }}
-            QTabBar::tab {{
-                background: {THEME['bg_card']};
-                color: {THEME['fg_muted']};
-                padding: 9px 16px;
-                margin-right: 4px;
-                border: 1px solid {THEME['border']};
-                border-bottom: none;
-                border-top-left-radius: 8px;
-                border-top-right-radius: 8px;
-            }}
-            QTabBar::tab:hover {{
-                background: {THEME['bg_entry']};
-                color: {THEME['fg_main']};
-            }}
-            QTabBar::tab:selected {{
-                background: {THEME['bg_entry']};
-                color: {THEME['fg_main']};
-                border: 1px solid {THEME['border']};
-                border-bottom-color: {THEME['bg_space']};
-                font-weight: 600;
-            }}
-            """
-        )
+        # Tab surfaces/states come from the global stylesheet (QTabWidget / QTabBar).
         root.addWidget(self.tabs, 1)
 
         run_tab = QtWidgets.QWidget()
@@ -381,21 +348,14 @@ class MonteCarloPage(QtWidgets.QWidget):
         """
 
         gb = _card("Backend Command Preview")
-        outer = QtWidgets.QVBoxLayout(gb)
-        outer.setContentsMargins(16, 20, 16, 16)
+        outer = gb.content_layout
         outer.setSpacing(10)
 
         # Prominent preview-only notice
-        notice = QtWidgets.QLabel(
-            "⚠  Preview only — commands are copied to clipboard, NOT executed."
+        notice = InlineNotice(
+            "⚠  Preview only — commands are copied to clipboard, NOT executed.",
+            "warning",
         )
-        notice.setStyleSheet(
-            f"color: {THEME['warning']}; font-size: 9pt; font-weight: 600;"
-            f" background: {with_alpha(THEME['warning'], 0.08)};"
-            f" border: 1px solid {with_alpha(THEME['warning'], 0.25)};"
-            f" border-radius: 6px; padding: 5px 10px;"
-        )
-        notice.setWordWrap(True)
         outer.addWidget(notice)
 
         # Header / collapse toggle
@@ -406,9 +366,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.btn_backend_compare_toggle.setArrowType(QtCore.Qt.RightArrow)
         self.btn_backend_compare_toggle.setToolButtonStyle(QtCore.Qt.ToolButtonTextBesideIcon)
         self.btn_backend_compare_toggle.setText("Show command matrix")
-        self.btn_backend_compare_toggle.setStyleSheet(
-            "QToolButton { border: none; padding: 4px; }"
-        )
+        # QToolButton base style (borderless, 4px padding) comes from global QSS.
         self.btn_backend_compare_toggle.clicked.connect(self._toggle_backend_comparison)
         header_row.addWidget(self.btn_backend_compare_toggle)
         header_row.addStretch(1)
@@ -476,16 +434,13 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.tbl_backend_compare.setMinimumHeight(170)
         body_layout.addWidget(self.tbl_backend_compare)
 
-        # Preview text
+        # Preview text — reuses the global monospace command-preview style.
         self.txt_backend_compare_cmd = QtWidgets.QPlainTextEdit()
+        self.txt_backend_compare_cmd.setObjectName("commandPreview")
         self.txt_backend_compare_cmd.setReadOnly(True)
         self.txt_backend_compare_cmd.setMinimumHeight(80)
         self.txt_backend_compare_cmd.setPlaceholderText(
             "Click 'Copy Command' on a row — the generated command appears here and is copied to clipboard."
-        )
-        self.txt_backend_compare_cmd.setStyleSheet(
-            f"background-color: {THEME['bg_log']}; color: {THEME['fg_main']};"
-            f" font-family: Consolas, monospace; border-radius: 6px;"
         )
         body_layout.addWidget(self.txt_backend_compare_cmd)
 
@@ -548,6 +503,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         cmd: list[str] = [python_exec, runner]
         cmd.extend(["--n-samples", n_samples])
+        cmd.extend(["--sampling-method", str(self.cb_sampling_method.currentData() or "random")])
         cmd.extend(["--mc-gravity-mode", gravity_mode])
         cmd.extend(["--mc-backend", str(meta.get("mc_backend", "auto"))])
         cmd.extend(["--enable-sh", "on"])
@@ -601,6 +557,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             out_path = str(meta.get("output_path", "outputs/monte_carlo/preview.h5"))
             cmd: list[str] = [python_exec, runner]
             cmd.extend(["--n-samples", n_samples])
+            cmd.extend(["--sampling-method", str(self.cb_sampling_method.currentData() or "random")])
             cmd.extend(["--mc-gravity-mode", gravity_mode])
             cmd.extend(["--mc-backend", str(meta.get("mc_backend", "auto"))])
             cmd.extend(["--enable-sh", "on"])
@@ -631,8 +588,8 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def _card_ensemble(self) -> QtWidgets.QGroupBox:
         gb = _card("Ensemble")
-        grid = QtWidgets.QGridLayout(gb)
-        grid.setContentsMargins(16, 20, 16, 16)
+        grid = QtWidgets.QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setVerticalSpacing(10)
         grid.setHorizontalSpacing(12)
 
@@ -641,23 +598,38 @@ class MonteCarloPage(QtWidgets.QWidget):
             str(self.mc_cfg.n_samples),
             step=50, min_value=2, max_value=100_000, decimals=0,
         )
-        self.ent_n_samples.setToolTip("Total number of Monte Carlo trajectories (N ≥ 2)")
+        self.ent_n_samples.setToolTip("Total number of ensemble trajectories (N >= 2)")
         grid.addWidget(self.ent_n_samples, 0, 1)
 
-        grid.addWidget(_label("Random Seed:"), 1, 0)
+        grid.addWidget(_label("Sampling:"), 1, 0)
+        self.cb_sampling_method = QtWidgets.QComboBox()
+        self.cb_sampling_method.addItem("Random (Monte Carlo)", "random")
+        self.cb_sampling_method.addItem("Latin Hypercube (LHS)", "lhs")
+        self.cb_sampling_method.addItem("Sobol", "sobol")
+        self.cb_sampling_method.addItem("Sobol scrambled", "sobol_scrambled")
+        self.cb_sampling_method.setToolTip(
+            "Select the ensemble design.\n"
+            "Random is the classical Monte Carlo option; LHS and Sobol are "
+            "space-filling designs for validation coverage."
+        )
+        sampling_idx = self.cb_sampling_method.findData(self.mc_cfg.sampling_method)
+        self.cb_sampling_method.setCurrentIndex(sampling_idx if sampling_idx >= 0 else 0)
+        grid.addWidget(self.cb_sampling_method, 1, 1)
+
+        grid.addWidget(_label("Seed:"), 2, 0)
         self.ent_seed = NumericDragLineEdit(
             str(self.mc_cfg.seed),
             step=1, min_value=0, max_value=2**31 - 1, decimals=0,
         )
-        self.ent_seed.setToolTip("Seed for numpy.random.default_rng — ensures reproducibility")
-        grid.addWidget(self.ent_seed, 1, 1)
+        self.ent_seed.setToolTip("Seed for random, LHS, and scrambled Sobol reproducibility")
+        grid.addWidget(self.ent_seed, 2, 1)
 
+        gb.content_layout.addLayout(grid)
         return gb
 
     def _card_state_uncertainty(self) -> QtWidgets.QGroupBox:
         gb = _card("Initial State Uncertainty  (1-σ, Isotropic)")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(16, 20, 16, 16)
+        layout = gb.content_layout
         layout.setSpacing(10)
 
         desc = _label(
@@ -711,8 +683,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def _card_spacecraft_uncertainty(self) -> QtWidgets.QGroupBox:
         gb = _card("Spacecraft Property Uncertainty  (optional)")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(16, 20, 16, 16)
+        layout = gb.content_layout
         layout.setSpacing(10)
 
         desc = _label("Zero σ = deterministic (no perturbation). Sampling uses truncated-normal (positive values only).", muted=True)
@@ -744,8 +715,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def _card_backend(self) -> QtWidgets.QGroupBox:
         gb = _card("Physics Backend")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(16, 20, 16, 16)
+        layout = gb.content_layout
         layout.setSpacing(12)
 
         # GPU / CPU toggle row
@@ -769,7 +739,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         layout.addLayout(gravity_row)
 
         gravity_hint = _label(
-            "Use this when you want Monte Carlo to reuse the mission gravity setup "
+            "Use this when you want batch propagation to reuse the mission gravity setup "
             "or explicitly force the classical SH model versus the ST-LRPS model.",
             muted=True,
         )
@@ -777,7 +747,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         layout.addWidget(gravity_hint)
 
         backend_row = QtWidgets.QHBoxLayout()
-        backend_row.addWidget(_label("Monte Carlo Backend:"))
+        backend_row.addWidget(_label("Batch Backend:"))
         self.cb_mc_backend = QtWidgets.QComboBox()
         self.cb_mc_backend.addItem("Auto Policy", "auto")
         self.cb_mc_backend.addItem("CPU Spherical Harmonics", "cpu_sh")
@@ -787,7 +757,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.cb_mc_backend.addItem("GPU ST-LRPS Potential", "gpu_st_lrps_potential")
         self.cb_mc_backend.addItem("GPU ST-LRPS Direct", "gpu_st_lrps_direct")
         self.cb_mc_backend.setToolTip(
-            "Explicit backend selector recorded verbatim in Monte Carlo metadata.\n"
+            "Explicit backend selector recorded verbatim in ensemble metadata.\n"
             "Numba CUDA SH: degree ≤ 24 (kernel-workspace limit). Torch CUDA SH: "
             "arbitrary degree on PyTorch CUDA, gravity-only.\n"
             "Auto uses safe GPU paths when available and records any fallback."
@@ -809,37 +779,24 @@ class MonteCarloPage(QtWidgets.QWidget):
         # ST-LRPS surrogate selection is only relevant when MC explicitly forces
         # the surrogate backend.  Leaving it blank intentionally falls back to
         # the global Force Models page setting.
+        # Warning-tinted sub-panel reuses the global inlineNotice surface so the
+        # emphasis is token-driven; inner inputs pick up the global QLineEdit style.
         self.st_lrps_config_frame = QtWidgets.QFrame()
-        self.st_lrps_config_frame.setStyleSheet(f"""
-            QFrame {{
-                border: 1px solid {with_alpha(THEME['warning'], 0.35)};
-                border-radius: 10px;
-                background: {with_alpha(THEME['warning'], 0.055)};
-            }}
-            QLineEdit {{
-                background: {THEME['bg_entry']};
-                border: 1px solid {THEME['border']};
-                border-radius: 6px;
-                padding: 5px 8px;
-                color: {THEME['fg_main']};
-            }}
-            QLineEdit:focus {{
-                border-color: {THEME['warning']};
-            }}
-        """)
+        self.st_lrps_config_frame.setObjectName("inlineNotice")
+        self.st_lrps_config_frame.setProperty("kind", "warning")
         st_lrps_layout = QtWidgets.QVBoxLayout(self.st_lrps_config_frame)
         st_lrps_layout.setContentsMargins(12, 10, 12, 12)
         st_lrps_layout.setSpacing(8)
 
         st_lrps_title_row = QtWidgets.QHBoxLayout()
         st_lrps_title = _label("ST-LRPS Model Run")
-        st_lrps_title.setStyleSheet(f"color: {THEME['warning']}; font-weight: 800;")
+        st_lrps_title.setObjectName("sectionTitle")
         st_lrps_title_row.addWidget(st_lrps_title)
         st_lrps_title_row.addStretch(1)
         st_lrps_layout.addLayout(st_lrps_title_row)
 
         st_lrps_help = _label(
-            "Select the trained ST-LRPS run used only by this Monte Carlo run. "
+            "Select the trained ST-LRPS run used only by this batch propagation run. "
             "If left empty, MC falls back to the main Force Models ST-LRPS directory.",
             muted=True,
         )
@@ -870,11 +827,9 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         layout.addWidget(self.st_lrps_config_frame)
 
-        # GPU-specific frame (hidden when CPU)
+        # GPU-specific frame (hidden when CPU) — reuses the global section surface.
         self.gpu_frame = QtWidgets.QFrame()
-        self.gpu_frame.setStyleSheet(
-            f"QFrame {{ border: 1px solid {THEME['border']}; border-radius: 8px; padding: 4px; }}"
-        )
+        self.gpu_frame.setObjectName("section")
         gpu_grid = QtWidgets.QGridLayout(self.gpu_frame)
         gpu_grid.setContentsMargins(12, 12, 12, 12)
         gpu_grid.setVerticalSpacing(8)
@@ -1018,8 +973,8 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def _card_integration(self) -> QtWidgets.QGroupBox:
         gb = _card("Integration  (GPU RK4 and batching)")
-        grid = QtWidgets.QGridLayout(gb)
-        grid.setContentsMargins(16, 20, 16, 16)
+        grid = QtWidgets.QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setVerticalSpacing(10)
         grid.setHorizontalSpacing(12)
 
@@ -1047,12 +1002,12 @@ class MonteCarloPage(QtWidgets.QWidget):
         grid.addWidget(self.ent_vram, 1, 1)
         grid.addWidget(_label("GB"), 1, 2)
 
+        gb.content_layout.addLayout(grid)
         return gb
 
     def _card_output(self) -> QtWidgets.QGroupBox:
         gb = _card("Output")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(16, 20, 16, 16)
+        layout = gb.content_layout
         layout.setSpacing(10)
 
         # Format
@@ -1062,15 +1017,6 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.cb_format.addItems(["hdf5", "npz"])
         self.cb_format.setCurrentText(self.mc_cfg.output_format)
         self.cb_format.currentTextChanged.connect(self._on_output_format_changed)
-        self.cb_format.setStyleSheet(f"""
-            QComboBox {{
-                background: {THEME['bg_entry']};
-                border: 1px solid {THEME['border']};
-                border-radius: 6px;
-                padding: 4px 8px;
-                color: {THEME['fg_main']};
-            }}
-        """)
         fmt_row.addWidget(self.cb_format)
         fmt_row.addStretch(1)
         layout.addLayout(fmt_row)
@@ -1078,16 +1024,6 @@ class MonteCarloPage(QtWidgets.QWidget):
         # Output path
         path_row = QtWidgets.QHBoxLayout()
         self.ent_output = QtWidgets.QLineEdit(self.mc_cfg.output_path)
-        self.ent_output.setStyleSheet(f"""
-            QLineEdit {{
-                background: {THEME['bg_entry']};
-                border: 1px solid {THEME['border']};
-                border-radius: 6px;
-                padding: 5px 8px;
-                color: {THEME['fg_main']};
-            }}
-            QLineEdit:focus {{ border-color: {THEME['accent']}; }}
-        """)
         self.ent_output.setPlaceholderText("outputs/monte_carlo/mc_output.h5")
         btn_browse = QtWidgets.QPushButton("Browse…")
         btn_browse.setFixedHeight(30)
@@ -1104,7 +1040,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         fmt = self.cb_format.currentText()
         ext_filter = "HDF5 Files (*.h5 *.hdf5)" if fmt == "hdf5" else "NumPy Files (*.npz)"
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "Save MC Output", self.ent_output.text(), ext_filter
+            self, "Save Batch Propagation Output", self.ent_output.text(), ext_filter
         )
         if path:
             self.ent_output.setText(path)
@@ -1125,8 +1061,8 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def _card_impact(self) -> QtWidgets.QGroupBox:
         gb = _card("Impact Detection")
-        grid = QtWidgets.QGridLayout(gb)
-        grid.setContentsMargins(16, 20, 16, 16)
+        grid = QtWidgets.QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setVerticalSpacing(10)
         grid.setHorizontalSpacing(12)
 
@@ -1142,6 +1078,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         grid.addWidget(self.ent_impact_alt, 0, 1)
         grid.addWidget(_label("km"), 0, 2)
 
+        gb.content_layout.addLayout(grid)
         return gb
 
     # -------------------------------------------------------------------------
@@ -1149,14 +1086,14 @@ class MonteCarloPage(QtWidgets.QWidget):
     # -------------------------------------------------------------------------
 
     def _card_run_controls(self) -> QtWidgets.QGroupBox:
-        gb = _card("Run Monte Carlo")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(16, 20, 16, 16)
+        gb = _card("Run Batch Propagation")
+        layout = gb.content_layout
         layout.setSpacing(10)
 
-        # Status validation label
+        # Status validation label — global inline-notice text style, kind-driven.
         self.lbl_validation = _label("Configuration looks ready.")
-        self.lbl_validation.setStyleSheet(f"color: {THEME['success']}; font-weight: 600;")
+        self.lbl_validation.setObjectName("inlineNoticeLabel")
+        self.lbl_validation.setProperty("kind", "ok")
         self.lbl_validation.setWordWrap(True)
         layout.addWidget(self.lbl_validation)
 
@@ -1168,11 +1105,6 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.badge_mc.setFixedHeight(24)
         self.badge_mc.setContentsMargins(10, 4, 10, 4)
         self.badge_mc.setProperty("kind", "info")
-        self.badge_mc.setStyleSheet(
-            f"border-radius: 10px; border: 1px solid {THEME['accent']};"
-            f" background: {with_alpha(THEME['accent'], 0.1)}; color: {THEME['accent']};"
-            f" font-weight: 700; padding: 0 8px;"
-        )
         status_row.addWidget(self.badge_mc)
         status_row.addStretch(1)
         layout.addLayout(status_row)
@@ -1184,58 +1116,30 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.progress_mc.setTextVisible(True)
         self.progress_mc.setFormat("Waiting…")
         self.progress_mc.setFixedHeight(16)
-        self.progress_mc.setStyleSheet(f"""
-            QProgressBar {{
-                border: 1px solid {THEME['border']};
-                border-radius: 4px;
-                background: {THEME['bg_entry']};
-                color: {THEME['fg_main']};
-                font-size: 8pt;
-                text-align: center;
-            }}
-            QProgressBar::chunk {{
-                background: {THEME['accent']};
-                border-radius: 3px;
-            }}
-        """)
+        # Bar/chunk styling comes from the global QProgressBar rules.
         layout.addWidget(self.progress_mc)
 
         self.lbl_progress_summary = _label("Waiting for run", muted=False)
-        self.lbl_progress_summary.setStyleSheet(
-            f"color: {THEME['fg_main']}; font-size: 9.5pt; font-weight: 600;"
-        )
+        self.lbl_progress_summary.setObjectName("statusValue")
         self.lbl_progress_summary.setWordWrap(True)
         layout.addWidget(self.lbl_progress_summary)
 
-        self.lbl_progress_meta = _label("No active Monte Carlo run", muted=True)
+        self.lbl_progress_meta = _label("No active batch run", muted=True)
         self.lbl_progress_meta.setWordWrap(True)
-        self.lbl_progress_meta.setStyleSheet(
-            f"color: {THEME['fg_muted']}; font-size: 9pt;"
-        )
         layout.addWidget(self.lbl_progress_meta)
 
-        # Live log (last few lines)
+        # Live log (last few lines) — reuses the global console surface style.
         self.txt_progress = QtWidgets.QPlainTextEdit()
+        self.txt_progress.setObjectName("logConsole")
         self.txt_progress.setReadOnly(True)
         self.txt_progress.setFixedHeight(80)
-        self.txt_progress.setStyleSheet(f"""
-            QPlainTextEdit {{
-                background: {THEME['bg_log']};
-                color: {THEME['fg_muted']};
-                border: 1px solid {THEME['border']};
-                border-radius: 6px;
-                font-family: Consolas, monospace;
-                font-size: 9pt;
-                padding: 4px;
-            }}
-        """)
-        self.txt_progress.setPlaceholderText("MC engine output appears here…")
+        self.txt_progress.setPlaceholderText("Batch engine output appears here...")
         layout.addWidget(self.txt_progress)
 
         # Buttons row
         btn_row = QtWidgets.QHBoxLayout()
 
-        self.btn_run_mc = QtWidgets.QPushButton("  Run Monte Carlo")
+        self.btn_run_mc = QtWidgets.QPushButton("  Run Batch")
         self.btn_run_mc.setObjectName("primaryBtn")
         self.btn_run_mc.setIcon(get_icon("fa6s.dice", THEME["fg_main"]))
         self.btn_run_mc.setCursor(QtCore.Qt.PointingHandCursor)
@@ -1258,7 +1162,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self._set_running(True)
         self.clear_results()
         self.txt_progress.clear()
-        self.txt_progress.appendPlainText("[MC] Queuing run…")
+        self.txt_progress.appendPlainText("[MC] Queuing batch propagation run...")
         self.run_requested.emit()
 
     def _open_output_folder(self) -> None:
@@ -1273,8 +1177,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def _card_metrics(self) -> QtWidgets.QGroupBox:
         gb = _card("Results  —  Last Run")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(16, 20, 16, 16)
+        layout = gb.content_layout
         layout.setSpacing(6)
 
         self._metric_labels: dict[str, QtWidgets.QLabel] = {}
@@ -1285,6 +1188,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             self._metric_labels[key] = val_lbl
 
         _add("n_samples",      "N Samples")
+        _add("sampling_method", "Sampling")
         _add("n_impacts",      "N Impacts")
         _add("p_impact",       "Impact Probability")
         _add("p_impact_ci95",  "95% CI")
@@ -1298,7 +1202,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         sep = QtWidgets.QFrame()
         sep.setFrameShape(QtWidgets.QFrame.HLine)
-        sep.setStyleSheet(f"color: {THEME['border']};")
+        sep.setFrameShadow(QtWidgets.QFrame.Plain)
         layout.addWidget(sep)
 
         self.btn_open_report = QtWidgets.QPushButton("  Open PDF Report")
@@ -1335,25 +1239,22 @@ class MonteCarloPage(QtWidgets.QWidget):
         if running:
             total = max(1, self._parse_int(self.ent_n_samples.text(), self.mc_cfg.n_samples))
             self._last_progress_payload = {}
-            self._set_badge("RUNNING", accent=THEME["success"])
+            self._set_badge("RUNNING", "running")
             self.progress_mc.setRange(0, 0)   # indeterminate until first structured payload
             self.progress_mc.setValue(0)
             self.progress_mc.setFormat("Preparing…")
-            self.lbl_progress_summary.setText("Preparing Monte Carlo ensemble")
+            self.lbl_progress_summary.setText("Preparing ensemble samples")
             self.lbl_progress_meta.setText(f"0 / {total} scenarios | Waiting for backend")
         else:
             self._update_validation()
             if self.progress_mc.maximum() == 0:
                 self.progress_mc.setRange(0, 1000)
 
-    def _set_badge(self, text: str, accent: str = "") -> None:
+    def _set_badge(self, text: str, kind: str = "info") -> None:
+        """Update the status badge text + semantic kind (styled by global QSS)."""
         self.badge_mc.setText(text)
-        c = accent or THEME["accent"]
-        self.badge_mc.setStyleSheet(
-            f"border-radius: 10px; border: 1px solid {c};"
-            f" background: transparent; color: {c};"
-            f" font-weight: 700; padding: 0 8px;"
-        )
+        self.badge_mc.setProperty("kind", kind)
+        _repolish(self.badge_mc)
 
     def update_progress(self, line: str) -> None:
         """
@@ -1416,11 +1317,11 @@ class MonteCarloPage(QtWidgets.QWidget):
         detail = str(payload.get("detail", "") or "").strip()
 
         stage_summary = {
-            "sampling": "Preparing Monte Carlo ensemble",
+            "sampling": "Preparing ensemble samples",
             "propagating": "Propagating scenarios",
             "writing": "Writing ensemble results",
-            "finalizing": "Finalizing Monte Carlo archive",
-        }.get(stage, "Running Monte Carlo")
+            "finalizing": "Finalizing ensemble archive",
+        }.get(stage, "Running batch propagation")
 
         badge_text = {
             "sampling": "PREPARING",
@@ -1428,7 +1329,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             "writing": "WRITING",
             "finalizing": "FINALIZING",
         }.get(stage, "RUNNING")
-        self._set_badge(badge_text, accent=THEME["success"] if stage == "propagating" else THEME["accent"])
+        self._set_badge(badge_text, "running")
 
         self.progress_mc.setRange(0, 1000)
         self.progress_mc.setValue(int(round(fraction * 1000.0)))
@@ -1473,12 +1374,12 @@ class MonteCarloPage(QtWidgets.QWidget):
         """
         self._set_running(False)
         if exit_code == 0:
-            self._set_badge("DONE", accent=THEME["success"])
+            self._set_badge("DONE", "completed")
             total_samples = int((metrics or {}).get("n_samples", self._parse_int(self.ent_n_samples.text(), self.mc_cfg.n_samples)))
             self.progress_mc.setRange(0, 1000)
             self.progress_mc.setValue(1000)
             self.progress_mc.setFormat("100.0%")
-            self.lbl_progress_summary.setText("Monte Carlo run completed")
+            self.lbl_progress_summary.setText("Batch propagation completed")
             self.lbl_progress_meta.setText(f"{total_samples} / {total_samples} scenarios | Results ready")
             if metrics:
                 self.update_results(metrics)
@@ -1489,11 +1390,11 @@ class MonteCarloPage(QtWidgets.QWidget):
                 self._last_report_path = report_path
                 self.btn_open_report.setEnabled(True)
         else:
-            self._set_badge("FAILED", accent=THEME["error"])
+            self._set_badge("FAILED", "failed")
             if self.progress_mc.maximum() == 0:
                 self.progress_mc.setRange(0, 1000)
             self.progress_mc.setFormat("Failed")
-            self.lbl_progress_summary.setText("Monte Carlo run failed")
+            self.lbl_progress_summary.setText("Batch propagation failed")
             if self._last_progress_payload:
                 total_samples = max(1, int(self._last_progress_payload.get("total_samples", 1)))
                 done_samples = int(min(total_samples, max(0.0, float(self._last_progress_payload.get("done_samples", 0.0) or 0.0))))
@@ -1503,7 +1404,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def shutdown(self) -> None:
         """
-        Stop background sub-components owned by the Monte Carlo page.
+        Stop background sub-components owned by the batch propagation page.
 
         The main window calls this during shutdown so the analysis workspace
         does not keep a background worker alive while the application exits.
@@ -1527,6 +1428,7 @@ class MonteCarloPage(QtWidgets.QWidget):
                 lbl.setText(value)
 
         _set("n_samples",     str(metrics.get("n_samples", "—")))
+        _set("sampling_method", str(metrics.get("sampling_method", "random")))
         _set("n_impacts",     str(metrics.get("n_impacts", "—")))
 
         p = metrics.get("p_impact")
@@ -1566,6 +1468,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         return {
             "n_samples":             self._parse_int(self.ent_n_samples.text(), 500),
             "seed":                  self._parse_int(self.ent_seed.text(), 42),
+            "sampling_method":        str(self.cb_sampling_method.currentData() or "random"),
             "sigma_r_m":             self._parse_float(self.ent_sigma_r.text(), 500.0),
             "sigma_v_m_s":           self._parse_float(self.ent_sigma_v.text(), 0.5),
             "sigma_mass_kg":         self._parse_float(self.ent_sigma_mass.text(), 0.0),
@@ -1600,6 +1503,10 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         self.ent_n_samples.setText(_s("n_samples", 500))
         self.ent_seed.setText(_s("seed", 42))
+        sampling_method = str(data.get("sampling_method", "random") or "random")
+        self.mc_cfg.sampling_method = sampling_method
+        sampling_idx = self.cb_sampling_method.findData(sampling_method)
+        self.cb_sampling_method.setCurrentIndex(sampling_idx if sampling_idx >= 0 else 0)
         self.ent_sigma_r.setText(_s("sigma_r_m", 500.0))
         self.ent_sigma_v.setText(_s("sigma_v_m_s", 0.5))
         self.ent_sigma_mass.setText(_s("sigma_mass_kg", 0.0))
@@ -1675,7 +1582,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             errors.append("Ensemble must have at least 2 samples.")
             ok = False
         if seed < 0:
-            errors.append("Random seed must be non-negative.")
+            errors.append("Sampling seed must be non-negative.")
             ok = False
 
         # 2. State uncertainty
@@ -1768,6 +1675,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         self.ent_n_samples.textChanged.connect(trigger)
         self.ent_seed.textChanged.connect(trigger)
+        self.cb_sampling_method.currentIndexChanged.connect(trigger)
         self.ent_sigma_r.textChanged.connect(trigger)
         self.ent_sigma_v.textChanged.connect(trigger)
         self.ent_sigma_mass.textChanged.connect(trigger)
@@ -1787,16 +1695,17 @@ class MonteCarloPage(QtWidgets.QWidget):
         ok, errors, warnings = self.validate_page_inputs()
         if not ok:
             self.lbl_validation.setText("⚠ Errors:\n" + "\n".join(errors))
-            self.lbl_validation.setStyleSheet(f"color: {THEME['error']}; font-weight: 600; font-size: 9pt;")
+            self.lbl_validation.setProperty("kind", "error")
             self.btn_run_mc.setEnabled(False)
         elif warnings:
             self.lbl_validation.setText("⚠ Warnings:\n" + "\n".join(warnings))
-            self.lbl_validation.setStyleSheet(f"color: {THEME['warning']}; font-weight: 600; font-size: 9pt;")
+            self.lbl_validation.setProperty("kind", "warn")
             self.btn_run_mc.setEnabled(True)
         else:
             self.lbl_validation.setText("Configuration looks ready.")
-            self.lbl_validation.setStyleSheet(f"color: {THEME['success']}; font-weight: 600; font-size: 9pt;")
+            self.lbl_validation.setProperty("kind", "ok")
             self.btn_run_mc.setEnabled(True)
+        _repolish(self.lbl_validation)
 
 
 # =============================================================================

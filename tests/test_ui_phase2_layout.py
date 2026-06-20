@@ -68,16 +68,15 @@ def test_st_lrps_shell_uses_shared_palette_and_compact_navigation() -> None:
     app.processEvents()
     try:
         assert window._sidebar.width() == DESIGN_TOKENS.layout.nav_compact_width
-        assert window._experiment_header._run.isHidden()
-        assert window._experiment_header._remaining.isHidden()
-        assert window._data_page._compact_layout is True
-        assert window._data_page._section_nav.maximumHeight() == 196
+        # The global ST-LRPS experiment header was retired in favour of
+        # page-local headers, so the shell no longer mounts one.
+        assert window._experiment_header is None
+        # The Data workspace section nav is now a compact horizontal strip.
+        assert window._data_page._section_nav.maximumHeight() == 64
 
         window._navigate(2)
         app.processEvents()
         assert window._stack.currentIndex() == 2
-        assert window._experiment_header._preset.isVisible()
-        assert window._experiment_header._dataset.isVisible()
         control_bar = window._train_monitor_page.findChild(
             QtWidgets.QFrame, "trainRunBar"
         )

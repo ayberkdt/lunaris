@@ -366,16 +366,19 @@ class LauncherWindow(QtWidgets.QWidget):
 
     def _apply_theme(self) -> None:
         """Instance-level stylesheet so workspace windows are never restyled."""
-        glass_bg = with_alpha(THEME["bg_shell"], 0.85)
+        # The panel reads as a near-solid premium surface over the 3D Moon, not a
+        # faint translucent wash. Borders are derived from border_strong at higher
+        # alpha so they stay visible with the v2 (darker) graphite palette.
+        glass_bg = with_alpha(THEME["bg_shell"], 0.94)
         overlay_bg = with_alpha(THEME["bg_log"], 0.55)
-        opening_bg = with_alpha(THEME["bg_shell"], 0.94)
-        quiet_border = with_alpha(THEME["border_strong"], 0.16)
-        quiet_border_hover = with_alpha(THEME["border_strong"], 0.30)
-        divider_bg = with_alpha(THEME["border_strong"], 0.14)
-        card_bg = with_alpha(THEME["bg_card_alt"], 0.72)
-        card_hover_bg = with_alpha(THEME["bg_hover"], 0.86)
-        scene_bg = with_alpha(THEME["bg_shell"], 0.78)
-        scene_border = with_alpha(THEME["border_strong"], 0.18)
+        opening_bg = with_alpha(THEME["bg_shell"], 0.96)
+        quiet_border = with_alpha(THEME["border_strong"], 0.34)
+        quiet_border_hover = with_alpha(THEME["border_strong"], 0.52)
+        divider_bg = with_alpha(THEME["border_strong"], 0.28)
+        card_bg = with_alpha(THEME["bg_card_alt"], 0.85)
+        card_hover_bg = with_alpha(THEME["bg_hover"], 0.92)
+        scene_bg = with_alpha(THEME["bg_shell"], 0.88)
+        scene_border = with_alpha(THEME["border_strong"], 0.36)
         self.setStyleSheet(
             f"""
             LauncherWindow {{
@@ -388,7 +391,7 @@ class LauncherWindow(QtWidgets.QWidget):
             QFrame#glassPanel {{
                 background: {glass_bg};
                 border: 1px solid {quiet_border};
-                border-radius: 22px;
+                border-radius: 16px;
             }}
             QFrame#openingOverlay {{
                 background: {overlay_bg};
@@ -397,7 +400,7 @@ class LauncherWindow(QtWidgets.QWidget):
                 background: {opening_bg};
                 color: {THEME['fg_soft']};
                 border: 1px solid {with_alpha(THEME['accent'], 0.35)};
-                border-radius: 14px;
+                border-radius: 12px;
                 padding: 20px 38px;
                 font-size: 12pt;
                 font-weight: 600;
@@ -453,7 +456,7 @@ class LauncherWindow(QtWidgets.QWidget):
             QFrame#launchCard {{
                 background: {card_bg};
                 border: 1px solid {THEME['border']};
-                border-radius: 14px;
+                border-radius: 12px;
             }}
             QFrame#launchCard:hover {{
                 border: 1px solid {THEME['accent']};
@@ -465,7 +468,7 @@ class LauncherWindow(QtWidgets.QWidget):
             QLabel#cardIconBadge {{
                 background: {with_alpha(THEME['accent'], 0.10)};
                 border: 1px solid {with_alpha(THEME['accent'], 0.22)};
-                border-radius: 12px;
+                border-radius: 10px;
             }}
             QLabel#cardIconBadge[accent="{THEME['secondary']}"] {{
                 background: {with_alpha(THEME['secondary'], 0.10)};
@@ -503,7 +506,7 @@ class LauncherWindow(QtWidgets.QWidget):
             QFrame#sceneControls {{
                 background: {scene_bg};
                 border: 1px solid {scene_border};
-                border-radius: 13px;
+                border-radius: 12px;
             }}
             QFrame#toggleSep {{
                 color: {THEME['border']};

@@ -155,6 +155,7 @@ from .common_widgets import (
     _tune_inputs,
 )
 from .runtime_pages import ModelReportPanel
+from .workspace_widgets import StudioNotice, StudioStatusBadge, StudioWorkflowOverview
 
 
 class STLRPSEvalTab(QWidget):
@@ -220,8 +221,7 @@ class STLRPSEvalTab(QWidget):
         btn_out = QPushButton("Select…")
         btn_out.clicked.connect(self._pick_out_dir)
         out_row = _row_lineedit_with_button(self.out_dir, btn_out)
-        self.run_artifact_badge = QLabel("No run selected")
-        self.run_artifact_badge.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        self.run_artifact_badge = StudioStatusBadge("No run selected", "info")
         self.run_artifact_summary = QPlainTextEdit()
         _style_command_preview(self.run_artifact_summary, min_h=120, max_h=170)
         self.run_artifact_summary.setPlaceholderText(
@@ -350,21 +350,19 @@ class STLRPSEvalTab(QWidget):
     def _refresh_run_artifact_summary(self) -> None:
         run_dir = self.model_dir.text().strip()
         if not run_dir:
-            self.run_artifact_badge.setText("No run selected")
-            self.run_artifact_badge.setStyleSheet("color: #94a3b8; font-size: 10px;")
+            self.run_artifact_badge.set_status("info", "No run selected")
             self.run_artifact_summary.setPlainText("")
             return
         status = _inspect_run_artifacts(run_dir)
         warnings = list(status.get("warnings") or [])
         badge_text = "Ready" if not warnings else f"Warnings: {len(warnings)}"
-        badge_color = "#6ee7b7" if not warnings else "#f59e0b"
+        badge_kind = "success" if not warnings else "warning"
         if any(
             str(item).startswith(("missing_", "checkpoint_load_failed", "config_checkpoint_mismatch"))
             for item in warnings
         ):
-            badge_color = "#f87171"
-        self.run_artifact_badge.setText(badge_text)
-        self.run_artifact_badge.setStyleSheet(f"color: {badge_color}; font-size: 10px;")
+            badge_kind = "error"
+        self.run_artifact_badge.set_status(badge_kind, badge_text)
 
         summary_lines = [
             f"source: {status.get('source', 'fallback')}",
@@ -660,6 +658,19 @@ class EvaluationPage(QWidget):
             "Evaluation",
             "Inspect training artifacts, verify checkpoint readiness, and run pointwise surrogate accuracy analysis.",
             "Model Quality",
+        ))
+        lo.addWidget(StudioWorkflowOverview(
+            (
+                ("Report", "Read contract, checkpoint, scaler, and provenance."),
+                ("Accuracy", "Run in-band pointwise error analysis."),
+                ("OOD", "Keep extrapolation evidence separate from interpolation."),
+            ),
+            current_index=0,
+        ))
+        lo.addWidget(StudioNotice(
+            "Evidence separation",
+            "Treat independent test and OOD datasets as separate evidence classes. OOD results should not be blended into the in-band accuracy story.",
+            kind="warning",
         ))
         lo.addWidget(tabs, 1)
         self.setLayout(lo)

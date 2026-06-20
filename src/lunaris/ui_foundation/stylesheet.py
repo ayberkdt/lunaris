@@ -109,7 +109,7 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         QMenuBar::item {{
             background: transparent;
             padding: 6px 12px;
-            border-radius: 7px;
+            border-radius: 8px;
         }}
         QMenuBar::item:selected {{
             background: {acc_dim};
@@ -123,7 +123,7 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         }}
         QMenu::item {{
             padding: 7px 22px 7px 12px;
-            border-radius: 7px;
+            border-radius: 8px;
         }}
         QMenu::item:selected {{
             background: {acc_dim};
@@ -136,10 +136,24 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         }}
 
         /* CONTAINERS — flat shell surfaces, no gradients */
-        QFrame#header, QFrame#logHeader {{
+        QFrame#header {{
             background: {theme['bg_shell']};
             border: 1px solid {theme['border_soft']};
             border-radius: 12px;
+        }}
+        QWidget#logPanel {{
+            background: {theme['bg_shell']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 12px;
+        }}
+        QFrame#logHeader {{
+            background: {theme['bg_shell']};
+            border: 1px solid {with_alpha(theme['accent'], 0.24)};
+            border-radius: 10px;
+        }}
+        QWidget#logBody {{
+            background: {theme['bg_shell']};
+            border: none;
         }}
         QFrame#stateFrame {{
             background: {acc_dim};
@@ -248,7 +262,7 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         QFrame#navGroup {{
             background: {acc_06};
             border: 1px solid {theme['border_soft']};
-            border-radius: 9px;
+            border-radius: 10px;
         }}
         QPushButton#navButton {{
             text-align: left;
@@ -376,11 +390,11 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         }}
         QPushButton:hover {{
             border-color: {acc_hover_border};
-            background: {theme['bg_entry']};
+            background: {theme['bg_hover']};
             color: {theme['fg_main']};
         }}
         QPushButton:pressed {{
-            background: {theme['border_soft']};
+            background: {theme['bg_inset']};
         }}
         QPushButton:disabled {{
             background: {theme['bg_card']};
@@ -457,12 +471,12 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         }}
         QToolButton:hover {{
             background: {acc_dim};
-            border-radius: 7px;
+            border-radius: 8px;
         }}
         QToolButton#overflowMenuButton {{
             color: {theme['fg_soft']};
             border: 1px solid {theme['border']};
-            border-radius: 7px;
+            border-radius: 8px;
             padding: 5px 10px;
             min-height: {metrics.compact_height}px;
         }}
@@ -649,7 +663,7 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         QWidget#headerMetric {{
             background: {theme['bg_card_alt']};
             border: 1px solid {theme['border_soft']};
-            border-radius: 7px;
+            border-radius: 8px;
         }}
         QLabel#headerMetricLabel {{
             color: {theme['fg_muted']};
@@ -709,11 +723,13 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         QPlainTextEdit#logConsole {{
             background: {theme['bg_log']};
             color: {log_colors['default']};
-            border: 1px solid {theme['border']};
+            border: 1px solid {theme['border_soft']};
             border-radius: 10px;
-            padding: 10px;
+            padding: 11px 12px;
             font-family: {type_tokens.family_mono};
-            font-size: 9.5pt;
+            font-size: 10pt;
+            selection-background-color: {with_alpha(theme['accent'], 0.32)};
+            selection-color: {theme['fg_main']};
         }}
         QPlainTextEdit#commandPreview {{
             background: {theme['bg_log']};
@@ -724,30 +740,51 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
             font-family: {type_tokens.family_mono};
         }}
         QLabel#logTitle {{
-            color: {theme['fg_soft']};
+            color: {theme['fg_main']};
             font-weight: 700;
         }}
         QLabel#logSubtitle, QLabel#logLatestMessage {{
-            color: {theme['fg_muted']};
+            color: {theme['fg_soft']};
             font-size: 9pt;
         }}
         QLabel#logCounter {{
-            color: {theme['fg_muted']};
-            background: {theme['bg_card_alt']};
+            color: {theme['fg_soft']};
+            background: {theme['bg_entry']};
             border: 1px solid {theme['border_soft']};
             border-radius: 8px;
             padding: 2px 8px;
         }}
         QLabel#logStatusChip {{
-            color: {theme['fg_muted']};
-            background: {theme['bg_card_alt']};
-            border: 1px solid {theme['border_soft']};
+            color: {theme['accent_hov']};
+            background: {with_alpha(theme['accent'], 0.12)};
+            border: 1px solid {with_alpha(theme['accent'], 0.28)};
             border-radius: 8px;
             padding: 2px 8px;
         }}
         QPushButton#logToolbarButton {{
+            background: {theme['bg_entry']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 8px;
+            color: {theme['fg_soft']};
             min-height: {metrics.compact_height}px;
             padding: 4px 10px;
+        }}
+        QPushButton#logToolbarButton:hover {{
+            background: {theme['bg_hover']};
+            border-color: {theme['accent_deep']};
+            color: {theme['fg_main']};
+        }}
+        QToolButton#logCollapseButton {{
+            color: {theme['fg_soft']};
+            background: {theme['bg_entry']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 8px;
+            font-weight: 700;
+        }}
+        QToolButton#logCollapseButton:hover {{
+            color: {theme['fg_main']};
+            background: {with_alpha(theme['accent'], 0.14)};
+            border-color: {theme['accent_deep']};
         }}
 
         /* SCROLLBARS */
@@ -783,12 +820,12 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
             background: {acc_35};
         }}
         QSplitter#mainSplit::handle:vertical {{
-            background: {theme['border']};
-            height: 8px;
-            border-radius: 3px;
+            background: {with_alpha(theme['accent'], 0.22)};
+            height: 10px;
+            border-radius: 4px;
         }}
         QSplitter#mainSplit::handle:vertical:hover {{
-            background: {acc_40};
+            background: {with_alpha(theme['accent'], 0.46)};
         }}
 
         /* ACCESSIBLE KEYBOARD FOCUS */

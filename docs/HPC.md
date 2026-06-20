@@ -14,7 +14,7 @@ session works through, in order:
 2. **ST-LRPS training**
 3. **ST-LRPS evaluation**
 4. **Orbit-level gravity benchmark / validation**
-5. **Monte Carlo / batch propagation**
+5. **Batch propagation / uncertainty ensembles**
 
 > **Keep GUIs off compute nodes.** The desktop UI (`lunaris-ui`) and the ST-LRPS
 > Studio (`lunaris-studio`) are interactive tools. Do not install or launch them
@@ -25,7 +25,8 @@ session works through, in order:
 ## Installation
 
 The recommended setup registers the package and its console commands
-(`lunaris-train`, `lunaris-eval`, `lunaris-benchmark`, `lunaris-mc`, …) in an
+(`lunaris-train`, `lunaris-eval`, `lunaris-benchmark`, `lunaris-batch`,
+`lunaris-mc`, …) in an
 isolated, GUI-free environment.
 
 ### Option A: pip / virtual environment (recommended)
@@ -80,6 +81,7 @@ Verify the headless entry points are available:
 lunaris-train --help
 lunaris-eval --help
 lunaris-benchmark --help
+lunaris-batch --help
 ```
 
 ## Data and Output Layout
@@ -172,7 +174,7 @@ before submitting.
 | ST-LRPS training | `hpc/slurm_train_stlrps.sbatch` | `lunaris-train` |
 | ST-LRPS scenario arrays (sweeps) | `hpc/slurm_train_scenario_array.sbatch` | `tools/hpc/run_training_scenario.py` |
 | Orbit-level gravity benchmark / validation | `hpc/slurm_benchmark_gpu.sbatch` | `lunaris-benchmark` |
-| Monte Carlo / batch propagation | `hpc/slurm_mc_array.sbatch` | `lunaris-mc` |
+| Batch propagation / uncertainty ensembles | `hpc/slurm_mc_array.sbatch` | `lunaris-batch` (`lunaris-mc` compatibility alias) |
 
 ### 1. ST-LRPS training (primary workload)
 
@@ -350,16 +352,21 @@ sbatch hpc/slurm_benchmark_gpu.sbatch \
   --output-dir "$LUNARIS_OUTPUT_DIR/gravity_benchmark/<run_name>"
 ```
 
-### 3. Monte Carlo / batch propagation
+### 3. Batch propagation / uncertainty ensembles
 
 ```bash
 sbatch hpc/slurm_mc_array.sbatch \
+  --sampling-method sobol_scrambled \
   --mc-backend auto \
   --gpu-sh-degree 24 \
   --out-dir "$LUNARIS_OUTPUT_DIR/monte_carlo/mc_run"
 ```
 
-Backend selection is explicit and recorded in Monte Carlo outputs:
+Sampling and backend selection are explicit and recorded in ensemble outputs:
+
+- `--sampling-method random` is the classical Monte Carlo option.
+- `--sampling-method lhs`, `sobol`, or `sobol_scrambled` uses a space-filling
+  design, which is usually preferable for validation and coverage studies.
 
 - `--mc-backend auto` prefers the safe GPU path when available and records any
   fallback.
@@ -374,8 +381,9 @@ Backend selection is explicit and recorded in Monte Carlo outputs:
   no-grad PyTorch CUDA forward pass. Keep it experimental until orbit-level
   validation shows acceptable drift for the target scenario set.
 
-For 512-orbit GPU Monte Carlo, use `auto` or an explicit ST-LRPS GPU backend for
-throughput runs, and keep `cpu_sh` high-degree runs as validation/truth jobs.
+For 512-orbit GPU batch propagation, use `auto` or an explicit ST-LRPS GPU
+backend for throughput runs, and keep `cpu_sh` high-degree runs as
+validation/truth jobs.
 Do not describe high-degree SH as a true GPU baseline unless the output metadata
 shows `actual_mc_backend=gpu_sh` and an `actual_sh_degree` at the requested tier.
 
