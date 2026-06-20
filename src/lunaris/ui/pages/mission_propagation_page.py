@@ -23,6 +23,15 @@ from lunaris.common.time_utils import (
 )
 
 try:
+    from lunaris.ui.components import (
+        ActionBar,
+        FormGrid,
+        InlineNotice,
+        MetricRow,
+        Section,
+        SegmentedControl,
+        Subsection,
+    )
     from lunaris.ui.core.solver_policy import (
         DEFAULT_ADAPTIVE_ATOL,
         DEFAULT_ADAPTIVE_RTOL,
@@ -33,7 +42,6 @@ try:
         coerce_positive_float,
         normalize_solver_config_object,
     )
-    from lunaris.ui.components import ActionBar, FormGrid, InlineNotice, MetricRow, Section, SegmentedControl, Subsection
     from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, QuickChip, get_icon
     from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:

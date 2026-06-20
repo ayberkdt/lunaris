@@ -11,17 +11,16 @@ from collections.abc import Sequence
 from lunaris.ui_foundation import DESIGN_TOKENS, with_alpha
 
 from .qt_common import (
+    THEME,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
     Qt,
-    THEME,
     QVBoxLayout,
     QWidget,
 )
-
 
 _KIND_COLOR = {
     "info": THEME["info"],

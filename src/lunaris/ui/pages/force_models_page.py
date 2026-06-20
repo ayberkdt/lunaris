@@ -95,6 +95,7 @@ from typing import Any
 from PySide6 import QtCore, QtWidgets
 
 try:
+    from lunaris.ui.components.primitives import InlineNotice, Section
     from lunaris.ui.core.gravity_artifact_utils import (
         ST_LRPS_RUNS_DIR as _ST_LRPS_RUNS_DIR_UTIL,
     )
@@ -103,7 +104,6 @@ try:
         find_best_gravity_file,
         list_st_lrps_model_dirs,
     )
-    from lunaris.ui.components.primitives import InlineNotice, Section
     from lunaris.ui.core.surrogate_artifacts import (
         is_valid_surrogate_run,
         looks_like_lunar_surrogate_run,
