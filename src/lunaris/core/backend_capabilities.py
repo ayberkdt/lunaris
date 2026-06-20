@@ -4,7 +4,7 @@ Central Backend Capability Registry
 
 Single source of truth (SSOT) for *what each propagator backend can do*.
 
-CLI, UI, the Monte Carlo engine, the benchmark runner, and the
+CLI, UI, the batch/Monte Carlo engine, the benchmark runner, and the
 report/provenance writers consult **one** capability source so they all make the
 same backend decision and label results identically.
 
@@ -12,10 +12,10 @@ Two distinct GPU spherical-harmonics implementations exist in the repository and
 are kept **separate** here — they must never be merged under a single ``gpu_sh``
 capability:
 
-* ``numba_cuda_sh`` — Numba CUDA, one Monte Carlo sample per CUDA thread with a
+* ``numba_cuda_sh`` — Numba CUDA, one ensemble sample per CUDA thread with a
   fixed thread-local Legendre workspace. The degree-24 ceiling is a *kernel
   workspace* limit (``cuda.local.array``), not a physical one. Intended for
-  low-degree, high-throughput Monte Carlo screening.
+  low-degree, high-throughput batch screening.
 * ``torch_cuda_sh`` — PyTorch tensors on CUDA (or CPU), evaluating arbitrary
   degrees (SH25/50/100/200…) bounded only by the loaded coefficient file, GPU
   memory, batch size, dtype, and step size — **no** hard degree-24 cap.
@@ -24,7 +24,7 @@ capability:
 ``numba_cuda_sh`` (see :data:`BACKEND_ALIASES`). Machine-readable provenance and
 user-facing output always use the resolved, real backend name.
 
-The Numba force-model support matrix here is locked to the existing Monte Carlo
+The Numba force-model support matrix here is locked to the existing batch/MC
 behavior by the consistency tests in ``tests/test_backend_capabilities.py``; do
 not change it without updating those tests.
 """
@@ -183,7 +183,7 @@ _NUMBA_CUDA_SH = BackendCapabilities(
         "(degree <= 24, a thread-local workspace limit — NOT a physical one). "
         "Supports third-body Sun/Earth, Earth J2, SRP, and 1PN relativity; "
         "albedo, thermal IR, and solid tides require the CPU backend. Use for "
-        "low-degree, high-throughput Monte Carlo screening."
+        "low-degree, high-throughput batch screening."
     ),
 )
 

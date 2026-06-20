@@ -7,7 +7,7 @@ This directory contains standalone visualization helpers for propagated orbit re
 Purpose: orbit animation and trajectory visualization around the Moon.
 
 Expected inputs:
-- Propagated output/history data from a single run or Monte Carlo workflow.
+- Propagated output/history data from a single run or batch/ensemble workflow.
 - Optional trajectory metadata, surface context, and animation output path.
 
 Primary API:

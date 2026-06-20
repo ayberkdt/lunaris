@@ -23,6 +23,15 @@ from lunaris.common.time_utils import (
 )
 
 try:
+    from lunaris.ui.components import (
+        ActionBar,
+        FormGrid,
+        InlineNotice,
+        MetricRow,
+        Section,
+        SegmentedControl,
+        Subsection,
+    )
     from lunaris.ui.core.solver_policy import (
         DEFAULT_ADAPTIVE_ATOL,
         DEFAULT_ADAPTIVE_RTOL,
@@ -34,6 +43,7 @@ try:
         normalize_solver_config_object,
     )
     from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, QuickChip, get_icon
+    from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -354,95 +364,124 @@ class MissionPropagationPage(QtWidgets.QWidget):
             precision=0,
         )
 
-    def _create_card(self, title: str) -> QtWidgets.QGroupBox:
-        gb = QtWidgets.QGroupBox(title)
-        gb.setStyleSheet(f"""
-            QGroupBox {{
-                background: {THEME['bg_card']};
-                border: 1px solid {THEME['border']};
-                border-radius: 14px;
-                margin-top: 12px;
-                padding-top: 8px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0 8px;
-                color: {THEME['fg_soft']};
-                font-weight: 700;
-            }}
-        """)
-        return gb
-
-    def _style_inner_group(self, group: QtWidgets.QGroupBox) -> None:
-        """Apply a softer nested-card treatment for secondary sections."""
-        group.setStyleSheet(f"""
-            QGroupBox {{
-                background: {THEME['bg_card_alt']};
-                border: 1px solid {THEME['border_soft']};
-                border-radius: 10px;
-                margin-top: 12px;
-                padding-top: 8px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0 8px;
-                color: {THEME['fg_soft']};
-                font-weight: 700;
-            }}
-        """)
-
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(20)
+        layout.setSpacing(DESIGN_TOKENS.layout.page_gap)
 
+        layout.addWidget(self._group_mission_summary())
         layout.addWidget(self._group_mission_timeline())
         layout.addWidget(self._group_integrator_settings())
 
-        btn_layout = QtWidgets.QHBoxLayout()
-        btn_layout.addStretch()
-
-        self.btn_solver_settings = QtWidgets.QPushButton("Advanced Solver Settings...")
-        self.btn_solver_settings.setIcon(get_icon("fa6s.gear", THEME["fg_main"]))
-        self.btn_solver_settings.clicked.connect(self.solver_settings_requested.emit)
-        btn_layout.addWidget(self.btn_solver_settings)
-        layout.addLayout(btn_layout)
-
-        btn_layout2 = QtWidgets.QHBoxLayout()
-        btn_layout2.addStretch()
-
-        self.btn_spacecraft_settings = QtWidgets.QPushButton("Spacecraft Properties...")
+        actions = ActionBar()
+        self.btn_spacecraft_settings = QtWidgets.QPushButton("Spacecraft Bus")
         self.btn_spacecraft_settings.setIcon(get_icon("fa6s.rocket", THEME["fg_main"]))
+        self.btn_spacecraft_settings.setProperty("kind", "ghost")
+        self.btn_spacecraft_settings.setToolTip("Open spacecraft mass, area, drag, and reflectivity settings.")
+        self.btn_spacecraft_settings.setAccessibleName("Spacecraft bus settings")
         self.btn_spacecraft_settings.clicked.connect(self.spacecraft_settings_requested.emit)
-        btn_layout2.addWidget(self.btn_spacecraft_settings)
-        layout.addLayout(btn_layout2)
 
+        self.btn_solver_settings = QtWidgets.QPushButton("Solver Settings")
+        self.btn_solver_settings.setIcon(get_icon("fa6s.gear", THEME["fg_main"]))
+        self.btn_solver_settings.setProperty("kind", "ghost")
+        self.btn_solver_settings.setToolTip("Open advanced numerical solver tolerances.")
+        self.btn_solver_settings.setAccessibleName("Advanced solver settings")
+        self.btn_solver_settings.clicked.connect(self.solver_settings_requested.emit)
+
+        actions.add_action(self.btn_spacecraft_settings)
+        actions.add_action(self.btn_solver_settings)
+        layout.addWidget(actions)
         layout.addStretch(1)
+
+        self._wire_summary_updates()
+        self._update_summary()
+
+    @staticmethod
+    def _field_label(text: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setObjectName("fieldLabel")
+        label.setMinimumWidth(DESIGN_TOKENS.controls.form_label_width)
+        return label
+
+    @staticmethod
+    def _unit_label(text: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setObjectName("fieldUnit")
+        return label
+
+    @staticmethod
+    def _row_container() -> tuple[QtWidgets.QWidget, QtWidgets.QHBoxLayout]:
+        widget = QtWidgets.QWidget()
+        layout = QtWidgets.QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(DESIGN_TOKENS.spacing.sm)
+        return widget, layout
+
+    def _group_mission_summary(self) -> QtWidgets.QWidget:
+        section = Section(
+            "Propagation Setup",
+            "Current timeline, cadence, and numerical method at a glance.",
+            elevated=True,
+        )
+        summary = MetricRow()
+        self.lbl_summary_epoch = summary.add_metric("Epoch", "UTC")
+        self.lbl_summary_duration = summary.add_metric("Window", "10 Days")
+        self.lbl_summary_method = summary.add_metric("Method", "DOP853")
+        self.lbl_summary_cadence = summary.add_metric("Cadence", "60 s")
+        section.add_widget(summary)
+        return section
+
+    def _wire_summary_updates(self) -> None:
+        self.dt_epoch.dateTimeChanged.connect(self._update_summary)
+        self.ent_duration.textChanged.connect(self._update_summary)
+        self.cb_duration_unit.currentTextChanged.connect(self._update_summary)
+        self.cb_integrator.currentTextChanged.connect(self._update_summary)
+        self.cb_output_mode.currentIndexChanged.connect(self._update_summary)
+        self.ent_dt_out.textChanged.connect(self._update_summary)
+        self.ent_samples_per_period.textChanged.connect(self._update_summary)
+        self.ent_max_step.textChanged.connect(self._update_summary)
+
+    def _update_summary(self) -> None:
+        if not hasattr(self, "lbl_summary_epoch"):
+            return
+
+        qdt = self.dt_epoch.dateTime().toUTC()
+        self.lbl_summary_epoch.setText(qdt.toString("yyyy-MM-dd HH:mm 'UTC'"))
+
+        duration = self.ent_duration.text().strip() or "-"
+        unit = self.cb_duration_unit.currentText().strip() or "Days"
+        self.lbl_summary_duration.setText(f"{duration} {unit}")
+
+        method = (self.cb_integrator.currentText() or "-").split(" ", 1)[0]
+        self.lbl_summary_method.setText(method)
+
+        mode = self.cb_output_mode.currentData() or "dt"
+        if mode == "dt":
+            cadence = f"{self.ent_dt_out.text().strip() or '-'} s"
+        else:
+            cadence = f"{self.ent_samples_per_period.text().strip() or '-'} pts/orbit"
+        max_step = self.ent_max_step.text().strip()
+        if max_step:
+            cadence = f"{cadence} | max {max_step} s"
+        self.lbl_summary_cadence.setText(cadence)
 
     # -------------------------------------------------------------------------
     # Timeline
     # -------------------------------------------------------------------------
-    def _group_mission_timeline(self) -> QtWidgets.QGroupBox:
-        gb = self._create_card("Mission Timeline")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(20)
-
-        intro = QtWidgets.QLabel(
-            "Choose when the mission begins and how long the analysis should follow the spacecraft."
+    def _group_mission_timeline(self) -> QtWidgets.QWidget:
+        section = Section(
+            "Mission Timeline",
+            "UTC epoch and analysis window.",
         )
-        intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {THEME['fg_muted']};")
-        layout.addWidget(intro)
 
-        epoch_group = QtWidgets.QGroupBox("Start Epoch")
-        self._style_inner_group(epoch_group)
-        epoch_layout = QtWidgets.QVBoxLayout(epoch_group)
+        section.add_widget(
+            InlineNotice(
+                "Epoch is stored as explicit UTC and exported as ISO-8601 Z.",
+                kind="info",
+            )
+        )
 
+        form = FormGrid()
         self.dt_epoch = QtWidgets.QDateTimeEdit()
         self.dt_epoch.setTimeZone(QtCore.QTimeZone(b"UTC"))
         self.dt_epoch.setDateTime(self.mission_epoch)
@@ -451,49 +490,23 @@ class MissionPropagationPage(QtWidgets.QWidget):
         self.dt_epoch.setToolTip(
             "Mission start time is kept in UTC so saved runs, results, and reports stay aligned."
         )
-        self.dt_epoch.setStyleSheet(f"""
-            QDateTimeEdit {{
-                background: {THEME['bg_entry']};
-                border: 1px solid {THEME['border']};
-                border-radius: 9px;
-                padding: 7px 10px;
-                color: {THEME['fg_main']};
-            }}
-        """)
-        epoch_layout.addWidget(self.dt_epoch)
+        self.dt_epoch.setAccessibleName("Mission start epoch in UTC")
+        form.add_row("Start epoch", self.dt_epoch, "UTC")
 
-        utc_note = QtWidgets.QLabel(
-            "Start time is shown in UTC so mission plans, saved sessions, and generated reports all refer to the same moment."
-        )
-        utc_note.setWordWrap(True)
-        utc_note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
-        epoch_layout.addWidget(utc_note)
-
-        layout.addWidget(epoch_group)
-
-        duration_group = QtWidgets.QGroupBox("Propagation Duration")
-        self._style_inner_group(duration_group)
-        duration_layout = QtWidgets.QVBoxLayout(duration_group)
-
-        duration_note = QtWidgets.QLabel(
-            "Set the full analysis window. Quick presets help you move between short checks and long mission studies."
-        )
-        duration_note.setWordWrap(True)
-        duration_note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
-        duration_layout.addWidget(duration_note)
-
-        value_row = QtWidgets.QHBoxLayout()
+        duration_field, value_row = self._row_container()
         self.ent_duration = NumericDragLineEdit("10.0", step=0.1, min_value=0.001, decimals=2)
+        self.ent_duration.setAccessibleName("Propagation duration")
         value_row.addWidget(self.ent_duration, 1)
 
         self.cb_duration_unit = QtWidgets.QComboBox()
         self.cb_duration_unit.addItems(["Days", "Hours"])
+        self.cb_duration_unit.setAccessibleName("Propagation duration unit")
         value_row.addWidget(self.cb_duration_unit)
+        form.add_row("Duration", duration_field)
+        section.add_widget(form)
 
-        duration_layout.addLayout(value_row)
-
-        presets_row = QtWidgets.QHBoxLayout()
-        presets_row.setSpacing(8)
+        presets, presets_row = self._row_container()
+        presets_row.addWidget(self._field_label("Presets"))
         for label, unit, value in [
             ("12h", "Hours", "12"),
             ("1d", "Days", "1"),
@@ -505,10 +518,8 @@ class MissionPropagationPage(QtWidgets.QWidget):
             presets_row.addWidget(btn)
 
         presets_row.addStretch()
-        duration_layout.addLayout(presets_row)
-
-        layout.addWidget(duration_group)
-        return gb
+        section.add_widget(presets)
+        return section
 
     def _set_duration_preset(self, unit: str, value: str) -> None:
         self.cb_duration_unit.setCurrentText(unit)
@@ -517,47 +528,32 @@ class MissionPropagationPage(QtWidgets.QWidget):
     # -------------------------------------------------------------------------
     # Integrator
     # -------------------------------------------------------------------------
-    def _group_integrator_settings(self) -> QtWidgets.QGroupBox:
-        gb = self._create_card("Numerical Integrator")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(15)
-
-        intro = QtWidgets.QLabel(
-            "Select how the trajectory is propagated and how often mission results are written to the output set."
+    def _group_integrator_settings(self) -> QtWidgets.QWidget:
+        section = Section(
+            "Numerical Integrator",
+            "Solver method, accuracy target, and saved-output cadence.",
         )
-        intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {THEME['fg_muted']};")
-        layout.addWidget(intro)
 
-        method_row = QtWidgets.QHBoxLayout()
-        method_row.addWidget(QtWidgets.QLabel("Propagation Method:"))
-
+        method_grid = FormGrid()
         self.cb_integrator = QtWidgets.QComboBox()
         self.cb_integrator.addItems([
             "DOP853 (Adaptive)",
             "YOSHIDA4 (Symplectic)",
             "VV (Symplectic)",
         ])
+        self.cb_integrator.setAccessibleName("Propagation method")
         self.cb_integrator.currentTextChanged.connect(self._sync_integrator_widgets)
+        method_grid.add_row("Method", self.cb_integrator)
+        section.add_widget(method_grid)
 
-        method_row.addWidget(self.cb_integrator)
-        method_row.addStretch()
-        layout.addLayout(method_row)
-
-        self.tolerance_group = QtWidgets.QGroupBox("Accuracy Target")
-        self._style_inner_group(self.tolerance_group)
-        tolerance_layout = QtWidgets.QVBoxLayout(self.tolerance_group)
-
-        tolerance_note = QtWidgets.QLabel(
-            "Recommended for adaptive solvers. Smaller values increase accuracy, but can make long runs slower."
+        self.solver_mode_notice = InlineNotice(
+            "Adaptive accuracy is active for DOP853.",
+            kind="info",
         )
-        tolerance_note.setWordWrap(True)
-        tolerance_note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
-        tolerance_layout.addWidget(tolerance_note)
+        section.add_widget(self.solver_mode_notice)
 
-        tol_row = QtWidgets.QHBoxLayout()
-        tol_row.addWidget(QtWidgets.QLabel("Relative Tolerance:"))
+        self.tolerance_group = Subsection("Adaptive Accuracy", "Relative tolerance for adaptive propagation.")
+        tolerance_grid = FormGrid()
         self.ent_rtol = NumericDragLineEdit(
             f"{self.solver_cfg.rtol:g}",
             step=1e-13,
@@ -565,64 +561,83 @@ class MissionPropagationPage(QtWidgets.QWidget):
             max_value=1e-3,
             decimals=0,
         )
-        self.ent_rtol.setFixedWidth(140)
-        tol_row.addWidget(self.ent_rtol)
-        tol_row.addStretch()
+        self.ent_rtol.setMaximumWidth(220)
+        self.ent_rtol.setAccessibleName("Relative tolerance")
+        tolerance_grid.add_row("Relative tolerance", self.ent_rtol)
+        self.tolerance_group.add_widget(tolerance_grid)
+        section.add_widget(self.tolerance_group)
 
-        tolerance_layout.addLayout(tol_row)
-        layout.addWidget(self.tolerance_group)
+        cadence_group = Subsection("Output Cadence", "Saved sample density and solver step guard.")
+        cadence_grid = QtWidgets.QGridLayout()
+        cadence_grid.setContentsMargins(0, 0, 0, 0)
+        cadence_grid.setHorizontalSpacing(DESIGN_TOKENS.spacing.md)
+        cadence_grid.setVerticalSpacing(DESIGN_TOKENS.spacing.sm)
+        cadence_grid.setColumnStretch(1, 1)
 
-        step_group = QtWidgets.QGroupBox("Saved Output and Step Control")
-        self._style_inner_group(step_group)
-        step_layout = QtWidgets.QGridLayout(step_group)
-
-        step_note = QtWidgets.QLabel(
-            "Output interval controls how often trajectory samples are saved. Max step limits how far the solver can advance between evaluations."
-        )
-        step_note.setWordWrap(True)
-        step_note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
-        step_layout.addWidget(step_note, 0, 0, 1, 3)
-
-        # Output sampling mode selector
-        step_layout.addWidget(QtWidgets.QLabel("Output Mode:"), 1, 0)
+        mode_label = self._field_label("Output mode")
         self.cb_output_mode = QtWidgets.QComboBox()
         self.cb_output_mode.addItem("Fixed Interval (dt)", "dt")
         self.cb_output_mode.addItem("Samples per Period", "spp")
-        step_layout.addWidget(self.cb_output_mode, 1, 1, 1, 2)
+        self.cb_output_mode.setVisible(False)
 
-        # Fixed interval row
-        self.lbl_dt_out = QtWidgets.QLabel("Output Interval:")
+        self.output_mode_segments = SegmentedControl(["Fixed interval", "Samples/period"])
+        self.output_mode_segments.setAccessibleName("Output sampling mode")
+        self.output_mode_segments.current_changed.connect(self._set_output_mode_index)
+        cadence_grid.addWidget(mode_label, 0, 0, QtCore.Qt.AlignVCenter)
+        cadence_grid.addWidget(self.output_mode_segments, 0, 1, 1, 2)
+
+        self.lbl_dt_out = self._field_label("Output interval")
         self.ent_dt_out = NumericDragLineEdit("60.0", step=10.0, min_value=0.1)
-        self.lbl_dt_out_unit = QtWidgets.QLabel("s")
-        step_layout.addWidget(self.lbl_dt_out, 2, 0)
-        step_layout.addWidget(self.ent_dt_out, 2, 1)
-        step_layout.addWidget(self.lbl_dt_out_unit, 2, 2)
+        self.ent_dt_out.setAccessibleName("Output interval in seconds")
+        self.lbl_dt_out.setBuddy(self.ent_dt_out)
+        self.lbl_dt_out_unit = self._unit_label("s")
+        cadence_grid.addWidget(self.lbl_dt_out, 1, 0, QtCore.Qt.AlignVCenter)
+        cadence_grid.addWidget(self.ent_dt_out, 1, 1)
+        cadence_grid.addWidget(self.lbl_dt_out_unit, 1, 2, QtCore.Qt.AlignVCenter)
 
-        # Samples per period row
-        self.lbl_spp = QtWidgets.QLabel("Samples/Period:")
+        self.lbl_spp = self._field_label("Samples per period")
         self.ent_samples_per_period = NumericDragLineEdit("360", step=10.0, min_value=2.0, max_value=2000.0, decimals=0)
-        self.lbl_spp_unit = QtWidgets.QLabel("pts")
-        step_layout.addWidget(self.lbl_spp, 3, 0)
-        step_layout.addWidget(self.ent_samples_per_period, 3, 1)
-        step_layout.addWidget(self.lbl_spp_unit, 3, 2)
+        self.ent_samples_per_period.setAccessibleName("Samples saved per orbital period")
+        self.lbl_spp.setBuddy(self.ent_samples_per_period)
+        self.lbl_spp_unit = self._unit_label("pts")
+        cadence_grid.addWidget(self.lbl_spp, 2, 0, QtCore.Qt.AlignVCenter)
+        cadence_grid.addWidget(self.ent_samples_per_period, 2, 1)
+        cadence_grid.addWidget(self.lbl_spp_unit, 2, 2, QtCore.Qt.AlignVCenter)
 
         self.ent_max_step = NumericDragLineEdit("", step=10.0, min_value=0.1)
         self.ent_max_step.setPlaceholderText("Auto (Nyquist)")
-        step_layout.addWidget(QtWidgets.QLabel("Max Step:"), 4, 0)
-        step_layout.addWidget(self.ent_max_step, 4, 1)
-        step_layout.addWidget(QtWidgets.QLabel("s"), 4, 2)
+        self.ent_max_step.setText("")
+        self.ent_max_step.setAccessibleName("Maximum solver step in seconds")
+        self.lbl_max_step = self._field_label("Max step")
+        self.lbl_max_step.setBuddy(self.ent_max_step)
+        cadence_grid.addWidget(self.lbl_max_step, 3, 0, QtCore.Qt.AlignVCenter)
+        cadence_grid.addWidget(self.ent_max_step, 3, 1)
+        cadence_grid.addWidget(self._unit_label("s"), 3, 2, QtCore.Qt.AlignVCenter)
 
-        # Wire output mode selector
+        cadence_widget = QtWidgets.QWidget()
+        cadence_widget.setLayout(cadence_grid)
+        cadence_group.add_widget(cadence_widget)
+
         self.cb_output_mode.currentIndexChanged.connect(self._sync_output_mode_widgets)
         self._sync_output_mode_widgets()
-
-        layout.addWidget(step_group)
+        section.add_widget(cadence_group)
 
         self._sync_integrator_widgets()
-        return gb
+        return section
+
+    def _set_output_mode_index(self, index: int) -> None:
+        if index != self.cb_output_mode.currentIndex() and 0 <= index < self.cb_output_mode.count():
+            self.cb_output_mode.setCurrentIndex(index)
+        else:
+            self._sync_output_mode_widgets()
 
     def _sync_output_mode_widgets(self) -> None:
         """Show/hide output interval vs samples-per-period inputs based on selection."""
+        if hasattr(self, "output_mode_segments"):
+            index = self.cb_output_mode.currentIndex()
+            if self.output_mode_segments.current_index() != index:
+                self.output_mode_segments.set_current_index(index)
+
         mode = self.cb_output_mode.currentData() or "dt"
         is_dt = (mode == "dt")
         self.lbl_dt_out.setVisible(is_dt)
@@ -631,12 +646,20 @@ class MissionPropagationPage(QtWidgets.QWidget):
         self.lbl_spp.setVisible(not is_dt)
         self.ent_samples_per_period.setVisible(not is_dt)
         self.lbl_spp_unit.setVisible(not is_dt)
+        self._update_summary()
 
     def _sync_integrator_widgets(self) -> None:
         txt = self.cb_integrator.currentText() or ""
-        self.tolerance_group.setVisible("Adaptive" in txt)
-        if "Adaptive" in txt and not self.ent_rtol.text().strip():
+        is_adaptive = "Adaptive" in txt
+        self.tolerance_group.setVisible(is_adaptive)
+        if hasattr(self, "solver_mode_notice"):
+            if is_adaptive:
+                self.solver_mode_notice.label.setText("Adaptive accuracy is active for DOP853.")
+            else:
+                self.solver_mode_notice.label.setText("Symplectic propagation ignores adaptive tolerance and uses step policy.")
+        if is_adaptive and not self.ent_rtol.text().strip():
             self.ent_rtol.setText(f"{self.solver_cfg.rtol:g}")
+        self._update_summary()
 
     # -------------------------------------------------------------------------
     # State helpers (preset/save/load)

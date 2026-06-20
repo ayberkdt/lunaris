@@ -1,16 +1,18 @@
 # lunaris/common/montecarlo_defs.py
 """
-Monte Carlo Simulation Configuration Definitions
-=================================================
+Batch/Monte Carlo Propagation Configuration Definitions
+=======================================================
 
-Configuration dataclasses for MC uncertainty propagation.  All types follow
-the project SSOT pattern: frozen dataclasses with __post_init__ validation.
+Configuration dataclasses for ensemble uncertainty propagation.  Monte Carlo is
+the default random sampling mode; Latin-hypercube and Sobol designs are also
+available for validation-oriented batch propagation.  All types follow the
+project SSOT pattern: frozen dataclasses with __post_init__ validation.
 
 Layers
 ------
 - ``StateUncertainty``      : position/velocity covariance model.
 - ``SpacecraftUncertainty`` : mass / Cd / Cr / area perturbations.
-- ``MonteCarloConfig``      : top-level MC run configuration.
+- ``MonteCarloConfig``      : top-level batch/MC run configuration.
 - ``MCRunResult``           : output container for ensemble trajectories.
 
 Units
@@ -35,6 +37,13 @@ from .type_defs import F64Array
 # =============================================================================
 # 0.                    SHARED MONTE CARLO OUTPUT GRID
 # =============================================================================
+
+BATCH_SAMPLING_METHODS: tuple[str, ...] = (
+    "random",
+    "lhs",
+    "sobol",
+    "sobol_scrambled",
+)
 
 
 def build_mc_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Array, int, float]:
@@ -220,7 +229,12 @@ def validate_st_lrps_model_dir(path: str | Path) -> Path:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MonteCarloConfig:
     """
-    Top-level Monte Carlo simulation configuration.
+    Top-level batch/Monte Carlo propagation configuration.
+
+    ``sampling_method="random"`` is the classical Monte Carlo option. Use
+    ``"lhs"``, ``"sobol"``, or ``"sobol_scrambled"`` when the goal is a
+    space-filling validation or benchmark design rather than a purely random
+    uncertainty draw.
 
     Routing
     -------
@@ -262,6 +276,7 @@ class MonteCarloConfig:
     # Ensemble
     n_samples: int = 1_000
     seed: int = 42
+    sampling_method: str = "random"
 
     # Uncertainty models
     state: StateUncertainty = field(default_factory=StateUncertainty)
@@ -308,6 +323,12 @@ class MonteCarloConfig:
     def __post_init__(self) -> None:
         if self.n_samples < 2:
             raise ValueError(f"n_samples must be >= 2, got {self.n_samples}")
+        if self.sampling_method not in BATCH_SAMPLING_METHODS:
+            raise ValueError(
+                "sampling_method must be one of: "
+                + ", ".join(repr(method) for method in BATCH_SAMPLING_METHODS)
+                + f". Got {self.sampling_method!r}"
+            )
         if self.dt_s <= 0.0:
             raise ValueError(f"dt_s must be > 0, got {self.dt_s}")
         if self.gravity_mode_override not in ("follow_mission", "classic_sh", "st_lrps"):
@@ -351,7 +372,7 @@ class MonteCarloConfig:
             or self.mc_backend in ("gpu_st_lrps_potential", "gpu_st_lrps_direct")
         ) and not st_lrps_model_dir:
             raise ValueError(
-                "st_lrps_model_dir cannot be empty when ST-LRPS Monte Carlo gravity is requested."
+                "st_lrps_model_dir cannot be empty when ST-LRPS batch gravity is requested."
             )
         if int(self.gpu_sh_degree) < 0:
             raise ValueError(
@@ -570,6 +591,7 @@ class MCRunResult:
 
 __all__ = [
     "build_mc_output_grid",
+    "BATCH_SAMPLING_METHODS",
     "StateUncertainty",
     "SpacecraftUncertainty",
     "MonteCarloConfig",

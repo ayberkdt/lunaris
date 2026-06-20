@@ -79,7 +79,7 @@ python -m lunaris.surrogate.st_lrps.runtime.profiling \
     --out-dir outputs/runtime/st_lrps_chunks_xxx
 ```
 
-Monte Carlo workflows should prefer batched force evaluation when throughput improves at larger batch sizes. If p95 timing is much higher than median timing, runtime jitter or memory pressure may be present.
+Batch propagation workflows should prefer batched force evaluation when throughput improves at larger batch sizes. If p95 timing is much higher than median timing, runtime jitter or memory pressure may be present.
 
 ## Optional Classic SH Comparison
 
@@ -95,13 +95,14 @@ python -m lunaris.surrogate.st_lrps.runtime.profiling \
 
 If the local gravity coefficient file is unavailable, ST-LRPS profiling still runs and the classic SH comparison is skipped with a warning.
 
-## Monte Carlo Backend Profiling
+## Batch Propagation Backend Profiling
 
-Monte Carlo profiling must record the requested backend and the resolved backend.
-Use `lunaris-mc --mc-backend ...` to compare:
+Batch propagation profiling must record the sampling method, requested backend,
+and resolved backend. Use `lunaris-batch --mc-backend ...` to compare:
 
 ```bash
-lunaris-mc \
+lunaris-batch \
+    --sampling-method sobol_scrambled \
     --mc-backend auto \
     --gpu-sh-degree 24 \
     --n-samples 128 \
@@ -113,7 +114,7 @@ Important interpretation rules:
 
 - The current true classic-SH GPU tier is degree 24. Requests above degree 24
   fall back to CPU SH and must be reported as fallback, not GPU high-degree SH.
-- Monte Carlo outputs include `requested_mc_backend`, `actual_mc_backend`,
+- Batch outputs include `sampling_method`, `requested_mc_backend`, `actual_mc_backend`,
   `requested_sh_degree`, `actual_sh_degree`, `runtime_model_kind`,
   `fallback_reason`, CUDA device name when available, dtype, integrator, and step
   size metadata.

@@ -71,6 +71,7 @@ except ImportError as e:
 
 
 try:
+    from lunaris.ui.components.primitives import EmptyState, Section
     from lunaris.ui.core.ui_commons import (
         MU_MOON_KM3_S2,
         ORBIT_THEME,
@@ -222,55 +223,13 @@ class OrbitViz3D(QtWidgets.QWidget):
         return bar
 
     def _install_fallback(self, layout: QtWidgets.QVBoxLayout) -> None:
-        """Designed empty-state card shown when OpenGL is unavailable."""
-        card = QtWidgets.QFrame()
-        card.setObjectName("vizFallback")
-        card.setStyleSheet(
-            f"QFrame#vizFallback {{"
-            f"  background: {THEME['bg_card_alt']};"
-            f"  border: 1px solid {THEME['border_soft']};"
-            f"  border-radius: 12px;"
-            f"}}"
-        )
-        v = QtWidgets.QVBoxLayout(card)
-        v.setContentsMargins(28, 28, 28, 28)
-        v.setSpacing(10)
-        v.addStretch(1)
-
-        try:
-            icon_lbl = QtWidgets.QLabel()
-            icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
-            pix = get_icon("fa6s.cube", THEME['fg_muted']).pixmap(48, 48)
-            if not pix.isNull():
-                icon_lbl.setPixmap(pix)
-                v.addWidget(icon_lbl)
-        except Exception:
-            pass
-
-        title = QtWidgets.QLabel("3D preview unavailable")
-        title.setAlignment(QtCore.Qt.AlignCenter)
-        title.setStyleSheet(
-            f"color: {THEME['fg_soft']}; font-size: 12pt; font-weight: 700;"
-        )
-        v.addWidget(title)
-
-        body = QtWidgets.QLabel(
+        """Designed empty-state shown when OpenGL is unavailable."""
+        card = EmptyState(
+            "3D preview unavailable",
             "The orbit can still be configured normally — only the interactive "
-            "3D preview needs OpenGL, which is not available on this system."
+            "3D preview needs OpenGL, which is not available on this system.\n\n"
+            "Install support:   pip install pyqtgraph PyOpenGL",
         )
-        body.setAlignment(QtCore.Qt.AlignCenter)
-        body.setWordWrap(True)
-        body.setStyleSheet(f"color: {THEME['fg_muted']};")
-        v.addWidget(body)
-
-        hint = QtWidgets.QLabel("Install support:   pip install pyqtgraph PyOpenGL")
-        hint.setAlignment(QtCore.Qt.AlignCenter)
-        hint.setStyleSheet(
-            f"color: {THEME['fg_muted']}; font-family: Consolas, monospace; font-size: 9pt;"
-        )
-        v.addWidget(hint)
-        v.addStretch(1)
-
         layout.addWidget(card)
 
     def _add_axes(self):
@@ -572,10 +531,9 @@ class OrbitPage(QtWidgets.QWidget):
 
         self._build_ui()
 
-    def _create_card(self, title: str) -> QtWidgets.QGroupBox:
-        """Factory for standard titled group boxes (Cards)."""
-        gb = QtWidgets.QGroupBox(title)
-        return gb
+    def _create_card(self, title: str, description: str = "") -> Section:
+        """Factory for standard titled cards built on the shared ``Section`` primitive."""
+        return Section(title, description)
 
     def _metric_chip(self, title: str) -> tuple[QtWidgets.QFrame, QtWidgets.QLabel]:
         """Return a compact ``(frame, value_label)`` metric chip for the info strip."""
@@ -646,11 +604,14 @@ class OrbitPage(QtWidgets.QWidget):
             layout.setColumnStretch(0, 11)
             layout.setColumnStretch(1, 9)
 
-    def _create_params_group(self) -> QtWidgets.QGroupBox:
+    def _create_params_group(self) -> Section:
         """Orbit parameters card with Modern Segmented Control."""
-        gb = self._create_card("Initial Orbit State")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(22, 24, 22, 22)
+        gb = self._create_card(
+            "Initial Orbit State",
+            "Choose the orbit entry style you prefer. Related values stay "
+            "synchronized automatically so you can review the full orbit shape at a glance.",
+        )
+        layout = gb.content_layout
         layout.setSpacing(16)
 
         # A. Modern Segmented Control for Input Mode
@@ -687,14 +648,6 @@ class OrbitPage(QtWidgets.QWidget):
 
         layout.addWidget(mode_container)
 
-        intro = QtWidgets.QLabel(
-            "Choose the orbit entry style you prefer. Related values stay "
-            "synchronized automatically so you can review the full orbit shape at a glance."
-        )
-        intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {THEME['fg_muted']};")
-        layout.addWidget(intro)
-
         # B. Parameter Form with Ghosting
         form_layout = QtWidgets.QGridLayout()
         form_layout.setHorizontalSpacing(12)
@@ -702,13 +655,14 @@ class OrbitPage(QtWidgets.QWidget):
 
         def add_param(row, label, widget, unit=""):
             lbl = QtWidgets.QLabel(label)
+            lbl.setObjectName("fieldLabel")
             lbl.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-            lbl.setStyleSheet(f"color: {THEME['fg_soft']}; font-weight: 600;")
+            lbl.setBuddy(widget)
             form_layout.addWidget(lbl, row, 0)
             form_layout.addWidget(widget, row, 1)
             if unit:
                 lbl_unit = QtWidgets.QLabel(unit)
-                lbl_unit.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
+                lbl_unit.setObjectName("fieldUnit")
                 form_layout.addWidget(lbl_unit, row, 2)
 
         # Input Fields - All are NumericDragLineEdit
@@ -728,7 +682,7 @@ class OrbitPage(QtWidgets.QWidget):
         self.ent_alt_circular = NumericDragLineEdit("100.0", step=10.0, min_value=0.0, max_value=10000.0, decimals=1)
 
         orbit_shape_lbl = QtWidgets.QLabel("Orbit size and shape")
-        orbit_shape_lbl.setStyleSheet(f"color: {THEME['fg_soft']}; font-weight: 700;")
+        orbit_shape_lbl.setObjectName("sectionTitle")
         form_layout.addWidget(orbit_shape_lbl, 0, 0, 1, 3)
 
         # Add to Form
@@ -740,11 +694,11 @@ class OrbitPage(QtWidgets.QWidget):
 
         sep = QtWidgets.QFrame()
         sep.setFrameShape(QtWidgets.QFrame.HLine)
-        sep.setStyleSheet(f"color: {THEME['border_soft']};")
+        sep.setFrameShadow(QtWidgets.QFrame.Plain)
         form_layout.addWidget(sep, 6, 0, 1, 3)
 
         orientation_lbl = QtWidgets.QLabel("Plane and orientation")
-        orientation_lbl.setStyleSheet(f"color: {THEME['fg_soft']}; font-weight: 700;")
+        orientation_lbl.setObjectName("sectionTitle")
         form_layout.addWidget(orientation_lbl, 7, 0, 1, 3)
 
         add_param(8, "Inclination (i)", self.ent_inc, "deg")
@@ -791,19 +745,14 @@ class OrbitPage(QtWidgets.QWidget):
 
         return gb
 
-    def _create_viz_group(self) -> QtWidgets.QGroupBox:
+    def _create_viz_group(self) -> Section:
         """3D orbit preview card."""
-        gb = self._create_card("Orbit Preview")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(16, 24, 16, 16)
-        layout.setSpacing(14)
-
-        intro = QtWidgets.QLabel(
-            "Review the orbit geometry, viewing angle, and estimated period before you launch the mission run."
+        gb = self._create_card(
+            "Orbit Preview",
+            "Review the orbit geometry, viewing angle, and estimated period before you launch the mission run.",
         )
-        intro.setWordWrap(True)
-        intro.setStyleSheet(f"color: {THEME['fg_muted']};")
-        layout.addWidget(intro)
+        layout = gb.content_layout
+        layout.setSpacing(14)
 
         self.orbit_viz_3d = OrbitViz3D()
         self.orbit_viz_3d.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Expanding)
@@ -812,7 +761,6 @@ class OrbitPage(QtWidgets.QWidget):
         # Compact metric strip — period, periselene, aposelene, e, i, energy.
         info_frame = QtWidgets.QFrame()
         info_frame.setObjectName("orbitInfoStrip")
-        info_frame.setStyleSheet("QFrame#orbitInfoStrip { background: transparent; }")
         info_grid = QtWidgets.QGridLayout(info_frame)
         info_grid.setContentsMargins(0, 0, 0, 0)
         info_grid.setHorizontalSpacing(8)

@@ -175,6 +175,7 @@ from .common_widgets import (
     _tune_inputs,
 )
 from .dataset_introspection import inspect_h5_metadata as _introspect_h5
+from .workspace_widgets import StudioStatusBadge
 
 
 def _base_preset(**overrides) -> dict[str, Any]:
@@ -312,10 +313,12 @@ class TrainingQueue(QWidget):
 
         # --- Header ---
         lbl = QLabel("Training Queue")
-        lbl.setStyleSheet("font-weight: 600; color: #c4ccff; font-size: 13px; padding: 2px 0;")
+        lbl.setStyleSheet(
+            f"font-weight: 600; color: {THEME['accent_hov']}; font-size: 13px; padding: 2px 0;"
+        )
 
         self._status_lbl = QLabel("")
-        self._status_lbl.setStyleSheet("color: #7480a8; font-size: 11px;")
+        self._status_lbl.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
 
         # --- List ---
         self._list = QListWidget()
@@ -500,11 +503,11 @@ class TrainingQueue(QWidget):
             text = f"{icon}  [{i + 1}] {job['label']}  —  {job['status']}"
             item = QListWidgetItem(text)
             if "Running" in job["status"]:
-                item.setForeground(QColor("#c084fc"))
+                item.setForeground(QColor(THEME["accent"]))
             elif "Completed" in job["status"]:
-                item.setForeground(QColor("#34d399"))
+                item.setForeground(QColor(THEME["success"]))
             elif "Error" in job["status"] or "Stopped" in job["status"]:
-                item.setForeground(QColor("#f87171"))
+                item.setForeground(QColor(THEME["error"]))
             self._list.addItem(item)
 
     def _update_status(self) -> None:
@@ -551,7 +554,9 @@ class STLRPSTrainTab(QWidget):
         preset_bar.setContentsMargins(4, 0, 4, 0)
         preset_bar.setSpacing(8)
         preset_lbl = QLabel("Profile:")
-        preset_lbl.setStyleSheet("font-weight: 600; color: #c4ccff; font-size: 13px;")
+        preset_lbl.setStyleSheet(
+            f"font-weight: 600; color: {THEME['accent_hov']}; font-size: 13px;"
+        )
         preset_bar.addWidget(preset_lbl)
         preset_bar.addWidget(self._preset_combo, 1)
         preset_bar.addWidget(btn_load_preset)
@@ -573,7 +578,9 @@ class STLRPSTrainTab(QWidget):
         )
         self.workflow_mode.currentIndexChanged.connect(self._on_workflow_mode_changed)
         wf_lbl = QLabel("Workflow:")
-        wf_lbl.setStyleSheet("font-weight: 600; color: #fbbf24; font-size: 13px;")
+        wf_lbl.setStyleSheet(
+            f"font-weight: 600; color: {THEME['warning']}; font-size: 13px;"
+        )
         workflow_bar = QHBoxLayout()
         workflow_bar.setContentsMargins(4, 2, 4, 2)
         workflow_bar.setSpacing(8)
@@ -584,10 +591,20 @@ class STLRPSTrainTab(QWidget):
         self._checklist_label = QLabel("")
         self._checklist_label.setWordWrap(True)
         self._checklist_label.setStyleSheet(
-            "QLabel { font-size: 11px; color: #9aa7c7; "
-            "background: rgba(10,16,31,0.7); border-radius: 6px; padding: 4px 8px; }"
+            f"QLabel {{ font-size: 11px; color: {THEME['fg_muted']}; "
+            f"background: {with_alpha(THEME['bg_inset'], 0.70)}; "
+            "border-radius: 6px; padding: 4px 8px; }"
         )
         self._checklist_label.setVisible(False)
+        self._launch_badge = StudioStatusBadge("Checking", "info")
+        self._launch_summary = QLabel("Readiness checks will appear here.")
+        self._launch_summary.setAccessibleName("Launch readiness details")
+        self._launch_summary.setWordWrap(True)
+        self._launch_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._launch_summary.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._launch_summary.setStyleSheet(
+            f"color: {THEME['fg_soft']}; font-size: 11px;"
+        )
 
         # =====================================================================
         # GROUP 1: Data & I/O
@@ -620,10 +637,17 @@ class STLRPSTrainTab(QWidget):
         self.val_data = ValidatedPathEdit(placeholder="Required in independent mode", check_file=True)
         self.test_data = ValidatedPathEdit(placeholder="Optional independent in-band test cloud", check_file=True)
         self.ood_data = ValidatedPathEdit(placeholder="Optional OOD/extrapolation cloud", check_file=True)
+        self._last_dataset_dir: Path | None = None
         btn_train_data = QPushButton("Select...")
         btn_val_data = QPushButton("Select...")
         btn_test_data = QPushButton("Select...")
         btn_ood_data = QPushButton("Select...")
+        btn_apply_suite = QPushButton("Apply Suite Folder...")
+        btn_apply_suite.setProperty("kind", "ghost")
+        btn_apply_suite.setToolTip(
+            "Select a generated dataset-suite folder once and fill train/validation/test/OOD paths automatically."
+        )
+        btn_apply_suite.clicked.connect(self._pick_dataset_suite)
         btn_train_data.clicked.connect(lambda: self._pick_dataset_path(self.train_data, "Select train dataset"))
         btn_val_data.clicked.connect(lambda: self._pick_dataset_path(self.val_data, "Select validation dataset"))
         btn_test_data.clicked.connect(lambda: self._pick_dataset_path(self.test_data, "Select test dataset"))
@@ -655,6 +679,14 @@ class STLRPSTrainTab(QWidget):
         self._independent_data_widget = QWidget()
         independent_form = QFormLayout()
         _tune_form(independent_form)
+        suite_actions = QHBoxLayout()
+        suite_actions.setContentsMargins(0, 0, 0, 0)
+        suite_actions.setSpacing(8)
+        suite_actions.addWidget(btn_apply_suite)
+        suite_actions.addStretch(1)
+        suite_actions_widget = QWidget()
+        suite_actions_widget.setLayout(suite_actions)
+        independent_form.addRow("Dataset Suite", suite_actions_widget)
         independent_form.addRow("Train Dataset", _row_lineedit_with_button(self.train_data, btn_train_data))
         independent_form.addRow("", self._train_ds_info)
         independent_form.addRow("Validation Dataset", _row_lineedit_with_button(self.val_data, btn_val_data))
@@ -685,8 +717,15 @@ class STLRPSTrainTab(QWidget):
         self.val_ratio.setSingleStep(0.01)
         self.val_ratio.setToolTip("Validation fraction in single-dataset mode. 0.1 -> 10% val, 90% train.")
 
+        self.allow_legacy_dataset_contract = QCheckBox("Allow legacy dataset contract")
+        self.allow_legacy_dataset_contract.setToolTip(
+            "Adds --allow-legacy-dataset-contract for older HDF5 datasets whose "
+            "DatasetContract is inferred from legacy attrs. Keep this off for paper/"
+            "evidence runs; prefer regenerating datasets with an explicit contract."
+        )
+
         self._suite_manifest_label = QLabel("(no suite applied)")
-        self._suite_manifest_label.setStyleSheet("color: #94a3b8; font-size: 10px;")
+        self._suite_manifest_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
         self._suite_manifest_label.setWordWrap(True)
 
         form_data.addRow("Dataset Mode", self.dataset_mode)
@@ -695,9 +734,12 @@ class STLRPSTrainTab(QWidget):
         form_data.addRow("Output Folder", out_row)
         form_data.addRow("HDF5 Dataset Name", self.dataset_name)
         form_data.addRow("Validation Fraction", self.val_ratio)
+        form_data.addRow(self.allow_legacy_dataset_contract)
         form_data.addRow("Suite Manifest", self._suite_manifest_label)
         grp_data.setLayout(form_data)
         self.dataset_mode.currentIndexChanged.connect(self._on_dataset_mode_changed)
+        self.allow_legacy_dataset_contract.toggled.connect(self._refresh_command_preview)
+        self.allow_legacy_dataset_contract.toggled.connect(self._refresh_checklist)
 
         # =====================================================================
         # GROUP 1B: Resume Training
@@ -744,7 +786,7 @@ class STLRPSTrainTab(QWidget):
             "training resumes from the last completed checkpoint."
         )
         resume_help.setWordWrap(True)
-        resume_help.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        resume_help.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
 
         form_resume.addRow(self.resume_enabled)
         form_resume.addRow("Resume From", resume_path_widget)
@@ -849,7 +891,7 @@ class STLRPSTrainTab(QWidget):
         )
         self.fourier_info = QLabel("SIREN and Fourier/RFF are mutually exclusive.")
         self.fourier_info.setWordWrap(True)
-        self.fourier_info.setStyleSheet("color: #fbbf24; font-size: 11px;")
+        self.fourier_info.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
         self.fourier_n = QSpinBox()
         self.fourier_n.setRange(16, 4096)
         self.fourier_n.setValue(256)
@@ -1175,7 +1217,7 @@ class STLRPSTrainTab(QWidget):
             "This computes second derivatives and can be expensive. Keep subset size small."
         )
         lap_warn.setWordWrap(True)
-        lap_warn.setStyleSheet("color: #fbbf24; font-size: 11px;")
+        lap_warn.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
         self.laplacian_weight = QDoubleSpinBox()
         self.laplacian_weight.setDecimals(10)
         self.laplacian_weight.setRange(0.0, 1.0)
@@ -1360,10 +1402,10 @@ class STLRPSTrainTab(QWidget):
         self.max_val_batches.setVisible(False)
         _adv_sep = QLabel("  PINN Architecture")
         _adv_sep.setStyleSheet(
-            "color: #9aa7ff; font-size: 11px; font-weight: 600;"
+            f"color: {THEME['accent_hov']}; font-size: 11px; font-weight: 600;"
             " padding: 4px 10px; margin-top: 4px;"
-            " background: rgba(124, 92, 255, 0.08);"
-            " border-left: 2px solid rgba(124, 92, 255, 0.40);"
+            f" background: {with_alpha(THEME['accent'], 0.08)};"
+            f" border-left: 2px solid {with_alpha(THEME['accent'], 0.40)};"
             " border-radius: 0 6px 6px 0;"
         )
         form_adv.addRow(_adv_sep)
@@ -1411,7 +1453,7 @@ class STLRPSTrainTab(QWidget):
 
         self.model_preset_note = QLabel("")
         self.model_preset_note.setWordWrap(True)
-        self.model_preset_note.setStyleSheet("color: #fbbf24; font-size: 11px;")
+        self.model_preset_note.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
 
         self.use_radial_separation = QCheckBox("Radial separation encoding [r, ux, uy, uz]")
         self.use_radial_decay_encoding = QCheckBox("Radial decay encoding (scaled inverse-radius)")
@@ -1539,7 +1581,7 @@ class STLRPSTrainTab(QWidget):
             "best-checkpoint selection. On resume, already-completed evaluations are skipped."
         )
         periodic_help.setWordWrap(True)
-        periodic_help.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        periodic_help.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
 
         form_periodic.addRow(self.periodic_eval_enabled)
         form_periodic.addRow("Mode", self.periodic_eval_mode)
@@ -1582,27 +1624,9 @@ class STLRPSTrainTab(QWidget):
         self.extra_args.setPlaceholderText("Extra CLI arguments (optional)")
         self.extra_args.setToolTip(f"Extra arguments passed directly to the python -m {TRAIN_CLI_MODULE} command.")
 
-        # =====================================================================
-        # LAYOUT ASSEMBLY
-        # =====================================================================
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(12)
-        grid.addWidget(grp_data, 0, 0)
-        grid.addWidget(self.resume_section, 0, 1)
-        grid.addWidget(grp_arch, 1, 0)
-        grid.addWidget(grp_optim, 1, 1)
-        grid.addWidget(self._loss_physics_section, 2, 0, 1, 2)
-        grid.addWidget(self._fourier_section, 3, 0, 1, 2)
-        grid.addWidget(self._dir_loss_section, 4, 0, 1, 2)
-        grid.addWidget(self._field_loss_section, 5, 0, 1, 2)
-        grid.addWidget(self.advanced_section, 6, 0, 1, 2)
-        grid.addWidget(self._model_repr_section, 7, 0, 1, 2)
-        grid.addWidget(self._periodic_eval_section, 8, 0, 1, 2)
-
-        extra_row_layout = QFormLayout()
-        _tune_form(extra_row_layout)
-        extra_row_layout.addRow("Extra CLI Arguments", self.extra_args)
+        # Command preview controls are mounted later in the visible command
+        # section. Keep them unparented here so Qt does not silently move them
+        # between an obsolete layout and the current setup workspace.
         self.command_preview = QPlainTextEdit()
         self.command_preview.setReadOnly(True)
         self.command_preview.setFont(_mono_font())
@@ -1612,25 +1636,7 @@ class STLRPSTrainTab(QWidget):
         )
         self.command_warning = QLabel("")
         self.command_warning.setWordWrap(True)
-        self.command_warning.setStyleSheet("color: #fbbf24; font-size: 11px;")
-        btn_preview = QPushButton("Preview Command")
-        btn_preview.clicked.connect(self._refresh_command_preview)
-        btn_copy = QPushButton("Copy Command")
-        btn_copy.clicked.connect(self._copy_command_preview)
-        preview_buttons = QHBoxLayout()
-        preview_buttons.setContentsMargins(0, 0, 0, 0)
-        preview_buttons.addWidget(btn_preview)
-        preview_buttons.addWidget(btn_copy)
-        preview_buttons.addStretch(1)
-        preview_wrap = QWidget()
-        preview_wrap.setLayout(preview_buttons)
-        extra_row_layout.addRow("", preview_wrap)
-        extra_row_layout.addRow("Generated Command", self.command_preview)
-        extra_row_layout.addRow("", self.command_warning)
-        extra_w = QWidget()
-        extra_w.setLayout(extra_row_layout)
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
+        self.command_warning.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
 
         for grp in (grp_data, grp_arch, grp_optim, grp_phys):
             _tune_inputs(grp)
@@ -1726,7 +1732,7 @@ class STLRPSTrainTab(QWidget):
 
         # ── 2. Add Model Preset to grp_arch ──
         form_arch.insertRow(0, "Model Preset", self.model_preset)
-        grp_data.setTitle("Dataset & Output")
+        grp_data.setTitle("Dataset and Output")
 
         # ── 3. Horizontal Launch Plan Strip (Phase 1) ──
         launch_strip = QFrame()
@@ -1741,14 +1747,17 @@ class STLRPSTrainTab(QWidget):
         output_mode_box = QHBoxLayout()
         output_mode_box.setSpacing(6)
         out_mode_lbl = QLabel("Output:")
-        out_mode_lbl.setStyleSheet("font-weight: 600; color: #94a3b8; font-size: 13px;")
+        out_mode_lbl.setStyleSheet(
+            f"font-weight: 600; color: {THEME['fg_muted']}; font-size: 13px;"
+        )
         self._output_mode_short = QLabel("auto")
-        self._output_mode_short.setStyleSheet("color: #cbd5e1; font-size: 13px;")
+        self._output_mode_short.setStyleSheet(f"color: {THEME['fg_soft']}; font-size: 13px;")
         output_mode_box.addWidget(out_mode_lbl)
         output_mode_box.addWidget(self._output_mode_short)
 
         launch_l.addLayout(output_mode_box)
-        launch_l.addWidget(self._checklist_label)
+        launch_l.addWidget(self._launch_badge)
+        launch_l.addWidget(self._launch_summary, 1)
         launch_l.addStretch(1)
         launch_l.addWidget(self.btn_enqueue_setup)
         launch_l.addWidget(self.btn_start_setup)
@@ -1758,20 +1767,22 @@ class STLRPSTrainTab(QWidget):
         workspace_grid = QGridLayout()
         workspace_grid.setContentsMargins(0, 0, 0, 0)
         workspace_grid.setSpacing(16)
+        workspace_grid.setColumnStretch(0, 1)
 
         # Resume / continue-from-checkpoint sits at the very top of the config
         # so it is the first thing visible (it was previously attached to an
         # unused layout and never displayed at all).
-        workspace_grid.addWidget(self.resume_section, 0, 0, 1, 2)
+        workspace_grid.addWidget(self.resume_section, 0, 0)
         workspace_grid.addWidget(grp_data, 1, 0)
-        workspace_grid.addWidget(grp_arch, 1, 1)
-        workspace_grid.addWidget(grp_optim, 2, 0)
-        workspace_grid.addWidget(self._loss_physics_section, 2, 1)
-        workspace_grid.addWidget(self._fourier_section, 3, 0, 1, 2)
-        workspace_grid.addWidget(self._dir_loss_section, 4, 0, 1, 2)
-        workspace_grid.addWidget(self._field_loss_section, 5, 0, 1, 2)
-        workspace_grid.addWidget(self.advanced_section, 6, 0, 1, 2)
-        workspace_grid.addWidget(self._model_repr_section, 7, 0, 1, 2)
+        workspace_grid.addWidget(grp_arch, 2, 0)
+        workspace_grid.addWidget(grp_optim, 3, 0)
+        workspace_grid.addWidget(self._loss_physics_section, 4, 0)
+        workspace_grid.addWidget(self._fourier_section, 5, 0)
+        workspace_grid.addWidget(self._dir_loss_section, 6, 0)
+        workspace_grid.addWidget(self._field_loss_section, 7, 0)
+        workspace_grid.addWidget(self.advanced_section, 8, 0)
+        workspace_grid.addWidget(self._model_repr_section, 9, 0)
+        workspace_grid.addWidget(self._periodic_eval_section, 10, 0)
 
         # ── 5. Command & Launch collapsible section ──
         cmd_section = CollapsibleSection("Command Preview & CLI Arguments")
@@ -1788,7 +1799,7 @@ class STLRPSTrainTab(QWidget):
 
         extra_row_layout = QHBoxLayout()
         extra_lbl = QLabel("Extra CLI Arguments:")
-        extra_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        extra_lbl.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 12px;")
         extra_row_layout.addWidget(extra_lbl)
         extra_row_layout.addWidget(self.extra_args, 1)
 
@@ -1805,8 +1816,8 @@ class STLRPSTrainTab(QWidget):
         cmd_section.set_content_layout(cmd_vbox)
 
         # Add both to the bottom of the grid layout
-        workspace_grid.addWidget(saved_profiles_section, 8, 0, 1, 2)
-        workspace_grid.addWidget(cmd_section, 9, 0, 1, 2)
+        workspace_grid.addWidget(saved_profiles_section, 11, 0)
+        workspace_grid.addWidget(cmd_section, 12, 0)
 
         workspace_inner = QWidget()
         workspace_inner.setLayout(workspace_grid)
@@ -1865,8 +1876,9 @@ class STLRPSTrainTab(QWidget):
         queue_collapsible_l.addWidget(queue_box)
         queue_collapsible.set_content_layout(queue_collapsible_l)
 
-        # Single-column scrollable content. The control bar sits at the top,
-        # just above the KPI/Phase cards (request: not a separate pinned widget).
+        # Fixed monitor workspace: metrics/plots on the left, process console on
+        # the right. This avoids the old bottom-opening terminal feel and keeps
+        # logs visible without stealing vertical space from the chart.
         monitor_content = QWidget()
         mc_l = QVBoxLayout(monitor_content)
         mc_l.setContentsMargins(0, 0, 0, 0)
@@ -1877,12 +1889,34 @@ class STLRPSTrainTab(QWidget):
         if _HAS_DASHBOARD_V2 and self._time_strip is not None:
             mc_l.addWidget(self._time_strip)
         mc_l.addWidget(self._live_plot)
-        if _HAS_DASHBOARD_V2 and self._structured_log is not None:
-            mc_l.addWidget(self._structured_log)
-        else:
-            mc_l.addWidget(self.runner)
         mc_l.addWidget(queue_collapsible)
         mc_l.addStretch(0)
+
+        console_panel = QFrame()
+        _style_surface(console_panel, object_name="trainingConsolePanel")
+        console_panel.setMinimumWidth(360)
+        console_l = QVBoxLayout(console_panel)
+        console_l.setContentsMargins(12, 10, 12, 12)
+        console_l.setSpacing(8)
+
+        console_title = QLabel("Run Console")
+        console_title.setObjectName("sectionTitle")
+        console_hint = QLabel("Process output, parsed events, warnings, and raw log context stay fixed here.")
+        console_hint.setObjectName("pageDescription")
+        console_hint.setWordWrap(True)
+        console_l.addWidget(console_title)
+        console_l.addWidget(console_hint)
+        if _HAS_DASHBOARD_V2 and self._structured_log is not None:
+            console_l.addWidget(self._structured_log, 1)
+        else:
+            console_l.addWidget(self.runner, 1)
+
+        monitor_splitter = QSplitter(Qt.Orientation.Horizontal)
+        monitor_splitter.addWidget(_scroll_wrap(monitor_content))
+        monitor_splitter.addWidget(console_panel)
+        monitor_splitter.setStretchFactor(0, 3)
+        monitor_splitter.setStretchFactor(1, 2)
+        monitor_splitter.setSizes([880, 420])
 
         self.monitor_page = QWidget()
         monitor_shell_l = QVBoxLayout(self.monitor_page)
@@ -1893,7 +1927,7 @@ class STLRPSTrainTab(QWidget):
             "Track lifecycle, loss curves, phase timing, checkpoints, and process output while the experiment runs.",
             "Live Experiment",
         ))
-        monitor_shell_l.addWidget(_scroll_wrap(monitor_content), 1)
+        monitor_shell_l.addWidget(monitor_splitter, 1)
 
         # ── 9. Final Setup ──
         self._page_tabs = None
@@ -2273,24 +2307,35 @@ class STLRPSTrainTab(QWidget):
     def _refresh_checklist(self) -> None:
         """Build a compact readiness checklist and update the label."""
         items = []
+        readiness_items: list[tuple[str, str]] = []
         ok = True
 
         script_train = TRAIN_CLI_PATH
         script_eval  = EVAL_CLI_PATH
         mode = self.workflow_mode.currentData() if hasattr(self, "workflow_mode") else "train_then_eval"
 
-        def check(cond: bool, text: str, hard: bool = True) -> None:
+        def check(cond: bool, text: str, hard: bool = True, fail_text: str | None = None) -> None:
             nonlocal ok
-            icon = "✓" if cond else ("✗" if hard else "⚠")
-            color = "#34d399" if cond else ("#f87171" if hard else "#fbbf24")
-            items.append(f'<span style="color:{color}">{icon} {text}</span>')
+            marker = "OK" if cond else ("BLOCK" if hard else "WARN")
+            color = THEME["success"] if cond else (THEME["error"] if hard else THEME["warning"])
+            shown_text = text if cond else (fail_text or text)
+            items.append(f'<span style="color:{color}">{marker}: {shown_text}</span>')
+            readiness_items.append(("success" if cond else ("error" if hard else "warning"), shown_text))
             if not cond and hard:
                 ok = False
 
         if mode in ("train_only", "train_then_eval", "queue"):
-            check(script_train.exists(), "lunaris.surrogate.st_lrps.training.cli found")
+            check(
+                script_train.exists(),
+                "Training CLI found",
+                fail_text=f"Training CLI is missing: {script_train}",
+            )
         if mode in ("eval_only", "train_then_eval"):
-            check(script_eval.exists(), "lunaris.surrogate.st_lrps.evaluation.cli found")
+            check(
+                script_eval.exists(),
+                "Evaluation CLI found",
+                fail_text=f"Evaluation CLI is missing: {script_eval}",
+            )
 
         dataset_mode = self.dataset_mode.currentData() if hasattr(self, "dataset_mode") else "single"
         if mode != "eval_only":
@@ -2303,40 +2348,137 @@ class STLRPSTrainTab(QWidget):
                     check(Path(rp).exists(), f"Resume source exists: {Path(rp).name}", hard=True)
                 else:
                     check(False, "Resume source is required", hard=True)
-                items.append(
-                    '<span style="color:#7c8dc7">ℹ Resume mode: dataset/output may be inferred from previous run config</span>'
-                )
+                readiness_items.append(("info", "Resume mode: dataset/output may be inferred from previous run config"))
+                items.append(f'<span style="color:{THEME["info"]}">INFO: Resume mode: dataset/output may be inferred from previous run config</span>')
             elif dataset_mode == "single":
                 dp = self.data.text().strip() if hasattr(self, "data") else ""
                 if dp:
                     check(Path(dp).is_file(), f"Dataset exists: {Path(dp).name}")
                 else:
-                    items.append('<span style="color:#7c8dc7">ℹ No dataset path → auto-discover</span>')
+                    readiness_items.append(("info", "No dataset path: latest HDF5 will be auto-discovered"))
+                    items.append(f'<span style="color:{THEME["info"]}">INFO: No dataset path: latest HDF5 will be auto-discovered</span>')
             else:
+                def check_dataset(label: str, path_text: str, *, required: bool) -> None:
+                    if path_text:
+                        check(
+                            Path(path_text).is_file(),
+                            f"{label} found: {Path(path_text).name}",
+                            hard=True,
+                            fail_text=f"{label} path not found: {path_text}",
+                        )
+                    elif required:
+                        check(
+                            False,
+                            f"{label} selected",
+                            hard=True,
+                            fail_text=f"{label} missing - use Apply Suite Folder or select the file.",
+                        )
+                    else:
+                        readiness_items.append(("info", f"{label} not selected (optional)."))
+                        items.append(
+                            f'<span style="color:{THEME["info"]}">INFO: {label} not selected (optional).</span>'
+                        )
+
                 tp = self.train_data.text().strip() if hasattr(self, "train_data") else ""
                 vp = self.val_data.text().strip() if hasattr(self, "val_data") else ""
-                check(bool(tp) and Path(tp).is_file(), "Train dataset exists", hard=True)
-                check(bool(vp) and Path(vp).is_file(), "Val dataset exists", hard=True)
+                xp = self.test_data.text().strip() if hasattr(self, "test_data") else ""
+                op = self.ood_data.text().strip() if hasattr(self, "ood_data") else ""
+                check_dataset("Train dataset", tp, required=True)
+                check_dataset("Validation dataset", vp, required=True)
+                check_dataset("Test dataset", xp, required=False)
+                check_dataset("OOD dataset", op, required=False)
+
+            if (
+                hasattr(self, "allow_legacy_dataset_contract")
+                and self.allow_legacy_dataset_contract.isChecked()
+            ):
+                warning = (
+                    "Legacy dataset contract override enabled - acceptable for old exploratory "
+                    "datasets, not for paper/evidence runs."
+                )
+                readiness_items.append(("warning", warning))
+                items.append(f'<span style="color:{THEME["warning"]}">WARN: {warning}</span>')
 
         if mode in ("eval_only",):
             md = self.out_dir.text().strip() if hasattr(self, "out_dir") else ""
-            check(bool(md) and Path(md).is_dir(), "Model dir exists (eval only)", hard=True)
+            check(
+                bool(md) and Path(md).is_dir(),
+                "Model directory exists",
+                hard=True,
+                fail_text="Model directory missing - choose an existing run/output folder for evaluation.",
+            )
 
         if not hasattr(self, "_checklist_label"):
             return
+
+        if hasattr(self, "_launch_badge"):
+            blocking = sum(1 for kind, _text in readiness_items if kind in {"error", "blocked"})
+            warnings = sum(1 for kind, _text in readiness_items if kind == "warning")
+            if blocking:
+                self._launch_badge.set_status("error", f"{blocking} blocking")
+            elif warnings:
+                self._launch_badge.set_status("warning", f"{warnings} warning")
+            else:
+                self._launch_badge.set_status("success", "Ready")
+        blocking_items = [text for kind, text in readiness_items if kind in {"error", "blocked"}]
+        warning_items = [text for kind, text in readiness_items if kind == "warning"]
+        info_items = [text for kind, text in readiness_items if kind == "info"]
+        ok_items = [text for kind, text in readiness_items if kind == "success"]
+
+        def compact(prefix: str, values: list[str]) -> str:
+            shown = values[:2]
+            suffix = f" (+{len(values) - len(shown)} more)" if len(values) > len(shown) else ""
+            return f"{prefix}: " + " | ".join(shown) + suffix
+
+        if hasattr(self, "_launch_summary"):
+            if blocking_items:
+                summary = compact("Fix before launch", blocking_items)
+            elif warning_items:
+                summary = compact("Review warning", warning_items)
+            elif ok_items:
+                summary = compact("Ready", ok_items[:3])
+            elif info_items:
+                summary = compact("Info", info_items)
+            else:
+                summary = "Ready to review parameters."
+            self._launch_summary.setText(summary)
+            tooltip_lines = []
+            for heading, values in (
+                ("Blocking", blocking_items),
+                ("Warnings", warning_items),
+                ("Info", info_items),
+                ("Passed", ok_items),
+            ):
+                if values:
+                    tooltip_lines.append(f"{heading}:")
+                    tooltip_lines.extend(f"  - {value}" for value in values)
+            tooltip = "\n".join(tooltip_lines)
+            self._launch_summary.setToolTip(tooltip)
+            if hasattr(self, "_launch_badge"):
+                self._launch_badge.setToolTip(tooltip)
 
         if not items:
             self._checklist_label.setVisible(False)
             return
 
         self._checklist_label.setText("  ".join(items))
-        self._checklist_label.setVisible(True)
+        self._checklist_label.setVisible(False)
 
         # Enable/disable start button based on hard requirements
         if hasattr(self, "runner"):
             self.runner.btn_start.setEnabled(ok)
+            if not ok and blocking_items:
+                self.runner.btn_start.setToolTip(compact("Cannot start", blocking_items))
+            else:
+                self.runner.btn_start.setToolTip("Start the current training workflow.")
         if hasattr(self, "btn_start_setup"):
-            if hasattr(self, "btn_start_setup"): self.btn_start_setup.setEnabled(ok)
+            self.btn_start_setup.setEnabled(ok)
+            if not ok and blocking_items:
+                self.btn_start_setup.setToolTip(compact("Cannot start", blocking_items))
+            else:
+                self.btn_start_setup.setToolTip(
+                    "Start the current training workflow and open the Training Monitor page."
+                )
 
     # -----------------------------------------------------------------
     # Preset System
@@ -2369,6 +2511,7 @@ class STLRPSTrainTab(QWidget):
             "out_dir": self.out_dir.text(),
             "dataset_name": self.dataset_name.text(),
             "val_ratio": self.val_ratio.value(),
+            "allow_legacy_dataset_contract": self.allow_legacy_dataset_contract.isChecked(),
             # Resume
             "resume_enabled": self.resume_enabled.isChecked(),
             "resume_from": self.resume_from.text(),
@@ -2545,6 +2688,8 @@ class STLRPSTrainTab(QWidget):
             self.preload_data.setChecked(bool(cfg["preload_data"]))
         if "pin_memory" in cfg:
             self.pin_memory.setChecked(bool(cfg["pin_memory"]))
+        if "allow_legacy_dataset_contract" in cfg:
+            self.allow_legacy_dataset_contract.setChecked(bool(cfg["allow_legacy_dataset_contract"]))
         if "quick_check" in cfg:
             self.quick_check.setChecked(bool(cfg["quick_check"]))
         if "use_altitude_balanced_loss" in cfg:
@@ -2623,10 +2768,10 @@ class STLRPSTrainTab(QWidget):
             self.applied_suite_manifest_path = str(cfg["suite_manifest"] or "")
             if self.applied_suite_manifest_path:
                 self._suite_manifest_label.setText(self.applied_suite_manifest_path)
-                self._suite_manifest_label.setStyleSheet("color: #6ee7b7; font-size: 10px;")
+                self._suite_manifest_label.setStyleSheet(f"color: {THEME['success']}; font-size: 10px;")
             else:
                 self._suite_manifest_label.setText("(no suite applied)")
-                self._suite_manifest_label.setStyleSheet("color: #94a3b8; font-size: 10px;")
+                self._suite_manifest_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
         # Periodic evaluation (monitoring only) — backward compatible: old profiles
         # without these keys keep the current (disabled) widget values.
         for _pk, _spin in (
@@ -2711,25 +2856,156 @@ class STLRPSTrainTab(QWidget):
     # -----------------------------------------------------------------
     # File Dialogs
     # -----------------------------------------------------------------
+    def _remember_dataset_dir(self, path: str | Path) -> None:
+        p = Path(path)
+        self._last_dataset_dir = p if p.is_dir() else p.parent
+
+    def _dataset_dialog_start_dir(self, target: ValidatedPathEdit | None = None) -> str:
+        candidates: list[Path] = []
+        if target is not None and target.text().strip():
+            p = Path(target.text().strip())
+            candidates.append(p if p.is_dir() else p.parent)
+        if getattr(self, "_last_dataset_dir", None) is not None:
+            candidates.append(self._last_dataset_dir)
+        for edit in (self.train_data, self.val_data, self.test_data, self.ood_data, self.data):
+            text = edit.text().strip()
+            if text:
+                p = Path(text)
+                candidates.append(p if p.is_dir() else p.parent)
+        candidates.extend((DATASET_SUITE_OUTPUT_ROOT, SCRIPT_DIR))
+        for candidate in candidates:
+            try:
+                if candidate.exists():
+                    return str(candidate)
+            except OSError:
+                continue
+        return str(SCRIPT_DIR)
+
     def _pick_data(self) -> None:
         fn, _ = QFileDialog.getOpenFileName(
             self,
             "Select Dataset",
-            self.data.text() or str(SCRIPT_DIR),
+            self._dataset_dialog_start_dir(self.data),
             "HDF5 (*.h5 *.hdf5);;All (*.*)",
         )
         if fn:
+            self._remember_dataset_dir(fn)
             self.data.setText(_norm_path(fn))
 
     def _pick_dataset_path(self, target: ValidatedPathEdit, title: str) -> None:
         fn, _ = QFileDialog.getOpenFileName(
             self,
             title,
-            target.text() or str(SCRIPT_DIR),
+            self._dataset_dialog_start_dir(target),
             "HDF5 (*.h5 *.hdf5);;All (*.*)",
         )
         if fn:
+            self._remember_dataset_dir(fn)
             target.setText(_norm_path(fn))
+
+    def _pick_dataset_suite(self) -> None:
+        suite_dir = QFileDialog.getExistingDirectory(
+            self,
+            "Select Dataset Suite Folder",
+            self._dataset_dialog_start_dir(),
+        )
+        if suite_dir:
+            self._apply_dataset_suite(Path(suite_dir))
+
+    def _apply_dataset_suite(self, suite_dir: Path) -> None:
+        suite_dir = Path(suite_dir).expanduser()
+        if not suite_dir.exists() or not suite_dir.is_dir():
+            QMessageBox.warning(self, "Dataset Suite", f"Folder not found:\n{suite_dir}")
+            return
+        self._remember_dataset_dir(suite_dir)
+
+        manifest_path = suite_dir / "manifest.json"
+        manifest: dict[str, Any] = {}
+        files: dict[str, Any] = {}
+        source = "folder scan"
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                files = dict(manifest.get("output_files", {}) or {})
+                source = "manifest.json"
+            except Exception as exc:
+                QMessageBox.warning(self, "Dataset Suite", f"manifest.json could not be read:\n{exc}")
+                return
+
+        def resolve_suite_file(value: object) -> str:
+            if not value:
+                return ""
+            p = Path(str(value)).expanduser()
+            if p.is_absolute():
+                return str(p)
+            for candidate in (
+                (suite_dir / p).resolve(),
+                (suite_dir / p.name).resolve(),
+                (SCRIPT_DIR / p).resolve(),
+            ):
+                if candidate.exists():
+                    return str(candidate)
+            return str((suite_dir / p).resolve())
+
+        def first_match(patterns: tuple[str, ...]) -> str:
+            for pattern in patterns:
+                matches = sorted(suite_dir.glob(pattern))
+                if matches:
+                    return str(matches[0].resolve())
+            return ""
+
+        train_path = resolve_suite_file(files.get("train", "")) or first_match(("train_hybrid*.h5", "train*.h5", "train*.hdf5"))
+        val_path = resolve_suite_file(files.get("val", "")) or first_match(("val_uniform*.h5", "val*.h5", "val*.hdf5"))
+        test_path = resolve_suite_file(files.get("test", "")) or first_match(("test_uniform*.h5", "test*.h5", "test*.hdf5"))
+        ood_path = (
+            resolve_suite_file(files.get("ood_combined", "") or files.get("ood_high", "") or files.get("ood_low", ""))
+            or first_match(("ood_combined*.h5", "ood_high*.h5", "ood*.h5", "ood*.hdf5"))
+        )
+
+        if not train_path or not val_path:
+            QMessageBox.warning(
+                self,
+                "Dataset Suite",
+                "Could not find both train and validation datasets in the selected folder.\n"
+                "Expected manifest.json or files like train_hybrid*.h5 and val_uniform*.h5.",
+            )
+            return
+
+        self.train_data.setText(train_path)
+        self.val_data.setText(val_path)
+        if test_path:
+            self.test_data.setText(test_path)
+        if ood_path:
+            self.ood_data.setText(ood_path)
+
+        idx = self.dataset_mode.findData("independent")
+        if idx >= 0:
+            self.dataset_mode.setCurrentIndex(idx)
+        self.dataset_name.setText("data")
+
+        alt_min = manifest.get("train_alt_min_km")
+        alt_max = manifest.get("train_alt_max_km")
+        if alt_min is not None:
+            self.altitude_min_km.setValue(float(alt_min))
+        if alt_max is not None:
+            self.altitude_max_km.setValue(float(alt_max))
+
+        if manifest_path.exists():
+            self.applied_suite_manifest_path = str(manifest_path.resolve())
+            self._suite_manifest_label.setText(self.applied_suite_manifest_path)
+            self._suite_manifest_label.setStyleSheet(f"color: {THEME['success']}; font-size: 10px;")
+        else:
+            self.applied_suite_manifest_path = ""
+            self._suite_manifest_label.setText(f"(folder scan: {suite_dir})")
+            self._suite_manifest_label.setStyleSheet(f"color: {THEME['info']}; font-size: 10px;")
+        self._suite_manifest_label.setToolTip(
+            f"Source: {source}\nTrain: {train_path}\nValidation: {val_path}\n"
+            f"Test: {test_path or '(not selected)'}\nOOD: {ood_path or '(not selected)'}"
+        )
+
+        self._on_dataset_mode_changed()
+        self._refresh_command_preview()
+        self._refresh_checklist()
 
     def _pick_out_dir(self) -> None:
         d = QFileDialog.getExistingDirectory(
@@ -3236,6 +3512,8 @@ class STLRPSTrainTab(QWidget):
         _sm = getattr(self, "applied_suite_manifest_path", "") or ""
         if _sm and Path(_sm).is_file():
             args += ["--suite-manifest", _sm]
+        if self.allow_legacy_dataset_contract.isChecked():
+            args += ["--allow-legacy-dataset-contract"]
 
         extra = self.extra_args.text().strip()
         if extra:

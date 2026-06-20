@@ -157,6 +157,7 @@ from .common_widgets import (
     _tune_form,
     _tune_inputs,
 )
+from .workspace_widgets import StudioNotice, StudioWorkflowOverview
 
 
 class STLRPSProfilingTab(QWidget):
@@ -277,7 +278,7 @@ class STLRPSProfilingTab(QWidget):
         )
         self.command_warning = QLabel("")
         self.command_warning.setWordWrap(True)
-        self.command_warning.setStyleSheet("color: #fbbf24; font-size: 11px;")
+        self.command_warning.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
         btn_preview = QPushButton("Preview Command")
         btn_preview.clicked.connect(self._refresh_profile_preview)
         btn_copy = QPushButton("Copy Command")
@@ -302,36 +303,24 @@ class STLRPSProfilingTab(QWidget):
         # Top Config Container (Model and Sweep parameters stacked vertically or in two-column cards)
         config_card = QFrame()
         config_card.setObjectName("profileConfigCard")
-        config_card.setStyleSheet(
-            "QFrame#profileConfigCard {"
-            "  background: rgba(11, 16, 32, 0.72);"
-            "  border: 1px solid rgba(185, 194, 221, 0.12);"
-            "  border-radius: 12px;"
-            "}"
-        )
+        _style_surface(config_card, object_name="profileConfigCard")
         config_l = QVBoxLayout()
         config_l.setContentsMargins(14, 14, 14, 14)
         config_l.setSpacing(10)
         config_heading = QLabel("Sweep Configuration")
-        config_heading.setStyleSheet("font-size: 14px; font-weight: 700; color: #e8ecf8;")
+        config_heading.setObjectName("sectionTitle")
         config_l.addWidget(config_heading)
         config_l.addLayout(grid)
         config_card.setLayout(config_l)
 
         launch_card = QFrame()
         launch_card.setObjectName("profileLaunchCard")
-        launch_card.setStyleSheet(
-            "QFrame#profileLaunchCard {"
-            "  background: rgba(11, 16, 32, 0.82);"
-            "  border: 1px solid rgba(185, 194, 221, 0.13);"
-            "  border-radius: 12px;"
-            "}"
-        )
+        _style_surface(launch_card, object_name="profileLaunchCard")
         launch_l = QVBoxLayout()
         launch_l.setContentsMargins(16, 16, 16, 16)
         launch_l.setSpacing(12)
         launch_heading = QLabel("Model / Options")
-        launch_heading.setStyleSheet("font-size: 14px; font-weight: 700; color: #e8ecf8;")
+        launch_heading.setObjectName("sectionTitle")
         launch_l.addWidget(launch_heading)
         launch_l.addWidget(grp_model)
         launch_l.addWidget(grp_output)
@@ -731,6 +720,20 @@ class RuntimePerformancePage(QWidget):
             "Profile loading latency, throughput, batching behavior, chunk effects, and hardware acceleration.",
             "Inference Workbench",
         ))
+        lo.addWidget(StudioWorkflowOverview(
+            (
+                ("Artifact", "Choose the trained run or checkpoint."),
+                ("Inputs", "Select synthetic or dataset query source."),
+                ("Sweep", "Compare batch, chunk, and device settings."),
+                ("Results", "Review logs, summary, and latency plots."),
+            ),
+            current_index=1,
+        ))
+        lo.addWidget(StudioNotice(
+            "Synthetic is diagnostic",
+            "Synthetic query timings are useful for throughput tuning, but dataset-backed profiling is the evidence path for artifact-specific runtime claims.",
+            kind="info",
+        ))
         lo.addWidget(profile_tab, 1)
         self.setLayout(lo)
 
@@ -742,7 +745,7 @@ class ModelReportPanel(QWidget):
         super().__init__(parent)
 
         title = QLabel("Model Report")
-        title.setStyleSheet("font-size: 15px; font-weight: 700; color: #e6edf7;")
+        title.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {THEME['fg_main']};")
 
         self.run_edit = ValidatedPathEdit(
             placeholder="Select a trained run directory", check_file=False

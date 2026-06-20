@@ -470,19 +470,18 @@ def apply_visual_state(
     # Main splitter sizes — validated and clamped to the live window so a stale
     # or corrupt session can never produce unusable (zero / negative / oversized)
     # splitter geometry.
+    log_collapsed = bool(visual.get("log_collapsed", False))
+    if main_window is not None and hasattr(main_window, "is_log_collapsed"):
+        _safe_call(None, lambda: _restore_log_collapsed(main_window, log_collapsed))
+
     splitter_sizes = visual.get("splitter_sizes")
-    if splitter_sizes and main_window is not None:
+    if splitter_sizes and main_window is not None and not log_collapsed:
         splitter = getattr(main_window, "main_splitter", None)
         if splitter is not None:
             total = _safe_call(0, lambda: int(splitter.height())) or None
             sanitized = sanitize_splitter_sizes(splitter_sizes, total)
             if sanitized is not None:
                 _safe_call(None, lambda: splitter.setSizes(sanitized))
-
-    # Log collapsed state
-    log_collapsed = bool(visual.get("log_collapsed", False))
-    if main_window is not None and hasattr(main_window, "is_log_collapsed"):
-        _safe_call(None, lambda: _restore_log_collapsed(main_window, log_collapsed))
 
     # Telemetry page
     plot_type = str(visual.get("telemetry_plot_type", "") or "")

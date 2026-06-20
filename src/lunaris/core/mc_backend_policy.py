@@ -1,10 +1,10 @@
 # ST_LRPS/core/mc_backend_policy.py
 """
-Monte Carlo Backend Capability Matrix and Policy Resolver
-=========================================================
+Batch Propagation Backend Capability Matrix and Policy Resolver
+===============================================================
 
 Single source of truth for deciding which propagator backend is used for a
-Monte Carlo run.  All GPU/CPU routing that was previously scattered across
+batch/Monte Carlo run.  All GPU/CPU routing that was previously scattered across
 ``MonteCarloEngine._build_propagator()`` is consolidated here so the decision
 is testable in isolation.
 
@@ -305,7 +305,7 @@ def _read_st_lrps_runtime_kind(mc_cfg: Any, sim_cfg: Any) -> str | None:
 
 class MCBackend(str, Enum):
     """
-    Available Monte Carlo propagator backends.
+    Available batch propagation backends.
 
     ``GPU_ST_LRPS``
         PyTorch CUDA fixed-step RK4.  All N trajectories are kept as a single
@@ -471,12 +471,12 @@ def resolve_mc_backend_policy(
     sim_cfg: Any,
 ) -> MCBackendPlan:
     """
-    Resolve the best available Monte Carlo backend given config and hardware.
+    Resolve the best available batch propagation backend given config and hardware.
 
     Parameters
     ----------
     mc_cfg : MonteCarloConfig
-        Requested Monte Carlo settings (``use_gpu``, ``gravity_mode_override``, …).
+        Requested batch settings (``use_gpu``, ``gravity_mode_override``, …).
     sim_cfg : SimConfig
         Full simulation configuration used to read ``gravity.uses_st_lrps`` and
         active perturbation flags.

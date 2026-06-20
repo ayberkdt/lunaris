@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=lunaris-mc
+#SBATCH --job-name=lunaris-batch
 #SBATCH --output=lunaris_mc_%A_%a.out
 #SBATCH --error=lunaris_mc_%A_%a.err
 #SBATCH --array=0-9
@@ -10,4 +10,4 @@
 set -euo pipefail
 source "$(dirname "$0")/env_template.sh"
 
-lunaris-mc "$@"
+lunaris-batch "$@"

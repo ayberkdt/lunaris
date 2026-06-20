@@ -1,9 +1,11 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from lunaris.common import GravityConfig
 from lunaris.common.montecarlo_defs import MonteCarloConfig, validate_st_lrps_model_dir
+from lunaris.core.monte_carlo_engine import generate_standard_normal_design
 
 
 def test_gravity_config_backend_aware():
@@ -41,6 +43,26 @@ def test_monte_carlo_config_no_fs_check():
     # can record an explicit CPU fallback instead of silently clipping degree.
     cfg = MonteCarloConfig(n_samples=10, gpu_sh_degree=80)
     assert cfg.gpu_sh_degree == 80
+
+
+def test_batch_sampling_method_validation_and_determinism() -> None:
+    cfg = MonteCarloConfig(n_samples=8, sampling_method="lhs")
+    assert cfg.sampling_method == "lhs"
+
+    with pytest.raises(ValueError, match="sampling_method must be one of"):
+        MonteCarloConfig(n_samples=8, sampling_method="grid")
+
+    lhs = generate_standard_normal_design(7, 3, "lhs", seed=123)
+    sobol_a = generate_standard_normal_design(7, 3, "sobol_scrambled", seed=123)
+    sobol_b = generate_standard_normal_design(7, 3, "sobol_scrambled", seed=123)
+    sobol_c = generate_standard_normal_design(7, 3, "sobol_scrambled", seed=124)
+
+    assert lhs.shape == (7, 3)
+    assert sobol_a.shape == (7, 3)
+    assert np.isfinite(lhs).all()
+    assert np.isfinite(sobol_a).all()
+    assert np.allclose(sobol_a, sobol_b)
+    assert not np.allclose(sobol_a, sobol_c)
 
 
 def test_monte_carlo_impact_and_storage_contracts() -> None:

@@ -28,7 +28,7 @@ Dependency-light shared layer.
 - `type_defs.py` — configuration dataclasses (`PerturbationFlags`, `TimeConfig`,
   `SpacecraftProps`, `InitialState`, …).
 - `math_utils.py`, `time_utils.py` — pure helpers.
-- `montecarlo_defs.py` — Monte Carlo configuration/result dataclasses.
+- `montecarlo_defs.py` — batch/Monte Carlo configuration/result dataclasses.
 
 ### Layer 2 — `lunaris.physics`
 Numba-JIT-compiled force-model kernels. Each file is one force model:
@@ -56,13 +56,14 @@ Numerical engine and configuration.
   returns `PropagationResult(t, y, events, status)`.
 - `events.py` — impact / periapsis-apoapsis / eclipse / occultation events.
 - `monte_carlo_engine.py`, `mc_propagator.py`, `mc_backend_policy.py`,
-  `mc_runner.py` — Monte Carlo orchestration and CPU/GPU backends.
+  `mc_runner.py` — batch/ensemble orchestration and CPU/GPU backends.
 
 ### Layer 4 — `lunaris.analysis`, `lunaris.visualization`, `lunaris.ui`
 Post-processing and presentation.
 - `analysis/postprocess.py` — orbital elements, invariants, metrics.
 - `analysis/reporting/` — report `manager`, `plotting`, `styling`.
-- `analysis/monte_carlo/` — Monte Carlo `statistics` and `plotting`.
+- `analysis/monte_carlo/` — ensemble uncertainty `statistics` and `plotting`
+  (package name retained for compatibility).
 - `analysis/perturbation_budget/` — mission-analysis acceleration budgets,
   spherical-harmonic degree sensitivity, force-model uncertainty comparisons,
   and per-configuration gravity-degree recommendations. It calls existing
@@ -79,7 +80,7 @@ Post-processing and presentation.
 Alongside the four layers:
 - `lunaris.loaders` — dependency-light data loading (gravity coefficient files,
   SPICE kernels, topography/albedo grids) consumed by layers 2–3.
-- `lunaris.cli` — console entry points (`lunaris`, `lunaris-mc`, …) and shared
+- `lunaris.cli` — console entry points (`lunaris`, `lunaris-batch`, `lunaris-mc`, …) and shared
   CLI argument helpers; wires user input into the `core` configuration. Optional
   subsystem commands use import-safe wrappers in `cli/entrypoints.py`.
 - `lunaris.surrogate.st_lrps` — the ST-LRPS surrogate-gravity family
@@ -233,11 +234,19 @@ walking up to the first directory containing `pyproject.toml`, `.git`, or
 `LUNARIS_ASSETS_DIR` environment variables (generic `LDEM_ROOT`, `ALBEDO_ROOT`,
 and `SPICE_KERNELS` fallbacks are also honored).
 
-## Monte Carlo infrastructure
+## Batch / ensemble propagation infrastructure
+
+The public Python dataclasses and file names still use the historical
+`MonteCarlo*` / `mc_*` names for API and archive compatibility. Conceptually,
+this subsystem is the batch propagation engine: it propagates an ensemble of
+initial states and spacecraft properties. Monte Carlo is the default
+`sampling_method="random"` option, while `lhs`, `sobol`, and
+`sobol_scrambled` provide space-filling designs for validation and benchmark
+coverage.
 
 | Module | Purpose |
 |--------|---------|
-| `common/montecarlo_defs.py` | `MonteCarloConfig`, `StateUncertainty`, `SpacecraftUncertainty`, `MCRunResult` |
+| `common/montecarlo_defs.py` | `MonteCarloConfig`, `StateUncertainty`, `SpacecraftUncertainty`, `MCRunResult`, sampling-method validation |
 | `core/mc_propagator.py` | `GPUBatchPropagator` (CUDA RK4), `CPUBatchPropagator` (process pool) |
 | `core/monte_carlo_engine.py` | `MonteCarloEngine.run()` — sampling, backend dispatch, HDF5/NPZ output |
 | `analysis/monte_carlo/statistics.py` | `compute_mc_statistics()` → covariance, ellipsoids, impact probability, OE dispersion |
@@ -253,6 +262,7 @@ from lunaris.analysis.monte_carlo.plotting import plot_mc_report
 sim_cfg = load_default_config()
 mc_cfg = MonteCarloConfig(
     n_samples=500,
+    sampling_method="sobol_scrambled",  # random = classical Monte Carlo; lhs/sobol = validation design
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
     use_gpu=True,
     mc_backend="auto",   # auto, cpu_sh, numba_cuda_sh (alias gpu_sh), torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_direct

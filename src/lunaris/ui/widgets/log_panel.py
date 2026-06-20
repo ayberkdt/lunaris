@@ -43,7 +43,7 @@ MAX_LOG_LINES = 10000
 
 # How often the pending queue is flushed to the widget (milliseconds). Batching
 # keeps the UI responsive under high-volume subprocess output.
-_FLUSH_INTERVAL_MS = 80
+_FLUSH_INTERVAL_MS = 33
 
 # Header-only height when collapsed, and the minimum height when expanded.
 COLLAPSED_HEIGHT = DESIGN_TOKENS.layout.console_collapsed_height
@@ -164,6 +164,9 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
         self.btn_collapse.setObjectName("logCollapseButton")
         self.btn_collapse.setCursor(QtCore.Qt.PointingHandCursor)
         self.btn_collapse.setIcon(get_icon("fa6s.chevron-down", THEME["fg_soft"]))
+        self.btn_collapse.setText("v")
+        self.btn_collapse.setFixedSize(28, 28)
+        self.btn_collapse.setAccessibleName("Collapse execution console")
         self.btn_collapse.setToolTip("Collapse console")
         self.btn_collapse.clicked.connect(self.toggle_collapsed)
         hl.addWidget(self.btn_collapse)
@@ -283,6 +286,8 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
         self.console.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)
         self.console.setWordWrapMode(QtGui.QTextOption.NoWrap)
         self.console.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self.console.setUndoRedoEnabled(False)
+        self.console.setCenterOnScroll(False)
         self.console.setSizePolicy(
             QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Expanding
         )
@@ -428,6 +433,10 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
 
         icon = "fa6s.chevron-up" if collapsed else "fa6s.chevron-down"
         self.btn_collapse.setIcon(get_icon(icon, THEME["fg_soft"]))
+        self.btn_collapse.setText("^" if collapsed else "v")
+        self.btn_collapse.setAccessibleName(
+            "Expand execution console" if collapsed else "Collapse execution console"
+        )
         self.btn_collapse.setToolTip("Expand console" if collapsed else "Collapse console")
         self.collapsed_changed.emit(collapsed)
 

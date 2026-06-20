@@ -171,6 +171,7 @@ def test_monte_carlo_page_restores_state_and_renders_structured_progress() -> No
         {
             "n_samples": 500,
             "seed": 7,
+            "sampling_method": "lhs",
             "sigma_r_m": 250.0,
             "sigma_v_m_s": 0.25,
             "use_gpu": False,
@@ -186,6 +187,7 @@ def test_monte_carlo_page_restores_state_and_renders_structured_progress() -> No
     assert state["output_format"] == "npz"
     assert state["output_path"].endswith(".npz")
     assert state["n_samples"] == 500
+    assert state["sampling_method"] == "lhs"
     assert state["use_gpu"] is False
     assert state["gravity_mode_override"] == "st_lrps"
 

@@ -168,6 +168,7 @@ from .common_widgets import (
     _tune_form,
     _tune_inputs,
 )
+from .workspace_widgets import StudioNotice, StudioWorkflowOverview
 
 
 def _legacy_introspect_h5(path: str) -> dict[str, Any] | None:
@@ -284,9 +285,9 @@ def _data_action_card(
     layout.setContentsMargins(16, 14, 16, 14)
     layout.setSpacing(12)
 
-    top = QHBoxLayout()
+    top = QVBoxLayout()
     top.setContentsMargins(0, 0, 0, 0)
-    top.setSpacing(14)
+    top.setSpacing(10)
 
     text_col = QVBoxLayout()
     text_col.setContentsMargins(0, 0, 0, 0)
@@ -304,23 +305,24 @@ def _data_action_card(
     text_col.addWidget(title_lbl)
     text_col.addWidget(subtitle_lbl)
 
+    top.addLayout(text_col)
+
     primary_button.setProperty("kind", "primary")
-    primary_button.setMinimumHeight(42)
-    primary_button.setMinimumWidth(150)
+    primary_button.setMinimumHeight(38)
+    primary_button.setMinimumWidth(132)
 
-    top.addLayout(text_col, 1)
-    top.addWidget(primary_button, 0, Qt.AlignmentFlag.AlignTop)
-    layout.addLayout(top)
-
+    action_row = QHBoxLayout()
+    action_row.setContentsMargins(0, 0, 0, 0)
+    action_row.setSpacing(8)
     if secondary_buttons:
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
         for button in secondary_buttons:
             button.setProperty("kind", button.property("kind") or "ghost")
-            row.addWidget(button)
-        row.addStretch(1)
-        layout.addLayout(row)
+            button.setMinimumHeight(36)
+            action_row.addWidget(button)
+    action_row.addStretch(1)
+    action_row.addWidget(primary_button)
+    top.addLayout(action_row)
+    layout.addLayout(top)
 
     if detail is not None:
         layout.addWidget(detail)
@@ -1966,8 +1968,8 @@ class CloudAnalysisTab(QWidget):
         input_card = _data_action_card(
             "Analyze Dataset",
             "Choose a generated cloud and create the quality report.",
-            btn_input,
-            secondary_buttons=[self._btn_start_analysis_top, btn_path],
+            self._btn_start_analysis_top,
+            secondary_buttons=[btn_input, btn_path],
             detail=file_detail,
         )
 
@@ -2263,8 +2265,8 @@ class DatasetInspectionPanel(QWidget):
         action_card = _data_action_card(
             "Inspect Dataset",
             "Choose an HDF5 cloud, validate it, then send it to Training.",
-            btn_browse,
-            secondary_buttons=[self.btn_validate, self.btn_send, btn_path],
+            self.btn_validate,
+            secondary_buttons=[btn_browse, self.btn_send, btn_path],
             detail=file_detail,
         )
 
@@ -2419,32 +2421,32 @@ class DataPage(QWidget):
         self._stack.addWidget(cloud_tab)
         self._stack.addWidget(analysis_tab)
         self._section_buttons: list[QPushButton] = []
-        self._compact_layout = False
 
         nav = QFrame()
         nav.setObjectName("dataSectionNav")
-        nav.setMaximumWidth(DESIGN_TOKENS.layout.nested_nav_width)
+        nav.setMaximumHeight(64)
         nav.setStyleSheet(
             f"QFrame#dataSectionNav {{"
             f"  background: {with_alpha(THEME['bg_card'], 0.74)};"
             f"  border: 1px solid {with_alpha(THEME['border'], 0.12)};"
-            f"  border-radius: 14px;"
+            f"  border-radius: {DESIGN_TOKENS.radii.section}px;"
             f"}}"
         )
-        nav_l = QVBoxLayout()
-        nav_l.setContentsMargins(12, 12, 12, 12)
+        nav_l = QHBoxLayout()
+        nav_l.setContentsMargins(10, 10, 10, 10)
         nav_l.setSpacing(8)
 
         def _nav_btn(label: str, hint: str, idx: int) -> QPushButton:
             btn = QPushButton(label)
             btn.setToolTip(hint)
             btn.setCheckable(True)
-            btn.setMinimumHeight(46)
+            btn.setMinimumHeight(36)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(
                 f"QPushButton {{"
-                f"  text-align: left; padding: 0 14px;"
+                f"  text-align: center; padding: 0 14px;"
                 f"  border: 1px solid {with_alpha(THEME['border'], 0.10)};"
-                f"  border-radius: 10px; background: {with_alpha(THEME['fg_main'], 0.025)};"
+                f"  border-radius: {DESIGN_TOKENS.radii.control}px; background: {with_alpha(THEME['fg_main'], 0.025)};"
                 f"  color: {THEME['fg_soft']}; font-weight: 750; font-size: 13px;"
                 f"}}"
                 f"QPushButton:hover {{ background: {with_alpha(THEME['accent'], 0.06)}; color: {THEME['fg_main']}; }}"
@@ -2458,57 +2460,48 @@ class DataPage(QWidget):
             self._section_buttons.append(btn)
             return btn
 
-        nav_title = QLabel("Data")
-        nav_title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {THEME['fg_main']};")
-        nav_l.addWidget(nav_title)
         nav_l.addWidget(_nav_btn("Inspect", "Readiness and metadata", 0))
         nav_l.addWidget(_nav_btn("Generate", "Single cloud or train/val/test/OOD suite", 1))
         nav_l.addWidget(_nav_btn("Analyze", "Coverage and field reports", 2))
-        nav_l.addStretch(1)
         nav.setLayout(nav_l)
         _style_surface(nav, object_name="dataSectionNav")
 
-        workspace = QHBoxLayout()
+        workspace = QVBoxLayout()
         workspace.setContentsMargins(0, 0, 0, 0)
-        workspace.setSpacing(14)
+        workspace.setSpacing(10)
         workspace.addWidget(nav)
         workspace.addWidget(self._stack, 1)
         self._section_nav = nav
         self._workspace_layout = workspace
 
         lo = QVBoxLayout()
-        lo.setContentsMargins(22, 20, 22, 20)
-        lo.setSpacing(14)
+        lo.setContentsMargins(12, 8, 18, 16)
+        lo.setSpacing(12)
         lo.addWidget(_make_page_header(
             "Data Workspace",
             "Choose a data task, then act from the primary card on that page.",
             "Dataset Pipeline",
         ))
+        self._workflow_overview = StudioWorkflowOverview(
+            (
+                ("Inspect", "Validate metadata, units, and dataset contract."),
+                ("Generate", "Create a single cloud or train/val/test/OOD suite."),
+                ("Analyze", "Review coverage and field diagnostics before training."),
+            )
+        )
+        lo.addWidget(self._workflow_overview)
+        lo.addWidget(StudioNotice(
+            "Inspect before training",
+            "Use Inspect as the handoff gate: dataset name, unit system, split policy, and OOD coverage should be visible before sending data into Training.",
+            kind="info",
+        ))
         lo.addLayout(workspace, 1)
         self.setLayout(lo)
         self._show_section(0)
-        QTimer.singleShot(0, self._update_responsive_layout)
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._update_responsive_layout()
-
-    def _update_responsive_layout(self) -> None:
-        """Move the secondary Data navigation above content on narrow pages."""
-        compact = self.width() < 850
-        if compact == self._compact_layout:
-            return
-        self._compact_layout = compact
-        if compact:
-            self._workspace_layout.setDirection(QBoxLayout.Direction.TopToBottom)
-            self._section_nav.setMaximumWidth(16777215)
-            self._section_nav.setMaximumHeight(196)
-        else:
-            self._workspace_layout.setDirection(QBoxLayout.Direction.LeftToRight)
-            self._section_nav.setMaximumWidth(DESIGN_TOKENS.layout.nested_nav_width)
-            self._section_nav.setMaximumHeight(16777215)
 
     def _show_section(self, idx: int) -> None:
         self._stack.setCurrentIndex(idx)
         for i, btn in enumerate(self._section_buttons):
             btn.setChecked(i == idx)
+        if hasattr(self, "_workflow_overview"):
+            self._workflow_overview.set_current(idx)

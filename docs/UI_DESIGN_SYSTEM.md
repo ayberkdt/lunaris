@@ -31,23 +31,24 @@ adapters.
 
 | Role | Token | Value |
 | --- | --- | --- |
-| App canvas | `bg_space` | `#070B11` |
-| Shell chrome | `bg_shell` | `#0C121B` |
-| Section surface | `bg_card` | `#121A25` |
-| Elevated surface | `bg_card_alt` | `#192433` |
-| Inset/read-only surface | `bg_inset` | `#0D151F` |
-| Input surface | `bg_entry` | `#0A121C` |
-| Console surface | `bg_log` | `#05080D` |
-| Primary text | `fg_main` | `#F3F6FB` |
-| Secondary text | `fg_soft` | `#C5D0DE` |
-| Muted text | `fg_muted` | `#94A3B8` |
-| Disabled text | `fg_disabled` | `#728298` |
-| Primary accent | `accent` | `#4F8CFF` |
-| Success | `success` | `#22D3B6` |
-| Warning | `warning` | `#E7B86A` |
-| Error | `error` | `#F87171` |
-| Critical | `critical` | `#FB7185` |
-| Information | `info` | `#60A5FA` |
+| App canvas | `bg_space` | `#090C12` |
+| Shell chrome | `bg_shell` | `#0F141C` |
+| Section surface | `bg_card` | `#171E29` |
+| Elevated surface | `bg_card_alt` | `#212B38` |
+| Inset/read-only surface | `bg_inset` | `#0C1016` |
+| Input surface | `bg_entry` | `#0E131B` |
+| Console surface | `bg_log` | `#06090E` |
+| Primary text | `fg_main` | `#EEF2F8` |
+| Secondary text | `fg_soft` | `#BCC7D6` |
+| Muted text | `fg_muted` | `#8C99AA` |
+| Disabled text | `fg_disabled` | `#79848F` |
+| Primary accent | `accent` | `#3B86FF` |
+| Secondary accent | `secondary` | `#15D6A6` |
+| Success | `success` | `#14D49E` |
+| Warning | `warning` | `#F5B43C` |
+| Error | `error` | `#FF5D6C` |
+| Critical | `critical` | `#FF7088` |
+| Information | `info` | `#4A9DFF` |
 
 There are no decorative gradients. Semantic colors are used for statuses,
 not for generic card decoration.

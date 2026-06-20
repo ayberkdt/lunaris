@@ -24,6 +24,7 @@ from pathlib import Path
 
 from lunaris.common.paths import project_root_from_file
 from lunaris.surrogate.st_lrps.evaluation import progress as _progress
+from lunaris.ui_foundation import DESIGN_TOKENS
 
 from .common_widgets import (
     CollapsibleSection,
@@ -43,6 +44,7 @@ from .common_widgets import (
 )
 from .qt_common import *
 from .qt_common import NoScrollComboBox
+from .workspace_widgets import StudioNotice, StudioWorkflowOverview
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = project_root_from_file(__file__)
@@ -74,21 +76,21 @@ def _valid_model_name(name: str) -> bool:
 
 # Pipeline chip status -> (glyph, label, text-color, fill, border).
 _STATUS_STYLE = {
-    "pending":   ("○", "Pending",  "#6f7ca8", "rgba(111,124,168,0.10)", "rgba(111,124,168,0.28)"),
-    "queued":    ("○", "Queued",   "#9aa7c7", "rgba(154,167,199,0.10)", "rgba(154,167,199,0.30)"),
-    "running":   ("●", "Running",  "#f59e0b", "rgba(245,158,11,0.16)",  "rgba(245,158,11,0.60)"),
-    "completed": ("✓", "Done",     "#34d399", "rgba(52,211,153,0.16)",  "rgba(52,211,153,0.55)"),
-    "cached":    ("✓", "Cached",   "#34d399", "rgba(52,211,153,0.10)",  "rgba(52,211,153,0.42)"),
-    "failed":    ("✕", "Failed",   "#f87171", "rgba(248,113,113,0.18)", "rgba(248,113,113,0.60)"),
-    "skipped":   ("–", "Skipped",  "#6f7ca8", "rgba(111,124,168,0.06)", "rgba(111,124,168,0.20)"),
+    "pending":   ("○", "Pending",  THEME["fg_muted"], with_alpha(THEME["fg_muted"], 0.10), with_alpha(THEME["fg_muted"], 0.28)),
+    "queued":    ("○", "Queued",   THEME["fg_soft"], with_alpha(THEME["fg_soft"], 0.10), with_alpha(THEME["fg_soft"], 0.30)),
+    "running":   ("●", "Running",  THEME["warning"], with_alpha(THEME["warning"], 0.16), with_alpha(THEME["warning"], 0.60)),
+    "completed": ("✓", "Done",     THEME["success"], with_alpha(THEME["success"], 0.16), with_alpha(THEME["success"], 0.55)),
+    "cached":    ("✓", "Cached",   THEME["success"], with_alpha(THEME["success"], 0.10), with_alpha(THEME["success"], 0.42)),
+    "failed":    ("✕", "Failed",   THEME["error"], with_alpha(THEME["error"], 0.18), with_alpha(THEME["error"], 0.60)),
+    "skipped":   ("–", "Skipped",  THEME["fg_muted"], with_alpha(THEME["fg_muted"], 0.06), with_alpha(THEME["fg_muted"], 0.20)),
 }
 
 # Run-status badge -> (text, text-color, fill).
 _BADGE_STYLE = {
-    "idle":      ("Idle",      "#9aa7c7", "rgba(154,167,199,0.12)"),
-    "running":   ("Running",   "#f59e0b", "rgba(245,158,11,0.16)"),
-    "completed": ("Completed", "#34d399", "rgba(52,211,153,0.16)"),
-    "failed":    ("Failed",    "#f87171", "rgba(248,113,113,0.18)"),
+    "idle":      ("Idle",      THEME["fg_soft"], with_alpha(THEME["fg_soft"], 0.12)),
+    "running":   ("Running",   THEME["warning"], with_alpha(THEME["warning"], 0.16)),
+    "completed": ("Completed", THEME["success"], with_alpha(THEME["success"], 0.16)),
+    "failed":    ("Failed",    THEME["error"], with_alpha(THEME["error"], 0.18)),
 }
 
 # Phase keys (from [progress] phase=...) -> human label.
@@ -232,7 +234,7 @@ class OrbitBenchmarkTab(QWidget):
             "directory (auto-detected if left empty)."
         )
         models_hint.setWordWrap(True)
-        models_hint.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        models_hint.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
         models_lo.addWidget(models_hint)
         grp_models.setLayout(models_lo)
 
@@ -507,7 +509,7 @@ class OrbitBenchmarkTab(QWidget):
         self.command_preview.setMaximumHeight(96)
         self.command_warning = QLabel("")
         self.command_warning.setWordWrap(True)
-        self.command_warning.setStyleSheet("color: #fbbf24; font-size: 11px;")
+        self.command_warning.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
         btn_preview = QPushButton("Preview Command")
         btn_preview.clicked.connect(self._refresh_command_preview)
         btn_copy = QPushButton("Copy Command")
@@ -652,8 +654,11 @@ class OrbitBenchmarkTab(QWidget):
         frame = QFrame()
         frame.setObjectName(object_name)
         frame.setStyleSheet(
-            f"#{object_name} {{ background: rgba(16,24,48,0.55); "
-            "border: 1px solid rgba(185,194,221,0.14); border-radius: 10px; }"
+            f"#{object_name} {{"
+            f" background: {with_alpha(THEME['bg_card'], 0.72)};"
+            f" border: 1px solid {with_alpha(THEME['border_soft'], 0.90)};"
+            f" border-radius: {DESIGN_TOKENS.radii.section}px;"
+            "}"
         )
         return frame
 
@@ -685,9 +690,9 @@ class OrbitBenchmarkTab(QWidget):
             cell.setContentsMargins(0, 0, 0, 0)
             cell.setSpacing(1)
             cap = QLabel(caption)
-            cap.setStyleSheet("color:#6f7ca8; font-size:10px; font-weight:600;")
+            cap.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:10px; font-weight:600;")
             val = QLabel("-")
-            val.setStyleSheet("color:#e8ecf8; font-size:14px; font-weight:700;")
+            val.setStyleSheet(f"color:{THEME['fg_main']}; font-size:14px; font-weight:700;")
             cell.addWidget(cap)
             cell.addWidget(val)
             holder = QWidget()
@@ -714,7 +719,7 @@ class OrbitBenchmarkTab(QWidget):
         outer.setContentsMargins(14, 8, 14, 10)
         outer.setSpacing(6)
         cap = QLabel("Model Pipeline")
-        cap.setStyleSheet("color:#6f7ca8; font-size:10px; font-weight:600;")
+        cap.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:10px; font-weight:600;")
         outer.addWidget(cap)
 
         self._pipeline_host = QWidget()
@@ -742,13 +747,13 @@ class OrbitBenchmarkTab(QWidget):
         v.setSpacing(7)
 
         slim = (
-            "QProgressBar { background: rgba(7,11,20,0.85); "
-            "border: 1px solid rgba(185,194,221,0.18); border-radius: 5px; height: 10px; }"
+            f"QProgressBar {{ background: {with_alpha(THEME['bg_log'], 0.85)}; "
+            f"border: 1px solid {with_alpha(THEME['border_strong'], 0.18)}; border-radius: 5px; height: 10px; }}"
             "QProgressBar::chunk { border-radius: 5px; background: %s; }"
         )
 
         cap1 = QLabel("Overall Progress")
-        cap1.setStyleSheet("color:#9aa7c7; font-size:11px; font-weight:600;")
+        cap1.setStyleSheet(f"color:{THEME['fg_soft']}; font-size:11px; font-weight:600;")
         self._overall_value = QLabel("-")
         self._overall_value.setStyleSheet(
             f"color:{THEME['success']}; font-size:11px; font-weight:700;"
@@ -766,7 +771,7 @@ class OrbitBenchmarkTab(QWidget):
         v.addWidget(self.overall_bar)
 
         self._phase_caption = QLabel("Current Phase: -")
-        self._phase_caption.setStyleSheet("color:#9aa7c7; font-size:11px; font-weight:600;")
+        self._phase_caption.setStyleSheet(f"color:{THEME['fg_soft']}; font-size:11px; font-weight:600;")
         self._phase_value = QLabel("-")
         self._phase_value.setStyleSheet(
             f"color:{THEME['accent']}; font-size:11px; font-weight:700;"
@@ -784,7 +789,7 @@ class OrbitBenchmarkTab(QWidget):
         v.addWidget(self.phase_bar)
 
         self._phase_detail = QLabel("")
-        self._phase_detail.setStyleSheet("color:#6f7ca8; font-size:10px;")
+        self._phase_detail.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:10px;")
         v.addWidget(self._phase_detail)
 
         self.show_telemetry = QCheckBox("Show raw telemetry lines")
@@ -795,7 +800,7 @@ class OrbitBenchmarkTab(QWidget):
         )
         self.show_telemetry.toggled.connect(self._on_telemetry_toggled)
         self._telemetry_note = QLabel("")
-        self._telemetry_note.setStyleSheet("color:#6f7ca8; font-size:10px;")
+        self._telemetry_note.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:10px;")
         trow = QHBoxLayout()
         trow.setContentsMargins(0, 0, 0, 0)
         trow.addWidget(self.show_telemetry)
@@ -954,7 +959,7 @@ class OrbitBenchmarkTab(QWidget):
         v.setSpacing(1)
         name = QLabel(_pipeline_label(key))
         name.setStyleSheet(
-            "color:#d8e1f7; font-size:12px; font-weight:700; "
+            f"color:{THEME['fg_soft']}; font-size:12px; font-weight:700; "
             "background:transparent; border:none;"
         )
         status = QLabel("○ Pending")
@@ -1639,6 +1644,20 @@ class OrbitBenchmarkPage(QWidget):
             "Propagate full orbits and compare SH / ST-LRPS gravity models against a high-degree truth.",
             "Validation Harness",
         ))
+        lo.addWidget(StudioWorkflowOverview(
+            (
+                ("Scenario", "Select truth, duration, altitude, and sample policy."),
+                ("Models", "Choose SH baselines and ST-LRPS artifact."),
+                ("Run", "Track requested vs actual benchmark phases."),
+                ("Evidence", "Review cache, reports, and plots separately."),
+            ),
+            current_index=0,
+        ))
+        lo.addWidget(StudioNotice(
+            "Benchmark evidence",
+            "Orbit-level results are claim-bearing only when the selected artifact contract, scenario range, backend, and cache status are visible in the run output.",
+            kind="warning",
+        ))
         lo.addWidget(benchmark_tab, 1)
         self.setLayout(lo)
 
@@ -1688,7 +1707,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
             "Choose a results folder above — the models cached in it are listed here."
         )
         self._models_status.setWordWrap(True)
-        self._models_status.setStyleSheet("color:#94a3b8; font-size:11px;")
+        self._models_status.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:11px;")
         models_lo.addWidget(self._models_status)
         grp_models.setLayout(models_lo)
 
@@ -1719,10 +1738,10 @@ class OrbitBenchmarkPlotsTab(QWidget):
         rescan_row_w.setLayout(rescan_row)
         self._scan_status = QLabel("")
         self._scan_status.setWordWrap(True)
-        self._scan_status.setStyleSheet("color:#94a3b8; font-size:11px;")
+        self._scan_status.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:11px;")
 
         detected_note = QLabel("Detected from the cache — edit only if a value is wrong:")
-        detected_note.setStyleSheet("color:#6f7ca8; font-size:11px;")
+        detected_note.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:11px;")
         self.truth = NoScrollComboBox()
         for t in _TRUTH_CHOICES:
             self.truth.addItem(t.upper(), t)
@@ -1755,13 +1774,13 @@ class OrbitBenchmarkPlotsTab(QWidget):
         self.command_preview.setMaximumHeight(80)
         self.command_warning = QLabel("")
         self.command_warning.setWordWrap(True)
-        self.command_warning.setStyleSheet("color:#fbbf24; font-size:11px;")
+        self.command_warning.setStyleSheet(f"color:{THEME['warning']}; font-size:11px;")
         safe_note = QLabel(
             "Plot-only: regenerates plots/report from cached trajectories. "
             "Does NOT propagate, run a benchmark, or train."
         )
         safe_note.setWordWrap(True)
-        safe_note.setStyleSheet("color:#34d399; font-size:11px; font-weight:600;")
+        safe_note.setStyleSheet(f"color:{THEME['success']}; font-size:11px; font-weight:600;")
 
         # -- Runner + results ---------------------------------------------
         self.runner = ProcessPane()
@@ -2075,10 +2094,10 @@ class OrbitBenchmarkPlotsTab(QWidget):
 
     # -- outcome banner ----------------------------------------------------
     _BANNER_STYLES = {
-        "running": ("#9aa7c7", "rgba(154,167,199,0.12)", "rgba(154,167,199,0.30)"),
-        "success": ("#34d399", "rgba(52,211,153,0.14)", "rgba(52,211,153,0.45)"),
-        "warning": ("#fbbf24", "rgba(245,158,11,0.14)", "rgba(245,158,11,0.45)"),
-        "error":   ("#f87171", "rgba(248,113,113,0.16)", "rgba(248,113,113,0.50)"),
+        "running": (THEME["fg_soft"], with_alpha(THEME["fg_soft"], 0.12), with_alpha(THEME["fg_soft"], 0.30)),
+        "success": (THEME["success"], with_alpha(THEME["success"], 0.14), with_alpha(THEME["success"], 0.45)),
+        "warning": (THEME["warning"], with_alpha(THEME["warning"], 0.14), with_alpha(THEME["warning"], 0.45)),
+        "error":   (THEME["error"], with_alpha(THEME["error"], 0.16), with_alpha(THEME["error"], 0.50)),
     }
 
     def _set_banner(self, kind: str, text: str) -> None:
@@ -2262,6 +2281,19 @@ class OrbitBenchmarkPlotsPage(QWidget):
             "Gravity Plots",
             "Regenerate comparison plots from cached benchmark results without launching a new run.",
             "Cached Analysis",
+        ))
+        lo.addWidget(StudioWorkflowOverview(
+            (
+                ("Source", "Pick an existing benchmark results folder."),
+                ("Detect", "Scan cached models and trajectory products."),
+                ("Compare", "Select model set and regenerate plots/report."),
+            ),
+            current_index=0,
+        ))
+        lo.addWidget(StudioNotice(
+            "Cache-only path",
+            "This page should never launch propagation. It is for regenerating figures from already-computed benchmark artifacts.",
+            kind="info",
         ))
         lo.addWidget(plots_tab, 1)
         self.setLayout(lo)

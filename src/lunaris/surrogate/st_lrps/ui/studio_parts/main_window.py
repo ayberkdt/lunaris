@@ -99,17 +99,6 @@ except Exception:  # pragma: no cover - UI remains usable without artifact deps
     read_run_manifest = None  # type: ignore[assignment]
     resolve_artifact_run_dir = None  # type: ignore[assignment]
 
-# Dashboard widgets and training metrics (Phase 1-8 redesign)
-try:
-    from lunaris.surrogate.st_lrps.ui.dashboard_widgets import (
-        ExperimentHeader,
-    )
-    _HAS_DASHBOARD_V2 = True
-except Exception:  # pragma: no cover
-    _HAS_DASHBOARD_V2 = False
-
-
-
 SCRIPT_DIR = Path(__file__).resolve().parent
 _PRESETS_DIR = SCRIPT_DIR / "presets"
 
@@ -234,47 +223,11 @@ class MainWindow(QMainWindow):
         if not _HAS_H5PY:
             dep_info.append("h5py not installed (dataset preview disabled)")
 
-        # --- Header card (Phase 2: professional experiment header) ---
-        if _HAS_DASHBOARD_V2:
-            self._experiment_header = ExperimentHeader()
-            header_card = self._experiment_header
-            # Detect device
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.get_device_name(0)
-                    mem_total = torch.cuda.get_device_properties(0).total_mem / (1024**3)
-                    self._experiment_header.set_device(f"CUDA \u00b7 {mem_total:.1f} GB")
-                else:
-                    self._experiment_header.set_device("CPU")
-            except Exception:
-                self._experiment_header.set_device("CPU")
-        else:
-            header_card = QFrame()
-            header_card.setObjectName("appHeaderCard")
-            header_lo = QHBoxLayout()
-            header_lo.setContentsMargins(18, 10, 18, 10)
-            header_lo.setSpacing(16)
-
-            title_col = QVBoxLayout()
-            title_col.setContentsMargins(0, 0, 0, 0)
-            title_col.setSpacing(3)
-            lbl_title = QLabel("ST-LRPS Studio")
-            lbl_title.setObjectName("title")
-            lbl_subtitle = QLabel(
-                "Lunar residual-potential surrogate training and evaluation"
-            )
-            lbl_subtitle.setObjectName("pageDescription")
-            title_col.addWidget(lbl_title)
-            title_col.addWidget(lbl_subtitle)
-            header_lo.addLayout(title_col, 1)
-            header_card.setLayout(header_lo)
-
-
-        # The train tab is not in the widget tree (only its pages are), so give
-        # it a direct reference to the header for lifecycle/ETA updates.
+        # Page-specific headers now carry the workspace identity. The old global
+        # ST-LRPS Studio header consumed vertical space without changing per page.
+        self._experiment_header = None
         if hasattr(self._train_tab, "set_experiment_header"):
-            self._train_tab.set_experiment_header(getattr(self, "_experiment_header", None))
+            self._train_tab.set_experiment_header(None)
 
         # --- Sidebar navigation ---
         self._nav_buttons: list[QPushButton] = []
@@ -300,7 +253,6 @@ class MainWindow(QMainWindow):
             DESIGN_TOKENS.layout.shell_margin,
         )
         root_lo.setSpacing(DESIGN_TOKENS.layout.shell_gap)
-        root_lo.addWidget(header_card)
         root_lo.addWidget(content_area, 1)
         root.setLayout(root_lo)
         self.setCentralWidget(root)
@@ -342,10 +294,13 @@ class MainWindow(QMainWindow):
             lbl.setObjectName("navSectionLabel")
             return lbl
 
-        def _nav_btn(label: str, page_idx: int) -> QPushButton:
+        def _nav_btn(label: str, page_idx: int, hint: str = "") -> QPushButton:
             btn = QPushButton(label)
             btn.setObjectName("navButton")
             btn.setCheckable(True)
+            btn.setAccessibleName(f"{label} workspace")
+            if hint:
+                btn.setToolTip(hint)
             btn.clicked.connect(lambda _c, i=page_idx: self._navigate(i))
             self._nav_buttons.append(btn)
             return btn
@@ -364,22 +319,22 @@ class MainWindow(QMainWindow):
 
         # ── DATA ──
         lo.addWidget(_section_lbl("DATA"))
-        lo.addWidget(_nav_btn("Data", 0))
+        lo.addWidget(_nav_btn("Data", 0, "Inspect, generate, and analyze ST-LRPS datasets."))
 
         # ── TRAINING (Setup + Monitor are one category, boxed together) ──
         lo.addWidget(_section_lbl("TRAINING"))
         train_box, train_l = _group_box()
-        train_l.addWidget(_nav_btn("Training Setup", 1))
-        train_l.addWidget(_nav_btn("Training Monitor", 2))
+        train_l.addWidget(_nav_btn("Training Setup", 1, "Configure data, model, loss, resume, and launch readiness."))
+        train_l.addWidget(_nav_btn("Training Monitor", 2, "Track lifecycle, loss, checkpoints, logs, and queue state."))
         lo.addWidget(train_box)
 
         # ── ANALYSIS ──
         lo.addWidget(_section_lbl("ANALYSIS"))
         analysis_box, analysis_l = _group_box()
-        analysis_l.addWidget(_nav_btn("Evaluation", 3))
-        analysis_l.addWidget(_nav_btn("Runtime Performance", 4))
-        analysis_l.addWidget(_nav_btn("Orbit-Level Benchmark", 5))
-        analysis_l.addWidget(_nav_btn("Gravity Plots", 6))
+        analysis_l.addWidget(_nav_btn("Evaluation", 3, "Inspect artifacts and run in-band or OOD accuracy analysis."))
+        analysis_l.addWidget(_nav_btn("Runtime Performance", 4, "Profile artifact loading, batching, chunks, and device throughput."))
+        analysis_l.addWidget(_nav_btn("Orbit-Level Benchmark", 5, "Run orbit-level SH versus ST-LRPS validation scenarios."))
+        analysis_l.addWidget(_nav_btn("Gravity Plots", 6, "Regenerate figures from cached benchmark results."))
         lo.addWidget(analysis_box)
 
         lo.addStretch(1)

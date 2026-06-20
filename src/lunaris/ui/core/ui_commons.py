@@ -226,6 +226,24 @@ def load_fonts() -> QtGui.QFont:
                 if font_id != -1:
                     loaded_families.extend(QtGui.QFontDatabase.applicationFontFamilies(font_id))
 
+    if os.name == "nt":
+        windows_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+        for filename in (
+            "segoeui.ttf",
+            "segoeuib.ttf",
+            "segoeuii.ttf",
+            "segoeuil.ttf",
+            "consola.ttf",
+            "consolab.ttf",
+            "consolai.ttf",
+            "arial.ttf",
+        ):
+            font_file = windows_fonts / filename
+            if font_file.exists():
+                font_id = QtGui.QFontDatabase.addApplicationFont(str(font_file))
+                if font_id != -1:
+                    loaded_families.extend(QtGui.QFontDatabase.applicationFontFamilies(font_id))
+
     # Build a set of available families after loading
     available = set(QtGui.QFontDatabase.families())
 
@@ -251,13 +269,10 @@ def load_fonts() -> QtGui.QFont:
 def get_icon(icon_name: str, color: str | None = None) -> QtGui.QIcon:
     """
     Returns a FontAwesome icon using qtawesome.
-    Falls back to a colored square if qtawesome is unavailable.
+    Falls back to no icon if qtawesome is unavailable.
     """
     if not HAS_QTAWESOME:
-        # Fallback: Create a simple colored square pixmap
-        pixmap = QtGui.QPixmap(16, 16)
-        pixmap.fill(QtGui.QColor(color or THEME['accent']))
-        return QtGui.QIcon(pixmap)
+        return QtGui.QIcon()
 
     try:
         options = {'color': color or THEME['fg_main']}
@@ -297,8 +312,8 @@ def card_stylesheet() -> str:
     """Standard card GroupBox QSS used across all pages."""
     return f"""
         QGroupBox {{
-            border: 1px solid {THEME['border']};
-            border-radius: 10px;
+            border: 1px solid {THEME['border_soft']};
+            border-radius: 12px;
             margin-top: 16px;
             padding-top: 8px;
             background: {THEME['bg_card']};
@@ -308,7 +323,7 @@ def card_stylesheet() -> str:
             subcontrol-position: top left;
             left: 14px;
             padding: 0 8px;
-            color: {THEME['fg_soft']};
+            color: {THEME['fg_main']};
             font-weight: 700;
             font-size: 10pt;
         }}
@@ -640,14 +655,18 @@ class NumericDragLineEdit(QtWidgets.QLineEdit):
 
 class ToggleSwitch(QtWidgets.QAbstractButton):
     """
-    Modern On/Off Switch.
-    Replaces QCheckBox with a mobile-style toggle.
+    Refined On/Off pill switch.
+
+    A flat, premium toggle: an accent-filled track when on, a neutral elevated
+    track when off (so it reads as interactive either way), a quiet hairline
+    border, and a knob with a subtle drop shadow for a tactile feel. All colors
+    come from ``THEME`` so it tracks the active palette.
     """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setCheckable(True)
         self.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
-        self.setFixedSize(44, 24)
+        self.setFixedSize(46, 26)
 
     def paintEvent(self, _):
         p = QtGui.QPainter(self)
@@ -656,42 +675,45 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         is_on = self.isChecked()
         is_enabled = self.isEnabled()
 
-        # Colors from THEME (cyan when on, dark entry when off)
-        bg_color = QtGui.QColor(THEME['accent'] if is_on else THEME['bg_entry'])
-        knob_color = QtGui.QColor(THEME['fg_main'])
+        # Inset by half a pixel so the antialiased track edge is never clipped.
+        rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        radius = rect.height() / 2.0
 
+        # Track: accent when on, a neutral elevated fill when off.
+        track = QtGui.QColor(THEME['accent'] if is_on else THEME['bg_hover'])
         if not is_enabled:
-            bg_color.setAlpha(100)
-            knob_color.setAlpha(150)
-
-        # Draw Track
-        rect = self.rect()
-        radius = rect.height() / 2
-
+            track.setAlpha(90)
         p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(bg_color)
+        p.setBrush(track)
         p.drawRoundedRect(rect, radius, radius)
 
-        # Draw Border (if off)
-        if not is_on:
-            p.setBrush(QtCore.Qt.NoBrush)
-            p.setPen(QtGui.QPen(QtGui.QColor(THEME['border']), 1))
-            p.drawRoundedRect(rect, radius, radius)
+        # Quiet hairline border (a faint accent edge when on, neutral when off).
+        border_col = QtGui.QColor(THEME['accent_deep'] if is_on else THEME['border'])
+        if not is_enabled:
+            border_col.setAlpha(80)
+        p.setBrush(QtCore.Qt.NoBrush)
+        p.setPen(QtGui.QPen(border_col, 1))
+        p.drawRoundedRect(rect, radius, radius)
 
-        # Draw Knob
-        p.setPen(QtCore.Qt.NoPen)
-        p.setBrush(knob_color)
-
-        margin = 3
+        # Knob geometry (left when off, right when on).
+        margin = 3.0
         knob_dia = rect.height() - (2 * margin)
+        x_pos = (rect.right() - margin - knob_dia) if is_on else (rect.left() + margin)
+        knob_rect = QtCore.QRectF(x_pos, rect.top() + margin, knob_dia, knob_dia)
 
-        # Calculate Position (Left vs Right)
-        if is_on:
-            x_pos = rect.width() - margin - knob_dia
-        else:
-            x_pos = margin
+        # Soft shadow under the knob for depth.
+        if is_enabled:
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(QtGui.QColor(0, 0, 0, 70))
+            p.drawEllipse(knob_rect.translated(0, 1.0))
 
-        p.drawEllipse(QtCore.QRectF(x_pos, margin, knob_dia, knob_dia))
+        # Knob: bright white on the accent track, soft on the neutral track.
+        knob_col = QtGui.QColor("#FFFFFF" if is_on else THEME['fg_soft'])
+        if not is_enabled:
+            knob_col.setAlpha(150)
+        p.setPen(QtCore.Qt.NoPen)
+        p.setBrush(knob_col)
+        p.drawEllipse(knob_rect)
 
 
 class CostIndicator(QtWidgets.QWidget):
@@ -701,16 +723,19 @@ class CostIndicator(QtWidgets.QWidget):
     """
     _LEVELS = {"low": 1, "medium": 2, "high": 3}
     _COLORS = {"low": "success", "medium": "warning", "high": "error"} # Keys in THEME
+    _TEXT = {"low": "Low", "medium": "Med", "high": "High"}
 
     def __init__(self, level: str = "low", parent=None):
         super().__init__(parent)
         self._level = "low"
         self.set_level(level)
-        self.setFixedSize(50, 14)
-        self.setToolTip("Estimated CPU Load")
+        self.setFixedSize(96, 16)
 
     def set_level(self, level: str):
         self._level = (level or "low").lower()
+        # Pair the bar glyph with an explicit word + tooltip so the indicator is
+        # never read by color/length alone (clearer, and color-independent).
+        self.setToolTip(f"Estimated CPU load per step: {self._TEXT.get(self._level, 'Low')}")
         self.update()
 
     def paintEvent(self, _):
@@ -720,10 +745,10 @@ class CostIndicator(QtWidgets.QWidget):
         active_bars = self._LEVELS.get(self._level, 1)
         color_key = self._COLORS.get(self._level, "info")
         active_color = QtGui.QColor(THEME.get(color_key, THEME['accent']))
-        inactive_color = QtGui.QColor(THEME['bg_entry'])
+        inactive_color = QtGui.QColor(THEME['bg_card_alt'])
 
-        bar_width = 12
-        bar_height = 8
+        bar_width = 9
+        bar_height = 9
         gap = 4
         y_pos = (self.height() - bar_height) / 2
 
@@ -737,6 +762,19 @@ class CostIndicator(QtWidgets.QWidget):
 
             p.setPen(QtCore.Qt.NoPen)
             p.drawRoundedRect(QtCore.QRectF(x_pos, y_pos, bar_width, bar_height), 2, 2)
+
+        # Explicit level word after the bars (color-matched to severity).
+        text_x = 3 * (bar_width + gap) + 5
+        font = p.font()
+        font.setPointSizeF(8.0)
+        font.setBold(True)
+        p.setFont(font)
+        p.setPen(QtGui.QPen(active_color))
+        p.drawText(
+            QtCore.QRectF(text_x, 0, self.width() - text_x, self.height()),
+            int(QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft),
+            self._TEXT.get(self._level, "Low"),
+        )
 
 
 # =============================================================================
@@ -820,32 +858,10 @@ def style_primary_button(btn: QtWidgets.QPushButton) -> None:
 
     btn.setObjectName("primaryBtn")
     btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
-    btn.setStyleSheet(
-        f"""
-        QPushButton#primaryBtn {{
-            background: qlineargradient(
-                x1: 0, y1: 0, x2: 1, y2: 0,
-                stop: 0 {THEME['accent']},
-                stop: 1 {THEME['secondary']}
-            );
-            color: {THEME['bg_space']};
-            border: 1px solid {THEME['accent']};
-            border-radius: 8px;
-            padding: 7px 16px;
-            font-weight: 700;
-        }}
-        QPushButton#primaryBtn:hover {{
-            background: {THEME['accent_hov']};
-            border-color: {THEME['accent_hov']};
-            color: {THEME['bg_space']};
-        }}
-        QPushButton#primaryBtn:disabled {{
-            background: {THEME['bg_entry']};
-            border-color: {THEME['border']};
-            color: {THEME['text_disabled']};
-        }}
-        """
-    )
+    # The global application QSS owns the flat ``QPushButton#primaryBtn`` look
+    # (a single orbital-blue accent — no decorative gradient). Setting the
+    # object name and re-polishing is enough; a page-local stylesheet here would
+    # only re-introduce a divergent, second primary-button style.
     try:
         btn.style().unpolish(btn)
         btn.style().polish(btn)

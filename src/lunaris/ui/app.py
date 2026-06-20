@@ -59,7 +59,7 @@ NAV_PAGES = [
     ("Output",      "Results & Export",  "fa6s.folder-open"),
     ("Telemetry",   "Live Telemetry",    "fa6s.chart-line"),
     ("Data",        "Data & Files",      "fa6s.database"),
-    ("MonteCarlo",  "Monte Carlo",       "fa6s.dice"),
+    ("MonteCarlo",  "Batch Propagation", "fa6s.dice"),
 ]
 
 PAGE_DESCRIPTIONS = {
@@ -69,7 +69,7 @@ PAGE_DESCRIPTIONS = {
     "Output": "Choose result destinations and inspect generated artifacts.",
     "Telemetry": "Monitor the active run and compare live engineering signals.",
     "Data": "Locate, validate, and manage mission data sources.",
-    "MonteCarlo": "Configure uncertainty, execute batches, and inspect distributions.",
+    "MonteCarlo": "Configure ensemble sampling, execute batch propagation, and inspect distributions.",
 }
 
 # Default UI values (Internal SI units convention)
@@ -274,7 +274,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Runtime Flags
         self.recent_presets: list[str] = []
         self.last_cmd_preview: str = ""
-        self.is_log_collapsed: bool = False
+        self.is_log_collapsed: bool = True
+        self._visual_state_restored: bool = False
         # Independent partial-line buffers for the two backend streams. Mixing
         # stdout and stderr fragments would interleave half-written lines, so
         # each stream owns a dedicated assembler.
@@ -560,7 +561,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 content=self.page_data,
             ),
             "MonteCarlo": PageShell(
-                "Monte Carlo",
+                "Batch Propagation",
                 PAGE_DESCRIPTIONS["MonteCarlo"],
                 content=self.page_mc,
                 scrollable=False,
@@ -589,7 +590,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter.setCollapsible(1, False)  # prevent log from disappearing
         self.main_splitter.setStretchFactor(0, 88)
         self.main_splitter.setStretchFactor(1, 12)
-        self.log_panel.set_collapsed(False)
+        self.log_panel.set_collapsed(True)
 
         # Build Menu & Status
         self._build_menubar()
@@ -820,14 +821,14 @@ class MainWindow(QtWidgets.QMainWindow):
     # =========================================================================
 
     def _build_page_mc(self) -> QtWidgets.QWidget:
-        """Page 7: Monte Carlo Analysis — configuration + live metrics."""
+        """Page 7: Batch propagation analysis - configuration + live metrics."""
         from lunaris.ui.pages.monte_carlo_page import MonteCarloPage
         self.page_mc = MonteCarloPage(parent=self)
         self.page_mc.run_requested.connect(self._on_mc_run_requested)
         return self.page_mc
 
     def _on_mc_run_requested(self) -> None:
-        """Slot: user clicked 'Run Monte Carlo' on the MC page."""
+        """Slot: user clicked 'Run Batch' on the batch page."""
         if self.mc_process is not None:
             try:
                 state = self.mc_process.state()
@@ -859,7 +860,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         self._log_separator()
-        self._log_message("[MC] Starting Monte Carlo run…", severity="system")
+        self._log_message("[MC] Starting batch propagation run…", severity="system")
 
         self.mc_process = QtCore.QProcess(self)
         self.mc_process.readyReadStandardOutput.connect(self._on_mc_stdout)
@@ -884,7 +885,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         Stream stdout from the MC subprocess to the page progress log.
 
-        Monte Carlo runs now emit two kinds of structured control lines:
+        Batch runs now emit two kinds of structured control lines:
         ``[MC_PROGRESS]`` for live progress payloads and ``[MC_METRICS]`` for
         the final summary blob.  These are consumed directly by the page rather
         than dumped into the human-readable log stream.
@@ -994,9 +995,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         Without an explicit size pass, Qt honors child size hints from the page
         stack, which makes the lower console feel stuck and hard to drag. This
-        gives the splitter a practical starting ratio (~68% content / ~32%
-        console) once the window has a real size.
+        gives the splitter a practical starting ratio once the window has a
+        real size. Collapsed terminal state stays compact and is not expanded by
+        this bootstrap pass.
         """
+        if self.is_log_collapsed or self.log_panel.is_collapsed:
+            self.main_splitter.setSizes([max(1, self.main_splitter.height()), LOG_COLLAPSED_HEIGHT])
+            return
+
         total = sum(max(0, size) for size in self.main_splitter.sizes())
         if total <= 0:
             total = max(self.main_splitter.height(), 480)
@@ -1913,6 +1919,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             visual = data.get("visual_state", {}) or {}
             if visual:
+                self._visual_state_restored = True
                 apply_visual_state(visual, main_window=self)
         except Exception as e:
             self._log_message(f"[Warning] Could not restore visual state: {e}", severity="warning")
@@ -2064,7 +2071,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Let the window reach a real geometry before forcing the initial
         # splitter ratio; this prevents page size hints from trapping the log
         # panel at an awkwardly small height.
-        QtCore.QTimer.singleShot(0, self._apply_default_log_splitter_sizes)
+        if not self._visual_state_restored:
+            QtCore.QTimer.singleShot(0, self._apply_default_log_splitter_sizes)
 
         # Update command preview (delayed: lets UI settle)
         QtCore.QTimer.singleShot(500, self._update_command_preview_silent)
@@ -2261,7 +2269,7 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
 
-        # Stop any background MC analysis work owned by the Monte Carlo page.
+        # Stop any background analysis work owned by the batch propagation page.
         try:
             if hasattr(self, "page_mc"):
                 self.page_mc.shutdown()

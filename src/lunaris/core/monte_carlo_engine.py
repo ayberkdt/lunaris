@@ -1,12 +1,14 @@
 # ST_LRPS/core/monte_carlo_engine.py
 """
-Monte Carlo Dispatch Engine
-============================
+Batch / Monte Carlo Dispatch Engine
+===================================
 
-This module is the single entry point for running Monte Carlo simulations.
+This module is the single entry point for running batch ensemble propagation.
+Monte Carlo is the default random sampling method; LHS and Sobol designs are
+available for validation-oriented coverage.
 It handles:
 
-1. Sample generation  — multivariate Gaussian draws for the 6D state and
+1. Sample generation  — random, LHS, or Sobol Gaussian designs for the 6D state and
    optional spacecraft property perturbations.
 2. Backend dispatch   — routes to GPUBatchPropagator (CUDA) or
    CPUBatchPropagator (multiprocessing) based on ``MonteCarloConfig.use_gpu``
@@ -60,6 +62,7 @@ import numpy as np
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 from lunaris.common.math_utils import quat_rotate_np, quat_slerp_np
 from lunaris.common.montecarlo_defs import (
+    BATCH_SAMPLING_METHODS,
     MCRunResult,
     MonteCarloConfig,
     StateUncertainty,
@@ -307,22 +310,102 @@ def _impact_positions_fixed(
 # 1.                      SAMPLE GENERATION
 # =============================================================================
 
+def _sobol_size_note(method: str, n_samples: int) -> str:
+    if str(method).startswith("sobol") and n_samples > 0:
+        power = 1 << int(math.ceil(math.log2(max(1, int(n_samples)))))
+        if power != int(n_samples):
+            return (
+                f"{method} generated {power} base-2 design points and kept the "
+                f"first {int(n_samples)}."
+            )
+    return ""
+
+
+def generate_standard_normal_design(
+    n_samples: int,
+    n_dim: int,
+    method: str,
+    seed: int,
+    rng: np.random.Generator | None = None,
+) -> F64Array:
+    """
+    Generate standardized normal samples for ensemble propagation.
+
+    ``random`` preserves the historical Monte Carlo draw path. Space-filling
+    methods generate unit-hypercube designs and transform them with the inverse
+    normal CDF so the existing covariance machinery can be reused.
+    """
+
+    method = str(method or "random")
+    if method not in BATCH_SAMPLING_METHODS:
+        raise ValueError(
+            "sampling_method must be one of: "
+            + ", ".join(repr(item) for item in BATCH_SAMPLING_METHODS)
+            + f". Got {method!r}"
+        )
+    if n_samples <= 0:
+        raise ValueError(f"n_samples must be > 0, got {n_samples}")
+    if n_dim <= 0:
+        raise ValueError(f"n_dim must be > 0, got {n_dim}")
+
+    if method == "random":
+        active_rng = rng if rng is not None else np.random.default_rng(int(seed))
+        return np.ascontiguousarray(
+            active_rng.standard_normal((int(n_samples), int(n_dim))),
+            dtype=np.float64,
+        )
+
+    from scipy import special
+    from scipy.stats import qmc
+
+    if method == "lhs":
+        unit = qmc.LatinHypercube(d=int(n_dim), seed=int(seed)).random(int(n_samples))
+    else:
+        scramble = method == "sobol_scrambled"
+        sampler = qmc.Sobol(
+            d=int(n_dim),
+            scramble=scramble,
+            seed=int(seed) if scramble else None,
+        )
+        m = int(math.ceil(math.log2(max(1, int(n_samples)))))
+        unit = sampler.random_base2(m=m)[: int(n_samples)]
+
+    eps = np.finfo(np.float64).eps
+    clipped = np.clip(np.asarray(unit, dtype=np.float64), eps, 1.0 - eps)
+    return np.ascontiguousarray(special.ndtri(clipped), dtype=np.float64)
+
+
 def sample_initial_states(
     nominal_state: F64Array,         # (6,) [x,y,z,vx,vy,vz]
     uncertainty: StateUncertainty,
     n_samples: int,
     rng: np.random.Generator,
+    *,
+    sampling_method: str = "random",
+    seed: int = 0,
+    standard_normal_samples: F64Array | None = None,
 ) -> F64Array:
     """
     Draw N Gaussian samples around the nominal state.
+
+    ``sampling_method`` can be ``random`` (classical Monte Carlo), ``lhs``,
+    ``sobol``, or ``sobol_scrambled``. Non-random methods are transformed into
+    standard-normal samples before the covariance factor is applied.
 
     Returns
     -------
     Y0 : (N, 6) float64 perturbed initial states
     """
     L = uncertainty.cholesky_factor()           # (6, 6) lower-triangular
-    Z = rng.standard_normal((n_samples, 6))     # (N, 6) i.i.d.
-    delta = Z @ L.T                             # (N, 6)  – broadcasted perturbation
+    if standard_normal_samples is None:
+        Z = generate_standard_normal_design(n_samples, 6, sampling_method, seed, rng)
+    else:
+        Z = np.asarray(standard_normal_samples, dtype=np.float64)
+        if Z.shape != (int(n_samples), 6):
+            raise ValueError(
+                f"standard_normal_samples must be ({n_samples}, 6), got {Z.shape}"
+            )
+    delta = Z @ L.T                             # (N, 6) perturbation
     return np.ascontiguousarray(
         nominal_state[None, :] + delta, dtype=np.float64
     )
@@ -336,6 +419,10 @@ def sample_spacecraft_props(
     uncertainty: Any,               # SpacecraftUncertainty
     n_samples: int,
     rng: np.random.Generator,
+    *,
+    sampling_method: str = "random",
+    seed: int = 0,
+    standard_normal_samples: F64Array | None = None,
 ) -> F64Array:
     """
     Sample spacecraft physical properties (truncated normal at zero).
@@ -345,18 +432,31 @@ def sample_spacecraft_props(
     sc_samples : (N, 4) float64 — columns [mass_kg, area_m2, cd, cr]
     """
     sc = np.zeros((n_samples, 4), dtype=np.float64)
+    if standard_normal_samples is not None:
+        z_sc = np.asarray(standard_normal_samples, dtype=np.float64)
+        if z_sc.shape != (int(n_samples), 4):
+            raise ValueError(
+                f"standard_normal_samples must be ({n_samples}, 4), got {z_sc.shape}"
+            )
+    elif str(sampling_method or "random") == "random":
+        z_sc = None
+    else:
+        z_sc = generate_standard_normal_design(n_samples, 4, sampling_method, seed)
 
-    def _trunc_normal(mu: float, sigma: float) -> np.ndarray:
+    def _trunc_normal(mu: float, sigma: float, col: int) -> np.ndarray:
         """Sample with sigma; clip at 0.01 * mu to keep values positive."""
         if sigma <= 0.0:
             return np.full(n_samples, mu, dtype=np.float64)
-        raw = rng.normal(mu, sigma, n_samples)
+        if z_sc is None:
+            raw = rng.normal(mu, sigma, n_samples)
+        else:
+            raw = mu + sigma * z_sc[:, col]
         return np.clip(raw, 0.01 * max(mu, 1e-30), None)
 
-    sc[:, 0] = _trunc_normal(nominal_mass, float(getattr(uncertainty, "sigma_mass_kg", 0.0)))
-    sc[:, 1] = _trunc_normal(nominal_area, float(getattr(uncertainty, "sigma_area_m2", 0.0)))
-    sc[:, 2] = _trunc_normal(nominal_cd,   float(getattr(uncertainty, "sigma_cd",     0.0)))
-    sc[:, 3] = _trunc_normal(nominal_cr,   float(getattr(uncertainty, "sigma_cr",     0.0)))
+    sc[:, 0] = _trunc_normal(nominal_mass, float(getattr(uncertainty, "sigma_mass_kg", 0.0)), 0)
+    sc[:, 1] = _trunc_normal(nominal_area, float(getattr(uncertainty, "sigma_area_m2", 0.0)), 1)
+    sc[:, 2] = _trunc_normal(nominal_cd,   float(getattr(uncertainty, "sigma_cd",     0.0)), 2)
+    sc[:, 3] = _trunc_normal(nominal_cr,   float(getattr(uncertainty, "sigma_cr",     0.0)), 3)
 
     return sc
 
@@ -1251,15 +1351,36 @@ class MonteCarloEngine:
             done_samples=0.0,
             elapsed_s=0.0,
             backend="pending",
-            detail="Preparing Monte Carlo sample set",
+            detail="Preparing ensemble sample set",
         )
 
         # -----------------------------------------------------------------
         # 1) Generate samples
         # -----------------------------------------------------------------
         nominal = _state_to_array(cfg.initial_state)   # (6,)
+        sampling_method = str(getattr(mc, "sampling_method", "random") or "random")
+        qmc_design_note = _sobol_size_note(sampling_method, N)
+        if sampling_method == "random":
+            joint_standard_normals = None
+        else:
+            joint_standard_normals = generate_standard_normal_design(
+                N,
+                10,
+                sampling_method,
+                int(mc.seed),
+            )
 
-        Y0 = sample_initial_states(nominal, mc.state, N, rng)
+        Y0 = sample_initial_states(
+            nominal,
+            mc.state,
+            N,
+            rng,
+            sampling_method=sampling_method,
+            seed=int(mc.seed),
+            standard_normal_samples=(
+                None if joint_standard_normals is None else joint_standard_normals[:, :6]
+            ),
+        )
         sc_samples = sample_spacecraft_props(
             nominal_mass=float(cfg.spacecraft.mass_kg),
             nominal_area=float(cfg.spacecraft.area_m2),
@@ -1268,6 +1389,11 @@ class MonteCarloEngine:
             uncertainty=mc.spacecraft,
             n_samples=N,
             rng=rng,
+            sampling_method=sampling_method,
+            seed=int(mc.seed) + 1,
+            standard_normal_samples=(
+                None if joint_standard_normals is None else joint_standard_normals[:, 6:10]
+            ),
         )
 
         masses = sc_samples[:, 0]
@@ -1281,7 +1407,7 @@ class MonteCarloEngine:
             done_samples=0.0,
             elapsed_s=time.perf_counter() - t_wall0,
             backend="pending",
-            detail="Samples generated",
+            detail=f"Samples generated ({sampling_method})",
         )
 
         # -----------------------------------------------------------------
@@ -1650,6 +1776,8 @@ class MonteCarloEngine:
                 archive_schema_version=2,
                 n_samples=N,
                 seed=int(mc.seed),
+                sampling_method=sampling_method,
+                sampling_note=qmc_design_note,
                 duration_s=duration_s,
                 output_dt_s=output_dt_s,
                 requested_backend="GPU" if bool(mc.use_gpu) else "CPU",
@@ -1737,6 +1865,8 @@ class MonteCarloEngine:
             diagnostics={
                 "wall_time_s": float(t_wall),
                 "n_samples": N,
+                "sampling_method": sampling_method,
+                "sampling_note": qmc_design_note,
                 "n_valid_samples": n_valid,
                 "n_failed_samples": n_failed,
                 "n_impacts": n_hit,
@@ -1910,10 +2040,15 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
 
 
 def mc_entry() -> int:
-    """Console-script entry point for Monte Carlo ensemble propagation."""
+    """Console-script entry point for batch/Monte Carlo ensemble propagation."""
     from lunaris.core.mc_runner import main as _mc_main
 
     return int(_mc_main())
+
+
+def batch_entry() -> int:
+    """Console-script alias for the batch propagation terminology."""
+    return mc_entry()
 
 
 # =============================================================================
@@ -1922,9 +2057,11 @@ def mc_entry() -> int:
 
 __all__ = [
     "MonteCarloEngine",
+    "generate_standard_normal_design",
     "sample_initial_states",
     "sample_spacecraft_props",
     "HDF5TrajectoryView",
     "load_mc_result",
     "mc_entry",
+    "batch_entry",
 ]

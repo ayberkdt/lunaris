@@ -180,6 +180,7 @@ def test_build_mc_command_targets_runner_with_canonical_flags() -> None:
     assert cmd[1] == "mc_runner.py"
     assert "--gravity-backend" in cmd
     assert "--n-samples" in cmd
+    assert "--sampling-method" in cmd
     assert "--mc-gravity-mode" in cmd
 
     preview = build_command_preview(cmd)
