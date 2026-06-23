@@ -69,6 +69,7 @@ except ImportError as e:
 
 
 try:
+    from lunaris.ui.components.primitives import EmptyState
     from lunaris.ui.core.ui_commons import THEME
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
@@ -143,11 +144,13 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         if not HAS_PYQTGRAPH:
-            # Fallback message
-            placeholder = QtWidgets.QLabel("PyQtGraph not installed.\nLive telemetry unavailable.")
-            placeholder.setAlignment(QtCore.Qt.AlignCenter)
-            placeholder.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 14px;")
-            layout.addWidget(placeholder)
+            # Designed empty-state when the plotting backend is unavailable.
+            layout.addWidget(
+                EmptyState(
+                    "Live telemetry unavailable",
+                    "Install PyQtGraph to enable real-time telemetry plots.",
+                )
+            )
             return
 
         # Plot Type Selector
@@ -939,14 +942,9 @@ class TelemetryPage(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Header
+        # Header (section-level; the shell already provides the page title)
         header = QtWidgets.QLabel("Real-time Mission Telemetry")
-        header.setStyleSheet(f"""
-            color: {THEME['fg_main']};
-            font-weight: bold;
-            font-size: 14pt;
-            margin: 20px;
-        """)
+        header.setObjectName("sectionTitle")
         layout.addWidget(header)
 
         # Enhanced Telemetry Widget

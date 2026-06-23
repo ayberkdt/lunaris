@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import csv
+import io
+from collections.abc import Iterable, Sequence
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.core.ui_commons import StatusBadge
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
@@ -76,7 +78,21 @@ class PageShell(QtWidgets.QWidget):
             body = QtWidgets.QWidget()
             body.setObjectName("pageShellBody")
             self.body_layout = QtWidgets.QVBoxLayout(body)
-            self.scroll_area.setWidget(body)
+            # Readable page width: cap the column and centre it when the workspace
+            # is wider, so dense forms stay scannable on ultrawide displays.
+            body.setMaximumWidth(DESIGN_TOKENS.layout.page_max_width)
+            body.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
+            )
+            centerer = QtWidgets.QWidget()
+            centerer.setObjectName("pageShellCenterer")
+            center_layout = QtWidgets.QHBoxLayout(centerer)
+            center_layout.setContentsMargins(0, 0, 0, 0)
+            center_layout.setSpacing(0)
+            center_layout.addStretch(1)
+            center_layout.addWidget(body)
+            center_layout.addStretch(1)
+            self.scroll_area.setWidget(centerer)
             root.addWidget(self.scroll_area)
         else:
             body = QtWidgets.QWidget()
@@ -380,18 +396,24 @@ class EmptyState(QtWidgets.QFrame):
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(DESIGN_TOKENS.spacing.sm)
         layout.setAlignment(QtCore.Qt.AlignCenter)
-        title_label = QtWidgets.QLabel(title)
-        title_label.setObjectName("emptyStateTitle")
-        title_label.setAlignment(QtCore.Qt.AlignCenter)
-        layout.addWidget(title_label)
-        description_label = QtWidgets.QLabel(description)
-        description_label.setObjectName("emptyStateDescription")
-        description_label.setWordWrap(True)
-        description_label.setAlignment(QtCore.Qt.AlignCenter)
-        description_label.setVisible(bool(description))
-        layout.addWidget(description_label)
+        self.title_label = QtWidgets.QLabel(title)
+        self.title_label.setObjectName("emptyStateTitle")
+        self.title_label.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(self.title_label)
+        self.description_label = QtWidgets.QLabel(description)
+        self.description_label.setObjectName("emptyStateDescription")
+        self.description_label.setWordWrap(True)
+        self.description_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.description_label.setVisible(bool(description))
+        layout.addWidget(self.description_label)
         if action is not None:
             layout.addWidget(action, 0, QtCore.Qt.AlignCenter)
+
+    def set_message(self, title: str, description: str = "") -> None:
+        """Update the empty-state text in place (so one widget can cover several cases)."""
+        self.title_label.setText(title)
+        self.description_label.setText(description)
+        self.description_label.setVisible(bool(description))
 
 
 class CompactSearchField(QtWidgets.QLineEdit):
@@ -425,9 +447,112 @@ class OverflowMenuButton(QtWidgets.QToolButton):
         self.setToolTip("More actions")
 
 
+class DataTable(QtWidgets.QTableWidget):
+    """Mission-analysis data table: sortable, copyable, CSV-exportable.
+
+    Adds the behaviours every results/ephemeris/event table should share:
+    sorting, row selection, read-only cells, right-aligned monospace numeric
+    columns, unit-bearing headers, ``Ctrl+C`` copy (TSV) of the selection, and
+    a ``to_csv()`` export. Surface styling comes from the global ``#dataTable``
+    QSS so no inline colors are needed.
+    """
+
+    def __init__(
+        self,
+        headers: Sequence[str | tuple[str, str]] = (),
+        *,
+        numeric_columns: Iterable[int] = (),
+        parent: QtWidgets.QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setObjectName("dataTable")
+        self._numeric_columns = set(numeric_columns)
+        self.setAlternatingRowColors(True)
+        self.setSortingEnabled(True)
+        self.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
+        self.verticalHeader().setVisible(False)
+        self.horizontalHeader().setHighlightSections(False)
+        self.setWordWrap(False)
+        if headers:
+            self.set_headers(headers)
+
+    def set_headers(self, headers: Sequence[str | tuple[str, str]]) -> None:
+        """Set column headers; a ``(label, unit)`` tuple renders as ``label [unit]``."""
+        labels: list[str] = []
+        for header in headers:
+            if isinstance(header, tuple):
+                label, unit = header
+                labels.append(f"{label} [{unit}]" if unit else label)
+            else:
+                labels.append(header)
+        self.setColumnCount(len(labels))
+        self.setHorizontalHeaderLabels(labels)
+
+    def append_row(self, values: Sequence[object]) -> int:
+        """Append a row; numeric columns are right-aligned and monospaced."""
+        # Insert with sorting disabled so the row index stays stable while filling.
+        was_sorting = self.isSortingEnabled()
+        self.setSortingEnabled(False)
+        row = self.rowCount()
+        self.insertRow(row)
+        for col, value in enumerate(values):
+            item = QtWidgets.QTableWidgetItem(str(value))
+            if col in self._numeric_columns:
+                item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+                font = item.font()
+                font.setFamily(DESIGN_TOKENS.typography.family_mono)
+                item.setFont(font)
+            self.setItem(row, col, item)
+        self.setSortingEnabled(was_sorting)
+        return row
+
+    def _cell_text(self, row: int, col: int) -> str:
+        item = self.item(row, col)
+        return item.text() if item is not None else ""
+
+    def _header_text(self, col: int) -> str:
+        item = self.horizontalHeaderItem(col)
+        return item.text() if item is not None else ""
+
+    def to_csv(self, *, include_header: bool = True) -> str:
+        """Return the full table as CSV text."""
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        cols = range(self.columnCount())
+        if include_header:
+            writer.writerow([self._header_text(c) for c in cols])
+        for row in range(self.rowCount()):
+            writer.writerow([self._cell_text(row, c) for c in cols])
+        return buffer.getvalue()
+
+    def copy_selection(self) -> None:
+        """Copy the selected cells to the clipboard as tab-separated rows."""
+        items = self.selectedItems()
+        if not items:
+            return
+        rows: dict[int, dict[int, str]] = {}
+        for item in items:
+            rows.setdefault(item.row(), {})[item.column()] = item.text()
+        lines = [
+            "\t".join(cols[c] for c in sorted(cols))
+            for _, cols in sorted(rows.items())
+        ]
+        QtWidgets.QApplication.clipboard().setText("\n".join(lines))
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        if event.matches(QtGui.QKeySequence.Copy):
+            self.copy_selection()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 __all__ = [
     "ActionBar",
     "CompactSearchField",
+    "DataTable",
     "EmptyState",
     "FormGrid",
     "InlineNotice",

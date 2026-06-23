@@ -107,7 +107,9 @@ def test_results_export_page_restores_state_and_flags_preview_errors(tmp_path: P
     assert state.generate_3d_plots is False
     assert page.spin_downsample_3d.isEnabled() is False
     assert page.txt_preview.toPlainText() == "invalid command preview"
-    assert THEME["error"] in page.txt_preview.styleSheet()
+    # Error styling is now driven by a dynamic ``state`` property resolved by the
+    # global stylesheet (QPlainTextEdit#commandPreview[state="error"]), not inline QSS.
+    assert page.txt_preview.property("state") == "error"
 
     page.close()
 
@@ -429,19 +431,33 @@ def test_results_export_empty_states(tmp_path: Path) -> None:
     page.show()
     app.processEvents()
 
-    # No dir set
+    # No dir set → standardized EmptyState shown in place of the tree
     page.ent_out_dir.setText("")
     page._refresh_artifact_browser()
     app.processEvents()
     summary = page.lbl_artifact_summary.text()
     assert "not set" in summary.lower() or "no artifact" in summary.lower()
+    assert page.artifact_empty.isVisible()
+    assert not page.tree_artifacts.isVisible()
 
-    # Dir doesn't exist
+    # Dir doesn't exist → still the EmptyState, with a case-specific message
     page.set_output_dir(str(tmp_path / "nonexistent"))
     page._refresh_artifact_browser()
     app.processEvents()
     summary2 = page.lbl_artifact_summary.text()
     assert "not exist" in summary2.lower() or "missing" in summary2.lower() or "artifact" in summary2.lower()
+    assert page.artifact_empty.isVisible()
+
+    # Populated dir → tree shown, EmptyState hidden
+    real_dir = tmp_path / "real_out"
+    real_dir.mkdir()
+    (real_dir / "altitude.png").write_bytes(b"png")
+    page.set_output_dir(str(real_dir))
+    page._refresh_artifact_browser()
+    app.processEvents()
+    assert page.tree_artifacts.isVisible()
+    assert not page.artifact_empty.isVisible()
+    assert page.tree_artifacts.topLevelItemCount() == 1
 
     page.close()
 
@@ -539,3 +555,31 @@ def test_data_page_path_ok_when_dir_exists_but_no_ldem_files(tmp_path: Path) -> 
 
     kind, _detail = DataPage._detect_ldem_content(empty_dir)
     assert kind == "path_ok", f"Expected path_ok for dir with no LDEM files, got {kind!r}"
+
+
+def test_results_export_artifact_csv_copy(tmp_path: Path) -> None:
+    app = _app()
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    (out_dir / "altitude.png").write_bytes(b"png")
+    (out_dir / "report.pdf").write_bytes(b"pdf")
+
+    page = ResultsExportPage(project_root=tmp_path, create_card=_create_card)
+    page.show()
+    page.set_output_dir(str(out_dir))
+    page._refresh_artifact_browser()
+    app.processEvents()
+
+    csv_text = page._artifacts_to_csv()
+    lines = csv_text.strip().splitlines()
+    # Header row + one row per artifact (2 files).
+    assert lines[0].split(",")[:2] == ["Name", "Type"]
+    assert len(lines) == 3
+    assert any("altitude.png" in ln for ln in lines[1:])
+    assert any("report.pdf" in ln for ln in lines[1:])
+
+    page._copy_artifacts_csv()
+    app.processEvents()
+    assert "altitude.png" in app.clipboard().text()
+
+    page.close()

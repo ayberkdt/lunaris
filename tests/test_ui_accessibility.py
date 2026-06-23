@@ -1,0 +1,64 @@
+"""Accessibility regression tests (Step B/E closeout).
+
+Locks in the accessible-name coverage on icon-only controls and the primary
+mode-selecting combos so future edits cannot silently regress screen-reader
+support.
+"""
+
+from __future__ import annotations
+
+import os
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+try:
+    from PySide6.QtWidgets import QApplication
+
+    HAS_PYSIDE = True
+except ImportError:
+    HAS_PYSIDE = False
+
+
+def _app():
+    return QApplication.instance() or QApplication([])
+
+
+def test_force_models_icon_buttons_have_accessible_names() -> None:
+    if not HAS_PYSIDE:
+        pytest.skip("PySide6 not available")
+    _app()
+    from lunaris.ui.pages.force_models_page import ForceModelsPage
+
+    page = ForceModelsPage()
+    # Icon-only gear buttons must be named for screen readers.
+    assert page.btn_gravity_settings.accessibleName()
+    assert page.btn_albedo_settings.accessibleName()
+    # Every force toggle is icon-only paint → must carry a name.
+    for switch in (
+        page.sw_gravity, page.sw_sun, page.sw_earth, page.sw_earth_j2,
+        page.sw_srp, page.sw_albedo, page.sw_thermal,
+        page.sw_tides_k2, page.sw_tides_k3, page.sw_relativity_1pn,
+    ):
+        assert switch.accessibleName()
+
+
+def test_monte_carlo_selectors_have_accessible_names() -> None:
+    if not HAS_PYSIDE:
+        pytest.skip("PySide6 not available")
+    _app()
+    from lunaris.ui.pages.monte_carlo_page import MonteCarloPage, UIMonteCarloConfig
+
+    page = MonteCarloPage(mc_cfg=UIMonteCarloConfig(use_gpu=False))
+    try:
+        for combo in (
+            page.cb_sampling_method,
+            page.cb_mc_gravity_mode,
+            page.cb_mc_backend,
+            page.cb_format,
+        ):
+            assert combo.accessibleName()
+        assert page.toggle_gpu.accessibleName()
+    finally:
+        page.shutdown()

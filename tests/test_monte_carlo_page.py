@@ -115,7 +115,9 @@ def test_status_badge_and_validation_kinds(mc_page):
     assert "Propagating" in mc_page.lbl_progress_summary.text()
     assert "210 / 500" in mc_page.lbl_progress_meta.text()
 
-    mc_page.on_run_finished(0, "x.h5", None, {"n_samples": 500})
+    # Empty output_path keeps the assertion on run-state styling and avoids
+    # triggering the analysis panel's background load (which needs a real file).
+    mc_page.on_run_finished(0, "", None, {"n_samples": 500})
     assert mc_page.badge_mc.property("kind") == "completed"
 
     mc_page.on_run_finished(1, "", None, None)
@@ -125,3 +127,23 @@ def test_status_badge_and_validation_kinds(mc_page):
 def test_st_lrps_panel_uses_inline_notice_surface(mc_page):
     assert mc_page.st_lrps_config_frame.objectName() == "inlineNotice"
     assert mc_page.st_lrps_config_frame.property("kind") == "warning"
+
+
+def test_metrics_csv_copy(mc_page):
+    from PySide6.QtWidgets import QApplication
+
+    mc_page.update_results({
+        "n_samples": 500,
+        "sampling_method": "random",
+        "backend": "cpu_sh",
+        "wall_time_s": 12.3,
+    })
+    mc_page._copy_metrics_csv()
+    text = QApplication.clipboard().text()
+    lines = text.strip().splitlines()
+    assert lines[0] == "Metric,Value"
+    assert any(ln.startswith("N Samples,500") for ln in lines)
+    assert any("cpu_sh" in ln for ln in lines)
+    # Monospace numerics on metric values.
+    fam = mc_page._metric_labels["n_samples"].font().family().lower()
+    assert "mono" in fam or "consolas" in fam or "cascadia" in fam or "courier" in fam

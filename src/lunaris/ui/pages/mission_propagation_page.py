@@ -118,9 +118,7 @@ class SolverSettingsDialog(QtWidgets.QDialog):
         layout.addWidget(desc)
 
         tol_frame = QtWidgets.QFrame()
-        tol_frame.setStyleSheet(
-            f"background-color: {THEME['bg_card']}; border-radius: 8px; border: 1px solid {THEME['border']};"
-        )
+        tol_frame.setObjectName("section")
         tol_layout = QtWidgets.QVBoxLayout(tol_frame)
         tol_layout.setContentsMargins(15, 15, 15, 15)
         tol_layout.setSpacing(12)
@@ -213,9 +211,7 @@ class SpacecraftBusDialog(QtWidgets.QDialog):
         layout.addWidget(desc)
 
         prop_frame = QtWidgets.QFrame()
-        prop_frame.setStyleSheet(
-            f"background-color: {THEME['bg_card']}; border-radius: 8px; border: 1px solid {THEME['border']};"
-        )
+        prop_frame.setObjectName("section")
         prop_layout = QtWidgets.QGridLayout(prop_frame)
         prop_layout.setContentsMargins(15, 15, 15, 15)
         prop_layout.setVerticalSpacing(12)

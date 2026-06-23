@@ -50,14 +50,16 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
     from lunaris.ui.components.monte_carlo_analysis_panel import MonteCarloAnalysisPanel
-    from lunaris.ui.components.primitives import InlineNotice, Section
+    from lunaris.ui.components.primitives import DataTable, InlineNotice, Section
     from lunaris.ui.core.ui_commons import (
         THEME,
         NumericDragLineEdit,
         ToggleSwitch,
         get_icon,
+        prefers_reduced_motion,
     )
     from lunaris.ui.pages.force_models_page import ST_LRPS_RUNS_DIR, list_st_lrps_model_dirs
+    from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
         import sys
@@ -211,6 +213,10 @@ def _metric_row(key: str, value: str = "—") -> QtWidgets.QHBoxLayout:
     val_lbl = QtWidgets.QLabel(value)
     val_lbl.setAlignment(QtCore.Qt.AlignRight)
     val_lbl.setObjectName("metricValue")
+    # Monospace numerics so digits align column-wise across rows.
+    mono = val_lbl.font()
+    mono.setFamily(DESIGN_TOKENS.typography.family_mono)
+    val_lbl.setFont(mono)
     row.addWidget(val_lbl)
     return row, val_lbl
 
@@ -386,7 +392,9 @@ class MonteCarloPage(QtWidgets.QWidget):
         intro.setWordWrap(True)
         body_layout.addWidget(intro)
 
-        self.tbl_backend_compare = QtWidgets.QTableWidget()
+        self.tbl_backend_compare = DataTable()
+        # Rows carry positional "Copy Command" buttons, so keep row order fixed.
+        self.tbl_backend_compare.setSortingEnabled(False)
         self.tbl_backend_compare.setColumnCount(5)
         self.tbl_backend_compare.setHorizontalHeaderLabels(
             ["Backend", "Degree / Model", "MC Gravity Mode", "GPU", "Output Path"]
@@ -603,6 +611,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         grid.addWidget(_label("Sampling:"), 1, 0)
         self.cb_sampling_method = QtWidgets.QComboBox()
+        self.cb_sampling_method.setAccessibleName("Ensemble sampling method")
         self.cb_sampling_method.addItem("Random (Monte Carlo)", "random")
         self.cb_sampling_method.addItem("Latin Hypercube (LHS)", "lhs")
         self.cb_sampling_method.addItem("Sobol", "sobol")
@@ -722,6 +731,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         toggle_row = QtWidgets.QHBoxLayout()
         toggle_row.addWidget(_label("Use GPU Acceleration:"))
         self.toggle_gpu = ToggleSwitch()
+        self.toggle_gpu.setAccessibleName("Use GPU acceleration")
         self.toggle_gpu.setChecked(self.mc_cfg.use_gpu)
         self.toggle_gpu.toggled.connect(self._on_backend_changed)
         toggle_row.addWidget(self.toggle_gpu)
@@ -731,6 +741,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         gravity_row = QtWidgets.QHBoxLayout()
         gravity_row.addWidget(_label("Central Gravity Source:"))
         self.cb_mc_gravity_mode = QtWidgets.QComboBox()
+        self.cb_mc_gravity_mode.setAccessibleName("Central gravity source")
         self.cb_mc_gravity_mode.addItem("Follow Mission Setup", "follow_mission")
         self.cb_mc_gravity_mode.addItem("Force Classical Gravity", "classic_sh")
         self.cb_mc_gravity_mode.addItem("Force ST-LRPS Gravity", "st_lrps")
@@ -749,6 +760,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         backend_row = QtWidgets.QHBoxLayout()
         backend_row.addWidget(_label("Batch Backend:"))
         self.cb_mc_backend = QtWidgets.QComboBox()
+        self.cb_mc_backend.setAccessibleName("Batch propagation backend")
         self.cb_mc_backend.addItem("Auto Policy", "auto")
         self.cb_mc_backend.addItem("CPU Spherical Harmonics", "cpu_sh")
         self.cb_mc_backend.addItem("Numba CUDA SH — degree ≤ 24, low-degree screening", "numba_cuda_sh")
@@ -1014,6 +1026,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         fmt_row = QtWidgets.QHBoxLayout()
         fmt_row.addWidget(_label("Format:"))
         self.cb_format = QtWidgets.QComboBox()
+        self.cb_format.setAccessibleName("Output archive format")
         self.cb_format.addItems(["hdf5", "npz"])
         self.cb_format.setCurrentText(self.mc_cfg.output_format)
         self.cb_format.currentTextChanged.connect(self._on_output_format_changed)
@@ -1181,11 +1194,13 @@ class MonteCarloPage(QtWidgets.QWidget):
         layout.setSpacing(6)
 
         self._metric_labels: dict[str, QtWidgets.QLabel] = {}
+        self._metric_order: list[tuple[str, QtWidgets.QLabel]] = []
 
         def _add(key: str, label: str) -> None:
             row_layout, val_lbl = _metric_row(label)
             layout.addLayout(row_layout)
             self._metric_labels[key] = val_lbl
+            self._metric_order.append((label, val_lbl))
 
         _add("n_samples",      "N Samples")
         _add("sampling_method", "Sampling")
@@ -1213,8 +1228,30 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.btn_open_report.clicked.connect(self._open_report)
         layout.addWidget(self.btn_open_report)
 
+        self.btn_copy_metrics = QtWidgets.QPushButton("  Copy Metrics (CSV)")
+        self.btn_copy_metrics.setIcon(get_icon("fa6s.table-list", THEME["fg_muted"]))
+        self.btn_copy_metrics.setCursor(QtCore.Qt.PointingHandCursor)
+        self.btn_copy_metrics.setFixedHeight(32)
+        self.btn_copy_metrics.clicked.connect(self._copy_metrics_csv)
+        layout.addWidget(self.btn_copy_metrics)
+
         self._last_report_path: str | None = None
         return gb
+
+    def _copy_metrics_csv(self) -> None:
+        """Copy the last-run metrics (Metric,Value) to the clipboard as CSV."""
+        import csv
+        import io
+
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["Metric", "Value"])
+        for label, val_lbl in getattr(self, "_metric_order", []):
+            writer.writerow([label, val_lbl.text()])
+        try:
+            QtWidgets.QApplication.clipboard().setText(buffer.getvalue())
+        except Exception:
+            pass
 
     def _open_report(self) -> None:
         if self._last_report_path and Path(self._last_report_path).exists():
@@ -1240,7 +1277,11 @@ class MonteCarloPage(QtWidgets.QWidget):
             total = max(1, self._parse_int(self.ent_n_samples.text(), self.mc_cfg.n_samples))
             self._last_progress_payload = {}
             self._set_badge("RUNNING", "running")
-            self.progress_mc.setRange(0, 0)   # indeterminate until first structured payload
+            # Reduced motion: keep the bar determinate instead of a marquee.
+            if prefers_reduced_motion():
+                self.progress_mc.setRange(0, 1000)
+            else:
+                self.progress_mc.setRange(0, 0)   # indeterminate until first structured payload
             self.progress_mc.setValue(0)
             self.progress_mc.setFormat("Preparing…")
             self.lbl_progress_summary.setText("Preparing ensemble samples")

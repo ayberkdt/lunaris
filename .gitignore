@@ -188,3 +188,4 @@ src/lunaris/ui/web/public/textures/artemis_disp.png
 # Local agent-skills trigger-routing fixture (consumed only by the local
 # .agents validator; not a tracked project artifact).
 tests/agent_skills/
+legacy/

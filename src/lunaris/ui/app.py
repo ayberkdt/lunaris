@@ -35,6 +35,7 @@ from lunaris.ui.core.ui_commons import (
     LOG_COLORS,
     THEME,
     WINDOW_SETTINGS,
+    prefers_reduced_motion,
 )
 from lunaris.ui.core.ui_commons import (
     ASSETS_DIR as UI_ASSETS_DIR,
@@ -193,6 +194,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setWindowTitle(WINDOW_SETTINGS["title"])
         self.resize(*WINDOW_SETTINGS["size"])
         self.setMinimumSize(*WINDOW_SETTINGS["min_size"])
+        # Restore the last window geometry (size/position) if one was saved.
+        try:
+            saved_geometry = self._density_settings().value("ui/geometry")
+            if saved_geometry:
+                self.restoreGeometry(saved_geometry)
+        except Exception:
+            pass
 
         # Icon setup
         icon_path = ASSETS_DIR / "icon.ico"
@@ -288,6 +296,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._run_wall_t0: float | None = None
         self._last_telem_t_s: float | None = None
         self._progress_is_determinate: bool = False
+
+        # UI density (comfortable / compact) — restored from user settings so the
+        # choice persists across sessions; applied by _apply_theme().
+        self._density: str = self._load_density_pref()
 
         # ---------------------------------------------------------------------
         # 4. UI Construction
@@ -595,6 +607,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Build Menu & Status
         self._build_menubar()
         self._build_statusbar()
+        self._build_global_shortcuts()
 
         # Set Initial State
         self._switch_page("Orbit")
@@ -671,6 +684,42 @@ class MainWindow(QtWidgets.QMainWindow):
         a_clear.setShortcut("Ctrl+K")
         a_clear.triggered.connect(self._clear_log)
 
+        m_view.addSeparator()
+
+        a_density = m_view.addAction("Compact Density")
+        a_density.setCheckable(True)
+        a_density.setChecked(self._density == "compact")
+        a_density.setShortcut("Ctrl+Shift+D")
+        a_density.toggled.connect(self._toggle_density)
+
+        a_reduce_motion = m_view.addAction("Reduce Motion")
+        a_reduce_motion.setCheckable(True)
+        a_reduce_motion.setChecked(prefers_reduced_motion())
+        a_reduce_motion.toggled.connect(self._toggle_reduce_motion)
+
+    def _build_global_shortcuts(self) -> None:
+        """Keyboard shortcuts for fast, mouse-free workspace navigation.
+
+        Ctrl+1..Ctrl+9 jump directly to a workspace page (in nav order); Ctrl+Shift+F
+        focuses the execution-console search field. Run/Stop/Save/Open already have
+        menu shortcuts (F5 / Shift+F5 / Ctrl+S / Ctrl+O).
+        """
+        self._page_shortcuts: list[QtGui.QShortcut] = []
+        for i, (key, _label, _icon) in enumerate(NAV_PAGES[:9]):
+            sc = QtGui.QShortcut(QtGui.QKeySequence(f"Ctrl+{i + 1}"), self)
+            sc.setContext(QtCore.Qt.WindowShortcut)
+            sc.activated.connect(lambda k=key: self._switch_page(k))
+            self._page_shortcuts.append(sc)
+
+        self._console_shortcut = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Shift+F"), self)
+        self._console_shortcut.setContext(QtCore.Qt.WindowShortcut)
+        self._console_shortcut.activated.connect(self._focus_console_search)
+
+    def _focus_console_search(self) -> None:
+        """Move keyboard focus to the execution-console search field."""
+        if hasattr(self, "log_panel"):
+            self.log_panel.focus_search()
+
     def _build_statusbar(self):
         """Create a hidden status bar so idle text does not clutter the footer."""
         sb = QtWidgets.QStatusBar()
@@ -702,7 +751,30 @@ class MainWindow(QtWidgets.QMainWindow):
         # 2. Build the global QSS from the Lunar Graphite palette.
         #    The large stylesheet now lives in lunaris.ui.theme.stylesheet
         #    so app.py stays an orchestration layer, not a design-token dump.
-        self.setStyleSheet(build_app_stylesheet(THEME, LOG_COLORS))
+        self.setStyleSheet(
+            build_app_stylesheet(THEME, LOG_COLORS, getattr(self, "_density", "comfortable"))
+        )
+
+    # -------------------------------------------------------------------------
+    # UI density (comfortable / compact)
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _density_settings() -> QtCore.QSettings:
+        return QtCore.QSettings("Lunaris", "MissionStudio")
+
+    def _load_density_pref(self) -> str:
+        value = str(self._density_settings().value("ui/density", "comfortable") or "comfortable")
+        return "compact" if value.lower() == "compact" else "comfortable"
+
+    def _toggle_density(self, compact: bool) -> None:
+        """Switch between comfortable and compact density and persist the choice."""
+        self._density = "compact" if compact else "comfortable"
+        self._density_settings().setValue("ui/density", self._density)
+        self._apply_theme()
+
+    def _toggle_reduce_motion(self, enabled: bool) -> None:
+        """Persist the reduced-motion preference (read live by progress widgets)."""
+        self._density_settings().setValue("ui/reduce_motion", bool(enabled))
 
     # =========================================================================
     # 19. PAGE BUILDERS: ORBIT PAGE (PAGE 1)
@@ -1203,10 +1275,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_run.setEnabled(False)
             self.btn_stop.setEnabled(False)
             self.progress_bar.show()
-            self.progress_bar.setTextVisible(False)
-            self.progress_bar.setRange(0, 0)
+            # Reduced motion: avoid the marquee (indeterminate) animation.
+            if prefers_reduced_motion():
+                self.progress_bar.setRange(0, 1000)
+                self.progress_bar.setTextVisible(True)
+                self.progress_bar.setFormat("Validating…")
+            else:
+                self.progress_bar.setTextVisible(False)
+                self.progress_bar.setRange(0, 0)
+                self.progress_bar.setFormat("")
             self.progress_bar.setValue(0)
-            self.progress_bar.setFormat("")
             self.lbl_progress.show()
             self.lbl_progress.setText("Validating inputs...")
             self.state_frame.show()
@@ -1410,8 +1488,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._last_telem_t_s = None
         self._progress_is_determinate = False
         self.progress_bar.show()
-        self.progress_bar.setTextVisible(False)
-        self.progress_bar.setRange(0, 0)
+        if prefers_reduced_motion():
+            self.progress_bar.setRange(0, 1000)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setTextVisible(True)
+        else:
+            self.progress_bar.setTextVisible(False)
+            self.progress_bar.setRange(0, 0)
         self.progress_bar.setFormat("Starting...")
         if hasattr(self, "lbl_progress"):
             self.lbl_progress.show()
@@ -2273,6 +2356,12 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if hasattr(self, "page_mc"):
                 self.page_mc.shutdown()
+        except Exception:
+            pass
+
+        # Persist window geometry so the workspace reopens where the user left it.
+        try:
+            self._density_settings().setValue("ui/geometry", self.saveGeometry())
         except Exception:
             pass
 

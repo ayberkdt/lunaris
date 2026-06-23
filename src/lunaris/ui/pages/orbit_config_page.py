@@ -749,7 +749,9 @@ class OrbitPage(QtWidgets.QWidget):
         """3D orbit preview card."""
         gb = self._create_card(
             "Orbit Preview",
-            "Review the orbit geometry, viewing angle, and estimated period before you launch the mission run.",
+            "Two-body Keplerian preview for geometry, viewing angle, and period — "
+            "the mission run adds the selected perturbations, so the propagated "
+            "trajectory will differ from this idealized orbit.",
         )
         layout = gb.content_layout
         layout.setSpacing(14)

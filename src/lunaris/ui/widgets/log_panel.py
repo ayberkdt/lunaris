@@ -407,6 +407,17 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
     def toggle_collapsed(self) -> None:
         self.set_collapsed(not self._collapsed)
 
+    def focus_search(self) -> None:
+        """Expand the console (if collapsed) and move keyboard focus to its search field.
+
+        Wired to a global shortcut so users can jump straight to filtering the
+        execution log without reaching for the mouse.
+        """
+        if self._collapsed:
+            self.set_collapsed(False)
+        self.search_field.setFocus(QtCore.Qt.ShortcutFocusReason)
+        self.search_field.selectAll()
+
     def set_collapsed(self, collapsed: bool) -> None:
         """Show/hide the console body; the host adjusts the splitter via the signal."""
         collapsed = bool(collapsed)
