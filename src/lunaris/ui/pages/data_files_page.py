@@ -180,13 +180,6 @@ class DataPage(QtWidgets.QWidget):
         self.ent_ldem_root = QtWidgets.QLineEdit("")
         self.ent_ldem_root.setReadOnly(True)
         self.ent_ldem_root.setPlaceholderText("Select LDEM root directory...")
-        self.ent_ldem_root.setStyleSheet(f"""
-            background: {THEME['bg_entry']};
-            border: 1px solid {THEME['border']};
-            border-radius: 6px;
-            padding: 6px;
-            color: {THEME['fg_main']};
-        """)
         ldem_row.addWidget(self.ent_ldem_root, 1)
 
         btn_ldem_browse = QtWidgets.QPushButton("Browse...")
@@ -208,9 +201,7 @@ class DataPage(QtWidgets.QWidget):
 
         # Detail label under the LDEM path row
         self.lbl_ldem_detail = QtWidgets.QLabel("")
-        self.lbl_ldem_detail.setStyleSheet(
-            f"color: {THEME['fg_muted']}; font-size: 9pt; padding-left: 4px;"
-        )
+        self.lbl_ldem_detail.setObjectName("statusLabel")
         self.lbl_ldem_detail.setVisible(False)
         layout.addWidget(self.lbl_ldem_detail)
 
@@ -226,12 +217,6 @@ class DataPage(QtWidgets.QWidget):
         self.spin_ldem_ppd.setValue(4)
         self.spin_ldem_ppd.setSuffix(" PPD")
         self.spin_ldem_ppd.setFixedWidth(100)
-        self.spin_ldem_ppd.setStyleSheet(f"""
-            background: {THEME['bg_entry']};
-            border: 1px solid {THEME['border']};
-            border-radius: 6px;
-            padding: 4px;
-        """)
         self.spin_ldem_ppd.valueChanged.connect(lambda _: self._state_changed())
         res_row.addWidget(self.spin_ldem_ppd)
 
@@ -242,7 +227,6 @@ class DataPage(QtWidgets.QWidget):
         # Albedo path checkbox
         self.chk_use_ldem_for_albedo = QtWidgets.QCheckBox("Reuse LDEM directory for Albedo data")
         self.chk_use_ldem_for_albedo.setChecked(False)
-        self.chk_use_ldem_for_albedo.setStyleSheet(f"color: {THEME['fg_main']};")
         self.chk_use_ldem_for_albedo.toggled.connect(self._sync_albedo_path)
         self.chk_use_ldem_for_albedo.toggled.connect(lambda _: self._update_albedo_badge())
         layout.addWidget(self.chk_use_ldem_for_albedo)
@@ -258,13 +242,6 @@ class DataPage(QtWidgets.QWidget):
         self.ent_albedo_root = QtWidgets.QLineEdit("")
         self.ent_albedo_root.setReadOnly(True)
         self.ent_albedo_root.setPlaceholderText("Select Albedo root directory...")
-        self.ent_albedo_root.setStyleSheet(f"""
-            background: {THEME['bg_entry']};
-            border: 1px solid {THEME['border']};
-            border-radius: 6px;
-            padding: 6px;
-            color: {THEME['fg_main']};
-        """)
         albedo_path_row.addWidget(self.ent_albedo_root, 1)
 
         btn_albedo_browse = QtWidgets.QPushButton("Browse...")
@@ -285,9 +262,7 @@ class DataPage(QtWidgets.QWidget):
         albedo_layout.addLayout(albedo_path_row)
 
         self.lbl_albedo_detail = QtWidgets.QLabel("")
-        self.lbl_albedo_detail.setStyleSheet(
-            f"color: {THEME['fg_muted']}; font-size: 9pt; padding-left: 4px;"
-        )
+        self.lbl_albedo_detail.setObjectName("statusLabel")
         self.lbl_albedo_detail.setVisible(False)
         albedo_layout.addWidget(self.lbl_albedo_detail)
 
@@ -298,7 +273,7 @@ class DataPage(QtWidgets.QWidget):
             "ℹ️ LDEM (Lunar Digital Elevation Model) provides high-resolution topography "
             "for collision detection and surface visualization."
         )
-        note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt; font-style: italic; margin-top: 10px;")
+        note.setObjectName("fieldHint")
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -317,13 +292,6 @@ class DataPage(QtWidgets.QWidget):
         self.ent_kernel_dir = QtWidgets.QLineEdit("")
         self.ent_kernel_dir.setReadOnly(True)
         self.ent_kernel_dir.setPlaceholderText("Select SPICE kernel directory...")
-        self.ent_kernel_dir.setStyleSheet(f"""
-            background: {THEME['bg_entry']};
-            border: 1px solid {THEME['border']};
-            border-radius: 6px;
-            padding: 6px;
-            color: {THEME['fg_main']};
-        """)
         kernel_row.addWidget(self.ent_kernel_dir, 1)
 
         btn_kernel_browse = QtWidgets.QPushButton("Browse...")
@@ -344,9 +312,7 @@ class DataPage(QtWidgets.QWidget):
         layout.addLayout(kernel_row)
 
         self.lbl_kernel_detail = QtWidgets.QLabel("")
-        self.lbl_kernel_detail.setStyleSheet(
-            f"color: {THEME['fg_muted']}; font-size: 9pt; padding-left: 4px;"
-        )
+        self.lbl_kernel_detail.setObjectName("statusLabel")
         self.lbl_kernel_detail.setVisible(False)
         layout.addWidget(self.lbl_kernel_detail)
 
@@ -356,7 +322,7 @@ class DataPage(QtWidgets.QWidget):
             "ℹ️ SPICE kernels provide planetary ephemerides, time conversions, and frame "
             "definitions for precise orbital calculations."
         )
-        note.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt; font-style: italic; margin-top: 10px;")
+        note.setObjectName("fieldHint")
         note.setWordWrap(True)
         layout.addWidget(note)
 

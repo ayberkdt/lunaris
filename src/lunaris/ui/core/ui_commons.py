@@ -386,6 +386,24 @@ def path_validity_badge(parent=None) -> StatusBadge:
 # 5.                        CUSTOM UI PRIMITIVES
 # =============================================================================
 
+def prefers_reduced_motion() -> bool:
+    """True when the user has asked to minimize non-essential UI animation.
+
+    Backed by the persisted ``ui/reduce_motion`` setting (see the View menu
+    toggle). Callers use it to swap marquee/indeterminate animations for a
+    static busy state. Failures default to ``False`` (animations on).
+    """
+    try:
+        settings = QtCore.QSettings("Lunaris", "MissionStudio")
+        return str(settings.value("ui/reduce_motion", "false")).strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+    except Exception:
+        return False
+
+
 class StatusBadge(QtWidgets.QLabel):
     """
     A stylized label to show status (e.g., 'READY', 'RUNNING', 'ERROR').
@@ -667,6 +685,20 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         self.setCheckable(True)
         self.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.setFixedSize(46, 26)
+        # Keyboard accessibility: the switch must be reachable by Tab and
+        # operable without a mouse (Space is handled by QAbstractButton, Enter
+        # is added in keyPressEvent). A focus ring is drawn in paintEvent.
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+        self.setAccessibleName("Toggle")
+
+    def keyPressEvent(self, event):
+        # QAbstractButton already activates on Space; mirror that for Enter/Return
+        # so the switch matches the platform expectation for toggle controls.
+        if event.key() in (QtCore.Qt.Key_Return, QtCore.Qt.Key_Enter):
+            self.click()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def paintEvent(self, _):
         p = QtGui.QPainter(self)
@@ -714,6 +746,16 @@ class ToggleSwitch(QtWidgets.QAbstractButton):
         p.setPen(QtCore.Qt.NoPen)
         p.setBrush(knob_col)
         p.drawEllipse(knob_rect)
+
+        # Keyboard focus ring: an outline along the track edge when the switch
+        # holds focus. The colour is chosen per state so it stays visible on
+        # BOTH track fills (≥3:1, WCAG 1.4.11): a light ring on the accent-filled
+        # "on" track, the accent ring on the neutral "off" track.
+        if self.hasFocus():
+            ring_col = QtGui.QColor(THEME['fg_main'] if is_on else THEME['accent'])
+            p.setBrush(QtCore.Qt.NoBrush)
+            p.setPen(QtGui.QPen(ring_col, 2.0))
+            p.drawRoundedRect(rect, radius, radius)
 
 
 class CostIndicator(QtWidgets.QWidget):

@@ -15,6 +15,7 @@ itself trip the "old name absent" scan.
 from __future__ import annotations
 
 import fnmatch
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -30,7 +31,15 @@ OLD_PKG = "surrogate" + "_gravity_model"
 ALLOWED_CLI_ARG = OLD_PKG + "_dir"
 
 # Directories we must never descend into while scanning the source tree.
-SKIP_DIR_PARTS = {".git", ".claude", "__pycache__", ".pytest_cache", ".mypy_cache", "node_modules"}
+# Besides VCS/cache dirs, this excludes virtualenvs, build/coverage output, and
+# vendored runtimes: they are installed dependencies / generated artifacts, not
+# project source, and scanning them makes the walk read thousands of unrelated
+# files (slow enough to trip CI/local timeouts) and risks false positives.
+SKIP_DIR_PARTS = {
+    ".git", ".claude", "__pycache__", ".pytest_cache", ".mypy_cache", "node_modules",
+    ".venv", "venv", "env", ".tox", "build", "dist", "htmlcov", ".eggs",
+    "site-packages", ".qt_runtime",
+}
 
 # Generated artifact basenames that must never be committed into the tree.
 ARTIFACT_NAMES = {
@@ -57,14 +66,19 @@ FIXTURE_PREFIXES = ("tests/fixtures/", "examples/st_lrps_minimal_artifact/")
 
 def _iter_source_files() -> list[Path]:
     files: list[Path] = []
-    for path in REPO_ROOT.rglob("*"):
-        if path.suffix not in (".py", ".md"):
-            continue
-        if any(part in SKIP_DIR_PARTS for part in path.relative_to(REPO_ROOT).parts):
-            continue
-        if path.resolve() == Path(__file__).resolve():
-            continue  # skip this test (it references the token by construction)
-        files.append(path)
+    this_file = Path(__file__).resolve()
+    # os.walk so SKIP_DIR_PARTS can be pruned in-place: this avoids *descending*
+    # into virtualenvs / build output entirely (rglob would still enumerate every
+    # file under them, which is slow enough to dominate the run on a dev checkout).
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIR_PARTS]
+        for name in filenames:
+            if not name.endswith((".py", ".md")):
+                continue
+            path = Path(dirpath) / name
+            if path.resolve() == this_file:
+                continue  # skip this test (it references the token by construction)
+            files.append(path)
     return files
 
 

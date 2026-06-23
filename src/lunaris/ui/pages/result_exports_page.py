@@ -41,6 +41,7 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
+    from lunaris.ui.components.primitives import EmptyState
     from lunaris.ui.core.ui_commons import THEME, ToggleSwitch, get_icon
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -165,15 +166,12 @@ class ResultsExportPage(QtWidgets.QWidget):
         """
 
         self.txt_preview.setPlainText(text)
-        color = THEME["error"] if is_error else THEME["fg_muted"]
-        self.txt_preview.setStyleSheet(
-            f"""
-            background-color: {THEME['bg_log']};
-            color: {color};
-            font-family: Consolas, monospace;
-            border-radius: 6px;
-            """
-        )
+        # Surface styling comes from QPlainTextEdit#commandPreview; only the
+        # error/ok state is toggled here via a dynamic property.
+        self.txt_preview.setProperty("state", "error" if is_error else "ok")
+        style = self.txt_preview.style()
+        style.unpolish(self.txt_preview)
+        style.polish(self.txt_preview)
 
     def _build_ui(self) -> None:
         """
@@ -231,6 +229,7 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         anim_row = QtWidgets.QHBoxLayout()
         self.toggle_anim3d = ToggleSwitch()
+        self.toggle_anim3d.setAccessibleName("Generate 3D animation and plot outputs")
         self.toggle_anim3d.toggled.connect(self._sync_3d_controls)
         anim_row.addWidget(self.toggle_anim3d)
 
@@ -258,9 +257,7 @@ class ResultsExportPage(QtWidgets.QWidget):
             "This page only exposes options that are actually consumed by the CLI."
         )
         note.setWordWrap(True)
-        note.setStyleSheet(
-            f"color: {THEME['fg_muted']}; font-size: 9pt; font-style: italic; margin-top: 4px;"
-        )
+        note.setObjectName("fieldHint")
         layout.addWidget(note)
 
         return group_box
@@ -282,7 +279,7 @@ class ResultsExportPage(QtWidgets.QWidget):
             "The following outputs are generated automatically after a successful propagation run:"
         )
         info.setWordWrap(True)
-        info.setStyleSheet(f"color: {THEME['fg_muted']};")
+        info.setObjectName("fieldHint")
         layout.addWidget(info)
 
         always_items = [
@@ -293,11 +290,11 @@ class ResultsExportPage(QtWidgets.QWidget):
         ]
         for item_text in always_items:
             row = QtWidgets.QHBoxLayout()
+            # Semantic status marker: token-based local color (no component fit).
             dot = QtWidgets.QLabel("•")
             dot.setStyleSheet(f"color: {THEME['success']}; font-size: 12pt;")
             dot.setFixedWidth(18)
             lbl = QtWidgets.QLabel(item_text)
-            lbl.setStyleSheet(f"color: {THEME['fg_soft']};")
             row.addWidget(dot)
             row.addWidget(lbl)
             row.addStretch()
@@ -305,11 +302,12 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         # 3D plot row (controlled by toggle above)
         row_3d = QtWidgets.QHBoxLayout()
+        # Semantic status marker: token-based local color (no component fit).
         dot_3d = QtWidgets.QLabel("•")
         dot_3d.setStyleSheet(f"color: {THEME['accent']}; font-size: 12pt;")
         dot_3d.setFixedWidth(18)
         lbl_3d = QtWidgets.QLabel("3D Orbit Plot (PNG) — enabled by 3D Animation toggle above")
-        lbl_3d.setStyleSheet(f"color: {THEME['fg_muted']}; font-style: italic;")
+        lbl_3d.setObjectName("fieldHint")
         row_3d.addWidget(dot_3d)
         row_3d.addWidget(lbl_3d)
         row_3d.addStretch()
@@ -331,7 +329,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         btn_row.addStretch()
 
         self.lbl_artifact_count = QtWidgets.QLabel("No output directory scanned yet.")
-        self.lbl_artifact_count.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 9pt;")
+        self.lbl_artifact_count.setObjectName("statusLabel")
         btn_row.addWidget(self.lbl_artifact_count)
 
         layout.addLayout(btn_row)
@@ -371,10 +369,11 @@ class ResultsExportPage(QtWidgets.QWidget):
         layout.setSpacing(12)
 
         info = QtWidgets.QLabel("Command that will be sent to the propagation engine:")
-        info.setStyleSheet(f"color: {THEME['fg_muted']};")
+        info.setObjectName("fieldHint")
         layout.addWidget(info)
 
         self.txt_preview = QtWidgets.QPlainTextEdit()
+        self.txt_preview.setObjectName("commandPreview")
         self.txt_preview.setReadOnly(True)
         self.txt_preview.setFixedHeight(120)
         layout.addWidget(self.txt_preview)
@@ -457,7 +456,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         # --- Row 1: path + action buttons ---
         header_row = QtWidgets.QHBoxLayout()
         self.lbl_browser_out_dir = QtWidgets.QLabel("Output Directory: —")
-        self.lbl_browser_out_dir.setStyleSheet(f"color: {THEME['fg_muted']};")
+        self.lbl_browser_out_dir.setObjectName("statusLabel")
         header_row.addWidget(self.lbl_browser_out_dir, 1)
 
         btn_browser_refresh = QtWidgets.QPushButton("Refresh")
@@ -476,6 +475,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         filter_row = QtWidgets.QHBoxLayout()
         filter_row.addWidget(QtWidgets.QLabel("Filter:"))
         self.cb_artifact_filter = QtWidgets.QComboBox()
+        self.cb_artifact_filter.setAccessibleName("Artifact type filter")
         self.cb_artifact_filter.addItems(list(self._FILTER_TYPES.keys()))
         self.cb_artifact_filter.setFixedWidth(100)
         self.cb_artifact_filter.currentTextChanged.connect(self._refresh_artifact_browser)
@@ -522,6 +522,16 @@ class ResultsExportPage(QtWidgets.QWidget):
         self.tree_artifacts.setColumnHidden(4, True)
         layout.addWidget(self.tree_artifacts)
 
+        # Standardized empty/first-run state shown in place of the tree when
+        # there is nothing to list (no dir, missing dir, or no matching files).
+        self.artifact_empty = EmptyState(
+            "No artifacts yet",
+            "Run a mission to generate plots and reports here.",
+        )
+        self.artifact_empty.setMinimumHeight(200)
+        self.artifact_empty.setVisible(False)
+        layout.addWidget(self.artifact_empty)
+
         # --- Action row ---
         action_row = QtWidgets.QHBoxLayout()
 
@@ -535,12 +545,21 @@ class ResultsExportPage(QtWidgets.QWidget):
         btn_copy_path.clicked.connect(self._on_artifacts_copy_path)
         action_row.addWidget(btn_copy_path)
 
+        btn_copy_csv = QtWidgets.QPushButton("Copy CSV")
+        btn_copy_csv.setIcon(get_icon("fa6s.table-list", THEME["fg_main"]))
+        btn_copy_csv.setToolTip("Copy all listed artifacts to the clipboard as CSV")
+        btn_copy_csv.clicked.connect(self._copy_artifacts_csv)
+        action_row.addWidget(btn_copy_csv)
+
+        # Ctrl+C over the tree copies the selected rows (TSV), else the whole list.
+        copy_shortcut = QtGui.QShortcut(QtGui.QKeySequence.Copy, self.tree_artifacts)
+        copy_shortcut.setContext(QtCore.Qt.WidgetShortcut)
+        copy_shortcut.activated.connect(self._copy_artifacts_selection)
+
         action_row.addStretch(1)
 
         self.lbl_artifact_summary = QtWidgets.QLabel("No artifacts yet.")
-        self.lbl_artifact_summary.setStyleSheet(
-            f"color: {THEME['fg_muted']}; font-size: 9pt;"
-        )
+        self.lbl_artifact_summary.setObjectName("statusLabel")
         action_row.addWidget(self.lbl_artifact_summary)
 
         layout.addLayout(action_row)
@@ -580,6 +599,17 @@ class ResultsExportPage(QtWidgets.QWidget):
             pass
         self._refresh_artifact_browser()
 
+    def _set_artifact_empty(self, title: str, description: str) -> None:
+        """Show the standardized empty-state in place of the (empty) tree."""
+        self.artifact_empty.set_message(title, description)
+        self.tree_artifacts.setVisible(False)
+        self.artifact_empty.setVisible(True)
+
+    def _show_artifact_tree(self) -> None:
+        """Show the populated tree and hide the empty-state."""
+        self.artifact_empty.setVisible(False)
+        self.tree_artifacts.setVisible(True)
+
     def _refresh_artifact_browser(self, *_args) -> None:
         """Scan output dir (optionally recursive) and populate the tree."""
         try:
@@ -601,12 +631,20 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         if not out_dir_text:
             self.lbl_artifact_summary.setText("Output directory not set.")
+            self._set_artifact_empty(
+                "No output directory",
+                "Choose a results directory above to browse generated artifacts.",
+            )
             self._update_latest_buttons([], [])
             return
 
         out_dir = Path(out_dir_text)
         if not out_dir.exists() or not out_dir.is_dir():
             self.lbl_artifact_summary.setText("Output directory does not exist yet.")
+            self._set_artifact_empty(
+                "Directory not created yet",
+                "The output directory does not exist until a mission run writes to it.",
+            )
             self._update_latest_buttons([], [])
             return
 
@@ -632,11 +670,16 @@ class ResultsExportPage(QtWidgets.QWidget):
                 all_entries = [p for p in out_dir.iterdir() if p.is_file()]
         except Exception as exc:
             self.lbl_artifact_summary.setText(f"Could not list directory: {exc}")
+            self._set_artifact_empty("Could not read directory", str(exc))
             self._update_latest_buttons([], [])
             return
 
         if not all_entries:
             self.lbl_artifact_summary.setText("No artifacts found.")
+            self._set_artifact_empty(
+                "No artifacts yet",
+                "Run a mission to generate plots and reports in this directory.",
+            )
             self._update_latest_buttons([], [])
             return
 
@@ -651,6 +694,10 @@ class ResultsExportPage(QtWidgets.QWidget):
             self.lbl_artifact_summary.setText(
                 f"Filter hides all artifacts ({total} total; change filter to see them)."
             )
+            self._set_artifact_empty(
+                "No artifacts match this filter",
+                f"{total} artifact(s) are hidden — switch the filter to 'All' to see them.",
+            )
             self._update_latest_buttons(all_entries, all_entries)
             return
 
@@ -662,6 +709,7 @@ class ResultsExportPage(QtWidgets.QWidget):
                 return 0.0
 
         entries.sort(key=_mtime, reverse=True)
+        self._show_artifact_tree()
 
         plots: list[Path] = []
         reports: list[Path] = []
@@ -818,6 +866,48 @@ class ResultsExportPage(QtWidgets.QWidget):
             return
         try:
             QtWidgets.QApplication.clipboard().setText(path)
+        except Exception:
+            pass
+
+    def _artifacts_to_csv(self, *, selected_only: bool = False) -> str:
+        """Render the artifact tree (or just the selected rows) as CSV text."""
+        import csv
+        import io
+
+        cols = range(self.tree_artifacts.columnCount())
+        header = self.tree_artifacts.headerItem()
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([header.text(c) if header else "" for c in cols])
+        if selected_only:
+            rows = self.tree_artifacts.selectedItems()
+        else:
+            rows = [
+                self.tree_artifacts.topLevelItem(i)
+                for i in range(self.tree_artifacts.topLevelItemCount())
+            ]
+        for item in rows:
+            if item is not None:
+                writer.writerow([item.text(c) for c in cols])
+        return buffer.getvalue()
+
+    def _copy_artifacts_csv(self, *_args) -> None:
+        """Copy every listed artifact to the clipboard as CSV."""
+        try:
+            QtWidgets.QApplication.clipboard().setText(self._artifacts_to_csv())
+        except Exception:
+            pass
+
+    def _copy_artifacts_selection(self) -> None:
+        """Ctrl+C: copy selected rows as TSV, or the whole list when nothing is selected."""
+        selected = self.tree_artifacts.selectedItems()
+        if not selected:
+            self._copy_artifacts_csv()
+            return
+        cols = range(self.tree_artifacts.columnCount())
+        lines = ["\t".join(item.text(c) for c in cols) for item in selected]
+        try:
+            QtWidgets.QApplication.clipboard().setText("\n".join(lines))
         except Exception:
             pass
 

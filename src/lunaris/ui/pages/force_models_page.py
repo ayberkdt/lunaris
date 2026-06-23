@@ -343,27 +343,8 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         self._load_current_config()
 
     def _apply_tab_style(self):
-        self.tabs.setStyleSheet(f"""
-            QTabWidget::pane {{
-                border: 1px solid {THEME['border']};
-                border-radius: 8px;
-                background: {THEME['bg_card']};
-            }}
-            QTabBar::tab {{
-                background: {THEME['bg_space']};
-                border: 1px solid {THEME['border']};
-                padding: 8px 16px;
-                margin-right: 4px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                color: {THEME['fg_muted']};
-            }}
-            QTabBar::tab:selected {{
-                background: {THEME['bg_card']};
-                color: {THEME['fg_main']};
-                border-bottom: 1px solid {THEME['bg_card']};
-            }}
-        """)
+        # Tab styling comes from the global stylesheet (QTabWidget / QTabBar).
+        pass
 
     def _create_basic_tab(self) -> QtWidgets.QWidget:
         page = QtWidgets.QWidget()
@@ -378,7 +359,6 @@ class GravitySettingsDialog(QtWidgets.QDialog):
 
         # Backend Selection
         backend_group = QtWidgets.QGroupBox("Gravity Computation Mode")
-        backend_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         backend_layout = QtWidgets.QVBoxLayout(backend_group)
 
         self.cb_backend = QtWidgets.QComboBox()
@@ -389,14 +369,13 @@ class GravitySettingsDialog(QtWidgets.QDialog):
 
         self.lbl_backend_hint = QtWidgets.QLabel()
         self.lbl_backend_hint.setWordWrap(True)
-        self.lbl_backend_hint.setStyleSheet(f"color: {THEME['fg_muted']};")
+        self.lbl_backend_hint.setObjectName("fieldHint")
         backend_layout.addWidget(self.lbl_backend_hint)
 
         layout.addWidget(backend_group)
 
         # Degree Selection
         self.degree_group = QtWidgets.QGroupBox("Maximum Spherical Harmonic Degree")
-        self.degree_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         deg_layout = QtWidgets.QHBoxLayout(self.degree_group)
 
         self.sp_degree = QtWidgets.QSpinBox()
@@ -420,7 +399,6 @@ class GravitySettingsDialog(QtWidgets.QDialog):
 
         # File Selection
         self.file_group = QtWidgets.QGroupBox("Gravity Model File")
-        self.file_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         file_layout = QtWidgets.QVBoxLayout(self.file_group)
 
         self.ent_file = QtWidgets.QLineEdit(self._cfg.file_path)
@@ -444,7 +422,6 @@ class GravitySettingsDialog(QtWidgets.QDialog):
 
         # Surrogate Run Selection
         self.surrogate_group = QtWidgets.QGroupBox("Surrogate Gravity Run")
-        self.surrogate_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         surrogate_layout = QtWidgets.QVBoxLayout(self.surrogate_group)
 
         self.ent_surrogate_dir = QtWidgets.QLineEdit(self._cfg.st_lrps_model_dir)
@@ -471,7 +448,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
             "The selected run must be a Moon-trained surrogate run and include config.json plus a checkpoint (ckpt_best.pt or ckpt_last.pt)."
         )
         self.lbl_surrogate_hint.setWordWrap(True)
-        self.lbl_surrogate_hint.setStyleSheet(f"color: {THEME['fg_muted']};")
+        self.lbl_surrogate_hint.setObjectName("fieldHint")
         surrogate_layout.addWidget(self.lbl_surrogate_hint)
 
         layout.addWidget(self.surrogate_group)
@@ -493,7 +470,8 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         adaptive_header.addWidget(self.toggle_adaptive)
 
         lbl_adaptive = QtWidgets.QLabel("Enable Adaptive Degree Optimization")
-        lbl_adaptive.setStyleSheet(f"font-weight: bold; color: {THEME['fg_main']};")
+        lbl_adaptive.setObjectName("valueLabel")
+        self.toggle_adaptive.setAccessibleName("Enable adaptive degree optimization")
         adaptive_header.addWidget(lbl_adaptive)
         adaptive_header.addStretch()
 
@@ -501,7 +479,6 @@ class GravitySettingsDialog(QtWidgets.QDialog):
 
         # Preset Selection
         presets_group = QtWidgets.QGroupBox("Optimization Profile")
-        presets_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         presets_layout = QtWidgets.QVBoxLayout(presets_group)
 
         self.cb_preset = QtWidgets.QComboBox()
@@ -513,7 +490,6 @@ class GravitySettingsDialog(QtWidgets.QDialog):
 
         # Table Preview
         table_group = QtWidgets.QGroupBox("Altitude vs Degree Rules")
-        table_group.setStyleSheet(f"border: 1px solid {THEME['border']}; border-radius: 8px;")
         table_layout = QtWidgets.QVBoxLayout(table_group)
 
         self.table_preview = QtWidgets.QTableWidget()
@@ -808,7 +784,7 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
 
         # --- Settings Form ---
         form_frame = QtWidgets.QFrame()
-        form_frame.setStyleSheet(f"background-color: {THEME['bg_card']}; border-radius: 8px; border: 1px solid {THEME['border']};")
+        form_frame.setObjectName("section")
         form_layout = QtWidgets.QGridLayout(form_frame)
         form_layout.setContentsMargins(15, 15, 15, 15)
         form_layout.setVerticalSpacing(12)
@@ -844,21 +820,8 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         self.table.verticalHeader().setVisible(False)
         self.table.setAlternatingRowColors(True)
 
-        # Table Styling
-        self.table.setStyleSheet(f"""
-            QTableWidget {{
-                background-color: {THEME['bg_entry']};
-                gridline-color: {THEME['border']};
-                border: 1px solid {THEME['border']};
-                selection-background-color: {THEME['accent']};
-            }}
-            QHeaderView::section {{
-                background-color: {THEME['bg_card']};
-                padding: 6px;
-                border: 1px solid {THEME['border']};
-                color: {THEME['fg_muted']};
-            }}
-        """)
+        # Surface styling comes from the global QTableWidget#dataTable rule.
+        self.table.setObjectName("dataTable")
 
         layout.addWidget(self.table, 1)
 
@@ -890,7 +853,6 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
 
     def _add_form_row(self, layout, row, label, widget):
         lbl = QtWidgets.QLabel(label)
-        lbl.setStyleSheet(f"color: {THEME['fg_main']};")
         layout.addWidget(lbl, row, 0)
         layout.addWidget(widget, row, 1)
 
@@ -1045,10 +1007,7 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
         layout.addWidget(desc)
 
         form_frame = QtWidgets.QFrame()
-        form_frame.setStyleSheet(
-            f"background-color: {THEME['bg_card']}; border-radius: 8px; "
-            f"border: 1px solid {THEME['border']};"
-        )
+        form_frame.setObjectName("section")
         form = QtWidgets.QFormLayout(form_frame)
         form.setContentsMargins(16, 16, 16, 16)
         form.setSpacing(12)
@@ -1090,14 +1049,13 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
         form.addRow("Facet resolution:", facet_holder)
 
         self.chk_eclipse = QtWidgets.QCheckBox("Apply lunar-eclipse (Earth-umbra) dimming")
-        self.chk_eclipse.setStyleSheet(f"color: {THEME['fg_main']};")
         form.addRow("", self.chk_eclipse)
 
         layout.addWidget(form_frame)
 
         self.lbl_note = QtWidgets.QLabel()
         self.lbl_note.setWordWrap(True)
-        self.lbl_note.setStyleSheet(f"color: {THEME['fg_muted']}; font-style: italic;")
+        self.lbl_note.setObjectName("fieldHint")
         layout.addWidget(self.lbl_note)
 
         layout.addStretch(1)
@@ -1376,6 +1334,22 @@ class ForceModelsPage(QtWidgets.QWidget):
         bottom_row.setStretch(0, 1)
         bottom_row.setStretch(1, 1)
         layout.addLayout(bottom_row)
+
+        # Accessibility: each ToggleSwitch is icon-only paint, so give it the
+        # adjacent control's meaning explicitly for keyboard/screen-reader users.
+        for switch, name in (
+            (self.sw_gravity, "Lunar gravity field"),
+            (self.sw_sun, "Sun point-mass perturbation"),
+            (self.sw_earth, "Earth point-mass perturbation"),
+            (self.sw_earth_j2, "Earth J2 oblateness perturbation"),
+            (self.sw_srp, "Solar radiation pressure"),
+            (self.sw_albedo, "Lunar albedo"),
+            (self.sw_thermal, "Thermal re-radiation"),
+            (self.sw_tides_k2, "Solid tides k2 Love number"),
+            (self.sw_tides_k3, "Solid tides k3 Love number"),
+            (self.sw_relativity_1pn, "1PN relativistic correction"),
+        ):
+            switch.setAccessibleName(name)
 
         layout.addStretch(1)
         return self

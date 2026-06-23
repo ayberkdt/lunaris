@@ -16,7 +16,11 @@ from lunaris.ui_foundation.palette import with_alpha
 from lunaris.ui_foundation.tokens import DESIGN_TOKENS
 
 
-def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> str:
+def build_app_stylesheet(
+    theme: dict[str, str],
+    log_colors: dict[str, str],
+    density: str = "comfortable",
+) -> str:
     """Return the full application QSS string for the given palettes.
 
     Parameters
@@ -25,7 +29,13 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         The ``THEME`` token dictionary (Qt widget colors).
     log_colors:
         The ``LOG_COLORS`` token dictionary (used for the console default text).
+    density:
+        ``"comfortable"`` (default) or ``"compact"``. Compact tightens control
+        heights and vertical paddings for long working sessions on small screens
+        without changing colors, radii, or the spacing scale used by layouts.
     """
+
+    compact = str(density).lower() == "compact"
 
     # Derived translucent accent variants — computed once so the QSS below never
     # hard-codes a raw ``rgba(...)`` literal.
@@ -49,6 +59,14 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
     metrics = DESIGN_TOKENS.controls
     layout = DESIGN_TOKENS.layout
     type_tokens = DESIGN_TOKENS.typography
+
+    # Density-derived control metrics. Compact mode tightens heights/paddings;
+    # comfortable mode keeps the standard tokens. Colors/radii are unchanged.
+    input_min_h = metrics.compact_height if compact else metrics.minimum_height
+    primary_min_h = metrics.minimum_height if compact else metrics.primary_height
+    field_pad_v = 4 if compact else 7
+    button_pad_v = 4 if compact else 7
+    nav_pad_v = 7 if compact else 11
 
     return f"""
         /* GLOBAL FOUNDATION — flat space-black canvas */
@@ -233,7 +251,7 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
         }}
         QListWidget#navDrawer::item {{
             background: transparent;
-            padding: 11px 14px;
+            padding: {nav_pad_v}px 14px;
             margin-bottom: 6px;
             border-radius: 10px;
             color: {theme['fg_muted']};
@@ -289,8 +307,8 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
             color: {theme['fg_main']};
             border: 1px solid {theme['border']};
             border-radius: 8px;
-            padding: 7px 10px;
-            min-height: {metrics.minimum_height}px;
+            padding: {field_pad_v}px 10px;
+            min-height: {input_min_h}px;
             selection-background-color: {theme['accent']};
             selection-color: {theme['bg_space']};
         }}
@@ -384,8 +402,8 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
             color: {theme['fg_main']};
             border: 1px solid {theme['border']};
             border-radius: 8px;
-            padding: 7px 16px;
-            min-height: {metrics.minimum_height}px;
+            padding: {button_pad_v}px 16px;
+            min-height: {input_min_h}px;
             font-weight: 600;
         }}
         QPushButton:hover {{
@@ -420,7 +438,7 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
             border: 1px solid {theme['accent']};
             color: {theme['fg_inverse']};
             font-weight: 700;
-            min-height: {metrics.primary_height}px;
+            min-height: {primary_min_h}px;
         }}
         QPushButton#primaryBtn:hover,
         QPushButton[kind="primary"]:hover {{
@@ -739,6 +757,10 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
             padding: 10px 12px;
             font-family: {type_tokens.family_mono};
         }}
+        QPlainTextEdit#commandPreview[state="error"] {{
+            color: {theme['error']};
+            border-color: {err_bd};
+        }}
         QLabel#logTitle {{
             color: {theme['fg_main']};
             font-weight: 700;
@@ -861,5 +883,23 @@ def build_app_stylesheet(theme: dict[str, str], log_colors: dict[str, str]) -> s
             border-bottom: 1px solid {theme['border']};
             padding: 5px 8px;
             font-weight: 600;
+        }}
+
+        /* DATA TABLES (results / ephemeris / event logs) */
+        QTableWidget#dataTable {{
+            background: {theme['bg_entry']};
+            alternate-background-color: {theme['bg_card_alt']};
+            color: {theme['fg_main']};
+            gridline-color: {theme['border_soft']};
+            border: 1px solid {theme['border']};
+            border-radius: 10px;
+            outline: none;
+        }}
+        QTableWidget#dataTable::item {{
+            padding: 4px 8px;
+        }}
+        QTableWidget#dataTable::item:selected {{
+            background: {acc_dim};
+            color: {theme['fg_main']};
         }}
     """

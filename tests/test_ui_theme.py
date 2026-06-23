@@ -263,7 +263,8 @@ def test_orbit_viz_constructs_with_opengl_unavailable(monkeypatch) -> None:
         from PySide6 import QtWidgets
 
         frames = viz.findChildren(QtWidgets.QFrame)
-        assert any(f.objectName() == "vizFallback" for f in frames)
+        # The bespoke fallback was migrated to the shared EmptyState primitive.
+        assert any(f.objectName() == "emptyState" for f in frames)
         labels = [w.text() for w in viz.findChildren(QtWidgets.QLabel)]
         assert any("unavailable" in t.lower() for t in labels)
     finally:
