@@ -213,9 +213,15 @@ def _metric_row(key: str, value: str = "—") -> QtWidgets.QHBoxLayout:
     val_lbl = QtWidgets.QLabel(value)
     val_lbl.setAlignment(QtCore.Qt.AlignRight)
     val_lbl.setObjectName("metricValue")
-    # Monospace numerics so digits align column-wise across rows.
+    # Monospace numerics so digits align column-wise across rows. Use
+    # setFamilies()+Monospace style hint, NOT setFamily() with the comma-joined
+    # token string (setFamily expects a single family and silently falls back to
+    # the UI font, which also made family() order-dependent after polish).
     mono = val_lbl.font()
-    mono.setFamily(DESIGN_TOKENS.typography.family_mono)
+    mono.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+    mono.setFamilies(
+        [f.strip().strip('"') for f in DESIGN_TOKENS.typography.family_mono.split(",")]
+    )
     val_lbl.setFont(mono)
     row.addWidget(val_lbl)
     return row, val_lbl
@@ -1238,8 +1244,8 @@ class MonteCarloPage(QtWidgets.QWidget):
         self._last_report_path: str | None = None
         return gb
 
-    def _copy_metrics_csv(self) -> None:
-        """Copy the last-run metrics (Metric,Value) to the clipboard as CSV."""
+    def _metrics_to_csv(self) -> str:
+        """Render the last-run metrics as ``Metric,Value`` CSV text."""
         import csv
         import io
 
@@ -1248,8 +1254,12 @@ class MonteCarloPage(QtWidgets.QWidget):
         writer.writerow(["Metric", "Value"])
         for label, val_lbl in getattr(self, "_metric_order", []):
             writer.writerow([label, val_lbl.text()])
+        return buffer.getvalue()
+
+    def _copy_metrics_csv(self) -> None:
+        """Copy the last-run metrics (Metric,Value) to the clipboard as CSV."""
         try:
-            QtWidgets.QApplication.clipboard().setText(buffer.getvalue())
+            QtWidgets.QApplication.clipboard().setText(self._metrics_to_csv())
         except Exception:
             pass
 

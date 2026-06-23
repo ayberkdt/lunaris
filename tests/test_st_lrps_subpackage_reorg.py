@@ -17,6 +17,7 @@ itself trip the "old names absent" repo scan.
 from __future__ import annotations
 
 import importlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -46,19 +47,26 @@ NEW_SUBPACKAGES = (
     "lunaris.surrogate.st_lrps.evaluation", "lunaris.surrogate.st_lrps.runtime", "lunaris.surrogate.st_lrps.ui", "lunaris.surrogate.st_lrps.shared",
 )
 
-SKIP_DIR_PARTS = {".git", ".claude", "__pycache__", ".pytest_cache", ".mypy_cache", "node_modules"}
+SKIP_DIR_PARTS = {
+    ".git", ".claude", "__pycache__", ".pytest_cache", ".mypy_cache", "node_modules",
+    ".venv", "venv", "env", ".tox", "build", "dist", "htmlcov", ".eggs",
+    "site-packages", ".qt_runtime",
+}
 
 
 def _iter_source_files() -> list[Path]:
     files: list[Path] = []
-    for path in REPO_ROOT.rglob("*"):
-        if path.suffix not in (".py", ".md"):
-            continue
-        if any(part in SKIP_DIR_PARTS for part in path.relative_to(REPO_ROOT).parts):
-            continue
-        if path.resolve() == Path(__file__).resolve():
-            continue
-        files.append(path)
+    this_file = Path(__file__).resolve()
+    # os.walk with in-place pruning so virtualenvs / build output are not walked.
+    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIR_PARTS]
+        for name in filenames:
+            if not name.endswith((".py", ".md")):
+                continue
+            path = Path(dirpath) / name
+            if path.resolve() == this_file:
+                continue
+            files.append(path)
     return files
 
 

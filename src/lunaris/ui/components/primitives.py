@@ -502,7 +502,12 @@ class DataTable(QtWidgets.QTableWidget):
             if col in self._numeric_columns:
                 item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
                 font = item.font()
-                font.setFamily(DESIGN_TOKENS.typography.family_mono)
+                # setFamilies()+Monospace hint (setFamily with the comma-joined
+                # token string silently falls back to the UI font).
+                font.setStyleHint(QtGui.QFont.StyleHint.Monospace)
+                font.setFamilies(
+                    [f.strip().strip('"') for f in DESIGN_TOKENS.typography.family_mono.split(",")]
+                )
                 item.setFont(font)
             self.setItem(row, col, item)
         self.setSortingEnabled(was_sorting)
