@@ -144,12 +144,17 @@ def test_metrics_csv_copy(mc_page):
     assert lines[0] == "Metric,Value"
     assert any(ln.startswith("N Samples,500") for ln in lines)
     assert any("cpu_sh" in ln for ln in lines)
-    # Monospace numerics on metric values. Assert the requested families + the
-    # Monospace style hint (both stable), NOT font().family() — that returns the
-    # *resolved* family which is order-dependent after the widget is polished.
+    # Monospace numerics on metric values. The Monospace style hint is the only
+    # cross-platform-stable runtime proof the per-label mono path ran: both
+    # font().family() and font().families() are substitution/polish-dependent and
+    # collapse to an unrelated resolved family on headless CI where Cascadia/
+    # Consolas/Courier are not installed. The requested mono families are a design
+    # contract, so assert them at the token level (environment-independent).
     from PySide6.QtGui import QFont
 
+    from lunaris.ui.theme.tokens import DESIGN_TOKENS
+
     font = mc_page._metric_labels["n_samples"].font()
-    requested = " ".join(font.families()).lower()
     assert font.styleHint() == QFont.StyleHint.Monospace
-    assert any(tok in requested for tok in ("mono", "consolas", "cascadia", "courier"))
+    mono_token = DESIGN_TOKENS.typography.family_mono.lower()
+    assert any(tok in mono_token for tok in ("mono", "consolas", "cascadia", "courier"))
