@@ -1448,7 +1448,7 @@ class MonteCarloEngine:
 
         print(
             f"[MC] N={N}  backend={backend_name}  "
-            f"T={duration_s / 86400:.2f} d  "
+            f"T={duration_s / DAY_S:.2f} d  "
             f"step={mc.dt_s:.1f} s  snap={output_dt_s:.1f} s",
             flush=True,
         )

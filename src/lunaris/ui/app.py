@@ -24,6 +24,7 @@ from typing import Any
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from lunaris.common.constants import DAY_S
 from lunaris.ui.components import PageShell
 
 # =============================================================================
@@ -1513,7 +1514,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     if dur_val > 0:
                         unit = prop_ui.cb_duration_unit.currentText().strip().lower()
                         if unit.startswith("day"):
-                            self.sim_state.total_duration = dur_val * 86400.0
+                            self.sim_state.total_duration = dur_val * DAY_S
                         else:
                             self.sim_state.total_duration = dur_val * 3600.0
                 except ValueError:
@@ -1757,7 +1758,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     if unit.startswith("h"):
                         t_s *= 3600.0
                     elif unit.startswith("d"):
-                        t_s *= 86400.0
+                        t_s *= DAY_S
                 break
 
         if t_s is not None:
@@ -1779,8 +1780,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
             # Extra text: t/T and ETA
             if hasattr(self, "lbl_progress"):
-                t_days = float(t_s) / 86400.0
-                T_days = total / 86400.0
+                t_days = float(t_s) / DAY_S
+                T_days = total / DAY_S
                 eta_txt = ""
                 if self._run_wall_t0 is not None and frac > 1e-6:
                     elapsed = max(0.0, time.time() - float(self._run_wall_t0))

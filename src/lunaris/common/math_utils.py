@@ -12,7 +12,8 @@ independent of higher-level layers (SPICE, file I/O, UI).
 Contents
 --------
 1) Core Tiny Math
-   - Small, JIT-friendly helpers such as dot/norm and scalar utilities.
+   - Small, JIT-friendly helpers: dot/cross/norm, vector normalize, domain-safe
+     acos, scalar clamp, and signed/unsigned angle wrapping.
 
 2) Quaternion Arithmetic (scalar-first)
    - Convention: q = [w, x, y, z] where w is the scalar part.
@@ -24,10 +25,12 @@ Contents
    - Catmull–Rom spline interpolation for 3D vector tables.
    - For ephemeris/attitude smoothing, resampling, and visualization.
 
-4) Orbital Mechanics (RV -> COE)
+4) Orbital Mechanics (RV <-> COE)
    - Conversion from Cartesian state (r, v) to Classical Orbital Elements (COE).
    - Robust handling of singularities (circular and/or equatorial cases).
    - Includes batch conversion with a Numba-parallel kernel for post-processing.
+   - Inverse conversion (COE -> r, v) via the perifocal frame for elliptical and
+     hyperbolic conics.
 
 5) Physics Helpers
    - Nyquist-based step-size recommendation for high-degree spherical harmonics
@@ -52,8 +55,8 @@ Constants & Tolerances
 ----------------------
 - Mathematical constants and numeric epsilons are centralized in `common.constants`.
 - Numeric epsilons follow scale-explicit naming:
-    EPS_1E12, EPS_1E15, EPS2_1E18, ...
-  Use EPS2_* for squared-scale guards (e.g., r^2 near-origin).
+    EPS_1E12, EPS_1E15, EPS_1E18, ...
+  Use the squared-scale epsilon (e.g. EPS_1E18) for r^2 near-origin guards.
 
 Conventions
 -----------
@@ -90,7 +93,7 @@ from typing import Literal
 import numpy as np
 from numba import njit, prange
 
-from .constants import EPS_1E12, EPS_1E15, EPS_1E18, EPS_1E30, RAD2DEG, TWO_PI
+from .constants import EPS_1E12, EPS_1E15, EPS_1E18, EPS_1E30, NEARLY_UNIT, PI, RAD2DEG, TWO_PI
 
 # =============================================================================
 # 1.                              SMALL HELPERS
@@ -138,6 +141,72 @@ def wrap_angle_2pi(angle_rad: float) -> float:
     """
     # With a positive modulus, Python/Numba's % returns a value in [0, 2π).
     return angle_rad % TWO_PI
+
+
+# Used by: math_utils, postprocess
+@njit(cache=True)
+def wrap_angle_pi(angle_rad: float) -> float:
+    """
+    Wrap an angle [rad] into the signed interval [-π, π).
+
+    Rationale
+    ---------
+    Angle *differences* (e.g., RAAN/argp drift relative to a reference) read most
+    naturally centered on zero. `wrap_angle_2pi` keeps angles in [0, 2π); this is
+    its signed companion.
+    """
+    return (angle_rad + PI) % TWO_PI - PI
+
+
+# Used by: math_utils
+@njit(cache=True)
+def dot3(ax: float, ay: float, az: float,
+         bx: float, by: float, bz: float) -> float:
+    """Dot product of two 3D vectors: ax*bx + ay*by + az*bz."""
+    return ax * bx + ay * by + az * bz
+
+
+# Used by: math_utils
+@njit(cache=True)
+def cross3(ax: float, ay: float, az: float,
+           bx: float, by: float, bz: float) -> tuple[float, float, float]:
+    """Cross product a × b of two 3D vectors (scalar-component form)."""
+    return (ay * bz - az * by,
+            az * bx - ax * bz,
+            ax * by - ay * bx)
+
+
+# Used by: math_utils
+@njit(cache=True)
+def vec3_normalize(ax: float, ay: float, az: float) -> tuple[float, float, float]:
+    """
+    Return the unit vector of (ax, ay, az).
+
+    Returns the zero vector (0, 0, 0) when the input norm is below a safe
+    threshold, preventing NaN/Inf from division by a near-zero magnitude.
+    """
+    n2 = ax * ax + ay * ay + az * az
+    if n2 < EPS_1E30:
+        return 0.0, 0.0, 0.0
+    inv = 1.0 / math.sqrt(n2)
+    return ax * inv, ay * inv, az * inv
+
+
+# Used by: math_utils, state
+@njit(cache=True)
+def safe_acos(x: float) -> float:
+    """
+    Domain-protected arccosine.
+
+    Clamps the input to [-1, 1] before calling ``math.acos`` so that values
+    pushed slightly outside the valid domain by floating-point error (e.g.
+    cos(θ) = 1.0000000002) do not raise / return NaN.
+    """
+    if x > 1.0:
+        x = 1.0
+    elif x < -1.0:
+        x = -1.0
+    return math.acos(x)
 
 
 
@@ -289,7 +358,7 @@ def _quat_slerp(qA0: float, qA1: float, qA2: float, qA3: float,
         dot = -1.0
 
     # If extremely close: LERP + normalize
-    SLERP_THRESHOLD = 0.9995
+    SLERP_THRESHOLD = NEARLY_UNIT
     if dot_original > SLERP_THRESHOLD:
         q0 = qA0 + t*(qB0 - qA0)
         q1 = qA1 + t*(qB1 - qA1)
@@ -729,8 +798,8 @@ def _rv_to_coe_kernel(
     else:
         a = -mu / (2.0 * eps)
 
-    # 7) Inclination inc = acos(hz/|h|) with clamping
-    inc = math.acos(clamp(x = (hz / hnorm), lo = -1, hi = 1))
+    # 7) Inclination inc = acos(hz/|h|) with domain-safe clamping
+    inc = safe_acos(hz / hnorm)
 
     # ---------------- Singularity detection ----------------
     is_circular = (e < EPS_1E12)
@@ -970,6 +1039,131 @@ def batch_y_to_elements(
         return out[0], out[1], out[2], out[4], out[6]
 
     raise ValueError(f"Unknown mode: {mode!r}. Expected 'coe10', 'coe6', or 'kepler5'.")
+
+
+
+# =============================================================================
+# 6b.                     ORBITAL INVERSE (COE -> RV)
+# =============================================================================
+
+# Used by: math_utils
+@njit(cache=True)
+def _coe_to_rv_kernel(
+    a: float, e: float, inc: float, raan: float, argp: float, nu: float, mu: float,
+) -> tuple[float, float, float, float, float, float]:
+    """
+    Kernel: classical orbital elements -> Cartesian state (r, v) [m, m/s].
+
+    Builds the state in the perifocal (PQW) frame, then rotates to the inertial
+    (IJK) frame with the standard 3-1-3 sequence R3(-Ω) R1(-i) R3(-ω) (Vallado).
+
+    Preconditions (validated by the public wrapper, not re-checked here):
+    - ``mu > 0``
+    - ``p = a * (1 - e^2) > 0`` and finite (ellipse e<1 with a>0, or hyperbola
+      e>1 with a<0); the parabolic case e==1 is excluded.
+    - ``1 + e*cos(nu) > 0`` (the true anomaly is not on the escape asymptote).
+    """
+    p = a * (1.0 - e * e)
+
+    cnu = math.cos(nu)
+    snu = math.sin(nu)
+    denom = 1.0 + e * cnu
+    r = p / denom
+
+    # Perifocal position / velocity (z-component is identically zero).
+    rp_x = r * cnu
+    rp_y = r * snu
+    sqrt_mu_p = math.sqrt(mu / p)
+    vp_x = -sqrt_mu_p * snu
+    vp_y = sqrt_mu_p * (e + cnu)
+
+    cO = math.cos(raan); sO = math.sin(raan)
+    ci = math.cos(inc);  si = math.sin(inc)
+    cw = math.cos(argp); sw = math.sin(argp)
+
+    # PQW -> IJK rotation matrix (first two columns suffice since rp_z = 0).
+    R00 = cO * cw - sO * sw * ci
+    R01 = -cO * sw - sO * cw * ci
+    R10 = sO * cw + cO * sw * ci
+    R11 = -sO * sw + cO * cw * ci
+    R20 = sw * si
+    R21 = cw * si
+
+    rx = R00 * rp_x + R01 * rp_y
+    ry = R10 * rp_x + R11 * rp_y
+    rz = R20 * rp_x + R21 * rp_y
+
+    vx = R00 * vp_x + R01 * vp_y
+    vy = R10 * vp_x + R11 * vp_y
+    vz = R20 * vp_x + R21 * vp_y
+
+    return rx, ry, rz, vx, vy, vz
+
+
+# Used by: state
+def coe_to_rv(
+    a: float,
+    e: float,
+    inc: float,
+    raan: float,
+    argp: float,
+    nu: float,
+    mu: float,
+) -> tuple[Vec3, Vec3]:
+    """
+    Public API: classical orbital elements -> Cartesian state (r, v).
+
+    Inverse of :func:`rv_to_coe_select` (``mode="coe6"``). Angles are in radians.
+
+    Parameters
+    ----------
+    a : semi-major axis [m] (a > 0 for ellipses, a < 0 for hyperbolas).
+    e : eccentricity [-] (>= 0; e == 1 parabolic is not supported).
+    inc, raan, argp, nu : inclination, RAAN, argument of periapsis, true
+        anomaly [rad].
+    mu : gravitational parameter [m^3/s^2] (> 0).
+
+    Returns
+    -------
+    (r, v) : two float64 arrays of shape (3,) — position [m] and velocity [m/s]
+        in the inertial frame.
+
+    Raises
+    ------
+    ValueError
+        For non-finite / non-positive ``mu``, negative ``e``, a non-finite
+        semi-latus rectum, ``p <= 0`` (includes the parabolic case), or a true
+        anomaly on the escape asymptote (``1 + e*cos(nu) <= 0``).
+    """
+    a_f = float(a)
+    e_f = float(e)
+    mu_f = float(mu)
+
+    if not np.isfinite(mu_f) or mu_f <= 0.0:
+        raise ValueError("mu must be finite and > 0.")
+    if not np.isfinite(e_f) or e_f < 0.0:
+        raise ValueError(f"e must be finite and >= 0, got {e!r}.")
+    if not np.isfinite(a_f):
+        raise ValueError("a must be finite (parabolic orbits are not supported).")
+
+    p = a_f * (1.0 - e_f * e_f)
+    if not np.isfinite(p) or p <= 0.0:
+        raise ValueError(
+            f"Degenerate conic: semi-latus rectum p = a*(1-e^2) must be > 0, got {p!r} "
+            f"(a={a!r}, e={e!r}). The parabolic case e==1 is unsupported."
+        )
+
+    if (1.0 + e_f * math.cos(float(nu))) <= EPS_1E12:
+        raise ValueError(
+            "True anomaly lies on (or beyond) the escape asymptote: 1 + e*cos(nu) <= 0."
+        )
+
+    rx, ry, rz, vx, vy, vz = _coe_to_rv_kernel(
+        a_f, e_f, float(inc), float(raan), float(argp), float(nu), mu_f
+    )
+    r = np.array((rx, ry, rz), dtype=np.float64)
+    v = np.array((vx, vy, vz), dtype=np.float64)
+    return r, v
 
 
 
@@ -1256,7 +1450,7 @@ def _sample_grid_bilinear_kernel(
     Composite Kernel: (lat, lon) in degrees -> bilinear sample on a regular grid.
     """
     # --- basic parameter sanity ---
-    if nlines <= 0 or nsamples <= 0 or res_deg <= 1e-12:
+    if nlines <= 0 or nsamples <= 0 or res_deg <= EPS_1E12:
         return math.nan
 
     # --- normalize longitude to [0,360) ---
@@ -1479,8 +1673,13 @@ __all__ = (
 
     # Core tiny math (public wrappers)
     "norm3",                     # 3D norm
+    "dot3",                      # 3D dot product
+    "cross3",                    # 3D cross product (component form)
+    "vec3_normalize",            # 3D unit vector (zero-safe)
     "clamp",                     # Public: clamp value into [lo, hi]
+    "safe_acos",                 # Domain-protected arccosine (clamps to [-1, 1])
     "wrap_angle_2pi",            # Public: wrap angle in radians into [0, 2π)
+    "wrap_angle_pi",             # Public: wrap angle in radians into [-π, π)
 
     # ------------------------------
     # Quaternion Kernels & Wrappers
@@ -1504,6 +1703,7 @@ __all__ = (
     # ------------------------------
     "rv_to_coe_select",          # Public: single RV->elements selector (coe6/coe10/kepler5)
     "batch_y_to_elements",       # Public: batch RV->elements selector (coe6/coe10/kepler5)
+    "coe_to_rv",                 # Public: inverse COE->(r, v) via the perifocal frame
 
     # ------------------------------
     # Scalar & Geometry Utilities (Public API)

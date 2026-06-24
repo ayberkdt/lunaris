@@ -22,6 +22,7 @@ import sys
 import time
 from pathlib import Path
 
+from lunaris.common.constants import DAY_S
 from lunaris.common.paths import project_root_from_file
 from lunaris.surrogate.st_lrps.evaluation import progress as _progress
 from lunaris.ui_foundation import DESIGN_TOKENS
@@ -281,7 +282,7 @@ class OrbitBenchmarkTab(QWidget):
         self.duration_days.setValue(1.0)
         self.dt_out = QDoubleSpinBox()
         self.dt_out.setDecimals(2)
-        self.dt_out.setRange(0.01, 86400.0)
+        self.dt_out.setRange(0.01, DAY_S)
         self.dt_out.setValue(60.0)
         form_scn.addRow("Scenario count", self.random_scenarios)
         form_scn.addRow("Seed", self.scenario_seed)

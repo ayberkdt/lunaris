@@ -44,7 +44,7 @@ from lunaris.cli.common_args import (  # noqa: E402
     resolve_orbit_elements,
     str2bool,
 )
-from lunaris.common.constants import DEG2RAD, MU_MOON, R_MOON  # noqa: E402
+from lunaris.common.constants import DAY_S, DEG2RAD, MU_MOON, R_MOON  # noqa: E402
 from lunaris.common.montecarlo_defs import (  # noqa: E402
     BATCH_SAMPLING_METHODS,
     MCRunResult,
@@ -259,7 +259,7 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
 
     # Mean impact time [days]
     hit_times = t_impact[np.isfinite(t_impact) & valid & (impact > 0.5)]
-    t_imp_mean_days = float(np.mean(hit_times) / 86400.0) if hit_times.size > 0 else None
+    t_imp_mean_days = float(np.mean(hit_times) / DAY_S) if hit_times.size > 0 else None
 
     # Honor the compute_impact_statistics contract. When enabled, run the
     # canonical analysis-layer statistics (Wilson CI + geographic impact-site
@@ -275,7 +275,7 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
             p_imp = float(imp.p_impact)
             ci_lo, ci_hi = float(imp.p_impact_ci95[0]), float(imp.p_impact_ci95[1])
             t_imp_mean_days = (
-                float(imp.t_impact_mean / 86400.0)
+                float(imp.t_impact_mean / DAY_S)
                 if math.isfinite(imp.t_impact_mean)
                 else None
             )

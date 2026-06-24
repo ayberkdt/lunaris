@@ -16,6 +16,7 @@ import numpy as np
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+from lunaris.common.constants import DAY_S
 from lunaris.core.config import SimConfig, load_default_config, replace_sim_config
 from lunaris.physics.spherical_harmonics import GravityModel
 from lunaris.surrogate.runtime_adapter import (
@@ -144,7 +145,7 @@ BENCHMARK_CACHE_SCHEMA_VERSION = 1
 def build_base_config(args: argparse.Namespace) -> SimConfig:
     cfg = load_default_config()
     new_time = replace(cfg.time,
-        duration_s=args.duration_days * 86400.0,
+        duration_s=args.duration_days * DAY_S,
         output_dt_s=args.dt_out,
     )
     new_prop = replace(cfg.propagator,

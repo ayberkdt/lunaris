@@ -2,6 +2,8 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.constants import DAY_S
+
 
 def safe_float(value: Any) -> float:
     """Best-effort float conversion used by formatting helpers."""
@@ -23,9 +25,9 @@ def format_duration(seconds: float) -> str:
         return f"{s:.2f} s"
     if s < 3600.0:
         return f"{s / 60.0:.2f} min"
-    if s < 86400.0:
+    if s < DAY_S:
         return f"{s / 3600.0:.2f} h"
-    return f"{s / 86400.0:.2f} d"
+    return f"{s / DAY_S:.2f} d"
 
 def format_count(value: Any) -> str:
     """Render integer-like counters with thousands separators."""
@@ -46,7 +48,7 @@ def format_days(seconds: Any, *, decimals: int = 3) -> str:
     f = safe_float(seconds)
     if not np.isfinite(f):
         return "N/A"
-    return f"{f / 86400.0:.{decimals}f} d"
+    return f"{f / DAY_S:.{decimals}f} d"
 
 def format_km(value: Any, *, decimals: int = 3) -> str:
     """Render kilometer-scale values with a consistent suffix."""

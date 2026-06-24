@@ -57,7 +57,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.constants import AU, MU_EARTH, MU_MOON, MU_SUN, P_SUN_1AU, R_EARTH_MEAN, R_MOON
+from lunaris.common.constants import AU, C_LIGHT, MU_EARTH, MU_MOON, MU_SUN, P_SUN_1AU, R_EARTH_MEAN, R_MOON
 from lunaris.common.montecarlo_defs import build_mc_output_grid
 from lunaris.common.type_defs import F64Array
 
@@ -608,7 +608,7 @@ if _CUDA_AVAILABLE:
     @cuda.jit(device=True, inline=True)
     def _relativity_1pn_cuda(rx, ry, rz, vx, vy, vz, mu, out):
         """1PN Schwarzschild acceleration correction."""
-        c_light = 299_792_458.0
+        c_light = C_LIGHT
         c2 = c_light * c_light
         r2 = rx * rx + ry * ry + rz * rz
         if r2 < 1.0:
@@ -661,7 +661,7 @@ if _CUDA_AVAILABLE:
             out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
             return
 
-        c_light = 299_792_458.0
+        c_light = C_LIGHT
         c2 = c_light * c_light
         inv_r3 = 1.0 / (r2 * math.sqrt(r2))
         scale = 1.5 * mu_body * inv_r3 / c2

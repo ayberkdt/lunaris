@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.constants import DAY_S
 from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
 from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, ArtifactContractError
 
@@ -260,7 +261,7 @@ def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> Non
     scenario_count = int(config["scenario"]["count"])
     duration_days = float(config["propagation"]["duration_days"])
     dt_s = float(config["propagation"]["dt_s"])
-    n_steps = max(1, int(math.ceil(duration_days * 86400.0 / max(dt_s, 1e-9))))
+    n_steps = max(1, int(math.ceil(duration_days * DAY_S / max(dt_s, 1e-9))))
     models = _configured_model_names(config)
     scenario_rows: list[dict[str, Any]] = []
     runtime_rows: list[dict[str, Any]] = []

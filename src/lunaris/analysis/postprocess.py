@@ -42,6 +42,8 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.constants import DAY_S
+
 # Prefer package-relative imports; fall back to local imports when running as a script.
 try:
     from ..common.math_utils import batch_y_to_elements, quat_rotate_vec
@@ -302,7 +304,7 @@ def extract_time_seconds(history: Mapping[str, Any]) -> np.ndarray:
 
     t_days = _first_present(history, ["t_days"])
     if t_days is not None:
-        return _as_np(t_days, dtype=float) * 86400.0
+        return _as_np(t_days, dtype=float) * DAY_S
 
     return np.empty((0,), dtype=float)
 
@@ -323,7 +325,7 @@ def extract_time_days(history: Mapping[str, Any]) -> np.ndarray:
     t_s = _as_np(t_s, dtype=float)
     if t_s.size == 0:
         return t_s
-    return t_s / 86400.0
+    return t_s / DAY_S
 
 
 # ------------------------------------------------------------

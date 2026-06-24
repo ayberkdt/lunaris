@@ -93,37 +93,11 @@ def axis_angle_quat(axis: np.ndarray, angle_rad: float) -> np.ndarray:
     return np.array([math.cos(angle_rad / 2.0), a[0] * s, a[1] * s, a[2] * s], dtype=np.float64)
 
 
-def coe_to_rv(
-    a: float,
-    e: float,
-    inc: float,
-    raan: float,
-    argp: float,
-    nu: float,
-    mu: float,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Classical elements -> inertial Cartesian (r,v). Elliptic (e<1) assumed."""
-    p = a * (1.0 - e * e)
-    r_pf = p / (1.0 + e * math.cos(nu)) * np.array([math.cos(nu), math.sin(nu), 0.0], dtype=np.float64)
-    v_pf = math.sqrt(mu / p) * np.array([-math.sin(nu), e + math.cos(nu), 0.0], dtype=np.float64)
-
-    cO, sO = math.cos(raan), math.sin(raan)
-    ci, si = math.cos(inc), math.sin(inc)
-    cw, sw = math.cos(argp), math.sin(argp)
-
-    # Perifocal -> inertial: R3(raan) * R1(inc) * R3(argp)
-    R = np.array(
-        [
-            [cO * cw - sO * sw * ci, -cO * sw - sO * cw * ci, sO * si],
-            [sO * cw + cO * sw * ci, -sO * sw + cO * cw * ci, -cO * si],
-            [sw * si, cw * si, ci],
-        ],
-        dtype=np.float64,
-    )
-
-    r = R @ r_pf
-    v = R @ v_pf
-    return r, v
+# ``coe_to_rv`` was previously reimplemented here because the library lacked an
+# inverse conversion. It now lives in ``common.math_utils`` (same perifocal /
+# Vallado R3-R1-R3 convention), so the round-trip tests exercise the real
+# library function via this alias.
+coe_to_rv = math_utils.coe_to_rv
 
 
 # =============================================================================
@@ -771,6 +745,117 @@ def test_scaled_bilinear_interpolates_when_no_missing():
     edge_high = math_utils.sample_2d_scaled_bilinear(data, 9.0, 0.0, 2, 2, 1.0, 0.0, -9999.0)
     assert edge_low == pytest.approx(0.0)
     assert edge_high == pytest.approx(10.0)
+
+
+# =============================================================================
+# New primitives: dot3 / cross3 / vec3_normalize / safe_acos / wrap_angle_pi
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "a,b",
+    [
+        ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)),
+        ((-1.0, 0.5, 2.0), (3.0, -4.0, 0.0)),
+        ((0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+    ],
+)
+def test_dot3_and_cross3_match_numpy(a, b):
+    av = np.asarray(a, dtype=np.float64)
+    bv = np.asarray(b, dtype=np.float64)
+    assert_allclose(math_utils.dot3(*a, *b), float(np.dot(av, bv)), rtol=0.0, atol=1e-12)
+    assert_allclose(np.asarray(math_utils.cross3(*a, *b)), np.cross(av, bv), rtol=0.0, atol=1e-12)
+
+
+def test_vec3_normalize_unit_and_zero_safe():
+    out = math_utils.vec3_normalize(0.0, 0.0, 5.0)
+    assert_allclose(np.asarray(out), [0.0, 0.0, 1.0], atol=1e-15)
+
+    out = math_utils.vec3_normalize(3.0, 4.0, 0.0)
+    assert_allclose(float(np.linalg.norm(out)), 1.0, atol=1e-15)
+
+    # Near-zero magnitude returns the zero vector rather than NaN/Inf.
+    assert math_utils.vec3_normalize(0.0, 0.0, 0.0) == (0.0, 0.0, 0.0)
+
+
+@pytest.mark.parametrize(
+    "x,expected",
+    [
+        (1.0, 0.0),
+        (-1.0, math.pi),
+        (0.0, math.pi / 2.0),
+        (1.0 + 2e-9, 0.0),   # slightly out of domain -> clamped, no NaN/raise
+        (-1.0 - 2e-9, math.pi),
+    ],
+)
+def test_safe_acos_clamps_domain(x, expected):
+    out = math_utils.safe_acos(x)
+    assert math.isfinite(out)
+    assert_allclose(out, expected, atol=1e-7)
+
+
+@pytest.mark.parametrize(
+    "angle",
+    [0.0, 0.3, -0.3, math.pi, -math.pi, 1.5 * math.pi, -1.5 * math.pi, 10.0, -10.0],
+)
+def test_wrap_angle_pi_range_and_equivalence(angle):
+    out = math_utils.wrap_angle_pi(angle)
+    # Output is in [-pi, pi) and differs from the input by a multiple of 2*pi.
+    assert -math.pi <= out < math.pi
+    assert_allclose(math.cos(out), math.cos(angle), atol=1e-12)
+    assert_allclose(math.sin(out), math.sin(angle), atol=1e-12)
+
+
+# =============================================================================
+# coe_to_rv: hyperbolic round-trip and input validation
+# =============================================================================
+
+
+def test_coe_to_rv_hyperbolic_roundtrip(moon_data):
+    mu = moon_data["mu"]
+    # Hyperbola: a < 0, e > 1, true anomaly inside the valid asymptote window.
+    a = -(moon_data["R"] + 5_000e3)
+    e = 1.4
+    inc = math.radians(25.0)
+    raan = math.radians(70.0)
+    argp = math.radians(120.0)
+    nu = math.radians(20.0)
+
+    r, v = coe_to_rv(a, e, inc, raan, argp, nu, mu)
+    a2, e2, inc2, raan2, argp2, nu2 = math_utils.rv_to_coe_select(r, v, mu, mode="coe6")
+
+    assert_allclose(a2, a, rtol=1e-9)
+    assert_allclose(e2, e, rtol=1e-9)
+    assert_angle_close(inc2, inc, atol=1e-10)
+    assert_angle_close(raan2, raan, atol=1e-10)
+    assert_angle_close(argp2, argp, atol=1e-10)
+    assert_angle_close(nu2, nu, atol=1e-10)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"mu": -1.0},                  # non-positive mu
+        {"mu": float("nan")},          # non-finite mu
+        {"e": -0.1},                   # negative eccentricity
+        {"a": float("inf")},           # parabolic / non-finite a
+        {"a": -2.2e6, "e": 0.15},      # p = a*(1-e^2) < 0 (degenerate conic)
+        {"e": 1.0},                    # parabolic case (p == 0)
+    ],
+)
+def test_coe_to_rv_rejects_invalid_inputs(moon_data, overrides):
+    kw = dict(
+        a=moon_data["R"] + 400e3,
+        e=0.15,
+        inc=math.radians(40.0),
+        raan=math.radians(30.0),
+        argp=math.radians(60.0),
+        nu=math.radians(10.0),
+        mu=moon_data["mu"],
+    )
+    kw.update(overrides)
+    with pytest.raises(ValueError):
+        coe_to_rv(**kw)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,8 @@ from typing import Any
 import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from lunaris.common.constants import DAY_S
+
 try:
     from lunaris.ui.core.ui_commons import THEME, get_icon
 except ImportError:
@@ -138,7 +140,7 @@ def _format_days(seconds: float | None, *, decimals: int = 3) -> str:
 
     if seconds is None or not math.isfinite(float(seconds)):
         return "N/A"
-    return f"{float(seconds) / 86400.0:.{decimals}f} d"
+    return f"{float(seconds) / DAY_S:.{decimals}f} d"
 
 
 def _format_km(value: float | None, *, decimals: int = 3) -> str:
@@ -802,8 +804,6 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
 
         if self._result is None or self._stats is None or not self._current_result_path:
             return
-
-        from lunaris.common.constants import DAY_S
 
         path = Path(self._current_result_path).expanduser().resolve()
         impacts = self._stats.impacts

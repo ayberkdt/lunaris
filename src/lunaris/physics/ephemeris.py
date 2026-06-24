@@ -105,7 +105,7 @@ Typical usage
     # Build once (initialization)
     tables = build_tables(
         start_utc="2026-01-01T00:00:00",
-        duration_s=7 * 86400.0,
+        duration_s=7 * DAY_S,
         output_dt_s=60.0,
         kernels=(...),
         fixed_frame="MOON_PA",
@@ -140,7 +140,7 @@ import spiceypy as spice
 from numba import njit
 from spiceypy.utils.exceptions import SpiceyError
 
-from lunaris.common.constants import KM3_TO_M3, KM_TO_M, MU_EARTH, MU_SUN
+from lunaris.common.constants import DAY_S, KM3_TO_M3, KM_TO_M, MU_EARTH, MU_SUN
 from lunaris.common.math_utils import (
     interp_quat_slerp,
     interp_vec3_catmull,
