@@ -995,6 +995,68 @@ def _cache_provenance(
     }
 
 
+def _maybe_build_compute_speed(
+    args: argparse.Namespace, gpu_models: list[str]
+) -> dict[str, Any] | None:
+    """Hardware-independent per-eval FLOP comparison for the benchmarked models.
+
+    Additive and best-effort: returns ``None`` on any problem so it can never break
+    a benchmark run. Classical SH costs are analytic estimates; the surrogate cost
+    is read from its training run manifest's ``compute_accounting`` block (measured).
+    Sits alongside the existing machine-dependent wall-clock ``runtime`` rows.
+    """
+    try:
+        from lunaris.surrogate.st_lrps.training.compute_accounting import (
+            build_compute_speed_section,
+        )
+
+        sh_degrees: dict[str, int] = {}
+        has_surrogate = False
+        for name in gpu_models:
+            n = str(name)
+            if n.startswith("sh"):
+                try:
+                    sh_degrees[n] = int(n[2:])
+                except ValueError:
+                    continue
+            elif n == "st_lrps":
+                has_surrogate = True
+
+        surrogate_flops: float | None = None
+        target_degree: int | None = None
+        baseline_degree = 0
+        model_dir = getattr(args, "st_lrps_model_dir", None)
+        if has_surrogate and model_dir:
+            manifest_path = Path(model_dir) / "run_manifest.json"
+            if manifest_path.is_file():
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                ca = manifest.get("compute_accounting") or {}
+                flops = ca.get("inference_flops_per_eval")
+                if flops is not None and float(flops) > 0:
+                    surrogate_flops = float(flops)
+                rcs = manifest.get("resolved_config_summary") or {}
+                if rcs.get("degree_max") is not None:
+                    target_degree = int(rcs["degree_max"])
+                if rcs.get("degree_min") is not None:
+                    baseline_degree = max(0, int(rcs["degree_min"]))
+
+        if not sh_degrees and surrogate_flops is None:
+            return None
+        # Default the surrogate's target to the highest benchmarked SH degree.
+        if surrogate_flops is not None and target_degree is None and sh_degrees:
+            target_degree = max(sh_degrees.values())
+
+        return build_compute_speed_section(
+            sh_degrees=sh_degrees,
+            surrogate_model_name="st_lrps" if surrogate_flops is not None else None,
+            surrogate_inference_flops_per_eval=surrogate_flops,
+            surrogate_target_sh_degree=target_degree,
+            surrogate_baseline_sh_degree=baseline_degree,
+        )
+    except Exception:
+        return None
+
+
 def _build_gpu_batch_summary(
     args: argparse.Namespace,
     *,
@@ -1086,6 +1148,9 @@ def _build_gpu_batch_summary(
         "truth_total_runtime_s": truth_total_runtime_s,
         "truth_mean_runtime_per_scenario_s": truth_mean_runtime_per_scenario_s,
         "equivalent_sh_degree": equivalent,
+        # Hardware-independent per-eval FLOP comparison (additive; sits alongside
+        # the machine-dependent wall-clock "runtime" rows). None if unavailable.
+        "compute_speed": _maybe_build_compute_speed(args, gpu_models),
         "selected_stlrps_scenarios": selected,
         # Honest scope language (Fix 8).
         "summary_scope": summary_scope,

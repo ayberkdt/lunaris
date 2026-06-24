@@ -1619,6 +1619,39 @@ def _finalize_evaluation_report(
             "run_manifest": str(layout.run_manifest_json) if layout.run_manifest_json.exists() else None,
         },
     }
+    # Hardware-independent compute & speed (additive, best-effort): surface the
+    # training run's measured compute accounting next to the eval's machine-
+    # dependent throughput/latency, with a surrogate-vs-SH per-eval comparison and
+    # a rendered Markdown section. Never fails the report.
+    try:
+        from lunaris.surrogate.st_lrps.training.compute_accounting import (
+            build_compute_speed_section,
+            render_compute_report,
+        )
+
+        _ca = None
+        if layout.run_manifest_json.exists():
+            _manifest = json.loads(layout.run_manifest_json.read_text(encoding="utf-8"))
+            _ca = _manifest.get("compute_accounting")
+        _speed = None
+        if _ca and _ca.get("inference_flops_per_eval") is not None:
+            _speed = build_compute_speed_section(
+                sh_degrees={},
+                surrogate_model_name="st_lrps",
+                surrogate_inference_flops_per_eval=float(_ca["inference_flops_per_eval"]),
+                surrogate_target_sh_degree=(
+                    int(model_degree_max) if model_degree_max is not None else None
+                ),
+                surrogate_baseline_sh_degree=max(0, int(degree_min)),
+            )
+        if _ca or _speed:
+            report["compute_and_speed"] = {"training": _ca, "speed": _speed}
+            (out_dir / "compute_report.md").write_text(
+                render_compute_report(_ca, _speed), encoding="utf-8"
+            )
+    except Exception:
+        pass
+
     report_path = out_dir / "eval_report.json"
     metrics_path = out_dir / "evaluate_metrics.json"
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")

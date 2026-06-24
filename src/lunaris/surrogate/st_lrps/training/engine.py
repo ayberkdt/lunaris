@@ -3054,6 +3054,8 @@ def _run_training_loop(session: _TrainingSession) -> None:
     _prev_mse_a: float | None = None  # for epoch-level explosion detection
     global_step = 0
     run_status = "completed"
+    _loop_t0 = time.perf_counter()
+    _total_train_samples = 0  # exact count of samples pushed through fwd/bwd
 
     if _resume_requested:
         tracker.restore(
@@ -3193,6 +3195,7 @@ def _run_training_loop(session: _TrainingSession) -> None:
             if _ldir_log > 0.0 or epoch == cfg.direction_loss_start_epoch:
                 logger.info(f"[epoch {epoch+1}] effective lambda_dir={_ldir_log:.4e}")
             tr = trainer.run_epoch(train_loader, is_train=True,  epoch=epoch, max_batches=cfg.max_train_batches)
+            _total_train_samples += int(tr.get("samples_seen", 0))
 
             # Epoch-level explosion detection: save failure manifest and stop on NaN.
             if tr.get("nan_detected"):
@@ -3508,6 +3511,37 @@ def _run_training_loop(session: _TrainingSession) -> None:
     payload["best_metric"] = str(_best_metric_canonical)
     payload["checkpoint_selection"] = dict(checkpoint_selection)
     atomic_write_json(config_path, payload)
+
+    # Hardware-independent compute accounting (FLOP / petaflop/s-days), measured on
+    # the trained network. Recorded for the paper/report so "how much compute this
+    # architecture does" is portable across machines, unlike wall-clock or GPU-hours.
+    # Measurement must never fail a real training run.
+    compute_accounting_dict = None
+    try:
+        from lunaris.surrogate.st_lrps.training.compute_accounting import (
+            build_compute_accounting,
+        )
+
+        _probe_dtype = next(model.parameters()).dtype
+        _probe_batch = min(int(getattr(cfg, "batch_size", 256) or 256), 256)
+        _probe = torch.randn(_probe_batch, 3, device=device, dtype=_probe_dtype)
+        _dev_type = getattr(device, "type", None) or str(device).split(":")[0]
+        _device_name = (
+            torch.cuda.get_device_name(device) if _dev_type == "cuda" else str(device)
+        )
+        _compute_acc = build_compute_accounting(
+            model,
+            _probe,
+            model_kind=str(getattr(model, "runtime_model_kind", "potential_autograd")),
+            total_samples_processed=int(_total_train_samples),
+            wall_clock_seconds=float(time.perf_counter() - _loop_t0),
+            device=_device_name,
+        )
+        compute_accounting_dict = _compute_acc.to_manifest_dict()
+        logger.info("[compute] %s", _compute_acc.summary_line())
+    except Exception as _cexc:  # pragma: no cover - never fail a run on measurement
+        logger.warning("[compute] compute accounting skipped: %s", _cexc)
+
     update_run_manifest(
         layout,
         {
@@ -3521,6 +3555,7 @@ def _run_training_loop(session: _TrainingSession) -> None:
                 "best": (compute_file_sha256(best_path) if best_path.exists() else None),
                 "last": (compute_file_sha256(last_path) if last_path.exists() else None),
             },
+            "compute_accounting": compute_accounting_dict,
         },
     )
 

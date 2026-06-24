@@ -5,6 +5,7 @@ import { OrbitControls, Stars, useProgress } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import MoonModel from './MoonModel';
 import OrbitPath from './OrbitPath';
+import { useReducedMotion } from './useReducedMotion';
 
 /**
  * LauncherScene3D — the headless visual engine for the desktop launcher.
@@ -91,6 +92,7 @@ export default function LauncherScene3D() {
   const [relief, setRelief] = useState(0.5); // 0..1 (maps onto RELIEF_MAX)
   const { progress } = useProgress();
   const loaded = progress === 100;
+  const prefersReducedMotion = useReducedMotion();
 
   // Register the global JS bridge for the Qt host. Kept on window so the
   // launcher can call it via page.runJavaScript(...).
@@ -157,11 +159,21 @@ export default function LauncherScene3D() {
       <pointLight position={[-5, -5, -5]} intensity={0.4} color="#334466" />
 
       <Suspense fallback={null}>
-        <MoonModel textureMode={textureMode} displacementScale={displacementScale} />
+        <MoonModel
+          textureMode={textureMode}
+          displacementScale={displacementScale}
+          animate={!prefersReducedMotion}
+        />
       </Suspense>
 
       {loaded && orbitVisible && (
-        <OrbitPath color="#00E5FF" glowColor="#00AEEF" speed={2.2} dataKey="path1" />
+        <OrbitPath
+          color="#00E5FF"
+          glowColor="#00AEEF"
+          speed={2.2}
+          dataKey="path1"
+          animate={!prefersReducedMotion}
+        />
       )}
 
       {enableBloom && (
@@ -179,7 +191,7 @@ export default function LauncherScene3D() {
         minDistance={3.2}
         maxDistance={6.2}
         zoomSpeed={0.6}
-        autoRotate
+        autoRotate={!prefersReducedMotion}
         autoRotateSpeed={0.35}
         rotateSpeed={0.4}
         minPolarAngle={Math.PI * 0.25}

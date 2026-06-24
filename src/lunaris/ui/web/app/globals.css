@@ -6,8 +6,8 @@
   --accent-secondary: #E0E0FF;
   --glass-bg: rgba(10, 17, 40, 0.4);
   --glass-border: rgba(255, 255, 255, 0.1);
-  --font-heading: 'Outfit', sans-serif;
-  --font-body: 'Inter', sans-serif;
+  --font-heading: "Segoe UI", system-ui, sans-serif;
+  --font-body: "Segoe UI", system-ui, sans-serif;
 }
 
 * {
