@@ -193,6 +193,8 @@ _RE_IMAGE_REC = re.compile(r"\^IMAGE\s*=\s*(\d+)", flags=re.IGNORECASE)
 
 _RE_FILE_NAME = re.compile(r'\bFILE_NAME\s*=\s*"([^"]+)"', flags=re.IGNORECASE | re.MULTILINE)
 _RE_RECORD_BYTES = re.compile(r"\bRECORD_BYTES\s*=\s*(\d+)", flags=re.IGNORECASE | re.MULTILINE)
+_RE_LDAM_PRODUCT = re.compile(r"(?<![A-Z0-9])LDAM(?:_[A-Z0-9]+)*(?![A-Z0-9])", flags=re.IGNORECASE)
+_RE_DGDR_PRODUCT = re.compile(r"(?<![A-Z0-9])DGDR(?:_[A-Z0-9]+)*(?![A-Z0-9])", flags=re.IGNORECASE)
 
 
 def _read_text(path: str | Path) -> str:
@@ -203,6 +205,25 @@ def _read_text(path: str | Path) -> str:
 def _strip_pds_comments(text: str) -> str:
     """Remove PDS3-style block comments: /* ... */."""
     return _RE_PDS_COMMENT.sub("", text)
+
+
+def _looks_like_lola_ldam_albedo_label(label_path: str | Path) -> bool:
+    """Return True only for LOLA LDAM albedo labels.
+
+    PDS cylindrical rasters share enough metadata that a Diviner DGDR product can
+    parse as a generic grid. The albedo provider is physically tied to LOLA LDAM
+    albedo, so product identity is part of the loader contract.
+    """
+    p = Path(label_path)
+    try:
+        txt = _strip_pds_comments(_read_text(p))
+    except OSError:
+        txt = ""
+
+    identity = f"{p.name}\n{txt}"
+    if _RE_DGDR_PRODUCT.search(identity):
+        return False
+    return _RE_LDAM_PRODUCT.search(identity) is not None
 
 
 def _re_find_one(pattern: str | re.Pattern[str], text: str, cast: Callable[[str], Any] = str) -> Any:
@@ -1262,8 +1283,10 @@ def find_lola_albedo_product(root: PathLike) -> tuple[Path, Path]:
     Selection policy
     ----------------
     - If `root` is a file, it is treated as the label.
-    - Otherwise, among parseable cylindrical rasters, the highest-resolution
-      (largest MAP_RESOLUTION) product is selected.
+    - Only LOLA LDAM products are eligible; other cylindrical rasters such as
+      Diviner DGDR products are rejected even when their labels parse.
+    - Otherwise, among parseable LDAM rasters, the highest-resolution (largest
+      MAP_RESOLUTION) product is selected.
 
     Returns
     -------
@@ -1277,6 +1300,9 @@ def find_lola_albedo_product(root: PathLike) -> tuple[Path, Path]:
     p = Path(root)
 
     if p.is_file():
+        if not _looks_like_lola_ldam_albedo_label(p):
+            raise FileNotFoundError(f"Not a LOLA LDAM albedo product label: {p}")
+        parse_pds3_cyl_label(p)
         img, _ = _resolve_img_from_label(p)
         return p, img
 
@@ -1289,6 +1315,8 @@ def find_lola_albedo_product(root: PathLike) -> tuple[Path, Path]:
 
     scored: list[tuple[float, Path]] = []
     for lbl in labels:
+        if not _looks_like_lola_ldam_albedo_label(lbl):
+            continue
         try:
             info = parse_pds3_cyl_label(lbl)  # validate cylindrical raster
             img, _ = _resolve_img_from_label(lbl)

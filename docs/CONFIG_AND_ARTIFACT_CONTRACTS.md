@@ -180,16 +180,15 @@ lunaris-benchmark --allow-legacy-artifact
 `--allow-contract-mismatch` downgrades contract mismatches to warnings. Use it
 for exploratory comparisons only; it is not appropriate for benchmark claims.
 
-## Legacy Behavior
+## Contract-Free Artifact Compatibility
 
-Legacy artifacts without `artifact_contract` can still be normalized when the
-caller opts in. The normalized contract is marked as inferred and the runtime
-sets `legacy_contract=True`. New canonical checkpoints must embed the full
-contract.
+Artifacts without `artifact_contract` can still be normalized when the caller
+opts in. The normalized contract is marked as inferred and the runtime sets
+`legacy_contract=True`. New canonical checkpoints must embed the full contract.
 
-Evaluation reload paths still infer enough metadata to inspect old runs, but
-runtime and benchmark entry points require explicit legacy allowances before
-they will trust a contract-free artifact.
+Evaluation reload paths still infer enough metadata for inspection, but runtime
+and benchmark entry points require explicit compatibility allowances before they
+will trust a contract-free artifact.
 
 ## Limitations
 

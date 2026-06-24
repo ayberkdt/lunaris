@@ -11,7 +11,7 @@ bundles spherical-harmonic lunar gravity, configurable physical force models, or
 propagation, batch/ensemble uncertainty analysis, validation harnesses,
 visualization tools, and a PySide6 desktop UI.
 
-It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate) — a
+It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate), a
 neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a
 residual scalar potential above a lower-degree spherical-harmonic baseline, with its
 own training, evaluation, and Studio UI.
@@ -37,7 +37,7 @@ This README is a landing page; the canonical detail lives in `docs/`.
 | [docs/HPC.md](docs/HPC.md) | Cluster/headless install, Conda environment, Slurm templates, scenario arrays |
 | [docs/profiling.md](docs/profiling.md) | ST-LRPS runtime profiling and timing interpretation |
 | [validation/README.md](validation/README.md) | Independent physics/orbit/gravity validation harnesses |
-| [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) | Dev setup + quality gates · vulnerability reporting |
+| [CONTRIBUTING.md](CONTRIBUTING.md) / [SECURITY.md](SECURITY.md) | Dev setup + quality gates / vulnerability reporting |
 
 ## Force models
 
@@ -86,13 +86,18 @@ Large mission data (SPICE kernels, gravity coefficients, topography, albedo) is
 ```bash
 lunaris-data list
 lunaris-data download --group ephemeris
+lunaris-data download --group gravity
 lunaris-data verify
+lunaris-data verify --strict --runtime
 ```
 
-The catalogue is `data/data_sources.json`; entries without a pinned URL print
-manual-placement instructions. Common locations: `data/ephemeris_models/`,
+The catalogue is `data/data_sources.json`. Official-provider entries download
+from NAIF/JPL or NASA PDS, recorded hashes are checked by `lunaris-data verify`,
+and `--strict --runtime` also proves the resolved SPICE kernels can build a small
+ephemeris table. Common locations: `data/ephemeris_models/`,
 `data/gravity_models/`, `data/topography_models/`, `data/albedo_models/`,
-`data/thermal_models/`.
+`data/thermal_models/`, and `data/assets/`. ST-LRPS cloud suites are generated
+artifacts under `data/datasets/`, not external downloads.
 
 ## Quickstart
 
@@ -145,7 +150,7 @@ Console entry points (installed via `pip install -e .`):
 ```text
 lunaris           single-run propagation CLI
 lunaris-batch     batch/ensemble propagation runner
-lunaris-mc        backward-compatible alias for the batch runner
+lunaris-mc        Monte Carlo-oriented entry point for the batch runner
 lunaris-launcher  welcome hub (picks a workspace; optional offline 3D Moon preview)
 lunaris-ui        mission desktop UI (Lunaris Mission Studio)
 lunaris-studio    ST-LRPS Studio UI
@@ -175,7 +180,7 @@ python -m lunaris.surrogate.st_lrps.evaluation.ablation --help
 At runtime ST-LRPS supports two artifact contracts: the default
 `potential_autograd` (learned scalar residual potential, acceleration via
 autograd; validation-safe) and the experimental `force_direct` (3-output
-direct residual acceleration, not conservative by construction — requires curl
+direct residual acceleration, not conservative by construction; requires curl
 and orbit-level validation before scientific claims). Versioned
 `artifact_contract` / `dataset_contract` blocks record target semantics, baseline
 degree, altitude envelope, scaler contract, encoding, and runtime kind.
@@ -203,7 +208,7 @@ are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Propagation, Batch Ensembles, And Analysis
 
 Single-run propagation is driven by `lunaris`; ensemble propagation by
-`lunaris-batch` (`lunaris-mc` remains a compatibility alias). The ensemble
+`lunaris-batch` and the Monte Carlo-oriented `lunaris-mc` entry point. The ensemble
 sampling design is explicit: `random` is the classical Monte Carlo option, while
 `lhs`, `sobol`, and `sobol_scrambled` are space-filling designs better suited to
 validation and benchmark coverage. Batch backends are explicit (`cpu_sh` truth

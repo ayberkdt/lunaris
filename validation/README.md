@@ -1,6 +1,12 @@
 # Validation Layer
 
-The validation layer contains independent physics, orbit, and cross-model validation harnesses. These tools compare model behavior against trusted references and write run-specific evidence for review.
+The validation layer contains independent physics, orbit, and cross-model
+validation harnesses. These tools compare Lunaris behavior against declared
+references and write run-specific evidence for review.
+
+Generated outputs, checkpoints, plots, cached trajectories, and reports belong
+under `outputs/` or an external scratch path. The `validation/` tree is for
+source, contracts, harness documentation, and small reference files.
 
 ## Package Boundaries
 
@@ -8,54 +14,73 @@ The validation layer contains independent physics, orbit, and cross-model valida
   post-processing and plotting of already generated simulation outputs.
 
 - `src/lunaris/surrogate/st_lrps/evaluation/`:
-  dataset-level and artifact-level evaluation of trained ST-LRPS models.
+  dataset-level, artifact-level, field-level, and orbit-level evaluation of
+  trained ST-LRPS models.
 
 - `validation/`:
-  physics-level, orbit-level, and cross-model validation against trusted references.
+  independent-reference validation material, gravity benchmark documentation,
+  and reference contracts.
 
-## Current Submodule
+## Available Harnesses
 
 - `validation/gravity/`
-  documentation and output schema for lunar gravity model validation. The
-  executable harness itself now lives in the ST-LRPS package at
-  `src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py` and is wired into the ST-LRPS
-  Studio under **Analysis → Orbit-Level Benchmark**.
+  documents the lunar gravity validation schema and the orbit-level benchmark
+  command. The command entry point is:
 
-Current gravity validation command:
+  ```bash
+  python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
+  ```
 
-```bash
-python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
-```
+  The same benchmark is available through `lunaris-benchmark` and the ST-LRPS
+  Studio under **Analysis -> Orbit-Level Benchmark**.
 
 - `validation/independent/`
-  **independent external-reference** harnesses that deliberately do NOT reuse the
-  Lunaris physics code, so a bug cannot hide in both the model and its check
-  (the correlated-error problem). Reference values come from separate code paths:
-  - `independent_sh.py` — geopotential via `scipy.special.lpmn` + an explicit 4π
-    normalization, with acceleration taken as the *numerical gradient* of that
-    potential (no shared analytic Legendre recurrence). `crosscheck_gravity_model`
-    compares it against a Lunaris `GravityModel`.
-  - `naif_ephemeris.py` — direct `spiceypy.spkpos` queries vs the Lunaris
-    `EphemerisManager` (catches frame/target/observer/unit bugs and quantifies
-    interior Catmull-Rom interpolation error).
-  - `pyshtools_reference.py` — optional second SH opinion via the external
-    `pyshtools` library (gated behind the `requires_pyshtools` pytest marker;
-    skipped cleanly when not installed).
+  contains external-reference checks that use separate numerical paths from the
+  production force models. This reduces correlated-error risk between the model
+  under test and its validation reference.
 
-  Tests live in `tests/test_independent_sh_validation.py`; the SH cross-check is
-  pinned against closed-form (point-mass, J2) anchors and the real lunar model.
+  Reference paths include:
 
-## Future Expected Submodules
+  - `independent_sh.py`: geopotential via `scipy.special.lpmn` plus explicit
+    `4*pi` normalization, with acceleration taken as the numerical gradient of
+    that potential.
+  - `naif_ephemeris.py`: direct `spiceypy.spkpos` queries checked against the
+    Lunaris `EphemerisManager`, including frame, target, observer, unit, and
+    interpolation behavior.
+  - `pyshtools_reference.py`: optional spherical-harmonic reference through the
+    external `pyshtools` library, gated behind the `requires_pyshtools` pytest
+    marker and skipped cleanly when unavailable.
 
-These submodules are expected to be implemented in the future:
+  Tests live in `tests/test_independent_sh_validation.py`; the spherical-
+  harmonic cross-check is pinned against closed-form point-mass and J2 anchors
+  plus the real lunar gravity model.
+
+## Gravity Benchmark Layout
+
+The gravity benchmark command is exposed by:
+
+```text
+src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py
+```
+
+Its implementation modules live under:
+
+```text
+src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/
+```
+
+The internal modules cover shared types, propagation/error computation, metric
+aggregation, run modes, plotting, and result I/O. Treat
+`compare_gravity_models.py` and `lunaris-benchmark` as the public command
+surface.
+
+## Reserved Validation Areas
+
+The following names are reserved for validation material as the project grows:
+
 - `validation/orbits/`
 - `validation/monte_carlo/`
 - `validation/reports/`
 
-## Do not put here
-
-Do not place generated outputs, run artifacts, checkpoints, or trained models under `validation/`. Write validation products under the repository-level `outputs/` directory (for example `outputs/gravity_benchmark/`) or an external scratch path. The `outputs/` tree is git-ignored.
-
-## Current status
-
-The gravity validation harness has been split: `src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py` remains the stable CLI/facade (and backs the `lunaris-benchmark` entry point), while the implementation lives in the internal subpackage `src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/` (`types`, `compute`, `metrics`, `modes`, `plotting`, `results_io`). The module path, CLI flags, and outputs are unchanged.
+Keep these directories documentation/source oriented. Store produced artifacts
+under `outputs/`.

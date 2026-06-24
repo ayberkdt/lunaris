@@ -44,12 +44,12 @@ npm run build      # output: 'export' -> writes ./out
 This produces `out/embed/index.html` plus hashed assets under `out/_next/`. The Python
 launcher serves `out/` from a local loopback HTTP server (no Node, no internet) and
 loads `http://127.0.0.1:<port>/embed/`. If `out/` is missing or QtWebEngine/WebGL is
-unavailable, the launcher falls back gracefully to a dark background — it never fails to
+unavailable, the launcher falls back gracefully to a dark background; it never fails to
 open. You can point the launcher at a custom build with the `LUNARIS_WEB_EMBED_DIR`
 environment variable.
 
 > **Note on the orbit:** the animated satellite path in `public/orbit-data.json` is a
-> **demo orbit** — a Keplerian/Hohmann animation produced by `scripts/generate_orbit.py`
+> **demo orbit**: a Keplerian/Hohmann animation produced by `scripts/generate_orbit.py`
 > for visual purposes. It is not the output of the Lunaris propagator.
 
 ## Project Structure

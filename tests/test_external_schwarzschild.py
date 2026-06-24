@@ -147,8 +147,11 @@ def test_solar_external_schwarzschild_is_small_for_lunar_orbiter() -> None:
 
     external_norm = float(np.linalg.norm(external))
     central_norm = float(np.linalg.norm(central_moon))
-    assert external_norm < 1.0e-12
-    assert external_norm / central_norm < 1.0e-2
+    # At lunar-orbiter scale the solar external Schwarzschild differential is a
+    # tidal-like residual of two large Sun-relative 1PN terms. It should be near
+    # 1e-13 m/s^2 and hundreds of times smaller than the Moon central 1PN term.
+    assert external_norm < 3.0e-13
+    assert external_norm / central_norm < 2.0e-3
 
 
 def test_solar_external_schwarzschild_goes_to_zero_with_body_distance() -> None:

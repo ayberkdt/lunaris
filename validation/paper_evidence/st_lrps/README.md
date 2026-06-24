@@ -76,8 +76,8 @@ lunaris-st-lrps-paper-evidence --stage all \
     --config configs/st_lrps/paper/train_full_seed42.json --model-dir outputs/st_lrps_paper/seed42
 ```
 
-`--stage all` runs train → field-validation → orbit-benchmark → worst-case →
-multi-seed → tables. Ablation is **secondary** and is run explicitly with
+`--stage all` runs train -> field-validation -> orbit-benchmark -> worst-case ->
+multi-seed -> tables. Ablation is **secondary** and is run explicitly with
 `--stage ablation` so it never blocks final-candidate evidence.
 
 ### Train a final candidate
@@ -105,8 +105,8 @@ lunaris-st-lrps-paper-evidence --stage orbit-benchmark --model-dir outputs/st_lr
 # defaults to the 1-day + 5-day paper configs; override with --benchmark-config
 ```
 
-Paper-safe mode forbids synthetic/legacy/mismatch settings and requires strict
-domain + a contract-checked surrogate. Outputs include
+Paper-safe mode forbids synthetic data, contract-free artifacts, and target-mode
+mismatches. It requires a strict domain and a contract-checked surrogate. Outputs include
 `orbit_benchmark_metrics.csv`, `orbit_benchmark_scenario_results.csv`,
 `orbit_benchmark_runtime.csv`, `orbit_benchmark_summary.md`,
 `benchmark_manifest.json`, and `validation_report.json`.
@@ -122,7 +122,7 @@ lunaris-st-lrps-paper-evidence --stage tables   # regenerate all tables/figures 
 ### Reproduce paper tables/figures
 
 `--stage tables` regenerates `tables/table_*.md` and `figures/*.png` **from the
-CSV outputs** — numbers are never hardcoded into the documents, so the set is
+CSV outputs**; numbers are never hardcoded into the documents, so the set is
 fully regenerable. (Figures require matplotlib; without it, tables are still
 produced and figures are skipped with a note.)
 

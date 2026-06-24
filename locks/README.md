@@ -1,6 +1,6 @@
 # Reproducible dependency locks
 
-`pyproject.toml` remains the **single source of truth** for version *ranges*.
+`pyproject.toml` is the **single source of truth** for version *ranges*.
 The files in this directory are fully pinned, hash-verified resolutions of those
 ranges, intended for **reproducible Paper-evidence and HPC runs** where the exact
 transitive dependency set must be identical across machines.
@@ -12,7 +12,7 @@ transitive dependency set must be identical across machines.
 
 ## Canonical target
 
-The locks are resolved for **Linux (`x86_64-unknown-linux-gnu`) + CPython 3.11** —
+The locks are resolved for **Linux (`x86_64-unknown-linux-gnu`) + CPython 3.11**:
 the environment used by CI guardrails, the `lunaris-st-lrps-paper-evidence`
 benchmark, and Linux HPC nodes. Day-to-day development on other platforms should
 keep using `pip install -e ".[all]"`; the locks exist for *reproducibility*, not

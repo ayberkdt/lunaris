@@ -1,38 +1,44 @@
 # Lunar Gravity Validation
 
-This module validates lunar gravity models by comparing lower-fidelity models and optional ST-LRPS against a high-fidelity spherical-harmonic truth/reference model.
+This module validates lunar gravity models by comparing candidate force models
+against a declared high-degree spherical-harmonic numerical reference. It can
+evaluate classical lower-degree spherical-harmonic models and, when an artifact
+directory is provided, the ST-LRPS residual-potential surrogate.
 
-## Current Harness
+## Harness Entry Point
 
-The CLI harness now lives inside the ST-LRPS package at:
-`src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py`
-
-It is also wired into the ST-LRPS Studio under **Analysis → Orbit-Level Benchmark**.
-
-Run it as:
+Run the gravity benchmark CLI as:
 
 ```bash
 python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
 ```
 
+The same harness is exposed by `lunaris-benchmark` and by the ST-LRPS Studio
+under **Analysis -> Orbit-Level Benchmark**.
+
 ## Reference Hierarchy
 
-- **Truth model**: high-degree spherical harmonics, usually SH200 in the current harness.
-- **Baseline models**: lower-degree spherical-harmonic models such as SH20, SH60, SH80, SH120, SH160.
-- **Optional learned model**: ST-LRPS residual-potential surrogate, when an artifact directory is provided.
+- **Numerical reference**: high-degree spherical harmonics, commonly SH200 for
+  paper-safe orbit benchmarks.
+- **Baseline models**: lower-degree spherical-harmonic models such as SH20,
+  SH60, SH80, SH120, and SH160.
+- **Optional learned model**: ST-LRPS residual-potential surrogate, enabled by
+  providing a trained artifact directory.
 
 ## Validation Modes
 
-Current validation modes at a high level:
+Supported validation modes include:
+
 - CPU smoke validation
 - random scenario propagation
-- ST-LRPS force sample trajectory mode
+- ST-LRPS force-sample trajectory mode
 - GPU batch comparison
 - full SH-vs-ST-LRPS comparison
 
 ## Metrics
 
-Current and expected metrics for gravity validation runs:
+Gravity validation runs report:
+
 - runtime_s
 - runtime_rel_to_truth
 - rms_pos_err_km
@@ -57,6 +63,7 @@ Current and expected metrics for gravity validation runs:
 ## Example Commands
 
 CPU smoke:
+
 ```bash
 python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
     --random-scenarios 3 --duration-days 0.01 \
@@ -65,6 +72,7 @@ python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
 ```
 
 GPU batch smoke:
+
 ```bash
 python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
     --random-scenarios 5 --duration-days 0.05 \
@@ -76,24 +84,38 @@ python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \
 
 ## ST-LRPS Note
 
-ST-LRPS comparison is optional and is treated as learned residual-potential surrogate validation. Provide a trained artifact directory through the harness options when comparing it against the spherical-harmonic reference. This README intentionally documents validation behavior rather than unstable package internals.
+ST-LRPS comparison is optional and is treated as learned residual-potential
+surrogate validation. Provide a trained artifact directory through the harness
+options when comparing it against the spherical-harmonic reference. This README
+documents validation behavior and output schemas rather than package internals.
 
 ## Generated Outputs
 
-Validation outputs should be written under the repository-level `outputs/` directory (the canonical location is `outputs/gravity_benchmark/`) or an external scratch path. Do not commit generated plots, cached truth trajectories, metrics tables, reports, checkpoints, or trained model artifacts; the `outputs/` tree is git-ignored.
+Validation outputs should be written under the repository-level `outputs/`
+directory, usually `outputs/gravity_benchmark/`, or an external scratch path. Do
+not commit generated plots, cached truth trajectories, metrics tables, reports,
+checkpoints, or trained model artifacts; the `outputs/` tree is git-ignored.
 
 ## Implementation Layout
 
-`compare_gravity_models.py` is the stable CLI/facade (and backs the
-`lunaris-benchmark` entry point); its implementation lives in the internal
-subpackage `src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/`:
-- `types.py` — shared dataclasses / result types
-- `compute.py` — propagation and error computation
-- `metrics.py` — metric aggregation
-- `modes.py` — validation modes (CPU smoke, random scenarios, GPU batch compare, …)
-- `plotting.py` — figures
-- `results_io.py` — metrics tables and report I/O
+The public command module is:
 
-`compare_gravity_models` re-exports the implementation symbols as a
-backward-compatible facade, so the module path and CLI flags are unchanged. This
-README documents validation behavior and schemas rather than these internals.
+```text
+src/lunaris/surrogate/st_lrps/evaluation/compare_gravity_models.py
+```
+
+Implementation modules live in:
+
+```text
+src/lunaris/surrogate/st_lrps/evaluation/_gravity_benchmark/
+```
+
+- `types.py`: shared dataclasses and result types
+- `compute.py`: propagation and error computation
+- `metrics.py`: metric aggregation
+- `modes.py`: validation modes such as CPU smoke, random scenarios, and GPU
+  batch compare
+- `plotting.py`: figures
+- `results_io.py`: metrics tables and report I/O
+
+Use the public command module for CLI and automation entry points.

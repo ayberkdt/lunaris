@@ -47,7 +47,8 @@ distribution into training.
 
 Tests (`tests/test_st_lrps_scaler_leakage.py`) build a dataset whose validation
 rows have extreme targets and prove the train-only scaler is unaffected while the
-legacy whole-file fit is not — so the guard genuinely catches leakage.
+whole-file fit would be contaminated. The guarded invariant is simple: validation
+and test targets must not influence any scaler used during training.
 
 ## 2. Split policies — interpolation vs generalization vs extrapolation
 
@@ -84,8 +85,8 @@ definitions, so train/val/test separation is fully auditable.
 * `predict_residual_accel_inertial(r_inertial_m, q_i2f)` (and `_potential_`,
   `_total_` variants) rotate inertial → fixed, evaluate, and rotate the
   acceleration back to inertial.
-* The legacy unsuffixed methods (`predict_residual_potential`, …) are retained as
-  documented **fixed-frame** wrappers.
+* The unsuffixed compatibility methods (`predict_residual_potential`, ...)
+  remain documented **fixed-frame** wrappers.
 
 The constructor reads the artifact's declared frame and **hard-fails** unless it
 is `moon_fixed_cartesian`. Dynamics integration (`surrogate/runtime_adapter.py`)
@@ -126,9 +127,12 @@ Synthetic output, when used outside paper-safe, is stamped
 * Model names are consistent across `metrics_summary`, `scenario_results`, and
   `runtime_summary`.
 * `report.md`'s stated scenario count matches the validated count (no stale text).
-* `total_runtime_s / n_scenarios ≈ runtime_per_scenario_s` within tolerance.
+* `total_runtime_s / n_scenarios` equals `runtime_per_scenario_s` within
+  tolerance.
 
-This makes the previous "N=100 vs N=512" class of errors impossible to miss.
+These checks make scenario-count drift explicit: a report cannot claim one
+scenario count while the result tables, runtime table, or per-scenario runtime
+were produced for a different count.
 
 ## 6. Validation suite beyond random
 

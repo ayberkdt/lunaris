@@ -75,6 +75,13 @@ _KERNEL_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("planetary_ephemeris", ("de440.bsp",)),
 )
 
+_OPTIONAL_KERNEL_CANDIDATES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # Supplies BODY*_GM values for strict ephemeris validation. Older local data
+    # bundles may not have this file yet, so include it opportunistically and
+    # let lunaris-data verify --strict report the missing asset.
+    ("gravity_constants", ("gm_de440.tpc", "gm_de440.tpc.txt")),
+)
+
 # Gravity model filename candidates (in priority order).
 _GRAVITY_CANDIDATES: tuple[str, ...] = (
     "jggrx_1800f_sha.tab",
@@ -97,6 +104,15 @@ def _pick_existing_file(folder: Path, candidates: tuple[str, ...], what: str) ->
     )
 
 
+def _pick_optional_existing_file(folder: Path, candidates: tuple[str, ...]) -> Path | None:
+    """Return the first existing optional file inside folder, or None."""
+    for name in candidates:
+        p = (folder / name)
+        if p.exists():
+            return p.resolve()
+    return None
+
+
 def _resolve_default_kernel_paths() -> tuple[str, ...]:
     """Default local SPICE-kernel resolver for the ST_LRPS config factory only.
 
@@ -113,6 +129,10 @@ def _resolve_default_kernel_paths() -> tuple[str, ...]:
     out: list[str] = []
     for purpose, candidates in _KERNEL_CANDIDATES:
         out.append(str(_pick_existing_file(KERNEL_DIR, candidates, what=f"SPICE kernel ({purpose})")))
+    for _purpose, candidates in _OPTIONAL_KERNEL_CANDIDATES:
+        optional = _pick_optional_existing_file(KERNEL_DIR, candidates)
+        if optional is not None:
+            out.append(str(optional))
     return tuple(out)
 
 
