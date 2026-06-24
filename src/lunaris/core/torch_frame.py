@@ -78,6 +78,138 @@ def line_sphere_alpha(p_prev: Any, p_curr: Any, r_impact: Any) -> Any:
     return alpha
 
 
+def sample_topo_radius_torch(topo: dict[str, Any], lat_deg: Any, lon_deg: Any) -> Any:
+    """Vectorised terrain-radius sampler for a ``loaders._grid_topo_payload``.
+
+    Torch counterpart of ``loaders.io_surface.sample_topo_radius_m`` and the Numba
+    ``_sample_topo_radius_cuda`` device function: longitude wrapped to ``[0, 360)``,
+    latitude clamped to ``[lat_min_deg, lat_max_deg]``, scaled bilinear lookup
+    ``scale_m * DN + bias_m``. ``lat_deg``/``lon_deg`` are ``[N]`` tensors; returns
+    a ``[N]`` tensor of surface radii [m].
+
+    When ``topo`` carries no grid (constant fallback) every sample resolves to the
+    payload's ``radius_const_m`` so the caller stays terrain-clean over voids.
+    """
+    import torch
+
+    dn = topo.get("dn", None)
+    const_m = float(topo.get("radius_const_m", 0.0))
+    if dn is None:
+        return torch.full_like(lat_deg, const_m)
+
+    n_lines = int(topo["n_lines"])
+    n_samples = int(topo["n_samples"])
+    res = float(topo["res_deg"])
+    lon0 = float(topo["lon0_deg"])
+    lat0 = float(topo["lat0_deg"])
+    scale_m = float(topo["scale_m"])
+    bias_m = float(topo["bias_m"])
+    flip = int(topo.get("flip_lat", 0))
+    lat_min = float(topo["lat_min_deg"])
+    lat_max = float(topo["lat_max_deg"])
+
+    lon_w = torch.remainder(lon_deg, 360.0)
+    lat_c = lat_deg.clamp(lat_min, lat_max)
+    lat_sign = 1.0 if flip == 0 else -1.0
+    i_f = (lat_sign * (lat0 - lat_c)) / res
+    j_f = torch.remainder((lon_w - lon0) / res, float(n_samples))
+
+    i0 = torch.floor(i_f)
+    j0 = torch.floor(j_f)
+    di = i_f - i0
+    dj = j_f - j0
+    i0l = i0.long().clamp(0, n_lines - 1)
+    i1l = (i0.long() + 1).clamp(0, n_lines - 1)
+    j0l = j0.long().clamp(0, n_samples - 1)
+    j1l = (j0.long() + 1).clamp(0, n_samples - 1)
+
+    dn = dn if dn.dtype == lat_deg.dtype else dn.to(lat_deg.dtype)
+    v00 = dn[i0l, j0l]
+    v01 = dn[i0l, j1l]
+    v10 = dn[i1l, j0l]
+    v11 = dn[i1l, j1l]
+    top = v00 * (1.0 - dj) + v01 * dj
+    bot = v10 * (1.0 - dj) + v11 * dj
+    dn_interp = top * (1.0 - di) + bot * di
+    return scale_m * dn_interp + bias_m
+
+
+def terrain_segment_intersection(
+    p_prev: Any,
+    p_curr: Any,
+    *,
+    t_prev_s: float,
+    dt_s: float,
+    frame: Any,
+    topo: dict[str, Any],
+    impact_alt_m: float,
+    bisection_iters: int = 32,
+) -> tuple[Any, Any]:
+    """Terrain-aware analogue of :func:`line_sphere_intersection`.
+
+    Two stages, fully vectorised:
+
+    1. **Outer envelope.** A segment can only touch terrain if it reaches the
+       bounding sphere ``r_terrain_max + impact_alt`` (max terrain height plus the
+       altitude threshold). Rows that miss this sphere cannot impact.
+    2. **Terrain bisection.** On ``[alpha_enter, 1]`` solve the downward crossing
+       of ``f(alpha) = ||p(alpha)|| - terrain_radius(lat, lon) - impact_alt``. The
+       sub-point latitude/longitude come from the body-fixed position; the
+       inertial→fixed rotation is evaluated once per segment at its midpoint
+       (Moon rotation over a single step is negligible relative to terrain relief),
+       keeping the SLERP-frame provenance.
+
+    Returns ``(hit, alpha)`` with the same contract as
+    :func:`line_sphere_intersection`: non-hit rows get ``alpha = 1``. The caller
+    forms the crossing state by linear interpolation at ``alpha`` exactly as for
+    the sphere path, so position **and** velocity freeze on the terrain surface.
+    """
+    import torch
+
+    dp = p_curr - p_prev
+    impact_alt = float(impact_alt_m)
+    r_outer = float(topo.get("r_terrain_max_m", topo.get("radius_const_m", 0.0))) + impact_alt
+    hit_outer, alpha_enter = line_sphere_intersection(p_prev, p_curr, r_outer)
+
+    t_rep = float(t_prev_s) + 0.5 * float(dt_s)
+    use_rot = frame is not None and bool(getattr(frame, "uses_rotation", False))
+
+    def _f(alpha: Any) -> Any:
+        p = p_prev + alpha.unsqueeze(1) * dp
+        r = torch.linalg.norm(p, dim=1)
+        p_bf = frame.inertial_to_fixed(t_rep, p) if use_rot else p
+        r_safe = r.clamp_min(1e-30)
+        lat = torch.rad2deg(torch.asin((p_bf[:, 2] / r_safe).clamp(-1.0, 1.0)))
+        lon = torch.rad2deg(torch.atan2(p_bf[:, 1], p_bf[:, 0]))
+        terrain_r = sample_topo_radius_torch(topo, lat, lon)
+        return r - terrain_r - impact_alt
+
+    one = p_prev.new_ones(p_prev.shape[0])
+    lo = alpha_enter
+    hi = one
+    f_lo = _f(lo)
+    f_hi = _f(hi)
+
+    # Impact iff the envelope is entered and the step endpoint is at/below terrain.
+    # (A transient dip-and-recover within one step is below this scheme's
+    # resolution and is intentionally treated as no-impact, mirroring the
+    # entry-only sphere logic.)
+    bracket = hit_outer & (f_hi <= 0.0)
+
+    # Where the segment is already below terrain at envelope entry, freeze at entry.
+    already = bracket & (f_lo <= 0.0)
+
+    for _ in range(int(bisection_iters)):
+        mid = 0.5 * (lo + hi)
+        go_right = _f(mid) > 0.0
+        lo = torch.where(go_right, mid, lo)
+        hi = torch.where(go_right, hi, mid)
+
+    alpha = torch.where(bracket, 0.5 * (lo + hi), one)
+    alpha = torch.where(already, alpha_enter, alpha)
+    return bracket, alpha
+
+
 class TorchMoonFrame:
     """SLERP-interpolated Moon inertial-to-fixed quaternion timeline."""
 
@@ -178,4 +310,6 @@ __all__ = [
     "line_sphere_intersection",
     "quat_conjugate_torch",
     "quat_rotate_torch",
+    "sample_topo_radius_torch",
+    "terrain_segment_intersection",
 ]

@@ -646,8 +646,8 @@ def build_events(
                     impact_alt_m=float(impact_alt_m),
                     topo=topo_grid,
                     r_i_to_bf=r_i_to_bf,
-                    switch_alt_m=float(getattr(cfg, "hybrid_switch_alt_m", 0.0)),
-                    kind=str(getattr(cfg, "hybrid_kind", "radial")),
+                    switch_alt_m=float(getattr(cfg, "hybrid_switch_alt_m", 11_000.0)),
+                    kind=str(getattr(cfg, "hybrid_kind", "bilinear")),
                     terminal=True,
                 )
             else:
