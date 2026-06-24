@@ -239,6 +239,11 @@ walking up to the first directory containing `pyproject.toml`, `.git`, or
 `LUNARIS_ASSETS_DIR` environment variables (generic `LDEM_ROOT`, `ALBEDO_ROOT`,
 and `SPICE_KERNELS` fallbacks are also honored).
 
+The `lunaris-data` CLI owns workflow-level data presets (`minimal`,
+`full-gravity`, `surface`, `st-lrps-dev`). Presets are named selections of
+`data/data_sources.json` entries; they do not bypass manifest URL, alias,
+companion-file, or SHA-256 verification. See [DATA_PRESETS.md](DATA_PRESETS.md).
+
 ## Batch / ensemble propagation infrastructure
 
 The public Python dataclasses and file names still use the historical

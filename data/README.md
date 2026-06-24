@@ -30,12 +30,18 @@ headless `lunaris-data` tool to list, download, verify, and locate files:
 
 ```bash
 lunaris-data list
-lunaris-data download --group ephemeris
-lunaris-data download --group gravity
-lunaris-data verify
+lunaris-data presets
+lunaris-data download --preset minimal
+lunaris-data verify --preset minimal --runtime
 lunaris-data verify --strict --runtime
 lunaris-data path
 ```
+
+Named presets are documented in
+[`docs/DATA_PRESETS.md`](../docs/DATA_PRESETS.md). Use `minimal` for a default
+single-orbit propagation run, `full-gravity` for strict gravity/SPICE
+provenance, `surface` for topography/albedo/thermal workflows, and
+`st-lrps-dev` when preparing optional ST-LRPS development artifacts.
 
 Entries with an official provider URL download directly from that provider
 (NAIF/JPL or NASA PDS). Entries with a recorded SHA-256 are verified by

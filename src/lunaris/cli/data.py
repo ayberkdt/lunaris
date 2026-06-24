@@ -46,6 +46,57 @@ CANONICAL_SUBDIRS = (
 #: Logical groups a dataset entry may belong to.
 GROUPS = ("gravity", "ephemeris", "topography", "albedo", "thermal", "assets", "datasets")
 
+#: Opinionated workflow bundles. Presets select exact manifest entries; all
+#: download, alias, companion-file, and hash behavior remains manifest-driven.
+DATA_PRESETS: dict[str, tuple[str, ...]] = {
+    "minimal": (
+        "naif_lsk_naif0012",
+        "naif_spk_de440",
+        "naif_pck_pck00011",
+        "naif_moon_pa_de440",
+        "naif_moon_fk_de440",
+        "grail_gravity_jggrx",
+    ),
+    "full-gravity": (
+        "naif_lsk_naif0012",
+        "naif_spk_de440",
+        "naif_pck_pck00011",
+        "naif_pck_gm_de440",
+        "naif_moon_pa_de440",
+        "naif_moon_fk_de440",
+        "grail_gravity_jggrx",
+    ),
+    "surface": (
+        "naif_lsk_naif0012",
+        "naif_spk_de440",
+        "naif_pck_pck00011",
+        "naif_pck_gm_de440",
+        "naif_moon_pa_de440",
+        "naif_moon_fk_de440",
+        "grail_gravity_jggrx",
+        "lola_ldem_topography",
+        "lola_albedo",
+        "diviner_thermal_dgdr_st",
+    ),
+    "st-lrps-dev": (
+        "naif_lsk_naif0012",
+        "naif_spk_de440",
+        "naif_pck_pck00011",
+        "naif_pck_gm_de440",
+        "naif_moon_pa_de440",
+        "naif_moon_fk_de440",
+        "grail_gravity_jggrx",
+        "st_lrps_cloud_suite",
+    ),
+}
+
+DATA_PRESET_DESCRIPTIONS: dict[str, str] = {
+    "minimal": "Default single-orbit propagation: SPICE kernels plus GRAIL gravity.",
+    "full-gravity": "Strict gravity/SPICE provenance, including GM constants.",
+    "surface": "Full-gravity plus topography, albedo, and thermal surface rasters.",
+    "st-lrps-dev": "Data needed to generate/inspect ST-LRPS development artifacts.",
+}
+
 _ALLOWED_SCHEMES = ("http", "https", "file")
 _CHUNK = 1 << 16
 _FAIL_STATUSES = ("missing", "hash_mismatch", "manual_missing")
@@ -126,12 +177,29 @@ def select_datasets(
     return items
 
 
+def select_preset_datasets(manifest: dict[str, Any], preset: str) -> list[dict[str, Any]]:
+    """Select manifest entries for a named data preset."""
+    preset_key = str(preset).strip()
+    if preset_key not in DATA_PRESETS:
+        raise ValueError(f"Unknown data preset: {preset_key}")
+
+    by_name = {str(d.get("name")): d for d in manifest.get("datasets", [])}
+    missing = [name for name in DATA_PRESETS[preset_key] if name not in by_name]
+    if missing:
+        raise ValueError(
+            f"Data preset {preset_key!r} references missing manifest entries: "
+            + ", ".join(missing)
+        )
+    return [by_name[name] for name in DATA_PRESETS[preset_key]]
+
+
 def select_for_download(
     manifest: dict[str, Any],
     *,
     all_groups: bool = False,
     group: str | None = None,
     name: str | None = None,
+    preset: str | None = None,
     include_optional: bool = False,
 ) -> list[dict[str, Any]]:
     """Select datasets for the ``download`` command.
@@ -140,6 +208,8 @@ def select_for_download(
     status. Otherwise an ``--all`` or ``--group`` selection is restricted to
     entries with ``required=true`` unless ``include_optional`` is set.
     """
+    if preset is not None:
+        return select_preset_datasets(manifest, preset)
     if name is not None:
         return select_datasets(manifest, name=name)
     base = select_datasets(manifest) if all_groups else select_datasets(manifest, group=group)
@@ -458,8 +528,19 @@ def _runtime_ephemeris_check(manifest: dict[str, Any], data_root: Path, *, stric
 # Commands
 # --------------------------------------------------------------------------- #
 def cmd_list(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
-    datasets = select_datasets(manifest, group=args.group)
+    try:
+        datasets = (
+            select_preset_datasets(manifest, args.preset)
+            if getattr(args, "preset", None)
+            else select_datasets(manifest, group=args.group)
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(f"manifest schema_version={manifest.get('schema_version')}   data root: {data_root}")
+    if getattr(args, "preset", None):
+        desc = DATA_PRESET_DESCRIPTIONS.get(args.preset, "")
+        print(f"preset: {args.preset}" + (f" - {desc}" if desc else ""))
     if not datasets:
         print("(no matching datasets)")
         return 0
@@ -477,16 +558,24 @@ def cmd_list(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace
 
 
 def cmd_download(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
-    if not (args.all or args.group or args.name):
-        print("error: choose what to download: --all, --group <g>, or --name <n>", file=sys.stderr)
+    if not (args.all or args.group or args.name or args.preset):
+        print(
+            "error: choose what to download: --preset <p>, --all, --group <g>, or --name <n>",
+            file=sys.stderr,
+        )
         return 2
-    datasets = select_for_download(
-        manifest,
-        all_groups=args.all,
-        group=args.group,
-        name=args.name,
-        include_optional=args.include_optional,
-    )
+    try:
+        datasets = select_for_download(
+            manifest,
+            all_groups=args.all,
+            group=args.group,
+            name=args.name,
+            preset=args.preset,
+            include_optional=args.include_optional,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     if not datasets:
         print("(no matching datasets — required entries only; "
               "pass --include-optional to include optional ones)")
@@ -511,7 +600,15 @@ def cmd_download(manifest: dict[str, Any], data_root: Path, args: argparse.Names
 
 
 def cmd_verify(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
-    datasets = select_datasets(manifest, group=args.group)
+    try:
+        datasets = (
+            select_preset_datasets(manifest, args.preset)
+            if getattr(args, "preset", None)
+            else select_datasets(manifest, group=args.group)
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     labels = {
         "valid": "OK (hash verified)",
         "present": "OK (present, no hash)",
@@ -556,6 +653,15 @@ def cmd_verify(manifest: dict[str, Any], data_root: Path, args: argparse.Namespa
         print(f"\n{failures} required dataset(s) missing or invalid.", file=sys.stderr)
         return 1
     print("\nAll required datasets present and valid (optional items may be missing).")
+    return 0
+
+
+def cmd_presets(manifest: dict[str, Any] | None, data_root: Path, args: argparse.Namespace) -> int:
+    """Print available data presets and their manifest entries."""
+    for preset, names in DATA_PRESETS.items():
+        print(f"{preset}: {DATA_PRESET_DESCRIPTIONS.get(preset, '')}")
+        for name in names:
+            print(f"  - {name}")
     return 0
 
 
@@ -647,8 +753,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_list = sub.add_parser("list", help="List catalogued datasets.")
-    p_list.add_argument("--group", choices=GROUPS, default=None)
+    list_filter = p_list.add_mutually_exclusive_group()
+    list_filter.add_argument("--group", choices=GROUPS, default=None)
+    list_filter.add_argument("--preset", choices=tuple(DATA_PRESETS), default=None)
     p_list.set_defaults(func=cmd_list)
+
+    p_presets = sub.add_parser("presets", help="List named data presets.")
+    p_presets.set_defaults(func=cmd_presets)
 
     p_dl = sub.add_parser(
         "download",
@@ -657,12 +768,15 @@ def build_parser() -> argparse.ArgumentParser:
         "selection downloads only required entries; add --include-optional to also "
         "fetch optional ones. --name always downloads the exact entry named.",
     )
-    p_dl.add_argument("--all", action="store_true",
-                      help="Select required datasets across every group (add --include-optional for optional ones).")
-    p_dl.add_argument("--group", choices=GROUPS, default=None,
-                      help="Select a group; downloads only its required entries unless --include-optional is given.")
-    p_dl.add_argument("--name", default=None,
-                      help="Download a single dataset by exact name, regardless of required/optional status.")
+    download_filter = p_dl.add_mutually_exclusive_group()
+    download_filter.add_argument("--preset", choices=tuple(DATA_PRESETS), default=None,
+                                 help="Select a named workflow preset.")
+    download_filter.add_argument("--all", action="store_true",
+                                 help="Select required datasets across every group (add --include-optional for optional ones).")
+    download_filter.add_argument("--group", choices=GROUPS, default=None,
+                                 help="Select a group; downloads only its required entries unless --include-optional is given.")
+    download_filter.add_argument("--name", default=None,
+                                 help="Download a single dataset by exact name, regardless of required/optional status.")
     p_dl.add_argument("--include-optional", action="store_true",
                       help="Also include optional (required=false) entries for --group/--all.")
     p_dl.add_argument("--dry-run", action="store_true", help="Show what would happen; download nothing.")
@@ -671,7 +785,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_dl.set_defaults(func=cmd_download)
 
     p_verify = sub.add_parser("verify", help="Verify presence/integrity of datasets.")
-    p_verify.add_argument("--group", choices=GROUPS, default=None)
+    verify_filter = p_verify.add_mutually_exclusive_group()
+    verify_filter.add_argument("--group", choices=GROUPS, default=None)
+    verify_filter.add_argument("--preset", choices=tuple(DATA_PRESETS), default=None)
     p_verify.add_argument(
         "--strict",
         action="store_true",
@@ -719,7 +835,7 @@ def main(argv: list[str] | None = None) -> int:
     data_root = resolve_data_root(args.data_dir)
 
     manifest: dict[str, Any] | None = None
-    if args.command not in {"path", "inspect", "validate", "report"}:
+    if args.command not in {"path", "presets", "inspect", "validate", "report"}:
         try:
             manifest = load_manifest(find_manifest(args.manifest))
         except (FileNotFoundError, ValueError) as exc:
