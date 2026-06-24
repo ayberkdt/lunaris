@@ -1,4 +1,4 @@
-# ST_LRPS/core/torch_sh_propagator.py
+# lunaris.core.torch_sh_propagator
 """
 Torch Classic-SH Batch Monte Carlo Propagator (``torch_cuda_sh`` / ``torch_cpu_sh`` runtime)
 =========================================================================

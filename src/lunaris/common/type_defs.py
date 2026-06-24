@@ -5,7 +5,7 @@ Type Definitions & Configuration Dataclasses
 
 This module defines the **public data model** for the project: type aliases, configuration
 dataclasses, and result containers. It is intended to be the single source of truth (SSOT)
-for structures shared across layers (UI/CLI → core → models → post-processing).
+for structures shared across layers (UI/CLI -> core -> physics -> analysis).
 
 Principles
 ----------

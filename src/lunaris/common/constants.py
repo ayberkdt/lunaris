@@ -1,10 +1,10 @@
 # lunaris/common/constants.py
 """
-Lunar Simulation Physical Constants & Reference Values
+Lunaris Physical Constants & Reference Values
 ==============================================
 
 This module serves as the Single Source of Truth (SSOT) for all physical,
-astronomical, and mathematical constants used throughout the Lunar Simulation project.
+astronomical, and mathematical constants used throughout the Lunaris project.
 It eliminates the use of "magic numbers" scattered across the codebase.
 
 Architectural Design Principles
@@ -34,8 +34,8 @@ Usage Guidelines
 
 - Time Systems: Constants like `DAY_S` and `MJD_J2000` define the continuous
   time grid (TDB/TT). This module does **not** account for UTC leap seconds.
-  For high-precision UTC <-> TDB transformations, utilize the SPICE-based layer
-  in `models/ephemeris.py`.
+  For high-precision UTC <-> TDB transformations, use the SPICE-based layer in
+  `lunaris.physics.ephemeris`.
 """
 
 from __future__ import annotations
@@ -155,7 +155,7 @@ M3_TO_KM3: float = 1e-9
 
 NEARLY_UNIT: float = 0.9995
 
-EPS_1E6 : float = 1e-6
+EPS_1E6: float = 1e-6
 EPS_1E12: float = 1e-12
 EPS_1E15: float = 1e-15
 EPS_1E18: float = 1e-18

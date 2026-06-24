@@ -1,10 +1,10 @@
 # config.py
 """
-ST_LRPS CONFIGURATION FACTORY
+LUNARIS CONFIGURATION FACTORY
 =============================
 
 This module acts as the "Builder" and "Single Source of Truth" (SSOT) manager
-for the ST_LRPS environment.
+for the Lunaris propagation environment.
 
 While `common.type_defs` defines the *atomic building blocks* (Bricks),
 this module defines the *blueprints* and the *construction logic* (The Building).
@@ -114,7 +114,7 @@ def _pick_optional_existing_file(folder: Path, candidates: tuple[str, ...]) -> P
 
 
 def _resolve_default_kernel_paths() -> tuple[str, ...]:
-    """Default local SPICE-kernel resolver for the ST_LRPS config factory only.
+    """Default local SPICE-kernel resolver for the Lunaris config factory only.
 
     Dependency-light: resolves paths from local filename candidates without
     importing heavy loaders/model modules. Runtime kernel loading/validation is
@@ -122,7 +122,7 @@ def _resolve_default_kernel_paths() -> tuple[str, ...]:
     """
     if not KERNEL_DIR.exists():
         raise FileNotFoundError(
-            f"CRITICAL: ST_LRPS SPICE kernel directory not found: {KERNEL_DIR}\n"
+            f"CRITICAL: Lunaris SPICE kernel directory not found: {KERNEL_DIR}\n"
             f"Expected folder structure: {DATA_DIR}/ephemeris_models"
         )
 
@@ -137,14 +137,14 @@ def _resolve_default_kernel_paths() -> tuple[str, ...]:
 
 
 def _resolve_default_gravity_path() -> Path:
-    """Default local gravity-model resolver for the ST_LRPS config factory only.
+    """Default local gravity-model resolver for the Lunaris config factory only.
 
     Dependency-light: resolves the default gravity file from local filename
     candidates without importing heavy loaders/model modules.
     """
     if not GRAV_DIR.exists():
         raise FileNotFoundError(
-            f"CRITICAL: ST_LRPS gravity model directory not found: {GRAV_DIR}\n"
+            f"CRITICAL: Lunaris gravity model directory not found: {GRAV_DIR}\n"
             f"Expected folder structure: {DATA_DIR}/gravity_models"
         )
     return _pick_existing_file(GRAV_DIR, _GRAVITY_CANDIDATES, what="gravity model")
@@ -403,7 +403,7 @@ def load_default_config() -> SimConfig:
             from lunaris.physics.solar_effects import SRPConfig
         except Exception as e:
             raise ImportError(
-                "SRP is enabled but models.solar_effects could not be imported (numba dependency)."
+                "SRP is enabled but lunaris.physics.solar_effects could not be imported (numba dependency)."
             ) from e
         srp_cfg = SRPConfig()
 
@@ -412,7 +412,7 @@ def load_default_config() -> SimConfig:
             from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig
         except Exception as e:
             raise ImportError(
-                "Albedo/Thermal is enabled but models.surface_effects could not be imported (numba dependency)."
+                "Albedo/Thermal is enabled but lunaris.physics.surface_effects could not be imported (numba dependency)."
             ) from e
 
         if flags.enable_albedo:
@@ -427,7 +427,7 @@ def load_default_config() -> SimConfig:
             from lunaris.physics.third_body_effects import EarthJ2Params
         except Exception as e:
             raise ImportError(
-                "Earth J2 requested (enable_earth_j2=True) but models.third_body_effects is unavailable."
+                "Earth J2 requested (enable_earth_j2=True) but lunaris.physics.third_body_effects is unavailable."
             ) from e
 
         # Typical values (WGS-84-like)
@@ -489,7 +489,7 @@ def get_default_config() -> SimConfig:
 
 if __name__ == "__main__":
     print("\n" + "=" * 60)
-    print("🛠️   ST_LRPS CONFIGURATION CHECK")
+    print("LUNARIS CONFIGURATION CHECK")
     print("=" * 60 + "\n")
 
     try:

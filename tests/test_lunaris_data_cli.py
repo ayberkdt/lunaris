@@ -7,9 +7,14 @@ in-memory manifests; none require external data, CUDA, PyTorch, or SPICE kernels
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from lunaris.cli import data as data_cli
 
 REQUIRED_FIELDS = ("name", "group", "filename", "target_subdir", "required")
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _manifest(datasets):
@@ -109,9 +114,87 @@ def test_preset_selection_preserves_exact_manifest_entries():
     minimal = data_cli.select_preset_datasets(manifest, "minimal")
     names = [entry["name"] for entry in minimal]
     assert names == list(data_cli.DATA_PRESETS["minimal"])
+    assert "naif_pck_pck00011" in names
     assert "naif_moon_pa_de440" in names
     assert "naif_moon_fk_de440" in names
     assert "grail_gravity_jggrx" in names
+
+
+def test_all_presets_reference_committed_manifest_entries():
+    manifest = data_cli.load_manifest(data_cli.default_manifest_path())
+    manifest_names = {entry["name"] for entry in manifest["datasets"]}
+    for preset, names in data_cli.DATA_PRESETS.items():
+        assert set(names) <= manifest_names, preset
+
+
+def test_preset_names_do_not_use_stale_albedo_ids():
+    all_preset_names = {
+        name
+        for names in data_cli.DATA_PRESETS.values()
+        for name in names
+    }
+    assert "lola_ldam_albedo_10" not in all_preset_names
+    assert "lola_ldam_albedo_8" not in all_preset_names
+    assert "lola_albedo" in all_preset_names
+    assert "lola_albedo_ldam8" in all_preset_names
+
+
+def test_preset_selection_fails_fast_for_missing_manifest_entry(monkeypatch):
+    monkeypatch.setitem(data_cli.DATA_PRESETS, "broken", ["req1", "missing"])
+    with pytest.raises(ValueError, match="missing manifest entries: missing"):
+        data_cli.select_preset_datasets(_sample(), "broken")
+
+
+def test_preset_selection_fails_fast_for_duplicate_manifest_names(monkeypatch):
+    manifest = _manifest([
+        {"name": "req1", "group": "ephemeris", "filename": "a",
+         "target_subdir": "ephemeris_models", "required": True},
+        {"name": "req1", "group": "gravity", "filename": "b",
+         "target_subdir": "gravity_models", "required": True},
+    ])
+    monkeypatch.setitem(data_cli.DATA_PRESETS, "dupe-check", ["req1"])
+    with pytest.raises(ValueError, match="duplicate dataset names: req1"):
+        data_cli.select_preset_datasets(manifest, "dupe-check")
+
+
+def test_unknown_preset_fails_fast():
+    with pytest.raises(ValueError, match="Unknown data preset"):
+        data_cli.select_preset_datasets(_sample(), "does-not-exist")
+
+
+def test_minimal_preset_is_runtime_ready_but_not_surface_or_strict_gm():
+    minimal = list(data_cli.DATA_PRESETS["minimal"])
+    assert "naif_pck_pck00011" in minimal
+    assert "naif_pck_gm_de440" not in minimal
+    assert "lola_ldem_topography" not in minimal
+    assert "lola_albedo" not in minimal
+    assert "diviner_thermal_dgdr_st" not in minimal
+
+
+def _docs_preset_entries() -> dict[str, list[str]]:
+    doc = (REPO_ROOT / "docs" / "DATA_PRESETS.md").read_text(encoding="utf-8")
+    parsed: dict[str, list[str]] = {}
+    current: str | None = None
+    for raw_line in doc.splitlines():
+        line = raw_line.strip()
+        if line.startswith("`") and line.endswith("`:"):
+            current = line.split("`", 2)[1]
+            parsed[current] = []
+            continue
+        if current is None or not line.startswith("- "):
+            continue
+        item = line[2:].strip()
+        if item.startswith("all `") and item.endswith("` entries"):
+            base = item.split("`", 2)[1]
+            parsed[current].extend(parsed[base])
+        elif item.startswith("`") and item.endswith("`"):
+            parsed[current].append(item.strip("`"))
+    return parsed
+
+
+def test_docs_exact_preset_lists_match_code():
+    docs_presets = _docs_preset_entries()
+    assert docs_presets == data_cli.DATA_PRESETS
 
 
 def test_download_preset_ignores_required_only_filter():
@@ -124,6 +207,11 @@ def test_download_preset_ignores_required_only_filter():
     # because they are needed for strict/runtime-friendly onboarding.
     assert "naif_pck_gm_de440" in names
     assert "naif_moon_fk_de440" in names
+
+
+def test_download_selector_conflicts_fail_fast():
+    with pytest.raises(ValueError, match="Choose only one download selector"):
+        data_cli.select_for_download(_sample(), group="gravity", preset="minimal")
 
 
 # --------------------------------------------------------------------------- #
@@ -164,6 +252,29 @@ def test_cli_preset_dry_run_includes_runtime_assets(tmp_path, capsys):
     assert "naif_moon_pa_de440" in out
     assert "naif_moon_fk_de440" in out
     assert "grail_gravity_jggrx" in out
+
+
+def test_cli_verify_accepts_preset_with_runtime_flag():
+    args = data_cli.build_parser().parse_args(["verify", "--preset", "minimal", "--runtime"])
+    assert args.command == "verify"
+    assert args.preset == "minimal"
+    assert args.group is None
+    assert args.runtime is True
+
+
+def test_cli_verify_group_and_preset_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        data_cli.build_parser().parse_args(["verify", "--group", "gravity", "--preset", "minimal"])
+
+
+def test_cli_download_selectors_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        data_cli.build_parser().parse_args(["download", "--group", "gravity", "--preset", "minimal"])
+
+
+def test_cli_list_group_and_preset_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        data_cli.build_parser().parse_args(["list", "--group", "gravity", "--preset", "minimal"])
 
 
 def test_cli_presets_lists_named_bundles(capsys):

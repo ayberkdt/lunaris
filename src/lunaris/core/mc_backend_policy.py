@@ -1,4 +1,4 @@
-# ST_LRPS/core/mc_backend_policy.py
+# lunaris.core.mc_backend_policy
 """
 Batch Propagation Backend Capability Matrix and Policy Resolver
 ===============================================================

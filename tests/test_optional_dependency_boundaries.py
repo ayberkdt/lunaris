@@ -56,6 +56,36 @@ assert loaded == [], loaded
     assert proc.returncode == 0, proc.stderr
 
 
+def test_lunaris_api_import_does_not_load_optional_dependencies() -> None:
+    proc = _run_blocked(
+        """
+import lunaris.api
+loaded = sorted(root for root in blocked if root in sys.modules)
+assert loaded == [], loaded
+"""
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_retired_physics_surrogate_module_does_not_load_optional_dependencies() -> None:
+    proc = _run_blocked(
+        """
+import importlib
+legacy = importlib.import_module("lunaris.physics.surrogate_gravity")
+assert legacy.__all__ == (), legacy.__all__
+loaded = sorted(root for root in blocked if root in sys.modules)
+assert loaded == [], loaded
+try:
+    getattr(legacy, "SurrogateGravityModel")
+except AttributeError as exc:
+    assert "lunaris.surrogate.runtime_adapter" in str(exc), exc
+else:
+    raise AssertionError("legacy physics surrogate path unexpectedly re-exported adapter")
+"""
+    )
+    assert proc.returncode == 0, proc.stderr
+
+
 def _console_scripts() -> dict[str, str]:
     scripts: dict[str, str] = {}
     in_scripts = False

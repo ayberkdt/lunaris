@@ -109,9 +109,9 @@ def test_force_direct_runtime_class_is_available() -> None:
     assert issubclass(DirectForceRuntime, BaseSurrogateRuntime)
 
 
-def test_legacy_physics_import_resolves_to_canonical_runtime_adapter() -> None:
-    from lunaris.physics.surrogate_gravity import (
-        SurrogateGravityModel as LegacySurrogateGravityModel,
-    )
+def test_legacy_physics_import_is_retired() -> None:
+    import importlib
 
-    assert LegacySurrogateGravityModel is SurrogateGravityModel
+    legacy = importlib.import_module("lunaris.physics.surrogate_gravity")
+    with pytest.raises(AttributeError, match="lunaris.surrogate.runtime_adapter"):
+        _ = legacy.SurrogateGravityModel

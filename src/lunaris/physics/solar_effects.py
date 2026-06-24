@@ -1,4 +1,4 @@
-# ST_LRPS/models/solar_effects.py
+# lunaris.physics.solar_effects
 """
 Solar Radiation Pressure (SRP) and Eclipse Geometry
 ===================================================

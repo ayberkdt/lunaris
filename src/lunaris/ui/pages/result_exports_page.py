@@ -1,9 +1,9 @@
-# ST_LRPS/ui_parts/result_exports_page.py
+# lunaris.ui.pages.result_exports_page
 """
 Results & Export Page (UI Part)
 ===============================
 
-This module encapsulates the output/export workflow for the Lunar Simulation
+This module encapsulates the output/export workflow for the Lunaris
 desktop UI. Earlier revisions kept this page embedded directly inside the main
 window, which made the window class responsible for both high-level process
 orchestration and low-level widget layout. The goal of this module is to give

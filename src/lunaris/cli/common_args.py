@@ -1,11 +1,11 @@
 # cli/common_args.py
 """
-ST_LRPS shared CLI helpers.
+Lunaris shared CLI helpers.
 
 Pure, import-safe argument helpers shared by the command-line entry points
 (``main.py`` and ``mc_runner.py``). This module is intentionally
 dependency-light: it imports only from the dependency-light ``common`` layer
-at module scope. Heavy modules (loaders / models / core) are imported lazily
+at module scope. Heavy modules (loaders / physics / core) are imported lazily
 inside the functions that need them, never at import time.
 """
 

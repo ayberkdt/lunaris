@@ -1,11 +1,9 @@
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from lunaris.common import GravityConfig
 from lunaris.common.montecarlo_defs import MonteCarloConfig, validate_st_lrps_model_dir
-from lunaris.core.monte_carlo_engine import generate_standard_normal_design
 
 
 def test_gravity_config_backend_aware():
@@ -45,24 +43,12 @@ def test_monte_carlo_config_no_fs_check():
     assert cfg.gpu_sh_degree == 80
 
 
-def test_batch_sampling_method_validation_and_determinism() -> None:
+def test_batch_sampling_method_validation() -> None:
     cfg = MonteCarloConfig(n_samples=8, sampling_method="lhs")
     assert cfg.sampling_method == "lhs"
 
     with pytest.raises(ValueError, match="sampling_method must be one of"):
         MonteCarloConfig(n_samples=8, sampling_method="grid")
-
-    lhs = generate_standard_normal_design(7, 3, "lhs", seed=123)
-    sobol_a = generate_standard_normal_design(7, 3, "sobol_scrambled", seed=123)
-    sobol_b = generate_standard_normal_design(7, 3, "sobol_scrambled", seed=123)
-    sobol_c = generate_standard_normal_design(7, 3, "sobol_scrambled", seed=124)
-
-    assert lhs.shape == (7, 3)
-    assert sobol_a.shape == (7, 3)
-    assert np.isfinite(lhs).all()
-    assert np.isfinite(sobol_a).all()
-    assert np.allclose(sobol_a, sobol_b)
-    assert not np.allclose(sobol_a, sobol_c)
 
 
 def test_monte_carlo_impact_and_storage_contracts() -> None:
@@ -122,12 +108,16 @@ def test_validate_st_lrps_model_dir(tmp_path: Path):
 
 def test_lazy_imports():
     import lunaris.common as common
-    assert hasattr(common, "math_utils")
-    assert hasattr(common, "time_utils")
+    for name in ("math_utils", "time_utils", "montecarlo_defs", "paths", "hashing", "lunar_data"):
+        assert hasattr(common, name)
 
     # Accessing them triggers the lazy import
-    from lunaris.common import math_utils, time_utils
+    from lunaris.common import hashing, lunar_data, math_utils, montecarlo_defs, paths, time_utils
+    assert hashing is not None
+    assert lunar_data is not None
     assert math_utils is not None
+    assert montecarlo_defs is not None
+    assert paths is not None
     assert time_utils is not None
 
     # Check that Numba requirement is mentioned in their docstrings

@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.constants import EPS_1E12, EPS_1E18, EPS_1E30
+
 
 class TorchFrameError(RuntimeError):
     """Raised when the Torch frame timeline cannot satisfy the runtime contract."""
@@ -58,7 +60,7 @@ def line_sphere_intersection(
     has_real_root = disc >= -disc_tol
     sqrt_disc = disc.clamp_min(0.0).sqrt()
     one = a.new_ones(())
-    nondegenerate = a.abs() >= 1e-18
+    nondegenerate = a.abs() >= EPS_1E18
     a_safe = a.where(nondegenerate, one)
     alpha_raw = (-b - sqrt_disc) / (2.0 * a_safe)
     alpha_tol = 32.0 * torch.finfo(a.dtype).eps
@@ -203,7 +205,7 @@ def terrain_segment_intersection(
         p = p_prev + alpha.unsqueeze(1) * dp
         r = torch.linalg.norm(p, dim=1)
         p_bf = frame.inertial_to_fixed(t_rep, p) if use_rot else p
-        r_safe = r.clamp_min(1e-30)
+        r_safe = r.clamp_min(EPS_1E30)
         lat = torch.rad2deg(torch.asin((p_bf[:, 2] / r_safe).clamp(-1.0, 1.0)))
         lon = torch.rad2deg(torch.atan2(p_bf[:, 1], p_bf[:, 0]))
         terrain_r = sample_topo_radius_torch(topo, lat, lon)
@@ -281,7 +283,7 @@ class TorchMoonFrame:
         self.q_tab = torch.as_tensor(q_np, device=device, dtype=dtype)
         self.q_tab = self.q_tab / torch.linalg.norm(
             self.q_tab, dim=1, keepdim=True
-        ).clamp_min(1e-30)
+        ).clamp_min(EPS_1E30)
         self.uses_rotation = True
 
     def quat_i2f(self, t_s: float) -> Any:
@@ -290,7 +292,7 @@ class TorchMoonFrame:
 
         if self.q_tab.shape[0] <= 1:
             return self.q_tab[0]
-        u = max(0.0, float(t_s) / max(self.dt_s, 1e-12))
+        u = max(0.0, float(t_s) / max(self.dt_s, EPS_1E12))
         i0 = int(math.floor(u))
         if i0 >= self.q_tab.shape[0] - 1:
             return self.q_tab[-1]
@@ -305,14 +307,14 @@ class TorchMoonFrame:
         dot = torch.clamp(dot_raw * sign, -1.0, 1.0)
         q_linear = (1.0 - frac) * qa + frac * qb
         theta_0 = torch.acos(dot)
-        sin_theta_0 = torch.sin(theta_0).clamp_min(1e-30)
+        sin_theta_0 = torch.sin(theta_0).clamp_min(EPS_1E30)
         theta = theta_0 * frac
         q_slerp = (
             torch.sin(theta_0 - theta) / sin_theta_0 * qa
             + torch.sin(theta) / sin_theta_0 * qb
         )
         q = torch.where(dot > 0.9995, q_linear, q_slerp)
-        return q / torch.linalg.norm(q).clamp_min(1e-30)
+        return q / torch.linalg.norm(q).clamp_min(EPS_1E30)
 
     def inertial_to_fixed(self, t_s: float, vectors: Any) -> Any:
         if not self.uses_rotation:

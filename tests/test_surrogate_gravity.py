@@ -292,4 +292,4 @@ def test_no_hnn_naming_in_surrogate_gravity_module() -> None:
     import lunaris.surrogate.runtime_adapter as sgm_mod
     public_names = [n for n in dir(sgm_mod) if not n.startswith("_")]
     hnn_names = [n for n in public_names if "hnn" in n.lower()]
-    assert hnn_names == [], f"HNN names found in models.surrogate_gravity: {hnn_names}"
+    assert hnn_names == [], f"HNN names found in lunaris.surrogate.runtime_adapter: {hnn_names}"

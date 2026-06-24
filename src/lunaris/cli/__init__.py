@@ -1,5 +1,5 @@
 # cli/__init__.py
-"""ST_LRPS command-line helper package.
+"""Lunaris command-line helper package.
 
 Houses small, import-safe helpers shared by the CLI entry points
 (``main.py`` and ``mc_runner.py``). Importing this package must not pull in

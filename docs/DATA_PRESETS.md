@@ -17,6 +17,10 @@ lunaris-data verify --preset minimal --runtime
 Use `--data-dir <path>` or `LUNARIS_DATA_DIR` when storing data outside the
 repository checkout.
 
+Selection flags are exclusive when supplied: do not combine `--group`, `--name`,
+`--all`, and `--preset` on `download`; do not combine `--group` and `--preset`
+on `list` or `verify`.
+
 ## Presets
 
 | Preset | Purpose |
@@ -47,6 +51,7 @@ repository checkout.
 - all `full-gravity` entries
 - `lola_ldem_topography`
 - `lola_albedo`
+- `lola_albedo_ldam8`
 - `diviner_thermal_dgdr_st`
 
 `st-lrps-dev`:

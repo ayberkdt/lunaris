@@ -23,8 +23,9 @@ python -m pip install -e ".[all]"
 
 ## 2. Download The Minimal Runtime Data
 
-The minimal preset contains the SPICE kernels and GRAIL gravity model needed for
-a default propagation run:
+The minimal preset contains the SPICE runtime kernels and GRAIL gravity model
+needed for a default classical propagation run. It does not require surface
+rasters or any ST-LRPS artifact:
 
 ```bash
 lunaris-data presets
