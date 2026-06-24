@@ -27,10 +27,6 @@ This README is a landing page; the canonical detail lives in `docs/`.
 
 | Document | Contents |
 |----------|----------|
-| [docs/README.md](docs/README.md) | Documentation index for onboarding, API boundaries, data presets, architecture, UI, and ST-LRPS |
-| [docs/GETTING_STARTED_10_MINUTES.md](docs/GETTING_STARTED_10_MINUTES.md) | Install, download/verify data, run one orbit, and produce a plot |
-| [docs/PUBLIC_API.md](docs/PUBLIC_API.md) | Stable console scripts, supported Python imports, and internal/provisional boundaries |
-| [docs/DATA_PRESETS.md](docs/DATA_PRESETS.md) | Named `lunaris-data` bundles: `minimal`, `full-gravity`, `surface`, `st-lrps-dev` |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, **force-model / perturbation flags**, batch/ensemble propagation internals, ST-LRPS surrogate |
 | [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD split policies, runtime frame safety, paper-safe benchmarks, validation + ablation suites |
 | [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
@@ -89,10 +85,9 @@ Large mission data (SPICE kernels, gravity coefficients, topography, albedo) is
 
 ```bash
 lunaris-data list
-lunaris-data presets
-lunaris-data download --preset minimal
-lunaris-data verify --preset minimal --runtime
-lunaris-data download --preset full-gravity
+lunaris-data download --group ephemeris
+lunaris-data download --group gravity
+lunaris-data verify
 lunaris-data verify --strict --runtime
 ```
 
@@ -126,12 +121,6 @@ python -m lunaris.visualization.surface_explorer --help
 Data-dependent workflows (full propagation, ST-LRPS training, gravity validation,
 topography plots) require local gravity, SPICE, or LOLA files.
 
-For a guided first run, see
-[docs/GETTING_STARTED_10_MINUTES.md](docs/GETTING_STARTED_10_MINUTES.md). The
-`examples/` directory contains executable Python examples for basic propagation,
-perturbation toggles, small batch sweeps, perturbation budgets, and optional
-ST-LRPS runtime loading.
-
 ## Repository architecture
 
 A `src/` package layout organized into **four strict layers** (a layer never
@@ -151,7 +140,6 @@ src/lunaris/
   surrogate/st_lrps/   Sobolev-Trained Lunar Residual Potential Surrogate family
       data/ training/ networks/ artifacts/ evaluation/ runtime/ shared/ ui/
 validation/        independent physics/orbit/gravity validation harnesses + docs
-examples/          small executable Python examples for the public API
 tests/             unit and regression tests
 data/              local input data (SPICE kernels, gravity, topography)
 hpc/               example Slurm templates for cluster use
