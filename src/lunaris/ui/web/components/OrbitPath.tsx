@@ -1,32 +1,45 @@
 'use client';
 import { useRef, useMemo, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { Line, Box, Cylinder, Sphere, Cone } from '@react-three/drei';
+import { Line } from '@react-three/drei';
 import * as THREE from 'three';
 import orbitData from '../public/orbit-data.json';
 import { Spacecraft } from './Spacecraft';
+
+type OrbitDataEntry = {
+  path?: number[][];
+  future_paths?: Record<string, number[][]>;
+};
+
+type OrbitDataset = Record<string, OrbitDataEntry | undefined>;
 
 interface OrbitPathProps {
   color?: string;
   glowColor?: string;
   speed?: number;
   dataKey?: string;
+  animate?: boolean;
 }
 
-export default function OrbitPath({ color = "#00E5FF", glowColor = "#00AEEF", speed = 2, dataKey = "path1" }: OrbitPathProps) {
+export default function OrbitPath({
+  color = "#00E5FF",
+  glowColor = "#00AEEF",
+  speed = 2,
+  dataKey = "path1",
+  animate = true,
+}: OrbitPathProps) {
   const satelliteRef = useRef<THREE.Group>(null);
   const thrusterRef = useRef<THREE.Mesh>(null);
   const thrusterCoreRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
-  const dummy = useMemo(() => new THREE.Object3D(), []);
   const burnTime = useRef(0);
   
   const [futurePoints, setFuturePoints] = useState<THREE.Vector3[]>([]);
   const [trailPoints, setTrailPoints] = useState<THREE.Vector3[]>([]);
 
-  const pathData = (orbitData as any)[dataKey];
-  const pathRaw = pathData?.path as number[][];
-  const futurePathsRaw = pathData?.future_paths as any;
+  const pathData = (orbitData as unknown as OrbitDataset)[dataKey];
+  const pathRaw = pathData?.path;
+  const futurePathsRaw = pathData?.future_paths;
 
   const points = useMemo(() => {
     if (!pathRaw) return [];
@@ -39,7 +52,8 @@ export default function OrbitPath({ color = "#00E5FF", glowColor = "#00AEEF", sp
   useFrame(({ clock }) => {
     if (satelliteRef.current && points.length > 1) {
       const timeOffset = 150; // Start in the middle of a coast phase to avoid confusing initial flips
-      const t = ((clock.getElapsedTime() * speed * 2.5) + timeOffset) % points.length;
+      const elapsed = animate ? clock.getElapsedTime() : 0;
+      const t = ((elapsed * speed * 2.5) + timeOffset) % points.length;
       const index = Math.floor(t);
       const nextIndex = (index + 1) % points.length;
       
@@ -73,11 +87,12 @@ export default function OrbitPath({ color = "#00E5FF", glowColor = "#00AEEF", sp
       satelliteRef.current.quaternion.slerp(progradQ, 0.015);
 
       // Engine Burn Visuals (Prograde and Retrograde windows)
-      const isBurning = 
+      const isBurning = animate && (
         (index >= 270 && index <= 300) || // Prograde 1
         (index >= 570 && index <= 600) || // Prograde 2
         (index >= 870 && index <= 900) || // Retrograde 1
-        (index >= 1170 || index < 5);     // Retrograde 2
+        (index >= 1170 || index < 5)      // Retrograde 2
+      );
       
       if (thrusterRef.current && thrusterCoreRef.current && lightRef.current) {
         if (isBurning) {

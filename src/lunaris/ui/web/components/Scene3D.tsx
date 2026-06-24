@@ -5,6 +5,7 @@ import { OrbitControls, Stars, useProgress } from '@react-three/drei';
 import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import MoonModel from './MoonModel';
 import OrbitPath from './OrbitPath';
+import { useReducedMotion } from './useReducedMotion';
 
 interface Scene3DProps {
   textureMode?: 'aesthetic' | 'gravity';
@@ -14,6 +15,7 @@ interface Scene3DProps {
 export default function Scene3D({ textureMode = 'aesthetic', displacementScale = 0.04 }: Scene3DProps) {
   const { progress } = useProgress();
   const loaded = progress === 100;
+  const prefersReducedMotion = useReducedMotion();
 
   return (
     <Canvas camera={{ position: [0, 0, 5], fov: 45 }} gl={{ alpha: true }}>
@@ -26,13 +28,23 @@ export default function Scene3D({ textureMode = 'aesthetic', displacementScale =
       <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
       
       <Suspense fallback={null}>
-        <MoonModel textureMode={textureMode} displacementScale={displacementScale} />
+        <MoonModel
+          textureMode={textureMode}
+          displacementScale={displacementScale}
+          animate={!prefersReducedMotion}
+        />
       </Suspense>
       
       {loaded && (
         <>
           {/* Premium Single Satellite (Cyan / Electric Blue) */}
-          <OrbitPath color="#00E5FF" glowColor="#00AEEF" speed={3.5} dataKey="path1" />
+          <OrbitPath
+            color="#00E5FF"
+            glowColor="#00AEEF"
+            speed={3.5}
+            dataKey="path1"
+            animate={!prefersReducedMotion}
+          />
         </>
       )}
       
@@ -43,7 +55,7 @@ export default function Scene3D({ textureMode = 'aesthetic', displacementScale =
       <OrbitControls 
         enableZoom={false} 
         enablePan={false} 
-        autoRotate 
+        autoRotate={!prefersReducedMotion}
         autoRotateSpeed={0.5}
       />
     </Canvas>

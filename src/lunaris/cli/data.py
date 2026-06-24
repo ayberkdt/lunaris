@@ -46,6 +46,45 @@ CANONICAL_SUBDIRS = (
 #: Logical groups a dataset entry may belong to.
 GROUPS = ("gravity", "ephemeris", "topography", "albedo", "thermal", "assets", "datasets")
 
+#: Named download presets — curated entry-name bundles for common onboarding scenarios.
+DATA_PRESETS: dict[str, list[str]] = {
+    "minimal": [
+        "naif_lsk_naif0012",
+        "naif_spk_de440",
+        "naif_moon_pa_de440",
+        "naif_moon_fk_de440",
+        "naif_pck_gm_de440",
+        "grail_gravity_jggrx",
+        "lola_ldem_topography",
+    ],
+    "full-gravity": [
+        "naif_lsk_naif0012",
+        "naif_spk_de440",
+        "naif_moon_pa_de440",
+        "naif_moon_fk_de440",
+        "naif_pck_gm_de440",
+        "grail_gravity_jggrx",
+        "lola_ldem_topography",
+        "lola_ldam_albedo_10",
+        "lola_ldam_albedo_8",
+    ],
+    "surface": [
+        "lola_ldem_topography",
+        "lola_ldam_albedo_10",
+        "lola_ldam_albedo_8",
+    ],
+    "st-lrps-dev": [
+        "naif_lsk_naif0012",
+        "naif_spk_de440",
+        "naif_moon_pa_de440",
+        "naif_moon_fk_de440",
+        "naif_pck_gm_de440",
+        "grail_gravity_jggrx",
+        "lola_ldem_topography",
+        "lola_ldam_albedo_10",
+    ],
+}
+
 _ALLOWED_SCHEMES = ("http", "https", "file")
 _CHUNK = 1 << 16
 _FAIL_STATUSES = ("missing", "hash_mismatch", "manual_missing")
@@ -126,22 +165,37 @@ def select_datasets(
     return items
 
 
+def select_preset_datasets(
+    manifest: dict[str, Any],
+    preset: str,
+) -> list[dict[str, Any]]:
+    """Return the manifest entries named by *preset* (in preset order)."""
+    names = DATA_PRESETS.get(preset, [])
+    by_name = {d["name"]: d for d in manifest.get("datasets", []) if "name" in d}
+    return [by_name[n] for n in names if n in by_name]
+
+
 def select_for_download(
     manifest: dict[str, Any],
     *,
     all_groups: bool = False,
     group: str | None = None,
     name: str | None = None,
+    preset: str | None = None,
     include_optional: bool = False,
 ) -> list[dict[str, Any]]:
     """Select datasets for the ``download`` command.
 
     ``--name`` selects that exact entry regardless of its required/optional
-    status. Otherwise an ``--all`` or ``--group`` selection is restricted to
+    status. ``--preset`` selects the named bundle (all entries in the preset
+    are included regardless of their required/optional flag in the manifest).
+    Otherwise an ``--all`` or ``--group`` selection is restricted to
     entries with ``required=true`` unless ``include_optional`` is set.
     """
     if name is not None:
         return select_datasets(manifest, name=name)
+    if preset is not None:
+        return select_preset_datasets(manifest, preset)
     base = select_datasets(manifest) if all_groups else select_datasets(manifest, group=group)
     if include_optional:
         return base
@@ -458,8 +512,13 @@ def _runtime_ephemeris_check(manifest: dict[str, Any], data_root: Path, *, stric
 # Commands
 # --------------------------------------------------------------------------- #
 def cmd_list(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
-    datasets = select_datasets(manifest, group=args.group)
-    print(f"manifest schema_version={manifest.get('schema_version')}   data root: {data_root}")
+    preset = getattr(args, "preset", None)
+    if preset is not None:
+        datasets = select_preset_datasets(manifest, preset)
+        print(f"manifest schema_version={manifest.get('schema_version')}   data root: {data_root}   preset: {preset}")
+    else:
+        datasets = select_datasets(manifest, group=getattr(args, "group", None))
+        print(f"manifest schema_version={manifest.get('schema_version')}   data root: {data_root}")
     if not datasets:
         print("(no matching datasets)")
         return 0
@@ -477,14 +536,16 @@ def cmd_list(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace
 
 
 def cmd_download(manifest: dict[str, Any], data_root: Path, args: argparse.Namespace) -> int:
-    if not (args.all or args.group or args.name):
-        print("error: choose what to download: --all, --group <g>, or --name <n>", file=sys.stderr)
+    preset = getattr(args, "preset", None)
+    if not (args.all or args.group or args.name or preset):
+        print("error: choose what to download: --all, --group <g>, --name <n>, or --preset <p>", file=sys.stderr)
         return 2
     datasets = select_for_download(
         manifest,
         all_groups=args.all,
         group=args.group,
         name=args.name,
+        preset=preset,
         include_optional=args.include_optional,
     )
     if not datasets:
@@ -630,6 +691,13 @@ def cmd_report_dataset(manifest: dict[str, Any] | None, data_root: Path, args: a
 # --------------------------------------------------------------------------- #
 # Parser + entry point
 # --------------------------------------------------------------------------- #
+def cmd_presets(manifest: dict[str, Any] | None, data_root: Path, args: argparse.Namespace) -> int:
+    """Print available named preset bundles."""
+    for preset_name, names in DATA_PRESETS.items():
+        print(f"{preset_name}:  {', '.join(names)}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lunaris-data",
@@ -648,6 +716,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_list = sub.add_parser("list", help="List catalogued datasets.")
     p_list.add_argument("--group", choices=GROUPS, default=None)
+    p_list.add_argument("--preset", choices=list(DATA_PRESETS), default=None,
+                        help="Filter list to a named preset bundle.")
     p_list.set_defaults(func=cmd_list)
 
     p_dl = sub.add_parser(
@@ -663,6 +733,8 @@ def build_parser() -> argparse.ArgumentParser:
                       help="Select a group; downloads only its required entries unless --include-optional is given.")
     p_dl.add_argument("--name", default=None,
                       help="Download a single dataset by exact name, regardless of required/optional status.")
+    p_dl.add_argument("--preset", choices=list(DATA_PRESETS), default=None,
+                      help="Download a named preset bundle (all entries regardless of required/optional flag).")
     p_dl.add_argument("--include-optional", action="store_true",
                       help="Also include optional (required=false) entries for --group/--all.")
     p_dl.add_argument("--dry-run", action="store_true", help="Show what would happen; download nothing.")
@@ -711,6 +783,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_report.add_argument("--bins", type=int, default=20)
     p_report.set_defaults(func=cmd_report_dataset)
 
+    p_presets = sub.add_parser("presets", help="List available named preset bundles.")
+    p_presets.set_defaults(func=cmd_presets)
+
     return parser
 
 
@@ -719,7 +794,7 @@ def main(argv: list[str] | None = None) -> int:
     data_root = resolve_data_root(args.data_dir)
 
     manifest: dict[str, Any] | None = None
-    if args.command not in {"path", "inspect", "validate", "report"}:
+    if args.command not in {"path", "inspect", "validate", "report", "presets"}:
         try:
             manifest = load_manifest(find_manifest(args.manifest))
         except (FileNotFoundError, ValueError) as exc:

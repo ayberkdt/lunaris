@@ -1407,6 +1407,200 @@ def _grid_albedo_payload(
     }
 
 
+def _topo_radius_envelope(
+    dn: Any,
+    scale_m: float,
+    bias_m: float,
+    missing_dn: float,
+    *,
+    default_m: float,
+) -> tuple[float, float]:
+    """
+    Min/max surface radius [m] implied by a stored DN grid.
+
+    Streams over the array once (``min``/``max`` on a memmap do not materialise
+    the whole raster). ``missing_dn`` pixels are excluded only when the missing
+    constant is finite; LDEM rasters are gap-free and pass ``NaN`` here, so the
+    common path is a plain min/max with no masking.
+
+    The terrain envelope lets the impact kernels cheaply bound the near-field
+    refinement region: only samples that cross ``r_terrain_max`` need a terrain
+    lookup, everything above is pure sphere.
+    """
+    try:
+        arr = np.asarray(dn)
+        if arr.size == 0:
+            return default_m, default_m
+        if np.isfinite(missing_dn):
+            valid = arr[arr != missing_dn]
+            if valid.size == 0:
+                return default_m, default_m
+            dn_min = float(valid.min())
+            dn_max = float(valid.max())
+        else:
+            dn_min = float(arr.min())
+            dn_max = float(arr.max())
+    except Exception:
+        return default_m, default_m
+
+    # scale_m may be negative for some products -> take min/max of both ends.
+    r_a = scale_m * dn_min + bias_m
+    r_b = scale_m * dn_max + bias_m
+    r_min = min(r_a, r_b)
+    r_max = max(r_a, r_b)
+    if not (math.isfinite(r_min) and math.isfinite(r_max)):
+        return default_m, default_m
+    return float(r_min), float(r_max)
+
+
+def _grid_topo_payload(
+    topo: Any,
+    *,
+    r_moon_m: float = float(R_MOON_MEAN),
+) -> dict[str, Any]:
+    """
+    Package a topography grid into a plain dict for Numba/torch-side impact
+    (terrain-aware freeze) consumption.
+
+    Mirrors :func:`_grid_albedo_payload`: ``core.dynamics`` and the batch impact
+    kernels cannot hold arbitrary Python objects, only NumPy arrays + POD
+    metadata. The kernel reconstructs the surface radius [m] at ``(lat, lon)``
+    from a scaled bilinear sample of the stored DN grid::
+
+        radius_m(lat, lon) = scale_m * DN + bias_m
+
+    with ``scale_m = scaling_factor * 1000`` and ``bias_m = offset_km * 1000``
+    (LDEM convention ``radius_km = DN * scaling_factor + offset_km``). This is
+    algebraically identical to :meth:`TopographyGrid.radius_m`, so the reference
+    sampler :func:`sample_topo_radius_m` round-trips against the loader.
+
+    Contract of the returned dict:
+      - grid missing/unusable -> ``{"radius_const_m": <r_moon_m>}``
+      - else includes::
+
+          dn, n_lines, n_samples, res_deg, lon0_deg, lat0_deg,
+          scale_m, bias_m, missing_dn, flip_lat,
+          lat_min_deg, lat_max_deg,
+          r_terrain_min_m, r_terrain_max_m, radius_const_m
+
+    The ``radius_const_m`` fallback (mean-Moon radius) plays the same role the
+    reference sphere does for void pixels: the loader stays physics-free and the
+    kernel/event resolves a usable radius everywhere.
+    """
+    if topo is None:
+        return {"radius_const_m": float(r_moon_m)}
+
+    info = getattr(topo, "info", None)
+    dn = getattr(topo, "dn_km", None)
+    if dn is None:
+        dn = getattr(topo, "_arr", None)
+    if info is None or dn is None:
+        return {"radius_const_m": float(r_moon_m)}
+
+    n_lines = int(info.lines)
+    n_samples = int(info.samples)
+    res_deg = float(getattr(topo, "ddeg", 1.0 / float(info.map_resolution_ppd)))
+
+    # Pixel-center origins (match the bilinear sampling convention).
+    lon_cent = getattr(topo, "_lon_centers_deg", None)
+    lat_cent = getattr(topo, "_lat_centers_deg", None)
+    if lon_cent is not None:
+        lon0_deg = float(np.asarray(lon_cent, dtype=np.float64)[0])
+    else:
+        lon0_deg = float(info.west_lon_deg) + 0.5 * res_deg
+    if lat_cent is not None:
+        lat_arr = np.asarray(lat_cent, dtype=np.float64)
+        lat0_deg = float(lat_arr[0])
+        lat_min_deg = float(lat_arr.min())
+        lat_max_deg = float(lat_arr.max())
+    else:
+        lat0_deg = float(info.max_lat_deg) - 0.5 * res_deg
+        lat_min_deg = float(info.min_lat_deg) + 0.5 * res_deg
+        lat_max_deg = float(info.max_lat_deg) - 0.5 * res_deg
+
+    # radius_m = (DN * scaling_factor + offset_km) * 1000
+    scale_m = float(info.scaling_factor) * 1000.0
+    bias_m = float(info.offset_km) * 1000.0
+    missing_dn = float(getattr(info, "missing_constant", float("nan")))
+    flip_lat = 1 if bool(getattr(topo, "_flip_lat", False)) else 0
+
+    r_min_m, r_max_m = _topo_radius_envelope(
+        dn, scale_m, bias_m, missing_dn, default_m=float(r_moon_m)
+    )
+
+    return {
+        "dn": dn,
+        "n_lines": n_lines,
+        "n_samples": n_samples,
+        "res_deg": res_deg,
+        "lon0_deg": lon0_deg,
+        "lat0_deg": lat0_deg,
+        "scale_m": scale_m,
+        "bias_m": bias_m,
+        "missing_dn": missing_dn,
+        "flip_lat": flip_lat,
+        "lat_min_deg": lat_min_deg,
+        "lat_max_deg": lat_max_deg,
+        "r_terrain_min_m": r_min_m,
+        "r_terrain_max_m": r_max_m,
+        "radius_const_m": float(r_moon_m),
+    }
+
+
+def sample_topo_radius_m(payload: dict[str, Any], lat_deg: float, lon_deg: float) -> float:
+    """
+    Reference (pure-NumPy) terrain-radius sampler for a :func:`_grid_topo_payload`.
+
+    Replicates *exactly* the indexing convention the batch impact kernels use
+    (see ``core.dynamics._sample_albedo_dn_scaled``): longitude wrapped to
+    ``[0, 360)``, latitude clamped to ``[lat_min_deg, lat_max_deg]``, then a
+    scaled bilinear lookup ``scale_m * DN + bias_m``.
+
+    This function is the CPU ground-truth the GPU/numba terrain-freeze kernels
+    must match bit-for-tolerance, and the round-trip oracle for the loader's own
+    :meth:`TopographyGrid.radius_m`.
+
+    Returns the surface radius [m]. Falls back to ``radius_const_m`` (mean-Moon
+    radius) when the payload carries no grid, the grid is degenerate, or the
+    sample is non-finite (void pixel).
+    """
+    const_m = float(payload.get("radius_const_m", float(R_MOON_MEAN)))
+    dn = payload.get("dn", None)
+    if dn is None:
+        return const_m
+
+    n_lines = int(payload["n_lines"])
+    n_samples = int(payload["n_samples"])
+    res_deg = float(payload["res_deg"])
+    if res_deg <= 0.0 or n_lines <= 0 or n_samples <= 0:
+        return const_m
+
+    lon0 = float(payload["lon0_deg"])
+    lat0 = float(payload["lat0_deg"])
+    scale_m = float(payload["scale_m"])
+    bias_m = float(payload["bias_m"])
+    missing_dn = float(payload.get("missing_dn", float("nan")))
+    flip_lat = int(payload.get("flip_lat", 0))
+    lat_min = float(payload["lat_min_deg"])
+    lat_max = float(payload["lat_max_deg"])
+
+    lon_w = wrap_lon_deg(float(lon_deg))  # -> [0, 360)
+    lat_c = clamp(float(lat_deg), lat_min, lat_max)
+
+    # Latitude -> fractional row index (flip_lat selects the storage direction).
+    lat_sign = 1.0 if flip_lat == 0 else -1.0
+    i_f = (lat_sign * (lat0 - lat_c)) / res_deg
+    # Longitude -> fractional col index (periodic).
+    j_f = ((lon_w - lon0) / res_deg) % n_samples
+
+    r_m = sample_2d_scaled_bilinear(
+        dn, i_f, j_f, n_lines, n_samples, scale_m, bias_m, missing_dn
+    )
+    if not math.isfinite(r_m):
+        return const_m
+    return float(r_m)
+
+
 class SurfaceProvider(Protocol):
     """
     Unified surface-query interface for the physics engine.
@@ -1432,6 +1626,10 @@ class SurfaceProvider(Protocol):
     def as_numba_dict(self) -> dict[str, Any]:
         """Return plain dict payload for core.dynamics (Numba-side)."""
         return {"albedo_const": 0.12}
+
+    def topo_payload(self) -> dict[str, Any]:
+        """Return plain dict topography payload for terrain-aware impact freeze."""
+        return {"radius_const_m": float(R_MOON_MEAN)}
 
 
 @dataclass(slots=True)
@@ -1512,6 +1710,10 @@ class FileBackedSurfaceProvider:
     def as_numba_dict(self) -> dict[str, Any]:
         return _grid_albedo_payload(self._grids.albedo, default_albedo=self.default_albedo)
 
+    def topo_payload(self) -> dict[str, Any]:
+        """Topography payload for terrain-aware impact freeze (Numba/torch-side)."""
+        return _grid_topo_payload(self._grids.topo, r_moon_m=self.default_radius_m)
+
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float:
         topo = self._grids.topo
         if topo is None:
@@ -1562,6 +1764,10 @@ class InMemorySurfaceProvider:
     def as_numba_dict(self) -> dict[str, Any]:
         # Only expose grid payload if the injected albedo is grid-like
         return _grid_albedo_payload(self.albedo, default_albedo=self.default_albedo)
+
+    def topo_payload(self) -> dict[str, Any]:
+        # Only expose grid payload if the injected topo is grid-like (TopographyGrid).
+        return _grid_topo_payload(self.topo, r_moon_m=self.default_radius_m)
 
     def radius_m_deg(self, lat_deg: float, lon_deg: float) -> float:
         if self.topo is None:
@@ -1638,6 +1844,9 @@ __all__ = (
     "SurfaceProvider",
     "FileBackedSurfaceProvider",
     "InMemorySurfaceProvider",
+
+    # Terrain-aware impact (freeze) payload + reference sampler
+    "sample_topo_radius_m",
 
     # PDS3 parsing utilities
     "PDS3ParseError",

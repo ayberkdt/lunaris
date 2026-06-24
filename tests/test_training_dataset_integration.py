@@ -114,3 +114,19 @@ def test_training_writes_dataset_validation_and_split_manifest(tmp_path):
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["dataset_validation_passed"] is True
     assert manifest["split_manifest_path"] == str(split_path)
+    # Hardware-independent compute accounting (FLOP / petaflop/s-days) is recorded
+    # for the report. The portable totals live at the top level; machine-dependent
+    # context (wall-clock, device) is quarantined under "hardware".
+    compute = manifest["compute_accounting"]
+    assert compute["schema_version"] == "st_lrps_compute_accounting_v1"
+    assert compute["total_training_flops"] > 0.0
+    assert compute["total_training_pflops_days"] > 0.0
+    assert compute["inference_flops_per_eval"] > 0.0
+    # The loop ran epochs=1 with max_train_batches=1 (batch_size=8), so exactly one
+    # batch of samples is pushed through fwd/bwd.
+    assert 0 < compute["total_samples_processed"] <= split["train_count"]
+    # Portable total is exactly per-sample step cost times samples processed.
+    assert compute["total_training_flops"] == pytest.approx(
+        compute["train_step_flops_per_sample"] * compute["total_samples_processed"]
+    )
+    assert "wall_clock_seconds" in compute["hardware"]

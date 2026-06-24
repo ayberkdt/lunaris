@@ -52,6 +52,17 @@ environment variable.
 > **demo orbit**: a Keplerian/Hohmann animation produced by `scripts/generate_orbit.py`
 > for visual purposes. It is not the output of the Lunaris propagator.
 
+## Cinematic orbit video studio
+
+The `/orbit-video` route is a browser-native shot builder for orbit capture. It
+uses the same offline static-export stack as the launcher preview, adds director
+and chase camera modes, a mission-style HUD, burn markers, reduced-motion
+support, and an in-browser WebM recorder based on `canvas.captureStream()`.
+
+The route is intentionally labeled as a demo visualization surface. Replace
+`public/orbit-data.json` with propagated samples before using a recorded shot as
+mission evidence.
+
 ## Project Structure
 
 - `app/` - Next.js App Router pages and global CSS.

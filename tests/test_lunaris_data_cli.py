@@ -104,6 +104,28 @@ def test_name_selects_exact_optional_entry():
     assert names == ["opt1"]
 
 
+def test_preset_selection_preserves_exact_manifest_entries():
+    manifest = data_cli.load_manifest(data_cli.default_manifest_path())
+    minimal = data_cli.select_preset_datasets(manifest, "minimal")
+    names = [entry["name"] for entry in minimal]
+    assert names == list(data_cli.DATA_PRESETS["minimal"])
+    assert "naif_moon_pa_de440" in names
+    assert "naif_moon_fk_de440" in names
+    assert "grail_gravity_jggrx" in names
+
+
+def test_download_preset_ignores_required_only_filter():
+    manifest = data_cli.load_manifest(data_cli.default_manifest_path())
+    names = {
+        entry["name"]
+        for entry in data_cli.select_for_download(manifest, preset="full-gravity")
+    }
+    # These entries are optional in the raw manifest but required by the preset
+    # because they are needed for strict/runtime-friendly onboarding.
+    assert "naif_pck_gm_de440" in names
+    assert "naif_moon_fk_de440" in names
+
+
 # --------------------------------------------------------------------------- #
 # Acceptance criteria via the CLI (dry-run on the committed manifest)
 # --------------------------------------------------------------------------- #
@@ -132,6 +154,33 @@ def test_cli_name_dry_run_selects_optional(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "naif_spk_de440s" in out
+
+
+def test_cli_preset_dry_run_includes_runtime_assets(tmp_path, capsys):
+    rc = data_cli.main(["--data-dir", str(tmp_path), "download",
+                        "--preset", "minimal", "--dry-run"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "naif_moon_pa_de440" in out
+    assert "naif_moon_fk_de440" in out
+    assert "grail_gravity_jggrx" in out
+
+
+def test_cli_presets_lists_named_bundles(capsys):
+    rc = data_cli.main(["presets"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "minimal:" in out
+    assert "st-lrps-dev:" in out
+
+
+def test_cli_list_preset_reports_only_that_bundle(tmp_path, capsys):
+    rc = data_cli.main(["--data-dir", str(tmp_path), "list", "--preset", "surface"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "preset: surface" in out
+    assert "lola_ldem_topography" in out
+    assert "lunar_texture_map" not in out
 
 
 # --------------------------------------------------------------------------- #

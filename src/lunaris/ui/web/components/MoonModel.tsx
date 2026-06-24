@@ -7,26 +7,35 @@ import * as THREE from 'three';
 interface MoonModelProps {
   textureMode?: 'aesthetic' | 'gravity';
   displacementScale?: number;
+  animate?: boolean;
 }
 
-export default function MoonModel({ textureMode = 'aesthetic', displacementScale = 0.04 }: MoonModelProps) {
+export default function MoonModel({
+  textureMode = 'aesthetic',
+  displacementScale = 0.04,
+  animate = true,
+}: MoonModelProps) {
   const moonRef = useRef<THREE.Mesh>(null);
   
   // Pre-load all textures
-  const [gravityMap, aestheticMap, dispMap] = useTexture([
-    '/textures/gravity_moon_real.webp',
-    '/textures/aesthetic_moon_real.webp',
-    '/textures/moon_disp_real.webp'
-  ]);
-  
-  gravityMap.colorSpace = THREE.SRGBColorSpace;
-  aestheticMap.colorSpace = THREE.SRGBColorSpace;
+  const [gravityMap, aestheticMap, dispMap] = useTexture(
+    [
+      '/textures/gravity_moon_real.webp',
+      '/textures/aesthetic_moon_real.webp',
+      '/textures/moon_disp_real.webp',
+    ],
+    (textures) => {
+      const [gravity, aesthetic] = textures as THREE.Texture[];
+      gravity.colorSpace = THREE.SRGBColorSpace;
+      aesthetic.colorSpace = THREE.SRGBColorSpace;
+    },
+  );
   
   const currentMap = textureMode === 'aesthetic' ? aestheticMap : gravityMap;
 
   useFrame(({ clock }) => {
     if (moonRef.current) {
-      moonRef.current.rotation.y = clock.getElapsedTime() * 0.05;
+      moonRef.current.rotation.y = animate ? clock.getElapsedTime() * 0.05 : 0.55;
       moonRef.current.rotation.x = 0.1;
     }
   });

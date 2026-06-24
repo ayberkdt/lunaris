@@ -19,11 +19,14 @@ export default function Header() {
           <Link href="/">LUNARIS</Link>
         </div>
         <nav className={styles.nav}>
-          <Link href="/" className={pathname === '/' ? styles.active : ''}>
+          <Link href="/" prefetch={false} className={pathname === '/' ? styles.active : ''}>
             Home
           </Link>
-          <Link href="/st-lrps" className={pathname === '/st-lrps' ? styles.active : ''}>
+          <Link href="/st-lrps" prefetch={false} className={pathname === '/st-lrps' ? styles.active : ''}>
             ST-LRPS
+          </Link>
+          <Link href="/orbit-video" prefetch={false} className={pathname === '/orbit-video' ? styles.active : ''}>
+            Orbit Video
           </Link>
           <a href="https://github.com/ayberkdt/lunaris" target="_blank" rel="noopener noreferrer">
             GitHub
