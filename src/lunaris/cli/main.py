@@ -1,5 +1,5 @@
 ﻿"""
-ST_LRPS - main entry point (STRICT, config.py + common.type_defs aligned)
+Lunaris - main entry point (STRICT, config.py + common.type_defs aligned)
 
 Contract
 --------
@@ -170,7 +170,7 @@ def print_summary(cfg: SimConfig, orbit_params: dict[str, float] | None, y0: Any
     sc = cfg.spacecraft
 
     print("=" * 64)
-    print("ST_LRPS RUNNER (STRICT)")
+    print("LUNARIS RUNNER (STRICT)")
     print("=" * 64)
     print("[Time]")
     print(f"  start_date   : {cfg.time.start_date}")
@@ -256,7 +256,7 @@ def median_dt(t_arr: Any) -> float | None:
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="ST_LRPS Runner (STRICT; config.py + common.type_defs aligned)",
+        description="Lunaris Runner (STRICT; config.py + common.type_defs aligned)",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -815,7 +815,7 @@ def main() -> int:
             out_dir=str(out_dir),
             meta=meta,
             ctx=engine,
-            title_prefix="ST_LRPS",
+            title_prefix="Lunaris",
             use_run_subdir=True,
             visual_cfg=cfg.visual,
             save_pdf=True,

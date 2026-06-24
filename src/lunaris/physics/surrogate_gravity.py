@@ -1,27 +1,26 @@
-"""Compatibility access to the canonical surrogate runtime adapter.
+"""Retired compatibility module for the old physics surrogate path.
 
-New code must import :mod:`lunaris.surrogate.runtime_adapter`.  This module is
-kept temporarily so existing callers continue to work while the public import
-path is migrated.  The lazy lookup deliberately avoids making ``physics`` own
-or import the surrogate subsystem at module-import time.
+The production ST-LRPS runtime adapter lives at
+``lunaris.surrogate.runtime_adapter``.  This module intentionally does not
+import or re-export that adapter so the ``physics`` layer has no dependency on
+the optional surrogate subsystem.
 """
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import Any
+from typing import Any, Final
 
-_ADAPTER_MODULE = "lunaris.surrogate.runtime_adapter"
+_CANONICAL_MODULE: Final[str] = "lunaris.surrogate.runtime_adapter"
+
+__all__: tuple[str, ...] = ()
 
 
 def __getattr__(name: str) -> Any:
-    module = import_module(_ADAPTER_MODULE)
-    try:
-        return getattr(module, name)
-    except AttributeError as exc:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+    raise AttributeError(
+        f"{__name__}.{name} was retired. "
+        f"Import {name} from {_CANONICAL_MODULE} instead."
+    )
 
 
 def __dir__() -> list[str]:
-    module = import_module(_ADAPTER_MODULE)
-    return sorted(set(globals()) | set(dir(module)))
+    return sorted(set(globals()) | set(__all__))

@@ -1,4 +1,4 @@
-# ST_LRPS/core/dynamics.py
+# lunaris.core.dynamics
 """
 Core Dynamics Engine (EOM / RHS Builder)
 =======================================
@@ -56,6 +56,7 @@ from numba import njit
 from lunaris.common.constants import (
     AU,
     C_LIGHT,
+    EPS_1E15,
     MU_EARTH,
     MU_MOON,
     MU_SUN,
@@ -779,7 +780,7 @@ class _EarthJ2Pack:
         if self.r_ref_m <= 0.0:
             raise ValueError(f"EarthJ2 r_ref_m must be > 0, got {self.r_ref_m}")
         n = (self.ax * self.ax + self.ay * self.ay + self.az * self.az) ** 0.5
-        if n <= 1e-15:
+        if n <= EPS_1E15:
             raise ValueError("EarthJ2 axis vector is degenerate (norm ~ 0).")
 
 

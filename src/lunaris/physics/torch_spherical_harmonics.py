@@ -14,6 +14,8 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.constants import EPS_1E12, EPS_1E24, EPS_1E30
+
 
 class TorchSHGravityEvaluator:
     """
@@ -93,9 +95,9 @@ class TorchSHGravityEvaluator:
 
         sin_phi = z * inv_r
         cos_phi = rho * inv_r
-        pole = rho > 1e-12
-        cos_lon = torch.where(pole, x / rho.clamp_min(1e-30), torch.ones_like(x))
-        sin_lon = torch.where(pole, y / rho.clamp_min(1e-30), torch.zeros_like(y))
+        pole = rho > EPS_1E12
+        cos_lon = torch.where(pole, x / rho.clamp_min(EPS_1E30), torch.ones_like(x))
+        sin_lon = torch.where(pole, y / rho.clamp_min(EPS_1E30), torch.zeros_like(y))
 
         u_r = positions_fixed_m * inv_r[:, None]
         u_phi = torch.stack(
@@ -169,7 +171,11 @@ class TorchSHGravityEvaluator:
                 r_ratio_n = r_ratio_n * r_ratio_base
 
         phi_factor = dv_dphi * inv_r
-        inv_rho_sq = torch.where(rho_sq < 1e-24, torch.zeros_like(rho_sq), 1.0 / (rho_sq + 1e-24))
+        inv_rho_sq = torch.where(
+            rho_sq < EPS_1E24,
+            torch.zeros_like(rho_sq),
+            1.0 / (rho_sq + EPS_1E24),
+        )
         ax = dv_dr * u_r[:, 0] + phi_factor * u_phi[:, 0] - dv_dlambda * y * inv_rho_sq
         ay = dv_dr * u_r[:, 1] + phi_factor * u_phi[:, 1] + dv_dlambda * x * inv_rho_sq
         az = dv_dr * u_r[:, 2] + phi_factor * u_phi[:, 2]

@@ -1,6 +1,6 @@
-# ST_LRPS/core/__init__.py
+# lunaris.core package
 """
-ST_LRPS core simulation engine.
+Lunaris core simulation engine.
 
 This package contains the runtime logic of the simulation:
 - state helpers (Cartesian/COE utilities)

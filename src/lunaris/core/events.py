@@ -1,4 +1,4 @@
-# ST_LRPS/core/events.py
+# lunaris.core.events
 """
 core.events
 ===========
@@ -94,6 +94,7 @@ from collections.abc import Callable
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
 
+from lunaris.common.constants import EPS_1E12, EPS_1E30
 from lunaris.common.type_defs import F64
 from lunaris.core.state import as_vec3
 
@@ -102,7 +103,7 @@ from lunaris.core.state import as_vec3
 # =============================================================================
 
 
-def _unit(v: ArrayLike, eps: float = 1e-12) -> NDArray[np.float64]:
+def _unit(v: ArrayLike, eps: float = EPS_1E12) -> NDArray[np.float64]:
     """
     Return a unit vector. If norm <= eps, returns a default axis (1,0,0).
     (Consider raising instead if you want strict behavior.)
@@ -1007,7 +1008,7 @@ if __name__ == "__main__":
         v = y[3:]
         rn = float(np.linalg.norm(r))
         # guard against rn=0 in pathological cases
-        inv_r3 = 1.0 / (rn * rn * rn + 1e-30)
+        inv_r3 = 1.0 / (rn * rn * rn + EPS_1E30)
         a = -MU * r * inv_r3
         return np.concatenate((v, a))
 

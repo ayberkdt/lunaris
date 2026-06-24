@@ -1,7 +1,7 @@
-# ST_LRPS/models/__init__.py
+# lunaris.physics package
 """
-Lunar Simulation - Models package
-=================================
+Lunaris Physics Package
+=======================
 
 Stable, high-level physics/environment model layer.
 
@@ -9,7 +9,7 @@ Design
 ------
 - Strict imports only (package-relative).
 - No backward-compat aliases.
-- Lazy re-exports (PEP 562): importing `models` does NOT eagerly import heavy
+- Lazy re-exports (PEP 562): importing `lunaris.physics` does NOT eagerly import heavy
   submodules. Symbols/modules are imported on first access and cached.
 - File I/O lives under `loaders.*` and is intentionally not re-exported here.
 
@@ -146,7 +146,7 @@ def __getattr__(name: str) -> Any:
                 f"Could not import lazy module {full_name!r}.\n"
                 f"Purpose: {_LAZY_MODULES[name]}\n"
                 "Likely causes:\n"
-                f" - Missing file: models/{name}.py\n"
+                f" - Missing file: physics/{name}.py\n"
                 " - Repo root not on PYTHONPATH\n"
                 "Fix:\n"
                 " - Run from project root, or install editable: pip install -e .\n"

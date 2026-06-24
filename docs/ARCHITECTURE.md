@@ -14,8 +14,8 @@ CLI/loaders are declared sibling subsystems with enforced dependency directions.
 The import contracts in `pyproject.toml` are authoritative when prose and code
 disagree.
 
-Last verified: 2026-06-14, against base commit `1fd95880` plus the Phase
-2.2-2.6 change set.
+Last verified: 2026-06-24, covering the data preset, public API, common,
+physics, and core cleanup pass.
 
 ## Engine core layers
 
@@ -90,6 +90,9 @@ Alongside the four layers:
   (see [ST-LRPS surrogate](#st-lrps-surrogate)).
 - `lunaris.surrogate.runtime_adapter` — the only production-facing adapter from
   engine gravity-provider semantics to ST-LRPS runtime artifacts.
+- `lunaris.physics.surrogate_gravity` is a retired compatibility module only; it
+  does not import or re-export the surrogate adapter. Use
+  `lunaris.surrogate.runtime_adapter` directly.
 - `lunaris.ui_foundation` — Qt-binding-neutral tokens, palettes, color helpers,
   and stylesheet generation shared by the mission UI and ST-LRPS Studio.
 

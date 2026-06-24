@@ -74,8 +74,8 @@ from .constants import DAY_S, MJD_J2000_TT
 
 JD_MJD_OFFSET: float = 2400000.5          # JD = MJD + 2400000.5
 JDN_J2000_TT: int = 2451545               # 2000-01-01 12:00:00 TT
-US_PER_DAY: int = 86_400_000_000
-J2000_NOON_US: int = 43_200_000_000
+US_PER_DAY: int = int(DAY_S * 1_000_000)
+J2000_NOON_US: int = US_PER_DAY // 2
 
 
 @njit(cache=True)

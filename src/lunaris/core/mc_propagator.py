@@ -1,4 +1,4 @@
-# ST_LRPS/core/mc_propagator.py
+# lunaris.core.mc_propagator
 """
 Batch Monte Carlo Propagators (GPU + CPU)
 =========================================
@@ -60,6 +60,12 @@ import numpy as np
 from lunaris.common.constants import (
     AU,
     C_LIGHT,
+    EPS_1E6,
+    EPS_1E12,
+    EPS_1E15,
+    EPS_1E18,
+    EPS_1E24,
+    EPS_1E30,
     MU_EARTH,
     MU_MOON,
     MU_SUN,
@@ -372,7 +378,7 @@ if _CUDA_AVAILABLE:
             r3 = s_a * a3 + s_b * b3
         # Renormalise (avoid drift)
         nrm = math.sqrt(r0 * r0 + r1 * r1 + r2 * r2 + r3 * r3)
-        if nrm > 1e-15:
+        if nrm > EPS_1E15:
             inv_n = 1.0 / nrm
             result[0] = r0 * inv_n; result[1] = r1 * inv_n
             result[2] = r2 * inv_n; result[3] = r3 * inv_n
@@ -470,7 +476,7 @@ if _CUDA_AVAILABLE:
         bfx = rx + q0 * tx + (q2 * tz - q3 * ty)
         bfy = ry + q0 * ty + (q3 * tx - q1 * tz)
         bfz = rz + q0 * tz + (q1 * ty - q2 * tx)
-        r_safe = r if r > 1e-30 else 1e-30
+        r_safe = r if r > EPS_1E30 else EPS_1E30
         s = bfz / r_safe
         if s > 1.0:
             s = 1.0
@@ -494,7 +500,7 @@ if _CUDA_AVAILABLE:
         Spherical-harmonic gravity acceleration in the body-fixed frame.
 
         Implements the same algorithm as ``_compute_sh_acceleration_serial``
-        (models/spherical_harmonics.py) but with:
+        (lunaris.physics.spherical_harmonics) but with:
           * thread-local workspace arrays (``cuda.local.array``).
           * No Kahan summation (lower accuracy, adequate for MC spread).
           * Compile-time fixed workspace size (_GPU_WS × _GPU_WS).
@@ -524,7 +530,7 @@ if _CUDA_AVAILABLE:
         sin_ph = rz * inv_r
         cos_ph = rho * inv_r
 
-        if rho > 1e-6:
+        if rho > EPS_1E6:
             inv_rho = 1.0 / rho
             cos_lon = rx * inv_rho
             sin_lon = ry * inv_rho
@@ -577,7 +583,7 @@ if _CUDA_AVAILABLE:
                     term_plus = 0.0
                 dP[n][m] = 0.5 * (term_plus - term_minus)
 
-        # Apply scale_m (sqrt(2) for m>0 + Condon-Shortley phase)
+        # Apply scale_m (sqrt(2) for m>0; no Condon-Shortley phase).
         for n in range(n_eff + 1):
             for m in range(n + 1):
                 P[n][m]  *= scale_m[m]
@@ -631,7 +637,7 @@ if _CUDA_AVAILABLE:
         # Gradient → Cartesian acceleration
         # ----------------------------------------------------------------
         phi_fac   = dv_dphi * inv_r
-        inv_rho2  = 1.0 / (rho2 + 1e-24)
+        inv_rho2  = 1.0 / (rho2 + EPS_1E24)
 
         out[0] = (dv_dr * rx * inv_r
                   + phi_fac * u_phi_x
@@ -1083,7 +1089,7 @@ if _CUDA_AVAILABLE:
 
             segment_hit = 0
             alpha = 1.0
-            if aa > 1e-18:
+            if aa > EPS_1E18:
                 disc = bb * bb - 4.0 * aa * cc
                 disc_scale = bb * bb + abs(4.0 * aa * cc)
                 if disc_scale < 1.0:
@@ -1093,7 +1099,7 @@ if _CUDA_AVAILABLE:
                     if disc < 0.0:
                         disc = 0.0
                     alpha = (-bb - math.sqrt(disc)) / (2.0 * aa)
-                    if alpha >= -1e-12 and alpha <= 1.0 + 1e-12:
+                    if alpha >= -EPS_1E12 and alpha <= 1.0 + EPS_1E12:
                         segment_hit = 1
                         if alpha < 0.0:
                             alpha = 0.0

@@ -26,7 +26,12 @@ These modules are intended for direct import:
 | Module | Public objects |
 | --- | --- |
 | `lunaris` | `__version__` |
+| `lunaris.api` | `load_default_config`, `replace_sim_config`, `DynamicsEngine`, `propagate`, `MonteCarloConfig`, `MonteCarloEngine` |
+| `lunaris.common` | Flat re-exports from `lunaris.common.constants` and `lunaris.common.type_defs` |
+| `lunaris.common.constants` | Physical constants and unit conversions such as `DAY_S`, `C_LIGHT`, `MU_MOON`, `R_MOON`, `AU`, `DEG2RAD`, `RAD2DEG` |
 | `lunaris.common.type_defs` | `GravityConfig`, `AdaptiveDegreeConfig`, `PerturbationFlags`, `SolidTideConfig`, `TimeConfig`, `InitialState`, `SpacecraftProps`, `PropagatorConfig`, `PropagationResult`, `SimulationHistory` |
+| `lunaris.common.hashing` | `canonical_json_text`, `canonical_json_sha256` |
+| `lunaris.common.paths` | `find_project_root`, `project_root_from_file`, `data_dir_from_root` |
 | `lunaris.core.config` | `SimConfig`, `load_default_config`, `get_default_config`, `replace_sim_config`, `VisualConfig`, `OutputConfig` |
 | `lunaris.core.dynamics` | `DynamicsEngine` |
 | `lunaris.core.propagator` | `propagate`, `make_time_grid`, `build_events` |
@@ -36,7 +41,14 @@ These modules are intended for direct import:
 | `lunaris.analysis.postprocess` | `process_simulation_results`, orbital/invariant extraction helpers |
 | `lunaris.analysis.reporting.manager` | `plot_all` |
 
-The examples in `examples/` are the executable reference for this Python API.
+For new scripts, prefer `lunaris.api` unless you intentionally need a lower-level
+module listed below. The examples in `examples/` are the executable reference for
+this Python API.
+
+`lunaris.common.lunar_data` is a dependency-light bridge for lunar gravity-path
+resolution and lunar body-signature checks. It is stable for internal framework
+subsystems, but downstream scripts should prefer `lunaris.api` or the documented
+console workflows unless they are deliberately extending data/artifact plumbing.
 
 ## Configuration Contract
 
@@ -79,6 +91,10 @@ without a trained ST-LRPS artifact. Runtime integration should go through:
 ```python
 from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
 ```
+
+The old `lunaris.physics.surrogate_gravity` compatibility path is retired and
+does not re-export ST-LRPS runtime objects. This keeps the physics layer
+independent of the optional surrogate subsystem.
 
 Training/evaluation package internals may change as artifact contracts evolve.
 Downstream code should prefer the `lunaris-train`, `lunaris-eval`, and

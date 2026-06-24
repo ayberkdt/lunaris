@@ -1,4 +1,4 @@
-# ST_LRPS/models/relativity_effects.py
+# lunaris.physics.relativity_effects
 """
 Relativistic Effects: 1PN Corrections
 =====================================

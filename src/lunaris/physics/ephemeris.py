@@ -1,4 +1,4 @@
-# ST_LRPS/models/ephemeris.py
+# lunaris.physics.ephemeris
 """
 Ephemeris (SPICE) Tables + Runtime Interpolator.
 
@@ -33,9 +33,12 @@ Responsibilities
    - Third-body position sampling attempts a vectorized SPICE call for ET arrays when available;
      if unsupported or shape-mismatched, it falls back to a robust scalar loop.
 
-3) Runtime access (no SPICE dependency)
+3) Runtime table access (no SPICE calls)
    - High-level: `EphemerisManager` interpolation + frame transforms (Python API)
    - Low-level: `get_ephem_state()` allocation-free sampler for Numba loops
+   - The module imports `spiceypy` because table construction lives here; the
+     prebuilt provider returned by `EphemerisManager.get_data_provider()` is the
+     object used by the runtime dynamics loop.
 
 Data contract (strict, canonical keys)
 --------------------------------------

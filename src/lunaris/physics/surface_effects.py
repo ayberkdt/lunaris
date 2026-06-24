@@ -1,4 +1,4 @@
-# ST_LRPS/models/surface_effects.py
+# lunaris.physics.surface_effects
 """Lunar surface radiative effects (physics layer).
 
 This module owns the **dynamics / force models** that depend on the lunar
@@ -8,7 +8,7 @@ surface in an engineering sense:
 * Thermal re-radiation recoil (IR)
 
 Everything related to *datasets* (PDS3 label parsing, file discovery, memmap
-loading, grid sampling, provider facades) lives in :mod:`models.surface_data`.
+loading, grid sampling, provider facades) lives under :mod:`lunaris.loaders`.
 
 Units & frames
 --------------

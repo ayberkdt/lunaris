@@ -1,4 +1,4 @@
-# ST_LRPS/models/third_body_effects.py
+# lunaris.physics.third_body_effects
 """
 Third-Body Effects (Differential Gravity, Solid Tides, and Optional Earth J2)
 ============================================================================

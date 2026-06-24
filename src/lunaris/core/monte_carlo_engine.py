@@ -1,4 +1,4 @@
-# ST_LRPS/core/monte_carlo_engine.py
+# lunaris.core.monte_carlo_engine
 """
 Batch / Monte Carlo Dispatch Engine
 ===================================
@@ -41,7 +41,8 @@ Usage example
 Architecture note
 -----------------
 This module is **layer 3** (core); it may import from ``common`` and
-``models`` but must not import from ``analysis`` or ``app``.
+``common``, ``physics``, and lower-level ``core`` helpers but must not import
+from ``analysis`` or UI packages.
 """
 
 from __future__ import annotations

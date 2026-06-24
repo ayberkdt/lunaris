@@ -765,7 +765,10 @@ class SurrogateGravityModel:
                 chunk_size=8192,
             )
             model = force_runtime.model
-            logger.info("models.surrogate_gravity delegated neural inference to st_lrps.runtime.force_model.")
+            logger.info(
+                "lunaris.surrogate.runtime_adapter delegated neural inference "
+                "to st_lrps.runtime.force_model."
+            )
         except Exception as exc:
             if declared_runtime_kind == "force_direct":
                 raise RuntimeError(

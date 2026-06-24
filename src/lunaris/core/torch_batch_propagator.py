@@ -1,10 +1,10 @@
-# ST_LRPS/core/torch_batch_propagator.py
+# lunaris.core.torch_batch_propagator
 """
 GPU-Accelerated Batched Monte Carlo Propagator — ST-LRPS Path
 ==============================================================
 
-Propagates N trajectories simultaneously as a single ``[N, 6]`` CUDA float32
-tensor using PyTorch fixed-step RK4 and the ST-LRPS neural surrogate for
+Propagates N trajectories simultaneously as a single ``[N, 6]`` CUDA tensor
+using PyTorch fixed-step RK4 and the ST-LRPS neural surrogate for
 gravity.
 
 Architecture
@@ -32,7 +32,8 @@ Limitations (current version)
   Enabling any of those perturbations in ``SimConfig`` forces a CPU fallback
   (detected by ``core.mc_backend_policy.resolve_mc_backend_policy``).
 - Fixed step size; no adaptive step control.
-- State is float32 (sufficient for ensemble statistics with ≥ 500 m σ_r).
+- State dtype follows ``MonteCarloConfig.torch_dtype`` (float32 by default for
+  throughput, float64 when explicitly requested).
 
 Performance notes
 -----------------

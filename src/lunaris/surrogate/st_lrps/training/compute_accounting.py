@@ -48,12 +48,14 @@ import torch
 import torch.nn as nn
 from torch.utils.flop_counter import FlopCounterMode
 
+from lunaris.common.constants import DAY_S
+
 logger = logging.getLogger(__name__)
 
 COMPUTE_ACCOUNTING_SCHEMA: str = "st_lrps_compute_accounting_v1"
 
-# One petaflop/s-day = 1e15 FLOP/s * 86400 s. The portable training-compute unit.
-PFLOP_S_DAY_IN_FLOPS: float = 1.0e15 * 86_400.0  # == 8.64e19
+# One petaflop/s-day = 1e15 FLOP/s * DAY_S. The portable training-compute unit.
+PFLOP_S_DAY_IN_FLOPS: float = 1.0e15 * DAY_S  # == 8.64e19
 
 # FlopCounterMode counts a multiply-add as two FLOP (a (m,k)x(k,n) matmul is
 # 2*m*k*n). Recorded into the artifact so the unit is unambiguous downstream.

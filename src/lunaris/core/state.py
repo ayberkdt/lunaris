@@ -1,4 +1,4 @@
-# ST_LRPS/core/state.py
+# lunaris.core.state
 """
 Orbital State & Coordinate Transformation Engine
 
