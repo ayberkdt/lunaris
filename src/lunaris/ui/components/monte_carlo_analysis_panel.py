@@ -316,6 +316,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         path_row.setSpacing(12)
         path_row.addWidget(_label("Result Archive:"))
         self.ent_result_path = QtWidgets.QLineEdit()
+        self.ent_result_path.setAccessibleName("Ensemble archive path")
         self.ent_result_path.setPlaceholderText("Select an ensemble .npz or .h5 archive")
         self.ent_result_path.setMinimumHeight(40)
         self.ent_result_path.setStyleSheet(
@@ -519,6 +520,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         top_row.setSpacing(12)
         top_row.addWidget(_label("Plot:"))
         self.cb_plot = QtWidgets.QComboBox()
+        self.cb_plot.setAccessibleName("Analysis plot type")
         self.cb_plot.addItems(
             [
                 "Altitude Envelope",

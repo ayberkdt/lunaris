@@ -39,10 +39,16 @@ class ColorTokens:
     secondary_hov: str = "#4DE8C4"
     secondary_dim: str = "rgba(21,214,166,0.16)"
 
-    success: str = "#14D49E"
+    # ``success`` is a true green, deliberately separated in hue from the
+    # ``secondary`` teal (#15D6A6) above. They previously sat ~1-8 per channel
+    # apart (#14D49E vs #15D6A6) so a "completed" status and a comparison data
+    # series were perceptually the same color; value/hue must carry the meaning.
+    success: str = "#3DD17E"
     warning: str = "#F5B43C"
     error: str = "#FF5D6C"
-    critical: str = "#FF7088"
+    # ``critical`` is a more intense red than ``error`` so the severity ladder
+    # (warning < error < critical) is perceptible by value, not just by label.
+    critical: str = "#FF3355"
     info: str = "#4A9DFF"
     inactive: str = "#6C7787"
 
@@ -205,13 +211,17 @@ class VisualizationTokens:
 
 @dataclass(frozen=True, slots=True)
 class TypographyTokens:
+    # Modular type scale (~1.2 ratio) with perceptible steps so hierarchy holds
+    # in grayscale. ``section`` was 11 pt — only 1 pt over ``body`` (10 pt), an
+    # imperceptible step that forced section headings to lean entirely on weight;
+    # 12 pt (= body x 1.2) makes the heading tier read by size as well.
     family_ui: str = '"Segoe UI", "Inter", "Noto Sans", sans-serif'
     family_mono: str = '"Cascadia Mono", "Consolas", "Courier New", monospace'
     size_caption_pt: float = 9.0
     size_body_pt: float = 10.0
-    size_section_pt: float = 11.0
+    size_section_pt: float = 12.0
     size_app_title_pt: float = 15.0
-    size_page_title_pt: float = 18.0
+    size_page_title_pt: float = 20.0
     weight_regular: int = 400
     weight_medium: int = 500
     weight_semibold: int = 600

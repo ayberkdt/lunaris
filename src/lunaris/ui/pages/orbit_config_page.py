@@ -658,6 +658,8 @@ class OrbitPage(QtWidgets.QWidget):
             lbl.setObjectName("fieldLabel")
             lbl.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
             lbl.setBuddy(widget)
+            if label and not widget.accessibleName():
+                widget.setAccessibleName(label.rstrip(": ").strip())
             form_layout.addWidget(lbl, row, 0)
             form_layout.addWidget(widget, row, 1)
             if unit:

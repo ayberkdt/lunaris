@@ -172,6 +172,20 @@ def _make_lbl(text: str, style: str = "") -> QtWidgets.QLabel:
     return lbl
 
 
+def _status_divider() -> QtWidgets.QFrame:
+    """A 1px vertical rule for separating status-bar groups.
+
+    Replaces the previous literal ``"|"`` text separators, which read as an
+    amateur tell; the rule is styled from the ``border_soft`` token via the
+    ``#statusDivider`` QSS selector.
+    """
+    rule = QtWidgets.QFrame()
+    rule.setObjectName("statusDivider")
+    rule.setFrameShape(QtWidgets.QFrame.VLine)
+    rule.setFixedWidth(1)
+    return rule
+
+
 # =============================================================================
 # 17.                       MAIN WINDOW APPLICATION
 # =============================================================================
@@ -349,8 +363,12 @@ class MainWindow(QtWidgets.QMainWindow):
         header_frame = QtWidgets.QFrame()
         header_frame.setObjectName("header")
         h_layout = QtWidgets.QHBoxLayout(header_frame)
-        h_layout.setContentsMargins(16, 10, 16, 10)
-        h_layout.setSpacing(12)
+        # Shell chrome shares one horizontal margin (spacing.lg) so the header and
+        # the status summary bar below it align to a common left edge; vertical
+        # padding and gaps snap to the 4/8 spacing scale.
+        _sp = DESIGN_TOKENS.spacing
+        h_layout.setContentsMargins(_sp.lg, _sp.sm, _sp.lg, _sp.sm)
+        h_layout.setSpacing(_sp.md)
 
         # App Title
         title_lbl = QtWidgets.QLabel(APP_NAME)
@@ -434,8 +452,10 @@ class MainWindow(QtWidgets.QMainWindow):
         status_bar_frame = QtWidgets.QFrame()
         status_bar_frame.setObjectName("missionStatusBar")
         sb_layout = QtWidgets.QHBoxLayout(status_bar_frame)
-        sb_layout.setContentsMargins(12, 6, 12, 6)
-        sb_layout.setSpacing(16)
+        # Match the header's horizontal margin (spacing.lg) for a shared left edge.
+        _sp = DESIGN_TOKENS.spacing
+        sb_layout.setContentsMargins(_sp.lg, _sp.xs, _sp.lg, _sp.xs)
+        sb_layout.setSpacing(_sp.lg)
 
         gravity_label = _make_lbl("Gravity:")
         gravity_label.setObjectName("statusLabel")
@@ -444,7 +464,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_gravity_status.setObjectName("statusValue")
         sb_layout.addWidget(self.lbl_gravity_status)
 
-        sb_layout.addWidget(_make_lbl("|"))
+        sb_layout.addWidget(_status_divider())
 
         output_label = _make_lbl("Output:")
         output_label.setObjectName("statusLabel")
@@ -454,7 +474,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_output_status.setMaximumWidth(200)
         sb_layout.addWidget(self.lbl_output_status)
 
-        sb_layout.addWidget(_make_lbl("|"))
+        sb_layout.addWidget(_status_divider())
 
         preflight_label = _make_lbl("Preflight:")
         preflight_label.setObjectName("statusLabel")
@@ -463,7 +483,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_preflight_status.setFixedWidth(70)
         sb_layout.addWidget(self.lbl_preflight_status)
 
-        sb_layout.addWidget(_make_lbl("|"))
+        sb_layout.addWidget(_status_divider())
 
         run_label = _make_lbl("Run:")
         run_label.setObjectName("statusLabel")
