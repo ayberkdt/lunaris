@@ -1418,10 +1418,10 @@ def _topo_radius_envelope(
     """
     Min/max surface radius [m] implied by a stored DN grid.
 
-    The gap-free path uses direct ``min``/``max`` reductions. ``missing_dn``
-    pixels are excluded only when the missing constant is finite; that masked
-    path may allocate a filtered view, while LDEM rasters are gap-free and pass
-    ``NaN`` here.
+    Streams over the array once (``min``/``max`` on a memmap do not materialise
+    the whole raster). ``missing_dn`` pixels are excluded only when the missing
+    constant is finite; LDEM rasters are gap-free and pass ``NaN`` here, so the
+    common path is a plain min/max with no masking.
 
     The terrain envelope lets the impact kernels cheaply bound the near-field
     refinement region: only samples that cross ``r_terrain_max`` need a terrain
