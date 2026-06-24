@@ -318,6 +318,7 @@ class MonteCarloConfig:
     compute_impact_statistics: bool | None = None
     compute_impact_probability: bool | None = None
     impact_alt_km: float = 0.0      # Impact detection threshold [km]
+    impact_surface_mode: str = "sphere"  # "sphere" (constant R) or "terrain" (topo-aware freeze)
     sigma_levels: tuple[float, ...] = (1.0, 2.0, 3.0)
 
     def __post_init__(self) -> None:
@@ -403,6 +404,11 @@ class MonteCarloConfig:
             raise ValueError(f"max_vram_gb must be > 0, got {self.max_vram_gb}")
         if self.impact_alt_km < 0.0:
             raise ValueError(f"impact_alt_km must be >= 0, got {self.impact_alt_km}")
+        if self.impact_surface_mode not in ("sphere", "terrain"):
+            raise ValueError(
+                "impact_surface_mode must be 'sphere' or 'terrain', "
+                f"got {self.impact_surface_mode!r}"
+            )
         if self.compute_impact_probability is not None:
             warnings.warn(
                 "compute_impact_probability is deprecated; use detect_impact and "
@@ -434,6 +440,15 @@ class MonteCarloConfig:
         if self.compute_impact_probability is not None:
             return bool(self.compute_impact_probability)
         return True
+
+    @property
+    def impact_surface_terrain_enabled(self) -> bool:
+        """True when terrain-aware impact freeze is requested AND detection is on.
+
+        The kernels still require a usable topography payload at runtime; this
+        flag only reflects the requested policy, not data availability.
+        """
+        return self.impact_detection_enabled and self.impact_surface_mode == "terrain"
 
     @property
     def impact_statistics_enabled(self) -> bool:

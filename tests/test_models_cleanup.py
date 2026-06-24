@@ -32,7 +32,9 @@ def test_surrogate_gravity_fail_fast():
     with pytest.raises(ValueError, match="does not support MultiScale or advanced Residual models"):
         _build_model_from_config(cfg_nbands)
 
-    # Should not raise for legacy supported formats
+    pytest.importorskip("torch")
+
+    # Should not raise for legacy supported formats when the ML extra is installed.
     cfg_legacy = {"activation": "sine", "hidden": 64, "depth": 2}
     net = _build_model_from_config(cfg_legacy)
     assert net is not None

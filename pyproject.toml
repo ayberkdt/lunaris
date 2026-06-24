@@ -144,6 +144,7 @@ markers = [
   "requires_data: needs large external data (SPICE kernels, gravity/topography files)",
   "requires_cuda: needs an NVIDIA CUDA device",
   "requires_torch: needs PyTorch installed (skipped cleanly otherwise)",
+  "requires_h5py: needs h5py installed (skipped cleanly otherwise)",
   "requires_pyshtools: needs the optional pyshtools library (skipped cleanly otherwise)",
   "requires_tudatpy: needs the optional tudatpy library (skipped cleanly otherwise)",
 ]

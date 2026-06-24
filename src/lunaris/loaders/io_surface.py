@@ -1418,10 +1418,10 @@ def _topo_radius_envelope(
     """
     Min/max surface radius [m] implied by a stored DN grid.
 
-    Streams over the array once (``min``/``max`` on a memmap do not materialise
-    the whole raster). ``missing_dn`` pixels are excluded only when the missing
-    constant is finite; LDEM rasters are gap-free and pass ``NaN`` here, so the
-    common path is a plain min/max with no masking.
+    The gap-free path uses direct ``min``/``max`` reductions. ``missing_dn``
+    pixels are excluded only when the missing constant is finite; that masked
+    path may allocate a filtered view, while LDEM rasters are gap-free and pass
+    ``NaN`` here.
 
     The terrain envelope lets the impact kernels cheaply bound the near-field
     refinement region: only samples that cross ``r_terrain_max`` need a terrain
@@ -1499,7 +1499,14 @@ def _grid_topo_payload(
 
     n_lines = int(info.lines)
     n_samples = int(info.samples)
-    res_deg = float(getattr(topo, "ddeg", 1.0 / float(info.map_resolution_ppd)))
+    ddeg = getattr(topo, "ddeg", None)
+    if ddeg is None:
+        ppd = getattr(info, "map_resolution_ppd", None)
+        if ppd is None or float(ppd) <= 0.0:
+            return {"radius_const_m": float(r_moon_m)}
+        res_deg = 1.0 / float(ppd)
+    else:
+        res_deg = float(ddeg)
 
     # Pixel-center origins (match the bilinear sampling convention).
     lon_cent = getattr(topo, "_lon_centers_deg", None)

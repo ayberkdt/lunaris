@@ -1,17 +1,17 @@
 """
-Terrain-aware impact (freeze) — Faz A & B.
+Terrain-aware impact freeze - Phase A & B.
 
-Faz A: ``loaders.io_surface._grid_topo_payload`` packages a topography grid into
+Phase A: ``loaders.io_surface._grid_topo_payload`` packages a topography grid into
 a plain POD dict, and ``sample_topo_radius_m`` reconstructs the surface radius
 [m] from it using the *exact* indexing convention the batch impact kernels use.
 The reference sampler must round-trip against the loader's own
 ``TopographyGrid.radius_m`` so it can serve as the CPU ground truth for the
-GPU/numba terrain-freeze kernels (Faz C/D).
+GPU/numba terrain-freeze kernels (Phase C/D).
 
-Faz B: ``core.propagator.build_events`` must wire a real terrain-aware impact
+Phase B: ``core.propagator.build_events`` must wire a real terrain-aware impact
 event (``make_hybrid_impact_event``) when a topo grid is present, with the
 near-field switch altitude sourced from the config single-source default
-(11 km) — never the latent ``0.0`` fallback that silently disables terrain.
+(11 km) - never the latent ``0.0`` fallback that silently disables terrain.
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ END
 
 
 # ---------------------------------------------------------------------------
-# Faz A — payload + reference sampler
+# Phase A - payload + reference sampler
 # ---------------------------------------------------------------------------
 
 # Interior points only (away from the patch boundary) so loader/payload wraps agree.
@@ -140,6 +140,32 @@ def test_topo_payload_envelope_matches_dn_extremes(tmp_path):
         assert payload["r_terrain_min_m"] - 1e-6 <= r <= payload["r_terrain_max_m"] + 1e-6
 
 
+def test_topo_payload_prefers_explicit_ddeg_over_info_ppd(tmp_path):
+    """Grid-like adapters may expose ``ddeg`` without repeating map_resolution_ppd."""
+
+    topo = _write_synthetic_ldem(tmp_path)
+
+    class _InfoWithoutPPD:
+        lines = topo.info.lines
+        samples = topo.info.samples
+        scaling_factor = topo.info.scaling_factor
+        offset_km = topo.info.offset_km
+        missing_constant = getattr(topo.info, "missing_constant", float("nan"))
+
+    class _GridLikeTopo:
+        info = _InfoWithoutPPD()
+        dn_km = topo.dn_km
+        ddeg = topo.ddeg
+        _lon_centers_deg = topo._lon_centers_deg
+        _lat_centers_deg = topo._lat_centers_deg
+        _flip_lat = topo._flip_lat
+
+    payload = _grid_topo_payload(_GridLikeTopo(), r_moon_m=float(R_MOON))
+
+    assert "dn" in payload
+    assert payload["res_deg"] == pytest.approx(topo.ddeg)
+
+
 def test_topo_payload_none_and_constant_fall_back_to_radius_const():
     # No grid at all.
     p_none = _grid_topo_payload(None, r_moon_m=float(R_MOON))
@@ -163,7 +189,7 @@ def test_inmemory_provider_topo_payload_wraps_injected_grid(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Faz B — CPU build_events terrain-aware wiring (ground truth)
+# Phase B - CPU build_events terrain-aware wiring (ground truth)
 # ---------------------------------------------------------------------------
 
 class _FakeTables:
@@ -203,7 +229,7 @@ def _impact_event(topo):
 
 def test_build_events_uses_terrain_near_field_for_topo_grid():
     """At a sub-switch altitude the impact event must reflect the terrain radius,
-    not the reference sphere — proving switch_alt is the 11 km default, not 0."""
+    not the reference sphere - proving switch_alt is the 11 km default, not 0."""
     alt_m = 3000.0  # well below the 11 km hybrid switch altitude
     r = float(R_MOON) + alt_m
     y = np.array([r, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)

@@ -1,12 +1,12 @@
 """
-Faz D core — torch terrain sampler + segment intersection (CPU).
+Phase D core - torch terrain sampler + segment intersection (CPU).
 
 These exercise the pure-tensor terrain logic that the CUDA-gated torch batch
 propagators use, so they run on a CPU-only torch install (identity frame, no
 CUDA). The terrain radius sampler must agree with the loader/CPU ground truth
 (``sample_topo_radius_m``), and ``terrain_segment_intersection`` must freeze a
-descending segment on the terrain surface — deeper for a crater, shallower for a
-mountain — and degenerate to the sphere result for uniform terrain.
+descending segment on the terrain surface - deeper for a crater, shallower for a
+mountain - and degenerate to the sphere result for uniform terrain.
 """
 
 from __future__ import annotations

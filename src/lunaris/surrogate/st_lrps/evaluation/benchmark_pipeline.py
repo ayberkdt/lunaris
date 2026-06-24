@@ -14,7 +14,6 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.constants import DAY_S
-from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
 from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, ArtifactContractError
 
 from .benchmark_config import (
@@ -195,6 +194,8 @@ def _benchmark_contract_report(
         }
     requested = ArtifactContract.from_benchmark_config(config)
     try:
+        from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
+
         artifact = read_artifact_contract(
             model_dir,
             strict=True,

@@ -46,6 +46,7 @@ Timing metrics are printed to stdout at run start and end.
 from __future__ import annotations
 
 import time
+import warnings
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +58,8 @@ from lunaris.core.torch_frame import (
     TorchFrameError,
     TorchMoonFrame,
     line_sphere_intersection,
+    terrain_segment_intersection,
+    topo_payload_to_torch,
 )
 
 if TYPE_CHECKING:
@@ -92,6 +95,7 @@ class TorchBatchPropagator:
         device_id: int = 0,
         ephem: Any = None,
         allow_identity_rotation: bool = False,
+        topo_payload: dict | None = None,
     ) -> None:
         try:
             import torch
@@ -109,8 +113,12 @@ class TorchBatchPropagator:
         self._torch = torch
         self._device = torch.device(f"cuda:{int(device_id)}")
         self._dt = float(getattr(mc_cfg, "dt_s", 60.0))
-        self._impact_r = float(R_MOON) + float(getattr(mc_cfg, "impact_alt_km", 0.0)) * 1_000.0
+        self._impact_alt_m = float(getattr(mc_cfg, "impact_alt_km", 0.0)) * 1_000.0
+        self._impact_r = float(R_MOON) + self._impact_alt_m
         self._detect_impact = bool(getattr(mc_cfg, "impact_detection_enabled", True))
+        self._terrain_requested = self._detect_impact and (
+            str(getattr(mc_cfg, "impact_surface_mode", "sphere")) == "terrain"
+        )
         dtype_name = str(getattr(mc_cfg, "torch_dtype", "float32") or "float32").lower()
         self._dtype = torch.float64 if dtype_name == "float64" else torch.float32
 
@@ -128,6 +136,23 @@ class TorchBatchPropagator:
             raise TorchSTLRPSPreflightError(
                 f"GPU ST-LRPS frame preflight failed: {exc}"
             ) from exc
+
+        # Terrain-aware impact freeze: move the topography payload onto the device
+        # only when requested AND a usable grid is present; otherwise stay on the
+        # constant-sphere path (zero behaviour change).
+        self._topo = (
+            topo_payload_to_torch(topo_payload, device=self._device, dtype=self._dtype)
+            if self._terrain_requested
+            else None
+        )
+        self._terrain_enabled = self._topo is not None
+        if self._terrain_requested and not self._terrain_enabled:
+            warnings.warn(
+                "impact_surface_mode='terrain' requested but no usable topography "
+                "payload was provided; falling back to constant-sphere impact freeze.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         self._throughput_metrics: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
@@ -162,6 +187,12 @@ class TorchBatchPropagator:
             "frame_mode": "moon_fixed_slerp" if self._frame.uses_rotation else "identity",
             "frame_interpolation": "slerp_shortest_path",
             "uses_frame_rotation": bool(self._frame.uses_rotation),
+            "impact_position_method": (
+                "terrain_bisection_hybrid"
+                if getattr(self, "_terrain_enabled", False)
+                else "line_sphere_quadratic"
+            ),
+            "impact_surface_mode": "terrain" if getattr(self, "_terrain_enabled", False) else "sphere",
         }
         diagnostics.update(self._throughput_metrics)
         return diagnostics
@@ -209,6 +240,10 @@ class TorchBatchPropagator:
                 allow_identity=True,
             )
         detect_impact = bool(getattr(self, "_detect_impact", True))
+        # Defensive (mirrors `_frame`): smoke tests construct via __new__ and may
+        # not set the terrain attributes; absent topo => constant-sphere freeze.
+        topo = getattr(self, "_topo", None)
+        impact_alt_m = float(getattr(self, "_impact_alt_m", 0.0))
 
         N = int(Y0.shape[0])
         dt = self._dt
@@ -326,11 +361,22 @@ class TorchBatchPropagator:
                 # impact sphere) so impacted trajectories freeze on the surface
                 # instead of at the sub-surface step endpoint.
                 if detect_impact:
-                    segment_hit, alpha = line_sphere_intersection(
-                        prev_state[:, :3],
-                        state[:, :3],
-                        r_impact_t,
-                    )
+                    if topo is not None:
+                        segment_hit, alpha = terrain_segment_intersection(
+                            prev_state[:, :3],
+                            state[:, :3],
+                            t_prev_s=t_curr - dt_eff,
+                            dt_s=dt_eff,
+                            frame=frame,
+                            topo=topo,
+                            impact_alt_m=impact_alt_m,
+                        )
+                    else:
+                        segment_hit, alpha = line_sphere_intersection(
+                            prev_state[:, :3],
+                            state[:, :3],
+                            r_impact_t,
+                        )
                     newly_hit = alive & segment_hit
                     cross_state = prev_state + alpha.unsqueeze(1) * (state - prev_state)
                     t_cross = (float(global_step - 1) + alpha) * dt_eff
