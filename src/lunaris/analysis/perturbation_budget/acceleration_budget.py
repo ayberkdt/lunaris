@@ -18,7 +18,7 @@ from lunaris.common.constants import (
     R_MOON_MEAN,
 )
 from lunaris.common.type_defs import SpacecraftProps
-from lunaris.physics.relativity_effects import calc_schwarzschild_accel
+from lunaris.physics.relativity_effects import calc_external_1pn_accel, calc_schwarzschild_accel
 from lunaris.physics.solar_effects import accel_srp
 from lunaris.physics.solid_tides import calc_solid_tide_accel
 from lunaris.physics.spherical_harmonics import GravityModel, compute_point_mass_acceleration
@@ -177,7 +177,32 @@ def non_gravity_vectors(config: PerturbationBudgetConfig, sample: SampleState) -
         vectors["Solid Tides"] = tide_earth + tide_sun
 
     if config.include_relativity:
-        vectors["1PN Relativity"] = calc_schwarzschild_accel(sample.r_m, sample.v_m_s, float(MU_MOON))
+        rel = calc_schwarzschild_accel(sample.r_m, sample.v_m_s, float(MU_MOON))
+        sun_vel = (
+            np.zeros(3, dtype=np.float64)
+            if sample.sun_vel_m_s is None
+            else np.asarray(sample.sun_vel_m_s, dtype=np.float64)
+        )
+        earth_vel = (
+            np.zeros(3, dtype=np.float64)
+            if sample.earth_vel_m_s is None
+            else np.asarray(sample.earth_vel_m_s, dtype=np.float64)
+        )
+        rel = rel + calc_external_1pn_accel(
+            sample.r_m,
+            sample.v_m_s,
+            sample.sun_m,
+            sun_vel,
+            float(MU_SUN),
+        )
+        rel = rel + calc_external_1pn_accel(
+            sample.r_m,
+            sample.v_m_s,
+            sample.earth_m,
+            earth_vel,
+            float(MU_EARTH),
+        )
+        vectors["1PN Relativity"] = rel
 
     return vectors
 

@@ -65,6 +65,7 @@ from lunaris.analysis.postprocess import (
     extract_invariants,
     extract_time_days,
 )
+from lunaris.common.constants import DAY_S
 from lunaris.common.math_utils import wrap_lon_deg
 
 from .styling import (
@@ -1041,7 +1042,7 @@ def figure_ground_track(
 
     t_s = _as_np(_first_present(history, ["t_s", "t", "time_s", "time"]), float, atleast_1d=True, ravel=True)
     if t_s.size >= n:
-        t_days = (t_s[:n] / 86400.0).astype(float)
+        t_days = (t_s[:n] / DAY_S).astype(float)
     else:
         t_days = np.linspace(0.0, 1.0, n, dtype=float)
 
@@ -1126,7 +1127,7 @@ def figure_orbit_3d(history: Mapping[str, Any], meta: Mapping[str, Any] | None =
 
     t_s = _as_np(_first_present(history, ["t_s", "t", "time_s", "time"]), float, atleast_1d=True, ravel=True)
     if t_s.size >= r_km.shape[0]:
-        t_days = (t_s[:r_km.shape[0]] / 86400.0)[::down]
+        t_days = (t_s[:r_km.shape[0]] / DAY_S)[::down]
     else:
         t_days = np.linspace(0.0, 1.0, r.shape[0], dtype=float)
 
@@ -1387,7 +1388,7 @@ def figure_perturbation_magnitude(
         valid_t: list[float] = []
         for i in range(n):
             try:
-                breakdown = ctx.get_acceleration_breakdown(float(t_days[i] * 86400.0), np.asarray(states[i, :], dtype=float))
+                breakdown = ctx.get_acceleration_breakdown(float(t_days[i] * DAY_S), np.asarray(states[i, :], dtype=float))
             except Exception:
                 breakdown = None
 
@@ -2394,7 +2395,7 @@ def figure_events_table(events: Mapping[str, Any], t_days: np.ndarray) -> plt.Fi
     def _fmt_sec_from_day(x: float) -> str:
         if not np.isfinite(x):
             return "—"
-        sec = float(x) * 86400.0
+        sec = float(x) * DAY_S
         if not np.isfinite(sec):
             return "—"
         # Use fixed notation unless very large

@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-from lunaris.common.constants import R_MOON
+from lunaris.common.constants import DAY_S, R_MOON
 
 from .compute import (
     _gpu_rk4_dt_values,
@@ -359,7 +359,7 @@ def plot_selected_scenario(
     if truth_res is None:
         return saved
 
-    t_ref  = truth_res.t / 86400.0
+    t_ref  = truth_res.t / DAY_S
     r_ref  = truth_res.y[:, :3]
     v_ref  = truth_res.y[:, 3:6]
     other_models = [m for m in model_trajectories if m != truth_model]
@@ -629,7 +629,7 @@ def plot_batch_selected_scenario(
     t_batch = np.asarray(batch_result["t"], dtype=np.float64)
     y_st = np.asarray(batch_result["Y"][:, i, :], dtype=np.float64)
     y_truth = interpolate_state_to_times(truth.t, truth.y, t_batch)
-    t_days = t_batch / 86400.0
+    t_days = t_batch / DAY_S
 
     saved: list[Path] = []
     plt.style.use("dark_background")
@@ -1109,7 +1109,7 @@ def plot_gpu_batch_report_figures(
     # ----- Ensemble time-series ------------------------------------------
     if scenarios and truth.t_by_scenario:
         common_t = next(iter(truth.t_by_scenario.values()))
-        t_days = np.asarray(common_t) / 86400.0
+        t_days = np.asarray(common_t) / DAY_S
         med_by_model: dict[str, np.ndarray] = {}
         band_by_model: dict[str, tuple[np.ndarray, np.ndarray]] = {}
         ric_by_model: dict[str, np.ndarray] = {}
@@ -1192,7 +1192,7 @@ def plot_gpu_batch_report_figures(
         idx = scenarios.index(sc)
         t_truth = truth.t_by_scenario[sid]
         y_truth = truth.y_by_scenario[sid]
-        t_days = np.asarray(t_truth) / 86400.0
+        t_days = np.asarray(t_truth) / DAY_S
 
         pos_by_model: dict[str, np.ndarray] = {}
         alt_by_model: dict[str, np.ndarray] = {}

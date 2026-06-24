@@ -17,6 +17,7 @@ from typing import Any
 
 from PySide6 import QtCore, QtWidgets
 
+from lunaris.common.constants import DAY_S
 from lunaris.common.time_utils import (
     normalize_iso_datetime_to_utc_string,
     parse_iso_datetime_to_utc_datetime,
@@ -141,7 +142,7 @@ class SolverSettingsDialog(QtWidgets.QDialog):
 
         maxstep_row = QtWidgets.QHBoxLayout()
         maxstep_row.addWidget(QtWidgets.QLabel("Maximum Step Size:"))
-        self.ent_maxstep = NumericDragLineEdit(f"{self._cfg.max_step:.1f}", step=10.0, min_value=0.1, max_value=86400.0, decimals=1)
+        self.ent_maxstep = NumericDragLineEdit(f"{self._cfg.max_step:.1f}", step=10.0, min_value=0.1, max_value=DAY_S, decimals=1)
         self.ent_maxstep.setFixedWidth(140)
         maxstep_row.addWidget(self.ent_maxstep)
         maxstep_row.addWidget(QtWidgets.QLabel("s"))

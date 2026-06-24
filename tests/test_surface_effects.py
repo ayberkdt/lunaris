@@ -170,3 +170,23 @@ def test_thermal_accel_returns_finite():
         ThermalConfig(thermal_mode="constant_temperature", facet_lat_count=6, facet_lon_count=12),
     )
     assert np.all(np.isfinite(a))
+
+
+def test_thermal_accel_equilibrium_eclipse_uses_optional_earth_vector():
+    r = np.asarray([R_MOON_MEAN + 5.0e5, 0.0, 0.0])
+    s = np.asarray([AU, 0.0, 0.0])
+    earth = np.asarray([3.84e8, 0.0, 0.0])
+    sc = SpacecraftProps(mass_kg=1000.0, area_m2=1.0, cr=1.5)
+    cfg = ThermalConfig(
+        thermal_mode="equilibrium_temperature",
+        night_temperature_K=0.0,
+        thermal_floor_flux_W_m2=0.0,
+        facet_lat_count=6,
+        facet_lon_count=12,
+    )
+
+    no_eclipse = thermal_accel(r, s, sc, cfg, r_earth=earth, enable_eclipse=False)
+    eclipsed = thermal_accel(r, s, sc, cfg, r_earth=earth, enable_eclipse=True)
+
+    assert np.linalg.norm(no_eclipse) > 0.0
+    np.testing.assert_allclose(eclipsed, 0.0, rtol=0.0, atol=0.0)

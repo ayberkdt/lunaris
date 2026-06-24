@@ -107,6 +107,39 @@ def test_init_ephemeris_keeps_third_body_sampling_when_sun_vector_is_needed(monk
     assert captured["spice_cfg"].include_third_body is True
 
 
+def test_init_ephemeris_relativity_requests_body_vector_tables(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _fake_from_time_and_spice(time_cfg, spice_cfg, **kwargs):
+        captured["spice_cfg"] = spice_cfg
+        return "mock-ephem"
+
+    monkeypatch.setattr(
+        "lunaris.physics.ephemeris.EphemerisManager.from_time_and_spice",
+        _fake_from_time_and_spice,
+    )
+
+    cfg = _make_cfg(
+        flags=PerturbationFlags(
+            enable_sh=False,
+            enable_3rd_body_sun=False,
+            enable_3rd_body_earth=False,
+            enable_earth_j2=False,
+            enable_srp=False,
+            enable_albedo=False,
+            enable_thermal=False,
+            enable_tides_k2=False,
+            enable_tides_k3=False,
+            enable_relativity_1pn=True,
+        )
+    )
+
+    result = main.init_ephemeris(cfg, tf_s=3600.0)
+
+    assert result == "mock-ephem"
+    assert captured["spice_cfg"].include_third_body is True
+
+
 def test_init_ephemeris_thermal_constant_needs_q_only(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

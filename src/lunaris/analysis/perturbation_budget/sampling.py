@@ -8,7 +8,7 @@ from math import cos, pi, sin, sqrt
 
 import numpy as np
 
-from lunaris.common.constants import AU, MU_MOON, R_MOON_MEAN
+from lunaris.common.constants import AU, DAY_S, MU_MOON, R_MOON_MEAN
 
 from .config import PerturbationBudgetConfig
 
@@ -25,20 +25,34 @@ class SampleState:
     sun_m: np.ndarray
     earth_m: np.ndarray
     geometry_source: str
+    sun_vel_m_s: np.ndarray | None = None
+    earth_vel_m_s: np.ndarray | None = None
 
 
 def _deg2rad(value: float) -> float:
     return float(value) * pi / 180.0
 
 
-def _synthetic_sun_earth(epoch_index: int, epoch_utc: str) -> tuple[np.ndarray, np.ndarray]:
+def _synthetic_sun_earth(epoch_index: int, epoch_utc: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Return deterministic representative Moon-centered Sun/Earth vectors."""
     # Spread epochs through geometry without depending on SPICE kernels.
     phase = 2.0 * pi * (epoch_index % 12) / 12.0
     if epoch_utc:
         phase += (sum(ord(c) for c in epoch_utc) % 360) * pi / 180.0 / 17.0
     earth_distance_m = 384_400_000.0
+    lunar_orbit_period_s = 27.321661 * DAY_S
+    year_s = 365.25 * DAY_S
+    n_earth = 2.0 * pi / lunar_orbit_period_s
+    n_sun = 2.0 * pi / year_s
     sun = np.array([AU * cos(phase), AU * sin(phase), 0.18 * AU * sin(0.5 * phase)], dtype=np.float64)
+    sun_vel = np.array(
+        [
+            -AU * n_sun * sin(phase),
+            AU * n_sun * cos(phase),
+            0.09 * AU * n_sun * cos(0.5 * phase),
+        ],
+        dtype=np.float64,
+    )
     earth = np.array(
         [
             earth_distance_m * cos(phase + 1.1),
@@ -47,7 +61,15 @@ def _synthetic_sun_earth(epoch_index: int, epoch_utc: str) -> tuple[np.ndarray, 
         ],
         dtype=np.float64,
     )
-    return sun, earth
+    earth_vel = np.array(
+        [
+            -earth_distance_m * n_earth * sin(phase + 1.1),
+            earth_distance_m * n_earth * cos(phase + 1.1),
+            0.12 * earth_distance_m * n_earth * cos(phase),
+        ],
+        dtype=np.float64,
+    )
+    return sun, earth, sun_vel, earth_vel
 
 
 def circular_state(altitude_km: float, inclination_deg: float, true_anomaly_deg: float) -> tuple[np.ndarray, np.ndarray]:
@@ -75,7 +97,7 @@ def generate_sample_states(config: PerturbationBudgetConfig) -> list[SampleState
     samples: list[SampleState] = []
     geometry_source = "synthetic_geometry"
     for epoch_index, epoch in enumerate(config.epochs_utc):
-        sun, earth = _synthetic_sun_earth(epoch_index, epoch)
+        sun, earth, sun_vel, earth_vel = _synthetic_sun_earth(epoch_index, epoch)
         for altitude in config.altitudes_km:
             for inc in config.inclinations_deg:
                 for anomaly in config.true_anomalies_deg:
@@ -97,6 +119,8 @@ def generate_sample_states(config: PerturbationBudgetConfig) -> list[SampleState
                             sun_m=sun,
                             earth_m=earth,
                             geometry_source=geometry_source,
+                            sun_vel_m_s=sun_vel,
+                            earth_vel_m_s=earth_vel,
                         )
                     )
     return samples

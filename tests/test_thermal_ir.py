@@ -65,18 +65,22 @@ def test_equilibrium_mode_respects_day_night_geometry():
     night = accel_thermal_ir_facets_numba(
         R_MOON + 1000.0, 0.0, 0.0,
         -AU, 0.0, 0.0,
+        0.0, 0.0, 0.0,
         pos, normals, areas, temps,
         THERMAL_MODE_EQUILIBRIUM,
         0.95, 0.12, 250.0, 0.0, 0.0, 1.0, 1.0, 100.0,
         1367.0, AU, 299_792_458.0, 5.670_374_419e-8, True,
+        6_371_000.0, False,
     )
     day = accel_thermal_ir_facets_numba(
         R_MOON + 1000.0, 0.0, 0.0,
         AU, 0.0, 0.0,
+        0.0, 0.0, 0.0,
         pos, normals, areas, temps,
         THERMAL_MODE_EQUILIBRIUM,
         0.95, 0.12, 250.0, 0.0, 0.0, 1.0, 1.0, 100.0,
         1367.0, AU, 299_792_458.0, 5.670_374_419e-8, True,
+        6_371_000.0, False,
     )
 
     assert night == (0.0, 0.0, 0.0)
@@ -110,6 +114,60 @@ def test_constant_mode_rotates_consistently():
     )
 
     assert np.allclose(a_rot, rot @ a, rtol=1e-12, atol=1e-30)
+
+
+def _equilibrium_thermal(earth, enable_eclipse):
+    """Single sunlit facet, equilibrium mode, sun on +X."""
+    pos = np.asarray([[R_MOON, 0.0, 0.0]], dtype=np.float64)
+    normals = np.asarray([[1.0, 0.0, 0.0]], dtype=np.float64)
+    areas = np.asarray([100.0], dtype=np.float64)
+    return calc_thermal_ir_accel(
+        np.asarray([R_MOON + 1.0e6, 0.0, 0.0]),
+        np.asarray([AU, 0.0, 0.0]),
+        pos, normals, areas,
+        mode="equilibrium_temperature",
+        thermal_floor_flux_W_m2=0.0,
+        night_temperature_K=0.0,  # isolate the solar-driven term (no night floor)
+        spacecraft_area_m2=2.0, spacecraft_mass_kg=100.0,
+        r_earth_fixed=earth, enable_eclipse=enable_eclipse,
+    )
+
+
+def test_equilibrium_thermal_dims_during_lunar_eclipse():
+    """With the Moon in Earth's umbra (Earth between Sun and Moon), the
+    equilibrium-mode solar input is shadowed, so the thermal IR drops to zero;
+    the same geometry with eclipse disabled is unaffected."""
+    earth_umbra = np.asarray([3.84e8, 0.0, 0.0])   # Earth toward the Sun -> Moon in umbra
+    a_no_eclipse = _equilibrium_thermal(earth_umbra, enable_eclipse=False)
+    a_eclipse = _equilibrium_thermal(earth_umbra, enable_eclipse=True)
+    assert np.linalg.norm(a_no_eclipse) > 0.0
+    assert np.linalg.norm(a_eclipse) == 0.0
+
+
+def test_equilibrium_thermal_unaffected_when_moon_is_sunlit():
+    """Eclipse enabled but Earth on the anti-solar side (no umbra) leaves the
+    thermal IR identical to the no-eclipse result."""
+    earth_sunlit = np.asarray([-3.84e8, 0.0, 0.0])  # Moon on the day side of Earth
+    a_ref = _equilibrium_thermal(earth_sunlit, enable_eclipse=False)
+    a_lit = _equilibrium_thermal(earth_sunlit, enable_eclipse=True)
+    np.testing.assert_allclose(a_lit, a_ref, rtol=1e-12, atol=0.0)
+
+
+def test_constant_mode_ignores_eclipse():
+    """Constant-temperature mode prescribes the facet temperature, so a lunar
+    eclipse must not change its thermal IR (no solar drive to dim)."""
+    pos = np.asarray([[R_MOON, 0.0, 0.0]], dtype=np.float64)
+    normals = np.asarray([[1.0, 0.0, 0.0]], dtype=np.float64)
+    areas = np.asarray([100.0], dtype=np.float64)
+    r = np.asarray([R_MOON + 1.0e6, 0.0, 0.0])
+    sun = np.asarray([AU, 0.0, 0.0])
+    earth_umbra = np.asarray([3.84e8, 0.0, 0.0])
+    a_plain = calc_thermal_ir_accel(r, sun, pos, normals, areas, temperature_K=250.0)
+    a_eclipse = calc_thermal_ir_accel(
+        r, sun, pos, normals, areas, temperature_K=250.0,
+        r_earth_fixed=earth_umbra, enable_eclipse=True,
+    )
+    np.testing.assert_allclose(a_eclipse, a_plain, rtol=1e-12, atol=0.0)
 
 
 def test_dynamics_thermal_ir_adds_finite_acceleration_without_surface_provider():

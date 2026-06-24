@@ -1356,6 +1356,16 @@ class GravityModel:
     def scale_m(self) -> np.ndarray:
         return self.scale_m_table
 
+    @property
+    def ws(self) -> Workspace:
+        """Default workspace under the name the dynamics core expects.
+
+        Exposing ``ws`` here completes the canonical gravity contract
+        (``degree_max``, ``R_ref_m``, ``GM_m3s2``, ``Cnm`` ... ``ws``) directly on
+        the model, so no external name-bridging adapter is needed.
+        """
+        return self.workspace
+
     # --------------------------- Internal Helpers ---------------------------
 
     @staticmethod

@@ -227,34 +227,35 @@ Post-processing, reporting, and ensemble statistics/plotting live under
 The validation layer provides independent physics, orbit, and cross-model checks,
 including external-reference harnesses (`scipy`/`pyshtools` SH cross-checks and
 direct NAIF/SPICE ephemeris checks) under `validation/independent/`. The gravity
-benchmark CLI compares ST-LRPS against spherical-harmonic baselines:
+benchmark CLI evaluates ST-LRPS and classical spherical-harmonic runs against a
+declared numerical reference:
 
 ```bash
 python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models --help
 ```
 
-> [!WARNING]
-> **Accuracy results below are invalidated and pending regeneration.** They
-> predate the correction of the spherical-harmonic Condon–Shortley phase
-> convention (the runtime engine and the ST-LRPS label generator now both use
-> the no-phase geodesy/GRAIL convention). The datasets, truth trajectories,
-> trained artifacts, and SH comparisons behind these numbers were produced under
-> the old convention and **must be regenerated and retrained before being used
-> as scientific evidence.** Only the relative runtime/throughput figures remain
-> approximately indicative.
+Current publication status: no regenerated, paper-safe ST-LRPS orbit-accuracy
+table is published in this README. A benchmark becomes citeable only when its
+`validation_report.json` passes and its `benchmark_manifest.json` records the
+resolved config, commit, scenario seed/count, numerical reference, hardware,
+backend, model artifact, dataset/gravity hashes when available, and ST-LRPS
+artifact-contract compatibility.
 
-Selected results (consumer workstation, Intel CPU + GTX 1660 Ti; see
-[docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) for full tables, scenario
-counts, and reproduction):
+How to read a gravity benchmark:
 
-| Benchmark | ST-LRPS median RMS position error | Note |
-|-----------|-----------------------------------|------|
-| 5-day general stability (128 scenarios, `float32`) | **1.106 km** *(invalidated)* | ≈2× faster wall-clock than `SH50` at higher accuracy |
-| 1-day high-degree comparison (100 scenarios, `float64`) | **0.626 km** *(invalidated)* | 29.1× lower error than `SH20`; 8.32× faster than `SH200` |
-| 1-day near-circular mapping (100 scenarios, `float64`) | **15.83 cm** *(invalidated)* | 2.25× speedup vs. sequential CPU truth |
+- **Median / P95 / max RMS position error [km]**: orbit-position error against
+  the declared numerical reference for the stated scenario set and duration.
+- **RIC errors [km]**: radial, along-track, and cross-track components; radial
+  maps most directly to altitude, along-track to phase/timing drift, and
+  cross-track to plane error.
+- **Runtime [s], steps/s, and speedup**: hardware- and backend-specific
+  throughput; compare only runs with the same scenario count, duration,
+  integrator, dtype, and output cadence.
+- **Reference model**: a high-degree SH DOP853 run is a numerical reference, not
+  physical truth; claims must name the reference and configuration.
 
-Numbers are run-specific evidence for the stated configuration, not a blanket
-performance guarantee.
+See [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) for the reporting
+contract and regeneration command pattern.
 
 ## Visualization
 

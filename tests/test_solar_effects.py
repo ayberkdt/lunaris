@@ -16,7 +16,14 @@ import sys
 import numpy as np
 import pytest
 
-from lunaris.common.constants import AU, R_EARTH_MEAN, R_MOON_MEAN
+from lunaris.common.constants import (
+    AU,
+    C_LIGHT,
+    P_SUN_1AU,
+    R_EARTH_MEAN,
+    R_MOON_MEAN,
+    SOLAR_FLUX_1AU,
+)
 from lunaris.common.type_defs import SpacecraftProps
 
 # ---------------------------------------------------------------------------
@@ -50,6 +57,11 @@ TEST_PROPS = SpacecraftProps(
 
 # Moon-centered Sun vector (simple synthetic geometry)
 R_SUN_VEC = np.array([AU_TEST, 0.0, 0.0], dtype=np.float64)
+
+
+def test_solar_flux_nominal_and_pressure_consistent() -> None:
+    assert SOLAR_FLUX_1AU == pytest.approx(1361.0, rel=0.0, abs=0.0)
+    assert P_SUN_1AU == pytest.approx(SOLAR_FLUX_1AU / C_LIGHT, rel=0.0, abs=0.0)
 
 
 def _expected_srp_mag(r_sc_moon: np.ndarray) -> float:

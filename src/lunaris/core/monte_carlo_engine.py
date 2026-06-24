@@ -69,7 +69,6 @@ from lunaris.common.montecarlo_defs import (
     build_mc_output_grid,
 )
 from lunaris.common.type_defs import F64Array
-from lunaris.physics.gravity_adapter import adapt_gravity_model
 
 if TYPE_CHECKING:
     from lunaris.core.mc_backend_policy import MCBackendPlan
@@ -240,6 +239,7 @@ def _need_body_vectors(cfg: Any) -> bool:
         or thermal_needs_sun
         or flags.enable_tides_k2
         or flags.enable_tides_k3
+        or flags.enable_relativity_1pn
     )
 
 
@@ -1078,11 +1078,11 @@ class MonteCarloEngine:
                             else max(requested_degree, mc_gpu_degree)
                         )
 
-                    grav_model = adapt_gravity_model(
-                        GravityModel.from_file(
-                            path=str(cfg.gravity.file_path),
-                            requested_degree=requested_degree,
-                        )
+                    # GravityModel already exposes the full dynamics gravity
+                    # contract (degree_max, R_ref_m, GM_m3s2, Cnm ... ws).
+                    grav_model = GravityModel.from_file(
+                        path=str(cfg.gravity.file_path),
+                        requested_degree=requested_degree,
                     )
             except Exception as exc:
                 raise RuntimeError(
@@ -1448,7 +1448,7 @@ class MonteCarloEngine:
 
         print(
             f"[MC] N={N}  backend={backend_name}  "
-            f"T={duration_s / 86400:.2f} d  "
+            f"T={duration_s / DAY_S:.2f} d  "
             f"step={mc.dt_s:.1f} s  snap={output_dt_s:.1f} s",
             flush=True,
         )

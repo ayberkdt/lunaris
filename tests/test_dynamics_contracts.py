@@ -192,6 +192,40 @@ def test_thermal_constant_mode_is_supported_without_surface_provider():
     assert eng._requirements()["use_thermal"] is True
 
 
+def test_thermal_equilibrium_eclipse_requests_earth_vector():
+    eng = DynamicsEngine(
+        _sc(),
+        PerturbationFlags(enable_sh=False, enable_thermal=True),
+        thermal=ThermalConfig(
+            thermal_mode="equilibrium_temperature",
+            enable_eclipse=True,
+            facet_lat_count=2,
+            facet_lon_count=4,
+        ),
+        ephem_manager=object(),
+    )
+    req = eng._requirements()
+    assert req["need_sun"] is True
+    assert req["need_earth"] is True
+
+
+def test_thermal_equilibrium_without_eclipse_only_requests_sun_vector():
+    eng = DynamicsEngine(
+        _sc(),
+        PerturbationFlags(enable_sh=False, enable_thermal=True),
+        thermal=ThermalConfig(
+            thermal_mode="equilibrium_temperature",
+            enable_eclipse=False,
+            facet_lat_count=2,
+            facet_lon_count=4,
+        ),
+        ephem_manager=object(),
+    )
+    req = eng._requirements()
+    assert req["need_sun"] is True
+    assert req["need_earth"] is False
+
+
 def test_thermal_equilibrium_requires_sun_ephemeris():
     with pytest.raises(ValueError, match="Ephemeris is required"):
         DynamicsEngine(

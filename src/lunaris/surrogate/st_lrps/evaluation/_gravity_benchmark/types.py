@@ -16,8 +16,8 @@ import numpy as np
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+from lunaris.common.constants import DAY_S
 from lunaris.core.config import SimConfig, load_default_config, replace_sim_config
-from lunaris.physics.gravity_adapter import adapt_gravity_model
 from lunaris.physics.spherical_harmonics import GravityModel
 from lunaris.surrogate.runtime_adapter import (
     SurrogateGravityModel,
@@ -145,7 +145,7 @@ BENCHMARK_CACHE_SCHEMA_VERSION = 1
 def build_base_config(args: argparse.Namespace) -> SimConfig:
     cfg = load_default_config()
     new_time = replace(cfg.time,
-        duration_s=args.duration_days * 86400.0,
+        duration_s=args.duration_days * DAY_S,
         output_dt_s=args.dt_out,
     )
     new_prop = replace(cfg.propagator,
@@ -260,8 +260,8 @@ class GravityModelCache:
         if model_name.startswith("sh"):
             degree = int(model_name.replace("sh", ""))
             print(f"  [cache] Loading SH{degree} gravity model ...", flush=True)
-            raw = GravityModel.from_file(self._cfg.gravity.file_path, requested_degree=degree)
-            return adapt_gravity_model(raw)
+            # GravityModel already satisfies the dynamics gravity contract.
+            return GravityModel.from_file(self._cfg.gravity.file_path, requested_degree=degree)
 
         if model_name == "st_lrps":
             if not self._args.st_lrps_model_dir:

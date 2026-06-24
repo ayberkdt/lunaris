@@ -23,7 +23,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 from lunaris.core.config import SimConfig
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagator import propagate
@@ -305,7 +305,7 @@ def run_single_orbit_mode(args: argparse.Namespace, cfg: SimConfig, ephem: Any) 
                   f"| Runtime: {s['runtime_s']:.2f}s")
 
     plt.style.use("dark_background")
-    t_ref = truth_res.t / 86400.0
+    t_ref = truth_res.t / DAY_S
     r_ref = truth_res.y[:, :3]
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -735,7 +735,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
     else:
         truth = TruthTrajectorySet(_truth_name, {}, {}, {})
 
-    duration_s = float(args.duration_days) * 86400.0
+    duration_s = float(args.duration_days) * DAY_S
     results: list[BatchModelResult] = []
     t_gpu_start = time.perf_counter()
     completed_gpu = 0
@@ -1538,7 +1538,7 @@ def run_random_scenario_mode(
         print("\n[batch-rk4] Starting batched RK4 propagation ...", flush=True)
 
         rk4_dt = args.rk4_dt_s if args.rk4_dt_s is not None else args.st_lrps_rk4_dt
-        duration_s   = args.duration_days * 86400.0
+        duration_s   = args.duration_days * DAY_S
         output_dt_s  = args.dt_out
 
         missing_truth = [sc for sc in scenarios if sc.scenario_id not in truth_results_all]

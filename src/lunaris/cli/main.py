@@ -41,9 +41,6 @@ from lunaris.common.constants import DAY_S, DEG2RAD, MU_MOON, R_MOON  # noqa: E4
 from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string  # noqa: E402
 from lunaris.common.type_defs import InitialState, PropagationResult  # noqa: E402
 from lunaris.core.config import SimConfig, load_default_config  # noqa: E402
-from lunaris.physics.gravity_adapter import (
-    adapt_gravity_model as _shared_adapt_gravity_model,  # noqa: E402
-)
 
 # Heavy modules (physics/core/loaders/analysis) are intentionally NOT imported
 # at module import time. They are imported inside runtime functions (main/init_*)
@@ -99,6 +96,7 @@ def init_ephemeris(cfg: SimConfig, tf_s: float) -> EphemerisManager:
         or thermal_needs_sun
         or flags.enable_tides_k2
         or flags.enable_tides_k3
+        or flags.enable_relativity_1pn
     )
     spice_cfg = replace(cfg.spice, include_third_body=need_body_vectors)
 
@@ -588,11 +586,6 @@ def _y0_to_array(y0: Any) -> np.ndarray:
     return arr.astype(float, copy=False)
 
 
-def _adapt_gravity_model(g: Any) -> Any:
-    """Normalize gravity-model attributes through the shared adapter module."""
-    return _shared_adapt_gravity_model(g)
-
-
 def main() -> int:
     args = parse_args()
 
@@ -634,7 +627,9 @@ def main() -> int:
                 path=str(cfg.gravity.file_path),
                 requested_degree=deg,
             )
-            gravity_core = _adapt_gravity_model(gravity) if bool(cfg.flags.enable_sh) else None
+            # GravityModel already satisfies the dynamics gravity contract
+            # (degree_max, R_ref_m, GM_m3s2, Cnm ... ws) directly.
+            gravity_core = gravity if bool(cfg.flags.enable_sh) else None
             # Prefer model's mu (m^3/s^2); fallback to constants
             mu = float(getattr(gravity, "mu", MU_MOON))
     except Exception as e:

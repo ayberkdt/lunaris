@@ -1,0 +1,388 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-06-24",
+  "data_root_observed": "data",
+  "purpose": "Frozen local data inventory for the Lunaris data cleanup pass. This file records current files, hashes, manifest coverage, runtime use, and known gaps before changing the data manifest or loaders.",
+  "summary": {
+    "file_count": 33,
+    "total_size_bytes": 1889816784,
+    "manifest_false_negatives": [
+      "data/ephemeris_models/naif0012.tls is missing by exact name, but data/ephemeris_models/naif0012.tls.txt is present and accepted by runtime kernel resolution.",
+      "data/ephemeris_models/pck00011.tpc is missing by exact name, but data/ephemeris_models/pck00011.tpc.txt is present and accepted by runtime kernel resolution.",
+      "data/ephemeris_models/moon_de440_220930.tf is missing by exact name, but data/ephemeris_models/moon_de440_220930.tf.txt is present and auto-included by runtime kernel resolution.",
+      "data/gravity_models/jggrx_1800f_sha.tab is missing by exact name, but data/gravity_models/jggrx_1800f_sha.tab.txt is present and used by local runtime helpers."
+    ],
+    "true_missing_assets": [
+      "data/datasets/st_lrps_cloud_suite.h5",
+      "data/ephemeris_models/gm_de440.tpc"
+    ],
+    "manifest_coverage_gaps": [
+      "thermal_models is present locally but is not a lunaris-data group.",
+      "assets is present locally but is not a lunaris-data group.",
+      "PDS label/XML companion files are not represented as first-class manifest requirements.",
+      "manifest URL for moon_de440_220930.tf points to the NAIF main FK directory, which currently returns 404; the file is available under a_old_versions."
+    ],
+    "runtime_risks": [
+      "Albedo auto-selection can choose Diviner DGDR_RA rock-abundance data over LOLA LDAM albedo because selection currently prefers highest parseable raster resolution.",
+      "Ephemeris works, but SPICE GM lookup falls back for Earth/Sun because gm_de440.tpc is not loaded."
+    ]
+  },
+  "assets": [
+    {
+      "relative_path": "data/albedo_models/dgdr_ra_avg_cyl_032_img.img",
+      "group": "albedo_models",
+      "size_bytes": 88473600,
+      "sha256": "ee0ff6ddfcc9cb4bb2fe83992f3951471c468a169804f1fdb582dc2df99540e1",
+      "manifest_status": "not_catalogued",
+      "product_identity": "LRO Diviner DGDR_RA rock abundance, not LOLA albedo",
+      "runtime_status": "risk: can be mis-selected as albedo by current generic cylindrical raster selection",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/urn-nasa-pds-lro_diviner_derived1/data_derived_gdr_l3/cylindrical/img/dgdr_ra_avg_cyl_032_img.img"
+    },
+    {
+      "relative_path": "data/albedo_models/dgdr_ra_avg_cyl_032_img.lbl.txt",
+      "group": "albedo_models",
+      "size_bytes": 4373,
+      "sha256": "2c84b7d76764f503baf415ec780abfc5da55d9724030cf7587a09b868c5a0206",
+      "manifest_status": "not_catalogued_companion",
+      "product_identity": "PDS3 label for Diviner DGDR_RA rock abundance",
+      "runtime_status": "parseable by generic cylindrical parser",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/urn-nasa-pds-lro_diviner_derived1/data_derived_gdr_l3/cylindrical/img/dgdr_ra_avg_cyl_032_img.lbl"
+    },
+    {
+      "relative_path": "data/albedo_models/dgdr_ra_avg_cyl_032_img.xml",
+      "group": "albedo_models",
+      "size_bytes": 11380,
+      "sha256": "c23fc15be7057ad443936f51792f446f71ea1112842cf62cc1392de003cdab4b",
+      "manifest_status": "not_catalogued_companion",
+      "product_identity": "PDS4 label for Diviner DGDR_RA rock abundance",
+      "runtime_status": "documentation/provenance only",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/urn-nasa-pds-lro_diviner_derived1/data_derived_gdr_l3/cylindrical/img/dgdr_ra_avg_cyl_032_img.xml"
+    },
+    {
+      "relative_path": "data/albedo_models/ldam_10_float.img",
+      "group": "albedo_models",
+      "size_bytes": 25920000,
+      "sha256": "6a14cac07b26e3d2c8576823e20c7f4aa47afb0b65ba55df11cf67e64c7b3761",
+      "manifest_status": "not_catalogued_exact; manifest currently lists ldam_8_float.img",
+      "product_identity": "LRO LOLA LDAM_10_FLOAT albedo",
+      "runtime_status": "valid albedo product; should be preferred over LDAM_8 and DGDR products",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldam_10_float.img"
+    },
+    {
+      "relative_path": "data/albedo_models/ldam_10_float.lbl.txt",
+      "group": "albedo_models",
+      "size_bytes": 3580,
+      "sha256": "8067d7640e01c970e93342a730794df03e049badf455fc817b2e9ef30b4a9427",
+      "manifest_status": "not_catalogued_companion",
+      "product_identity": "PDS3 label for LRO LOLA LDAM_10_FLOAT albedo",
+      "runtime_status": "parseable; resolves ldam_10_float.img companion",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldam_10_float.lbl"
+    },
+    {
+      "relative_path": "data/albedo_models/ldam_10_float.xml",
+      "group": "albedo_models",
+      "size_bytes": 10201,
+      "sha256": "e2b70686aaffb5c0c3ad5d55cb56b57b56d004eb15a1685f9e7b14f6cdaa018a",
+      "manifest_status": "not_catalogued_companion",
+      "product_identity": "PDS4 label for LRO LOLA LDAM_10_FLOAT albedo",
+      "runtime_status": "documentation/provenance only",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldam_10_float.xml"
+    },
+    {
+      "relative_path": "data/albedo_models/ldam_8_float.img",
+      "group": "albedo_models",
+      "size_bytes": 16588800,
+      "sha256": "a9097304b06c380ad7086bcef40e2ca8117f3d0152beecbceb79060e4df3ee4d",
+      "manifest_status": "catalogued_optional_manual",
+      "product_identity": "LRO LOLA LDAM_8_FLOAT albedo",
+      "runtime_status": "valid lower-resolution albedo fallback",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldam_8_float.img"
+    },
+    {
+      "relative_path": "data/albedo_models/ldam_8_float.lbl.txt",
+      "group": "albedo_models",
+      "size_bytes": 3577,
+      "sha256": "e5c131bd6eeee13f14e1c7a36e5569b255101a8c5359ba4afa3c91e8f7fcd0e1",
+      "manifest_status": "not_catalogued_companion",
+      "product_identity": "PDS3 label for LRO LOLA LDAM_8_FLOAT albedo",
+      "runtime_status": "parseable; resolves ldam_8_float.img companion",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldam_8_float.lbl"
+    },
+    {
+      "relative_path": "data/albedo_models/ldam_8_float.xml",
+      "group": "albedo_models",
+      "size_bytes": 10196,
+      "sha256": "26c252e7f7225f15e596ba231bfb5a1cd8c1eb093fb33eeb6d9faeda070b5e94",
+      "manifest_status": "not_catalogued_companion",
+      "product_identity": "PDS4 label for LRO LOLA LDAM_8_FLOAT albedo",
+      "runtime_status": "documentation/provenance only",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldam_8_float.xml"
+    },
+    {
+      "relative_path": "data/assets/lroc_color_2k.jpg",
+      "group": "assets",
+      "size_bytes": 457942,
+      "sha256": "f7130a1822681fa7512d7dcfd40db8c10b9ba4f06777910348698260ed7a2170",
+      "manifest_status": "group_not_catalogued",
+      "product_identity": "Lunar texture/image asset",
+      "runtime_status": "discoverable through UI/visualization asset helpers",
+      "source_url": null
+    },
+    {
+      "relative_path": "data/assets/lunar_map.jpg",
+      "group": "assets",
+      "size_bytes": 1410270,
+      "sha256": "53b49442859e7dd90a745828a5cce11eef7e6a468e5033df948952dd47029d53",
+      "manifest_status": "group_not_catalogued",
+      "product_identity": "Lunar map image asset",
+      "runtime_status": "discoverable through UI/visualization asset helpers",
+      "source_url": null
+    },
+    {
+      "relative_path": "data/data_sources.json",
+      "group": "manifest",
+      "size_bytes": 7273,
+      "sha256": "c6affa95763b2109e238b8679fac382c070eff329966796782ee03a393c7c5f9",
+      "manifest_status": "manifest_file",
+      "product_identity": "Current data source manifest before cleanup",
+      "runtime_status": "used by lunaris-data",
+      "source_url": null
+    },
+    {
+      "relative_path": "data/ephemeris_models/de440.bsp",
+      "group": "ephemeris_models",
+      "size_bytes": 119799808,
+      "sha256": "a4ce9bf9b3282becc9f4b2ac3cebe03a2ae7599981aabd7265fd8482fff7c4b5",
+      "manifest_status": "catalogued_required_url",
+      "product_identity": "NAIF DE440 planetary ephemeris SPK",
+      "runtime_status": "loaded by default config",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440.bsp"
+    },
+    {
+      "relative_path": "data/ephemeris_models/de440_and_de441.pdf",
+      "group": "ephemeris_models",
+      "size_bytes": 5501569,
+      "sha256": "96c3945deb12e0f0843c2bf0703d3542d950cf85ff903b1fe11a501634f68ee0",
+      "manifest_status": "not_catalogued_documentation",
+      "product_identity": "DE440/DE441 documentation",
+      "runtime_status": "not loaded",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440_and_de441.pdf"
+    },
+    {
+      "relative_path": "data/ephemeris_models/de440_tech-comments.txt",
+      "group": "ephemeris_models",
+      "size_bytes": 59339,
+      "sha256": "451a4aaa7a85ce9890bdb8a2275434fd07ec21d7fd31494f1fbe8422f368ba10",
+      "manifest_status": "not_catalogued_documentation",
+      "product_identity": "DE440 technical comments",
+      "runtime_status": "not loaded",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440_tech-comments.txt"
+    },
+    {
+      "relative_path": "data/ephemeris_models/de440s.bsp",
+      "group": "ephemeris_models",
+      "size_bytes": 32726016,
+      "sha256": "c1c7feeab882263fc493a9d5a5b2ddd71b54826cdf65d8d17a76126b260a49f2",
+      "manifest_status": "catalogued_optional_url",
+      "product_identity": "NAIF DE440 short planetary ephemeris SPK",
+      "runtime_status": "present but not default-loaded",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp"
+    },
+    {
+      "relative_path": "data/ephemeris_models/moon_de440_220930.tf.txt",
+      "group": "ephemeris_models",
+      "size_bytes": 19571,
+      "sha256": "73eb6b216c06a27c3419c4cfeaded7ffce46a714e3d4f9f5142dda51c0710f76",
+      "manifest_status": "alias_of_catalogued_optional_url",
+      "product_identity": "NAIF lunar DE440 frame kernel, text-wrapped",
+      "runtime_status": "auto-included for MOON_PA frame",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/fk/satellites/a_old_versions/moon_de440_220930.tf"
+    },
+    {
+      "relative_path": "data/ephemeris_models/moon_pa_de440_200625.bpc",
+      "group": "ephemeris_models",
+      "size_bytes": 12863488,
+      "sha256": "60cd55aa401ea2ea97360636f567554bfe4e37bb829f901b4460a455dfaf783f",
+      "manifest_status": "catalogued_optional_url",
+      "product_identity": "NAIF lunar principal-axis binary PCK for DE440",
+      "runtime_status": "loaded by default config",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/moon_pa_de440_200625.bpc"
+    },
+    {
+      "relative_path": "data/ephemeris_models/moon_pa_de440_200625.cmt.txt",
+      "group": "ephemeris_models",
+      "size_bytes": 1946,
+      "sha256": "97e6d7adf4ea734d9f40212c591d80dee621ddaa324941dd552140bdab829010",
+      "manifest_status": "not_catalogued_documentation",
+      "product_identity": "Comment file for moon_pa_de440_200625.bpc",
+      "runtime_status": "not loaded",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/moon_pa_de440_200625.cmt"
+    },
+    {
+      "relative_path": "data/ephemeris_models/naif0012.tls.txt",
+      "group": "ephemeris_models",
+      "size_bytes": 5257,
+      "sha256": "678e32bdb5a744117a467cd9601cd6b373f0e9bc9bbde1371d5eee39600a039b",
+      "manifest_status": "alias_of_catalogued_required_url",
+      "product_identity": "NAIF leap seconds kernel, text-wrapped",
+      "runtime_status": "loaded by default config",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/lsk/naif0012.tls"
+    },
+    {
+      "relative_path": "data/ephemeris_models/pck00011.tpc.txt",
+      "group": "ephemeris_models",
+      "size_bytes": 131226,
+      "sha256": "3dff7b1dbeceaa01f25467767d3fa25816051c85d162d1edf04acb310ee28bb1",
+      "manifest_status": "alias_of_catalogued_required_url",
+      "product_identity": "NAIF generic planetary constants text PCK, text-wrapped",
+      "runtime_status": "loaded by default config; does not provide Earth/Sun GM in current smoke test",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc"
+    },
+    {
+      "relative_path": "data/gravity_models/jggrx_1800f_sha.lbl.txt",
+      "group": "gravity_models",
+      "size_bytes": 10987,
+      "sha256": "379ab3671622147e10f69587be6f2767b16709d2992d787b840214d7600c059e",
+      "manifest_status": "not_catalogued_companion",
+      "product_identity": "PDS3 label for GRAIL JGGRX_1800F SHA gravity model",
+      "runtime_status": "metadata/provenance; coefficient parser uses TAB",
+      "source_url": "https://pds-geosciences.wustl.edu/grail/grail-l-lgrs-5-rdr-v1/grail_1001/shadr/jggrx_1800f_sha.lbl"
+    },
+    {
+      "relative_path": "data/gravity_models/jggrx_1800f_sha.tab.txt",
+      "group": "gravity_models",
+      "size_bytes": 197969644,
+      "sha256": "d2a552067a78bf1d2755807ae14ee1d6843a8f6a4228e01ce59a665516738fec",
+      "manifest_status": "alias_of_catalogued_optional_manual",
+      "product_identity": "GRAIL JGGRX_1800F SHA gravity coefficients",
+      "runtime_status": "default lunar gravity path and validation generators use this file",
+      "source_url": "https://pds-geosciences.wustl.edu/grail/grail-l-lgrs-5-rdr-v1/grail_1001/shadr/jggrx_1800f_sha.tab"
+    },
+    {
+      "relative_path": "data/gravity_models/jggrx_1800f_sha.tab.zip",
+      "group": "gravity_models",
+      "size_bytes": 59691178,
+      "sha256": "16499dfc9b32b2455ca0a50ebcf7ac65918cf6ef57bdba01c5d54ea79634fa61",
+      "manifest_status": "not_catalogued_archive",
+      "product_identity": "Local compressed copy of JGGRX_1800F SHA gravity coefficients",
+      "runtime_status": "not loaded directly",
+      "source_url": null
+    },
+    {
+      "relative_path": "data/README.md",
+      "group": "docs",
+      "size_bytes": 2056,
+      "sha256": "a4117c2c060d4b375e96da8ff4682c074ab5a06c4b8be9a179a674daa253ada3",
+      "manifest_status": "tracked_documentation",
+      "product_identity": "Data directory README before cleanup",
+      "runtime_status": "not loaded",
+      "source_url": null
+    },
+    {
+      "relative_path": "data/thermal_models/dgdr_st_avg_cyl_032_img.img",
+      "group": "thermal_models",
+      "size_bytes": 88473600,
+      "sha256": "2f2bc4498f38ecba4b96e1199486e425bdc800db5d5e6fdc099a1eb57faa96f5",
+      "manifest_status": "group_not_catalogued",
+      "product_identity": "LRO Diviner DGDR_ST average regolith temperature variation",
+      "runtime_status": "parseable as raster; no dedicated runtime thermal-grid resolver yet",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/urn-nasa-pds-lro_diviner_derived1/data_derived_gdr_l3/cylindrical/img/dgdr_st_avg_cyl_032_img.img"
+    },
+    {
+      "relative_path": "data/thermal_models/dgdr_st_avg_cyl_032_img.lbl.txt",
+      "group": "thermal_models",
+      "size_bytes": 4679,
+      "sha256": "364b41712088ddd9be0c1724e984a22423dd5356a7c98a6a47e42275644d5e1a",
+      "manifest_status": "group_not_catalogued_companion",
+      "product_identity": "PDS3 label for Diviner DGDR_ST average regolith temperature variation",
+      "runtime_status": "parseable by generic cylindrical parser",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/urn-nasa-pds-lro_diviner_derived1/data_derived_gdr_l3/cylindrical/img/dgdr_st_avg_cyl_032_img.lbl"
+    },
+    {
+      "relative_path": "data/thermal_models/dgdr_st_avg_cyl_032_img.xml",
+      "group": "thermal_models",
+      "size_bytes": 11680,
+      "sha256": "c155d2caacab59cd6a2d7ca06c243dc637e347e8f120e58213e7ef1b9f0f9ae5",
+      "manifest_status": "group_not_catalogued_companion",
+      "product_identity": "PDS4 label for Diviner DGDR_ST average regolith temperature variation",
+      "runtime_status": "documentation/provenance only",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/urn-nasa-pds-lro_diviner_derived1/data_derived_gdr_l3/cylindrical/img/dgdr_st_avg_cyl_032_img.xml"
+    },
+    {
+      "relative_path": "data/topography_models/16ppd a\u00e7\u0131klama lbl.txt",
+      "group": "topography_models",
+      "size_bytes": 5137,
+      "sha256": "bd5315bc036e03c4cc9ac44b3ed8e024cf3d05aa561418cbad0f5f4495fb8478",
+      "manifest_status": "not_catalogued_or_runtime_matched",
+      "product_identity": "Local explanatory label-like text for 16 ppd topography",
+      "runtime_status": "not selected by current LDEM resolver because ldem_16_float label pair is incomplete",
+      "source_url": null
+    },
+    {
+      "relative_path": "data/topography_models/ldem_16_float.img",
+      "group": "topography_models",
+      "size_bytes": 66355200,
+      "sha256": "c6b790f14409f0a74d6640b69ddb0c48b8cd3e330117366162669f85f567a432",
+      "manifest_status": "not_catalogued_exact",
+      "product_identity": "LRO LOLA LDEM_16_FLOAT topography image without canonical matching label",
+      "runtime_status": "not selected in current local smoke because no ldem_16_float.lbl(.txt) companion is present",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldem_16_float.img"
+    },
+    {
+      "relative_path": "data/topography_models/ldem_64_float.img",
+      "group": "topography_models",
+      "size_bytes": 1061683200,
+      "sha256": "4dd151f230984316602f13df36214563ff575683cb5612f1a7bc4699188ec25b",
+      "manifest_status": "catalogued_optional_manual",
+      "product_identity": "LRO LOLA LDEM_64_FLOAT topography",
+      "runtime_status": "valid; selected by LDEM resolver and sampled successfully",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldem_64_float.img"
+    },
+    {
+      "relative_path": "data/topography_models/ldem_64_float.lbl.txt",
+      "group": "topography_models",
+      "size_bytes": 5150,
+      "sha256": "8dd78e4e20af85ebdb9fab40d69526d675fc8ec6cd6739503b8282b973089e18",
+      "manifest_status": "not_catalogued_companion",
+      "product_identity": "PDS3 label for LRO LOLA LDEM_64_FLOAT topography",
+      "runtime_status": "parseable; resolves ldem_64_float.img companion",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldem_64_float.lbl"
+    },
+    {
+      "relative_path": "data/topography_models/ldem_64_float.xml",
+      "group": "topography_models",
+      "size_bytes": 11909,
+      "sha256": "0a6cff7b9b69636879c1db10a55d71393784c16825f4d9af1a8f15e6c8af42b8",
+      "manifest_status": "not_catalogued_companion",
+      "product_identity": "PDS4 label for LRO LOLA LDEM_64_FLOAT topography",
+      "runtime_status": "documentation/provenance only",
+      "source_url": "https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/float_img/ldem_64_float.xml"
+    }
+  ],
+  "observed_runtime_checks": {
+    "lunaris_data_verify_current": {
+      "status": "fails",
+      "reason": "Exact manifest filenames do not accept runtime-supported text-wrapper aliases."
+    },
+    "ephemeris_rotation_smoke": {
+      "status": "passes",
+      "fixed_frame": "MOON_PA",
+      "q_shape": [1585, 4],
+      "q_norm_min": 0.9999999999999999,
+      "q_norm_max": 1.0,
+      "q_delta_norm": 0.1264017516433258
+    },
+    "third_body_spice_smoke": {
+      "status": "passes_with_gm_fallback_warning",
+      "sun_norm_m": 147402352766.21884,
+      "earth_norm_m": 361024834.8354955
+    },
+    "surface_smoke": {
+      "ldem_64_radius_sample_m": 1736681.8196862936,
+      "ldam_10_albedo_sample": 0.1839846670627594,
+      "ldam_8_albedo_sample": 0.1839342676103115,
+      "dgdr_ra_sample_if_misused_as_albedo": 0.004,
+      "diviner_st_label_parse": "passes"
+    }
+  }
+}

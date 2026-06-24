@@ -17,7 +17,7 @@ import numpy as np
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
-from lunaris.common.constants import R_MOON
+from lunaris.common.constants import DAY_S, R_MOON
 
 from .compute import (
     _model_display_name,
@@ -562,7 +562,7 @@ def rebuild_gpu_batch_metrics_from_cache(
     if truth.t_by_scenario:
         first_scen = next(iter(truth.t_by_scenario.values()))
         if len(first_scen) > 0:
-            args.duration_days = float(first_scen[-1]) / 86400.0
+            args.duration_days = float(first_scen[-1]) / DAY_S
             print(f"[cache] Recovered true duration_days = {args.duration_days} from trajectory arrays.", flush=True)
 
     run_ctx: dict[str, Any] = dict(run_context or {})

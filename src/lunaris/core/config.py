@@ -492,7 +492,7 @@ if __name__ == "__main__":
 
     print("\n🚀 [MISSION PARAMETERS]")
     print(f"   Spacecraft Mass : {test_cfg.spacecraft.mass_kg} kg")
-    print(f"   Total Duration  : {test_cfg.total_seconds / 86400.0:.2f} days")
+    print(f"   Total Duration  : {test_cfg.total_seconds / DAY_S:.2f} days")
     dt_display = test_cfg.time.output_dt_s
     dt_str = f"{dt_display}s" if dt_display is not None else "Auto (Variable)"
     print(f"   Time Step (Out) : {dt_str}")

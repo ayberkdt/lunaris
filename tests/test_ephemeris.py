@@ -42,6 +42,7 @@ from lunaris.physics.ephemeris import (
     EphemerisManager,
     EphemerisTables,
     get_ephem_state,
+    interp_vec3_derivative_safe,
 )
 
 
@@ -146,6 +147,25 @@ def test_ephemeris_case_a_linear_interp_clamp_and_out_buffer() -> None:
     ret4 = mgr.get_inertial_to_fixed_rotation(t_query, out=out4)
     assert ret4 is out4
     np.testing.assert_allclose(out4, np.array([1.0, 0.0, 0.0, 0.0]), atol=1e-12)
+
+
+def test_ephemeris_vec3_derivative_safe_linear_and_degenerate() -> None:
+    dt_s = 10.0
+    tab = np.array(
+        [
+            [0.0, 2.0, -4.0],
+            [10.0, 12.0, 6.0],
+            [20.0, 22.0, 16.0],
+        ],
+        dtype=np.float64,
+    )
+
+    got = np.array(interp_vec3_derivative_safe(10.0, dt_s, tab), dtype=np.float64)
+    np.testing.assert_allclose(got, np.array([1.0, 1.0, 1.0]), rtol=0.0, atol=0.0)
+
+    one_row = np.array([[5.0, 6.0, 7.0]], dtype=np.float64)
+    got_zero = np.array(interp_vec3_derivative_safe(0.0, dt_s, one_row), dtype=np.float64)
+    np.testing.assert_allclose(got_zero, np.zeros(3), rtol=0.0, atol=0.0)
 
 
 @pytest.mark.parametrize("tq", [-123.0, 0.0, 1.0, 999.0])
@@ -256,4 +276,3 @@ if __name__ == "__main__":
     print("This is a pytest test module. Run it with:")
     print("python -m pytest -vv -rA --durations=10 tests/test_ephemeris.py")
     sys.exit(0)
-

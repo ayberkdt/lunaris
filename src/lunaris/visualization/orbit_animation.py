@@ -39,6 +39,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import FancyBboxPatch
 
+from lunaris.common.constants import DAY_S
+
 try:
     from scipy.interpolate import CubicHermiteSpline, CubicSpline  # type: ignore
     _HAVE_SCIPY = True
@@ -553,7 +555,7 @@ def _get_sun_dir_series(hist: dict[str, Any], t_ref: np.ndarray, t_new: np.ndarr
 # ==========================
 
 def _format_mission_time(t_s: float) -> tuple[float, float]:
-    days = t_s / 86400.0
+    days = t_s / DAY_S
     hours = t_s / 3600.0
     return float(days), float(hours)
 
@@ -656,7 +658,7 @@ def render_orbit_animation_from_history(
     # -------------------------------------------------------
     # Uniform time base and resampling
     # -------------------------------------------------------
-    duration_days = (float(t_s[-1]) - float(t_s[0])) / 86400.0
+    duration_days = (float(t_s[-1]) - float(t_s[0])) / DAY_S
     if frames is None or int(frames) <= 0:
         frames = int(np.clip(duration_days * 30.0, 240, 2400))
     else:
@@ -874,7 +876,7 @@ def render_orbit_animation_from_history(
         # Trail age gradient bar
         try:
             dt_med = float(np.nanmedian(np.diff(t_anim))) if t_anim.size >= 2 else 0.0
-            trail_dur_d = (dt_med * max(0, int(trail_length) - 1)) / 86400.0
+            trail_dur_d = (dt_med * max(0, int(trail_length) - 1)) / DAY_S
 
             g_left, g_bottom = x0 + 0.19, y0f + 0.012
             g_width, g_height = w0 - 0.21, 0.022
@@ -1090,9 +1092,9 @@ def render_orbit_animation_from_history(
 
         # Camera rotation
         if rotate_camera:
-            dur_days = max(1e-9, (float(t_anim[-1]) - float(t_anim[0])) / 86400.0)
+            dur_days = max(1e-9, (float(t_anim[-1]) - float(t_anim[0])) / DAY_S)
             sweep = float(np.clip(float(cam_rate_deg_per_day) * dur_days, 0.0, 160.0))
-            az = float(azim0_deg) + sweep * ((float(t_anim[i]) - float(t_anim[0])) / 86400.0) / dur_days
+            az = float(azim0_deg) + sweep * ((float(t_anim[i]) - float(t_anim[0])) / DAY_S) / dur_days
             ax.view_init(elev=float(elev_deg), azim=az)
         else:
             ax.view_init(elev=float(elev_deg), azim=float(azim0_deg))
@@ -1156,7 +1158,7 @@ def render_orbit_animation_from_history(
 
 if __name__ == "__main__":
     # Minimal self-test (synthetic trajectory)
-    t = np.linspace(0.0, 6.0 * 86400.0, 12000)
+    t = np.linspace(0.0, 6.0 * DAY_S, 12000)
     mu = MU_MOON_DEFAULT
     Rm = R_MOON_KM_DEFAULT * 1000.0
     a = Rm + 200e3
@@ -1172,7 +1174,7 @@ if __name__ == "__main__":
 
     sun = np.zeros((3, t.size))
     sun[0] = 1.0
-    sun[1] = 0.15 * np.sin(2.0 * np.pi * t / (7.0 * 86400.0))
+    sun[1] = 0.15 * np.sin(2.0 * np.pi * t / (7.0 * DAY_S))
     sun = _unit(sun, axis=0)
 
     mock = {

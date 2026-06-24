@@ -278,8 +278,7 @@ def jd_to_date_tuple(jd: float) -> tuple[int, int, int, int, int, float]:
         jdn -= 1
 
     # Convert fractional day -> integer microseconds (rounded to nearest µs)
-
-    US_PER_DAY = 86_400_000_000
+    # (US_PER_DAY is the module-level constant; njit reads it as a compile-time global.)
     us_day = int(f * float(US_PER_DAY) + 0.5)
 
     # IMPORTANT: Do NOT carry to next day here. JD(float) cannot represent µs near day-boundary reliably.

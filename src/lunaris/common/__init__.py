@@ -16,8 +16,10 @@ Public API
 
 Lazy modules
 ------------
-Heavier utilities are imported only when accessed as attributes, e.g.
-`common.time_utils` or `common.math_utils`.
+Heavier or path/IO-oriented utilities are imported only when accessed as
+attributes, e.g. `common.time_utils`, `common.math_utils`, `common.paths`,
+`common.hashing`, or `common.lunar_data`. (Direct submodule imports such as
+`from lunaris.common.hashing import canonical_json_sha256` also work.)
 """
 
 from __future__ import annotations
@@ -33,6 +35,9 @@ _LAZY_MODULES: Final[dict[str, str]] = {
     "math_utils":       "Numerical helpers (vectors/quaternions/frames).",
     "time_utils":       "Time & calendar conversions (JD/MJD/J2000, ISO parsing).",
     "montecarlo_defs":  "Monte Carlo simulation configuration dataclasses.",
+    "paths":            "Project-root and data-dir resolution (editable/installed).",
+    "hashing":          "Canonical JSON hashing (single source for content digests).",
+    "lunar_data":       "Neutral lunar gravity-data path/heuristic helpers.",
 }
 
 

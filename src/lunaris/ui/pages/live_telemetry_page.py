@@ -46,6 +46,8 @@ from typing import Any
 import numpy as np
 from PySide6 import QtCore, QtWidgets
 
+from lunaris.common.constants import DAY_S
+
 # Modern Icon Library
 try:
     import qtawesome as qta  # noqa: F401  # availability probe for HAS_QTAWESOME
@@ -456,7 +458,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             choice = str(self.time_axis_combo.currentText()).strip()
 
         if choice.lower() == "auto":
-            if span >= 5.0 * 86400.0:
+            if span >= 5.0 * DAY_S:
                 unit = "d"
             elif span >= 3.0 * 3600.0:
                 unit = "h"
@@ -467,7 +469,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         else:
             unit = choice
 
-        factor = {"s": 1.0, "min": 60.0, "h": 3600.0, "d": 86400.0}.get(unit, 1.0)
+        factor = {"s": 1.0, "min": 60.0, "h": 3600.0, "d": DAY_S}.get(unit, 1.0)
         t_plot = [x / factor for x in t_sec]
 
         self._last_time_unit = unit
@@ -752,7 +754,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             if unit.startswith("h"):
                 t_s *= 3600.0
             elif unit.startswith("d"):
-                t_s *= 86400.0
+                t_s *= DAY_S
 
         # --- Extract remaining fields (optional, NaN if missing) ---
         alt_keys = ("alt_km", "altitude_km", "h_km", "alt")

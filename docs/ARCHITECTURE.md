@@ -40,9 +40,12 @@ Numba-JIT-compiled force-model kernels. Each file is one force model:
 - `lunar_albedo.py` — Lambertian lunar albedo (reflected-solar) facets.
 - `thermal_ir.py` — Lambertian lunar thermal IR radiation-pressure facets.
 - `solid_tides.py` — elastic lunar solid-body tide potential and acceleration.
-- `relativity_effects.py` — first-order post-Newtonian.
+- `relativity_effects.py` — first-order post-Newtonian Schwarzschild plus
+  external-body Schwarzschild/de Sitter terms when Sun/Earth ephemerides are available.
 - `ephemeris.py` — SPICE kernel wrapper; ephemerides are pre-tabulated at startup.
-- `gravity_adapter.py` — engine-facing gravity-provider normalization.
+- Classical `GravityModel` exposes the engine-facing gravity-provider contract
+  directly (`degree_max`, `R_ref_m`, `GM_m3s2`, coefficient arrays, workspace);
+  no legacy gravity-name adapter sits between `physics` and `core`.
 
 Physics models never import from `core/` or `surrogate/`.
 
@@ -162,7 +165,7 @@ non-`None` (e.g. `enable_srp=True` requires `cfg.srp`).
 | `enable_earth_j2` | Earth oblateness (differential) | Implemented |
 | `enable_srp` | Solar radiation pressure | Implemented |
 | `enable_albedo` | Reflected-solar radiation pressure (facet Lambertian) | Implemented |
-| `enable_relativity_1pn` | First-order post-Newtonian | Implemented |
+| `enable_relativity_1pn` | First-order post-Newtonian: central-body Schwarzschild, and — when a Sun/Earth ephemeris is present — the external-body Schwarzschild differential plus de Sitter (geodetic) precession (no separate flag) | Implemented |
 | `enable_thermal` | Lunar thermal IR radiation pressure | Implemented on CPU RHS |
 | `enable_tides_k2` / `enable_tides_k3` | Elastic lunar solid-body tides | Implemented on CPU RHS |
 
@@ -195,8 +198,10 @@ Moon-fixed latitude-longitude facets, treats each facet as a Lambertian emitter,
 and rotates the resulting acceleration back to the inertial integration frame.
 Supported modes are `constant_temperature`, `equilibrium_temperature`
 (instantaneous solar incidence with no thermal inertia), and `temperature_grid`
-(provider-supplied facet temperatures). The model is a radiation-pressure
-perturbation only; it does not alter lunar gravity.
+(provider-supplied facet temperatures). In `equilibrium_temperature` mode, the
+solar-driven exitance is dimmed during lunar eclipses using the same conical
+Earth-umbra geometry as reflected-solar albedo. The model is a
+radiation-pressure perturbation only; it does not alter lunar gravity.
 
 Solid tides are configured through `SolidTideConfig` and evaluated in
 `lunaris.physics.solid_tides`. The model is an instantaneous elastic response
