@@ -1124,6 +1124,32 @@ class MonteCarloEngine:
     # Internal: select and initialise backend
     # ----------------------------------------------------------------
 
+    def _resolve_topo_payload(self) -> dict[str, Any] | None:
+        """Topography payload for terrain-aware impact freeze, or ``None``.
+
+        Built only when the config requests ``impact_surface_mode='terrain'`` AND
+        a topography grid/provider is available; otherwise the batch backends keep
+        the constant-sphere impact freeze (zero behaviour change). The payload is
+        the same POD contract the CPU ground-truth event consumes, so all backends
+        share one terrain definition.
+        """
+        if not bool(getattr(self._mc, "impact_surface_terrain_enabled", False)):
+            return None
+
+        prov = self._surface_provider
+        if prov is not None and hasattr(prov, "topo_payload"):
+            try:
+                payload = prov.topo_payload()
+            except Exception:
+                payload = None
+            if payload is not None and payload.get("dn", None) is not None:
+                return payload
+
+        if self._topo_grid is not None:
+            from lunaris.loaders.io_surface import _grid_topo_payload
+            return _grid_topo_payload(self._topo_grid)
+        return None
+
     def _build_propagator(self) -> Any:
         """
         Instantiate the appropriate batch propagator using the backend policy.
@@ -1137,6 +1163,10 @@ class MonteCarloEngine:
 
         plan = resolve_mc_backend_policy(self._mc, self._sim_cfg)
         self._backend_plan = plan
+
+        # Terrain-aware impact freeze payload (None unless requested + available).
+        # Shared across every batch backend so they agree on the surface.
+        topo_payload = self._resolve_topo_payload()
 
         # Emit all warnings produced by the policy resolver
         for w in plan.warnings:
@@ -1195,6 +1225,8 @@ class MonteCarloEngine:
                     prop_kwargs["allow_identity_rotation"] = bool(
                         getattr(self._dyn, "allow_identity_rotation", False)
                     )
+                if "topo_payload" in constructor_params and topo_payload is not None:
+                    prop_kwargs["topo_payload"] = topo_payload
                 return TorchBatchPropagator(**prop_kwargs)
             except TorchSTLRPSPreflightError:
                 raise
@@ -1214,10 +1246,14 @@ class MonteCarloEngine:
             try:
                 from lunaris.core.mc_propagator import GPUBatchPropagator
 
+                gpu_kwargs: dict[str, Any] = {}
+                if "topo_payload" in inspect.signature(GPUBatchPropagator).parameters and topo_payload is not None:
+                    gpu_kwargs["topo_payload"] = topo_payload
                 return GPUBatchPropagator(
                     self._dyn,
                     self._mc,
                     self._sim_cfg.flags,
+                    **gpu_kwargs,
                 )
             except Exception as exc:
                 note = (
@@ -1243,6 +1279,7 @@ class MonteCarloEngine:
                     self._mc,
                     self._sim_cfg.flags,
                     device=f"cuda:{int(getattr(self._mc, 'gpu_device_id', 0) or 0)}",
+                    topo_payload=topo_payload,
                 )
             except TorchSHPreflightError:
                 # Hard contract violation (degree above the coefficient file,
@@ -1273,6 +1310,7 @@ class MonteCarloEngine:
                     self._mc,
                     self._sim_cfg.flags,
                     device="cpu",
+                    topo_payload=topo_payload,
                 )
             except TorchSHPreflightError:
                 raise

@@ -392,6 +392,95 @@ if _CUDA_AVAILABLE:
         out[1] = vy + q0 * ty + q3 * tx - q1 * tz
         out[2] = vz + q0 * tz + q1 * ty - q2 * tx
 
+    @cuda.jit(device=True, inline=True)
+    def _sample_topo_radius_cuda(lat_deg, lon_deg, dn, meta):
+        """Bilinear terrain radius [m] at (lat, lon).
+
+        Device twin of ``loaders.io_surface.sample_topo_radius_m`` and the torch
+        ``sample_topo_radius_torch``: longitude wrapped to [0, 360), latitude
+        clamped to the grid extent, scaled bilinear ``scale_m * DN + bias_m``.
+        ``meta`` packs the payload scalars (see ``_build_topo_pack``).
+        """
+        n_lines = int(meta[0])
+        n_samples = int(meta[1])
+        res = meta[2]
+        lon0 = meta[3]
+        lat0 = meta[4]
+        scale_m = meta[5]
+        bias_m = meta[6]
+        flip = int(meta[7])
+        lat_min = meta[8]
+        lat_max = meta[9]
+        radius_const = meta[12]
+        if res <= 0.0 or n_lines <= 0 or n_samples <= 0:
+            return radius_const
+
+        lon_w = lon_deg % 360.0
+        if lon_w < 0.0:
+            lon_w += 360.0
+        lat_c = lat_deg
+        if lat_c < lat_min:
+            lat_c = lat_min
+        elif lat_c > lat_max:
+            lat_c = lat_max
+
+        lat_sign = 1.0 if flip == 0 else -1.0
+        i_f = (lat_sign * (lat0 - lat_c)) / res
+        j_f = ((lon_w - lon0) / res) % float(n_samples)
+        if j_f < 0.0:
+            j_f += float(n_samples)
+
+        i0 = int(math.floor(i_f))
+        j0 = int(math.floor(j_f))
+        di = i_f - float(i0)
+        dj = j_f - float(j0)
+        i0c = min(max(i0, 0), n_lines - 1)
+        i1c = min(max(i0 + 1, 0), n_lines - 1)
+        j0c = min(max(j0, 0), n_samples - 1)
+        j1c = min(max(j0 + 1, 0), n_samples - 1)
+
+        v00 = dn[i0c, j0c]
+        v01 = dn[i0c, j1c]
+        v10 = dn[i1c, j0c]
+        v11 = dn[i1c, j1c]
+        top = v00 * (1.0 - dj) + v01 * dj
+        bot = v10 * (1.0 - dj) + v11 * dj
+        dn_i = top * (1.0 - di) + bot * di
+        return scale_m * dn_i + bias_m
+
+    @cuda.jit(device=True, inline=True)
+    def _terrain_residual_cuda(
+        alpha, px0, py0, pz0, dx, dy, dz, q0, q1, q2, q3, dn, meta, impact_alt_m
+    ):
+        """``f(alpha) = ||p(alpha)|| - terrain_radius(lat, lon) - impact_alt``.
+
+        ``p(alpha) = p0 + alpha * dp`` (inertial). The sub-point lat/lon come from
+        the body-fixed position obtained by rotating ``p(alpha)`` with the
+        crossing-time quaternion (inlined ``_quat_rot_cuda`` to avoid a local
+        array per evaluation).
+        """
+        rx = px0 + alpha * dx
+        ry = py0 + alpha * dy
+        rz = pz0 + alpha * dz
+        r = math.sqrt(rx * rx + ry * ry + rz * rz)
+        # Inertial -> body-fixed (scalar-first quaternion rotation, inlined).
+        tx = 2.0 * (q2 * rz - q3 * ry)
+        ty = 2.0 * (q3 * rx - q1 * rz)
+        tz = 2.0 * (q1 * ry - q2 * rx)
+        bfx = rx + q0 * tx + (q2 * tz - q3 * ty)
+        bfy = ry + q0 * ty + (q3 * tx - q1 * tz)
+        bfz = rz + q0 * tz + (q1 * ty - q2 * tx)
+        r_safe = r if r > 1e-30 else 1e-30
+        s = bfz / r_safe
+        if s > 1.0:
+            s = 1.0
+        elif s < -1.0:
+            s = -1.0
+        lat = math.degrees(math.asin(s))
+        lon = math.degrees(math.atan2(bfy, bfx))
+        terrain_r = _sample_topo_radius_cuda(lat, lon, dn, meta)
+        return r - terrain_r - impact_alt_m
+
     @cuda.jit(device=True)
     def _sh_accel_cuda(
         rx, ry, rz,
@@ -881,6 +970,11 @@ if _CUDA_AVAILABLE:
         impact_positions,  # (N, 3) float64 – interpolated crossing position, NaN if untouched
         detect_impact,     # int32 boolean
         r_impact,          # impact radius [m]
+        # Terrain-aware impact freeze
+        topo_dn,           # (L, S) float64 device array (1x1 dummy when unused)
+        topo_meta,         # (13,) float64 device array (payload scalars)
+        impact_alt_m,      # float64 altitude threshold [m]
+        use_terrain,       # int32 boolean
     ):
         """
         One RK4 step for all N samples in parallel.
@@ -969,17 +1063,24 @@ if _CUDA_AVAILABLE:
         # miss a large step that enters and exits the Moon between its endpoints.
         # Y[i, :3] is still the pre-step position because write-back happens below.
         if detect_impact == 1:
-            dx = y[0] - Y[i, 0]
-            dy = y[1] - Y[i, 1]
-            dz = y[2] - Y[i, 2]
+            px0 = Y[i, 0]
+            py0 = Y[i, 1]
+            pz0 = Y[i, 2]
+            dx = y[0] - px0
+            dy = y[1] - py0
+            dz = y[2] - pz0
             aa = dx * dx + dy * dy + dz * dz
-            bb = 2.0 * (Y[i, 0] * dx + Y[i, 1] * dy + Y[i, 2] * dz)
-            cc = (
-                Y[i, 0] * Y[i, 0]
-                + Y[i, 1] * Y[i, 1]
-                + Y[i, 2] * Y[i, 2]
-                - r_impact * r_impact
-            )
+
+            # Stage 1: bracket against the impact sphere. In terrain mode this is
+            # the outer terrain envelope (max relief + threshold); a terrain hit
+            # must first cross it, so misses are rejected cheaply.
+            if use_terrain == 1:
+                r_bracket = topo_meta[11] + impact_alt_m
+            else:
+                r_bracket = r_impact
+            bb = 2.0 * (px0 * dx + py0 * dy + pz0 * dz)
+            cc = px0 * px0 + py0 * py0 + pz0 * pz0 - r_bracket * r_bracket
+
             segment_hit = 0
             alpha = 1.0
             if aa > 1e-18:
@@ -998,6 +1099,39 @@ if _CUDA_AVAILABLE:
                             alpha = 0.0
                         elif alpha > 1.0:
                             alpha = 1.0
+
+            # Stage 2: refine the envelope crossing down to the true terrain
+            # surface by bisecting f(alpha) = ||p|| - terrain_r - impact_alt on
+            # [alpha_enter, 1]. The crossing-time body-fixed mapping uses the
+            # segment-midpoint quaternion (Moon rotation over one step is tiny).
+            if segment_hit == 1 and use_terrain == 1:
+                quat_imp = cuda.local.array(4, numba.float64)
+                _interp4_cuda(t_val + 0.5 * dt, ephem_dt, q_tab, n_ephem, quat_imp)
+                qi0 = quat_imp[0]
+                qi1 = quat_imp[1]
+                qi2 = quat_imp[2]
+                qi3 = quat_imp[3]
+                a_lo = alpha
+                a_hi = 1.0
+                f_hi = _terrain_residual_cuda(
+                    a_hi, px0, py0, pz0, dx, dy, dz,
+                    qi0, qi1, qi2, qi3, topo_dn, topo_meta, impact_alt_m,
+                )
+                if f_hi <= 0.0:
+                    for _bi in range(40):
+                        a_mid = 0.5 * (a_lo + a_hi)
+                        f_mid = _terrain_residual_cuda(
+                            a_mid, px0, py0, pz0, dx, dy, dz,
+                            qi0, qi1, qi2, qi3, topo_dn, topo_meta, impact_alt_m,
+                        )
+                        if f_mid > 0.0:
+                            a_lo = a_mid
+                        else:
+                            a_hi = a_mid
+                    alpha = 0.5 * (a_lo + a_hi)
+                else:
+                    # Entered the envelope but stayed above terrain this step.
+                    segment_hit = 0
 
             if segment_hit == 1:
                 impact_flags[i] = 1
@@ -1063,6 +1197,7 @@ class GPUBatchPropagator:
         dynamics_engine: Any,          # core.dynamics.DynamicsEngine
         mc_cfg: Any,                   # MonteCarloConfig
         flags: Any,                    # PerturbationFlags
+        topo_payload: dict[str, Any] | None = None,  # terrain-aware impact freeze
     ) -> None:
         """
         Pre-transfer all heavy arrays (gravity coefficients, ephemeris tables)
@@ -1119,6 +1254,26 @@ class GPUBatchPropagator:
         self._au       = float(AU)
         self._p1au     = float(P_SUN_1AU)
         self._detect_impact = bool(getattr(mc_cfg, "impact_detection_enabled", True))
+        self._impact_alt_m = float(getattr(mc_cfg, "impact_alt_km", 0.0)) * 1_000.0
+
+        # Terrain-aware impact freeze device pack (dummy + disabled unless
+        # requested AND a usable topography payload is present).
+        terrain_requested = self._detect_impact and (
+            str(getattr(mc_cfg, "impact_surface_mode", "sphere")) == "terrain"
+        )
+        self._topo_pack = self._build_topo_pack(
+            topo_payload if terrain_requested else None
+        )
+        self._terrain_enabled = bool(self._topo_pack["use_terrain"])
+        if terrain_requested and not self._terrain_enabled:
+            import warnings
+            warnings.warn(
+                "impact_surface_mode='terrain' requested but no usable topography "
+                "payload was provided; numba CUDA backend keeps constant-sphere "
+                "impact freeze.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     # ----------------------------------------------------------------
     # Setup helpers
@@ -1268,6 +1423,43 @@ class GPUBatchPropagator:
             "kz": float(kz) * inv_k,
         }
 
+    def _build_topo_pack(self, payload: dict[str, Any] | None) -> dict[str, Any]:
+        """Move a topography payload to device memory for terrain-aware freeze.
+
+        Returns ``{"d_dn", "d_meta", "use_terrain"}`` with device arrays ``d_dn``
+        (L, S float64) and ``d_meta`` (13 float64). When ``payload`` is None / has
+        no grid, a 1x1 dummy is allocated and ``use_terrain=0`` so the kernel
+        takes the constant-sphere path (zero behaviour change). ``d_meta`` layout
+        matches ``_sample_topo_radius_cuda`` and the kernel impact block:
+        ``[n_lines, n_samples, res_deg, lon0, lat0, scale_m, bias_m, flip_lat,
+        lat_min, lat_max, missing_dn, r_terrain_max, radius_const]``.
+        """
+        if payload is None or payload.get("dn", None) is None:
+            with cuda.gpus[self._device_id]:
+                d_dn = cuda.to_device(np.zeros((1, 1), dtype=np.float64))
+                d_meta = cuda.to_device(np.zeros(13, dtype=np.float64))
+            return {"d_dn": d_dn, "d_meta": d_meta, "use_terrain": 0}
+
+        dn = np.ascontiguousarray(np.asarray(payload["dn"], dtype=np.float64))
+        meta = np.zeros(13, dtype=np.float64)
+        meta[0] = float(int(payload["n_lines"]))
+        meta[1] = float(int(payload["n_samples"]))
+        meta[2] = float(payload["res_deg"])
+        meta[3] = float(payload["lon0_deg"])
+        meta[4] = float(payload["lat0_deg"])
+        meta[5] = float(payload["scale_m"])
+        meta[6] = float(payload["bias_m"])
+        meta[7] = float(int(payload.get("flip_lat", 0)))
+        meta[8] = float(payload["lat_min_deg"])
+        meta[9] = float(payload["lat_max_deg"])
+        meta[10] = float(payload.get("missing_dn", float("nan")))
+        meta[11] = float(payload["r_terrain_max_m"])
+        meta[12] = float(payload.get("radius_const_m", float(R_MOON)))
+        with cuda.gpus[self._device_id]:
+            d_dn = cuda.to_device(dn)
+            d_meta = cuda.to_device(meta)
+        return {"d_dn": d_dn, "d_meta": d_meta, "use_terrain": 1}
+
     def _estimate_recommended_max_batch(self) -> int:
         """
         Estimate a safe GPU sub-batch size using live device memory when possible.
@@ -1314,7 +1506,12 @@ class GPUBatchPropagator:
             "gpu_sh_workspace": f"{_GPU_WS}x{_GPU_WS}",
             "gpu_sh_workspace_policy": "compile_time_thread_local",
             "supports_earth_j2": bool(self._earth_j2_pack["enabled"]),
-            "impact_position_method": "line_sphere_quadratic",
+            "impact_position_method": (
+                "terrain_bisection_hybrid"
+                if getattr(self, "_terrain_enabled", False)
+                else "line_sphere_quadratic"
+            ),
+            "impact_surface_mode": "terrain" if getattr(self, "_terrain_enabled", False) else "sphere",
             "frame_interpolation": "slerp_shortest_path",
         }
 
@@ -1431,6 +1628,10 @@ class GPUBatchPropagator:
                         d_impact_pos,
                         np.int32(1 if self._detect_impact else 0),
                         np.float64(r_impact),
+                        self._topo_pack["d_dn"],
+                        self._topo_pack["d_meta"],
+                        np.float64(self._impact_alt_m),
+                        np.int32(self._topo_pack["use_terrain"]),
                     )
                     t_curr += dt_eff
 

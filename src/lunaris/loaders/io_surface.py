@@ -1499,7 +1499,14 @@ def _grid_topo_payload(
 
     n_lines = int(info.lines)
     n_samples = int(info.samples)
-    res_deg = float(getattr(topo, "ddeg", 1.0 / float(info.map_resolution_ppd)))
+    ddeg = getattr(topo, "ddeg", None)
+    if ddeg is None:
+        ppd = getattr(info, "map_resolution_ppd", None)
+        if ppd is None or float(ppd) <= 0.0:
+            return {"radius_const_m": float(r_moon_m)}
+        res_deg = 1.0 / float(ppd)
+    else:
+        res_deg = float(ddeg)
 
     # Pixel-center origins (match the bilinear sampling convention).
     lon_cent = getattr(topo, "_lon_centers_deg", None)

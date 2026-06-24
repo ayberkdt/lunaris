@@ -17,6 +17,8 @@ belt-and-suspenders that keeps an *unfiltered* no-data run green too.
 
 from __future__ import annotations
 
+import ast
+import importlib.util
 import os
 
 # Pin the Qt binding for the whole test process BEFORE any Qt-aware library is
@@ -70,6 +72,27 @@ def _pyshtools_available() -> bool:
     return True
 
 
+def _module_available(module_name: str) -> bool:
+    """Return True when an optional dependency can be imported."""
+
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def _torch_available() -> bool:
+    """Return True only when the optional ``torch`` package is importable."""
+
+    return _module_available("torch")
+
+
+def _h5py_available() -> bool:
+    """Return True only when the optional ``h5py`` package is importable."""
+
+    return _module_available("h5py")
+
+
 def _tudatpy_available() -> bool:
     """Return True only when the optional ``tudatpy`` library is importable."""
     try:
@@ -79,11 +102,84 @@ def _tudatpy_available() -> bool:
     return True
 
 
+def _top_level_import_roots(path: Path) -> set[str]:
+    """Return module roots imported at test module top level.
+
+    This is used only as a pre-collection guard for optional-dependency tests:
+    tests that import torch/h5py before pytest can see their markers otherwise
+    fail as collection errors on a core-only install.
+    """
+
+    try:
+        text = path.read_text(encoding="utf-8")
+        tree = ast.parse(text, filename=str(path))
+    except Exception:
+        return set()
+
+    roots: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            roots.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            roots.add(node.module.split(".", 1)[0])
+    return roots
+
+
+def _source_mentions(path: Path, needles: tuple[str, ...]) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    return any(needle in text for needle in needles)
+
+
+def pytest_ignore_collect(collection_path: Path, config) -> bool:
+    """Pre-collection optional-dependency guard for core-only environments."""
+
+    path = Path(collection_path)
+    if path.suffix != ".py" or path.name == "conftest.py":
+        return False
+
+    roots = _top_level_import_roots(path)
+
+    if not _torch_available() and (
+        "torch" in roots
+        or _source_mentions(
+            path,
+            (
+                "import torch",
+                "from torch",
+                "pytest.mark.requires_torch",
+                "lunaris.surrogate.st_lrps.runtime.profiling",
+            ),
+        )
+    ):
+        return True
+
+    if not _h5py_available() and (
+        "h5py" in roots
+        or _source_mentions(
+            path,
+            (
+                "import h5py",
+                "from h5py",
+                "dataset_pipeline_test_utils",
+                "lunaris.surrogate.st_lrps.evaluation.validation_suite",
+                "lunaris.surrogate.st_lrps.shared.scaling",
+                "lunaris.surrogate.st_lrps.training.config",
+            ),
+        )
+    ):
+        return True
+
+    return False
+
+
 def pytest_collection_modifyitems(config, items):
-    """Auto-skip ``requires_data`` / ``requires_pyshtools`` / ``requires_tudatpy``
-    tests when their prerequisites are unavailable, so an unfiltered run stays
-    green."""
+    """Auto-skip tests when their prerequisites are unavailable."""
     data_available = _lunaris_data_available()
+    torch_available = _torch_available()
+    h5py_available = _h5py_available()
     pyshtools_available = _pyshtools_available()
     tudatpy_available = _tudatpy_available()
     skip_no_data = pytest.mark.skip(
@@ -93,12 +189,22 @@ def pytest_collection_modifyitems(config, items):
     skip_no_pyshtools = pytest.mark.skip(
         reason="optional dependency 'pyshtools' is not installed."
     )
+    skip_no_torch = pytest.mark.skip(
+        reason="optional dependency 'torch' is not installed."
+    )
+    skip_no_h5py = pytest.mark.skip(
+        reason="optional dependency 'h5py' is not installed."
+    )
     skip_no_tudatpy = pytest.mark.skip(
         reason="optional dependency 'tudatpy' is not installed."
     )
     for item in items:
         if not data_available and "requires_data" in item.keywords:
             item.add_marker(skip_no_data)
+        if not torch_available and "requires_torch" in item.keywords:
+            item.add_marker(skip_no_torch)
+        if not h5py_available and "requires_h5py" in item.keywords:
+            item.add_marker(skip_no_h5py)
         if not pyshtools_available and "requires_pyshtools" in item.keywords:
             item.add_marker(skip_no_pyshtools)
         if not tudatpy_available and "requires_tudatpy" in item.keywords:

@@ -134,6 +134,31 @@ def sample_topo_radius_torch(topo: dict[str, Any], lat_deg: Any, lon_deg: Any) -
     return scale_m * dn_interp + bias_m
 
 
+def topo_payload_to_torch(
+    payload: dict[str, Any] | None,
+    *,
+    device: Any,
+    dtype: Any,
+) -> dict[str, Any] | None:
+    """Move a ``loaders._grid_topo_payload`` onto a torch device for the kernels.
+
+    Returns ``None`` when ``payload`` is missing or carries no grid (constant
+    fallback), signalling the caller to keep the constant-sphere impact path.
+    Otherwise the ``dn`` raster becomes a device tensor and the POD metadata is
+    passed through unchanged (consumed as Python scalars by
+    :func:`sample_topo_radius_torch`).
+    """
+    import torch
+
+    if payload is None or payload.get("dn", None) is None:
+        return None
+    out = dict(payload)
+    out["dn"] = torch.as_tensor(
+        np.asarray(payload["dn"], dtype=np.float64), device=device, dtype=dtype
+    )
+    return out
+
+
 def terrain_segment_intersection(
     p_prev: Any,
     p_curr: Any,
@@ -312,4 +337,5 @@ __all__ = [
     "quat_rotate_torch",
     "sample_topo_radius_torch",
     "terrain_segment_intersection",
+    "topo_payload_to_torch",
 ]

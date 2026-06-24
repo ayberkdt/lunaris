@@ -82,6 +82,8 @@ def test_numba_cuda_swept_segment_detects_tunneling_without_false_positive() -> 
         times = np.full(2, np.nan, dtype=np.float64)
         positions = np.full((2, 3), np.nan, dtype=np.float64)
 
+        topo_dn = np.zeros((1, 1), dtype=np.float64)
+        topo_meta = np.zeros(13, dtype=np.float64)
         _rk4_batch_kernel[1, 32](
             states, 0.0, dt,
             1.0, zeros3, zeros3, q, 1,
@@ -92,6 +94,7 @@ def test_numba_cuda_swept_segment_detects_tunneling_without_false_positive() -> 
             MU_SUN, MU_EARTH, R_EARTH_MEAN, 0.0, 0.0, 0.0, 1.0,
             radius, R_EARTH_MEAN, AU, P_SUN_1AU,
             flags, times, positions, 1, radius,
+            topo_dn, topo_meta, 0.0, 0,
         )
 
         np.testing.assert_array_equal(flags, [1, 0])

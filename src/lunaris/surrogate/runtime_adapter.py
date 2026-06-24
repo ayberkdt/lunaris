@@ -77,6 +77,18 @@ else:  # pragma: no cover - trivial branch
     _TORCH_IMPORT_ERROR = None
 
 
+def _require_torch() -> tuple[Any, Any]:
+    """Return the torch modules required for inference, or fail with install guidance."""
+
+    if torch is None or nn is None:
+        raise RuntimeError(
+            "PyTorch is required for ST-LRPS surrogate inference. "
+            "Install the optional ML stack with `pip install lunaris[ml]` "
+            "or `pip install lunaris[hpc]`."
+        ) from _TORCH_IMPORT_ERROR
+    return torch, nn
+
+
 # =============================================================================
 # 1.                           DISCOVERY HELPERS
 # =============================================================================
@@ -356,126 +368,137 @@ def _load_scaler_bundle(model_dir: Path, checkpoint_obj: dict[str, Any]) -> _Sca
 # =============================================================================
 
 
-class Sine(nn.Module):
-    """SIREN activation used by some surrogate runs."""
+if torch is not None and nn is not None:
 
-    def __init__(self, w0: float = 30.0) -> None:
-        super().__init__()
-        self.w0 = float(w0)
+    class Sine(nn.Module):
+        """SIREN activation used by some surrogate runs."""
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
-        return torch.sin(self.w0 * x)
+        def __init__(self, w0: float = 30.0) -> None:
+            super().__init__()
+            self.w0 = float(w0)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+            return torch.sin(self.w0 * x)
 
 
-class SirenMLP(nn.Module):
-    """Small SIREN MLP that matches the training artifact contract."""
+    class SirenMLP(nn.Module):
+        """Small SIREN MLP that matches the training artifact contract."""
 
-    def __init__(
-        self,
-        *,
-        in_dim: int = 3,
-        hidden: int = 256,
-        depth: int = 4,
-        w0_first: float = 30.0,
-        w0_hidden: float = 30.0,
-        dropout: float = 0.0,
-    ) -> None:
-        super().__init__()
-        layers: list[nn.Module] = [nn.Linear(in_dim, hidden), Sine(w0=w0_first)]
-        if dropout > 0.0:
-            layers.append(nn.Dropout(p=float(dropout)))
-        for _ in range(max(0, depth - 1)):
-            layers.append(nn.Linear(hidden, hidden))
-            layers.append(Sine(w0=w0_hidden))
+        def __init__(
+            self,
+            *,
+            in_dim: int = 3,
+            hidden: int = 256,
+            depth: int = 4,
+            w0_first: float = 30.0,
+            w0_hidden: float = 30.0,
+            dropout: float = 0.0,
+        ) -> None:
+            super().__init__()
+            layers: list[nn.Module] = [nn.Linear(in_dim, hidden), Sine(w0=w0_first)]
             if dropout > 0.0:
                 layers.append(nn.Dropout(p=float(dropout)))
-        layers.append(nn.Linear(hidden, 1))
-        self.net = nn.Sequential(*layers)
+            for _ in range(max(0, depth - 1)):
+                layers.append(nn.Linear(hidden, hidden))
+                layers.append(Sine(w0=w0_hidden))
+                if dropout > 0.0:
+                    layers.append(nn.Dropout(p=float(dropout)))
+            layers.append(nn.Linear(hidden, 1))
+            self.net = nn.Sequential(*layers)
 
-    def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
-        return self.net(x_scaled)
+        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+            return self.net(x_scaled)
 
 
-class MLP(nn.Module):
-    """Legacy activation-based MLP used by older checkpoints."""
+    class MLP(nn.Module):
+        """Legacy activation-based MLP used by older checkpoints."""
 
-    def __init__(self, *, in_dim: int, hidden: int, depth: int, activation: str, dropout: float) -> None:
-        super().__init__()
-        act_name = str(activation).strip().lower()
-        if act_name == "silu":
-            act_factory = nn.SiLU
-        elif act_name == "tanh":
-            act_factory = nn.Tanh
-        elif act_name == "softplus":
-            act_factory = nn.Softplus
-        else:
-            raise ValueError(
-                "Unsupported surrogate activation. Expected one of: sine, silu, tanh, softplus. "
-                f"Got {activation!r}."
+        def __init__(
+            self,
+            *,
+            in_dim: int,
+            hidden: int,
+            depth: int,
+            activation: str,
+            dropout: float,
+        ) -> None:
+            super().__init__()
+            act_name = str(activation).strip().lower()
+            if act_name == "silu":
+                act_factory = nn.SiLU
+            elif act_name == "tanh":
+                act_factory = nn.Tanh
+            elif act_name == "softplus":
+                act_factory = nn.Softplus
+            else:
+                raise ValueError(
+                    "Unsupported surrogate activation. "
+                    "Expected one of: sine, silu, tanh, softplus. "
+                    f"Got {activation!r}."
+                )
+
+            layers: list[nn.Module] = []
+            width_in = int(in_dim)
+            for _ in range(max(0, int(depth))):
+                layers.append(nn.Linear(width_in, int(hidden)))
+                layers.append(act_factory())
+                if dropout > 0.0:
+                    layers.append(nn.Dropout(p=float(dropout)))
+                width_in = int(hidden)
+            layers.append(nn.Linear(width_in, 1))
+            self.net = nn.Sequential(*layers)
+
+        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+            return self.net(x_scaled)
+
+
+    class FourierInputEmbedding(nn.Module):
+        """
+        Random Fourier Feature embedding used by newer lunar surrogate runs.
+
+        The runtime keeps this tiny implementation locally so inference does not
+        depend on the experimental training script environment.
+        """
+
+        def __init__(
+            self,
+            *,
+            in_dim: int = 3,
+            n_features: int = 256,
+            sigma: float = 1.0,
+            seed: int = 42,
+            append_raw: bool = False,
+        ) -> None:
+            super().__init__()
+            rng = np.random.default_rng(int(seed))
+            B = rng.standard_normal((int(n_features), int(in_dim))).astype(np.float32) * float(sigma)
+            self.register_buffer("B", torch.from_numpy(B))
+            self.append_raw = bool(append_raw)
+            self.out_dim = (int(in_dim) if self.append_raw else 0) + (2 * int(n_features))
+
+        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+            proj = x_scaled @ self.B.T
+            encoded = torch.cat(
+                [torch.sin(2.0 * math.pi * proj), torch.cos(2.0 * math.pi * proj)],
+                dim=-1,
             )
-
-        layers: list[nn.Module] = []
-        width_in = int(in_dim)
-        for _ in range(max(0, int(depth))):
-            layers.append(nn.Linear(width_in, int(hidden)))
-            layers.append(act_factory())
-            if dropout > 0.0:
-                layers.append(nn.Dropout(p=float(dropout)))
-            width_in = int(hidden)
-        layers.append(nn.Linear(width_in, 1))
-        self.net = nn.Sequential(*layers)
-
-    def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
-        return self.net(x_scaled)
+            if self.append_raw:
+                return torch.cat([x_scaled, encoded], dim=-1)
+            return encoded
 
 
-class FourierInputEmbedding(nn.Module):
-    """
-    Random Fourier Feature embedding used by newer lunar surrogate runs.
+    class PhysicsNet(nn.Module):
+        """Inference-time wrapper for optional Fourier preprocessing + backbone."""
 
-    The runtime keeps this tiny implementation locally so inference does not
-    depend on the experimental training script environment.
-    """
+        def __init__(self, *, backbone: nn.Module, embedding: FourierInputEmbedding | None) -> None:
+            super().__init__()
+            self.backbone = backbone
+            self.embedding = embedding
 
-    def __init__(
-        self,
-        *,
-        in_dim: int = 3,
-        n_features: int = 256,
-        sigma: float = 1.0,
-        seed: int = 42,
-        append_raw: bool = False,
-    ) -> None:
-        super().__init__()
-        rng = np.random.default_rng(int(seed))
-        B = rng.standard_normal((int(n_features), int(in_dim))).astype(np.float32) * float(sigma)
-        self.register_buffer("B", torch.from_numpy(B))
-        self.append_raw = bool(append_raw)
-        self.out_dim = (int(in_dim) if self.append_raw else 0) + (2 * int(n_features))
-
-    def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
-        proj = x_scaled @ self.B.T
-        encoded = torch.cat(
-            [torch.sin(2.0 * math.pi * proj), torch.cos(2.0 * math.pi * proj)],
-            dim=-1,
-        )
-        if self.append_raw:
-            return torch.cat([x_scaled, encoded], dim=-1)
-        return encoded
-
-
-class PhysicsNet(nn.Module):
-    """Inference-time wrapper for optional Fourier preprocessing + backbone."""
-
-    def __init__(self, *, backbone: nn.Module, embedding: FourierInputEmbedding | None) -> None:
-        super().__init__()
-        self.backbone = backbone
-        self.embedding = embedding
-
-    def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
-        if self.embedding is not None:
-            x_scaled = self.embedding(x_scaled)
-        return self.backbone(x_scaled)
+        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+            if self.embedding is not None:
+                x_scaled = self.embedding(x_scaled)
+            return self.backbone(x_scaled)
 
 
 def _build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
@@ -486,6 +509,7 @@ def _build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
             "This legacy surrogate provider does not support MultiScale or advanced Residual models. "
             "Please use the st_lrps module."
         )
+    _require_torch()
 
     activation = str(cfg.get("activation", "sine")).strip().lower()
     hidden = int(cfg.get("hidden", 256))
