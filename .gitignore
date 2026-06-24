@@ -54,6 +54,7 @@ refactor.ui
 /data/*
 !/data/README.md
 !/data/data_sources.json
+!/data/data_inventory.generated.json
 # Generated dataset suites that land inside the data subpackage during local runs:
 st_lrps/data/cloud_suites/
 # Large external scientific data (SPICE kernels, gravity / topography / albedo

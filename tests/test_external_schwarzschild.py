@@ -24,7 +24,6 @@ from lunaris.physics.relativity_effects import (
     _schwarzschild_components,
 )
 
-
 C_SQ = float(C_LIGHT) * float(C_LIGHT)
 
 

@@ -94,6 +94,7 @@ import numpy as np
 from numba import njit, prange
 
 from .constants import EPS_1E12, EPS_1E15, EPS_1E18, EPS_1E30, NEARLY_UNIT, PI, RAD2DEG, TWO_PI
+from .type_defs import Vec3
 
 # =============================================================================
 # 1.                              SMALL HELPERS

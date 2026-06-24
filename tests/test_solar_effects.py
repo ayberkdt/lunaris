@@ -16,7 +16,14 @@ import sys
 import numpy as np
 import pytest
 
-from lunaris.common.constants import AU, C_LIGHT, P_SUN_1AU, R_EARTH_MEAN, R_MOON_MEAN, SOLAR_FLUX_1AU
+from lunaris.common.constants import (
+    AU,
+    C_LIGHT,
+    P_SUN_1AU,
+    R_EARTH_MEAN,
+    R_MOON_MEAN,
+    SOLAR_FLUX_1AU,
+)
 from lunaris.common.type_defs import SpacecraftProps
 
 # ---------------------------------------------------------------------------

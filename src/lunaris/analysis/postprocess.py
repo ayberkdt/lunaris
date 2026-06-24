@@ -470,7 +470,7 @@ def extract_elements(history: Mapping[str, Any]) -> dict[str, np.ndarray]:
         try:
             mu_f = float(mu)
             if mu_f > 0.0:
-                a_m, e2, inc, raan2, argp2, *_ = batch_y_to_elements(y6N.astype(float), mu_f, mode="coe")
+                a_m, e2, inc, raan2, argp2, *_ = batch_y_to_elements(y6N.astype(float), mu_f, mode="coe10")
                 a = _as_np(a_m, dtype=float) / 1000.0
                 e = _as_np(e2, dtype=float)
                 i = np.degrees(_as_np(inc, dtype=float))
@@ -1124,10 +1124,12 @@ def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None, *,
         y = np.asarray(sol.y, dtype=float)
     else:
         # Fallback: raw result.t / result.y only (strict; no broad alias normalization)
-        t = np.asarray(getattr(result, "t", None), dtype=float) if getattr(result, "t", None) is not None else None
-        y = np.asarray(getattr(result, "y", None), dtype=float) if getattr(result, "y", None) is not None else None
-        if t is None or y is None:
+        _t = getattr(result, "t", None)
+        _y = getattr(result, "y", None)
+        if _t is None or _y is None:
             raise ValueError("process_simulation_results: expected result.sol or (result.t, result.y).")
+        t = np.asarray(_t, dtype=float)
+        y = np.asarray(_y, dtype=float)
 
     if t.ndim != 1 or t.size < 2:
         raise ValueError("process_simulation_results: expected 1D time vector with length >= 2.")

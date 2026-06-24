@@ -57,7 +57,16 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.constants import AU, C_LIGHT, MU_EARTH, MU_MOON, MU_SUN, P_SUN_1AU, R_EARTH_MEAN, R_MOON
+from lunaris.common.constants import (
+    AU,
+    C_LIGHT,
+    MU_EARTH,
+    MU_MOON,
+    MU_SUN,
+    P_SUN_1AU,
+    R_EARTH_MEAN,
+    R_MOON,
+)
 from lunaris.common.montecarlo_defs import build_mc_output_grid
 from lunaris.common.type_defs import F64Array
 

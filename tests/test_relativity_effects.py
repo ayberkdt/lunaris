@@ -13,6 +13,8 @@ import sys
 import numpy as np
 import pytest
 
+from lunaris.common.constants import MU_SUN
+
 # ---------------------------------------------------------------------------
 # Import the module under test.
 # ---------------------------------------------------------------------------
@@ -26,7 +28,6 @@ from lunaris.physics.relativity_effects import (
     calc_external_1pn_accel,
     calc_schwarzschild_accel,
 )
-from lunaris.common.constants import MU_SUN
 
 # ---------------------------------------------------------------------------
 # Pure-Python reference implementation (no numba), same formula as kernel

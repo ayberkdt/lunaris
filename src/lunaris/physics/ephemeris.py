@@ -140,7 +140,7 @@ import spiceypy as spice
 from numba import njit
 from spiceypy.utils.exceptions import SpiceyError
 
-from lunaris.common.constants import DAY_S, KM3_TO_M3, KM_TO_M, MU_EARTH, MU_SUN
+from lunaris.common.constants import KM3_TO_M3, KM_TO_M, MU_EARTH, MU_SUN
 from lunaris.common.math_utils import (
     interp_quat_slerp,
     interp_vec3_catmull,
