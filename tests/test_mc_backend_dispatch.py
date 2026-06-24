@@ -55,6 +55,17 @@ def _sim(flags=None):
     )
 
 
+def test_mc_body_vector_policy_includes_relativity_external_terms() -> None:
+    from lunaris.core.monte_carlo_engine import _need_body_vectors
+
+    cfg = SimpleNamespace(
+        flags=PerturbationFlags(enable_sh=False, enable_relativity_1pn=True),
+        thermal=None,
+    )
+
+    assert _need_body_vectors(cfg) is True
+
+
 # ===========================================================================
 # 1. Policy integration (§15)
 # ===========================================================================
@@ -471,7 +482,6 @@ def _patch_dynamics_gravity_capture(monkeypatch) -> dict:
             return object()
 
     monkeypatch.setattr(sh_mod, "GravityModel", _FakeGrav)
-    monkeypatch.setattr(mce, "adapt_gravity_model", lambda g: g)
     monkeypatch.setattr(dyn_mod, "DynamicsEngine", lambda **k: SimpleNamespace(**k))
     monkeypatch.setattr(mce, "_need_ephemeris", lambda cfg, topo_requested: False)
     monkeypatch.setattr(mce, "_surface_topography_requested", lambda sp, tg: False)

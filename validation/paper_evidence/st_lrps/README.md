@@ -12,17 +12,17 @@ scientific claim about ST-LRPS.
 > reference, not physical truth**. Results are valid only for the specific
 > dataset, split, artifact, and benchmark configuration used.
 
-## ⚠️ Pre-hygiene checkpoints are preliminary
+## Final-candidate eligibility
 
-Any ST-LRPS checkpoint trained **before** the validation-hygiene refactor
-(train-only scalers, spatial/OOD splits, strict dataset contracts, explicit
-runtime frame, paper-safe benchmarks) is **preliminary** and **not valid for
-final paper claims**. Do not reuse such checkpoints as final candidates. Mark
-them explicitly:
+An ST-LRPS checkpoint is a final paper candidate only if it was produced with
+train-only scalers, spatial/OOD split metadata, strict dataset contracts,
+explicit runtime-frame metadata, and paper-safe benchmark outputs. A checkpoint
+that lacks those requirements is **preliminary** and must not be used for final
+paper claims. Mark non-final runs explicitly:
 
 ```bash
-python -m lunaris.surrogate.st_lrps.paper_evidence.runner --mark-pre-hygiene outputs/old_run
-# writes outputs/old_run/PRE_HYGIENE.json  {status: pre_hygiene, not_for_final_paper_claims: true}
+python -m lunaris.surrogate.st_lrps.paper_evidence.runner --mark-pre-hygiene outputs/run_to_mark
+# writes outputs/run_to_mark/PRE_HYGIENE.json  {status: pre_hygiene, not_for_final_paper_claims: true}
 ```
 
 Final candidates are trained from the paper configs here, which enforce
@@ -144,8 +144,9 @@ produced and figures are skipped with a note.)
 
 - **Final**: artifacts produced by this pipeline from the paper configs, with a
   train-only scaler and strict contracts, carrying full provenance.
-- **Preliminary**: anything pre-hygiene (see above) or any synthetic/quick
-  benchmark output. Synthetic output is a smoke test, never a scientific result.
+- **Preliminary**: any artifact that lacks the final-candidate requirements
+  above, or any synthetic/quick benchmark output. Synthetic output is a smoke
+  test, never a scientific result.
 
 ## Limitations (read before citing)
 

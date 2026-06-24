@@ -15,7 +15,8 @@ GPU path  — ``GPUBatchPropagator``
       * Point-mass fallback (when ``gpu_sh_degree=0``).
       * Third-body Sun / Earth point-mass perturbations.
       * Solar Radiation Pressure (flat-plate, eclipse-checked).
-      * 1PN Schwarzschild relativistic correction.
+      * 1PN relativistic corrections (Moon Schwarzschild plus external-body
+        Schwarzschild/de Sitter terms when ephemeris tables are present).
 
     Physics CPU-only (not on GPU):
       * Albedo / thermal surface forces.
@@ -190,32 +191,133 @@ if _CUDA_AVAILABLE:
 
     @cuda.jit(device=True, inline=True)
     def _third_body_cuda(rx, ry, rz, bx, by, bz, mu_b, out):
-        """Third-body acceleration (differential formulation)."""
+        """Third-body differential acceleration (cancellation-free Battin form).
+
+        Identical math to the CPU kernel
+        ``lunaris.physics.third_body_effects.accel_third_body_numba``: the
+        differential ``mu*((r_tb - r_sc)/|.|^3 - r_tb/|r_tb|^3)`` is evaluated via
+        the ``F(q)`` device that avoids subtracting two near-equal large vectors,
+        which otherwise costs ~4-5 significant digits on the Sun term. Keeping the
+        two backends on the same formula is required for CPU/GPU parity.
+        """
         dx = bx - rx; dy = by - ry; dz = bz - rz
         d2 = dx * dx + dy * dy + dz * dz
         b2 = bx * bx + by * by + bz * bz
         if d2 < 1.0 or b2 < 1.0:
             out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
             return
+        r2 = rx * rx + ry * ry + rz * rz
+        r_dot_b = rx * bx + ry * by + rz * bz
+        q = (r2 - 2.0 * r_dot_b) / b2
+        one_plus_q = 1.0 + q
+        f_q = q * (3.0 + 3.0 * q + q * q) / (1.0 + one_plus_q * math.sqrt(one_plus_q))
         inv_d3 = 1.0 / (d2 * math.sqrt(d2))
-        inv_b3 = 1.0 / (b2 * math.sqrt(b2))
-        out[0] = mu_b * (dx * inv_d3 - bx * inv_b3)
-        out[1] = mu_b * (dy * inv_d3 - by * inv_b3)
-        out[2] = mu_b * (dz * inv_d3 - bz * inv_b3)
+        pref = -mu_b * inv_d3
+        out[0] = pref * (rx + bx * f_q)
+        out[1] = pref * (ry + by * f_q)
+        out[2] = pref * (rz + bz * f_q)
 
     @cuda.jit(device=True, inline=True)
     def _interp3_cuda(t, dt_s, tab, n_tab, result):
-        """Linear interpolation of a (N, 3) pre-tabulated vector at time t."""
+        """Interpolate a (N, 3) pre-tabulated vector at time t.
+
+        Mirrors the CPU runtime path
+        ``lunaris.physics.ephemeris.interp_vec3_safe`` exactly so Sun/Earth
+        third-body positions are sampled with the *same* scheme on both backends:
+        constant for ``n<=1``, linear (clamped) for ``2<=n<4``, and Catmull-Rom
+        (C1) for ``n>=4``. Previously this kernel was linear-only, which diverged
+        from the CPU Catmull-Rom sampling between table nodes; the quaternion
+        path (:func:`_interp4_cuda`) already matched CPU SLERP.
+        """
+        # Degenerate / single-row table -> constant (matches interp_vec3_safe).
+        if n_tab <= 1 or dt_s <= 0.0:
+            result[0] = tab[0, 0]; result[1] = tab[0, 1]; result[2] = tab[0, 2]
+            return
+
+        # Endpoint clamp (matches _table_endpoint_index).
+        tmax = dt_s * (n_tab - 1)
+        if t <= 0.0:
+            result[0] = tab[0, 0]; result[1] = tab[0, 1]; result[2] = tab[0, 2]
+            return
+        if t >= tmax:
+            j = n_tab - 1
+            result[0] = tab[j, 0]; result[1] = tab[j, 1]; result[2] = tab[j, 2]
+            return
+
+        # Base segment index + fraction (matches _table_index_frac: i in [0,n-2]).
         u = t / dt_s
         i = int(u)
         if i < 0:
             i = 0
-        if i >= n_tab - 1:
+        elif i > n_tab - 2:
             i = n_tab - 2
-        a = u - float(i)
-        result[0] = tab[i, 0] * (1.0 - a) + tab[i + 1, 0] * a
-        result[1] = tab[i, 1] * (1.0 - a) + tab[i + 1, 1] * a
-        result[2] = tab[i, 2] * (1.0 - a) + tab[i + 1, 2] * a
+        f = u - float(i)
+        if f < 0.0:
+            f = 0.0
+        elif f > 1.0:
+            f = 1.0
+
+        if n_tab < 4:
+            # Linear (matches interp_vec3_safe small-table branch).
+            result[0] = tab[i, 0] * (1.0 - f) + tab[i + 1, 0] * f
+            result[1] = tab[i, 1] * (1.0 - f) + tab[i + 1, 1] * f
+            result[2] = tab[i, 2] * (1.0 - f) + tab[i + 1, 2] * f
+            return
+
+        # Catmull-Rom on 4 clamped control points (matches interp_vec3_catmull).
+        i0 = i - 1 if i > 0 else 0
+        i3 = i + 2 if i < n_tab - 2 else n_tab - 1
+        f2 = f * f
+        f3 = f2 * f
+        w0 = -f + 2.0 * f2 - f3
+        w1 = 2.0 - 5.0 * f2 + 3.0 * f3
+        w2 = f + 4.0 * f2 - 3.0 * f3
+        w3 = -f2 + f3
+        result[0] = 0.5 * (tab[i0, 0] * w0 + tab[i, 0] * w1 + tab[i + 1, 0] * w2 + tab[i3, 0] * w3)
+        result[1] = 0.5 * (tab[i0, 1] * w0 + tab[i, 1] * w1 + tab[i + 1, 1] * w2 + tab[i3, 1] * w3)
+        result[2] = 0.5 * (tab[i0, 2] * w0 + tab[i, 2] * w1 + tab[i + 1, 2] * w2 + tab[i3, 2] * w3)
+
+    @cuda.jit(device=True, inline=True)
+    def _interp3_derivative_cuda(t, dt_s, tab, n_tab, result):
+        """Finite-difference derivative for a uniformly sampled vec3 table."""
+        if n_tab <= 1 or dt_s <= 0.0:
+            result[0] = 0.0; result[1] = 0.0; result[2] = 0.0
+            return
+
+        if n_tab == 2:
+            inv_dt = 1.0 / dt_s
+            result[0] = (tab[1, 0] - tab[0, 0]) * inv_dt
+            result[1] = (tab[1, 1] - tab[0, 1]) * inv_dt
+            result[2] = (tab[1, 2] - tab[0, 2]) * inv_dt
+            return
+
+        u = t / dt_s
+        if u <= 0.0:
+            inv_dt = 1.0 / dt_s
+            result[0] = (tab[1, 0] - tab[0, 0]) * inv_dt
+            result[1] = (tab[1, 1] - tab[0, 1]) * inv_dt
+            result[2] = (tab[1, 2] - tab[0, 2]) * inv_dt
+            return
+
+        if u >= float(n_tab - 1):
+            inv_dt = 1.0 / dt_s
+            j0 = n_tab - 2
+            j1 = n_tab - 1
+            result[0] = (tab[j1, 0] - tab[j0, 0]) * inv_dt
+            result[1] = (tab[j1, 1] - tab[j0, 1]) * inv_dt
+            result[2] = (tab[j1, 2] - tab[j0, 2]) * inv_dt
+            return
+
+        i = int(u)
+        if i < 1:
+            i = 1
+        elif i > n_tab - 2:
+            i = n_tab - 2
+
+        inv_2dt = 0.5 / dt_s
+        result[0] = (tab[i + 1, 0] - tab[i - 1, 0]) * inv_2dt
+        result[1] = (tab[i + 1, 1] - tab[i - 1, 1]) * inv_2dt
+        result[2] = (tab[i + 1, 2] - tab[i - 1, 2]) * inv_2dt
 
     @cuda.jit(device=True, inline=True)
     def _interp4_cuda(t, dt_s, tab, n_tab, result):
@@ -526,6 +628,64 @@ if _CUDA_AVAILABLE:
         out[2] = fac * (A * rz + B * vz)
 
     @cuda.jit(device=True, inline=True)
+    def _external_schwarzschild_diff_cuda(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out):
+        """Differential external-body Schwarzschild term in Moon-centered coordinates."""
+        b2 = bx * bx + by * by + bz * bz
+        if b2 <= 1.0 or mu_body <= 0.0:
+            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            return
+
+        sc = cuda.local.array(3, numba.float64)
+        moon = cuda.local.array(3, numba.float64)
+        _relativity_1pn_cuda(rx - bx, ry - by, rz - bz, vx - bvx, vy - bvy, vz - bvz, mu_body, sc)
+        _relativity_1pn_cuda(-bx, -by, -bz, -bvx, -bvy, -bvz, mu_body, moon)
+        out[0] = sc[0] - moon[0]
+        out[1] = sc[1] - moon[1]
+        out[2] = sc[2] - moon[2]
+
+    @cuda.jit(device=True, inline=True)
+    def _de_sitter_cuda(vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out):
+        """de Sitter/geodetic precession term in Moon-centered coordinates."""
+        if mu_body <= 0.0:
+            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            return
+
+        rx_b = -bx
+        ry_b = -by
+        rz_b = -bz
+        vx_b = -bvx
+        vy_b = -bvy
+        vz_b = -bvz
+        r2 = rx_b * rx_b + ry_b * ry_b + rz_b * rz_b
+        if r2 <= 1.0:
+            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0
+            return
+
+        c_light = 299_792_458.0
+        c2 = c_light * c_light
+        inv_r3 = 1.0 / (r2 * math.sqrt(r2))
+        scale = 1.5 * mu_body * inv_r3 / c2
+        ox = scale * (ry_b * vz_b - rz_b * vy_b)
+        oy = scale * (rz_b * vx_b - rx_b * vz_b)
+        oz = scale * (rx_b * vy_b - ry_b * vx_b)
+
+        # a = +2 * (Omega x v): prograde geodetic precession (must match the CPU
+        # kernel lunaris.physics.relativity_effects._de_sitter_components).
+        out[0] = 2.0 * (oy * vz - oz * vy)
+        out[1] = 2.0 * (oz * vx - ox * vz)
+        out[2] = 2.0 * (ox * vy - oy * vx)
+
+    @cuda.jit(device=True, inline=True)
+    def _external_1pn_cuda(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out):
+        """External-body Schwarzschild differential plus de Sitter term."""
+        tmp = cuda.local.array(3, numba.float64)
+        _external_schwarzschild_diff_cuda(rx, ry, rz, vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, out)
+        _de_sitter_cuda(vx, vy, vz, bx, by, bz, bvx, bvy, bvz, mu_body, tmp)
+        out[0] += tmp[0]
+        out[1] += tmp[1]
+        out[2] += tmp[2]
+
+    @cuda.jit(device=True, inline=True)
     def _j2_oblate_unit_cuda(x, y, z, mu, r_ref, j2, kx, ky, kz, out):
         """J2 acceleration for an oblate body in its inertial frame."""
         r2 = x * x + y * y + z * z
@@ -596,6 +756,8 @@ if _CUDA_AVAILABLE:
         accel = cuda.local.array(3, numba.float64)
         sun   = cuda.local.array(3, numba.float64)
         earth = cuda.local.array(3, numba.float64)
+        sun_vel = cuda.local.array(3, numba.float64)
+        earth_vel = cuda.local.array(3, numba.float64)
         quat  = cuda.local.array(4, numba.float64)
         rf    = cuda.local.array(3, numba.float64)   # body-fixed position
 
@@ -662,6 +824,24 @@ if _CUDA_AVAILABLE:
         # F) 1PN Relativity
         if use_rel == 1:
             _relativity_1pn_cuda(rx, ry, rz, vx, vy, vz, gm, accel)
+            ax += accel[0]; ay += accel[1]; az += accel[2]
+            _interp3_derivative_cuda(t, ephem_dt, sun_tab, n_ephem, sun_vel)
+            _external_1pn_cuda(
+                rx, ry, rz, vx, vy, vz,
+                sun[0], sun[1], sun[2],
+                sun_vel[0], sun_vel[1], sun_vel[2],
+                mu_sun,
+                accel,
+            )
+            ax += accel[0]; ay += accel[1]; az += accel[2]
+            _interp3_derivative_cuda(t, ephem_dt, earth_tab, n_ephem, earth_vel)
+            _external_1pn_cuda(
+                rx, ry, rz, vx, vy, vz,
+                earth[0], earth[1], earth[2],
+                earth_vel[0], earth_vel[1], earth_vel[2],
+                mu_earth,
+                accel,
+            )
             ax += accel[0]; ay += accel[1]; az += accel[2]
 
         dydt[3] = ax; dydt[4] = ay; dydt[5] = az

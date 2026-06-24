@@ -78,14 +78,14 @@ from lunaris.common.math_utils import (
     wrap_lon_deg,
 )
 from lunaris.common.type_defs import F64Array, PerturbationFlags, SolidTideConfig, SpacecraftProps
-from lunaris.physics.ephemeris import get_ephem_state
+from lunaris.physics.ephemeris import get_ephem_state, interp_vec3_derivative_safe
 from lunaris.physics.lunar_albedo import (
     ALBEDO_SOURCE_CONSTANT,
     ALBEDO_SOURCE_GRID,
     accel_albedo_facets_numba,
     normalize_albedo_mode,
 )
-from lunaris.physics.relativity_effects import _schwarzschild_components
+from lunaris.physics.relativity_effects import _external_1pn_components, _schwarzschild_components
 from lunaris.physics.solar_effects import accel_srp
 from lunaris.physics.solid_tides import accel_solid_tides_numba
 from lunaris.physics.spherical_harmonics import (
@@ -820,6 +820,8 @@ class _ThermalPack:
     c_light_m_s: float
     sigma_sb: float
     include_sun_distance_scaling: bool
+    enable_eclipse: bool
+    r_earth_m: float
     facet_pos_m: F64Array
     facet_normals: F64Array
     facet_areas_m2: F64Array
@@ -828,6 +830,8 @@ class _ThermalPack:
     def __post_init__(self) -> None:
         if self.mode not in (THERMAL_MODE_CONSTANT, THERMAL_MODE_EQUILIBRIUM, THERMAL_MODE_TEMPERATURE_GRID):
             raise ValueError(f"thermal mode must be 0/1/2, got {self.mode}")
+        if self.r_earth_m <= 0.0:
+            raise ValueError(f"thermal r_earth_m must be > 0, got {self.r_earth_m}")
 
         for name in (
             "surface_emissivity",
@@ -965,6 +969,18 @@ class DynamicsEngine:
 
         # Backwards compatibility: enable_relativity_1pn or enable_relativity
         use_rel = bool(getattr(f, "enable_relativity_1pn", getattr(f, "enable_relativity", False)))
+        # Design (#4): there is intentionally no separate "external relativity"
+        # flag. The external-body Schwarzschild differential and the de Sitter
+        # geodetic term are the physically dominant relativistic effects for a
+        # lunar orbiter, but they can only be evaluated when Sun/Earth ephemeris
+        # states are available. So they auto-enable whenever 1PN relativity is on
+        # AND an ephemeris is present, and silently degrade to the central-body
+        # Schwarzschild term alone otherwise. The body velocities they require are
+        # a central finite difference of the ephemeris position table
+        # (interp_vec3_derivative_safe, O(dt^2), the same scheme used on the GPU
+        # via _interp3_derivative_cuda) rather than the Catmull-Rom position
+        # interpolant's analytic derivative — adequate for the ~1e-11 m/s^2 term.
+        use_rel_external = bool(use_rel and self.ephem is not None)
 
         use_earth_j2_flag = bool(getattr(f, "enable_earth_j2", False))
         use_earth_j2 = bool(use_earth_j2_flag and (self.earth_j2 is not None))
@@ -974,10 +990,27 @@ class DynamicsEngine:
         thermal_mode = normalize_thermal_mode(getattr(self.thermal, "thermal_mode", "constant_temperature"))
         use_thermal_equilibrium = bool(use_thermal and thermal_mode == THERMAL_MODE_EQUILIBRIUM)
         use_thermal_grid = bool(use_thermal and thermal_mode == THERMAL_MODE_TEMPERATURE_GRID)
+        use_thermal_eclipse = bool(
+            use_thermal_equilibrium
+            and bool(getattr(self.thermal, "enable_eclipse", True))
+        )
 
         # What data do we need from ephemeris?
-        need_sun = bool(use_srp or use_3rd_sun or use_albedo or use_tide_sun or use_thermal_equilibrium)
-        need_earth = bool(use_3rd_earth or use_earth_j2 or use_tide_earth)
+        need_sun = bool(
+            use_srp
+            or use_3rd_sun
+            or use_albedo
+            or use_tide_sun
+            or use_thermal_equilibrium
+            or use_rel_external
+        )
+        need_earth = bool(
+            use_3rd_earth
+            or use_earth_j2
+            or use_tide_earth
+            or use_thermal_eclipse
+            or use_rel_external
+        )
         need_q = bool(use_sh or use_surrogate_gravity or use_albedo or use_tides or use_thermal)
 
         # Ephemeris manager is required if Sun/Earth vectors are needed.
@@ -996,6 +1029,7 @@ class DynamicsEngine:
             "albedo_needs_provider": albedo_needs_provider,
             "use_thermal": use_thermal,
             "use_thermal_equilibrium": use_thermal_equilibrium,
+            "use_thermal_eclipse": use_thermal_eclipse,
             "use_thermal_grid": use_thermal_grid,
             "use_srp": use_srp,
             "use_3rd_sun": use_3rd_sun,
@@ -1006,6 +1040,7 @@ class DynamicsEngine:
             "use_tide_earth": use_tide_earth,
             "use_tide_sun": use_tide_sun,
             "use_rel": use_rel,
+            "use_rel_external": use_rel_external,
             "use_earth_j2": use_earth_j2,
             "need_sun": need_sun,
             "need_earth": need_earth,
@@ -1055,7 +1090,7 @@ class DynamicsEngine:
                 if req["need_sun"]:
                     reasons.append("Sun vector (SRP / 3rd-body Sun / Albedo / Thermal IR equilibrium / solid tides)")
                 if req["need_earth"]:
-                    reasons.append("Earth vector (3rd-body Earth / Earth J2 / solid tides)")
+                    reasons.append("Earth vector (3rd-body Earth / Earth J2 / Thermal IR eclipse / solid tides)")
             if req["need_quat_from_ephem"]:
                 reasons.append("q_i2f (SH / Albedo / Thermal IR / solid tides)")
 
@@ -1462,6 +1497,8 @@ class DynamicsEngine:
                 c_light_m_s=1.0,
                 sigma_sb=1.0,
                 include_sun_distance_scaling=True,
+                enable_eclipse=False,
+                r_earth_m=float(R_EARTH_MEAN),
                 facet_pos_m=np.zeros((1, 3), dtype=np.float64),
                 facet_normals=np.zeros((1, 3), dtype=np.float64),
                 facet_areas_m2=np.zeros(1, dtype=np.float64),
@@ -1522,6 +1559,8 @@ class DynamicsEngine:
             c_light_m_s=float(getattr(cfg, "c_light_m_s", C_LIGHT)),
             sigma_sb=float(getattr(cfg, "sigma_sb", SIGMA_SB)),
             include_sun_distance_scaling=bool(getattr(cfg, "include_sun_distance_scaling", True)),
+            enable_eclipse=bool(getattr(cfg, "enable_eclipse", True)),
+            r_earth_m=float(R_EARTH_MEAN),
             facet_pos_m=pos,
             facet_normals=normals,
             facet_areas_m2=areas,
@@ -1556,6 +1595,7 @@ class DynamicsEngine:
         USE_SRP = bool(req["use_srp"])
         USE_ALBEDO = bool(req["use_albedo"])
         USE_REL = bool(req["use_rel"])
+        USE_REL_EXTERNAL = bool(req["use_rel_external"])
         USE_EJ2 = bool(req["use_earth_j2"])
         USE_TIDES = bool(req["use_tides"])
         USE_TIDE_EARTH = bool(req["use_tide_earth"])
@@ -1680,6 +1720,8 @@ class DynamicsEngine:
         TH_C = float(th.c_light_m_s)
         TH_SIGMA = float(th.sigma_sb)
         TH_SCALE_SUN_DIST = bool(th.include_sun_distance_scaling)
+        TH_ECLIPSE = bool(th.enable_eclipse)
+        TH_R_EARTH = float(th.r_earth_m)
         TH_POS = th.facet_pos_m
         TH_NORMALS = th.facet_normals
         TH_AREAS = th.facet_areas_m2
@@ -1832,6 +1874,7 @@ class DynamicsEngine:
                 if USE_THERMAL:
                     rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
                     sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
+                    efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
                     athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
                         rfx,
                         rfy,
@@ -1839,6 +1882,9 @@ class DynamicsEngine:
                         sfx,
                         sfy,
                         sfz,
+                        efx,
+                        efy,
+                        efz,
                         TH_POS,
                         TH_NORMALS,
                         TH_AREAS,
@@ -1857,6 +1903,8 @@ class DynamicsEngine:
                         TH_C,
                         TH_SIGMA,
                         TH_SCALE_SUN_DIST,
+                        TH_R_EARTH,
+                        TH_ECLIPSE,
                     )
                     athx, athy, athz = quat_rotate_vec(q0, -q1, -q2, -q3, athx_f, athy_f, athz_f)
                     ax += athx
@@ -1868,6 +1916,28 @@ class DynamicsEngine:
                     ax += arx
                     ay += ary
                     az += arz
+                    if USE_REL_EXTERNAL:
+                        svx, svy, svz = interp_vec3_derivative_safe(float(t), EPH_DT_S, EPH_SUN)
+                        erx, ery, erz = _external_1pn_components(
+                            rx, ry, rz, vx, vy, vz,
+                            sunx, suny, sunz,
+                            svx, svy, svz,
+                            MU_S,
+                        )
+                        ax += erx
+                        ay += ery
+                        az += erz
+
+                        evx, evy, evz = interp_vec3_derivative_safe(float(t), EPH_DT_S, EPH_EARTH)
+                        erx, ery, erz = _external_1pn_components(
+                            rx, ry, rz, vx, vy, vz,
+                            earthx, earthy, earthz,
+                            evx, evy, evz,
+                            MU_E,
+                        )
+                        ax += erx
+                        ay += ery
+                        az += erz
 
                 dydt = np.empty_like(y)
                 dydt[0] = vx
@@ -2181,6 +2251,7 @@ class DynamicsEngine:
             if USE_THERMAL:
                 rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
                 sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
+                efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
                 athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
                     rfx,
                     rfy,
@@ -2188,6 +2259,9 @@ class DynamicsEngine:
                     sfx,
                     sfy,
                     sfz,
+                    efx,
+                    efy,
+                    efz,
                     TH_POS,
                     TH_NORMALS,
                     TH_AREAS,
@@ -2206,6 +2280,8 @@ class DynamicsEngine:
                     TH_C,
                     TH_SIGMA,
                     TH_SCALE_SUN_DIST,
+                    TH_R_EARTH,
+                    TH_ECLIPSE,
                 )
                 athx, athy, athz = quat_rotate_vec(q0, -q1, -q2, -q3, athx_f, athy_f, athz_f)
                 ax += athx
@@ -2218,6 +2294,28 @@ class DynamicsEngine:
                 ax += arx
                 ay += ary
                 az += arz
+                if USE_REL_EXTERNAL:
+                    svx, svy, svz = interp_vec3_derivative_safe(t, EPH_DT_S, EPH_SUN)
+                    erx, ery, erz = _external_1pn_components(
+                        rx, ry, rz, vx, vy, vz,
+                        sunx, suny, sunz,
+                        svx, svy, svz,
+                        MU_S,
+                    )
+                    ax += erx
+                    ay += ery
+                    az += erz
+
+                    evx, evy, evz = interp_vec3_derivative_safe(t, EPH_DT_S, EPH_EARTH)
+                    erx, ery, erz = _external_1pn_components(
+                        rx, ry, rz, vx, vy, vz,
+                        earthx, earthy, earthz,
+                        evx, evy, evz,
+                        MU_E,
+                    )
+                    ax += erx
+                    ay += ery
+                    az += erz
 
             dydt = np.empty_like(y)
             dydt[0] = vx
@@ -2548,6 +2646,7 @@ class DynamicsEngine:
         if req["use_thermal"]:
             rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
             sfx, sfy, sfz = quat_rotate_vec(q[0], q[1], q[2], q[3], sun[0], sun[1], sun[2])
+            efx, efy, efz = quat_rotate_vec(q[0], q[1], q[2], q[3], earth[0], earth[1], earth[2])
             athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
                 rfx,
                 rfy,
@@ -2555,6 +2654,9 @@ class DynamicsEngine:
                 sfx,
                 sfy,
                 sfz,
+                efx,
+                efy,
+                efz,
                 np.ascontiguousarray(th.facet_pos_m, dtype=np.float64),
                 np.ascontiguousarray(th.facet_normals, dtype=np.float64),
                 np.ascontiguousarray(th.facet_areas_m2, dtype=np.float64),
@@ -2573,6 +2675,8 @@ class DynamicsEngine:
                 float(th.c_light_m_s),
                 float(th.sigma_sb),
                 bool(th.include_sun_distance_scaling),
+                float(th.r_earth_m),
+                bool(th.enable_eclipse),
             )
             athx_i, athy_i, athz_i = quat_rotate_vec(q[0], -q[1], -q[2], -q[3], athx_f, athy_f, athz_f)
             out["Thermal IR"] = _norm3(athx_i, athy_i, athz_i)
@@ -2580,7 +2684,45 @@ class DynamicsEngine:
         # Relativity
         if req["use_rel"]:
             arx, ary, arz = _schwarzschild_components(r[0], r[1], r[2], v[0], v[1], v[2], float(mu_m))
-            out["Relativity (1PN)"] = _norm3(arx, ary, arz)
+            rel_x = arx
+            rel_y = ary
+            rel_z = arz
+            out["Relativity (Moon Schwarzschild)"] = _norm3(arx, ary, arz)
+
+            if req.get("use_rel_external", False):
+                svx, svy, svz = interp_vec3_derivative_safe(
+                    float(t),
+                    float(ep.dt_s),
+                    np.ascontiguousarray(ep.r_sun_tab_m, dtype=np.float64),
+                )
+                exx, exy, exz = _external_1pn_components(
+                    float(r[0]), float(r[1]), float(r[2]),
+                    float(v[0]), float(v[1]), float(v[2]),
+                    float(sun[0]), float(sun[1]), float(sun[2]),
+                    float(svx), float(svy), float(svz),
+                    float(MU_SUN),
+                )
+                evx, evy, evz = interp_vec3_derivative_safe(
+                    float(t),
+                    float(ep.dt_s),
+                    np.ascontiguousarray(ep.r_earth_tab_m, dtype=np.float64),
+                )
+                eex, eey, eez = _external_1pn_components(
+                    float(r[0]), float(r[1]), float(r[2]),
+                    float(v[0]), float(v[1]), float(v[2]),
+                    float(earth[0]), float(earth[1]), float(earth[2]),
+                    float(evx), float(evy), float(evz),
+                    float(MU_EARTH),
+                )
+                ext_x = exx + eex
+                ext_y = exy + eey
+                ext_z = exz + eez
+                out["Relativity (External 1PN)"] = _norm3(ext_x, ext_y, ext_z)
+                rel_x += ext_x
+                rel_y += ext_y
+                rel_z += ext_z
+
+            out["Relativity (1PN)"] = _norm3(rel_x, rel_y, rel_z)
 
         return out
 

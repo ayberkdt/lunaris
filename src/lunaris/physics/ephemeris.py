@@ -788,6 +788,50 @@ def interp_vec3_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, f
 
 
 @njit(cache=True, nogil=True)
+def interp_vec3_derivative_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, float, float]:
+    """
+    Finite-difference derivative for a uniformly sampled vec3 table.
+
+    The ephemeris provider currently stores positions only. This helper gives
+    hot-loop force models a bounded velocity estimate without changing the
+    provider contract. Degenerate/constant tables return zero velocity.
+    """
+    n = int(tab.shape[0])
+    if n <= 1 or dt_s <= 0.0:
+        return 0.0, 0.0, 0.0
+
+    if n == 2:
+        x0, y0, z0 = _row3(tab, 0)
+        x1, y1, z1 = _row3(tab, 1)
+        inv_dt = 1.0 / dt_s
+        return (x1 - x0) * inv_dt, (y1 - y0) * inv_dt, (z1 - z0) * inv_dt
+
+    u = t_s / dt_s
+    if u <= 0.0:
+        x0, y0, z0 = _row3(tab, 0)
+        x1, y1, z1 = _row3(tab, 1)
+        inv_dt = 1.0 / dt_s
+        return (x1 - x0) * inv_dt, (y1 - y0) * inv_dt, (z1 - z0) * inv_dt
+
+    if u >= float(n - 1):
+        x0, y0, z0 = _row3(tab, n - 2)
+        x1, y1, z1 = _row3(tab, n - 1)
+        inv_dt = 1.0 / dt_s
+        return (x1 - x0) * inv_dt, (y1 - y0) * inv_dt, (z1 - z0) * inv_dt
+
+    i = int(u)
+    if i < 1:
+        i = 1
+    elif i > n - 2:
+        i = n - 2
+
+    xm, ym, zm = _row3(tab, i - 1)
+    xp, yp, zp = _row3(tab, i + 1)
+    inv_2dt = 0.5 / dt_s
+    return (xp - xm) * inv_2dt, (yp - ym) * inv_2dt, (zp - zm) * inv_2dt
+
+
+@njit(cache=True, nogil=True)
 def interp_quat_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, float, float, float]:
     """
     Safe quaternion interpolation:
@@ -839,6 +883,7 @@ __all__ = (
 
     # --- Low-level kernel (dynamics loop) ---
     "get_ephem_state",      # Numba-friendly, allocation-free ephemeris sampler for the integrator loop
+    "interp_vec3_derivative_safe",
 
     # --- Utilities (debug/tools) ---
     "resolve_kernel_paths", # Validates kernel paths and tries common extension fixes (e.g., .tls vs .tls.txt)

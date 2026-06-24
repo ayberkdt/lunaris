@@ -207,6 +207,10 @@ class ThermalConfig:
     c_light_m_s: float = C_LIGHT
     sigma_sb: float = SIGMA_SB
     include_sun_distance_scaling: bool = True
+    # Lunar-eclipse (Earth-umbra) dimming of the equilibrium-mode solar input,
+    # mirroring AlbedoConfig.enable_eclipse so the two surface-radiation models
+    # treat eclipses consistently.
+    enable_eclipse: bool = True
 
     # Compatibility with the former simple thermal wrapper.
     k_thermal: float | None = None
@@ -404,18 +408,21 @@ def thermal_accel(
     sc_props: SpacecraftProps,
     config: ThermalConfig,
     *,
+    r_earth: npt.ArrayLike | None = None,
     enable_eclipse: bool = True,
     R_moon: float = R_MOON_MEAN,
 ) -> Vec3:
     """Thermal IR acceleration in a Moon-centered frame.
 
-    This wrapper now delegates to the Lambertian facet model in
-    :mod:`lunaris.physics.thermal_ir`. ``enable_eclipse`` is accepted for
-    compatibility with older callers; thermal emission is controlled by the
-    selected thermal mode rather than spacecraft eclipse state.
+    This wrapper delegates to the Lambertian facet model in
+    :mod:`lunaris.physics.thermal_ir`. ``r_earth`` is an optional Moon-centered
+    Earth vector in the same frame as ``r_sc`` and ``r_sun``; when supplied with
+    ``enable_eclipse=True``, equilibrium-mode solar input is dimmed by the
+    Earth's umbra.
     """
     r_sc_v = _as_vec3(r_sc, "r_sc")
     r_sun_v = _as_vec3(r_sun, "r_sun")
+    r_earth_v = None if r_earth is None else _as_vec3(r_earth, "r_earth")
 
     facet_pos, facet_normals, facet_areas, _, _ = build_latlon_facets(
         int(config.facet_lat_count),
@@ -442,6 +449,8 @@ def thermal_accel(
         c_light_m_s=float(config.c_light_m_s),
         sigma_sb=float(config.sigma_sb),
         include_sun_distance_scaling=bool(config.include_sun_distance_scaling),
+        r_earth_fixed=r_earth_v,
+        enable_eclipse=bool(enable_eclipse and config.enable_eclipse),
     )
 
 __all__ = (

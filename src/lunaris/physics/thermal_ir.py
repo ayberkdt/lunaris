@@ -38,7 +38,8 @@ import numpy as np
 import numpy.typing as npt
 from numba import njit
 
-from lunaris.common.constants import AU, C_LIGHT, PI, R_MOON, SIGMA_SB, SOLAR_FLUX_1AU
+from lunaris.common.constants import AU, C_LIGHT, PI, R_EARTH_MEAN, R_MOON, SIGMA_SB, SOLAR_FLUX_1AU
+from lunaris.physics.solar_effects import earth_shadow_factor_conical
 
 THERMAL_MODE_CONSTANT = 0
 THERMAL_MODE_EQUILIBRIUM = 1
@@ -191,6 +192,9 @@ def accel_thermal_ir_facets_numba(
     sunx: float,
     suny: float,
     sunz: float,
+    earthx: float,
+    earthy: float,
+    earthz: float,
     facet_pos_m: np.ndarray,
     facet_normals: np.ndarray,
     facet_areas_m2: np.ndarray,
@@ -209,8 +213,19 @@ def accel_thermal_ir_facets_numba(
     c_light_m_s: float,
     sigma_sb: float,
     include_sun_distance_scaling: bool,
+    r_earth_m: float,
+    enable_eclipse: bool,
 ) -> tuple[float, float, float]:
-    """Sum Lambertian lunar thermal IR acceleration over precomputed facets."""
+    """Sum Lambertian lunar thermal IR acceleration over precomputed facets.
+
+    During a lunar eclipse (Moon in Earth's umbra) the solar input to the surface
+    drops, so in ``equilibrium_temperature`` mode the solar-driven exitance is
+    scaled by the same conical Earth-shadow factor used by the SRP and albedo
+    models. ``constant_temperature`` and ``temperature_grid`` modes prescribe the
+    facet temperatures directly and are therefore left untouched by the eclipse.
+    Vectors are Moon-fixed; the Earth vector is converted to Earth-centred to
+    match the shared shadow contract.
+    """
     if (
         ir_pressure_coefficient == 0.0
         or spacecraft_area_m2 <= 0.0
@@ -240,6 +255,26 @@ def accel_thermal_ir_facets_numba(
 
     if solar_flux < 0.0:
         solar_flux = 0.0
+
+    # Lunar-eclipse dimming of the solar input (equilibrium mode only; the other
+    # modes prescribe temperatures and ignore solar_flux). A single Earth-umbra
+    # factor at the Moon center is an accurate, cheap proxy because the Moon is
+    # small compared with the Earth umbra at lunar distance.
+    if enable_eclipse:
+        earth_norm2 = earthx * earthx + earthy * earthy + earthz * earthz
+        if earth_norm2 > 1.0:
+            rmoon_ex = -earthx
+            rmoon_ey = -earthy
+            rmoon_ez = -earthz
+            rsun_ex = sunx - earthx
+            rsun_ey = suny - earthy
+            rsun_ez = sunz - earthz
+            eclipse_factor = earth_shadow_factor_conical(
+                rmoon_ex, rmoon_ey, rmoon_ez,
+                rsun_ex, rsun_ey, rsun_ez,
+                r_earth_m,
+            )
+            solar_flux *= eclipse_factor
 
     albedo = surface_albedo
     if albedo < 0.0:
@@ -345,10 +380,23 @@ def calc_thermal_ir_accel(
     c_light_m_s: float = C_LIGHT,
     sigma_sb: float = SIGMA_SB,
     include_sun_distance_scaling: bool = True,
+    r_earth_fixed: npt.ArrayLike | None = None,
+    r_earth_m: float = R_EARTH_MEAN,
+    enable_eclipse: bool = False,
 ) -> np.ndarray:
-    """Python convenience wrapper for the facet-summed thermal IR acceleration."""
+    """Python convenience wrapper for the facet-summed thermal IR acceleration.
+
+    ``r_earth_fixed`` (Moon-fixed Earth position) and ``enable_eclipse`` drive the
+    optional lunar-eclipse dimming of the equilibrium-mode solar input. They are
+    off by default so existing callers are unaffected.
+    """
     r = np.asarray(r_sc_fixed, dtype=np.float64).reshape(3)
     s = np.asarray(r_sun_fixed, dtype=np.float64).reshape(3)
+    e = (
+        np.zeros(3, dtype=np.float64)
+        if r_earth_fixed is None
+        else np.asarray(r_earth_fixed, dtype=np.float64).reshape(3)
+    )
     temps = (
         np.zeros(1, dtype=np.float64)
         if facet_temperatures_K is None
@@ -361,6 +409,9 @@ def calc_thermal_ir_accel(
         float(s[0]),
         float(s[1]),
         float(s[2]),
+        float(e[0]),
+        float(e[1]),
+        float(e[2]),
         np.ascontiguousarray(facet_pos_m, dtype=np.float64),
         np.ascontiguousarray(facet_normals, dtype=np.float64),
         np.ascontiguousarray(facet_areas_m2, dtype=np.float64),
@@ -379,6 +430,8 @@ def calc_thermal_ir_accel(
         float(c_light_m_s),
         float(sigma_sb),
         bool(include_sun_distance_scaling),
+        float(r_earth_m),
+        bool(enable_eclipse),
     )
     return np.asarray((ax, ay, az), dtype=np.float64)
 

@@ -122,11 +122,14 @@ R_SUN_MEAN: float = 695_700_000.0
 # Astronomical Unit [m] (IAU 2012 exact)
 AU: float = 149_597_870_700.0
 
-# Solar radiation pressure at 1 AU [N/m^2] (typical nominal value)
-P_SUN_1AU: float = 4.56 * 1e-06
+# IAU 2015 nominal total solar irradiance at 1 AU [W/m^2].
+# The irradiance is the primary physical quantity; radiation pressure is
+# derived below as P = S / c so SRP, albedo, and thermal models stay scaled
+# from the same source.
+SOLAR_FLUX_1AU: float = 1361.0
 
-# Solar flux at 1 AU [W/m^2], kept consistent with the nominal SRP pressure.
-SOLAR_FLUX_1AU: float = P_SUN_1AU * C_LIGHT
+# Solar radiation pressure at 1 AU [N/m^2], derived as P = S / c.
+P_SUN_1AU: float = SOLAR_FLUX_1AU / C_LIGHT
 
 
 # =============================================================================
@@ -181,8 +184,8 @@ CONSTANT_SOURCES: Final[Mapping[str, str]] = MappingProxyType({
     "R_SUN_MEAN": "IAU 2015 nominal solar radius",
     "AU": "IAU 2012 exact definition",
     "MU_SUN": "JPL DE440 ephemeris (GM of Sun)",
-    "P_SUN_1AU": "Nominal SRP at 1 AU (common astrodynamics reference value)",
-    "SOLAR_FLUX_1AU": "Derived from nominal P_SUN_1AU * C_LIGHT",
+    "SOLAR_FLUX_1AU": "IAU 2015 Resolution B3 nominal total solar irradiance",
+    "P_SUN_1AU": "Derived as SOLAR_FLUX_1AU / C_LIGHT",
 
     # --- Earth ---
     "MU_EARTH": "JPL DE440 geocentric GM",
