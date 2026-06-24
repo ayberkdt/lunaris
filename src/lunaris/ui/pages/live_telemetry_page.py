@@ -155,11 +155,17 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             )
             return
 
-        # Plot Type Selector
-        selector_layout = QtWidgets.QHBoxLayout()
-        selector_layout.setContentsMargins(10, 5, 10, 5)
+        # Plot Type Selector.
+        #
+        # The axis controls are split across two rows so the dense toolbar never
+        # clips or squishes its controls at narrow window widths (the single-row
+        # layout overflowed below ~1100 px). Row 1 carries plot/time selection;
+        # row 2 carries the mouse-zoom and Y-range controls.
+        row1 = QtWidgets.QHBoxLayout()
+        row1.setContentsMargins(10, 5, 10, 0)
+        row1.setSpacing(8)
 
-        selector_layout.addWidget(QtWidgets.QLabel("Plot Type:"))
+        row1.addWidget(QtWidgets.QLabel("Plot Type:"))
         self.plot_type_combo = QtWidgets.QComboBox()
         self.plot_type_combo.addItems([
             "Altitude vs Time",
@@ -167,52 +173,63 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             "Eccentricity vs Time",
             "Ground Track"
         ])
+        self.plot_type_combo.setAccessibleName("Plot type")
         self.plot_type_combo.currentTextChanged.connect(self._switch_plot)
-        selector_layout.addWidget(self.plot_type_combo)
+        row1.addWidget(self.plot_type_combo)
 
-        selector_layout.addStretch()
+        row1.addStretch()
 
         # ------------------------------
         # Live Telemetry Axis Controls
         # ------------------------------
-        selector_layout.addWidget(QtWidgets.QLabel("Time:"))
+        row1.addWidget(QtWidgets.QLabel("Time:"))
         self.time_axis_combo = QtWidgets.QComboBox()
         self.time_axis_combo.addItems(["Auto", "s", "min", "h", "d"])
         self.time_axis_combo.setFixedHeight(24)
-        self.time_axis_combo.setFixedWidth(70)
+        self.time_axis_combo.setMinimumWidth(70)
+        self.time_axis_combo.setAccessibleName("Time axis unit")
         self.time_axis_combo.currentTextChanged.connect(self._on_axis_controls_changed)
-        selector_layout.addWidget(self.time_axis_combo)
+        row1.addWidget(self.time_axis_combo)
 
         self.chk_time_relative = QtWidgets.QCheckBox("T+")
         self.chk_time_relative.setChecked(True)
         self.chk_time_relative.setToolTip("Display time relative to first received sample.")
         self.chk_time_relative.toggled.connect(self._on_axis_controls_changed)
-        selector_layout.addWidget(self.chk_time_relative)
+        row1.addWidget(self.chk_time_relative)
 
-        selector_layout.addWidget(QtWidgets.QLabel("Mouse zoom:"))
+        layout.addLayout(row1)
+
+        row2 = QtWidgets.QHBoxLayout()
+        row2.setContentsMargins(10, 0, 10, 5)
+        row2.setSpacing(8)
+
+        row2.addWidget(QtWidgets.QLabel("Mouse zoom:"))
         self.chk_mouse_x = QtWidgets.QCheckBox("X")
         self.chk_mouse_y = QtWidgets.QCheckBox("Y")
         self.chk_mouse_x.setChecked(False)  # keep time axis stable by default
         self.chk_mouse_y.setChecked(True)
         self.chk_mouse_x.toggled.connect(self._apply_mouse_zoom_settings)
         self.chk_mouse_y.toggled.connect(self._apply_mouse_zoom_settings)
-        selector_layout.addWidget(self.chk_mouse_x)
-        selector_layout.addWidget(self.chk_mouse_y)
+        row2.addWidget(self.chk_mouse_x)
+        row2.addWidget(self.chk_mouse_y)
 
-        selector_layout.addWidget(QtWidgets.QLabel("Y:"))
+        row2.addSpacing(12)
+        row2.addWidget(QtWidgets.QLabel("Y:"))
         self.chk_auto_y = QtWidgets.QCheckBox("Auto")
         self.chk_auto_y.setChecked(True)
         self.chk_auto_y.toggled.connect(self._on_y_mode_changed)
-        selector_layout.addWidget(self.chk_auto_y)
+        row2.addWidget(self.chk_auto_y)
 
         self.ed_ymin = QtWidgets.QLineEdit()
         self.ed_ymin.setPlaceholderText("min")
         self.ed_ymin.setFixedWidth(70)
+        self.ed_ymin.setAccessibleName("Y-axis minimum")
         self.ed_ymax = QtWidgets.QLineEdit()
         self.ed_ymax.setPlaceholderText("max")
         self.ed_ymax.setFixedWidth(70)
-        selector_layout.addWidget(self.ed_ymin)
-        selector_layout.addWidget(self.ed_ymax)
+        self.ed_ymax.setAccessibleName("Y-axis maximum")
+        row2.addWidget(self.ed_ymin)
+        row2.addWidget(self.ed_ymax)
 
         self.spin_y_pad = QtWidgets.QDoubleSpinBox()
         self.spin_y_pad.setSuffix("%")
@@ -221,25 +238,28 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         self.spin_y_pad.setSingleStep(1.0)
         self.spin_y_pad.setValue(5.0)
         self.spin_y_pad.setFixedWidth(75)
+        self.spin_y_pad.setAccessibleName("Y-axis padding percent")
         self.spin_y_pad.valueChanged.connect(self._on_axis_controls_changed)
-        selector_layout.addWidget(self.spin_y_pad)
+        row2.addWidget(self.spin_y_pad)
 
         self.btn_y_apply = QtWidgets.QPushButton("Apply")
         self.btn_y_apply.setFixedHeight(24)
         self.btn_y_apply.clicked.connect(self._apply_manual_y_range)
-        selector_layout.addWidget(self.btn_y_apply)
+        row2.addWidget(self.btn_y_apply)
 
         self.btn_y_fit = QtWidgets.QPushButton("Fit")
         self.btn_y_fit.setFixedHeight(24)
         self.btn_y_fit.clicked.connect(self._fit_y_range_to_data)
-        selector_layout.addWidget(self.btn_y_fit)
+        row2.addWidget(self.btn_y_fit)
 
         self.btn_clear = QtWidgets.QPushButton("Clear All")
         self.btn_clear.setFixedHeight(24)
         self.btn_clear.clicked.connect(self.clear_all)
-        selector_layout.addWidget(self.btn_clear)
+        row2.addWidget(self.btn_clear)
 
-        layout.addLayout(selector_layout)
+        row2.addStretch()
+
+        layout.addLayout(row2)
 
         # Stacked widget for different plots
         self.plot_stack = QtWidgets.QStackedWidget()

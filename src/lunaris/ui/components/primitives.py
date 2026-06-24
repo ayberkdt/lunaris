@@ -186,6 +186,11 @@ class FormGrid(QtWidgets.QWidget):
         label_widget.setObjectName("fieldLabel")
         label_widget.setMinimumWidth(DESIGN_TOKENS.controls.form_label_width)
         label_widget.setBuddy(field)
+        # Mirror the visible label into the field's accessible name so screen
+        # readers announce a meaningful name, not just the control type. Never
+        # override a name the caller set explicitly.
+        if label and not field.accessibleName():
+            field.setAccessibleName(label.rstrip(": ").strip())
         self.grid.addWidget(label_widget, self._row, 0, QtCore.Qt.AlignVCenter)
         self.grid.addWidget(field, self._row, 1)
         unit_widget = QtWidgets.QLabel(unit)
@@ -217,6 +222,8 @@ class LabeledField(QtWidgets.QWidget):
         label_widget = QtWidgets.QLabel(label)
         label_widget.setObjectName("fieldLabel")
         label_widget.setBuddy(field)
+        if label and not field.accessibleName():
+            field.setAccessibleName(label.rstrip(": ").strip())
         layout.addWidget(label_widget)
         layout.addWidget(field)
         if hint:

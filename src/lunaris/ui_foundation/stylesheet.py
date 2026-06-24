@@ -230,6 +230,11 @@ def build_app_stylesheet(
             color: {theme['fg_main']};
             font-weight: {type_tokens.weight_semibold};
         }}
+        /* Value flagged as off-nominal (e.g. a backend that fell back from the
+           requested one) — color reinforces the text, never the sole signal. */
+        QLabel#valueLabel[kind="warning"], QLabel#metricValue[kind="warning"] {{
+            color: {theme['warning']};
+        }}
         QLabel#statusLabel {{
             color: {theme['fg_muted']};
             font-size: 9pt;
@@ -238,6 +243,14 @@ def build_app_stylesheet(
             color: {theme['fg_soft']};
             font-size: 9pt;
             font-weight: 600;
+        }}
+        /* Thin vertical rule between status groups — replaces literal "|" text
+           separators with a real divider drawn from the border token. */
+        QFrame#statusDivider {{
+            background: {theme['border_soft']};
+            border: none;
+            max-width: 1px;
+            min-width: 1px;
         }}
 
         /* NAVIGATION — flat shell; active = left border + tinted background */

@@ -276,8 +276,30 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.mc_cfg = mc_cfg
         self._last_progress_payload: dict[str, Any] = {}
         self._build_ui()
+        self._autoname_grid_fields()
         self._setup_validation_signals()
         self._update_validation()
+
+    def _autoname_grid_fields(self) -> None:
+        """Give every grid-placed input an accessible name from its row label.
+
+        The configuration cards lay out ``label (col 0) | field (col 1)`` in raw
+        QGridLayouts (not FormGrid), so the fields would otherwise reach screen
+        readers unnamed. This walks each grid once and mirrors the column-0 label
+        text into the field's accessible name, without overriding an explicit one.
+        """
+        need = (QtWidgets.QLineEdit, QtWidgets.QComboBox, QtWidgets.QAbstractSpinBox)
+        for grid in self.findChildren(QtWidgets.QGridLayout):
+            for i in range(grid.count()):
+                item = grid.itemAt(i)
+                field = item.widget() if item else None
+                if not isinstance(field, need) or field.accessibleName().strip():
+                    continue
+                row, _col, _rs, _cs = grid.getItemPosition(grid.indexOf(field))
+                label_item = grid.itemAtPosition(row, 0)
+                label = label_item.widget() if label_item else None
+                if isinstance(label, QtWidgets.QLabel) and label.text().strip():
+                    field.setAccessibleName(label.text().rstrip(": ").strip())
 
     # -------------------------------------------------------------------------
     # UI construction
@@ -319,6 +341,12 @@ class MonteCarloPage(QtWidgets.QWidget):
         left_layout.addStretch(1)
 
         left_scroll.setWidget(left_container)
+        # Minimum column widths keep the two-column run tab from collapsing into
+        # an unusable, overlapping layout at the window's minimum width (1000 px):
+        # without these the right control card was crushed and its contents
+        # visually collided. Both stay above their minimums at every supported
+        # window size, so no horizontal page scrollbar is introduced.
+        left_scroll.setMinimumWidth(320)
         run_root.addWidget(left_scroll, 6)
 
         # ----- Right: run controls + metrics ---------------------------------
@@ -331,6 +359,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         right_layout.addWidget(self._card_metrics())
         right_layout.addStretch(1)
 
+        right_widget.setMinimumWidth(300)
         run_root.addWidget(right_widget, 4)
 
         # Backend comparison card lives below the existing run cards so users
@@ -451,6 +480,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         # Preview text — reuses the global monospace command-preview style.
         self.txt_backend_compare_cmd = QtWidgets.QPlainTextEdit()
         self.txt_backend_compare_cmd.setObjectName("commandPreview")
+        self.txt_backend_compare_cmd.setAccessibleName("Backend command preview")
         self.txt_backend_compare_cmd.setReadOnly(True)
         self.txt_backend_compare_cmd.setMinimumHeight(80)
         self.txt_backend_compare_cmd.setPlaceholderText(
@@ -823,6 +853,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         st_lrps_path_row = QtWidgets.QHBoxLayout()
         self.ent_mc_st_lrps_model_dir = QtWidgets.QLineEdit(self.mc_cfg.st_lrps_model_dir)
+        self.ent_mc_st_lrps_model_dir.setAccessibleName("ST-LRPS model directory")
         self.ent_mc_st_lrps_model_dir.setPlaceholderText(
             str(ST_LRPS_RUNS_DIR / "<trained_run>")
         )
@@ -1043,6 +1074,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         # Output path
         path_row = QtWidgets.QHBoxLayout()
         self.ent_output = QtWidgets.QLineEdit(self.mc_cfg.output_path)
+        self.ent_output.setAccessibleName("Output archive path")
         self.ent_output.setPlaceholderText("outputs/monte_carlo/mc_output.h5")
         btn_browse = QtWidgets.QPushButton("Browse…")
         btn_browse.setFixedHeight(30)
@@ -1150,8 +1182,13 @@ class MonteCarloPage(QtWidgets.QWidget):
         # Live log (last few lines) — reuses the global console surface style.
         self.txt_progress = QtWidgets.QPlainTextEdit()
         self.txt_progress.setObjectName("logConsole")
+        self.txt_progress.setAccessibleName("Batch engine output log")
         self.txt_progress.setReadOnly(True)
-        self.txt_progress.setFixedHeight(80)
+        # Minimum (not fixed) height so the mini-log never clips its text under
+        # larger fonts, HiDPI scaling, or localized strings; capped to keep the
+        # control card compact.
+        self.txt_progress.setMinimumHeight(80)
+        self.txt_progress.setMaximumHeight(120)
         self.txt_progress.setPlaceholderText("Batch engine output appears here...")
         layout.addWidget(self.txt_progress)
 
@@ -1501,12 +1538,37 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         wt = metrics.get("wall_time_s")
         _set("wall_time", f"{wt:.1f} s" if wt is not None else "—")
-        _set("backend",   str(metrics.get("backend", "—")))
+
+        # Backend provenance: surface requested-vs-actual so a silent GPU->CPU
+        # fallback is visible instead of hidden behind one label. Both keys are
+        # emitted by mc_runner from the run diagnostics; when they differ the row
+        # is marked as a warning and carries the fallback reason as a tooltip.
+        backend_lbl = self._metric_labels.get("backend")
+        if backend_lbl is not None:
+            actual = str(metrics.get("actual_mc_backend") or metrics.get("backend") or "—")
+            requested = str(metrics.get("requested_mc_backend") or "").strip()
+            fell_back = bool(requested) and requested.lower() != actual.lower()
+            if fell_back:
+                backend_lbl.setText(f"{actual}  (requested: {requested})")
+                reason = str(metrics.get("fallback_reason") or metrics.get("backend_note") or "").strip()
+                backend_lbl.setToolTip(reason or f"Requested {requested} but ran on {actual}.")
+                backend_lbl.setProperty("kind", "warning")
+            else:
+                backend_lbl.setText(actual)
+                backend_lbl.setToolTip("")
+                backend_lbl.setProperty("kind", "")
+            _repolish(backend_lbl)
 
     def clear_results(self) -> None:
         """Reset all metric labels to '—'."""
         for lbl in self._metric_labels.values():
             lbl.setText("—")
+        # Drop any backend-fallback warning styling/tooltip from a previous run.
+        backend_lbl = self._metric_labels.get("backend")
+        if backend_lbl is not None:
+            backend_lbl.setToolTip("")
+            backend_lbl.setProperty("kind", "")
+            _repolish(backend_lbl)
         self.btn_open_report.setEnabled(False)
         self._last_report_path = None
 

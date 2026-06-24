@@ -52,7 +52,7 @@ def test_core_palette_and_layout_contract() -> None:
     colors = DESIGN_TOKENS.colors
     assert colors.bg_space == "#090C12"
     assert colors.accent == "#3B86FF"
-    assert colors.success == "#14D49E"
+    assert colors.success == "#3DD17E"
     assert DESIGN_TOKENS.layout.nav_width == 216
     assert DESIGN_TOKENS.layout.nav_compact_width < DESIGN_TOKENS.layout.nav_width
     assert DESIGN_TOKENS.layout.console_collapsed_height <= 46
