@@ -145,6 +145,74 @@ def test_verify_entry_statuses(tmp_path):
     assert data_cli.verify_entry(mismatch, root) == "hash_mismatch"
 
 
+def test_verify_entry_accepts_alias_path(tmp_path):
+    root = tmp_path / "root"
+    (root / "ephemeris_models").mkdir(parents=True)
+    (root / "ephemeris_models" / "naif0012.tls.txt").write_text("kernel", encoding="utf-8")
+
+    entry = {
+        "name": "lsk",
+        "filename": "naif0012.tls",
+        "aliases": ["naif0012.tls.txt"],
+        "target_subdir": "ephemeris_models",
+        "url": "https://naif.example/naif0012.tls",
+    }
+
+    detail = data_cli.verify_entry_detail(entry, root)
+    assert data_cli.verify_entry(entry, root) == "present"
+    assert detail["alias_used"] is True
+    assert detail["matched_path"].name == "naif0012.tls.txt"
+
+
+def test_verify_entry_reports_companion_files(tmp_path):
+    root = tmp_path / "root"
+    (root / "topography_models").mkdir(parents=True)
+    (root / "topography_models" / "ldem_64_float.img").write_bytes(b"img")
+    (root / "topography_models" / "ldem_64_float.lbl.txt").write_text("label", encoding="utf-8")
+
+    entry = {
+        "name": "ldem",
+        "filename": "ldem_64_float.img",
+        "target_subdir": "topography_models",
+        "url": "https://pds.example/ldem_64_float.img",
+        "companion_files": [
+            {"filename": "ldem_64_float.lbl", "aliases": ["ldem_64_float.lbl.txt"], "required": True},
+            {"filename": "ldem_64_float.xml", "required": False},
+        ],
+    }
+
+    detail = data_cli.verify_entry_detail(entry, root)
+    companions = {comp["filename"]: comp for comp in detail["companions"]}
+    assert companions["ldem_64_float.lbl"]["status"] == "present"
+    assert companions["ldem_64_float.lbl"]["matched_path"].name == "ldem_64_float.lbl.txt"
+    assert companions["ldem_64_float.xml"]["status"] == "missing"
+
+
+def test_verify_entry_checks_companion_hashes(tmp_path):
+    root = tmp_path / "root"
+    (root / "gravity_models").mkdir(parents=True)
+    (root / "gravity_models" / "model.tab").write_bytes(b"model")
+    label = root / "gravity_models" / "model.lbl"
+    label.write_bytes(b"label")
+
+    entry = {
+        "name": "gravity",
+        "filename": "model.tab",
+        "target_subdir": "gravity_models",
+        "url": "https://pds.example/model.tab",
+        "companion_files": [
+            {"filename": "model.lbl", "required": True, "sha256": hashlib.sha256(b"label").hexdigest()},
+        ],
+    }
+
+    detail = data_cli.verify_entry_detail(entry, root)
+    assert detail["companions"][0]["status"] == "valid"
+
+    entry["companion_files"][0]["sha256"] = "0" * 64
+    detail = data_cli.verify_entry_detail(entry, root)
+    assert detail["companions"][0]["status"] == "hash_mismatch"
+
+
 def test_verify_command_optional_missing_exits_zero(tmp_path):
     manifest = _write_manifest(tmp_path, [
         {"name": "opt", "group": "gravity", "filename": "g.tab",
@@ -164,6 +232,41 @@ def test_verify_command_required_missing_exits_nonzero(tmp_path):
     rc = data_cli.main(["--data-dir", str(tmp_path / "root"),
                         "--manifest", str(manifest), "verify"])
     assert rc == 1
+
+
+def test_verify_command_strict_requires_strict_required_entries(tmp_path):
+    manifest = _write_manifest(tmp_path, [
+        {"name": "gm", "group": "ephemeris", "filename": "gm_de440.tpc",
+         "target_subdir": "ephemeris_models", "url": "https://naif.example/gm_de440.tpc",
+         "required": False, "strict_required": True},
+    ])
+    root = tmp_path / "root"
+
+    assert data_cli.main(["--data-dir", str(root), "--manifest", str(manifest), "verify"]) == 0
+    assert data_cli.main(["--data-dir", str(root), "--manifest", str(manifest), "verify", "--strict"]) == 1
+
+
+def test_verify_command_runtime_hook_is_called(tmp_path, monkeypatch, capsys):
+    manifest = _write_manifest(tmp_path, [
+        {"name": "req", "group": "ephemeris", "filename": "x.bsp",
+         "target_subdir": "ephemeris_models", "url": "https://naif.example/x.bsp",
+         "required": False},
+    ])
+
+    called = {}
+
+    def _fake_runtime(manifest_obj, data_root, *, strict):
+        called["strict"] = strict
+        return True, ["[runtime] fake OK"]
+
+    monkeypatch.setattr(data_cli, "_runtime_ephemeris_check", _fake_runtime)
+
+    rc = data_cli.main(["--data-dir", str(tmp_path / "root"),
+                        "--manifest", str(manifest), "verify", "--runtime"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert called["strict"] is False
+    assert "[runtime] fake OK" in out
 
 
 # --------------------------------------------------------------------------- #

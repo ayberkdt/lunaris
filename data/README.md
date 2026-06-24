@@ -1,12 +1,12 @@
 # External Data Directory
 
-Lunaris depends on large external scientific data files (lunar gravity
-coefficients, SPICE/ephemeris kernels, LOLA/LDEM topography, optional albedo
-grids) and locally generated datasets. These are **not** committed to Git or
-bundled in the `lunaris` package — place them here in an editable checkout, or on
-shared storage referenced by `LUNARIS_DATA_DIR` on HPC.
+Lunaris depends on large external scientific data files: SPICE/ephemeris
+kernels, lunar gravity coefficients, LOLA/LDEM topography, LOLA LDAM albedo,
+thermal rasters, UI assets, and locally generated ST-LRPS datasets. These files
+are not bundled in the Python package. Keep them in this editable checkout's
+`data/` directory, or on shared storage referenced by `LUNARIS_DATA_DIR` on HPC.
 
-## Canonical layout
+## Canonical Layout
 
 ```text
 data/
@@ -14,41 +14,54 @@ data/
   ephemeris_models/
   topography_models/
   albedo_models/
+  thermal_models/
+  assets/
   datasets/
 ```
 
-The same layout is expected under `$LUNARIS_DATA_DIR` on HPC/cluster systems.
-`LUNARIS_DATA_DIR` (read by the framework) overrides this repository `data/`
-folder; point it at a shared scratch/project path that contains these
-subdirectories. Additional category subdirectories (e.g. `thermal_models/`)
-follow the same convention.
+The same layout is expected under `$LUNARIS_DATA_DIR` on cluster systems.
+Resolution order is `--data-dir`, then `LUNARIS_DATA_DIR`, then the repository
+`data/` directory.
 
-## Acquiring data
+## Acquiring Data
 
-The asset catalogue is [`data_sources.json`](data_sources.json). Use the headless
-`lunaris-data` tool to list, download, verify, and place files:
+The asset catalogue is [`data_sources.json`](data_sources.json). Use the
+headless `lunaris-data` tool to list, download, verify, and locate files:
 
 ```bash
 lunaris-data list
 lunaris-data download --group ephemeris
 lunaris-data download --group gravity
 lunaris-data verify
-lunaris-data path          # show the resolved data root
+lunaris-data verify --strict --runtime
+lunaris-data path
 ```
 
-Data-root resolution order: `--data-dir` → `LUNARIS_DATA_DIR` → this repository
-`data/` folder.
+Entries with an official provider URL download directly from that provider
+(NAIF/JPL or NASA PDS). Entries with a recorded SHA-256 are verified by
+`lunaris-data verify`; supported local wrapper aliases such as `.tls.txt`,
+`.tpc.txt`, `.tf.txt`, and `.tab.txt` are accepted. Companion labels/XML files
+are also checked, and hash-checked when their manifest entry records a SHA-256.
 
-Entries in the manifest that carry an official URL (currently the NAIF/JPL SPICE
-kernels) download directly. Entries without a pinned URL (e.g. GRAIL gravity,
-LOLA topography/albedo) print the official provider and the directory to place
-the file in manually — `lunaris-data` never downloads from unofficial mirrors.
+`lunaris-data verify --strict` promotes strict-required assets, such as
+`gm_de440.tpc`, to required status. `lunaris-data verify --runtime` additionally
+builds a small SPICE ephemeris table from the resolved kernels, so the check
+covers both file presence and runtime readability.
+
+## Generated Datasets
+
+`data/datasets/st_lrps_cloud_suite.h5` is not a download target. It is an
+optional generated ST-LRPS artifact. When a local HDF5 dataset exists, inspect
+and validate it with:
+
+```bash
+lunaris-data inspect --data data/datasets/st_lrps_cloud_suite.h5
+lunaris-data validate --data data/datasets/st_lrps_cloud_suite.h5 --out outputs/dataset_reports/st_lrps_cloud_suite
+```
 
 ## Notes
 
-- Large files (400 MB+ gravity coefficients, SPICE kernels, topography grids)
-  should be downloaded **once** to shared storage and reused via
+- Download large files once to shared storage and reuse them through
   `LUNARIS_DATA_DIR`; do not copy them into each run directory.
 - Downloaded data and generated datasets are git-ignored and must not be
-  committed. Only this `README.md` and `data_sources.json` are tracked under
-  `data/`.
+  committed. Only lightweight catalogues and documentation belong in Git.

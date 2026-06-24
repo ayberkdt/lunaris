@@ -35,11 +35,34 @@ def _sample():
 def test_repo_manifest_schema_and_required_fields():
     manifest = data_cli.load_manifest(data_cli.default_manifest_path())
     assert manifest["schema_version"] == 1
+    groups = {entry["group"] for entry in manifest["datasets"]}
+    assert {"thermal", "assets"}.issubset(groups)
+    assert "naif_pck_gm_de440" in {entry["name"] for entry in manifest["datasets"]}
     for entry in manifest["datasets"]:
         for field in REQUIRED_FIELDS:
             assert field in entry, f"{entry.get('name')} missing field {field!r}"
         assert entry["group"] in data_cli.GROUPS
         assert entry["target_subdir"] in data_cli.CANONICAL_SUBDIRS
+
+
+def test_repo_manifest_records_text_wrapper_aliases_and_companions():
+    manifest = data_cli.load_manifest(data_cli.default_manifest_path())
+    by_name = {entry["name"]: entry for entry in manifest["datasets"]}
+
+    assert "naif0012.tls.txt" in by_name["naif_lsk_naif0012"]["aliases"]
+    assert "pck00011.tpc.txt" in by_name["naif_pck_pck00011"]["aliases"]
+    assert by_name["naif_pck_gm_de440"]["strict_required"] is True
+
+    ldem_companions = by_name["lola_ldem_topography"]["companion_files"]
+    assert any(comp["filename"] == "ldem_64_float.lbl" for comp in ldem_companions)
+    assert any(comp["filename"] == "ldem_64_float.xml" for comp in ldem_companions)
+
+    st_lrps = by_name["st_lrps_cloud_suite"]
+    assert st_lrps["required"] is False
+    assert st_lrps["strict_required"] is False
+    assert st_lrps["downloadable"] is False
+    assert st_lrps["generated_artifact"] is True
+    assert "DatasetContract" in st_lrps["artifact_contract"]
 
 
 def test_target_path_stays_under_root_and_never_in_src(tmp_path):

@@ -9,6 +9,40 @@ fail because of naming aliases, and which assets are genuinely missing.
 
 The machine-readable snapshot is in `data/data_inventory.generated.json`.
 
+## Implementation Status
+
+Phase 2/3 cleanup is now represented in the runtime/data contract:
+
+- `lunaris-data verify` accepts manifest aliases such as `.tls.txt`,
+  `.tpc.txt`, `.tf.txt`, and `.tab.txt`.
+- Manifest entries can declare required/optional companion files; labels and
+  XML metadata are checked next to their primary rasters/kernels.
+- `thermal` and `assets` are first-class manifest groups.
+- `lunaris-data verify --strict` treats `strict_required` entries as required,
+  which surfaces the missing `gm_de440.tpc` without breaking normal local runs.
+- `lunaris-data verify --runtime` builds a small real SPICE ephemeris table from
+  manifest-resolved files and reports GM fallback warnings.
+- `load_default_config()` opportunistically includes `gm_de440.tpc` when it is
+  present, but still works with existing local data bundles that do not have it.
+- The albedo raster resolver now accepts only LOLA LDAM products; Diviner
+  `DGDR_*` rasters are rejected for albedo even when they are parseable
+  cylindrical grids.
+- SHA-256 values from the frozen local inventory have been promoted into
+  `data/data_sources.json` for the currently archived primary files and
+  companion labels/XML files. `lunaris-data verify` now hash-checks companion
+  files when their manifest entries provide `sha256`.
+- `gm_de440.tpc` has been downloaded from NAIF, recorded with SHA-256, and now
+  passes `lunaris-data verify --strict --runtime` without Earth/Sun GM fallback
+  warnings.
+- `st_lrps_cloud_suite.h5` is explicitly classified as an optional generated
+  artifact, not an external download; when present it should be inspected and
+  validated through the ST-LRPS dataset contract.
+
+The local data root still lacks `datasets/st_lrps_cloud_suite.h5`, but that is
+now an expected optional/generated state rather than an external-data gap. The
+inventory and gap sections below remain a pre-cleanup baseline snapshot, so
+they intentionally preserve the earlier missing-GM observation.
+
 ## Executive Summary
 
 Current ephemeris data works at runtime:
@@ -131,11 +165,21 @@ Thermal and Diviner products:
 
 ## Next Cleanup Targets
 
+Done:
+
 1. Add alias and companion-file support to `lunaris-data verify`.
 2. Add `gm_de440.tpc` to the ephemeris manifest/default strict kernel set.
-3. Fix `moon_de440_220930.tf` source URL or migrate to `moon_de440_250416.tf`.
+3. Fix `moon_de440_220930.tf` source URL.
 4. Add `thermal` and `assets` manifest groups.
 5. Make albedo product selection LDAM-specific so Diviner `DGDR_RA` cannot be
    selected as an albedo grid.
-6. Promote source URL and hash information from this audit into
-   `data/data_sources.json`.
+6. Promote source hash information from this audit into `data/data_sources.json`.
+7. Classify `datasets/st_lrps_cloud_suite.h5` as an optional generated artifact
+   governed by the ST-LRPS dataset contract, not as a downloadable external
+   data dependency.
+
+Open:
+
+- None for the external-data manifest/verification contract. Future ST-LRPS
+  work may generate and validate a cloud-suite artifact for a specific
+  experiment, but it is outside the baseline data bundle.

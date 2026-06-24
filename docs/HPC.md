@@ -130,6 +130,9 @@ data/gravity_models/
 data/ephemeris_models/
 data/topography_models/
 data/albedo_models/
+data/thermal_models/
+data/assets/
+data/datasets/
 ```
 
 ## Acquiring External Data
@@ -145,15 +148,22 @@ lunaris-data list
 lunaris-data download --group ephemeris
 lunaris-data download --group gravity
 lunaris-data verify
+lunaris-data verify --strict --runtime
 ```
 
 The catalogue lives in `data/data_sources.json`. Entries with an official URL
-(currently the NAIF/JPL SPICE kernels) download directly; entries without a
-pinned URL (e.g. GRAIL gravity, LOLA topography/albedo) print the official
-provider and the directory to place the file in manually. `lunaris-data` resolves
-its data root as `--data-dir` → `LUNARIS_DATA_DIR` → the repository `data/`
-folder, and writes into `gravity_models/`, `ephemeris_models/`,
-`topography_models/`, `albedo_models/`, and `datasets/`.
+download directly from NAIF/JPL or NASA PDS, and entries with recorded SHA-256
+values are hash-checked by `lunaris-data verify`. `--strict` promotes
+strict-required assets such as `gm_de440.tpc`; `--runtime` additionally builds a
+small SPICE ephemeris table to prove the resolved kernels are readable by the
+runtime. `lunaris-data` resolves its data root as `--data-dir` ->
+`LUNARIS_DATA_DIR` -> the repository `data/` folder, and writes into
+`gravity_models/`, `ephemeris_models/`, `topography_models/`, `albedo_models/`,
+`thermal_models/`, `assets/`, and `datasets/`.
+
+ST-LRPS cloud-suite HDF5 files are generated artifacts, not external downloads.
+When a job creates or consumes one, validate it with `lunaris-data validate`
+before treating it as benchmark or training evidence.
 
 Download large files **once** to shared scratch/project storage and let every job
 reuse `LUNARIS_DATA_DIR`. Do not copy 400 MB+ gravity files into each run

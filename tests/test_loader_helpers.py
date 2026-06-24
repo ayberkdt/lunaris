@@ -15,7 +15,40 @@ from lunaris.loaders.io_helpers import (
     autodetect_repository_data_roots,
     find_lunar_map_path,
 )
+from lunaris.loaders.io_surface import find_lola_albedo_product
 from lunaris.loaders.spice_builder import maybe_autoinclude_lunar_fk, resolve_kernel_paths
+
+
+def _write_cyl_label_pair(root: Path, stem: str, *, product_id: str, ppd: int) -> Path:
+    img = root / f"{stem}.img"
+    lbl = root / f"{stem}.lbl"
+    img.write_bytes(b"\0" * 16)
+    lbl.write_text(
+        "\n".join(
+            [
+                f'PRODUCT_ID = "{product_id}"',
+                f'^IMAGE = "{img.name}"',
+                "LINES = 2",
+                "LINE_SAMPLES = 2",
+                "SAMPLE_TYPE = PC_REAL",
+                "SAMPLE_BITS = 32",
+                "UNIT = UNITLESS",
+                "SCALING_FACTOR = 1.0",
+                "OFFSET = 0.0",
+                'MAP_PROJECTION_TYPE = "SIMPLE CYLINDRICAL"',
+                f"MAP_RESOLUTION = {ppd} <PIXEL/DEGREE>",
+                "MAXIMUM_LATITUDE = 90.0",
+                "MINIMUM_LATITUDE = -90.0",
+                "WESTERNMOST_LONGITUDE = 0.0",
+                "EASTERNMOST_LONGITUDE = 360.0",
+                'POSITIVE_LONGITUDE_DIRECTION = "EAST"',
+                "CENTER_LATITUDE = 0.0 <DEGREE>",
+                "CENTER_LONGITUDE = 0.0 <DEGREE>",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return lbl
 
 
 def test_autodetect_repository_data_roots_prefers_split_albedo_layout(tmp_path: Path) -> None:
@@ -48,6 +81,31 @@ def test_autodetect_repository_data_roots_prefers_split_albedo_layout(tmp_path: 
     assert Path(detected.kernel_dir) == kernel_dir.resolve()
     assert detected.use_ldem_for_albedo is False
     assert any("Albedo auto-filled" in message for message in messages)
+
+
+def test_find_lola_albedo_product_ignores_diviner_dgdr_rasters(tmp_path: Path) -> None:
+    root = tmp_path / "albedo_models"
+    root.mkdir()
+    _write_cyl_label_pair(root, "dgdr_ra_avg_cyl_032_img", product_id="DGDR_RA_AVG_CYL_032_IMG", ppd=32)
+    ldam_lbl = _write_cyl_label_pair(root, "ldam_8_float", product_id="LDAM_8_FLOAT", ppd=8)
+
+    lbl, img = find_lola_albedo_product(root)
+
+    assert lbl == ldam_lbl
+    assert img.name == "ldam_8_float.img"
+
+
+def test_find_lola_albedo_product_rejects_direct_dgdr_label(tmp_path: Path) -> None:
+    root = tmp_path / "albedo_models"
+    root.mkdir()
+    dgdr_lbl = _write_cyl_label_pair(root, "dgdr_ra_avg_cyl_032_img", product_id="DGDR_RA_AVG_CYL_032_IMG", ppd=32)
+
+    try:
+        find_lola_albedo_product(dgdr_lbl)
+    except FileNotFoundError as exc:
+        assert "LDAM" in str(exc)
+    else:
+        raise AssertionError("Diviner DGDR labels must not be accepted as albedo products")
 
 
 def test_find_lunar_map_path_uses_canonical_assets_directory(tmp_path: Path) -> None:

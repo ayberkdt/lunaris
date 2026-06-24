@@ -38,11 +38,13 @@ CANONICAL_SUBDIRS = (
     "ephemeris_models",
     "topography_models",
     "albedo_models",
+    "thermal_models",
+    "assets",
     "datasets",
 )
 
 #: Logical groups a dataset entry may belong to.
-GROUPS = ("gravity", "ephemeris", "topography", "albedo", "datasets")
+GROUPS = ("gravity", "ephemeris", "topography", "albedo", "thermal", "assets", "datasets")
 
 _ALLOWED_SCHEMES = ("http", "https", "file")
 _CHUNK = 1 << 16
@@ -88,6 +90,25 @@ def dataset_target_path(data_root: Path, entry: dict[str, Any]) -> Path:
     """Absolute path where ``entry`` is expected to live on disk."""
     subdir = entry.get("target_subdir") or ""
     return data_root / subdir / entry["filename"]
+
+
+def dataset_candidate_paths(data_root: Path, entry: dict[str, Any]) -> list[Path]:
+    """Return canonical and alias target paths for ``entry`` in priority order."""
+    names = [str(entry["filename"])]
+    for alias in entry.get("aliases") or ():
+        alias_s = str(alias)
+        if alias_s not in names:
+            names.append(alias_s)
+    subdir = entry.get("target_subdir") or ""
+    return [data_root / subdir / name for name in names]
+
+
+def resolve_dataset_path(data_root: Path, entry: dict[str, Any]) -> Path | None:
+    """Return the first existing canonical/alias path for ``entry``."""
+    for candidate in dataset_candidate_paths(data_root, entry):
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def select_datasets(
@@ -220,19 +241,217 @@ def download_entry(
 # --------------------------------------------------------------------------- #
 # Verification
 # --------------------------------------------------------------------------- #
+def _companion_specs(entry: dict[str, Any]) -> list[dict[str, Any]]:
+    """Normalize manifest companion-file declarations."""
+    out: list[dict[str, Any]] = []
+    for raw in entry.get("companion_files") or ():
+        if isinstance(raw, str):
+            out.append({"filename": raw, "aliases": (), "required": True})
+        elif isinstance(raw, dict) and raw.get("filename"):
+            spec = dict(raw)
+            spec.setdefault("aliases", ())
+            spec.setdefault("required", True)
+            out.append(spec)
+    return out
+
+
+def _companion_target_paths(data_root: Path, entry: dict[str, Any], spec: dict[str, Any]) -> list[Path]:
+    names = [str(spec["filename"])]
+    for alias in spec.get("aliases") or ():
+        alias_s = str(alias)
+        if alias_s not in names:
+            names.append(alias_s)
+    subdir = spec.get("target_subdir") or entry.get("target_subdir") or ""
+    return [data_root / subdir / name for name in names]
+
+
+def verify_entry_detail(entry: dict[str, Any], data_root: Path) -> dict[str, Any]:
+    """Return detailed verification status for a manifest entry.
+
+    The top-level ``status`` preserves the historic ``verify_entry`` statuses.
+    Alias and companion information is additive so callers can decide whether
+    companion gaps are warnings or strict failures.
+    """
+    canonical = dataset_target_path(data_root, entry)
+    matched = resolve_dataset_path(data_root, entry)
+    if matched is None:
+        status = "missing" if entry.get("url") else "manual_missing"
+    else:
+        expected = entry.get("sha256")
+        if expected:
+            status = "valid" if sha256_file(matched).lower() == str(expected).lower() else "hash_mismatch"
+        else:
+            status = "present"
+
+    companions = []
+    for spec in _companion_specs(entry):
+        paths = _companion_target_paths(data_root, entry, spec)
+        found = next((path for path in paths if path.exists()), None)
+        if found is None:
+            companion_status = "missing"
+        else:
+            expected = spec.get("sha256")
+            if expected:
+                companion_status = (
+                    "valid" if sha256_file(found).lower() == str(expected).lower() else "hash_mismatch"
+                )
+            else:
+                companion_status = "present"
+        companions.append({
+            "filename": spec["filename"],
+            "required": bool(spec.get("required", True)),
+            "target": paths[0],
+            "matched_path": found,
+            "status": companion_status,
+        })
+
+    return {
+        "status": status,
+        "target": canonical,
+        "matched_path": matched,
+        "alias_used": matched is not None and matched != canonical,
+        "companions": companions,
+    }
+
+
 def verify_entry(entry: dict[str, Any], data_root: Path) -> str:
     """Return a verification status for a single entry.
 
     One of: ``valid``, ``present`` (no hash to check), ``missing``,
     ``manual_missing`` (absent and no URL), ``hash_mismatch``.
     """
-    target = dataset_target_path(data_root, entry)
-    if not target.exists():
-        return "missing" if entry.get("url") else "manual_missing"
-    expected = entry.get("sha256")
-    if expected:
-        return "valid" if sha256_file(target).lower() == str(expected).lower() else "hash_mismatch"
-    return "present"
+    return str(verify_entry_detail(entry, data_root)["status"])
+
+
+def _entry_required_for_mode(entry: dict[str, Any], *, strict: bool) -> bool:
+    """Return whether an entry must exist for the current verification mode."""
+    return bool(entry.get("required")) or (strict and bool(entry.get("strict_required")))
+
+
+def _format_match_note(detail: dict[str, Any]) -> str:
+    matched = detail.get("matched_path")
+    if detail.get("alias_used") and matched is not None:
+        return f" (via alias: {Path(matched).name})"
+    return ""
+
+
+def _required_missing_companions(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        comp for comp in detail.get("companions", [])
+        if bool(comp.get("required", True)) and comp.get("status") not in ("present", "valid")
+    ]
+
+
+def _find_entry_by_name(manifest: dict[str, Any], name: str) -> dict[str, Any] | None:
+    for entry in manifest.get("datasets", []):
+        if entry.get("name") == name:
+            return entry
+    return None
+
+
+def _runtime_ephemeris_check(manifest: dict[str, Any], data_root: Path, *, strict: bool) -> tuple[bool, list[str]]:
+    """Build a small real SPICE table from manifest-resolved kernels.
+
+    This check intentionally lives in the CLI layer and imports SPICE-facing
+    code lazily. It verifies that the files the data tool sees can also be
+    consumed by the ephemeris builder.
+    """
+    messages: list[str] = []
+    kernel_names = [
+        "naif_lsk_naif0012",
+        "naif_pck_pck00011",
+        "naif_moon_pa_de440",
+        "naif_spk_de440",
+    ]
+    optional_kernel_names = [
+        "naif_pck_gm_de440",
+        "naif_moon_fk_de440",
+    ]
+
+    kernels: list[str] = []
+    ok = True
+    for name in kernel_names:
+        entry = _find_entry_by_name(manifest, name)
+        if entry is None:
+            messages.append(f"[runtime] missing manifest entry: {name}")
+            ok = False
+            continue
+        detail = verify_entry_detail(entry, data_root)
+        matched = detail.get("matched_path")
+        if detail["status"] in _FAIL_STATUSES or matched is None:
+            messages.append(f"[runtime] missing required SPICE kernel for smoke check: {name}")
+            ok = False
+            continue
+        kernels.append(str(matched))
+
+    for name in optional_kernel_names:
+        entry = _find_entry_by_name(manifest, name)
+        if entry is None:
+            continue
+        detail = verify_entry_detail(entry, data_root)
+        matched = detail.get("matched_path")
+        if matched is not None and detail["status"] not in _FAIL_STATUSES:
+            kernels.append(str(matched))
+
+    if not ok:
+        return False, messages
+
+    try:
+        import warnings
+
+        import numpy as np
+
+        from lunaris.physics.ephemeris import build_tables
+    except Exception as exc:
+        return False, [f"[runtime] failed to import ephemeris dependencies: {type(exc).__name__}: {exc}"]
+
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            tables = build_tables(
+                start_utc="2026-01-01T00:00:00",
+                duration_s=3600.0,
+                output_dt_s=600.0,
+                kernels=tuple(kernels),
+                inertial_frame="J2000",
+                fixed_frame="MOON_PA",
+                observer="MOON",
+                include_third_body=True,
+                clear_kernels_after=True,
+                clean_kernels_before=True,
+            )
+
+        q_norm = np.linalg.norm(tables.q_i2f_tab, axis=1)
+        if tables.q_i2f_tab.shape[0] < 2 or not np.all(np.isfinite(q_norm)):
+            return False, ["[runtime] q_i2f_tab is empty or non-finite."]
+        if float(np.max(np.abs(q_norm - 1.0))) > 1.0e-6:
+            return False, ["[runtime] q_i2f_tab quaternion norms are not unit within 1e-6."]
+        if float(np.linalg.norm(tables.q_i2f_tab[-1] - tables.q_i2f_tab[0])) <= 1.0e-12:
+            return False, ["[runtime] q_i2f_tab is effectively constant; expected real lunar attitude motion."]
+        sun_norm = float(np.linalg.norm(tables.r_sun_tab_m[0]))
+        earth_norm = float(np.linalg.norm(tables.r_earth_tab_m[0]))
+        if not (sun_norm > 1.0e10 and earth_norm > 1.0e7):
+            return False, [
+                f"[runtime] third-body vectors look degenerate: |Sun|={sun_norm:.6g} m, |Earth|={earth_norm:.6g} m"
+            ]
+
+        gm_fallbacks = [
+            str(w.message) for w in caught
+            if "GM for" in str(w.message) and "fallback" in str(w.message).lower()
+        ]
+        if gm_fallbacks:
+            messages.extend(f"[runtime] warning: {msg}" for msg in gm_fallbacks)
+            if strict:
+                messages.append("[runtime] strict mode requires GM from SPICE kernels; install gm_de440.tpc.")
+                ok = False
+
+        messages.append(
+            f"[runtime] ephemeris smoke OK: q={tables.q_i2f_tab.shape}, "
+            f"|Sun|={sun_norm:.6g} m, |Earth|={earth_norm:.6g} m"
+        )
+        return ok, messages
+    except Exception as exc:
+        return False, [f"[runtime] ephemeris smoke failed: {type(exc).__name__}: {exc}"]
 
 
 # --------------------------------------------------------------------------- #
@@ -300,15 +519,39 @@ def cmd_verify(manifest: dict[str, Any], data_root: Path, args: argparse.Namespa
         "manual_missing": "MISSING (manual placement required)",
         "hash_mismatch": "HASH MISMATCH",
     }
+    strict = bool(getattr(args, "strict", False))
     failures = 0
     for entry in datasets:
-        status = verify_entry(entry, data_root)
-        required = bool(entry.get("required"))
-        target = dataset_target_path(data_root, entry)
+        detail = verify_entry_detail(entry, data_root)
+        status = str(detail["status"])
+        required = _entry_required_for_mode(entry, strict=strict)
+        target = detail["target"]
         print(f"[{'required' if required else 'optional':8s}] "
-              f"{str(entry.get('name')):28s} {labels[status]:36s} {target}")
+              f"{str(entry.get('name')):28s} {labels[status]:36s} {target}"
+              f"{_format_match_note(detail)}")
         if status in _FAIL_STATUSES and required:
             failures += 1
+
+        missing_companions = _required_missing_companions(detail)
+        if detail.get("companions") and status not in _FAIL_STATUSES:
+            if missing_companions:
+                missing = ", ".join(
+                    f"{comp['status']}: {comp['target']}" for comp in missing_companions
+                )
+                print(f"{'':13s}{'':28s} COMPANION INVALID/MISSING          {missing}")
+                if strict or required:
+                    failures += 1
+            else:
+                count = len(detail["companions"])
+                print(f"{'':13s}{'':28s} companions OK ({count})")
+
+    if getattr(args, "runtime", False):
+        runtime_ok, runtime_messages = _runtime_ephemeris_check(manifest, data_root, strict=strict)
+        for message in runtime_messages:
+            print(message)
+        if not runtime_ok:
+            failures += 1
+
     if failures:
         print(f"\n{failures} required dataset(s) missing or invalid.", file=sys.stderr)
         return 1
@@ -429,6 +672,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_verify = sub.add_parser("verify", help="Verify presence/integrity of datasets.")
     p_verify.add_argument("--group", choices=GROUPS, default=None)
+    p_verify.add_argument(
+        "--strict",
+        action="store_true",
+        help="Also require strict-required entries and present-entry companion files.",
+    )
+    p_verify.add_argument(
+        "--runtime",
+        action="store_true",
+        help="Run a small real SPICE ephemeris smoke check using resolved manifest kernels.",
+    )
     p_verify.set_defaults(func=cmd_verify)
 
     p_path = sub.add_parser("path", help="Print the resolved data root and subdirectories.")

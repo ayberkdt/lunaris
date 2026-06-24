@@ -105,6 +105,58 @@ def test_config_all_names_exist_and_cfg_not_exported() -> None:
     assert callable(config.get_default_config)
 
 
+def test_default_kernel_paths_include_optional_gm_when_present(monkeypatch, tmp_path: Path) -> None:
+    import lunaris.core.config as config
+
+    kernel_dir = tmp_path / "ephemeris_models"
+    kernel_dir.mkdir()
+    for name in (
+        "naif0012.tls",
+        "pck00011.tpc",
+        "moon_pa_de440_200625.bpc",
+        "de440.bsp",
+        "gm_de440.tpc",
+    ):
+        (kernel_dir / name).write_bytes(b"kernel")
+
+    monkeypatch.setattr(config, "KERNEL_DIR", kernel_dir)
+
+    paths = config._resolve_default_kernel_paths()
+
+    assert [Path(p).name for p in paths] == [
+        "naif0012.tls",
+        "pck00011.tpc",
+        "moon_pa_de440_200625.bpc",
+        "de440.bsp",
+        "gm_de440.tpc",
+    ]
+
+
+def test_default_kernel_paths_tolerate_missing_optional_gm(monkeypatch, tmp_path: Path) -> None:
+    import lunaris.core.config as config
+
+    kernel_dir = tmp_path / "ephemeris_models"
+    kernel_dir.mkdir()
+    for name in (
+        "naif0012.tls",
+        "pck00011.tpc",
+        "moon_pa_de440_200625.bpc",
+        "de440.bsp",
+    ):
+        (kernel_dir / name).write_bytes(b"kernel")
+
+    monkeypatch.setattr(config, "KERNEL_DIR", kernel_dir)
+
+    paths = config._resolve_default_kernel_paths()
+
+    assert [Path(p).name for p in paths] == [
+        "naif0012.tls",
+        "pck00011.tpc",
+        "moon_pa_de440_200625.bpc",
+        "de440.bsp",
+    ]
+
+
 # ---------------------------------------------------------------------------
 # 3) No stale project identity
 # ---------------------------------------------------------------------------

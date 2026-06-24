@@ -256,13 +256,38 @@ def _norm_method(method: Any) -> str:
 
 
 def _is_symplectic_method(method: str) -> bool:
-    m = _norm_method(method)
-    return m in ("VV", "VERLET", "STORMER_VERLET", "STÖRMER_VERLET", "YOSHIDA4", "Y4")
+    """True for the structure-preserving fixed-step methods (Verlet/PEFRL/Yoshida)."""
+    canonical = _ACCEL_METHODS.get(_norm_method(method))
+    return canonical in _SYMPLECTIC_CANONICAL
 
 
-def _sympl_name(method: str) -> str:
+def _is_fixed_step_method(method: str) -> bool:
+    """True for every in-house fixed-step method (symplectic, Nystrom, or RK)."""
     m = _norm_method(method)
-    return "Y4" if m in ("YOSHIDA4", "Y4") else "VV"
+    return (m in _ACCEL_METHODS) or (m in _RHS_METHODS)
+
+
+def _fixed_step_requires_6d(method: str) -> bool:
+    """Acceleration-based methods (symplectic + RKN) support only the 6-D state."""
+    return _norm_method(method) in _ACCEL_METHODS
+
+
+# SciPy's solve_ivp is case-sensitive about method names: every built-in is
+# upper-case EXCEPT ``Radau``. Map our normalized (upper-case) tokens to the
+# exact spelling SciPy expects so an adaptive selection never raises.
+_SCIPY_METHOD_NAMES: dict[str, str] = {
+    "DOP853": "DOP853",
+    "RK45": "RK45",
+    "RK23": "RK23",
+    "RADAU": "Radau",
+    "BDF": "BDF",
+    "LSODA": "LSODA",
+}
+
+
+def _resolve_scipy_method(method: Any) -> str:
+    """Return the exact SciPy ``solve_ivp`` method name (defaulting to DOP853)."""
+    return _SCIPY_METHOD_NAMES.get(_norm_method(method), "DOP853")
 
 
 def _stop_requested(stop_file: str | None) -> bool:
@@ -660,12 +685,35 @@ def build_events(
 
 
 # =============================================================================
-# 4.                 Fixed-step integrators (VV / Yoshida4)
+# 4.        Fixed-step integrators (symplectic, RKN, and classical RK)
 # =============================================================================
+#
+# Two stepper families share the driver in ``_integrate_fixed_step``:
+#
+#   * Acceleration-based steppers — symplectic (velocity-Verlet / PEFRL /
+#     Yoshida) and Runge-Kutta-Nystrom. They advance the 6-D state ``[r, v]``
+#     using the acceleration ``a(t, y) = rhs(t, y)[3:6]``. They are exact for a
+#     separable Hamiltonian (position/time-dependent acceleration); when
+#     velocity-dependent perturbations are active (1PN relativity, drag) the
+#     acceleration is evaluated with the latest stage velocity — the same
+#     approximation the original Verlet/Yoshida path already made.
+#
+#   * RHS-based steppers — classical explicit Runge-Kutta (RK4). They advance the
+#     full state vector through ``rhs(t, y)`` directly and therefore also support
+#     augmented states (e.g. mass).
+#
+# High-order symplectic methods are built by Yoshida's symmetric triple-jump
+# composition of the velocity-Verlet base step, which is correct *by
+# construction* (Yoshida 1990; Creutz & Gocksch 1989): a symmetric method of
+# order ``2k`` composes into one of order ``2k+2`` via
+#     S_{2k+2}(h) = S_{2k}(x1 h) ∘ S_{2k}(x0 h) ∘ S_{2k}(x1 h),
+#     x1 = 1 / (2 - 2^{1/(2k+1)}),   x0 = -2^{1/(2k+1)} · x1.
+# Each level's weights telescope to sum 1, so the composed step advances time by
+# exactly ``h``. This trades a few extra force evaluations for guaranteed order
+# without hand-tabulated coefficients.
 
-_Y4_W1 = 1.0 / (2.0 - 2.0 ** (1.0 / 3.0))
-_Y4_W0 = - (2.0 ** (1.0 / 3.0)) / (2.0 - 2.0 ** (1.0 / 3.0))
 
+# ---- Velocity-Verlet base step (symmetric, 2nd order) -----------------------
 
 def _vv_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
     r = y6[:3]
@@ -688,13 +736,238 @@ def _vv_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.
     return y1
 
 
+# ---- Yoshida symmetric triple-jump composition ------------------------------
+
+def _composition_weights(num_levels: int) -> tuple[float, ...]:
+    """Flat velocity-Verlet sub-step fractions for a Yoshida composition.
+
+    ``num_levels == 0`` returns ``(1.0,)`` (plain 2nd-order Verlet); each
+    additional level raises the order by two (4th, 6th, 8th, ...). The returned
+    fractions always sum to 1.0.
+    """
+    weights: list[float] = [1.0]
+    for k in range(1, int(num_levels) + 1):
+        p = 2 * k + 1
+        root = 2.0 ** (1.0 / p)
+        x1 = 1.0 / (2.0 - root)
+        x0 = -root / (2.0 - root)
+        expanded: list[float] = []
+        for w in weights:
+            expanded.extend((x1 * w, x0 * w, x1 * w))
+        weights = expanded
+    return tuple(weights)
+
+
+# Order 4 / 6 / 8 weight tables. Order-4 reproduces the classic Yoshida4 step.
+_Y4_WEIGHTS = _composition_weights(1)
+_Y6_WEIGHTS = _composition_weights(2)
+_Y8_WEIGHTS = _composition_weights(3)
+
+
+def _composed_step(
+    accel: Callable[[float, np.ndarray], np.ndarray],
+    t: float,
+    y6: np.ndarray,
+    h: float,
+    weights: tuple[float, ...],
+) -> np.ndarray:
+    """Apply a sequence of velocity-Verlet sub-steps (Yoshida composition)."""
+    y = y6
+    tau = t
+    for w in weights:
+        hw = w * h
+        y = _vv_step(accel, tau, y, hw)
+        tau += hw
+    return y
+
+
 def _y4_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
-    y1 = _vv_step(accel, t, y6, _Y4_W1 * h)
-    t1 = t + _Y4_W1 * h
-    y2 = _vv_step(accel, t1, y1, _Y4_W0 * h)
-    t2 = t1 + _Y4_W0 * h
-    y3 = _vv_step(accel, t2, y2, _Y4_W1 * h)
-    return y3
+    return _composed_step(accel, t, y6, h, _Y4_WEIGHTS)
+
+
+def _y6_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    return _composed_step(accel, t, y6, h, _Y6_WEIGHTS)
+
+
+def _y8_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    return _composed_step(accel, t, y6, h, _Y8_WEIGHTS)
+
+
+# ---- PEFRL: Position-Extended Forest-Ruth-Like (4th order, optimized) -------
+# Omelyan, Mryglod & Folk (2002), Computer Physics Communications 146, 188.
+# Four force evaluations per step with a markedly smaller error constant than the
+# Yoshida4 triple jump, which makes it a strong default 4th-order symplectic
+# integrator for smooth gravitational fields.
+
+_PEFRL_XI = 0.1786178958448091
+_PEFRL_LAMBDA = -0.2123418310626054
+_PEFRL_CHI = -0.06626458266981849
+
+
+def _pack6(r: np.ndarray, v: np.ndarray) -> np.ndarray:
+    y = np.empty(6, dtype=np.float64)
+    y[0:3] = r
+    y[3:6] = v
+    return y
+
+
+def _pefrl_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    xi = _PEFRL_XI
+    lam = _PEFRL_LAMBDA
+    chi = _PEFRL_CHI
+
+    r = np.array(y6[:3], dtype=np.float64, copy=True)
+    v = np.array(y6[3:6], dtype=np.float64, copy=True)
+
+    # Drift/kick fractions (positions telescope to 1; velocity kicks sum to 1).
+    drift_mid = 1.0 - 2.0 * (chi + xi)
+    kick_end = (1.0 - 2.0 * lam) * 0.5
+
+    tau = t
+    r = r + xi * h * v
+    tau += xi * h
+    v = v + kick_end * h * accel(tau, _pack6(r, v))
+
+    r = r + chi * h * v
+    tau += chi * h
+    v = v + lam * h * accel(tau, _pack6(r, v))
+
+    r = r + drift_mid * h * v
+    tau += drift_mid * h
+    v = v + lam * h * accel(tau, _pack6(r, v))
+
+    r = r + chi * h * v
+    tau += chi * h
+    v = v + kick_end * h * accel(tau, _pack6(r, v))
+
+    r = r + xi * h * v
+    return _pack6(r, v)
+
+
+# ---- Runge-Kutta-Nystrom (4th order) ----------------------------------------
+# Classical RKN4 for second-order systems. Exact 4th order when the acceleration
+# depends only on position/time (gravity, SH, third-body, SRP); when
+# velocity-dependent perturbations are active the stage velocity is frozen at the
+# step-start value, so those (small) terms degrade to lower order — prefer RK4 or
+# a symplectic method when 1PN/drag dominate.
+
+def _rkn4_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:
+    r = np.asarray(y6[:3], dtype=np.float64)
+    v = np.asarray(y6[3:6], dtype=np.float64)
+    h2 = h * h
+
+    k1 = accel(t, y6)
+    r_mid = r + 0.5 * h * v + 0.125 * h2 * k1
+    # k2 and k3 share this argument in the classical RKN4 (both reuse k1), so a
+    # single evaluation suffices.
+    k2 = accel(t + 0.5 * h, _pack6(r_mid, v))
+    r_end = r + h * v + 0.5 * h2 * k2
+    k4 = accel(t + h, _pack6(r_end, v))
+
+    r_next = r + h * v + (h2 / 6.0) * (k1 + 2.0 * k2)
+    v_next = v + (h / 6.0) * (k1 + 4.0 * k2 + k4)
+    return _pack6(r_next, v_next)
+
+
+# ---- Classical explicit RK4 (full state, any dimension) ---------------------
+
+def _rk4_step_full(rhs: Callable[[float, np.ndarray], np.ndarray], t: float, y: np.ndarray, h: float) -> np.ndarray:
+    y = np.asarray(y, dtype=np.float64)
+    k1 = np.asarray(rhs(t, y), dtype=np.float64)
+    k2 = np.asarray(rhs(t + 0.5 * h, y + 0.5 * h * k1), dtype=np.float64)
+    k3 = np.asarray(rhs(t + 0.5 * h, y + 0.5 * h * k2), dtype=np.float64)
+    k4 = np.asarray(rhs(t + h, y + h * k3), dtype=np.float64)
+    return y + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+
+# ---- Classical explicit RK8 (full state, any dimension) ---------------------
+# Built from Gragg's symmetric modified-midpoint method plus Bulirsch-Stoer
+# (Deuflhard) polynomial extrapolation in (H/n)^2. Because the modified midpoint
+# has an error expansion in even powers of the sub-step, four levels of the
+# substep sequence (2, 4, 6, 8) extrapolate to 8th order. This is correct *by
+# construction* — no hand-tabulated 8th-order Butcher coefficients — and is the
+# non-symplectic counterpart to the Yoshida-8 symplectic method.
+
+_RK8_SEQUENCE: tuple[int, ...] = (2, 4, 6, 8)
+
+
+def _modified_midpoint(
+    rhs: Callable[[float, np.ndarray], np.ndarray], t: float, y: np.ndarray, H: float, n: int
+) -> np.ndarray:
+    """Gragg's symmetric modified-midpoint rule over ``n`` sub-steps of ``H``."""
+    h = H / n
+    z0 = np.asarray(y, dtype=np.float64)
+    z1 = z0 + h * np.asarray(rhs(t, z0), dtype=np.float64)
+    for i in range(1, n):
+        z2 = z0 + 2.0 * h * np.asarray(rhs(t + i * h, z1), dtype=np.float64)
+        z0, z1 = z1, z2
+    return 0.5 * (z0 + z1 + h * np.asarray(rhs(t + H, z1), dtype=np.float64))
+
+
+def _rk8_step_full(rhs: Callable[[float, np.ndarray], np.ndarray], t: float, y: np.ndarray, h: float) -> np.ndarray:
+    seq = _RK8_SEQUENCE
+    table = [_modified_midpoint(rhs, t, y, h, n) for n in seq]
+    # Bulirsch-Stoer extrapolation to sub-step -> 0 (Deuflhard recurrence).
+    for k in range(1, len(seq)):
+        for i in range(len(seq) - 1, k - 1, -1):
+            ratio = (seq[i] / seq[i - k]) ** 2
+            table[i] = table[i] + (table[i] - table[i - 1]) / (ratio - 1.0)
+    return table[-1]
+
+
+# ---- Method-name resolution / stepper construction --------------------------
+
+# Acceleration-based symplectic + Nystrom methods operate on the 6-D [r, v]
+# state only. RK4 operates on the full state (augmented states allowed).
+_ACCEL_METHODS: dict[str, str] = {
+    "VV": "VV", "VERLET": "VV", "STORMER_VERLET": "VV", "STÖRMER_VERLET": "VV",
+    "LEAPFROG": "VV",
+    "Y4": "Y4", "YOSHIDA4": "Y4",
+    "Y6": "Y6", "YOSHIDA6": "Y6",
+    "Y8": "Y8", "YOSHIDA8": "Y8",
+    "PEFRL": "PEFRL",
+    "RKN4": "RKN4", "RKN": "RKN4",
+}
+_SYMPLECTIC_CANONICAL = frozenset({"VV", "Y4", "Y6", "Y8", "PEFRL"})
+_RHS_METHODS: dict[str, str] = {"RK4": "RK4", "RK8": "RK8"}
+
+
+def _accel_stepper(canonical: str) -> Callable[[Callable[[float, np.ndarray], np.ndarray], float, np.ndarray, float], np.ndarray]:
+    return {
+        "VV": _vv_step,
+        "Y4": _y4_step,
+        "Y6": _y6_step,
+        "Y8": _y8_step,
+        "PEFRL": _pefrl_step,
+        "RKN4": _rkn4_step,
+    }[canonical]
+
+
+def _build_fixed_stepper(
+    method: str,
+    rhs: Callable[[float, np.ndarray], np.ndarray],
+    accel: Callable[[float, np.ndarray], np.ndarray],
+) -> tuple[Callable[[float, np.ndarray, float], np.ndarray], bool]:
+    """Return ``(step(t, y, h) -> y_next, requires_6d)`` for a fixed-step method."""
+    m = _norm_method(method)
+    if m in _RHS_METHODS:
+        rhs_stepper = _rk8_step_full if _RHS_METHODS[m] == "RK8" else _rk4_step_full
+
+        def step_rhs(t: float, y: np.ndarray, h: float) -> np.ndarray:
+            return rhs_stepper(rhs, t, y, h)
+
+        return step_rhs, False
+
+    canonical = _ACCEL_METHODS.get(m)
+    if canonical is None:
+        raise ValueError(f"Unknown fixed-step method: {method!r}")
+
+    base = _accel_stepper(canonical)
+
+    def step_accel(t: float, y: np.ndarray, h: float) -> np.ndarray:
+        return base(accel, t, y, h)
+
+    return step_accel, True
 
 
 def _event_crossed(g0: float, g1: float, direction: float = 0.0) -> bool:
@@ -715,8 +988,7 @@ def _event_crossed(g0: float, g1: float, direction: float = 0.0) -> bool:
 
 def _refine_event_time_bisect(
     *,
-    stepper: Callable[[Callable[[float, np.ndarray], np.ndarray], float, np.ndarray, float], np.ndarray],
-    accel: Callable[[float, np.ndarray], np.ndarray],
+    step: Callable[[float, np.ndarray, float], np.ndarray],
     ev: Callable[[float, np.ndarray], float],
     t0: float,
     y0: np.ndarray,
@@ -747,7 +1019,7 @@ def _refine_event_time_bisect(
 
     # Early exit if already extremely close
     if abs(h) <= tol_s:
-        yb = stepper(accel, t0, y0, h)
+        yb = step(t0, y0, h)
         return t0 + h, np.asarray(yb, dtype=np.float64)
 
     # Bisection iterations
@@ -756,7 +1028,7 @@ def _refine_event_time_bisect(
             break
         m = 0.5 * (a + b)
         hm = m * h
-        ym = stepper(accel, t0, y0, hm)
+        ym = step(t0, y0, hm)
         gm = float(ev(t0 + hm, ym))
 
         # Narrow the bracket by sign
@@ -770,7 +1042,7 @@ def _refine_event_time_bisect(
 
     # If yb not computed (possible if we always moved left), compute it
     if yb is None:
-        yb = stepper(accel, t0, y0, b * h)
+        yb = step(t0, y0, b * h)
         gb = float(ev(t0 + b * h, yb))
 
     # Final linear-in-g correction inside last bracket (a,b)
@@ -782,7 +1054,7 @@ def _refine_event_time_bisect(
         tau = b
 
     ht = tau * h
-    yt = stepper(accel, t0, y0, ht)
+    yt = step(t0, y0, ht)
     return float(t0 + ht), np.asarray(yt, dtype=np.float64)
 
 
@@ -801,12 +1073,12 @@ def _integrate_fixed_step(
     stop_file: str | None,
     checkpoint_path: str | None,
 ) -> tuple[Any, bool, float | None, np.ndarray | None, bool, str | None, float | None]:
-    """Integrate a 6D state with a fixed-step symplectic method (VV / Yoshida4).
+    """Integrate with an in-house fixed-step method (symplectic, RKN, or RK4).
 
     Notes
     -----
-    - This fixed-step path supports ONLY the 6D state [r,v]. Any augmented state
-      (e.g. mass) should be handled via the SciPy path.
+    - Acceleration-based methods (Verlet/PEFRL/Yoshida/RKN4) support ONLY the 6D
+      state [r,v]. The full-state RK4 also accepts augmented states (e.g. mass).
     - Events are supported (including non-impact events) and can be refined inside
       each step using a bisection scheme.
     """
@@ -815,15 +1087,17 @@ def _integrate_fixed_step(
         raise ValueError("t_eval must be strictly increasing and contain at least 2 points.")
 
     y0 = np.asarray(y0, dtype=np.float64).reshape(-1)
-    if y0.size != 6:
-        raise ValueError("Fixed-step VV/Y4 currently supports only 6D state vectors.")
+    if y0.size < 6:
+        raise ValueError("Fixed-step integration requires a state of at least 6 elements [x,y,z,vx,vy,vz].")
+    if _fixed_step_requires_6d(method) and y0.size != 6:
+        raise ValueError(
+            f"Fixed-step method {method!r} (symplectic/Nystrom) supports only the 6D state [r,v]; "
+            f"got size={int(y0.size)}. Use RK4 or a SciPy integrator for augmented states."
+        )
 
     max_step = float(max_step)
     if (not np.isfinite(max_step)) or max_step <= 0.0:
         raise ValueError("max_step must be positive and finite for fixed-step integration.")
-
-    meth = _sympl_name(method)
-    stepper = _vv_step if meth == "VV" else _y4_step
 
     # Acceleration adapter: avoid extra allocations when rhs already returns ndarray
     def accel(t: float, y6: np.ndarray) -> np.ndarray:
@@ -833,6 +1107,8 @@ def _integrate_fixed_step(
         # Fallback (should be rare)
         a = np.asarray(dy, dtype=np.float64).reshape(-1)
         return a[3:6]
+
+    step, _requires_6d = _build_fixed_stepper(method, rhs, accel)
 
     # ------------------------------------------------------------------
     # Events: support all events, with optional refinement
@@ -894,7 +1170,7 @@ def _integrate_fixed_step(
 
         for j in range(n_sub):
             tj = t_seg0 + j * h
-            y_next = stepper(accel, tj, y_curr, h)
+            y_next = step(tj, y_curr, h)
             t_next = tj + h
 
             earliest_terminal: tuple[float, int, np.ndarray] | None = None  # (t_event, idx, y_event)
@@ -914,8 +1190,7 @@ def _integrate_fixed_step(
                     # Refine root within this substep
                     try:
                         t_ev, y_ev = _refine_event_time_bisect(
-                            stepper=stepper,
-                            accel=accel,
+                            step=step,
                             ev=ev,
                             t0=tj,
                             y0=y_curr,
@@ -1243,21 +1518,25 @@ def propagate(
     # -------------------------------------------------------------------------
     # 5) Integrate
     # -------------------------------------------------------------------------
-    if _is_symplectic_method(getattr(cfg, "method", "DOP853")):
+    if _is_fixed_step_method(getattr(cfg, "method", "DOP853")):
         meth_name = str(getattr(cfg, "method", "VV"))
         if verbose:
             print(f"[PROP] Fixed-step {meth_name}: dt_out={dt_out:g}s, max_step={max_step:.6f}s", flush=True)
 
-        if y0_arr.size != 6:
+        if _fixed_step_requires_6d(meth_name) and y0_arr.size != 6:
             raise ValueError(
-                "Fixed-step symplectic integrators (VV/Y4) support only the 6D state [x,y,z,vx,vy,vz]. "
-                f"Got initial state size={int(y0_arr.size)}. Use a SciPy integrator (e.g., DOP853/RK45) for augmented states."
+                f"Fixed-step method {meth_name!r} (symplectic/Nystrom) supports only the 6D state "
+                "[x,y,z,vx,vy,vz]. "
+                f"Got initial state size={int(y0_arr.size)}. Use RK4 or a SciPy integrator (e.g., "
+                "DOP853/RK45) for augmented states."
             )
+
+        y0_fixed = y0_arr[:6] if _fixed_step_requires_6d(meth_name) else y0_arr
 
         ode_like, impacted, t_imp, y_imp, stopped_early, stop_reason, t_stop = _integrate_fixed_step(
             rhs=rhs,
             t_eval=t_eval,
-            y0=y0_arr[:6],
+            y0=y0_fixed,
             max_step=max_step,
             method=meth_name,
             events=events,
@@ -1289,9 +1568,7 @@ def propagate(
         if solve_ivp is None:
             raise ImportError("SciPy is required for adaptive integration (solve_ivp not available).")
 
-        method = str(getattr(cfg, "method", "DOP853")).strip().upper()
-        if method not in ("DOP853", "RK45", "RK23", "RADAU", "BDF", "LSODA"):
-            method = "DOP853"
+        method = _resolve_scipy_method(getattr(cfg, "method", "DOP853"))
 
         if verbose:
             print(f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s", flush=True)
@@ -1616,8 +1893,8 @@ def _compute_2body_baseline(
         dy[5] = az
         return dy
 
-    # Symplectic baseline (fixed-step)
-    if _is_symplectic_method(cfg.method):
+    # Fixed-step baseline (symplectic / RKN / RK4)
+    if _is_fixed_step_method(cfg.method):
         ode_like, _, _, _, _, _, _ = _integrate_fixed_step(
             rhs=rhs2,
             t_eval=t_eval,
@@ -1645,7 +1922,7 @@ def _compute_2body_baseline(
     if solve_ivp is None:
         return None
 
-    method = str(cfg.method).strip().upper() or "DOP853"
+    method = _resolve_scipy_method(cfg.method)
     rtol = float(getattr(cfg, "baseline_rtol", getattr(cfg, "rtol", 1e-9)))
     atol = float(getattr(cfg, "baseline_atol", getattr(cfg, "atol", 1e-12)))
 

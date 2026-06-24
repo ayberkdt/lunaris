@@ -33,6 +33,16 @@ try:
         SegmentedControl,
         Subsection,
     )
+    from lunaris.ui.core.integrator_catalog import (
+        IntegratorSpec,
+        grouped_labels,
+        spec_for_label,
+    )
+    from lunaris.ui.core.integrator_estimates import (
+        accuracy_label,
+        estimate_fixed_step_cost,
+        validate_solver_inputs,
+    )
     from lunaris.ui.core.solver_policy import (
         DEFAULT_ADAPTIVE_ATOL,
         DEFAULT_ADAPTIVE_RTOL,
@@ -43,7 +53,13 @@ try:
         coerce_positive_float,
         normalize_solver_config_object,
     )
-    from lunaris.ui.core.ui_commons import THEME, NumericDragLineEdit, QuickChip, get_icon
+    from lunaris.ui.core.ui_commons import (
+        THEME,
+        NumericDragLineEdit,
+        QuickChip,
+        StatusBadge,
+        get_icon,
+    )
     from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
@@ -438,6 +454,12 @@ class MissionPropagationPage(QtWidgets.QWidget):
         self.ent_samples_per_period.textChanged.connect(self._update_summary)
         self.ent_max_step.textChanged.connect(self._update_summary)
 
+        # Live solver feedback (cost / accuracy / validation) reacts to the
+        # inputs that change those estimates.
+        for editor in (self.ent_max_step, self.ent_rtol, self.ent_atol, self.ent_duration):
+            editor.textChanged.connect(self._update_solver_feedback)
+        self.cb_duration_unit.currentTextChanged.connect(self._update_solver_feedback)
+
     def _update_summary(self) -> None:
         if not hasattr(self, "lbl_summary_epoch"):
             return
@@ -528,27 +550,28 @@ class MissionPropagationPage(QtWidgets.QWidget):
     def _group_integrator_settings(self) -> QtWidgets.QWidget:
         section = Section(
             "Numerical Integrator",
-            "Solver method, accuracy target, and saved-output cadence.",
+            "Pick a method, review its characteristics, then tune only the settings it uses.",
         )
 
+        # --- Method selector (grouped by family) -----------------------------
         method_grid = FormGrid()
         self.cb_integrator = QtWidgets.QComboBox()
-        self.cb_integrator.addItems([
-            "DOP853 (Adaptive)",
-            "YOSHIDA4 (Symplectic)",
-            "VV (Symplectic)",
-        ])
+        first_group = True
+        for _family_label, labels in grouped_labels():
+            if not first_group:
+                self.cb_integrator.insertSeparator(self.cb_integrator.count())
+            first_group = False
+            for label in labels:
+                self.cb_integrator.addItem(label)
         self.cb_integrator.setAccessibleName("Propagation method")
         self.cb_integrator.currentTextChanged.connect(self._sync_integrator_widgets)
         method_grid.add_row("Method", self.cb_integrator)
         section.add_widget(method_grid)
 
-        self.solver_mode_notice = InlineNotice(
-            "Adaptive accuracy is active for DOP853.",
-            kind="info",
-        )
-        section.add_widget(self.solver_mode_notice)
+        # --- Characteristics card --------------------------------------------
+        section.add_widget(self._build_integrator_card())
 
+        # --- Adaptive-only accuracy controls ---------------------------------
         self.tolerance_group = Subsection("Adaptive Accuracy", "Relative tolerance for adaptive propagation.")
         tolerance_grid = FormGrid()
         self.ent_rtol = NumericDragLineEdit(
@@ -561,10 +584,58 @@ class MissionPropagationPage(QtWidgets.QWidget):
         self.ent_rtol.setMaximumWidth(220)
         self.ent_rtol.setAccessibleName("Relative tolerance")
         tolerance_grid.add_row("Relative tolerance", self.ent_rtol)
+
+        self.ent_atol = NumericDragLineEdit(
+            f"{self.solver_cfg.atol:g}",
+            step=1e-15,
+            min_value=1e-30,
+            max_value=1e-5,
+            decimals=0,
+        )
+        self.ent_atol.setMaximumWidth(220)
+        self.ent_atol.setAccessibleName("Absolute tolerance")
+        tolerance_grid.add_row("Absolute tolerance", self.ent_atol)
         self.tolerance_group.add_widget(tolerance_grid)
+
+        self.tol_feedback = InlineNotice("", kind="info")
+        self.tol_feedback.setAccessibleName("Accuracy estimate")
+        self.tolerance_group.add_widget(self.tol_feedback)
         section.add_widget(self.tolerance_group)
 
-        cadence_group = Subsection("Output Cadence", "Saved sample density and solver step guard.")
+        # --- Step-size control (meaning depends on method family) ------------
+        self.step_group = Subsection("Step Size")
+        self.step_desc = QtWidgets.QLabel("")
+        self.step_desc.setObjectName("sectionDescription")
+        self.step_desc.setWordWrap(True)
+        self.step_group.add_widget(self.step_desc)
+
+        step_grid = QtWidgets.QGridLayout()
+        step_grid.setContentsMargins(0, 0, 0, 0)
+        step_grid.setHorizontalSpacing(DESIGN_TOKENS.spacing.md)
+        step_grid.setVerticalSpacing(DESIGN_TOKENS.spacing.sm)
+        step_grid.setColumnStretch(1, 1)
+
+        self.ent_max_step = NumericDragLineEdit("", step=10.0, min_value=0.1)
+        self.ent_max_step.setPlaceholderText("Auto (Nyquist)")
+        self.ent_max_step.setText("")
+        self.ent_max_step.setAccessibleName("Solver step size in seconds")
+        self.lbl_max_step = self._field_label("Max step")
+        self.lbl_max_step.setBuddy(self.ent_max_step)
+        step_grid.addWidget(self.lbl_max_step, 0, 0, QtCore.Qt.AlignVCenter)
+        step_grid.addWidget(self.ent_max_step, 0, 1)
+        step_grid.addWidget(self._unit_label("s"), 0, 2, QtCore.Qt.AlignVCenter)
+
+        step_widget = QtWidgets.QWidget()
+        step_widget.setLayout(step_grid)
+        self.step_group.add_widget(step_widget)
+
+        self.step_feedback = InlineNotice("", kind="info")
+        self.step_feedback.setAccessibleName("Step cost estimate")
+        self.step_group.add_widget(self.step_feedback)
+        section.add_widget(self.step_group)
+
+        # --- Common output cadence (shared by every method) ------------------
+        cadence_group = Subsection("Output Cadence", "Saved-sample density (applies to every integrator).")
         cadence_grid = QtWidgets.QGridLayout()
         cadence_grid.setContentsMargins(0, 0, 0, 0)
         cadence_grid.setHorizontalSpacing(DESIGN_TOKENS.spacing.md)
@@ -601,16 +672,6 @@ class MissionPropagationPage(QtWidgets.QWidget):
         cadence_grid.addWidget(self.ent_samples_per_period, 2, 1)
         cadence_grid.addWidget(self.lbl_spp_unit, 2, 2, QtCore.Qt.AlignVCenter)
 
-        self.ent_max_step = NumericDragLineEdit("", step=10.0, min_value=0.1)
-        self.ent_max_step.setPlaceholderText("Auto (Nyquist)")
-        self.ent_max_step.setText("")
-        self.ent_max_step.setAccessibleName("Maximum solver step in seconds")
-        self.lbl_max_step = self._field_label("Max step")
-        self.lbl_max_step.setBuddy(self.ent_max_step)
-        cadence_grid.addWidget(self.lbl_max_step, 3, 0, QtCore.Qt.AlignVCenter)
-        cadence_grid.addWidget(self.ent_max_step, 3, 1)
-        cadence_grid.addWidget(self._unit_label("s"), 3, 2, QtCore.Qt.AlignVCenter)
-
         cadence_widget = QtWidgets.QWidget()
         cadence_widget.setLayout(cadence_grid)
         cadence_group.add_widget(cadence_widget)
@@ -621,6 +682,62 @@ class MissionPropagationPage(QtWidgets.QWidget):
 
         self._sync_integrator_widgets()
         return section
+
+    def _build_integrator_card(self) -> QtWidgets.QWidget:
+        """Card that surfaces the selected integrator's characteristics + use case."""
+        card = Subsection("Method Characteristics")
+
+        header, header_row = self._row_container()
+        self.card_badge = StatusBadge("ADAPTIVE", kind="info")
+        self.card_badge.setAccessibleName("Integrator family")
+        self.card_title = QtWidgets.QLabel("")
+        self.card_title.setObjectName("sectionTitle")
+        self.card_title.setWordWrap(True)
+        header_row.addWidget(self.card_badge, 0, QtCore.Qt.AlignVCenter)
+        header_row.addWidget(self.card_title, 1, QtCore.Qt.AlignVCenter)
+        card.add_widget(header)
+
+        # Compact dashboard-style facts; values are kept short so the four cells
+        # stay aligned like the summary row at the top of the page.
+        self.card_metrics = MetricRow()
+        self.card_val_order = self.card_metrics.add_metric("Order", "-")
+        self.card_val_type = self.card_metrics.add_metric("Type", "-")
+        self.card_val_step = self.card_metrics.add_metric("Step", "-")
+        self.card_val_error = self.card_metrics.add_metric("Local error", "-")
+        card.add_widget(self.card_metrics)
+
+        self.card_reco = InlineNotice("", kind="info")
+        self.card_reco.setAccessibleName("Recommended use")
+        card.add_widget(self.card_reco)
+        return card
+
+    def _update_integrator_card(self, spec: IntegratorSpec | None) -> None:
+        if not hasattr(self, "card_badge"):
+            return
+        if spec is None:
+            self.card_badge.set_status("info", "INTEGRATOR")
+            self.card_title.setText("")
+            for value in (self.card_val_order, self.card_val_type, self.card_val_step, self.card_val_error):
+                value.setText("-")
+            self._set_notice_kind(self.card_reco, "info")
+            self.card_reco.label.setText("Select an integration method.")
+            return
+
+        self.card_badge.set_status(spec.badge_kind, spec.family_label)
+        self.card_title.setText(spec.title)
+        self.card_val_order.setText(spec.order)
+        self.card_val_type.setText(spec.metric_type)
+        self.card_val_step.setText(spec.step_mode)
+        self.card_val_error.setText(spec.metric_error)
+        self._set_notice_kind(self.card_reco, spec.notice_kind)
+        self.card_reco.label.setText(f"Recommended for: {spec.recommended}")
+
+    @staticmethod
+    def _set_notice_kind(notice: InlineNotice, kind: str) -> None:
+        """Re-style an InlineNotice in place when its severity changes."""
+        notice.setProperty("kind", kind)
+        notice.style().unpolish(notice)
+        notice.style().polish(notice)
 
     def _set_output_mode_index(self, index: int) -> None:
         if index != self.cb_output_mode.currentIndex() and 0 <= index < self.cb_output_mode.count():
@@ -647,16 +764,94 @@ class MissionPropagationPage(QtWidgets.QWidget):
 
     def _sync_integrator_widgets(self) -> None:
         txt = self.cb_integrator.currentText() or ""
-        is_adaptive = "Adaptive" in txt
+        spec = spec_for_label(txt)
+        is_adaptive = spec.is_adaptive if spec is not None else ("Adaptive" in txt)
+
+        # Adaptive-only tolerance controls.
         self.tolerance_group.setVisible(is_adaptive)
-        if hasattr(self, "solver_mode_notice"):
-            if is_adaptive:
-                self.solver_mode_notice.label.setText("Adaptive accuracy is active for DOP853.")
-            else:
-                self.solver_mode_notice.label.setText("Symplectic propagation ignores adaptive tolerance and uses step policy.")
         if is_adaptive and not self.ent_rtol.text().strip():
             self.ent_rtol.setText(f"{self.solver_cfg.rtol:g}")
+
+        # The step field means different things per family; relabel it so the
+        # user knows whether they are setting a guard cap or the actual step.
+        if hasattr(self, "step_group"):
+            if is_adaptive:
+                self.lbl_max_step.setText("Max step")
+                self.ent_max_step.setPlaceholderText("Auto (Nyquist)")
+                self.step_desc.setText(
+                    "Optional cap on the adaptive solver step. Leave blank to let the "
+                    "engine choose a Nyquist-safe limit automatically."
+                )
+            else:
+                self.lbl_max_step.setText("Fixed step")
+                self.ent_max_step.setPlaceholderText("Auto (Nyquist)")
+                self.step_desc.setText(
+                    "Integration step size for this fixed-step method. Leave blank to use "
+                    "a Nyquist-safe step derived from the gravity field and orbit."
+                )
+
+        self._update_integrator_card(spec)
+        self._update_solver_feedback()
         self._update_summary()
+
+    def _duration_seconds(self) -> float | None:
+        """Best-effort propagation duration in seconds from the timeline inputs."""
+        try:
+            value = float(self.ent_duration.text().strip())
+        except (TypeError, ValueError):
+            return None
+        if value <= 0.0:
+            return None
+        unit = (self.cb_duration_unit.currentText() or "").strip().lower()
+        factor = DAY_S if unit.startswith("day") else 3600.0
+        return value * factor
+
+    def _update_solver_feedback(self) -> None:
+        """Refresh the live accuracy / cost / validation notices for the solver."""
+        if not hasattr(self, "step_feedback"):
+            return
+
+        spec = spec_for_label(self.cb_integrator.currentText() or "")
+        duration_s = self._duration_seconds()
+        step_text = self.ent_max_step.text().strip()
+        rtol_text = self.ent_rtol.text().strip()
+
+        issues = validate_solver_inputs(
+            spec,
+            duration_s=duration_s,
+            step_s=step_text or None,
+            rtol=rtol_text or None,
+        )
+        errors = [msg for sev, msg in issues if sev == "error"]
+        warnings = [msg for sev, msg in issues if sev == "warning"]
+        cost = estimate_fixed_step_cost(spec, duration_s, step_text or None)
+
+        is_adaptive = bool(spec and spec.is_adaptive)
+        # Validation belongs with the field it concerns: tolerance issues live in
+        # the tolerance group, step issues in the step group.
+        primary = self.tol_feedback if is_adaptive else self.step_feedback
+        if is_adaptive:
+            default_kind, default_text = "info", f"Accuracy band: {accuracy_label(rtol_text)}."
+        else:
+            default_kind, default_text = "info", cost.summary
+
+        if errors:
+            self._set_notice_kind(primary, "error")
+            primary.label.setText(errors[0])
+        elif warnings:
+            self._set_notice_kind(primary, "warning")
+            text = warnings[0]
+            if not is_adaptive and cost.mode == "fixed":
+                text = f"{warnings[0]}  ({cost.summary})"
+            primary.label.setText(text)
+        else:
+            self._set_notice_kind(primary, default_kind)
+            primary.label.setText(default_text)
+
+        # For adaptive methods the step field is just a cap; show what it implies.
+        if is_adaptive:
+            self._set_notice_kind(self.step_feedback, "info")
+            self.step_feedback.label.setText(cost.summary)
 
     # -------------------------------------------------------------------------
     # State helpers (preset/save/load)
@@ -673,6 +868,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
             "integrator": {
                 "method": self.cb_integrator.currentText(),
                 "rtol": self.ent_rtol.text(),
+                "atol": self.ent_atol.text(),
                 "dt_out": self.ent_dt_out.text() if output_mode == "dt" else "",
                 "max_step": self.ent_max_step.text(),
                 "output_mode": output_mode,
@@ -696,12 +892,13 @@ class MissionPropagationPage(QtWidgets.QWidget):
         )
         self.cb_integrator.setCurrentText(method_label)
 
-        rtol_value, _ = choose_solver_tolerances(
+        rtol_value, atol_value = choose_solver_tolerances(
             method_label,
             rtol=integrator.get("rtol", getattr(self.solver_cfg, "rtol", None)),
-            atol=getattr(self.solver_cfg, "atol", None),
+            atol=integrator.get("atol", getattr(self.solver_cfg, "atol", None)),
         )
         self.ent_rtol.setText(f"{float(rtol_value):g}")
+        self.ent_atol.setText(f"{float(atol_value):g}")
 
         # Restore output sampling mode
         output_mode = str(integrator.get("output_mode", "dt") or "dt")
@@ -746,6 +943,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
             {
                 "method": self.cb_integrator.currentText() or DEFAULT_SOLVER_METHOD,
                 "rtol": getattr(self.solver_cfg, "rtol", None),
+                "atol": getattr(self.solver_cfg, "atol", None),
                 "dt_out": self.ent_dt_out.text() or "60.0",
                 "max_step": getattr(self.solver_cfg, "max_step", None),
             }

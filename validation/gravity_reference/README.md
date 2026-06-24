@@ -19,20 +19,19 @@ exists.
 
 **Field**
 
-- `benchmarks/field/synthetic_degree4_oracle.json` — Lunaris vs an independent
+- `benchmarks/field/synthetic_degree4_oracle.json`: Lunaris checked against an independent
   from-scratch direct-formula oracle on a synthetic degree-4 fixture (~1e-12).
   Low-degree correlated-error guard; no external tools.
-- `benchmarks/field/grail_degree120_pyshtools_oracle.json` — Lunaris vs
+- `benchmarks/field/grail_degree120_pyshtools_oracle.json`: Lunaris checked against
   **pyshtools** on the real GRAIL JGGRX_1800F model at degree 120 (machine
   precision). Primary high-degree external truth.
 
-The degree-120 internal direct-formula oracle benchmark was removed because its
-classical Legendre recurrence is unstable above degree ~80; pyshtools is the
-trustworthy high-degree reference.
+The high-degree reference uses pyshtools because classical direct Legendre
+recurrences are numerically unstable above degree ~80.
 
 **Trajectory**
 
-- `benchmarks/trajectory/grail_degree32_pyshtools_trajectory.json` — Lunaris'
+- `benchmarks/trajectory/grail_degree32_pyshtools_trajectory.json`: Lunaris'
   production propagator vs an independent gravity-only arc (pyshtools force +
   SciPy `DOP853`). Non-rotating field; ~5e-8 m position agreement over ~2
   orbits. Rotating body-fixed fields fail closed.
@@ -62,4 +61,3 @@ network resources; it consumes the committed reference bytes only.
 - Generated run outputs belong under `outputs/validation/gravity_reference/`.
 - Mission SPKs/OEMs are observational comparisons unless the source explicitly
   proves a gravity-only dynamics contract.
-

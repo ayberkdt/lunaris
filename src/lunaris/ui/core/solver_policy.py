@@ -43,6 +43,38 @@ _ADAPTIVE_METHOD_HINTS = (
     "LSODA",
 )
 
+# Order-appropriate fallback tolerance pairs, applied ONLY when the user leaves
+# the relative tolerance blank/invalid (never overriding an explicit value).
+# A high-order solver (DOP853) reaches a tight tolerance cheaply; a low-order one
+# (RK23) wastes steps chasing a tolerance it cannot use, so its default is looser.
+# Stiff solvers sit in between. DOP853 stays on the backend SSOT pair.
+_METHOD_TOLERANCE_DEFAULTS: dict[str, tuple[float, float]] = {
+    "DOP853": (1e-10, 1e-12),
+    "RK45": (1e-9, 1e-12),
+    "RK23": (1e-6, 1e-9),
+    "RADAU": (1e-8, 1e-10),
+    "BDF": (1e-8, 1e-10),
+    "LSODA": (1e-8, 1e-10),
+}
+
+
+def _method_token(method_label: Any) -> str:
+    """Return the leading whitespace token of a method label, upper-cased."""
+    text = str(method_label or "").strip()
+    parts = text.split()
+    return parts[0].upper() if parts else ""
+
+
+def method_default_tolerances(method_label: Any) -> tuple[float, float]:
+    """Return the order-appropriate ``(rtol, atol)`` fallback for a method.
+
+    Unknown or fixed-step methods fall back to the shared safe pair so session
+    restore and preflight validation stay internally consistent.
+    """
+    return _METHOD_TOLERANCE_DEFAULTS.get(
+        _method_token(method_label), (DEFAULT_ADAPTIVE_RTOL, DEFAULT_ADAPTIVE_ATOL)
+    )
+
 
 def solver_method_is_adaptive(method_label: Any) -> bool:
     """
@@ -99,34 +131,31 @@ def choose_solver_tolerances(
       not actively consume those values for the chosen integrator.
     """
 
-    # The current UI ships one solver policy for all adaptive methods. If we add
-    # method-specific defaults later, the branch point already exists here.
-    if solver_method_is_adaptive(method_label):
-        default_rtol = DEFAULT_ADAPTIVE_RTOL
-        default_atol = DEFAULT_ADAPTIVE_ATOL
-    else:
-        default_rtol = DEFAULT_ADAPTIVE_RTOL
-        default_atol = DEFAULT_ADAPTIVE_ATOL
+    # Method-aware fallback pair (used only when rtol is blank/invalid).
+    default_rtol, default_atol = method_default_tolerances(method_label)
 
     raw_rtol = coerce_positive_float(rtol)
     rtol_was_invalid = raw_rtol is None
-    rtol_value = raw_rtol
-    if rtol_value is None:
-        rtol_value = default_rtol
+    rtol_value = raw_rtol if raw_rtol is not None else default_rtol
 
-    derived_atol = min(max(default_atol, float(rtol_value) * 1e-2), float(rtol_value))
+    # When the user supplied a valid rtol we derive atol from it using a fixed
+    # global floor (stable, method-independent). When rtol fell back to a method
+    # default, the method's own default atol is the safe partner.
+    derived_atol = min(max(DEFAULT_ADAPTIVE_ATOL, float(rtol_value) * 1e-2), float(rtol_value))
+    safe_atol = default_atol if rtol_was_invalid else derived_atol
+
     atol_value = coerce_positive_float(atol)
     if atol_value is None:
-        atol_value = derived_atol
+        atol_value = safe_atol
     else:
         # Absolute tolerance should never be looser than the relative target.
         atol_value = min(float(atol_value), float(rtol_value))
 
         # If the visible rtol had to fall back to a default, a very small
         # carried-over atol is usually a stale legacy value rather than fresh
-        # user intent. In that case prefer the derived safe pair.
-        if rtol_was_invalid and float(atol_value) < float(derived_atol):
-            atol_value = derived_atol
+        # user intent. In that case prefer the safe pair.
+        if rtol_was_invalid and float(atol_value) < float(safe_atol):
+            atol_value = safe_atol
 
     if atol_value <= 0.0:
         atol_value = default_atol
