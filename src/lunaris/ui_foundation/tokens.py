@@ -52,7 +52,13 @@ class ColorTokens:
     info: str = "#4A9DFF"
     inactive: str = "#6C7787"
 
-    border: str = "#3A4756"
+    # ``border`` carries load-bearing component boundaries (inputs, lists, key
+    # frames). Surface fills differ from their containers by only ~1.1:1, so the
+    # border alone identifies the control; it must meet WCAG 1.4.11 non-text
+    # 3:1. #3A4756 was 1.77:1 on bg_card; #6A7686 is >=3:1 on every surface
+    # (3.63 card / 4.00 shell / 4.03 entry / 3.10 elevated). ``border_soft``
+    # stays intentionally subtle for decorative rules.
+    border: str = "#6A7686"
     border_soft: str = "#1F2833"
     border_strong: str = "#4A5765"
     panel_shadow: str = "rgba(0,0,0,0.45)"

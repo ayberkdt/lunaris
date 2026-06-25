@@ -245,9 +245,11 @@ def build_app_stylesheet(
             font-weight: 600;
         }}
         /* Thin vertical rule between status groups — replaces literal "|" text
-           separators with a real divider drawn from the border token. */
+           separators with a real divider. Uses the visible ``border`` token
+           (not ``border_soft``) so the grouping cue meets WCAG 1.4.11 (3:1);
+           border_soft (#1F2833) was ~1.2:1 here and effectively invisible. */
         QFrame#statusDivider {{
-            background: {theme['border_soft']};
+            background: {theme['border']};
             border: none;
             max-width: 1px;
             min-width: 1px;
