@@ -66,6 +66,24 @@ Recommended production workflow:
 - Kept `potential_autograd` and `force_direct` runtime paths working, with direct
   force inference using a no-grad torch path through `SurrogateGravityModel`.
 - Added UI and CLI support for the explicit backend names.
+- Added a measured non-conservativeness (curl) diagnostic for `force_direct`
+  artifacts. `lunaris.surrogate.st_lrps.evaluation.force_direct_eval` now reports
+  `conservativeness_metrics` (finite-difference `curl a` magnitude plus the
+  scale-free `nonconservative_ratio = ||antisym(J)||_F / ||J||_F in [0, 1]`),
+  so the "not conservative by construction" caveat is now quantified per artifact
+  rather than only asserted.
+- Added an orbit-level drift harness,
+  `lunaris.surrogate.st_lrps.evaluation.orbit_drift`
+  (`python -m lunaris.surrogate.st_lrps.evaluation.orbit_drift --model-dir <run>
+  [--ref-model-dir <potential_run>]`). It propagates the same circular orbit
+  under two acceleration models with identical RK4 settings and reports position/
+  velocity drift, plus an `energy_drift` diagnostic whose secular trend exposes
+  the non-conservative content at the orbit level. Both halves of the
+  `force_direct` validation gate (local curl + orbit drift/energy) are now
+  tooled and unit-tested against analytic Kepler fields; the **remaining gate
+  action is to run them on a contract-valid `force_direct` artifact** (paired
+  with its potential counterpart) and record the thresholds before the
+  experimental label is dropped.
 
 ## Benchmark Status
 
