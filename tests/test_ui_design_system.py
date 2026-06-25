@@ -59,36 +59,26 @@ def test_core_palette_and_layout_contract() -> None:
     assert DESIGN_TOKENS.controls.minimum_height >= 34
 
 
-def test_phase2_semantic_roles_are_complete_and_alias_safe() -> None:
+def test_color_tokens_single_naming_surface_is_complete() -> None:
     colors = DESIGN_TOKENS.colors
-    roles = (
-        "surface_app",
-        "surface_shell",
-        "surface_card",
-        "surface_elevated",
-        "surface_inset",
-        "surface_input",
-        "surface_terminal",
-        "surface_selected",
-        "surface_hover",
-        "surface_overlay",
-        "text_primary",
-        "text_secondary",
-        "text_muted",
-        "text_disabled",
-        "text_inverse",
-        "text_link",
-        "primary",
-        "border_quiet",
-        "border_standard",
-        "border_focus",
-        "border_selected",
-        "divider",
-    )
-    legacy = colors.as_legacy_dict()
-    for role in roles:
-        assert getattr(colors, role)
-        assert legacy[role] == getattr(colors, role)
+    mapping = colors.as_dict()
+    # The compact bg_*/fg_*/role names are the single naming surface: every
+    # field appears in as_dict() and is non-empty, with no parallel semantic
+    # alias surface (surface_*/text_*/divider/as_legacy_dict) to drift apart.
+    for name in (
+        "bg_space", "bg_shell", "bg_card", "bg_card_alt", "bg_inset",
+        "bg_entry", "bg_log", "bg_hover", "bg_overlay",
+        "fg_main", "fg_soft", "fg_muted", "fg_disabled", "fg_inverse", "fg_link",
+        "accent", "accent_hov", "accent_dim", "accent_deep",
+        "secondary", "secondary_hov", "secondary_dim",
+        "success", "warning", "error", "critical", "info", "inactive",
+        "border", "border_soft", "border_strong", "panel_shadow", "grid_color",
+    ):
+        assert getattr(colors, name)
+        assert mapping[name] == getattr(colors, name)
+    assert not hasattr(colors, "surface_app")
+    assert not hasattr(colors, "text_primary")
+    assert not hasattr(colors, "as_legacy_dict")
 
     visualization = DESIGN_TOKENS.visualization.as_dict()
     for role in (
@@ -131,14 +121,13 @@ def test_semantic_text_contrast_meets_wcag_aa(foreground: str, background: str) 
     assert _contrast(getattr(colors, foreground), getattr(colors, background)) >= 4.5
 
 
-def test_legacy_theme_facade_tracks_typed_tokens() -> None:
+def test_theme_facade_tracks_typed_tokens() -> None:
     pytest.importorskip("PySide6")
     from lunaris.ui.core.ui_commons import THEME
 
     assert THEME["accent"] == DESIGN_TOKENS.colors.accent
-    assert THEME["primary"] == THEME["accent"]
-    assert THEME["selected_bg"] == THEME["accent_dim"]
-    assert THEME["plot_bg"] == THEME["bg_log"]
+    assert THEME["accent_dim"] == DESIGN_TOKENS.colors.accent_dim
+    assert THEME["bg_log"] == DESIGN_TOKENS.colors.bg_log
 
 
 def test_global_stylesheet_has_shared_component_selectors() -> None:

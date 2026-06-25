@@ -1172,9 +1172,9 @@ def apply_plot_theme(widget: QtWidgets.QWidget) -> None:
     pen widths, etc.
     """
     try:
-        widget.setBackground(THEME["plot_bg"])  # type: ignore[attr-defined]
+        widget.setBackground(THEME["bg_log"])  # type: ignore[attr-defined]
     except AttributeError:
-        widget.setStyleSheet(f"background: {THEME['plot_bg']};")
+        widget.setStyleSheet(f"background: {THEME['bg_log']};")
 
 
 def status_text(text: str, kind: str = "info") -> str:

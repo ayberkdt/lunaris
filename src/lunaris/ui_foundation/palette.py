@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from lunaris.ui_foundation.tokens import DESIGN_TOKENS
 
-THEME = DESIGN_TOKENS.colors.as_legacy_dict()
+THEME = DESIGN_TOKENS.colors.as_dict()
 
 LOG_COLORS = {
     "error": DESIGN_TOKENS.colors.error,

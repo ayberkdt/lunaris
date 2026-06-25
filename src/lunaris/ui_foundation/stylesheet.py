@@ -353,7 +353,7 @@ def build_app_stylesheet(
         }}
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled,
         QDoubleSpinBox:disabled, QDateTimeEdit:disabled {{
-            color: {theme['text_disabled']};
+            color: {theme['fg_disabled']};
             background: {theme['bg_inset']};
             border-color: {theme['border_soft']};
         }}
@@ -432,7 +432,7 @@ def build_app_stylesheet(
         QPushButton:disabled {{
             background: {theme['bg_card']};
             border-color: {theme['border_soft']};
-            color: {theme['text_disabled']};
+            color: {theme['fg_disabled']};
         }}
         QPushButton#quickChip {{
             background: {acc_dim};
@@ -465,7 +465,7 @@ def build_app_stylesheet(
         QPushButton[kind="primary"]:disabled {{
             background: {theme['bg_entry']};
             border-color: {theme['border']};
-            color: {theme['text_disabled']};
+            color: {theme['fg_disabled']};
         }}
         QPushButton[kind="ghost"] {{
             background: transparent;
@@ -493,7 +493,7 @@ def build_app_stylesheet(
         QPushButton#dangerBtn:disabled {{
             background: {theme['bg_entry']};
             border-color: {theme['border']};
-            color: {theme['text_disabled']};
+            color: {theme['fg_disabled']};
         }}
 
         /* TOOL + CHECK CONTROLS */
