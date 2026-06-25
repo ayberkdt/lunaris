@@ -80,6 +80,9 @@ st_lrps/data/cloud_suites/
 !examples/
 !examples/**
 
+# Per-user HPC site configuration (copied from hpc/cluster.env.example)
+hpc/cluster.env
+
 # Simulation outputs
 results/
 output/
