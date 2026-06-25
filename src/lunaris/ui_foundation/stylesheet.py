@@ -245,9 +245,11 @@ def build_app_stylesheet(
             font-weight: 600;
         }}
         /* Thin vertical rule between status groups — replaces literal "|" text
-           separators with a real divider drawn from the border token. */
+           separators with a real divider. Uses the visible ``border`` token
+           (not ``border_soft``) so the grouping cue meets WCAG 1.4.11 (3:1);
+           border_soft (#1F2833) was ~1.2:1 here and effectively invisible. */
         QFrame#statusDivider {{
-            background: {theme['border_soft']};
+            background: {theme['border']};
             border: none;
             max-width: 1px;
             min-width: 1px;
@@ -351,7 +353,7 @@ def build_app_stylesheet(
         }}
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled,
         QDoubleSpinBox:disabled, QDateTimeEdit:disabled {{
-            color: {theme['text_disabled']};
+            color: {theme['fg_disabled']};
             background: {theme['bg_inset']};
             border-color: {theme['border_soft']};
         }}
@@ -430,7 +432,7 @@ def build_app_stylesheet(
         QPushButton:disabled {{
             background: {theme['bg_card']};
             border-color: {theme['border_soft']};
-            color: {theme['text_disabled']};
+            color: {theme['fg_disabled']};
         }}
         QPushButton#quickChip {{
             background: {acc_dim};
@@ -463,7 +465,7 @@ def build_app_stylesheet(
         QPushButton[kind="primary"]:disabled {{
             background: {theme['bg_entry']};
             border-color: {theme['border']};
-            color: {theme['text_disabled']};
+            color: {theme['fg_disabled']};
         }}
         QPushButton[kind="ghost"] {{
             background: transparent;
@@ -491,7 +493,7 @@ def build_app_stylesheet(
         QPushButton#dangerBtn:disabled {{
             background: {theme['bg_entry']};
             border-color: {theme['border']};
-            color: {theme['text_disabled']};
+            color: {theme['fg_disabled']};
         }}
 
         /* TOOL + CHECK CONTROLS */

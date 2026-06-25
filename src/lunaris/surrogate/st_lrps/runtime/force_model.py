@@ -108,8 +108,19 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     resolve_run_dir as resolve_run_dir_from_artifacts,
 )
+from lunaris.surrogate.st_lrps.shared.capabilities import (
+    UnsupportedCapability,
+    get_capability,
+)
 from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
+
+# Direct-force artifacts predict acceleration only; the scalar residual potential
+# is not-applicable by design (see the ST-LRPS capability matrix). Resolved once
+# so the runtime raises the single registry-backed exception type everywhere.
+_FORCE_DIRECT_NO_POTENTIAL = get_capability(
+    "runtime", "force_direct", "scalar_residual_potential"
+)
 
 
 def _resolve_run_dir(model_dir: str | Path) -> Path:
@@ -699,22 +710,13 @@ class DirectForceRuntime(SurrogateForceModel):
         return zeros_u, delta_a.detach().cpu().numpy()
 
     def _predict_potential_only_chunk(self, x_t: torch.Tensor) -> np.ndarray:
-        raise NotImplementedError(
-            "force_direct artifacts predict residual acceleration directly and do not "
-            "provide a scalar residual potential DeltaU. Use predict_residual_accel_*."
-        )
+        raise UnsupportedCapability(_FORCE_DIRECT_NO_POTENTIAL)
 
     def predict_residual_potential_fixed(self, r_fixed_m):
-        raise NotImplementedError(
-            "force_direct artifacts do not predict scalar residual potential DeltaU. "
-            "Use predict_residual_accel_fixed for residual acceleration."
-        )
+        raise UnsupportedCapability(_FORCE_DIRECT_NO_POTENTIAL)
 
     def predict_residual_potential_inertial(self, r_inertial_m, q_i2f):
-        raise NotImplementedError(
-            "force_direct artifacts do not predict scalar residual potential DeltaU. "
-            "Use predict_residual_accel_inertial for residual acceleration."
-        )
+        raise UnsupportedCapability(_FORCE_DIRECT_NO_POTENTIAL)
 
     def predict_residual_potential(self, x_m):
         return self.predict_residual_potential_fixed(x_m)

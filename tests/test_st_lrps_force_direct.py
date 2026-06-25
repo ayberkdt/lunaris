@@ -15,7 +15,10 @@ from lunaris.surrogate.st_lrps.data.dataset_contract import (
     REQUIRED_SH_PHASE_CONVENTION,
 )
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
-from lunaris.surrogate.st_lrps.evaluation.force_direct_eval import evaluate_force_direct
+from lunaris.surrogate.st_lrps.evaluation.force_direct_eval import (
+    curl_diagnostics,
+    evaluate_force_direct,
+)
 from lunaris.surrogate.st_lrps.networks.models import (
     build_model_from_config,
     compute_architecture_signature,
@@ -219,6 +222,14 @@ def test_force_direct_training_roundtrip(tmp_path):
     assert report["acceleration_metrics"]["rmse_a_vec"] >= 0.0
     assert "mean_deg" in report["angular_metrics"]
 
+    # force_direct now ships a measured non-conservativeness diagnostic.
+    cons = report["conservativeness_metrics"]
+    assert cons["n_points"] >= 1
+    ratio = cons["nonconservative_ratio"]
+    assert 0.0 <= ratio <= 1.0 + 1e-9
+    assert np.isfinite(cons["curl_abs_rms"])
+    assert any("nonconservative_ratio=" in w for w in report["warnings"])
+
 
 def test_force_direct_training_rejects_missing_gravity_label_contract(tmp_path):
     h5py = pytest.importorskip("h5py")
@@ -246,3 +257,64 @@ def test_force_direct_training_rejects_missing_gravity_label_contract(tmp_path):
     )
     with pytest.raises(ValueError, match="unsafe gravity label contract"):
         train_force_direct(args)
+
+
+# --------------------------------------------------------------------------- #
+# curl / non-conservativeness diagnostic (model-independent analytic checks)
+# --------------------------------------------------------------------------- #
+def _sample_shell(n: int, *, seed: int) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    dirs = rng.normal(size=(n, 3))
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    radii = R_MOON_SI + rng.uniform(100_000.0, 300_000.0, size=(n, 1))
+    return radii * dirs
+
+
+def test_curl_diagnostics_conservative_linear_field():
+    # a = -k r = -grad(0.5 k |r|^2): symmetric Jacobian -> curl == 0 exactly
+    # (finite differences are exact for a linear field at any step).
+    k = 1.0e-12
+    pts = _sample_shell(256, seed=1)
+    out = curl_diagnostics(lambda r: -k * np.asarray(r), pts, step_m=1.0)
+    assert out["nonconservative_ratio"] < 1e-9
+    assert out["curl_abs_rms"] < 1e-20
+
+
+def test_curl_diagnostics_conservative_point_mass():
+    # a = -mu r / |r|^3 = -grad(-mu/|r|): conservative, curl == 0 analytically.
+    mu = 4.9048695e12
+    pts = _sample_shell(256, seed=2)
+
+    def accel(r):
+        r = np.asarray(r, dtype=np.float64)
+        rn = np.linalg.norm(r, axis=1, keepdims=True)
+        return -mu * r / rn ** 3
+
+    out = curl_diagnostics(accel, pts, step_m=1.0)
+    # Central-difference truncation only; should be far below any real signal.
+    assert out["nonconservative_ratio"] < 1e-4
+
+
+def test_curl_diagnostics_detects_rotational_field():
+    # a = (-y, x, 0) is purely rotational: curl = (0, 0, 2), Jacobian is fully
+    # antisymmetric, so the non-conservative ratio is exactly 1.
+    pts = _sample_shell(128, seed=3)
+
+    def accel(r):
+        r = np.asarray(r, dtype=np.float64)
+        out = np.zeros_like(r)
+        out[:, 0] = -r[:, 1]
+        out[:, 1] = r[:, 0]
+        return out
+
+    out = curl_diagnostics(accel, pts, step_m=1.0)
+    np.testing.assert_allclose(out["curl_abs_rms"], 2.0, rtol=1e-6)
+    np.testing.assert_allclose(out["nonconservative_ratio"], 1.0, rtol=1e-6)
+
+
+def test_curl_diagnostics_rejects_bad_input():
+    pts = _sample_shell(4, seed=4)
+    with pytest.raises(ValueError, match="step_m must be positive"):
+        curl_diagnostics(lambda r: np.asarray(r), pts, step_m=0.0)
+    with pytest.raises(ValueError, match="at least one point"):
+        curl_diagnostics(lambda r: np.asarray(r), np.zeros((0, 3)), step_m=1.0)

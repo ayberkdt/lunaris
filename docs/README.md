@@ -28,6 +28,7 @@ advanced subsystem.
 | Document | Use it for |
 | --- | --- |
 | [Config And Artifact Contracts](CONFIG_AND_ARTIFACT_CONTRACTS.md) | Dataset, training, checkpoint, runtime, and benchmark contracts |
+| [Capability Matrix](ST_LRPS_CAPABILITY_MATRIX.md) | Which surrogate kind / baseline / training path implements which feature (generated SSOT) |
 | [Dataset Pipeline](DATASET_PIPELINE.md) | Dataset generation, validation, quality reports, and split manifests |
 | [Validation Hygiene](ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD splits, artifact compatibility, paper-safe rules |
 | [Modularity Audit](ST_LRPS_MODULARITY_AUDIT.md) | ST-LRPS package/UI modularity notes |

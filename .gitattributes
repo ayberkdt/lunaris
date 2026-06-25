@@ -1,0 +1,7 @@
+# Shell scripts and Slurm batch files must keep LF line endings so they run on
+# Linux HPC nodes even when edited or checked out on Windows. CRLF would break
+# the `#!/usr/bin/env bash` shebang and `set -euo pipefail`.
+*.sh        text eol=lf
+*.sbatch    text eol=lf
+*.slurm     text eol=lf
+hpc/cluster.env.example text eol=lf

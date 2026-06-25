@@ -22,6 +22,35 @@ session works through, in order:
 > `PyQt6`, `pyqtgraph`) only on a login or visualization node, and only if you
 > actually need them there.
 
+## Quick start
+
+If you just want to get an ST-LRPS training job running, fill in **one** site
+config file and use the helper scripts in `hpc/` (see
+[`hpc/README.md`](../hpc/README.md)). The rest of this guide is the reference for
+what those scripts do and the individual workflows.
+
+```bash
+# 1. Configure your cluster once: account, partition, modules, venv, storage.
+cp hpc/cluster.env.example hpc/cluster.env
+$EDITOR hpc/cluster.env
+
+# 2. Build the headless environment once (creates a venv, installs .[hpc]).
+bash hpc/setup_env.sh
+#    then paste the printed LUNARIS_VENV=... line into hpc/cluster.env
+
+# 3. Sanity-check, then submit. submit.sh injects partition/account/qos/gres
+#    from cluster.env, so you never edit those into the .sbatch files.
+bash hpc/preflight.sh
+hpc/submit.sh train -- --epochs 300 --batch-size 8192 \
+    --out-dir "$LUNARIS_OUTPUT_DIR/training/run1"
+```
+
+`hpc/cluster.env` is git-ignored, so site-specific values never get committed.
+Every `hpc/*.sbatch` job sources `hpc/env_template.sh`, which loads `cluster.env`,
+runs the requested `module load`s, and activates your venv/conda env before the
+headless entry point runs. The manual installation and per-workflow details
+below still apply when you need finer control.
+
 ## Installation
 
 The recommended setup registers the package and its console commands

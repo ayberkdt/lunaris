@@ -1,4 +1,4 @@
-﻿"""
+"""
 Widget-level regression tests for the modular UI pages.
 
 These tests sit between the pure helper tests and the heavier full-window smoke
@@ -234,13 +234,12 @@ def test_theme_has_no_gold_accent() -> None:
 def test_theme_has_required_lunar_aurora_tokens() -> None:
     required = [
         "bg_space", "bg_shell", "bg_card", "bg_card_alt", "bg_entry", "bg_log",
-        "fg_main", "fg_soft", "fg_muted",
+        "fg_main", "fg_soft", "fg_muted", "fg_disabled",
         "accent", "accent_hov", "accent_dim",
         "secondary", "secondary_dim",
         "success", "warning", "error",
         "border", "border_soft",
-        "primary", "primary_hover", "selected_bg",
-        "plot_bg", "grid_color", "text_disabled",
+        "grid_color",
     ]
     for key in required:
         assert key in THEME, f"THEME is missing required key {key!r}"

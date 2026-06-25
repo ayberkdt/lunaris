@@ -36,9 +36,17 @@ if TYPE_CHECKING:
     import h5py  # optional dependency; imported lazily at runtime
 
 try:
-    from numba import njit  # type: ignore
+    import numba  # noqa: F401  # required transitively by the physics SH kernels imported below
 except Exception as e:  # pragma: no cover
     raise RuntimeError("Numba is required for this script. Install: pip install numba") from e
+
+# ---- SH potential/acceleration kernels (SSOT: lunaris.physics) ----
+from lunaris.physics.spherical_harmonics import (
+    precompute_legendre_constants,
+)
+from lunaris.physics.spherical_harmonics import (
+    sh_potential_accel_batch_serial as _sh_potential_accel_batch_serial,
+)
 
 # ---- Physics SSOT (local lunar dataset parameters) ----
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
@@ -126,206 +134,11 @@ def _file_sha256(path: str | Path | None) -> str | None:
 # =============================================================================
 # SH constants precompute (pure NumPy, called once)
 # =============================================================================
-def precompute_legendre_constants(N: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    N = int(N)
-    a_nm = np.zeros((N + 1, N + 1), dtype=np.float64)
-    b_nm = np.zeros_like(a_nm)
-    diag_f = np.zeros(N + 1, dtype=np.float64)
-    subdiag_f = np.zeros(N + 1, dtype=np.float64)
-    k_ratio = np.zeros_like(a_nm)
-
-    for n in range(1, N + 1):
-        diag_f[n] = math.sqrt((2.0 * n + 1.0) / (2.0 * n))
-        subdiag_f[n] = math.sqrt(2.0 * n + 1.0)
-
-    for n in range(2, N + 1):
-        for m in range(0, n - 1):
-            if m <= n - 2:
-                num_a = (2.0 * n + 1.0) * (2.0 * n - 1.0)
-                den_a = (n - m) * (n + m)
-                a_nm[n, m] = math.sqrt(num_a / den_a)
-
-                num_b = (2.0 * n + 1.0) * (n + m - 1.0) * (n - m - 1.0)
-                den_b = (2.0 * n - 3.0) * (n - m) * (n + m)
-                b_nm[n, m] = math.sqrt(num_b / den_b)
-
-    for n in range(1, N + 1):
-        for m in range(0, n + 1):
-            if n == 0 or (n + m) == 0:
-                k_ratio[n, m] = 0.0
-            else:
-                if (2 * n - 1) > 0:
-                    k_ratio[n, m] = math.sqrt(((2.0 * n + 1.0) / (2.0 * n - 1.0)) * ((n - m) / (n + m)))
-                else:
-                    k_ratio[n, m] = 0.0
-
-    return a_nm, b_nm, diag_f, subdiag_f, k_ratio
 
 
 # =============================================================================
 # Numba kernels
 # =============================================================================
-@njit(cache=True, fastmath=True)
-def _sh_potential_accel_batch_serial(
-    xyz_m: np.ndarray,   # (M,3) [m]
-    C: np.ndarray,       # (N+1,N+1)
-    S: np.ndarray,       # (N+1,N+1)
-    a_nm: np.ndarray,    # (N+1,N+1)
-    b_nm: np.ndarray,    # (N+1,N+1)
-    diag_f: np.ndarray,  # (N+1,)
-    subdiag_f: np.ndarray,  # (N+1,)
-    k_ratio: np.ndarray, # (N+1,N+1)
-    mu_si: float,
-    r_ref_m: float,
-    degree_max: int,
-    degree_min: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    M = xyz_m.shape[0]
-    N = degree_max
-    V_out = np.empty(M, dtype=np.float64)
-    a_out = np.empty((M, 3), dtype=np.float64)
-
-    eps_r = 1e-12
-    eps_rho = 1e-14
-    eps_c = 1e-14
-
-    for k in range(M):
-        x = float(xyz_m[k, 0])
-        y = float(xyz_m[k, 1])
-        z = float(xyz_m[k, 2])
-
-        r2 = x * x + y * y + z * z
-        r = math.sqrt(r2)
-        if r < eps_r:
-            V_out[k] = 0.0
-            a_out[k, 0] = 0.0
-            a_out[k, 1] = 0.0
-            a_out[k, 2] = 0.0
-            continue
-
-        rho2 = x * x + y * y
-        rho = math.sqrt(rho2)
-
-        s = z / r
-        c = rho / r
-
-        if rho > eps_rho:
-            cosl = x / rho
-            sinl = y / rho
-        else:
-            cosl = 1.0
-            sinl = 0.0
-
-        cos_m = np.empty(N + 1, dtype=np.float64)
-        sin_m = np.empty(N + 1, dtype=np.float64)
-        cos_m[0] = 1.0
-        sin_m[0] = 0.0
-        for m in range(1, N + 1):
-            cos_m[m] = cos_m[m - 1] * cosl - sin_m[m - 1] * sinl
-            sin_m[m] = sin_m[m - 1] * cosl + cos_m[m - 1] * sinl
-
-        P_nm2 = np.zeros(N + 1, dtype=np.float64)
-        P_nm1 = np.zeros(N + 1, dtype=np.float64)
-        P_n = np.zeros(N + 1, dtype=np.float64)
-
-        P_nm1[0] = 1.0
-
-        q = r_ref_m / r
-        qpow = 1.0
-
-        V_sum = 0.0
-        dr_sum = 0.0
-        dphi_sum = 0.0
-        dlam_sum = 0.0
-
-        term_cs0 = float(C[0, 0])
-        if degree_min < 0:
-            V_sum += P_nm1[0] * term_cs0
-            dr_sum += P_nm1[0] * term_cs0
-
-        for n in range(1, N + 1):
-            qpow *= q
-
-            for i in range(n + 1):
-                P_n[i] = 0.0
-
-            # Fully-normalized ALFs WITHOUT the Condon-Shortley phase (geodesy/
-            # GRAIL convention), matching lunaris.physics.spherical_harmonics. The
-            # sectoral seed and sectoral recurrence use a POSITIVE sign; a negative
-            # sign here would re-introduce the (-1)^m phase and flip every odd-m
-            # (tesseral/sectoral) label relative to the runtime engine. The first
-            # sub-diagonal and the vertical recurrence keep m fixed, so they are
-            # phase-agnostic and unchanged. (Guarded by the parity test against
-            # GravityModel; zonal-only checks cannot catch a phase error.)
-            if n == 1:
-                P_n[0] = math.sqrt(3.0) * s
-                P_n[1] = math.sqrt(3.0) * c
-            else:
-                P_n[n] = diag_f[n] * c * P_nm1[n - 1]
-                P_n[n - 1] = subdiag_f[n] * s * P_nm1[n - 1]
-                for m in range(0, n - 1):
-                    if m <= n - 2:
-                        P_n[m] = a_nm[n, m] * s * P_nm1[m] - b_nm[n, m] * P_nm2[m]
-
-            nn = float(n)
-            for m in range(0, n + 1):
-                cnm = float(C[n, m])
-                snm = float(S[n, m])
-
-                term_cs = cnm * cos_m[m] + snm * sin_m[m]
-                P = P_n[m]
-
-                if n > degree_min:
-                    V_sum += qpow * P * term_cs
-                    dr_sum += (nn + 1.0) * qpow * P * term_cs
-
-                    if m > 0:
-                        term_lon = (-cnm * sin_m[m] + snm * cos_m[m]) * float(m)
-                        dlam_sum += qpow * P * term_lon
-
-                    if c > eps_c:
-                        P_nm1_m = 0.0
-                        if m <= n - 1:
-                            P_nm1_m = P_nm1[m]
-                        kfac = 0.0
-                        if m <= n:
-                            kfac = k_ratio[n, m]
-                        # Correct derivative: dP̄_n^m/dφ = [-n sinφ P̄_n^m + (n+m) k_{n,m} P̄_{n-1}^m] / cosφ
-                        # WARNING: datasets generated before this fix have sign-flipped latitude
-                        # acceleration components and must be regenerated.
-                        dP_dphi = (-nn * s * P + (nn + float(m)) * kfac * P_nm1_m) / c
-                        dphi_sum += qpow * dP_dphi * term_cs
-
-            P_nm2, P_nm1, P_n = P_nm1, P_n, P_nm2
-
-        V = (mu_si / r) * V_sum
-
-        inv_r2 = 1.0 / r2
-        a_r = -mu_si * inv_r2 * dr_sum
-        a_phi = mu_si * inv_r2 * dphi_sum
-        a_lam = 0.0
-        if c > eps_c:
-            a_lam = mu_si * inv_r2 * (dlam_sum / c)
-
-        rx = c * cosl
-        ry = c * sinl
-        rz = s
-        phix = -s * cosl
-        phiy = -s * sinl
-        phiz = c
-        lamx = -sinl
-        lamy = cosl
-
-        ax = a_r * rx + a_phi * phix + a_lam * lamx
-        ay = a_r * ry + a_phi * phiy + a_lam * lamy
-        az = a_r * rz + a_phi * phiz
-
-        V_out[k] = V
-        a_out[k, 0] = ax
-        a_out[k, 1] = ay
-        a_out[k, 2] = az
-
-    return V_out, a_out
 
 
 # =============================================================================

@@ -42,20 +42,16 @@ UI_DIR = REPO_ROOT / "src" / "lunaris" / "ui"
 # 1) Token dictionaries
 # ---------------------------------------------------------------------------
 
+# Single compact naming surface (bg_*/fg_*/role). THEME == ColorTokens.as_dict(),
+# so these are exactly the token field names; there is no parallel alias surface.
 THEME_REQUIRED_KEYS = [
-    "bg_space", "bg_shell", "bg_card", "bg_card_alt", "bg_inset", "bg_entry", "bg_log",
-    "fg_main", "fg_soft", "fg_muted", "fg_disabled", "fg_inverse",
-    "accent", "accent_hov", "accent_dim",
+    "bg_space", "bg_shell", "bg_card", "bg_card_alt", "bg_inset", "bg_entry",
+    "bg_log", "bg_hover", "bg_overlay",
+    "fg_main", "fg_soft", "fg_muted", "fg_disabled", "fg_inverse", "fg_link",
+    "accent", "accent_hov", "accent_dim", "accent_deep",
     "secondary", "secondary_hov", "secondary_dim",
     "success", "warning", "error", "critical", "info", "inactive",
-    "border", "border_soft", "border_strong",
-    "primary", "primary_hover", "selected_bg", "panel_shadow",
-    "plot_bg", "grid_color", "text_disabled", "accent_deep",
-    "surface_app", "surface_shell", "surface_card", "surface_elevated",
-    "surface_inset", "surface_input", "surface_terminal", "surface_selected",
-    "surface_hover", "surface_overlay",
-    "text_primary", "text_secondary", "text_muted", "text_inverse", "text_link",
-    "border_quiet", "border_standard", "border_focus", "border_selected", "divider",
+    "border", "border_soft", "border_strong", "panel_shadow", "grid_color",
 ]
 
 ORBIT_THEME_REQUIRED_KEYS = [
@@ -87,18 +83,12 @@ def test_log_colors_has_required_keys(key: str) -> None:
     assert key in LOG_COLORS, f"LOG_COLORS is missing required key {key!r}"
 
 
-def test_theme_primary_aliases_track_accent() -> None:
-    assert THEME["primary"] == THEME["accent"]
-    assert THEME["primary_hover"] == THEME["accent_hov"]
-    assert THEME["selected_bg"] == THEME["accent_dim"]
-    assert THEME["plot_bg"] == THEME["bg_log"]
-
-
 def test_theme_accent_is_lunar_graphite_blue() -> None:
-    # The Lunar Graphite primary accent is orbital blue, not the old ion-cyan.
-    # v2 (premium) refined the orbital blue to #5790FF and split the teal
-    # secondary (#2DD4BF) from the success state color.
-    assert THEME["accent"].lower() == "#3b86ff"
+    # The Lunar Graphite primary accent is a restrained orbital blue, not the old
+    # ion-cyan. It was refined to the lighter, calmer #6AA9FF (less edge vibration
+    # on the graphite canvas, higher contrast for dark text on the accent fill);
+    # the teal secondary stays split from the success state color.
+    assert THEME["accent"].lower() == "#6aa9ff"
     assert THEME["secondary"].lower() == "#15d6a6"
 
 
@@ -190,7 +180,7 @@ def test_build_app_stylesheet_has_no_legacy_neon() -> None:
     assert "#35d0ff" not in qss and "#8b7cff" not in qss
     assert "53,208,255" not in qss and "139,124,255" not in qss
     # The new orbital-blue accent should be present (as hex and/or rgb triple).
-    assert "#3b86ff" in qss or "59,134,255" in qss
+    assert "#6aa9ff" in qss or "106,169,255" in qss
 
 
 def test_build_app_stylesheet_reserves_gradients_for_primary_action() -> None:

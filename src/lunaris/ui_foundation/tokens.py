@@ -9,9 +9,9 @@ from dataclasses import asdict, dataclass
 class ColorTokens:
     """Widget colors plus semantic aliases used by QSS consumers.
 
-    The compact historical names remain the compatibility surface. Properties
-    below expose the explicit Phase 2 roles without storing duplicate values
-    that could drift apart.
+    Names follow the single ``bg_*`` / ``fg_*`` / role (accent, border, success,
+    ...) scheme. There is one name per color; consumers read these names
+    directly (via :meth:`as_dict` -> ``THEME``) with no parallel alias surface.
     """
 
     bg_space: str = "#090C12"
@@ -31,9 +31,15 @@ class ColorTokens:
     fg_inverse: str = "#04070C"
     fg_link: str = "#6FA8FF"
 
-    accent: str = "#3B86FF"
-    accent_hov: str = "#5C9CFF"
-    accent_dim: str = "rgba(59,134,255,0.22)"
+    # Restrained orbital-blue accent. Lighter/calmer than the prior #3B86FF: on
+    # a cool-graphite canvas a fully saturated blue vibrates at edges over long
+    # sessions, and primary buttons carry dark fg_inverse text, so a lighter
+    # accent both calms the chrome and lifts contrast (6.96:1 as text on bg_card,
+    # 8.39:1 for dark text on the accent fill, vs 4.82/5.80). accent_hov stays
+    # lighter for a perceptible hover; accent_deep is the darker pressed shade.
+    accent: str = "#6AA9FF"
+    accent_hov: str = "#86BBFF"
+    accent_dim: str = "rgba(106,169,255,0.22)"
     accent_deep: str = "#2E6AD6"
     secondary: str = "#15D6A6"
     secondary_hov: str = "#4DE8C4"
@@ -52,130 +58,21 @@ class ColorTokens:
     info: str = "#4A9DFF"
     inactive: str = "#6C7787"
 
-    border: str = "#3A4756"
+    # ``border`` carries load-bearing component boundaries (inputs, lists, key
+    # frames). Surface fills differ from their containers by only ~1.1:1, so the
+    # border alone identifies the control; it must meet WCAG 1.4.11 non-text
+    # 3:1. #3A4756 was 1.77:1 on bg_card; #6A7686 is >=3:1 on every surface
+    # (3.63 card / 4.00 shell / 4.03 entry / 3.10 elevated). ``border_soft``
+    # stays intentionally subtle for decorative rules.
+    border: str = "#6A7686"
     border_soft: str = "#1F2833"
     border_strong: str = "#4A5765"
     panel_shadow: str = "rgba(0,0,0,0.45)"
     grid_color: str = "rgba(100,116,139,0.42)"
 
-    def as_legacy_dict(self) -> dict[str, str]:
-        values = asdict(self)
-        values.update(
-            primary=self.accent,
-            primary_hover=self.accent_hov,
-            selected_bg=self.accent_dim,
-            plot_bg=self.bg_log,
-            text_disabled=self.fg_disabled,
-            surface_app=self.surface_app,
-            surface_shell=self.surface_shell,
-            surface_card=self.surface_card,
-            surface_elevated=self.surface_elevated,
-            surface_inset=self.surface_inset,
-            surface_input=self.surface_input,
-            surface_terminal=self.surface_terminal,
-            surface_selected=self.surface_selected,
-            surface_hover=self.surface_hover,
-            surface_overlay=self.surface_overlay,
-            text_primary=self.text_primary,
-            text_secondary=self.text_secondary,
-            text_muted=self.text_muted,
-            text_inverse=self.text_inverse,
-            text_link=self.text_link,
-            border_quiet=self.border_quiet,
-            border_standard=self.border_standard,
-            border_focus=self.border_focus,
-            border_selected=self.border_selected,
-            divider=self.divider,
-        )
-        return values
-
-    @property
-    def surface_app(self) -> str:
-        return self.bg_space
-
-    @property
-    def surface_shell(self) -> str:
-        return self.bg_shell
-
-    @property
-    def surface_card(self) -> str:
-        return self.bg_card
-
-    @property
-    def surface_elevated(self) -> str:
-        return self.bg_card_alt
-
-    @property
-    def surface_inset(self) -> str:
-        return self.bg_inset
-
-    @property
-    def surface_input(self) -> str:
-        return self.bg_entry
-
-    @property
-    def surface_terminal(self) -> str:
-        return self.bg_log
-
-    @property
-    def surface_selected(self) -> str:
-        return self.accent_dim
-
-    @property
-    def surface_hover(self) -> str:
-        return self.bg_hover
-
-    @property
-    def surface_overlay(self) -> str:
-        return self.bg_overlay
-
-    @property
-    def text_primary(self) -> str:
-        return self.fg_main
-
-    @property
-    def text_secondary(self) -> str:
-        return self.fg_soft
-
-    @property
-    def text_muted(self) -> str:
-        return self.fg_muted
-
-    @property
-    def text_disabled(self) -> str:
-        return self.fg_disabled
-
-    @property
-    def text_inverse(self) -> str:
-        return self.fg_inverse
-
-    @property
-    def text_link(self) -> str:
-        return self.fg_link
-
-    @property
-    def primary(self) -> str:
-        return self.accent
-
-    @property
-    def border_quiet(self) -> str:
-        return self.border_soft
-
-    @property
-    def border_standard(self) -> str:
-        return self.border
-
-    @property
-    def border_focus(self) -> str:
-        return self.accent
-
-    @property
-    def border_selected(self) -> str:
-        return self.accent
-
-    @property
-    def divider(self) -> str:
-        return self.border_soft
+    def as_dict(self) -> dict[str, str]:
+        """Return all color tokens as a flat ``name -> value`` mapping."""
+        return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)

@@ -17,6 +17,7 @@ from lunaris.common.lunar_data import R_MOON_SI
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 
 if TYPE_CHECKING:
+    from lunaris.physics.spherical_harmonics import GravityModel
     from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
 
 logger = logging.getLogger(__name__)
@@ -211,17 +212,61 @@ def compute_base_accel(x_phys: torch.Tensor, mu: float, degree_min: int = -1) ->
     return -mu * x_phys / (r_norm ** 3)
 
 
+def _sh_baseline_field(
+    x_phys: torch.Tensor,
+    contract: TargetContract,
+    gravity_model: GravityModel | None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Evaluate the (potential, acceleration) of the SH baseline through
+    ``contract.base_degree`` for a full-field spherical-harmonics contract.
+
+    The source gravity coefficients are not part of the :class:`TargetContract`,
+    so the caller must thread in the loaded
+    :class:`~lunaris.physics.spherical_harmonics.GravityModel` (built from
+    ``meta.gravity_model_path``). The acceleration is the physical field
+    (``a = +grad U``), identical in convention to the point-mass branch's
+    ``-mu r/|r|^3``; the caller applies ``a_sign`` to the potential to stay
+    consistent with that branch.
+    """
+    if gravity_model is None:
+        raise ValueError(
+            "spherical_harmonics baseline requires the source gravity-model "
+            "coefficients, but gravity_model=None. Build it from "
+            "meta.gravity_model_path (GravityModel.from_file) and pass it through "
+            "fit_scaler_streaming / STLRPSLoss / the evaluation predict call."
+        )
+    from lunaris.physics.spherical_harmonics import sh_potential_accel_fixed
+
+    xyz = x_phys.detach().to(device="cpu", dtype=torch.float64).numpy()
+    V, a = sh_potential_accel_fixed(
+        xyz,
+        gravity_model.c_coeffs,
+        gravity_model.s_coeffs,
+        float(gravity_model.mu),
+        float(gravity_model.r_ref),
+        int(contract.base_degree),
+        degree_min=-1,
+    )
+    V_t = torch.as_tensor(V, device=x_phys.device, dtype=x_phys.dtype).reshape(-1, 1)
+    a_t = torch.as_tensor(a, device=x_phys.device, dtype=x_phys.dtype).reshape(-1, 3)
+    return V_t, a_t
+
+
 def compute_base_potential_from_contract(
     x_phys: torch.Tensor,
     contract: TargetContract,
+    gravity_model: GravityModel | None = None,
 ) -> torch.Tensor:
     """Return the scaler/loss baseline potential dictated by ``contract``.
 
     For residual datasets, labels already contain the high-degree-minus-baseline
-    residual, so the target baseline in this layer is zero even when the
-    runtime total-field model later needs an SH baseline. Full-field point-mass
-    contracts subtract the monopole. Full-field SH baselines require an SH
-    evaluator and are not silently approximated here.
+    residual, so the target baseline in this layer is zero even when the runtime
+    total-field model later needs an SH baseline. Full-field point-mass contracts
+    subtract the monopole. Full-field spherical-harmonics contracts subtract the
+    real SH field through ``base_degree`` via
+    :func:`lunaris.physics.spherical_harmonics.sh_potential_accel_fixed`, for
+    which ``gravity_model`` must be provided. See the capability matrix in
+    ``lunaris.surrogate.st_lrps.shared.capabilities``.
     """
 
     if contract.target_mode == "residual" or contract.baseline_kind == "none":
@@ -230,19 +275,22 @@ def compute_base_potential_from_contract(
         r_norm = torch.norm(x_phys, dim=1, keepdim=True).clamp(min=1.0)
         return float(contract.a_sign) * (float(contract.mu_si) / r_norm)
     if contract.baseline_kind == "spherical_harmonics":
-        raise NotImplementedError(
-            "TargetContract requests a spherical-harmonics full-field baseline, "
-            "but st_lrps.shared.scaling has no SH evaluator. Provide residual "
-            "labels or subtract the SH baseline in the caller."
-        )
+        v_base, _ = _sh_baseline_field(x_phys, contract, gravity_model)
+        return float(contract.a_sign) * v_base
     raise ValueError(f"Unsupported baseline_kind={contract.baseline_kind!r}")
 
 
 def compute_base_accel_from_contract(
     x_phys: torch.Tensor,
     contract: TargetContract,
+    gravity_model: GravityModel | None = None,
 ) -> torch.Tensor:
-    """Return the scaler/loss baseline acceleration dictated by ``contract``."""
+    """Return the scaler/loss baseline acceleration dictated by ``contract``.
+
+    Full-field spherical-harmonics contracts subtract the real SH field through
+    ``base_degree``; ``gravity_model`` must be supplied (see
+    :func:`compute_base_potential_from_contract`).
+    """
 
     if contract.target_mode == "residual" or contract.baseline_kind == "none":
         return torch.zeros((x_phys.shape[0], 3), device=x_phys.device, dtype=x_phys.dtype)
@@ -250,11 +298,8 @@ def compute_base_accel_from_contract(
         r_norm = torch.norm(x_phys, dim=1, keepdim=True).clamp(min=1.0)
         return -float(contract.mu_si) * x_phys / (r_norm ** 3)
     if contract.baseline_kind == "spherical_harmonics":
-        raise NotImplementedError(
-            "TargetContract requests a spherical-harmonics full-field baseline, "
-            "but st_lrps.shared.scaling has no SH evaluator. Provide residual "
-            "labels or subtract the SH baseline in the caller."
-        )
+        _, a_base = _sh_baseline_field(x_phys, contract, gravity_model)
+        return a_base
     raise ValueError(f"Unsupported baseline_kind={contract.baseline_kind!r}")
 
 
@@ -281,6 +326,7 @@ def fit_scaler_streaming(
     target_contract: TargetContract | None = None,
     indices: np.ndarray | None = None,
     split_provenance: Mapping[str, Any] | None = None,
+    gravity_model: GravityModel | None = None,
 ) -> ScalerPack:
     """Stream-fit isometric scalers on residuals ΔU/Δa (baseline already subtracted).
 
@@ -365,8 +411,8 @@ def fit_scaler_streaming(
 
         # Subtract baseline so scaler is fitted on residuals
         x_t = torch.as_tensor(x, dtype=torch.float64)
-        u_base = compute_base_potential_from_contract(x_t, contract).numpy()   # (B, 1)
-        a_base = compute_base_accel_from_contract(x_t, contract).numpy()       # (B, 3)
+        u_base = compute_base_potential_from_contract(x_t, contract, gravity_model).numpy()   # (B, 1)
+        a_base = compute_base_accel_from_contract(x_t, contract, gravity_model).numpy()       # (B, 3)
 
         delta_u = u - u_base    # residual potential
         delta_a = a - a_base    # residual acceleration

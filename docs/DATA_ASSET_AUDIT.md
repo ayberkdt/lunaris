@@ -43,7 +43,13 @@ now an expected optional/generated state rather than an external-data gap. The
 inventory and gap sections below remain a pre-cleanup baseline snapshot, so
 they intentionally preserve the earlier missing-GM observation.
 
-## Executive Summary
+## Executive Summary (pre-cleanup baseline)
+
+> **Historical snapshot.** Every "not yet trustworthy" item below has since been
+> resolved; see **Implementation Status** above for the current contract and
+> **Next Cleanup Targets → Done** for the per-item closure. This section is kept
+> verbatim as the pre-cleanup baseline so later changes remain measurable. For
+> the live state, run `lunaris-data verify [--strict --runtime]`.
 
 Current ephemeris data works at runtime:
 
@@ -53,17 +59,24 @@ Current ephemeris data works at runtime:
 - SPICE kernel path resolution accepts local `.txt` wrappers such as
   `naif0012.tls.txt`.
 
-The data-management layer is not yet trustworthy:
+The data-management layer was not yet trustworthy at the time of this snapshot
+(all items now **resolved** — resolution noted inline):
 
-- `lunaris-data verify` reports required ephemeris files missing because it
-  checks exact manifest filenames and does not know the runtime alias policy.
-- `gm_de440.tpc` is absent, so Earth/Sun GM lookups fall back to constants.
-- `thermal_models/` and `assets/` exist locally but are not represented as
-  first-class manifest groups.
-- PDS label/XML companion files are present but not represented as required
-  companions in the manifest.
-- Albedo auto-selection can choose Diviner `DGDR_RA` rock-abundance data over
-  LOLA `LDAM_*` albedo data.
+- `lunaris-data verify` reported required ephemeris files missing because it
+  checked exact manifest filenames and did not know the runtime alias policy.
+  *Resolved: the verifier resolves manifest `aliases` and prints `(via alias: …)`.*
+- `gm_de440.tpc` was absent, so Earth/Sun GM lookups fell back to constants.
+  *Resolved: `gm_de440.tpc` downloaded, hash-recorded, and present; passes
+  `verify --strict --runtime` with no GM fallback warnings.*
+- `thermal_models/` and `assets/` existed locally but were not represented as
+  first-class manifest groups. *Resolved: both are now manifest groups.*
+- PDS label/XML companion files were present but not represented as required
+  companions in the manifest. *Resolved: entries declare `companion_files`,
+  which `verify` checks (and hash-checks when `sha256` is provided).*
+- Albedo auto-selection could choose Diviner `DGDR_RA` rock-abundance data over
+  LOLA `LDAM_*` albedo data. *Resolved: the albedo resolver accepts only LOLA
+  LDAM products and rejects Diviner `DGDR_*` rasters even when they parse
+  (`io_surface._looks_like_lola_ldam_albedo_label`).*
 
 ## Local Inventory
 

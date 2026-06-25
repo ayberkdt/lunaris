@@ -402,12 +402,17 @@ class SobolevLoss(nn.Module):
         target_contract: TargetContract | dict | None = None,
         target_mode: str | None = None,
         degree_max: int | None = None,
+        gravity_model: Any | None = None,
     ):
         super().__init__()
         self.a_sign = float(a_sign)
         self.mu_si = float(mu_si)
         self.degree_min = int(degree_min)
         self.r_ref_m = float(r_ref_m)
+        # Source SH gravity model, required only for a full-field
+        # spherical-harmonics baseline (residual/point-mass paths leave it None).
+        # Not a registered buffer/parameter: it is a read-only analytical field.
+        self._gravity_model = gravity_model
         if isinstance(target_contract, dict):
             self.target_contract = TargetContract.from_dict(target_contract)
         elif isinstance(target_contract, TargetContract):
@@ -606,8 +611,10 @@ class SobolevLoss(nn.Module):
         # Analytical base from explicit target semantics. Residual datasets
         # already store residual labels, so base subtraction is zero even when
         # the runtime total field later needs an SH baseline.
-        u_base = compute_base_potential_from_contract(x_phys, self.target_contract)   # (B,1)
-        a_base = compute_base_accel_from_contract(x_phys, self.target_contract)       # (B,3)
+        u_base = compute_base_potential_from_contract(
+            x_phys, self.target_contract, self._gravity_model)   # (B,1)
+        a_base = compute_base_accel_from_contract(
+            x_phys, self.target_contract, self._gravity_model)   # (B,3)
 
         # Residual targets (what the network must learn)
         delta_u_true = u_phys - u_base   # (B,1)
