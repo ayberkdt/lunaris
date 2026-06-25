@@ -195,7 +195,35 @@ def _point_mass_accel(x_m: np.ndarray, mu_si: float) -> np.ndarray:
     return -float(mu_si) * x_m / (r ** 3)
 
 
-def _target_accel(arr: np.ndarray, *, target_mode: str, baseline_kind: str, mu_si: float) -> np.ndarray:
+def _maybe_load_sh_baseline_model(
+    meta: DatasetMeta, target_mode: str, baseline_kind: str, base_degree: int
+) -> Any | None:
+    """Load the source SH model only for a full-field spherical-harmonics
+    baseline; residual / point-mass paths never touch the gravity file."""
+    if str(target_mode).strip().lower() == "residual":
+        return None
+    if str(baseline_kind).strip().lower() != "spherical_harmonics":
+        return None
+    path = getattr(meta, "gravity_model_path", None)
+    if not path:
+        raise ValueError(
+            "force_direct full-field spherical-harmonics baseline needs "
+            "meta.gravity_model_path; none was recorded in the dataset."
+        )
+    from lunaris.physics.spherical_harmonics import GravityModel
+
+    return GravityModel.from_file(str(path), requested_degree=int(base_degree))
+
+
+def _target_accel(
+    arr: np.ndarray,
+    *,
+    target_mode: str,
+    baseline_kind: str,
+    mu_si: float,
+    gravity_model: Any | None = None,
+    base_degree: int = -1,
+) -> np.ndarray:
     x = arr[:, 0:3]
     a = arr[:, 4:7]
     mode = str(target_mode).strip().lower()
@@ -204,10 +232,25 @@ def _target_accel(arr: np.ndarray, *, target_mode: str, baseline_kind: str, mu_s
         return a
     if baseline == "point_mass":
         return a - _point_mass_accel(x, mu_si)
-    raise NotImplementedError(
-        "Direct-force CLI cannot subtract a spherical-harmonics full-field baseline. "
-        "Use residual datasets, or provide a direct residual-acceleration dataset."
-    )
+    if baseline == "spherical_harmonics":
+        if gravity_model is None:
+            raise ValueError(
+                "Direct-force spherical-harmonics full-field baseline requires the "
+                "source gravity model; pass gravity_model (from meta.gravity_model_path)."
+            )
+        from lunaris.physics.spherical_harmonics import sh_potential_accel_fixed
+
+        _, a_base = sh_potential_accel_fixed(
+            np.ascontiguousarray(x, dtype=np.float64),
+            gravity_model.c_coeffs,
+            gravity_model.s_coeffs,
+            float(gravity_model.mu),
+            float(gravity_model.r_ref),
+            int(base_degree),
+            degree_min=-1,
+        )
+        return a - a_base
+    raise ValueError(f"Unsupported baseline_kind={baseline_kind!r}")
 
 
 def _fit_scaler(arr: np.ndarray, target_a: np.ndarray, meta: DatasetMeta, *, fit_scope: str) -> ScalerPack:
@@ -318,7 +361,14 @@ def train_force_direct(args: argparse.Namespace) -> Path:
     if target_mode not in {"residual", "full"}:
         raise ValueError("--target-mode must be residual or full")
     baseline_kind = "spherical_harmonics" if target_mode == "residual" else "point_mass"
-    target_a = _target_accel(arr, target_mode=target_mode, baseline_kind=baseline_kind, mu_si=mu_si)
+    target_a = _target_accel(
+        arr,
+        target_mode=target_mode,
+        baseline_kind=baseline_kind,
+        mu_si=mu_si,
+        gravity_model=_maybe_load_sh_baseline_model(meta, target_mode, baseline_kind, degree_min),
+        base_degree=degree_min,
+    )
 
     rng = np.random.default_rng(int(args.seed))
     n = int(arr.shape[0])

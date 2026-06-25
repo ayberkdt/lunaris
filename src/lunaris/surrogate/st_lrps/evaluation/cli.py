@@ -517,12 +517,17 @@ def predict_u_and_a(
     mu_si: float = MU_MOON_SI,
     degree_min: int = -1,
     target_contract: TargetContract | dict | None = None,
+    gravity_model: Any | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Predict total U and a via hierarchical residual superposition.
 
     Returns U_pred_phys (B,1) and a_pred_phys (B,3):
       U_total = U_base + unscale(ΔU_scaled)
       a_total = a_base + a_sign · ∇(ΔU_scaled) · (u_scale/x_scale)
+
+    ``gravity_model`` is required only when ``target_contract`` declares a
+    full-field spherical-harmonics baseline (see
+    :func:`lunaris.surrogate.st_lrps.shared.scaling.compute_base_potential_from_contract`).
     """
     if target_contract is not None:
         contract = (
@@ -530,8 +535,8 @@ def predict_u_and_a(
             if isinstance(target_contract, dict)
             else target_contract
         )
-        u_base = compute_base_potential_from_contract(x_phys, contract)  # (B,1)
-        a_base = compute_base_accel_from_contract(x_phys, contract)      # (B,3)
+        u_base = compute_base_potential_from_contract(x_phys, contract, gravity_model)  # (B,1)
+        a_base = compute_base_accel_from_contract(x_phys, contract, gravity_model)      # (B,3)
     else:
         u_base = compute_base_potential(x_phys, mu_si, a_sign, degree_min)   # (B,1)
         a_base = compute_base_accel(x_phys, mu_si, degree_min)               # (B,3)

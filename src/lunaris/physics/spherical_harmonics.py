@@ -1286,6 +1286,246 @@ def compute_point_mass_acceleration(
 
 
 # =============================================================================
+# 5b.        SCALAR POTENTIAL + ACCELERATION (geodesy U and a=grad U)
+# =============================================================================
+# Promoted from st_lrps/data/spatial_cloud_generator.py so the shared scaling
+# layer can subtract an SH baseline without importing the data layer. The
+# generator now imports these back from here (single source of SH math).
+
+def precompute_legendre_constants(N: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    N = int(N)
+    a_nm = np.zeros((N + 1, N + 1), dtype=np.float64)
+    b_nm = np.zeros_like(a_nm)
+    diag_f = np.zeros(N + 1, dtype=np.float64)
+    subdiag_f = np.zeros(N + 1, dtype=np.float64)
+    k_ratio = np.zeros_like(a_nm)
+
+    for n in range(1, N + 1):
+        diag_f[n] = math.sqrt((2.0 * n + 1.0) / (2.0 * n))
+        subdiag_f[n] = math.sqrt(2.0 * n + 1.0)
+
+    for n in range(2, N + 1):
+        for m in range(0, n - 1):
+            if m <= n - 2:
+                num_a = (2.0 * n + 1.0) * (2.0 * n - 1.0)
+                den_a = (n - m) * (n + m)
+                a_nm[n, m] = math.sqrt(num_a / den_a)
+
+                num_b = (2.0 * n + 1.0) * (n + m - 1.0) * (n - m - 1.0)
+                den_b = (2.0 * n - 3.0) * (n - m) * (n + m)
+                b_nm[n, m] = math.sqrt(num_b / den_b)
+
+    for n in range(1, N + 1):
+        for m in range(0, n + 1):
+            if n == 0 or (n + m) == 0:
+                k_ratio[n, m] = 0.0
+            else:
+                if (2 * n - 1) > 0:
+                    k_ratio[n, m] = math.sqrt(((2.0 * n + 1.0) / (2.0 * n - 1.0)) * ((n - m) / (n + m)))
+                else:
+                    k_ratio[n, m] = 0.0
+
+    return a_nm, b_nm, diag_f, subdiag_f, k_ratio
+
+
+@njit(cache=True, fastmath=True)
+def sh_potential_accel_batch_serial(
+    xyz_m: np.ndarray,   # (M,3) [m]
+    C: np.ndarray,       # (N+1,N+1)
+    S: np.ndarray,       # (N+1,N+1)
+    a_nm: np.ndarray,    # (N+1,N+1)
+    b_nm: np.ndarray,    # (N+1,N+1)
+    diag_f: np.ndarray,  # (N+1,)
+    subdiag_f: np.ndarray,  # (N+1,)
+    k_ratio: np.ndarray, # (N+1,N+1)
+    mu_si: float,
+    r_ref_m: float,
+    degree_max: int,
+    degree_min: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    M = xyz_m.shape[0]
+    N = degree_max
+    V_out = np.empty(M, dtype=np.float64)
+    a_out = np.empty((M, 3), dtype=np.float64)
+
+    eps_r = 1e-12
+    eps_rho = 1e-14
+    eps_c = 1e-14
+
+    for k in range(M):
+        x = float(xyz_m[k, 0])
+        y = float(xyz_m[k, 1])
+        z = float(xyz_m[k, 2])
+
+        r2 = x * x + y * y + z * z
+        r = math.sqrt(r2)
+        if r < eps_r:
+            V_out[k] = 0.0
+            a_out[k, 0] = 0.0
+            a_out[k, 1] = 0.0
+            a_out[k, 2] = 0.0
+            continue
+
+        rho2 = x * x + y * y
+        rho = math.sqrt(rho2)
+
+        s = z / r
+        c = rho / r
+
+        if rho > eps_rho:
+            cosl = x / rho
+            sinl = y / rho
+        else:
+            cosl = 1.0
+            sinl = 0.0
+
+        cos_m = np.empty(N + 1, dtype=np.float64)
+        sin_m = np.empty(N + 1, dtype=np.float64)
+        cos_m[0] = 1.0
+        sin_m[0] = 0.0
+        for m in range(1, N + 1):
+            cos_m[m] = cos_m[m - 1] * cosl - sin_m[m - 1] * sinl
+            sin_m[m] = sin_m[m - 1] * cosl + cos_m[m - 1] * sinl
+
+        P_nm2 = np.zeros(N + 1, dtype=np.float64)
+        P_nm1 = np.zeros(N + 1, dtype=np.float64)
+        P_n = np.zeros(N + 1, dtype=np.float64)
+
+        P_nm1[0] = 1.0
+
+        q = r_ref_m / r
+        qpow = 1.0
+
+        V_sum = 0.0
+        dr_sum = 0.0
+        dphi_sum = 0.0
+        dlam_sum = 0.0
+
+        term_cs0 = float(C[0, 0])
+        if degree_min < 0:
+            V_sum += P_nm1[0] * term_cs0
+            dr_sum += P_nm1[0] * term_cs0
+
+        for n in range(1, N + 1):
+            qpow *= q
+
+            for i in range(n + 1):
+                P_n[i] = 0.0
+
+            # Fully-normalized ALFs WITHOUT the Condon-Shortley phase (geodesy/
+            # GRAIL convention), matching lunaris.physics.spherical_harmonics. The
+            # sectoral seed and sectoral recurrence use a POSITIVE sign; a negative
+            # sign here would re-introduce the (-1)^m phase and flip every odd-m
+            # (tesseral/sectoral) label relative to the runtime engine. The first
+            # sub-diagonal and the vertical recurrence keep m fixed, so they are
+            # phase-agnostic and unchanged. (Guarded by the parity test against
+            # GravityModel; zonal-only checks cannot catch a phase error.)
+            if n == 1:
+                P_n[0] = math.sqrt(3.0) * s
+                P_n[1] = math.sqrt(3.0) * c
+            else:
+                P_n[n] = diag_f[n] * c * P_nm1[n - 1]
+                P_n[n - 1] = subdiag_f[n] * s * P_nm1[n - 1]
+                for m in range(0, n - 1):
+                    if m <= n - 2:
+                        P_n[m] = a_nm[n, m] * s * P_nm1[m] - b_nm[n, m] * P_nm2[m]
+
+            nn = float(n)
+            for m in range(0, n + 1):
+                cnm = float(C[n, m])
+                snm = float(S[n, m])
+
+                term_cs = cnm * cos_m[m] + snm * sin_m[m]
+                P = P_n[m]
+
+                if n > degree_min:
+                    V_sum += qpow * P * term_cs
+                    dr_sum += (nn + 1.0) * qpow * P * term_cs
+
+                    if m > 0:
+                        term_lon = (-cnm * sin_m[m] + snm * cos_m[m]) * float(m)
+                        dlam_sum += qpow * P * term_lon
+
+                    if c > eps_c:
+                        P_nm1_m = 0.0
+                        if m <= n - 1:
+                            P_nm1_m = P_nm1[m]
+                        kfac = 0.0
+                        if m <= n:
+                            kfac = k_ratio[n, m]
+                        # Correct derivative: dP̄_n^m/dφ = [-n sinφ P̄_n^m + (n+m) k_{n,m} P̄_{n-1}^m] / cosφ
+                        # WARNING: datasets generated before this fix have sign-flipped latitude
+                        # acceleration components and must be regenerated.
+                        dP_dphi = (-nn * s * P + (nn + float(m)) * kfac * P_nm1_m) / c
+                        dphi_sum += qpow * dP_dphi * term_cs
+
+            P_nm2, P_nm1, P_n = P_nm1, P_n, P_nm2
+
+        V = (mu_si / r) * V_sum
+
+        inv_r2 = 1.0 / r2
+        a_r = -mu_si * inv_r2 * dr_sum
+        a_phi = mu_si * inv_r2 * dphi_sum
+        a_lam = 0.0
+        if c > eps_c:
+            a_lam = mu_si * inv_r2 * (dlam_sum / c)
+
+        rx = c * cosl
+        ry = c * sinl
+        rz = s
+        phix = -s * cosl
+        phiy = -s * sinl
+        phiz = c
+        lamx = -sinl
+        lamy = cosl
+
+        ax = a_r * rx + a_phi * phix + a_lam * lamx
+        ay = a_r * ry + a_phi * phiy + a_lam * lamy
+        az = a_r * rz + a_phi * phiz
+
+        V_out[k] = V
+        a_out[k, 0] = ax
+        a_out[k, 1] = ay
+        a_out[k, 2] = az
+
+    return V_out, a_out
+
+
+def sh_potential_accel_fixed(
+    xyz_m: np.ndarray,
+    c_coeffs: np.ndarray,
+    s_coeffs: np.ndarray,
+    mu_si: float,
+    r_ref_m: float,
+    degree_max: int,
+    degree_min: int = -1,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Batch geodesy potential V and acceleration a for an SH field (body-fixed, SI).
+
+    Returns ``(V, a)`` with ``V`` shape (M,) [m^2/s^2] and ``a`` shape (M, 3)
+    [m/s^2], where ``a = +grad(V)``. Degrees in the inclusive range
+    ``(degree_min, degree_max]`` are summed (``degree_min < 0`` includes the
+    degree-0 monopole), so one call serves both full-field evaluation and
+    residual-baseline subtraction. This is the scalar-potential companion to
+    :func:`sh_accel_fixed`; both use the geodesy 4-pi normalization WITHOUT the
+    Condon-Shortley phase. Validated against the independent field oracle
+    (potential, ~1e-16 rel) and ``GravityModel.accel_fixed`` (acceleration,
+    ~1e-16 rel off-pole; the analytic polar value matches the reference kernel).
+    """
+    xyz = np.ascontiguousarray(np.asarray(xyz_m, dtype=np.float64).reshape(-1, 3))
+    N = int(degree_max)
+    if N < 0:
+        raise ValueError(f"degree_max must be >= 0. Got {degree_max}.")
+    c_sq, s_sq = slice_gravity_model(c_coeffs, s_coeffs, N)
+    a_nm, b_nm, diag_f, subdiag_f, k_ratio = precompute_legendre_constants(N)
+    return sh_potential_accel_batch_serial(
+        xyz, c_sq, s_sq, a_nm, b_nm, diag_f, subdiag_f, k_ratio,
+        float(mu_si), float(r_ref_m), N, int(degree_min),
+    )
+
+
+
+# =============================================================================
 # 6.                 HIGH-LEVEL WRAPPER: GRAVITY MODEL
 # =============================================================================
 
@@ -1511,6 +1751,37 @@ class GravityModel:
         )
         return np.array([ax, ay, az], dtype=np.float64)
 
+    # --------------------------- Potential APIs ---------------------------
+
+    def potential_accel_fixed(
+        self,
+        r_body_fixed: Vec3,
+        degree: int | None = None,
+        degree_min: int = -1,
+    ) -> tuple[float, np.ndarray]:
+        """Geodesy potential ``U`` and acceleration ``a = +grad(U)`` (body-fixed, SI).
+
+        Degrees in ``(degree_min, degree]`` are summed (``degree_min < 0``
+        includes the monopole), so the same call serves full-field evaluation
+        and residual-baseline subtraction. ``a`` agrees with
+        :meth:`accel_fixed` to machine precision.
+        """
+        n_eval = int(clamp(degree if degree is not None else self.max_degree, 0, self.max_degree))
+        V, a = sh_potential_accel_fixed(
+            np.asarray(r_body_fixed, dtype=np.float64).reshape(1, 3),
+            self.c_coeffs, self.s_coeffs, self.mu, self.r_ref, n_eval, int(degree_min),
+        )
+        return float(V[0]), a[0]
+
+    def potential_fixed(
+        self,
+        r_body_fixed: Vec3,
+        degree: int | None = None,
+        degree_min: int = -1,
+    ) -> float:
+        """Geodesy potential ``U`` in the Body-Fixed frame (SI, m^2/s^2)."""
+        return self.potential_accel_fixed(r_body_fixed, degree=degree, degree_min=degree_min)[0]
+
 
 
 # =============================================================================
@@ -1530,6 +1801,9 @@ __all__ = (
     "sh_accel_fixed_numba",           # Serial Kahan-compensated fixed-degree kernel
     "sh_accel_adaptive_blend_numba",  # Altitude-based adaptive resolution kernel
     "compute_point_mass_acceleration",# Newtonian monopole baseline (point-mass)
+    "sh_potential_accel_fixed",       # Batch geodesy potential V + acceleration a
+    "sh_potential_accel_batch_serial",# Numba kernel: (V, a) for an SH field
+    "precompute_legendre_constants",  # SH potential recurrence tables
 
     # --- Utility & Setup Functions ---
     "slice_gravity_model",            # Truncates/pads coefficient arrays to degree N

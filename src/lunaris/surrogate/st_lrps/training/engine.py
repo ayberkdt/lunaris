@@ -1472,6 +1472,36 @@ def _resolve_data_splits(
     )
 
 
+def _maybe_load_baseline_gravity_model(
+    meta: DatasetMeta, target_contract: TargetContract
+) -> Any | None:
+    """Load the source SH gravity model for a full-field spherical-harmonics
+    baseline; return ``None`` for residual / point-mass / none contracts.
+
+    The common (residual) path never touches the gravity file. When a full-field
+    SH baseline is requested, the coefficients are loaded once from
+    ``meta.gravity_model_path`` (truncated to ``base_degree``) and threaded into
+    the scaler fit and the loss so the analytical SH field can be subtracted.
+    """
+    if not (
+        target_contract.target_mode == "full"
+        and target_contract.baseline_kind == "spherical_harmonics"
+    ):
+        return None
+    path = getattr(meta, "gravity_model_path", None)
+    if not path:
+        raise ValueError(
+            "Full-field spherical-harmonics baseline needs the source gravity "
+            "model, but the dataset metadata has no gravity_model_path. "
+            "Regenerate the dataset with a recorded gravity_model_path, or train "
+            "on a residual dataset (which already stores baseline-subtracted "
+            "labels)."
+        )
+    from lunaris.physics.spherical_harmonics import GravityModel
+
+    return GravityModel.from_file(str(path), requested_degree=int(target_contract.base_degree))
+
+
 def _fit_residual_scalers(
     cfg: TrainConfig,
     *,
@@ -1553,6 +1583,7 @@ def _fit_residual_scalers(
             target_contract=target_contract,
             indices=(None if independent_val else train_indices),
             split_provenance=scaler_split_provenance,
+            gravity_model=_maybe_load_baseline_gravity_model(meta, target_contract),
         )
         scaler_hash_info = write_scaler_json(layout, scaler)
     logger.info(f"[artifacts] scaler_hash={scaler_hash_info['scaler_hash']}")
@@ -2084,6 +2115,7 @@ def _build_model_and_optim(
         degree_min=degree_min_val,
         degree_max=degree_max_val,
         target_contract=target_contract,
+        gravity_model=_maybe_load_baseline_gravity_model(meta, target_contract),
     ).to(device=device, dtype=DTYPE)
     logger.info(f"Residual baseline: {target_contract.baseline_description}")
 
