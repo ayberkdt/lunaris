@@ -31,9 +31,15 @@ class ColorTokens:
     fg_inverse: str = "#04070C"
     fg_link: str = "#6FA8FF"
 
-    accent: str = "#3B86FF"
-    accent_hov: str = "#5C9CFF"
-    accent_dim: str = "rgba(59,134,255,0.22)"
+    # Restrained orbital-blue accent. Lighter/calmer than the prior #3B86FF: on
+    # a cool-graphite canvas a fully saturated blue vibrates at edges over long
+    # sessions, and primary buttons carry dark fg_inverse text, so a lighter
+    # accent both calms the chrome and lifts contrast (6.96:1 as text on bg_card,
+    # 8.39:1 for dark text on the accent fill, vs 4.82/5.80). accent_hov stays
+    # lighter for a perceptible hover; accent_deep is the darker pressed shade.
+    accent: str = "#6AA9FF"
+    accent_hov: str = "#86BBFF"
+    accent_dim: str = "rgba(106,169,255,0.22)"
     accent_deep: str = "#2E6AD6"
     secondary: str = "#15D6A6"
     secondary_hov: str = "#4DE8C4"

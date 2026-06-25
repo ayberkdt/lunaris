@@ -43,16 +43,18 @@ third-party widget that cannot be styled through a property or palette.
 | `fg_soft` | `#BCC7D6` | secondary text |
 | `fg_muted` | `#8C99AA` | metadata and hints |
 | `fg_disabled` | `#79848F` | inactive control text |
-| `accent` | `#3B86FF` | selection, focus, primary action |
+| `accent` | `#6AA9FF` | selection, focus, primary action |
+| `accent_hov` | `#86BBFF` | hover state of accented controls |
+| `accent_deep` | `#2E6AD6` | pressed/active accent shade |
 | `secondary` | `#15D6A6` | comparison series, secondary accent |
-| `success` | `#14D49E` | success and completed state |
+| `success` | `#3DD17E` | success and completed state |
 | `warning` | `#F5B43C` | warning state |
 | `error` | `#FF5D6C` | failure and destructive action |
-| `critical` | `#FF7088` | critical state |
+| `critical` | `#FF3355` | critical state (more intense than `error`) |
 | `info` | `#4A9DFF` | informational state |
-| `border` | `#3A4756` | control and standard surface border |
+| `border` | `#6A7686` | control and standard surface border (WCAG 1.4.11, >=3:1) |
 | `border_soft` | `#1F2833` | separators and quiet surfaces |
-| `border_strong` | `#46545F` | focus-adjacent and elevated borders |
+| `border_strong` | `#4A5765` | focus-adjacent and elevated borders |
 
 Decorative gradients are not used. Translucent variants are derived from tokens
 with `with_alpha(...)`.
