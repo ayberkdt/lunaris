@@ -15,7 +15,6 @@ import logging
 
 from lunaris.surrogate.runtime.artifact import (
     DEFAULT_ST_LRPS_RUNS_DIR,
-    _is_valid_surrogate_run,
     discover_st_lrps_model_dirs,
     find_checkpoint_for_st_lrps_run,
     find_latest_st_lrps_model_dir,
@@ -25,7 +24,6 @@ from lunaris.surrogate.runtime.gravity_provider import (
     SurrogateGravityMetadata,
     SurrogateGravityModel,
 )
-from lunaris.surrogate.runtime.metadata import _extract_degree_metadata
 
 logger = logging.getLogger(__name__)
 

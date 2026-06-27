@@ -7,23 +7,13 @@ reconstructs that surface.
 
 from __future__ import annotations
 
-from lunaris.core.propagation.propagator import (
-    propagate,
-    PropagationResult,
-)
+from scipy.integrate import solve_ivp
+
 from lunaris.core.propagation.events import (
-    build_events,
-    _find_event_index,
     _build_r_i_to_bf_from_rot_table,
+    _find_event_index,
+    build_events,
 )
-from lunaris.core.propagation.time_grid import (
-    make_time_grid,
-    _norm_method,
-    _get_ref_radius_and_mu,
-    _get_sh_degree,
-    _clamp_output_dt,
-)
-from lunaris.core.propagation.telemetry import _make_telem_dict
 from lunaris.core.propagation.integrators.fixed_step import (
     _ACCEL_METHODS,
     _RHS_METHODS,
@@ -41,7 +31,18 @@ from lunaris.core.propagation.integrators.symplectic import (
     _Y8_WEIGHTS,
     _composition_weights,
 )
-from scipy.integrate import solve_ivp
+from lunaris.core.propagation.propagator import (
+    PropagationResult,
+    propagate,
+)
+from lunaris.core.propagation.telemetry import _make_telem_dict
+from lunaris.core.propagation.time_grid import (
+    _clamp_output_dt,
+    _get_ref_radius_and_mu,
+    _get_sh_degree,
+    _norm_method,
+    make_time_grid,
+)
 
 __all__ = [
     "propagate",
