@@ -55,7 +55,6 @@ from numba import njit
 from lunaris.common.constants import (
     AU,
     C_LIGHT,
-    EPS_1E15,
     MU_EARTH,
     MU_MOON,
     MU_SUN,
@@ -75,6 +74,24 @@ from lunaris.common.math_utils import (
     sample_grid_bilinear,
 )
 from lunaris.common.type_defs import PerturbationFlags, SolidTideConfig, SpacecraftProps
+from lunaris.core.dynamics.adaptive_degree import (
+    _sample_albedo_dn_scaled,
+    _select_adaptive_sh_degree,
+)
+from lunaris.core.dynamics.ephemeris_pack import _EphemPack
+from lunaris.core.dynamics.gravity_pack import _GravPack
+from lunaris.core.dynamics.perturbation_packs import (
+    _AlbedoPack,
+    _EarthJ2Pack,
+    _ThermalPack,
+    _TidePack,
+)
+from lunaris.core.dynamics.requirements import (
+    extract_ephem_tables_strict,
+    extract_gravity_strict,
+    extract_surface_provider_strict,
+)
+from lunaris.core.dynamics.surrogate_bridge import _is_surrogate_gravity_provider
 from lunaris.physics.ephemeris import get_ephem_state, interp_vec3_derivative_safe
 from lunaris.physics.lunar_albedo import (
     ALBEDO_SOURCE_CONSTANT,
@@ -99,19 +116,6 @@ from lunaris.physics.thermal_ir import (
     normalize_thermal_mode,
 )
 from lunaris.physics.third_body_effects import accel_j2_oblate_diff_numba, accel_third_body_numba
-from lunaris.core.dynamics.adaptive_degree import _sample_albedo_dn_scaled, _select_adaptive_sh_degree
-from lunaris.core.dynamics.ephemeris_pack import _EphemPack
-from lunaris.core.dynamics.gravity_pack import _GravPack
-from lunaris.core.dynamics.perturbation_packs import _AlbedoPack, _EarthJ2Pack, _ThermalPack, _TidePack
-from lunaris.core.dynamics.requirements import (
-    extract_ephem_tables_strict,
-    extract_gravity_strict,
-    extract_surface_provider_strict,
-    need_ephemeris,
-    require_srp_props,
-)
-from lunaris.core.dynamics.surrogate_bridge import _is_surrogate_gravity_provider
-
 
 # =============================================================================
 # 1.                             DYNAMICS ENGINE

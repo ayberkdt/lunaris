@@ -9,6 +9,7 @@ import numpy as np
 
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
 
+
 def _as_f64_c(a: Any, name: str) -> np.ndarray:
     """Return float64, C-contiguous numpy array; reject empty inputs."""
     arr = np.asarray(a, dtype=np.float64)

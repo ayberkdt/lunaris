@@ -18,7 +18,6 @@ from lunaris.validation.gravity_reference.independent_field_oracle import (
 )
 from lunaris.validation.gravity_reference.source_hashes import sha256_file
 
-
 REPO = Path(__file__).resolve().parents[4]
 BENCHMARK_ID = "synthetic_degree4_oracle"
 R_REF_M = 1_738_000.0

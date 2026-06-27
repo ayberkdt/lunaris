@@ -17,7 +17,6 @@ from lunaris.surrogate.st_lrps.shared.scaling import (
     compute_base_potential_from_contract,
 )
 
-
 # --- Risk 3: SH baseline computed once -------------------------------------
 
 def _full_sh_contract() -> TargetContract:

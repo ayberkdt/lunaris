@@ -9,6 +9,7 @@ from typing import Any
 
 from lunaris.common.lunar_data import resolve_lunar_gravity_path
 
+
 def _extract_degree_metadata(config: dict[str, Any]) -> tuple:
     """
     Resolve ``degree_min`` and ``degree_max`` from a run ``config.json``.

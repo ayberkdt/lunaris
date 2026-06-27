@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Thin wrapper for the ST-LRPS paper evidence runner (Part 1).
 
 The real logic lives in the installed package so it is importable and tested:
@@ -26,7 +25,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - install hint only
         "Could not import lunaris. Install the project first: `python -m pip install -e .`\n"
         f"Original error: {exc}\n"
     )
-    raise SystemExit(2)
+    raise SystemExit(2) from exc
 
 
 if __name__ == "__main__":

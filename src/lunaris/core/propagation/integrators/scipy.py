@@ -6,7 +6,6 @@ from typing import Any
 
 from lunaris.core.propagation.time_grid import _norm_method
 
-
 # exact spelling SciPy expects so an adaptive selection never raises.
 _SCIPY_METHOD_NAMES: dict[str, str] = {
     "DOP853": "DOP853",

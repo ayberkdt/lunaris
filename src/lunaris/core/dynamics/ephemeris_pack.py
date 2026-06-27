@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from lunaris.common.type_defs import F64Array
 from lunaris.core.dynamics.requirements import _as_f64_c
 
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _EphemPack:
     """

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+
 def _is_surrogate_gravity_provider(obj: Any) -> bool:
     """
     Return ``True`` when the gravity object exposes the surrogate-runtime API.

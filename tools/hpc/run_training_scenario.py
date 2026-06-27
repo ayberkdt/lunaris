@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Reproducible ST-LRPS scenario launcher for Slurm array jobs.
 
 Each *scenario* is one self-describing experiment stored as a single JSON line
@@ -40,9 +39,10 @@ import platform
 import re
 import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any
 
 # --------------------------------------------------------------------------- #
 # Contracts
@@ -50,14 +50,14 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 # Entry points the launcher is allowed to start, mapped to the module run via
 # ``python -m`` (more robust than relying on console scripts being on PATH).
-ENTRYPOINT_MODULES: Dict[str, str] = {
+ENTRYPOINT_MODULES: dict[str, str] = {
     "lunaris-train": "lunaris.surrogate.st_lrps.training.cli",
     "lunaris-train-force-direct": "lunaris.surrogate.st_lrps.training.force_direct_cli",
     "lunaris-eval": "lunaris.surrogate.st_lrps.evaluation.cli",
     "lunaris-benchmark": "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models",
 }
 
-REQUIRED_FIELDS: Tuple[str, ...] = (
+REQUIRED_FIELDS: tuple[str, ...] = (
     "name",
     "entrypoint",
     "description",
@@ -67,14 +67,14 @@ REQUIRED_FIELDS: Tuple[str, ...] = (
 
 # The launcher injects the output directory itself; scenarios and common flags
 # must not also set an output flag, or the run directory would be ambiguous.
-OUTPUT_FLAGS: Tuple[str, ...] = ("--out", "--out-dir", "--output-dir", "--output")
+OUTPUT_FLAGS: tuple[str, ...] = ("--out", "--out-dir", "--output-dir", "--output")
 
 # Filesystem-safe scenario name: starts alphanumeric, then word/dot/dash chars.
 _SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_NAME_LEN = 200
 
 # Expected (runtime_model_kind -> entrypoint) consistency for training kinds.
-_KIND_TO_ENTRYPOINT: Dict[str, str] = {
+_KIND_TO_ENTRYPOINT: dict[str, str] = {
     "potential_autograd": "lunaris-train",
     "force_direct": "lunaris-train-force-direct",
 }
@@ -98,7 +98,7 @@ def is_safe_name(name: Any) -> bool:
     return bool(_SAFE_NAME_RE.match(name))
 
 
-def load_scenarios(path: Path) -> List[Dict[str, Any]]:
+def load_scenarios(path: Path) -> list[dict[str, Any]]:
     """Parse a scenario JSONL file into a list of scenario dicts.
 
     Blank lines and ``#`` comment lines are skipped but counted so error
@@ -106,7 +106,7 @@ def load_scenarios(path: Path) -> List[Dict[str, Any]]:
     """
     if not path.exists():
         raise ScenarioError(f"Scenario file not found: {path}")
-    scenarios: List[Dict[str, Any]] = []
+    scenarios: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8") as handle:
         for line_no, raw in enumerate(handle, start=1):
             text = raw.strip()
@@ -213,7 +213,7 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-def resolve_output_root(explicit: Optional[str]) -> Path:
+def resolve_output_root(explicit: str | None) -> Path:
     """Resolve the base directory that holds per-scenario run directories."""
     if explicit:
         return Path(explicit).expanduser().resolve()
@@ -240,10 +240,10 @@ def build_command(
     scenario: Mapping[str, Any],
     run_dir: Path,
     common_flags: Sequence[str],
-) -> List[str]:
+) -> list[str]:
     """Build the ``python -m <module> ...`` command for a scenario."""
     module = ENTRYPOINT_MODULES[scenario["entrypoint"]]
-    cmd: List[str] = [sys.executable, "-m", module]
+    cmd: list[str] = [sys.executable, "-m", module]
     cmd += [str(tok) for tok in scenario["flags"]]
     cmd += list(common_flags)
     # Inject the output directory last so the launcher's value is unambiguous.
@@ -264,9 +264,9 @@ def command_to_str(cmd: Sequence[str]) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def _environment_snapshot(scenario_file: Path, index: int) -> Dict[str, Any]:
+def _environment_snapshot(scenario_file: Path, index: int) -> dict[str, Any]:
     """Capture a curated, secret-free snapshot of the launch environment."""
-    captured: Dict[str, str] = {}
+    captured: dict[str, str] = {}
     for key, value in os.environ.items():
         if key.startswith(("SLURM_", "LUNARIS_", "STLRPS_", "CUDA_")):
             captured[key] = value
@@ -313,7 +313,7 @@ def _write_provenance(
 # --------------------------------------------------------------------------- #
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> Tuple[argparse.Namespace, List[str]]:
+def parse_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
     ap = argparse.ArgumentParser(
         prog="run_training_scenario.py",
         description="Launch one ST-LRPS scenario from a JSONL sweep file.",
@@ -367,7 +367,7 @@ def _resolve_index(args: argparse.Namespace) -> int:
         raise ScenarioError(f"SLURM_ARRAY_TASK_ID={env!r} is not an integer.") from exc
 
 
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     args, common_flags = parse_args(argv)
 
     # Strip a lone "--" separator if the caller used one before common flags.

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from lunaris.common.constants import AU, C_LIGHT, EPS_1E15, R_EARTH_MEAN, SIGMA_SB, SOLAR_FLUX_1AU
+from lunaris.common.constants import AU, C_LIGHT, EPS_1E15, R_EARTH_MEAN, SOLAR_FLUX_1AU
 from lunaris.common.type_defs import F64Array
 from lunaris.core.dynamics.requirements import _as_f64_c
 from lunaris.physics.thermal_ir import (
@@ -14,6 +14,7 @@ from lunaris.physics.thermal_ir import (
     THERMAL_MODE_EQUILIBRIUM,
     THERMAL_MODE_TEMPERATURE_GRID,
 )
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _AlbedoPack:

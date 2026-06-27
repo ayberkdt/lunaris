@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 from scipy.integrate import solve_ivp
 
-from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.common.constants import R_MOON
 from lunaris.common.math_utils import nyquist_max_step_s
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig, TimeConfig
 from lunaris.core.dynamics import DynamicsEngine
@@ -33,49 +33,21 @@ from lunaris.core.propagation.events import (
     build_events,
 )
 from lunaris.core.propagation.integrators.fixed_step import (
-    _ACCEL_METHODS,
-    _RHS_METHODS,
-    _SYMPLECTIC_CANONICAL,
     _fixed_step_requires_6d,
     _integrate_fixed_step,
     _is_fixed_step_method,
     _is_symplectic_method,
 )
-from lunaris.core.propagation.integrators.rk import (
-    _RK8_SEQUENCE,
-    _modified_midpoint,
-    _rk4_step_full,
-    _rk8_step_full,
-    _rkn4_step,
-)
-from lunaris.core.propagation.integrators.scipy import _SCIPY_METHOD_NAMES, _resolve_scipy_method
-from lunaris.core.propagation.integrators.symplectic import (
-    _PEFRL_CHI,
-    _PEFRL_LAMBDA,
-    _PEFRL_XI,
-    _Y4_WEIGHTS,
-    _Y6_WEIGHTS,
-    _Y8_WEIGHTS,
-    _composition_weights,
-    _composed_step,
-    _pack6,
-    _pefrl_step,
-    _vv_step,
-    _y4_step,
-    _y6_step,
-    _y8_step,
-)
-from lunaris.core.propagation.result import STATE_MIN_SIZE, _as_state_array
+from lunaris.core.propagation.integrators.scipy import _resolve_scipy_method
+from lunaris.core.propagation.result import _as_state_array
 from lunaris.core.propagation.telemetry import (
     _build_surface_radius_sampler,
-    _latlon_from_r_bf,
     _make_telem_dict,
 )
 from lunaris.core.propagation.time_grid import (
     _clamp_output_dt,
     _get_ref_radius_and_mu,
     _get_sh_degree,
-    _norm_method,
     make_time_grid,
 )
 

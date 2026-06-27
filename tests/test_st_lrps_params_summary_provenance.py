@@ -23,7 +23,6 @@ from lunaris.surrogate.st_lrps.training.config_summary import (
     build_experiment_feature_summary,
 )
 
-
 # --- dataset_parameters ----------------------------------------------------
 
 def test_dataset_parameters_defaults_are_lunar():
@@ -57,7 +56,7 @@ def test_load_run_config_roundtrip(tmp_path):
 
 def test_dataset_parameters_is_frozen():
     p = DatasetParameters()
-    with pytest.raises(Exception):
+    with pytest.raises(Exception, match="cannot assign to field"):
         p.mu_si = 1.0  # frozen dataclass
 
 

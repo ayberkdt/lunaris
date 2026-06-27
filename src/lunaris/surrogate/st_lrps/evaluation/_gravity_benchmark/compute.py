@@ -974,7 +974,7 @@ def run_st_lrps_batch_rk4(
             flush=True,
         )
         try:
-            setattr(args, "_legacy_batch_frame_notice_emitted", True)
+            args._legacy_batch_frame_notice_emitted = True
         except Exception:
             pass
 

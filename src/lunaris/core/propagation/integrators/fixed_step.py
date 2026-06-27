@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import time
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -20,9 +19,7 @@ from lunaris.core.propagation.integrators.symplectic import (
     _y6_step,
     _y8_step,
 )
-from lunaris.core.propagation.telemetry import _make_telem_dict
 from lunaris.core.propagation.time_grid import _norm_method
-
 
 # Acceleration-based symplectic + Nystrom methods operate on the 6-D [r, v]
 # state only. RK4 operates on the full state (augmented states allowed).

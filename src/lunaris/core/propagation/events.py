@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from typing import Any
 
@@ -18,7 +17,6 @@ from lunaris.core.events import (
     make_periselene_event,
 )
 from lunaris.core.propagation.checkpoint import _stop_requested
-from lunaris.core.propagation.telemetry import _build_surface_radius_sampler
 from lunaris.core.propagation.time_grid import _get_ref_radius_and_mu
 
 

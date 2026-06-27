@@ -9,6 +9,7 @@ import numpy as np
 from lunaris.common.type_defs import F64Array
 from lunaris.core.dynamics.requirements import _as_f64_c
 
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _GravPack:
     """Engine-internal gravity pack (validated, float64, C-contiguous; GravityModel)."""

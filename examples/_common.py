@@ -9,9 +9,9 @@ Run examples from the repository root after installing the package:
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
-from typing import Iterable
 
 import matplotlib
 import numpy as np

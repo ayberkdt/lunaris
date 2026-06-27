@@ -9,6 +9,7 @@ from typing import Any
 
 import numpy as np
 
+
 @dataclass(frozen=True, slots=True)
 class _ScaleVector:
     """

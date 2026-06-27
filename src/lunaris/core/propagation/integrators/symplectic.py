@@ -6,7 +6,6 @@ from collections.abc import Callable
 
 import numpy as np
 
-
 # ---- Velocity-Verlet base step (symmetric, 2nd order) -----------------------
 
 def _vv_step(accel: Callable[[float, np.ndarray], np.ndarray], t: float, y6: np.ndarray, h: float) -> np.ndarray:

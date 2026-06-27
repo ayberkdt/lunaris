@@ -25,7 +25,7 @@ from lunaris.surrogate.runtime.networks import (
     _extract_state_dict,
     _load_checkpoint,
 )
-from lunaris.surrogate.runtime.scalers import _ScalerBundle, _load_scaler_bundle
+from lunaris.surrogate.runtime.scalers import _load_scaler_bundle, _ScalerBundle
 
 logger = logging.getLogger(__name__)
 
