@@ -37,8 +37,8 @@ __all__ = [
 if TYPE_CHECKING:
     from . import events
     from .dynamics import DynamicsEngine
-    from .propagation.propagator import propagate
     from .propagation.events import build_events
+    from .propagation.propagator import propagate
     from .state import (
         calculate_ae_from_altitudes,
         calculate_ae_from_radii,
