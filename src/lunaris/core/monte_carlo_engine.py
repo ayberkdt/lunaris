@@ -7,6 +7,7 @@ entry points and downstream imports continue to resolve through this module.
 
 from __future__ import annotations
 
+from importlib import import_module as _import_module
 from typing import Any
 
 import numpy as np
@@ -85,6 +86,33 @@ _COMPAT_PRIVATE_EXPORT_NAMES = (
     "_NPZWriter",
     "_validate_archive_v2_manifest",
 )
+
+
+# Bind every legacy private name onto this module from its canonical batch home.
+# Done dynamically (not via ``from lunaris.batch.X import _Y``) so import-pruning
+# linters (``ruff --fix``) cannot strip these compatibility re-exports.
+_BATCH_SUBMODULES = (
+    "lunaris.batch.engine",
+    "lunaris.batch.storage",
+    "lunaris.batch.sampling",
+    "lunaris.batch.provenance",
+    "lunaris.batch.requirements",
+    "lunaris.batch.memory_policy",
+    "lunaris.batch.backend_policy",
+)
+_g = globals()
+for _modname in _BATCH_SUBMODULES:
+    _sub = _import_module(_modname)
+    for _name in _COMPAT_PRIVATE_EXPORT_NAMES:
+        if _name not in _g and hasattr(_sub, _name):
+            _g[_name] = getattr(_sub, _name)
+
+_missing = [_n for _n in _COMPAT_PRIVATE_EXPORT_NAMES if _n not in _g]
+if _missing:  # pragma: no cover - guards against future renames in lunaris.batch
+    raise ImportError(
+        "lunaris.core.monte_carlo_engine compatibility shim could not resolve: "
+        + ", ".join(_missing)
+    )
 
 
 __all__ = [
