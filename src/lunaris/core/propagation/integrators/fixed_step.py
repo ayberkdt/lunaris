@@ -6,6 +6,7 @@ import math
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 
 import numpy as np
 

@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.math_utils import quat_rotate_np, quat_slerp_np
+from lunaris.common.type_defs import PropagatorConfig
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.events import (
     make_aposelene_event,

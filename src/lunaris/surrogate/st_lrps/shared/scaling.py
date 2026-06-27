@@ -251,7 +251,6 @@ def _sh_baseline_field(
     a_t = torch.as_tensor(a, device=x_phys.device, dtype=x_phys.dtype).reshape(-1, 3)
     return V_t, a_t
 
-
 def compute_base_potential_accel_from_contract(
     x_phys: torch.Tensor,
     contract: TargetContract,

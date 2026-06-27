@@ -8,9 +8,11 @@ point and re-exports legacy private helpers for compatibility with the old
 
 from __future__ import annotations
 
+import json
 import math
 import time
 from collections.abc import Callable, Sequence
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
