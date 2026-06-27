@@ -57,6 +57,7 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.batch_defs import build_mc_output_grid
 from lunaris.common.constants import (
     AU,
     C_LIGHT,
@@ -73,7 +74,6 @@ from lunaris.common.constants import (
     R_EARTH_MEAN,
     R_MOON,
 )
-from lunaris.common.batch_defs import build_mc_output_grid
 from lunaris.common.type_defs import F64Array
 
 # =============================================================================
@@ -1803,7 +1803,7 @@ class CPUBatchPropagator:
             missing a required attribute such as ``degree_max``.
         """
 
-        from lunaris.core.propagator import _get_ref_radius_and_mu, _get_sh_degree
+        from lunaris.core.propagation.time_grid import _get_ref_radius_and_mu, _get_sh_degree
 
         dyn = self._make_sample_dynamics(
             mass_kg=float(self._sim_cfg.spacecraft.mass_kg),
@@ -1841,7 +1841,7 @@ class CPUBatchPropagator:
         grid and later samples are linearly resampled onto that grid when
         needed.
         """
-        from lunaris.core.propagator import propagate as propagate_single
+        from lunaris.core.propagation.propagator import propagate as propagate_single
 
         N = int(Y0.shape[0])
         time_cfg, prop_cfg = _build_cpu_time_and_solver_config(

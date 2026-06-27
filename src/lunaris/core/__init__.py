@@ -37,7 +37,8 @@ __all__ = [
 if TYPE_CHECKING:
     from . import events
     from .dynamics import DynamicsEngine
-    from .propagator import build_events, propagate
+    from .propagation.propagator import propagate
+    from .propagation.events import build_events
     from .state import (
         calculate_ae_from_altitudes,
         calculate_ae_from_radii,
@@ -49,8 +50,8 @@ if TYPE_CHECKING:
 # name -> (relative_module, attribute)
 _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "DynamicsEngine": (".dynamics", "DynamicsEngine"),
-    "propagate": (".propagator", "propagate"),
-    "build_events": (".propagator", "build_events"),
+    "propagate": (".propagation.propagator", "propagate"),
+    "build_events": (".propagation.events", "build_events"),
     "create_state_from_keplerian": (".state", "create_state_from_keplerian"),
     "calculate_ae_from_altitudes": (".state", "calculate_ae_from_altitudes"),
     "calculate_ae_from_radii": (".state", "calculate_ae_from_radii"),

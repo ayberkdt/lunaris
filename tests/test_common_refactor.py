@@ -112,7 +112,15 @@ def test_lazy_imports():
         assert hasattr(common, name)
 
     # Accessing them triggers the lazy import
-    from lunaris.common import batch_defs, hashing, lunar_data, math_utils, montecarlo_defs, paths, time_utils
+    from lunaris.common import (
+        batch_defs,
+        hashing,
+        lunar_data,
+        math_utils,
+        montecarlo_defs,
+        paths,
+        time_utils,
+    )
     assert batch_defs is not None
     assert hashing is not None
     assert lunar_data is not None
