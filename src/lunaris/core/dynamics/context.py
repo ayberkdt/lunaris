@@ -1,4 +1,4 @@
-"""Responsibility-split re-export surface for ``lunaris.core.dynamics.engine``."""
+"""Compatibility surface for dynamics context and pack imports."""
 
 from __future__ import annotations
 

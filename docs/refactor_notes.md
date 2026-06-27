@@ -74,15 +74,18 @@ Deferred:
 
 New canonical package:
 
-- `lunaris.surrogate.runtime.adapter`: moved implementation of the production
-  ST-LRPS gravity runtime adapter.
-- `lunaris.surrogate.runtime.artifact`: artifact/run discovery import surface.
-- `lunaris.surrogate.runtime.metadata`: degree/config/path metadata helpers.
-- `lunaris.surrogate.runtime.scalers`: scaler bundle helpers.
+- `lunaris.surrogate.runtime.adapter`: compatibility facade only (62 LOC).
+- `lunaris.surrogate.runtime.artifact`: artifact/run discovery helpers.
+- `lunaris.surrogate.runtime.metadata`: degree/config/path metadata helpers and
+  `SurrogateGravityMetadata`.
+- `lunaris.surrogate.runtime.scalers`: scaler vector/bundle normalization.
 - `lunaris.surrogate.runtime.networks`: network/checkpoint construction helpers.
-- `lunaris.surrogate.runtime.device`: `_require_torch` import guard surface.
-- `lunaris.surrogate.runtime.gravity_provider`: `SurrogateGravityModel` surface.
-- `lunaris.surrogate.runtime.force_runtime`: force-runtime facade surface.
+- `lunaris.surrogate.runtime.device`: lazy torch import guard and torch module
+  handles.
+- `lunaris.surrogate.runtime.gravity_provider`: `SurrogateGravityModel` runtime
+  provider (582 LOC).
+- `lunaris.surrogate.runtime.force_runtime`: lazy bridge to the canonical
+  `st_lrps.runtime.force_model` loader.
 
 Compatibility shim:
 
@@ -92,18 +95,21 @@ Compatibility shim:
 - No production code was moved into `physics` or `core`; the adapter remains in
   the surrogate subsystem. Existing lazy/failing optional torch behavior is
   preserved.
+- The previous 1153-LOC adapter implementation is now split across the modules
+  above; `adapter.py` is no longer the god-module.
 
 ## P3 Propagation Split
 
 New canonical package:
 
-- `lunaris.core.propagation.propagator`: moved implementation of the propagation
-  orchestration, solve_ivp path, fixed-step path, events, checkpointing, and
-  telemetry helpers.
+- `lunaris.core.propagation.propagator`: propagation orchestration and
+  solve_ivp-facing public API (727 LOC).
 - `lunaris.core.propagation.{events,checkpoint,time_grid,telemetry,result}`:
-  responsibility import surfaces over the canonical implementation.
+  event detection/refinement, checkpoint IO, time-grid policy, telemetry, and
+  result helpers.
 - `lunaris.core.propagation.integrators.{scipy,fixed_step,rk,symplectic}`:
-  integrator helper import surfaces.
+  scipy method normalization, fixed-step driver, RK steppers, and symplectic
+  steppers.
 
 Compatibility shim:
 
@@ -113,18 +119,28 @@ Compatibility shim:
   `lunaris.core.propagator.solve_ivp`.
 - Public and private helper imports used by tests remain available from the old
   path.
+- The previous 1981-LOC propagator implementation is now split; event,
+  checkpoint, time-grid, telemetry, and fixed-step integrator code are no longer
+  stub re-exports.
 
 ## P4 Dynamics Split
 
 New canonical package:
 
-- `lunaris.core.dynamics.engine`: moved implementation of `DynamicsEngine`, RHS
-  assembly, strict provider extraction, packs, adaptive-degree helpers, and
-  surrogate bridge.
-- `lunaris.core.dynamics.{requirements,gravity_pack,ephemeris_pack,perturbation_packs,adaptive_degree,surrogate_bridge,rhs,context}`:
-  responsibility import surfaces over the canonical implementation.
+- `lunaris.core.dynamics.engine`: `DynamicsEngine`, RHS assembly, and the
+  jitted RHS closures (1961 LOC).
+- `lunaris.core.dynamics.requirements`: strict gravity/ephemeris/surface
+  provider extraction and spacecraft/ephemeris requirement helpers.
+- `lunaris.core.dynamics.{gravity_pack,ephemeris_pack,perturbation_packs}`:
+  validated data packs used by RHS construction.
+- `lunaris.core.dynamics.adaptive_degree`: adaptive SH degree and albedo DN
+  sampling kernels.
+- `lunaris.core.dynamics.surrogate_bridge`: surrogate gravity provider
+  detection.
+- `lunaris.core.dynamics.{rhs,context}`: compatibility/facade surfaces for the
+  current engine-owned RHS assembly.
 - `lunaris.core.dynamics.rhs_numba`: placeholder surface documenting that the
-  first structural split keeps jitted closures inside `engine.py` to avoid
+  jitted closures intentionally remain inside `engine.py` for now to avoid
   changing hot-loop object boundaries.
 
 Compatibility shim:
@@ -134,6 +150,10 @@ Compatibility shim:
   and private helper imports used by tests still work.
 - The old `src/lunaris/core/dynamics.py` module was removed to avoid
   module/package shadowing.
+- The previous 2739-LOC implementation has a real reduction: strict contracts,
+  packs, adaptive kernels, and surrogate detection moved out of `engine.py`.
+  Deeper RHS extraction is intentionally deferred because it touches the Numba
+  hot path and needs stronger performance/physics regression coverage.
 
 P2-P4 smoke checks run after the split:
 
@@ -151,9 +171,10 @@ P2-P4 smoke checks run after the split:
 
 Deferred:
 
-- P2/P3/P4 submodules are import surfaces over moved canonical implementation
-  modules in this first structural pass. Deeper physical extraction can follow
-  once a full pytest/ruff/mypy environment is available.
+- P4 `rhs.py`, `rhs_numba.py`, and parts of `context.py` remain facade or
+  placeholder surfaces. Moving the jitted RHS closure out of `engine.py` is the
+  next logical decomposition step, but it should be done with a full
+  pytest/ruff/mypy environment plus physics/performance checks.
 - No finite-difference or CPU/GPU physics validation was added because this pass
   intentionally moved code without changing kernels, frames, signs, or
   integrator algorithms. The point-mass RHS and short propagation golden are the

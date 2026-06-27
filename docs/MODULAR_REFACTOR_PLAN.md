@@ -1,6 +1,6 @@
 # Modular Architecture Refactor Plan
 
-Status: **IN PROGRESS** (P0-P6 applied 2026-06-27; available local checks passed)
+Status: **APPLIED** (P0-P6 applied 2026-06-27; local smoke/golden checks passed; full pytest/ruff/mypy unavailable in this venv)
 Owner: Ayberk
 Date: 2026-06-27
 Scope: structural refactor only — **no numerical, CLI, or workflow behavior changes**
@@ -28,7 +28,7 @@ These are non-negotiable acceptance constraints. Re-check them at the end of eac
 
 ## 1. Current state (measured 2026-06-27)
 
-Oversized modules (line counts):
+Oversized modules before the refactor (line counts):
 
 | File | LOC | Target |
 |---|---|---|
@@ -40,6 +40,23 @@ Oversized modules (line counts):
 | `src/lunaris/surrogate/runtime_adapter.py` | 1153 | Target 4 |
 | `src/lunaris/cli/main.py` | 853 | Target 5 (only if needed) |
 | `src/lunaris/core/config.py` | 540 | Target 6 (leave mostly alone) |
+
+Post-refactor measured state (same date):
+
+| Target | Main compatibility/canonical file after split | LOC | Real code moved to |
+|---|---:|---:|---|
+| P1 batch | `src/lunaris/core/monte_carlo_engine.py` shim | 121 | `lunaris/batch/{engine,storage,sampling,provenance,requirements,...}.py` |
+| P1 batch engine | `src/lunaris/batch/engine.py` | 1119 | Storage/sampling/provenance/requirements/memory policy are separate modules |
+| P2 surrogate runtime facade | `src/lunaris/surrogate/runtime/adapter.py` | 62 | `runtime/{artifact,metadata,scalers,networks,gravity_provider,force_runtime,device}.py` |
+| P3 propagation orchestration | `src/lunaris/core/propagation/propagator.py` | 727 | `propagation/{events,checkpoint,time_grid,telemetry,result,integrators/*}.py` |
+| P4 dynamics engine | `src/lunaris/core/dynamics/engine.py` | 1961 | `dynamics/{requirements,gravity_pack,ephemeris_pack,perturbation_packs,adaptive_degree,surrogate_bridge}.py` |
+| P5 CLI facade | `src/lunaris/cli/main.py` | 53 | `cli/{options,run,summary,batch}.py` |
+
+Note: P4 intentionally keeps the RHS assembly and jitted closure inside
+`dynamics/engine.py`; only validation helpers, data packs, adaptive kernels, and
+the surrogate-provider bridge were moved. This is a real reduction, but the
+remaining engine is still a large hot-path module and should be split further
+only with stronger physics/performance regression coverage.
 
 Relevant existing structure (do **not** duplicate these):
 

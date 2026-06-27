@@ -1,7 +1,7 @@
-"""Numba RHS implementation surface.
+"""Reserved surface for a future Numba RHS extraction.
 
-The first structural split keeps the jitted RHS closures inside
-``engine.py`` so no Python objects are introduced into the hot loop.
+The jitted RHS closures intentionally remain inside ``engine.py`` for now so
+this refactor does not alter hot-loop object boundaries.
 """
 
 from __future__ import annotations

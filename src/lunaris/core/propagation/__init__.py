@@ -1,8 +1,4 @@
-"""Package facade for ``lunaris.core.propagation.propagator``.
-
-The implementation is kept in one module for the first structural split
-so behavior and monkeypatch semantics stay stable.
-"""
+"""Package facade for the split propagation implementation."""
 
 from __future__ import annotations
 

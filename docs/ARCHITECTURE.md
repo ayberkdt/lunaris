@@ -55,13 +55,17 @@ Numerical engine and configuration.
 - `config.py` — `SimConfig` SSOT (`load_default_config()` returns a frozen
   config; `validate()` does cross-field checks).
 - `dynamics/` — assembles a Numba-compiled RHS closure by wiring the active
-  physics models together. `dynamics.engine` owns the moved implementation;
+  physics models together. `dynamics.engine` owns `DynamicsEngine` and the
+  jitted RHS closure;
   `requirements`, `gravity_pack`, `ephemeris_pack`, `perturbation_packs`,
-  `adaptive_degree`, `surrogate_bridge`, and `rhs` provide responsibility
-  import surfaces without changing the hot RHS path.
+  `adaptive_degree`, and `surrogate_bridge` own validation helpers, data packs,
+  adaptive kernels, and surrogate-provider detection without changing the hot
+  RHS path. `rhs`/`rhs_numba` remain compatibility surfaces for future deeper
+  extraction.
 - `propagation/` — propagation orchestration, event wrapping, time-grid,
-  checkpoint, telemetry, and integrator import surfaces. The canonical
-  implementation currently lives in `propagation.propagator`.
+  checkpoint, telemetry, and integrator modules. `propagation.propagator` keeps
+  the public `propagate(...)` orchestration while events, checkpointing,
+  telemetry, time-grid policy, and fixed-step steppers live in sibling modules.
 - `propagator.py` — compatibility alias for `core.propagation.propagator`;
   old imports and monkeypatch paths remain valid.
 - `events.py` — impact / periapsis-apoapsis / eclipse / occultation events.
