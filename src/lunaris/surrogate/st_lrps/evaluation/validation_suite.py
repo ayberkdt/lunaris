@@ -24,7 +24,11 @@ from typing import Any
 import numpy as np
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
-from lunaris.surrogate.st_lrps.data.splits import radius_lat_lon_deg, split_dataset_indices
+from lunaris.surrogate.st_lrps.data.splits import (
+    _hash_indices,
+    radius_lat_lon_deg,
+    split_dataset_indices,
+)
 from lunaris.surrogate.st_lrps.evaluation.cli import _accel_error_radial_cross_components
 
 logger = logging.getLogger(__name__)
@@ -178,6 +182,294 @@ def compute_field_metrics(
     }
 
 
+def _dataset_content_sha(dataset_path: str | Path | None, dataset_name: str = "data") -> str | None:
+    """Best-effort content hash of the evaluation dataset, or ``None``.
+
+    Mirrors the hash the training pipeline stamps into the split manifest
+    (``content_sha256_for_hdf5_dataset``), so the two can be compared to confirm
+    the evaluation dataset *is* the one the model trained on. Returns ``None`` on
+    any failure (missing file, unknown dataset name) so the caller treats dataset
+    identity as merely unknown rather than asserting a false mismatch.
+    """
+    if dataset_path is None:
+        return None
+    try:
+        from lunaris.surrogate.st_lrps.data.dataset_contract import content_sha256_for_hdf5_dataset
+        from lunaris.surrogate.st_lrps.data.datasets import _discover_dataset_name
+
+        path = Path(dataset_path)
+        name = dataset_name
+        try:
+            import h5py
+
+            with h5py.File(path, "r") as f:
+                if name not in f:
+                    name = _discover_dataset_name(path, dataset_name)
+        except Exception:
+            pass
+        return content_sha256_for_hdf5_dataset(path, dataset_name=name)
+    except Exception:
+        return None
+
+
+def _resolve_training_heldout_guard(
+    model_dir: str | Path,
+    n_rows: int,
+    xyz: np.ndarray,
+    altitude_km: np.ndarray,
+    *,
+    dataset_path: str | Path | None = None,
+    dataset_name: str = "data",
+) -> dict[str, Any]:
+    """Establish (and verify) the model's TRAINING train-set for leakage filtering.
+
+    Random / altitude-stratified ("interpolation") validation is only honest if
+    the evaluated rows were never seen during training. The training run records
+    its split in ``provenance/split_manifest.json`` and the *exact* split indices
+    in ``provenance/split_indices.npz``. This helper establishes the training
+    train-index set with two layers of defence against silent error:
+
+    1. **Dataset identity** — the evaluation dataset's content hash is compared
+       to the manifest's ``dataset_content_sha256``. A mismatch means the user
+       pointed evaluation at a different (or modified) dataset, where the stored
+       indices reference different physical rows; that is reported ``unverified``
+       and never filtered, because index values alone cannot detect it.
+    2. **Index provenance** — the persisted ``split_indices.npz`` is loaded and
+       hash-checked against the manifest (deterministic, exact, robust to any
+       split policy and fraction rounding). Only when the sidecar is absent (old
+       runs) is the split re-derived from policy/seed and hash-verified.
+
+    The returned ``status`` drives the caller:
+
+    * ``"verified"`` — the training train-set is known and hash-verified;
+      ``train_index_array`` lets evaluation exclude every training row regardless
+      of the evaluation re-split seed. ``method`` is ``"persisted_indices"`` or
+      ``"reconstructed"``; ``dataset_identity`` is ``"verified"``/``"unknown"``.
+    * ``"independent_files"`` — training used dedicated train/val files; the
+      single-dataset re-split leakage check does not apply.
+    * ``"manifest_missing"`` / ``"unverified"`` — the held-out set could not be
+      established (no manifest, dataset mismatch, row-count drift, or hash
+      disagreement). The caller must NOT silently claim clean metrics.
+    """
+    try:
+        from lunaris.surrogate.st_lrps.artifacts.manager import (
+            make_run_layout,
+            resolve_run_dir,
+        )
+        from lunaris.surrogate.st_lrps.data.splits import (
+            SPLIT_INDICES_FILENAME,
+            load_verified_train_indices,
+        )
+
+        run_dir = resolve_run_dir(model_dir)
+        provenance_dir = make_run_layout(run_dir).provenance_dir
+        manifest_path = provenance_dir / "split_manifest.json"
+        if not manifest_path.exists():
+            return {
+                "status": "manifest_missing",
+                "reason": f"no split_manifest.json under {manifest_path.parent}",
+            }
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # pragma: no cover - filesystem/parse edge
+        return {"status": "manifest_missing", "reason": f"could not read split manifest: {exc}"}
+
+    policy = str(manifest.get("split_policy", "")).strip().lower()
+    if policy in ("independent_files", "independent"):
+        return {
+            "status": "independent_files",
+            "training_split_policy": policy,
+            "reason": "training used independent train/val files; single-dataset re-split leakage check is not applicable",
+        }
+
+    seed = manifest.get("split_seed")
+    expected_hash = (manifest.get("index_hashes") or {}).get("train")
+    if seed is None or not expected_hash:
+        return {
+            "status": "unverified",
+            "training_split_policy": policy,
+            "reason": "split manifest is missing split_seed or the train index hash",
+        }
+
+    n_total = sum(
+        int(manifest.get(key, 0) or 0)
+        for key in ("train_count", "val_count", "test_count", "ood_count")
+    )
+    if n_total and n_total != int(n_rows):
+        return {
+            "status": "unverified",
+            "training_split_policy": policy,
+            "reason": (
+                f"evaluation dataset has {int(n_rows)} rows but the training split covered "
+                f"{n_total}; the dataset differs from the one the model trained on"
+            ),
+        }
+
+    # Dataset identity guard: a same-row-count but different/modified dataset
+    # would make the stored indices point at the wrong physical rows. Index
+    # values alone cannot catch this, so compare dataset content hashes.
+    manifest_content_sha = manifest.get("dataset_content_sha256")
+    dataset_identity = "unknown"
+    if manifest_content_sha:
+        actual_sha = _dataset_content_sha(dataset_path, dataset_name)
+        if actual_sha is None:
+            dataset_identity = "unknown"
+        elif str(actual_sha) != str(manifest_content_sha):
+            return {
+                "status": "unverified",
+                "training_split_policy": policy,
+                "dataset_identity": "mismatch",
+                "reason": (
+                    "evaluation dataset content hash does not match the training dataset "
+                    f"(eval={str(actual_sha)[:12]}…, train={str(manifest_content_sha)[:12]}…); "
+                    "the model was trained on a different dataset, so held-out filtering "
+                    "would reference the wrong rows"
+                ),
+            }
+        else:
+            dataset_identity = "verified"
+
+    # Preferred path: load the EXACT persisted training indices, hash-verified.
+    persisted = load_verified_train_indices(
+        provenance_dir / SPLIT_INDICES_FILENAME, expected_train_hash=str(expected_hash)
+    )
+    if persisted is not None:
+        return {
+            "status": "verified",
+            "method": "persisted_indices",
+            "dataset_identity": dataset_identity,
+            "training_split_policy": policy,
+            "training_split_seed": int(seed),
+            "train_hash_expected": expected_hash,
+            "train_count": int(persisted.size),
+            "train_index_array": persisted,
+            "reason": (
+                "training indices loaded from split_indices.npz and hash-verified; "
+                "evaluation rows exclude all training rows"
+            ),
+        }
+
+    # Fallback for older runs without the indices sidecar: re-derive the split
+    # from policy/seed (subject to fraction-rounding, hence hash-verified).
+    val_frac = (int(manifest.get("val_count", 0) or 0) / n_rows) if n_rows else 0.0
+    test_frac = (int(manifest.get("test_count", 0) or 0) / n_rows) if n_rows else 0.0
+
+    opts: dict[str, Any] = {}
+    spatial_bins = manifest.get("spatial_bins") or {}
+    if spatial_bins:
+        if spatial_bins.get("lon_bins") is not None:
+            opts["spatial_lon_bins"] = int(spatial_bins["lon_bins"])
+        if spatial_bins.get("lat_bins") is not None:
+            opts["spatial_lat_bins"] = int(spatial_bins["lat_bins"])
+        if spatial_bins.get("altitude_bins") is not None:
+            opts["spatial_altitude_bins"] = int(spatial_bins["altitude_bins"])
+        opts["spatial_val_block_fraction"] = val_frac
+        opts["spatial_test_block_fraction"] = test_frac
+    ood_thresholds = manifest.get("ood_thresholds") or {}
+    if ood_thresholds:
+        side = str(ood_thresholds.get("side", "")).strip().lower()
+        thr = ood_thresholds.get("threshold_km")
+        if thr is not None and side == "low":
+            opts["ood_low_altitude_max_km"] = float(thr)
+        elif thr is not None and side == "high":
+            opts["ood_high_altitude_min_km"] = float(thr)
+
+    try:
+        recon = split_dataset_indices(
+            n_rows=int(n_rows),
+            split_policy=policy,
+            split_seed=int(seed),
+            val_fraction=float(val_frac),
+            test_fraction=float(test_frac),
+            altitude_km=altitude_km,
+            xyz=xyz,
+            options=opts or None,
+        )
+        train_recon = np.asarray(recon.get("train", []), dtype=np.int64)
+        recon_hash = _hash_indices(train_recon)
+    except Exception as exc:
+        return {
+            "status": "unverified",
+            "training_split_policy": policy,
+            "training_split_seed": int(seed),
+            "dataset_identity": dataset_identity,
+            "reason": (
+                f"could not reconstruct the training split: {exc} "
+                "(no split_indices.npz sidecar to fall back on; retrain to record one)"
+            ),
+        }
+
+    if recon_hash != expected_hash:
+        return {
+            "status": "unverified",
+            "training_split_policy": policy,
+            "training_split_seed": int(seed),
+            "dataset_identity": dataset_identity,
+            "train_hash_expected": expected_hash,
+            "train_hash_reconstructed": recon_hash,
+            "reason": (
+                "reconstructed training train-set hash does not match split_manifest.json "
+                "and no split_indices.npz sidecar is present; cannot guarantee a held-out "
+                "evaluation (retrain to record the exact indices)"
+            ),
+        }
+
+    return {
+        "status": "verified",
+        "method": "reconstructed",
+        "dataset_identity": dataset_identity,
+        "training_split_policy": policy,
+        "training_split_seed": int(seed),
+        "train_hash_expected": expected_hash,
+        "train_hash_reconstructed": recon_hash,
+        "train_count": int(train_recon.size),
+        "train_index_array": train_recon,
+        "reason": "training train-set reconstructed and hash-verified; evaluation rows exclude all training rows",
+    }
+
+
+def _maybe_curl_diagnostics(
+    fm: Any,
+    xyz: np.ndarray,
+    n_rows: int,
+    seed: int,
+    *,
+    max_points: int = 4096,
+    step_m: float = 1.0,
+) -> dict[str, Any]:
+    """Finite-difference non-conservativeness (curl) report for a force field.
+
+    ``force_direct`` artifacts predict acceleration directly and carry no
+    structural guarantee of conservativeness (a true ``a = -grad U`` has zero
+    curl). This quantifies that warning so a field-validation report can never
+    present a direct-force surrogate as if it were a conservative potential model.
+    """
+    from lunaris.surrogate.st_lrps.evaluation.force_direct_eval import curl_diagnostics
+
+    if n_rows <= 0:
+        return {"error": "no points available for curl diagnostics"}
+    if max_points < n_rows:
+        rng = np.random.default_rng(int(seed))
+        idx = np.sort(rng.choice(int(n_rows), size=int(max_points), replace=False).astype(np.int64))
+        points = xyz[idx]
+    else:
+        points = xyz
+    try:
+        report = curl_diagnostics(
+            lambda pts: np.asarray(fm.predict_residual_accel_fixed(pts), dtype=np.float64),
+            points,
+            step_m=step_m,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"error": str(exc)}
+    report["warning"] = (
+        "force_direct artifact predicts residual acceleration directly and is NOT "
+        "guaranteed conservative; nonconservative_ratio > 0 means the field is not the "
+        "gradient of any potential, which can inject spurious energy over long orbit "
+        "propagation."
+    )
+    return report
+
+
 def _load_residual_rows(dataset_path: Path, dataset_name: str = "data") -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Load (xyz, u, a) residual rows in SI plus the reference radius."""
     import h5py
@@ -205,14 +497,37 @@ def run_field_validation(
     val_fraction: float = 0.15,
     options: Mapping[str, Any] | None = None,
     device: str = "cpu",
+    enforce_heldout: bool = True,
+    strict_leakage: bool = False,
 ) -> dict[str, Any]:
     """Evaluate a trained ST-LRPS model on each split policy's validation rows.
 
     For every policy the same dataset is re-split, the model is evaluated on that
     policy's validation indices, and the field metrics are computed. Results are
     grouped by the *kind* of generalization measured.
+
+    Leakage guard
+    -------------
+    The evaluation re-split is independent of the training split, so a naive
+    "validation" set can include rows the model trained on — silently inflating
+    the interpolation numbers. When ``enforce_heldout`` is True (default) the
+    model's training train-set is reconstructed from ``split_manifest.json`` and
+    hash-verified; every evaluated row that the model trained on is then excluded,
+    so the reported metrics are genuinely held-out *regardless of* whether
+    ``split_seed`` matches the training seed. If the held-out set cannot be
+    verified (no manifest, dataset drift, or hash mismatch) the report is flagged
+    accordingly; ``strict_leakage=True`` turns that flag into a hard error.
+
+    Conservativeness
+    ----------------
+    For ``force_direct`` artifacts (which predict acceleration with no potential)
+    a finite-difference curl diagnostic is attached under ``conservativeness`` so
+    a non-conservative field can never be reported as a clean potential model.
     """
-    from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
+    from lunaris.surrogate.st_lrps.runtime.force_model import (
+        DirectForceRuntime,
+        load_surrogate_force_model,
+    )
 
     dataset_path = Path(dataset_path)
     xyz, u_true, a_true, r_ref = _load_residual_rows(dataset_path)
@@ -220,6 +535,28 @@ def run_field_validation(
     n_rows = xyz.shape[0]
 
     fm = load_surrogate_force_model(model_dir, device=device, strict_domain=False)
+
+    # Leakage guard: establish the exact rows the model trained on so they can be
+    # excluded from every evaluation split (see the docstring). The dataset path
+    # is threaded through so the guard can verify dataset identity (content hash)
+    # and catch evaluation being pointed at a different/modified dataset.
+    guard = _resolve_training_heldout_guard(
+        model_dir, n_rows, xyz, altitude_km, dataset_path=dataset_path
+    )
+    train_excl = (
+        guard.pop("train_index_array", None) if guard.get("status") == "verified" else None
+    )
+    if enforce_heldout and guard.get("status") not in ("verified", "independent_files"):
+        msg = (
+            "field validation could not verify a held-out training split "
+            f"({guard.get('status')}: {guard.get('reason')}); reported interpolation "
+            "metrics may include rows the model trained on."
+        )
+        if strict_leakage:
+            raise RuntimeError(
+                msg + " strict_leakage=True; refusing to produce unverified field metrics."
+            )
+        logger.warning(msg)
 
     results: dict[str, Any] = {}
     for policy in policies:
@@ -236,8 +573,26 @@ def run_field_validation(
                 split_info_out=info,
             )
             idx = np.asarray(splits.get("val", []), dtype=np.int64)
+            heldout_info: dict[str, int] | None = None
+            if enforce_heldout and train_excl is not None and idx.size:
+                keep = ~np.isin(idx, train_excl)
+                kept = int(np.count_nonzero(keep))
+                heldout_info = {
+                    "val_before": int(idx.size),
+                    "train_rows_excluded": int(idx.size - kept),
+                    "evaluated": kept,
+                }
+                idx = idx[keep]
             if idx.size == 0:
-                results[policy] = {"kind": SPLIT_KIND.get(policy, "unknown"), "error": "empty validation split"}
+                results[policy] = {
+                    "kind": SPLIT_KIND.get(policy, "unknown"),
+                    "leakage_guard_status": guard.get("status"),
+                    "error": (
+                        "empty validation split after held-out filtering"
+                        if heldout_info
+                        else "empty validation split"
+                    ),
+                }
                 continue
             r_fixed = xyz[idx]
             u_pred = np.asarray(fm.predict_residual_potential_fixed(r_fixed), dtype=np.float64).reshape(-1)
@@ -248,10 +603,18 @@ def run_field_validation(
             metrics["kind"] = SPLIT_KIND.get(policy, "unknown")
             metrics["split_geometry"] = info
             metrics["radius_domain_warning_count"] = _count_domain_warnings(fm, r_fixed, r_ref)
+            metrics["leakage_guard_status"] = guard.get("status")
+            if heldout_info is not None:
+                metrics["heldout_filtering"] = heldout_info
             results[policy] = metrics
         except Exception as exc:  # keep going so one bad policy does not sink the report
             logger.warning("field validation policy %s failed: %s", policy, exc)
             results[policy] = {"kind": SPLIT_KIND.get(policy, "unknown"), "error": str(exc)}
+
+    runtime_kind = str(getattr(fm, "runtime_model_kind", "potential_autograd"))
+    conservativeness = None
+    if isinstance(fm, DirectForceRuntime) or runtime_kind == "force_direct":
+        conservativeness = _maybe_curl_diagnostics(fm, xyz, n_rows, split_seed)
 
     return {
         "schema_version": 1,
@@ -260,6 +623,10 @@ def run_field_validation(
         "split_seed": int(split_seed),
         "val_fraction": float(val_fraction),
         "n_rows": int(n_rows),
+        "runtime_model_kind": runtime_kind,
+        "enforce_heldout": bool(enforce_heldout),
+        "leakage_guard": guard,
+        "conservativeness": conservativeness,
         "field_validation": results,
         "orbit_validation": None,  # populated by run_orbit_validation when requested
     }
@@ -396,18 +763,47 @@ def write_validation_report(report: Mapping[str, Any], out_dir: str | Path) -> d
     for policy, metrics in field.items():
         by_kind.setdefault(str(metrics.get("kind", "unknown")), []).append(policy)
 
+    guard = report.get("leakage_guard") or {}
+    guard_status = str(guard.get("status", "unknown"))
+    guard_ok = guard_status in ("verified", "independent_files")
     lines = [
         "# ST-LRPS Validation Suite",
         "",
         f"- Model: `{report.get('model_dir')}`",
         f"- Dataset: `{report.get('dataset_path')}`",
         f"- Rows: {report.get('n_rows')}  |  split_seed: {report.get('split_seed')}",
+        f"- Runtime kind: `{report.get('runtime_model_kind', 'potential_autograd')}`",
+        f"- Held-out leakage guard: **{guard_status}**"
+        + (
+            f" (method: {guard.get('method')}, dataset identity: {guard.get('dataset_identity', 'n/a')})"
+            if guard_status == "verified"
+            else ""
+        )
+        + ("" if guard_ok else f" — {guard.get('reason', '')}"),
         "",
         "> Random / altitude splits are **interpolation**. Spatial-block is "
         "**spatial generalization**. OOD low/high are **altitude extrapolation**. "
         "Orbit is **trajectory propagation**. These are NOT interchangeable.",
         "",
     ]
+    if not guard_ok:
+        lines += [
+            "> ⚠ **Leakage guard not verified.** Evaluation rows could not be proven "
+            "disjoint from the training set, so the interpolation numbers below may be "
+            "optimistic. Re-run with a present, matching `split_manifest.json` or pass "
+            "`strict_leakage=True` to hard-fail.",
+            "",
+        ]
+    conservativeness = report.get("conservativeness")
+    if isinstance(conservativeness, Mapping) and "nonconservative_ratio" in conservativeness:
+        lines += [
+            f"> 🔶 **Non-conservative field** (`force_direct`): nonconservative_ratio = "
+            f"{_fmt(conservativeness.get('nonconservative_ratio'))} "
+            f"(0 = conservative), curl RMS = "
+            f"{_fmt(conservativeness.get('curl_abs_rms'))} 1/s². Direct-force surrogates "
+            "are not gradients of any potential.",
+            "",
+        ]
     section_titles = {
         "interpolation": "## Interpolation (random / altitude)",
         "spatial_generalization": "## Spatial generalization (block holdout)",

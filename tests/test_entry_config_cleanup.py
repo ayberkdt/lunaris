@@ -212,7 +212,7 @@ def test_validate_args_uses_canonical_st_lrps_helper(monkeypatch, tmp_path: Path
         calls.append(str(path))
         return model_dir
 
-    monkeypatch.setattr("lunaris.common.montecarlo_defs.validate_st_lrps_model_dir", _spy)
+    monkeypatch.setattr("lunaris.common.batch_defs.validate_st_lrps_model_dir", _spy)
     monkeypatch.setattr(
         "lunaris.surrogate.st_lrps.data.dataset_parameters.looks_like_lunar_run_config",
         lambda cfg: True,

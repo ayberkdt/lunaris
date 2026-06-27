@@ -53,8 +53,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from lunaris.common.batch_defs import build_mc_output_grid
 from lunaris.common.constants import R_MOON
-from lunaris.common.montecarlo_defs import build_mc_output_grid
 from lunaris.core.torch_frame import (
     TorchFrameError,
     TorchMoonFrame,

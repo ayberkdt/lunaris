@@ -8,7 +8,7 @@ of the accepted path forms onto a canonical run directory and surfaces
 human-readable warnings.
 
 The authoritative pass/fail policy for a runnable ST-LRPS directory lives in
-``common.montecarlo_defs.validate_st_lrps_model_dir`` (the same gate the
+``common.batch_defs.validate_st_lrps_model_dir`` (the same gate the
 backend uses).  ``validate_surrogate_run_preflight`` defers to it so the UI can
 never green-light a run that the backend would reject.
 
@@ -229,7 +229,7 @@ def validate_surrogate_run_preflight(
 
     # Authoritative runtime gate — the backend uses the same validator, so the
     # UI must not report a run as valid that the backend would reject.
-    from lunaris.common.montecarlo_defs import validate_st_lrps_model_dir
+    from lunaris.common.batch_defs import validate_st_lrps_model_dir
 
     try:
         validate_st_lrps_model_dir(artifacts.run_dir)

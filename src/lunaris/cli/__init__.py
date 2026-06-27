@@ -8,4 +8,4 @@ heavy runtime dependencies (numba / spiceypy / torch / loaders / core).
 
 from __future__ import annotations
 
-__all__ = ["common_args"]
+__all__ = ["batch", "common_args", "options", "run", "summary"]

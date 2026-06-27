@@ -30,7 +30,7 @@ def _stats(values: np.ndarray) -> dict[str, float | None]:
 
 
 def _read_all(path: Path, dataset_name: str) -> tuple[np.ndarray, str]:
-    import h5py  # type: ignore
+    import h5py
 
     with h5py.File(path, "r") as handle:
         name = dataset_name if dataset_name in handle else next(
@@ -65,6 +65,8 @@ def build_dataset_quality_report(
     accel = data[:, 4:7]
     accel_mag = np.linalg.norm(accel, axis=1)
     finite = np.isfinite(data)
+    # Residual-cloud contracts always carry altitude bounds; assert narrows for mypy.
+    assert contract.altitude_min_km is not None and contract.altitude_max_km is not None
     hist_counts, hist_edges = np.histogram(
         altitude[np.isfinite(altitude)],
         bins=max(1, int(bins)),
@@ -77,7 +79,7 @@ def build_dataset_quality_report(
     if rounded_xyz.shape[0] > 0:
         duplicate_fraction = float(1.0 - np.unique(rounded_xyz, axis=0).shape[0] / float(rounded_xyz.shape[0]))
 
-    report = {
+    report: dict[str, Any] = {
         "schema_version": 1,
         "data_path": str(path),
         "dataset_name": resolved_name,

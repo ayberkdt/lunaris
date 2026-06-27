@@ -4,7 +4,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://pypi.org/classifiers/)
+[![Status: Active Development](https://img.shields.io/badge/status-active%20development-blue.svg)](https://pypi.org/classifiers/)
 
 Lunaris is a Python framework for lunar-orbit propagation and gravity modeling. It
 bundles spherical-harmonic lunar gravity, configurable physical force models, orbit
@@ -16,10 +16,13 @@ neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a
 residual scalar potential above a lower-degree spherical-harmonic baseline, with its
 own training, evaluation, and Studio UI.
 
-> **Project status.** Lunaris is an **alpha-stage research prototype**
-> (`Development Status :: 3 - Alpha`). APIs, trained artifacts, and reported
-> benchmark numbers may change between versions. Treat validation outputs as
-> run-specific evidence, not a blanket guarantee.
+> **Project status.** Lunaris is **actively developed research software** with
+> versioned on-disk contracts (datasets, checkpoints, runtime, and benchmark
+> artifacts) and a documented validation pipeline. Public APIs may still evolve
+> between releases, so pin a version for reproducible work. Trained artifacts and
+> reported benchmark numbers are tied to a specific run and configuration: treat
+> validation outputs as run-specific evidence produced through the evidence
+> pipeline, not a blanket guarantee.
 
 ## Documentation
 

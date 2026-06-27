@@ -56,21 +56,21 @@ def sha256_file(path: str | Path | None) -> str | None:
 
 
 def content_sha256_for_hdf5_dataset(path: str | Path, dataset_name: str = "data", *, chunk_rows: int = 65536) -> str:
-    import h5py  # type: ignore
+    import h5py
 
     digest = hashlib.sha256()
     with h5py.File(path, "r") as handle:
         ds = handle[dataset_name]
         for start in range(0, int(ds.shape[0]), int(chunk_rows)):
             arr = np.asarray(ds[start : start + int(chunk_rows)])
-            digest.update(np.ascontiguousarray(arr).view(np.uint8))
+            digest.update(np.ascontiguousarray(arr).view(np.uint8).tobytes())
     return digest.hexdigest()
 
 
 def stamp_hdf5_content_hash(path: str | Path, dataset_name: str = "data") -> DatasetContract:
     """Compute the HDF5 dataset payload hash and update the embedded contract."""
 
-    import h5py  # type: ignore
+    import h5py
 
     digest = content_sha256_for_hdf5_dataset(path, dataset_name=dataset_name)
     contract = DatasetContract.from_hdf5(path, dataset_name=dataset_name, allow_legacy_dataset_contract=True)
@@ -481,7 +481,7 @@ class DatasetContract:
         allow_missing_dataset_contract: bool = False,
         allow_legacy_derivative_convention: bool = False,
     ) -> DatasetContract:
-        import h5py  # type: ignore
+        import h5py
 
         with h5py.File(path, "r") as handle:
             if METADATA_GROUP in handle and "contract_json" in handle[METADATA_GROUP]:

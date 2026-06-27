@@ -1,7 +1,8 @@
-import os
 import ast
+import os
 import tokenize
 from io import BytesIO
+
 
 def count_dense_python(start_paths, exclude_dirs):
     total_files = 0
@@ -14,16 +15,16 @@ def count_dense_python(start_paths, exclude_dirs):
     for start_path in start_paths:
         for root, dirs, files in os.walk(start_path):
             dirs[:] = [d for d in dirs if d not in exclude_dirs and not d.startswith('.')]
-            
+
             for file in files:
                 if not file.endswith('.py'):
                     continue
-                    
+
                 file_path = os.path.join(root, file)
                 try:
                     with open(file_path, 'rb') as f:
                         source_bytes = f.read()
-                    
+
                     source_str = source_bytes.decode('utf-8')
                     raw_lines = source_str.split('\n')
                     total_raw_lines += len(raw_lines)
@@ -35,20 +36,20 @@ def count_dense_python(start_paths, exclude_dirs):
 
                     # Use tokenize to find comments and docstrings accurately
                     tokens = tokenize.tokenize(BytesIO(source_bytes).readline)
-                    
+
                     comment_lines = set()
                     docstring_lines = set()
-                    
+
                     for tok in tokens:
                         if tok.type == tokenize.COMMENT:
                             # Mark the lines covered by the comment
                             for line_num in range(tok.start[0], tok.end[0] + 1):
                                 comment_lines.add(line_num)
                         elif tok.type == tokenize.STRING:
-                            # Heuristic: if a string is the only thing on a line or it's a multiline string 
+                            # Heuristic: if a string is the only thing on a line or it's a multiline string
                             # that acts as a docstring (we could use AST for perfect docstrings, but tokenize is good for all loose strings)
                             pass
-                            
+
                     # Let's use AST for docstrings
                     try:
                         tree = ast.parse(source_str)
@@ -61,10 +62,10 @@ def count_dense_python(start_paths, exclude_dirs):
                                         docstring_lines.add(line_num)
                     except Exception:
                         pass
-                    
+
                     total_comments += len(comment_lines)
                     total_docstrings += len(docstring_lines)
-                    
+
                     # Dense lines = raw - empty - comments - docstrings
                     # Need to be careful not to double count if a comment and docstring share a line (rare) or empty line in docstring
                     # Let's do a line-by-line classification
@@ -76,15 +77,15 @@ def count_dense_python(start_paths, exclude_dirs):
                             continue # Docstring
                         if line.strip().startswith('#'):
                             continue # Pure comment line
-                        
+
                         # It's a code line!
                         dense_count += 1
-                        
+
                     total_dense_lines += dense_count
 
-                except Exception as e:
+                except Exception:
                     pass
-                    
+
     return total_files, total_raw_lines, total_dense_lines, total_empty, total_comments, total_docstrings
 
 exclude = {'node_modules', '__pycache__', 'outputs', 'data', 'venv', '.venv', 'build', 'dist', 'locks'}
@@ -96,6 +97,6 @@ print(f"Raw Lines (including tests/src): {raw}")
 print(f"Empty Lines: {empty}")
 print(f"Pure Comment Lines: {comments}")
 print(f"Docstring Lines: {docs}")
-print(f"---")
+print("---")
 print(f"DENSE CODE LINES (Executable / Definitions): {dense}")
 print(f"Compression Ratio: {dense/raw*100:.1f}% of original size")

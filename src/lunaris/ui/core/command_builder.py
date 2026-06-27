@@ -371,7 +371,7 @@ def build_mc_command(
     log_warning: Callable[[str], None] | None = None,
 ) -> list[str]:
     """
-    Build the CLI command for ``lunaris.core.mc_runner`` from modular UI state.
+    Build the CLI command for ``lunaris.cli.batch_runner`` from modular UI state.
 
     Parameters mirror ``build_command()`` but target the MC runner script and
     append Monte Carlo specific flags from ``mc_data`` (MonteCarloPage.get_data()).

@@ -14,8 +14,9 @@ CLI/loaders are declared sibling subsystems with enforced dependency directions.
 The import contracts in `pyproject.toml` are authoritative when prose and code
 disagree.
 
-Last verified: 2026-06-24, covering the data preset, public API, common,
-physics, and core cleanup pass.
+Last verified: 2026-06-27, covering the P1-P6 modular refactor pass:
+`batch/`, `core/propagation/`, `core/dynamics/`, `surrogate/runtime/`, and the
+split main CLI surfaces.
 
 ## Engine core layers
 
@@ -28,7 +29,8 @@ Dependency-light shared layer.
 - `type_defs.py` — configuration dataclasses (`PerturbationFlags`, `TimeConfig`,
   `SpacecraftProps`, `InitialState`, …).
 - `math_utils.py`, `time_utils.py` — pure helpers.
-- `montecarlo_defs.py` — batch/Monte Carlo configuration/result dataclasses.
+- `batch_defs.py` — canonical batch/ensemble configuration/result dataclasses.
+- `montecarlo_defs.py` — historical compatibility facade for batch dataclasses.
 
 ### Layer 2 — `lunaris.physics`
 Numba-JIT-compiled force-model kernels. Each file is one force model:
@@ -53,13 +55,25 @@ Physics models never import from `core/` or `surrogate/`.
 Numerical engine and configuration.
 - `config.py` — `SimConfig` SSOT (`load_default_config()` returns a frozen
   config; `validate()` does cross-field checks).
-- `dynamics.py` — assembles a Numba-compiled RHS closure by wiring the active
-  physics models together.
-- `propagator.py` — calls `scipy.integrate.solve_ivp()` with event detection;
-  returns `PropagationResult(t, y, events, status)`.
+- `dynamics/` — assembles a Numba-compiled RHS closure by wiring the active
+  physics models together. `dynamics.engine` owns `DynamicsEngine` and the
+  jitted RHS closure;
+  `requirements`, `gravity_pack`, `ephemeris_pack`, `perturbation_packs`,
+  `adaptive_degree`, and `surrogate_bridge` own validation helpers, data packs,
+  adaptive kernels, and surrogate-provider detection without changing the hot
+  RHS path. `rhs`/`rhs_numba` remain compatibility surfaces for future deeper
+  extraction.
+- `propagation/` — propagation orchestration, event wrapping, time-grid,
+  checkpoint, telemetry, and integrator modules. `propagation.propagator` keeps
+  the public `propagate(...)` orchestration while events, checkpointing,
+  telemetry, time-grid policy, and fixed-step steppers live in sibling modules.
+- `propagator.py` — compatibility alias for `core.propagation.propagator`;
+  old imports and monkeypatch paths remain valid.
 - `events.py` — impact / periapsis-apoapsis / eclipse / occultation events.
 - `monte_carlo_engine.py`, `mc_propagator.py`, `mc_backend_policy.py`,
-  `mc_runner.py` — batch/ensemble orchestration and CPU/GPU backends.
+  `mc_runner.py` — historical compatibility/import surfaces for batch ensemble
+  orchestration and CPU/GPU backends. New ensemble orchestration code lives in
+  `lunaris.batch`.
 
 ### Layer 4 — `lunaris.analysis`, `lunaris.visualization`, `lunaris.ui`
 Post-processing and presentation.
@@ -83,16 +97,27 @@ Post-processing and presentation.
 Alongside the four layers:
 - `lunaris.loaders` — dependency-light data loading (gravity coefficient files,
   SPICE kernels, topography/albedo grids) consumed by layers 2–3.
-- `lunaris.cli` — console entry points (`lunaris`, `lunaris-batch`, `lunaris-mc`, …) and shared
-  CLI argument helpers; wires user input into the `core` configuration. Optional
-  subsystem commands use import-safe wrappers in `cli/entrypoints.py`.
+- `lunaris.batch` — canonical batch/ensemble orchestration package:
+  `engine`, `sampling`, `storage`, `memory_policy`, `requirements`,
+  `provenance`, `backend_policy`, `progress`, and `types`. Historical
+  Monte Carlo names remain in public APIs and archives for compatibility.
+- `lunaris.cli` — console entry points (`lunaris`, `lunaris-batch`,
+  `lunaris-mc`, …) and shared CLI argument helpers; wires user input into the
+  `core` configuration. The main `lunaris` command is split into `options`,
+  `summary`, and `run`; `cli/main.py` remains the public compatibility facade.
+  Optional subsystem commands use import-safe wrappers in `cli/entrypoints.py`.
 - `lunaris.surrogate.st_lrps` — the ST-LRPS surrogate-gravity family
   (see [ST-LRPS surrogate](#st-lrps-surrogate)).
-- `lunaris.surrogate.runtime_adapter` — the only production-facing adapter from
-  engine gravity-provider semantics to ST-LRPS runtime artifacts.
+- `lunaris.surrogate.runtime` — production-facing ST-LRPS runtime package:
+  artifact discovery, metadata extraction, scaler loading, network/checkpoint
+  construction, device selection, and the engine-facing gravity provider.
+- `lunaris.surrogate.runtime_adapter` — compatibility alias for the production
+  runtime adapter API. It remains the historical import path for
+  `SurrogateGravityModel`.
 - `lunaris.physics.surrogate_gravity` is a retired compatibility module only; it
   does not import or re-export the surrogate adapter. Use
-  `lunaris.surrogate.runtime_adapter` directly.
+  `lunaris.surrogate.runtime` for new code; the historical
+  `lunaris.surrogate.runtime_adapter` path remains available.
 - `lunaris.ui_foundation` — Qt-binding-neutral tokens, palettes, color helpers,
   and stylesheet generation shared by the mission UI and ST-LRPS Studio.
 
@@ -139,7 +164,7 @@ CLI (lunaris.cli.main) / UI (lunaris.ui.app)
   → lunaris.core.config (SimConfig)
   → lunaris.loaders (gravity model, SPICE kernels, surface grids)
   → lunaris.core.dynamics (build Numba RHS closure)
-  → lunaris.core.propagator (solve_ivp → PropagationResult)
+  → lunaris.core.propagation.propagator (solve_ivp → PropagationResult)
   → lunaris.analysis.postprocess (orbital elements, metrics)
   → lunaris.analysis.reporting.{plotting,manager} (PNG/PDF output)
 ```
@@ -249,31 +274,38 @@ companion-file, or SHA-256 verification. See [DATA_PRESETS.md](DATA_PRESETS.md).
 
 ## Batch / ensemble propagation infrastructure
 
-The public Python dataclasses and file names still use the historical
-`MonteCarlo*` / `mc_*` names for API and archive compatibility. Conceptually,
-this subsystem is the batch propagation engine: it propagates an ensemble of
-initial states and spacecraft properties. Monte Carlo is the default
+The canonical Python dataclasses live in `common/batch_defs.py` and expose
+`BatchPropagation*` aliases for new code. The historical `MonteCarlo*` /
+`mc_*` names remain for API, CLI, and archive compatibility. Conceptually, this
+subsystem is the batch propagation engine: it propagates an ensemble of initial
+states and spacecraft properties. Monte Carlo is the default
 `sampling_method="random"` option, while `lhs`, `sobol`, and
 `sobol_scrambled` provide space-filling designs for validation and benchmark
 coverage.
 
 | Module | Purpose |
 |--------|---------|
-| `common/montecarlo_defs.py` | `MonteCarloConfig`, `StateUncertainty`, `SpacecraftUncertainty`, `MCRunResult`, sampling-method validation |
+| `common/batch_defs.py` | `BatchPropagationConfig`, `MonteCarloConfig`, `StateUncertainty`, `SpacecraftUncertainty`, `BatchPropagationResult`, `MCRunResult`, sampling-method validation |
+| `common/montecarlo_defs.py` | Historical compatibility facade re-exporting `common/batch_defs.py` |
+| `batch/engine.py` | Canonical `MonteCarloEngine.run()` orchestration, backend dispatch, HDF5/NPZ output |
+| `batch/sampling.py` | random/LHS/Sobol standard-normal designs, initial-state and spacecraft-property samples |
+| `batch/storage.py` | HDF5/NPZ writers, archive loading, storage policy |
+| `batch/requirements.py` | ephemeris/body-vector/topography and impact-frame preparation helpers |
+| `batch/backend_policy.py` | Thin adapter over `core/mc_backend_policy.py` |
 | `core/mc_propagator.py` | `GPUBatchPropagator` (CUDA RK4), `CPUBatchPropagator` (process pool) |
-| `core/monte_carlo_engine.py` | `MonteCarloEngine.run()` — sampling, backend dispatch, HDF5/NPZ output |
+| `core/monte_carlo_engine.py` | Historical compatibility shim for old imports and `lunaris-mc` / `lunaris-batch` entry points |
 | `analysis/monte_carlo/statistics.py` | `compute_mc_statistics()` → covariance, ellipsoids, impact probability, OE dispersion |
 | `analysis/monte_carlo/plotting.py` | altitude envelopes, 3-D covariance tubes, impact map, OE dispersion |
 
 ```python
 from lunaris.core.config import load_default_config
-from lunaris.common.montecarlo_defs import MonteCarloConfig, StateUncertainty
-from lunaris.core.monte_carlo_engine import MonteCarloEngine
+from lunaris.common.batch_defs import BatchPropagationConfig, StateUncertainty
+from lunaris.batch import BatchPropagationEngine
 from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
 from lunaris.analysis.monte_carlo.plotting import plot_mc_report
 
 sim_cfg = load_default_config()
-mc_cfg = MonteCarloConfig(
+batch_cfg = BatchPropagationConfig(
     n_samples=500,
     sampling_method="sobol_scrambled",  # random = classical Monte Carlo; lhs/sobol = validation design
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
@@ -283,12 +315,14 @@ mc_cfg = MonteCarloConfig(
     output_format="hdf5",
     output_path="outputs/monte_carlo/run.h5",
 )
-result = MonteCarloEngine(sim_cfg, mc_cfg).run()      # MCRunResult
+result = BatchPropagationEngine(sim_cfg, batch_cfg).run()      # BatchPropagationResult
 stats = compute_mc_statistics(result)
 figs = plot_mc_report(result, stats, output_path="outputs/monte_carlo/report.pdf")
 ```
 
-Reload a saved run with `from lunaris.core.monte_carlo_engine import load_mc_result`.
+Reload a saved run with `from lunaris.batch import load_mc_result`. The
+historical `lunaris.core.monte_carlo_engine` and
+`lunaris.common.montecarlo_defs` import paths remain available.
 
 ### GPU classic-SH backends (Numba vs. Torch)
 - Two distinct classic-SH GPU runtimes exist and are kept separate everywhere:
@@ -373,9 +407,12 @@ configs/checkpoints, distinguishing residual labels from full-field labels and
 keeping the runtime path aligned with the scaler and loss.
 
 **Runtime.** The engine-facing API is
-`lunaris.surrogate.runtime_adapter.SurrogateGravityModel`. It delegates artifact
-loading and neural inference to the internal ST-LRPS API in
-`runtime/force_model.py`.
+`lunaris.surrogate.runtime.SurrogateGravityModel`, with
+`lunaris.surrogate.runtime_adapter.SurrogateGravityModel` retained as the
+historical compatibility path. The runtime package owns artifact discovery,
+metadata/scaler loading, checkpoint/network construction, device selection, and
+the gravity-provider facade; neural force inference still delegates to the
+internal ST-LRPS API in `runtime/force_model.py`.
 `potential_autograd` (`SurrogateForceModel`) evaluates the learned scalar
 potential and differentiates it with autograd to obtain residual acceleration,
 which is added to the SH(`degree_min`) baseline. `force_direct`

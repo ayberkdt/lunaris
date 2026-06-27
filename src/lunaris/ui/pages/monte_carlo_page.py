@@ -75,7 +75,7 @@ except ImportError:
 @dataclass
 class UIMonteCarloConfig:
     """
-    Mutable mirror of ``common.montecarlo_defs.MonteCarloConfig`` for the UI.
+    Mutable mirror of ``common.batch_defs.MonteCarloConfig`` for the UI.
 
     All values are kept as plain Python types so the page can safely serialize
     them to JSON (for session persistence) and pass them to the CLI argument

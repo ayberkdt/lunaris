@@ -74,8 +74,10 @@ from lunaris.surrogate.st_lrps.data.datasets import (
     validate_training_dataset_convention,
 )
 from lunaris.surrogate.st_lrps.data.splits import (
+    SPLIT_INDICES_FILENAME,
     build_split_manifest,
     split_dataset_indices,
+    write_split_indices,
     write_split_manifest,
 )
 from lunaris.surrogate.st_lrps.networks.models import (
@@ -1459,6 +1461,12 @@ def _resolve_data_splits(
             ood_thresholds=split_info.get("ood_thresholds"),
         )
     split_manifest_path = write_split_manifest(layout.provenance_dir / "split_manifest.json", split_manifest)
+    # Persist the exact split indices alongside the manifest so downstream
+    # evaluation can enforce a held-out split deterministically (hash-verified)
+    # rather than re-deriving it from the policy/seed and risking a rounding
+    # mismatch. Independent-file splits have no in-file indices to record.
+    if splits is not None:
+        write_split_indices(layout.provenance_dir / SPLIT_INDICES_FILENAME, splits)
     return _SplitResult(
         split_seed=split_seed,
         split_policy=split_policy,

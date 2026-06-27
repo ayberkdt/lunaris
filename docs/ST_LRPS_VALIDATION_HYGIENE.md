@@ -89,8 +89,10 @@ definitions, so train/val/test separation is fully auditable.
   remain documented **fixed-frame** wrappers.
 
 The constructor reads the artifact's declared frame and **hard-fails** unless it
-is `moon_fixed_cartesian`. Dynamics integration (`surrogate/runtime_adapter.py`)
-already rotates inertial→fixed around `acceleration_fixed` and back.
+is `moon_fixed_cartesian`. Dynamics integration
+(`surrogate/runtime/adapter.py`, also available through the historical
+`surrogate/runtime_adapter.py` path) already rotates inertial→fixed around
+`acceleration_fixed` and back.
 
 ## 4. Paper-safe benchmark mode
 

@@ -114,7 +114,8 @@ SYNTHETIC_BANNER = "SYNTHETIC SMOKE TEST - NOT A SCIENTIFIC BENCHMARK"
 
 def is_paper_safe_requested(config: Mapping[str, Any], *, flag: bool = False) -> bool:
     """Return True when paper-safe mode is requested by flag or config."""
-    run_options = config.get("run_options") if isinstance(config.get("run_options"), Mapping) else {}
+    _ro = config.get("run_options")
+    run_options: Mapping[str, Any] = _ro if isinstance(_ro, Mapping) else {}
     return bool(flag or config.get("paper_safe") or run_options.get("paper_safe"))
 
 
@@ -151,7 +152,8 @@ def apply_paper_safe(config: MutableMapping[str, Any]) -> dict[str, Any]:
             "validation.truth_baseline_justification explains the exception."
         )
 
-    surrogate = config.get("surrogate") if isinstance(config.get("surrogate"), Mapping) else {}
+    _surrogate = config.get("surrogate")
+    surrogate: Mapping[str, Any] = _surrogate if isinstance(_surrogate, Mapping) else {}
     if not (surrogate.get("enabled") and surrogate.get("model_dir")):
         raise BenchmarkConfigError(
             "paper_safe mode requires surrogate.enabled=true with a surrogate.model_dir so the "
@@ -270,7 +272,7 @@ def _load_config_payload(path: Path) -> Any:
 
 def _load_yaml_payload(text: str) -> Any:
     try:
-        import yaml  # type: ignore
+        import yaml
     except Exception:
         return _parse_simple_yaml(text)
     data = yaml.safe_load(text)
@@ -314,7 +316,7 @@ def _parse_yaml_block(lines: list[tuple[int, str]], index: int, indent: int) -> 
                 continue
             if ":" in item_text:
                 key, value_text = _split_yaml_key_value(item_text)
-                item: dict[str, Any] = {}
+                item = {}
                 if value_text:
                     item[key] = _parse_yaml_scalar(value_text)
                     index += 1

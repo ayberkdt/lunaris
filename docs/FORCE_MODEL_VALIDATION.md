@@ -1,7 +1,7 @@
 # Force-Model Validation Memo (Phase 0/1 + Test Suite)
 
 Scope: the perturbation force models and ephemeris application used by the
-Lunaris equations of motion (`src/lunaris/core/dynamics.py`,
+Lunaris equations of motion (`src/lunaris/core/dynamics/`,
 `src/lunaris/physics/*`, and the CUDA Monte-Carlo path
 `src/lunaris/core/mc_propagator.py`). This memo records what was changed, why,
 and the measured evidence that the result is physically and numerically correct
@@ -14,7 +14,7 @@ CPU/GPU agreement, limiting cases).
 | Quantity | Convention | Source of truth |
 |---|---|---|
 | Units | strict SI (m, m/s, m/s², s, kg) | `lunaris.common.constants` |
-| Integration frame | Moon-centred inertial (J2000-like) | `core/dynamics.py` |
+| Integration frame | Moon-centred inertial (J2000-like) | `core/dynamics/engine.py` |
 | Gravity/tide eval frame | Moon-fixed (body-fixed) | `physics/spherical_harmonics.py` |
 | Frame bridge | `q_i2f` (scalar-first `[w,x,y,z]`); inverse via **conjugate** | `physics/ephemeris.py` |
 | Potential → accel | `a = +∇U` (geodesy sign) | confirmed by finite difference, §3 |

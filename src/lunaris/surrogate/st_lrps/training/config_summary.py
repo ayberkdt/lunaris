@@ -18,7 +18,7 @@ def _contract_dict(target_contract: Any) -> dict[str, Any] | None:
         return None
     if hasattr(target_contract, "to_dict"):
         return target_contract.to_dict()
-    if is_dataclass(target_contract):
+    if is_dataclass(target_contract) and not isinstance(target_contract, type):
         return asdict(target_contract)
     if isinstance(target_contract, Mapping):
         return dict(target_contract)

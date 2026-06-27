@@ -219,7 +219,8 @@ class TargetContract:
         if isinstance(config.get("target_contract"), Mapping):
             return cls.from_dict(config["target_contract"])
 
-        dataset_meta = config.get("dataset_meta") if isinstance(config.get("dataset_meta"), Mapping) else {}
+        _raw_meta = config.get("dataset_meta")
+        dataset_meta: Mapping[str, Any] = _raw_meta if isinstance(_raw_meta, Mapping) else {}
         base_degree = _as_int(config.get("degree_min", dataset_meta.get("degree_min")), -1)
         target_degree = _as_int(
             config.get("degree_max", dataset_meta.get("degree_max", dataset_meta.get("requested_degree"))),

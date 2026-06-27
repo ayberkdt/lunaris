@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Capture a screenshot of the Lunaris desktop main window (Lunar Graphite theme).
 

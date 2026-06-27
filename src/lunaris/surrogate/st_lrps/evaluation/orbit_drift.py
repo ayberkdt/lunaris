@@ -238,40 +238,102 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--steps-per-orbit", type=int, default=720)
     ap.add_argument("--out", default="outputs/force_direct_eval/orbit_drift.json")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
+    ap.add_argument(
+        "--strict-domain", action="store_true",
+        help="Hard-fail if the propagated orbit leaves the surrogate's trained domain "
+             "(default: integrate anyway and report the extrapolation fraction).",
+    )
     return ap
 
 
-def _runtime_total_accel(model_dir: str, device: str) -> tuple[AccelFn, float, float]:
+class _DomainTrackingTotalAccel:
+    """Total-acceleration callable that records out-of-domain extrapolation.
+
+    Wraps a loaded surrogate so every evaluated position is checked against the
+    artifact's trained domain (:meth:`SurrogateForceModel.domain_status`). The
+    counts let the orbit summary state how much of a trajectory left the training
+    envelope, so a drift number can never silently rest on extrapolation. When
+    ``strict_domain`` is True the wrapped runtime is loaded strict and the
+    underlying prediction raises on extrapolation; this wrapper additionally
+    raises early with a clear orbit-level message.
+    """
+
+    def __init__(self, runtime: Any, mu: float, *, strict_domain: bool = False) -> None:
+        self.runtime = runtime
+        self.mu = float(mu)
+        self.strict_domain = bool(strict_domain)
+        self.n_eval = 0
+        self.n_extrapolating = 0
+
+    def __call__(self, r: np.ndarray) -> np.ndarray:
+        r = np.asarray(r, dtype=np.float64).reshape(-1, 3)
+        try:
+            status = self.runtime.domain_status(r)
+            extrapolating = bool(status.get("recommended_fallback"))
+        except Exception:
+            status, extrapolating = None, False
+        self.n_eval += int(r.shape[0])
+        if extrapolating:
+            self.n_extrapolating += int(r.shape[0])
+            if self.strict_domain:
+                raise RuntimeError(
+                    "orbit_drift: trajectory left the surrogate's trained domain "
+                    f"({(status or {}).get('reason', 'out of domain')}); refusing to "
+                    "integrate an extrapolated orbit under strict_domain=True."
+                )
+        rn = np.linalg.norm(r, axis=1, keepdims=True)
+        base = -self.mu * r / rn ** 3
+        residual = np.asarray(
+            self.runtime.predict_residual_accel_fixed(r), dtype=np.float64
+        ).reshape(-1, 3)
+        return base + residual
+
+    @property
+    def extrapolation_fraction(self) -> float:
+        return float(self.n_extrapolating) / float(self.n_eval) if self.n_eval else 0.0
+
+    def domain_report(self) -> dict[str, Any]:
+        return {
+            "evaluations": int(self.n_eval),
+            "extrapolating_evaluations": int(self.n_extrapolating),
+            "extrapolation_fraction": self.extrapolation_fraction,
+            "strict_domain": self.strict_domain,
+        }
+
+
+def _runtime_total_accel(
+    model_dir: str, device: str, *, strict_domain: bool = False
+) -> tuple[_DomainTrackingTotalAccel, float, float]:
     """Build a total-acceleration callable (point-mass base + residual) for a run.
 
     Returns ``(accel_fn, mu, r_ref_m)`` using the artifact's own ``mu`` so the
-    reference and test orbits share an identical Keplerian base.
+    reference and test orbits share an identical Keplerian base. The returned
+    callable tracks out-of-domain extrapolation (see
+    :class:`_DomainTrackingTotalAccel`); ``strict_domain=True`` loads the runtime
+    strict and hard-fails the propagation on extrapolation.
     """
     from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
 
-    runtime = load_surrogate_force_model(model_dir, device=device)
+    runtime = load_surrogate_force_model(model_dir, device=device, strict_domain=strict_domain)
     contract = runtime.artifact_contract
     mu = float(getattr(contract, "mu_si", 0.0) or 0.0)
     r_ref = float(getattr(contract, "r_ref_m", 0.0) or 0.0)
     if mu <= 0.0:
         raise ValueError(f"Artifact {model_dir} has no usable mu_si for a Keplerian base.")
 
-    def accel(r: np.ndarray) -> np.ndarray:
-        r = np.asarray(r, dtype=np.float64).reshape(-1, 3)
-        rn = np.linalg.norm(r, axis=1, keepdims=True)
-        base = -mu * r / rn ** 3
-        residual = np.asarray(runtime.predict_residual_accel_fixed(r), dtype=np.float64).reshape(-1, 3)
-        return base + residual
-
-    return accel, mu, r_ref
+    return _DomainTrackingTotalAccel(runtime, mu, strict_domain=strict_domain), mu, r_ref
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
 
-    test_accel, mu, r_ref = _runtime_total_accel(args.model_dir, args.device)
+    test_accel, mu, r_ref = _runtime_total_accel(
+        args.model_dir, args.device, strict_domain=bool(args.strict_domain)
+    )
     if args.ref_model_dir:
-        ref_accel, _, _ = _runtime_total_accel(args.ref_model_dir, args.device)
+        ref_accel, _, _ = _runtime_total_accel(
+            args.ref_model_dir, args.device, strict_domain=bool(args.strict_domain)
+        )
     else:
         def ref_accel(r: np.ndarray) -> np.ndarray:  # point-mass base only
             r = np.asarray(r, dtype=np.float64).reshape(-1, 3)
@@ -296,7 +358,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "position_drift_summary_m": report["position_drift_summary_m"],
         "velocity_drift_summary_m_s": report["velocity_drift_summary_m_s"],
         "position_drift_rel_max": report["position_drift_rel_max"],
+        "test_domain": test_accel.domain_report(),
     }
+    if isinstance(ref_accel, _DomainTrackingTotalAccel):
+        summary["ref_domain"] = ref_accel.domain_report()
     out = Path(args.out).expanduser().resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")

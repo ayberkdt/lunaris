@@ -284,7 +284,7 @@ def _is_mc_npz(path: Path) -> bool:
 
 
 def _audit_mc_archive(path: Path) -> dict[str, Any]:
-    from lunaris.core.monte_carlo_engine import load_mc_result
+    from lunaris.batch import load_mc_result
 
     result = load_mc_result(str(path), lazy=True, strict=False)
     valid = result.valid_sample_mask()

@@ -251,6 +251,38 @@ def _sh_baseline_field(
     a_t = torch.as_tensor(a, device=x_phys.device, dtype=x_phys.dtype).reshape(-1, 3)
     return V_t, a_t
 
+def compute_base_potential_accel_from_contract(
+    x_phys: torch.Tensor,
+    contract: TargetContract,
+    gravity_model: GravityModel | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return ``(u_base, a_base)`` for ``contract`` in a single evaluation.
+
+    Computing the potential and acceleration baselines together matters for the
+    ``spherical_harmonics`` baseline: ``sh_potential_accel_fixed`` evaluates the
+    full SH field (V and a) in one pass, so requesting them through the separate
+    :func:`compute_base_potential_from_contract` /
+    :func:`compute_base_accel_from_contract` helpers does that costly CPU pass
+    *twice* per batch and discards half each time. The hot training/eval paths
+    (the Sobolev loss, the streaming scaler fit, and the field evaluator) call
+    this combined helper so the SH baseline is computed once.
+
+    Residual / ``none`` baselines return zeros; ``point_mass`` uses the monopole.
+    """
+    if contract.target_mode == "residual" or contract.baseline_kind == "none":
+        zeros_u = torch.zeros((x_phys.shape[0], 1), device=x_phys.device, dtype=x_phys.dtype)
+        zeros_a = torch.zeros((x_phys.shape[0], 3), device=x_phys.device, dtype=x_phys.dtype)
+        return zeros_u, zeros_a
+    if contract.baseline_kind == "point_mass":
+        r_norm = torch.norm(x_phys, dim=1, keepdim=True).clamp(min=1.0)
+        u_base = float(contract.a_sign) * (float(contract.mu_si) / r_norm)
+        a_base = -float(contract.mu_si) * x_phys / (r_norm ** 3)
+        return u_base, a_base
+    if contract.baseline_kind == "spherical_harmonics":
+        v_base, a_base = _sh_baseline_field(x_phys, contract, gravity_model)
+        return float(contract.a_sign) * v_base, a_base
+    raise ValueError(f"Unsupported baseline_kind={contract.baseline_kind!r}")
+
 
 def compute_base_potential_from_contract(
     x_phys: torch.Tensor,
@@ -267,17 +299,13 @@ def compute_base_potential_from_contract(
     :func:`lunaris.physics.spherical_harmonics.sh_potential_accel_fixed`, for
     which ``gravity_model`` must be provided. See the capability matrix in
     ``lunaris.surrogate.st_lrps.shared.capabilities``.
+
+    Prefer :func:`compute_base_potential_accel_from_contract` when both the
+    potential and acceleration baselines are needed (it avoids a duplicate SH
+    pass); this helper exists for callers that need only the potential.
     """
 
-    if contract.target_mode == "residual" or contract.baseline_kind == "none":
-        return torch.zeros((x_phys.shape[0], 1), device=x_phys.device, dtype=x_phys.dtype)
-    if contract.baseline_kind == "point_mass":
-        r_norm = torch.norm(x_phys, dim=1, keepdim=True).clamp(min=1.0)
-        return float(contract.a_sign) * (float(contract.mu_si) / r_norm)
-    if contract.baseline_kind == "spherical_harmonics":
-        v_base, _ = _sh_baseline_field(x_phys, contract, gravity_model)
-        return float(contract.a_sign) * v_base
-    raise ValueError(f"Unsupported baseline_kind={contract.baseline_kind!r}")
+    return compute_base_potential_accel_from_contract(x_phys, contract, gravity_model)[0]
 
 
 def compute_base_accel_from_contract(
@@ -289,18 +317,12 @@ def compute_base_accel_from_contract(
 
     Full-field spherical-harmonics contracts subtract the real SH field through
     ``base_degree``; ``gravity_model`` must be supplied (see
-    :func:`compute_base_potential_from_contract`).
+    :func:`compute_base_potential_from_contract`). Prefer
+    :func:`compute_base_potential_accel_from_contract` when both baselines are
+    needed.
     """
 
-    if contract.target_mode == "residual" or contract.baseline_kind == "none":
-        return torch.zeros((x_phys.shape[0], 3), device=x_phys.device, dtype=x_phys.dtype)
-    if contract.baseline_kind == "point_mass":
-        r_norm = torch.norm(x_phys, dim=1, keepdim=True).clamp(min=1.0)
-        return -float(contract.mu_si) * x_phys / (r_norm ** 3)
-    if contract.baseline_kind == "spherical_harmonics":
-        _, a_base = _sh_baseline_field(x_phys, contract, gravity_model)
-        return a_base
-    raise ValueError(f"Unsupported baseline_kind={contract.baseline_kind!r}")
+    return compute_base_potential_accel_from_contract(x_phys, contract, gravity_model)[1]
 
 
 # --- GradNorm loss balancing (Chen et al. 2018) ---
@@ -409,10 +431,11 @@ def fit_scaler_streaming(
         if batch_max_r > max_r_from_origin:
             max_r_from_origin = batch_max_r
 
-        # Subtract baseline so scaler is fitted on residuals
+        # Subtract baseline so scaler is fitted on residuals (single SH pass).
         x_t = torch.as_tensor(x, dtype=torch.float64)
-        u_base = compute_base_potential_from_contract(x_t, contract, gravity_model).numpy()   # (B, 1)
-        a_base = compute_base_accel_from_contract(x_t, contract, gravity_model).numpy()       # (B, 3)
+        u_base_t, a_base_t = compute_base_potential_accel_from_contract(x_t, contract, gravity_model)
+        u_base = u_base_t.numpy()   # (B, 1)
+        a_base = a_base_t.numpy()   # (B, 3)
 
         delta_u = u - u_base    # residual potential
         delta_a = a - a_base    # residual acceleration
@@ -523,5 +546,6 @@ __all__ = [
     'IsometricScaleParams', 'ScalerPack', 'OnlineIsometricStats',
     'compute_base_potential', 'compute_base_accel',
     'compute_base_potential_from_contract', 'compute_base_accel_from_contract',
+    'compute_base_potential_accel_from_contract',
     'fit_scaler_streaming',
 ]

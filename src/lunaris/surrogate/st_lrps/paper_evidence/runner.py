@@ -1,17 +1,17 @@
-"""Staged runner for the ST-LRPS paper evidence pipeline (Part 1).
+"""Staged runner for the ST-LRPS paper evidence pipeline.
 
-Only the ``train`` stage is implemented in Part 1. The other stages exist as
-explicit placeholders that say they belong to Part 2/3 — they never pretend to
-be complete.
+Implemented stages cover the core evidence flow:
 
-Train stage:
-  1. load + validate the paper config (rejects unsafe settings),
-  2. resolve paths and check for unfilled dataset placeholders,
-  3. build the canonical trainer command,
-  4. launch the existing ST-LRPS trainer (unless ``--dry-run``),
-  5. verify the run is hygiene-compliant (train-only scaler, split manifest,
-     artifact contract, checkpoint) — failing loudly otherwise,
-  6. package a provenance bundle and update the evidence manifest.
+* train: validate a paper-safe training config, reject unfilled placeholders for
+  real runs, launch the existing trainer, verify hygiene, and package provenance.
+* field-validation, orbit-benchmark, worst-case, multi-seed, tables: run or
+  regenerate the downstream evidence artifacts used by the paper bundle.
+* ablation: secondary/optional and intentionally excluded from ``--stage all``.
+
+The checked-in paper configs are templates. ``--dry-run`` records any
+``<FILL: ...>`` placeholders in the manifest; non-dry runs fail closed until real
+dataset/model paths are supplied. This module prepares reproducible evidence; it
+does not turn placeholder configs into a final scientific claim.
 """
 
 from __future__ import annotations
@@ -564,12 +564,19 @@ def run_field_validation_stage(
         val_fraction=float(cfg.get("val_fraction", 0.15)),
         options=cfg.get("options"),
         device=str(cfg.get("device", "cpu")),
+        enforce_heldout=bool(cfg.get("enforce_heldout", True)),
+        strict_leakage=bool(cfg.get("strict_leakage", False)),
     )
     paths = write_field_validation_csvs(report, out_dir)
     artifacts = {"field_metrics_csv": paths.get("metrics"), **_model_artifacts(model)}
     _record_stage(evidence_root, "field-validation", "field_validation",
                   config_path=config_path, config=cfg, out_dir=out_dir, artifacts=artifacts,
-                  extra={"policies": list(report.get("field_validation", {}).keys())})
+                  extra={
+                      "policies": list(report.get("field_validation", {}).keys()),
+                      "leakage_guard_status": (report.get("leakage_guard") or {}).get("status"),
+                      "runtime_model_kind": report.get("runtime_model_kind"),
+                      "nonconservative_ratio": (report.get("conservativeness") or {}).get("nonconservative_ratio"),
+                  })
     print(f"[paper-evidence] OK field-validation -> {out_dir}")
     return 0
 

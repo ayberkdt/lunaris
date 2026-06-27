@@ -326,9 +326,8 @@ from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import (
     ScalerPack,
     compute_base_accel,
-    compute_base_accel_from_contract,
     compute_base_potential,
-    compute_base_potential_from_contract,
+    compute_base_potential_accel_from_contract,
 )
 
 
@@ -535,8 +534,8 @@ def predict_u_and_a(
             if isinstance(target_contract, dict)
             else target_contract
         )
-        u_base = compute_base_potential_from_contract(x_phys, contract, gravity_model)  # (B,1)
-        a_base = compute_base_accel_from_contract(x_phys, contract, gravity_model)      # (B,3)
+        u_base, a_base = compute_base_potential_accel_from_contract(  # (B,1), (B,3)
+            x_phys, contract, gravity_model)
     else:
         u_base = compute_base_potential(x_phys, mu_si, a_sign, degree_min)   # (B,1)
         a_base = compute_base_accel(x_phys, mu_si, degree_min)               # (B,3)

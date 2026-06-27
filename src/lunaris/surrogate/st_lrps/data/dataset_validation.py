@@ -27,7 +27,7 @@ def _sample_indices(n_total: int, n_check: int, seed: int) -> np.ndarray:
 
 
 def _read_subset(path: Path, dataset_name: str, indices: np.ndarray) -> tuple[np.ndarray, tuple[int, ...]]:
-    import h5py  # type: ignore
+    import h5py
 
     with h5py.File(path, "r") as handle:
         name = dataset_name if dataset_name in handle else next(
@@ -74,7 +74,7 @@ def validate_dataset_file(
         contract = None
         errors.append(f"dataset contract invalid: {exc}")
 
-    import h5py  # type: ignore
+    import h5py
 
     with h5py.File(path, "r") as handle:
         name = dataset_name if dataset_name in handle else None
@@ -83,6 +83,7 @@ def validate_dataset_file(
                 if hasattr(handle[key], "shape"):
                     name = key
                     break
+        shape: tuple[int, ...]
         if name is None:
             errors.append("no HDF5 dataset found")
             shape = (0, 0)
@@ -120,7 +121,12 @@ def validate_dataset_file(
     altitude_km = (r - r_ref) / 1000.0 if r.size else np.asarray([], dtype=float)
     if r.size and np.any(r <= r_ref):
         errors.append("position norm must exceed lunar reference radius for orbital shell samples")
-    if contract is not None and altitude_km.size:
+    if (
+        contract is not None
+        and altitude_km.size
+        and contract.altitude_min_km is not None
+        and contract.altitude_max_km is not None
+    ):
         lo = float(contract.altitude_min_km)
         hi = float(contract.altitude_max_km)
         envelope_tol_km = 1e-3

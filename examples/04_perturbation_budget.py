@@ -8,7 +8,6 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-
 from _common import build_classic_engine, enable_demo_perturbations, short_config
 
 

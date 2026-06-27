@@ -109,6 +109,18 @@ def test_training_writes_dataset_validation_and_split_manifest(tmp_path):
     assert scaler_prov.get("split_policy") == "altitude_stratified"
     assert scaler_prov.get("train_count") == split["train_count"]
     assert scaler_prov.get("train_index_hash") == split["index_hashes"]["train"]
+    # The exact split indices are persisted alongside the manifest so evaluation
+    # can enforce a held-out split deterministically (no policy/seed reconstruction
+    # — which is fraction-rounding fragile for altitude_stratified). The sidecar
+    # must hash-verify against the manifest's recorded train hash.
+    from lunaris.surrogate.st_lrps.data.splits import load_verified_train_indices
+    indices_path = run_dir / "provenance" / "split_indices.npz"
+    assert indices_path.exists()
+    verified_train = load_verified_train_indices(
+        indices_path, expected_train_hash=split["index_hashes"]["train"]
+    )
+    assert verified_train is not None
+    assert verified_train.size == split["train_count"]
     dataset_meta = json.loads(dataset_meta_path.read_text(encoding="utf-8"))
     assert dataset_meta["dataset_contract"]["dataset_id"] == "toy_residual_cloud"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

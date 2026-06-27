@@ -15,7 +15,7 @@ from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract, utc
 
 def _hash_indices(indices: np.ndarray) -> str:
     arr = np.asarray(indices, dtype=np.int64)
-    return hashlib.sha256(np.ascontiguousarray(arr).view(np.uint8)).hexdigest()
+    return hashlib.sha256(np.ascontiguousarray(arr).view(np.uint8).tobytes()).hexdigest()
 
 
 def _split_counts(n_rows: int, val_fraction: float, test_fraction: float = 0.0) -> tuple[int, int, int]:
@@ -351,6 +351,59 @@ def write_split_manifest(path: str | Path, manifest: Mapping[str, Any]) -> Path:
     return out
 
 
+SPLIT_INDICES_FILENAME = "split_indices.npz"
+
+
+def write_split_indices(path: str | Path, splits: Mapping[str, np.ndarray]) -> Path:
+    """Persist the exact per-split row indices next to the split manifest.
+
+    Storing the actual indices (not just their hashes) lets evaluation enforce a
+    held-out split *deterministically* — by loading the rows the model trained on
+    and excluding them — instead of re-deriving them from the policy/seed and
+    risking a fraction-rounding mismatch (e.g. ``altitude_stratified``). The file
+    is a compact ``.npz`` of int64 arrays keyed ``train``/``val``/``test``/``ood``;
+    each is hash-checked against the manifest's ``index_hashes`` on load so a
+    stale or swapped sidecar can never be trusted silently.
+    """
+    out = Path(path).expanduser().resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    arrays = {
+        str(name): np.asarray(idx, dtype=np.int64).reshape(-1)
+        for name, idx in splits.items()
+    }
+    # numpy's savez_compressed stub types **kwds against allow_pickle; the call is
+    # correct at runtime (each value is an ndarray written as a named archive entry).
+    np.savez_compressed(out, **arrays)  # type: ignore[arg-type]
+    return out
+
+
+def load_verified_train_indices(
+    indices_path: str | Path,
+    *,
+    expected_train_hash: str,
+) -> np.ndarray | None:
+    """Load and hash-verify the persisted training indices, or return ``None``.
+
+    Returns the ``train`` index array only when the sidecar exists, contains a
+    ``train`` array, and its :func:`_hash_indices` digest matches
+    ``expected_train_hash`` exactly. Any mismatch or read error returns ``None``
+    so the caller can fall back without ever trusting an unverified sidecar.
+    """
+    path = Path(indices_path)
+    if not path.exists():
+        return None
+    try:
+        with np.load(path) as data:
+            if "train" not in data:
+                return None
+            train = np.asarray(data["train"], dtype=np.int64).reshape(-1)
+    except Exception:
+        return None
+    if not expected_train_hash or _hash_indices(train) != str(expected_train_hash):
+        return None
+    return train
+
+
 SUPPORTED_SPLIT_POLICIES = (
     "seeded_random",
     "altitude_stratified",
@@ -479,8 +532,10 @@ def _range_per_split(
 
 
 __all__ = [
+    "SPLIT_INDICES_FILENAME",
     "SUPPORTED_SPLIT_POLICIES",
     "build_split_manifest",
+    "load_verified_train_indices",
     "make_altitude_stratified_split",
     "make_ood_altitude_split",
     "make_seeded_random_split",
@@ -488,5 +543,6 @@ __all__ = [
     "make_spatial_plus_altitude_split",
     "radius_lat_lon_deg",
     "split_dataset_indices",
+    "write_split_indices",
     "write_split_manifest",
 ]
