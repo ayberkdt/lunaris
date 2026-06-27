@@ -52,7 +52,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.constants import R_MOON
-from lunaris.common.montecarlo_defs import build_mc_output_grid
+from lunaris.common.batch_defs import build_mc_output_grid
 from lunaris.core.backend_capabilities import unsupported_force_models
 from lunaris.core.torch_frame import (
     TorchFrameError,

@@ -41,7 +41,7 @@ from lunaris.batch.storage import (
     load_mc_result,
 )
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
-from lunaris.common.montecarlo_defs import (
+from lunaris.common.batch_defs import (
     MCRunResult,
     MonteCarloConfig,
     build_mc_output_grid,
@@ -208,7 +208,7 @@ class MonteCarloEngine:
                     # Prioritize the MC-specific ST-LRPS run directory if provided.
                     st_lrps_dir = self._mc.st_lrps_model_dir or cfg.gravity.st_lrps_model_dir
 
-                    from lunaris.common.montecarlo_defs import validate_st_lrps_model_dir
+                    from lunaris.common.batch_defs import validate_st_lrps_model_dir
                     valid_dir = validate_st_lrps_model_dir(st_lrps_dir)
 
                     grav_model = SurrogateGravityModel.from_model_dir(
@@ -1097,7 +1097,7 @@ class MonteCarloEngine:
 
 def mc_entry() -> int:
     """Console-script entry point for batch/Monte Carlo ensemble propagation."""
-    from lunaris.core.mc_runner import main as _mc_main
+    from lunaris.cli.batch_runner import main as _mc_main
 
     return int(_mc_main())
 
@@ -1107,7 +1107,11 @@ def batch_entry() -> int:
     return mc_entry()
 
 
+BatchPropagationEngine = MonteCarloEngine
+
+
 __all__ = [
+    "BatchPropagationEngine",
     "MonteCarloEngine",
     "generate_standard_normal_design",
     "sample_initial_states",

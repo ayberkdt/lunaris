@@ -28,6 +28,9 @@ def test_lunaris_api_facade_exports_stable_names() -> None:
     import lunaris.api as api
 
     assert set(api.__all__) == {
+        "BatchPropagationConfig",
+        "BatchPropagationEngine",
+        "BatchPropagationResult",
         "DynamicsEngine",
         "MonteCarloConfig",
         "MonteCarloEngine",
@@ -37,5 +40,8 @@ def test_lunaris_api_facade_exports_stable_names() -> None:
     }
     assert api.load_default_config.__name__ == "load_default_config"
     assert api.replace_sim_config.__name__ == "replace_sim_config"
+    assert api.BatchPropagationConfig is api.MonteCarloConfig
+    assert api.BatchPropagationEngine is api.MonteCarloEngine
+    assert api.BatchPropagationResult.__name__ == "MCRunResult"
     assert api.MonteCarloConfig.__name__ == "MonteCarloConfig"
     assert api.MonteCarloEngine.__name__ == "MonteCarloEngine"

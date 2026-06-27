@@ -37,7 +37,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.constants import R_MOON
-from lunaris.common.montecarlo_defs import MCRunResult
+from lunaris.common.batch_defs import MCRunResult
 from lunaris.common.type_defs import F64Array
 from lunaris.core.state import cartesian_to_keplerian
 

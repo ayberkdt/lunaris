@@ -193,7 +193,7 @@ class MCAnalysisWorker(QtCore.QThread):
 
         try:
             from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
-            from lunaris.core.monte_carlo_engine import load_mc_result
+            from lunaris.batch import load_mc_result
 
             if self._is_cancelled():
                 return

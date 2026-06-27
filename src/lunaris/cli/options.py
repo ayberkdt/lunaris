@@ -291,7 +291,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         # Artifact validation: directory existence, config.json, and a usable
         # checkpoint (ckpt_best.pt OR ckpt_last.pt) are delegated to the
         # canonical helper. Do NOT reimplement these checks here.
-        from lunaris.common.montecarlo_defs import validate_st_lrps_model_dir
+        from lunaris.common.batch_defs import validate_st_lrps_model_dir
 
         try:
             model_dir = validate_st_lrps_model_dir(args.surrogate_gravity_model_dir)

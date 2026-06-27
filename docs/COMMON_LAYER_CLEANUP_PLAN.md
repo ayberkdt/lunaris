@@ -12,8 +12,8 @@ The common layer is in good shape:
 - done: `common` has no runtime imports from `physics`, `core`, `analysis`,
   `visualization`, `ui`, or `surrogate`.
 - done: `common.__init__` exposes the real lazy submodules:
-  `math_utils`, `time_utils`, `montecarlo_defs`, `paths`, `hashing`, and
-  `lunar_data`.
+  `math_utils`, `time_utils`, `batch_defs`, `montecarlo_defs`, `paths`,
+  `hashing`, and `lunar_data`.
 - done: `C_LIGHT` use in CUDA/MC relativity paths comes from
   `common.constants`.
 - done: `math_utils` exposes the advertised helpers (`dot3`, `cross3`,

@@ -45,7 +45,7 @@ New canonical package:
 - `lunaris.batch.provenance`: file hashing and metadata JSON encode/decode helpers.
 - `lunaris.batch.requirements`: ephemeris/body-vector/topography and impact-frame helpers.
 - `lunaris.batch.backend_policy`: thin adapter over the existing `lunaris.core.mc_backend_policy`.
-- `lunaris.batch.types`: re-exports the canonical dataclasses from `lunaris.common.montecarlo_defs`.
+- `lunaris.batch.types`: re-exports the canonical dataclasses from `lunaris.common.batch_defs`.
 - `lunaris.batch.progress`: progress callback type surface for the later progress extraction.
 
 Compatibility shim:
@@ -55,6 +55,9 @@ Compatibility shim:
   points.
 - Public names still import from both `lunaris.batch` and
   `lunaris.core.monte_carlo_engine`.
+- New code can use the `BatchPropagationConfig` / `BatchPropagationEngine` /
+  `BatchPropagationResult` aliases; historical `MonteCarlo*` names remain
+  identical objects for compatibility.
 - Private helpers currently used by tests or downstream code remain importable
   from the legacy module. `_resolve_result_storage` and `_allocate_result_buffer`
   are proxied so legacy monkeypatches against `lunaris.core.monte_carlo_engine`

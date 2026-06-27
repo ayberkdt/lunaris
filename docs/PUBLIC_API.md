@@ -27,13 +27,14 @@ These modules are intended for direct import:
 | Module | Public objects |
 | --- | --- |
 | `lunaris` | `__version__` |
-| `lunaris.api` | `load_default_config`, `replace_sim_config`, `DynamicsEngine`, `propagate`, `MonteCarloConfig`, `MonteCarloEngine` |
+| `lunaris.api` | `load_default_config`, `replace_sim_config`, `DynamicsEngine`, `propagate`, `BatchPropagationConfig`, `BatchPropagationEngine`, `BatchPropagationResult`, `MonteCarloConfig`, `MonteCarloEngine` |
 | `lunaris.common` | Flat re-exports from `lunaris.common.constants` and `lunaris.common.type_defs` |
 | `lunaris.common.constants` | Physical constants and unit conversions such as `DAY_S`, `C_LIGHT`, `MU_MOON`, `R_MOON`, `AU`, `DEG2RAD`, `RAD2DEG` |
 | `lunaris.common.type_defs` | `GravityConfig`, `AdaptiveDegreeConfig`, `PerturbationFlags`, `SolidTideConfig`, `TimeConfig`, `InitialState`, `SpacecraftProps`, `PropagatorConfig`, `PropagationResult`, `SimulationHistory` |
 | `lunaris.common.hashing` | `canonical_json_text`, `canonical_json_sha256` |
 | `lunaris.common.paths` | `find_project_root`, `project_root_from_file`, `data_dir_from_root` |
-| `lunaris.batch` | `MonteCarloEngine`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_mc_result` |
+| `lunaris.common.batch_defs` | `BatchPropagationConfig`, `BatchPropagationResult`, `MonteCarloConfig`, `MCRunResult`, `StateUncertainty`, `SpacecraftUncertainty`, `build_mc_output_grid`, `validate_st_lrps_model_dir` |
+| `lunaris.batch` | `BatchPropagationEngine`, `BatchPropagationConfig`, `BatchPropagationResult`, `MonteCarloEngine`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_mc_result` |
 | `lunaris.core.config` | `SimConfig`, `load_default_config`, `get_default_config`, `replace_sim_config`, `VisualConfig`, `OutputConfig` |
 | `lunaris.core.dynamics` | `DynamicsEngine` |
 | `lunaris.core.propagator` | `propagate`, `make_time_grid`, `build_events` |

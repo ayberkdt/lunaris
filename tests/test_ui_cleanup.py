@@ -203,7 +203,7 @@ def _make_run(run_dir: Path, *, config: bool, ckpt: str | None) -> Path:
 
 
 def _runtime_accepts(run_dir: Path) -> bool:
-    from lunaris.common.montecarlo_defs import validate_st_lrps_model_dir
+    from lunaris.common.batch_defs import validate_st_lrps_model_dir
 
     try:
         validate_st_lrps_model_dir(run_dir)

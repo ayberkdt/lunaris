@@ -73,7 +73,7 @@ from lunaris.common.constants import (
     R_EARTH_MEAN,
     R_MOON,
 )
-from lunaris.common.montecarlo_defs import build_mc_output_grid
+from lunaris.common.batch_defs import build_mc_output_grid
 from lunaris.common.type_defs import F64Array
 
 # =============================================================================

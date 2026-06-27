@@ -10,6 +10,9 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
 __all__ = [
+    "BatchPropagationConfig",
+    "BatchPropagationEngine",
+    "BatchPropagationResult",
     "DynamicsEngine",
     "MonteCarloConfig",
     "MonteCarloEngine",
@@ -19,10 +22,14 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
-    from lunaris.common.montecarlo_defs import MonteCarloConfig
+    from lunaris.batch import BatchPropagationEngine, MonteCarloEngine
+    from lunaris.common.batch_defs import (
+        BatchPropagationConfig,
+        BatchPropagationResult,
+        MonteCarloConfig,
+    )
     from lunaris.core.config import load_default_config, replace_sim_config
     from lunaris.core.dynamics import DynamicsEngine
-    from lunaris.core.monte_carlo_engine import MonteCarloEngine
     from lunaris.core.propagator import propagate
 
 
@@ -31,8 +38,11 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "replace_sim_config": ("lunaris.core.config", "replace_sim_config"),
     "DynamicsEngine": ("lunaris.core.dynamics", "DynamicsEngine"),
     "propagate": ("lunaris.core.propagator", "propagate"),
-    "MonteCarloConfig": ("lunaris.common.montecarlo_defs", "MonteCarloConfig"),
-    "MonteCarloEngine": ("lunaris.core.monte_carlo_engine", "MonteCarloEngine"),
+    "BatchPropagationConfig": ("lunaris.common.batch_defs", "BatchPropagationConfig"),
+    "BatchPropagationResult": ("lunaris.common.batch_defs", "BatchPropagationResult"),
+    "BatchPropagationEngine": ("lunaris.batch", "BatchPropagationEngine"),
+    "MonteCarloConfig": ("lunaris.common.batch_defs", "MonteCarloConfig"),
+    "MonteCarloEngine": ("lunaris.batch", "MonteCarloEngine"),
 }
 
 

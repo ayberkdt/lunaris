@@ -14,10 +14,12 @@ import numpy as np
 from lunaris.batch import storage as _storage
 from lunaris.batch.engine import (
     _BACKEND_DISPLAY_NAMES,
+    BatchPropagationEngine,
     MonteCarloEngine,
     batch_entry,
     mc_entry,
 )
+from lunaris.batch.types import BatchPropagationConfig, BatchPropagationResult
 from lunaris.batch.memory_policy import (
     _HOST_MEMORY_SAFETY_FACTOR,
     _available_host_memory_bytes,
@@ -84,32 +86,35 @@ def _allocate_result_buffer(
     return np.empty(shape, dtype=np.float64)
 
 
-_COMPAT_PRIVATE_EXPORTS = (
-    _BACKEND_DISPLAY_NAMES,
-    REQUIRED_ARCHIVE_V2_FIELDS,
-    _HOST_MEMORY_SAFETY_FACTOR,
-    _available_host_memory_bytes,
-    _active_physics_capabilities,
-    _decode_archive_metadata,
-    _decode_metadata_value,
-    _metadata_value_to_jsonable,
-    _sha256_file,
-    _build_ephemeris_manager,
-    _impact_positions_fixed,
-    _need_body_vectors,
-    _need_ephemeris,
-    _state_to_array,
-    _surface_topography_requested,
-    _sobol_size_note,
-    _HDF5Writer,
-    _infer_valid_mask_from_dataset,
-    _make_writer,
-    _NPZWriter,
-    _validate_archive_v2_manifest,
+_COMPAT_PRIVATE_EXPORT_NAMES = (
+    "_BACKEND_DISPLAY_NAMES",
+    "REQUIRED_ARCHIVE_V2_FIELDS",
+    "_HOST_MEMORY_SAFETY_FACTOR",
+    "_available_host_memory_bytes",
+    "_active_physics_capabilities",
+    "_decode_archive_metadata",
+    "_decode_metadata_value",
+    "_metadata_value_to_jsonable",
+    "_sha256_file",
+    "_build_ephemeris_manager",
+    "_impact_positions_fixed",
+    "_need_body_vectors",
+    "_need_ephemeris",
+    "_state_to_array",
+    "_surface_topography_requested",
+    "_sobol_size_note",
+    "_HDF5Writer",
+    "_infer_valid_mask_from_dataset",
+    "_make_writer",
+    "_NPZWriter",
+    "_validate_archive_v2_manifest",
 )
 
 
 __all__ = [
+    "BatchPropagationConfig",
+    "BatchPropagationEngine",
+    "BatchPropagationResult",
     "MonteCarloEngine",
     "generate_standard_normal_design",
     "sample_initial_states",
@@ -119,3 +124,4 @@ __all__ = [
     "mc_entry",
     "batch_entry",
 ]
+__all__.extend(_COMPAT_PRIVATE_EXPORT_NAMES)

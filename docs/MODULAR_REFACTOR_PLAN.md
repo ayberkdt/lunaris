@@ -62,18 +62,18 @@ Relevant existing structure (do **not** duplicate these):
 
 - `src/lunaris/physics/` **already holds the force math**: `third_body_effects.py`, `solar_effects.py`, `solid_tides.py`, `lunar_albedo.py`, `thermal_ir.py`, `relativity_effects.py`, `spherical_harmonics.py`, `torch_spherical_harmonics.py`, `ephemeris.py`, `surface_effects.py`, `surrogate_gravity.py`.
 - `src/lunaris/analysis/monte_carlo/` already exists (`plotting.py`, `result_audit.py`, `statistics.py`) — **post-processing**, distinct from the engine. The new `batch/` package must not absorb or shadow it.
-- `src/lunaris/common/` is already lightweight (`constants`, `hashing`, `lunar_data`, `math_utils`, `montecarlo_defs`, `paths`, `time_utils`, `type_defs`).
+- `src/lunaris/common/` is already lightweight (`constants`, `hashing`, `lunar_data`, `math_utils`, `batch_defs`, `montecarlo_defs`, `paths`, `time_utils`, `type_defs`).
 
 Entry points that pin internal modules (`pyproject.toml [project.scripts]`):
 
 ```
-lunaris-mc    = "lunaris.core.monte_carlo_engine:mc_entry"
-lunaris-batch = "lunaris.core.monte_carlo_engine:batch_entry"
+lunaris-mc    = "lunaris.cli.batch:mc_entry"
+lunaris-batch = "lunaris.cli.batch:batch_entry"
 lunaris       = "lunaris.cli.main:main_entry"
 ... (lunaris-ui/-train/-eval/-benchmark/-data via lunaris.cli.entrypoints)
 ```
 
-**Consequence:** `mc_entry` and `batch_entry` must remain importable from `lunaris.core.monte_carlo_engine` (re-export from the shim).
+**Consequence:** `mc_entry` and `batch_entry` must remain importable from `lunaris.core.monte_carlo_engine` (re-export from the shim), while packaging resolves through the canonical CLI wrapper.
 
 ---
 
@@ -128,7 +128,7 @@ Deliverable: `docs/refactor_notes.md` started, with the baseline command list + 
 | Ephemeris/requirement prep helpers | `_need_ephemeris`, `_need_body_vectors`, `_build_ephemeris_manager`, `_surface_topography_requested`, `_impact_positions_fixed`, `_state_to_array` | `batch/requirements.py` (or fold into engine if small) |
 | Backend selection / CPU fallback | (currently delegates to `core/mc_backend_policy.py` + `core/backend_capabilities.py`) | `batch/backend_policy.py` = thin re-export/adapter; **do not move** the existing policy yet |
 | Orchestration | `MonteCarloEngine`, `mc_entry`, `batch_entry` | `batch/engine.py` |
-| Shared dataclasses/types | result/run types (`MCRunResult`, etc., currently sourced from `common/montecarlo_defs` + engine) | `batch/types.py` (re-export, don't fork) |
+| Shared dataclasses/types | result/run types (`BatchPropagationResult` / `MCRunResult`, etc., sourced from `common/batch_defs` with legacy aliases) | `batch/types.py` (re-export, don't fork) |
 
 ### Target layout
 ```
@@ -157,7 +157,7 @@ from lunaris.batch.sampling import (
 # ... every name external code / tests / entry points currently import
 __all__ = [...]
 ```
-Entry points in `pyproject.toml` stay pointed at `lunaris.core.monte_carlo_engine:mc_entry` / `:batch_entry` (they resolve through the shim). **Do not edit pyproject scripts.**
+Entry points in `pyproject.toml` point at `lunaris.cli.batch:mc_entry` / `:batch_entry`; the historical `lunaris.core.monte_carlo_engine` and `lunaris.core.mc_runner` paths remain import-compatible shims.
 
 ### Tests (add)
 - `tests/test_batch_import_compat.py`: every public symbol importable from **both** `lunaris.core.monte_carlo_engine` and `lunaris.batch`.

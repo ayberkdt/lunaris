@@ -7,15 +7,19 @@ sampling, storage, memory policy, and provenance helpers.
 
 from __future__ import annotations
 
-from lunaris.batch.engine import MonteCarloEngine, batch_entry, mc_entry
+from lunaris.batch.engine import BatchPropagationEngine, MonteCarloEngine, batch_entry, mc_entry
 from lunaris.batch.sampling import (
     generate_standard_normal_design,
     sample_initial_states,
     sample_spacecraft_props,
 )
 from lunaris.batch.storage import HDF5TrajectoryView, load_mc_result
+from lunaris.batch.types import BatchPropagationConfig, BatchPropagationResult
 
 __all__ = [
+    "BatchPropagationConfig",
+    "BatchPropagationEngine",
+    "BatchPropagationResult",
     "MonteCarloEngine",
     "generate_standard_normal_design",
     "sample_initial_states",

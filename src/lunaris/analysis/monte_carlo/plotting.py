@@ -64,7 +64,7 @@ from lunaris.analysis.monte_carlo.statistics import (
     OEDispersion,
 )
 from lunaris.common.constants import DAY_S, R_MOON_MEAN
-from lunaris.common.montecarlo_defs import MCRunResult
+from lunaris.common.batch_defs import MCRunResult
 
 # =============================================================================
 # 0.              INTERNAL HELPERS

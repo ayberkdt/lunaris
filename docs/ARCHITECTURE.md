@@ -29,7 +29,8 @@ Dependency-light shared layer.
 - `type_defs.py` — configuration dataclasses (`PerturbationFlags`, `TimeConfig`,
   `SpacecraftProps`, `InitialState`, …).
 - `math_utils.py`, `time_utils.py` — pure helpers.
-- `montecarlo_defs.py` — batch/Monte Carlo configuration/result dataclasses.
+- `batch_defs.py` — canonical batch/ensemble configuration/result dataclasses.
+- `montecarlo_defs.py` — historical compatibility facade for batch dataclasses.
 
 ### Layer 2 — `lunaris.physics`
 Numba-JIT-compiled force-model kernels. Each file is one force model:
@@ -273,17 +274,19 @@ companion-file, or SHA-256 verification. See [DATA_PRESETS.md](DATA_PRESETS.md).
 
 ## Batch / ensemble propagation infrastructure
 
-The public Python dataclasses and file names still use the historical
-`MonteCarlo*` / `mc_*` names for API and archive compatibility. Conceptually,
-this subsystem is the batch propagation engine: it propagates an ensemble of
-initial states and spacecraft properties. Monte Carlo is the default
+The canonical Python dataclasses live in `common/batch_defs.py` and expose
+`BatchPropagation*` aliases for new code. The historical `MonteCarlo*` /
+`mc_*` names remain for API, CLI, and archive compatibility. Conceptually, this
+subsystem is the batch propagation engine: it propagates an ensemble of initial
+states and spacecraft properties. Monte Carlo is the default
 `sampling_method="random"` option, while `lhs`, `sobol`, and
 `sobol_scrambled` provide space-filling designs for validation and benchmark
 coverage.
 
 | Module | Purpose |
 |--------|---------|
-| `common/montecarlo_defs.py` | `MonteCarloConfig`, `StateUncertainty`, `SpacecraftUncertainty`, `MCRunResult`, sampling-method validation |
+| `common/batch_defs.py` | `BatchPropagationConfig`, `MonteCarloConfig`, `StateUncertainty`, `SpacecraftUncertainty`, `BatchPropagationResult`, `MCRunResult`, sampling-method validation |
+| `common/montecarlo_defs.py` | Historical compatibility facade re-exporting `common/batch_defs.py` |
 | `batch/engine.py` | Canonical `MonteCarloEngine.run()` orchestration, backend dispatch, HDF5/NPZ output |
 | `batch/sampling.py` | random/LHS/Sobol standard-normal designs, initial-state and spacecraft-property samples |
 | `batch/storage.py` | HDF5/NPZ writers, archive loading, storage policy |
@@ -296,13 +299,13 @@ coverage.
 
 ```python
 from lunaris.core.config import load_default_config
-from lunaris.common.montecarlo_defs import MonteCarloConfig, StateUncertainty
-from lunaris.batch import MonteCarloEngine
+from lunaris.common.batch_defs import BatchPropagationConfig, StateUncertainty
+from lunaris.batch import BatchPropagationEngine
 from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
 from lunaris.analysis.monte_carlo.plotting import plot_mc_report
 
 sim_cfg = load_default_config()
-mc_cfg = MonteCarloConfig(
+batch_cfg = BatchPropagationConfig(
     n_samples=500,
     sampling_method="sobol_scrambled",  # random = classical Monte Carlo; lhs/sobol = validation design
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
@@ -312,13 +315,14 @@ mc_cfg = MonteCarloConfig(
     output_format="hdf5",
     output_path="outputs/monte_carlo/run.h5",
 )
-result = MonteCarloEngine(sim_cfg, mc_cfg).run()      # MCRunResult
+result = BatchPropagationEngine(sim_cfg, batch_cfg).run()      # BatchPropagationResult
 stats = compute_mc_statistics(result)
 figs = plot_mc_report(result, stats, output_path="outputs/monte_carlo/report.pdf")
 ```
 
 Reload a saved run with `from lunaris.batch import load_mc_result`. The
-historical `lunaris.core.monte_carlo_engine` import path remains available.
+historical `lunaris.core.monte_carlo_engine` and
+`lunaris.common.montecarlo_defs` import paths remain available.
 
 ### GPU classic-SH backends (Numba vs. Torch)
 - Two distinct classic-SH GPU runtimes exist and are kept separate everywhere:

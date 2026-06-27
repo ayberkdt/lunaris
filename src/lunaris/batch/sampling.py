@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.montecarlo_defs import BATCH_SAMPLING_METHODS, StateUncertainty
+from lunaris.common.batch_defs import BATCH_SAMPLING_METHODS, StateUncertainty
 from lunaris.common.type_defs import F64Array
 
 

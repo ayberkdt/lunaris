@@ -19,7 +19,7 @@ from lunaris.batch.provenance import (
     _decode_metadata_value,
     _metadata_value_to_jsonable,
 )
-from lunaris.common.montecarlo_defs import MCRunResult, MonteCarloConfig
+from lunaris.common.batch_defs import MCRunResult, MonteCarloConfig
 
 REQUIRED_ARCHIVE_V2_FIELDS: tuple[str, ...] = (
     "archive_schema_version",
