@@ -14,7 +14,7 @@ import numpy as np
 from PySide6 import QtWidgets
 
 from lunaris.common.type_defs import PropagatorConfig
-from lunaris.core.dynamics import _select_adaptive_sh_degree
+from lunaris.core.dynamics.adaptive_degree import _select_adaptive_sh_degree
 from lunaris.core.propagator import _make_telem_dict, build_events
 from lunaris.ui.core.solver_policy import (
     DEFAULT_ADAPTIVE_ATOL,

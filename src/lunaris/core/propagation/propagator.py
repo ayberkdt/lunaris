@@ -33,12 +33,22 @@ from lunaris.core.propagation.events import (
     build_events,
 )
 from lunaris.core.propagation.integrators.fixed_step import (
+    _ACCEL_METHODS,
+    _RHS_METHODS,
+    _accel_stepper,
     _fixed_step_requires_6d,
     _integrate_fixed_step,
     _is_fixed_step_method,
     _is_symplectic_method,
 )
+from lunaris.core.propagation.integrators.rk import _rk4_step_full, _rk8_step_full
 from lunaris.core.propagation.integrators.scipy import _resolve_scipy_method
+from lunaris.core.propagation.integrators.symplectic import (
+    _Y4_WEIGHTS,
+    _Y6_WEIGHTS,
+    _Y8_WEIGHTS,
+    _composition_weights,
+)
 from lunaris.core.propagation.result import _as_state_array
 from lunaris.core.propagation.telemetry import (
     _build_surface_radius_sampler,
@@ -48,6 +58,7 @@ from lunaris.core.propagation.time_grid import (
     _clamp_output_dt,
     _get_ref_radius_and_mu,
     _get_sh_degree,
+    _norm_method,
     make_time_grid,
 )
 
@@ -698,4 +709,16 @@ __all__ = [
     "PropagationResult",
     "make_time_grid",
     "build_events",
+    "_ACCEL_METHODS",
+    "_RHS_METHODS",
+    "_Y4_WEIGHTS",
+    "_Y6_WEIGHTS",
+    "_Y8_WEIGHTS",
+    "_accel_stepper",
+    "_composition_weights",
+    "_is_fixed_step_method",
+    "_is_symplectic_method",
+    "_norm_method",
+    "_rk4_step_full",
+    "_rk8_step_full",
 ]

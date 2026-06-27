@@ -402,7 +402,7 @@ def test_dynamics_simple_backend_with_dn_grid_compiles_and_runs():
 
 
 def test_sample_albedo_dn_scaled_applies_scale_and_offset():
-    from lunaris.core.dynamics import _sample_albedo_dn_scaled
+    from lunaris.core.dynamics.adaptive_degree import _sample_albedo_dn_scaled
 
     dn = np.full((90, 180), 100.0, dtype=np.float64)
     a = float(_sample_albedo_dn_scaled(0.0, 0.0, dn, 90, 180, 2.0, 0.0, 89.0, 0, 0.001, 0.05, -1.0, -90.0, 90.0))

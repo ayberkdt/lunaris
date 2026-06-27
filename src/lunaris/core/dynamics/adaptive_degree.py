@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import numpy as np
+from numba import njit
 
 from lunaris.common.math_utils import _sample_2d_scaled_bilinear_kernel, clamp, wrap_lon_deg
 
 
+@njit(cache=True)
 def _sample_albedo_dn_scaled(
     lat_deg: float,
     lon_deg: float,
@@ -52,6 +54,8 @@ def _sample_albedo_dn_scaled(
         dn_grid, i_f, j_f, n_rows, n_cols, scale, bias, nodata_dn
     )
 
+
+@njit(cache=True)
 def _select_adaptive_sh_degree(
     r_norm_m: float,
     r_ref_m: float,
