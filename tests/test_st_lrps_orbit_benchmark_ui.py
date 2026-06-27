@@ -1681,6 +1681,7 @@ def test_backend_summary_requested_vs_completed_breakdown(monkeypatch):
     assert summary["requested_batch_frame_mode"] == "precomputed_slerp"
     assert summary["effective_batch_frame_mode"] == "precomputed_slerp"
     assert summary["truth_frame_mode"] == "match_dynamics_engine"
+    assert summary["uses_lunar_rotation"] is True
     assert summary["matches_dynamics_engine_frame"] is False
     warns = " ".join(summary["metadata_warnings"])
     assert "GPU_SH60_RK4" in warns and "GPU_ST_LRPS_RK4" in warns

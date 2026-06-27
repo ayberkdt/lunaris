@@ -32,7 +32,7 @@ keywords = [
   "st-lrps",
 ]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -211,8 +211,48 @@ ignore_missing_imports = true
 warn_unused_ignores = true
 # Kademeli adoption: start with the dependency-light SSOT layers, then widen.
 # common+core are clean; physics is now type-checked too (engine force models).
-files = ["src/lunaris/common", "src/lunaris/core", "src/lunaris/physics"]
+# The ST-LRPS surrogate is being adopted bottom-up: its foundational, dependency-
+# light layers (capability/target/artifact contracts, isometric scaling, split
+# policies, dataset contract, body constants) are type-checked here; the heavier
+# training/evaluation/runtime/UI layers stay out of scope for now (see the
+# per-module skip override below) and will be widened incrementally.
+files = [
+  "src/lunaris/common",
+  "src/lunaris/core",
+  "src/lunaris/physics",
+  # --- ST-LRPS foundational SSOT layers (shared contracts, scaling, constants) ---
+  "src/lunaris/surrogate/st_lrps/shared/capabilities.py",
+  "src/lunaris/surrogate/st_lrps/shared/contracts.py",
+  "src/lunaris/surrogate/st_lrps/shared/scaling.py",
+  "src/lunaris/surrogate/st_lrps/data/dataset_parameters.py",
+  "src/lunaris/surrogate/st_lrps/data/splits.py",
+  "src/lunaris/surrogate/st_lrps/data/dataset_contract.py",
+  "src/lunaris/surrogate/st_lrps/data/dataset_validation.py",
+  "src/lunaris/surrogate/st_lrps/data/quality_report.py",
+  "src/lunaris/surrogate/st_lrps/data/datasets.py",
+  # --- ST-LRPS training support (config, loss, metrics, checkpointing, gates) ---
+  "src/lunaris/surrogate/st_lrps/training/config.py",
+  "src/lunaris/surrogate/st_lrps/training/config_summary.py",
+  "src/lunaris/surrogate/st_lrps/training/losses.py",
+  "src/lunaris/surrogate/st_lrps/training/metrics.py",
+  "src/lunaris/surrogate/st_lrps/training/checkpoint_manager.py",
+  "src/lunaris/surrogate/st_lrps/training/periodic_eval.py",
+  "src/lunaris/surrogate/st_lrps/training/preflight.py",
+  "src/lunaris/surrogate/st_lrps/training/compute_accounting.py",
+  # --- ST-LRPS evaluation/runtime support ---
+  "src/lunaris/surrogate/st_lrps/evaluation/progress.py",
+  "src/lunaris/surrogate/st_lrps/evaluation/provenance.py",
+  "src/lunaris/surrogate/st_lrps/evaluation/benchmark_config.py",
+  "src/lunaris/surrogate/st_lrps/runtime/profiling.py",
+]
 
+# Still-untyped ST-LRPS code (and the rest of the surrogate package): skip
+# following imports into it so the typed foundational modules above can be
+# checked without dragging the heavy training/evaluation/runtime/UI code (and its
+# torch/h5py/PySide6 surface) into scope, and so checked layers above (core,
+# physics) keep treating surrogate imports as before. Modules listed explicitly
+# in `files` are still checked despite this skip — the override only governs how
+# *imported* modules are followed.
 [[tool.mypy.overrides]]
 module = "lunaris.surrogate.*"
 follow_imports = "skip"

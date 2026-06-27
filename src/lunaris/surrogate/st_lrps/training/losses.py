@@ -15,8 +15,7 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import (
     ScalerPack,
-    compute_base_accel_from_contract,
-    compute_base_potential_from_contract,
+    compute_base_potential_accel_from_contract,
 )
 
 if TYPE_CHECKING:
@@ -190,7 +189,7 @@ class GradNormWeights:
         self,
         loss_u: torch.Tensor,
         loss_a: torch.Tensor,
-        shared_params: list[torch.nn.Parameter],
+        shared_params: list[torch.Tensor],
     ) -> float:
         """Return ‖∂L_U/∂W‖ / ‖∂L_a/∂W‖, clamped to [w_a_min, w_a_max].
 
@@ -258,7 +257,7 @@ class GradNormWeights:
         self,
         loss_u: torch.Tensor,
         loss_a: torch.Tensor,
-        shared_params: list[torch.nn.Parameter],
+        shared_params: list[torch.Tensor],
     ) -> tuple[float, float]:
         mode = self._effective_mode()
 
@@ -598,7 +597,7 @@ class SobolevLoss(nn.Module):
         laplacian_subset_size: int = 512,
         laplacian_n_hutchinson: int = 4,
         laplacian_mode: str = "diagnostic",
-    ) -> tuple[torch.Tensor, dict[str, float]]:
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         """
         Compute the staged Sobolev objective and its reference metrics.
 
@@ -610,11 +609,11 @@ class SobolevLoss(nn.Module):
         """
         # Analytical base from explicit target semantics. Residual datasets
         # already store residual labels, so base subtraction is zero even when
-        # the runtime total field later needs an SH baseline.
-        u_base = compute_base_potential_from_contract(
-            x_phys, self.target_contract, self._gravity_model)   # (B,1)
-        a_base = compute_base_accel_from_contract(
-            x_phys, self.target_contract, self._gravity_model)   # (B,3)
+        # the runtime total field later needs an SH baseline. Potential and
+        # acceleration baselines come from one call so a full-field SH baseline
+        # is evaluated once per batch, not twice.
+        u_base, a_base = compute_base_potential_accel_from_contract(
+            x_phys, self.target_contract, self._gravity_model)   # (B,1), (B,3)
 
         # Residual targets (what the network must learn)
         delta_u_true = u_phys - u_base   # (B,1)
@@ -650,7 +649,7 @@ class SobolevLoss(nn.Module):
         )
 
         if is_train and allow_dynamic_weight_update and weights.needs_grad_compute():
-            shared_params = _get_last_hidden_params(model)
+            shared_params = _gradnorm_shared_params(model, weights._effective_mode())
             w_u, w_a = weights.compute_gradnorm_weights(mse_u, mse_a, shared_params)
         else:
             w_u, w_a = weights.get_static_weights()
@@ -780,7 +779,7 @@ class SobolevLoss(nn.Module):
         }
         return loss_opt, stats
 
-def _get_last_hidden_params(model: nn.Module) -> list[nn.Parameter]:
+def _get_last_hidden_params(model: nn.Module) -> list[torch.Tensor]:
     """
     Return the parameters of the last hidden Linear layer for GradNorm computation.
 
@@ -788,15 +787,55 @@ def _get_last_hidden_params(model: nn.Module) -> list[nn.Parameter]:
     full affine transformation at the layer boundary.  Excluding bias would
     slightly underestimate norm_u / norm_a, but the effect is negligible for
     typical hidden sizes (512+).  We include it for completeness.
+
+    This single-layer proxy is cheap, which is why the amortised ``dynamic``
+    GradNorm mode (recomputed every interval) uses it. The ``ntk_init`` mode
+    computes the ratio once and should use the more representative
+    :func:`_get_backbone_shared_params` instead.
     """
     linears = [m for m in model.modules() if isinstance(m, nn.Linear)]
     if len(linears) < 2:
-        return list(model.parameters())
+        return [p for p in model.parameters()]
     last_hidden = linears[-2]
-    params = [last_hidden.weight]
+    params: list[torch.Tensor] = [last_hidden.weight]
     if last_hidden.bias is not None:
         params.append(last_hidden.bias)
     return params
+
+
+def _get_backbone_shared_params(model: nn.Module) -> list[torch.Tensor]:
+    """Grad-enabled parameters of the whole backbone except the output head.
+
+    The last-hidden-layer proxy can be unrepresentative for multi-scale /
+    additive SIRENs, where ``linears[-2]`` is one band-specific layer rather than
+    a shared trunk that every frequency band flows through. For the one-shot
+    ``ntk_init`` ratio we can afford to use the full backbone, so the frozen
+    ``w_a`` reflects gradients from *all* bands and shared blocks, not a single
+    arbitrary layer. The output head (the final ``Linear``) is excluded because
+    it is trained on a separate, higher learning rate and starts near zero, so
+    its gradients are not representative of the shared backbone balance.
+    """
+    linears = [m for m in model.modules() if isinstance(m, nn.Linear)]
+    head_param_ids: set[int] = set()
+    if linears:
+        head_param_ids = {id(p) for p in linears[-1].parameters()}
+    params: list[torch.Tensor] = [
+        p for p in model.parameters() if p.requires_grad and id(p) not in head_param_ids
+    ]
+    return params if params else [p for p in model.parameters()]
+
+
+def _gradnorm_shared_params(model: nn.Module, mode: str) -> list[torch.Tensor]:
+    """Pick the GradNorm reference parameters for the active weighting mode.
+
+    ``dynamic`` recomputes the ratio every ``update_interval`` steps, so it keeps
+    the cheap single-layer proxy. ``ntk_init`` (and any non-dynamic mode that
+    still asks for a gradient compute) runs once, so it uses the representative
+    full-backbone set.
+    """
+    if str(mode).strip().lower() == "dynamic":
+        return _get_last_hidden_params(model)
+    return _get_backbone_shared_params(model)
 
 
 def collocation_laplacian_loss(
@@ -878,5 +917,6 @@ __all__ = [
     'GradNormWeights', 'LossCurriculum', 'SobolevLoss',
     '_direction_loss_factor', '_altitude_km_from_positions',
     '_altitude_balanced_mean_square', '_radial_cross_components',
+    '_get_last_hidden_params', '_get_backbone_shared_params', '_gradnorm_shared_params',
     'collocation_laplacian_loss',
 ]

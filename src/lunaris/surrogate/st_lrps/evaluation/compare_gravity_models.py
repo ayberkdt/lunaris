@@ -274,7 +274,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--batch-frame-mode",
                    choices=["match_dynamics_engine", "inertial_fixed_legacy", "precomputed_slerp"],
                    default="match_dynamics_engine",
-                   help="Frame convention for GPU batch RK4")
+                   help=(
+                       "Frame convention for GPU batch RK4. Default matches the "
+                       "DynamicsEngine Moon-fixed transform. inertial_fixed_legacy "
+                       "is a diagnostic no-rotation approximation only. "
+                       "precomputed_slerp is optimized for --gpu-batch-compare; "
+                       "legacy --batch-rk4 falls back to dynamic match_dynamics_engine."
+                   ))
     p.add_argument("--cache-truth", action="store_true",
                    help="Save SH200 DOP853 truth trajectories under output_dir/truth")
     p.add_argument("--reuse-truth-cache", action="store_true",

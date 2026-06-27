@@ -188,6 +188,8 @@ class DatasetMeta:
                 "scaling constants (DU_m, TU_s, VU_m_s). Cannot convert to SI."
             )
 
+        # Guaranteed non-None by can_convert_to_si() above; assert narrows for mypy.
+        assert self.DU_m is not None and self.TU_s is not None and self.VU_m_s is not None
         DU = float(self.DU_m)
         TU = float(self.TU_s)
         VU = float(self.VU_m_s)
@@ -803,6 +805,8 @@ class H5BlockDataset(Dataset):
 
         local_idx = global_idx - self._cache_start
 
+        # _load_cache_for above guarantees the caches are populated here.
+        assert self._cache_x is not None and self._cache_u is not None and self._cache_a is not None
         return (
             self._cache_x[local_idx],
             self._cache_u[local_idx],

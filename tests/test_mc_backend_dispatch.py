@@ -469,8 +469,8 @@ def test_engine_st_lrps_build_failure_downgrades_plan_to_cpu(monkeypatch, tmp_pa
 def _patch_dynamics_gravity_capture(monkeypatch) -> dict:
     """Patch the gravity/dynamics stack so _build_dynamics runs without real data
     and capture the requested coefficient degree passed to GravityModel.from_file."""
+    import lunaris.batch.engine as engine_mod
     import lunaris.core.dynamics as dyn_mod
-    import lunaris.core.monte_carlo_engine as mce
     import lunaris.physics.spherical_harmonics as sh_mod
 
     captured: dict = {}
@@ -483,8 +483,12 @@ def _patch_dynamics_gravity_capture(monkeypatch) -> dict:
 
     monkeypatch.setattr(sh_mod, "GravityModel", _FakeGrav)
     monkeypatch.setattr(dyn_mod, "DynamicsEngine", lambda **k: SimpleNamespace(**k))
-    monkeypatch.setattr(mce, "_need_ephemeris", lambda cfg, topo_requested: False)
-    monkeypatch.setattr(mce, "_surface_topography_requested", lambda sp, tg: False)
+    # _need_ephemeris / _surface_topography_requested are bound into
+    # lunaris.batch.engine (the engine looks them up in its own namespace after
+    # the batch refactor), so the seam must be patched there, not on the
+    # lunaris.core.monte_carlo_engine compatibility shim.
+    monkeypatch.setattr(engine_mod, "_need_ephemeris", lambda cfg, topo_requested: False)
+    monkeypatch.setattr(engine_mod, "_surface_topography_requested", lambda sp, tg: False)
     return captured
 
 

@@ -27,7 +27,8 @@ To integrate from an inertial propagation frame you MUST:
     2. evaluate ST-LRPS in the fixed frame,
     3. rotate the fixed-frame acceleration back into the inertial frame.
 The ``*_inertial`` helpers below do exactly this; the dynamics engine performs
-the same rotation around ``acceleration_fixed`` in ``surrogate/runtime_adapter.py``.
+the same rotation around ``acceleration_fixed`` in ``surrogate/runtime/adapter.py``
+(also exposed through the historical ``surrogate/runtime_adapter.py`` path).
 
 The legacy ``predict_residual_potential`` / ``predict_residual_accel`` /
 ``predict_total_accel`` names are retained as thin **fixed-frame** wrappers for

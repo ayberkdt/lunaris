@@ -1575,6 +1575,7 @@ def run_random_scenario_mode(
                 dt_s=rk4_dt,
                 output_dt_s=output_dt_s,
                 args=args,
+                ephem=ephem,
             )
         except Exception as exc:
             print(f"[batch-rk4] ERROR: {exc}", flush=True)
@@ -1605,6 +1606,12 @@ def run_random_scenario_mode(
                         duration_s=duration_s,
                         dt_s=rk4_dt,
                         output_dt_s=output_dt_s,
+                        cfg_base=cfg_base,
+                        ephem=ephem,
+                        frame_mode=str(batch_result.get(
+                            "effective_frame_mode",
+                            getattr(args, "batch_frame_mode", "match_dynamics_engine"),
+                        )),
                     )
                 except Exception as exc:
                     print(f"[batch-rk4] SH200 RK4 reference failed: {exc}", flush=True)
@@ -1644,6 +1651,9 @@ def run_random_scenario_mode(
                 "total_error_vs_sh200_dop853": agg_total,
                 "model_error_vs_sh200_rk4":    agg_model,
                 "integrator_error_sh200_rk4_vs_dop853": agg_integr,
+                "requested_batch_frame_mode": batch_result.get("requested_frame_mode"),
+                "effective_batch_frame_mode": batch_result.get("effective_frame_mode"),
+                "uses_frame_rotation": batch_result.get("uses_frame_rotation"),
             }
             with open(out_dir / "batch_rk4_summary.json", "w") as f:
                 json.dump(batch_summary, f, indent=4, default=str)
@@ -1670,6 +1680,9 @@ def run_random_scenario_mode(
                     "device": batch_result.get("device"),
                     "batch_size": args.batch_size or batch_result.get("n_scenarios"),
                     "torch_dtype": batch_result.get("torch_dtype", args.torch_dtype),
+                    "requested_batch_frame_mode": batch_result.get("requested_frame_mode"),
+                    "effective_batch_frame_mode": batch_result.get("effective_frame_mode"),
+                    "uses_frame_rotation": batch_result.get("uses_frame_rotation"),
                 }
             ]
             if sh200_rk4_result is not None:

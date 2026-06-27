@@ -1,9 +1,10 @@
 # Public API
 
-Lunaris is still alpha software, so this page separates the supported public
-surface from internal implementation modules. Public means "reasonable to use in
-examples, scripts, and downstream workflows"; it does not mean the whole package
-is frozen forever.
+Lunaris is under active development, so this page defines the supported public
+surface and its stability expectations, separating it from internal
+implementation modules. Public means "reasonable to use in examples, scripts, and
+downstream workflows"; it does not mean the whole package is frozen forever. Pin
+a version when you need a stable surface.
 
 ## Stable Entry Points
 
@@ -32,12 +33,15 @@ These modules are intended for direct import:
 | `lunaris.common.type_defs` | `GravityConfig`, `AdaptiveDegreeConfig`, `PerturbationFlags`, `SolidTideConfig`, `TimeConfig`, `InitialState`, `SpacecraftProps`, `PropagatorConfig`, `PropagationResult`, `SimulationHistory` |
 | `lunaris.common.hashing` | `canonical_json_text`, `canonical_json_sha256` |
 | `lunaris.common.paths` | `find_project_root`, `project_root_from_file`, `data_dir_from_root` |
+| `lunaris.batch` | `MonteCarloEngine`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_mc_result` |
 | `lunaris.core.config` | `SimConfig`, `load_default_config`, `get_default_config`, `replace_sim_config`, `VisualConfig`, `OutputConfig` |
 | `lunaris.core.dynamics` | `DynamicsEngine` |
 | `lunaris.core.propagator` | `propagate`, `make_time_grid`, `build_events` |
+| `lunaris.core.propagation` | Canonical propagation package; `propagate`, `make_time_grid`, `build_events` |
 | `lunaris.physics.spherical_harmonics` | `GravityModel` |
 | `lunaris.physics.ephemeris` | `SpiceBuildConfig`, `EphemerisManager`, `build_spice_tables`, `build_tables` |
-| `lunaris.surrogate.runtime_adapter` | `SurrogateGravityModel` for production-facing ST-LRPS inference |
+| `lunaris.surrogate.runtime` | `SurrogateGravityModel` for production-facing ST-LRPS inference |
+| `lunaris.surrogate.runtime_adapter` | Historical compatibility alias for production-facing ST-LRPS inference |
 | `lunaris.analysis.postprocess` | `process_simulation_results`, orbital/invariant extraction helpers |
 | `lunaris.analysis.reporting.manager` | `plot_all` |
 
@@ -81,7 +85,7 @@ listed above:
 - `lunaris.ui.*` page/widget internals and web preview implementation details.
 - `lunaris.surrogate.st_lrps.*` training, data, evaluation, UI, and artifact
   internals, except where exposed through console scripts, documented artifact
-  contracts, or `lunaris.surrogate.runtime_adapter`.
+  contracts, or `lunaris.surrogate.runtime`.
 
 ## ST-LRPS Boundary
 
@@ -89,8 +93,11 @@ ST-LRPS is an optional advanced subsystem. Classical propagation must work
 without a trained ST-LRPS artifact. Runtime integration should go through:
 
 ```python
-from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
+from lunaris.surrogate.runtime import SurrogateGravityModel
 ```
+
+The `lunaris.surrogate.runtime_adapter` path is retained for historical
+compatibility.
 
 The old `lunaris.physics.surrogate_gravity` compatibility path is retired and
 does not re-export ST-LRPS runtime objects. This keeps the physics layer

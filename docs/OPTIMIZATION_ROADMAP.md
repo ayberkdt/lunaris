@@ -1,6 +1,6 @@
 # Optimization Roadmap
 
-Date: 2026-06-02
+Date: 2026-06-25
 
 This roadmap records the current ST-LRPS and batch propagation backend decision. It is
 intentionally conservative: do not claim a faster or more accurate method as the
@@ -17,14 +17,18 @@ artifact, hardware, force model, and scenario set.
    validation/coverage batches, and `sampling_method="random"` for classical
    Monte Carlo uncertainty draws. Pair that with `mc_backend="auto"` for
    ordinary batch runs, explicit `cpu_sh` for high-fidelity truth/reference,
-   explicit `gpu_sh` for the current degree-24 classic-SH CUDA tier, and
+   explicit `numba_cuda_sh`/`gpu_sh` for the degree-24 Numba CUDA screening tier,
+   explicit `torch_cuda_sh` for high-degree gravity-only PyTorch CUDA runs, and
    explicit ST-LRPS GPU backends for throughput.
-4. Do not remove the GPU SH degree-24 limit by raising a constant. The current
-   Numba CUDA evaluator uses fixed `(26 x 26)` per-thread Legendre workspaces, so
-   degree 24 is the only true GPU SH tier today.
-5. For requested classic-SH degrees above 24, route to CPU SH with warning and
-   metadata. No silent clipping, no "GPU SH100" label unless the kernel truly
-   computes degree 100 on GPU.
+4. Do not remove the Numba CUDA degree-24 limit by raising a constant. The
+   Numba evaluator uses fixed `(26 x 26)` per-thread Legendre workspaces; that
+   ceiling belongs to `numba_cuda_sh` and its legacy alias `gpu_sh`, not to the
+   entire classic-SH GPU family.
+5. For requested classic-SH degrees above 24, route through
+   `select_classic_sh_backend()`: use `torch_cuda_sh` when PyTorch CUDA is
+   available and the requested physics is gravity-only, otherwise fall back
+   explicitly to CPU SH according to policy. No silent clipping, and no
+   "GPU SH100" label unless `actual_mc_backend` records `torch_cuda_sh`.
 
 ## Method Selection Audit
 
@@ -50,8 +54,11 @@ Recommended production workflow:
   until drift and curl validation pass.
 - Run smaller high-degree `mc_backend="cpu_sh"` truth/reference batches to
   quantify the error envelope.
-- Use `mc_backend="gpu_sh"` only for the true degree-24 classic-SH CUDA tier.
-  Requests above degree 24 fall back to CPU SH and must be reported as fallback.
+- Use `mc_backend="gpu_sh"` only as the legacy alias for `numba_cuda_sh`
+  (degree <= 24). For high-degree GPU classic SH, request `torch_cuda_sh`
+  explicitly or let `mc_backend="auto"` select it when the run is gravity-only
+  and PyTorch CUDA is available. Requests that cannot be served on GPU must
+  record the CPU fallback in requested-vs-actual metadata.
 
 ## Implemented Now
 
@@ -60,9 +67,10 @@ Recommended production workflow:
 - Added explicit requested/actual backend metadata, requested/actual SH degree,
   GPU SH capability metadata, runtime model kind, CUDA device name, dtype, and
   fallback reason.
-- Removed silent degree clipping in the classic-SH CUDA pack builder. Direct use
-  of the low-level CUDA propagator with degree >24 now raises a clear runtime
-  error; the high-level batch propagation policy routes such requests to CPU SH.
+- Removed silent degree clipping in the Numba classic-SH CUDA pack builder.
+  Direct use of the low-level Numba CUDA propagator with degree >24 now raises a
+  clear runtime error; the high-level policy selects `torch_cuda_sh` for
+  compatible high-degree gravity-only runs, or records an explicit CPU fallback.
 - Kept `potential_autograd` and `force_direct` runtime paths working, with direct
   force inference using a no-grad torch path through `SurrogateGravityModel`.
 - Added UI and CLI support for the explicit backend names.
@@ -114,8 +122,10 @@ contract, and a machine where both PyTorch CUDA and Numba CUDA are available.
 
 - ST-LRPS runtime: `potential_autograd` vs `force_direct`, CPU and CUDA, batch
   sizes `1, 16, 128, 512, 1024, 8192`.
-- Batch classic SH: degrees `0, 2, 10, 20, 24`, batch sizes `32, 128, 512,
-  2048`, with CPU same-degree correctness checks.
+- Batch classic SH: Numba CUDA degrees `0, 2, 10, 20, 24`; PyTorch CUDA
+  high-degree gravity-only runs `50, 100, 200`; batch sizes `32, 128, 512,
+  2048`; all with CPU same-degree correctness checks and requested-vs-actual
+  backend metadata.
 - High-degree truth: CPU SH50/SH100/SH200 against ST-LRPS potential and direct
   force over representative 1-day and 5-day orbit sets.
 - Direct-force validity: acceleration absolute/relative error, curl penalty,
@@ -124,9 +134,11 @@ contract, and a machine where both PyTorch CUDA and Numba CUDA are available.
 
 ## Postponed
 
-- True GPU SH50/SH100/SH200 kernels. This needs either generated max-degree
-  specializations with explicit memory tiers or a streaming/row-wise recurrence.
-  It should not be attempted as a constant change.
+- Higher-degree Numba CUDA SH kernels beyond the current degree-24 workspace
+  tier. PyTorch CUDA already covers gravity-only high-degree classic SH; a Numba
+  extension would still need generated max-degree specializations or a
+  streaming/row-wise recurrence and should not be attempted as a constant
+  change.
 - CUDA graphs or `torch.compile` for ST-LRPS. These may help repeated fixed
   shapes, but should follow baseline timings and must preserve autograd for
   `potential_autograd`.
@@ -137,7 +149,8 @@ contract, and a machine where both PyTorch CUDA and Numba CUDA are available.
 ## Delete Or Hide
 
 - Hide or relabel any UI/report wording that implies high-degree classic SH is
-  computed on GPU when metadata shows CPU fallback.
+  computed on GPU when metadata shows CPU fallback, or when the actual backend is
+  not the backend family being claimed.
 - Do not publish `force_direct` scientific accuracy claims without orbit-level
   validation.
 - Do not keep legacy benchmark artifacts in the default runtime path unless they

@@ -802,7 +802,7 @@ def profile_surrogate_runtime(
 
 
 def _json_safe(value: Any) -> Any:
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return _json_safe(asdict(value))
     if isinstance(value, Path):
         return str(value)

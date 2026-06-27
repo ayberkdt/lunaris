@@ -102,19 +102,19 @@ def collect_environment() -> dict[str, Any]:
         "optional_import_errors": {},
     }
     try:
-        import numpy as np  # type: ignore
+        import numpy as np
 
         env["numpy_version"] = np.__version__
     except Exception as exc:
         env["optional_import_errors"]["numpy"] = str(exc)
     try:
-        import scipy  # type: ignore
+        import scipy
 
         env["scipy_version"] = scipy.__version__
     except Exception as exc:
         env["optional_import_errors"]["scipy"] = str(exc)
     try:
-        import torch  # type: ignore
+        import torch
 
         env["torch_version"] = torch.__version__
         env["cuda_available"] = bool(torch.cuda.is_available())

@@ -45,7 +45,7 @@ try:
         DEFAULT_SPATIAL_CLOUD_CONFIG as _CLOUD_CFG,
     )
 except ImportError:  # pragma: no cover - cloud-param defaults are optional
-    _CLOUD_CFG = None  # type: ignore
+    _CLOUD_CFG = None
 
 _DEFAULT_ALT_MIN_KM: float = float(getattr(_CLOUD_CFG, "alt_min_km", 200.0))
 _DEFAULT_ALT_MAX_KM: float = float(getattr(_CLOUD_CFG, "alt_max_km", 600.0))
@@ -53,6 +53,13 @@ _DEFAULT_ALT_MAX_KM: float = float(getattr(_CLOUD_CFG, "alt_max_km", 600.0))
 @dataclass
 class TrainConfig:
     """Hyperparameter configuration for the Physics-Informed Neural Network."""
+
+    # Runtime marker (NOT a dataclass field — left unannotated so it is excluded
+    # from asdict()/serialization): set True by the CLI when --model-preset was
+    # passed explicitly, read by apply_model_preset to distinguish an explicit
+    # preset from the default.
+    _model_preset_explicit = False
+
     data: str
     out: str
     dataset_name: str = "data"

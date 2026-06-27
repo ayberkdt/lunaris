@@ -1132,7 +1132,10 @@ def _build_gpu_batch_summary(
         "effective_batch_frame_mode": frame["effective_batch_frame_mode"],
         "gpu_frame_mode": frame["gpu_frame_mode"],
         "truth_frame_mode": frame["truth_frame_mode"],
-        "uses_lunar_rotation": frame["effective_batch_frame_mode"] == "match_dynamics_engine",
+        "uses_lunar_rotation": frame["effective_batch_frame_mode"] in {
+            "match_dynamics_engine",
+            "precomputed_slerp",
+        },
         "matches_dynamics_engine_frame":
             frame["effective_batch_frame_mode"] == "match_dynamics_engine",
         # Model accounting (Fix 2).

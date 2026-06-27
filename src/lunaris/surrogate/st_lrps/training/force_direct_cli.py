@@ -38,7 +38,12 @@ from lunaris.surrogate.st_lrps.data.dataset_contract import (
 )
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
-from lunaris.surrogate.st_lrps.data.splits import build_split_manifest, write_split_manifest
+from lunaris.surrogate.st_lrps.data.splits import (
+    SPLIT_INDICES_FILENAME,
+    build_split_manifest,
+    write_split_indices,
+    write_split_manifest,
+)
 from lunaris.surrogate.st_lrps.networks.models import (
     build_model_from_config,
     compute_architecture_signature,
@@ -519,6 +524,8 @@ def train_force_direct(args: argparse.Namespace) -> Path:
         run_dir = run_dir / f"force_direct_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     layout = ensure_run_layout(run_dir)
     write_split_manifest(layout.provenance_dir / "split_manifest.json", split_manifest)
+    # Persist exact split indices for deterministic held-out evaluation (see engine).
+    write_split_indices(layout.provenance_dir / SPLIT_INDICES_FILENAME, split_indices)
     layout.config_json.write_text(_json_text(resolved_cfg), encoding="utf-8")
     scaler.save_json(layout.scaler_json)
     layout.history_jsonl.write_text(

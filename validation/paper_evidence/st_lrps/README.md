@@ -63,6 +63,16 @@ large checkpoints are committed: the evidence references each checkpoint by
 Fill the `<FILL: ...>` placeholders (dataset and `model_dir` paths) before a real
 run. Do not edit the safety fields.
 
+### Current repository state
+
+The checked-in configs are paper-safe templates, not completed evidence. A
+dry-run is allowed to record unresolved `<FILL: ...>` values in
+`manifests/evidence_manifest.json`; a real run fails closed until those values
+point at the actual dataset, final-candidate model directory, and benchmark
+output directory. Do not cite this folder as final ST-LRPS evidence until the
+manifest contains non-dry training, field-validation, orbit-benchmark,
+worst-case, multi-seed, and table entries for the same artifact chain.
+
 ## Running the pipeline
 
 The runner is `lunaris-st-lrps-paper-evidence` (or `python -m
