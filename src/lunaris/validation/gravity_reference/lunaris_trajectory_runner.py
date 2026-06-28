@@ -7,7 +7,7 @@ Two regimes:
   ``REFERENCE_GENERATION_REQUIRED`` and never fabricates a comparison.
 * **Real comparison** when a complete, checksummed gravity-only reference arc is
   present. Lunaris propagates the manifest initial state with its production
-  propagator (``core.propagator.propagate`` over ``DynamicsEngine``) under a
+  propagator (``core.propagation.propagator.propagate`` over ``DynamicsEngine``) under a
   gravity-only force model, and the result is compared epoch-by-epoch against the
   immutable reference.
 
@@ -146,7 +146,7 @@ def _run_provenance(manifest: ResolvedTrajectoryManifest, out_dir: Path) -> dict
         "python_version": sys.version.replace("\n", " "),
         "platform": platform.platform(),
         "numpy_version": np.__version__,
-        "implementation_path": "lunaris.core.propagator.propagate",
+        "implementation_path": "lunaris.core.propagation.propagator.propagate",
         "dtype": "float64",
         "backend": "cpu",
     }
@@ -232,7 +232,7 @@ def _propagate_lunaris(
         TimeConfig,
     )
     from lunaris.core.dynamics import DynamicsEngine
-    from lunaris.core.propagator import propagate
+    from lunaris.core.propagation.propagator import propagate
 
     epochs_s = np.asarray(epochs_s, dtype=np.float64)
     step = float(epochs_s[1] - epochs_s[0])

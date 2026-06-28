@@ -167,7 +167,6 @@ def apply_paper_safe(config: MutableMapping[str, Any]) -> dict[str, Any]:
     validation["allow_validation_fail"] = False
     validation["allow_contract_mismatch"] = False
     validation["allow_domain_extrapolation"] = False
-    validation["allow_legacy_artifact"] = False
     if not allow_truth:
         validation["allow_truth_baseline"] = False
 
@@ -177,7 +176,6 @@ def apply_paper_safe(config: MutableMapping[str, Any]) -> dict[str, Any]:
         "quick": False,
         "allow_contract_mismatch": False,
         "allow_domain_extrapolation": False,
-        "allow_legacy_artifact": False,
         "allow_validation_fail": False,
         "strict_domain": True,
         "allow_truth_baseline": bool(allow_truth),

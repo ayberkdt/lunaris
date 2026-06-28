@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from lunaris.common.hashing import canonical_json_text
+from lunaris.common.provenance import sha256_file as _sha256_file
+from lunaris.common.provenance import utc_now_iso as _utc_now_iso
 
 
 def utc_now_iso() -> str:
     """Return a stable UTC timestamp string."""
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return _utc_now_iso()
 
 
 def find_repo_root(start: str | os.PathLike[str] | None = None) -> Path:
@@ -34,18 +34,7 @@ def sha256_file(path: str | os.PathLike[str]) -> str:
     For text files (.csv, .json), CRLF is normalized to LF before hashing
     to ensure cross-platform stability (e.g., Windows vs Linux in CI).
     """
-    p = Path(path)
-    digest = hashlib.sha256()
-
-    if p.suffix in {".csv", ".json"}:
-        with p.open("r", encoding="utf-8", newline="") as handle:
-            for line in handle:
-                digest.update(line.replace("\r\n", "\n").encode("utf-8"))
-    else:
-        with p.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-    return digest.hexdigest()
+    return str(_sha256_file(path, normalize_text_suffixes={".csv", ".json"}))
 
 
 def file_record(path: str | os.PathLike[str]) -> dict[str, Any]:
@@ -113,4 +102,3 @@ def resolve_manifest_path(
     if must_exist and not resolved.exists():
         raise FileNotFoundError(str(resolved))
     return resolved
-

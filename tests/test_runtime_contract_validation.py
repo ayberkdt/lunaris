@@ -26,20 +26,15 @@ def test_runtime_loader_exposes_valid_artifact_contract(tmp_path):
     assert fm.artifact_contract.base_degree == 20
     assert fm.artifact_contract.target_degree == 60
     assert fm.target_contract.baseline_kind == "spherical_harmonics"
-    assert fm.legacy_contract is False
     status = fm.domain_status(np.array([R_MOON_SI + 200_000.0, 0.0, 0.0]))
     assert status["in_training_altitude_range"] is True
 
 
-def test_strict_runtime_rejects_missing_artifact_contract_until_legacy_flag_is_set(tmp_path):
+def test_runtime_rejects_missing_artifact_contract(tmp_path):
     run = make_contract_run(tmp_path, include_contract=False)
 
     with pytest.raises(ArtifactContractError, match="missing artifact_contract"):
         load_surrogate_force_model(run["run_dir"], device="cpu")
-
-    fm = load_surrogate_force_model(run["run_dir"], device="cpu", allow_legacy_contract=True)
-    assert fm.legacy_contract is True
-    assert fm.artifact_contract.target_degree == 60
 
 
 def test_checkpoint_contract_cross_check_rejects_mismatched_baseline_degree(tmp_path):

@@ -517,24 +517,20 @@ def _make_encoded_force_model_checkpoint(tmp_path, use_sh=False, use_radial=Fals
     return tmp_path, cfg_dict
 
 
-def test_force_model_loads_sh_encoded_checkpoint(tmp_path):
-    """Task 2 & 7: SurrogateForceModel must load an SH-encoded checkpoint and produce finite output."""
+def test_force_model_rejects_contract_free_sh_encoded_checkpoint(tmp_path):
+    """Contract-free SH-encoded checkpoints must be regenerated before runtime use."""
     model_dir, _ = _make_encoded_force_model_checkpoint(tmp_path, use_sh=True)
     from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
-    fm = load_surrogate_force_model(str(model_dir), device="cpu", allow_legacy_contract=True)
-    x = np.array([[1.8e6, 0.0, 0.0], [0.0, 1.8e6, 0.0]])
-    out = fm.predict_residual_potential(x)
-    assert np.isfinite(out).all(), f"SH-encoded force model produced non-finite output: {out}"
+    with pytest.raises(Exception, match="artifact_contract"):
+        load_surrogate_force_model(str(model_dir), device="cpu")
 
 
-def test_force_model_loads_radial_encoded_checkpoint(tmp_path):
-    """Task 2 & 7: SurrogateForceModel must load a radial-encoded checkpoint and produce finite output."""
+def test_force_model_rejects_contract_free_radial_encoded_checkpoint(tmp_path):
+    """Contract-free radial-encoded checkpoints must be regenerated before runtime use."""
     model_dir, _ = _make_encoded_force_model_checkpoint(tmp_path, use_radial=True)
     from lunaris.surrogate.st_lrps.runtime.force_model import load_surrogate_force_model
-    fm = load_surrogate_force_model(str(model_dir), device="cpu", allow_legacy_contract=True)
-    x = np.array([[1.8e6, 0.0, 0.0], [0.0, 1.8e6, 0.0]])
-    out = fm.predict_residual_potential(x)
-    assert np.isfinite(out).all(), f"Radial-encoded force model produced non-finite output: {out}"
+    with pytest.raises(Exception, match="artifact_contract"):
+        load_surrogate_force_model(str(model_dir), device="cpu")
 
 
 # ==============================================================================

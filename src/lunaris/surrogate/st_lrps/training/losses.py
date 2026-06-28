@@ -417,7 +417,7 @@ class SobolevLoss(nn.Module):
         elif isinstance(target_contract, TargetContract):
             self.target_contract = target_contract
         else:
-            self.target_contract = TargetContract.from_legacy_config(
+            self.target_contract = TargetContract.from_resolved_config(
                 {
                     "target_mode": target_mode,
                     "degree_min": degree_min,

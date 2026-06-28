@@ -1,4 +1,4 @@
-﻿"""
+"""
 Regression tests for the lunarized surrogate-gravity configuration layer.
 
 These tests focus on the "glue" that keeps the experimental ST-LRPS tooling aligned
@@ -29,7 +29,7 @@ from lunaris.common.lunar_data import (
 from lunaris.common.lunar_data import (
     resolve_lunar_gravity_path as common_resolve_lunar_gravity_path,
 )
-from lunaris.surrogate.runtime_adapter import discover_st_lrps_model_dirs
+from lunaris.surrogate.runtime import discover_st_lrps_model_dirs
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     DEFAULT_DATASET_CONFIG,
     DEFAULT_LUNAR_GRAVITY_PATH,

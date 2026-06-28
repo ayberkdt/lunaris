@@ -54,7 +54,6 @@ Exploratory overrides are explicit:
 ```bash
 lunaris-benchmark --config configs/benchmarks/st_lrps_1day_high_degree.json --allow-contract-mismatch
 lunaris-benchmark --config configs/benchmarks/st_lrps_1day_high_degree.json --allow-domain-extrapolation
-lunaris-benchmark --config configs/benchmarks/st_lrps_1day_high_degree.json --allow-legacy-artifact
 ```
 
 Use these only when the resulting report is clearly labeled exploratory. A
@@ -197,8 +196,8 @@ lunaris-benchmark --config configs/benchmarks/st_lrps_1day_high_degree.json --pa
 ```
 
 Paper-safe enforces: no synthetic/quick output; `allow_contract_mismatch`,
-`allow_domain_extrapolation`, `allow_legacy_artifact`, `allow_validation_fail`
-all false; `strict_domain` true; no truth-as-baseline unless
+`allow_domain_extrapolation`, and `allow_validation_fail` all false;
+`strict_domain` true; no truth-as-baseline unless
 `validation.truth_baseline_justification` is given; a real surrogate whose
 artifact contract matches the config and whose altitude domain covers all
 scenarios. It writes `resolved_config.json`, `benchmark_manifest.json` (with a

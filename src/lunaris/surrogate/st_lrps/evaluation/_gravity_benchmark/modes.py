@@ -26,9 +26,9 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 from lunaris.core.config import SimConfig
 from lunaris.core.dynamics import DynamicsEngine
-from lunaris.core.propagator import propagate
+from lunaris.core.propagation.propagator import propagate
 from lunaris.core.state import create_state_from_keplerian
-from lunaris.surrogate.runtime_adapter import (
+from lunaris.surrogate.runtime import (
     find_latest_st_lrps_model_dir,
 )
 from lunaris.surrogate.st_lrps.evaluation import progress
@@ -1744,7 +1744,7 @@ def run_random_scenario_mode(
 def _auto_find_st_lrps_dir() -> str | None:
     """
     Return the newest valid surrogate run directory.
-    Uses surrogate.runtime_adapter.find_latest_st_lrps_model_dir which requires
+    Uses surrogate.runtime.find_latest_st_lrps_model_dir which requires
     config.json AND checkpoints/ckpt_best.pt (or ckpt_last.pt).
     """
     result = find_latest_st_lrps_model_dir()

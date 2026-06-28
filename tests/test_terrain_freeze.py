@@ -8,7 +8,7 @@ The reference sampler must round-trip against the loader's own
 ``TopographyGrid.radius_m`` so it can serve as the CPU ground truth for the
 GPU/numba terrain-freeze kernels (Phase C/D).
 
-Phase B: ``core.propagator.build_events`` must wire a real terrain-aware impact
+Phase B: ``core.propagation.propagator.build_events`` must wire a real terrain-aware impact
 event (``make_hybrid_impact_event``) when a topo grid is present, with the
 near-field switch altitude sourced from the config single-source default
 (11 km) - never the latent ``0.0`` fallback that silently disables terrain.
@@ -23,7 +23,7 @@ import pytest
 
 from lunaris.common.constants import R_MOON
 from lunaris.common.type_defs import PropagatorConfig
-from lunaris.core.propagator import _find_event_index, build_events
+from lunaris.core.propagation.propagator import _find_event_index, build_events
 from lunaris.loaders.io_surface import (
     ConstantTopography,
     InMemorySurfaceProvider,

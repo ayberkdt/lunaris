@@ -2,7 +2,7 @@ import pytest
 
 import lunaris.physics as models
 from lunaris.physics import surface_effects
-from lunaris.surrogate.runtime_adapter import _build_model_from_config
+from lunaris.surrogate.runtime.networks import _build_model_from_config
 
 
 def test_models_init_exports():
@@ -22,8 +22,8 @@ def test_surface_effects_cleanup():
     assert not hasattr(surface_effects, "accel_albedo_lommel_seeliger"), "accel_albedo_lommel_seeliger (legacy) should be removed."
     assert not hasattr(surface_effects, "_ALBEDO_KERNELS"), "_ALBEDO_KERNELS dispatch dict should be removed."
 
-def test_surrogate_gravity_fail_fast():
-    """Verify surrogate_gravity._build_model_from_config rejects advanced architectures."""
+def test_surrogate_runtime_network_builder_fail_fast():
+    """Verify the runtime network builder rejects advanced architectures."""
     cfg_multiscale = {"architecture": "MultiScale", "activation": "sine", "hidden": 256, "depth": 4}
     with pytest.raises(ValueError, match="does not support MultiScale or advanced Residual models"):
         _build_model_from_config(cfg_multiscale)

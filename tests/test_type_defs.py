@@ -1,4 +1,4 @@
-﻿# tests/test_type_defs.py
+# tests/test_type_defs.py
 """
 Unit tests for common.type_defs
 ==============================

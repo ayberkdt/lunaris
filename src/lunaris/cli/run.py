@@ -129,7 +129,7 @@ def main() -> int:
     mu = float(MU_MOON)
     try:
         if bool(cfg.flags.enable_sh) and cfg.gravity.uses_st_lrps:
-            from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
+            from lunaris.surrogate.runtime import SurrogateGravityModel
 
             gravity_core = SurrogateGravityModel.from_model_dir(
                 cfg.gravity.st_lrps_model_dir,
@@ -278,7 +278,7 @@ def main() -> int:
     t0 = time.perf_counter()
     try:
         # Local import: avoid importing core at module import time
-        from lunaris.core.propagator import propagate
+        from lunaris.core.propagation.propagator import propagate
 
         result: PropagationResult = propagate(
             dynamics=engine,

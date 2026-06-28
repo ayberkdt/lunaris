@@ -9,7 +9,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from lunaris.analysis.monte_carlo.result_audit import TRUSTED, classify_st_lrps_run
-from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
+from lunaris.surrogate.runtime import SurrogateGravityModel
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
     GRAVITY_LABEL_ENGINE_VERSION,
     REQUIRED_SH_PHASE_CONVENTION,

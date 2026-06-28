@@ -6,7 +6,7 @@ tolerance implies (number of steps, force-evaluation budget, accuracy band) and
 to flag obviously unsafe inputs before launch.
 
 The per-step force-evaluation counts mirror the actual implementation in
-``lunaris.core.propagator`` (the Yoshida compositions reuse no evaluations across
+``lunaris.core.propagation.propagator`` (the Yoshida compositions reuse no evaluations across
 their velocity-Verlet sub-steps, so the counts grow with the number of
 sub-steps).
 """

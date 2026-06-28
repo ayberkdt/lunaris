@@ -36,7 +36,7 @@ def main() -> int:
     import numpy as np
 
     from lunaris.common.constants import R_MOON
-    from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
+    from lunaris.surrogate.runtime import SurrogateGravityModel
 
     model = SurrogateGravityModel.from_model_dir(args.model_dir)
     r_fixed_m = np.asarray([float(R_MOON) + 100_000.0, 0.0, 0.0], dtype=float)

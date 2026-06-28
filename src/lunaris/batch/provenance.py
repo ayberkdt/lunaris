@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from lunaris.common.provenance import sha256_file
 
 
 def _sha256_file(path: Any) -> str | None:
@@ -17,19 +18,7 @@ def _sha256_file(path: Any) -> str | None:
     manifest. Never raises: missing or unreadable files yield ``None`` so
     provenance capture cannot abort a completed run.
     """
-    if not path:
-        return None
-    try:
-        p = Path(path)
-        if not p.is_file():
-            return None
-        digest = hashlib.sha256()
-        with p.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest()
-    except Exception:
-        return None
+    return sha256_file(path, missing_ok=True, suppress_errors=True) if path else None
 
 
 def _active_physics_capabilities(sim_cfg: Any) -> list[str]:

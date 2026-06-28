@@ -37,12 +37,10 @@ These modules are intended for direct import:
 | `lunaris.batch` | `BatchPropagationEngine`, `BatchPropagationConfig`, `BatchPropagationResult`, `MonteCarloEngine`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_mc_result` |
 | `lunaris.core.config` | `SimConfig`, `load_default_config`, `get_default_config`, `replace_sim_config`, `VisualConfig`, `OutputConfig` |
 | `lunaris.core.dynamics` | `DynamicsEngine` |
-| `lunaris.core.propagator` | `propagate`, `make_time_grid`, `build_events` |
 | `lunaris.core.propagation` | Canonical propagation package; `propagate`, `make_time_grid`, `build_events` |
 | `lunaris.physics.spherical_harmonics` | `GravityModel` |
 | `lunaris.physics.ephemeris` | `SpiceBuildConfig`, `EphemerisManager`, `build_spice_tables`, `build_tables` |
 | `lunaris.surrogate.runtime` | `SurrogateGravityModel` for production-facing ST-LRPS inference |
-| `lunaris.surrogate.runtime_adapter` | Historical compatibility alias for production-facing ST-LRPS inference |
 | `lunaris.analysis.postprocess` | `process_simulation_results`, orbital/invariant extraction helpers |
 | `lunaris.analysis.reporting.manager` | `plot_all` |
 
@@ -97,12 +95,10 @@ without a trained ST-LRPS artifact. Runtime integration should go through:
 from lunaris.surrogate.runtime import SurrogateGravityModel
 ```
 
-The `lunaris.surrogate.runtime_adapter` path is retained for historical
-compatibility.
-
-The old `lunaris.physics.surrogate_gravity` compatibility path is retired and
-does not re-export ST-LRPS runtime objects. This keeps the physics layer
-independent of the optional surrogate subsystem.
+The historical `lunaris.surrogate.runtime_adapter` and
+`lunaris.physics.surrogate_gravity` paths have been removed. This keeps the
+physics layer independent of the optional surrogate subsystem and avoids stale
+import aliases in new experiments.
 
 Training/evaluation package internals may change as artifact contracts evolve.
 Downstream code should prefer the `lunaris-train`, `lunaris-eval`, and

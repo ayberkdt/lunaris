@@ -46,19 +46,12 @@ def build_dataset_quality_report(
     dataset_name: str = "data",
     bins: int = 20,
     split_manifest: Mapping[str, Any] | None = None,
-    allow_legacy_dataset_contract: bool = True,
 ) -> dict[str, Any]:
     """Compute lightweight dataset quality statistics and optionally write files."""
 
     path = Path(data_path).expanduser().resolve()
     data, resolved_name = _read_all(path, dataset_name)
-    contract = DatasetContract.from_hdf5(
-        path,
-        dataset_name=resolved_name,
-        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-        allow_missing_dataset_contract=allow_legacy_dataset_contract,
-        allow_legacy_derivative_convention=allow_legacy_dataset_contract,
-    )
+    contract = DatasetContract.from_hdf5(path, dataset_name=resolved_name)
     xyz = data[:, 0:3]
     r = np.linalg.norm(xyz, axis=1)
     altitude = (r - float(contract.r_ref_m)) / 1000.0

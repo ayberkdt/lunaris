@@ -181,10 +181,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="Config-mode: downgrade artifact/benchmark contract errors to warnings.")
     p.add_argument("--allow-domain-extrapolation", action="store_true",
                    help="Config-mode: allow benchmark altitude ranges outside artifact training envelope.")
-    p.add_argument("--allow-legacy-artifact", action="store_true",
-                   help="Config-mode: allow ST-LRPS artifacts without a full artifact_contract.")
     p.add_argument("--paper-safe", action="store_true",
-                   help="Config-mode: enforce a defensible benchmark. Forbids synthetic/quick/legacy "
+                   help="Config-mode: enforce a defensible benchmark. Forbids synthetic/quick "
                         "artifacts, contract mismatch, and domain extrapolation; requires a real "
                         "contract-checked surrogate covering all scenario altitudes. Hard-fails otherwise.")
 
@@ -594,7 +592,6 @@ def main(argv: list[str] | None = None) -> int:
             allow_validation_fail=bool(args.allow_validation_fail),
             allow_contract_mismatch=bool(args.allow_contract_mismatch),
             allow_domain_extrapolation=bool(args.allow_domain_extrapolation),
-            allow_legacy_artifact=bool(args.allow_legacy_artifact),
             paper_safe=bool(args.paper_safe),
         )
     return run_from_args(args)

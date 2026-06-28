@@ -13,7 +13,7 @@ Contract with the rest of the app
   (e.g. ``"RK4 (Fixed-step)" -> "RK4"``), so every label must start with its
   ``key``.
 - ``key`` is the canonical method string the propagator understands
-  (``lunaris.core.propagator``): DOP853/RK45/RK23/RADAU/BDF/LSODA (adaptive,
+  (``lunaris.core.propagation.propagator``): DOP853/RK45/RK23/RADAU/BDF/LSODA (adaptive,
   SciPy) and VV/PEFRL/YOSHIDA4/YOSHIDA6/YOSHIDA8/RKN4/RK4/RK8 (in-house
   fixed-step).
 - ``family == "adaptive"`` must agree with

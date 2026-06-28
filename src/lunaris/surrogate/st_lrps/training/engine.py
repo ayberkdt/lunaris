@@ -1817,8 +1817,6 @@ class _DatasetContext:
     bytes_est: int
     dataset_contract_obj: DatasetContract
     validation_report: dict[str, Any]
-    allow_legacy_dataset_contract: bool
-    allow_missing_dataset_contract: bool
 
 
 def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
@@ -1910,14 +1908,9 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
     if cfg.use_si and meta.unit_system == "canonical" and not meta.can_convert_to_si():
         raise ValueError("Configuration demands SI units, but dataset is missing DU_m/TU_s/VU_m_s attributes.")
 
-    allow_legacy_dataset_contract = bool(getattr(cfg, "allow_legacy_dataset_contract", False))
-    allow_missing_dataset_contract = bool(getattr(cfg, "allow_missing_dataset_contract", False))
     dataset_contract_obj = DatasetContract.from_hdf5(
         primary_path,
         dataset_name=dset_name,
-        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-        allow_missing_dataset_contract=allow_missing_dataset_contract,
-        allow_legacy_derivative_convention=bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
     )
     validation_report = validate_dataset_file(
         primary_path,
@@ -1925,9 +1918,6 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
         dataset_name=dset_name,
         n_check=min(1024, int(N)),
         seed=int(cfg.split_seed if cfg.split_seed is not None else cfg.seed),
-        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-        allow_missing_dataset_contract=allow_missing_dataset_contract,
-        allow_legacy_derivative_convention=bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
     )
     if not validation_report.get("passed") and not bool(getattr(cfg, "allow_dataset_validation_fail", False)):
         raise ValueError(
@@ -1948,8 +1938,6 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
         bytes_est=bytes_est,
         dataset_contract_obj=dataset_contract_obj,
         validation_report=validation_report,
-        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-        allow_missing_dataset_contract=allow_missing_dataset_contract,
     )
 
 
@@ -2511,8 +2499,6 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     bytes_est = _dsctx.bytes_est
     dataset_contract_obj = _dsctx.dataset_contract_obj
     validation_report = _dsctx.validation_report
-    allow_legacy_dataset_contract = _dsctx.allow_legacy_dataset_contract
-    allow_missing_dataset_contract = _dsctx.allow_missing_dataset_contract
 
     # 4. Data Splitting
     _split = _resolve_data_splits(
@@ -2549,15 +2535,6 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     validate_training_dataset_convention(
         meta,
         data_path=primary_path,
-        allow_legacy_derivative_convention=bool(
-            getattr(cfg, "allow_legacy_derivative_convention", False)
-        ),
-        allow_legacy_target_mode_inference=bool(
-            getattr(cfg, "allow_legacy_target_mode_inference", False)
-        ),
-        allow_missing_dataset_contract=bool(
-            getattr(cfg, "allow_missing_dataset_contract", False)
-        ),
     )
     if _effective_target == "residual" and degree_min_val < 0:
         raise ValueError(
@@ -2624,10 +2601,6 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         resolved_mu_si=float(resolved_mu_si),
         resolved_r_ref_m=float(resolved_r_ref_m),
         a_sign=float(a_sign),
-        allow_inferred_target_mode=bool(getattr(cfg, "allow_legacy_target_mode_inference", False)),
-        allow_legacy_derivative_convention=bool(
-            getattr(cfg, "allow_legacy_derivative_convention", False)
-        ),
     )
     logger.info(
         "Target contract: "
@@ -2767,10 +2740,8 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     dataset_snapshot["dataset_validation_report_path"] = str(layout.provenance_dir / "dataset_validation_report.json")
     dataset_snapshot["split_manifest_path"] = str(split_manifest_path)
     dataset_snapshot["split_manifest"] = split_manifest
-    dataset_snapshot["dataset_safety_overrides"] = {
-        "allow_legacy_dataset_contract": allow_legacy_dataset_contract,
-        "allow_missing_dataset_contract": allow_missing_dataset_contract,
-        "allow_legacy_derivative_convention": bool(getattr(cfg, "allow_legacy_derivative_convention", False)),
+    dataset_snapshot["dataset_safety"] = {
+        "strict_dataset_contract": True,
         "allow_dataset_validation_fail": bool(getattr(cfg, "allow_dataset_validation_fail", False)),
     }
     atomic_write_json(layout.provenance_dir / "dataset_meta.json", dataset_snapshot)

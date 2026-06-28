@@ -73,7 +73,7 @@ class SurrogateGravityModel:
         self._baseline_torch_evaluator: Any | None = None
         self._baseline_torch_signature: tuple[str, str, int] | None = None
 
-        # Degree metadata — required by core.propagator._get_sh_degree() and
+        # Degree metadata — required by core.propagation.propagator._get_sh_degree() and
         # MC result provenance.  Raised at construction time so the error fires
         # once at load, not N times inside the Monte Carlo sample loop.
         _deg_min, _deg_max = _extract_degree_metadata(config)
@@ -203,7 +203,7 @@ class SurrogateGravityModel:
             )
             model = force_runtime.model
             logger.info(
-                "lunaris.surrogate.runtime_adapter delegated neural inference "
+                "lunaris.surrogate.runtime delegated neural inference "
                 "to st_lrps.runtime.force_model."
             )
         except Exception as exc:

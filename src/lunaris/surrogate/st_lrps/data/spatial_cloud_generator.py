@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from lunaris.common.provenance import utc_now_iso
+
 if TYPE_CHECKING:
     import h5py  # optional dependency; imported lazily at runtime
 
@@ -50,7 +52,8 @@ from lunaris.physics.spherical_harmonics import (
 
 # ---- Physics SSOT (local lunar dataset parameters) ----
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
-    contract_from_generation_attrs,
+    DatasetContract,
+    build_contract_payload_for_generator,
     ensure_output_path_allowed,
     stamp_hdf5_content_hash,
 )
@@ -71,6 +74,48 @@ from lunaris.surrogate.st_lrps.data.spatial_cloud_parameters import (
     SamplingStrategy,
     SpatialCloudConfig,
 )
+
+
+def _columns_from_attr(value: object) -> list[str]:
+    text = str(value or "[x,y,z,dU,dax,day,daz]").strip().strip("[]")
+    return [part.strip().strip("'\"") for part in text.split(",") if part.strip()]
+
+
+def _contract_from_current_generator_attrs(
+    attrs: dict[str, object],
+    *,
+    n_samples: int,
+    dataset_name: str,
+) -> DatasetContract:
+    payload = build_contract_payload_for_generator(
+        dataset_id=str(attrs.get("dataset_id") or attrs.get("suite_id") or "") or None,
+        n_samples=int(n_samples),
+        degree_min=int(attrs["degree_min"]),
+        degree_max=int(attrs["degree_max"]),
+        target_mode=str(attrs["target_mode"]),
+        baseline_kind=str(attrs.get("baseline_kind") or "spherical_harmonics"),
+        mu_si=float(attrs["mu_si"]),
+        r_ref_m=float(attrs["r_ref_m"]),
+        altitude_min_km=float(attrs.get("altitude_min_km", attrs.get("alt_min_km"))),
+        altitude_max_km=float(attrs.get("altitude_max_km", attrs.get("alt_max_km"))),
+        random_seed=int(attrs.get("random_seed", attrs.get("seed", 0))),
+        sampling_policy={
+            "name": attrs.get("sampling_strategy") or attrs.get("sampling_policy"),
+            "surface_bias_ratio": attrs.get("surface_bias_ratio"),
+        },
+        source_gravity_model=str(attrs.get("source_gravity_model") or attrs.get("gravity_model_path") or ""),
+        source_gravity_file_path=str(
+            attrs.get("source_gravity_file_path") or attrs.get("gravity_model_path") or ""
+        ),
+        source_gravity_file_sha256=str(attrs.get("source_gravity_file_sha256") or ""),
+        generator_version=str(attrs.get("generator_version") or "spatial_cloud_generator_contract_v1"),
+        columns=_columns_from_attr(attrs.get("columns")),
+    )
+    payload["created_at_utc"] = attrs.get("created_at_utc") or payload.get("created_at_utc")
+    payload["generator_name"] = str(attrs.get("generator_name") or attrs.get("created_by") or "spatial_cloud_generator")
+    payload["dataset_kind"] = str(attrs.get("dataset_kind") or payload.get("dataset_kind"))
+    payload["dataset_layout"] = {"dataset_name": dataset_name, "shape": [int(n_samples), 7]}
+    return DatasetContract.from_dict(payload)
 
 
 # =============================================================================
@@ -298,7 +343,7 @@ def write_h5_streaming(out_path: Path, n_samples: int, dtype: np.dtype, chunks_r
     )
     for k, v in attrs.items():
         f.attrs[str(k)] = str(v)
-    contract = contract_from_generation_attrs(attrs, n_samples=int(n_samples), dataset_name="data")
+    contract = _contract_from_current_generator_attrs(attrs, n_samples=int(n_samples), dataset_name="data")
     generation_config = {}
     try:
         generation_config = json.loads(str(attrs.get("cloud_config_json", "{}")))
@@ -708,7 +753,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
         "coordinate_frame": "moon_fixed_cartesian",
         "units": json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True),
         "generator_version": "spatial_cloud_generator_contract_v1",
-        "created_at_utc": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "created_at_utc": utc_now_iso(),
         "sampling_strategy": str(cfg.sampling_strategy),
         "surface_bias_ratio": str(float(cfg.surface_bias_ratio)),
         "n_samples": str(int(cfg.n_samples)),
@@ -906,7 +951,7 @@ def _write_suite_h5(
         ds[:] = data.astype(dtype, copy=False)
         for k, v in attrs.items():
             f.attrs[str(k)] = str(v)
-        contract = contract_from_generation_attrs(attrs, n_samples=n, dataset_name="data")
+        contract = _contract_from_current_generator_attrs(attrs, n_samples=n, dataset_name="data")
         generation_config = {}
         try:
             generation_config = json.loads(str(attrs.get("cloud_config_json", "{}")))
@@ -952,7 +997,7 @@ def _build_suite_attrs(
         "coordinate_frame": "moon_fixed_cartesian",
         "units": json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True),
         "generator_version": "spatial_cloud_generator_suite_contract_v1",
-        "created_at_utc": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "created_at_utc": utc_now_iso(),
         "dataset_role": str(dataset_role),
         "sampling_strategy": str(sampling_strategy),
         "suite_id": str(suite_id),
@@ -2050,7 +2095,7 @@ def _run_active_refinement(a, ap) -> None:
         hf.attrs["coordinate_frame"] = "moon_fixed_cartesian"
         hf.attrs["units"] = json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True)
         hf.attrs["generator_version"] = "spatial_cloud_generator_active_contract_v1"
-        hf.attrs["created_at_utc"] = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        hf.attrs["created_at_utc"] = utc_now_iso()
         hf.attrs["columns"] = columns_label
         hf.attrs["a_sign_convention"] = "+1"
         hf.attrs["unit_system"] = "si"
@@ -2063,7 +2108,7 @@ def _run_active_refinement(a, ap) -> None:
         hf.attrs["gravity_label_engine_version"] = "lunaris_sh_v2"
         hf.attrs["seed"] = int(getattr(a, "active_seed", 42))
         hf.attrs["created_by"] = "spatial_cloud_generator._run_active_refinement"
-        contract = contract_from_generation_attrs(
+        contract = _contract_from_current_generator_attrs(
             {str(k): hf.attrs[k] for k in hf.attrs.keys()},
             n_samples=int(data_out.shape[0]),
             dataset_name="data",

@@ -69,8 +69,8 @@ def test_residual_degree_order_raises() -> None:
         TargetContract.from_dataset_meta(_meta(degree_min=50, degree_max=50), MU_MOON_SI, R_MOON_SI, 1.0)
 
 
-def test_backward_compatible_reconstruction_from_old_config() -> None:
-    c = TargetContract.from_legacy_config(
+def test_target_contract_from_resolved_config() -> None:
+    c = TargetContract.from_resolved_config(
         {
             "target_mode": "residual",
             "degree_min": 10,
@@ -86,17 +86,9 @@ def test_backward_compatible_reconstruction_from_old_config() -> None:
     assert TargetContract.from_dict(c.to_dict()) == c
 
 
-def test_missing_target_mode_requires_explicit_legacy_inference() -> None:
+def test_missing_target_mode_is_rejected() -> None:
     with pytest.raises(ValueError, match="missing target_mode"):
         TargetContract.from_dataset_meta(_meta(target_mode=None), MU_MOON_SI, R_MOON_SI, 1.0)
-    c = TargetContract.from_dataset_meta(
-        _meta(target_mode=None),
-        MU_MOON_SI,
-        R_MOON_SI,
-        1.0,
-        allow_inferred_target_mode=True,
-    )
-    assert c.target_mode == "residual"
 
 
 def test_contract_aware_base_subtraction_modes() -> None:

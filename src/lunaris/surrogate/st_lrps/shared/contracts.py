@@ -1,13 +1,9 @@
-"""Explicit target contracts for ST-LRPS lunar surrogate artifacts.
+"""Explicit target and artifact contracts for ST-LRPS lunar surrogate artifacts.
 
-The target contract separates two ideas that used to be coupled implicitly:
-
-* the harmonic degree range of the reference/high-degree fields, and
-* whether the dataset stores residual labels or full-field labels.
-
-Old configs may omit ``target_contract``.  Use
-``TargetContract.from_legacy_config`` to reconstruct the contract from the
-older flat fields without silently changing the learned physics.
+The target contract separates the harmonic degree range of the reference/high
+degree fields from whether the dataset stores residual labels or full-field
+labels. Artifact contracts are generated from fully resolved training configs
+and embedded in every current checkpoint.
 """
 
 from __future__ import annotations
@@ -169,19 +165,14 @@ class TargetContract:
         resolved_mu_si: float,
         resolved_r_ref_m: float,
         a_sign: float,
-        *,
-        allow_inferred_target_mode: bool = False,
-        allow_legacy_derivative_convention: bool = False,
     ) -> TargetContract:
         target_mode = getattr(meta, "target_mode", None)
         base_degree = _as_int(getattr(meta, "degree_min", None), -1)
         if not target_mode:
-            if not allow_inferred_target_mode:
-                raise ValueError(
-                    "Dataset metadata is missing target_mode. Regenerate the dataset "
-                    "or explicitly use legacy target-mode inference."
-                )
-            target_mode = "residual" if base_degree >= 0 else "full"
+            raise ValueError(
+                "Dataset metadata is missing target_mode. Regenerate the dataset "
+                "with the current contract schema."
+            )
         target_mode = _clean_str(target_mode, "residual")
         target_degree = _as_int(
             getattr(meta, "degree_max", None),
@@ -189,8 +180,6 @@ class TargetContract:
         )
         baseline_kind = _baseline_kind_for(target_mode, base_degree)
         deriv = getattr(meta, "derivative_convention_version", None)
-        if allow_legacy_derivative_convention and deriv != REQUIRED_DERIVATIVE_CONVENTION:
-            deriv = REQUIRED_DERIVATIVE_CONVENTION
         return cls(
             central_body=getattr(meta, "central_body", None) or "moon",
             target_mode=target_mode,
@@ -206,7 +195,7 @@ class TargetContract:
         )
 
     @classmethod
-    def from_legacy_config(
+    def from_resolved_config(
         cls,
         config: Mapping[str, Any],
         *,
@@ -214,7 +203,7 @@ class TargetContract:
         resolved_r_ref_m: float | None = None,
         a_sign: float | None = None,
     ) -> TargetContract:
-        """Reconstruct a target contract from old flat config fields."""
+        """Build a target contract from a fully resolved training config."""
 
         if isinstance(config.get("target_contract"), Mapping):
             return cls.from_dict(config["target_contract"])
@@ -508,7 +497,7 @@ class ArtifactContract:
         )
 
     @classmethod
-    def from_legacy_config(
+    def from_resolved_config(
         cls,
         config: Mapping[str, Any],
         *,
@@ -518,23 +507,13 @@ class ArtifactContract:
     ) -> ArtifactContract:
         if isinstance(config.get("artifact_contract"), Mapping):
             return cls.from_dict(config["artifact_contract"])
-        target = TargetContract.from_legacy_config(config)
+        target = TargetContract.from_resolved_config(config)
         dataset = dict(dataset_contract or _dataset_contract_from_config(config))
         if not dataset:
-            dataset = {
-                "schema_version": 1,
-                "dataset_kind": "legacy_unknown",
-                "target_mode": target.target_mode,
-                "degree_min": target.base_degree,
-                "degree_max": target.target_degree,
-                "mu_si": target.mu_si,
-                "r_ref_m": target.r_ref_m,
-                "a_sign": target.a_sign,
-                "altitude_min_km": config.get("altitude_min_km"),
-                "altitude_max_km": config.get("altitude_max_km"),
-                "coordinate_frame": target.frame,
-                "units": {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
-            }
+            raise ArtifactContractError(
+                "ArtifactContract requires dataset_contract. Regenerate the ST-LRPS run "
+                "with the current artifact schema."
+            )
         if dataset.get("target_mode") is None:
             dataset["target_mode"] = target.target_mode
         if dataset.get("degree_min") is None:

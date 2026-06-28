@@ -3,13 +3,10 @@ from __future__ import annotations
 import importlib
 
 
-def test_surrogate_runtime_old_and_new_paths_share_public_api() -> None:
-    legacy = importlib.import_module("lunaris.surrogate.runtime_adapter")
+def test_surrogate_runtime_package_exports_public_api() -> None:
     adapter = importlib.import_module("lunaris.surrogate.runtime.adapter")
     package = importlib.import_module("lunaris.surrogate.runtime")
 
-    assert legacy is adapter
-    assert legacy.SurrogateGravityModel is adapter.SurrogateGravityModel
     assert package.SurrogateGravityModel is adapter.SurrogateGravityModel
 
 

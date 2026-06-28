@@ -1,6 +1,6 @@
 # tests/test_propagator_physics.py
 """
-Physics & orchestration tests for ``lunaris.core.propagator``.
+Physics & orchestration tests for ``lunaris.core.propagation.propagator``.
 
 These tests use a *minimal fake* point-mass dynamics object rather than the full
 Numba ``DynamicsEngine`` (whose RHS is already covered in ``test_dynamics.py``).
@@ -25,7 +25,7 @@ import pytest
 
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.type_defs import EventConfig, PropagatorConfig, TimeConfig
-from lunaris.core.propagator import _clamp_output_dt, make_time_grid, propagate
+from lunaris.core.propagation.propagator import _clamp_output_dt, make_time_grid, propagate
 
 MU = float(MU_MOON)
 R = float(R_MOON)

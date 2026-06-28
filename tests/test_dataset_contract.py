@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import h5py
@@ -43,6 +44,30 @@ def _write_h5(path: Path, **attrs) -> Path:
             "columns": "[x,y,z,dU,dax,day,daz]",
         }
         base.update(attrs)
+        payload = {
+            "schema_version": 1,
+            "dataset_id": path.stem,
+            "dataset_kind": "st_lrps_spatial_cloud",
+            "n_samples": 4,
+            "target_mode": base.get("target_mode"),
+            "baseline_kind": "spherical_harmonics",
+            "degree_min": base.get("degree_min"),
+            "degree_max": base.get("degree_max"),
+            "mu_si": base.get("mu_si"),
+            "r_ref_m": base.get("r_ref_m"),
+            "a_sign": 1.0,
+            "altitude_min_km": base.get("alt_min_km"),
+            "altitude_max_km": base.get("alt_max_km"),
+            "source_gravity_model": "toy",
+            "source_gravity_file_path": "toy.gfc",
+            "source_gravity_file_sha256": "a" * 64,
+            "derivative_convention": base.get("derivative_convention_version"),
+            "spherical_harmonic_convention": base.get("spherical_harmonic_convention"),
+            "gravity_label_engine_version": base.get("gravity_label_engine_version"),
+            "columns": ["x", "y", "z", "dU", "dax", "day", "daz"],
+            "dataset_layout": {"dataset_name": "data", "shape": [4, 7]},
+        }
+        handle.attrs["dataset_contract_json"] = json.dumps(payload, sort_keys=True)
         for key, value in base.items():
             if value is not None:
                 handle.attrs[key] = value
@@ -89,21 +114,18 @@ def test_missing_degree_metadata_fails_in_strict_mode(tmp_path):
         validate_dataset_contract(meta, data_path=path)
 
 
-def test_legacy_inference_requires_explicit_allow_flag(tmp_path):
+def test_missing_target_mode_fails(tmp_path):
     path = _write_h5(tmp_path / "data.h5", target_mode=None)
     meta = DatasetMeta.from_h5(path)
     with pytest.raises(ValueError, match="target_mode"):
         validate_dataset_contract(meta, data_path=path)
-    contract = validate_dataset_contract(meta, data_path=path, allow_legacy_target_mode_inference=True)
-    assert contract["degree_min"] == 20
 
 
-def test_derivative_convention_mismatch_rejected_unless_allowed(tmp_path):
+def test_derivative_convention_mismatch_rejected(tmp_path):
     path = _write_h5(tmp_path / "data.h5", derivative_convention_version="legacy")
     meta = DatasetMeta.from_h5(path)
     with pytest.raises(ValueError, match="derivative_convention"):
         validate_dataset_contract(meta, data_path=path)
-    assert validate_dataset_contract(meta, data_path=path, allow_legacy_derivative_convention=True)
 
 
 def test_altitude_bounds_are_validated(tmp_path):
@@ -182,27 +204,22 @@ def test_gravity_label_engine_version_is_required():
         DatasetContract.from_dict(payload)
 
 
-def test_legacy_from_dict_override_applies_before_validation():
+def test_from_dict_rejects_unsafe_derivative_contract():
     payload = _contract_payload(derivative_convention="legacy")
     payload.pop("spherical_harmonic_convention")
     payload.pop("gravity_label_engine_version")
 
-    contract = DatasetContract.from_dict(payload, allow_legacy_derivative_convention=True)
-
-    assert contract.derivative_convention == "legacy"
-    assert contract.spherical_harmonic_convention is None
-    assert contract.gravity_label_engine_version is None
+    with pytest.raises(DatasetContractError, match="derivative_convention"):
+        DatasetContract.from_dict(payload)
 
 
 def test_compatibility_report_rejects_gravity_label_contract_mismatch():
     current = DatasetContract.from_dict(_contract_payload())
-    legacy = DatasetContract.from_dict(
-        _contract_payload(
-            spherical_harmonic_convention="legacy_csphase",
-            gravity_label_engine_version="lunaris_sh_v1",
-        ),
-        allow_legacy_derivative_convention=True,
+    legacy_payload = _contract_payload(
+        spherical_harmonic_convention="legacy_csphase",
+        gravity_label_engine_version="lunaris_sh_v1",
     )
+    legacy = DatasetContract(**legacy_payload, _skip_initial_validation=True)
 
     report = current.compatibility_report(legacy)
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Regression tests for the lunar surrogate training / analysis contract.
 
 These tests protect the exact areas that previously caused silent mistakes:
@@ -19,7 +19,7 @@ import numpy as np
 import pytest
 
 from lunaris.common.constants import MU_MOON, R_MOON
-from lunaris.surrogate.runtime_adapter import _build_model_from_config
+from lunaris.surrogate.runtime.networks import _build_model_from_config
 from lunaris.surrogate.st_lrps.data import spatial_cloud_generator as scg
 from lunaris.surrogate.st_lrps.data.spatial_cloud_analysis import _apply_region_filter
 from lunaris.surrogate.st_lrps.evaluation.cli import (

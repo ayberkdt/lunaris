@@ -203,7 +203,7 @@ class MonteCarloEngine:
                     )
                 )
                 if use_st_lrps_gravity:
-                    from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
+                    from lunaris.surrogate.runtime import SurrogateGravityModel
 
                     # Prioritize the MC-specific ST-LRPS run directory if provided.
                     st_lrps_dir = self._mc.st_lrps_model_dir or cfg.gravity.st_lrps_model_dir

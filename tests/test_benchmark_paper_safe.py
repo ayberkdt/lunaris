@@ -1,7 +1,7 @@
 """Task 4 — paper-safe benchmark mode.
 
-Paper-safe mode must hard-fail on synthetic/quick/legacy/mismatch/extrapolation
-settings *before* producing scientific-looking output, and cannot be bypassed by
+Paper-safe mode must hard-fail on synthetic/quick/mismatch/extrapolation
+settings before producing scientific-looking output, and cannot be bypassed by
 the permissive ``allow_*`` flags. It must also write the provenance files.
 """
 
@@ -38,7 +38,6 @@ def test_apply_paper_safe_enforces_strict_flags():
     assert enforced["synthetic"] is False
     assert enforced["allow_contract_mismatch"] is False
     assert enforced["allow_domain_extrapolation"] is False
-    assert enforced["allow_legacy_artifact"] is False
     assert enforced["allow_validation_fail"] is False
     assert enforced["strict_domain"] is True
     assert cfg["paper_safe"] is True
@@ -175,16 +174,15 @@ def test_paper_safe_overrides_allow_domain_extrapolation(tmp_path):
         )
 
 
-def test_paper_safe_overrides_allow_legacy_artifact(tmp_path):
+def test_paper_safe_rejects_contract_free_artifact(tmp_path):
     run = make_contract_run(tmp_path, degree_min=20, degree_max=60, include_contract=False)
     config = _write_config(tmp_path / "bench.json")
-    with pytest.raises(Exception):  # noqa: B017  # legacy artifact rejected with various types
+    with pytest.raises(Exception):  # noqa: B017  # contract-free artifact rejected with various types
         run_configured_benchmark(
             config,
             out_dir=tmp_path / "out",
             model_dir=run["run_dir"],
             paper_safe=True,
-            allow_legacy_artifact=True,
         )
 
 

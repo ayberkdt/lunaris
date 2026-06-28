@@ -2,8 +2,7 @@
 
 The heavy helper families live in sibling modules under
 ``lunaris.core.propagation``. This module keeps the public ``propagate`` entry
-point and re-exports legacy private helpers for compatibility with the old
-``lunaris.core.propagator`` import path.
+point and owns the propagation orchestration surface.
 """
 
 from __future__ import annotations

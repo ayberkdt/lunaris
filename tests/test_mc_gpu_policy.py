@@ -481,7 +481,8 @@ torch = pytest.importorskip("torch")
 def _make_tiny_surrogate(tmp_path: Path) -> Any:  # noqa: F821
     """Create a minimal SurrogateGravityModel on CPU for inference tests."""
     from lunaris.common.constants import MU_MOON, R_MOON
-    from lunaris.surrogate.runtime_adapter import SurrogateGravityModel, _build_model_from_config
+    from lunaris.surrogate.runtime import SurrogateGravityModel
+    from lunaris.surrogate.runtime.networks import _build_model_from_config
 
     config = {
         "hidden": 8,

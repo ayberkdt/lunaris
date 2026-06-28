@@ -2,37 +2,22 @@
 
 from __future__ import annotations
 
-import hashlib
 import platform
 import subprocess
 import sys
 from collections.abc import Mapping
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from lunaris.common.provenance import sha256_file as _sha256_file
+from lunaris.common.provenance import sha256_text
+from lunaris.common.provenance import utc_now_iso
 
 from .benchmark_config import canonical_json_text
 
 
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
 def sha256_file(path: str | Path | None) -> str | None:
-    if path is None:
-        return None
-    p = Path(path)
-    if not p.exists() or not p.is_file():
-        return None
-    digest = hashlib.sha256()
-    with p.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def sha256_text(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return _sha256_file(path, missing_ok=True)
 
 
 def sha256_payload(payload: Mapping[str, Any]) -> str:

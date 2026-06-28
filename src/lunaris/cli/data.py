@@ -14,7 +14,6 @@ never requires GUI dependencies.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import sys
 import urllib.error
@@ -24,6 +23,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from lunaris.common.paths import data_dir_from_root, find_project_root
+from lunaris.common.provenance import sha256_file as _sha256_file
 
 try:  # tqdm is a core dependency; degrade gracefully if it is unavailable.
     from tqdm import tqdm
@@ -245,11 +245,7 @@ def select_for_download(
 # --------------------------------------------------------------------------- #
 def sha256_file(path: Path) -> str:
     """Return the SHA-256 hex digest of ``path`` (streamed)."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return str(_sha256_file(path))
 
 
 def _stream_to_file(url: str, dest: Path) -> None:
@@ -674,12 +670,7 @@ def cmd_path(manifest: dict[str, Any] | None, data_root: Path, args: argparse.Na
 def cmd_inspect(manifest: dict[str, Any] | None, data_root: Path, args: argparse.Namespace) -> int:
     from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract
 
-    contract = DatasetContract.from_hdf5(
-        args.data,
-        allow_legacy_dataset_contract=bool(args.allow_legacy),
-        allow_missing_dataset_contract=bool(args.allow_legacy),
-        allow_legacy_derivative_convention=bool(args.allow_legacy_derivative_convention),
-    )
+    contract = DatasetContract.from_hdf5(args.data)
     payload = contract.to_dict()
     print(json.dumps({
         "dataset_id": payload.get("dataset_id"),
@@ -693,7 +684,6 @@ def cmd_inspect(manifest: dict[str, Any] | None, data_root: Path, args: argparse
         "altitude_max_km": payload.get("altitude_max_km"),
         "coordinate_frame": payload.get("coordinate_frame"),
         "units": payload.get("units"),
-        "legacy_inferred": payload.get("legacy_inferred"),
     }, indent=2, sort_keys=True))
     return 0
 
@@ -706,9 +696,6 @@ def cmd_validate_dataset(manifest: dict[str, Any] | None, data_root: Path, args:
         out_dir=args.out,
         n_check=int(args.n_check),
         seed=int(args.seed),
-        allow_legacy_dataset_contract=bool(args.allow_legacy),
-        allow_missing_dataset_contract=bool(args.allow_legacy),
-        allow_legacy_derivative_convention=bool(args.allow_legacy_derivative_convention),
     )
     print(json.dumps({"passed": report["passed"], "errors": report["errors"], "warnings": report["warnings"]}, indent=2))
     return 0 if report["passed"] else 1
@@ -721,7 +708,6 @@ def cmd_report_dataset(manifest: dict[str, Any] | None, data_root: Path, args: a
         args.data,
         out_dir=args.out,
         bins=int(args.bins),
-        allow_legacy_dataset_contract=bool(args.allow_legacy),
     )
     print(json.dumps({
         "n_samples": report["n_samples"],
@@ -810,10 +796,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     def _add_dataset_path_flags(p_ds: argparse.ArgumentParser) -> None:
         p_ds.add_argument("--data", required=True, help="ST-LRPS HDF5 dataset path.")
-        p_ds.add_argument("--allow-legacy", action="store_true",
-                          help="Allow reading old datasets whose DatasetContract is inferred from attrs.")
-        p_ds.add_argument("--allow-legacy-derivative-convention", action="store_true",
-                          help="Allow old derivative convention only for inspection.")
 
     p_inspect = sub.add_parser("inspect", help="Inspect an ST-LRPS dataset contract.")
     _add_dataset_path_flags(p_inspect)
