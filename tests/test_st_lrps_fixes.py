@@ -235,11 +235,12 @@ def test_streaming_report_does_not_use_stub_arrays(tmp_path):
     model = build_model_from_config(cfg)
     ckpt_dir = model_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    
-    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
+
     from dataclasses import asdict
+
+    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
     ac = ArtifactContract.from_resolved_config(cfg_payload, scaler_payload=asdict(s))
-    
+
     torch.save({"model": model.state_dict(), "config": cfg_payload, "artifact_contract": ac.to_dict()}, ckpt_dir / "ckpt_best.pt")
 
     out_dir = tmp_path / "eval_out"
@@ -290,11 +291,12 @@ def test_streaming_report_metrics_match_in_memory_for_small_dataset(tmp_path):
     model = build_model_from_config(cfg)
     ckpt_dir = model_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    
-    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
+
     from dataclasses import asdict
+
+    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
     ac = ArtifactContract.from_resolved_config(cfg_payload, scaler_payload=asdict(s))
-    
+
     torch.save({"model": model.state_dict(), "config": cfg_payload, "artifact_contract": ac.to_dict()}, ckpt_dir / "ckpt_best.pt")
 
     out_dir_mem = tmp_path / "eval_mem"
@@ -777,10 +779,10 @@ def _make_minimal_run_dir(tmp_path: Path):
         "a": {"mean": [0.0, 0.0, 0.0], "scale": 1.0}
     }
     (tmp_path / "scaler.json").write_text(json.dumps(scaler_data))
-    
+
     from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
     ac = ArtifactContract.from_resolved_config(cfg_dict, scaler_payload=scaler_data)
-    
+
     torch.save({"model": model.state_dict(), "cfg": cfg_dict, "artifact_contract": ac.to_dict()},
                str(ckpt_dir / "ckpt_best.pt"))
     (tmp_path / "config.json").write_text(json.dumps(cfg_dict))

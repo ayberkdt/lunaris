@@ -818,9 +818,10 @@ def test_force_model_domain_status_inside_range() -> None:
         "resolved_mu_si": 4.902e12,
         "resolved_a_sign": 1.0,
         "resolved_r_ref_m": 1.737e6,
-        "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
+        "degree_min": -1,
         "altitude_min_km": 100.0,
-        "altitude_max_km": 500.0, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
+        "altitude_max_km": 500.0,
+        "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
     }
     fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
     # Position at ~200 km altitude (inside range)
@@ -851,9 +852,10 @@ def test_force_model_domain_status_outside_range() -> None:
         "resolved_mu_si": 4.902e12,
         "resolved_a_sign": 1.0,
         "resolved_r_ref_m": 1.737e6,
-        "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
+        "degree_min": -1,
         "altitude_min_km": 100.0,
-        "altitude_max_km": 500.0, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
+        "altitude_max_km": 500.0,
+        "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
     }
     fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
     # Position at 1000 km altitude (well outside range)

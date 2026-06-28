@@ -118,7 +118,6 @@ def _make_run_dir(tmp_path: Path, build_cfg: dict, *, config_json_overrides: dic
     ckpt_config["architecture_signature"] = compute_architecture_signature(ckpt_config)
 
     from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
-    from dataclasses import asdict
     ac = ArtifactContract.from_resolved_config(ckpt_config, scaler_payload=asdict(scaler))
     ckpt_config["artifact_contract"] = ac.to_dict()
 
