@@ -9,7 +9,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract
+from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract, DatasetContractError
 
 GravityFn = Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]
 
