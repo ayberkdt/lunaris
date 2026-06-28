@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import math
 import time
+import warnings
 from collections.abc import Callable, Sequence
 from types import SimpleNamespace
 from typing import Any
@@ -40,6 +41,8 @@ from lunaris.core.propagation.integrators.fixed_step import (
     _integrate_fixed_step,
     _is_fixed_step_method,
     _is_symplectic_method,
+    symplectic_breaks_separability,
+    symplectic_nonconservative_violations,
 )
 from lunaris.core.propagation.integrators.rk import _rk4_step_full, _rk8_step_full
 from lunaris.core.propagation.integrators.scipy import _resolve_scipy_method
@@ -261,6 +264,36 @@ def propagate(
         for ev in list(extra_events):
             events.append(_wrap_event_first6(ev))
 
+    # -------------------------------------------------------------------------
+    # 4b) Symplectic guard
+    # -------------------------------------------------------------------------
+    # Symplectic / structure-preserving methods (VV, PEFRL, Yoshida) only keep
+    # their bounded-energy-drift guarantee for conservative, position-only forces
+    # (SH gravity, third-body, Earth J2). When a non-conservative perturbation is
+    # active (SRP / albedo / thermal IR) that guarantee is void; when a
+    # velocity-dependent force is active (1PN relativity) the acceleration-based
+    # steppers additionally sample the force inconsistently. We don't silently
+    # change the method -- the choice belongs to the caller -- but we must not let
+    # the inconsistency pass unflagged. See ``_SYMPLECTIC_VOIDING_FLAGS``.
+    _method = getattr(cfg, "method", "DOP853")
+    _flags = getattr(dynamics, "flags", None)
+    _violations = symplectic_nonconservative_violations(_method, _flags)
+    if _violations:
+        _msg = (
+            f"Symplectic method {str(_method)!r} is active together with "
+            f"non-conservative perturbation(s): {', '.join(_violations)}. "
+            "The bounded-energy-drift guarantee of symplectic integrators only "
+            "holds for conservative, position-only forces (gravity, third-body, "
+            "Earth J2). Energy drift may now be unbounded; prefer RK4 or an "
+            "adaptive method (DOP853/RK45) for these dynamics."
+        )
+        if symplectic_breaks_separability(_method, _flags):
+            _msg += (
+                " Note: 1PN relativity is velocity-dependent, so the "
+                "acceleration-form stepper also evaluates it at an inconsistent "
+                "intermediate velocity (not just non-symplectically)."
+            )
+        warnings.warn(_msg, RuntimeWarning, stacklevel=2)
 
     # -------------------------------------------------------------------------
     # 5) Integrate
@@ -465,7 +498,6 @@ def propagate(
                             y_tmp = np.concatenate(y_parts, axis=1) if y_parts else np.zeros((y0_arr.size, 0), dtype=np.float64)
                             _atomic_save_npz(checkpoint_path, t=t_tmp, y_row=y_tmp.T)
                     except Exception as exc:
-                        import warnings
                         warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
                 if sol_k_status == 1:
@@ -542,7 +574,6 @@ def propagate(
             try:
                 _atomic_save_npz(checkpoint_path, t=np.asarray(t_cat, dtype=np.float64), y_row=y_row)
             except Exception as exc:
-                import warnings
                 warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
         res = PropagationResult(
@@ -573,7 +604,10 @@ def propagate(
         "n_points": float(res.t.size),
         "nfev": float(nfev) if np.isfinite(nfev) else float("nan"),
         "method_symplectic": float(1.0 if _is_symplectic_method(getattr(cfg, "method", "DOP853")) else 0.0),
+        "symplectic_violation": float(1.0 if _violations else 0.0),
     }
+    if _violations:
+        res.diagnostics["symplectic_violation_forces"] = list(_violations)
 
     if bool(getattr(cfg, "compute_2body_baseline", False)):
         res.baseline = _compute_2body_baseline(
@@ -718,6 +752,8 @@ __all__ = [
     "_composition_weights",
     "_is_fixed_step_method",
     "_is_symplectic_method",
+    "symplectic_nonconservative_violations",
+    "symplectic_breaks_separability",
     "_norm_method",
     "_rk4_step_full",
     "_rk8_step_full",

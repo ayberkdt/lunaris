@@ -1179,7 +1179,17 @@ class DynamicsEngine:
 
             self._rhs_cache = rhs
             dt_build = time.perf_counter() - t0
-            print(f"[Dynamics] RHS ready. (build={dt_build:.3f}s | surrogate gravity)")
+            # Unlike the SH path below, this RHS is a plain Python closure (it
+            # calls the PyTorch surrogate, which Numba cannot compile). It pays
+            # Python-call + autograd overhead on every evaluation, so a
+            # single-trajectory CPU run is NOT a like-for-like speed comparison
+            # against the @njit SH kernel; the surrogate only amortizes that
+            # overhead in the GPU batch path. See the dynamics path asymmetry note.
+            print(
+                f"[Dynamics] RHS ready. (build={dt_build:.3f}s | surrogate gravity, "
+                "interpreted Python+autograd path -- not @njit; single-trajectory CPU "
+                "timings are not comparable to the SH kernel)"
+            )
             return rhs
 
         # This closure captures runtime-sized arrays/config values, so Numba
