@@ -348,6 +348,81 @@ def test_nyquist_monotonicity_and_altitude_clamp():
 
 
 # =============================================================================
+# 4b) SH degree adequacy (upward continuation)
+# =============================================================================
+
+def test_recommended_sh_degree_matches_closed_form():
+    R = 1738.0e3
+    h_km = 50.0
+    floor = 1e-3
+    # Closed form: (R/(R+h))^N = floor  =>  N = ln(floor)/ln(R/(R+h))
+    ratio = R / (R + h_km * 1000.0)
+    n_exact = math.log(floor) / math.log(ratio)
+    n = math_utils.recommended_sh_degree(h_km, R, floor)
+    assert n == math.ceil(n_exact)
+    assert n == 244  # Moon @ 50 km, floor 1e-3
+
+
+def test_recommended_sh_degree_decreases_with_altitude():
+    R = 1738.0e3
+    n50 = math_utils.recommended_sh_degree(50.0, R)
+    n100 = math_utils.recommended_sh_degree(100.0, R)
+    n200 = math_utils.recommended_sh_degree(200.0, R)
+    assert n50 > n100 > n200  # higher orbit needs fewer degrees
+
+
+def test_recommended_sh_degree_looser_floor_needs_fewer_degrees():
+    R = 1738.0e3
+    assert math_utils.recommended_sh_degree(50.0, R, 1e-2) < math_utils.recommended_sh_degree(50.0, R, 1e-3)
+
+
+def test_recommended_sh_degree_sentinel_and_validation():
+    R = 1738.0e3
+    assert math_utils.recommended_sh_degree(0.0, R) == 0      # at the surface: n/a
+    assert math_utils.recommended_sh_degree(-10.0, R) == 0    # below the surface: n/a
+    with pytest.raises(ValueError):
+        math_utils.recommended_sh_degree(50.0, -1.0)
+    with pytest.raises(ValueError):
+        math_utils.recommended_sh_degree(50.0, R, attenuation_floor=1.0)
+    with pytest.raises(ValueError):
+        math_utils.recommended_sh_degree(50.0, R, attenuation_floor=0.0)
+
+
+# =============================================================================
+# 4c) Energy / angular-momentum drift diagnostic
+# =============================================================================
+
+def test_specific_energy_drift_two_body_is_tiny():
+    # A pure point-mass orbit conserves energy and |h| exactly; an accurate
+    # integrator should leave only tiny numerical drift.
+    mu = 4.9048695e12
+    R = 1738.0e3
+    r = R + 100e3
+    vc = math.sqrt(mu / r)
+    rhs = lambda t, y: np.concatenate([y[3:6], -mu * y[0:3] / np.linalg.norm(y[0:3]) ** 3])  # noqa: E731
+    from scipy.integrate import solve_ivp
+
+    y0 = np.array([r, 0.0, 0.0, 0.0, vc, 0.0])
+    sol = solve_ivp(rhs, (0.0, 6 * 3600.0), y0, method="DOP853", rtol=1e-11, atol=1e-13,
+                    t_eval=np.linspace(0.0, 6 * 3600.0, 200))
+    stats = math_utils.specific_energy_drift_stats(sol.t, sol.y.T, mu)
+    assert set(stats) == {
+        "kepler_energy_rel_drift", "kepler_energy_rel_spread",
+        "angmom_rel_drift", "angmom_rel_spread",
+    }
+    assert stats["kepler_energy_rel_drift"] < 1e-8
+    assert stats["angmom_rel_drift"] < 1e-8
+
+
+def test_specific_energy_drift_guards():
+    mu = 4.9048695e12
+    # Too few columns, too few rows, and bad mu all return an empty dict.
+    assert math_utils.specific_energy_drift_stats(np.arange(3), np.zeros((3, 5)), mu) == {}
+    assert math_utils.specific_energy_drift_stats(np.arange(1), np.zeros((1, 6)), mu) == {}
+    assert math_utils.specific_energy_drift_stats(np.arange(3), np.ones((3, 6)), -1.0) == {}
+
+
+# =============================================================================
 # 5) Orbital mechanics (RV -> COE)
 # =============================================================================
 

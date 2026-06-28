@@ -19,7 +19,11 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 from lunaris.common.constants import R_MOON
-from lunaris.common.math_utils import nyquist_max_step_s
+from lunaris.common.math_utils import (
+    nyquist_max_step_s,
+    recommended_sh_degree,
+    specific_energy_drift_stats,
+)
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig, TimeConfig
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagation.checkpoint import _atomic_save_npz, _stop_requested
@@ -63,6 +67,31 @@ from lunaris.core.propagation.time_grid import (
     _norm_method,
     make_time_grid,
 )
+
+
+def _resolve_atol(cfg: PropagatorConfig, n_state: int) -> float | np.ndarray:
+    """Resolve the absolute-tolerance argument for solve_ivp.
+
+    Returns the scalar ``cfg.atol`` unless ``atol_pos``/``atol_vel`` are set, in
+    which case it returns a length-``n_state`` vector that applies the
+    position/velocity bounds to the first six components and keeps the scalar
+    ``atol`` for any extra (augmented) components. Keeping the scalar path
+    byte-identical preserves the existing default behavior.
+    """
+    atol_scalar = float(getattr(cfg, "atol", 1e-12))
+    atol_pos = getattr(cfg, "atol_pos", None)
+    atol_vel = getattr(cfg, "atol_vel", None)
+    if atol_pos is None and atol_vel is None:
+        return atol_scalar
+
+    n = int(n_state)
+    vec = np.full(n, atol_scalar, dtype=np.float64)
+    if n >= 6:
+        if atol_pos is not None:
+            vec[0:3] = float(atol_pos)
+        if atol_vel is not None:
+            vec[3:6] = float(atol_vel)
+    return vec
 
 
 def propagate(
@@ -349,8 +378,19 @@ def propagate(
 
         method = _resolve_scipy_method(getattr(cfg, "method", "DOP853"))
 
+        # Per-component (vector) atol when configured: position and velocity differ
+        # by ~3 orders of magnitude, so a single scalar over-tightens one of them.
+        atol_arg = _resolve_atol(cfg, int(y0_arr.size))
+
         if verbose:
-            print(f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s", flush=True)
+            if isinstance(atol_arg, np.ndarray):
+                print(
+                    f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s "
+                    f"| atol=vector(pos={getattr(cfg, 'atol_pos', None)}, vel={getattr(cfg, 'atol_vel', None)})",
+                    flush=True,
+                )
+            else:
+                print(f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s", flush=True)
 
         def _solve_span(t_start: float, t_end: float, y_start: np.ndarray, t_eval_span: np.ndarray):
             return solve_ivp(
@@ -360,7 +400,7 @@ def propagate(
                 method=method,
                 t_eval=np.asarray(t_eval_span, dtype=np.float64),
                 rtol=float(getattr(cfg, "rtol", 1e-9)),
-                atol=float(getattr(cfg, "atol", 1e-12)),
+                atol=atol_arg,
                 max_step=float(max_step),
                 events=(events if events else None),
                 dense_output=False,
@@ -608,6 +648,48 @@ def propagate(
     if _violations:
         res.diagnostics["symplectic_violation_forces"] = list(_violations)
 
+    # Energy / angular-momentum drift over the trajectory. This is a combined
+    # physical+numerical drift on the full run (a bounded oscillation is physical;
+    # a monotone secular trend signals numerical error). It is a *pure* numerical
+    # accuracy proxy on the conservative/autonomous 2-body baseline below.
+    try:
+        for _k, _v in specific_energy_drift_stats(res.t, res.y, float(mu_m3s2)).items():
+            res.diagnostics[_k] = float(_v)
+    except Exception:
+        pass
+
+    # SH truncation-degree adequacy for the orbit's periapsis altitude. Below the
+    # recommended degree, low-degree truncation (not the integrator) is the
+    # dominant position-error term, so we surface it rather than let it pass.
+    try:
+        if int(degree) >= 2 and y0_arr.size >= 6 and float(mu_m3s2) > 0.0:
+            r0 = np.asarray(y0_arr[:3], dtype=np.float64)
+            v0 = np.asarray(y0_arr[3:6], dtype=np.float64)
+            rn0 = float(np.linalg.norm(r0))
+            vn0 = float(np.linalg.norm(v0))
+            eps0 = 0.5 * vn0 * vn0 - float(mu_m3s2) / rn0 if rn0 > 0.0 else 0.0
+            if eps0 < 0.0:  # bound orbit -> finite periapsis
+                a_sma = -float(mu_m3s2) / (2.0 * eps0)
+                h0 = float(np.linalg.norm(np.cross(r0, v0)))
+                ecc = math.sqrt(max(0.0, 1.0 + (2.0 * eps0 * h0 * h0) / (float(mu_m3s2) ** 2)))
+                alt_peri_km = (a_sma * (1.0 - ecc) - float(R_ref_m)) / 1000.0
+                rec_deg = recommended_sh_degree(alt_peri_km, float(R_ref_m))
+                res.diagnostics["periapsis_alt_km"] = float(alt_peri_km)
+                res.diagnostics["recommended_degree"] = float(rec_deg)
+                if rec_deg > int(degree):
+                    _deg_msg = (
+                        f"SH truncation degree={int(degree)} may be too low for periapsis "
+                        f"altitude {alt_peri_km:.1f} km: upward continuation suggests degree "
+                        f">= {rec_deg} to retain gravity signal above the 1e-3 floor. "
+                        "Low-degree truncation, not the integrator, is then the dominant "
+                        "position-error term."
+                    )
+                    warnings.warn(_deg_msg, RuntimeWarning, stacklevel=2)
+                    if verbose:
+                        print(f"[GRAV] {_deg_msg}", flush=True)
+    except Exception:
+        pass
+
     if bool(getattr(cfg, "compute_2body_baseline", False)):
         res.baseline = _compute_2body_baseline(
             t_eval=res.t,
@@ -685,11 +767,14 @@ def _compute_2body_baseline(
         )
         t_out = np.asarray(ode_like.t, dtype=np.float64)
         y_row = np.asarray(ode_like.y, dtype=np.float64).T
+        # 2-body is conservative + autonomous, so this drift is purely numerical.
+        diag = {"baseline": 1.0, "solver": "fixed-step", "success": 1.0}
+        diag.update(specific_energy_drift_stats(t_out, y_row, float(mu)))
         return PropagationResult(
             t=t_out,
             y=y_row,
             ode=ode_like,
-            diagnostics={"baseline": 1.0, "solver": "fixed-step", "success": 1.0},
+            diagnostics=diag,
         )
 
     # Adaptive baseline (solve_ivp)
@@ -729,11 +814,16 @@ def _compute_2body_baseline(
             vectorized=False,
         )
 
+    t_b = np.asarray(sol.t, dtype=np.float64)
+    y_b = np.asarray(sol.y, dtype=np.float64).T
+    # 2-body is conservative + autonomous, so this drift is purely numerical.
+    diag = {"baseline": 1.0, "solver": method, "success": float(bool(getattr(sol, "success", True)))}
+    diag.update(specific_energy_drift_stats(t_b, y_b, float(mu)))
     return PropagationResult(
-        t=np.asarray(sol.t, dtype=np.float64),
-        y=np.asarray(sol.y, dtype=np.float64).T,
+        t=t_b,
+        y=y_b,
         ode=sol,
-        diagnostics={"baseline": 1.0, "solver": method, "success": float(bool(getattr(sol, "success", True)))},
+        diagnostics=diag,
     )
 
 

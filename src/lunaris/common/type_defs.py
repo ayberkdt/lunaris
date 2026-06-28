@@ -521,6 +521,14 @@ class PropagatorConfig:
     method: str = "DOP853"
     rtol: float = 1e-10
     atol: float = 1e-12
+    # Optional per-component absolute tolerance. A single scalar ``atol`` is the
+    # same bound for position (~1e6 m) and velocity (~1e3 m/s), which over-tightens
+    # one relative to the other. When set, these split the first 6 state components
+    # into a vector atol passed to solve_ivp (position[0:3], velocity[3:6]); any
+    # extra augmented components keep the scalar ``atol``. None preserves the
+    # scalar behavior. This mirrors GMAT-style component-scaled accuracy control.
+    atol_pos: float | None = None
+    atol_vel: float | None = None
 
     # Fixed-step / symplectic (if used by your engine)
     symplectic_default: str = "YOSHIDA4"
@@ -563,6 +571,11 @@ class PropagatorConfig:
     def __post_init__(self) -> None:
         if self.rtol <= 0.0 or self.atol <= 0.0:
             raise ValueError(f"rtol/atol must be > 0 (rtol={self.rtol!r}, atol={self.atol!r})")
+
+        if self.atol_pos is not None and self.atol_pos <= 0.0:
+            raise ValueError(f"atol_pos must be > 0 if set, got {self.atol_pos!r}")
+        if self.atol_vel is not None and self.atol_vel <= 0.0:
+            raise ValueError(f"atol_vel must be > 0 if set, got {self.atol_vel!r}")
 
         if self.nyquist_safety_div <= 0.0:
             raise ValueError(f"nyquist_safety_div must be > 0, got {self.nyquist_safety_div!r}")

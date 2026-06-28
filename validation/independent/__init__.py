@@ -26,4 +26,5 @@ __all__ = [
     "independent_sh",
     "pyshtools_reference",
     "naif_ephemeris",
+    "cross_validation",
 ]

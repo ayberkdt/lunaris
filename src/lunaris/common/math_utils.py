@@ -701,6 +701,138 @@ def nyquist_max_step_s(
     return T_lam / float(safety_div)
 
 
+def recommended_sh_degree(
+    min_alt_km: float,
+    R_ref_m: float,
+    attenuation_floor: float = 1e-3,
+) -> int:
+    """
+    Recommend a minimum spherical-harmonic truncation degree for an orbit
+    altitude, from upward-continuation attenuation.
+
+    Physics Logic
+    -------------
+    A surface gravity feature of degree ``n`` attenuates with radius as
+    ``(R / r)^n`` (upward continuation of a harmonic field). At orbital radius
+    ``r = R + h`` the relative contribution of degree ``n`` is ``(R/(R+h))^n``.
+    Truncating below the degree ``N`` where this factor first drops under
+    ``attenuation_floor`` discards signal still above the floor, so ``N`` is the
+    smallest *defensible* max degree for that altitude::
+
+        (R / (R + h))^N = floor   =>   N = ln(floor) / ln(R / (R + h))
+
+    This is a Kaula-style upper bound, NOT a guaranteed position error: the true
+    requirement also depends on the field's per-degree power. Use it to flag
+    clearly-undersized truncations, not to certify accuracy.
+
+    Parameters
+    ----------
+    min_alt_km : float
+        Minimum (periapsis) altitude above the reference radius, in km.
+    R_ref_m : float
+        Gravity-model reference radius, in meters.
+    attenuation_floor : float
+        Per-degree contribution treated as negligible (default 1e-3), in (0, 1).
+
+    Returns
+    -------
+    int
+        Recommended minimum max degree (>= 1). Returns 0 as a "not applicable"
+        sentinel when the altitude is non-positive (a finite truncation cannot
+        resolve the reference sphere); callers should not warn on a 0 result.
+    """
+    R = float(R_ref_m)
+    if R <= 0.0:
+        raise ValueError(f"R_ref_m must be > 0, got {R_ref_m}")
+    if not (0.0 < float(attenuation_floor) < 1.0):
+        raise ValueError(f"attenuation_floor must be in (0, 1), got {attenuation_floor}")
+
+    h = float(min_alt_km) * 1000.0
+    if h <= 0.0:
+        # At/below the reference sphere the (R/r)^n series does not decay; no
+        # finite degree is "enough". Signal not-applicable with 0.
+        return 0
+
+    ratio = R / (R + h)  # in (0, 1)
+    n = math.log(float(attenuation_floor)) / math.log(ratio)
+    return int(math.ceil(n)) if math.isfinite(n) and n > 0.0 else 0
+
+
+def specific_energy_drift_stats(
+    t: np.ndarray,
+    y: np.ndarray,
+    mu_m3s2: float,
+) -> dict[str, float]:
+    """
+    Two-body specific energy and angular-momentum drift over a trajectory.
+
+    At every output sample computes the osculating two-body specific energy
+    ``eps = |v|^2 / 2 - mu / |r|`` [m^2/s^2] and specific angular-momentum
+    magnitude ``|h| = |r x v|`` [m^2/s], then returns drift statistics.
+
+    Interpretation
+    --------------
+    These are *total dynamical* drifts: the real physical effect of any enabled
+    perturbation PLUS the integrator's numerical error. For a conservative,
+    autonomous central field (pure point mass) both quantities are exact
+    invariants, so the drift is then a pure numerical-accuracy proxy. With
+    perturbations active a *bounded oscillation* is physical while a *monotone
+    secular trend* is dominated by numerical error. For a purely numerical
+    reading, read these on the 2-body baseline (which IS conservative/autonomous).
+
+    Parameters
+    ----------
+    t : ndarray, shape (N,)
+        Output times (only used for size validation).
+    y : ndarray, shape (N, >=6)
+        State rows ``[x, y, z, vx, vy, vz, ...]`` in SI.
+    mu_m3s2 : float
+        Gravitational parameter of the central body [m^3/s^2].
+
+    Returns
+    -------
+    dict[str, float]
+        ``kepler_energy_rel_drift``  = |eps_end - eps_0| / |eps_0|
+        ``kepler_energy_rel_spread`` = (max - min) / |mean|
+        ``angmom_rel_drift``         = |h_end - h_0| / h_0
+        ``angmom_rel_spread``        = (max - min) / mean
+        Empty dict if inputs are too small / degenerate or ``mu`` is invalid.
+    """
+    t_arr = np.asarray(t, dtype=np.float64).reshape(-1)
+    y_arr = np.asarray(y, dtype=np.float64)
+    mu = float(mu_m3s2)
+    if y_arr.ndim != 2 or y_arr.shape[0] < 2 or y_arr.shape[1] < 6 or t_arr.size < 2:
+        return {}
+    if (not np.isfinite(mu)) or mu <= 0.0:
+        return {}
+
+    r = y_arr[:, 0:3]
+    v = y_arr[:, 3:6]
+    rn = np.sqrt(np.sum(r * r, axis=1))
+    if (not np.all(np.isfinite(rn))) or np.any(rn <= 0.0):
+        return {}
+
+    eps = 0.5 * np.sum(v * v, axis=1) - mu / rn
+    hn = np.sqrt(np.sum(np.cross(r, v) ** 2, axis=1))
+
+    def _rel_drift(a: np.ndarray) -> float:
+        a0 = float(a[0])
+        return float(abs(float(a[-1]) - a0) / abs(a0)) if a0 != 0.0 else float("nan")
+
+    def _rel_spread(a: np.ndarray) -> float:
+        m = float(np.mean(a))
+        if m == 0.0:
+            return float("nan")
+        return float((float(np.max(a)) - float(np.min(a))) / abs(m))
+
+    return {
+        "kepler_energy_rel_drift": _rel_drift(eps),
+        "kepler_energy_rel_spread": _rel_spread(eps),
+        "angmom_rel_drift": _rel_drift(hn),
+        "angmom_rel_spread": _rel_spread(hn),
+    }
+
+
 
 # =============================================================================
 # 5.                           ORBITAL FUNCTIONS
@@ -1698,6 +1830,8 @@ __all__ = (
 
     # Physics Helpers
     "nyquist_max_step_s",        # Calculate max safe integrator step size
+    "recommended_sh_degree",     # Min SH degree for an altitude (upward continuation)
+    "specific_energy_drift_stats",  # Two-body energy / angular-momentum drift over a trajectory
 
     # ------------------------------
     # Orbital Mechanics (Public API)
