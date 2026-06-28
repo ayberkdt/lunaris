@@ -19,7 +19,7 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
     load_best_or_last,
     load_checkpoint,
     load_scaler_for_run,
-    normalize_legacy_checkpoint,
+    normalize_checkpoint_payload,
     read_run_manifest,
     save_checkpoint,
     update_run_manifest,
@@ -270,18 +270,18 @@ def test_ckpt_best_and_last_share_same_top_level_keys(canonical_run: dict) -> No
     assert set(best.keys()) == set(last.keys())
 
 
-def test_legacy_checkpoint_model_key_normalizes_to_model_state_dict(canonical_run: dict) -> None:
-    legacy = {
+def test_checkpoint_model_key_normalizes_to_model_state_dict(canonical_run: dict) -> None:
+    payload = {
         "model": canonical_run["best_payload"]["model_state_dict"],
         "config": canonical_run["cfg"],
         "scaler": canonical_run["best_payload"]["scaler"],
         "epoch": 0,
         "best_val": 0.5,
     }
-    normalized = normalize_legacy_checkpoint(legacy)
+    normalized = normalize_checkpoint_payload(payload)
     assert "model_state_dict" in normalized
-    assert normalized["model_state_dict"] == legacy["model"]
-    assert normalized["model"] == legacy["model"]
+    assert normalized["model_state_dict"] == payload["model"]
+    assert normalized["model"] == payload["model"]
 
 
 def test_config_json_and_checkpoint_config_critical_fields_match(canonical_run: dict) -> None:

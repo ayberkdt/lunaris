@@ -264,7 +264,7 @@ class _TopKErrors:
                   "abs_a_error,rel_a_error,altitude_km,cos_sim,angular_deg")
         np.savetxt(str(path), arr, delimiter=",", header=header, comments="")
 
-from lunaris.surrogate.runtime_adapter import find_latest_st_lrps_model_dir
+from lunaris.surrogate.runtime import find_latest_st_lrps_model_dir
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     MU_MOON_SI,
     R_MOON_SI,

@@ -18,12 +18,10 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from lunaris.common.constants import MU_MOON, R_MOON
-from lunaris.surrogate.runtime_adapter import (
-    SurrogateGravityModel,
-    _build_model_from_config,
-    _extract_degree_metadata,
-    _is_valid_surrogate_run,
-)
+from lunaris.surrogate.runtime import SurrogateGravityModel
+from lunaris.surrogate.runtime.artifact import _is_valid_surrogate_run
+from lunaris.surrogate.runtime.metadata import _extract_degree_metadata
+from lunaris.surrogate.runtime.networks import _build_model_from_config
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -202,7 +200,7 @@ class TestSurrogateGravityModelDegreeAttributes:
         assert model.effective_degree_max == 100
 
     def test_degree_max_satisfies_propagator_contract(self, tmp_path: Path) -> None:
-        """Confirm _get_sh_degree() in core.propagator no longer raises for ST-LRPS."""
+        """Confirm _get_sh_degree() in core.propagation.propagator no longer raises for ST-LRPS."""
         run_dir = _make_tiny_run(tmp_path, "run_propagator_compat")
         sgm = SurrogateGravityModel.from_model_dir(
             run_dir,
@@ -211,7 +209,7 @@ class TestSurrogateGravityModelDegreeAttributes:
             device_preference="cpu",
         )
 
-        # Simulate what core.propagator._get_sh_degree() does.
+        # Simulate what core.propagation.propagator._get_sh_degree() does.
         assert hasattr(sgm, "degree_max"), "degree_max must be present for propagator"
         assert int(sgm.degree_max) > 0
 
@@ -287,9 +285,9 @@ class TestCkptLastFallback:
 # Naming: no HNN references in active MC state
 # ---------------------------------------------------------------------------
 
-def test_no_hnn_naming_in_surrogate_gravity_module() -> None:
+def test_no_hnn_naming_in_surrogate_runtime_module() -> None:
     """ST-LRPS module must not re-export HNN names in runtime paths."""
-    import lunaris.surrogate.runtime_adapter as sgm_mod
+    import lunaris.surrogate.runtime as sgm_mod
     public_names = [n for n in dir(sgm_mod) if not n.startswith("_")]
     hnn_names = [n for n in public_names if "hnn" in n.lower()]
-    assert hnn_names == [], f"HNN names found in lunaris.surrogate.runtime_adapter: {hnn_names}"
+    assert hnn_names == [], f"HNN names found in lunaris.surrogate.runtime: {hnn_names}"

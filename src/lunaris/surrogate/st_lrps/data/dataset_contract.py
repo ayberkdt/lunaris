@@ -8,12 +8,13 @@ import json
 import subprocess
 from collections.abc import Mapping
 from dataclasses import InitVar, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from lunaris.common.provenance import sha256_file as _sha256_file
+from lunaris.common.provenance import utc_now_iso
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 
 DATASET_CONTRACT_SCHEMA_VERSION = 1
@@ -22,8 +23,7 @@ REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
 # labels. Must match the runtime engine (lunaris.physics.spherical_harmonics):
 # 4pi geodesy normalization with NO Condon-Shortley phase. Datasets generated
 # before this was enforced (the generator used a negative sectoral recurrence =
-# (-1)^m phase) have sign-flipped odd-order labels and MUST be regenerated; they
-# are rejected unless an explicit legacy override is passed.
+# (-1)^m phase) have sign-flipped odd-order labels and MUST be regenerated.
 REQUIRED_SH_PHASE_CONVENTION = "4pi_geodesy_no_condon_shortley_v1"
 GRAVITY_LABEL_ENGINE_VERSION = "lunaris_sh_v2"
 TARGET_MODES = frozenset({"residual", "full"})
@@ -38,21 +38,8 @@ class DatasetContractError(ValueError):
     """Raised when dataset metadata is missing, ambiguous, or unsafe."""
 
 
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
 def sha256_file(path: str | Path | None) -> str | None:
-    if path is None:
-        return None
-    p = Path(path)
-    if not p.is_file():
-        return None
-    digest = hashlib.sha256()
-    with p.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return _sha256_file(path, missing_ok=True)
 
 
 def content_sha256_for_hdf5_dataset(path: str | Path, dataset_name: str = "data", *, chunk_rows: int = 65536) -> str:
@@ -73,15 +60,10 @@ def stamp_hdf5_content_hash(path: str | Path, dataset_name: str = "data") -> Dat
     import h5py
 
     digest = content_sha256_for_hdf5_dataset(path, dataset_name=dataset_name)
-    contract = DatasetContract.from_hdf5(path, dataset_name=dataset_name, allow_legacy_dataset_contract=True)
+    contract = DatasetContract.from_hdf5(path, dataset_name=dataset_name)
     payload = contract.to_dict()
     payload["content_sha256"] = digest
-    updated = DatasetContract.from_dict(
-        payload,
-        allow_legacy_dataset_contract=bool(payload.get("legacy_inferred")),
-        allow_missing_source_gravity=bool(payload.get("legacy_inferred")),
-        allow_legacy_derivative_convention=bool(payload.get("legacy_inferred")),
-    )
+    updated = DatasetContract.from_dict(payload)
     with h5py.File(path, "a") as handle:
         updated.write_hdf5_attrs(handle)
     return updated
@@ -141,38 +123,6 @@ def _get_first(mapping: Mapping[str, Any], *keys: str, default: Any = None) -> A
     return default
 
 
-def _as_optional_int(value: Any) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _as_optional_float(value: Any) -> float | None:
-    if value in (None, ""):
-        return None
-    try:
-        out = float(value)
-    except (TypeError, ValueError):
-        return None
-    return out if np.isfinite(out) else None
-
-
-def _as_units(value: Any) -> dict[str, str]:
-    if isinstance(value, Mapping):
-        return {str(k): str(v) for k, v in value.items()}
-    if isinstance(value, str) and value.strip():
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, Mapping):
-                return {str(k): str(v) for k, v in parsed.items()}
-        except Exception:
-            pass
-    return {}
-
-
 def _columns(value: Any) -> list[str]:
     if isinstance(value, (list, tuple)):
         return [str(item).strip() for item in value if str(item).strip()]
@@ -222,7 +172,6 @@ class DatasetContract:
     gravity_label_engine_version: str | None = None
     columns: list[str] = field(default_factory=lambda: ["x", "y", "z", "dU", "dax", "day", "daz"])
     dataset_layout: dict[str, Any] = field(default_factory=lambda: {"dataset_name": "data", "shape": None})
-    legacy_inferred: bool = False
     _skip_initial_validation: InitVar[bool] = False
 
     def __post_init__(self, _skip_initial_validation: bool) -> None:
@@ -247,23 +196,11 @@ class DatasetContract:
         object.__setattr__(self, "derivative_convention", _normalize_derivative(self.derivative_convention))
         object.__setattr__(self, "columns", _columns(self.columns))
         object.__setattr__(self, "dataset_layout", dict(self.dataset_layout or {}))
-        object.__setattr__(self, "legacy_inferred", bool(self.legacy_inferred))
         if not _skip_initial_validation:
-            self.validate(
-                allow_legacy_dataset_contract=bool(self.legacy_inferred),
-                allow_missing_source_gravity=bool(self.legacy_inferred),
-                allow_legacy_derivative_convention=bool(self.legacy_inferred),
-            )
+            self.validate()
 
-    def validate(
-        self,
-        *,
-        allow_legacy_dataset_contract: bool = False,
-        allow_missing_source_gravity: bool = False,
-        allow_legacy_derivative_convention: bool = False,
-    ) -> None:
+    def validate(self) -> None:
         errors: list[str] = []
-        warnings: list[str] = []
 
         if self.schema_version != DATASET_CONTRACT_SCHEMA_VERSION:
             errors.append(f"schema_version must be {DATASET_CONTRACT_SCHEMA_VERSION}")
@@ -303,10 +240,7 @@ class DatasetContract:
                 f"derivative_convention={self.derivative_convention!r} is unsafe; "
                 f"expected {REQUIRED_DERIVATIVE_CONVENTION!r}"
             )
-            if allow_legacy_derivative_convention:
-                warnings.append(msg)
-            else:
-                errors.append(msg)
+            errors.append(msg)
         if self.spherical_harmonic_convention != REQUIRED_SH_PHASE_CONVENTION:
             msg = (
                 f"spherical_harmonic_convention={self.spherical_harmonic_convention!r} is unsafe; "
@@ -314,30 +248,18 @@ class DatasetContract:
                 "Condon-Shortley phase fix have sign-flipped odd-order gravity labels and must "
                 "be regenerated."
             )
-            if allow_legacy_derivative_convention:
-                warnings.append(msg)
-            else:
-                errors.append(msg)
+            errors.append(msg)
         if self.gravity_label_engine_version != GRAVITY_LABEL_ENGINE_VERSION:
             msg = (
                 f"gravity_label_engine_version={self.gravity_label_engine_version!r} is unsafe; "
                 f"expected {GRAVITY_LABEL_ENGINE_VERSION!r}"
             )
-            if allow_legacy_derivative_convention:
-                warnings.append(msg)
-            else:
-                errors.append(msg)
+            errors.append(msg)
         if self.target_mode == "residual" and self.baseline_kind == "none":
             errors.append("residual datasets require a non-none baseline_kind")
         if self.target_mode == "residual" and not (self.source_gravity_model or self.source_gravity_file_path):
             msg = "source gravity model information is required for residual datasets"
-            if allow_missing_source_gravity or allow_legacy_dataset_contract:
-                warnings.append(msg)
-            else:
-                errors.append(msg)
-        if self.legacy_inferred and not allow_legacy_dataset_contract:
-            errors.append("dataset contract was inferred from legacy attrs; pass allow_legacy_dataset_contract=True")
-
+            errors.append(msg)
         if errors:
             raise DatasetContractError("; ".join(errors))
 
@@ -345,14 +267,7 @@ class DatasetContract:
         return dataclasses.asdict(self)
 
     @classmethod
-    def from_dict(
-        cls,
-        payload: Mapping[str, Any],
-        *,
-        allow_legacy_dataset_contract: bool = False,
-        allow_missing_source_gravity: bool = False,
-        allow_legacy_derivative_convention: bool = False,
-    ) -> DatasetContract:
+    def from_dict(cls, payload: Mapping[str, Any]) -> DatasetContract:
         data = dict(payload)
         if "derivative_convention" not in data and "derivative_convention_version" in data:
             data["derivative_convention"] = data.get("derivative_convention_version")
@@ -366,11 +281,7 @@ class DatasetContract:
             **{k: v for k, v in data.items() if k in {f.name for f in dataclasses.fields(cls)}},
             _skip_initial_validation=True,
         )
-        obj.validate(
-            allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-            allow_missing_source_gravity=allow_missing_source_gravity,
-            allow_legacy_derivative_convention=allow_legacy_derivative_convention,
-        )
+        obj.validate()
         return obj
 
     @classmethod
@@ -381,9 +292,6 @@ class DatasetContract:
         n_samples: int | None = None,
         dataset_name: str = "data",
         shape: tuple[int, ...] | None = None,
-        allow_legacy_dataset_contract: bool = False,
-        allow_missing_dataset_contract: bool = False,
-        allow_legacy_derivative_convention: bool = False,
     ) -> DatasetContract:
         mapping = _attrs_to_dict(attrs)
         raw_contract = _get_first(mapping, DATASET_CONTRACT_ATTR, "contract_json", "dataset_contract")
@@ -393,83 +301,14 @@ class DatasetContract:
                 if isinstance(payload, Mapping):
                     if n_samples is not None and not payload.get("n_samples"):
                         payload = {**payload, "n_samples": int(n_samples)}
-                    return cls.from_dict(
-                        payload,
-                        allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-                        allow_missing_source_gravity=allow_legacy_dataset_contract or allow_missing_dataset_contract,
-                        allow_legacy_derivative_convention=allow_legacy_derivative_convention,
-                    )
+                    return cls.from_dict(payload)
             except Exception as exc:
-                if not allow_missing_dataset_contract:
-                    raise DatasetContractError(f"could not parse dataset contract JSON: {exc}") from exc
+                raise DatasetContractError(f"could not parse dataset contract JSON: {exc}") from exc
 
-        if not (allow_legacy_dataset_contract or allow_missing_dataset_contract):
-            raise DatasetContractError(
-                "dataset is missing dataset_contract_json; pass allow_legacy_dataset_contract=True "
-                "only for old datasets"
-            )
-
-        degree_min = _as_optional_int(_get_first(mapping, "degree_min"))
-        degree_max = _as_optional_int(_get_first(mapping, "degree_max", "requested_degree"))
-        target_mode = str(_get_first(mapping, "target_mode", default="")).strip().lower()
-        if not target_mode:
-            target_mode = "residual" if degree_min is not None and degree_min >= 0 else "full"
-        baseline_kind = str(_get_first(mapping, "baseline_kind", default="")).strip().lower()
-        if not baseline_kind:
-            baseline_kind = "spherical_harmonics" if target_mode == "residual" and (degree_min or -1) >= 0 else "none"
-        seed = _as_optional_int(_get_first(mapping, "random_seed", "seed", "base_seed"))
-        columns = _columns(_get_first(mapping, "columns", default="[x,y,z,dU,dax,day,daz]"))
-        obj = cls(
-            schema_version=DATASET_CONTRACT_SCHEMA_VERSION,
-            dataset_id=_get_first(mapping, "dataset_id", "suite_id"),
-            dataset_kind=str(_get_first(mapping, "dataset_kind", default="st_lrps_spatial_cloud")),
-            created_at_utc=_get_first(mapping, "created_at_utc"),
-            generator_name=str(_get_first(mapping, "generator_name", "created_by", default="spatial_cloud_generator")),
-            generator_version=_get_first(mapping, "generator_version"),
-            repo_commit_sha=_get_first(mapping, "repo_commit_sha"),
-            random_seed=seed,
-            n_samples=int(n_samples or _as_optional_int(_get_first(mapping, "n_samples")) or 0),
-            coordinate_frame=str(_get_first(mapping, "coordinate_frame", "frame", default=DEFAULT_COORDINATE_FRAME)),
-            units=_as_units(_get_first(mapping, "units", default=json.dumps(DEFAULT_UNITS))),
-            target_mode=target_mode,
-            baseline_kind=baseline_kind,
-            degree_min=degree_min,
-            degree_max=degree_max,
-            mu_si=float(_as_optional_float(_get_first(mapping, "mu_si", "resolved_mu_si")) or MU_MOON_SI),
-            r_ref_m=float(_as_optional_float(_get_first(mapping, "r_ref_m", "resolved_r_ref_m")) or R_MOON_SI),
-            a_sign=float(_as_optional_float(_get_first(mapping, "a_sign", "resolved_a_sign")) or 1.0),
-            altitude_min_km=_as_optional_float(_get_first(mapping, "altitude_min_km", "alt_min_km")),
-            altitude_max_km=_as_optional_float(_get_first(mapping, "altitude_max_km", "alt_max_km")),
-            sampling_policy={
-                "name": _get_first(mapping, "sampling_strategy", "sampling_policy"),
-                "surface_bias_ratio": _as_optional_float(_get_first(mapping, "surface_bias_ratio")),
-            },
-            split_policy={"role": _get_first(mapping, "dataset_role", "split")},
-            source_gravity_model=_get_first(mapping, "source_gravity_model", "gravity_model_path", "gfc_path"),
-            source_gravity_file_path=_get_first(mapping, "source_gravity_file_path", "gravity_model_path", "gfc_path"),
-            source_gravity_file_sha256=_get_first(mapping, "source_gravity_file_sha256"),
-            content_sha256=_get_first(mapping, "content_sha256", "dataset_sha256"),
-            derivative_convention=_get_first(
-                mapping,
-                "derivative_convention",
-                "derivative_convention_version",
-            ),
-            spherical_harmonic_convention=_get_first(
-                mapping,
-                "spherical_harmonic_convention",
-                "spherical_harmonic_convention_version",
-            ),
-            gravity_label_engine_version=_get_first(mapping, "gravity_label_engine_version"),
-            columns=columns,
-            dataset_layout={"dataset_name": dataset_name, "shape": list(shape) if shape is not None else None},
-            legacy_inferred=True,
+        raise DatasetContractError(
+            "dataset is missing dataset_contract_json. Legacy metadata inference has been removed; "
+            "regenerate the dataset with the current generator."
         )
-        obj.validate(
-            allow_legacy_dataset_contract=True,
-            allow_missing_source_gravity=True,
-            allow_legacy_derivative_convention=allow_legacy_derivative_convention,
-        )
-        return obj
 
     @classmethod
     def from_hdf5(
@@ -477,9 +316,6 @@ class DatasetContract:
         path: str | Path,
         *,
         dataset_name: str = "data",
-        allow_legacy_dataset_contract: bool = False,
-        allow_missing_dataset_contract: bool = False,
-        allow_legacy_derivative_convention: bool = False,
     ) -> DatasetContract:
         import h5py
 
@@ -489,12 +325,7 @@ class DatasetContract:
                 if isinstance(raw, bytes):
                     raw = raw.decode("utf-8")
                 payload = json.loads(str(raw))
-                return cls.from_dict(
-                    payload,
-                    allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-                    allow_missing_source_gravity=allow_legacy_dataset_contract,
-                    allow_legacy_derivative_convention=allow_legacy_derivative_convention,
-                )
+                return cls.from_dict(payload)
             name = dataset_name if dataset_name in handle else next(
                 key for key in handle.keys() if hasattr(handle[key], "shape")
             )
@@ -504,9 +335,6 @@ class DatasetContract:
                 n_samples=shape[0],
                 dataset_name=name,
                 shape=shape,
-                allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-                allow_missing_dataset_contract=allow_missing_dataset_contract,
-                allow_legacy_derivative_convention=allow_legacy_derivative_convention,
             )
 
     def write_hdf5_attrs(
@@ -591,17 +419,6 @@ def _write_scalar_text_dataset(group: Any, name: str, text: str) -> None:
     group.create_dataset(name, data=np.bytes_(text))
 
 
-def contract_from_generation_attrs(attrs: Mapping[str, Any], *, n_samples: int, dataset_name: str = "data") -> DatasetContract:
-    return DatasetContract.from_hdf5_attrs(
-        attrs,
-        n_samples=n_samples,
-        dataset_name=dataset_name,
-        shape=(int(n_samples), 7),
-        allow_legacy_dataset_contract=True,
-        allow_missing_dataset_contract=True,
-    )
-
-
 def build_contract_payload_for_generator(
     *,
     dataset_id: str | None,
@@ -678,7 +495,6 @@ __all__ = [
     "TARGET_MODES",
     "build_contract_payload_for_generator",
     "content_sha256_for_hdf5_dataset",
-    "contract_from_generation_attrs",
     "ensure_output_path_allowed",
     "sha256_file",
     "stamp_hdf5_content_hash",

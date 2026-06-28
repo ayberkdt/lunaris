@@ -95,14 +95,5 @@ generalization. See
 validation, writes the validation report, creates a split manifest, and copies
 the dataset contract into the run provenance and run manifest.
 
-Strict defaults reject missing or inferred contracts. Contract-free datasets can
-be inspected or migrated only with explicit flags:
-
-```bash
-lunaris-train --allow-legacy-dataset-contract
-lunaris-train --allow-missing-dataset-contract
-lunaris-train --allow-legacy-derivative-convention
-lunaris-train --allow-dataset-validation-fail
-```
-
-These flags should not be used for new research artifacts.
+Missing, inferred, or unsafe contracts are rejected. Contract-free datasets must
+be regenerated with the current generator before training.

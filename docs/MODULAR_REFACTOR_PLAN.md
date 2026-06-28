@@ -34,10 +34,10 @@ Oversized modules before the refactor (line counts):
 |---|---|---|
 | `src/lunaris/core/dynamics.py` | 2739 | Target 2 |
 | `src/lunaris/core/monte_carlo_engine.py` | 2106 | Target 1 |
-| `src/lunaris/core/propagator.py` | 1981 | Target 3 |
+| `src/lunaris/core/propagation/propagator.py` | 727 | Target 3 |
 | `src/lunaris/core/mc_propagator.py` | 1958 | (out of scope this pass) |
 | `src/lunaris/core/events.py` | 1211 | (consumed by Target 3) |
-| `src/lunaris/surrogate/runtime_adapter.py` | 1153 | Target 4 |
+| `src/lunaris/surrogate/runtime/adapter.py` | 62 | Target 4 |
 | `src/lunaris/cli/main.py` | 853 | Target 5 (only if needed) |
 | `src/lunaris/core/config.py` | 540 | Target 6 (leave mostly alone) |
 
@@ -47,7 +47,7 @@ Post-refactor measured state (same date):
 |---|---:|---:|---|
 | P1 batch | `src/lunaris/core/monte_carlo_engine.py` shim | 121 | `lunaris/batch/{engine,storage,sampling,provenance,requirements,...}.py` |
 | P1 batch engine | `src/lunaris/batch/engine.py` | 1119 | Storage/sampling/provenance/requirements/memory policy are separate modules |
-| P2 surrogate runtime facade | `src/lunaris/surrogate/runtime/adapter.py` | 62 | `runtime/{artifact,metadata,scalers,networks,gravity_provider,force_runtime,device}.py` |
+| P2 surrogate runtime facade | `src/lunaris/surrogate/runtime/adapter.py` | 62 | `runtime/{artifact,metadata,scalers,networks,gravity_provider,force_runtime,device}.py`; temporary `runtime_adapter.py` shim removed |
 | P3 propagation orchestration | `src/lunaris/core/propagation/propagator.py` | 727 | `propagation/{events,checkpoint,time_grid,telemetry,result,integrators/*}.py` |
 | P4 dynamics engine | `src/lunaris/core/dynamics/engine.py` | 1961 | `dynamics/{requirements,gravity_pack,ephemeris_pack,perturbation_packs,adaptive_degree,surrogate_bridge}.py` |
 | P5 CLI facade | `src/lunaris/cli/main.py` | 53 | `cli/{options,run,summary,batch}.py` |
@@ -85,7 +85,7 @@ Ordered lowest-risk-highest-value first; each phase is shippable on its own.
 |---|---|---|---|
 | **P0** | Baseline harness | none | Lock a behavior baseline before touching code |
 | **P1** | Target 1 — `batch/` (monte_carlo_engine) | medium | Highest value; clean responsibility seams; entry points need care |
-| **P2** | Target 4 — `surrogate/runtime/` (runtime_adapter) | low–med | Self-contained, optional-torch boundary, good test coverage payoff |
+| **P2** | Target 4 — `surrogate/runtime/` | low–med | Self-contained, optional-torch boundary, good test coverage payoff |
 | **P3** | Target 3 — `core/propagation/` (propagator) | medium | Many private helpers, integrators isolate cleanly |
 | **P4** | Target 2 — `core/dynamics/` (dynamics) | **high** | Hot Numba path, frame conventions, surrogate bridge — do last |
 | **P5** | Target 5 — `cli/` split | low | Only if `main.py` still feels unwieldy after P1–P4 |
@@ -172,7 +172,7 @@ Entry points in `pyproject.toml` point at `lunaris.cli.batch:mc_entry` / `:batch
 
 ---
 
-## P2 — Target 4: split `runtime_adapter.py` → `surrogate/runtime/`
+## P2 — Target 4: split surrogate runtime into `surrogate/runtime/`
 
 ### Responsibility map
 | Concern | Current symbols | New home |
@@ -200,8 +200,9 @@ src/lunaris/surrogate/runtime/
   device.py
 ```
 
-### Compatibility shim
-`src/lunaris/surrogate/runtime_adapter.py` re-exports all current public names from `lunaris.surrogate.runtime.*`.
+### Public import path
+Use `lunaris.surrogate.runtime`. The temporary `runtime_adapter.py` shim has
+been removed.
 
 ### Critical behavior to preserve (verify with tests)
 - residual-potential, absolute-potential, force_direct, and potential_autograd artifact paths all behave as before.
@@ -250,8 +251,9 @@ src/lunaris/core/propagation/
     symplectic.py
 ```
 
-### Compatibility shim
-`src/lunaris/core/propagator.py` re-exports `Propagator`/`propagate`/`PropagationResult`/`make_time_grid`/`build_events` etc.
+### Public import path
+Use `lunaris.core.propagation.propagator` for `Propagator`, `propagate`,
+`PropagationResult`, `make_time_grid`, and `build_events`.
 > Note: confirm whether the public symbol is `Propagator` (class) or `propagate` (fn) — the current file exposes `propagate(...)`. Shim must re-export **whatever the tests/CLI currently import**; grep before writing the shim.
 
 ### Behavior to preserve

@@ -13,7 +13,7 @@ import sys
 import tempfile
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -21,6 +21,7 @@ import numpy as np
 import torch
 
 from lunaris.common.hashing import canonical_json_sha256, canonical_json_text
+from lunaris.common.provenance import sha256_file, utc_now_iso
 from lunaris.surrogate.st_lrps.networks.models import (
     ARCH_SIGNATURE_FIELDS,
     MODEL_BUILDER_VERSION,
@@ -143,7 +144,7 @@ def ensure_run_layout(run_dir: Path) -> RunLayout:
 
 
 def _utcnow_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 def _json_safe(value: Any) -> Any:
@@ -228,11 +229,7 @@ def _atomic_torch_save(path: Path, payload: Any) -> None:
 
 
 def compute_file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return str(sha256_file(path))
 
 
 def _compute_payload_sha256(payload: Mapping[str, Any]) -> str:
@@ -385,7 +382,7 @@ def _state_dict_from_checkpoint(ckpt: Any) -> dict[str, torch.Tensor]:
         if isinstance(ckpt.get("model"), dict):
             return ckpt["model"]
         if all(isinstance(k, str) for k in ckpt.keys()) and all(torch.is_tensor(v) for v in ckpt.values()):
-            return ckpt  # pragma: no cover - raw state_dict legacy path
+            return ckpt  # pragma: no cover - raw state_dict path
     raise ValueError("Checkpoint does not contain a usable model state_dict.")
 
 
@@ -398,7 +395,7 @@ def _extract_config_block(ckpt: Mapping[str, Any]) -> dict[str, Any]:
     else:
         cfg = {}
 
-    # Legacy checkpoints stored architecture and physics fields at the top level.
+    # Older checkpoints stored architecture and physics fields at the top level.
     alias_keys = set(ARCH_SIGNATURE_FIELDS) | {
         "resolved_mu_si",
         "resolved_r_ref_m",
@@ -524,7 +521,7 @@ def _build_dataset_block_from_cfg(cfg: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def normalize_legacy_checkpoint(ckpt: dict) -> dict:
+def normalize_checkpoint_payload(ckpt: dict) -> dict:
     if not isinstance(ckpt, dict):
         ckpt = {"model_state_dict": ckpt}
 
@@ -573,7 +570,7 @@ def normalize_legacy_checkpoint(ckpt: dict) -> dict:
     }
 
     normalized = {
-        "schema_version": ckpt.get("schema_version") or "legacy",
+        "schema_version": ckpt.get("schema_version") or "unknown",
         "kind": ckpt.get("kind") or "epoch",
         "epoch": epoch,
         "epoch_display": _coerce_int(ckpt.get("epoch_display"), default=epoch + 1),
@@ -626,7 +623,7 @@ def normalize_legacy_checkpoint(ckpt: dict) -> dict:
 
 
 def validate_checkpoint_schema(ckpt: dict, *, strict: bool = True) -> dict:
-    normalized = normalize_legacy_checkpoint(ckpt)
+    normalized = normalize_checkpoint_payload(ckpt)
 
     required_top = (
         "schema_version",
@@ -797,7 +794,7 @@ def load_checkpoint(path: Path, device: torch.device) -> dict:
         obj = torch.load(path, map_location=device, weights_only=False)
     except TypeError:
         obj = torch.load(path, map_location=device)
-    ckpt = normalize_legacy_checkpoint(obj if isinstance(obj, dict) else {"model_state_dict": obj})
+    ckpt = normalize_checkpoint_payload(obj if isinstance(obj, dict) else {"model_state_dict": obj})
     if ckpt.get("kind") not in {"best", "last", "epoch"}:
         ckpt["kind"] = _infer_checkpoint_kind_from_path(path)
     ckpt = validate_checkpoint_schema(
@@ -1155,7 +1152,7 @@ def build_resolved_config(
             if k not in {"artifact_contract", "training_config_hash", "run_provenance"}
         }
     )
-    cfg_dict["artifact_contract"] = ArtifactContract.from_legacy_config(
+    cfg_dict["artifact_contract"] = ArtifactContract.from_resolved_config(
         cfg_dict,
         scaler_payload=scaler_payload,
         dataset_contract=cfg_dict["dataset_contract"],
@@ -1180,7 +1177,7 @@ def build_artifact_contract(
 ) -> ArtifactContract:
     """Build an :class:`ArtifactContract` from resolved training artifacts."""
 
-    return ArtifactContract.from_legacy_config(
+    return ArtifactContract.from_resolved_config(
         cfg,
         scaler_payload=scaler_payload,
         dataset_contract=dataset_contract,
@@ -1194,13 +1191,11 @@ def validate_checkpoint_contract(
     cfg: Mapping[str, Any] | None = None,
     scaler_payload: Mapping[str, Any] | None = None,
     strict: bool = True,
-    allow_legacy_contract: bool = False,
 ) -> dict[str, Any]:
     """Read and validate the artifact contract embedded in a checkpoint."""
 
     cfg_payload = dict(cfg or ckpt.get("config") or {})
     source = "checkpoint"
-    legacy = False
     raw_contract = ckpt.get("artifact_contract")
     if not isinstance(raw_contract, dict):
         raw_contract = cfg_payload.get("artifact_contract")
@@ -1208,34 +1203,11 @@ def validate_checkpoint_contract(
     if isinstance(raw_contract, dict):
         contract = ArtifactContract.from_dict(raw_contract)
     else:
-        legacy = True
-        source = "legacy_inferred"
-        if strict and not allow_legacy_contract:
-            raise ArtifactContractError(
-                "Checkpoint is missing artifact_contract. Strict runtime loading requires a "
-                "versioned artifact contract; pass allow_legacy_contract=True only for "
-                "compatibility inspection of old runs."
-            )
-        try:
-            contract = ArtifactContract.from_legacy_config(
-                cfg_payload,
-                scaler_payload=(
-                    scaler_payload
-                    if isinstance(scaler_payload, Mapping)
-                    else ckpt.get("scaler") if isinstance(ckpt.get("scaler"), dict) else None
-                ),
-                dataset_contract=ckpt.get("dataset") if isinstance(ckpt.get("dataset"), dict) else None,
-                architecture_signature=(ckpt.get("architecture") or {}).get("signature"),
-            )
-        except Exception as exc:
-            if strict and not allow_legacy_contract:
-                raise ArtifactContractError(
-                    "Checkpoint is missing artifact_contract and its legacy metadata could not be "
-                    f"promoted to a validated contract: {exc}. Pass allow_legacy_contract=True "
-                    "only for inspection of old runs."
-                ) from exc
-            raise
-    if not legacy and strict:
+        raise ArtifactContractError(
+            "Checkpoint is missing artifact_contract. Legacy contract inference has been removed; "
+            "regenerate the ST-LRPS run with the current artifact schema."
+        )
+    if strict:
         expected_cfg = dict(cfg_payload)
         expected_cfg.pop("artifact_contract", None)
         expected_dataset = (
@@ -1244,7 +1216,7 @@ def validate_checkpoint_contract(
             or ckpt.get("dataset")
         )
         try:
-            expected = ArtifactContract.from_legacy_config(
+            expected = ArtifactContract.from_resolved_config(
                 expected_cfg,
                 scaler_payload=(
                     scaler_payload
@@ -1269,7 +1241,6 @@ def validate_checkpoint_contract(
     return {
         "artifact_contract": contract.to_dict(),
         "contract_source": source,
-        "legacy_contract": legacy,
     }
 
 
@@ -1279,7 +1250,6 @@ def read_artifact_contract(
     prefer: str = "best",
     device: torch.device | None = None,
     strict: bool = True,
-    allow_legacy_contract: bool = False,
 ) -> ArtifactContract:
     """Load the preferred checkpoint for a run and return its artifact contract."""
 
@@ -1302,7 +1272,6 @@ def read_artifact_contract(
         cfg=cfg,
         scaler_payload=scaler_payload,
         strict=strict,
-        allow_legacy_contract=allow_legacy_contract,
     )
     return ArtifactContract.from_dict(report["artifact_contract"])
 
@@ -1427,7 +1396,7 @@ def build_checkpoint_payload(
         "dataset": dataset,
         "dataset_contract": cfg_dict.get("dataset_contract") or dataset,
         "artifact_contract": (
-            ArtifactContract.from_legacy_config(
+            ArtifactContract.from_resolved_config(
                 cfg_dict,
                 scaler_payload=scaler_payload,
                 dataset_contract=cfg_dict.get("dataset_contract") or dataset,
@@ -1543,8 +1512,7 @@ def reload_model_from_run_dir(
         ckpt,
         cfg=merged_cfg,
         scaler_payload=canonical_scaler_payload(scaler),
-        strict=False,
-        allow_legacy_contract=True,
+        strict=True,
     )
 
     report.update(
@@ -1569,7 +1537,6 @@ def reload_model_from_run_dir(
             "embedding_type": merged_cfg.get("embedding_type"),
             "artifact_contract": contract_report.get("artifact_contract"),
             "artifact_contract_source": contract_report.get("contract_source"),
-            "legacy_contract": contract_report.get("legacy_contract"),
         }
     )
     return model, scaler, merged_cfg, report
@@ -1666,7 +1633,7 @@ def inspect_run(run_dir: Path | str) -> dict[str, Any]:
 
     if summary["classification"] == "usable_current_schema":
         if any(item and item.get("schema_version") != CHECKPOINT_SCHEMA_VERSION for item in loaded.values() if item is not None):
-            summary["classification"] = "usable_legacy"
+            summary["classification"] = "usable_prior_schema"
     return summary
 
 

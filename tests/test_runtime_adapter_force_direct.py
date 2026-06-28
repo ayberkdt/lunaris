@@ -14,7 +14,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from lunaris.surrogate.runtime_adapter import SurrogateGravityModel  # noqa: E402
+from lunaris.surrogate.runtime import SurrogateGravityModel  # noqa: E402
 from st_lrps_contract_test_utils import make_contract_run  # noqa: E402
 
 

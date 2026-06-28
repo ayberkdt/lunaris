@@ -57,10 +57,19 @@ def _scaler(x_scale: float = 1.0) -> ScalerPack:
 
 
 def _model(cfg=None, *, x_scale=1.0, strict_domain=False) -> SurrogateForceModel:
+    base_cfg = dict(cfg or {})
+    if "dataset" not in base_cfg:
+        base_cfg["dataset"] = {
+            "target_mode": "residual",
+            "degree_min": 20,
+            "degree_max": 100,
+            "altitude_min_km": 100.0,
+            "altitude_max_km": 500.0,
+        }
     return SurrogateForceModel(
         model=_ToyPotential(),
         scaler=_scaler(x_scale),
-        cfg=dict(cfg or {}),
+        cfg=base_cfg,
         device=torch.device("cpu"),
         strict_domain=strict_domain,
     )

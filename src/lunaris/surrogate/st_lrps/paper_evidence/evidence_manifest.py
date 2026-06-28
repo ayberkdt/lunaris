@@ -12,12 +12,12 @@ yet.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Mapping
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from lunaris.common.provenance import sha256_file, sha256_text, utc_now_iso
 
 # Reuse the benchmark provenance collectors so environment/git capture is
 # consistent across the whole ST-LRPS evidence stack.
@@ -34,28 +34,15 @@ from lunaris.surrogate.st_lrps.evaluation.provenance import (
 EVIDENCE_MANIFEST_SCHEMA_VERSION = 1
 
 
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
 def compute_file_sha256(path: str | Path | None) -> str | None:
     """SHA-256 of a file, or ``None`` if the path is missing/not a file."""
-    if path is None:
-        return None
-    p = Path(path)
-    if not p.exists() or not p.is_file():
-        return None
-    digest = hashlib.sha256()
-    with p.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return sha256_file(path, missing_ok=True)
 
 
 def compute_json_hash(obj: Any) -> str:
     """Stable SHA-256 over a JSON-serializable object (sorted keys, canonical)."""
     text = json.dumps(obj, sort_keys=True, ensure_ascii=True, default=str)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return sha256_text(text)
 
 
 def artifact_record(path: str | Path | None, *, label: str = "file") -> dict[str, Any]:

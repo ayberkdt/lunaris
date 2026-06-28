@@ -50,9 +50,6 @@ def validate_dataset_file(
     baseline_fn: GravityFn | None = None,
     potential_atol: float = 1e-8,
     accel_atol: float = 1e-10,
-    allow_legacy_dataset_contract: bool = False,
-    allow_missing_dataset_contract: bool = False,
-    allow_legacy_derivative_convention: bool = False,
 ) -> dict[str, Any]:
     """Validate an ST-LRPS HDF5 dataset and optionally write a JSON report."""
 
@@ -65,9 +62,6 @@ def validate_dataset_file(
         contract = DatasetContract.from_hdf5(
             path,
             dataset_name=dataset_name,
-            allow_legacy_dataset_contract=allow_legacy_dataset_contract,
-            allow_missing_dataset_contract=allow_missing_dataset_contract,
-            allow_legacy_derivative_convention=allow_legacy_derivative_convention,
         )
         checked.append("dataset_contract")
     except Exception as exc:

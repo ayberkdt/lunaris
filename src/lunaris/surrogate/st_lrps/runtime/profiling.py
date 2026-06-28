@@ -28,13 +28,14 @@ import time
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, is_dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
 
+from lunaris.common.provenance import utc_now_iso
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     load_checkpoint,
     make_run_layout,
@@ -397,8 +398,6 @@ def _load_profiled_surrogate_force_model(
             device=str(dev),
             chunk_size=int(chunk_size),
             allow_config_mismatch=allow_config_mismatch,
-            strict_contract=False,
-            allow_legacy_contract=True,
             strict_domain=False,
         ),
         device=dev,
@@ -760,7 +759,7 @@ def profile_surrogate_runtime(
             if runtime_device.type == "cuda" and torch.cuda.is_available()
             else None
         ),
-        created_at_utc=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        created_at_utc=utc_now_iso(),
         load=load_timings,
         warnings=warnings_out,
     )

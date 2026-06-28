@@ -24,7 +24,7 @@ GPU path  — ``GPUBatchPropagator``
       * Tide models.
 
 CPU path  — ``CPUBatchPropagator``
-    Runs the full-fidelity ``core.propagator.propagate()`` path for each
+    Runs the full-fidelity ``core.propagation.propagator.propagate()`` path for each
     sample while reusing the same validated runtime assets as the main mission
     analysis pipeline.  All physics enabled in the parent ``SimConfig`` are
     therefore available on the CPU Monte Carlo backend.
@@ -1792,7 +1792,7 @@ class CPUBatchPropagator:
         """
         Probe gravity attributes before entering the Monte Carlo sample loop.
 
-        Calls the same helper functions that ``core.propagator.propagate()``
+        Calls the same helper functions that ``core.propagation.propagator.propagate()``
         uses internally so any missing attribute is caught once, with a single
         clear error message, instead of being repeated for every sample.
 

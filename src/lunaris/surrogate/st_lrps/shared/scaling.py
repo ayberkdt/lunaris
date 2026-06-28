@@ -389,7 +389,7 @@ def fit_scaler_streaming(
     logger.info(f"Fitting isometric scaler on {_n_fit_effective:,} rows from '{h5_path.name}' ({_fit_src})...")
     contract = target_contract
     if contract is None:
-        contract = TargetContract.from_legacy_config(
+        contract = TargetContract.from_resolved_config(
             {
                 "target_mode": target_mode,
                 "degree_min": degree_min,

@@ -30,14 +30,14 @@ if TYPE_CHECKING:
     )
     from lunaris.core.config import load_default_config, replace_sim_config
     from lunaris.core.dynamics import DynamicsEngine
-    from lunaris.core.propagator import propagate
+    from lunaris.core.propagation.propagator import propagate
 
 
 _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "load_default_config": ("lunaris.core.config", "load_default_config"),
     "replace_sim_config": ("lunaris.core.config", "replace_sim_config"),
     "DynamicsEngine": ("lunaris.core.dynamics", "DynamicsEngine"),
-    "propagate": ("lunaris.core.propagator", "propagate"),
+    "propagate": ("lunaris.core.propagation.propagator", "propagate"),
     "BatchPropagationConfig": ("lunaris.common.batch_defs", "BatchPropagationConfig"),
     "BatchPropagationResult": ("lunaris.common.batch_defs", "BatchPropagationResult"),
     "BatchPropagationEngine": ("lunaris.batch", "BatchPropagationEngine"),

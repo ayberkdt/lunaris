@@ -85,7 +85,7 @@ def test_train_tab_omits_debug_flags(qapp):
     tab.deleteLater()
 
 
-def test_train_tab_legacy_dataset_contract_flag_is_explicit(qapp):
+def test_train_tab_has_no_legacy_dataset_contract_flag(qapp):
     tab = STLRPSTrainTab()
     _set_combo_data(tab.workflow_mode, "train_only")
     _set_combo_data(tab.dataset_mode, "single")
@@ -95,11 +95,7 @@ def test_train_tab_legacy_dataset_contract_flag_is_explicit(qapp):
     args = tab._build_args(show_errors=False)
     assert args is not None
     assert "--allow-legacy-dataset-contract" not in args
-
-    tab.allow_legacy_dataset_contract.setChecked(True)
-    args = tab._build_args(show_errors=False)
-    assert args is not None
-    assert "--allow-legacy-dataset-contract" in args
+    assert not hasattr(tab, "allow_legacy_dataset_contract")
     tab.deleteLater()
 
 

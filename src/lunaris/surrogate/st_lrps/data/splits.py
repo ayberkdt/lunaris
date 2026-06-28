@@ -304,11 +304,7 @@ def build_split_manifest(
     contract = (
         dataset_contract
         if isinstance(dataset_contract, DatasetContract)
-        else DatasetContract.from_dict(
-            dataset_contract,
-            allow_legacy_dataset_contract=True,
-            allow_missing_source_gravity=True,
-        )
+        else DatasetContract.from_dict(dataset_contract)
     )
     # Latitude/longitude are derived from xyz when available; altitude may be
     # passed directly or derived from xyz + the contract reference radius.

@@ -9,7 +9,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
+from lunaris.surrogate.runtime import SurrogateGravityModel
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 from lunaris.surrogate.st_lrps.networks.models import (
     build_model_from_config,
@@ -56,6 +56,13 @@ def _make_run(tmp_path: Path) -> Path:
         "runtime_model_kind": "potential_autograd",
         "target_contract": contract.to_dict(),
         "model_preset": "custom",
+        "dataset": {
+            "target_mode": "residual",
+            "degree_min": 0,
+            "degree_max": 50,
+            "altitude_min_km": 50.0,
+            "altitude_max_km": 300.0,
+        },
     }
     model = build_model_from_config(cfg, device=torch.device("cpu"), dtype=torch.float32)
     with torch.no_grad():
@@ -73,6 +80,8 @@ def _make_run(tmp_path: Path) -> Path:
     )
     (run_dir / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     scaler.save_json(run_dir / "scaler.json")
+    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
+    ac = ArtifactContract.from_resolved_config(cfg, scaler_payload=asdict(scaler))
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -81,16 +90,17 @@ def _make_run(tmp_path: Path) -> Path:
             "scaler": asdict(scaler),
             "kind": "best",
             "epoch": 0,
+            "artifact_contract": ac.to_dict(),
         },
         run_dir / "checkpoints" / "ckpt_best.pt",
     )
     return run_dir
 
 
-def test_force_model_and_legacy_adapter_return_same_total_accel(tmp_path: Path) -> None:
+def test_force_model_and_gravity_provider_return_same_total_accel(tmp_path: Path) -> None:
     run_dir = _make_run(tmp_path)
-    force = load_surrogate_force_model(run_dir, device="cpu", allow_legacy_contract=True)
-    legacy = SurrogateGravityModel.from_model_dir(run_dir, device_preference="cpu")
+    force = load_surrogate_force_model(run_dir, device="cpu")
+    provider = SurrogateGravityModel.from_model_dir(run_dir, device_preference="cpu")
     x = np.array(
         [
             [R_MOON_SI + 100_000.0, 0.0, 0.0],
@@ -98,9 +108,9 @@ def test_force_model_and_legacy_adapter_return_same_total_accel(tmp_path: Path) 
         ],
         dtype=np.float64,
     )
-    assert np.allclose(force.predict_total_accel(x), legacy.acceleration_fixed_batch(x), rtol=1e-6, atol=1e-12)
-    assert force.degree_min == legacy.degree_min == 0
-    assert force.degree_max == legacy.degree_max == 50
+    assert np.allclose(force.predict_total_accel(x), provider.acceleration_fixed_batch(x), rtol=1e-6, atol=1e-12)
+    assert force.degree_min == provider.degree_min == 0
+    assert force.degree_max == provider.degree_max == 50
     assert force.target_contract.target_mode == "residual"
 
 
@@ -109,9 +119,8 @@ def test_force_direct_runtime_class_is_available() -> None:
     assert issubclass(DirectForceRuntime, BaseSurrogateRuntime)
 
 
-def test_legacy_physics_import_is_retired() -> None:
+def test_retired_physics_import_is_removed() -> None:
     import importlib
 
-    legacy = importlib.import_module("lunaris.physics.surrogate_gravity")
-    with pytest.raises(AttributeError, match="lunaris.surrogate.runtime_adapter"):
-        _ = legacy.SurrogateGravityModel
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("lunaris.physics.surrogate_gravity")

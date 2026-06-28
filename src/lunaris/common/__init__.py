@@ -38,6 +38,7 @@ _LAZY_MODULES: Final[dict[str, str]] = {
     "montecarlo_defs":  "Historical compatibility facade for batch propagation dataclasses.",
     "paths":            "Project-root and data-dir resolution (editable/installed).",
     "hashing":          "Canonical JSON hashing (single source for content digests).",
+    "provenance":       "Dependency-light file hashing and UTC timestamp helpers.",
     "lunar_data":       "Neutral lunar gravity-data path/heuristic helpers.",
 }
 

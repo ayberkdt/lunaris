@@ -717,13 +717,6 @@ class STLRPSTrainTab(QWidget):
         self.val_ratio.setSingleStep(0.01)
         self.val_ratio.setToolTip("Validation fraction in single-dataset mode. 0.1 -> 10% val, 90% train.")
 
-        self.allow_legacy_dataset_contract = QCheckBox("Allow legacy dataset contract")
-        self.allow_legacy_dataset_contract.setToolTip(
-            "Adds --allow-legacy-dataset-contract for older HDF5 datasets whose "
-            "DatasetContract is inferred from legacy attrs. Keep this off for paper/"
-            "evidence runs; prefer regenerating datasets with an explicit contract."
-        )
-
         self._suite_manifest_label = QLabel("(no suite applied)")
         self._suite_manifest_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
         self._suite_manifest_label.setWordWrap(True)
@@ -734,12 +727,9 @@ class STLRPSTrainTab(QWidget):
         form_data.addRow("Output Folder", out_row)
         form_data.addRow("HDF5 Dataset Name", self.dataset_name)
         form_data.addRow("Validation Fraction", self.val_ratio)
-        form_data.addRow(self.allow_legacy_dataset_contract)
         form_data.addRow("Suite Manifest", self._suite_manifest_label)
         grp_data.setLayout(form_data)
         self.dataset_mode.currentIndexChanged.connect(self._on_dataset_mode_changed)
-        self.allow_legacy_dataset_contract.toggled.connect(self._refresh_command_preview)
-        self.allow_legacy_dataset_contract.toggled.connect(self._refresh_checklist)
 
         # =====================================================================
         # GROUP 1B: Resume Training
@@ -2388,17 +2378,6 @@ class STLRPSTrainTab(QWidget):
                 check_dataset("Test dataset", xp, required=False)
                 check_dataset("OOD dataset", op, required=False)
 
-            if (
-                hasattr(self, "allow_legacy_dataset_contract")
-                and self.allow_legacy_dataset_contract.isChecked()
-            ):
-                warning = (
-                    "Legacy dataset contract override enabled - acceptable for old exploratory "
-                    "datasets, not for paper/evidence runs."
-                )
-                readiness_items.append(("warning", warning))
-                items.append(f'<span style="color:{THEME["warning"]}">WARN: {warning}</span>')
-
         if mode in ("eval_only",):
             md = self.out_dir.text().strip() if hasattr(self, "out_dir") else ""
             check(
@@ -2511,7 +2490,6 @@ class STLRPSTrainTab(QWidget):
             "out_dir": self.out_dir.text(),
             "dataset_name": self.dataset_name.text(),
             "val_ratio": self.val_ratio.value(),
-            "allow_legacy_dataset_contract": self.allow_legacy_dataset_contract.isChecked(),
             # Resume
             "resume_enabled": self.resume_enabled.isChecked(),
             "resume_from": self.resume_from.text(),
@@ -2688,8 +2666,6 @@ class STLRPSTrainTab(QWidget):
             self.preload_data.setChecked(bool(cfg["preload_data"]))
         if "pin_memory" in cfg:
             self.pin_memory.setChecked(bool(cfg["pin_memory"]))
-        if "allow_legacy_dataset_contract" in cfg:
-            self.allow_legacy_dataset_contract.setChecked(bool(cfg["allow_legacy_dataset_contract"]))
         if "quick_check" in cfg:
             self.quick_check.setChecked(bool(cfg["quick_check"]))
         if "use_altitude_balanced_loss" in cfg:
@@ -3512,8 +3488,6 @@ class STLRPSTrainTab(QWidget):
         _sm = getattr(self, "applied_suite_manifest_path", "") or ""
         if _sm and Path(_sm).is_file():
             args += ["--suite-manifest", _sm]
-        if self.allow_legacy_dataset_contract.isChecked():
-            args += ["--allow-legacy-dataset-contract"]
 
         extra = self.extra_args.text().strip()
         if extra:

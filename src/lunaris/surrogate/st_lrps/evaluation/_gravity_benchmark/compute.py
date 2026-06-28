@@ -21,7 +21,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.core.config import SimConfig, replace_sim_config
 from lunaris.core.dynamics import DynamicsEngine
-from lunaris.core.propagator import propagate
+from lunaris.core.propagation.propagator import propagate
 from lunaris.core.state import calculate_ae_from_altitudes, create_state_from_keplerian
 from lunaris.core.torch_frame import quat_rotate_torch as _quat_rotate_torch
 from lunaris.surrogate.st_lrps.evaluation import progress

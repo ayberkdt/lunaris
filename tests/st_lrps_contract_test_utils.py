@@ -42,6 +42,13 @@ def tiny_training_cfg(
         "train_data_path": "synthetic_contract_fixture.h5",
         "val_data_path": "synthetic_contract_fixture.h5",
         "dataset_name": "data",
+        "dataset": {
+            "target_mode": "residual",
+            "degree_min": int(degree_min),
+            "degree_max": int(degree_max),
+            "altitude_min_km": float(alt_min_km),
+            "altitude_max_km": float(alt_max_km),
+        },
         "central_body": "moon",
         "target_mode": "residual",
         "degree_min": int(degree_min),

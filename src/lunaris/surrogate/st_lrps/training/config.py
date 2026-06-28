@@ -14,8 +14,6 @@ Configuration policy
   There is no alternate default mode. Older configurations are reproduced by passing
   the corresponding CLI flags explicitly (e.g. ``--no-residual-blocks --n-bands 1``)
   or via ``st_lrps.evaluation.ablation``.
-* The word "legacy" elsewhere refers only to loading older checkpoints/datasets
-  (e.g. ``--allow-legacy-derivative-convention``), not to a default-config mode.
 * Experimental input encodings (off by default): ``--use-radial-decay-encoding``
   (scaled inverse-radius decay features inspired by the R/r radial decay of
   spherical-harmonic terms; evaluate through ablation) and
@@ -310,13 +308,8 @@ class TrainConfig:
     a_scale_mode: str = "hybrid"
     target_scale_multiplier: float = 6.0
 
-    # Dataset convention safety. Datasets generated before the dP_dphi sign fix
-    # have sign-flipped latitude acceleration; training on them is silently
-    # wrong. By default such datasets are rejected; set True only for inspection.
-    allow_legacy_derivative_convention: bool = False
-    allow_legacy_target_mode_inference: bool = False
-    allow_legacy_dataset_contract: bool = False
-    allow_missing_dataset_contract: bool = False
+    # Dataset convention safety. Old or incomplete dataset contracts are always
+    # rejected; regenerate clouds with the current generator before training.
     allow_dataset_validation_fail: bool = False
 
     # Pre-training preflight gate (single go/no-go before training starts).
@@ -461,10 +454,6 @@ RUN_PRESET_EXPLICIT_FLAGS: dict[str, tuple[str, ...]] = {
     "skip_preflight": ("--skip-preflight",),
     "allow_preflight_fail": ("--allow-preflight-fail",),
     "allow_dataset_validation_fail": ("--allow-dataset-validation-fail",),
-    "allow_legacy_derivative_convention": ("--allow-legacy-derivative-convention",),
-    "allow_legacy_target_mode_inference": ("--allow-legacy-target-mode-inference",),
-    "allow_legacy_dataset_contract": ("--allow-legacy-dataset-contract",),
-    "allow_missing_dataset_contract": ("--allow-missing-dataset-contract",),
 }
 
 # Boolean posture for the "paper" preset: (field -> required value). These are
@@ -478,10 +467,6 @@ _PAPER_BOOL_POSTURE: dict[str, bool] = {
     "skip_preflight": False,
     "allow_preflight_fail": False,
     "allow_dataset_validation_fail": False,
-    "allow_legacy_derivative_convention": False,
-    "allow_legacy_target_mode_inference": False,
-    "allow_legacy_dataset_contract": False,
-    "allow_missing_dataset_contract": False,
 }
 
 
@@ -1107,21 +1092,6 @@ def parse_args() -> TrainConfig:
 
     # Dataset convention / determinism
     group_safety = ap.add_argument_group("Dataset Safety & Determinism")
-    group_safety.add_argument("--allow-legacy-derivative-convention", action="store_true",
-                              default=False,
-                              help="Permit training on datasets generated before the dP_dphi "
-                                   "sign fix (sign-flipped latitude acceleration). Inspection only.")
-    group_safety.add_argument("--allow-legacy-target-mode-inference", action="store_true",
-                              default=False,
-                              help="Permit old datasets without explicit target_mode by inferring "
-                                   "residual/full from degree_min. Prefer regenerating metadata.")
-    group_safety.add_argument("--allow-legacy-dataset-contract", action="store_true",
-                              default=False,
-                              help="Permit HDF5 datasets whose DatasetContract must be inferred from legacy attrs.")
-    group_safety.add_argument("--allow-missing-dataset-contract", action="store_true",
-                              default=False,
-                              help="Permit old datasets with incomplete degree/altitude contract metadata. "
-                                   "Prefer regenerating metadata.")
     group_safety.add_argument("--allow-dataset-validation-fail", action="store_true",
                               default=False,
                               help="Record but do not abort when lightweight dataset validation fails.")
@@ -1528,10 +1498,6 @@ def parse_args() -> TrainConfig:
         u_scale_mode=str(a.u_scale_mode),
         a_scale_mode=str(a.a_scale_mode),
         target_scale_multiplier=float(a.target_scale_multiplier),
-        allow_legacy_derivative_convention=bool(a.allow_legacy_derivative_convention),
-        allow_legacy_target_mode_inference=bool(a.allow_legacy_target_mode_inference),
-        allow_legacy_dataset_contract=bool(a.allow_legacy_dataset_contract),
-        allow_missing_dataset_contract=bool(a.allow_missing_dataset_contract),
         allow_dataset_validation_fail=bool(a.allow_dataset_validation_fail),
         skip_preflight=bool(a.skip_preflight),
         allow_preflight_fail=bool(a.allow_preflight_fail),

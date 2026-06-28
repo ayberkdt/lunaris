@@ -27,12 +27,11 @@ To integrate from an inertial propagation frame you MUST:
     2. evaluate ST-LRPS in the fixed frame,
     3. rotate the fixed-frame acceleration back into the inertial frame.
 The ``*_inertial`` helpers below do exactly this; the dynamics engine performs
-the same rotation around ``acceleration_fixed`` in ``surrogate/runtime/adapter.py``
-(also exposed through the historical ``surrogate/runtime_adapter.py`` path).
+the same rotation around ``acceleration_fixed`` in ``lunaris.surrogate.runtime``.
 
-The legacy ``predict_residual_potential`` / ``predict_residual_accel`` /
-``predict_total_accel`` names are retained as thin **fixed-frame** wrappers for
-backward compatibility and behave identically to their ``*_fixed`` counterparts.
+The unsuffixed ``predict_residual_potential`` / ``predict_residual_accel`` /
+``predict_total_accel`` methods are thin **fixed-frame** wrappers and behave
+identically to their ``*_fixed`` counterparts.
 """
 
 from __future__ import annotations
@@ -183,7 +182,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
     Cartesian** frame (``moon_fixed_cartesian``) — the frame used during SH
     residual dataset generation. The ``*_inertial`` methods accept inertial
     positions plus the inertial->fixed quaternion ``q_i2f`` and handle the
-    rotation. The unsuffixed legacy methods are fixed-frame wrappers. The
+    rotation. The unsuffixed methods are fixed-frame wrappers. The
     constructor hard-fails if the artifact declares a non-fixed frame.
 
     Attributes
@@ -210,7 +209,6 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         checkpoint_epoch: int | None = None,
         architecture_signature: str | None = None,
         artifact_contract: ArtifactContract | dict | None = None,
-        legacy_contract: bool = False,
         run_manifest: dict | None = None,
         strict_domain: bool = False,
     ):
@@ -222,7 +220,6 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         self.checkpoint_path = checkpoint_path
         self.checkpoint_epoch = checkpoint_epoch
         self.architecture_signature = architecture_signature
-        self.legacy_contract = bool(legacy_contract)
         self.run_manifest = dict(run_manifest or {})
         # When True, predict_residual_accel / predict_total_accel raise if the
         # domain check recommends falling back (extrapolation outside the trained
@@ -238,7 +235,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         self.r_ref_m = float(cfg.get("resolved_r_ref_m", R_MOON_SI))
         self.runtime_model_kind = str(cfg.get("runtime_model_kind", "potential_autograd"))
         if artifact_contract is None:
-            artifact_contract = ArtifactContract.from_legacy_config(
+            artifact_contract = ArtifactContract.from_resolved_config(
                 cfg,
                 scaler_payload={
                     "x": asdict(scaler.x) if hasattr(scaler.x, "__dataclass_fields__") else {},
@@ -269,9 +266,9 @@ class SurrogateForceModel(PotentialAutogradRuntime):
 
         # Frame guard: ST-LRPS is a body-fixed surrogate. Read the declared frame
         # from the artifact (dataset_contract.coordinate_frame, then the target
-        # contract). A legacy artifact without the field defaults to the fixed
-        # frame; an artifact that explicitly declares a different frame fails
-        # loudly so inertial coordinates can never be fed to a fixed-frame model.
+        # contract). An artifact that explicitly declares a different frame
+        # fails loudly so inertial coordinates can never be fed to a fixed-frame
+        # model.
         declared_frame = (
             (self.artifact_contract.dataset_contract or {}).get("coordinate_frame")
             or self.target_contract.frame
@@ -594,18 +591,17 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         return a_total[0] if single else a_total
 
     # ------------------------------------------------------------------
-    # Backward-compatible fixed-frame wrappers (legacy unsuffixed names)
+    # Fixed-frame wrappers for the unsuffixed runtime API.
     # ------------------------------------------------------------------
     def predict_residual_potential(self, x_m):
-        """Fixed-frame alias of :meth:`predict_residual_potential_fixed`.
+        """Fixed-frame wrapper of :meth:`predict_residual_potential_fixed`.
 
-        ``x_m`` is interpreted in the Moon-fixed Cartesian frame. Retained for
-        backward compatibility; prefer the explicit ``_fixed`` name.
+        ``x_m`` is interpreted in the Moon-fixed Cartesian frame.
         """
         return self.predict_residual_potential_fixed(x_m)
 
     def predict_residual_accel(self, x_m: np.ndarray | torch.Tensor) -> np.ndarray:
-        """Fixed-frame alias of :meth:`predict_residual_accel_fixed`."""
+        """Fixed-frame wrapper of :meth:`predict_residual_accel_fixed`."""
         return self.predict_residual_accel_fixed(x_m)
 
     def predict_total_accel(
@@ -728,8 +724,6 @@ def load_surrogate_force_model(
     device: str = "auto",
     chunk_size: int = 8192,
     allow_config_mismatch: bool = False,
-    strict_contract: bool = True,
-    allow_legacy_contract: bool = False,
     strict_domain: bool = False,
 ) -> BaseSurrogateRuntime:
     """
@@ -753,10 +747,6 @@ def load_surrogate_force_model(
         RuntimeError if the input lies outside the surrogate's valid domain
         (see SurrogateForceModel.domain_status). Default False keeps the prior
         behaviour of always returning a (possibly extrapolated) prediction.
-    strict_contract : bool
-        When True, require a full versioned artifact contract. Legacy artifacts
-        must opt in with ``allow_legacy_contract=True``.
-
     Returns
     -------
     SurrogateForceModel
@@ -792,8 +782,7 @@ def load_surrogate_force_model(
             "a": asdict(scaler.a) if hasattr(scaler.a, "__dataclass_fields__") else {},
             "provenance": getattr(scaler, "provenance", {}) or {},
         },
-        strict=bool(strict_contract),
-        allow_legacy_contract=bool(allow_legacy_contract),
+        strict=True,
     )
     artifact_contract = ArtifactContract.from_dict(contract_report["artifact_contract"])
     runtime_kind = str(cfg.get("runtime_model_kind", "potential_autograd") or "potential_autograd")
@@ -808,7 +797,6 @@ def load_surrogate_force_model(
         checkpoint_epoch=report.get("checkpoint_epoch"),
         architecture_signature=report.get("architecture_signature"),
         artifact_contract=artifact_contract,
-        legacy_contract=bool(contract_report.get("legacy_contract")),
         run_manifest=read_run_manifest(layout),
         strict_domain=strict_domain,
     )

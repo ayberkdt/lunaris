@@ -214,6 +214,9 @@ def test_rng_state_helpers_roundtrip():
 def _write_tiny_training_h5(path: Path) -> bool:
     h5py = pytest.importorskip("h5py")
     import numpy as np
+
+    from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract
+
     rng = np.random.default_rng(0)
     n = 512
     r_ref = 1.738e6
@@ -237,6 +240,24 @@ def _write_tiny_training_h5(path: Path) -> bool:
         h.attrs["target_mode"] = "residual"
         h.attrs["alt_min_km"] = 100.0
         h.attrs["alt_max_km"] = 500.0
+        DatasetContract(
+            dataset_id="tiny-resume-smoke",
+            n_samples=n,
+            target_mode="residual",
+            baseline_kind="spherical_harmonics",
+            degree_min=20,
+            degree_max=100,
+            mu_si=4.902800e12,
+            r_ref_m=r_ref,
+            altitude_min_km=100.0,
+            altitude_max_km=500.0,
+            source_gravity_model="toy",
+            source_gravity_file_path="toy.gfc",
+            source_gravity_file_sha256="a" * 64,
+            spherical_harmonic_convention="4pi_geodesy_no_condon_shortley_v1",
+            gravity_label_engine_version="lunaris_sh_v2",
+            dataset_layout={"dataset_name": "data", "shape": [n, 7]},
+        ).write_hdf5_attrs(h)
     return True
 
 
@@ -255,8 +276,7 @@ def test_engine_resume_smoke(tmp_path):
     common = [
         "--n-bands", "1", "--activation", "silu", "--hidden", "8", "--depth", "2",
         "--batch-size", "32", "--num-workers", "0", "--quick-check",
-        "--a-sign", "1.0", "--allow-legacy-dataset-contract",
-        "--allow-legacy-derivative-convention",
+        "--a-sign", "1.0",
         "--direction-loss-weight", "0.0", "--best-ckpt-start-epoch", "0",
         "--no-auto-preload",
     ]

@@ -85,6 +85,13 @@ def _base_cfg(**overrides) -> dict:
         "target_mode": "residual",
         "central_body": "moon",
         "dataset_name": "data",
+        "dataset": {
+            "target_mode": "residual",
+            "degree_min": 10,
+            "degree_max": 60,
+            "altitude_min_km": 50.0,
+            "altitude_max_km": 300.0,
+        },
     }
     cfg.update(overrides)
     return cfg
@@ -109,6 +116,10 @@ def _make_run_dir(tmp_path: Path, build_cfg: dict, *, config_json_overrides: dic
     ckpt_config["embedding_type"] = str(getattr(model, "embedding_type", "raw"))
     ckpt_config["model_builder_version"] = str(getattr(model, "model_builder_version", "v3"))
     ckpt_config["architecture_signature"] = compute_architecture_signature(ckpt_config)
+
+    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
+    ac = ArtifactContract.from_resolved_config(ckpt_config, scaler_payload=asdict(scaler))
+    ckpt_config["artifact_contract"] = ac.to_dict()
 
     # config.json defaults to matching the checkpoint, unless a test overrides it.
     cfg_json = dict(ckpt_config)
@@ -214,7 +225,6 @@ def test_force_model_rejects_config_checkpoint_architecture_mismatch(tmp_path):
         run_dir,
         device="cpu",
         allow_config_mismatch=True,
-        allow_legacy_contract=True,
     )
     assert fm is not None
 
@@ -495,19 +505,15 @@ def test_wrong_derivative_convention_raises(tmp_path):
         validate_training_dataset_convention(meta, data_path=p)
 
 
-def test_allow_legacy_derivative_convention_only_with_flag(tmp_path):
+def test_missing_derivative_convention_is_rejected(tmp_path):
     from lunaris.surrogate.st_lrps.data.datasets import (
         DatasetMeta,
         validate_training_dataset_convention,
     )
     p = _write_conv_h5(tmp_path, deriv_conv=None)
     meta = DatasetMeta.from_h5(p)
-    with pytest.raises(ValueError):
-        validate_training_dataset_convention(meta, data_path=p,
-                                             allow_legacy_derivative_convention=False)
-    # with the flag it must NOT raise (inspection mode)
-    validate_training_dataset_convention(meta, data_path=p,
-                                         allow_legacy_derivative_convention=True)
+    with pytest.raises(ValueError, match="derivative_convention"):
+        validate_training_dataset_convention(meta, data_path=p)
 
 
 def test_degree_zero_parse_does_not_become_silent_none(tmp_path):

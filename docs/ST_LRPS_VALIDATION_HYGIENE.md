@@ -85,13 +85,12 @@ definitions, so train/val/test separation is fully auditable.
 * `predict_residual_accel_inertial(r_inertial_m, q_i2f)` (and `_potential_`,
   `_total_` variants) rotate inertial → fixed, evaluate, and rotate the
   acceleration back to inertial.
-* The unsuffixed compatibility methods (`predict_residual_potential`, ...)
-  remain documented **fixed-frame** wrappers.
+* The unsuffixed methods (`predict_residual_potential`, ...) are documented
+  **fixed-frame** wrappers.
 
 The constructor reads the artifact's declared frame and **hard-fails** unless it
 is `moon_fixed_cartesian`. Dynamics integration
-(`surrogate/runtime/adapter.py`, also available through the historical
-`surrogate/runtime_adapter.py` path) already rotates inertial→fixed around
+(`surrogate/runtime/adapter.py`) already rotates inertial→fixed around
 `acceleration_fixed` and back.
 
 ## 4. Paper-safe benchmark mode
@@ -102,9 +101,8 @@ unsafe, and forces the strict flags so they cannot be bypassed by `allow_*`:
 
 * `run_options.synthetic` must be false (synthetic is a smoke test, never a
   scientific benchmark); `quick` mode is forbidden.
-* `allow_contract_mismatch`, `allow_domain_extrapolation`,
-  `allow_legacy_artifact`, `allow_validation_fail` are all forced false;
-  `strict_domain` is true.
+* `allow_contract_mismatch`, `allow_domain_extrapolation`, and
+  `allow_validation_fail` are all forced false; `strict_domain` is true.
 * `allow_truth_baseline` is forbidden unless
   `validation.truth_baseline_justification` is provided.
 * A real surrogate (`surrogate.enabled` + `surrogate.model_dir`) is required; its

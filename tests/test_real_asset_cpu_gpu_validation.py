@@ -44,7 +44,7 @@ def _real_gravity_path() -> Path | None:
 
 
 def _real_st_lrps_dir() -> Path | None:
-    from lunaris.surrogate.runtime_adapter import find_latest_st_lrps_model_dir
+    from lunaris.surrogate.runtime import find_latest_st_lrps_model_dir
 
     try:
         return find_latest_st_lrps_model_dir()
@@ -61,7 +61,7 @@ def test_real_st_lrps_artifact_cpu_matches_gpu_acceleration() -> None:
     if run_dir is None:
         pytest.skip("no real ST-LRPS run directory discovered")
 
-    from lunaris.surrogate.runtime_adapter import SurrogateGravityModel
+    from lunaris.surrogate.runtime import SurrogateGravityModel
 
     try:
         model = SurrogateGravityModel.from_model_dir(

@@ -27,7 +27,7 @@ if SRC.exists() and str(SRC) not in sys.path:
 from lunaris.common.constants import R_MOON
 from lunaris.core.config import SimConfig, load_default_config
 from lunaris.core.dynamics import DynamicsEngine
-from lunaris.core.propagator import propagate
+from lunaris.core.propagation.propagator import propagate
 from lunaris.physics.ephemeris import EphemerisManager
 from lunaris.physics.spherical_harmonics import GravityModel
 

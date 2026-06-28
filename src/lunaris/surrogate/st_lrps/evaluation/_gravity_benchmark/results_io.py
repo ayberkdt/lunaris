@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import csv
-import hashlib
 import json
 import math
 import os
@@ -16,7 +15,6 @@ import sys
 import time
 import uuid
 from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +24,7 @@ import numpy as np
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+from lunaris.common.provenance import sha256_file, sha256_text, utc_now_iso
 from lunaris.core.config import SimConfig
 from lunaris.physics.ephemeris import EphemerisManager
 
@@ -494,16 +493,7 @@ def _trajectory_cache_path(
 
 
 def _file_sha256(path: str | None) -> str | None:
-    if not path:
-        return None
-    p = Path(path)
-    if not p.exists() or not p.is_file():
-        return None
-    h = hashlib.sha256()
-    with open(p, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return sha256_file(path, missing_ok=True) if path else None
 
 
 def _cache_metadata(args: argparse.Namespace) -> dict[str, Any]:
@@ -833,7 +823,7 @@ def _package_version() -> str:
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return utc_now_iso(z_suffix=False)
 
 
 def _run_mode_label(args: argparse.Namespace) -> str:
@@ -893,7 +883,7 @@ def _config_fingerprint(args: argparse.Namespace) -> str:
     meta = _cache_metadata(args)
     canon = {k: meta.get(k) for k in _FINGERPRINT_FIELDS}
     blob = json.dumps(canon, sort_keys=True, default=str)
-    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    return sha256_text(blob)
 
 
 def _effective_frame_modes(args: argparse.Namespace) -> dict[str, str]:

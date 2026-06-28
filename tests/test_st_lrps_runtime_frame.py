@@ -39,6 +39,13 @@ def _make_fm(**ctor_overrides):
         "degree_min": -1,
         "altitude_min_km": 50.0,
         "altitude_max_km": 600.0,
+        "dataset": {
+            "target_mode": "residual",
+            "degree_min": -1,
+            "degree_max": 50,
+            "altitude_min_km": 50.0,
+            "altitude_max_km": 600.0,
+        },
     }
     return SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"), **ctor_overrides)
 

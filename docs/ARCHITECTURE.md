@@ -111,13 +111,9 @@ Alongside the four layers:
 - `lunaris.surrogate.runtime` — production-facing ST-LRPS runtime package:
   artifact discovery, metadata extraction, scaler loading, network/checkpoint
   construction, device selection, and the engine-facing gravity provider.
-- `lunaris.surrogate.runtime_adapter` — compatibility alias for the production
-  runtime adapter API. It remains the historical import path for
-  `SurrogateGravityModel`.
-- `lunaris.physics.surrogate_gravity` is a retired compatibility module only; it
-  does not import or re-export the surrogate adapter. Use
-  `lunaris.surrogate.runtime` for new code; the historical
-  `lunaris.surrogate.runtime_adapter` path remains available.
+- Historical ST-LRPS runtime aliases (`lunaris.surrogate.runtime_adapter` and
+  `lunaris.physics.surrogate_gravity`) have been removed. Use
+  `lunaris.surrogate.runtime` for runtime imports.
 - `lunaris.ui_foundation` — Qt-binding-neutral tokens, palettes, color helpers,
   and stylesheet generation shared by the mission UI and ST-LRPS Studio.
 
@@ -407,9 +403,7 @@ configs/checkpoints, distinguishing residual labels from full-field labels and
 keeping the runtime path aligned with the scaler and loss.
 
 **Runtime.** The engine-facing API is
-`lunaris.surrogate.runtime.SurrogateGravityModel`, with
-`lunaris.surrogate.runtime_adapter.SurrogateGravityModel` retained as the
-historical compatibility path. The runtime package owns artifact discovery,
+`lunaris.surrogate.runtime.SurrogateGravityModel`. The runtime package owns artifact discovery,
 metadata/scaler loading, checkpoint/network construction, device selection, and
 the gravity-provider facade; neural force inference still delegates to the
 internal ST-LRPS API in `runtime/force_model.py`.

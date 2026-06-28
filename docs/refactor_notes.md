@@ -90,11 +90,10 @@ New canonical package:
 - `lunaris.surrogate.runtime.force_runtime`: lazy bridge to the canonical
   `st_lrps.runtime.force_model` loader.
 
-Compatibility shim:
+Compatibility cleanup:
 
-- `lunaris.surrogate.runtime_adapter` now aliases the canonical
-  `lunaris.surrogate.runtime.adapter` module object. Old imports and module-level
-  inspection continue to resolve through the historical path.
+- The temporary `lunaris.surrogate.runtime_adapter` shim was removed after the
+  runtime split. Use `lunaris.surrogate.runtime` imports.
 - No production code was moved into `physics` or `core`; the adapter remains in
   the surrogate subsystem. Existing lazy/failing optional torch behavior is
   preserved.
@@ -114,14 +113,12 @@ New canonical package:
   scipy method normalization, fixed-step driver, RK steppers, and symplectic
   steppers.
 
-Compatibility shim:
+Compatibility cleanup:
 
-- `lunaris.core.propagator` aliases the canonical
-  `lunaris.core.propagation.propagator` module object, not a copied facade. This
-  preserves existing tests and downstream monkeypatches such as
-  `lunaris.core.propagator.solve_ivp`.
-- Public and private helper imports used by tests remain available from the old
-  path.
+- The temporary `lunaris.core.propagator` shim was removed after the propagation
+  split. Use `lunaris.core.propagation.propagator` imports.
+- Tests and downstream monkeypatches should target the canonical propagation
+  module.
 - The previous 1981-LOC propagator implementation is now split; event,
   checkpoint, time-grid, telemetry, and fixed-step integrator code are no longer
   stub re-exports.
@@ -162,8 +159,8 @@ P2-P4 smoke checks run after the split:
 
 | Command | Result |
 |---|---|
-| `.venv\Scripts\python.exe -m compileall -q src\lunaris\surrogate\runtime src\lunaris\surrogate\runtime_adapter.py src\lunaris\core\propagation src\lunaris\core\propagator.py src\lunaris\core\dynamics tests\test_surrogate_runtime_import_compat.py tests\test_propagation_import_compat.py tests\test_dynamics_import_compat.py` | Pass |
-| Manual import-compat calls for P2/P3/P4 new and old paths | Pass |
+| `.venv\Scripts\python.exe -m compileall -q src\lunaris\surrogate\runtime src\lunaris\core\propagation src\lunaris\core\dynamics tests\test_surrogate_runtime_import_compat.py tests\test_propagation_import_compat.py tests\test_dynamics_import_compat.py` | Pass |
+| Manual import calls for P2/P3/P4 canonical paths | Pass |
 | Manual execution of new import-compat tests | Pass |
 | P0 point-mass propagation golden after P3/P4 | Unchanged: `[1773050.703713613, 484288.345988895, 0.0, -430.426980182, 1575.856339368, 0.0]` |
 | P0 batch sampling hashes after P2-P4 | Unchanged: `random=3827c2dcf7e0fc2d`, `lhs=6e2d0524cf73c496`, `sobol=4f0de7624ff5ef66`, `sobol_scrambled=327f8f9a8cf36577` |
@@ -222,7 +219,7 @@ P5-P6 smoke checks run after the split:
 
 | Command | Result |
 |---|---|
-| `.venv\Scripts\python.exe -m compileall -q src\lunaris\cli src\lunaris\batch src\lunaris\core\propagation src\lunaris\core\propagator.py src\lunaris\core\dynamics src\lunaris\surrogate\runtime src\lunaris\surrogate\runtime_adapter.py tests\test_cli_import_compat.py tests\test_architecture_boundaries.py` | Pass |
+| `.venv\Scripts\python.exe -m compileall -q src\lunaris\cli src\lunaris\batch src\lunaris\core\propagation src\lunaris\core\dynamics src\lunaris\surrogate\runtime tests\test_cli_import_compat.py tests\test_architecture_boundaries.py` | Pass |
 | Manual execution of `tests/test_cli_import_compat.py` and `tests/test_architecture_boundaries.py` test functions | Pass |
 | Manual execution of P1-P4 import-compat tests | Pass |
 | `lunaris.cli.main` source-contract smoke for `validate_st_lrps_model_dir` delegation | Pass |

@@ -119,7 +119,7 @@ def verify_paper_run_artifacts(run_dir: str | Path) -> dict[str, Path]:
 
     # 3. Artifact contract must be readable (i.e. it was written).
     try:
-        read_artifact_contract(run_dir, strict=True, allow_legacy_contract=False)
+        read_artifact_contract(run_dir, strict=True)
     except Exception as exc:  # noqa: BLE001 - surface as a clear paper error
         raise PaperEvidenceError(f"artifact contract is missing or invalid for {run_dir}: {exc}") from exc
 
@@ -275,7 +275,7 @@ def package_evidence(
 def _read_artifact_contract_dict(run_dir: Path) -> dict[str, Any]:
     from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
 
-    return read_artifact_contract(run_dir, strict=True, allow_legacy_contract=False).to_dict()
+    return read_artifact_contract(run_dir, strict=True).to_dict()
 
 
 def _render_training_summary(run_dir: Path, config: Mapping[str, Any], checkpoint: Path) -> str:

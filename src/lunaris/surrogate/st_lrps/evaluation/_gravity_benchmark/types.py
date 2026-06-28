@@ -19,7 +19,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from lunaris.common.constants import DAY_S
 from lunaris.core.config import SimConfig, load_default_config, replace_sim_config
 from lunaris.physics.spherical_harmonics import GravityModel
-from lunaris.surrogate.runtime_adapter import (
+from lunaris.surrogate.runtime import (
     SurrogateGravityModel,
     find_checkpoint_for_st_lrps_run,
 )

@@ -84,19 +84,8 @@ writes `provenance/dataset_validation_report.json`, creates
 Validation rejects missing contracts, missing `target_mode`, missing degree
 metadata, invalid unit system, invalid altitude bounds, non-lunar body
 metadata, unsafe derivative conventions, non-finite values, invalid HDF5 shape,
-and altitude-envelope violations by default. Compatibility escape hatches are
-explicit:
-
-```bash
-lunaris-train --allow-legacy-dataset-contract
-lunaris-train --allow-legacy-target-mode-inference
-lunaris-train --allow-missing-dataset-contract
-lunaris-train --allow-legacy-derivative-convention
-lunaris-train --allow-dataset-validation-fail
-```
-
-These flags are intended for inspecting old data, not for producing new
-research artifacts.
+and altitude-envelope violations. Contract-free or pre-fix datasets must be
+regenerated with the current generator before training.
 
 Dataset inspection and report commands:
 
@@ -134,15 +123,10 @@ returning a runtime object. The returned `SurrogateForceModel` exposes:
 
 - `artifact_contract`
 - `target_contract`
-- `legacy_contract`
 - `run_manifest`
 
-Strict loading requires an embedded versioned contract. Older checkpoints can
-be inspected only with:
-
-```python
-load_surrogate_force_model(path, allow_legacy_contract=True)
-```
+Strict loading requires an embedded versioned contract. Contract-free
+checkpoints are rejected and must be regenerated.
 
 `load_surrogate_force_model` dispatches `potential_autograd` artifacts to
 `SurrogateForceModel` and `force_direct` artifacts to `DirectForceRuntime`.
@@ -174,21 +158,16 @@ Explicit overrides:
 ```bash
 lunaris-benchmark --allow-contract-mismatch
 lunaris-benchmark --allow-domain-extrapolation
-lunaris-benchmark --allow-legacy-artifact
 ```
 
 `--allow-contract-mismatch` downgrades contract mismatches to warnings. Use it
 for exploratory comparisons only; it is not appropriate for benchmark claims.
 
-## Contract-Free Artifact Compatibility
+## Contract-Free Artifacts
 
-Artifacts without `artifact_contract` can still be normalized when the caller
-opts in. The normalized contract is marked as inferred and the runtime sets
-`legacy_contract=True`. New canonical checkpoints must embed the full contract.
-
-Evaluation reload paths still infer enough metadata for inspection, but runtime
-and benchmark entry points require explicit compatibility allowances before they
-will trust a contract-free artifact.
+Artifacts without `artifact_contract` are not runtime-compatible. Regenerate the
+ST-LRPS run so checkpoints, `config.json`, and the run manifest all embed the
+current dataset and artifact contracts.
 
 ## Limitations
 

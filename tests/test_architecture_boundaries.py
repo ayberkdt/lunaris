@@ -137,7 +137,6 @@ def test_refactor_public_modules_import_smoke() -> None:
         "lunaris.core.propagation",
         "lunaris.core.propagation.propagator",
         "lunaris.surrogate.runtime",
-        "lunaris.surrogate.runtime_adapter",
     )
 
     for module_name in modules:

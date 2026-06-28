@@ -124,8 +124,6 @@ def test_paper_enforces_full_reproducibility_posture():
             skip_preflight=True,
             allow_preflight_fail=True,
             allow_dataset_validation_fail=True,
-            allow_legacy_derivative_convention=True,
-            allow_missing_dataset_contract=True,
         )
     )
     # No explicit_fields → programmatic enforcement (never raises, always fixes).
@@ -136,8 +134,6 @@ def test_paper_enforces_full_reproducibility_posture():
     assert cfg.skip_preflight is False
     assert cfg.allow_preflight_fail is False
     assert cfg.allow_dataset_validation_fail is False
-    assert cfg.allow_legacy_derivative_convention is False
-    assert cfg.allow_missing_dataset_contract is False
     assert cfg.split_policy == "spatial_block"
 
 
@@ -151,10 +147,6 @@ def test_paper_enforces_full_reproducibility_posture():
         ("skip_preflight", True),
         ("allow_preflight_fail", True),
         ("allow_dataset_validation_fail", True),
-        ("allow_legacy_derivative_convention", True),
-        ("allow_legacy_target_mode_inference", True),
-        ("allow_legacy_dataset_contract", True),
-        ("allow_missing_dataset_contract", True),
     ],
 )
 def test_paper_raises_on_explicit_conflicting_flag(field, bad_value):

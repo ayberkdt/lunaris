@@ -7,13 +7,13 @@ import math
 import shutil
 import sys
 from collections.abc import Mapping
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from lunaris.common.constants import DAY_S
+from lunaris.common.provenance import utc_now_iso
 from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, ArtifactContractError
 
 from .benchmark_config import (
@@ -38,7 +38,6 @@ def run_configured_benchmark(
     allow_validation_fail: bool = False,
     allow_contract_mismatch: bool = False,
     allow_domain_extrapolation: bool = False,
-    allow_legacy_artifact: bool = False,
     paper_safe: bool = False,
 ) -> int:
     """Run a benchmark from a fixed config and write standardized outputs."""
@@ -53,7 +52,7 @@ def run_configured_benchmark(
     }
     config = load_benchmark_config(config_path, overrides)
 
-    # Paper-safe mode hard-fails on synthetic/quick/legacy/mismatch/extrapolation
+    # Paper-safe mode hard-fails on synthetic/quick/mismatch/extrapolation
     # settings *before* any output is produced, and forces the strict flags so a
     # debug/legacy benchmark can never masquerade as a scientific result.
     paper_safe = is_paper_safe_requested(config, flag=bool(paper_safe))
@@ -63,7 +62,6 @@ def run_configured_benchmark(
         allow_validation_fail = False
         allow_contract_mismatch = False
         allow_domain_extrapolation = False
-        allow_legacy_artifact = False
 
     output_dir = _resolve_output_dir(config, out_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -74,7 +72,6 @@ def run_configured_benchmark(
         config,
         strict=not bool(allow_contract_mismatch),
         strict_domain=not bool(allow_domain_extrapolation),
-        allow_legacy_artifact=bool(allow_legacy_artifact),
     )
     config.setdefault("contract_compatibility", contract_report)
     resolved_hash = sha256_payload(config)
@@ -180,7 +177,6 @@ def _benchmark_contract_report(
     *,
     strict: bool,
     strict_domain: bool,
-    allow_legacy_artifact: bool,
 ) -> dict[str, Any]:
     surrogate = config.get("surrogate", {}) if isinstance(config.get("surrogate"), Mapping) else {}
     if not surrogate.get("enabled"):
@@ -199,11 +195,9 @@ def _benchmark_contract_report(
         artifact = read_artifact_contract(
             model_dir,
             strict=True,
-            allow_legacy_contract=bool(allow_legacy_artifact),
         )
         report = artifact.compatibility_report(requested, strict_domain=strict_domain)
         report["checked"] = True
-        report["allow_legacy_artifact"] = bool(allow_legacy_artifact)
         if strict and report["errors"]:
             raise ArtifactContractError("; ".join(report["errors"]))
         if not strict and report["errors"]:
@@ -221,7 +215,6 @@ def _benchmark_contract_report(
             "compatible": False,
             "errors": [],
             "warnings": [f"contract mismatch allowed explicitly: {exc}"],
-            "allow_legacy_artifact": bool(allow_legacy_artifact),
         }
 
 
@@ -405,7 +398,7 @@ def _resolve_output_dir(config: Mapping[str, Any], override: str | Path | None) 
     configured = config.get("outputs", {}).get("out_dir") if isinstance(config.get("outputs"), Mapping) else None
     if configured:
         return Path(configured).expanduser().resolve()
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = utc_now_iso().replace("-", "").replace(":", "")
     return (Path("outputs") / "gravity_benchmark" / f"{config['name']}_{timestamp}").resolve()
 
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 Focused regression tests for the modular UI helper layer.
 
 These tests intentionally avoid booting the full Qt application. The goal is to

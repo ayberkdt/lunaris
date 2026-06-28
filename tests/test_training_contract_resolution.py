@@ -40,10 +40,9 @@ def test_checkpoint_payload_repeats_contract_at_top_level(tmp_path):
     assert payload["training_config_hash"] == payload["config"]["training_config_hash"]
     report = validate_checkpoint_contract(payload, cfg=run["cfg"], strict=True)
     assert report["contract_source"] == "checkpoint"
-    assert report["legacy_contract"] is False
 
 
-def test_training_cli_exposes_legacy_dataset_escape_hatches(tmp_path, monkeypatch):
+def test_training_cli_rejects_removed_dataset_escape_hatches(tmp_path, monkeypatch):
     monkeypatch.setattr(
         sys,
         "argv",
@@ -58,7 +57,5 @@ def test_training_cli_exposes_legacy_dataset_escape_hatches(tmp_path, monkeypatc
         ],
     )
 
-    cfg = parse_args()
-
-    assert cfg.allow_legacy_target_mode_inference is True
-    assert cfg.allow_missing_dataset_contract is True
+    with pytest.raises(SystemExit):
+        parse_args()
