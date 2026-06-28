@@ -80,6 +80,8 @@ def _make_run(tmp_path: Path) -> Path:
     )
     (run_dir / "config.json").write_text(json.dumps(cfg, indent=2), encoding="utf-8")
     scaler.save_json(run_dir / "scaler.json")
+    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
+    ac = ArtifactContract.from_resolved_config(cfg, scaler_payload=asdict(scaler))
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -88,6 +90,7 @@ def _make_run(tmp_path: Path) -> Path:
             "scaler": asdict(scaler),
             "kind": "best",
             "epoch": 0,
+            "artifact_contract": ac.to_dict(),
         },
         run_dir / "checkpoints" / "ckpt_best.pt",
     )
