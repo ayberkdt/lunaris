@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,7 @@ class SurrogateGravityModel:
         baseline_gravity_model: Any | None = None,
         baseline_gravity_path: Path | None = None,
         force_runtime: Any | None = None,
+        strict_domain: bool = False,
     ) -> None:
         self.model_dir = Path(model_dir).resolve()
         self.model = model
@@ -72,6 +74,16 @@ class SurrogateGravityModel:
         self._force_runtime = force_runtime
         self._baseline_torch_evaluator: Any | None = None
         self._baseline_torch_signature: tuple[str, str, int] | None = None
+
+        # Domain guard for the GPU tensor path. The canonical ``_fixed`` runtime
+        # enforces the training-altitude envelope, but the tensor entry points
+        # (``predict_*_accel_torch``) used by the GPU batch propagator did not,
+        # so a trajectory leaving the training shell could silently extrapolate.
+        # Resolve the envelope here (prefer the canonical runtime's resolved
+        # bounds) and guard every torch prediction below.
+        self.strict_domain = bool(strict_domain)
+        self._warned_out_of_domain = False
+        self._alt_min_km, self._alt_max_km = self._resolve_altitude_envelope(config, force_runtime)
 
         # Degree metadata — required by core.propagation.propagator._get_sh_degree() and
         # MC result provenance.  Raised at construction time so the error fires
@@ -115,6 +127,7 @@ class SurrogateGravityModel:
         mu_override: float | None = None,
         r_ref_override: float | None = None,
         device_preference: str = "cpu",
+        strict_domain: bool = False,
     ) -> SurrogateGravityModel:
         """
         Load a surrogate gravity provider from a trained run directory.
@@ -253,6 +266,7 @@ class SurrogateGravityModel:
             baseline_gravity_model=baseline_model,
             baseline_gravity_path=baseline_path,
             force_runtime=force_runtime,
+            strict_domain=strict_domain,
         )
 
     @staticmethod
@@ -326,12 +340,98 @@ class SurrogateGravityModel:
     def _unscale_u(self, u_scaled: torch.Tensor) -> torch.Tensor:
         return u_scaled * self._u_scale + self._u_mean
 
+    @staticmethod
+    def _resolve_altitude_envelope(
+        config: dict[str, Any], force_runtime: Any | None
+    ) -> tuple[float | None, float | None]:
+        """Resolve the surrogate's training altitude envelope [km].
+
+        Prefers the canonical runtime's already-resolved bounds (single source of
+        truth); otherwise reads the artifact config / contract / provenance.
+        Returns ``(None, None)`` when no envelope is recorded, in which case the
+        tensor-path guard cannot fire (it never blocks on unknown bounds).
+        """
+        if force_runtime is not None:
+            lo = getattr(force_runtime, "_train_alt_min_km", None)
+            hi = getattr(force_runtime, "_train_alt_max_km", None)
+            if lo is not None and hi is not None:
+                return float(lo), float(hi)
+
+        sources = [config]
+        for key in ("artifact_contract", "provenance", "meta", "metadata"):
+            sub = config.get(key)
+            if isinstance(sub, dict):
+                sources.append(sub)
+
+        def _get(*keys: str) -> float | None:
+            for src in sources:
+                for k in keys:
+                    v = src.get(k)
+                    if v is not None:
+                        try:
+                            return float(v)
+                        except (TypeError, ValueError):
+                            continue
+            return None
+
+        return _get("altitude_min_km", "alt_min_km"), _get("altitude_max_km", "alt_max_km")
+
+    def _enforce_domain_torch(self, x_m: torch.Tensor, *, caller: str) -> None:
+        """Guard the tensor path against out-of-training-envelope extrapolation.
+
+        Mirrors the canonical ``SurrogateForceModel._enforce_domain`` (same ~1 km
+        slack): hard-fail when ``strict_domain=True``, otherwise warn once. No-op
+        when the envelope is unknown. This closes the gap where the GPU batch
+        propagator's per-step ``predict_*_accel_torch`` calls bypassed the domain
+        check that the CPU ``_fixed`` path performs.
+        """
+        if self._alt_min_km is None or self._alt_max_km is None:
+            return
+        with torch.no_grad():
+            r = torch.linalg.norm(x_m.detach().to(dtype=torch.float32), dim=1)
+            alt_km = (r - float(self.R_ref_m)) / 1000.0
+            lo = float(torch.min(alt_km))
+            hi = float(torch.max(alt_km))
+        tol = 1.0  # km, matches the canonical runtime's slack
+        if lo >= self._alt_min_km - tol and hi <= self._alt_max_km + tol:
+            return
+        msg = (
+            f"{caller}: input altitude range [{lo:.1f}, {hi:.1f}] km is outside the surrogate "
+            f"training envelope [{self._alt_min_km:.1f}, {self._alt_max_km:.1f}] km; GPU tensor "
+            "predictions here are extrapolation."
+        )
+        if self.strict_domain:
+            raise RuntimeError(
+                msg + " strict_domain=True: refusing to return an extrapolated prediction."
+            )
+        if not self._warned_out_of_domain:
+            self._warned_out_of_domain = True
+            warnings.warn(msg + " Pass strict_domain=True to hard-fail.", RuntimeWarning, stacklevel=3)
+
     def _base_potential(self, x_phys: torch.Tensor) -> torch.Tensor:
-        # Potential is rarely consumed by the propagator.  We keep the monopole
-        # potential as a conservative scalar baseline while acceleration below
-        # uses the physically required SH(degree_min) baseline.
-        r = torch.linalg.norm(x_phys, dim=1, keepdim=True).clamp_min(1.0)
-        return self.a_sign * self._mu_tensor / r
+        """Geodesy potential baseline, consistent with :meth:`_base_acceleration`.
+
+        The acceleration baseline for residual models is the SH field truncated at
+        ``baseline_degree`` (``accel_fixed``), so the potential baseline MUST be the
+        matching SH potential (``potential_fixed`` at the same degree), not the bare
+        monopole. With ``a = +grad(U)`` holding for both, this keeps total potential
+        and total acceleration self-consistent; the old monopole-only baseline made
+        any energy / Hamiltonian / conservative-field check on the total field
+        invalid. No ``a_sign`` factor: the baseline acceleration carries none either
+        (``a_sign`` belongs to the neural residual).
+        """
+        if self.baseline_gravity_model is None:
+            # Point-mass geodesy potential U = mu/r, whose +gradient is the monopole
+            # acceleration -mu x / r^3 (matches ``_point_mass_acceleration``).
+            r = torch.linalg.norm(x_phys, dim=1, keepdim=True).clamp_min(1.0)
+            return self._mu_tensor / r
+
+        pos_np = x_phys.detach().cpu().numpy().astype(np.float64, copy=False)
+        out = np.empty((pos_np.shape[0], 1), dtype=np.float64)
+        degree = int(self.baseline_degree)
+        for idx, row in enumerate(pos_np):
+            out[idx, 0] = float(self.baseline_gravity_model.potential_fixed(row, degree=degree))
+        return torch.as_tensor(out, device=x_phys.device, dtype=x_phys.dtype)
 
     def _point_mass_acceleration(self, x_phys: torch.Tensor) -> torch.Tensor:
         r = torch.linalg.norm(x_phys, dim=1, keepdim=True).clamp_min(1.0)
@@ -515,6 +615,9 @@ class SurrogateGravityModel:
         if torch is None:  # pragma: no cover
             raise RuntimeError("PyTorch is not available.")
 
+        # Domain guard (covers predict_total_accel_torch too, which routes here).
+        self._enforce_domain_torch(x_m, caller="predict_residual_accel_torch")
+
         out_dtype = x_m.dtype if x_m.is_floating_point() else torch.float32
         x = x_m.to(device=self.device, dtype=torch.float32)
         if (
@@ -532,8 +635,22 @@ class SurrogateGravityModel:
                 delta_a = self._force_runtime.scaler.unscale_a(delta_a_scaled)
             return delta_a.detach().to(dtype=out_dtype)
 
+        # Single source of truth for scaling: when the canonical runtime is
+        # loaded, scale with ITS scaler (the model is already shared via
+        # from_model_dir). This collapses the dual-scaler "second truth" — the
+        # same chain rule the canonical runtime applies in its own autograd
+        # (SurrogateForceModel._predict_chunk). gravity_provider's own scaler
+        # tensors are used only on the legacy fallback path (_force_runtime is None).
+        fr = self._force_runtime
+        if fr is not None:
+            scale_x = fr.scaler.scale_x
+            u_over_x = fr.scaler._u_scale / fr.scaler._x_scale
+        else:
+            scale_x = self._scale_x
+            u_over_x = self._u_scale / self._x_scale
+
         with torch.enable_grad():
-            x_scaled = self._scale_x(x).requires_grad_(True)
+            x_scaled = scale_x(x).requires_grad_(True)
             u_scaled = self.model(x_scaled)
             (grad_u_scaled,) = torch.autograd.grad(
                 outputs=(u_scaled.sum(),),
@@ -542,7 +659,7 @@ class SurrogateGravityModel:
                 retain_graph=False,
             )
 
-        grad_u_phys = grad_u_scaled * (self._u_scale / self._x_scale)
+        grad_u_phys = grad_u_scaled * u_over_x
         return (self.a_sign * grad_u_phys).detach().to(dtype=out_dtype)
 
     def predict_total_accel_torch(
