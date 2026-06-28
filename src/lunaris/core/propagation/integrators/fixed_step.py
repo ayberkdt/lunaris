@@ -40,6 +40,58 @@ def _is_symplectic_method(method: str) -> bool:
     canonical = _ACCEL_METHODS.get(_norm_method(method))
     return canonical in _SYMPLECTIC_CANONICAL
 
+# Perturbations that void the symplectic guarantee. SH gravity, third-body, and
+# Earth J2 are position-only (conservative): a symplectic integrator still
+# preserves a modified Hamiltonian, so it remains the correct choice for them.
+# The flags below are different:
+#   - SRP / albedo / thermal IR are non-conservative external forces (not
+#     derivable from a Moon-centered potential; discontinuous across eclipse),
+#     so the bounded-energy-drift guarantee no longer holds.
+#   - 1PN relativity is *velocity-dependent*, which additionally breaks the
+#     separable ``H = T(p) + V(q)`` form the acceleration-based steppers assume
+#     (they sample the force at a partially updated velocity). This is worse than
+#     "merely non-conservative" and is flagged separately.
+# Each entry is ``(flag_attr, human_label, breaks_separability)``.
+_SYMPLECTIC_VOIDING_FLAGS: tuple[tuple[str, str, bool], ...] = (
+    ("enable_srp", "SRP", False),
+    ("enable_albedo", "albedo", False),
+    ("enable_thermal", "thermal IR", False),
+    ("enable_relativity_1pn", "1PN relativity", True),
+)
+
+def symplectic_nonconservative_violations(method: str, flags: Any) -> list[str]:
+    """Return human labels of active perturbations that void symplecticity.
+
+    Empty when ``method`` is not symplectic or when only conservative
+    (position-only) perturbations are active. ``flags`` is any object exposing
+    the :class:`PerturbationFlags` boolean attributes; missing attributes are
+    treated as ``False`` so this is safe on partial/legacy flag objects.
+    """
+    if flags is None or not _is_symplectic_method(method):
+        return []
+    out: list[str] = []
+    for attr, label, _breaks_sep in _SYMPLECTIC_VOIDING_FLAGS:
+        if bool(getattr(flags, attr, False)):
+            out.append(label)
+    # Legacy thermal flag alias (some callers set enable_thermal_ir directly).
+    if "thermal IR" not in out and bool(getattr(flags, "enable_thermal_ir", False)):
+        out.append("thermal IR")
+    return out
+
+def symplectic_breaks_separability(method: str, flags: Any) -> bool:
+    """True when a *velocity-dependent* force is active under a symplectic method.
+
+    This is the stronger failure mode: the acceleration-based steppers assume
+    ``a = f(t, r)`` and sample velocity-dependent forces (1PN relativity)
+    inconsistently, not just non-symplectically.
+    """
+    if flags is None or not _is_symplectic_method(method):
+        return False
+    return any(
+        breaks_sep and bool(getattr(flags, attr, False))
+        for attr, _label, breaks_sep in _SYMPLECTIC_VOIDING_FLAGS
+    )
+
 def _is_fixed_step_method(method: str) -> bool:
     """True for every in-house fixed-step method (symplectic, Nystrom, or RK)."""
     m = _norm_method(method)
@@ -343,6 +395,9 @@ __all__ = [
     "_SYMPLECTIC_CANONICAL",
     "_RHS_METHODS",
     "_is_symplectic_method",
+    "_SYMPLECTIC_VOIDING_FLAGS",
+    "symplectic_nonconservative_violations",
+    "symplectic_breaks_separability",
     "_is_fixed_step_method",
     "_fixed_step_requires_6d",
     "_accel_stepper",

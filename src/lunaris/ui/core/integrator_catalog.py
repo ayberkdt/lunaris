@@ -113,7 +113,9 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         title="Velocity Verlet", order="2",
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
         recommended="Low-cost, energy-stable long-duration runs in smooth, conservative "
-                    "fields.",
+                    "fields. Bounded drift holds only for conservative forces (gravity, "
+                    "third-body, J2); enabling SRP, albedo, thermal IR or relativity voids "
+                    "the symplectic guarantee — prefer RK4/DOP853 there.",
         notice_kind="info",
     ),
     IntegratorSpec(
@@ -122,7 +124,9 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         title="Position-Extended Forest–Ruth-Like", order="4",
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
         recommended="Strong 4th-order symplectic default: a low error constant makes it "
-                    "excellent for long, smooth arcs.",
+                    "excellent for long, smooth arcs. Valid only for conservative forces "
+                    "(gravity, third-body, J2); enabling SRP, albedo, thermal IR or "
+                    "relativity voids the symplectic guarantee — prefer RK4/DOP853 there.",
         notice_kind="info",
     ),
     IntegratorSpec(
@@ -130,7 +134,10 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         family_label="Symplectic", badge_kind="success",
         title="Yoshida (4th order)", order="4",
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
-        recommended="4th-order symplectic with bounded energy drift over many revolutions.",
+        recommended="4th-order symplectic with bounded energy drift over many revolutions "
+                    "— for conservative forces only (gravity, third-body, J2). SRP, albedo, "
+                    "thermal IR or relativity void the symplectic guarantee; prefer "
+                    "RK4/DOP853 there.",
         notice_kind="info",
     ),
     IntegratorSpec(
@@ -138,7 +145,9 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         family_label="Symplectic", badge_kind="success",
         title="Yoshida (6th order)", order="6",
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
-        recommended="High-precision long-arc symplectic propagation.",
+        recommended="High-precision long-arc symplectic propagation for conservative "
+                    "forces only (gravity, third-body, J2). SRP, albedo, thermal IR or "
+                    "relativity void the symplectic guarantee; prefer RK4/DOP853 there.",
         notice_kind="info",
     ),
     IntegratorSpec(
@@ -146,7 +155,10 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         family_label="Symplectic", badge_kind="success",
         title="Yoshida (8th order)", order="8",
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
-        recommended="Maximum-precision symplectic integration for very long arcs.",
+        recommended="Maximum-precision symplectic integration for very long arcs — "
+                    "conservative forces only (gravity, third-body, J2). SRP, albedo, "
+                    "thermal IR or relativity void the symplectic guarantee; prefer "
+                    "RK4/DOP853 there.",
         notice_kind="info",
     ),
     # --- Runge–Kutta–Nyström -----------------------------------------------
