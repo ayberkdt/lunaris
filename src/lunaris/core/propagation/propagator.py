@@ -663,14 +663,14 @@ def propagate(
     # dominant position-error term, so we surface it rather than let it pass.
     try:
         if int(degree) >= 2 and y0_arr.size >= 6 and float(mu_m3s2) > 0.0:
-            r0 = np.asarray(y0_arr[:3], dtype=np.float64)
-            v0 = np.asarray(y0_arr[3:6], dtype=np.float64)
-            rn0 = float(np.linalg.norm(r0))
-            vn0 = float(np.linalg.norm(v0))
+            r0_vec = np.asarray(y0_arr[:3], dtype=np.float64)
+            v0_vec = np.asarray(y0_arr[3:6], dtype=np.float64)
+            rn0 = float(np.linalg.norm(r0_vec))
+            vn0 = float(np.linalg.norm(v0_vec))
             eps0 = 0.5 * vn0 * vn0 - float(mu_m3s2) / rn0 if rn0 > 0.0 else 0.0
             if eps0 < 0.0:  # bound orbit -> finite periapsis
                 a_sma = -float(mu_m3s2) / (2.0 * eps0)
-                h0 = float(np.linalg.norm(np.cross(r0, v0)))
+                h0 = float(np.linalg.norm(np.cross(r0_vec, v0_vec)))
                 ecc = math.sqrt(max(0.0, 1.0 + (2.0 * eps0 * h0 * h0) / (float(mu_m3s2) ** 2)))
                 alt_peri_km = (a_sma * (1.0 - ecc) - float(R_ref_m)) / 1000.0
                 rec_deg = recommended_sh_degree(alt_peri_km, float(R_ref_m))
