@@ -18,6 +18,14 @@ __pycache__/
 .ruff_cache/
 .ipynb_checkpoints/
 *.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
 
 # uv lockfile: canonical lock is locks/*.lock.txt (see locks/README.md)
 uv.lock
@@ -79,6 +87,13 @@ st_lrps/data/cloud_suites/
 !tests/fixtures/**
 !examples/
 !examples/**
+# ...but the broad re-includes above must NOT drag Python bytecode caches back in.
+# Re-exclude caches inside the negated trees (order matters: this comes after the
+# negations so it wins). This is why examples/__pycache__/*.pyc was committable.
+examples/**/__pycache__/
+tests/fixtures/**/__pycache__/
+**/__pycache__/
+*.py[cod]
 
 # Per-user HPC site configuration (copied from hpc/cluster.env.example)
 hpc/cluster.env
