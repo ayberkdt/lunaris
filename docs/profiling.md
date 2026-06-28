@@ -2,6 +2,17 @@
 
 ST-LRPS runtime profiling measures inference bottlenecks before optimization. It does not change physics, model architecture, checkpoint contents, loss functions, validation metrics, or propagation algorithms.
 
+> **Read this before comparing ST-LRPS to the SH kernel.** ST-LRPS is a
+> high-throughput **batch** gravity backend, not a low-latency single-trajectory
+> CPU replacement. A single trajectory through `propagate()` runs the surrogate as
+> an interpreted PyTorch + autograd closure (not `@njit`), paying Python/autograd
+> overhead on every RHS call, so it is **expected to be slower** than the
+> spherical-harmonic kernel on one CPU trajectory. The surrogate only amortizes
+> that overhead across a large GPU batch (Monte Carlo / ensemble). A fair
+> "surrogate vs SH" timing compares the **GPU batch** backend at matched batch
+> sizes — never one CPU trajectory, which measures the wrong path and will
+> mislead any speedup table.
+
 The profiler measures:
 
 - model loading and checkpoint/config/scaler load phases

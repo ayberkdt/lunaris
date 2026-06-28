@@ -321,6 +321,16 @@ def propagate(
                 "acceleration-form stepper also evaluates it at an inconsistent "
                 "intermediate velocity (not just non-symplectically)."
             )
+        # In normal use this is a warning (the method choice belongs to the
+        # caller). For a paper / validation run, an invalid energy-behavior claim
+        # must not pass silently: ``strict_symplectic`` escalates it to a hard
+        # failure so a benchmark cannot quietly ship a symplectic result whose
+        # bounded-drift guarantee is void.
+        if bool(getattr(cfg, "strict_symplectic", False)):
+            raise ValueError(
+                _msg + " strict_symplectic=True: refusing to run a symplectic method with "
+                "non-conservative forces for a paper/validation run."
+            )
         warnings.warn(_msg, RuntimeWarning, stacklevel=2)
 
     # -------------------------------------------------------------------------
