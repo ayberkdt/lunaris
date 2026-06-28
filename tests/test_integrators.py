@@ -28,7 +28,7 @@ import pytest
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.math_utils import coe_to_rv, rv_to_coe_select
 from lunaris.common.type_defs import EventConfig, PropagatorConfig, TimeConfig
-from lunaris.core import propagator as P
+from lunaris.core.propagation import propagator as P
 from lunaris.core.propagation.propagator import propagate
 
 MU = float(MU_MOON)

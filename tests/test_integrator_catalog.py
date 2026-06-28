@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from lunaris.common.type_defs import PerturbationFlags
-from lunaris.core import propagator as P
+from lunaris.core.propagation import propagator as P
 from lunaris.ui.core.integrator_catalog import (
     INTEGRATOR_CATALOG,
     catalog_labels,
