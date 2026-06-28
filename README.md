@@ -16,6 +16,16 @@ neural surrogate-gravity model under `lunaris.surrogate.st_lrps` that learns a
 residual scalar potential above a lower-degree spherical-harmonic baseline, with its
 own training, evaluation, and Studio UI.
 
+> **ST-LRPS is a high-throughput *batch* gravity backend, not a low-latency
+> single-trajectory CPU replacement.** A single trajectory run through
+> `propagate()` evaluates the surrogate as an interpreted PyTorch + autograd
+> closure (not a Numba kernel), so it pays per-call Python/autograd overhead on
+> every RHS evaluation and will be *slower* than the `@njit` spherical-harmonic
+> kernel. The surrogate's advantage is amortized only across a large GPU batch
+> (Monte Carlo / ensemble). Do **not** benchmark "ST-LRPS vs SH" by timing one
+> CPU trajectory — that measures the wrong path. Compare like-for-like on the GPU
+> batch backend. See [docs/profiling.md](docs/profiling.md).
+
 > **Project status.** Lunaris is **actively developed research software** with
 > versioned on-disk contracts (datasets, checkpoints, runtime, and benchmark
 > artifacts) and a documented validation pipeline. Public APIs may still evolve

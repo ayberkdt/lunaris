@@ -532,6 +532,11 @@ class PropagatorConfig:
 
     # Fixed-step / symplectic (if used by your engine)
     symplectic_default: str = "YOSHIDA4"
+    # Paper/validation safety: when True, pairing a symplectic method with a
+    # non-conservative perturbation (SRP/albedo/thermal/1PN) is a hard error
+    # instead of a warning -- a symplectic result whose bounded-energy-drift
+    # guarantee is void must not silently back a benchmark claim.
+    strict_symplectic: bool = False
 
     # Internal step-size logic
     use_nyquist_max_step: bool = True

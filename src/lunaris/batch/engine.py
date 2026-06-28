@@ -399,9 +399,7 @@ class MonteCarloEngine:
                     f"[MC] GPU ST-LRPS backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
-                self._backend_note = note
-                warnings.warn(note, RuntimeWarning, stacklevel=2)
-                self._downgrade_plan_to_cpu(plan, note)
+                self._handle_backend_init_failure(plan, note, exc)
 
         # ----------------------------------------------------------------
         # GPU classic-SH path - Numba CUDA fixed-step RK4 (torch_cuda_sh's sibling)
@@ -424,9 +422,7 @@ class MonteCarloEngine:
                     f"[MC] GPU classic-SH backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
-                self._backend_note = note
-                warnings.warn(note, RuntimeWarning, stacklevel=2)
-                self._downgrade_plan_to_cpu(plan, note)
+                self._handle_backend_init_failure(plan, note, exc)
 
         # ----------------------------------------------------------------
         # GPU torch classic-SH path - PyTorch fixed-step RK4 (high-degree)
@@ -455,9 +451,7 @@ class MonteCarloEngine:
                     f"[MC] torch_cuda_sh backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
-                self._backend_note = note
-                warnings.warn(note, RuntimeWarning, stacklevel=2)
-                self._downgrade_plan_to_cpu(plan, note)
+                self._handle_backend_init_failure(plan, note, exc)
 
         # ----------------------------------------------------------------
         # Torch CPU classic-SH path - PyTorch fixed-step RK4 on CPU
@@ -483,9 +477,7 @@ class MonteCarloEngine:
                     f"[MC] torch_cpu_sh backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
-                self._backend_note = note
-                warnings.warn(note, RuntimeWarning, stacklevel=2)
-                self._downgrade_plan_to_cpu(plan, note)
+                self._handle_backend_init_failure(plan, note, exc)
 
         # ----------------------------------------------------------------
         # CPU path (default / fallback)
@@ -497,6 +489,36 @@ class MonteCarloEngine:
             surface_provider=self._surface_provider,
             topo_grid=self._topo_grid,
         )
+
+    def _fallback_forbidden(self) -> bool:
+        """True when a silent GPU->CPU downgrade must NOT happen.
+
+        A benchmark / paper-evidence run that asks for a GPU backend and then
+        quietly executes on CPU produces a misleading speed/throughput table. The
+        existing ``gpu_sh_fallback_policy='error'`` already hard-fails at backend
+        *planning*; this extends the same intent to *initialization* failures
+        (GPU selected by the policy, but the propagator could not be built), plus
+        any explicit paper-safe / strict-backend flag on the MC config.
+        """
+        policy = str(getattr(self._mc, "gpu_sh_fallback_policy", "compatible_gpu") or "").strip().lower()
+        if policy == "error":
+            return True
+        return any(
+            bool(getattr(self._mc, attr, False))
+            for attr in ("paper_safe", "strict_backend", "benchmark_mode")
+        )
+
+    def _handle_backend_init_failure(self, plan: Any, note: str, exc: Exception) -> None:
+        """Either hard-fail (strict/paper-safe) or downgrade to CPU with provenance."""
+        if self._fallback_forbidden():
+            raise RuntimeError(
+                f"{note} However, fallback is forbidden (gpu_sh_fallback_policy='error' or "
+                "paper-safe mode): refusing to silently run on CPU for a benchmark/paper run. "
+                "Fix the GPU backend or relax the fallback policy explicitly."
+            ) from exc
+        self._backend_note = note
+        warnings.warn(note, RuntimeWarning, stacklevel=3)
+        self._downgrade_plan_to_cpu(plan, note)
 
     @staticmethod
     def _downgrade_plan_to_cpu(plan: Any, reason: str) -> None:
