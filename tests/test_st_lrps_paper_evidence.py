@@ -42,14 +42,6 @@ def test_paper_configs_exist_and_validate(name):
     assert config["scaler"]["fit_scope"] == "train_only"
     safety = config["contract_safety"]
     assert safety["strict_dataset_contract"] is True
-    for key in (
-        "allow_legacy_dataset_contract",
-        "allow_missing_dataset_contract",
-        "allow_dataset_validation_fail",
-        "allow_legacy_derivative_convention",
-        "allow_legacy_target_mode_inference",
-    ):
-        assert safety[key] is False
 
 
 def test_configs_differ_only_by_seed_and_output():
@@ -96,11 +88,6 @@ _DELETE = object()
         {"scaler.fit_scope": "full_dataset"},
         {"split.split_policy": _DELETE},
         {"contract_safety.strict_dataset_contract": False},
-        {"contract_safety.allow_legacy_dataset_contract": True},
-        {"contract_safety.allow_missing_dataset_contract": True},
-        {"contract_safety.allow_dataset_validation_fail": True},
-        {"contract_safety.allow_legacy_derivative_convention": True},
-        {"contract_safety.allow_legacy_target_mode_inference": True},
         {"output.out_dir": _DELETE},
         {"seed": _DELETE},
         {"target.target_mode": _DELETE},
@@ -171,15 +158,6 @@ def test_mapped_flags_parse_into_valid_trainconfig(monkeypatch):
     assert tc.seed == 42 and tc.epochs == 400 and tc.n_bands == 3
     assert tc.use_residual_blocks is True and tc.use_radial_cross_loss is True
     assert float(tc.spatial_val_block_fraction) == 0.15
-    # Paper-safety: legacy/debug escapes stay false (never emitted).
-    for attr in (
-        "allow_legacy_dataset_contract",
-        "allow_missing_dataset_contract",
-        "allow_dataset_validation_fail",
-        "allow_legacy_derivative_convention",
-        "allow_legacy_target_mode_inference",
-    ):
-        assert getattr(tc, attr) is False, attr
 
 
 # ---------------------------------------------------------------------------

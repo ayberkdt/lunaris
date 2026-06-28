@@ -818,9 +818,9 @@ def test_force_model_domain_status_inside_range() -> None:
         "resolved_mu_si": 4.902e12,
         "resolved_a_sign": 1.0,
         "resolved_r_ref_m": 1.737e6,
-        "degree_min": -1,
+        "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
         "altitude_min_km": 100.0,
-        "altitude_max_km": 500.0,
+        "altitude_max_km": 500.0, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
     }
     fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
     # Position at ~200 km altitude (inside range)
@@ -851,9 +851,9 @@ def test_force_model_domain_status_outside_range() -> None:
         "resolved_mu_si": 4.902e12,
         "resolved_a_sign": 1.0,
         "resolved_r_ref_m": 1.737e6,
-        "degree_min": -1,
+        "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
         "altitude_min_km": 100.0,
-        "altitude_max_km": 500.0,
+        "altitude_max_km": 500.0, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
     }
     fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
     # Position at 1000 km altitude (well outside range)
@@ -879,7 +879,7 @@ def test_force_model_rejects_bad_base_accel_shape() -> None:
         a=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=1e-3),
     ).to_tensors(torch.device("cpu"), torch.float32)
     model = torch.nn.Sequential(torch.nn.Linear(3,4), torch.nn.Tanh(), torch.nn.Linear(4,1))
-    cfg = {"resolved_mu_si": 4.902e12, "resolved_a_sign": 1.0, "resolved_r_ref_m": 1.737e6, "degree_min": -1}
+    cfg = {"resolved_mu_si": 4.902e12, "resolved_a_sign": 1.0, "resolved_r_ref_m": 1.737e6, "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0}}
     fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
     x = np.array([[0.0, 0.0, 1.937e6]])
     def bad_fn(_x):
@@ -907,7 +907,7 @@ def test_predict_residual_potential_no_grad_path() -> None:
         a=IsometricScaleParams(mean=[0.0,0.0,0.0], scale=1e-3),
     ).to_tensors(torch.device("cpu"), torch.float32)
     model = torch.nn.Sequential(torch.nn.Linear(3,4), torch.nn.Tanh(), torch.nn.Linear(4,1))
-    cfg = {"resolved_mu_si": 4.902e12, "resolved_a_sign": 1.0, "resolved_r_ref_m": 1.737e6, "degree_min": -1}
+    cfg = {"resolved_mu_si": 4.902e12, "resolved_a_sign": 1.0, "resolved_r_ref_m": 1.737e6, "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0}}
     fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
     x = np.array([[0.0, 0.0, 1.937e6], [0.0, 1.937e6, 0.0]])
     # Should run without error and return shape (2,)
@@ -1554,7 +1554,7 @@ def test_domain_status_reads_from_dataset_meta() -> None:
         "resolved_mu_si": 4.902e12,
         "resolved_a_sign": 1.0,
         "resolved_r_ref_m": 1.737e6,
-        "degree_min": -1,
+        "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0},
         "dataset_meta": {
             "alt_min_km": 50.0,
             "alt_max_km": 300.0,
@@ -1600,7 +1600,7 @@ def test_domain_status_reads_from_scaler_provenance() -> None:
         "resolved_mu_si": 4.902e12,
         "resolved_a_sign": 1.0,
         "resolved_r_ref_m": 1.737e6,
-        "degree_min": -1,
+        "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60},
         # No altitude_min_km / altitude_max_km / dataset_meta here
     }
     fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
@@ -1627,7 +1627,7 @@ def test_predict_rejects_nan_input() -> None:
         a=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=1e-3),
     ).to_tensors(torch.device("cpu"), torch.float32)
     model = torch.nn.Sequential(torch.nn.Linear(3, 4), torch.nn.Tanh(), torch.nn.Linear(4, 1))
-    cfg = {"resolved_mu_si": 4.902e12, "resolved_a_sign": 1.0, "resolved_r_ref_m": 1.737e6, "degree_min": -1}
+    cfg = {"resolved_mu_si": 4.902e12, "resolved_a_sign": 1.0, "resolved_r_ref_m": 1.737e6, "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0}}
     fm = SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"))
 
     # NaN in position

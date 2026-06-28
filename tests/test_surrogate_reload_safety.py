@@ -85,6 +85,13 @@ def _base_cfg(**overrides) -> dict:
         "target_mode": "residual",
         "central_body": "moon",
         "dataset_name": "data",
+        "dataset": {
+            "target_mode": "residual",
+            "degree_min": 10,
+            "degree_max": 60,
+            "altitude_min_km": 50.0,
+            "altitude_max_km": 300.0,
+        },
     }
     cfg.update(overrides)
     return cfg
@@ -109,6 +116,11 @@ def _make_run_dir(tmp_path: Path, build_cfg: dict, *, config_json_overrides: dic
     ckpt_config["embedding_type"] = str(getattr(model, "embedding_type", "raw"))
     ckpt_config["model_builder_version"] = str(getattr(model, "model_builder_version", "v3"))
     ckpt_config["architecture_signature"] = compute_architecture_signature(ckpt_config)
+
+    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
+    from dataclasses import asdict
+    ac = ArtifactContract.from_resolved_config(ckpt_config, scaler_payload=asdict(scaler))
+    ckpt_config["artifact_contract"] = ac.to_dict()
 
     # config.json defaults to matching the checkpoint, unless a test overrides it.
     cfg_json = dict(ckpt_config)

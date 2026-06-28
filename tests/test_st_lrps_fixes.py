@@ -223,17 +223,24 @@ def test_streaming_report_does_not_use_stub_arrays(tmp_path):
     model_dir = tmp_path / "model"
     model_dir.mkdir(parents=True, exist_ok=True)
     import json
+    cfg_payload = {
+        "hidden": 16, "depth": 1, "activation": "silu", "use_fourier": False, "use_sh_encoding": False,
+        "central_body": "moon", "resolved_mu_si": 4.902800066e12, "resolved_r_ref_m": 1737400.0,
+        "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0}, "degree_max": 2
+    }
     with open(model_dir / "config.json", "w") as f:
-        json.dump({
-            "hidden": 16, "depth": 1, "activation": "silu", "use_fourier": False, "use_sh_encoding": False,
-            "central_body": "moon", "resolved_mu_si": 4.902800066e12, "resolved_r_ref_m": 1737400.0,
-            "degree_min": -1, "degree_max": 2
-        }, f)
-    mock_scaler().save_json(model_dir / "scaler.json")
+        json.dump(cfg_payload, f)
+    s = mock_scaler()
+    s.save_json(model_dir / "scaler.json")
     model = build_model_from_config(cfg)
     ckpt_dir = model_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    torch.save({"model": model.state_dict()}, ckpt_dir / "ckpt_best.pt")
+    
+    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
+    from dataclasses import asdict
+    ac = ArtifactContract.from_resolved_config(cfg_payload, scaler_payload=asdict(s))
+    
+    torch.save({"model": model.state_dict(), "config": cfg_payload, "artifact_contract": ac.to_dict()}, ckpt_dir / "ckpt_best.pt")
 
     out_dir = tmp_path / "eval_out"
     evaluate(
@@ -271,17 +278,24 @@ def test_streaming_report_metrics_match_in_memory_for_small_dataset(tmp_path):
     model_dir = tmp_path / "model"
     model_dir.mkdir(parents=True, exist_ok=True)
     import json
+    cfg_payload = {
+        "hidden": 16, "depth": 1, "activation": "silu", "use_fourier": False, "use_sh_encoding": False,
+        "central_body": "moon", "resolved_mu_si": 4.902800066e12, "resolved_r_ref_m": 1737400.0,
+        "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0}, "degree_max": 2
+    }
     with open(model_dir / "config.json", "w") as f:
-        json.dump({
-            "hidden": 16, "depth": 1, "activation": "silu", "use_fourier": False, "use_sh_encoding": False,
-            "central_body": "moon", "resolved_mu_si": 4.902800066e12, "resolved_r_ref_m": 1737400.0,
-            "degree_min": -1, "degree_max": 2
-        }, f)
-    mock_scaler().save_json(model_dir / "scaler.json")
+        json.dump(cfg_payload, f)
+    s = mock_scaler()
+    s.save_json(model_dir / "scaler.json")
     model = build_model_from_config(cfg)
     ckpt_dir = model_dir / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    torch.save({"model": model.state_dict()}, ckpt_dir / "ckpt_best.pt")
+    
+    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
+    from dataclasses import asdict
+    ac = ArtifactContract.from_resolved_config(cfg_payload, scaler_payload=asdict(s))
+    
+    torch.save({"model": model.state_dict(), "config": cfg_payload, "artifact_contract": ac.to_dict()}, ckpt_dir / "ckpt_best.pt")
 
     out_dir_mem = tmp_path / "eval_mem"
     evaluate(
@@ -345,7 +359,7 @@ def test_predict_residual_potential_rejects_nan_input():
     cfg = MockArgs(hidden=16, depth=1, activation="silu", use_fourier=False, use_sh_encoding=False)
     model = build_model_from_config(cfg)
     scaler = mock_scaler()
-    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0}, device=torch.device("cpu"))
+    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0, "dataset": {"target_mode": "residual", "degree_min": 0, "degree_max": 50}}, device=torch.device("cpu"))
 
     x_nan = np.array([[np.nan, 1000.0, 1000.0]])
     with pytest.raises(ValueError, match="NaN or Inf"):
@@ -355,7 +369,7 @@ def test_predict_residual_potential_rejects_inf_input():
     cfg = MockArgs(hidden=16, depth=1, activation="silu", use_fourier=False, use_sh_encoding=False)
     model = build_model_from_config(cfg)
     scaler = mock_scaler()
-    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0}, device=torch.device("cpu"))
+    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0, "dataset": {"target_mode": "residual", "degree_min": 0, "degree_max": 50}}, device=torch.device("cpu"))
 
     x_inf = np.array([[np.inf, 1000.0, 1000.0]])
     with pytest.raises(ValueError, match="NaN or Inf"):
@@ -365,7 +379,7 @@ def test_predict_residual_potential_valid_input_unchanged():
     cfg = MockArgs(hidden=16, depth=1, activation="silu", use_fourier=False, use_sh_encoding=False)
     model = build_model_from_config(cfg)
     scaler = mock_scaler()
-    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0}, device=torch.device("cpu"))
+    fm = SurrogateForceModel(model, scaler, cfg={"a_sign": 1.0, "mu_si": 4.902800066e12, "degree_min": 0, "dataset": {"target_mode": "residual", "degree_min": 0, "degree_max": 50}}, device=torch.device("cpu"))
 
     x = np.array([[1000.0, 1000.0, 1000.0]])
     res = fm.predict_residual_potential(x)
@@ -751,22 +765,25 @@ def _make_minimal_run_dir(tmp_path: Path):
         "use_radial_separation": False, "radial_append_raw": False,
         "use_fourier": False, "n_bands": 1, "use_residual_blocks": False,
         "resolved_a_sign": 1.0, "resolved_mu_si": MU_MOON_SI,
-        "resolved_r_ref_m": R_MOON_SI, "degree_min": -1, "residual_mode": False,
+        "resolved_r_ref_m": R_MOON_SI, "degree_min": -1, "dataset": {"target_mode": "residual", "degree_min": 10, "degree_max": 60, "altitude_min_km": 100.0, "altitude_max_km": 500.0}, "residual_mode": False,
         "target_mode": "full",
     }
     model = build_model_from_config(cfg_dict, in_dim=3)
     ckpt_dir = tmp_path / "checkpoints"
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    torch.save({"model": model.state_dict(), "cfg": cfg_dict},
-               str(ckpt_dir / "ckpt_best.pt"))
-    (tmp_path / "config.json").write_text(json.dumps(cfg_dict))
     scaler_data = {
         "x": {"mean": [0.0, 0.0, 0.0], "scale": 1.0},
         "u": {"mean": [0.0], "scale": 1.0},
-        "a": {"mean": [0.0, 0.0, 0.0], "scale": 1.0},
-        "provenance": {"fit_rows": 10}
+        "a": {"mean": [0.0, 0.0, 0.0], "scale": 1.0}
     }
     (tmp_path / "scaler.json").write_text(json.dumps(scaler_data))
+    
+    from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract
+    ac = ArtifactContract.from_resolved_config(cfg_dict, scaler_payload=scaler_data)
+    
+    torch.save({"model": model.state_dict(), "cfg": cfg_dict, "artifact_contract": ac.to_dict()},
+               str(ckpt_dir / "ckpt_best.pt"))
+    (tmp_path / "config.json").write_text(json.dumps(cfg_dict))
     return tmp_path
 
 

@@ -415,6 +415,13 @@ def test_force_model_strict_domain_flag_logic():
         "degree_min": -1,
         "altitude_min_km": 100.0,
         "altitude_max_km": 500.0,
+        "dataset": {
+            "target_mode": "residual",
+            "degree_min": 10,
+            "degree_max": 60,
+            "altitude_min_km": 100.0,
+            "altitude_max_km": 500.0,
+        },
     }
 
     fm_lax = SurrogateForceModel(model, scaler, cfg, torch.device("cpu"), strict_domain=False)

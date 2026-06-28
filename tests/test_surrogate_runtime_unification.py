@@ -56,6 +56,13 @@ def _make_run(tmp_path: Path) -> Path:
         "runtime_model_kind": "potential_autograd",
         "target_contract": contract.to_dict(),
         "model_preset": "custom",
+        "dataset": {
+            "target_mode": "residual",
+            "degree_min": 0,
+            "degree_max": 50,
+            "altitude_min_km": 50.0,
+            "altitude_max_km": 300.0,
+        },
     }
     model = build_model_from_config(cfg, device=torch.device("cpu"), dtype=torch.float32)
     with torch.no_grad():
