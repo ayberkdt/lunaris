@@ -21,8 +21,7 @@ import numpy as np
 import torch
 
 from lunaris.common.hashing import canonical_json_sha256, canonical_json_text
-from lunaris.common.provenance import sha256_file
-from lunaris.common.provenance import utc_now_iso
+from lunaris.common.provenance import sha256_file, utc_now_iso
 from lunaris.surrogate.st_lrps.networks.models import (
     ARCH_SIGNATURE_FIELDS,
     MODEL_BUILDER_VERSION,

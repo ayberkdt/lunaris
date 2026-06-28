@@ -214,6 +214,7 @@ def test_rng_state_helpers_roundtrip():
 def _write_tiny_training_h5(path: Path) -> bool:
     h5py = pytest.importorskip("h5py")
     import numpy as np
+
     from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContract
 
     rng = np.random.default_rng(0)

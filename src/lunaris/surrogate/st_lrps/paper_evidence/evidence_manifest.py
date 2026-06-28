@@ -17,9 +17,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from lunaris.common.provenance import sha256_file
-from lunaris.common.provenance import sha256_text
-from lunaris.common.provenance import utc_now_iso
+from lunaris.common.provenance import sha256_file, sha256_text, utc_now_iso
+
 # Reuse the benchmark provenance collectors so environment/git capture is
 # consistent across the whole ST-LRPS evidence stack.
 from lunaris.surrogate.st_lrps.evaluation.provenance import (

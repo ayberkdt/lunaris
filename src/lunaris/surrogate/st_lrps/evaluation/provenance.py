@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from lunaris.common.provenance import sha256_file as _sha256_file
-from lunaris.common.provenance import sha256_text
-from lunaris.common.provenance import utc_now_iso
+from lunaris.common.provenance import sha256_text, utc_now_iso
 
 from .benchmark_config import canonical_json_text
 
