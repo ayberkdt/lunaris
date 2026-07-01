@@ -68,6 +68,14 @@ def _minimal_meta(tmp_path: Path) -> dict:
     }
 
 
+def _figure_text(fig) -> str:
+    return "\n".join(
+        str(obj.get_text())
+        for obj in fig.findobj()
+        if hasattr(obj, "get_text") and str(obj.get_text())
+    )
+
+
 def test_report_pages_build_from_minimal_history(tmp_path: Path) -> None:
     history = _minimal_history()
     meta = _minimal_meta(tmp_path)
@@ -79,6 +87,34 @@ def test_report_pages_build_from_minimal_history(tmp_path: Path) -> None:
     assert fig_config is not None
     assert len(fig_summary.axes) >= 4
     assert len(fig_config.axes) >= 4
+
+
+def test_summary_separates_output_epochs_from_report_samples(tmp_path: Path) -> None:
+    history = _minimal_history()
+    history.update(
+        {
+            "sample_count_raw": 144_001,
+            "sample_count_returned": 50_000,
+            "downsampled_for_reporting": True,
+        }
+    )
+    meta = _minimal_meta(tmp_path)
+    meta.update(
+        {
+            "duration_s": 100.0 * 86400.0,
+            "output_dt_s": 60.0,
+            "output_dt_s_measured": 60.0,
+        }
+    )
+
+    fig = figure_summary_page(history, meta=meta, pdf_or_out_dir_hint=str(tmp_path))
+    text = _figure_text(fig)
+
+    assert "144,001" in text
+    assert "50,000 (downsampled)" in text
+    assert "Expected epochs" in text
+    assert "two-body specific energy" in text
+    assert "not standalone solver-error metrics" in text
 
 
 def test_make_report_pdf_creates_standard_report(tmp_path: Path) -> None:

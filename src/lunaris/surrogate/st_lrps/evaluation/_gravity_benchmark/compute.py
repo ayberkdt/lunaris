@@ -848,6 +848,11 @@ def propagate_for_scenario(
         flags=cfg.flags,
         gravity_model=grav,
         ephem_manager=ephem,
+        earth_j2=cfg.earth_j2,
+        srp=cfg.srp,
+        thermal=cfg.thermal,
+        albedo=cfg.albedo,
+        solid_tides=cfg.solid_tides,
         allow_identity_rotation=True,
     )
     t0 = time.perf_counter()
@@ -1279,6 +1284,11 @@ def run_sh200_cpu_rk4_reference(
             flags=cfg_base.flags,
             gravity_model=grav,
             ephem_manager=ephem,
+            earth_j2=cfg_base.earth_j2,
+            srp=cfg_base.srp,
+            thermal=cfg_base.thermal,
+            albedo=cfg_base.albedo,
+            solid_tides=cfg_base.solid_tides,
             allow_identity_rotation=False,
         )
         rhs_engine = dyn.build_rhs()

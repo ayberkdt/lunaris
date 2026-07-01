@@ -89,8 +89,13 @@ class PageShell(QtWidgets.QWidget):
             center_layout = QtWidgets.QHBoxLayout(centerer)
             center_layout.setContentsMargins(0, 0, 0, 0)
             center_layout.setSpacing(0)
+            # The body should *expand* to fill the workspace up to its readable
+            # max-width, then centre — not sit at its narrow natural width with
+            # large dead bands on both sides. Giving the body a high stretch
+            # weight against the two spacers makes it grow until it hits the
+            # max-width cap, after which the spacers share the remainder.
             center_layout.addStretch(1)
-            center_layout.addWidget(body)
+            center_layout.addWidget(body, 50)
             center_layout.addStretch(1)
             self.scroll_area.setWidget(centerer)
             root.addWidget(self.scroll_area)

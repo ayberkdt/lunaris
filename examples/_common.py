@@ -102,6 +102,7 @@ def build_classic_engine(cfg: SimConfig) -> DynamicsEngine:
         gravity_adaptive=cfg.gravity.adaptive,
         ephem_manager=ephem,
         earth_j2=cfg.earth_j2,
+        srp=cfg.srp,
         thermal=cfg.thermal,
         albedo=cfg.albedo,
         solid_tides=cfg.solid_tides,

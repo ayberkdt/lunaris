@@ -154,6 +154,22 @@ def test_sh_reduces_to_point_mass_with_zero_coefficients() -> None:
         assert np.linalg.norm(a - a_pm) <= 1e-12 * np.linalg.norm(a_pm)
 
 
+def test_sh_degree_one_matches_potential_acceleration_path() -> None:
+    """Custom degree-1 coefficients must not diverge between SH APIs."""
+    degree = 2
+    c = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    s = np.zeros_like(c)
+    c[0, 0] = 1.0
+    c[1, 0] = 1.0e-6
+    c[2, 0] = -2.0e-6
+    model = GravityModel.from_arrays(degree, R_MOON, MU_MOON, c, s)
+
+    r = np.array([R_MOON + 100e3, 23e3, 45e3], dtype=np.float64)
+    a_direct = model.accel_fixed(r, degree=degree)
+    _, a_potential = model.potential_accel_fixed(r, degree=degree)
+    assert np.linalg.norm(a_direct - a_potential) <= 1e-12 * np.linalg.norm(a_direct)
+
+
 def test_sh_zonal_field_is_axially_symmetric() -> None:
     """A zonal-only (m=0) field must be invariant under rotation about the polar
     axis: rotating the evaluation point in longitude rotates the acceleration by

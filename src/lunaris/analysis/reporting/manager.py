@@ -192,6 +192,63 @@ def _as_1d_float_array(x: Any) -> np.ndarray:
         return np.array([], dtype=float)
 
 
+def _finite_float_or_none(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if np.isfinite(out) else None
+
+
+def _positive_int_or_none(value: Any) -> int | None:
+    try:
+        out = int(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out > 0 else None
+
+
+def _epoch_count_info(
+    history: Mapping[str, Any],
+    t_s: np.ndarray,
+    meta: Mapping[str, Any],
+) -> tuple[int, int, bool]:
+    returned = int(getattr(t_s, "size", 0))
+    raw = (
+        _positive_int_or_none(meta.get("output_epoch_count"))
+        or _positive_int_or_none(meta.get("output_epochs"))
+        or _positive_int_or_none(history.get("sample_count_raw"))
+        or _positive_int_or_none(history.get("output_epoch_count"))
+        or returned
+    )
+    reported = (
+        _positive_int_or_none(history.get("sample_count_returned"))
+        or _positive_int_or_none(history.get("report_sample_count"))
+        or returned
+    )
+    downsampled = bool(history.get("downsampled_for_reporting", False)) or reported < raw
+    return int(raw), int(reported), bool(downsampled)
+
+
+def _expected_epochs(duration_s: float, cadence_s: float | None) -> int | None:
+    if cadence_s is None or cadence_s <= 0.0 or not np.isfinite(cadence_s) or not np.isfinite(duration_s):
+        return None
+    steps = int(np.floor(max(0.0, duration_s) / cadence_s))
+    count = steps + 1
+    if steps * cadence_s < max(0.0, duration_s) - max(1e-9, cadence_s * 1e-12):
+        count += 1
+    return int(count)
+
+
+def _format_cadence(value: Any) -> str:
+    val = _finite_float_or_none(value)
+    if val is None or val <= 0.0:
+        return "Auto"
+    if abs(val - round(val)) < 1e-9:
+        return f"{int(round(val))} s"
+    return f"{val:.6g} s"
+
+
 def _ensure_dir(path: str | None) -> str:
     """Ensure directory exists; return normalized directory path as str."""
     p = Path(path or ".")
@@ -282,7 +339,7 @@ def figure_summary_page(
     altitude_final = float(alt_km[-1]) if alt_km.size else float("nan")
     ecc_final = float(_as_1d_float_array(elems.get("e", []))[-1]) if _as_1d_float_array(elems.get("e", [])).size else float("nan")
     inc_final = float(_as_1d_float_array(elems.get("i_deg", []))[-1]) if _as_1d_float_array(elems.get("i_deg", [])).size else float("nan")
-    n_steps = int(getattr(t_s, "size", 0))
+    output_epoch_count, report_sample_count, report_downsampled = _epoch_count_info(history, t_s, meta2)
     n_peri = int(np.size(events.get("peri_idx", []))) if events.get("peri_idx", None) is not None else 0
     n_apo = int(np.size(events.get("apo_idx", []))) if events.get("apo_idx", None) is not None else 0
     has_impact = events.get("impact_idx", None) is not None
@@ -296,6 +353,14 @@ def figure_summary_page(
         or "Unknown"
     )
     output_dt_s = meta2.get("output_dt_s", meta2.get("dt_out_s", None))
+    measured_output_dt_s = meta2.get("output_dt_s_measured", meta2.get("recorded_output_dt_s", None))
+    if measured_output_dt_s is None and t_s.size >= 2 and not report_downsampled:
+        measured_output_dt_s = float(np.nanmedian(np.diff(t_s)))
+    requested_dt_float = _finite_float_or_none(output_dt_s)
+    expected_epoch_count = _expected_epochs(
+        _finite_float_or_none(meta2.get("duration_s")) or dur_s,
+        requested_dt_float,
+    )
 
     rel_energy = _as_1d_float_array(inv.get("rel_energy_drift", []))
     rel_h = _as_1d_float_array(inv.get("rel_h_drift", []))
@@ -313,7 +378,7 @@ def figure_summary_page(
 
     primary_rows = [
         ("Trajectory span", f"{format_days(dur_s)} ({format_duration(dur_s)})"),
-        ("Output epochs", format_count(n_steps)),
+        ("Output epochs", format_count(output_epoch_count)),
         ("Altitude floor", format_km(altitude_min)),
         ("Altitude ceiling", format_km(altitude_max)),
         ("Final altitude", format_km(altitude_final)),
@@ -321,14 +386,20 @@ def figure_summary_page(
         ("Final inclination", f"{inc_final:.4f} deg" if np.isfinite(inc_final) else "N/A"),
         ("Impact detected", "Yes" if has_impact else "No"),
     ]
+    if expected_epoch_count is not None:
+        primary_rows.insert(2, ("Expected epochs", format_count(expected_epoch_count)))
+    if report_downsampled:
+        primary_rows.insert(3, ("Report samples", f"{format_count(report_sample_count)} (downsampled)"))
+
     health_rows = [
         ("Integrator", str(integrator_name)),
-        ("Output cadence", "Auto" if output_dt_s in (None, "") else f"{output_dt_s} s"),
+        ("Requested cadence", _format_cadence(output_dt_s)),
+        ("Recorded cadence", _format_cadence(measured_output_dt_s)),
         ("Active models", f"{active_effects} / {len(effects)} enabled"),
         ("Periapsis passes", format_count(n_peri)),
         ("Apoapsis passes", format_count(n_apo)),
-        ("Peak rel. energy drift", format_sci_or_na(max_rel_energy)),
-        ("Peak rel. ang. mom. drift", format_sci_or_na(max_rel_h)),
+        ("Peak rel. two-body energy", format_sci_or_na(max_rel_energy)),
+        ("Peak rel. |h| diagnostic", format_sci_or_na(max_rel_h)),
         ("Config source", str(source_label)),
     ]
 
@@ -361,7 +432,7 @@ def figure_summary_page(
     card_specs = [
         ("Trajectory Span", format_duration(dur_s), "#1E3A8A"),
         ("Integrator", str(integrator_name).upper(), "#334155"),
-        ("Output Epochs", format_count(n_steps), "#0F766E"),
+        ("Output Epochs", format_count(output_epoch_count), "#0F766E"),
         ("Impact State", "YES" if has_impact else "CLEAR", "#B91C1C" if has_impact else "#166534"),
     ]
     for idx, (label, value, color) in enumerate(card_specs):
@@ -438,8 +509,15 @@ def figure_summary_page(
     ax_orb = fig.add_axes([0.08, 0.19, 0.84, 0.15])
     draw_table(ax_orb, "Orbital Elements Statistics", orb_rows)
 
-    ax_inv = fig.add_axes([0.08, 0.03, 0.84, 0.15])
-    draw_table(ax_inv, "Conservation Diagnostics", inv_rows)
+    fig.text(
+        0.08,
+        0.175,
+        "Drift note: two-body specific energy and |h| are diagnostic series; under SH/non-central or non-conservative forces they are not standalone solver-error metrics.",
+        fontsize=7.8,
+        color="#64748B",
+    )
+    ax_inv = fig.add_axes([0.08, 0.03, 0.84, 0.135])
+    draw_table(ax_inv, "Invariant Diagnostics", inv_rows)
 
     return fig
 
@@ -502,8 +580,15 @@ def figure_run_config_page(
     n_apo = int(np.size(apo_idx)) if apo_idx is not None else 0
     has_impact = impact_idx is not None
     t_s = extract_time_seconds(history)
-    n_steps = int(getattr(t_s, "size", 0))
     duration_s = float(np.nanmax(t_s) - np.nanmin(t_s)) if getattr(t_s, "size", 0) else float("nan")
+    output_epoch_count, report_sample_count, report_downsampled = _epoch_count_info(history, t_s, meta2)
+    measured_out_dt_s = meta2.get("output_dt_s_measured", meta2.get("recorded_output_dt_s", None))
+    if measured_out_dt_s is None and t_s.size >= 2 and not report_downsampled:
+        measured_out_dt_s = float(np.nanmedian(np.diff(t_s)))
+    expected_epoch_count = _expected_epochs(
+        _finite_float_or_none(meta2.get("duration_s")) or duration_s,
+        _finite_float_or_none(out_dt_s),
+    )
 
     fig = plt.figure(figsize=(8.27, 11.69))
     fig.suptitle("CONFIGURATION & PERFORMANCE", fontsize=16, fontweight="bold", y=0.955, color="#334155")
@@ -521,7 +606,8 @@ def figure_run_config_page(
         ("Tolerance (rtol / atol)", f"{rtol} / {atol}"),
         ("Gravity model", f"Spherical harmonics up to degree {sh_degree}"),
         ("Central-body GM", format_sci_or_na(mu, decimals=4) + " m^3/s^2"),
-        ("Output step", "Auto" if out_dt_s is None else f"{out_dt_s} s"),
+        ("Requested output step", _format_cadence(out_dt_s)),
+        ("Recorded output step", _format_cadence(measured_out_dt_s)),
         ("Reported span", f"{format_days(duration_s)} ({format_duration(duration_s)})"),
     ]
     spacecraft_rows = [
@@ -539,9 +625,13 @@ def figure_run_config_page(
     perf_rows = [
         ("Propagation time", f"{t_prop:.4f} s"),
         ("Total wall time", f"{t_wall:.4f} s"),
-        ("Output epochs", format_count(n_steps)),
+        ("Output epochs", format_count(output_epoch_count)),
         ("Wall / propagation ratio", f"{(t_wall / t_prop):.2f}x" if t_prop > 0.0 else "N/A"),
     ]
+    if expected_epoch_count is not None:
+        perf_rows.insert(3, ("Expected epochs", format_count(expected_epoch_count)))
+    if report_downsampled:
+        perf_rows.insert(4, ("Report samples", f"{format_count(report_sample_count)} (downsampled)"))
 
     ax_cfg = fig.add_axes([0.08, 0.68, 0.40, 0.20])
     draw_kv_table(ax_cfg, "Simulation Settings", settings_rows)
@@ -557,7 +647,7 @@ def figure_run_config_page(
 
     ax_notes = fig.add_axes([0.08, 0.18, 0.84, 0.16])
     note_items = [
-        ("Interpretation", "Use low drift plus stable event statistics as a quick quality screen before detailed plot review."),
+        ("Interpretation", "Drift rows are diagnostic. Two-body energy and |h| are not standalone solver-error metrics when non-central or non-conservative forces are active."),
         ("Output source", Path(pdf_or_out_dir_hint).name if pdf_or_out_dir_hint else "In-memory report export"),
     ]
     draw_kv_block(ax_notes, "Operator Notes", note_items, ncols=1)

@@ -146,6 +146,20 @@ def test_albedo_accel_default_backend_is_facet_and_outward():
     assert a[0] > 0.0
 
 
+def test_albedo_accel_lambert_eclipse_uses_earth_vector():
+    r = np.asarray([R_MOON_MEAN + 5.0e5, 0.0, 0.0])
+    s = np.asarray([AU, 0.0, 0.0])
+    earth = np.asarray([3.84e8, 0.0, 0.0])
+    sc = SpacecraftProps(mass_kg=1000.0, area_m2=1.0, cr=1.5)
+    cfg = AlbedoConfig(facet_lat_count=6, facet_lon_count=12, enable_eclipse=True)
+
+    no_eclipse = albedo_accel(r, s, sc, cfg, enable_eclipse=False, r_earth=earth)
+    eclipsed = albedo_accel(r, s, sc, cfg, enable_eclipse=True, r_earth=earth)
+
+    assert np.linalg.norm(no_eclipse) > 0.0
+    np.testing.assert_allclose(eclipsed, 0.0, rtol=0.0, atol=0.0)
+
+
 def test_albedo_accel_simple_backend():
     r = np.asarray([R_MOON_MEAN + 5.0e5, 0.0, 0.0])
     s = np.asarray([-AU, 0.0, 0.0])                      # Sun -X -> push +X

@@ -152,12 +152,12 @@ class TorchSHGravityEvaluator:
         dv_dphi = torch.zeros_like(dv_dr)
         dv_dlambda = torch.zeros_like(dv_dr)
 
-        if nmax >= 2:
+        if nmax >= 1:
             r_ratio_base = self.r_ref * inv_r
-            r_ratio_n = r_ratio_base * r_ratio_base
+            r_ratio_n = r_ratio_base
             mu_inv_r = self.mu * inv_r
             mu_inv_r_sq = self.mu * inv_r_sq
-            for n in range(2, nmax + 1):
+            for n in range(1, nmax + 1):
                 sl = slice(0, n + 1)
                 term_lon = self.C[n, sl][None, :] * cos_m[:, sl] + self.S[n, sl][None, :] * sin_m[:, sl]
                 deriv_lon = -self.C[n, sl][None, :] * sin_m[:, sl] + self.S[n, sl][None, :] * cos_m[:, sl]

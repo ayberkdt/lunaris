@@ -609,12 +609,12 @@ if _CUDA_AVAILABLE:
         dv_dlambda= 0.0
 
         r_ratio = r_ref * inv_r
-        r_ratio_n = r_ratio * r_ratio         # (r_ref/r)^2 for n=2
+        r_ratio_n = r_ratio                   # (r_ref/r)^1 for n=1
 
         mu_inv_r   = gm * inv_r
         mu_inv_r2  = gm / r2
 
-        for n in range(2, n_eff + 1):
+        for n in range(1, n_eff + 1):
             s_r = 0.0; s_p = 0.0; s_l = 0.0
             for m in range(n + 1):
                 c_lon = cos_m[m]
@@ -1772,6 +1772,8 @@ class CPUBatchPropagator:
         gravity_adaptive = getattr(template, "gravity_adaptive", None) if template is not None else None
         ephem_manager = getattr(template, "ephem", None) if template is not None else None
         earth_j2 = getattr(template, "earth_j2", None) if template is not None else None
+        srp = getattr(template, "srp", None) if template is not None else getattr(self._sim_cfg, "srp", None)
+        albedo = getattr(template, "albedo", None) if template is not None else getattr(self._sim_cfg, "albedo", None)
         thermal = getattr(template, "thermal", None) if template is not None else getattr(self._sim_cfg, "thermal", None)
         solid_tides = getattr(template, "solid_tides", None) if template is not None else getattr(self._sim_cfg, "solid_tides", None)
 
@@ -1783,6 +1785,8 @@ class CPUBatchPropagator:
             ephem_manager=ephem_manager,
             surface_provider=self._surface_provider,
             earth_j2=earth_j2,
+            srp=srp,
+            albedo=albedo,
             thermal=thermal,
             solid_tides=solid_tides,
             allow_identity_rotation=(ephem_manager is None),

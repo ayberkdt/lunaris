@@ -140,6 +140,9 @@ def evaluate_forces(
     grav_truth = model_cache.get(truth_model)
     dyn_truth  = DynamicsEngine(cfg.spacecraft, cfg.flags,
                                 gravity_model=grav_truth, ephem_manager=ephem,
+                                earth_j2=cfg.earth_j2, srp=cfg.srp,
+                                thermal=cfg.thermal, albedo=cfg.albedo,
+                                solid_tides=cfg.solid_tides,
                                 allow_identity_rotation=True)
     try:
         res_truth = propagate(dyn_truth, y0, cfg.propagator, time_cfg=cfg.time)
@@ -172,6 +175,9 @@ def evaluate_forces(
         else:
             dyn  = DynamicsEngine(cfg.spacecraft, cfg.flags,
                                   gravity_model=grav, ephem_manager=ephem,
+                                  earth_j2=cfg.earth_j2, srp=cfg.srp,
+                                  thermal=cfg.thermal, albedo=cfg.albedo,
+                                  solid_tides=cfg.solid_tides,
                                   allow_identity_rotation=True)
             rhs  = dyn.build_rhs()
             a_test = np.array([rhs(t_ref[i], y_ref[i])[3:6] for i in range(N)])

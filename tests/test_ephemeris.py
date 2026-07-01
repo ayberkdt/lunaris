@@ -41,6 +41,7 @@ if str(_REPO_ROOT) not in sys.path:
 from lunaris.physics.ephemeris import (
     EphemerisManager,
     EphemerisTables,
+    _build_time_grid,
     get_ephem_state,
     interp_vec3_derivative_safe,
 )
@@ -107,6 +108,12 @@ def _make_tables(
 # -----------------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------------
+def test_build_time_grid_covers_noninteger_duration() -> None:
+    """Table grids remain uniform but extend far enough to cover the run span."""
+    np.testing.assert_allclose(_build_time_grid(100.0, 60.0), np.array([0.0, 60.0, 120.0]))
+    np.testing.assert_allclose(_build_time_grid(120.0, 60.0), np.array([0.0, 60.0, 120.0]))
+
+
 def test_ephemeris_case_a_linear_interp_clamp_and_out_buffer() -> None:
     """Case A: Basic linear interpolation + clamp tests (N=2) + out-buffer semantics."""
     dt_s = 10.0

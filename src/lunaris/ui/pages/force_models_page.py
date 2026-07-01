@@ -1131,6 +1131,12 @@ class ForceModelsPage(QtWidgets.QWidget):
     Encapsulates all widgets (sw_gravity, sw_sun, sw_earth, etc.) inside this page.
     """
 
+    # Emitted by the Spacecraft Bus shortcut in the Non-Gravitational Forces card.
+    # The spacecraft's mass/area/reflectivity are what scale SRP, albedo, and
+    # thermal, so the editor now lives next to those forces (it used to sit on the
+    # Propagation page, away from the forces it actually drives).
+    spacecraft_settings_requested = QtCore.Signal()
+
     def __init__(
         self,
         gravity_cfg: UIGravityConfig | None = None,
@@ -1540,6 +1546,35 @@ class ForceModelsPage(QtWidgets.QWidget):
         self.sw_albedo.toggled.connect(self._sync_srp_requirement)
         self.sw_albedo.toggled.connect(self._sync_albedo_settings_button)
         self.sw_thermal.toggled.connect(self._sync_srp_requirement)
+
+        # Spacecraft bus shortcut. Mass, area, and reflectivity are exactly what
+        # scale SRP / albedo / thermal, so the bus editor belongs here next to the
+        # forces it drives — and it fills this card's otherwise empty lower band.
+        divider = QtWidgets.QFrame()
+        divider.setObjectName("formDivider")
+        divider.setFrameShape(QtWidgets.QFrame.HLine)
+        divider.setFixedHeight(1)
+        gb.content_layout.addWidget(divider)
+
+        sc_row = QtWidgets.QHBoxLayout()
+        sc_row.setContentsMargins(0, 0, 0, 0)
+        sc_caption = QtWidgets.QLabel(
+            "Spacecraft mass, area & reflectivity scale these forces."
+        )
+        sc_caption.setObjectName("sectionDescription")
+        sc_caption.setWordWrap(True)
+        sc_row.addWidget(sc_caption, 1)
+
+        self.btn_spacecraft_settings = QtWidgets.QPushButton("Spacecraft Bus…")
+        self.btn_spacecraft_settings.setProperty("kind", "ghost")
+        self.btn_spacecraft_settings.setIcon(get_icon("fa6s.rocket", THEME["fg_main"]))
+        self.btn_spacecraft_settings.setToolTip(
+            "Open spacecraft mass, area, drag, and reflectivity settings."
+        )
+        self.btn_spacecraft_settings.setAccessibleName("Spacecraft bus settings")
+        self.btn_spacecraft_settings.clicked.connect(self.spacecraft_settings_requested.emit)
+        sc_row.addWidget(self.btn_spacecraft_settings, 0)
+        gb.content_layout.addLayout(sc_row)
 
         return gb
 

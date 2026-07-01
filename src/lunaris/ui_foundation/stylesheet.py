@@ -635,6 +635,85 @@ def build_app_stylesheet(
             font-weight: 700;
             font-family: {type_tokens.family_mono};
         }}
+        /* Orbit preview: themed form rule + scene control chrome */
+        QFrame#formDivider {{
+            background: {theme['border_soft']};
+            border: none;
+            max-height: 1px;
+            min-height: 1px;
+        }}
+        QLabel#orbitControlLabel {{
+            color: {theme['fg_muted']};
+            font-size: 8.5pt;
+            font-weight: 700;
+            letter-spacing: 0.6px;
+        }}
+        QPushButton#orbitPresetBtn {{
+            background: {theme['bg_card_alt']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 7px;
+            padding: 3px 10px;
+            font-size: 9pt;
+            font-weight: 600;
+            color: {theme['fg_soft']};
+        }}
+        QPushButton#orbitPresetBtn:hover {{
+            border-color: {acc_hover_border};
+            background: {theme['bg_hover']};
+            color: {theme['fg_main']};
+        }}
+        QPushButton#orbitPresetBtn:pressed {{
+            background: {theme['bg_inset']};
+        }}
+        /* Orbit workspace split: transparent scroll surface + subtle handle */
+        QScrollArea#orbitParamsScroll {{
+            background: transparent;
+            border: none;
+        }}
+        QScrollArea#orbitParamsScroll > QWidget > QWidget {{
+            background: transparent;
+        }}
+        QSplitter#orbitSplit::handle {{
+            background: transparent;
+        }}
+        QSplitter#orbitSplit::handle:hover {{
+            background: {acc_20};
+            border-radius: 3px;
+        }}
+        /* Live telemetry: cohesive control bar + idle empty-state overlay */
+        QFrame#telemetryToolbar {{
+            background: {theme['bg_card']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 10px;
+        }}
+        QWidget#telemetryEmpty {{
+            background: transparent;
+        }}
+        QLabel#telemetryEmptyTitle {{
+            color: {theme['fg_soft']};
+            font-size: 13pt;
+            font-weight: 700;
+        }}
+        QLabel#telemetryEmptyText {{
+            color: {theme['fg_muted']};
+            font-size: 10pt;
+        }}
+        QFrame#telemetryKpiCell {{
+            background: {theme['bg_card_alt']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: 8px;
+        }}
+        QLabel#telemetryKpiLabel {{
+            color: {theme['fg_muted']};
+            font-size: 8.5pt;
+            font-weight: 600;
+        }}
+        QLabel#telemetryKpiValue {{
+            color: {theme['fg_main']};
+            font-size: 13pt;
+            font-weight: 700;
+            font-family: {type_tokens.family_mono};
+        }}
         QLabel#metricCardSubtitle {{
             color: {theme['fg_muted']};
             font-size: 9pt;

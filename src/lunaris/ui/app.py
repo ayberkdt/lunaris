@@ -435,6 +435,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_run.setIcon(get_icon('fa6s.play', THEME['fg_main']))
         self.btn_run.clicked.connect(self._start_preflight_validation)
 
+        # Both run actions live in the global header so they are reachable from
+        # every page. Previously Run Analysis was mounted only on the Orbit page
+        # header (via the PageShell action slot), so it disappeared on every
+        # other workspace. Run stays primary and always visible; Stop sits to
+        # its right and only appears while a run is active.
+        h_layout.addWidget(self.btn_run)
         h_layout.addWidget(self.btn_stop)
 
         # The header stays quieter when the app is idle. Progress and transient
@@ -447,7 +453,14 @@ class MainWindow(QtWidgets.QMainWindow):
         root.addWidget(header_frame)
 
         # ---------------------------------------------------------------------
-        # A2. Mission Status Summary Bar
+        # A2. Mission Readiness Ribbon
+        #
+        # The bar answers one question — "is the mission ready to run?" — and is
+        # split to read left-to-right as configure -> run: the LEFT group
+        # summarises what you have set up (gravity model, output destination);
+        # the RIGHT group reports execution readiness (pre-flight + run state).
+        # Small leading icons make each field scannable at a glance, so the strip
+        # reads as a purposeful status ribbon rather than a loose row of text.
         # ---------------------------------------------------------------------
         status_bar_frame = QtWidgets.QFrame()
         status_bar_frame.setObjectName("missionStatusBar")
@@ -455,44 +468,57 @@ class MainWindow(QtWidgets.QMainWindow):
         # Match the header's horizontal margin (spacing.lg) for a shared left edge.
         _sp = DESIGN_TOKENS.spacing
         sb_layout.setContentsMargins(_sp.lg, _sp.xs, _sp.lg, _sp.xs)
-        sb_layout.setSpacing(_sp.lg)
+        sb_layout.setSpacing(_sp.sm)
 
-        gravity_label = _make_lbl("Gravity:")
-        gravity_label.setObjectName("statusLabel")
-        sb_layout.addWidget(gravity_label)
+        def _status_icon(icon_name: str) -> QtWidgets.QLabel:
+            """A small muted leading glyph for a status field."""
+            lbl = QtWidgets.QLabel()
+            lbl.setObjectName("statusIcon")
+            lbl.setPixmap(get_icon(icon_name, THEME['fg_muted']).pixmap(13, 13))
+            return lbl
+
+        def _status_field(layout: QtWidgets.QHBoxLayout, icon_name: str,
+                          caption: str) -> None:
+            layout.addWidget(_status_icon(icon_name))
+            cap = _make_lbl(caption)
+            cap.setObjectName("statusLabel")
+            layout.addWidget(cap)
+
+        # --- Left group: mission configuration summary ---
+        _status_field(sb_layout, "fa6s.atom", "Gravity")
         self.lbl_gravity_status = QtWidgets.QLabel("SH [100]")
         self.lbl_gravity_status.setObjectName("statusValue")
         sb_layout.addWidget(self.lbl_gravity_status)
 
+        sb_layout.addSpacing(_sp.md)
         sb_layout.addWidget(_status_divider())
+        sb_layout.addSpacing(_sp.md)
 
-        output_label = _make_lbl("Output:")
-        output_label.setObjectName("statusLabel")
-        sb_layout.addWidget(output_label)
+        _status_field(sb_layout, "fa6s.folder-open", "Output")
         self.lbl_output_status = QtWidgets.QLabel("Not set")
         self.lbl_output_status.setObjectName("statusValue")
-        self.lbl_output_status.setMaximumWidth(200)
+        self.lbl_output_status.setMaximumWidth(280)
+        self.lbl_output_status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         sb_layout.addWidget(self.lbl_output_status)
 
-        sb_layout.addWidget(_status_divider())
+        # Configure | Run separation — the dead space here is intentional.
+        sb_layout.addStretch(1)
 
-        preflight_label = _make_lbl("Preflight:")
-        preflight_label.setObjectName("statusLabel")
-        sb_layout.addWidget(preflight_label)
+        # --- Right group: execution readiness ---
+        _status_field(sb_layout, "fa6s.clipboard-check", "Preflight")
         self.lbl_preflight_status = StatusBadge("IDLE", "info")
         self.lbl_preflight_status.setFixedWidth(70)
         sb_layout.addWidget(self.lbl_preflight_status)
 
+        sb_layout.addSpacing(_sp.md)
         sb_layout.addWidget(_status_divider())
+        sb_layout.addSpacing(_sp.md)
 
-        run_label = _make_lbl("Run:")
-        run_label.setObjectName("statusLabel")
-        sb_layout.addWidget(run_label)
+        _status_field(sb_layout, "fa6s.satellite", "Run")
         self.lbl_run_status = StatusBadge("IDLE", "info")
         self.lbl_run_status.setFixedWidth(70)
         sb_layout.addWidget(self.lbl_run_status)
 
-        sb_layout.addStretch(1)
         root.addWidget(status_bar_frame)
 
         # ---------------------------------------------------------------------
@@ -565,7 +591,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Orbit Setup",
                 PAGE_DESCRIPTIONS["Orbit"],
                 content=self.page_orbit,
-                action=self.btn_run,
+                # The Orbit page owns an internal split (scrollable form + fixed
+                # preview), so it must NOT sit inside the shell's own scroll/max-
+                # width column — that is what pushed it into a narrow centred band
+                # and forced scrolling just to see the preview update.
+                scrollable=False,
             ),
             "Forces": PageShell(
                 "Force Models",
@@ -1731,9 +1761,16 @@ class MainWindow(QtWidgets.QMainWindow):
         if not clean_line:
             return
 
-        if clean_line.startswith("{") and ('"t"' in clean_line or '"t_s"' in clean_line):
+        telemetry_line = clean_line
+        for prefix in ("JSON_TELEM:", "TELEMETRY:"):
+            if clean_line.startswith(prefix):
+                telemetry_line = clean_line[len(prefix):].strip()
+                break
+
+        time_keys = ('"t"', '"t_s"', '"time_s"', "'t'", "'t_s'", "'time_s'")
+        if telemetry_line.startswith("{") and any(key in telemetry_line for key in time_keys):
             try:
-                if self._handle_telemetry_line(clean_line):
+                if self._handle_telemetry_line(telemetry_line):
                     return
             except Exception:
                 self._log_message(clean_line, severity="warning")
@@ -1769,7 +1806,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Update progress based on time
         t_s = None
-        for t_key in ["t_s", "t_sec", "t"]:
+        for t_key in ["t_s", "time_s", "t_sec", "t"]:
             if t_key in telem:
                 t_s = float(telem[t_key])
                 # Handle unit conversion if 't' is used without explicit unit
@@ -2168,7 +2205,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # Wire page signals (no aliases: pages own their widgets)
         try:
             self.page_propagation.solver_settings_requested.connect(self._on_solver_settings)
-            self.page_propagation.spacecraft_settings_requested.connect(self._on_spacecraft_settings)
+            # Spacecraft Bus now lives on the Force Models page (it scales the
+            # non-gravitational forces), so the dialog opens from there.
+            self.page_forces.spacecraft_settings_requested.connect(self._on_spacecraft_settings)
         except Exception:
             pass
 

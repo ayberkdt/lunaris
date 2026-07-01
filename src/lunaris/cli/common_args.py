@@ -393,6 +393,10 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
         prop_cfg = replace(prop_cfg, rtol=float(args.rtol))
     if args.atol is not None:
         prop_cfg = replace(prop_cfg, atol=float(args.atol))
+    if args.enable_telemetry is not None:
+        prop_cfg = replace(prop_cfg, enable_telemetry=bool(args.enable_telemetry))
+    if args.telem_cadence_s is not None:
+        prop_cfg = replace(prop_cfg, telem_cadence_s=float(args.telem_cadence_s))
     cfg = replace(cfg, propagator=prop_cfg)
 
     # --- Output config (OutputConfig) ---

@@ -155,6 +155,30 @@ class OrbitViz3D(QtWidgets.QWidget):
         self.apoapsis_marker = None
         self.spacecraft_marker = None
 
+        # Mission-control annotation layers (apsides/nodes lines, node markers,
+        # orbital-plane disk, velocity arrow, and floating text labels). Created
+        # on demand inside ``_update_annotations`` and toggled via the layer
+        # checkboxes built in ``_build_controls``.
+        self.plane_disk = None
+        self.apsides_line = None
+        self.nodes_line = None
+        self.asc_node_marker = None
+        self.desc_node_marker = None
+        self.vel_arrow_line = None
+        self.vel_arrow_cone = None
+        self.starfield = None
+        self._labels: dict = {}
+        # Layer visibility (mirrors the checkbox states; defaults all on).
+        self._layers = {"labels": True, "nodes": True, "velocity": True, "plane": True}
+        # True once the camera has framed the first valid orbit (so the scene
+        # fills the viewport instead of floating as a small moon in a dark void),
+        # after which the user's manual camera moves are respected.
+        self._did_autofit = False
+        # Set when the line of nodes collapses onto the line of apsides
+        # (argp ~ 0 or 180): the node markers/labels are then redundant and are
+        # suppressed so "Apoapsis" and "AN" stop colliding into illegible mush.
+        self._nodes_coincident = False
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -177,6 +201,7 @@ class OrbitViz3D(QtWidgets.QWidget):
             self.gl_widget.opts['elevation'] = 28
             self.gl_widget.opts['azimuth'] = 45
 
+            self._add_starfield()
             self._add_axes()
             self._create_moon()
         except Exception as exc:
@@ -187,7 +212,7 @@ class OrbitViz3D(QtWidgets.QWidget):
             return
 
         layout.addWidget(self.gl_widget, 1)
-        layout.addLayout(self._build_camera_bar())
+        layout.addLayout(self._build_controls())
 
         # Initial draw
         QtCore.QTimer.singleShot(100, self.update_orbit)
@@ -196,11 +221,26 @@ class OrbitViz3D(QtWidgets.QWidget):
     # Construction helpers
     # -------------------------------------------------------------------------
 
-    def _build_camera_bar(self) -> QtWidgets.QHBoxLayout:
-        """Compact camera-preset row: Reset | Top | Side | Iso | Fit."""
+    def _build_controls(self) -> QtWidgets.QVBoxLayout:
+        """Two compact control rows below the scene.
+
+        Row 1 — camera presets (Reset | Top | Side | Iso | Fit).
+        Row 2 — mission-control layer toggles (Labels | Nodes | Velocity | Plane)
+        so the operator can declutter the schematic to taste, the way STK/GMAT
+        let you switch annotation layers on and off.
+        """
+        from lunaris.ui.theme.tokens import DESIGN_TOKENS
+
+        col = QtWidgets.QVBoxLayout()
+        col.setContentsMargins(8, 6, 8, 4)
+        col.setSpacing(6)
+
+        # --- Row 1: camera presets ---
         bar = QtWidgets.QHBoxLayout()
-        bar.setContentsMargins(8, 6, 8, 4)
         bar.setSpacing(6)
+        view_lbl = QtWidgets.QLabel("View")
+        view_lbl.setObjectName("orbitControlLabel")
+        bar.addWidget(view_lbl)
 
         presets = (
             ("Reset", "Default mission view", self.reset_view),
@@ -212,15 +252,75 @@ class OrbitViz3D(QtWidgets.QWidget):
         self._cam_buttons = []
         for label, tip, handler in presets:
             btn = QtWidgets.QPushButton(label)
+            btn.setObjectName("orbitPresetBtn")
             btn.setCursor(QtCore.Qt.PointingHandCursor)
-            btn.setFixedHeight(26)
+            btn.setFixedHeight(DESIGN_TOKENS.controls.compact_height)
             btn.setMinimumWidth(46)
             btn.setToolTip(tip)
             btn.clicked.connect(handler)
             self._cam_buttons.append(btn)
             bar.addWidget(btn)
         bar.addStretch(1)
-        return bar
+        col.addLayout(bar)
+
+        # --- Row 2: annotation layer toggles ---
+        layers = QtWidgets.QHBoxLayout()
+        layers.setSpacing(10)
+        layer_lbl = QtWidgets.QLabel("Layers")
+        layer_lbl.setObjectName("orbitControlLabel")
+        layers.addWidget(layer_lbl)
+
+        self._layer_checks = {}
+        layer_specs = (
+            ("labels", "Labels", "Floating periapsis / apoapsis / node / S-C labels"),
+            ("nodes", "Nodes", "Ascending and descending node markers and line of nodes"),
+            ("velocity", "Velocity", "Direction-of-motion arrow at the spacecraft"),
+            ("plane", "Plane", "Translucent orbital-plane disk and line of apsides"),
+        )
+        for key, text, tip in layer_specs:
+            chk = QtWidgets.QCheckBox(text)
+            chk.setChecked(self._layers.get(key, True))
+            chk.setToolTip(tip)
+            chk.setCursor(QtCore.Qt.PointingHandCursor)
+            chk.toggled.connect(lambda on, k=key: self._on_layer_toggled(k, on))
+            self._layer_checks[key] = chk
+            layers.addWidget(chk)
+        layers.addStretch(1)
+        col.addLayout(layers)
+
+        return col
+
+    def _on_layer_toggled(self, key: str, on: bool) -> None:
+        """Persist a layer toggle and refresh the scene's annotation visibility."""
+        self._layers[key] = bool(on)
+        self._refresh_layer_visibility()
+
+    def _add_starfield(self):
+        """Scatter a faint, fixed starfield on a far shell for depth.
+
+        A flat near-black void reads as an empty CAD viewport; a subtle starfield
+        gives the scene a sense of space and scale without competing with the
+        orbit. The points sit far enough out that they never intersect the orbit
+        and a fixed RNG seed keeps the pattern stable across redraws.
+        """
+        rng = np.random.default_rng(42)
+        n = 520
+        # Uniform directions on a sphere, pushed to a far radius.
+        vecs = rng.normal(size=(n, 3))
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True)
+        radius = 60000.0
+        pos = vecs * radius
+        base = hex_to_rgba_float(ORBIT_THEME['moon_light'], 1.0)
+        colors = np.empty((n, 4), dtype=float)
+        colors[:] = base
+        # Vary brightness so the field looks natural rather than a flat dot grid.
+        colors[:, 3] = rng.uniform(0.18, 0.7, size=n)
+        sizes = rng.uniform(1.0, 2.6, size=n)
+        self.starfield = gl.GLScatterPlotItem(
+            pos=pos, color=colors, size=sizes, pxMode=True
+        )
+        self.starfield.setGLOptions('additive')
+        self.gl_widget.addItem(self.starfield)
 
     def _install_fallback(self, layout: QtWidgets.QVBoxLayout) -> None:
         """Designed empty-state shown when OpenGL is unavailable."""
@@ -276,7 +376,11 @@ class OrbitViz3D(QtWidgets.QWidget):
         """
         md = gl.MeshData.sphere(rows=48, cols=96, radius=R_MOON)
 
-        base = hex_to_rgba_float(ORBIT_THEME['moon_mid'])
+        # A darker regolith base (was the lighter ``moon_mid``) keeps the sphere
+        # from reading as a flat bright-grey ball that drowns out the orbit. The
+        # 'shaded' shader then gives a natural lit/terminator gradient and the
+        # crisp blue orbit line reads clearly against it.
+        base = hex_to_rgba_float(ORBIT_THEME['moon_dark'])
         colors = np.empty((md.faceCount(), 4), dtype=float)
         colors[:] = base
         md.setFaceColors(colors)
@@ -432,6 +536,16 @@ class OrbitViz3D(QtWidgets.QWidget):
             self._update_marker('spacecraft_marker', self._eci_point_at_ta(self._ta_deg),
                                 ORBIT_THEME['spacecraft'], r_marker * 0.72)
 
+            # Mission-control annotations: apsides/nodes lines, node markers,
+            # orbital-plane disk, velocity arrow, and floating labels.
+            self._update_annotations(r_marker)
+
+            # Frame the first valid orbit so it fills the viewport; later edits
+            # leave the camera where the user put it.
+            if not self._did_autofit:
+                self._did_autofit = True
+                self._view_fit()
+
         except Exception as exc:
             print(f"[3D Viz] Error updating orbit: {exc}")
 
@@ -473,6 +587,240 @@ class OrbitViz3D(QtWidgets.QWidget):
         marker.setTransform(transform)
 
     # -------------------------------------------------------------------------
+    # Mission-control annotations
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _make_disk_meshdata(n: int = 96):
+        """Build a unit-radius disk in the local XY plane (triangle fan)."""
+        ang = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
+        ring = np.column_stack([np.cos(ang), np.sin(ang), np.zeros_like(ang)])
+        verts = np.vstack([[0.0, 0.0, 0.0], ring])
+        faces = np.array(
+            [[0, i + 1, (i % n) + 1] for i in range(1, n + 1)], dtype=int
+        )
+        # Wrap the last face back to the first ring vertex.
+        faces[-1, 2] = 1
+        return gl.MeshData(vertexes=verts, faces=faces)
+
+    def _perifocal_velocity_dir(self, ta_deg: float) -> np.ndarray:
+        """Unit velocity direction (ECI) at the given true anomaly.
+
+        In the perifocal frame the velocity is parallel to
+        ``(-sin nu, e + cos nu, 0)``; rotating that by the orbit's PQW->ECI
+        matrix gives the in-plane direction of motion shown by the arrow.
+        """
+        ta = np.deg2rad(ta_deg)
+        v_pqw = np.array([-np.sin(ta), self._e + np.cos(ta), 0.0])
+        norm = np.linalg.norm(v_pqw)
+        if norm < 1e-12:
+            return np.array([0.0, 0.0, 0.0])
+        v_pqw /= norm
+        R = self._rotation_matrix(
+            np.deg2rad(self._inc_deg),
+            np.deg2rad(self._raan_deg),
+            np.deg2rad(self._argp_deg),
+        )
+        return R @ v_pqw
+
+    def _ensure_line(self, attr: str, pos, color_token: str, alpha: float, width: float):
+        """Create (once) or update a translucent annotation line stored at *attr*."""
+        line = getattr(self, attr, None)
+        color = hex_to_rgba_float(color_token, alpha)
+        if line is None:
+            line = gl.GLLinePlotItem(
+                pos=pos, color=color, width=width, antialias=True,
+                glOptions='translucent',
+            )
+            self.gl_widget.addItem(line)
+            setattr(self, attr, line)
+        else:
+            line.setData(pos=pos, color=color, width=width)
+        return line
+
+    def _ensure_label(self, key: str, point, text: str, color_token: str):
+        """Create (once) or reposition a floating text label."""
+        rgba = hex_to_rgba_float(color_token, 1.0)
+        col = (
+            int(round(rgba[0] * 255)),
+            int(round(rgba[1] * 255)),
+            int(round(rgba[2] * 255)),
+            255,
+        )
+        label = self._labels.get(key)
+        if label is None:
+            try:
+                font = QtGui.QFont()
+                font.setPointSize(9)
+                label = gl.GLTextItem(
+                    pos=np.asarray(point, dtype=float), text=text, color=col, font=font
+                )
+                self.gl_widget.addItem(label)
+                self._labels[key] = label
+            except Exception:
+                return None
+        else:
+            try:
+                label.setData(pos=np.asarray(point, dtype=float), text=text, color=col)
+            except Exception:
+                pass
+        return label
+
+    def _update_annotations(self, r_marker: float) -> None:
+        """Refresh apsides/nodes lines, node markers, plane disk, velocity arrow.
+
+        Everything is derived from the same validated elements the orbit line
+        uses, so the schematic stays self-consistent. Items are created once and
+        then updated in place; per-layer visibility is applied at the end.
+        """
+        if not HAS_OPENGL or getattr(self, 'gl_widget', None) is None:
+            return
+
+        peri = self._eci_point_at_ta(0.0)
+        apo = self._eci_point_at_ta(180.0)
+        # Ascending node crosses the reference plane at argument of latitude 0
+        # (nu = -argp); descending node at 180 deg further along.
+        asc = self._eci_point_at_ta(-self._argp_deg)
+        desc = self._eci_point_at_ta(180.0 - self._argp_deg)
+        sc = self._eci_point_at_ta(self._ta_deg)
+
+        # Line of apsides (major axis) — quiet, periapsis-tinted.
+        self._ensure_line(
+            'apsides_line', np.array([peri, apo]),
+            ORBIT_THEME['periapsis'], 0.55, 1.6,
+        )
+
+        # Orbital-plane disk — a unit disk rotated into the orbit plane and
+        # scaled to the aposelene radius, kept very translucent for context.
+        ra = self._a_km * (1.0 + self._e)
+        if self.plane_disk is None:
+            md = self._make_disk_meshdata()
+            self.plane_disk = gl.GLMeshItem(
+                meshdata=md,
+                color=hex_to_rgba_float(ORBIT_THEME['orbit_glow'], 0.07),
+                glOptions='translucent', smooth=False, drawEdges=False,
+            )
+            self.gl_widget.addItem(self.plane_disk)
+        R = self._rotation_matrix(
+            np.deg2rad(self._inc_deg),
+            np.deg2rad(self._raan_deg),
+            np.deg2rad(self._argp_deg),
+        )
+        disk_tf = QtGui.QMatrix4x4()
+        disk_tf.setColumn(0, QtGui.QVector4D(R[0, 0] * ra, R[1, 0] * ra, R[2, 0] * ra, 0.0))
+        disk_tf.setColumn(1, QtGui.QVector4D(R[0, 1] * ra, R[1, 1] * ra, R[2, 1] * ra, 0.0))
+        disk_tf.setColumn(2, QtGui.QVector4D(R[0, 2] * ra, R[1, 2] * ra, R[2, 2] * ra, 0.0))
+        disk_tf.setColumn(3, QtGui.QVector4D(0.0, 0.0, 0.0, 1.0))
+        self.plane_disk.setTransform(disk_tf)
+
+        # Line of nodes (through the focus, ascending <-> descending).
+        self._ensure_line(
+            'nodes_line', np.array([desc, asc]),
+            ORBIT_THEME['apoapsis'], 0.5, 1.6,
+        )
+        self._update_marker('asc_node_marker', asc, ORBIT_THEME['apoapsis'], r_marker * 0.6)
+        self._update_marker('desc_node_marker', desc, ORBIT_THEME['apoapsis'], r_marker * 0.6)
+
+        # Velocity arrow at the spacecraft — line + cone tip in the direction of
+        # motion, scaled to the current orbital radius.
+        v_dir = self._perifocal_velocity_dir(self._ta_deg)
+        arrow_len = float(np.clip(0.45 * np.linalg.norm(sc), 200.0, 2400.0))
+        cone_len = 0.26 * arrow_len
+        base = np.asarray(sc, dtype=float) + v_dir * (arrow_len - cone_len)
+        tip = np.asarray(sc, dtype=float) + v_dir * arrow_len
+        self._ensure_line(
+            'vel_arrow_line', np.array([sc, base]),
+            ORBIT_THEME['spacecraft'], 0.9, 2.4,
+        )
+        if self.vel_arrow_cone is None:
+            cmd = gl.MeshData.cylinder(rows=2, cols=16, radius=[0.32 * cone_len, 0.0], length=cone_len)
+            self.vel_arrow_cone = gl.GLMeshItem(
+                meshdata=cmd, smooth=True, shader='shaded',
+                color=hex_to_rgba_float(ORBIT_THEME['spacecraft'], 1.0),
+                glOptions='opaque',
+            )
+            self.gl_widget.addItem(self.vel_arrow_cone)
+        self.vel_arrow_cone.setTransform(self._cone_transform(base, v_dir))
+
+        # When argp ~ 0 or 180 the nodes sit exactly on the apsides; labelling
+        # both there produces the "Apoapsis"+"AN" overlap. Detect that and let
+        # _refresh_layer_visibility suppress the redundant node annotations.
+        argp_mod = self._argp_deg % 180.0
+        self._nodes_coincident = min(argp_mod, 180.0 - argp_mod) < 6.0
+
+        # Floating labels — pushed off their markers so the text never sits on
+        # top of the sphere or another label. Apsis labels float radially
+        # outward; node labels lift along the orbit normal; the S/C label rides
+        # ahead of the velocity arrow.
+        off = max(R_MOON * 0.05, 0.10 * self._a_km)
+
+        def _unit(vec):
+            v = np.asarray(vec, dtype=float)
+            n = float(np.linalg.norm(v))
+            return v / n if n > 1e-9 else v
+
+        h_hat = _unit(R @ np.array([0.0, 0.0, 1.0]))
+        self._ensure_label('peri', np.asarray(peri, float) + _unit(peri) * off,
+                           "Periapsis", ORBIT_THEME['periapsis'])
+        self._ensure_label('apo', np.asarray(apo, float) + _unit(apo) * off,
+                           "Apoapsis", ORBIT_THEME['apoapsis'])
+        self._ensure_label('asc', np.asarray(asc, float) + h_hat * off,
+                           "AN", ORBIT_THEME['apoapsis'])
+        self._ensure_label('desc', np.asarray(desc, float) - h_hat * off,
+                           "DN", ORBIT_THEME['apoapsis'])
+        self._ensure_label('sc', np.asarray(sc, dtype=float) + v_dir * (arrow_len * 1.15),
+                           "S/C", ORBIT_THEME['spacecraft'])
+
+        self._refresh_layer_visibility()
+
+    @staticmethod
+    def _cone_transform(base, direction) -> QtGui.QMatrix4x4:
+        """Transform placing a +Z cone's base at *base*, apex along *direction*."""
+        tf = QtGui.QMatrix4x4()
+        tf.translate(float(base[0]), float(base[1]), float(base[2]))
+        z = np.array([0.0, 0.0, 1.0])
+        d = np.asarray(direction, dtype=float)
+        nd = np.linalg.norm(d)
+        if nd > 1e-12:
+            d = d / nd
+            axis = np.cross(z, d)
+            axis_n = np.linalg.norm(axis)
+            dot = float(np.clip(np.dot(z, d), -1.0, 1.0))
+            if axis_n > 1e-9:
+                angle = math.degrees(math.acos(dot))
+                tf.rotate(angle, float(axis[0]), float(axis[1]), float(axis[2]))
+            elif dot < 0.0:
+                # Antiparallel: flip 180 deg about any perpendicular axis.
+                tf.rotate(180.0, 1.0, 0.0, 0.0)
+        return tf
+
+    def _refresh_layer_visibility(self) -> None:
+        """Apply the current per-layer toggle states to the GL items."""
+        show_labels = self._layers.get("labels", True)
+        # Hide the node layer entirely when it has collapsed onto the apsides,
+        # so we never draw a doubled marker or a colliding "AN"/"Apoapsis" pair.
+        show_nodes = self._layers.get("nodes", True) and not self._nodes_coincident
+        show_vel = self._layers.get("velocity", True)
+        show_plane = self._layers.get("plane", True)
+
+        for item in (self.nodes_line, self.asc_node_marker, self.desc_node_marker):
+            if item is not None:
+                item.setVisible(show_nodes)
+        for item in (self.vel_arrow_line, self.vel_arrow_cone):
+            if item is not None:
+                item.setVisible(show_vel)
+        for item in (self.plane_disk, self.apsides_line):
+            if item is not None:
+                item.setVisible(show_plane)
+        for key, label in self._labels.items():
+            if label is None:
+                continue
+            if key in ("asc", "desc"):
+                label.setVisible(show_labels and show_nodes)
+            else:
+                label.setVisible(show_labels)
+
+    # -------------------------------------------------------------------------
     # Camera presets
     # -------------------------------------------------------------------------
 
@@ -497,9 +845,16 @@ class OrbitViz3D(QtWidgets.QWidget):
         self._set_camera(distance=8000, elevation=26, azimuth=135)
 
     def _view_fit(self, _checked: bool = False):
-        """Frame the whole orbit by setting distance from its aposelene radius."""
+        """Frame the whole orbit with margin, also keeping the Moon in view.
+
+        The camera distance is driven by whichever is larger — the aposelene
+        radius or the Moon — and uses a generous multiplier so the sphere and
+        orbit sit comfortably inside the viewport instead of being clipped at
+        the edges (the previous 2.6x framing cropped the Moon on low orbits).
+        """
         ra = self._a_km * (1.0 + self._e)  # aposelene radius (km)
-        self._set_camera(distance=max(3000.0, 2.6 * ra))
+        extent = max(ra, R_MOON)
+        self._set_camera(distance=max(4200.0, 3.4 * extent))
 
 
 
@@ -553,24 +908,44 @@ class OrbitPage(QtWidgets.QWidget):
         return frame, value_lbl
 
     def _build_ui(self):
-        """Constructs the layout of the Orbit Configuration Page."""
-        layout = QtWidgets.QGridLayout(self)
-        self._page_layout = layout
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setHorizontalSpacing(20)
-        layout.setVerticalSpacing(20)
+        """Two-pane workspace filling the full page width.
 
-        # Left Column: Orbit Parameters
+        Left: a *scrollable* parameter form. Right: a *fixed*, always-visible 3D
+        preview. The preview no longer scrolls away with the form, so editing any
+        element updates the orbit in place while it stays in view — and the
+        splitter spans the whole width instead of a centred narrow column, so the
+        old left/right dead space is gone. A draggable handle lets the operator
+        rebalance form vs. preview.
+        """
+        root = QtWidgets.QVBoxLayout(self)
+        self._page_layout = root
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # Left pane: the parameter form in its own scroll area.
         self.group_params = self._create_params_group()
-        layout.addWidget(self.group_params, 0, 0, 2, 1)
+        self._params_scroll = QtWidgets.QScrollArea()
+        self._params_scroll.setObjectName("orbitParamsScroll")
+        self._params_scroll.setWidgetResizable(True)
+        self._params_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._params_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self._params_scroll.setWidget(self.group_params)
+        self._params_scroll.setMinimumWidth(360)
 
-        # Right Column: 3D Visualization
+        # Right pane: the fixed 3D preview.
         self.group_viz = self._create_viz_group()
-        layout.addWidget(self.group_viz, 0, 1, 2, 1)
+        self.group_viz.setMinimumWidth(380)
 
-        # Adjust column ratios (Left slightly wider for inputs, Right for Viz)
-        layout.setColumnStretch(0, 11)
-        layout.setColumnStretch(1, 9)
+        self._split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
+        self._split.setObjectName("orbitSplit")
+        self._split.setChildrenCollapsible(False)
+        self._split.setHandleWidth(12)
+        self._split.addWidget(self._params_scroll)
+        self._split.addWidget(self.group_viz)
+        self._split.setStretchFactor(0, 6)
+        self._split.setStretchFactor(1, 5)
+        root.addWidget(self._split)
+
         QtCore.QTimer.singleShot(0, self._update_responsive_layout)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
@@ -578,31 +953,19 @@ class OrbitPage(QtWidgets.QWidget):
         self._update_responsive_layout()
 
     def _update_responsive_layout(self) -> None:
-        """Stack the configuration and preview when the workspace is narrow."""
-        available_width = self.width()
-        ancestor = self.parentWidget()
-        while ancestor is not None:
-            if isinstance(ancestor, QtWidgets.QAbstractScrollArea):
-                available_width = ancestor.viewport().width()
-                break
-            ancestor = ancestor.parentWidget()
-        compact = available_width < 1050
+        """Stack the form above the preview only when the workspace is narrow."""
+        if not hasattr(self, "_split"):
+            return
+        compact = self.width() < 1000
         if compact == self._compact_layout:
             return
         self._compact_layout = compact
-        layout = self._page_layout
-        layout.removeWidget(self.group_params)
-        layout.removeWidget(self.group_viz)
         if compact:
-            layout.addWidget(self.group_params, 0, 0)
-            layout.addWidget(self.group_viz, 1, 0)
-            layout.setColumnStretch(0, 1)
-            layout.setColumnStretch(1, 0)
+            self._split.setOrientation(QtCore.Qt.Vertical)
         else:
-            layout.addWidget(self.group_params, 0, 0, 2, 1)
-            layout.addWidget(self.group_viz, 0, 1, 2, 1)
-            layout.setColumnStretch(0, 11)
-            layout.setColumnStretch(1, 9)
+            self._split.setOrientation(QtCore.Qt.Horizontal)
+            total = max(self.width(), 1)
+            self._split.setSizes([int(total * 0.56), int(total * 0.44)])
 
     def _create_params_group(self) -> Section:
         """Orbit parameters card with Modern Segmented Control."""
@@ -617,7 +980,7 @@ class OrbitPage(QtWidgets.QWidget):
         # A. Modern Segmented Control for Input Mode
         mode_container = QtWidgets.QWidget()
         mode_container.setObjectName("segmentedControl")
-        mode_container.setFixedHeight(46)
+        mode_container.setFixedHeight(40)
 
         mode_layout = QtWidgets.QHBoxLayout(mode_container)
         mode_layout.setContentsMargins(4, 4, 4, 4)
@@ -653,6 +1016,11 @@ class OrbitPage(QtWidgets.QWidget):
         form_layout.setHorizontalSpacing(12)
         form_layout.setVerticalSpacing(12)
 
+        # Cap the input width so a short value like "100.0" doesn't float in a
+        # huge box now that the form pane fills the full width; the slack becomes
+        # a right margin (stretch column 3) instead of an over-wide field.
+        form_layout.setColumnStretch(3, 1)
+
         def add_param(row, label, widget, unit=""):
             lbl = QtWidgets.QLabel(label)
             lbl.setObjectName("fieldLabel")
@@ -660,6 +1028,7 @@ class OrbitPage(QtWidgets.QWidget):
             lbl.setBuddy(widget)
             if label and not widget.accessibleName():
                 widget.setAccessibleName(label.rstrip(": ").strip())
+            widget.setMaximumWidth(360)
             form_layout.addWidget(lbl, row, 0)
             form_layout.addWidget(widget, row, 1)
             if unit:
@@ -694,9 +1063,13 @@ class OrbitPage(QtWidgets.QWidget):
         add_param(4, "Eccentricity (e)", self.ent_e, "")
         add_param(5, "Circular Altitude", self.ent_alt_circular, "km")
 
+        # A flat 1px rule styled from the theme — the old beveled QFrame.HLine
+        # read as a dated Win-Forms divider. ``#formDivider`` is themed in QSS.
         sep = QtWidgets.QFrame()
+        sep.setObjectName("formDivider")
         sep.setFrameShape(QtWidgets.QFrame.HLine)
         sep.setFrameShadow(QtWidgets.QFrame.Plain)
+        sep.setFixedHeight(1)
         form_layout.addWidget(sep, 6, 0, 1, 3)
 
         orientation_lbl = QtWidgets.QLabel("Plane and orientation")

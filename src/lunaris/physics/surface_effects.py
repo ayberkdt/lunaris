@@ -340,6 +340,7 @@ def albedo_accel(
     model: str | None = None,
     enable_eclipse: bool = True,
     R_moon: float = R_MOON_MEAN,
+    r_earth: npt.ArrayLike | None = None,
 ) -> Vec3:
     """Albedo acceleration in a Moon-centered frame.
 
@@ -348,9 +349,12 @@ def albedo_accel(
     ``"simple"`` cannonball kernel is unchanged and reuses the spacecraft SRP
     coefficient ``cr``; ``"lambert_facets"`` builds a constant-albedo facet
     sphere from the config and uses ``config.albedo_pressure_coefficient``.
+    ``r_earth`` is optional and only needed when lunar-eclipse dimming is
+    requested for the Lambertian facet backend.
     """
     r_sc_v = _as_vec3(r_sc, "r_sc")
     r_sun_v = _as_vec3(r_sun, "r_sun")
+    r_earth_v = None if r_earth is None else _as_vec3(r_earth, "r_earth")
 
     selected = str(model if model is not None else config.albedo_model).strip().lower()
 
@@ -368,6 +372,7 @@ def albedo_accel(
             facet_normals,
             facet_areas,
             facet_albedo,
+            r_earth_fixed=r_earth_v,
             pressure_coefficient=float(config.albedo_pressure_coefficient),
             spacecraft_area_m2=float(sc_props.area_m2),
             spacecraft_mass_kg=float(sc_props.mass_kg),
@@ -376,7 +381,7 @@ def albedo_accel(
             c_light_m_s=float(config.c_light_m_s),
             r_earth_m=float(R_EARTH_MEAN),
             include_sun_distance_scaling=bool(config.include_sun_distance_scaling),
-            enable_eclipse=False,
+            enable_eclipse=bool(enable_eclipse and config.enable_eclipse),
         )
 
     if selected != "simple":

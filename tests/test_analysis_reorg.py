@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -125,3 +126,36 @@ def test_strict_mode_postprocess():
     # Optional products fail-fast in strict mode
     with pytest.raises(Exception):  # noqa: B017
         compute_history(t_s, y_good, mu=1.0, R_body=1.0, ctx=DummyCtx(), strict=True)
+
+
+def test_process_simulation_results_uses_configured_output_cap():
+    import numpy as np
+
+    from lunaris.analysis.postprocess import process_simulation_results
+
+    n = 60_000
+    t_s = np.arange(n, dtype=float)
+    y = np.zeros((n, 6), dtype=float)
+    y[:, 0] = 1_837_400.0
+    y[:, 4] = 1_600.0
+
+    cfg = SimpleNamespace(
+        time=SimpleNamespace(max_points_cap=70_000),
+        propagator=SimpleNamespace(
+            events=SimpleNamespace(
+                detect_impact=True,
+                enable_peri_apo_events=True,
+                detect_eclipse=False,
+                impact_alt_km=0.0,
+            )
+        ),
+        flags=SimpleNamespace(enable_srp=False, enable_albedo=False, enable_thermal=False),
+    )
+    result = SimpleNamespace(t=t_s, y=y)
+
+    hist = process_simulation_results(result, cfg=cfg)
+
+    assert len(hist["t_s"]) == n
+    assert hist["sample_count_raw"] == n
+    assert hist["sample_count_returned"] == n
+    assert hist["downsampled_for_reporting"] is False

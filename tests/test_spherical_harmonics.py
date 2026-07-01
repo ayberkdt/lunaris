@@ -121,6 +121,21 @@ def _point_mass(sh, x: float, y: float, z: float, mu: float):
     pytest.skip("Module under test has no point-mass acceleration function.")
 
 
+def test_internal_sh_contract_docstrings_match_phase_and_pole_guards() -> None:
+    """Prevent reviewer-found comment drift in the SH kernel contracts."""
+    sh = _import_sh_module()
+
+    normalize = getattr(sh._apply_legendre_normalization, "py_func", sh._apply_legendre_normalization)
+    normalize_doc = normalize.__doc__ or ""
+    assert "No Condon-Shortley phase is applied" in normalize_doc
+    assert "and Condon" not in normalize_doc
+
+    pole_guard = getattr(sh._compute_pole_safe_inv_rho_sq, "py_func", sh._compute_pole_safe_inv_rho_sq)
+    pole_doc = pole_guard.__doc__ or ""
+    assert "absolute ``EPS_1E24`` rho^2 floor" in pole_doc
+    assert "no radial relative softening is applied" in pole_doc
+
+
 def _model_fields(model):
     """
     Return a dict of the model fields used by kernels, supporting old/new naming.

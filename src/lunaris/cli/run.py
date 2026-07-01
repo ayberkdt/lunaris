@@ -264,6 +264,7 @@ def main() -> int:
             ephem_manager=ephem_mgr,
             surface_provider=surface_provider,
             earth_j2=cfg.earth_j2,
+            srp=cfg.srp,
             thermal=cfg.thermal,
             albedo=cfg.albedo,
             solid_tides=cfg.solid_tides,
@@ -312,6 +313,8 @@ def main() -> int:
         "atol": cfg.propagator.atol,
         "output_dt_s": cfg.time.output_dt_s,          # strict key
         "output_dt_s_measured": dt_used,              # optional diagnostic
+        "output_epoch_count": int(len(result.t)) if getattr(result, "t", None) is not None else None,
+        "output_points_cap": int(cfg.time.max_points_cap),
         "degree": cfg.gravity.degree,
         "mu_m3s2": mu,
         "spacecraft": {

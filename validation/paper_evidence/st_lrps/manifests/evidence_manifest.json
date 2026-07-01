@@ -1,0 +1,52 @@
+{
+  "created_at_utc": "2026-06-28T22:17:57Z",
+  "runs": {
+    "worst_case": {
+      "artifacts": {},
+      "command": null,
+      "config": {
+        "content_hash": "c2c9d4338c6209db03412a10df57dc9ed16910dee3f880b32f2cd9d498144db3",
+        "file_sha256": "b77c35ad2dfd43b14cf4c35140d96530f383cb661e536558147769dd4c7a1628",
+        "path": "D:\\Masaustu\\LUNAR_SIMULATION\\configs\\st_lrps\\paper\\worst_case_analysis.json"
+      },
+      "created_at_utc": "2026-06-28T22:17:54Z",
+      "dry_run": true,
+      "environment": {
+        "collected_at_utc": "2026-06-28T22:17:57Z",
+        "cuda_available": true,
+        "device_name": "NVIDIA GeForce GTX 1660 Ti",
+        "git": {
+          "branch": "main",
+          "commit_sha": "4b33580bdb346b16702b6798f961a137142d083d",
+          "errors": {
+            "branch": null,
+            "commit": null,
+            "dirty": null,
+            "root": null
+          },
+          "is_dirty": false,
+          "repo_root": "C:/Users/ayber/Desktop/Makale/lunaris_repo"
+        },
+        "machine": "AMD64",
+        "numpy_version": "2.2.6",
+        "optional_import_errors": {},
+        "platform": "Windows-11-10.0.26200-SP0",
+        "processor": "Intel64 Family 6 Model 158 Stepping 10, GenuineIntel",
+        "python_version": "3.12.1 (tags/v3.12.1:2305ca5, Dec  7 2023, 22:03:25) [MSC v.1937 64 bit (AMD64)]",
+        "scipy_version": "1.14.1",
+        "torch_version": "2.5.1+cu121"
+      },
+      "extra": {
+        "unfilled_placeholders": [
+          "<FILL: orbit benchmark output dir containing scenario_results.csv (e.g. validation/paper_evidence/st_lrps/orbit_benchmarks/benchmark_1day_high_degree)>"
+        ]
+      },
+      "out_dir": "D:\\Masaustu\\LUNAR_SIMULATION\\validation\\paper_evidence\\st_lrps\\worst_case_analysis",
+      "run_key": "worst_case",
+      "schema_version": 1,
+      "stage": "worst-case"
+    }
+  },
+  "schema_version": 1,
+  "updated_at_utc": "2026-06-28T22:17:57Z"
+}

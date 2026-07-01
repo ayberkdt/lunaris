@@ -100,7 +100,7 @@ from lunaris.physics.lunar_albedo import (
     normalize_albedo_mode,
 )
 from lunaris.physics.relativity_effects import _external_1pn_components, _schwarzschild_components
-from lunaris.physics.solar_effects import accel_srp
+from lunaris.physics.solar_effects import SRPConfig, accel_srp
 from lunaris.physics.solid_tides import accel_solid_tides_numba
 from lunaris.physics.spherical_harmonics import (
     compute_point_mass_acceleration,
@@ -139,6 +139,7 @@ class DynamicsEngine:
         ephem_manager: Any = None,
         surface_provider: Any = None,
         earth_j2: Any = None,
+        srp: SRPConfig | None = None,
         thermal: Any = None,
         albedo: Any = None,
         solid_tides: SolidTideConfig | None = None,
@@ -152,6 +153,7 @@ class DynamicsEngine:
         self.ephem = ephem_manager
         self.surf = surface_provider
         self.earth_j2 = earth_j2
+        self.srp = srp if srp is not None else SRPConfig()
         self.thermal = thermal if thermal is not None else ThermalConfig()
         self.albedo = albedo if albedo is not None else AlbedoConfig()
         self.solid_tides = solid_tides if solid_tides is not None else SolidTideConfig()
@@ -843,10 +845,13 @@ class DynamicsEngine:
         MU_S = float(MU_SUN)
         MU_E = float(MU_EARTH)
 
-        RMOON = float(R_MOON)
-        R_EARTH = float(R_EARTH_MEAN)
-        AU_ = float(AU)
-        P1AU = float(P_SUN_1AU)
+        srp_cfg = self.srp
+        RMOON = float(getattr(srp_cfg, "R_moon_m", R_MOON))
+        R_EARTH = float(getattr(srp_cfg, "R_earth_m", R_EARTH_MEAN))
+        AU_ = float(getattr(srp_cfg, "AU_m", AU))
+        P1AU = float(getattr(srp_cfg, "P0", P_SUN_1AU))
+        SRP_MOON_ECLIPSE = bool(getattr(srp_cfg, "enable_moon_eclipse", True))
+        SRP_EARTH_ECLIPSE = bool(getattr(srp_cfg, "enable_earth_eclipse", False))
 
         ENABLE_ECLIPSE = True
 
@@ -1044,11 +1049,11 @@ class DynamicsEngine:
 
                 if USE_SRP:
                     earth_r2 = earthx * earthx + earthy * earthy + earthz * earthz
-                    enable_earth = ENABLE_ECLIPSE and (earth_r2 > 1.0e12)
+                    enable_earth = SRP_EARTH_ECLIPSE and (earth_r2 > 1.0e12)
                     asx, asy, asz = accel_srp(
                         rx, ry, rz, sunx, suny, sunz, earthx, earthy, earthz,
                         RMOON, R_EARTH, AU_, P1AU, SC_CR, SC_AREA, mass,
-                        ENABLE_ECLIPSE, enable_earth,
+                        SRP_MOON_ECLIPSE, enable_earth,
                     )
                     ax += asx
                     ay += asy
@@ -1359,7 +1364,7 @@ class DynamicsEngine:
             # D) SRP
             if USE_SRP:
                 earth_r2 = earthx * earthx + earthy * earthy + earthz * earthz
-                enable_earth = ENABLE_ECLIPSE and (earth_r2 > 1.0e12)
+                enable_earth = SRP_EARTH_ECLIPSE and (earth_r2 > 1.0e12)
 
                 asx, asy, asz = accel_srp(
                     rx,
@@ -1378,7 +1383,7 @@ class DynamicsEngine:
                     SC_CR,
                     SC_AREA,
                     mass,
-                    ENABLE_ECLIPSE,
+                    SRP_MOON_ECLIPSE,
                     enable_earth,
                 )
                 ax += asx
@@ -1761,8 +1766,9 @@ class DynamicsEngine:
 
         # SRP
         if req["use_srp"]:
+            srp_cfg = self.srp
             earth_r2 = float(earth[0] * earth[0] + earth[1] * earth[1] + earth[2] * earth[2])
-            enable_earth = bool(earth_r2 > 1.0e12)
+            enable_earth = bool(getattr(srp_cfg, "enable_earth_eclipse", False)) and bool(earth_r2 > 1.0e12)
 
             asx, asy, asz = accel_srp(
                 r[0],
@@ -1774,14 +1780,14 @@ class DynamicsEngine:
                 earth[0],
                 earth[1],
                 earth[2],
-                float(R_MOON),
-                float(R_EARTH_MEAN),
-                float(AU),
-                float(P_SUN_1AU),
+                float(getattr(srp_cfg, "R_moon_m", R_MOON)),
+                float(getattr(srp_cfg, "R_earth_m", R_EARTH_MEAN)),
+                float(getattr(srp_cfg, "AU_m", AU)),
+                float(getattr(srp_cfg, "P0", P_SUN_1AU)),
                 float(self.sc_props.cr),
                 float(self.sc_props.area_m2),
                 float(mass),
-                True,
+                bool(getattr(srp_cfg, "enable_moon_eclipse", True)),
                 enable_earth,
             )
             out["SRP"] = _norm3(asx, asy, asz)

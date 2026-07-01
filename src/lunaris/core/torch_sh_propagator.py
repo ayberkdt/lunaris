@@ -490,7 +490,11 @@ class TorchSHBatchPropagator:
             "total_raw_state_steps": total_raw_state_steps,
             "total_active_state_steps": total_active_state_steps,
             "propagation_elapsed_s": float(elapsed),
-            "impact_position_method": "line_sphere_quadratic",
+            "impact_position_method": (
+                "terrain_bisection_hybrid"
+                if getattr(self, "_terrain_enabled", False)
+                else "line_sphere_quadratic"
+            ),
             "impact_time_resolution_s": float(dt_eff),
         }
         print(

@@ -92,3 +92,27 @@ def test_boundary_statement_sanity(doc_paths):
             boundary_layers = get_boundary_layers()
             for layer in boundary_layers:
                 assert layer in content, f"Missing boundary layer '{layer}' in top README"
+
+
+def test_gravity_reference_validation_scope_is_not_overclaimed():
+    """The committed trajectory reference is frozen-frame, not GMAT-grade proof."""
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    external_doc = os.path.join(base_dir, "docs", "GRAVITY_ENGINE_EXTERNAL_VALIDATION.md")
+    gravity_ref_readme = os.path.join(base_dir, "validation", "gravity_reference", "README.md")
+    top_readme = os.path.join(base_dir, "validation", "README.md")
+
+    with open(external_doc, encoding="utf-8") as f:
+        external_content = f.read()
+    external_flat = " ".join(external_content.split())
+    assert "not an independent-integrator cross-check" in external_flat
+    assert "must not be described as physical rotating" in external_flat
+
+    with open(gravity_ref_readme, encoding="utf-8") as f:
+        gravity_ref_content = f.read()
+    gravity_ref_flat = " ".join(gravity_ref_content.split())
+    assert "not an independent-integrator or physical rotating" in gravity_ref_flat
+
+    with open(top_readme, encoding="utf-8") as f:
+        top_content = f.read()
+    top_flat = " ".join(top_content.split())
+    assert "not a physical rotating `MOON_PA` trajectory validation" in top_flat

@@ -265,6 +265,8 @@ class MonteCarloEngine:
                 ) from exc
 
         earth_j2 = getattr(cfg, "earth_j2", None)
+        srp = getattr(cfg, "srp", None)
+        albedo = getattr(cfg, "albedo", None)
         thermal = getattr(cfg, "thermal", None)
         solid_tides = getattr(cfg, "solid_tides", None)
 
@@ -279,6 +281,8 @@ class MonteCarloEngine:
             ephem_manager=ephem_manager,
             surface_provider=surface_provider,
             earth_j2=earth_j2,
+            srp=srp,
+            albedo=albedo,
             thermal=thermal,
             solid_tides=solid_tides,
             allow_identity_rotation=(ephem_manager is None),

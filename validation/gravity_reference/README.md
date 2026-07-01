@@ -32,9 +32,11 @@ recurrences are numerically unstable above degree ~80.
 **Trajectory**
 
 - `benchmarks/trajectory/grail_degree32_pyshtools_trajectory.json`: Lunaris'
-  production propagator vs an independent gravity-only arc (pyshtools force +
-  SciPy `DOP853`). Non-rotating field; ~5e-8 m position agreement over ~2
-  orbits. Rotating body-fixed fields fail closed.
+  production propagator vs an external gravity-only arc (independent pyshtools
+  force + separately configured SciPy `DOP853`). This is a non-rotating frozen
+  field regression; it is not an independent-integrator or physical rotating
+  `MOON_PA` validation. Agreement is ~5e-8 m over ~2 orbits. Rotating
+  body-fixed fields fail closed.
 
 Regenerate (needs pyshtools; not run in normal CI):
 
