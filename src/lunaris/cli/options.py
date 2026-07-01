@@ -148,6 +148,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     g_num.add_argument("--user-max-step-s", type=float, help="Max internal solver step [s]")
     g_num.add_argument("--rtol", type=float, help="Relative tolerance")
     g_num.add_argument("--atol", type=float, help="Absolute tolerance")
+    g_num.add_argument(
+        "--compute-2body-baseline",
+        type=str2bool,
+        help="Run an extra two-body diagnostic propagation after the main solve (on/off)",
+    )
     g_num.add_argument("--enable-telemetry", type=str2bool, help="Stream JSON telemetry to stdout (on/off)")
     g_num.add_argument("--telem-cadence-s", type=float, help="Telemetry stdout cadence [s]")
     g_num.add_argument(

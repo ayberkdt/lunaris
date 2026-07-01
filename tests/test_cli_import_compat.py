@@ -28,6 +28,15 @@ def test_options_parse_empty_args_without_runtime_setup() -> None:
 
     assert args.start_date is None
     assert args.surrogate_gravity_model_dir is None
+    assert args.compute_2body_baseline is None
+
+
+def test_options_parse_compute_2body_baseline_toggle() -> None:
+    options = importlib.import_module("lunaris.cli.options")
+
+    args = options.parse_args(["--compute-2body-baseline", "on"])
+
+    assert args.compute_2body_baseline is True
 
 
 def test_cli_batch_surface_points_at_batch_engine() -> None:

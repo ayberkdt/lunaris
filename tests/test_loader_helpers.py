@@ -137,6 +137,23 @@ def test_maybe_autoinclude_lunar_fk_injects_best_colocated_frame_kernel(tmp_path
     kernel_dir.mkdir()
 
     bpc = kernel_dir / "moon_pa_de440_200625.bpc"
+    old_tf = kernel_dir / "moon_de440_220930.tf.txt"
+    tf = kernel_dir / "moon_de440_250416.tf"
+    bpc.write_text("bpc", encoding="utf-8")
+    old_tf.write_text("old tf", encoding="utf-8")
+    tf.write_text("tf", encoding="utf-8")
+
+    out = maybe_autoinclude_lunar_fk([str(bpc)], "MOON_PA")
+
+    assert out[0] == str(tf)
+    assert out[1] == str(bpc)
+
+
+def test_maybe_autoinclude_lunar_fk_keeps_legacy_de440_fallback(tmp_path: Path) -> None:
+    kernel_dir = tmp_path / "kernels"
+    kernel_dir.mkdir()
+
+    bpc = kernel_dir / "moon_pa_de440_200625.bpc"
     tf = kernel_dir / "moon_de440_220930.tf.txt"
     bpc.write_text("bpc", encoding="utf-8")
     tf.write_text("tf", encoding="utf-8")

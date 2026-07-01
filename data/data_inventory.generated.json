@@ -1,31 +1,19 @@
 {
   "schema_version": 1,
-  "generated_at_utc": "2026-06-24",
+  "generated_at_utc": "2026-07-01",
   "data_root_observed": "data",
-  "purpose": "Frozen local data inventory for the Lunaris data cleanup pass. This file records current files, hashes, manifest coverage, runtime use, and known gaps before changing the data manifest or loaders.",
+  "purpose": "Current local data inventory after the NAIF ephemeris/lunar-frame kernel cleanup. This file records current files, hashes, manifest coverage, runtime use, and remaining known gaps.",
   "summary": {
-    "file_count": 33,
-    "total_size_bytes": 1889816784,
+    "file_count": 37,
+    "total_size_bytes": 1889993052,
     "manifest_false_negatives": [
-      "data/ephemeris_models/naif0012.tls is missing by exact name, but data/ephemeris_models/naif0012.tls.txt is present and accepted by runtime kernel resolution.",
-      "data/ephemeris_models/pck00011.tpc is missing by exact name, but data/ephemeris_models/pck00011.tpc.txt is present and accepted by runtime kernel resolution.",
-      "data/ephemeris_models/moon_de440_220930.tf is missing by exact name, but data/ephemeris_models/moon_de440_220930.tf.txt is present and auto-included by runtime kernel resolution.",
       "data/gravity_models/jggrx_1800f_sha.tab is missing by exact name, but data/gravity_models/jggrx_1800f_sha.tab.txt is present and used by local runtime helpers."
     ],
     "true_missing_assets": [
-      "data/datasets/st_lrps_cloud_suite.h5",
-      "data/ephemeris_models/gm_de440.tpc"
+      "data/datasets/st_lrps_cloud_suite.h5"
     ],
-    "manifest_coverage_gaps": [
-      "thermal_models is present locally but is not a lunaris-data group.",
-      "assets is present locally but is not a lunaris-data group.",
-      "PDS label/XML companion files are not represented as first-class manifest requirements.",
-      "manifest URL for moon_de440_220930.tf points to the NAIF main FK directory, which currently returns 404; the file is available under a_old_versions."
-    ],
-    "runtime_risks": [
-      "Albedo auto-selection can choose Diviner DGDR_RA rock-abundance data over LOLA LDAM albedo because selection currently prefers highest parseable raster resolution.",
-      "Ephemeris works, but SPICE GM lookup falls back for Earth/Sun because gm_de440.tpc is not loaded."
-    ]
+    "manifest_coverage_gaps": [],
+    "runtime_risks": []
   },
   "assets": [
     {
@@ -141,10 +129,10 @@
     {
       "relative_path": "data/data_sources.json",
       "group": "manifest",
-      "size_bytes": 7273,
-      "sha256": "c6affa95763b2109e238b8679fac382c070eff329966796782ee03a393c7c5f9",
+      "size_bytes": 15174,
+      "sha256": "5e9c8c249acbe48360e43d9dd1f3c6330fce6d4ea0c3ba03238c20ad3f6002e6",
       "manifest_status": "manifest_file",
-      "product_identity": "Current data source manifest before cleanup",
+      "product_identity": "Current data source manifest after NAIF kernel cleanup",
       "runtime_status": "used by lunaris-data",
       "source_url": null
     },
@@ -189,14 +177,34 @@
       "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/spk/planets/de440s.bsp"
     },
     {
+      "relative_path": "data/ephemeris_models/gm_de440.tpc",
+      "group": "ephemeris_models",
+      "size_bytes": 12406,
+      "sha256": "924ddf4fb9ead9fe8a1aa55780bcabde40b09d00065d58226e24b68d8092f140",
+      "manifest_status": "catalogued_strict_required_url",
+      "product_identity": "NAIF DE440 GM constants text PCK",
+      "runtime_status": "loaded by default config when present; used for Earth/Sun GM values",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/gm_de440.tpc"
+    },
+    {
       "relative_path": "data/ephemeris_models/moon_de440_220930.tf.txt",
       "group": "ephemeris_models",
       "size_bytes": 19571,
       "sha256": "73eb6b216c06a27c3419c4cfeaded7ffce46a714e3d4f9f5142dda51c0710f76",
-      "manifest_status": "alias_of_catalogued_optional_url",
-      "product_identity": "NAIF lunar DE440 frame kernel, text-wrapped",
-      "runtime_status": "auto-included for MOON_PA frame",
+      "manifest_status": "legacy_alias_of_catalogued_optional_url",
+      "product_identity": "Legacy NAIF lunar DE440 frame kernel, text-wrapped",
+      "runtime_status": "accepted as a legacy fallback; moon_de440_250416.tf is preferred",
       "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/fk/satellites/a_old_versions/moon_de440_220930.tf"
+    },
+    {
+      "relative_path": "data/ephemeris_models/moon_de440_250416.tf",
+      "group": "ephemeris_models",
+      "size_bytes": 19478,
+      "sha256": "a47c71e9c9f33796bdafb2c9d69a7ee447b6016ecad80f71cd6f3e479f9cf768",
+      "manifest_status": "catalogued_optional_url",
+      "product_identity": "Current NAIF lunar DE440 frame kernel",
+      "runtime_status": "preferred auto-included FK for MOON_PA/MOON_ME frames",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/fk/satellites/moon_de440_250416.tf"
     },
     {
       "relative_path": "data/ephemeris_models/moon_pa_de440_200625.bpc",
@@ -219,14 +227,34 @@
       "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/moon_pa_de440_200625.cmt"
     },
     {
+      "relative_path": "data/ephemeris_models/naif0012.tls",
+      "group": "ephemeris_models",
+      "size_bytes": 5257,
+      "sha256": "678e32bdb5a744117a467cd9601cd6b373f0e9bc9bbde1371d5eee39600a039b",
+      "manifest_status": "catalogued_required_url",
+      "product_identity": "NAIF leap seconds kernel",
+      "runtime_status": "loaded by default config",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/lsk/naif0012.tls"
+    },
+    {
       "relative_path": "data/ephemeris_models/naif0012.tls.txt",
       "group": "ephemeris_models",
       "size_bytes": 5257,
       "sha256": "678e32bdb5a744117a467cd9601cd6b373f0e9bc9bbde1371d5eee39600a039b",
       "manifest_status": "alias_of_catalogued_required_url",
       "product_identity": "NAIF leap seconds kernel, text-wrapped",
-      "runtime_status": "loaded by default config",
+      "runtime_status": "accepted legacy wrapper; exact naif0012.tls is present",
       "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/lsk/naif0012.tls"
+    },
+    {
+      "relative_path": "data/ephemeris_models/pck00011.tpc",
+      "group": "ephemeris_models",
+      "size_bytes": 131226,
+      "sha256": "3dff7b1dbeceaa01f25467767d3fa25816051c85d162d1edf04acb310ee28bb1",
+      "manifest_status": "catalogued_required_url",
+      "product_identity": "NAIF generic planetary constants text PCK",
+      "runtime_status": "loaded by default config",
+      "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc"
     },
     {
       "relative_path": "data/ephemeris_models/pck00011.tpc.txt",
@@ -235,7 +263,7 @@
       "sha256": "3dff7b1dbeceaa01f25467767d3fa25816051c85d162d1edf04acb310ee28bb1",
       "manifest_status": "alias_of_catalogued_required_url",
       "product_identity": "NAIF generic planetary constants text PCK, text-wrapped",
-      "runtime_status": "loaded by default config; does not provide Earth/Sun GM in current smoke test",
+      "runtime_status": "accepted legacy wrapper; exact pck00011.tpc is present",
       "source_url": "https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/pck00011.tpc"
     },
     {

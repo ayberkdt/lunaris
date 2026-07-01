@@ -157,16 +157,16 @@ explicit that this is a well-posed frozen-field regression test, not a physical
 rotating `MOON_PA` propagation.
 
 **What is still missing (and why).** Two stronger references are scaffolded but
-blocked on this environment, and are NOT faked:
+must still be run against pinned external tools/references, and are NOT faked:
 
 - *Independent integrator (tudatpy/Orekit/GMAT).* tudatpy is not installed
   (conda-only); the gated `tudatpy_reference.py` slot runs once it is.
-- *Physical rotating-frame gravity-only reference.* This needs SPICE lunar
-  orientation, which requires two NAIF kernels not present here: a leapseconds
-  kernel (`naif00xx.tls`, for UTC→ET) and a lunar frame kernel
-  (`moon_de440_*.tf`, to resolve the `MOON_PA` frame). The repo ships
-  `de440.bsp`, `de440s.bsp`, and `moon_pa_de440_200625.bpc` (orientation *data*)
-  but not the `.tls`/`.tf` needed to *name and time* the frame, so a rotating-Moon
-  reference cannot be built or verified here. Add those kernels (or run
-  `lunaris-data download`) to enable it; the rotating-frame manifest path already
-  fails closed (`INCOMPLETE_CONTRACT`) rather than approximating.
+- *Physical rotating-frame gravity-only reference.* The required NAIF kernel set
+  is now explicit in `data/data_sources.json` and the local data layout:
+  `naif0012.tls` for UTC to ET, `moon_de440_250416.tf` for `MOON_PA`/`MOON_ME`,
+  `moon_pa_de440_200625.bpc` for lunar orientation, plus the DE440 SPK/PCK/GM
+  support files. What is still missing is an immutable external rotating
+  gravity-only trajectory generated with that exact kernel set and a separate
+  tool/integrator. Until that reference is supplied and checked in, the
+  rotating-frame manifest path remains a fail-closed scaffold
+  (`INCOMPLETE_CONTRACT`), not a GMAT-grade physical Moon propagation claim.

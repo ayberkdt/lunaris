@@ -285,7 +285,8 @@ def load_external_ephemeris(
     path: str | Path,
     *,
     length_unit_m: float = 1000.0,
-    time_unit_s: float = 1.0,
+    time_unit_s: float | None = None,
+    time_column: str = "auto",
     time_to_seconds_from_start: bool = True,
     columns: tuple[int, int, int, int, int, int, int] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -295,13 +296,22 @@ def load_external_ephemeris(
     table whose rows are ``time x y z vx vy vz``. Header / comment lines (any
     line that does not parse as >=7 floats) are skipped. GMAT writes kilometers,
     so the default ``length_unit_m=1000.0`` converts to SI; pass ``1.0`` for a
-    file already in meters.
+    file already in meters. Time defaults to ``time_column="auto"``: a header
+    token containing ``A1ModJulian`` is treated as days and converted to seconds,
+    while elapsed-time columns are treated as seconds. Pass ``time_unit_s`` to
+    override the inferred multiplier explicitly.
 
     Parameters
     ----------
     columns : optional 7-tuple of int
         Zero-based column indices for ``(t, x, y, z, vx, vy, vz)``. If omitted,
         the first seven numeric columns are used in order.
+    time_column : {"auto", "elapsed", "a1modjulian"}
+        Interpretation for the selected time column. ``auto`` uses the parsed
+        header when available and otherwise preserves elapsed-seconds behavior.
+    time_unit_s : optional float
+        Explicit multiplier from the raw time-column values to seconds. Overrides
+        ``time_column`` when supplied.
 
     Returns
     -------
@@ -314,16 +324,29 @@ def load_external_ephemeris(
         raise FileNotFoundError(f"external ephemeris not found: {p}")
 
     rows: list[list[float]] = []
+    header_tokens: list[str] | None = None
     sep = "," if p.suffix.lower() == ".csv" else None
     with p.open("r", encoding="utf-8", errors="ignore") as fh:
         for raw in fh:
             line = raw.strip()
-            if not line or line.startswith(("#", "%", "//")):
+            if not line:
                 continue
-            parts = line.split(sep) if sep else line.split()
+            if line.startswith(("#", "%", "//")):
+                header_line = line[2:].strip() if line.startswith("//") else line[1:].strip()
+                parts = [
+                    tok.strip()
+                    for tok in (header_line.split(sep) if sep else header_line.split())
+                    if tok.strip()
+                ]
+                if len(parts) >= 7 and any(any(ch.isalpha() for ch in tok) for tok in parts):
+                    header_tokens = parts
+                continue
+            parts = [tok.strip() for tok in (line.split(sep) if sep else line.split()) if tok.strip()]
             try:
                 vals = [float(tok) for tok in parts]
             except ValueError:
+                if len(parts) >= 7:
+                    header_tokens = parts
                 continue  # header / non-numeric line
             if len(vals) >= 7:
                 rows.append(vals)
@@ -333,13 +356,107 @@ def load_external_ephemeris(
 
     arr = np.asarray(rows, dtype=np.float64)
     idx = columns if columns is not None else (0, 1, 2, 3, 4, 5, 6)
-    t = arr[:, idx[0]] * float(time_unit_s)
+    resolved_time_unit_s = _resolve_external_time_unit_s(
+        time_unit_s=time_unit_s,
+        time_column=time_column,
+        header_tokens=header_tokens,
+        time_index=int(idx[0]),
+    )
+    t_raw = arr[:, idx[0]]
     if time_to_seconds_from_start:
-        t = t - t[0]
+        t = (t_raw - t_raw[0]) * resolved_time_unit_s
+    else:
+        t = t_raw * resolved_time_unit_s
     y = np.empty((arr.shape[0], 6), dtype=np.float64)
     y[:, 0:3] = arr[:, [idx[1], idx[2], idx[3]]] * float(length_unit_m)
     y[:, 3:6] = arr[:, [idx[4], idx[5], idx[6]]] * float(length_unit_m)
     return t, y
+
+
+def _resolve_external_time_unit_s(
+    *,
+    time_unit_s: float | None,
+    time_column: str,
+    header_tokens: list[str] | None,
+    time_index: int,
+) -> float:
+    """Resolve a report time-column multiplier to seconds."""
+    if time_unit_s is not None:
+        unit = float(time_unit_s)
+        if (not np.isfinite(unit)) or unit <= 0.0:
+            raise ValueError(f"time_unit_s must be finite and > 0, got {time_unit_s!r}")
+        return unit
+
+    mode = str(time_column).strip().lower()
+    if mode not in {"auto", "elapsed", "a1modjulian"}:
+        raise ValueError(
+            "time_column must be one of 'auto', 'elapsed', or 'a1modjulian' "
+            f"(got {time_column!r})"
+        )
+
+    if mode == "auto":
+        mode = _infer_external_time_column_mode(header_tokens, time_index)
+
+    if mode == "a1modjulian":
+        return 86400.0
+    return 1.0
+
+
+def _infer_external_time_column_mode(header_tokens: list[str] | None, time_index: int) -> str:
+    """Infer elapsed seconds vs GMAT A1ModJulian days from a report header token."""
+    if not header_tokens or time_index < 0 or time_index >= len(header_tokens):
+        return "elapsed"
+    token = _normalize_report_header_token(header_tokens[time_index])
+    if "a1modjulian" in token or token.endswith("a1mjd"):
+        return "a1modjulian"
+    return "elapsed"
+
+
+def _normalize_report_header_token(token: str) -> str:
+    return "".join(ch for ch in str(token).strip().lower() if ch.isalnum())
+
+
+def _interpolate_states_by_time(
+    t_source_s: np.ndarray,
+    y_source: np.ndarray,
+    t_target_s: np.ndarray,
+) -> np.ndarray:
+    """Linearly interpolate state rows from ``t_source_s`` onto ``t_target_s``."""
+    t_src = np.asarray(t_source_s, dtype=np.float64).reshape(-1)
+    y_src = np.asarray(y_source, dtype=np.float64)
+    t_tgt = np.asarray(t_target_s, dtype=np.float64).reshape(-1)
+
+    if y_src.ndim != 2 or y_src.shape[1] != 6 or y_src.shape[0] != t_src.size:
+        raise ValueError(
+            "source ephemeris must have t shape (N,) and y shape (N,6) "
+            f"(got t={t_src.shape}, y={y_src.shape})"
+        )
+    if t_src.size < 2:
+        raise ValueError("at least two source ephemeris rows are required for time interpolation")
+    if t_tgt.size == 0:
+        return np.zeros((0, 6), dtype=np.float64)
+    if not (np.all(np.isfinite(t_src)) and np.all(np.isfinite(y_src)) and np.all(np.isfinite(t_tgt))):
+        raise ValueError("ephemeris interpolation inputs must be finite")
+
+    order = np.argsort(t_src)
+    t_sorted = t_src[order]
+    y_sorted = y_src[order]
+    if np.any(np.diff(t_sorted) <= 0.0):
+        raise ValueError("source ephemeris times must be strictly increasing after sorting")
+
+    span = max(1.0, float(t_sorted[-1] - t_sorted[0]))
+    tol = 1.0e-10 * span
+    if float(np.min(t_tgt)) < float(t_sorted[0]) - tol or float(np.max(t_tgt)) > float(t_sorted[-1]) + tol:
+        raise ValueError(
+            "target trajectory times fall outside external ephemeris range "
+            f"[{t_sorted[0]:.9g}, {t_sorted[-1]:.9g}] s"
+        )
+
+    t_eval = np.clip(t_tgt, float(t_sorted[0]), float(t_sorted[-1]))
+    out = np.empty((t_eval.size, 6), dtype=np.float64)
+    for j in range(6):
+        out[:, j] = np.interp(t_eval, t_sorted, y_sorted[:, j])
+    return out
 
 
 # =============================================================================
@@ -450,6 +567,8 @@ class _RunConfig:
     compare_vector_atol: bool = True
     gmat_report: Path | None = None
     gmat_units_km: bool = True
+    gmat_time_column: str = "auto"
+    gmat_time_unit_s: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -471,6 +590,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--gmat-traj", type=Path, default=None,
                         help="npz with arrays t,y (the Lunaris trajectory) to diff against --gmat-report")
     parser.add_argument("--gmat-meters", action="store_true", help="external report already in meters (default km)")
+    parser.add_argument(
+        "--gmat-time-column",
+        choices=("auto", "elapsed", "a1modjulian"),
+        default="auto",
+        help=(
+            "Interpret the external report time column. auto treats headers containing "
+            "A1ModJulian as days and otherwise elapsed seconds."
+        ),
+    )
+    parser.add_argument(
+        "--gmat-time-unit-s",
+        type=float,
+        default=None,
+        help="Explicit multiplier from external report time values to seconds; overrides --gmat-time-column.",
+    )
     args = parser.parse_args(argv)
 
     mu = float(MU_MOON)
@@ -500,14 +634,40 @@ def main(argv: list[str] | None = None) -> int:
     # Optional external (GMAT) report comparison against a provided Lunaris npz.
     if args.gmat_report is not None and args.gmat_traj is not None:
         t_ref, y_ref = load_external_ephemeris(
-            args.gmat_report, length_unit_m=(1.0 if args.gmat_meters else 1000.0))
+            args.gmat_report,
+            length_unit_m=(1.0 if args.gmat_meters else 1000.0),
+            time_column=str(args.gmat_time_column),
+            time_unit_s=args.gmat_time_unit_s,
+        )
         data = np.load(args.gmat_traj)
         y_test = np.asarray(data["y"], dtype=np.float64)
         if y_test.shape[0] == 6 and y_test.shape[1] != 6:
             y_test = y_test.T
-        n = min(y_test.shape[0], y_ref.shape[0])
-        gmat = ric_error_report(y_test[:n], y_ref[:n], label="Lunaris vs external (GMAT) ephemeris")
-        results["external_ephemeris"] = {"report": str(args.gmat_report), "metrics": gmat}
+        if "t" in data.files:
+            t_test = np.asarray(data["t"], dtype=np.float64).reshape(-1)
+            if t_test.shape[0] != y_test.shape[0]:
+                raise ValueError(
+                    f"--gmat-traj t/y length mismatch: t has {t_test.shape[0]} rows, y has {y_test.shape[0]}"
+                )
+            span = max(1.0, float(t_ref[-1] - t_ref[0]))
+            tol = 1.0e-10 * span
+            mask = (t_test >= float(t_ref[0]) - tol) & (t_test <= float(t_ref[-1]) + tol)
+            if not np.any(mask):
+                raise ValueError("no Lunaris trajectory samples fall within the external ephemeris time span")
+            y_test_cmp = y_test[mask]
+            y_ref_cmp = _interpolate_states_by_time(t_ref, y_ref, t_test[mask])
+            time_aligned = True
+        else:
+            n = min(y_test.shape[0], y_ref.shape[0])
+            y_test_cmp = y_test[:n]
+            y_ref_cmp = y_ref[:n]
+            time_aligned = False
+        gmat = ric_error_report(y_test_cmp, y_ref_cmp, label="Lunaris vs external (GMAT) ephemeris")
+        results["external_ephemeris"] = {
+            "report": str(args.gmat_report),
+            "time_aligned": bool(time_aligned),
+            "metrics": gmat,
+        }
         print(f"[xval] external (GMAT) compare -> pos RMS {gmat['pos_rms_m']:.3e} m | "
               f"in-track RMS {gmat['ric_intrack_rms_m']:.3e} m | n={gmat['n_samples']}")
 

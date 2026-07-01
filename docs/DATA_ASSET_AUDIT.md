@@ -18,10 +18,10 @@ Phase 2/3 cleanup is now represented in the runtime/data contract:
 - Manifest entries can declare required/optional companion files; labels and
   XML metadata are checked next to their primary rasters/kernels.
 - `thermal` and `assets` are first-class manifest groups.
-- `lunaris-data verify --strict` treats `strict_required` entries as required,
-  which surfaces the missing `gm_de440.tpc` without breaking normal local runs.
+- `lunaris-data verify --strict` treats `strict_required` entries as required;
+  `gm_de440.tpc` is now present and hash-checked.
 - `lunaris-data verify --runtime` builds a small real SPICE ephemeris table from
-  manifest-resolved files and reports GM fallback warnings.
+  manifest-resolved files and reports any GM fallback warnings.
 - `load_default_config()` opportunistically includes `gm_de440.tpc` when it is
   present, but still works with existing local data bundles that do not have it.
 - The albedo raster resolver now accepts only LOLA LDAM products; Diviner
@@ -37,11 +37,13 @@ Phase 2/3 cleanup is now represented in the runtime/data contract:
 - `st_lrps_cloud_suite.h5` is explicitly classified as an optional generated
   artifact, not an external download; when present it should be inspected and
   validated through the ST-LRPS dataset contract.
+- The current NAIF lunar DE440 frame kernel has been promoted to
+  `moon_de440_250416.tf` from the official NAIF main FK directory. The older
+  `moon_de440_220930.tf[.txt]` remains accepted only as a legacy alias.
 
 The local data root still lacks `datasets/st_lrps_cloud_suite.h5`, but that is
 now an expected optional/generated state rather than an external-data gap. The
-inventory and gap sections below remain a pre-cleanup baseline snapshot, so
-they intentionally preserve the earlier missing-GM observation.
+machine-readable inventory has been refreshed for the current NAIF kernel set.
 
 ## Executive Summary (pre-cleanup baseline)
 
@@ -82,7 +84,7 @@ The data-management layer was not yet trustworthy at the time of this snapshot
 
 | Area | Current state | Runtime status | Manifest status |
 | --- | --- | --- | --- |
-| Ephemeris | DE440 SPK, LSK, PCK, lunar BPC, lunar FK are present | Works; GM falls back without `gm_de440.tpc` | False negatives for `.txt` aliases |
+| Ephemeris | DE440 SPK, LSK, PCK, GM PCK, lunar BPC, lunar FK are present | Works; strict runtime check uses `gm_de440.tpc` when present | Canonical NAIF files plus accepted legacy aliases |
 | Gravity | `jggrx_1800f_sha.tab.txt` and label are present | Used by default gravity helpers | False negative for `.tab` exact filename |
 | Topography | `ldem_64_float` IMG/LBL/XML are present; `ldem_16_float.img` lacks canonical label pair | `ldem_64_float` samples successfully | Only IMG is catalogued; companions are not |
 | Albedo | `ldam_8_float`, `ldam_10_float`, and Diviner `dgdr_ra` are present | LDAM samples are valid; Diviner RA is a mis-selection risk | Only `ldam_8_float.img` is catalogued |
@@ -92,17 +94,14 @@ The data-management layer was not yet trustworthy at the time of this snapshot
 
 ## Exact Gaps
 
-These are not necessarily runtime failures, but they are data-management gaps:
+These are the remaining current data-management gaps:
 
-- `data/ephemeris_models/naif0012.tls` is missing by exact name; local
-  `naif0012.tls.txt` exists and runtime accepts it.
-- `data/ephemeris_models/pck00011.tpc` is missing by exact name; local
-  `pck00011.tpc.txt` exists and runtime accepts it.
-- `data/ephemeris_models/moon_de440_220930.tf` is missing by exact name; local
-  `moon_de440_220930.tf.txt` exists and runtime auto-includes it.
+- `data/ephemeris_models/naif0012.tls`, `pck00011.tpc`,
+  `gm_de440.tpc`, and `moon_de440_250416.tf` are present by exact name.
+- Legacy wrapper files such as `naif0012.tls.txt`, `pck00011.tpc.txt`, and
+  `moon_de440_220930.tf.txt` remain accepted for compatibility only.
 - `data/gravity_models/jggrx_1800f_sha.tab` is missing by exact name; local
   `jggrx_1800f_sha.tab.txt` exists and runtime helpers use it.
-- `data/ephemeris_models/gm_de440.tpc` is truly missing.
 - `data/datasets/st_lrps_cloud_suite.h5` is truly missing.
 
 ## Source URLs To Preserve
@@ -121,10 +120,10 @@ Ephemeris:
   https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/gm_de440.tpc
 - `moon_pa_de440_200625.bpc`:
   https://naif.jpl.nasa.gov/pub/naif/generic_kernels/pck/moon_pa_de440_200625.bpc
-- `moon_de440_220930.tf`:
-  https://naif.jpl.nasa.gov/pub/naif/generic_kernels/fk/satellites/a_old_versions/moon_de440_220930.tf
-- Current main-directory lunar frame alternative:
+- `moon_de440_250416.tf`:
   https://naif.jpl.nasa.gov/pub/naif/generic_kernels/fk/satellites/moon_de440_250416.tf
+- Legacy `moon_de440_220930.tf` alias:
+  https://naif.jpl.nasa.gov/pub/naif/generic_kernels/fk/satellites/a_old_versions/moon_de440_220930.tf
 
 Gravity:
 
@@ -168,7 +167,8 @@ Thermal and Diviner products:
 
 - `tests/test_ephemeris.py` and `tests/test_loader_helpers.py`: passed.
 - Default ephemeris rotation smoke: passed.
-- Direct third-body SPICE smoke: passed with Earth/Sun GM fallback warnings.
+- Direct third-body SPICE smoke: passed without Earth/Sun GM fallback warnings
+  after `gm_de440.tpc` was added.
 - Surface smoke:
   - `ldem_64_float` sampled radius near `1736681.8196862936 m`.
   - `ldam_10_float` sampled albedo near `0.1839846670627594`.
@@ -183,11 +183,13 @@ Done:
 1. Add alias and companion-file support to `lunaris-data verify`.
 2. Add `gm_de440.tpc` to the ephemeris manifest/default strict kernel set.
 3. Fix `moon_de440_220930.tf` source URL.
-4. Add `thermal` and `assets` manifest groups.
-5. Make albedo product selection LDAM-specific so Diviner `DGDR_RA` cannot be
+4. Promote the current main-directory NAIF lunar FK to `moon_de440_250416.tf`,
+   keeping `moon_de440_220930.tf[.txt]` as a legacy alias.
+5. Add `thermal` and `assets` manifest groups.
+6. Make albedo product selection LDAM-specific so Diviner `DGDR_RA` cannot be
    selected as an albedo grid.
-6. Promote source hash information from this audit into `data/data_sources.json`.
-7. Classify `datasets/st_lrps_cloud_suite.h5` as an optional generated artifact
+7. Promote source hash information from this audit into `data/data_sources.json`.
+8. Classify `datasets/st_lrps_cloud_suite.h5` as an optional generated artifact
    governed by the ST-LRPS dataset contract, not as a downloadable external
    data dependency.
 
