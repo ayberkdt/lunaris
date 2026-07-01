@@ -386,14 +386,10 @@ class MissionPropagationPage(QtWidgets.QWidget):
         layout.addWidget(self._group_mission_timeline())
         layout.addWidget(self._group_integrator_settings())
 
+        # Spacecraft Bus moved to the Force Models page (it scales the
+        # non-gravitational forces, so it belongs beside them); the Propagation
+        # page keeps only the numerical solver settings.
         actions = ActionBar()
-        self.btn_spacecraft_settings = QtWidgets.QPushButton("Spacecraft Bus")
-        self.btn_spacecraft_settings.setIcon(get_icon("fa6s.rocket", THEME["fg_main"]))
-        self.btn_spacecraft_settings.setProperty("kind", "ghost")
-        self.btn_spacecraft_settings.setToolTip("Open spacecraft mass, area, drag, and reflectivity settings.")
-        self.btn_spacecraft_settings.setAccessibleName("Spacecraft bus settings")
-        self.btn_spacecraft_settings.clicked.connect(self.spacecraft_settings_requested.emit)
-
         self.btn_solver_settings = QtWidgets.QPushButton("Solver Settings")
         self.btn_solver_settings.setIcon(get_icon("fa6s.gear", THEME["fg_main"]))
         self.btn_solver_settings.setProperty("kind", "ghost")
@@ -401,7 +397,6 @@ class MissionPropagationPage(QtWidgets.QWidget):
         self.btn_solver_settings.setAccessibleName("Advanced solver settings")
         self.btn_solver_settings.clicked.connect(self.solver_settings_requested.emit)
 
-        actions.add_action(self.btn_spacecraft_settings)
         actions.add_action(self.btn_solver_settings)
         layout.addWidget(actions)
         layout.addStretch(1)

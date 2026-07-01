@@ -958,6 +958,7 @@ def compute_history(
         idx = None
         t = t_s
         ys = y
+    returned_N = int(t.size)
 
     r = ys[:3, :]
     v = ys[3:6, :]
@@ -1014,6 +1015,10 @@ def compute_history(
         "h_norm_m2s": _as_np(hnorm, float),
         "rel_energy_drift": _as_np(relE, float),
         "rel_h_drift": _as_np(relh, float),
+        "sample_count_raw": int(N),
+        "sample_count_returned": int(returned_N),
+        "max_samples_cap": int(max_samples) if max_samples is not None else None,
+        "downsampled_for_reporting": bool(idx is not None),
         "events": {
             "peri_idx": _as_np(peri_idx, float).astype(np.int64, copy=False),
             "apo_idx": _as_np(apo_idx, float).astype(np.int64, copy=False),
@@ -1154,7 +1159,7 @@ def process_simulation_results(result: Any, ctx: Any = None, cfg: Any = None, *,
             if cap is not None:
                 cap_i = int(cap)
                 if cap_i > 0:
-                    max_samples = min(max_samples, cap_i)
+                    max_samples = cap_i
         except Exception:
             pass
 

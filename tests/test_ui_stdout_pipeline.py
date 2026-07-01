@@ -48,6 +48,18 @@ def test_valid_telemetry_line_is_not_logged(win) -> None:
     assert _log_count(w) == before
 
 
+def test_prefixed_time_s_telemetry_updates_progress(win) -> None:
+    w, _ = win
+    w.sim_state.total_duration = 200.0
+    before = _log_count(w)
+
+    w._consume_stdout_line('JSON_TELEM: {"time_s": 100.0, "alt_km": 50.0}')
+
+    assert _log_count(w) == before
+    assert w._last_telem_t_s == 100.0
+    assert w.progress_bar.value() == 500
+
+
 def test_ordinary_line_is_logged(win) -> None:
     w, _ = win
     before = _log_count(w)

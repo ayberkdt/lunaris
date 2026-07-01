@@ -73,6 +73,7 @@ except ImportError as e:
 try:
     from lunaris.ui.components.primitives import EmptyState
     from lunaris.ui.core.ui_commons import THEME
+    from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -113,6 +114,11 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
     - Eccentricity vs Time
     - Ground Track (Latitude vs Longitude)
     """
+
+    # Emitted after each buffer flush with the latest scalar sample so an owner
+    # (the page's KPI strip) can show live mission-control readouts. An empty
+    # dict means "reset to placeholders" (e.g. after Clear All).
+    sample_updated = QtCore.Signal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -161,8 +167,22 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         # clips or squishes its controls at narrow window widths (the single-row
         # layout overflowed below ~1100 px). Row 1 carries plot/time selection;
         # row 2 carries the mouse-zoom and Y-range controls.
+        # Uniform control height for every toolbar widget. Mixing the theme's
+        # default input height (~34px) with hard-coded 24px buttons/combos made
+        # the two rows look misaligned and broken, worst when the window is wide.
+        ctrl_h = DESIGN_TOKENS.controls.compact_height
+
+        # The two control rows live inside one themed toolbar surface so they
+        # read as a single cohesive control bar instead of loose widgets floating
+        # on the page background (the old look felt unfinished / debug-panel-y).
+        toolbar = QtWidgets.QFrame()
+        toolbar.setObjectName("telemetryToolbar")
+        toolbar_v = QtWidgets.QVBoxLayout(toolbar)
+        toolbar_v.setContentsMargins(12, 8, 12, 8)
+        toolbar_v.setSpacing(8)
+
         row1 = QtWidgets.QHBoxLayout()
-        row1.setContentsMargins(10, 5, 10, 0)
+        row1.setContentsMargins(0, 0, 0, 0)
         row1.setSpacing(8)
 
         row1.addWidget(QtWidgets.QLabel("Plot Type:"))
@@ -173,11 +193,12 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             "Eccentricity vs Time",
             "Ground Track"
         ])
+        self.plot_type_combo.setFixedHeight(ctrl_h)
         self.plot_type_combo.setAccessibleName("Plot type")
         self.plot_type_combo.currentTextChanged.connect(self._switch_plot)
         row1.addWidget(self.plot_type_combo)
 
-        row1.addStretch()
+        row1.addSpacing(18)
 
         # ------------------------------
         # Live Telemetry Axis Controls
@@ -185,7 +206,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         row1.addWidget(QtWidgets.QLabel("Time:"))
         self.time_axis_combo = QtWidgets.QComboBox()
         self.time_axis_combo.addItems(["Auto", "s", "min", "h", "d"])
-        self.time_axis_combo.setFixedHeight(24)
+        self.time_axis_combo.setFixedHeight(ctrl_h)
         self.time_axis_combo.setMinimumWidth(70)
         self.time_axis_combo.setAccessibleName("Time axis unit")
         self.time_axis_combo.currentTextChanged.connect(self._on_axis_controls_changed)
@@ -196,11 +217,12 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         self.chk_time_relative.setToolTip("Display time relative to first received sample.")
         self.chk_time_relative.toggled.connect(self._on_axis_controls_changed)
         row1.addWidget(self.chk_time_relative)
+        row1.addStretch()
 
-        layout.addLayout(row1)
+        toolbar_v.addLayout(row1)
 
         row2 = QtWidgets.QHBoxLayout()
-        row2.setContentsMargins(10, 0, 10, 5)
+        row2.setContentsMargins(0, 0, 0, 0)
         row2.setSpacing(8)
 
         row2.addWidget(QtWidgets.QLabel("Mouse zoom:"))
@@ -223,10 +245,12 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         self.ed_ymin = QtWidgets.QLineEdit()
         self.ed_ymin.setPlaceholderText("min")
         self.ed_ymin.setFixedWidth(70)
+        self.ed_ymin.setFixedHeight(ctrl_h)
         self.ed_ymin.setAccessibleName("Y-axis minimum")
         self.ed_ymax = QtWidgets.QLineEdit()
         self.ed_ymax.setPlaceholderText("max")
         self.ed_ymax.setFixedWidth(70)
+        self.ed_ymax.setFixedHeight(ctrl_h)
         self.ed_ymax.setAccessibleName("Y-axis maximum")
         row2.addWidget(self.ed_ymin)
         row2.addWidget(self.ed_ymax)
@@ -238,28 +262,30 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         self.spin_y_pad.setSingleStep(1.0)
         self.spin_y_pad.setValue(5.0)
         self.spin_y_pad.setFixedWidth(75)
+        self.spin_y_pad.setFixedHeight(ctrl_h)
         self.spin_y_pad.setAccessibleName("Y-axis padding percent")
         self.spin_y_pad.valueChanged.connect(self._on_axis_controls_changed)
         row2.addWidget(self.spin_y_pad)
 
         self.btn_y_apply = QtWidgets.QPushButton("Apply")
-        self.btn_y_apply.setFixedHeight(24)
+        self.btn_y_apply.setFixedHeight(ctrl_h)
         self.btn_y_apply.clicked.connect(self._apply_manual_y_range)
         row2.addWidget(self.btn_y_apply)
 
         self.btn_y_fit = QtWidgets.QPushButton("Fit")
-        self.btn_y_fit.setFixedHeight(24)
+        self.btn_y_fit.setFixedHeight(ctrl_h)
         self.btn_y_fit.clicked.connect(self._fit_y_range_to_data)
         row2.addWidget(self.btn_y_fit)
 
         self.btn_clear = QtWidgets.QPushButton("Clear All")
-        self.btn_clear.setFixedHeight(24)
+        self.btn_clear.setFixedHeight(ctrl_h)
         self.btn_clear.clicked.connect(self.clear_all)
         row2.addWidget(self.btn_clear)
 
         row2.addStretch()
 
-        layout.addLayout(row2)
+        toolbar_v.addLayout(row2)
+        layout.addWidget(toolbar)
 
         # Stacked widget for different plots
         self.plot_stack = QtWidgets.QStackedWidget()
@@ -271,6 +297,14 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         self._create_eccentricity_plot()
         self._create_ground_track_plot()
 
+        # Empty-state overlay: an idle telemetry plot with empty axes reads as
+        # "broken / unfinished". This centered overlay tells the operator the
+        # view is waiting for a run; it is hidden the moment samples arrive and
+        # shown again on Clear All.
+        self._empty_overlay = self._build_empty_overlay(self.plot_stack)
+        self._has_telemetry = False
+        self._position_empty_overlay()
+
         # Timer for buffered updates (30 FPS)
         self.update_timer = QtCore.QTimer(self)
         self.update_timer.setInterval(33)  # ~30 Hz
@@ -279,6 +313,58 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
 
         # Set initial plot
         self._switch_plot("Altitude vs Time")
+
+    # ------------------------------------------------------------------
+    # Empty-state overlay
+    # ------------------------------------------------------------------
+    def _build_empty_overlay(self, parent: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        """Build the 'waiting for telemetry' overlay shown over an idle plot."""
+        overlay = QtWidgets.QWidget(parent)
+        overlay.setObjectName("telemetryEmpty")
+        overlay.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents)
+        box = QtWidgets.QVBoxLayout(overlay)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(4)
+        box.setAlignment(QtCore.Qt.AlignCenter)
+
+        title = QtWidgets.QLabel("Waiting for telemetry")
+        title.setObjectName("telemetryEmptyTitle")
+        title.setAlignment(QtCore.Qt.AlignCenter)
+        sub = QtWidgets.QLabel(
+            "Start a mission run to stream live engineering signals here."
+        )
+        sub.setObjectName("telemetryEmptyText")
+        sub.setAlignment(QtCore.Qt.AlignCenter)
+        sub.setWordWrap(True)
+
+        box.addStretch(1)
+        box.addWidget(title, 0, QtCore.Qt.AlignCenter)
+        box.addWidget(sub, 0, QtCore.Qt.AlignCenter)
+        box.addStretch(1)
+        overlay.raise_()
+        return overlay
+
+    def _position_empty_overlay(self) -> None:
+        """Keep the overlay covering the plot stack as the page resizes."""
+        overlay = getattr(self, "_empty_overlay", None)
+        if overlay is not None and getattr(self, "plot_stack", None) is not None:
+            overlay.setGeometry(self.plot_stack.rect())
+            if overlay.isVisible():
+                overlay.raise_()
+
+    def _set_empty_visible(self, visible: bool) -> None:
+        """Show/hide the empty-state overlay and keep it correctly stacked."""
+        overlay = getattr(self, "_empty_overlay", None)
+        if overlay is None:
+            return
+        overlay.setVisible(visible)
+        if visible:
+            self._position_empty_overlay()
+            overlay.raise_()
+
+    def resizeEvent(self, event):  # noqa: N802 (Qt naming)
+        super().resizeEvent(event)
+        self._position_empty_overlay()
 
     def _create_altitude_plot(self):
         """Altitude vs Time plot (Lunar Graphite styling)."""
@@ -857,6 +943,11 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
                 f"(t={len(time_chunk)}, alt={len(alt_chunk)}, vel={len(vel_chunk)}, ecc={len(ecc_chunk)}, lat={len(lat_chunk)}, lon={len(lon_chunk)})"
             )
 
+        # First real samples — retire the empty-state overlay.
+        if not getattr(self, "_has_telemetry", False):
+            self._has_telemetry = True
+            self._set_empty_visible(False)
+
         # Append to main storage (aligned, includes NaNs)
         self.time_data.extend(time_chunk)
         self.alt_data.extend(alt_chunk)
@@ -919,6 +1010,22 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
                 # UI redraw race / curve deleted; ignore to keep stream alive
                 pass
 
+        # Publish the latest scalar sample for the KPI strip.
+        if self.time_data:
+            def _last(dq):
+                return float(dq[-1]) if dq else float("nan")
+            try:
+                self.sample_updated.emit({
+                    "t_s": _last(self.time_data),
+                    "alt_km": _last(self.alt_data),
+                    "v_km_s": _last(self.vel_data),
+                    "ecc": _last(self.ecc_data),
+                    "lat_deg": _last(self.lat_data),
+                    "lon_deg": _last(self.lon_data),
+                })
+            except Exception:
+                pass
+
     def clear_all(self, _checked: bool = False):
         """Clear all telemetry data."""
         self._buffer_lock.lock()
@@ -948,6 +1055,12 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
             self.ecc_curve.setData([], [])
             self.ground_track_curve.setData([], [])
 
+        # Back to the idle empty-state until the next run streams data.
+        self._has_telemetry = False
+        self._set_empty_visible(True)
+        # Reset the KPI strip to placeholders.
+        self.sample_updated.emit({})
+
 
 
 # =============================================================================
@@ -957,21 +1070,91 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
 class TelemetryPage(QtWidgets.QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._kpis: dict = {}
         self._build_ui()
+
+    def _kpi_chip(self, title: str) -> tuple[QtWidgets.QFrame, QtWidgets.QLabel]:
+        """A compact live readout cell (label + value) for the KPI strip."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("telemetryKpiCell")
+        v = QtWidgets.QVBoxLayout(frame)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(2)
+        title_lbl = QtWidgets.QLabel(title)
+        title_lbl.setObjectName("telemetryKpiLabel")
+        v.addWidget(title_lbl)
+        value_lbl = QtWidgets.QLabel("--")
+        value_lbl.setObjectName("telemetryKpiValue")
+        v.addWidget(value_lbl)
+        return frame, value_lbl
 
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(DESIGN_TOKENS.layout.page_gap)
 
-        # Header (section-level; the shell already provides the page title)
-        header = QtWidgets.QLabel("Real-time Mission Telemetry")
-        header.setObjectName("sectionTitle")
-        layout.addWidget(header)
+        # Live KPI strip — current mission-control readouts. Replaces the
+        # redundant "Real-time Mission Telemetry" header (the shell already
+        # titles the page) and turns an empty single-plot view into a dashboard.
+        kpi_frame = QtWidgets.QFrame()
+        kpi_frame.setObjectName("telemetryKpiStrip")
+        kpi_row = QtWidgets.QHBoxLayout(kpi_frame)
+        kpi_row.setContentsMargins(0, 0, 0, 0)
+        kpi_row.setSpacing(DESIGN_TOKENS.spacing.sm)
+        for key, title in (
+            ("t", "Mission Elapsed"),
+            ("alt", "Altitude (km)"),
+            ("vel", "Speed (km/s)"),
+            ("ecc", "Eccentricity"),
+            ("lat", "Latitude (°)"),
+            ("lon", "Longitude (°)"),
+        ):
+            chip, value_lbl = self._kpi_chip(title)
+            kpi_row.addWidget(chip, 1)
+            self._kpis[key] = value_lbl
+        layout.addWidget(kpi_frame)
 
         # Enhanced Telemetry Widget
         self.telemetry_multiplot = MultiTelemetryPlot()
+        self.telemetry_multiplot.sample_updated.connect(self._update_kpis)
         layout.addWidget(self.telemetry_multiplot, 1)
+
+    @staticmethod
+    def _fmt_elapsed(t_s: float) -> str:
+        """Human-readable mission-elapsed time from seconds."""
+        if not math.isfinite(t_s):
+            return "--"
+        t = abs(float(t_s))
+        if t < 60.0:
+            return f"{t:.1f} s"
+        if t < 3600.0:
+            return f"{int(t // 60)}m {int(t % 60):02d}s"
+        if t < DAY_S:
+            h = int(t // 3600)
+            return f"{h}h {int((t % 3600) // 60):02d}m"
+        d = int(t // DAY_S)
+        return f"{d}d {int((t % DAY_S) // 3600):02d}h"
+
+    def _update_kpis(self, sample: dict) -> None:
+        """Refresh the KPI strip from the latest telemetry sample (or reset)."""
+        if not sample:
+            for value_lbl in self._kpis.values():
+                value_lbl.setText("--")
+            return
+
+        def _fmt(x, fmt: str) -> str:
+            try:
+                xf = float(x)
+            except (TypeError, ValueError):
+                return "--"
+            return fmt.format(xf) if math.isfinite(xf) else "--"
+
+        self._kpis["t"].setText(self._fmt_elapsed(sample.get("t_s", float("nan"))))
+        self._kpis["alt"].setText(_fmt(sample.get("alt_km"), "{:,.1f}"))
+        self._kpis["vel"].setText(_fmt(sample.get("v_km_s"), "{:.3f}"))
+        self._kpis["ecc"].setText(_fmt(sample.get("ecc"), "{:.4f}"))
+        self._kpis["lat"].setText(_fmt(sample.get("lat_deg"), "{:.2f}"))
+        self._kpis["lon"].setText(_fmt(sample.get("lon_deg"), "{:.2f}"))
 
 
 

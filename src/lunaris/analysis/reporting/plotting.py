@@ -929,7 +929,7 @@ def figure_altitude_with_events(
 
 def figure_relative_drift(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt.Figure:
     """
-    Plot relative drift of conserved quantities vs time.
+    Plot relative diagnostic drift series vs time.
 
     Relative drift is computed as:
       (x - x0) / max(|x0|, eps)
@@ -962,7 +962,7 @@ def figure_relative_drift(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt
         )
 
     fig = plt.figure(figsize=(11.7, 8.3))
-    fig.suptitle("Integrator Accuracy: Relative Drift", fontsize=16, fontweight="bold", y=0.96)
+    fig.suptitle("Relative Drift Diagnostics", fontsize=16, fontweight="bold", y=0.96)
     ax = fig.add_subplot(1, 1, 1)
 
     if rel_E.size >= 2:
@@ -972,7 +972,7 @@ def figure_relative_drift(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt
             c = get_series_color("energy")
         except Exception:
             c = None
-        ax.plot(tt, yy, linewidth=1.7, label=r"Energy $\Delta \epsilon/|\epsilon_0|$", color=c)
+        ax.plot(tt, yy, linewidth=1.7, label=r"Two-body energy $\Delta \epsilon/|\epsilon_0|$", color=c)
 
     if rel_h.size >= 2:
         tt, yy = _aligned_xy(t_days, rel_h)
@@ -981,18 +981,26 @@ def figure_relative_drift(t_days: np.ndarray, inv: dict[str, np.ndarray]) -> plt
             c = get_series_color("h_norm")
         except Exception:
             c = None
-        ax.plot(tt, yy, linewidth=1.7, label=r"Ang. Mom. $\Delta h/|h_0|$", color=c)
+        ax.plot(tt, yy, linewidth=1.7, label=r"$|h|$ diagnostic $\Delta h/|h_0|$", color=c)
 
     ax.axhline(0.0, linewidth=0.9, alpha=0.5, linestyle="--", color="black", zorder=1)
     ax.set_xlabel("Time [days]", fontweight="bold")
-    ax.set_ylabel("Relative error [-]", fontweight="bold")
+    ax.set_ylabel("Relative change [-]", fontweight="bold")
     ax.grid(True, which="major", alpha=0.30)
     ax.grid(True, which="minor", alpha=0.12, linestyle=":")
     ax.minorticks_on()
     format_scientific_axis(ax, "y")
     _legend(ax, loc="best")
 
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.text(
+        0.5,
+        0.025,
+        "Two-body energy and |h| are diagnostic series; under SH/non-central or non-conservative forces they are not standalone solver-error metrics.",
+        ha="center",
+        fontsize=9,
+        color="#64748B",
+    )
+    fig.tight_layout(rect=[0, 0.055, 1, 0.95])
     return fig
 
 

@@ -24,7 +24,9 @@ Responsibilities
 
 2) Table generation (one-time)
    - Samples SPICE at a fixed step `output_dt_s` over `duration_s`.
-   - Uses a deterministic grid: t[k] = k * dt, with the last sample guaranteed <= duration_s.
+   - Uses a deterministic uniform grid: t[k] = k * dt, with the last sample
+     guaranteed >= duration_s so runtime interpolation never clamps inside the
+     requested propagation span.
    - Stores:
        * Observer→Earth and Observer→Sun position vectors in the inertial frame (meters)
        * Inertial→body-fixed attitude as a quaternion time series [w, x, y, z]
@@ -50,7 +52,8 @@ The provider contains only canonical keys (no aliases):
     Sampling step in seconds (uniform).
 
 - "t_tab_s"         : ndarray (N,), float64
-    Table timestamps in seconds relative to table start (0 ... <= duration_s).
+    Uniform table timestamps in seconds relative to table start; the final
+    timestamp is at or beyond `duration_s`.
 
 - "et0"             : float
     SPICE ephemeris time (ET) at table start.
@@ -303,11 +306,16 @@ def _require_positive(name: str, value: float) -> float:
 
 
 def _build_time_grid(duration_s: float, output_dt_s: float) -> np.ndarray:
-    """Deterministic uniform grid: 0, dt, 2dt, ... <= duration."""
+    """Deterministic uniform grid that covers the requested duration."""
     dur = float(duration_s)
     dt = float(output_dt_s)
-    # +1e-12 to reduce off-by-one from binary float ratios.
-    n = int(np.floor(dur / dt + 1.0e-12)) + 1
+    # The runtime samplers assume a uniform dt_s, so extend to the next dt node
+    # instead of appending a nonuniform final timestamp at exactly duration_s.
+    ratio = dur / dt
+    nearest = float(np.round(ratio))
+    tol = 1.0e-12 * max(1.0, abs(ratio))
+    steps = int(nearest) if abs(ratio - nearest) <= tol else int(np.ceil(ratio))
+    n = max(1, steps + 1)
     return np.arange(n, dtype=np.float64) * dt
 
 

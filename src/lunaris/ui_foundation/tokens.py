@@ -162,7 +162,7 @@ class LayoutTokens:
     shell_gap: int = 12
     page_gap: int = 16
     section_padding: int = 16
-    page_max_width: int = 1180
+    page_max_width: int = 1440
     nav_width: int = 216
     nav_compact_width: int = 188
     nested_nav_width: int = 176

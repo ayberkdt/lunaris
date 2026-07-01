@@ -110,6 +110,8 @@ def test_build_command_uses_modular_state_objects() -> None:
     assert "--kernel-dir" in command
     assert "--gravity-file-path" in command
     assert "--adaptive-table" in command
+    assert command[command.index("--enable-telemetry") + 1] == "on"
+    assert command[command.index("--telem-cadence-s") + 1] == "300"
     assert "--enable-relativity-1pn" in command
     assert "--albedo-root" not in command
     assert "--save-csv" not in command

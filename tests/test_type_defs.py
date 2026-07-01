@@ -230,6 +230,16 @@ def test_time_config_enforces_output_grid_cap_when_output_dt_is_set():
         TimeConfig(duration_s=100000.0, output_dt_s=1.0, max_points_cap=100_000)
 
 
+def test_propagator_config_accepts_positive_telemetry_cadence():
+    cfg = PropagatorConfig(enable_telemetry=True, telem_cadence_s=30.0)
+
+    assert cfg.enable_telemetry is True
+    assert cfg.telem_cadence_s == 30.0
+
+    with pytest.raises(ValueError):
+        PropagatorConfig(telem_cadence_s=-1.0)
+
+
 # =============================================================================
 # 6) InitialState
 # =============================================================================

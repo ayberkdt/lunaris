@@ -550,6 +550,8 @@ class PropagatorConfig:
     # Runtime / logging
     verbose: bool = True
     heartbeat_hours: float = 6.0
+    enable_telemetry: bool = False
+    telem_cadence_s: float = 0.0
 
     # Cooperative stop
     stop_file: str | None = None
@@ -596,6 +598,9 @@ class PropagatorConfig:
 
         if self.heartbeat_hours <= 0.0:
             raise ValueError(f"heartbeat_hours must be > 0, got {self.heartbeat_hours!r}")
+
+        if self.telem_cadence_s < 0.0 or not np.isfinite(self.telem_cadence_s):
+            raise ValueError(f"telem_cadence_s must be finite and >= 0, got {self.telem_cadence_s!r}")
 
         if self.chunk_s is not None and self.chunk_s <= 0.0:
             raise ValueError(f"chunk_s must be > 0 if set, got {self.chunk_s!r}")

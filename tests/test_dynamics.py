@@ -16,9 +16,11 @@ except Exception as e:  # pragma: no cover
     pytest.skip(f"core.dynamics not importable: {e}", allow_module_level=True)
 
 try:
+    from lunaris.common.constants import AU, MU_MOON, R_MOON_MEAN
     from lunaris.common.math_utils import quat_rotate_np
     from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
-    from lunaris.physics.spherical_harmonics import GravityModel
+    from lunaris.physics.solar_effects import SRPConfig
+    from lunaris.physics.spherical_harmonics import GravityModel, compute_point_mass_acceleration
 except Exception as e:  # pragma: no cover
     pytest.skip(f"common.type_defs not importable: {e}", allow_module_level=True)
 
@@ -159,6 +161,52 @@ def test_acceleration_breakdown_smoke(engine_point_mass: tuple[DynamicsEngine, c
     for _k, v in comp.items():
         assert math.isfinite(float(v))
         assert float(v) >= 0.0
+
+
+def test_srp_config_controls_dynamics_eclipse() -> None:
+    class _Ephem:
+        def get_data_provider(self):
+            return {
+                "dt_s": 60.0,
+                "r_sun_tab_m": np.tile(np.array([AU, 0.0, 0.0], dtype=np.float64), (2, 1)),
+                "r_earth_tab_m": np.zeros((2, 3), dtype=np.float64),
+                "q_i2f_tab": np.tile(np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64), (2, 1)),
+            }
+
+    flags = PerturbationFlags(enable_sh=False, enable_srp=True)
+    sc = SpacecraftProps(mass_kg=12.0, area_m2=2.0, cr=1.8, cd=2.2)
+    r = np.array([-(R_MOON_MEAN + 50e3), 0.0, 0.0], dtype=np.float64)
+    y = np.r_[r, [0.0, 0.0, 0.0]]
+    point_mass = np.array(
+        compute_point_mass_acceleration(r[0], r[1], r[2], MU_MOON),
+        dtype=np.float64,
+    )
+
+    default = DynamicsEngine(
+        sc_props=sc,
+        flags=flags,
+        ephem_manager=_Ephem(),
+        srp=SRPConfig(),
+        allow_identity_rotation=True,
+    )
+    default_rhs = default.build_rhs(force_rebuild=True)
+    default_srp = np.asarray(default_rhs(0.0, y), dtype=np.float64)[3:6] - point_mass
+
+    np.testing.assert_allclose(default_srp, 0.0, rtol=0.0, atol=0.0)
+    assert default.get_acceleration_breakdown(0.0, y)["SRP"] == pytest.approx(0.0)
+
+    no_shadow = DynamicsEngine(
+        sc_props=sc,
+        flags=flags,
+        ephem_manager=_Ephem(),
+        srp=SRPConfig(enable_moon_eclipse=False),
+        allow_identity_rotation=True,
+    )
+    no_shadow_rhs = no_shadow.build_rhs(force_rebuild=True)
+    no_shadow_srp = np.asarray(no_shadow_rhs(0.0, y), dtype=np.float64)[3:6] - point_mass
+
+    assert float(np.linalg.norm(no_shadow_srp)) > 0.0
+    assert no_shadow.get_acceleration_breakdown(0.0, y)["SRP"] > 0.0
 
 
 def test_surrogate_gravity_provider_can_drive_python_rhs() -> None:

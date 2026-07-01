@@ -148,6 +148,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     g_num.add_argument("--user-max-step-s", type=float, help="Max internal solver step [s]")
     g_num.add_argument("--rtol", type=float, help="Relative tolerance")
     g_num.add_argument("--atol", type=float, help="Absolute tolerance")
+    g_num.add_argument("--enable-telemetry", type=str2bool, help="Stream JSON telemetry to stdout (on/off)")
+    g_num.add_argument("--telem-cadence-s", type=float, help="Telemetry stdout cadence [s]")
+    g_num.add_argument(
+        "--telemetry-cadence-s",
+        dest="telem_cadence_s",
+        type=float,
+        help="Alias for --telem-cadence-s",
+    )
 
     # ---------------------------
     # Output & Assets (OutputConfig + assets)
@@ -229,6 +237,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("--ldem-ppd must be positive.")
     if args.user_max_step_s is not None and args.user_max_step_s <= 0:
         parser.error("--user-max-step-s must be positive.")
+    if args.telem_cadence_s is not None and args.telem_cadence_s <= 0:
+        parser.error("--telem-cadence-s must be positive.")
     if args.tide_k2 is not None and args.tide_k2 < 0.0:
         parser.error("--tide-k2 must be >= 0.")
     if args.tide_k3 is not None and args.tide_k3 < 0.0:

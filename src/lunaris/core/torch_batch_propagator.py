@@ -418,7 +418,11 @@ class TorchBatchPropagator:
             "active_state_steps_per_second": float(total_active_steps) / max(t_prop, 1e-9),
             "propagation_elapsed_s": float(t_prop),
             "impacted_sample_count": int(hit_indices.size),
-            "impact_position_method": "line_sphere_quadratic",
+            "impact_position_method": (
+                "terrain_bisection_hybrid"
+                if getattr(self, "_terrain_enabled", False)
+                else "line_sphere_quadratic"
+            ),
             "impact_time_resolution_s": float(dt_eff),
         }
         impact_positions = impact_pos_t.detach().cpu().numpy().astype(np.float64)

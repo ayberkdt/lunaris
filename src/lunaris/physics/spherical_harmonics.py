@@ -365,10 +365,11 @@ def _apply_legendre_normalization(
     scale_m_table: np.ndarray
 ) -> None:
     """
-    Applies per-order scaling (sqrt(2) and Condon–Shortley phase) in-place.
+    Applies per-order sqrt(2) scaling in-place for fully normalized real
+    geodesy harmonics.
 
-    This final step adjusts the ALFs and their derivatives to match the
-    fully-normalized geodesy convention.
+    No Condon-Shortley phase is applied. The ALF recurrence is intentionally
+    built for the GRAIL/geodesy convention, where that phase is absent.
     """
     for n in range(max_degree + 1):
         # Accessing rows directly for better cache locality in Numba
@@ -561,20 +562,20 @@ def _transform_cartesian_to_spherical_basis(x: float, y: float, z: float):
 
 
 @njit(cache=True)
-def _compute_pole_safe_inv_rho_sq(rho_sq: float, r: float) -> float:
+def _compute_pole_safe_inv_rho_sq(rho_sq: float, _r: float) -> float:
     """
     Computes 1/rho^2 safely near the planetary poles.
 
-    Uses a relative softening factor (epsilon) based on radial distance.
-    If the position is too close to the pole, it nullifies the term to prevent
-    numerical spikes in the longitudinal acceleration.
+    The current guard uses the absolute ``EPS_1E24`` rho^2 floor. The radial
+    argument is retained for call-site symmetry with the Cartesian conversion
+    helper, but no radial relative softening is applied.
     """
 
     # If we are effectively at the pole, return 0 to bypass longitudinal forces
     if rho_sq < EPS_1E24:
         return 0.0
 
-    # Standard inverse with a small softening constant to ensure stability
+    # Standard inverse with the same tiny absolute floor used for the cutoff.
     return 1.0 / (rho_sq + EPS_1E24)
 
 
@@ -752,7 +753,7 @@ def _compute_sh_acceleration_serial(
     err_dr, err_dphi, err_dlambda = 0.0, 0.0, 0.0
 
     # 3. Non-Spherical Terms (Perturbations)
-    if eval_degree >= 2:
+    if eval_degree >= 1:
         # Precompute Legendre and Trigonometric lookup tables
         m_cutoff = _prepare_evaluation_tables(
             sin_phi, cos_phi, cos_lon, sin_lon, eval_degree,
@@ -761,13 +762,13 @@ def _compute_sh_acceleration_serial(
         )
 
         r_ratio_base = r_ref * inv_r
-        # r_ratio starts at (R_ref/r)^2 for degree n=2
-        r_ratio_n = r_ratio_base * r_ratio_base
+        # r_ratio starts at (R_ref/r)^1 for degree n=1.
+        r_ratio_n = r_ratio_base
         mu_inv_r = mu * inv_r
         mu_inv_r_sq = mu * inv_r_sq
 
         # Outer Loop: Summation by Degree (n)
-        for n in range(2, eval_degree + 1):
+        for n in range(1, eval_degree + 1):
             m_limit = _imin(m_cutoff, n)
 
             # Row access for current degree
@@ -859,7 +860,7 @@ def _compute_sh_acceleration_parallel(
     dv_dphi = 0.0
     dv_dlambda = 0.0
 
-    if eval_degree >= 2:
+    if eval_degree >= 1:
         # Precompute shared tables (Legendre/Trig) - Note: This part is serial!
         m_cutoff = _prepare_evaluation_tables(
             sin_phi, cos_phi, cos_lon, sin_lon, eval_degree,
@@ -873,7 +874,7 @@ def _compute_sh_acceleration_parallel(
 
         # 2. Parallel Partitioning
         block_size = _get_optimal_block_size(eval_degree)
-        n_start, n_stop = 2, eval_degree + 1
+        n_start, n_stop = 1, eval_degree + 1
         num_blocks = (n_stop - n_start + block_size - 1) // block_size
 
         # Race-free partial sum buffers
@@ -1082,7 +1083,7 @@ def _compute_sh_acceleration_dual_numba(
     dv_dr_hi, dv_dp_hi, dv_dl_hi = -mu * inv_r_sq, 0.0, 0.0
     err_dr_hi, err_dp_hi, err_dl_hi = 0.0, 0.0, 0.0
 
-    if n_hi >= 2:
+    if n_hi >= 1:
         # Precompute tables for the HIGHER degree (covers both)
         m_cutoff = _prepare_evaluation_tables(
             sin_phi, cos_phi, cos_lon, sin_lon, n_hi,
@@ -1091,12 +1092,12 @@ def _compute_sh_acceleration_dual_numba(
         )
 
         r_ratio_base = r_ref * inv_r
-        r_ratio_n = r_ratio_base * r_ratio_base
+        r_ratio_n = r_ratio_base
         mu_inv_r = mu * inv_r
         mu_inv_r_sq = mu * inv_r_sq
 
         # 3. Main Loop: Unified Summation
-        for n in range(2, n_hi + 1):
+        for n in range(1, n_hi + 1):
             m_limit = _imin(m_cutoff, n)
 
             c_row, s_row = c_coeffs[n], s_coeffs[n]

@@ -56,6 +56,29 @@ def _warn(log_warning: Callable[[str], None] | None, message: str) -> None:
         log_warning(message)
 
 
+def _timeline_duration_s(timeline: Mapping[str, Any]) -> float | None:
+    raw = str(timeline.get("duration", "")).strip()
+    val = coerce_positive_float(raw)
+    if val is None:
+        return None
+
+    unit = str(timeline.get("unit", "Days")).lower().strip()
+    if unit.startswith("hour"):
+        return float(val) * 3600.0
+    return float(val) * 86400.0
+
+
+def _ui_telemetry_cadence_s(timeline: Mapping[str, Any], output_dt_s: str | None) -> float:
+    dt = coerce_positive_float(output_dt_s)
+    if dt is not None:
+        cadence = float(dt) * 10.0
+    else:
+        duration_s = _timeline_duration_s(timeline)
+        cadence = (float(duration_s) / 600.0) if duration_s else 60.0
+
+    return max(5.0, min(600.0, float(cadence)))
+
+
 def build_preflight_snapshot(
     *,
     orbit: Mapping[str, Any],
@@ -208,6 +231,10 @@ def build_command(
         command.extend(["--samples-per-period", samples_per_period])
     elif dt_out:
         command.extend(["--output-dt-s", dt_out])
+
+    telemetry_dt = None if output_mode == "spp" else dt_out
+    command.extend(["--enable-telemetry", "on"])
+    command.extend(["--telem-cadence-s", f"{_ui_telemetry_cadence_s(timeline, telemetry_dt):g}"])
 
     gravity_section = forces.get("gravity", {}) or {}
     gravity_enabled = bool(gravity_section.get("enabled", True))

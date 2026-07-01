@@ -349,18 +349,28 @@ class MonteCarloPage(QtWidgets.QWidget):
         left_scroll.setMinimumWidth(320)
         run_root.addWidget(left_scroll, 6)
 
-        # ----- Right: run controls + metrics ---------------------------------
+        # ----- Right: run controls + metrics (scrollable) --------------------
+        # The right column must scroll independently like the left one. Without
+        # its own scroll area the run-controls + 12-row results stack overflowed
+        # short windows, squeezing widgets below their minimum size — which is
+        # what made the text overlap and clipped the Run / Open Folder buttons.
+        right_scroll = QtWidgets.QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        right_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+
         right_widget = QtWidgets.QWidget()
         right_layout = QtWidgets.QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setContentsMargins(0, 0, 8, 0)
         right_layout.setSpacing(12)
 
         right_layout.addWidget(self._card_run_controls())
         right_layout.addWidget(self._card_metrics())
         right_layout.addStretch(1)
 
-        right_widget.setMinimumWidth(300)
-        run_root.addWidget(right_widget, 4)
+        right_scroll.setWidget(right_widget)
+        right_scroll.setMinimumWidth(340)
+        run_root.addWidget(right_scroll, 4)
 
         # Backend comparison card lives below the existing run cards so users
         # discover it after configuring a baseline run.  The widget is
@@ -1259,8 +1269,9 @@ class MonteCarloPage(QtWidgets.QWidget):
         _add("backend",        "Backend")
 
         sep = QtWidgets.QFrame()
+        sep.setObjectName("formDivider")
         sep.setFrameShape(QtWidgets.QFrame.HLine)
-        sep.setFrameShadow(QtWidgets.QFrame.Plain)
+        sep.setFixedHeight(1)
         layout.addWidget(sep)
 
         self.btn_open_report = QtWidgets.QPushButton("  Open PDF Report")

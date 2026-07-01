@@ -55,6 +55,15 @@ source, contracts, harness documentation, and small reference files.
   harmonic cross-check is pinned against closed-form point-mass and J2 anchors
   plus the real lunar gravity model.
 
+- `validation/gravity_reference/`
+  contains immutable field and trajectory reference contracts for the lunar
+  spherical-harmonic gravity engine. The committed trajectory benchmark is a
+  non-rotating frozen-field regression using an independent pyshtools force
+  reference and separately configured SciPy `DOP853`; it is not a physical
+  rotating `MOON_PA` trajectory validation and not an independent-integrator
+  claim. Rotating body-fixed manifests fail closed until the required SPICE
+  lunar frame/time kernels and an external trajectory reference are supplied.
+
 ## Gravity Benchmark Layout
 
 The gravity benchmark command is exposed by:
