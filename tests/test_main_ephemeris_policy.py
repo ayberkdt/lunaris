@@ -195,7 +195,7 @@ def test_apply_args_to_config_canonicalizes_offset_start_dates_to_utc() -> None:
 
     assert cfg2.time.start_date == "2026-05-10T16:19:47Z"
 
-
+@pytest.mark.requires_data
 def test_apply_args_to_config_applies_2body_baseline_toggle() -> None:
     cfg = load_default_config()
     args = main.parse_args(["--compute-2body-baseline", "on"])

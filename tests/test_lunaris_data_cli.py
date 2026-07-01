@@ -187,8 +187,8 @@ def _docs_preset_entries() -> dict[str, list[str]]:
         if item.startswith("all `") and item.endswith("` entries"):
             base = item.split("`", 2)[1]
             parsed[current].extend(parsed[base])
-        elif item.startswith("`") and item.endswith("`"):
-            parsed[current].append(item.strip("`"))
+        elif item.startswith("`"):
+            parsed[current].append(item.split("`")[1])
     return parsed
 
 
