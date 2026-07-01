@@ -11,7 +11,13 @@ import numpy as np
 import pytest
 
 from lunaris.common.constants import MU_MOON, R_MOON
-from lunaris.common.type_defs import EventConfig, PerturbationFlags, PropagatorConfig, SpacecraftProps, TimeConfig
+from lunaris.common.type_defs import (
+    EventConfig,
+    PerturbationFlags,
+    PropagatorConfig,
+    SpacecraftProps,
+    TimeConfig,
+)
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagation import propagator as prop_mod
 from lunaris.core.propagation.propagator import _osculating_periapsis_alt_km, _resolve_atol
