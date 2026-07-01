@@ -393,6 +393,8 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
         prop_cfg = replace(prop_cfg, rtol=float(args.rtol))
     if args.atol is not None:
         prop_cfg = replace(prop_cfg, atol=float(args.atol))
+    if getattr(args, "compute_2body_baseline", None) is not None:
+        prop_cfg = replace(prop_cfg, compute_2body_baseline=bool(args.compute_2body_baseline))
     if args.enable_telemetry is not None:
         prop_cfg = replace(prop_cfg, enable_telemetry=bool(args.enable_telemetry))
     if args.telem_cadence_s is not None:

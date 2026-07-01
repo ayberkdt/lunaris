@@ -70,7 +70,9 @@ These are optional external validation extensions, not blockers for the current
 in-repo convention invariant:
 
 1. Install `tudatpy` and run the gated C++ toolkit cross-check.
-2. Add NAIF lunar-frame kernels (`naif00xx.tls`, `moon_de440_*.tf`, or
-   `lunaris-data download`) for a physical rotating-frame gravity-only reference.
+2. Generate and freeze a physical rotating-frame gravity-only trajectory
+   reference using the manifest-backed NAIF lunar kernel set
+   (`naif0012.tls`, `moon_de440_250416.tf`, `moon_pa_de440_200625.bpc`, and the
+   DE440 support kernels).
 3. Extend the optional `pyshtools` statistical field validation to degree 200 if
    a future paper claim needs that external degree coverage.

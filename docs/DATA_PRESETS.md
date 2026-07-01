@@ -38,7 +38,7 @@ on `list` or `verify`.
 - `naif_spk_de440`
 - `naif_pck_pck00011`
 - `naif_moon_pa_de440`
-- `naif_moon_fk_de440`
+- `naif_moon_fk_de440` (`moon_de440_250416.tf`; legacy `moon_de440_220930.tf[.txt]` remains accepted as an alias)
 - `grail_gravity_jggrx`
 
 `full-gravity`:

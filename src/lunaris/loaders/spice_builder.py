@@ -239,14 +239,16 @@ def maybe_autoinclude_lunar_fk(kernels: Sequence[str], fixed_frame: str) -> list
         full = name.lower()
         base = normalize_kernel_name(full)
 
-        if base == "moon_de440_220930.tf":
+        if base == "moon_de440_250416.tf":
             return (0, full)
-        if base.startswith("moon_de440_") and base.endswith(".tf"):
+        if base == "moon_de440_220930.tf":
             return (1, full)
-        if "de440" in base and base.endswith(".tf"):
+        if base.startswith("moon_de440_") and base.endswith(".tf"):
             return (2, full)
-        if "moon" in base and is_kernel_with_base_ext(full, SPICE_FRAME_BASE_EXTS):
+        if "de440" in base and base.endswith(".tf"):
             return (3, full)
+        if "moon" in base and is_kernel_with_base_ext(full, SPICE_FRAME_BASE_EXTS):
+            return (4, full)
         return (9, full)
 
     selected: Path | None = None

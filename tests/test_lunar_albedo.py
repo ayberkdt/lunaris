@@ -218,6 +218,46 @@ def test_dynamics_albedo_facets_adds_finite_acceleration():
     assert breakdown["Albedo"] > 0.0
 
 
+def test_dynamics_albedo_facets_eclipse_uses_earth_vector_in_rhs():
+    sc = SpacecraftProps(mass_kg=100.0, area_m2=2.0, cr=1.2)
+    y = np.asarray([R_MOON + 500_000.0, 0.0, 0.0, 0.0, 1600.0, 0.0], dtype=np.float64)
+    base = DynamicsEngine(
+        sc_props=sc,
+        flags=PerturbationFlags(enable_sh=False, enable_albedo=False),
+        allow_identity_rotation=True,
+    )
+    no_eclipse = DynamicsEngine(
+        sc_props=sc,
+        flags=PerturbationFlags(enable_sh=False, enable_albedo=True),
+        ephem_manager=_StubEphem((AU, 0.0, 0.0), (3.84e8, 0.0, 0.0)),
+        albedo=AlbedoConfig(
+            albedo_model="lambert_facets",
+            facet_lat_count=6,
+            facet_lon_count=12,
+            enable_eclipse=False,
+        ),
+    )
+    eclipsed = DynamicsEngine(
+        sc_props=sc,
+        flags=PerturbationFlags(enable_sh=False, enable_albedo=True),
+        ephem_manager=_StubEphem((AU, 0.0, 0.0), (3.84e8, 0.0, 0.0)),
+        albedo=AlbedoConfig(
+            albedo_model="lambert_facets",
+            facet_lat_count=6,
+            facet_lon_count=12,
+            enable_eclipse=True,
+        ),
+    )
+
+    d_base = base.build_rhs(force_rebuild=True)(0.0, y)
+    d_no_eclipse = no_eclipse.build_rhs(force_rebuild=True)(0.0, y)
+    d_eclipsed = eclipsed.build_rhs(force_rebuild=True)(0.0, y)
+
+    assert np.linalg.norm(d_no_eclipse[3:6] - d_base[3:6]) > 0.0
+    np.testing.assert_allclose(d_eclipsed[3:6], d_base[3:6], rtol=0.0, atol=1e-18)
+    assert eclipsed.get_acceleration_breakdown(0.0, y)["Albedo"] == pytest.approx(0.0, abs=1e-30)
+
+
 def test_dynamics_albedo_disabled_leaves_rhs_unchanged():
     sc = SpacecraftProps(mass_kg=100.0, area_m2=2.0, cr=1.2)
     y = np.asarray([R_MOON + 1_000_000.0, 0.0, 0.0, 0.0, 1600.0, 0.0], dtype=np.float64)

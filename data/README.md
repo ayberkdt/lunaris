@@ -48,6 +48,13 @@ are also checked, and hash-checked when their manifest entry records a SHA-256.
 builds a small SPICE ephemeris table from the resolved kernels, so the check
 covers both file presence and runtime readability.
 
+Physical lunar `MOON_PA` validation requires the manifest-backed NAIF kernel set:
+`naif0012.tls`, `moon_de440_250416.tf`, `moon_pa_de440_200625.bpc`,
+`pck00011.tpc`, `gm_de440.tpc`, and a DE440 SPK (`de440.bsp` or `de440s.bsp`).
+Use `lunaris-data download --preset minimal` to acquire the official entries
+recorded in `data_sources.json`; older `moon_de440_220930.tf[.txt]` files are
+accepted only as legacy aliases.
+
 ## Generated Datasets
 
 `data/datasets/st_lrps_cloud_suite.h5` is not a download target. It is an

@@ -61,8 +61,10 @@ source, contracts, harness documentation, and small reference files.
   non-rotating frozen-field regression using an independent pyshtools force
   reference and separately configured SciPy `DOP853`; it is not a physical
   rotating `MOON_PA` trajectory validation and not an independent-integrator
-  claim. Rotating body-fixed manifests fail closed until the required SPICE
-  lunar frame/time kernels and an external trajectory reference are supplied.
+  claim. The required SPICE lunar frame/time kernels are now manifest-backed,
+  including `naif0012.tls` and `moon_de440_250416.tf`; rotating body-fixed
+  manifests still fail closed until an external rotating trajectory reference is
+  supplied.
 
 ## Gravity Benchmark Layout
 

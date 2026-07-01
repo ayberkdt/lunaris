@@ -564,7 +564,7 @@ class PropagatorConfig:
     checkpoint_mode: str = "full"
 
     # Baseline run (e.g., 2-body comparison)
-    compute_2body_baseline: bool = True
+    compute_2body_baseline: bool = False
     baseline_rtol: float = 1e-12
     baseline_atol: float = 1e-14
 

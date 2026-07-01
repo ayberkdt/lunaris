@@ -194,3 +194,13 @@ def test_apply_args_to_config_canonicalizes_offset_start_dates_to_utc() -> None:
     cfg2 = main.apply_args_to_config(cfg, args)
 
     assert cfg2.time.start_date == "2026-05-10T16:19:47Z"
+
+
+def test_apply_args_to_config_applies_2body_baseline_toggle() -> None:
+    cfg = load_default_config()
+    args = main.parse_args(["--compute-2body-baseline", "on"])
+
+    cfg2 = main.apply_args_to_config(cfg, args)
+
+    assert cfg.propagator.compute_2body_baseline is False
+    assert cfg2.propagator.compute_2body_baseline is True

@@ -94,6 +94,44 @@ def _resolve_atol(cfg: PropagatorConfig, n_state: int) -> float | np.ndarray:
     return vec
 
 
+def _osculating_periapsis_alt_km(y: Any, mu_m3s2: float, R_ref_m: float) -> float | None:
+    """Return osculating conic periapsis altitude from a Cartesian state.
+
+    The p/(1+e) form works for elliptic, parabolic, and hyperbolic conics when
+    angular momentum is non-zero. ``None`` means the state is too degenerate to
+    infer a useful periapsis for step-size policy.
+    """
+    arr = np.asarray(y, dtype=np.float64).reshape(-1)
+    if arr.size < 6:
+        return None
+
+    mu = float(mu_m3s2)
+    R_ref = float(R_ref_m)
+    if (not np.isfinite(mu)) or mu <= 0.0 or (not np.isfinite(R_ref)) or R_ref <= 0.0:
+        return None
+
+    r = arr[0:3]
+    v = arr[3:6]
+    if not (np.all(np.isfinite(r)) and np.all(np.isfinite(v))):
+        return None
+
+    rn = float(np.linalg.norm(r))
+    h_vec = np.cross(r, v)
+    h2 = float(np.dot(h_vec, h_vec))
+    if rn <= 0.0 or h2 <= 0.0:
+        return None
+
+    ecc_vec = np.cross(v, h_vec) / mu - r / rn
+    ecc = float(np.linalg.norm(ecc_vec))
+    if (not np.isfinite(ecc)) or ecc < 0.0:
+        return None
+
+    rp = (h2 / mu) / (1.0 + ecc)
+    if (not np.isfinite(rp)) or rp <= 0.0:
+        return None
+    return float((rp - R_ref) / 1000.0)
+
+
 def propagate(
     dynamics: DynamicsEngine,
     y0: Any,
@@ -258,13 +296,23 @@ def propagate(
     topo_present = topo_grid is not None
 
     nyq_max: float | None = None
+    nyq_r_min_alt_km: float | None = None
     if bool(getattr(cfg, "use_nyquist_max_step", False)):
         try:
+            guard_alt_km = float(_get_impact_alt_km(cfg) if _get_detect_impact(cfg) else 0.0)
+            if topo_present:
+                guard_alt_km = 0.0
+            peri_alt_km = _osculating_periapsis_alt_km(y0_arr, float(mu_m3s2), float(R_ref_m))
+            nyq_r_min_alt_km = (
+                max(float(guard_alt_km), float(peri_alt_km))
+                if peri_alt_km is not None
+                else float(guard_alt_km)
+            )
             nyq_max = float(nyquist_max_step_s(
                 R_ref_m=float(R_ref_m),
                 mu_m3s2=float(mu_m3s2),
                 degree=int(max(1, degree)),
-                r_min_alt_km=(0.0 if topo_present else float(_get_impact_alt_km(cfg) if _get_detect_impact(cfg) else 0.0)),
+                r_min_alt_km=float(nyq_r_min_alt_km),
                 safety_div=float(getattr(cfg, "nyquist_safety_div", 8.0)),
                 v_margin=float(getattr(cfg, "nyquist_v_margin", 1.2)),
             ))
@@ -655,6 +703,8 @@ def propagate(
         "method_symplectic": float(1.0 if _is_symplectic_method(getattr(cfg, "method", "DOP853")) else 0.0),
         "symplectic_violation": float(1.0 if _violations else 0.0),
     }
+    if nyq_r_min_alt_km is not None:
+        res.diagnostics["nyquist_r_min_alt_km"] = float(nyq_r_min_alt_km)
     if _violations:
         res.diagnostics["symplectic_violation_forces"] = list(_violations)
 
@@ -673,16 +723,8 @@ def propagate(
     # dominant position-error term, so we surface it rather than let it pass.
     try:
         if int(degree) >= 2 and y0_arr.size >= 6 and float(mu_m3s2) > 0.0:
-            r0_vec = np.asarray(y0_arr[:3], dtype=np.float64)
-            v0_vec = np.asarray(y0_arr[3:6], dtype=np.float64)
-            rn0 = float(np.linalg.norm(r0_vec))
-            vn0 = float(np.linalg.norm(v0_vec))
-            eps0 = 0.5 * vn0 * vn0 - float(mu_m3s2) / rn0 if rn0 > 0.0 else 0.0
-            if eps0 < 0.0:  # bound orbit -> finite periapsis
-                a_sma = -float(mu_m3s2) / (2.0 * eps0)
-                h0 = float(np.linalg.norm(np.cross(r0_vec, v0_vec)))
-                ecc = math.sqrt(max(0.0, 1.0 + (2.0 * eps0 * h0 * h0) / (float(mu_m3s2) ** 2)))
-                alt_peri_km = (a_sma * (1.0 - ecc) - float(R_ref_m)) / 1000.0
+            alt_peri_km = _osculating_periapsis_alt_km(y0_arr, float(mu_m3s2), float(R_ref_m))
+            if alt_peri_km is not None:
                 rec_deg = recommended_sh_degree(alt_peri_km, float(R_ref_m))
                 res.diagnostics["periapsis_alt_km"] = float(alt_peri_km)
                 res.diagnostics["recommended_degree"] = float(rec_deg)

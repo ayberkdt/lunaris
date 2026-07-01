@@ -103,7 +103,7 @@ def test_load_external_ephemeris_km_to_m(tmp_path):
     # Synthetic GMAT-style ReportFile: a header line + 3 data rows in km / km/s.
     f = tmp_path / "gmat_report.txt"
     f.write_text(
-        "Sat.A1ModJulian Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ\n"
+        "Sat.ElapsedSecs Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ\n"
         "0.0 1838.0 0.0 0.0 0.0 1.6 0.1\n"
         "60.0 1837.0 96.0 6.0 -0.05 1.59 0.099\n"
         "120.0 1834.0 192.0 12.0 -0.10 1.58 0.098\n",
@@ -122,6 +122,44 @@ def test_load_external_ephemeris_meters_passthrough(tmp_path):
     f.write_text("0,1.0e6,0,0,0,1600,0\n1,1.0e6,1.0e4,0,0,1600,0\n", encoding="utf-8")
     _t, y = xv.load_external_ephemeris(f, length_unit_m=1.0)
     assert y[0, 0] == pytest.approx(1.0e6)
+
+
+def test_load_external_ephemeris_a1modjulian_days_to_seconds(tmp_path):
+    f = tmp_path / "gmat_a1mjd_report.txt"
+    f.write_text(
+        "Sat.A1ModJulian Sat.X Sat.Y Sat.Z Sat.VX Sat.VY Sat.VZ\n"
+        "30000.000000000000 1838.0 0.0 0.0 0.0 1.6 0.1\n"
+        "30000.000694444445 1837.0 96.0 6.0 -0.05 1.59 0.099\n"
+        "30000.001388888890 1834.0 192.0 12.0 -0.10 1.58 0.098\n",
+        encoding="utf-8",
+    )
+    t, _y = xv.load_external_ephemeris(f)
+    np.testing.assert_allclose(t, [0.0, 60.0, 120.0], rtol=0.0, atol=1.0e-6)
+
+
+def test_load_external_ephemeris_time_unit_override(tmp_path):
+    f = tmp_path / "ephem_minutes.csv"
+    f.write_text("0,1,0,0,0,1,0\n1,1,1,0,0,1,0\n", encoding="utf-8")
+    t, _y = xv.load_external_ephemeris(f, time_unit_s=60.0)
+    np.testing.assert_allclose(t, [0.0, 60.0], rtol=0.0, atol=0.0)
+
+
+def test_interpolate_states_by_time_aligns_reference_rows():
+    t_src = np.asarray([0.0, 60.0, 120.0], dtype=np.float64)
+    y_src = np.column_stack([t_src + j for j in range(6)]).astype(np.float64)
+
+    out = xv._interpolate_states_by_time(t_src, y_src, np.asarray([30.0, 90.0]))
+
+    expected = np.column_stack([np.asarray([30.0, 90.0]) + j for j in range(6)])
+    np.testing.assert_allclose(out, expected, rtol=0.0, atol=0.0)
+
+
+def test_interpolate_states_by_time_rejects_out_of_range_targets():
+    t_src = np.asarray([0.0, 60.0], dtype=np.float64)
+    y_src = np.zeros((2, 6), dtype=np.float64)
+
+    with pytest.raises(ValueError, match="outside external ephemeris range"):
+        xv._interpolate_states_by_time(t_src, y_src, np.asarray([120.0]))
 
 
 # ---------------------------------------------------------------------------

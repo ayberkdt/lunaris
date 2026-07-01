@@ -278,6 +278,7 @@ def test_propagator_config_defaults_and_validation():
     pc = PropagatorConfig()
     assert hasattr(pc, "rtol") and hasattr(pc, "atol")
     assert pc.rtol > 0.0 and pc.atol > 0.0
+    assert pc.compute_2body_baseline is False
     assert isinstance(pc.events, EventConfig)
 
     pc2 = PropagatorConfig(rtol=1e-9, atol=1e-11)
