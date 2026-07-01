@@ -94,8 +94,8 @@ cuda-bindings==13.3.1 \
     --hash=sha256:e32d08f71ebcdf00f0f41eab2eb37e8da94c8ed411cc9f7f7a019ce6b34abe3a \
     --hash=sha256:efd4c814d311ec08c981f6dded1dbe7d4b371067ee4f6c14cccec4bde9590f80
     # via torch
-cuda-pathfinder==1.5.5 \
-    --hash=sha256:0228c023f95d1480f143ef5c8922d27a2ab052087a942e81dc289c9eb8f91689
+cuda-pathfinder==1.5.6 \
+    --hash=sha256:7e4c07c117b78ba1fb35dac4c444d21f3677b1b1ff56175c53a8e3025c5b43c0
     # via cuda-bindings
 cuda-toolkit==13.0.2 \
     --hash=sha256:b198824cf2f54003f50d64ada3a0f184b42ca0846c1c94192fa269ecd97a66eb

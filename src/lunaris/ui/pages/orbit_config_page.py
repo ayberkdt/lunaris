@@ -727,7 +727,6 @@ class OrbitViz3D(QtWidgets.QWidget):
         arrow_len = float(np.clip(0.45 * np.linalg.norm(sc), 200.0, 2400.0))
         cone_len = 0.26 * arrow_len
         base = np.asarray(sc, dtype=float) + v_dir * (arrow_len - cone_len)
-        tip = np.asarray(sc, dtype=float) + v_dir * arrow_len
         self._ensure_line(
             'vel_arrow_line', np.array([sc, base]),
             ORBIT_THEME['spacecraft'], 0.9, 2.4,
