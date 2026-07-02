@@ -109,7 +109,7 @@ def test_core_avoids_presentation_and_ml_pipeline_imports() -> None:
         "lunaris.ui",
         "lunaris.visualization",
         "lunaris.analysis.reporting",
-        "lunaris.analysis.monte_carlo.plotting",
+        "lunaris.analysis.ensemble.plotting",
         "lunaris.surrogate.st_lrps.training",
         "lunaris.surrogate.st_lrps.evaluation",
         "lunaris.surrogate.st_lrps.ui",

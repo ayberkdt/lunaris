@@ -145,7 +145,7 @@ def test_archive_v2_strict_rejects_missing_required_field(tmp_path) -> None:
 
 def test_lazy_oe_dispersion_matches_eager_block_read(tmp_path) -> None:
     """C2: disk-backed OE dispersion matches the eager trajectory result."""
-    from lunaris.analysis.monte_carlo.statistics import compute_oe_dispersion
+    from lunaris.analysis.ensemble.statistics import compute_oe_dispersion
 
     path = tmp_path / "oe.h5"
     t, _Y, sc, impact, t_impact, valid, impact_i, impact_f = _archive_arrays()

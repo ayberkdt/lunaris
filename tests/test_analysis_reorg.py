@@ -48,11 +48,8 @@ def test_new_canonical_paths_importable():
     from lunaris.analysis.reporting.manager import plot_all
     from lunaris.analysis.reporting.plotting import figure_orbit_3d
     from lunaris.analysis.reporting.styling import apply_rcparams
-    try:
-        from lunaris.analysis.monte_carlo.plotting import plot_mc_report
-        from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
-    except ImportError:
-        pass
+    from lunaris.analysis.ensemble.plotting import plot_mc_report
+    from lunaris.analysis.ensemble.statistics import compute_mc_statistics
     from lunaris.visualization.orbit_animation import render_orbit_animation
 
 def test_stale_names_absent():

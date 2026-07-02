@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from lunaris.analysis.monte_carlo.result_audit import (
+from lunaris.analysis.ensemble.result_audit import (
     INVALID,
     QUARANTINED,
     RERUN,

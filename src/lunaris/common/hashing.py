@@ -2,7 +2,7 @@
 
 Kept dependency-free (standard library only) so both the heavy artifact layer
 (``lunaris.surrogate.st_lrps.artifacts``) and the lightweight audit layer
-(``lunaris.analysis.monte_carlo.result_audit``) hash *byte-identically* without
+(``lunaris.analysis.ensemble.result_audit``) hash *byte-identically* without
 either side re-implementing the canonicalization. A digest written by training
 can therefore be recomputed and verified by the auditor.
 

@@ -1,8 +1,14 @@
 # Uncertainty Quantification: Ensemble Covariance & Error Ellipsoids
 
-This page documents the Monte Carlo uncertainty-quantification (UQ) report:
+This page documents the ensemble uncertainty-quantification (UQ) report:
 what the propagated covariance *is*, how to produce a provenance-stamped UQ
 run, what the outputs contain, and how the result is validated.
+
+Terminology note:
+The canonical concept is batch/ensemble propagation. Random Monte Carlo is one
+supported sampling design alongside Latin Hypercube and Sobol variants. Some
+legacy CLI/module names retain `mc` or `monte_carlo` for backward compatibility,
+but new documentation and imports should use the ensemble terminology.
 
 ## What the covariance is (and is not)
 
@@ -25,21 +31,23 @@ and sample count are all recorded in the manifest.
 
 ## Producing a UQ report
 
-With a fresh Monte Carlo run (all `lunaris-mc` physics/backend flags apply):
+With a fresh batch/ensemble run (all `lunaris-batch` physics/backend flags
+apply; `lunaris-mc` is retained as a historical command name for the same
+runner):
 
 ```bash
-lunaris-mc --n-samples 512 --seed 42 --sampling-method sobol_scrambled \
+lunaris-batch --n-samples 512 --seed 42 --sampling-method sobol_scrambled \
     --alt-km 100 --inc-deg 60 --days 1 \
-    --mc-output-path outputs/monte_carlo/llo_uq.h5 \
-    --uq-report-dir outputs/monte_carlo/llo_uq_report
+    --mc-output-path outputs/ensemble/llo_uq.h5 \
+    --uq-report-dir outputs/ensemble/llo_uq_report
 ```
 
 Post-hoc, from an existing archive (no re-propagation):
 
 ```bash
-python -m lunaris.analysis.monte_carlo.uq_report \
-    --archive outputs/monte_carlo/llo_uq.h5 \
-    --out outputs/monte_carlo/llo_uq_report
+python -m lunaris.analysis.ensemble.uq_report \
+    --archive outputs/ensemble/llo_uq.h5 \
+    --out outputs/ensemble/llo_uq_report
 ```
 
 A failed UQ report fails the CLI run (exit code 3): an explicitly requested
@@ -72,13 +80,13 @@ projection to the benchmark implementation so the two cannot drift.
 - **Zero-dispersion degenerate case** — zero input σ yields zero covariance.
 - **Seed reproducibility** — identical seeds produce identical content hashes;
   different seeds differ.
-- **Linear (STM) cross-check** — `lunaris.analysis.monte_carlo.linear_check`
+- **Linear (STM) cross-check** — `lunaris.analysis.ensemble.linear_check`
   builds state-transition matrices by central finite differences of any
-  propagation callable and compares `Φ P₀ Φᵀ` with the Monte Carlo covariance.
+  propagation callable and compares `Φ P₀ Φᵀ` with the ensemble covariance.
   For exactly linear dynamics the two agree to sampling error; for a short
   point-mass arc with small dispersion they agree within the sampling +
   mild-nonlinearity budget (both are locked as tests). On real force models,
-  the epoch where MC and linear histories diverge is itself a result — the
+  the epoch where ensemble and linear histories diverge is itself a result — the
   onset of non-linearity for that dispersion — not a failure.
 
 ## Claim discipline
@@ -89,7 +97,7 @@ at t₀ only); validity outside the sampled dispersion magnitudes, scenario, and
 force-model configuration; anything about runs whose manifest is missing or
 whose content hash does not reproduce.
 
-Statistics come from `lunaris.analysis.monte_carlo.statistics`
+Statistics come from `lunaris.analysis.ensemble.statistics`
 (mean/covariance tube, 3-σ ellipsoids, RIC uncertainty, impact statistics with
 Wilson CIs, orbital-element dispersion); figures from
-`lunaris.analysis.monte_carlo.plotting`.
+`lunaris.analysis.ensemble.plotting`.

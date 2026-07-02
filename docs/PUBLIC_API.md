@@ -14,7 +14,7 @@ Console scripts are the most stable user-facing API:
 | --- | --- |
 | `lunaris` | Single-run orbit propagation |
 | `lunaris-data` | External data download, verification, path discovery, ST-LRPS dataset inspection |
-| `lunaris-batch` / `lunaris-mc` | Batch and Monte Carlo style propagation |
+| `lunaris-batch` / `lunaris-mc` | Batch/ensemble propagation; `lunaris-mc` is a historical alias retained for compatibility |
 | `lunaris-perturbation-budget` | Acceleration and perturbation budget analysis |
 | `lunaris-ui` / `lunaris-launcher` | Mission desktop UI and launcher |
 | `lunaris-studio` | Optional ST-LRPS Studio UI |
@@ -51,6 +51,15 @@ These modules are intended for direct import:
 | `lunaris.surrogate.runtime` | `SurrogateGravityModel` for production-facing ST-LRPS inference |
 | `lunaris.analysis.postprocess` | `process_simulation_results`, orbital/invariant extraction helpers |
 | `lunaris.analysis.reporting.manager` | `plot_all` |
+| `lunaris.analysis.ensemble.statistics` | Propagated-ensemble statistics, covariance, RIC uncertainty, impact statistics, OE dispersion |
+| `lunaris.analysis.ensemble.plotting` | Ensemble plots and backward-compatible `plot_mc_report` report assembly |
+| `lunaris.analysis.ensemble.uq_report` | Provenance-stamped ensemble UQ report builder |
+
+Terminology note: the canonical concept is batch/ensemble propagation. Random
+Monte Carlo is one supported sampling design alongside Latin Hypercube and Sobol
+variants. Some legacy CLI/module names retain `mc` or `monte_carlo` for
+backward compatibility, but new documentation and imports should use the
+ensemble terminology.
 
 For new scripts, prefer `lunaris.api` unless you intentionally need a lower-level
 module listed below. The examples in `examples/` are the executable reference for

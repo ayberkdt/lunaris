@@ -47,7 +47,7 @@ This README is a landing page; the canonical detail lives in `docs/`.
 | [docs/DATASET_PIPELINE.md](docs/DATASET_PIPELINE.md) | ST-LRPS dataset contract, validation, quality reports, split manifests, and strict training ingestion |
 | [docs/CONFIG_AND_ARTIFACT_CONTRACTS.md](docs/CONFIG_AND_ARTIFACT_CONTRACTS.md) | ST-LRPS dataset, training, checkpoint, runtime, and benchmark contract rules |
 | [docs/PERTURBATION_BUDGET.md](docs/PERTURBATION_BUDGET.md) | Perturbation-budget assumptions, outputs, and interpretation |
-| [docs/UQ_COVARIANCE.md](docs/UQ_COVARIANCE.md) | Monte Carlo uncertainty quantification: ensemble covariance definition, RIC uncertainty, error ellipsoids, provenance-stamped UQ reports, linear (STM) cross-check |
+| [docs/UQ_COVARIANCE.md](docs/UQ_COVARIANCE.md) | Ensemble uncertainty quantification: covariance definition, RIC uncertainty, error ellipsoids, provenance-stamped UQ reports, linear (STM) cross-check |
 | [docs/HPC.md](docs/HPC.md) | Cluster/headless install, Conda environment, Slurm templates, scenario arrays |
 | [docs/profiling.md](docs/profiling.md) | ST-LRPS runtime profiling and timing interpretation |
 | [validation/README.md](validation/README.md) | Independent physics/orbit/gravity validation harnesses |
@@ -164,7 +164,7 @@ Console entry points (installed via `pip install -e .`):
 ```text
 lunaris           single-run propagation CLI
 lunaris-batch     batch/ensemble propagation runner
-lunaris-mc        Monte Carlo-oriented entry point for the batch runner
+lunaris-mc        historical alias for batch/ensemble runs with random Monte Carlo sampling support
 lunaris-launcher  welcome hub (picks a workspace; optional offline 3D Moon preview)
 lunaris-ui        mission desktop UI (Lunaris Mission Studio)
 lunaris-studio    ST-LRPS Studio UI
@@ -228,7 +228,7 @@ are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## Propagation, Batch Ensembles, And Analysis
 
 Single-run propagation is driven by `lunaris`; ensemble propagation by
-`lunaris-batch` and the Monte Carlo-oriented `lunaris-mc` entry point. The ensemble
+`lunaris-batch` and the historical `lunaris-mc` entry point. The ensemble
 sampling design is explicit: `random` is the classical Monte Carlo option, while
 `lhs`, `sobol`, and `sobol_scrambled` are space-filling designs better suited to
 validation and benchmark coverage. Batch backends are explicit (`cpu_sh` truth
@@ -238,6 +238,12 @@ by `lunaris.core.mc_backend_policy`, and the requested vs. effective backend,
 device, integrator, sampling method, and any fallback reason are recorded in
 `MCRunResult.diagnostics` rather than applied silently. The perturbation budget
 tool quantifies acceleration contributions and force-model uncertainty:
+
+Terminology note: the canonical concept is batch/ensemble propagation. Random
+Monte Carlo is one supported sampling design alongside Latin Hypercube and Sobol
+variants. Some legacy CLI/module names retain `mc` or `monte_carlo` for
+backward compatibility, but new documentation and imports should use the
+ensemble terminology.
 
 ```bash
 lunaris-perturbation-budget --altitudes-km 50,100,300,1000 --sh-degrees 20,60,200 \
@@ -309,7 +315,7 @@ exception is the offline web preview's static demo assets under
 `orbit-data.json`) — these are display-only inputs for the optional Three.js
 preview, not scientific outputs, and the allowlist is enforced by
 `tests/test_repo_hygiene.py`. The standard layout
-(`outputs/{simulations,monte_carlo,missions,gravity_benchmark,training,evaluations,runtime,dataset_reports,datasets,validation,visualization}/`)
+(`outputs/{simulations,ensemble,monte_carlo,missions,gravity_benchmark,training,evaluations,runtime,dataset_reports,datasets,validation,visualization}/`)
 keeps a trained run's checkpoints, plots, evals, and provenance together.
 
 ## Testing

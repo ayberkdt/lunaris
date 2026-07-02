@@ -80,8 +80,10 @@ Numerical engine and configuration.
 Post-processing and presentation.
 - `analysis/postprocess.py` — orbital elements, invariants, metrics.
 - `analysis/reporting/` — report `manager`, `plotting`, `styling`.
-- `analysis/monte_carlo/` — ensemble uncertainty `statistics` and `plotting`
-  (package name retained for compatibility).
+- `analysis/ensemble/` — canonical ensemble uncertainty `statistics`,
+  `plotting`, UQ reports, linear covariance checks, and result audits. The
+  historical `analysis/monte_carlo/` analysis namespace has been removed; use
+  `analysis/ensemble/` directly.
 - `analysis/perturbation_budget/` — mission-analysis acceleration budgets,
   spherical-harmonic degree sensitivity, force-model uncertainty comparisons,
   and per-configuration gravity-degree recommendations. It calls existing
@@ -281,6 +283,12 @@ states and spacecraft properties. Monte Carlo is the default
 `sobol_scrambled` provide space-filling designs for validation and benchmark
 coverage.
 
+Terminology note: the canonical concept is batch/ensemble propagation. Random
+Monte Carlo is one supported sampling design alongside Latin Hypercube and Sobol
+variants. Some legacy CLI/module names retain `mc` or `monte_carlo` for
+backward compatibility, but new documentation and imports should use the
+ensemble terminology.
+
 | Module | Purpose |
 |--------|---------|
 | `common/batch_defs.py` | `BatchPropagationConfig`, `MonteCarloConfig`, `StateUncertainty`, `SpacecraftUncertainty`, `BatchPropagationResult`, `MCRunResult`, sampling-method validation |
@@ -292,15 +300,15 @@ coverage.
 | `batch/backend_policy.py` | Thin adapter over `core/mc_backend_policy.py` |
 | `core/mc_propagator.py` | `GPUBatchPropagator` (CUDA RK4), `CPUBatchPropagator` (process pool) |
 | `core/monte_carlo_engine.py` | Historical compatibility shim for old imports and `lunaris-mc` / `lunaris-batch` entry points |
-| `analysis/monte_carlo/statistics.py` | `compute_mc_statistics()` → covariance, ellipsoids, impact probability, OE dispersion |
-| `analysis/monte_carlo/plotting.py` | altitude envelopes, 3-D covariance tubes, impact map, OE dispersion |
+| `analysis/ensemble/statistics.py` | `compute_mc_statistics()` → covariance, ellipsoids, impact probability, OE dispersion |
+| `analysis/ensemble/plotting.py` | altitude envelopes, 3-D covariance tubes, impact map, OE dispersion |
 
 ```python
 from lunaris.core.config import load_default_config
 from lunaris.common.batch_defs import BatchPropagationConfig, StateUncertainty
 from lunaris.batch import BatchPropagationEngine
-from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
-from lunaris.analysis.monte_carlo.plotting import plot_mc_report
+from lunaris.analysis.ensemble.statistics import compute_mc_statistics
+from lunaris.analysis.ensemble.plotting import plot_mc_report
 
 sim_cfg = load_default_config()
 batch_cfg = BatchPropagationConfig(
@@ -311,16 +319,18 @@ batch_cfg = BatchPropagationConfig(
     mc_backend="auto",   # auto, cpu_sh, numba_cuda_sh (alias gpu_sh), torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
     gpu_sh_degree=10,    # requested SH degree; numba_cuda_sh supports <=24, torch_cuda_sh is high-degree
     output_format="hdf5",
-    output_path="outputs/monte_carlo/run.h5",
+    output_path="outputs/ensemble/run.h5",
 )
 result = BatchPropagationEngine(sim_cfg, batch_cfg).run()      # BatchPropagationResult
 stats = compute_mc_statistics(result)
-figs = plot_mc_report(result, stats, output_path="outputs/monte_carlo/report.pdf")
+figs = plot_mc_report(result, stats, output_path="outputs/ensemble/report.pdf")
 ```
 
 Reload a saved run with `from lunaris.batch import load_mc_result`. The
 historical `lunaris.core.monte_carlo_engine` and
-`lunaris.common.montecarlo_defs` import paths remain available.
+`lunaris.common.montecarlo_defs` import paths remain available. The historical
+`lunaris.analysis.monte_carlo` analysis import path has been removed; new and
+existing analysis code should import from `lunaris.analysis.ensemble`.
 
 ### GPU classic-SH backends (Numba vs. Torch)
 - Two distinct classic-SH GPU runtimes exist and are kept separate everywhere:

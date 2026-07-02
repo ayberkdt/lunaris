@@ -19,7 +19,7 @@ from tests.st_lrps_contract_test_utils import (
     tiny_training_cfg,
 )
 
-from lunaris.analysis.monte_carlo.result_audit import (
+from lunaris.analysis.ensemble.result_audit import (
     QUARANTINED,
     TRUSTED,
     _is_valid_sha256,

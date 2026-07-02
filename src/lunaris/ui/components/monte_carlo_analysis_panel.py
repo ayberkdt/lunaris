@@ -192,7 +192,7 @@ class MCAnalysisWorker(QtCore.QThread):
         """Load the archive and compute the canonical MC statistics bundle."""
 
         try:
-            from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
+            from lunaris.analysis.ensemble.statistics import compute_mc_statistics
             from lunaris.batch import load_mc_result
 
             if self._is_cancelled():
@@ -755,7 +755,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
 
         The plotting layer already knows how to assemble the engineering report,
         so the workspace simply collects the destination path and delegates to
-        `analysis.monte_carlo.plotting.plot_mc_report`.
+        `analysis.ensemble.plotting.plot_mc_report`.
         """
 
         if self._result is None or self._stats is None or not self._current_result_path:
@@ -780,7 +780,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         try:
             from matplotlib import pyplot as plt
 
-            from lunaris.analysis.monte_carlo.plotting import plot_mc_report
+            from lunaris.analysis.ensemble.plotting import plot_mc_report
 
             plot_mc_report(self._result, self._stats, output_path=out_path, show=False)
             plt.close("all")
@@ -924,7 +924,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         try:
             from matplotlib import pyplot as plt
 
-            from lunaris.analysis.monte_carlo.plotting import (
+            from lunaris.analysis.ensemble.plotting import (
                 plot_altitude_envelope,
                 plot_covariance_tubes_3d,
                 plot_impact_map,

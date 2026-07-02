@@ -13,7 +13,9 @@ These are non-negotiable acceptance constraints. Re-check them at the end of eac
 
 1. Preserve numerical behavior (no algorithm edits, no default-tolerance edits).
 2. Preserve public CLI commands and `[project.scripts]` entry points.
-3. Preserve existing import paths via compatibility shims.
+3. Preserve existing import paths via compatibility shims only when explicitly
+   retained as public API; obsolete analysis aliases may be removed in a hard
+   namespace cut.
 4. Do not rename user-facing commands.
 5. Do not change default `SimConfig` / simulation settings.
 6. Do not silently change backend selection / fallback behavior.
@@ -61,7 +63,7 @@ only with stronger physics/performance regression coverage.
 Relevant existing structure (do **not** duplicate these):
 
 - `src/lunaris/physics/` **already holds the force math**: `third_body_effects.py`, `solar_effects.py`, `solid_tides.py`, `lunar_albedo.py`, `thermal_ir.py`, `relativity_effects.py`, `spherical_harmonics.py`, `torch_spherical_harmonics.py`, `ephemeris.py`, `surface_effects.py`, `surrogate_gravity.py`.
-- `src/lunaris/analysis/monte_carlo/` already exists (`plotting.py`, `result_audit.py`, `statistics.py`) — **post-processing**, distinct from the engine. The new `batch/` package must not absorb or shadow it.
+- `src/lunaris/analysis/ensemble/` owns propagated-ensemble post-processing (`plotting.py`, `result_audit.py`, `statistics.py`). The historical `src/lunaris/analysis/monte_carlo/` analysis alias has been removed. The `batch/` package must not absorb or shadow ensemble analysis.
 - `src/lunaris/common/` is already lightweight (`constants`, `hashing`, `lunar_data`, `math_utils`, `batch_defs`, `montecarlo_defs`, `paths`, `time_utils`, `type_defs`).
 
 Entry points that pin internal modules (`pyproject.toml [project.scripts]`):
