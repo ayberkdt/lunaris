@@ -395,9 +395,12 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
         prop_cfg = replace(prop_cfg, atol=float(args.atol))
     if getattr(args, "compute_2body_baseline", None) is not None:
         prop_cfg = replace(prop_cfg, compute_2body_baseline=bool(args.compute_2body_baseline))
-    if args.enable_telemetry is not None:
+    # Not every entry point defines the telemetry options (the MC batch runner
+    # has its own parser without them), so probe defensively like the other
+    # optional blocks above.
+    if getattr(args, "enable_telemetry", None) is not None:
         prop_cfg = replace(prop_cfg, enable_telemetry=bool(args.enable_telemetry))
-    if args.telem_cadence_s is not None:
+    if getattr(args, "telem_cadence_s", None) is not None:
         prop_cfg = replace(prop_cfg, telem_cadence_s=float(args.telem_cadence_s))
     cfg = replace(cfg, propagator=prop_cfg)
 

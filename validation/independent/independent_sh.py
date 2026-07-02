@@ -29,12 +29,12 @@ Conventions (verified against closed-form anchors in the tests)
   :func:`normalized_alf_column`. This is pinned by the cross-check tests against
   the analytic Lunaris accelerations and the J2/(2,2) closed forms.
 * Potential:
-  ``U = (μ/r) [ 1 + Σ_{n≥2} (R/r)^n Σ_{m} P̄_{nm}(sinφ)(C̄_{nm} cos mλ + S̄_{nm} sin mλ) ]``
+  ``U = (μ/r) [ 1 + Σ_{n≥1} (R/r)^n Σ_{m} P̄_{nm}(sinφ)(C̄_{nm} cos mλ + S̄_{nm} sin mλ) ]``
   and gravitational acceleration ``a = +∇U`` (point-mass limit
   ``U = μ/r → a = -μ r/r³``). The leading ``1`` is the structural monopole; the
-  perturbation sum starts at degree 2, mirroring the Lunaris kernel (which adds
-  ``-μ/r²`` unconditionally and ignores the stored degree-0/degree-1
-  coefficients). See :func:`geopotential`.
+  perturbation sum starts at degree 1, mirroring the Lunaris kernel (which adds
+  ``-μ/r²`` unconditionally, ignores the stored degree-0 coefficient, and
+  applies degree-1 coefficients when non-zero). See :func:`geopotential`.
 
 Units are SI throughout (metres, m³/s², m/s²).
 """
@@ -146,14 +146,15 @@ def geopotential(
     ratio = r_ref / r
 
     # The central monopole (μ/r) is structural and ALWAYS present, exactly like
-    # the Lunaris kernel (``dv_dr = -μ/r²`` regardless of the stored C₀₀). Real
-    # gravity files commonly store C₀₀ = 0, expecting the implementation to
-    # supply the monopole. The Lunaris perturbation sum starts at degree 2
-    # (degree-0 and degree-1 coefficients are ignored — degree 1 vanishes in a
-    # centre-of-mass frame), so this reference mirrors that to compare like with
-    # like.
+    # the Lunaris kernel (``dv_dr = -μ/r²`` regardless of the stored C₀₀; GRAIL
+    # SHADR files omit the degree-0 row entirely). The perturbation sum starts
+    # at degree 1, mirroring the Lunaris kernel: its degree loop runs from n=1,
+    # so stored degree-1 coefficients ARE applied when non-zero (they vanish in
+    # a centre-of-mass frame, which is why standard products ship them as
+    # zeros). Starting this reference at degree 2 would silently diverge from
+    # the code under test for any field with non-zero degree-1 terms.
     total = 1.0
-    for n in range(2, n_max + 1):
+    for n in range(1, n_max + 1):
         rn = ratio ** n
         inner = 0.0
         for m in range(n + 1):

@@ -174,6 +174,23 @@ def test_cross_validate_integrator_circular_is_accurate():
     assert rep["n_samples"] > 10
 
 
+def test_cross_validate_integrator_reports_period_from_semi_major_axis():
+    """alt_km is the periapsis altitude; the reported period must come from the
+    semi-major axis a = r_p / (1 - e), not from r_p (regression: eccentric
+    scenarios used to report a too-short period)."""
+    scn = xv.Scenario("ell", alt_km=100.0, ecc=0.36, inc_deg=30.0, duration_s=3600.0, dt_s=60.0)
+    rep = xv.cross_validate_integrator(scn, MU, R_REF)
+    r_p = R_REF + 100e3
+    a = r_p / (1.0 - 0.36)
+    expected = 2.0 * math.pi * math.sqrt(a**3 / MU)
+    assert rep["period_s"] == pytest.approx(expected, rel=1e-12)
+    # And the circular case is unchanged (a == r_p).
+    scn_c = xv.Scenario("circ", alt_km=100.0, ecc=0.0, inc_deg=0.0, duration_s=3600.0, dt_s=60.0)
+    rep_c = xv.cross_validate_integrator(scn_c, MU, R_REF)
+    expected_c = 2.0 * math.pi * math.sqrt(r_p**3 / MU)
+    assert rep_c["period_s"] == pytest.approx(expected_c, rel=1e-12)
+
+
 def test_cross_validate_integrator_vector_atol_mode():
     scn = xv.Scenario("llo", alt_km=100.0, ecc=0.0, inc_deg=45.0, duration_s=2 * 3600.0, dt_s=60.0)
     rep = xv.cross_validate_integrator(scn, MU, R_REF, atol_pos=1e-6, atol_vel=1e-9)

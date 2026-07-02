@@ -170,6 +170,29 @@ def test_sh_degree_one_matches_potential_acceleration_path() -> None:
     assert np.linalg.norm(a_direct - a_potential) <= 1e-12 * np.linalg.norm(a_direct)
 
 
+def test_sh_potential_monopole_is_structural_with_omitted_degree0_row() -> None:
+    """GRAIL SHADR files omit the degree-0 row, so the loaded C00 is 0. The
+    potential kernel must supply the structural mu/r monopole regardless (like
+    the acceleration kernel does), or potential_accel_fixed silently loses the
+    entire central field for SHADR-loaded models."""
+    degree = 2
+    c = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    s = np.zeros_like(c)
+    c[2, 0] = -9.0e-5  # C00 intentionally left 0 (SHADR-style)
+    model = GravityModel.from_arrays(degree, R_MOON, MU_MOON, c, s)
+
+    r = np.array([R_MOON + 100e3, 23e3, 45e3], dtype=np.float64)
+    rn = float(np.linalg.norm(r))
+
+    V, a_potential = model.potential_accel_fixed(r, degree=degree)
+    a_direct = model.accel_fixed(r, degree=degree)
+
+    # Acceleration parity between the two kernels must not depend on stored C00.
+    assert np.linalg.norm(a_direct - a_potential) <= 1e-12 * np.linalg.norm(a_direct)
+    # The potential must contain the monopole (mu/r dominates the J2-like term).
+    assert V == pytest.approx(MU_MOON / rn, rel=1e-3)
+
+
 def test_sh_zonal_field_is_axially_symmetric() -> None:
     """A zonal-only (m=0) field must be invariant under rotation about the polar
     axis: rotating the evaluation point in longitude rotates the acceleration by

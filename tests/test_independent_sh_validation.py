@@ -104,6 +104,30 @@ def test_independent_matches_lunaris_analytic(degree):
     )
 
 
+def test_independent_matches_lunaris_with_nonzero_degree1_terms():
+    """The Lunaris kernel's degree loop starts at n=1, so stored degree-1
+    coefficients ARE applied when non-zero. The independent reference must
+    include them too, or the two sides silently diverge on any non-COM-frame
+    field (regression: the reference used to start at degree 2)."""
+    from lunaris.physics.spherical_harmonics import GravityModel
+
+    degree = 3
+    c = np.zeros((degree + 1, degree + 1)); s = np.zeros((degree + 1, degree + 1))
+    c[0, 0] = 1.0
+    c[1, 0] = 3.0e-5   # deliberate non-zero degree-1 (non-centre-of-mass frame)
+    c[1, 1] = -2.0e-5
+    s[1, 1] = 1.5e-5
+    c[2, 0] = -9.0e-5
+    model = GravityModel.from_arrays(degree, R_REF, MU, c, s)
+
+    worst_rel = 0.0
+    for pos in _spread_points():
+        ref = iref.acceleration(pos, mu=MU, r_ref=R_REF, c_coeffs=c, s_coeffs=s, degree=degree)
+        got = np.asarray(model.accel_fixed(pos, degree=degree), dtype=np.float64)
+        worst_rel = max(worst_rel, float(np.linalg.norm(got - ref) / np.linalg.norm(ref)))
+    assert worst_rel < 1e-8, f"degree-1 parity broken: max rel error {worst_rel:.3e}"
+
+
 def test_crosscheck_detects_a_corrupted_coefficient():
     # A genuine independent check must FAIL if the model under test is wrong.
     # The reference is computed from the CLEAN coefficients; only the model under
