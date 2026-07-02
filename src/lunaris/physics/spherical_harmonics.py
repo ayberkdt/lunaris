@@ -1402,10 +1402,16 @@ def sh_potential_accel_batch_serial(
         dphi_sum = 0.0
         dlam_sum = 0.0
 
-        term_cs0 = float(C[0, 0])
+        # Structural monopole: the degree-0 term is mu/r by definition and does
+        # NOT read the stored C[0,0]. This matches the acceleration kernel
+        # (_compute_sh_acceleration_serial adds -mu/r^2 unconditionally) and the
+        # independent field oracles. Real gravity products differ in whether
+        # they store a degree-0 row at all (ICGEM .gfc stores C00=1; GRAIL
+        # SHADR .tab starts at degree 1, leaving the loaded C00=0), so honoring
+        # the stored value would silently drop the monopole for SHADR models.
         if degree_min < 0:
-            V_sum += P_nm1[0] * term_cs0
-            dr_sum += P_nm1[0] * term_cs0
+            V_sum += 1.0
+            dr_sum += 1.0
 
         for n in range(1, N + 1):
             qpow *= q
@@ -1507,7 +1513,11 @@ def sh_potential_accel_fixed(
     [m/s^2], where ``a = +grad(V)``. Degrees in the inclusive range
     ``(degree_min, degree_max]`` are summed (``degree_min < 0`` includes the
     degree-0 monopole), so one call serves both full-field evaluation and
-    residual-baseline subtraction. This is the scalar-potential companion to
+    residual-baseline subtraction. The monopole is structural (``mu/r``); the
+    stored ``C[0,0]`` is ignored, exactly as in :func:`sh_accel_fixed` --
+    GRAIL SHADR files omit the degree-0 row (loaded ``C00 = 0``) while ICGEM
+    ``.gfc`` files store ``C00 = 1``, and both must yield the same field.
+    This is the scalar-potential companion to
     :func:`sh_accel_fixed`; both use the geodesy 4-pi normalization WITHOUT the
     Condon-Shortley phase. Validated against the independent field oracle
     (potential, ~1e-16 rel) and ``GravityModel.accel_fixed`` (acceleration,

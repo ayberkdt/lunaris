@@ -319,3 +319,79 @@ def test_solve_ivp_mini_run(engine_point_mass: tuple[DynamicsEngine, callable]) 
     y_end = sol.y[:, -1]
     assert y_end.shape[0] == 6
     assert np.all(np.isfinite(y_end))
+
+
+# -----------------------------------------------------------------------------
+# Fail-closed guard: degenerate (all-zero) Sun/Earth ephemeris tables
+# -----------------------------------------------------------------------------
+class _ZeroBodyEphem:
+    """Ephemeris stub: valid quaternion timeline, all-zero Sun/Earth tables
+    (what build_tables produces with include_third_body=False)."""
+
+    def __init__(self, sun=None, earth=None, n: int = 4) -> None:
+        z = np.zeros((1, 3), dtype=np.float64)
+        self._d = {
+            "dt_s": 60.0,
+            "r_sun_tab_m": (np.tile(np.asarray(sun, dtype=np.float64), (n, 1)) if sun is not None else z),
+            "r_earth_tab_m": (np.tile(np.asarray(earth, dtype=np.float64), (n, 1)) if earth is not None else z),
+            "q_i2f_tab": np.tile(np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float64), (n, 1)),
+        }
+
+    def get_data_provider(self):
+        return self._d
+
+
+def test_build_rhs_rejects_zero_sun_table_with_srp_enabled() -> None:
+    eng = DynamicsEngine(
+        sc_props=SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3),
+        flags=PerturbationFlags(enable_sh=False, enable_srp=True),
+        ephem_manager=_ZeroBodyEphem(),
+        allow_identity_rotation=True,
+    )
+    with pytest.raises(ValueError, match="Sun table is all zeros"):
+        eng.build_rhs(force_rebuild=True)
+
+
+def test_build_rhs_rejects_zero_earth_table_with_third_body_earth() -> None:
+    eng = DynamicsEngine(
+        sc_props=SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3),
+        flags=PerturbationFlags(enable_sh=False, enable_3rd_body_earth=True),
+        ephem_manager=_ZeroBodyEphem(sun=(AU, 0.0, 0.0)),
+        allow_identity_rotation=True,
+    )
+    with pytest.raises(ValueError, match="Earth table is all zeros"):
+        eng.build_rhs(force_rebuild=True)
+
+
+def test_build_rhs_allows_zero_tables_when_only_quaternion_needed() -> None:
+    """SH-only dynamics need only q_i2f; zero Sun/Earth rows must stay legal."""
+    degree = 2
+    c = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    s = np.zeros_like(c)
+    gravity = GravityModel.from_arrays(degree, 1_737_400.0, MU_MOON, c, s)
+    eng = DynamicsEngine(
+        sc_props=SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3),
+        flags=PerturbationFlags(enable_sh=True),
+        gravity_model=gravity,
+        ephem_manager=_ZeroBodyEphem(),
+        allow_identity_rotation=False,
+    )
+    rhs = eng.build_rhs(force_rebuild=True)
+    dy = rhs(0.0, _build_default_state())
+    assert np.all(np.isfinite(dy))
+
+
+def test_build_rhs_degrades_external_1pn_on_zero_tables_with_warning() -> None:
+    """Auto-enabled external 1PN terms degrade (documented policy) instead of
+    failing the run when the ephemeris has no Sun/Earth vectors."""
+    eng = DynamicsEngine(
+        sc_props=SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3),
+        flags=PerturbationFlags(enable_sh=False, enable_relativity_1pn=True),
+        ephem_manager=_ZeroBodyEphem(),
+        allow_identity_rotation=True,
+    )
+    with pytest.warns(RuntimeWarning, match="external-body relativity terms disabled"):
+        rhs = eng.build_rhs(force_rebuild=True)
+    assert eng._prep["req"]["use_rel_external"] is False
+    dy = rhs(0.0, _build_default_state())
+    assert np.all(np.isfinite(dy))

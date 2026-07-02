@@ -542,7 +542,12 @@ def cross_validate_integrator(
     report["atol_mode"] = "vector" if isinstance(atol_arg, np.ndarray) else "scalar"
     report["atol_pos"] = atol_pos
     report["atol_vel"] = atol_vel
-    report["period_s"] = float(2.0 * math.pi * math.sqrt((r_ref_m + scn.alt_km * 1000.0) ** 3 / mu))
+    # Orbital period from the semi-major axis (alt_km is the *periapsis*
+    # altitude, so a = r_p / (1 - e); using r_p directly understates the period
+    # of every eccentric scenario).
+    r_p = float(r_ref_m) + scn.alt_km * 1000.0
+    a_sma = r_p / (1.0 - float(scn.ecc))
+    report["period_s"] = float(2.0 * math.pi * math.sqrt(a_sma ** 3 / mu))
     return report
 
 

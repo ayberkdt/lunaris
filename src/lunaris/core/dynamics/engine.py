@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import math
 import time
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -518,6 +519,60 @@ class DynamicsEngine:
             return _EphemPack(dt_s=1.0, r_sun_tab_m=z23, r_earth_tab_m=z23, q_i2f_tab=q_ident)
 
         dt_s, sun_tab, earth_tab, qtab = extract_ephem_tables_strict(self.ephem)
+
+        # Fail closed on degenerate body tables. An ephemeris built with
+        # include_third_body=False stores all-zero Sun/Earth rows; feeding those
+        # into an enabled Sun/Earth-dependent force does not fail loudly -- the
+        # third-body/J2 kernels guard-return zero (the force silently vanishes)
+        # and SRP evaluates with the Sun at the Moon's center (catastrophically
+        # wrong magnitude). SimConfig.validate() catches this at the config
+        # layer; this guard covers direct DynamicsEngine construction.
+        #
+        # Only *explicitly enabled* forces raise. The external-1PN relativity
+        # terms are auto-enabled from `ephem is not None` and are documented to
+        # silently degrade to the central-body Schwarzschild term when Sun/Earth
+        # vectors are unavailable, so a quaternion-only ephemeris downgrades
+        # them (with a warning) instead of failing the run.
+        explicit_sun = bool(
+            req["use_srp"]
+            or req["use_3rd_sun"]
+            or req["use_albedo"]
+            or req["use_tide_sun"]
+            or req["use_thermal_equilibrium"]
+        )
+        explicit_earth = bool(
+            req["use_3rd_earth"]
+            or req["use_earth_j2"]
+            or req["use_tide_earth"]
+            or req["use_thermal_eclipse"]
+        )
+        sun_degenerate = not np.any(sun_tab)
+        earth_degenerate = not np.any(earth_tab)
+
+        if explicit_sun and sun_degenerate:
+            raise ValueError(
+                "Enabled perturbations require the Sun position (SRP / 3rd-body Sun / "
+                "Albedo / Thermal IR equilibrium / solid tides), but the ephemeris Sun "
+                "table is all zeros. Rebuild the ephemeris with include_third_body=True, "
+                "or disable those perturbations."
+            )
+        if explicit_earth and earth_degenerate:
+            raise ValueError(
+                "Enabled perturbations require the Earth position (3rd-body Earth / "
+                "Earth J2 / Thermal IR eclipse / solid tides), but the ephemeris Earth "
+                "table is all zeros. Rebuild the ephemeris with include_third_body=True, "
+                "or disable those perturbations."
+            )
+        if req["use_rel_external"] and (sun_degenerate or earth_degenerate):
+            req["use_rel_external"] = False
+            warnings.warn(
+                "1PN external-body relativity terms disabled: the ephemeris does not "
+                "provide Sun/Earth position tables (all zeros). Only the central-body "
+                "Schwarzschild term remains active.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
         return _EphemPack(dt_s=float(dt_s), r_sun_tab_m=sun_tab, r_earth_tab_m=earth_tab, q_i2f_tab=qtab)
 
     def _prepare_albedo(self, req: dict[str, bool]) -> _AlbedoPack:
@@ -1864,6 +1919,10 @@ class DynamicsEngine:
                     aval = float(ap.alb_const)
                 aval = max(0.0, min(1.0, aval)) * float(ap.alb_scale)
 
+                # Use the same SRPConfig-derived constants as the runtime RHS
+                # (which reads R_moon_m / AU_m / P0 from self.srp), so the
+                # debug breakdown cannot diverge from the integrated force.
+                _srp_cfg = self.srp
                 aax_f, aay_f, aaz_f = accel_albedo_simple(
                     rfx,
                     rfy,
@@ -1871,9 +1930,9 @@ class DynamicsEngine:
                     sfx,
                     sfy,
                     sfz,
-                    float(R_MOON),
-                    float(AU),
-                    float(P_SUN_1AU),
+                    float(getattr(_srp_cfg, "R_moon_m", R_MOON)),
+                    float(getattr(_srp_cfg, "AU_m", AU)),
+                    float(getattr(_srp_cfg, "P0", P_SUN_1AU)),
                     float(aval),
                     float(ap.k_lambert),
                     float(self.sc_props.cr),

@@ -76,8 +76,11 @@ def geopotential(
     sin_m = np.sin(np.arange(n_max + 1, dtype=np.float64) * lam)
     ratio = float(reference_radius_m) / r
 
+    # Structural monopole plus the perturbation sum from degree 1: the Lunaris
+    # kernels apply stored degree-1 coefficients when non-zero (they are zero in
+    # centre-of-mass-frame products), so the oracle must include them too.
     total = 1.0
-    for n in range(2, n_max + 1):
+    for n in range(1, n_max + 1):
         inner = 0.0
         for m in range(n + 1):
             inner += p_bar[n, m] * (c[n, m] * cos_m[m] + s[n, m] * sin_m[m])
