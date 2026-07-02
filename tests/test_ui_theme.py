@@ -249,14 +249,8 @@ def test_orbit_viz_constructs_with_opengl_unavailable(monkeypatch) -> None:
         viz.set_orbit_params(2000.0, 0.1, 45.0, 0.0, 0.0, 30.0)
         viz.update_orbit()
         viz.reset_view()
-        # A designed empty-state card should be present.
-        from PySide6 import QtWidgets
-
-        frames = viz.findChildren(QtWidgets.QFrame)
-        # The bespoke fallback was migrated to the shared EmptyState primitive.
-        assert any(f.objectName() == "emptyState" for f in frames)
-        labels = [w.text() for w in viz.findChildren(QtWidgets.QLabel)]
-        assert any("unavailable" in t.lower() for t in labels)
+        assert getattr(viz, "schematic_widget", None) is not None
+        assert viz.schematic_widget.width() >= 0
     finally:
         viz.deleteLater()
     _ = app

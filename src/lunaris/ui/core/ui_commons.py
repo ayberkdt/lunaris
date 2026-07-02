@@ -58,6 +58,19 @@ except ImportError:
 # Modern Icon Library
 try:
     import qtawesome as qta
+    from qtawesome import iconic_font as _qta_iconic_font
+
+    if os.name == "nt":
+        # QtAwesome normally copies bundled fonts into the per-user Windows
+        # Fonts directory before loading them. That folder can contain locked or
+        # permission-restricted files on managed desktops, which makes every
+        # icon request fail. Loading the package fonts in place keeps icons
+        # deterministic for the app and for offscreen screenshot captures.
+        def _qta_packaged_fonts_dir(self) -> str:  # pragma: no cover - import-time guard
+            return str(Path(qta.__file__).resolve().parent / "fonts")
+
+        _qta_iconic_font.IconicFont._get_fonts_directory = _qta_packaged_fonts_dir
+
     HAS_QTAWESOME = True
 except ImportError:
     HAS_QTAWESOME = False

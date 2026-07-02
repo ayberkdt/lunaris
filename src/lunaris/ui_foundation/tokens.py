@@ -112,8 +112,11 @@ class TypographyTokens:
     # in grayscale. ``section`` was 11 pt — only 1 pt over ``body`` (10 pt), an
     # imperceptible step that forced section headings to lean entirely on weight;
     # 12 pt (= body x 1.2) makes the heading tier read by size as well.
-    family_ui: str = '"Segoe UI", "Inter", "Noto Sans", sans-serif'
-    family_mono: str = '"Cascadia Mono", "Consolas", "Courier New", monospace'
+    # Qt style sheets accept a single family name here, not a CSS fallback
+    # stack. The app-level font loader still handles platform fallbacks before
+    # the stylesheet is applied.
+    family_ui: str = '"Segoe UI"'
+    family_mono: str = '"Consolas"'
     size_caption_pt: float = 9.0
     size_body_pt: float = 10.0
     size_section_pt: float = 12.0
