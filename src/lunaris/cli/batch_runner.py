@@ -218,6 +218,10 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--compute-impact-statistics", type=str2bool, default=True)
     g.add_argument("--impact-alt-km",         type=float, default=0.0,
                    help="Impact detection threshold altitude [km]")
+    g.add_argument("--uq-report-dir",         type=str, default=None,
+                   help="Write a provenance-stamped UQ report (covariance history, "
+                        "RIC sigmas, error-ellipsoid figures, manifest) to this directory "
+                        "after the run. See docs/UQ_COVARIANCE.md.")
 
     return p
 
@@ -513,6 +517,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"[MC_METRICS] {json.dumps(metrics)}", flush=True)
     except Exception as exc:
         print(f"[MC][WARN] Could not build metrics: {exc}", flush=True)
+
+    # ---- Optional UQ report (explicitly requested => fail loudly) -----------
+    if args.uq_report_dir:
+        try:
+            from dataclasses import asdict
+
+            from lunaris.analysis.monte_carlo.uq_report import build_uq_report
+
+            manifest = build_uq_report(
+                result,
+                args.uq_report_dir,
+                run_config=asdict(mc_cfg),
+                source_archive=mc_cfg.output_path,
+            )
+            print(
+                f"[MC] UQ report written: {Path(args.uq_report_dir) / 'uq_manifest.json'} "
+                f"(content hash {manifest['covariance_content_sha256'][:12]}...)",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[MC][FATAL] UQ report failed: {exc}", flush=True)
+            return 3
 
     return 0
 

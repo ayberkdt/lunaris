@@ -568,6 +568,75 @@ def compute_mc_statistics(
 
 
 # =============================================================================
+# 3b.             RIC (RADIAL / IN-TRACK / CROSS-TRACK) UNCERTAINTY
+# =============================================================================
+
+@dataclass
+class RICUncertainty:
+    """
+    Position uncertainty history expressed in the RIC frame of the mean state.
+
+    RIC convention (identical to the orbit-benchmark RIC error decomposition):
+    R = r̂ (radial), C = (r×v)/|r×v| (cross-track / orbit normal),
+    I = C×R (in-track / along-track). Component order is [radial, along, cross].
+
+    Shapes
+    ------
+    t           : (T,)      epoch times [s]
+    cov_ric     : (T, 3, 3) position covariance rotated into the RIC frame [m²]
+    sigma_ric_m : (T, 3)    1-σ [radial, along, cross] uncertainty [m]
+    """
+    t:           F64Array
+    cov_ric:     F64Array
+    sigma_ric_m: F64Array
+
+
+def ric_basis_from_state(mean_state: F64Array) -> F64Array:
+    """
+    Build per-epoch RIC basis matrices from a (T, 6) mean state history.
+
+    Returns
+    -------
+    B : (T, 3, 3) with rows [r̂; î; ĉ] so that ``B @ vec`` maps an inertial
+        position vector into [radial, along, cross] components — the same
+        convention as the orbit-benchmark RIC error decomposition.
+    """
+    Y = np.asarray(mean_state, dtype=np.float64)
+    if Y.ndim != 2 or Y.shape[1] != 6:
+        raise ValueError(f"mean_state must be (T, 6), got {Y.shape}")
+    r = Y[:, :3]
+    v = Y[:, 3:]
+
+    r_hat = r / np.maximum(np.linalg.norm(r, axis=1, keepdims=True), 1e-12)
+    h = np.cross(r, v)
+    c_hat = h / np.maximum(np.linalg.norm(h, axis=1, keepdims=True), 1e-12)
+    i_hat = np.cross(c_hat, r_hat)
+
+    B = np.stack([r_hat, i_hat, c_hat], axis=1)  # (T, 3, 3), rows = basis vectors
+    return np.ascontiguousarray(B, dtype=np.float64)
+
+
+def compute_ric_uncertainty(ens: EnsembleStatistics) -> RICUncertainty:
+    """
+    Rotate the position covariance history into the RIC frame of the mean state.
+
+    ``cov_ric[t] = B[t] @ P_pos[t] @ B[t].T`` where ``B`` is the RIC basis of
+    the ensemble-mean state at each epoch. Diagonal entries give the RIC
+    variances; negative round-off is clipped to zero before the square root.
+    """
+    B = ric_basis_from_state(ens.mean)
+    P_pos = ens.pos_cov()
+    cov_ric = np.einsum("tij,tjk,tlk->til", B, P_pos, B)
+    diag = np.einsum("tii->ti", cov_ric)
+    sigma = np.sqrt(np.maximum(diag, 0.0))
+    return RICUncertainty(
+        t=ens.t.copy(),
+        cov_ric=np.ascontiguousarray(cov_ric, dtype=np.float64),
+        sigma_ric_m=np.ascontiguousarray(sigma, dtype=np.float64),
+    )
+
+
+# =============================================================================
 # 4.              COVARIANCE PROPAGATION HELPERS (linear theory)
 # =============================================================================
 
@@ -625,6 +694,7 @@ __all__ = [
     "ImpactStatistics",
     "OEDispersion",
     "MCStatistics",
+    "RICUncertainty",
     # Impact-statistics contract states
     "IMPACT_EVALUATED",
     "IMPACT_DISABLED",
@@ -635,7 +705,9 @@ __all__ = [
     "compute_impact_statistics",
     "compute_oe_dispersion",
     "compute_mc_statistics",
+    "compute_ric_uncertainty",
     # Helpers
+    "ric_basis_from_state",
     "propagate_covariance_linear",
     "mahalanobis_distance",
 ]
