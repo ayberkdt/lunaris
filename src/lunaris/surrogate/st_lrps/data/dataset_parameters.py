@@ -39,27 +39,15 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-try:
-    from lunaris.common.lunar_data import (
-        DEFAULT_LUNAR_GRAVITY_PATH,
-        MU_MOON_SI,
-        R_MOON_SI,
-        is_lunar_body_signature,
-        looks_like_lunar_run_config,
-        resolve_lunar_gravity_path,
-    )
-    from lunaris.loaders.io_gravity import load_gravity_model
-except Exception:  # pragma: no cover
-    from lunaris.common.lunar_data import (
-        DEFAULT_LUNAR_GRAVITY_PATH,
-        MU_MOON_SI,
-        R_MOON_SI,
-        is_lunar_body_signature,
-        looks_like_lunar_run_config,
-        resolve_lunar_gravity_path,
-    )
-    from lunaris.loaders.io_gravity import load_gravity_model
-
+from lunaris.common.lunar_data import (
+    DEFAULT_LUNAR_GRAVITY_PATH,
+    MU_MOON_SI,
+    R_MOON_SI,
+    is_lunar_body_signature,
+    looks_like_lunar_run_config,
+    resolve_lunar_gravity_path,
+)
+from lunaris.loaders.io_gravity import load_gravity_model
 
 # =============================================================================
 # 1.                      DATASET / COEFFICIENT CONFIG SSOT

@@ -282,8 +282,8 @@ class DatasetMeta:
             logger.warning(
                 "Dataset is missing 'derivative_convention_version'. "
                 "If generated before the dP_dphi sign fix (derivative_convention_version="
-                "'dP_dphi_corrected_v1'), the latitude acceleration components are sign-flipped "
-                "and the dataset must be regenerated before training."
+                f"{REQUIRED_DERIVATIVE_CONVENTION!r}), the latitude acceleration components are "
+                "sign-flipped and the dataset must be regenerated before training."
             )
 
         # Resolve central_body from attrs or cloud_config

@@ -21,6 +21,8 @@ from lunaris.common.lunar_data import (
 )
 
 REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
+# Canonical body-fixed Cartesian frame name for every ST-LRPS dataset/artifact.
+MOON_FIXED_FRAME = "moon_fixed_cartesian"
 LUNAR_BODY_ALIASES = frozenset({"moon", "lunar", "selene"})
 TARGET_MODES = frozenset({"residual", "full"})
 BASELINE_KINDS = frozenset({"none", "point_mass", "spherical_harmonics"})
@@ -73,7 +75,7 @@ class TargetContract:
         object.__setattr__(self, "target_mode", _clean_str(self.target_mode, "residual"))
         object.__setattr__(self, "baseline_kind", _clean_str(self.baseline_kind, "none"))
         object.__setattr__(self, "unit_system", _clean_str(self.unit_system, "si"))
-        object.__setattr__(self, "frame", str(self.frame or "moon_fixed_cartesian").strip())
+        object.__setattr__(self, "frame", str(self.frame or MOON_FIXED_FRAME).strip())
         object.__setattr__(
             self,
             "derivative_convention_version",
@@ -148,7 +150,7 @@ class TargetContract:
             target_degree=_as_int(payload.get("target_degree"), -1),
             baseline_kind=payload.get("baseline_kind", "none"),
             unit_system=payload.get("unit_system", "si"),
-            frame=payload.get("frame", "moon_fixed_cartesian"),
+            frame=payload.get("frame", MOON_FIXED_FRAME),
             derivative_convention_version=payload.get(
                 "derivative_convention_version",
                 REQUIRED_DERIVATIVE_CONVENTION,
@@ -187,7 +189,7 @@ class TargetContract:
             target_degree=target_degree,
             baseline_kind=baseline_kind,
             unit_system=getattr(meta, "unit_system", None) or "unknown",
-            frame="moon_fixed_cartesian",
+            frame=MOON_FIXED_FRAME,
             derivative_convention_version=(deriv or REQUIRED_DERIVATIVE_CONVENTION),
             a_sign=float(a_sign),
             mu_si=float(resolved_mu_si),
@@ -226,7 +228,7 @@ class TargetContract:
             target_degree=target_degree,
             baseline_kind=_baseline_kind_for(target_mode, base_degree),
             unit_system=config.get("unit_system", dataset_meta.get("unit_system", "unknown")),
-            frame=config.get("frame", "moon_fixed_cartesian"),
+            frame=config.get("frame", MOON_FIXED_FRAME),
             derivative_convention_version=config.get(
                 "derivative_convention_version",
                 dataset_meta.get("derivative_convention_version", REQUIRED_DERIVATIVE_CONVENTION),
@@ -332,7 +334,7 @@ def _dataset_contract_from_config(config: Mapping[str, Any]) -> dict[str, Any]:
         "a_sign": meta.get("a_sign") or config.get("resolved_a_sign") or config.get("a_sign"),
         "altitude_min_km": meta.get("alt_min_km") or meta.get("altitude_min_km"),
         "altitude_max_km": meta.get("alt_max_km") or meta.get("altitude_max_km"),
-        "coordinate_frame": meta.get("coordinate_frame") or meta.get("frame") or "moon_fixed_cartesian",
+        "coordinate_frame": meta.get("coordinate_frame") or meta.get("frame") or MOON_FIXED_FRAME,
         "units": meta.get("units") or {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
         "generator_version": meta.get("generator_version") or meta.get("created_by"),
         "source_gravity_model": meta.get("source_gravity_model") or meta.get("gravity_model_path"),
@@ -585,7 +587,7 @@ class ArtifactContract:
             "degree_max": target_degree,
             "altitude_min_km": scenario.get("altitude_min_km"),
             "altitude_max_km": scenario.get("altitude_max_km"),
-            "coordinate_frame": "moon_fixed_cartesian",
+            "coordinate_frame": MOON_FIXED_FRAME,
             "units": {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
         }
         return cls(
@@ -708,6 +710,7 @@ __all__ = [
     "BASELINE_KINDS",
     "LUNAR_BODY_ALIASES",
     "PREDICTION_KINDS",
+    "MOON_FIXED_FRAME",
     "REQUIRED_DERIVATIVE_CONVENTION",
     "RUNTIME_MODEL_KINDS",
     "TARGET_MODES",

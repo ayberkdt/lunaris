@@ -17,8 +17,16 @@ from lunaris.common.provenance import sha256_file as _sha256_file
 from lunaris.common.provenance import utc_now_iso
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 
+# Canonical target/frame/derivative-convention names live in
+# lunaris.surrogate.st_lrps.shared.contracts; re-exported here for dataset code.
+from lunaris.surrogate.st_lrps.shared.contracts import (
+    BASELINE_KINDS,
+    MOON_FIXED_FRAME,
+    REQUIRED_DERIVATIVE_CONVENTION,
+    TARGET_MODES,
+)
+
 DATASET_CONTRACT_SCHEMA_VERSION = 1
-REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
 # Spherical-harmonic phase/normalization convention used to generate the gravity
 # labels. Must match the runtime engine (lunaris.physics.spherical_harmonics):
 # 4pi geodesy normalization with NO Condon-Shortley phase. Datasets generated
@@ -26,9 +34,7 @@ REQUIRED_DERIVATIVE_CONVENTION = "dP_dphi_corrected_v1"
 # (-1)^m phase) have sign-flipped odd-order labels and MUST be regenerated.
 REQUIRED_SH_PHASE_CONVENTION = "4pi_geodesy_no_condon_shortley_v1"
 GRAVITY_LABEL_ENGINE_VERSION = "lunaris_sh_v2"
-TARGET_MODES = frozenset({"residual", "full"})
-BASELINE_KINDS = frozenset({"none", "point_mass", "spherical_harmonics"})
-DEFAULT_COORDINATE_FRAME = "moon_fixed_cartesian"
+DEFAULT_COORDINATE_FRAME = MOON_FIXED_FRAME
 DEFAULT_UNITS = {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}
 DATASET_CONTRACT_ATTR = "dataset_contract_json"
 METADATA_GROUP = "metadata"

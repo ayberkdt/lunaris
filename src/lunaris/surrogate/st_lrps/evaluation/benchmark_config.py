@@ -19,12 +19,6 @@ class BenchmarkConfigError(ValueError):
     """Raised when a benchmark config is ambiguous or invalid."""
 
 
-def canonical_json_text(payload: Mapping[str, Any]) -> str:
-    """Return stable JSON text used for resolved-config hashes."""
-
-    return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True, default=str) + "\n"
-
-
 def load_benchmark_config(
     path: str | Path,
     overrides: Mapping[str, Any] | None = None,

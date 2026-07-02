@@ -9,10 +9,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.hashing import canonical_json_sha256, canonical_json_text
 from lunaris.common.provenance import sha256_file as _sha256_file
-from lunaris.common.provenance import sha256_text, utc_now_iso
-
-from .benchmark_config import canonical_json_text
+from lunaris.common.provenance import sha256_text as sha256_text  # noqa: PLC0414 -- re-export
+from lunaris.common.provenance import utc_now_iso
 
 
 def sha256_file(path: str | Path | None) -> str | None:
@@ -20,7 +20,8 @@ def sha256_file(path: str | Path | None) -> str | None:
 
 
 def sha256_payload(payload: Mapping[str, Any]) -> str:
-    return sha256_text(canonical_json_text(payload))
+    """SHA-256 of the canonical JSON form (see ``lunaris.common.hashing``)."""
+    return canonical_json_sha256(payload)
 
 
 def artifact_record(path: str | Path | None, *, label: str = "file") -> dict[str, Any]:
@@ -235,8 +236,8 @@ def _model_config_path(model_dir: Any) -> Path | None:
     path = Path(str(model_dir)).expanduser()
     if path.is_file():
         return path.with_name("config.json")
-    candidate = path / "config.json"
-    return candidate if candidate.exists() else candidate
+    # Returned even when missing: artifact_record() records the missing_reason.
+    return path / "config.json"
 
 
 def _missing_dir_reason(model_dir: Any) -> str | None:

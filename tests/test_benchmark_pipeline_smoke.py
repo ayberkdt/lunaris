@@ -25,6 +25,16 @@ def test_config_cli_quick_synthetic_pipeline_writes_standard_outputs(tmp_path):
         assert (out / name).exists(), name
     report = json.loads((out / "validation_report.json").read_text(encoding="utf-8"))
     assert report["passed"] is True
+    # A quick/synthetic smoke run must be self-describing as non-evidence.
+    evidence = report["evidence"]
+    assert evidence["synthetic"] is True
+    assert evidence["quick"] is True
+    assert evidence["scientific_evidence"] is False
+    assert "NOT A SCIENTIFIC BENCHMARK" in str(evidence["banner"])
+    manifest = json.loads((out / "benchmark_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["validation"]["status"] == "passed"
+    assert manifest["validation"]["scientific_evidence"] is False
+    assert manifest["config"]["resolved_config_sha256"] == evidence["resolved_config_sha256"]
 
 
 def test_validator_fails_for_corrupted_synthetic_output(tmp_path):
