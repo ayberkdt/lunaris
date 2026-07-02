@@ -52,7 +52,7 @@ def _need_ephemeris(cfg: Any, *, topo_requested: bool) -> bool:
     """
     Match the main runner's ephemeris policy for consistent physics coverage.
 
-    The Monte Carlo path should not secretly use a different decision tree than
+    The batch/ensemble path should not secretly use a different decision tree than
     the single-run path.  Repeating the logic locally keeps this core module
     self-contained while preserving the same "SH/topography implies q_i2f"
     behavior.
@@ -79,7 +79,7 @@ def _need_body_vectors(cfg: Any) -> bool:
     """
     Return True only when Sun/Earth position tables are physically required.
 
-    SH-only or topo-only Monte Carlo runs still need the Moon-fixed attitude
+    SH-only or topo-only batch runs still need the Moon-fixed attitude
     quaternion table, but they do not need Sun/Earth vectors.  Using this split
     keeps ephemeris initialization lighter and avoids misleading SPICE warnings.
     """
@@ -110,7 +110,7 @@ def _build_ephemeris_manager(cfg: Any) -> Any:
     Build an ``EphemerisManager`` using the same buffered timeline as main.py.
 
     A small duration buffer protects interpolation near the last requested
-    sample, which is especially helpful in Monte Carlo runs where many samples
+    sample, which is especially helpful in ensemble runs where many samples
     stop at slightly different times due to impact events.
     """
 

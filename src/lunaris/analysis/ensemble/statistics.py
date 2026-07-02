@@ -1,7 +1,7 @@
-# ST_LRPS/analysis/monte_carlo/statistics.py
+# ST_LRPS/analysis/ensemble/statistics.py
 """
-Monte Carlo Statistical Analysis
-==================================
+Ensemble Statistical Analysis
+=============================
 
 Post-processes a ``MCRunResult`` ensemble into actionable statistics:
 
@@ -230,7 +230,7 @@ IMPACT_NOT_EVALUATED = "not_evaluated"
 @dataclass
 class MCStatistics:
     """
-    Complete Monte Carlo analysis output.
+    Complete propagated-ensemble analysis output.
 
     Produced by :func:`compute_mc_statistics`.
 
@@ -591,6 +591,10 @@ class RICUncertainty:
     sigma_ric_m: F64Array
 
 
+_RIC_NORM_ATOL = 1e-12
+_RIC_SIN_ANGLE_ATOL = 1e-12
+
+
 def ric_basis_from_state(mean_state: F64Array) -> F64Array:
     """
     Build per-epoch RIC basis matrices from a (T, 6) mean state history.
@@ -607,9 +611,26 @@ def ric_basis_from_state(mean_state: F64Array) -> F64Array:
     r = Y[:, :3]
     v = Y[:, 3:]
 
-    r_hat = r / np.maximum(np.linalg.norm(r, axis=1, keepdims=True), 1e-12)
+    r_norm = np.linalg.norm(r, axis=1, keepdims=True)
+    v_norm = np.linalg.norm(v, axis=1, keepdims=True)
     h = np.cross(r, v)
-    c_hat = h / np.maximum(np.linalg.norm(h, axis=1, keepdims=True), 1e-12)
+    h_norm = np.linalg.norm(h, axis=1, keepdims=True)
+    sin_angle = h_norm / np.maximum(r_norm * v_norm, _RIC_NORM_ATOL)
+    degenerate = (
+        (r_norm[:, 0] <= _RIC_NORM_ATOL)
+        | (v_norm[:, 0] <= _RIC_NORM_ATOL)
+        | (sin_angle[:, 0] <= _RIC_SIN_ANGLE_ATOL)
+    )
+    if np.any(degenerate):
+        idx = int(np.flatnonzero(degenerate)[0])
+        raise ValueError(
+            "RIC frame is undefined for degenerate position/velocity geometry "
+            f"at epoch index {idx}: position and velocity must define a nonzero "
+            "orbit normal."
+        )
+
+    r_hat = r / r_norm
+    c_hat = h / h_norm
     i_hat = np.cross(c_hat, r_hat)
 
     B = np.stack([r_hat, i_hat, c_hat], axis=1)  # (T, 3, 3), rows = basis vectors

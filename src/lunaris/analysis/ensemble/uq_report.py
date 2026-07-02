@@ -1,7 +1,7 @@
-"""Provenance-stamped uncertainty-quantification report over an MC ensemble.
+"""Provenance-stamped uncertainty-quantification report over an ensemble.
 
-One call (or ``python -m lunaris.analysis.monte_carlo.uq_report``) turns a
-Monte Carlo :class:`~lunaris.common.batch_defs.MCRunResult` into a run
+One call (or ``python -m lunaris.analysis.ensemble.uq_report``) turns a
+batch-propagated :class:`~lunaris.common.batch_defs.MCRunResult` ensemble into a run
 directory containing:
 
 - ``uq_covariance.npz`` — epochs, mean state, 6×6 covariance history, RIC
@@ -213,7 +213,10 @@ def _write_figures(
     ]
     written: list[str] = []
     for name, build in builders:
-        fig = build()
+        try:
+            fig = build()
+        except ImportError as exc:
+            return [], f"matplotlib unavailable: {exc}"
         try:
             fig.savefig(figures_dir / name, dpi=150)
             written.append(f"figures/{name}")
@@ -243,7 +246,7 @@ def build_uq_report(
     out_dir : path
         Report directory (created if needed).
     run_config : optional mapping
-        Echo of the Monte Carlo configuration (seed, sampling method, sigmas,
+        Echo of the batch/ensemble configuration (seed, sampling method, sigmas,
         backend); recorded verbatim in the manifest for reproducibility.
     source_archive : optional path
         The HDF5/NPZ archive the ensemble came from; hashed into the manifest.
@@ -335,11 +338,11 @@ def build_uq_report(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Post-hoc UQ report over an existing Monte Carlo archive."""
+    """Post-hoc UQ report over an existing batch archive."""
     parser = argparse.ArgumentParser(
-        description="Build a provenance-stamped UQ report from an MC archive (HDF5/NPZ)."
+        description="Build a provenance-stamped ensemble UQ report from a batch archive (HDF5/NPZ)."
     )
-    parser.add_argument("--archive", required=True, help="Path to the MC archive (.h5/.npz)")
+    parser.add_argument("--archive", required=True, help="Path to the batch ensemble archive (.h5/.npz)")
     parser.add_argument("--out", required=True, help="Output report directory")
     parser.add_argument("--survived-only", action="store_true",
                         help="Exclude impacted samples from the statistics")

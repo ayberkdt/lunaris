@@ -1,9 +1,9 @@
-# ST_LRPS/analysis/monte_carlo/plotting.py
+# ST_LRPS/analysis/ensemble/plotting.py
 """
-Monte Carlo Visualization
-==========================
+Ensemble Visualization
+======================
 
-Matplotlib-based figures for Monte Carlo ensemble analysis results.
+Matplotlib-based figures for propagated-ensemble analysis results.
 
 Available plots
 ---------------
@@ -17,6 +17,12 @@ plot_covariance_tubes_3d
 plot_position_covariance_history
     Position covariance diagonal (σ_x, σ_y, σ_z) and cross-terms vs time.
 
+plot_ric_sigma_history
+    RIC-frame 1-σ uncertainty growth vs time.
+
+plot_covariance_eigenvalues
+    Position covariance eigenvalue spectrum vs time.
+
 plot_impact_map
     Mollweide lunar surface projection of impact site distribution.
 
@@ -27,7 +33,7 @@ plot_oe_dispersion
     Semi-major axis, eccentricity, and inclination spread vs time.
 
 plot_mc_report
-    Master function: all MC plots on a single multi-page PDF.
+    Master function: all ensemble plots on a single multi-page PDF.
 
 Design conventions
 ------------------
@@ -56,7 +62,7 @@ except ImportError:
     _MPL_OK = False
     plt = None  # type: ignore[assignment]
 
-from lunaris.analysis.monte_carlo.statistics import (
+from lunaris.analysis.ensemble.statistics import (
     EnsembleStatistics,
     ErrorEllipsoids,
     ImpactStatistics,
@@ -74,7 +80,7 @@ from lunaris.common.constants import DAY_S, R_MOON_MEAN
 def _require_mpl() -> None:
     if not _MPL_OK:
         raise ImportError(
-            "matplotlib is required for MC plotting.  "
+            "matplotlib is required for ensemble plotting.  "
             "Install via:  pip install matplotlib"
         )
 
@@ -148,7 +154,7 @@ def plot_mc_summary(
     mc_stats: MCStatistics,
     *,
     figsize: tuple[float, float] | None = None,
-    title: str = "Monte Carlo Executive Summary",
+    title: str = "Ensemble Executive Summary",
 ) -> Any:
     """
     Build a compact first page that surfaces the run's key risk and dispersion metrics.
@@ -211,7 +217,7 @@ def plot_mc_summary(
     fig.text(
         0.06,
         0.905,
-        "Risk, ensemble spread, and endpoint metrics for the current Monte Carlo archive.",
+        "Risk, ensemble spread, and endpoint metrics for the current batch archive.",
         fontsize=10.5,
         color="#4A5C7A",
     )
@@ -299,7 +305,7 @@ def plot_mc_summary(
     fig.text(
         0.94,
         0.06,
-        "ST_LRPS Monte Carlo Report",
+        "ST_LRPS Ensemble Report",
         fontsize=9,
         color="#8A97AC",
         ha="right",
@@ -320,7 +326,7 @@ def plot_altitude_envelope(
     max_traj: int = 50,
     r_ref_m: float = R_MOON_MEAN,
     figsize: tuple[float, float] | None = None,
-    title: str = "Altitude Envelope – Monte Carlo Ensemble",
+    title: str = "Altitude Envelope - Ensemble",
 ) -> Any:
     """
     Plot altitude vs time with σ-bands and individual sample trajectories.
@@ -582,7 +588,7 @@ def plot_impact_map(
     impacts: ImpactStatistics | None,
     *,
     figsize: tuple[float, float] | None = None,
-    title: str = "Monte Carlo Impact Site Distribution",
+    title: str = "Ensemble Impact Site Distribution",
 ) -> Any:
     """
     Mollweide projection of lunar surface impact sites.
@@ -807,8 +813,8 @@ def plot_mc_report(
         p.parent.mkdir(parents=True, exist_ok=True)
         with PdfPages(str(p)) as pdf:
             info = pdf.infodict()
-            info["Title"] = "ST_LRPS Monte Carlo Analysis Report"
-            info["Subject"] = "Monte Carlo uncertainty, dispersion, and impact-risk summary"
+            info["Title"] = "ST_LRPS Ensemble Analysis Report"
+            info["Subject"] = "Ensemble uncertainty, dispersion, and impact-risk summary"
             for fig in figs:
                 pdf.savefig(fig, bbox_inches="tight")
         print(f"[MC] Report saved → {p}", flush=True)

@@ -1,7 +1,7 @@
 # lunaris.batch.engine
 """
-Batch / Monte Carlo Dispatch Engine
-===================================
+Batch / Ensemble Dispatch Engine
+================================
 
 Canonical batch ensemble orchestration. Compatibility imports remain in
 ``lunaris.core.monte_carlo_engine`` for the historical public path.
@@ -101,7 +101,7 @@ def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
 
 class MonteCarloEngine:
     """
-    Orchestrates a full Monte Carlo orbital uncertainty propagation run.
+    Orchestrates a full batch/ensemble orbital uncertainty propagation run.
 
     Workflow
     ----------
@@ -113,14 +113,14 @@ class MonteCarloEngine:
           - Transfer arrays to device (GPU) or dispatch workers (CPU).
           - Iterate over time steps; write snapshots to disk.
        d. Aggregate impact statistics.
-       e. Return ``MCRunResult``.
+       e. Return ``BatchPropagationResult`` / legacy ``MCRunResult``.
 
     Parameters
     ----------
     sim_cfg : SimConfig
         Full simulation configuration (physics flags, gravity, ephemeris, ...).
     mc_cfg : MonteCarloConfig
-        Monte Carlo parameters (N, uncertainties, GPU flags, output format).
+        Batch/ensemble parameters (N, uncertainties, GPU flags, output format).
     dynamics_engine : optional pre-built DynamicsEngine
         If None, the engine builds one from ``sim_cfg``.
     progress_callback : optional ``f(payload: dict)``
@@ -217,7 +217,7 @@ class MonteCarloEngine:
 
         The MC path intentionally reuses the same gravity / ephemeris bootstrap
         policy as the single-run path so users do not hit "works in Run, breaks
-        in Monte Carlo" divergences.
+        in batch/ensemble" divergences.
         """
         from lunaris.core.dynamics import DynamicsEngine
 
@@ -288,7 +288,7 @@ class MonteCarloEngine:
                     )
             except Exception as exc:
                 raise RuntimeError(
-                    f"Monte Carlo bootstrap failed: Could not load gravity model.\n"
+                    f"Batch ensemble bootstrap failed: Could not load gravity model.\n"
                     f"ST-LRPS mode: {getattr(cfg.gravity, 'uses_st_lrps', False)}\n"
                     f"Error: {exc}"
                 ) from exc
@@ -298,7 +298,7 @@ class MonteCarloEngine:
                 ephem_manager = _build_ephemeris_manager(cfg)
             except Exception as exc:
                 raise RuntimeError(
-                    f"Monte Carlo bootstrap failed: Could not load ephemeris.\n"
+                    f"Batch ensemble bootstrap failed: Could not load ephemeris.\n"
                     f"Error: {exc}"
                 ) from exc
 
@@ -591,7 +591,7 @@ class MonteCarloEngine:
 
     def run(self) -> MCRunResult:
         """
-        Execute the full Monte Carlo simulation.
+        Execute the full batch/ensemble propagation.
 
         Returns
         ----------
@@ -1154,7 +1154,7 @@ class MonteCarloEngine:
 
 
 def mc_entry() -> int:
-    """Console-script entry point for batch/Monte Carlo ensemble propagation."""
+    """Historical console-script alias for batch/ensemble propagation."""
     from lunaris.cli.batch_runner import main as _mc_main
 
     return int(_mc_main())

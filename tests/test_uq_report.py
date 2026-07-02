@@ -14,17 +14,17 @@ import json
 import numpy as np
 import pytest
 
-from lunaris.analysis.monte_carlo.linear_check import (
+from lunaris.analysis.ensemble.linear_check import (
     compare_covariance_histories,
     finite_difference_stm,
     linear_covariance_history,
 )
-from lunaris.analysis.monte_carlo.statistics import (
+from lunaris.analysis.ensemble.statistics import (
     compute_ensemble_statistics,
     compute_ric_uncertainty,
     ric_basis_from_state,
 )
-from lunaris.analysis.monte_carlo.uq_report import (
+from lunaris.analysis.ensemble.uq_report import (
     COVARIANCE_DEFINITION,
     build_uq_report,
     ensemble_content_sha256,
@@ -110,6 +110,13 @@ def test_ric_basis_hand_case():
     np.testing.assert_allclose(B[0], [1, 0, 0], atol=1e-12)  # radial
     np.testing.assert_allclose(B[1], [0, 1, 0], atol=1e-12)  # along
     np.testing.assert_allclose(B[2], [0, 0, 1], atol=1e-12)  # cross
+
+
+def test_ric_basis_rejects_degenerate_angular_momentum():
+    # Purely radial motion has no orbit normal, so the RIC frame is undefined.
+    state = np.array([[R_ORBIT, 0, 0, 1000.0, 0, 0]], dtype=np.float64)
+    with pytest.raises(ValueError, match="RIC frame is undefined"):
+        ric_basis_from_state(state)
 
 
 def test_ric_covariance_diagonal_hand_case():
@@ -205,6 +212,19 @@ def test_uq_report_writes_figures(tmp_path):
     ):
         assert (out / rel).is_file(), rel
         assert manifest["files"][rel]["sha256"]
+
+
+def test_uq_report_records_plot_build_importerror(tmp_path, monkeypatch):
+    import lunaris.analysis.ensemble.plotting as plotting
+
+    def _raise_import_error(_stats):
+        raise ImportError("synthetic matplotlib unavailable")
+
+    monkeypatch.setattr(plotting, "plot_position_covariance_history", _raise_import_error)
+
+    manifest = build_uq_report(_make_result(2, n_samples=16, n_epochs=10), tmp_path / "report")
+    assert "matplotlib unavailable" in str(manifest["figures_skipped_reason"])
+    assert not any(name.startswith("figures/") for name in manifest["files"])
 
 
 # ---------------------------------------------------------------------------

@@ -40,7 +40,7 @@ CHECKPOINT_SCHEMA_VERSION = "st_lrps_checkpoint_v2"
 RUN_MANIFEST_SCHEMA_VERSION = "st_lrps_run_manifest_v1"
 # Reproducibility/provenance block recorded into config.json, the run manifest,
 # and every checkpoint. Bump when the required field set changes; the audit gate
-# (lunaris.analysis.monte_carlo.result_audit.classify_st_lrps_run) keys off this.
+# (lunaris.analysis.ensemble.result_audit.classify_st_lrps_run) keys off this.
 ST_LRPS_PROVENANCE_VERSION = "st_lrps_run_provenance_v1"
 CHECKPOINTS_MANIFEST_SCHEMA_VERSION = "st_lrps_checkpoints_manifest_v1"
 EVAL_MANIFEST_SCHEMA_VERSION = "st_lrps_eval_manifest_v1"
@@ -306,7 +306,7 @@ def build_run_provenance(
     Recorded identically into ``config.json``, the run manifest, and every
     checkpoint so a result can be traced back to its code, hardware, determinism
     settings, split, and contract. The audit gate
-    (:func:`lunaris.analysis.monte_carlo.result_audit.classify_st_lrps_run`)
+    (:func:`lunaris.analysis.ensemble.result_audit.classify_st_lrps_run`)
     requires these fields to *trust* a run; the two SHA-256 digests must be
     valid, while ``git_commit``/``cuda_version`` may legitimately be ``None``.
     """

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lunaris.analysis.monte_carlo.statistics import (
+from lunaris.analysis.ensemble.statistics import (
     IMPACT_DISABLED,
     IMPACT_EVALUATED,
     IMPACT_NOT_EVALUATED,
@@ -82,7 +82,7 @@ def test_legacy_archive_without_flag_defaults_to_evaluated() -> None:
 def test_enabled_but_impact_analysis_cannot_run_is_not_evaluated(monkeypatch) -> None:
     # Detection on, ensemble succeeds, but the impact analysis itself cannot
     # produce statistics -> "not evaluated", never a fabricated 0 %.
-    import lunaris.analysis.monte_carlo.statistics as stats_mod
+    import lunaris.analysis.ensemble.statistics as stats_mod
 
     def _raise(*_args, **_kwargs):
         raise ValueError("impact statistics are undefined: no valid samples")

@@ -8,7 +8,7 @@ ST-LRPS runtime profiling measures inference bottlenecks before optimization. It
 > an interpreted PyTorch + autograd closure (not `@njit`), paying Python/autograd
 > overhead on every RHS call, so it is **expected to be slower** than the
 > spherical-harmonic kernel on one CPU trajectory. The surrogate only amortizes
-> that overhead across a large GPU batch (Monte Carlo / ensemble). A fair
+> that overhead across a large GPU batch/ensemble. A fair
 > "surrogate vs SH" timing compares the **GPU batch** backend at matched batch
 > sizes — never one CPU trajectory, which measures the wrong path and will
 > mislead any speedup table.
@@ -118,7 +118,7 @@ lunaris-batch \
     --gpu-sh-degree 24 \
     --n-samples 128 \
     --mc-dt-s 60 \
-    --mc-output-path outputs/monte_carlo/profile_auto.h5
+    --mc-output-path outputs/ensemble/profile_auto.h5
 ```
 
 Important interpretation rules:
