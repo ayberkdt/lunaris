@@ -433,8 +433,9 @@ def _baseline_model_token(item: Mapping[str, Any]) -> str:
 
 
 def _legacy_gpu_integrator(value: str) -> str:
-    if value.upper() == "RK4":
-        return "medium"
+    # The legacy harness exposes a single fixed-step integrator profile
+    # ("medium"); the actual RK4 step size is carried separately via --rk4-dt-s.
+    del value
     return "medium"
 
 
