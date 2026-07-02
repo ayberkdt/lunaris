@@ -52,6 +52,10 @@ from lunaris.physics.spherical_harmonics import (
 
 # ---- Physics SSOT (local lunar dataset parameters) ----
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
+    DEFAULT_COORDINATE_FRAME,
+    GRAVITY_LABEL_ENGINE_VERSION,
+    REQUIRED_DERIVATIVE_CONVENTION,
+    REQUIRED_SH_PHASE_CONVENTION,
     DatasetContract,
     build_contract_payload_for_generator,
     ensure_output_path_allowed,
@@ -741,16 +745,16 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
         "baseline_kind": "spherical_harmonics" if target_mode == "residual" else "none",
         "columns": columns_str,
         "a_sign_convention": "+1",
-        "derivative_convention_version": "dP_dphi_corrected_v1",
-        "spherical_harmonic_convention": "4pi_geodesy_no_condon_shortley_v1",
-        "gravity_label_engine_version": "lunaris_sh_v2",
+        "derivative_convention_version": REQUIRED_DERIVATIVE_CONVENTION,
+        "spherical_harmonic_convention": REQUIRED_SH_PHASE_CONVENTION,
+        "gravity_label_engine_version": GRAVITY_LABEL_ENGINE_VERSION,
         "gravity_model_path": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
         "source_gravity_model": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
         "source_gravity_file_path": str(meta.get("gfc_path", cfg.resolved_gfc_path())),
         "source_gravity_file_sha256": str(_file_sha256(meta.get("gfc_path", cfg.resolved_gfc_path())) or ""),
         "alt_min_km": str(float(cfg.alt_min_km)),
         "alt_max_km": str(float(cfg.alt_max_km)),
-        "coordinate_frame": "moon_fixed_cartesian",
+        "coordinate_frame": DEFAULT_COORDINATE_FRAME,
         "units": json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True),
         "generator_version": "spatial_cloud_generator_contract_v1",
         "created_at_utc": utc_now_iso(),
@@ -994,7 +998,7 @@ def _build_suite_attrs(
         "columns": "[x,y,z,dU,dax,day,daz]",
         "alt_min_km": str(float(alt_min_km)),
         "alt_max_km": str(float(alt_max_km)),
-        "coordinate_frame": "moon_fixed_cartesian",
+        "coordinate_frame": DEFAULT_COORDINATE_FRAME,
         "units": json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True),
         "generator_version": "spatial_cloud_generator_suite_contract_v1",
         "created_at_utc": utc_now_iso(),
@@ -1010,9 +1014,9 @@ def _build_suite_attrs(
         "source_gravity_model": str(globals_blob.get("gfc_path", "")),
         "source_gravity_file_path": str(globals_blob.get("gfc_path", "")),
         "source_gravity_file_sha256": str(globals_blob.get("source_gravity_file_sha256", "")),
-        "derivative_convention_version": "dP_dphi_corrected_v1",
-        "spherical_harmonic_convention": "4pi_geodesy_no_condon_shortley_v1",
-        "gravity_label_engine_version": "lunaris_sh_v2",
+        "derivative_convention_version": REQUIRED_DERIVATIVE_CONVENTION,
+        "spherical_harmonic_convention": REQUIRED_SH_PHASE_CONVENTION,
+        "gravity_label_engine_version": GRAVITY_LABEL_ENGINE_VERSION,
         "DU_m": str(DU),
         "TU_s": str(TU),
         "VU_m_s": str(VU),
@@ -2092,7 +2096,7 @@ def _run_active_refinement(a, ap) -> None:
         hf.attrs["r_ref_m"] = float(r_ref_gfc)
         hf.attrs["alt_min_km"] = alt_min_out
         hf.attrs["alt_max_km"] = alt_max_out
-        hf.attrs["coordinate_frame"] = "moon_fixed_cartesian"
+        hf.attrs["coordinate_frame"] = DEFAULT_COORDINATE_FRAME
         hf.attrs["units"] = json.dumps({"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"}, sort_keys=True)
         hf.attrs["generator_version"] = "spatial_cloud_generator_active_contract_v1"
         hf.attrs["created_at_utc"] = utc_now_iso()
@@ -2103,9 +2107,9 @@ def _run_active_refinement(a, ap) -> None:
         hf.attrs["source_gravity_model"] = str(gfc_path)
         hf.attrs["source_gravity_file_path"] = str(gfc_path)
         hf.attrs["source_gravity_file_sha256"] = str(_file_sha256(gfc_path) or "")
-        hf.attrs["derivative_convention_version"] = "dP_dphi_corrected_v1"
-        hf.attrs["spherical_harmonic_convention"] = "4pi_geodesy_no_condon_shortley_v1"
-        hf.attrs["gravity_label_engine_version"] = "lunaris_sh_v2"
+        hf.attrs["derivative_convention_version"] = REQUIRED_DERIVATIVE_CONVENTION
+        hf.attrs["spherical_harmonic_convention"] = REQUIRED_SH_PHASE_CONVENTION
+        hf.attrs["gravity_label_engine_version"] = GRAVITY_LABEL_ENGINE_VERSION
         hf.attrs["seed"] = int(getattr(a, "active_seed", 42))
         hf.attrs["created_by"] = "spatial_cloud_generator._run_active_refinement"
         contract = _contract_from_current_generator_attrs(

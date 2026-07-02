@@ -33,7 +33,9 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
 )
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
     DATASET_CONTRACT_ATTR,
+    DEFAULT_COORDINATE_FRAME,
     GRAVITY_LABEL_ENGINE_VERSION,
+    REQUIRED_DERIVATIVE_CONVENTION,
     REQUIRED_SH_PHASE_CONVENTION,
 )
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
@@ -313,9 +315,9 @@ def _dataset_meta_block(
         "altitude_min_km": alt_min_km,
         "altitude_max_km": alt_max_km,
         "n_samples": int(n_samples),
-        "coordinate_frame": "moon_fixed_cartesian",
+        "coordinate_frame": DEFAULT_COORDINATE_FRAME,
         "units": {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
-        "derivative_convention_version": meta.derivative_convention_version or "dP_dphi_corrected_v1",
+        "derivative_convention_version": meta.derivative_convention_version or REQUIRED_DERIVATIVE_CONVENTION,
         "spherical_harmonic_convention": REQUIRED_SH_PHASE_CONVENTION,
         "gravity_label_engine_version": GRAVITY_LABEL_ENGINE_VERSION,
     }
@@ -341,7 +343,7 @@ def _dataset_meta_block(
         "derivative_convention_version": contract["derivative_convention_version"],
         "spherical_harmonic_convention": REQUIRED_SH_PHASE_CONVENTION,
         "gravity_label_engine_version": GRAVITY_LABEL_ENGINE_VERSION,
-        "coordinate_frame": "moon_fixed_cartesian",
+        "coordinate_frame": DEFAULT_COORDINATE_FRAME,
         "dataset_contract": contract,
     }
 

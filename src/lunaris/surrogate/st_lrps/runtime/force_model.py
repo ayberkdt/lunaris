@@ -48,10 +48,6 @@ import torch.nn as nn
 
 logger = logging.getLogger(__name__)
 
-# The only runtime frame ST-LRPS artifacts currently support. Inputs to the
-# ``*_fixed`` methods are interpreted in this body-fixed Cartesian frame.
-SUPPORTED_RUNTIME_FRAME = "moon_fixed_cartesian"
-
 
 def _quat_to_rotation_matrix(q_i2f: np.ndarray | tuple) -> np.ndarray:
     """Scalar-first unit quaternion ``q_i2f`` -> 3x3 inertial->fixed rotation matrix.
@@ -113,8 +109,17 @@ from lunaris.surrogate.st_lrps.shared.capabilities import (
     UnsupportedCapability,
     get_capability,
 )
-from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, TargetContract
+from lunaris.surrogate.st_lrps.shared.contracts import (
+    MOON_FIXED_FRAME,
+    REQUIRED_DERIVATIVE_CONVENTION,
+    ArtifactContract,
+    TargetContract,
+)
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
+
+# The only runtime frame ST-LRPS artifacts currently support. Inputs to the
+# ``*_fixed`` methods are interpreted in this body-fixed Cartesian frame.
+SUPPORTED_RUNTIME_FRAME = MOON_FIXED_FRAME
 
 # Direct-force artifacts predict acceleration only; the scalar residual potential
 # is not-applicable by design (see the ST-LRPS capability matrix). Resolved once
@@ -292,8 +297,8 @@ class SurrogateForceModel(PotentialAutogradRuntime):
             target_degree=self.artifact_contract.target_degree,
             baseline_kind=self.artifact_contract.baseline_kind,
             unit_system="si",
-            frame="moon_fixed_cartesian",
-            derivative_convention_version="dP_dphi_corrected_v1",
+            frame=MOON_FIXED_FRAME,
+            derivative_convention_version=REQUIRED_DERIVATIVE_CONVENTION,
             a_sign=self.artifact_contract.a_sign,
             mu_si=self.artifact_contract.mu_si,
             r_ref_m=self.artifact_contract.r_ref_m,
