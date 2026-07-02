@@ -41,8 +41,9 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
-    from lunaris.ui.components.primitives import EmptyState
-    from lunaris.ui.core.ui_commons import THEME, ToggleSwitch, get_icon
+    from lunaris.ui.components.primitives import EmptyState, KeyValueList, Section
+    from lunaris.ui.core.ui_commons import THEME, StatusBadge, ToggleSwitch, get_icon
+    from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
         import sys
@@ -184,15 +185,22 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(20)
+        layout.setSpacing(DESIGN_TOKENS.layout.page_gap)
 
         layout.addWidget(self._build_output_config_card())
+        layout.addWidget(self._build_diagnostics_card())
         layout.addWidget(self._build_artifacts_card())
         layout.addWidget(self._build_artifact_browser_card())
         layout.addWidget(self._build_preview_card())
         layout.addStretch(1)
 
-    def _build_output_config_card(self) -> QtWidgets.QGroupBox:
+    @staticmethod
+    def _field_label(text: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setObjectName("fieldLabel")
+        return label
+
+    def _build_output_config_card(self) -> QtWidgets.QFrame:
         """
         Create the directory/option card shown at the top of the page.
 
@@ -201,12 +209,13 @@ class ResultsExportPage(QtWidgets.QWidget):
         in the OS file explorer.
         """
 
-        group_box = self._create_card("Data Export")
-        layout = QtWidgets.QVBoxLayout(group_box)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(15)
+        section = Section(
+            "Output Destination",
+            "Where mission plots, reports, and run metadata are written.",
+        )
+        layout = section.content_layout
 
-        layout.addWidget(QtWidgets.QLabel("Results Directory:"))
+        layout.addWidget(self._field_label("Results directory"))
 
         dir_row = QtWidgets.QHBoxLayout()
         self.ent_out_dir = QtWidgets.QLineEdit()
@@ -241,7 +250,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         options_row.addSpacing(24)
 
         downsample_row = QtWidgets.QHBoxLayout()
-        downsample_row.addWidget(QtWidgets.QLabel("3D Downsample:"))
+        downsample_row.addWidget(QtWidgets.QLabel("3D downsample"))
         self.spin_downsample_3d = QtWidgets.QSpinBox()
         self.spin_downsample_3d.setRange(1, 1000)
         self.spin_downsample_3d.setValue(1)
@@ -260,9 +269,122 @@ class ResultsExportPage(QtWidgets.QWidget):
         note.setObjectName("fieldHint")
         layout.addWidget(note)
 
-        return group_box
+        return section
 
-    def _build_artifacts_card(self) -> QtWidgets.QGroupBox:
+    def _build_diagnostics_card(self) -> QtWidgets.QFrame:
+        """
+        Create the post-run diagnostics card.
+
+        Values come exclusively from the propagation engine's own diagnostics
+        payload (emitted as a structured ``[DIAG]`` line and mirrored to
+        ``run_diagnostics.json``). Nothing is estimated or invented here: until
+        a run completes in this session the card shows an explicit empty state.
+        """
+
+        section = Section(
+            "Run Diagnostics",
+            "Numerical health of the most recent propagation in this session, "
+            "as reported by the engine.",
+        )
+        layout = section.content_layout
+
+        header_row = QtWidgets.QHBoxLayout()
+        header_row.setSpacing(DESIGN_TOKENS.spacing.sm)
+        self.badge_run_outcome = StatusBadge("NO RUN", kind="info")
+        self.badge_run_outcome.setAccessibleName("Last run outcome")
+        header_row.addWidget(self.badge_run_outcome, 0, QtCore.Qt.AlignVCenter)
+        self.lbl_diag_context = QtWidgets.QLabel("")
+        self.lbl_diag_context.setObjectName("statusLabel")
+        header_row.addWidget(self.lbl_diag_context, 1)
+        layout.addLayout(header_row)
+
+        self.diag_empty = EmptyState(
+            "No diagnostics yet",
+            "Run a propagation to see wall time, solver effort, and "
+            "conservation-drift metrics reported by the engine.",
+        )
+        layout.addWidget(self.diag_empty)
+
+        self.diag_list = KeyValueList()
+        self.diag_list.setVisible(False)
+        layout.addWidget(self.diag_list)
+
+        return section
+
+    # Display order, labels, units, and formatting for the engine diagnostics
+    # payload. Only keys present in the payload are rendered; nothing is
+    # synthesized. Keys: see PropagationResult.diagnostics + the CLI [DIAG] line.
+    _DIAG_FIELDS: tuple[tuple[str, str, str, str], ...] = (
+        ("wall_time_s",              "Propagation wall time", "s",   "{:.3f}"),
+        ("method",                   "Integrator",            "",    "{}"),
+        ("degree",                   "SH degree",             "",    "{:.0f}"),
+        ("nfev",                     "RHS evaluations",       "",    "{:,.0f}"),
+        ("n_points",                 "Output samples",        "",    "{:,.0f}"),
+        ("output_dt_s",              "Output interval",       "s",   "{:g}"),
+        ("max_step_s",               "Max solver step",       "s",   "{:.3f}"),
+        ("periapsis_alt_km",         "Osculating periapsis",  "km",  "{:.1f}"),
+        ("recommended_degree",       "Recommended SH degree", "",    "{:.0f}"),
+        ("kepler_energy_rel_drift",  "Energy drift (rel.)",   "",    "{:.3e}"),
+        ("angmom_rel_drift",         "Ang. momentum drift (rel.)", "", "{:.3e}"),
+        ("t_impact_s",               "Impact time",           "s",   "{:.1f}"),
+        ("stop_reason",              "Stop reason",           "",    "{}"),
+    )
+
+    def set_run_diagnostics(self, payload: dict | None) -> None:
+        """
+        Render an engine diagnostics payload (or reset to the empty state).
+
+        ``payload`` is the parsed ``[DIAG]`` JSON emitted by the run CLI. Only
+        recognized, present keys are shown; unknown keys are ignored so a newer
+        backend cannot break the panel.
+        """
+
+        # Rebuild the key/value grid from scratch each time.
+        while self.diag_list.layout_grid.count():
+            item = self.diag_list.layout_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not payload:
+            self.badge_run_outcome.set_status("info", "NO RUN")
+            self.lbl_diag_context.setText("")
+            self.diag_list.setVisible(False)
+            self.diag_empty.setVisible(True)
+            return
+
+        rendered = 0
+        for key, label, unit, fmt in self._DIAG_FIELDS:
+            if key not in payload or payload[key] is None:
+                continue
+            try:
+                text = fmt.format(payload[key])
+            except (ValueError, TypeError):
+                text = str(payload[key])
+            if unit:
+                text = f"{text} {unit}"
+            self.diag_list.add_item(label, text)
+            rendered += 1
+
+        impacted = bool(payload.get("impacted", False))
+        if impacted:
+            self.badge_run_outcome.set_status("warning", "IMPACT")
+        else:
+            self.badge_run_outcome.set_status("success", "COMPLETED")
+
+        method = str(payload.get("method", "") or "")
+        wall = payload.get("wall_time_s")
+        context = "Engine-reported values from the last completed run"
+        if method:
+            context += f" ({method})"
+        if isinstance(wall, (int, float)):
+            context += f", {wall:.2f} s wall time"
+        self.lbl_diag_context.setText(context + ".")
+
+        self.diag_empty.setVisible(rendered == 0)
+        self.diag_list.setVisible(rendered > 0)
+
+    def _build_artifacts_card(self) -> QtWidgets.QFrame:
         """
         Create the Generated Artifacts information card.
 
@@ -270,10 +392,8 @@ class ResultsExportPage(QtWidgets.QWidget):
         quick access to the output directory plus a file count refresh.
         """
 
-        group_box = self._create_card("Generated Artifacts")
-        layout = QtWidgets.QVBoxLayout(group_box)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(12)
+        section = Section("Generated Artifacts")
+        layout = section.content_layout
 
         info = QtWidgets.QLabel(
             "The following outputs are generated automatically after a successful propagation run:"
@@ -335,7 +455,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         layout.addLayout(btn_row)
 
         # Connect output dir changes to auto-refresh count
-        return group_box
+        return section
 
     def _scan_artifacts(self) -> None:
         """Scan the output directory for PNG/PDF artifacts and update the count label."""
@@ -354,7 +474,7 @@ class ResultsExportPage(QtWidgets.QWidget):
             f"{total} artifact(s) found ({len(pngs)} PNG, {len(pdfs)} PDF)"
         )
 
-    def _build_preview_card(self) -> QtWidgets.QGroupBox:
+    def _build_preview_card(self) -> QtWidgets.QFrame:
         """
         Create the command preview card used to inspect the generated CLI call.
 
@@ -363,14 +483,11 @@ class ResultsExportPage(QtWidgets.QWidget):
         actually launches.
         """
 
-        group_box = self._create_card("Execution Command")
-        layout = QtWidgets.QVBoxLayout(group_box)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(12)
-
-        info = QtWidgets.QLabel("Command that will be sent to the propagation engine:")
-        info.setObjectName("fieldHint")
-        layout.addWidget(info)
+        section = Section(
+            "Execution Command",
+            "Exact CLI invocation that will be sent to the propagation engine.",
+        )
+        layout = section.content_layout
 
         self.txt_preview = QtWidgets.QPlainTextEdit()
         self.txt_preview.setObjectName("commandPreview")
@@ -392,7 +509,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         btn_row.addWidget(btn_copy)
 
         layout.addLayout(btn_row)
-        return group_box
+        return section
 
     def _sync_3d_controls(self, _checked: bool = False) -> None:
         """
@@ -435,7 +552,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         "Logs":    {".txt", ".log"},
     }
 
-    def _build_artifact_browser_card(self) -> QtWidgets.QGroupBox:
+    def _build_artifact_browser_card(self) -> QtWidgets.QFrame:
         """
         Render the enhanced per-file artifact browser.
 
@@ -448,10 +565,11 @@ class ResultsExportPage(QtWidgets.QWidget):
         - Informative empty states
         """
 
-        group_box = self._create_card("Artifact Browser")
-        layout = QtWidgets.QVBoxLayout(group_box)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(10)
+        section = Section(
+            "Artifact Browser",
+            "Generated files in the results directory, newest first.",
+        )
+        layout = section.content_layout
 
         # --- Row 1: path + action buttons ---
         header_row = QtWidgets.QHBoxLayout()
@@ -473,7 +591,7 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         # --- Row 2: filter + recursive controls ---
         filter_row = QtWidgets.QHBoxLayout()
-        filter_row.addWidget(QtWidgets.QLabel("Filter:"))
+        filter_row.addWidget(QtWidgets.QLabel("Filter"))
         self.cb_artifact_filter = QtWidgets.QComboBox()
         self.cb_artifact_filter.setAccessibleName("Artifact type filter")
         self.cb_artifact_filter.addItems(list(self._FILTER_TYPES.keys()))
@@ -572,7 +690,7 @@ class ResultsExportPage(QtWidgets.QWidget):
             pass
 
         QtCore.QTimer.singleShot(0, self._refresh_artifact_browser)
-        return group_box
+        return section
 
     def _on_out_dir_text_changed_for_browser(self, _text: str) -> None:
         # Avoid hammering disk on every keystroke; rely on editingFinished

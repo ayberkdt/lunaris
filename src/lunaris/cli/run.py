@@ -29,6 +29,40 @@ if TYPE_CHECKING:
     from lunaris.physics.ephemeris import EphemerisManager
 
 
+def build_run_diagnostics_payload(result: Any, method: str) -> dict[str, Any]:
+    """Flatten engine-reported run diagnostics into a JSON-safe dict.
+
+    Sources only values the propagator itself computed
+    (``PropagationResult.diagnostics`` plus the impact/stop outcome). Non-finite
+    numbers are dropped rather than serialized, so consumers never see ``NaN``
+    from e.g. an unavailable ``nfev``.
+    """
+    payload: dict[str, Any] = {}
+
+    diagnostics = getattr(result, "diagnostics", None) or {}
+    for key, value in diagnostics.items():
+        if isinstance(value, (int, float)):
+            if np.isfinite(value):
+                payload[key] = float(value)
+        elif isinstance(value, (str, bool)):
+            payload[key] = value
+        elif isinstance(value, (list, tuple)):
+            payload[key] = [str(v) for v in value]
+
+    if method:
+        payload["method"] = str(method)
+
+    payload["impacted"] = bool(getattr(result, "impacted", False))
+    t_impact = getattr(result, "t_impact_s", None)
+    if isinstance(t_impact, (int, float)) and np.isfinite(t_impact):
+        payload["t_impact_s"] = float(t_impact)
+    stop_reason = getattr(result, "stop_reason", None)
+    if stop_reason:
+        payload["stop_reason"] = str(stop_reason)
+
+    return payload
+
+
 def init_ephemeris(cfg: SimConfig, tf_s: float) -> EphemerisManager:
     """Build ephemeris tables using strict EphemerisManager factory.
 
@@ -294,6 +328,18 @@ def main() -> int:
 
     t_prop = time.perf_counter() - t0
     print(f"[DONE] Propagation finished in {t_prop:.3f} s.")
+
+    # Structured engine diagnostics: one machine-readable line for the desktop
+    # UI plus a JSON file next to run_config.json. This only re-emits values
+    # the propagator already computed -- nothing is estimated here.
+    diag_payload = build_run_diagnostics_payload(result, cfg.propagator.method)
+    if diag_payload:
+        print("[DIAG] " + json.dumps(diag_payload, sort_keys=True))
+        try:
+            with open(out_dir / "run_diagnostics.json", "w", encoding="utf-8") as f:
+                json.dump(diag_payload, f, indent=2, sort_keys=True)
+        except Exception:
+            print("[WARN] Could not write run_diagnostics.json")
 
     # Save config snapshot
     try:

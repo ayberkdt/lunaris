@@ -584,3 +584,126 @@ def test_results_export_artifact_csv_copy(tmp_path: Path) -> None:
     app.processEvents()
 
     page.close()
+
+
+# ---------------------------------------------------------------------------
+# Run diagnostics (Results & Export page + CLI payload builder)
+# ---------------------------------------------------------------------------
+
+def test_results_export_page_run_diagnostics_panel(tmp_path: Path) -> None:
+    """The diagnostics card renders only engine-reported keys and resets cleanly."""
+    app = _app()
+    page = ResultsExportPage(project_root=tmp_path, create_card=_create_card)
+    page.show()
+    app.processEvents()
+
+    # Empty state before any run.
+    assert page.diag_empty.isVisible() is True
+    assert page.diag_list.isVisible() is False
+    assert page.badge_run_outcome.text() == "NO RUN"
+
+    payload = {
+        "wall_time_s": 12.345,
+        "method": "DOP853",
+        "degree": 100.0,
+        "nfev": 51234.0,
+        "n_points": 14401.0,
+        "max_step_s": 42.5,
+        "periapsis_alt_km": 99.6,
+        "recommended_degree": 121.0,
+        "kepler_energy_rel_drift": 3.2e-11,
+        "impacted": False,
+        "unknown_future_key": "ignored",
+    }
+    page.set_run_diagnostics(payload)
+    app.processEvents()
+
+    assert page.diag_empty.isVisible() is False
+    assert page.diag_list.isVisible() is True
+    assert page.badge_run_outcome.text() == "COMPLETED"
+
+    rendered = [
+        page.diag_list.layout_grid.itemAt(i).widget().text()
+        for i in range(page.diag_list.layout_grid.count())
+        if page.diag_list.layout_grid.itemAt(i).widget() is not None
+    ]
+    joined = "\n".join(rendered)
+    assert "12.345 s" in joined            # wall time with unit
+    assert "DOP853" in joined              # integrator
+    assert "51,234" in joined              # nfev, grouped
+    assert "99.6 km" in joined             # periapsis with unit
+    assert "3.200e-11" in joined           # energy drift, scientific
+    assert "ignored" not in joined         # unknown keys never rendered
+
+    # Impact outcome is visually distinct from a clean completion.
+    page.set_run_diagnostics({"wall_time_s": 1.0, "impacted": True, "t_impact_s": 512.0})
+    assert page.badge_run_outcome.text() == "IMPACT"
+
+    # Reset (a new run supersedes the panel).
+    page.set_run_diagnostics(None)
+    assert page.diag_empty.isVisible() is True
+    assert page.diag_list.isVisible() is False
+    assert page.badge_run_outcome.text() == "NO RUN"
+
+    page.close()
+
+
+def test_cli_run_diagnostics_payload_builder() -> None:
+    """The CLI payload re-emits engine diagnostics, dropping non-finite values."""
+    from types import SimpleNamespace
+
+    from lunaris.cli.run import build_run_diagnostics_payload
+
+    result = SimpleNamespace(
+        diagnostics={
+            "wall_time_s": 3.5,
+            "nfev": float("nan"),                 # unavailable -> dropped
+            "degree": 100.0,
+            "symplectic_violation_forces": ["srp"],
+        },
+        impacted=True,
+        t_impact_s=1234.5,
+        stop_reason="impact",
+    )
+    payload = build_run_diagnostics_payload(result, "DOP853")
+
+    assert payload["wall_time_s"] == 3.5
+    assert "nfev" not in payload              # NaN never serialized
+    assert payload["degree"] == 100.0
+    assert payload["method"] == "DOP853"
+    assert payload["impacted"] is True
+    assert payload["t_impact_s"] == 1234.5
+    assert payload["stop_reason"] == "impact"
+    assert payload["symplectic_violation_forces"] == ["srp"]
+
+    # JSON-safe end to end (this is what the [DIAG] line carries).
+    import json as _json
+
+    _json.loads(_json.dumps(payload))
+
+
+def test_data_page_badges_and_buttons_are_not_clipped(tmp_path: Path) -> None:
+    """Path-row controls must size to content: fixed pixel widths clipped
+    'Open' and 'CONTENT OK' on wider system fonts (regression)."""
+    app = _app()
+    content_dir = tmp_path / "topo"
+    content_dir.mkdir()
+    (content_dir / "ldem_4.lbl").write_text("PDS_VERSION_ID = PDS3", encoding="utf-8")
+
+    page = DataPage(
+        project_root=tmp_path,
+        normalize_path=lambda text: str(Path(text).expanduser().resolve()),
+        log_message=lambda _msg: None,
+        create_card=_create_card,
+        initial_state=DataFilesState(ldem_root=str(content_dir)),
+    )
+    page.show()
+    app.processEvents()
+
+    assert page.badge_ldem.text() == "CONTENT OK"
+    # No fixed width: the badge's hint must fit its own text.
+    assert page.badge_ldem.maximumWidth() == 16777215  # QWIDGETSIZE_MAX
+    fm = page.badge_ldem.fontMetrics()
+    assert page.badge_ldem.sizeHint().width() >= fm.horizontalAdvance("CONTENT OK")
+
+    page.close()

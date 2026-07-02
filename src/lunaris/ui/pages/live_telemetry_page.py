@@ -261,7 +261,9 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
         self.spin_y_pad.setRange(0.0, 50.0)
         self.spin_y_pad.setSingleStep(1.0)
         self.spin_y_pad.setValue(5.0)
-        self.spin_y_pad.setFixedWidth(75)
+        # 75 px clipped the "%" suffix next to the spin buttons on wider
+        # system fonts; 92 px fits "50.0%" plus the buttons everywhere.
+        self.spin_y_pad.setFixedWidth(92)
         self.spin_y_pad.setFixedHeight(ctrl_h)
         self.spin_y_pad.setAccessibleName("Y-axis padding percent")
         self.spin_y_pad.valueChanged.connect(self._on_axis_controls_changed)

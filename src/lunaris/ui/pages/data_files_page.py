@@ -47,7 +47,9 @@ from pathlib import Path
 from PySide6 import QtCore, QtWidgets
 
 try:
+    from lunaris.ui.components import Section
     from lunaris.ui.core.ui_commons import THEME, StatusBadge, get_icon
+    from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -161,43 +163,73 @@ class DataPage(QtWidgets.QWidget):
     def _build_ui(self) -> None:
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(20)
+        layout.setSpacing(DESIGN_TOKENS.layout.page_gap)
 
         layout.addWidget(self._group_surface_topography())
         layout.addWidget(self._group_spice_kernels())
 
         layout.addStretch(1)
 
-    def _group_surface_topography(self) -> QtWidgets.QGroupBox:
-        gb = self._create_card("Surface & Topography (LDEM)")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(15)
+    @staticmethod
+    def _field_label(text: str) -> QtWidgets.QLabel:
+        label = QtWidgets.QLabel(text)
+        label.setObjectName("fieldLabel")
+        return label
 
-        layout.addWidget(QtWidgets.QLabel("LDEM Root Directory:"))
+    def _path_row(
+        self,
+        entry: QtWidgets.QLineEdit,
+        badge: StatusBadge,
+        *,
+        on_browse,
+        on_open,
+    ) -> QtWidgets.QHBoxLayout:
+        """One data-source row: read-only path, Browse/Open actions, status badge.
 
-        ldem_row = QtWidgets.QHBoxLayout()
+        Buttons and badge size to their content — fixed pixel widths clipped
+        "Open" and "CONTENT OK" on wider system fonts.
+        """
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(DESIGN_TOKENS.spacing.sm)
+        row.addWidget(entry, 1)
+
+        btn_browse = QtWidgets.QPushButton("Browse…")
+        btn_browse.setIcon(get_icon("fa6s.folder-open", THEME["fg_main"]))
+        btn_browse.clicked.connect(on_browse)
+        row.addWidget(btn_browse)
+
+        btn_open = QtWidgets.QPushButton("Open")
+        btn_open.setIcon(get_icon("fa6s.arrow-up-right-from-square", THEME["fg_main"]))
+        btn_open.setToolTip("Open this directory in the file explorer.")
+        btn_open.clicked.connect(on_open)
+        row.addWidget(btn_open)
+
+        row.addWidget(badge, 0, QtCore.Qt.AlignVCenter)
+        return row
+
+    def _group_surface_topography(self) -> QtWidgets.QFrame:
+        section = Section(
+            "Surface & Topography (LDEM)",
+            "High-resolution lunar elevation data used for terrain-aware impact "
+            "detection and surface visualization.",
+        )
+        layout = section.content_layout
+
+        layout.addWidget(self._field_label("LDEM root directory"))
+
         self.ent_ldem_root = QtWidgets.QLineEdit("")
         self.ent_ldem_root.setReadOnly(True)
-        self.ent_ldem_root.setPlaceholderText("Select LDEM root directory...")
-        ldem_row.addWidget(self.ent_ldem_root, 1)
-
-        btn_ldem_browse = QtWidgets.QPushButton("Browse...")
-        btn_ldem_browse.setIcon(get_icon("fa6s.folder-open", THEME["fg_main"]))
-        btn_ldem_browse.clicked.connect(self._browse_ldem_root)
-        ldem_row.addWidget(btn_ldem_browse)
-
-        btn_ldem_open = QtWidgets.QPushButton("Open")
-        btn_ldem_open.setIcon(get_icon("fa6s.arrow-up-right-from-square", THEME["fg_main"]))
-        btn_ldem_open.setFixedWidth(72)
-        btn_ldem_open.clicked.connect(lambda: self._open_path(self.ent_ldem_root.text()))
-        ldem_row.addWidget(btn_ldem_open)
-
+        self.ent_ldem_root.setPlaceholderText("Select LDEM root directory…")
+        self.ent_ldem_root.setAccessibleName("LDEM root directory")
         self.badge_ldem = StatusBadge("NOT SET", kind="warning")
-        self.badge_ldem.setFixedWidth(80)
-        ldem_row.addWidget(self.badge_ldem)
-
-        layout.addLayout(ldem_row)
+        layout.addLayout(
+            self._path_row(
+                self.ent_ldem_root,
+                self.badge_ldem,
+                on_browse=self._browse_ldem_root,
+                on_open=lambda: self._open_path(self.ent_ldem_root.text()),
+            )
+        )
 
         # Detail label under the LDEM path row
         self.lbl_ldem_detail = QtWidgets.QLabel("")
@@ -210,22 +242,26 @@ class DataPage(QtWidgets.QWidget):
 
         # Resolution control
         res_row = QtWidgets.QHBoxLayout()
-        res_row.addWidget(QtWidgets.QLabel("LDEM Resolution:"))
+        res_row.setSpacing(DESIGN_TOKENS.spacing.sm)
+        res_row.addWidget(self._field_label("LDEM resolution"))
 
         self.spin_ldem_ppd = QtWidgets.QSpinBox()
         self.spin_ldem_ppd.setRange(1, 128)
         self.spin_ldem_ppd.setValue(4)
-        self.spin_ldem_ppd.setSuffix(" PPD")
-        self.spin_ldem_ppd.setFixedWidth(100)
+        self.spin_ldem_ppd.setSuffix(" ppd")
+        self.spin_ldem_ppd.setMinimumWidth(110)
+        self.spin_ldem_ppd.setAccessibleName("LDEM resolution in pixels per degree")
         self.spin_ldem_ppd.valueChanged.connect(lambda _: self._state_changed())
         res_row.addWidget(self.spin_ldem_ppd)
 
-        res_row.addWidget(QtWidgets.QLabel("(Pixels Per Degree)"))
+        unit_hint = QtWidgets.QLabel("pixels per degree")
+        unit_hint.setObjectName("fieldUnit")
+        res_row.addWidget(unit_hint)
         res_row.addStretch()
         layout.addLayout(res_row)
 
         # Albedo path checkbox
-        self.chk_use_ldem_for_albedo = QtWidgets.QCheckBox("Reuse LDEM directory for Albedo data")
+        self.chk_use_ldem_for_albedo = QtWidgets.QCheckBox("Reuse LDEM directory for albedo data")
         self.chk_use_ldem_for_albedo.setChecked(False)
         self.chk_use_ldem_for_albedo.toggled.connect(self._sync_albedo_path)
         self.chk_use_ldem_for_albedo.toggled.connect(lambda _: self._update_albedo_badge())
@@ -234,32 +270,24 @@ class DataPage(QtWidgets.QWidget):
         # Albedo container (shown only when not using LDEM)
         self.albedo_container = QtWidgets.QWidget()
         albedo_layout = QtWidgets.QVBoxLayout(self.albedo_container)
-        albedo_layout.setContentsMargins(0, 10, 0, 0)
+        albedo_layout.setContentsMargins(0, DESIGN_TOKENS.spacing.sm, 0, 0)
+        albedo_layout.setSpacing(DESIGN_TOKENS.spacing.sm)
 
-        albedo_layout.addWidget(QtWidgets.QLabel("Albedo Root Directory:"))
+        albedo_layout.addWidget(self._field_label("Albedo root directory"))
 
-        albedo_path_row = QtWidgets.QHBoxLayout()
         self.ent_albedo_root = QtWidgets.QLineEdit("")
         self.ent_albedo_root.setReadOnly(True)
-        self.ent_albedo_root.setPlaceholderText("Select Albedo root directory...")
-        albedo_path_row.addWidget(self.ent_albedo_root, 1)
-
-        btn_albedo_browse = QtWidgets.QPushButton("Browse...")
-        btn_albedo_browse.setIcon(get_icon("fa6s.folder-open", THEME["fg_main"]))
-        btn_albedo_browse.clicked.connect(self._browse_albedo_root)
-        albedo_path_row.addWidget(btn_albedo_browse)
-
-        btn_albedo_open = QtWidgets.QPushButton("Open")
-        btn_albedo_open.setIcon(get_icon("fa6s.arrow-up-right-from-square", THEME["fg_main"]))
-        btn_albedo_open.setFixedWidth(72)
-        btn_albedo_open.clicked.connect(lambda: self._open_path(self.ent_albedo_root.text()))
-        albedo_path_row.addWidget(btn_albedo_open)
-
+        self.ent_albedo_root.setPlaceholderText("Select albedo root directory…")
+        self.ent_albedo_root.setAccessibleName("Albedo root directory")
         self.badge_albedo = StatusBadge("NOT SET", kind="warning")
-        self.badge_albedo.setFixedWidth(80)
-        albedo_path_row.addWidget(self.badge_albedo)
-
-        albedo_layout.addLayout(albedo_path_row)
+        albedo_layout.addLayout(
+            self._path_row(
+                self.ent_albedo_root,
+                self.badge_albedo,
+                on_browse=self._browse_albedo_root,
+                on_open=lambda: self._open_path(self.ent_albedo_root.text()),
+            )
+        )
 
         self.lbl_albedo_detail = QtWidgets.QLabel("")
         self.lbl_albedo_detail.setObjectName("statusLabel")
@@ -269,47 +297,32 @@ class DataPage(QtWidgets.QWidget):
         self.ent_albedo_root.textChanged.connect(lambda _: self._update_albedo_badge())
         layout.addWidget(self.albedo_container)
 
-        note = QtWidgets.QLabel(
-            "ℹ️ LDEM (Lunar Digital Elevation Model) provides high-resolution topography "
-            "for collision detection and surface visualization."
-        )
-        note.setObjectName("fieldHint")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-
         self._sync_albedo_path()
-        return gb
+        return section
 
-    def _group_spice_kernels(self) -> QtWidgets.QGroupBox:
-        gb = self._create_card("SPICE Kernels")
-        layout = QtWidgets.QVBoxLayout(gb)
-        layout.setContentsMargins(20, 24, 20, 20)
-        layout.setSpacing(15)
+    def _group_spice_kernels(self) -> QtWidgets.QFrame:
+        section = Section(
+            "SPICE Kernels",
+            "Planetary ephemerides, time systems, and reference-frame definitions "
+            "(LSK / SPK / PCK / frame kernels) used by the propagator.",
+        )
+        layout = section.content_layout
 
-        layout.addWidget(QtWidgets.QLabel("SPICE Kernel Directory:"))
+        layout.addWidget(self._field_label("SPICE kernel directory"))
 
-        kernel_row = QtWidgets.QHBoxLayout()
         self.ent_kernel_dir = QtWidgets.QLineEdit("")
         self.ent_kernel_dir.setReadOnly(True)
-        self.ent_kernel_dir.setPlaceholderText("Select SPICE kernel directory...")
-        kernel_row.addWidget(self.ent_kernel_dir, 1)
-
-        btn_kernel_browse = QtWidgets.QPushButton("Browse...")
-        btn_kernel_browse.setIcon(get_icon("fa6s.folder-open", THEME["fg_main"]))
-        btn_kernel_browse.clicked.connect(self._browse_kernel_dir)
-        kernel_row.addWidget(btn_kernel_browse)
-
-        btn_kernel_open = QtWidgets.QPushButton("Open")
-        btn_kernel_open.setIcon(get_icon("fa6s.arrow-up-right-from-square", THEME["fg_main"]))
-        btn_kernel_open.setFixedWidth(72)
-        btn_kernel_open.clicked.connect(lambda: self._open_path(self.ent_kernel_dir.text()))
-        kernel_row.addWidget(btn_kernel_open)
-
+        self.ent_kernel_dir.setPlaceholderText("Select SPICE kernel directory…")
+        self.ent_kernel_dir.setAccessibleName("SPICE kernel directory")
         self.badge_kernel = StatusBadge("NOT SET", kind="warning")
-        self.badge_kernel.setFixedWidth(80)
-        kernel_row.addWidget(self.badge_kernel)
-
-        layout.addLayout(kernel_row)
+        layout.addLayout(
+            self._path_row(
+                self.ent_kernel_dir,
+                self.badge_kernel,
+                on_browse=self._browse_kernel_dir,
+                on_open=lambda: self._open_path(self.ent_kernel_dir.text()),
+            )
+        )
 
         self.lbl_kernel_detail = QtWidgets.QLabel("")
         self.lbl_kernel_detail.setObjectName("statusLabel")
@@ -318,15 +331,7 @@ class DataPage(QtWidgets.QWidget):
 
         self.ent_kernel_dir.textChanged.connect(lambda _: self._update_kernel_badge())
 
-        note = QtWidgets.QLabel(
-            "ℹ️ SPICE kernels provide planetary ephemerides, time conversions, and frame "
-            "definitions for precise orbital calculations."
-        )
-        note.setObjectName("fieldHint")
-        note.setWordWrap(True)
-        layout.addWidget(note)
-
-        return gb
+        return section
 
     # -------------------------------------------------------------------------
     # Callbacks
@@ -520,8 +525,6 @@ class DataPage(QtWidgets.QWidget):
         }
         status_kind, text = labels.get(kind, ("warning", "NOT SET"))
         badge.set_status(status_kind, text)
-        # Widen badge to fit longer labels
-        badge.setFixedWidth(max(80, len(text) * 7 + 20))
 
     def _open_path(self, path_text: str) -> None:
         """Open a directory path in the OS file explorer."""

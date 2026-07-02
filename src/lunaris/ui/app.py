@@ -1581,6 +1581,14 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             self._log_message(f"[Warning] Could not prepare output dir: {e}", severity="warning")
 
+        # A new run supersedes the previous run's diagnostics panel; reset it
+        # to the explicit empty state so stale numbers can never be read as
+        # belonging to the run that is about to start.
+        try:
+            self.page_output.set_run_diagnostics(None)
+        except Exception:
+            pass
+
         # Start process. The run separator above already provides the visual
         # break, so we go straight to the launch line.
         self._log_message("[System] Launching mission analysis...", severity="system")
@@ -1760,6 +1768,24 @@ class MainWindow(QtWidgets.QMainWindow):
         clean_line = line.strip()
         if not clean_line:
             return
+
+        # Structured engine diagnostics emitted once at the end of a run.
+        # Routed to the Results page panel; a malformed payload falls through
+        # to the plain log so nothing is silently dropped.
+        if clean_line.startswith("[DIAG]"):
+            try:
+                payload = json.loads(clean_line[len("[DIAG]"):].strip())
+                if isinstance(payload, dict):
+                    self.page_output.set_run_diagnostics(payload)
+                    wall = payload.get("wall_time_s")
+                    if isinstance(wall, (int, float)):
+                        self._log_message(
+                            f"[Run] Engine diagnostics received (wall {wall:.2f} s) — see Results & Export.",
+                            severity="system",
+                        )
+                    return
+            except Exception:
+                pass
 
         telemetry_line = clean_line
         for prefix in ("JSON_TELEM:", "TELEMETRY:"):
