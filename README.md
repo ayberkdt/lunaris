@@ -170,9 +170,15 @@ lunaris-studio    ST-LRPS Studio UI
 lunaris-train / lunaris-train-force-direct      ST-LRPS training CLIs
 lunaris-eval  / lunaris-eval-force-direct       ST-LRPS evaluation CLIs
 lunaris-benchmark ST-LRPS orbit-level gravity benchmark / validation CLI
+lunaris-validate  gravity-reference checks + ST-LRPS validation suite
+lunaris-ablation  ST-LRPS ablation suite runner
+lunaris-st-lrps-paper-evidence  end-to-end paper-evidence pipeline
 lunaris-data      external-data download / verify CLI
 lunaris-perturbation-budget   acceleration / force-model uncertainty budget
 ```
+
+The canonical inventory with stability classifications is
+[docs/PUBLIC_API.md](docs/PUBLIC_API.md).
 
 The desktop UI uses a unified dark theme, **Lunar Graphite**, whose tokens flow
 from `lunaris.ui_foundation` (see [docs/UI_THEME.md](docs/UI_THEME.md)). The
@@ -296,7 +302,12 @@ for quick previews.
 Generated products are not committed; tools write under `outputs/` (git-ignored)
 unless an external scratch directory is chosen. Source packages
 (`src/lunaris/...`, `validation/`) hold source and documentation, never run
-artifacts, checkpoints, plots, or evaluation tables. The standard layout
+artifacts, checkpoints, plots, or evaluation tables. The one deliberate
+exception is the offline web preview's static demo assets under
+`src/lunaris/ui/web/public/` (Moon textures and a precomputed demo
+`orbit-data.json`) — these are display-only inputs for the optional Three.js
+preview, not scientific outputs, and the allowlist is enforced by
+`tests/test_repo_hygiene.py`. The standard layout
 (`outputs/{simulations,monte_carlo,missions,gravity_benchmark,training,evaluations,runtime,dataset_reports,datasets,validation,visualization}/`)
 keeps a trained run's checkpoints, plots, evals, and provenance together.
 

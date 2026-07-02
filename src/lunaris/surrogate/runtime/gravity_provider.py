@@ -30,6 +30,25 @@ from lunaris.surrogate.runtime.scalers import _load_scaler_bundle, _ScalerBundle
 
 logger = logging.getLogger(__name__)
 
+
+def _cfg_values_differ(file_val: Any, ckpt_val: Any) -> bool:
+    """Compare config values across the JSON/pickle boundary.
+
+    ``config.json`` round-trips through JSON (tuples become lists, numeric types
+    may shift), so a naive ``!=`` would report false divergence for equal
+    content. Values are divergent only when plain equality AND a canonical JSON
+    dump both disagree.
+    """
+    if file_val == ckpt_val:
+        return False
+    try:
+        return json.dumps(file_val, sort_keys=True, default=str) != json.dumps(
+            ckpt_val, sort_keys=True, default=str
+        )
+    except (TypeError, ValueError):  # pragma: no cover - non-serializable payloads
+        return True
+
+
 class SurrogateGravityModel:
     """
     Runtime gravity provider backed by a neural potential surrogate.
@@ -176,6 +195,23 @@ class SurrogateGravityModel:
         cfg_ckpt = checkpoint_obj.get("config")
         config = dict(cfg_file)
         if isinstance(cfg_ckpt, dict):
+            # The checkpoint's embedded config wins the merge, but a divergence
+            # from config.json is a provenance problem (edited config.json,
+            # mixed-up run dirs, ...) and must not pass silently.
+            diverged = sorted(
+                key
+                for key, ckpt_val in cfg_ckpt.items()
+                if key in cfg_file and _cfg_values_differ(cfg_file[key], ckpt_val)
+            )
+            if diverged:
+                shown = ", ".join(diverged[:8]) + (", ..." if len(diverged) > 8 else "")
+                warnings.warn(
+                    "[ST-LRPS] config.json and the checkpoint's embedded config "
+                    f"disagree on {len(diverged)} key(s) ({shown}); the checkpoint "
+                    f"values take precedence. Run dir: {run_dir}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
             config.update(cfg_ckpt)
 
         scaler = _load_scaler_bundle(run_dir, checkpoint_obj)
@@ -228,6 +264,34 @@ class SurrogateGravityModel:
                     "physics for a direct residual-acceleration artifact. Fix the artifact / "
                     f"contract instead of degrading to a potential model. Original error: {exc}"
                 ) from exc
+            # The legacy local path skips strict checkpoint-contract validation
+            # (validate_checkpoint_contract), the frame guard, and the scaler
+            # contract. That is only tolerable for pre-contract artifacts: an
+            # artifact that *declares* a versioned contract must load through the
+            # canonical runtime or fail loudly, never degrade to an unvalidated
+            # model.
+            contract_era = bool(
+                config.get("artifact_contract")
+                or config.get("target_contract")
+                or declared_runtime_kind
+            )
+            if contract_era:
+                raise RuntimeError(
+                    "ST-LRPS artifact declares a versioned contract "
+                    "(artifact_contract / target_contract / runtime_model_kind) but "
+                    "could not be loaded through the canonical runtime "
+                    "(st_lrps.runtime.force_model). Refusing the legacy fallback, "
+                    "which would skip strict contract validation. Fix the artifact "
+                    f"or environment instead of degrading. Original error: {exc}"
+                ) from exc
+            warnings.warn(
+                "[ST-LRPS] Canonical runtime unavailable for pre-contract artifact "
+                f"{run_dir}; falling back to the legacy local runtime path "
+                "(potential_autograd only). Strict checkpoint-contract validation "
+                f"is SKIPPED on this path. Original error: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             logger.warning(
                 "Could not initialize canonical st_lrps.runtime.force_model adapter; "
                 "falling back to the legacy local runtime path (potential_autograd only): %s",
@@ -330,6 +394,23 @@ class SurrogateGravityModel:
                         "Surrogate gravity artifact looks incompatible with the active central body. "
                         f"|mean(U)|/mu_over_rref ratio={ratio:.3f} is outside the accepted range."
                     )
+
+    @property
+    def is_conservative(self) -> bool:
+        """False for ``force_direct`` artifacts (no underlying scalar potential).
+
+        Mirrors the runtime taxonomy flag on the canonical ST-LRPS runtimes; do
+        not use ``isinstance()`` on the wrapped runtime for this distinction.
+        """
+        fr = self._force_runtime
+        if fr is not None and hasattr(fr, "is_conservative"):
+            return bool(fr.is_conservative)
+        kind = str(
+            getattr(fr, "runtime_model_kind", "")
+            or self.config.get("runtime_model_kind", "")
+            or "potential_autograd"
+        ).strip().lower()
+        return kind != "force_direct"
 
     # ------------------------------------------------------------------
     # Physics evaluation

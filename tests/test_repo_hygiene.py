@@ -279,3 +279,86 @@ def test_active_docs_use_correct_topography_spelling():
         assert typo not in content, (
             f"Old typo '{typo}' found in {filepath.relative_to(root)}"
         )
+
+
+def test_no_tracked_scratch_diff_files():
+    """Audit F9: no committed local-diff / merge-conflict scratch files."""
+    root = get_project_root()
+    banned_names = {"local_diff.txt"}
+    banned_suffixes = (".orig", ".rej")
+
+    found = []
+    for filepath in get_committed_files(root):
+        name = filepath.name
+        if name in banned_names or name.endswith(banned_suffixes):
+            found.append(filepath.relative_to(root).as_posix())
+    assert not found, "Scratch diff files are tracked in git:\n" + "\n".join(found)
+
+
+# Deliberate committed binary/demo assets under src/. Everything else under
+# src/ above the size floor is treated as an accidentally committed artifact
+# (checkpoints, datasets, plots, run outputs). Additions here need a review.
+_LARGE_SRC_FILE_ALLOWLIST = {
+    "src/lunaris/ui/web/public/orbit-data.json",           # offline 3D preview demo trajectory
+    "src/lunaris/ui/web/public/textures/gravity_moon_real.webp",
+    "src/lunaris/ui/web/public/textures/aesthetic_moon_real.webp",
+    "src/lunaris/ui/web/public/textures/moon_disp_real.webp",
+}
+_LARGE_SRC_FILE_FLOOR_BYTES = 1024 * 1024  # 1 MiB
+
+
+def test_large_tracked_files_under_src_are_allowlisted():
+    """Audit F9: large tracked files under src/ must be deliberate, not leaked."""
+    root = get_project_root()
+    offenders = []
+    for filepath in get_committed_files(root):
+        rel = filepath.relative_to(root).as_posix()
+        if not rel.startswith("src/"):
+            continue
+        try:
+            size = filepath.stat().st_size
+        except OSError:
+            continue
+        if size >= _LARGE_SRC_FILE_FLOOR_BYTES and rel not in _LARGE_SRC_FILE_ALLOWLIST:
+            offenders.append(f"{rel} ({size / 1024 / 1024:.1f} MiB)")
+    assert not offenders, (
+        "Tracked files over 1 MiB under src/ that are not in the deliberate "
+        "allowlist (generated artifacts must live under outputs/):\n"
+        + "\n".join(offenders)
+    )
+
+
+def _console_scripts_from_pyproject(root: Path) -> list[str]:
+    """Parse [project.scripts] keys without requiring tomllib (py3.10)."""
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r"\[project\.scripts\]\n(.*?)(?:\n\[|\Z)", text, re.DOTALL)
+    assert match, "pyproject.toml has no [project.scripts] table"
+    names = []
+    for line in match.group(1).splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key = line.split("=", 1)[0].strip().strip('"')
+        if key:
+            names.append(key)
+    assert names, "no console scripts parsed from pyproject.toml"
+    return names
+
+
+def test_console_scripts_documented_in_public_api():
+    """Audit F11: PUBLIC_API.md is the canonical entry-point inventory.
+
+    Every installed console script must appear in docs/PUBLIC_API.md so its
+    stability classification (stable / optional / experimental) has one home.
+    """
+    root = get_project_root()
+    public_api = (root / "docs" / "PUBLIC_API.md").read_text(encoding="utf-8")
+    missing = [
+        name
+        for name in _console_scripts_from_pyproject(root)
+        if f"`{name}`" not in public_api
+    ]
+    assert not missing, (
+        "Console scripts missing from docs/PUBLIC_API.md (add them to the "
+        "Stable Entry Points table with a stability note): " + ", ".join(missing)
+    )

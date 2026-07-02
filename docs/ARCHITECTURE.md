@@ -67,8 +67,9 @@ Numerical engine and configuration.
   checkpoint, telemetry, and integrator modules. `propagation.propagator` keeps
   the public `propagate(...)` orchestration while events, checkpointing,
   telemetry, time-grid policy, and fixed-step steppers live in sibling modules.
-- `propagator.py` — compatibility alias for `core.propagation.propagator`;
-  old imports and monkeypatch paths remain valid.
+- The temporary `core/propagator.py` compatibility alias has been **removed**;
+  import `lunaris.core.propagation.propagator` (or `lunaris.core.propagation`)
+  directly. See `docs/refactor_notes.md` for the removal rationale.
 - `events.py` — impact / periapsis-apoapsis / eclipse / occultation events.
 - `monte_carlo_engine.py`, `mc_propagator.py`, `mc_backend_policy.py`,
   `mc_runner.py` — historical compatibility/import surfaces for batch ensemble
@@ -124,7 +125,8 @@ Alongside the four layers:
 | `common` has no upward imports | import-linter: `common stays dependency-light (no upward imports)` |
 | `physics` does not depend on core, presentation, or surrogate code | import-linter: `physics never imports core/analysis/visualization/ui` and `physics does not depend on the ST-LRPS subsystem` |
 | `core` does not import desktop UI or the ST-LRPS data/training/evaluation/UI pipelines | import-linter: `core does not import the desktop UI or the ST-LRPS ML pipeline` |
-| ST-LRPS inference stays independent of training/evaluation/UI | import-linter: `ST-LRPS runtime (inference path) stays light` |
+| ST-LRPS inference stays independent of training/evaluation/UI | import-linter: `ST-LRPS runtime (inference path) stays light` and `production ST-LRPS runtime facade stays light` (the `lunaris.surrogate.runtime` facade obeys the same rule) |
+| `core` does not import the CLI wiring or the batch orchestration package (the two historical compatibility shims are the only sanctioned, lazily folded call-time exceptions) | import-linter: `core does not import the CLI or batch orchestration layers` |
 | Analysis and visualization do not import desktop UI | import-linter: `analysis and visualization do not import the desktop UI` |
 | ST-LRPS Studio consumes only the published UI foundation | import-linter: `ST-LRPS studio does not import mission-UI internals` |
 | The shared UI foundation imports neither desktop application | import-linter: `UI foundation stays independent of both desktop applications` |
@@ -415,7 +417,19 @@ which is added to the SH(`degree_min`) baseline. `force_direct`
 `DeltaU`. `load_surrogate_force_model` dispatches by `runtime_model_kind` and
 strictly validates artifact contracts, output dimension, and frame. Direct-force
 is a faster inference target but is not conservative by construction and needs
-separate curl / orbit-level validation.
+separate curl / orbit-level validation; the propagator's symplectic guard
+accordingly flags a `force_direct` gravity provider as a non-conservative force
+(warning, or hard failure under `strict_symplectic=True`).
+
+Artifacts that declare a versioned contract (`artifact_contract` /
+`target_contract` / `runtime_model_kind`) must load through the canonical
+runtime — a load failure is an error, never a silent downgrade. The legacy
+local loader in `lunaris.surrogate.runtime` remains only for pre-contract
+artifacts and emits a `RuntimeWarning` when taken (strict checkpoint-contract
+validation is skipped on that path). A `config.json` ↔ checkpoint-config
+divergence is surfaced as a `RuntimeWarning` before the checkpoint values take
+precedence. An artifact that does not declare its coordinate frame loads with a
+`RuntimeWarning` (the Moon-fixed assumption is made visible, not silent).
 
 **Frame.** ST-LRPS is a **Moon-fixed / body-fixed Cartesian** surrogate
 (`moon_fixed_cartesian`). The runtime exposes explicit `predict_*_fixed`

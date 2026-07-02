@@ -45,6 +45,7 @@ from lunaris.core.propagation.integrators.fixed_step import (
     _is_fixed_step_method,
     _is_symplectic_method,
     symplectic_breaks_separability,
+    symplectic_nonconservative_gravity,
     symplectic_nonconservative_violations,
 )
 from lunaris.core.propagation.integrators.rk import _rk4_step_full, _rk8_step_full
@@ -354,6 +355,11 @@ def propagate(
     _method = getattr(cfg, "method", "DOP853")
     _flags = getattr(dynamics, "flags", None)
     _violations = symplectic_nonconservative_violations(_method, _flags)
+    # The gravity model itself can void the guarantee: a force_direct ST-LRPS
+    # surrogate predicts acceleration directly (no underlying scalar potential),
+    # so it is non-conservative by construction even with every perturbation
+    # flag off. potential_autograd surrogates and classical SH stay exempt.
+    _violations += symplectic_nonconservative_gravity(_method, getattr(dynamics, "grav", None))
     if _violations:
         _msg = (
             f"Symplectic method {str(_method)!r} is active together with "
@@ -894,6 +900,7 @@ __all__ = [
     "_is_fixed_step_method",
     "_is_symplectic_method",
     "symplectic_nonconservative_violations",
+    "symplectic_nonconservative_gravity",
     "symplectic_breaks_separability",
     "_norm_method",
     "_rk4_step_full",

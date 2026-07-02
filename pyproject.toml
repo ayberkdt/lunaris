@@ -351,6 +351,35 @@ forbidden_modules = [
   "lunaris.ui",
 ]
 
+# The production runtime facade (PUBLIC_API's sanctioned ST-LRPS import) must
+# obey the same lightness rule as the internal st_lrps runtime: inference never
+# drags in training/evaluation/UI code.
+[[tool.importlinter.contracts]]
+name = "production ST-LRPS runtime facade stays light"
+type = "forbidden"
+source_modules = ["lunaris.surrogate.runtime"]
+forbidden_modules = [
+  "lunaris.surrogate.st_lrps.training",
+  "lunaris.surrogate.st_lrps.evaluation",
+  "lunaris.surrogate.st_lrps.ui",
+  "lunaris.surrogate.st_lrps.paper_evidence",
+  "lunaris.ui",
+]
+
+# The engine core must not depend on the CLI wiring or the batch orchestration
+# package. The two historical compatibility shims are the only sanctioned
+# (call-time, lazily folded) exceptions; new edges are architecture violations.
+[[tool.importlinter.contracts]]
+name = "core does not import the CLI or batch orchestration layers"
+type = "forbidden"
+source_modules = ["lunaris.core"]
+forbidden_modules = ["lunaris.cli", "lunaris.batch"]
+ignore_imports = [
+  "lunaris.core.mc_runner -> lunaris.cli.*",
+  "lunaris.core.monte_carlo_engine -> lunaris.batch.*",
+]
+unmatched_ignore_imports_alerting = "warn"
+
 [[tool.importlinter.contracts]]
 name = "analysis and visualization do not import the desktop UI"
 type = "forbidden"
