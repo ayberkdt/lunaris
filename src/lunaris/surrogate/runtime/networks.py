@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +159,39 @@ def _build_model_from_config(cfg: dict[str, Any]) -> nn.Module:
     depth = int(cfg.get("depth", 4))
     dropout = float(cfg.get("dropout", 0.0) or 0.0)
     use_fourier = bool(cfg.get("use_fourier", False))
+
+    # Audit F7: this legacy builder reconstructs the architecture from config
+    # values, and some hyperparameters are NOT recoverable from the checkpoint
+    # state_dict — a wrong default silently changes the computed field. The
+    # defaults stay usable (pre-contract artifacts never recorded them) but the
+    # assumption must be visible, never silent.
+    if activation == "sine" and ("w0_first" not in cfg or "w0_hidden" not in cfg):
+        warnings.warn(
+            "[ST-LRPS legacy loader] sine (SIREN) artifact config does not record "
+            "w0_first/w0_hidden; assuming w0=30.0. w0 is not stored in the "
+            "checkpoint state_dict, so a wrong default silently changes the "
+            "computed field. Regenerate the artifact with explicit w0 metadata "
+            "for paper-safe use.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    if use_fourier:
+        _missing_fourier = [
+            key
+            for key in ("fourier_n_features", "fourier_sigma", "fourier_seed", "fourier_append_raw")
+            if key not in cfg
+        ]
+        if _missing_fourier:
+            warnings.warn(
+                "[ST-LRPS legacy loader] Fourier-embedding artifact config does not "
+                f"record {', '.join(_missing_fourier)}; reconstructing the embedding "
+                "from defaults. The projection matrix itself is restored from the "
+                "checkpoint state_dict (strict load), but shape-affecting defaults "
+                "can fail the load or misdescribe the run's provenance. Regenerate "
+                "the artifact with explicit Fourier metadata for paper-safe use.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     embedding: FourierInputEmbedding | None = None
     backbone_in_dim = 3

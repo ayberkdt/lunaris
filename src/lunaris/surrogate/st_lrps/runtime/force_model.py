@@ -37,6 +37,7 @@ identically to their ``*_fixed`` counterparts.
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
@@ -123,6 +124,25 @@ _FORCE_DIRECT_NO_POTENTIAL = get_capability(
 )
 
 
+def _artifact_declares_frame(cfg: dict | None) -> bool:
+    """True when the artifact's raw config explicitly declares a coordinate frame.
+
+    Contract normalization (``_dataset_contract_from_config`` /
+    ``TargetContract``) injects the default ``moon_fixed_cartesian`` when the
+    frame is absent, so the *normalized* contract cannot distinguish "declared"
+    from "defaulted". Scan the raw config keys instead.
+    """
+    if not isinstance(cfg, dict):
+        return False
+    if cfg.get("coordinate_frame") or cfg.get("frame"):
+        return True
+    for key in ("dataset_meta", "dataset_contract", "dataset", "target_contract"):
+        sub = cfg.get(key)
+        if isinstance(sub, dict) and (sub.get("coordinate_frame") or sub.get("frame")):
+            return True
+    return False
+
+
 def _resolve_run_dir(model_dir: str | Path) -> Path:
     """
     Accept run dir, checkpoint dir, or direct checkpoint path.
@@ -154,9 +174,21 @@ def _to_tensor(x: np.ndarray | torch.Tensor, device: torch.device) -> torch.Tens
 
 
 class BaseSurrogateRuntime:
-    """Runtime contract for current and future ST-LRPS surrogate kinds."""
+    """Runtime contract for current and future ST-LRPS surrogate kinds.
+
+    .. warning::
+       Do **not** use ``isinstance()`` to decide whether a runtime is
+       conservative: :class:`DirectForceRuntime` inherits from
+       :class:`SurrogateForceModel` for implementation reuse, so isinstance
+       checks against the potential classes are also True for ``force_direct``.
+       Use :attr:`is_conservative` (or ``runtime_model_kind``) instead.
+    """
 
     runtime_model_kind = "base"
+    # Scientific taxonomy flag: True only when the predicted acceleration is by
+    # construction the gradient of a scalar potential. Unknown kinds default to
+    # non-conservative (fail-safe).
+    is_conservative: bool = False
 
     def predict_residual_potential(self, x_m):  # pragma: no cover - interface
         raise NotImplementedError
@@ -172,6 +204,9 @@ class PotentialAutogradRuntime(BaseSurrogateRuntime):
     """Reference ST-LRPS runtime: scalar potential with autograd acceleration."""
 
     runtime_model_kind = "potential_autograd"
+    # Acceleration is the autograd gradient of the learned scalar potential, so
+    # the residual field is conservative by construction.
+    is_conservative = True
 
 
 class SurrogateForceModel(PotentialAutogradRuntime):
@@ -282,6 +317,20 @@ class SurrogateForceModel(PotentialAutogradRuntime):
                 "ST-LRPS predicts residual gravity in the body-fixed frame; rotate "
                 "inertial inputs with predict_*_inertial(q_i2f) instead of loading a "
                 "wrong-frame artifact."
+            )
+        # Frame declared vs defaulted: contract normalization injects the default
+        # frame, so a frameless legacy artifact would otherwise pass the guard
+        # silently. It still loads (the assumption is almost certainly right for
+        # this repository's artifacts) but the assumption must be visible.
+        self.frame_declared = _artifact_declares_frame(cfg)
+        if not self.frame_declared:
+            warnings.warn(
+                "ST-LRPS artifact does not declare a coordinate frame "
+                "(no coordinate_frame/frame key in its config or dataset metadata); "
+                f"assuming {SUPPORTED_RUNTIME_FRAME!r}. For paper-safe use, regenerate "
+                "the artifact with an explicit frame declaration.",
+                RuntimeWarning,
+                stacklevel=2,
             )
 
         # Training altitude bounds: resolved from 3 sources in priority order.
@@ -674,6 +723,10 @@ class DirectForceRuntime(SurrogateForceModel):
     """
 
     runtime_model_kind = "force_direct"
+    # Direct residual acceleration has no underlying scalar potential; zero curl
+    # is not guaranteed unless separately validated. isinstance() against the
+    # potential classes is True for this class too — use this flag instead.
+    is_conservative = False
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -703,8 +756,12 @@ class DirectForceRuntime(SurrogateForceModel):
                     f"got {tuple(delta_a_scaled.shape)}."
                 )
             delta_a = self.scaler.unscale_a(delta_a_scaled)
-        zeros_u = np.zeros((int(x_t.shape[0]), 1), dtype=np.float64)
-        return zeros_u, delta_a.detach().cpu().numpy()
+        # NaN, not zeros: force_direct artifacts have no scalar potential, and a
+        # zero could masquerade as a real DeltaU downstream. The public potential
+        # methods raise UnsupportedCapability; this internal column must poison,
+        # not placate, any accidental consumer.
+        nan_u = np.full((int(x_t.shape[0]), 1), np.nan, dtype=np.float64)
+        return nan_u, delta_a.detach().cpu().numpy()
 
     def _predict_potential_only_chunk(self, x_t: torch.Tensor) -> np.ndarray:
         raise UnsupportedCapability(_FORCE_DIRECT_NO_POTENTIAL)

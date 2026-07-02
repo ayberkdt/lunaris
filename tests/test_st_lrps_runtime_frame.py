@@ -24,7 +24,7 @@ from lunaris.surrogate.st_lrps.runtime.force_model import (
 from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
 
 
-def _make_fm(**ctor_overrides):
+def _make_fm(cfg_extra=None, **ctor_overrides):
     sp = ScalerPack(
         x=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=2.0e6),
         u=IsometricScaleParams(mean=[0.0], scale=1.0),
@@ -47,6 +47,8 @@ def _make_fm(**ctor_overrides):
             "altitude_max_km": 600.0,
         },
     }
+    if cfg_extra:
+        cfg.update(cfg_extra)
     return SurrogateForceModel(model=model, scaler=sp, cfg=cfg, device=torch.device("cpu"), **ctor_overrides)
 
 
@@ -154,3 +156,48 @@ def test_wrong_frame_artifact_raises():
     bad_contract["dataset_contract"]["coordinate_frame"] = "moon_centered_inertial"
     with pytest.raises(ValueError, match="moon_fixed_cartesian"):
         _make_fm(artifact_contract=bad_contract)
+
+
+# ---------------------------------------------------------------------------
+# Audit F14 — the frame guard must not fail open silently. Contract
+# normalization injects the default frame, so a frameless legacy artifact would
+# otherwise be *assumed* Moon-fixed with no signal. It still loads, but with a
+# visible RuntimeWarning; an artifact that declares its frame stays silent.
+# ---------------------------------------------------------------------------
+
+def test_frameless_artifact_warns_defaulted_frame():
+    with pytest.warns(RuntimeWarning, match="does not declare a coordinate frame"):
+        fm = _make_fm()
+    assert fm.frame_declared is False
+    assert fm.frame == SUPPORTED_RUNTIME_FRAME  # assumption is visible, not changed
+
+
+def test_declared_frame_loads_silently():
+    import warnings as _warnings
+
+    with _warnings.catch_warnings(record=True) as rec:
+        _warnings.simplefilter("always")
+        fm = _make_fm(cfg_extra={"coordinate_frame": "moon_fixed_cartesian"})
+    assert fm.frame_declared is True
+    assert not [w for w in rec if "does not declare a coordinate frame" in str(w.message)]
+
+
+def test_frame_declared_in_dataset_block_counts():
+    import warnings as _warnings
+
+    with _warnings.catch_warnings(record=True) as rec:
+        _warnings.simplefilter("always")
+        fm = _make_fm(
+            cfg_extra={
+                "dataset": {
+                    "target_mode": "residual",
+                    "degree_min": -1,
+                    "degree_max": 50,
+                    "altitude_min_km": 50.0,
+                    "altitude_max_km": 600.0,
+                    "coordinate_frame": "moon_fixed_cartesian",
+                }
+            }
+        )
+    assert fm.frame_declared is True
+    assert not [w for w in rec if "does not declare a coordinate frame" in str(w.message)]

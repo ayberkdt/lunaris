@@ -61,6 +61,44 @@ _BACKEND_DISPLAY_NAMES = {
 }
 
 
+def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
+    """Return the preflight error message when the artifact kind is unacceptable.
+
+    ``expected_kind`` is what the backend policy resolved (from the request /
+    config.json); ``actual_kind`` is what the loaded artifact actually declares.
+    Rules:
+
+    - expected empty: nothing to enforce (``None``).
+    - expected ``force_direct`` but the artifact declares nothing: **fail
+      closed**. An explicit direct-force request must be provable from the
+      artifact — legacy kind-less artifacts are potential-only by construction,
+      so assuming ``force_direct`` would run the wrong physics.
+    - expected ``potential_autograd`` with a kind-less artifact: allowed (the
+      legacy loader only ever builds scalar-potential models).
+    - both declared and different: fail.
+    """
+    expected = str(expected_kind or "").strip()
+    actual = str(actual_kind or "").strip()
+    if not expected:
+        return None
+    if not actual:
+        if expected == "force_direct":
+            return (
+                "GPU ST-LRPS artifact kind mismatch: backend policy expects "
+                "'force_direct', but the loaded artifact does not declare "
+                "runtime_model_kind. An explicit direct-force request must be "
+                "provable from the artifact (legacy kind-less artifacts are "
+                "potential-only); refusing to assume."
+            )
+        return None
+    if actual != expected:
+        return (
+            "GPU ST-LRPS artifact kind mismatch: backend policy expects "
+            f"{expected!r}, loaded runtime is {actual!r}."
+        )
+    return None
+
+
 class MonteCarloEngine:
     """
     Orchestrates a full Monte Carlo orbital uncertainty propagation run.
@@ -372,15 +410,9 @@ class MonteCarloEngine:
                     or getattr(grav_model, "config", {}).get("runtime_model_kind", "")
                 ).strip()
                 expected_runtime_kind = str(getattr(plan, "runtime_model_kind", "") or "").strip()
-                if (
-                    expected_runtime_kind
-                    and actual_runtime_kind
-                    and actual_runtime_kind != expected_runtime_kind
-                ):
-                    raise TorchSTLRPSPreflightError(
-                        "GPU ST-LRPS artifact kind mismatch: backend policy expects "
-                        f"{expected_runtime_kind!r}, loaded runtime is {actual_runtime_kind!r}."
-                    )
+                _kind_error = _st_lrps_kind_mismatch(expected_runtime_kind, actual_runtime_kind)
+                if _kind_error:
+                    raise TorchSTLRPSPreflightError(_kind_error)
                 prop_kwargs: dict[str, Any] = {
                     "surrogate_model": grav_model,
                     "mc_cfg": self._mc,

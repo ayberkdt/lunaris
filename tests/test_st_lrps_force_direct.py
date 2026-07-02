@@ -93,6 +93,31 @@ def test_force_direct_loader_and_runtime_methods(tmp_path, monkeypatch):
     assert total.shape == (3,)
 
 
+def test_force_direct_internal_potential_column_is_nan(tmp_path):
+    # Audit F15: force_direct has no scalar potential — the internal potential
+    # column of _chunked_predict must poison (NaN), never placate (zeros), an
+    # accidental consumer. Public potential methods raise UnsupportedCapability.
+    run = make_contract_run(
+        tmp_path,
+        cfg_overrides={
+            "runtime_model_kind": "force_direct",
+            "prediction_kind": "residual_force",
+            "output_dim": 3,
+        },
+    )
+    fm = load_surrogate_force_model(run["run_dir"], device="cpu")
+    assert isinstance(fm, DirectForceRuntime)
+    x = np.vstack(
+        [
+            [R_MOON_SI + 200_000.0, 0.0, 0.0],
+            [0.0, R_MOON_SI + 250_000.0, 0.0],
+        ]
+    )
+    u_col, da = fm._chunked_predict(x)
+    assert np.isnan(u_col).all()
+    assert np.isfinite(da).all()
+
+
 def test_force_direct_strict_domain(tmp_path):
     run = make_contract_run(
         tmp_path,

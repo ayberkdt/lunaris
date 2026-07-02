@@ -18,7 +18,15 @@ Console scripts are the most stable user-facing API:
 | `lunaris-perturbation-budget` | Acceleration and perturbation budget analysis |
 | `lunaris-ui` / `lunaris-launcher` | Mission desktop UI and launcher |
 | `lunaris-studio` | Optional ST-LRPS Studio UI |
-| `lunaris-train`, `lunaris-eval`, `lunaris-benchmark` | Optional ST-LRPS workflows |
+| `lunaris-train`, `lunaris-eval`, `lunaris-benchmark` | Optional ST-LRPS workflows (`potential_autograd`) |
+| `lunaris-train-force-direct`, `lunaris-eval-force-direct` | Experimental `force_direct` ST-LRPS workflows (direct residual acceleration; not conservative by construction — requires curl / orbit-level validation before scientific claims) |
+| `lunaris-validate` | Validation runners: gravity-reference field/trajectory checks and the ST-LRPS validation suite |
+| `lunaris-ablation` | ST-LRPS ablation suite runner |
+| `lunaris-st-lrps-paper-evidence` | End-to-end paper-evidence pipeline (multi-seed training, benchmarks, ablation, evidence manifest) |
+
+This table is the canonical console-script inventory: every entry in
+`pyproject.toml [project.scripts]` must appear here (enforced by
+`tests/test_repo_hygiene.py::test_console_scripts_documented_in_public_api`).
 
 ## Stable Python Surface
 
@@ -60,11 +68,12 @@ Full simulation configuration flows through `SimConfig`:
 ```python
 from dataclasses import replace
 
-from lunaris.core.config import load_default_config
+from lunaris.core.config import load_default_config, replace_sim_config
 
 cfg = load_default_config()
-cfg = replace(cfg, time=replace(cfg.time, duration_s=2 * 3600.0))
-cfg.validate()
+# Sub-configs are plain frozen dataclasses (dataclasses.replace is fine there);
+# the top-level SimConfig copy must go through the validating helper.
+cfg = replace_sim_config(cfg, time=replace(cfg.time, duration_s=2 * 3600.0))
 ```
 
 Do not construct ad-hoc dictionaries of physics flags or pass loose keyword
