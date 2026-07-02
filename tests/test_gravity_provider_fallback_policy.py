@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.requires_data
+
 torch = pytest.importorskip("torch")
 
 from lunaris.common.constants import MU_MOON

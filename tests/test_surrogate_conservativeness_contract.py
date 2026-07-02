@@ -65,6 +65,7 @@ def test_loaded_potential_runtime_is_conservative(tmp_path):
     assert fm.runtime_model_kind == "potential_autograd"
 
 
+@pytest.mark.requires_data
 def test_gravity_provider_mirrors_runtime_flag(tmp_path):
     run = make_contract_run(tmp_path)
     provider = SurrogateGravityModel.from_model_dir(
