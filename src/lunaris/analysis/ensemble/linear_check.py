@@ -1,6 +1,6 @@
-"""Linear (STM) covariance cross-check for Monte Carlo ensembles.
+"""Linear (STM) covariance cross-check for propagated ensembles.
 
-Validates the Monte Carlo sample covariance against linear covariance
+Validates the ensemble sample covariance against linear covariance
 propagation ``P(t) = Φ(t) P₀ Φ(t)ᵀ`` in the small-dispersion regime, where the
 two must agree up to sampling error. The state-transition matrices are built by
 central finite differences of an arbitrary propagation callable, so the check

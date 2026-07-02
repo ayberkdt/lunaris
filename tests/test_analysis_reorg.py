@@ -31,6 +31,12 @@ def test_removed_modules_raise_importerror():
         "lunaris.analysis.styling",
         "lunaris.analysis.mc_analysis",
         "lunaris.analysis.mc_plotting",
+        "lunaris.analysis.monte_carlo",
+        "lunaris.analysis.monte_carlo.linear_check",
+        "lunaris.analysis.monte_carlo.plotting",
+        "lunaris.analysis.monte_carlo.result_audit",
+        "lunaris.analysis.monte_carlo.statistics",
+        "lunaris.analysis.monte_carlo.uq_report",
         "lunaris.analysis.compare_gravity_models",
         "lunaris.analysis.threeD_animation",
     ]
@@ -40,6 +46,8 @@ def test_removed_modules_raise_importerror():
             importlib.import_module(mod)
 
 def test_new_canonical_paths_importable():
+    from lunaris.analysis.ensemble.plotting import plot_mc_report
+    from lunaris.analysis.ensemble.statistics import compute_mc_statistics
     from lunaris.analysis.postprocess import (
         compute_history,
         process_simulation_results,
@@ -48,11 +56,6 @@ def test_new_canonical_paths_importable():
     from lunaris.analysis.reporting.manager import plot_all
     from lunaris.analysis.reporting.plotting import figure_orbit_3d
     from lunaris.analysis.reporting.styling import apply_rcparams
-    try:
-        from lunaris.analysis.monte_carlo.plotting import plot_mc_report
-        from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
-    except ImportError:
-        pass
     from lunaris.visualization.orbit_animation import render_orbit_animation
 
 def test_stale_names_absent():

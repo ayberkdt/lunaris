@@ -21,8 +21,8 @@ own training, evaluation, and Studio UI.
 > `propagate()` evaluates the surrogate as an interpreted PyTorch + autograd
 > closure (not a Numba kernel), so it pays per-call Python/autograd overhead on
 > every RHS evaluation and will be *slower* than the `@njit` spherical-harmonic
-> kernel. The surrogate's advantage is amortized only across a large GPU batch
-> (Monte Carlo / ensemble). Do **not** benchmark "ST-LRPS vs SH" by timing one
+> kernel. The surrogate's advantage is amortized only across a large GPU
+> batch/ensemble. Do **not** benchmark "ST-LRPS vs SH" by timing one
 > CPU trajectory — that measures the wrong path. Compare like-for-like on the GPU
 > batch backend. See [docs/profiling.md](docs/profiling.md).
 
@@ -47,7 +47,7 @@ This README is a landing page; the canonical detail lives in `docs/`.
 | [docs/DATASET_PIPELINE.md](docs/DATASET_PIPELINE.md) | ST-LRPS dataset contract, validation, quality reports, split manifests, and strict training ingestion |
 | [docs/CONFIG_AND_ARTIFACT_CONTRACTS.md](docs/CONFIG_AND_ARTIFACT_CONTRACTS.md) | ST-LRPS dataset, training, checkpoint, runtime, and benchmark contract rules |
 | [docs/PERTURBATION_BUDGET.md](docs/PERTURBATION_BUDGET.md) | Perturbation-budget assumptions, outputs, and interpretation |
-| [docs/UQ_COVARIANCE.md](docs/UQ_COVARIANCE.md) | Monte Carlo uncertainty quantification: ensemble covariance definition, RIC uncertainty, error ellipsoids, provenance-stamped UQ reports, linear (STM) cross-check |
+| [docs/UQ_COVARIANCE.md](docs/UQ_COVARIANCE.md) | Ensemble uncertainty quantification: covariance definition, RIC uncertainty, error ellipsoids, provenance-stamped UQ reports, linear (STM) cross-check |
 | [docs/HPC.md](docs/HPC.md) | Cluster/headless install, Conda environment, Slurm templates, scenario arrays |
 | [docs/profiling.md](docs/profiling.md) | ST-LRPS runtime profiling and timing interpretation |
 | [validation/README.md](validation/README.md) | Independent physics/orbit/gravity validation harnesses |
@@ -124,7 +124,7 @@ lunaris-train --help
 lunaris-eval --help
 lunaris-benchmark --help
 lunaris-batch --help
-lunaris-mc --help
+lunaris-mc --help  # historical alias
 lunaris-perturbation-budget --help
 python -m lunaris.surrogate.st_lrps.training.cli --help
 python -m lunaris.surrogate.st_lrps.evaluation.cli --help
@@ -164,7 +164,7 @@ Console entry points (installed via `pip install -e .`):
 ```text
 lunaris           single-run propagation CLI
 lunaris-batch     batch/ensemble propagation runner
-lunaris-mc        Monte Carlo-oriented entry point for the batch runner
+lunaris-mc        historical alias for batch/ensemble propagation
 lunaris-launcher  welcome hub (picks a workspace; optional offline 3D Moon preview)
 lunaris-ui        mission desktop UI (Lunaris Mission Studio)
 lunaris-studio    ST-LRPS Studio UI
@@ -227,16 +227,19 @@ are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Propagation, Batch Ensembles, And Analysis
 
-Single-run propagation is driven by `lunaris`; ensemble propagation by
-`lunaris-batch` and the Monte Carlo-oriented `lunaris-mc` entry point. The ensemble
-sampling design is explicit: `random` is the classical Monte Carlo option, while
-`lhs`, `sobol`, and `sobol_scrambled` are space-filling designs better suited to
-validation and benchmark coverage. Batch backends are explicit (`cpu_sh` truth
-reference, `numba_cuda_sh`, `torch_cuda_sh`, `torch_cpu_sh`,
-`gpu_st_lrps_potential`, `gpu_st_lrps_direct`); selection is resolved centrally
-by `lunaris.core.mc_backend_policy`, and the requested vs. effective backend,
-device, integrator, sampling method, and any fallback reason are recorded in
-`MCRunResult.diagnostics` rather than applied silently. The perturbation budget
+Single-run propagation is driven by `lunaris`; propagated ensembles are driven
+by the primary `lunaris-batch` command. Each ensemble run declares its sampling
+design: `random` is the classical Monte Carlo design, while `lhs`, `sobol`, and
+`sobol_scrambled` provide space-filling designs for validation and benchmark
+coverage. The historical `lunaris-mc` command remains only as a compatibility
+alias for existing scripts.
+
+Batch backends are explicit (`cpu_sh` truth reference, `numba_cuda_sh`,
+`torch_cuda_sh`, `torch_cpu_sh`, `gpu_st_lrps_potential`,
+`gpu_st_lrps_direct`). Selection is resolved centrally by
+`lunaris.core.mc_backend_policy`, and the requested vs. effective backend,
+device, integrator, sampling method, and any fallback reason are recorded in the
+batch result diagnostics rather than applied silently. The perturbation budget
 tool quantifies acceleration contributions and force-model uncertainty:
 
 ```bash
@@ -309,8 +312,10 @@ exception is the offline web preview's static demo assets under
 `orbit-data.json`) — these are display-only inputs for the optional Three.js
 preview, not scientific outputs, and the allowlist is enforced by
 `tests/test_repo_hygiene.py`. The standard layout
-(`outputs/{simulations,monte_carlo,missions,gravity_benchmark,training,evaluations,runtime,dataset_reports,datasets,validation,visualization}/`)
-keeps a trained run's checkpoints, plots, evals, and provenance together.
+(`outputs/{simulations,ensemble,missions,gravity_benchmark,training,evaluations,runtime,dataset_reports,datasets,validation,visualization}/`)
+keeps a trained run's checkpoints, plots, evals, and provenance together. Older
+scripts and archives may still use `outputs/monte_carlo/`; new examples should
+use `outputs/ensemble/`.
 
 ## Testing
 

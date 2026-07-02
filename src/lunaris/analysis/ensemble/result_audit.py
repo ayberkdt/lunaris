@@ -1,8 +1,8 @@
-"""Audit pre-contract Monte Carlo / ST-LRPS results into a trust manifest.
+"""Audit pre-contract batch / ST-LRPS results into a trust manifest.
 
 Reviewer §10: results produced before the freeze-review fixes may rest on now-closed
 contract/physics gaps, so they must be classified before being reused as evidence.
-This module scans for Monte Carlo result archives and ST-LRPS run directories and
+This module scans for batch result archives and ST-LRPS run directories and
 labels each one ``invalid`` / ``rerun_required`` / ``quarantined`` / ``trusted`` with
 explicit, item-tagged reasons:
 
@@ -41,7 +41,7 @@ from typing import Any
 
 from lunaris.common.hashing import canonical_json_sha256
 
-# Hash-provenance keys written by MonteCarloEngine.run (§7). Presence of any one
+# Hash-provenance keys written by BatchPropagationEngine.run (§7). Presence of any one
 # means the archive carries verifiable artifact/coefficient/kernel provenance.
 _PROVENANCE_HASH_KEYS = (
     "kernel_source_sha256",
@@ -53,7 +53,7 @@ _SHA256_HEX_LENGTH = 64
 
 # Mirrors ``monte_carlo_engine.REQUIRED_ARCHIVE_V2_FIELDS`` so this module stays
 # importable without the heavy engine deps. A v2 archive missing any of these
-# declares the v2 contract but was not produced by a complete MonteCarloEngine
+# declares the v2 contract but was not produced by a complete BatchPropagationEngine
 # run -> INVALID (the strict loader rejects the same archives).
 _REQUIRED_V2_FIELDS = (
     "archive_schema_version",
@@ -107,7 +107,7 @@ def _has_valid_provenance_hash(metadata: dict[str, Any]) -> bool:
 
 
 def classify_mc_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tuple[str, list[str]]:
-    """Classify one Monte Carlo archive from its manifest metadata.
+    """Classify one batch/ensemble archive from its manifest metadata.
 
     ``has_impacts`` reflects whether any valid sample impacted (impact geography /
     timing only matters when there were impacts).
@@ -142,7 +142,7 @@ def classify_mc_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tuple
         return INVALID, [
             "declares schema v2 but is missing required manifest field(s): "
             + ", ".join(sorted(missing))
-            + " (not a complete MonteCarloEngine run)"
+            + " (not a complete BatchPropagationEngine run)"
         ]
 
     backend_diag = metadata.get("backend_diagnostics")

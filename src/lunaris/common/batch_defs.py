@@ -3,17 +3,19 @@
 Batch Propagation Configuration Definitions
 ===========================================
 
-Configuration dataclasses for ensemble uncertainty propagation.  Monte Carlo is
-the default random sampling mode; Latin-hypercube and Sobol designs are also
-available for validation-oriented batch propagation.  All types follow the
+Configuration dataclasses for batch/ensemble uncertainty propagation. Random
+Monte Carlo is one sampling design; Latin-hypercube and Sobol designs are also
+available for validation-oriented batch propagation. All types follow the
 project SSOT pattern: frozen dataclasses with __post_init__ validation.
 
 Layers
 ------
 - ``StateUncertainty``      : position/velocity covariance model.
 - ``SpacecraftUncertainty`` : mass / Cd / Cr / area perturbations.
-- ``MonteCarloConfig``      : top-level batch/MC run configuration.
-- ``MCRunResult``           : output container for ensemble trajectories.
+- ``BatchPropagationConfig``: top-level batch/ensemble run configuration.
+- ``BatchPropagationResult``: output container for ensemble trajectories.
+- ``MonteCarloConfig``      : legacy alias for ``BatchPropagationConfig``.
+- ``MCRunResult``           : legacy alias for ``BatchPropagationResult``.
 
 Units
 -----
@@ -35,7 +37,7 @@ import numpy as np
 from .type_defs import F64Array
 
 # =============================================================================
-# 0.                    SHARED MONTE CARLO OUTPUT GRID
+# 0.                    SHARED BATCH OUTPUT GRID
 # =============================================================================
 
 BATCH_SAMPLING_METHODS: tuple[str, ...] = (
@@ -47,9 +49,9 @@ BATCH_SAMPLING_METHODS: tuple[str, ...] = (
 
 
 def build_mc_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Array, int, float]:
-    """Single source of truth for the Monte Carlo output time grid.
+    """Single source of truth for the batch/ensemble output time grid.
 
-    Every MC backend (CPU DOP853, Numba CUDA classic SH, torch_cuda_sh /
+    Every batch backend (CPU DOP853, Numba CUDA classic SH, torch_cuda_sh /
     torch_cpu_sh, and the ST-LRPS torch path) must emit its snapshots on THIS
     grid so that ``Y[k]`` means the same epoch across backends and trajectories
     are index-comparable for benchmarking and error metrics.
@@ -229,9 +231,9 @@ def validate_st_lrps_model_dir(path: str | Path) -> Path:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MonteCarloConfig:
     """
-    Top-level batch/Monte Carlo propagation configuration.
+    Top-level batch/ensemble propagation configuration.
 
-    ``sampling_method="random"`` is the classical Monte Carlo option. Use
+    ``sampling_method="random"`` is the Monte Carlo sampling design. Use
     ``"lhs"``, ``"sobol"``, or ``"sobol_scrambled"`` when the goal is a
     space-filling validation or benchmark design rather than a purely random
     uncertainty draw.
@@ -308,7 +310,7 @@ class MonteCarloConfig:
 
     # Output
     output_format: str = "hdf5"     # "hdf5" or "npz"
-    output_path: str = "outputs/monte_carlo/mc_output.h5"
+    output_path: str = "outputs/ensemble/batch_output.h5"
     max_vram_gb: float = 4.0        # VRAM budget (caps batch size automatically)
     result_storage_mode: str = "auto"  # "auto", "memory", or "disk"
     max_result_memory_gb: float = 1.0

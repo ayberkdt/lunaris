@@ -111,7 +111,7 @@ class UIMonteCarloConfig:
 
     # Output
     output_format: str = "hdf5"    # "hdf5" or "npz"
-    output_path: str = "outputs/monte_carlo/mc_output.h5"
+    output_path: str = "outputs/ensemble/batch_output.h5"
     result_storage_mode: str = "auto"
     max_result_memory_gb: float = 1.0
 
@@ -154,7 +154,7 @@ def _detect_cuda_available() -> bool:
 
 
 def _preferred_output_suffix(fmt: str) -> str:
-    """Return the canonical filename suffix for the selected MC archive format."""
+    """Return the canonical filename suffix for the selected batch archive format."""
 
     return ".npz" if str(fmt).strip().lower() == "npz" else ".h5"
 
@@ -166,7 +166,7 @@ def _normalize_output_path_for_format(path_text: str, fmt: str) -> str:
     raw = str(path_text).strip()
     suffix = _preferred_output_suffix(fmt)
     if not raw:
-        return f"outputs/monte_carlo/mc_output{suffix}"
+        return f"outputs/ensemble/batch_output{suffix}"
 
     current = Path(raw)
     lower_name = current.name.lower()
@@ -450,10 +450,10 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.tbl_backend_compare.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
 
         rows = [
-            ("SH-20", "20", "classic_sh", "On", "numba_cuda_sh", "outputs/monte_carlo/preview_sh20.h5"),
-            ("SH-60", "60", "classic_sh", "On", "torch_cuda_sh", "outputs/monte_carlo/preview_sh60.h5"),
-            ("SH-100", "100", "classic_sh", "Off", "cpu_sh", "outputs/monte_carlo/preview_sh100.h5"),
-            ("ST-LRPS", "surrogate", "st_lrps", "On", "gpu_st_lrps_potential", "outputs/monte_carlo/preview_stlrps.h5"),
+            ("SH-20", "20", "classic_sh", "On", "numba_cuda_sh", "outputs/ensemble/preview_sh20.h5"),
+            ("SH-60", "60", "classic_sh", "On", "torch_cuda_sh", "outputs/ensemble/preview_sh60.h5"),
+            ("SH-100", "100", "classic_sh", "Off", "cpu_sh", "outputs/ensemble/preview_sh100.h5"),
+            ("ST-LRPS", "surrogate", "st_lrps", "On", "gpu_st_lrps_potential", "outputs/ensemble/preview_stlrps.h5"),
         ]
         self.tbl_backend_compare.setRowCount(len(rows))
         self._backend_compare_meta: list[dict[str, Any]] = []
@@ -547,7 +547,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         gravity_mode = str(meta.get("mode", "classic_sh"))
         degree = meta.get("degree", "20")
         gpu_on = bool(meta.get("gpu_on", True))
-        out_path = str(meta.get("output_path", "outputs/monte_carlo/backend_compare.h5"))
+        out_path = str(meta.get("output_path", "outputs/ensemble/backend_compare.h5"))
 
         n_samples = "100"
         try:
@@ -608,7 +608,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             gravity_mode = str(meta.get("mode", "classic_sh"))
             degree = meta.get("degree", "20")
             gpu_on = bool(meta.get("gpu_on", True))
-            out_path = str(meta.get("output_path", "outputs/monte_carlo/preview.h5"))
+            out_path = str(meta.get("output_path", "outputs/ensemble/preview.h5"))
             cmd: list[str] = [python_exec, runner]
             cmd.extend(["--n-samples", n_samples])
             cmd.extend(["--sampling-method", str(self.cb_sampling_method.currentData() or "random")])
@@ -1085,7 +1085,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         path_row = QtWidgets.QHBoxLayout()
         self.ent_output = QtWidgets.QLineEdit(self.mc_cfg.output_path)
         self.ent_output.setAccessibleName("Output archive path")
-        self.ent_output.setPlaceholderText("outputs/monte_carlo/mc_output.h5")
+        self.ent_output.setPlaceholderText("outputs/ensemble/batch_output.h5")
         btn_browse = QtWidgets.QPushButton("Browse…")
         btn_browse.setFixedHeight(30)
         btn_browse.clicked.connect(self._browse_output)
@@ -1658,7 +1658,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             self.cb_format.setCurrentIndex(idx)
         self.ent_output.setText(
             _normalize_output_path_for_format(
-                str(data.get("output_path", "outputs/monte_carlo/mc_output.h5")),
+                str(data.get("output_path", "outputs/ensemble/batch_output.h5")),
                 fmt,
             )
         )
@@ -1842,7 +1842,7 @@ if __name__ == "__main__":
     app.setStyle("Fusion")
 
     win = QtWidgets.QMainWindow()
-    win.setWindowTitle("Monte Carlo Page — Test")
+    win.setWindowTitle("Batch Ensemble Page - Test")
     win.resize(1100, 750)
     win.setStyleSheet(f"background-color: {THEME['bg_space']}; color: {THEME['fg_main']};")
 

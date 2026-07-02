@@ -44,7 +44,7 @@ def _metadata_value_to_jsonable(value: Any) -> Any:
     """
     Convert runtime metadata values into JSON-safe primitives.
 
-    Monte Carlo archives are often reopened long after the run completed, so
+    Batch/ensemble archives are often reopened long after the run completed, so
     even lightweight metadata such as seed, cadence, and backend selection is
     worth preserving in a transport-safe form across both HDF5 and NPZ outputs.
     """

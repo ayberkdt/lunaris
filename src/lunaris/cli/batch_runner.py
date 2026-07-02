@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-batch_runner.py — CLI entry point for batch/Monte Carlo ensemble propagation.
+batch_runner.py — CLI entry point for batch/ensemble propagation.
 
 This script mirrors main.py's orbit/physics/timeline argument interface and
 adds batch uncertainty-propagation flags.  It is invoked by the GUI as a subprocess
@@ -22,6 +22,7 @@ Exit codes
     0 — success
     1 — configuration / validation error
     2 — runtime error
+    3 — requested UQ report generation failed
 """
 
 from __future__ import annotations
@@ -61,7 +62,7 @@ from lunaris.core.config import load_default_config, replace_sim_config  # noqa:
 def _build_parser() -> argparse.ArgumentParser:
     """Return the combined sim + MC argument parser."""
     p = argparse.ArgumentParser(
-        description="Lunaris batch propagation / Monte Carlo runner",
+        description="Lunaris batch/ensemble propagation runner",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
@@ -137,8 +138,8 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--rtol",             type=float)
     g.add_argument("--atol",             type=float)
 
-    # ---- Batch / Monte Carlo ------------------------------------------------
-    g = p.add_argument_group("Batch / Monte Carlo")
+    # ---- Batch / ensemble ---------------------------------------------------
+    g = p.add_argument_group("Batch / ensemble")
     g.add_argument("--n-samples",             type=int,   default=500,
                    help="Number of ensemble trajectories (>= 2)")
     g.add_argument(
@@ -207,7 +208,7 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--mc-output-format",      choices=["hdf5", "npz"],
                    default="hdf5")
     g.add_argument("--mc-output-path",        type=str,
-                   default="outputs/monte_carlo/mc_output.h5")
+                   default="outputs/ensemble/batch_output.h5")
     g.add_argument(
         "--result-storage-mode",
         choices=["auto", "memory", "disk"],
@@ -273,7 +274,7 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
     # which the headless runner — an entry point — is allowed to import.)
     if mc_cfg.impact_statistics_enabled:
         try:
-            from lunaris.analysis.monte_carlo.statistics import compute_impact_statistics
+            from lunaris.analysis.ensemble.statistics import compute_impact_statistics
 
             imp = compute_impact_statistics(result)
             p_imp = float(imp.p_impact)
@@ -346,7 +347,7 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
 
 def _emit_progress_line(payload: dict) -> None:
     """
-    Stream one structured Monte Carlo progress update to stdout.
+    Stream one structured batch/ensemble progress update to stdout.
 
     The desktop UI treats ``[MC_PROGRESS]`` as a machine-readable control line
     rather than as human log text.  Keeping this emission centralized ensures
@@ -523,13 +524,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         try:
             from dataclasses import asdict
 
-            from lunaris.analysis.monte_carlo.uq_report import build_uq_report
+            from lunaris.analysis.ensemble.uq_report import build_uq_report
 
             manifest = build_uq_report(
                 result,
                 args.uq_report_dir,
                 run_config=asdict(mc_cfg),
-                source_archive=mc_cfg.output_path,
+                source_archive=result.archive_path or mc_cfg.output_path_resolved,
             )
             print(
                 f"[MC] UQ report written: {Path(args.uq_report_dir) / 'uq_manifest.json'} "

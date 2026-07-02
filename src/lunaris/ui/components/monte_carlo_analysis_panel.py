@@ -1,13 +1,13 @@
 """
-Monte Carlo Analysis Workspace
-==============================
+Ensemble Analysis Workspace
+===========================
 
 This module provides a dedicated Qt widget for loading, analyzing, and
-visualizing completed Monte Carlo result archives (`.npz` / `.h5`).
+visualizing completed batch/ensemble result archives (`.npz` / `.h5`).
 
 Why this lives in its own module
 --------------------------------
-The Monte Carlo configuration page already owns a substantial amount of
+The batch configuration page already owns a substantial amount of
 run-time UI.  Keeping the post-run analysis workspace separate prevents the
 page from becoming a monolith and makes the intent of each area explicit:
 
@@ -15,14 +15,14 @@ page from becoming a monolith and makes the intent of each area explicit:
    Owns ensemble setup, backend selection, live progress, and last-run status.
 2. `monte_carlo_analysis_panel.py`
    Owns archive loading, statistical post-processing, plot preview, and
-   report export for completed MC runs.
+   report export for completed ensemble runs.
 
 Design goals
 ------------
 - Non-blocking analysis bootstrap via a Qt worker thread.
 - Friendly operator workflow: choose file -> analyze -> inspect plots/export.
 - Reuse the project's existing pure analysis kernels instead of duplicating
-  Monte Carlo statistics logic inside the UI layer.
+  ensemble statistics logic inside the UI layer.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def _card(title: str) -> QtWidgets.QGroupBox:
     Return a themed group-box card consistent with the rest of the desktop UI.
 
     The analysis workspace reuses the same visual vocabulary as the run page so
-    it feels like a natural extension of the Monte Carlo module rather than an
+    it feels like a natural extension of the batch/ensemble module rather than an
     unrelated tool bolted on later.
     """
 
@@ -153,7 +153,7 @@ def _format_km(value: float | None, *, decimals: int = 3) -> str:
 
 class MCAnalysisWorker(QtCore.QThread):
     """
-    Load a Monte Carlo archive and compute reusable statistics off the UI thread.
+    Load a batch/ensemble archive and compute reusable statistics off the UI thread.
 
     The heavy statistical kernels are pure Python/NumPy and can take noticeable
     time for larger ensembles.  Running them in a background `QThread` keeps the
@@ -189,10 +189,10 @@ class MCAnalysisWorker(QtCore.QThread):
         return bool(self._stop_requested)
 
     def run(self) -> None:
-        """Load the archive and compute the canonical MC statistics bundle."""
+        """Load the archive and compute the canonical ensemble statistics bundle."""
 
         try:
-            from lunaris.analysis.monte_carlo.statistics import compute_mc_statistics
+            from lunaris.analysis.ensemble.statistics import compute_mc_statistics
             from lunaris.batch import load_mc_result
 
             if self._is_cancelled():
@@ -218,7 +218,7 @@ class MCAnalysisWorker(QtCore.QThread):
 
 class MonteCarloAnalysisPanel(QtWidgets.QWidget):
     """
-    Dedicated analysis workspace for completed Monte Carlo result archives.
+    Dedicated analysis workspace for completed batch/ensemble result archives.
 
     The panel separates post-run reasoning from run configuration.  Users can
     revisit old archives, compare outputs, inspect impact risk, and export a
@@ -455,7 +455,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
 
         The original table worked functionally, but the updated card titles are
         more explicit and align better with the language used in engineering
-        Monte Carlo reviews and PDF summaries.
+        ensemble reviews and PDF summaries.
         """
 
         gb = _card("Analysis Summary")
@@ -589,14 +589,14 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         return gb
 
     # ------------------------------------------------------------------
-    # Public helpers used by the MC page / host window
+    # Public helpers used by the batch page / host window
     # ------------------------------------------------------------------
 
     def set_result_path(self, result_path: str, *, auto_analyze: bool = False) -> None:
         """
         Update the visible archive path and optionally start analysis immediately.
 
-        This is used after a successful Monte Carlo run so the analysis
+        This is used after a successful batch/ensemble run so the analysis
         workspace can seamlessly pivot to the freshly written archive.
         """
 
@@ -751,11 +751,11 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
 
     def _export_pdf_report(self) -> None:
         """
-        Export the canonical multi-figure Monte Carlo PDF report.
+        Export the canonical multi-figure ensemble PDF report.
 
         The plotting layer already knows how to assemble the engineering report,
         so the workspace simply collects the destination path and delegates to
-        `analysis.monte_carlo.plotting.plot_mc_report`.
+        `analysis.ensemble.plotting.plot_mc_report`.
         """
 
         if self._result is None or self._stats is None or not self._current_result_path:
@@ -780,7 +780,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         try:
             from matplotlib import pyplot as plt
 
-            from lunaris.analysis.monte_carlo.plotting import plot_mc_report
+            from lunaris.analysis.ensemble.plotting import plot_mc_report
 
             plot_mc_report(self._result, self._stats, output_path=out_path, show=False)
             plt.close("all")
@@ -924,7 +924,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         try:
             from matplotlib import pyplot as plt
 
-            from lunaris.analysis.monte_carlo.plotting import (
+            from lunaris.analysis.ensemble.plotting import (
                 plot_altitude_envelope,
                 plot_covariance_tubes_3d,
                 plot_impact_map,

@@ -75,7 +75,7 @@ def _resolve_result_storage(
             else f"max_result_memory_gb={mc_cfg.max_result_memory_gb:g}"
         )
         raise MemoryError(
-            "Estimated eager Monte Carlo trajectory size "
+            "Estimated eager batch/ensemble trajectory size "
             f"({result_bytes / (1024.0 ** 3):.2f} GiB) exceeds {budget_note}. "
             "Use HDF5 output for disk-backed streaming or explicitly choose "
             "result_storage_mode='memory'."
@@ -86,7 +86,7 @@ def _resolve_result_storage(
         and result_bytes > int(available * _HOST_MEMORY_SAFETY_FACTOR)
     ):
         warnings.warn(
-            "Eager Monte Carlo result "
+            "Eager batch/ensemble result "
             f"({result_bytes / (1024.0 ** 3):.2f} GiB) exceeds the host memory "
             f"safety budget ({_HOST_MEMORY_SAFETY_FACTOR:.0%} of "
             f"{available / (1024.0 ** 3):.2f} GiB free RAM); the run may exhaust "
@@ -128,7 +128,7 @@ class HDF5TrajectoryView:
         try:
             import h5py
         except ImportError:
-            raise ImportError("h5py required for lazy HDF5 MC results.") from None
+            raise ImportError("h5py required for lazy HDF5 batch results.") from None
         with h5py.File(str(self.path), "r") as f:
             ds = f[self.dataset]
             self.shape = tuple(int(v) for v in ds.shape)
@@ -392,7 +392,7 @@ def _infer_valid_mask_from_dataset(dataset: Any, chunk_size: int = 256) -> np.nd
 
 
 def _validate_archive_v2_manifest(metadata: dict[str, Any]) -> None:
-    """Enforce required manifest fields for schema-v2 Monte Carlo archives.
+    """Enforce required manifest fields for schema-v2 batch archives.
 
     Pre-v2 / legacy archives (missing ``archive_schema_version`` or < 2) are
     exempt and loaded best-effort. A v2 archive missing any required field is
@@ -410,21 +410,21 @@ def _validate_archive_v2_manifest(metadata: dict[str, Any]) -> None:
     missing = [f for f in REQUIRED_ARCHIVE_V2_FIELDS if f not in metadata]
     if missing:
         raise ValueError(
-            f"Monte Carlo archive declares schema v{version} but is missing required "
+            f"Batch archive declares schema v{version} but is missing required "
             f"manifest field(s): {', '.join(sorted(missing))}. The archive is incomplete "
-            "or was not produced by a current MonteCarloEngine run. Pass strict=False to "
+            "or was not produced by a current BatchPropagationEngine run. Pass strict=False to "
             "load it as a best-effort legacy archive."
         )
 
 
 def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCRunResult:
     """
-    Reload a saved ``MCRunResult`` from HDF5 or NPZ file.
+    Reload a saved batch/ensemble result from HDF5 or NPZ file.
 
     Parameters
     ----------
     path : str
-        Path produced by ``MonteCarloEngine.run()``.
+        Path produced by ``BatchPropagationEngine.run()``.
     lazy : bool
         Return a disk-backed, read-only trajectory view instead of loading the
         full ``Y`` ensemble into memory (HDF5 only).
@@ -436,7 +436,7 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
 
     Returns
     ----------
-    MCRunResult
+    BatchPropagationResult / legacy MCRunResult
     """
     p = Path(path).expanduser().resolve()
     suffix = p.suffix.lower()
@@ -445,7 +445,7 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
         try:
             import h5py
         except ImportError:
-            raise ImportError("h5py required to read HDF5 MC output.") from None
+            raise ImportError("h5py required to read HDF5 batch output.") from None
         with h5py.File(str(p), "r") as f:
             t_arr  = np.asarray(f["t"],           dtype=np.float64)
             Y_arr: Any = (

@@ -401,7 +401,7 @@ def build_mc_command(
     Build the CLI command for ``lunaris.cli.batch_runner`` from modular UI state.
 
     Parameters mirror ``build_command()`` but target the MC runner script and
-    append Monte Carlo specific flags from ``mc_data`` (MonteCarloPage.get_data()).
+    append batch/ensemble specific flags from ``mc_data`` (MonteCarloPage.get_data()).
     """
 
     command: list[str] = [python_executable, str(mc_runner_path)]
@@ -526,7 +526,7 @@ def build_mc_command(
     if surface_albedo_needed and data_files.albedo_root:
         command.extend(["--albedo-root", data_files.albedo_root])
 
-    # -- Monte Carlo specific flags -------------------------------------------
+    # -- Batch/ensemble specific flags ----------------------------------------
     integrator_label = str(integrator.get("method", "") or "").strip()
     integrator_method = (integrator_label.split()[0] if integrator_label else "DOP853").strip()
     if integrator_method:
@@ -572,7 +572,7 @@ def build_mc_command(
     command.extend(["--max-vram-gb",           str(mc_data.get("max_vram_gb", 4.0))])
     command.extend(["--mc-output-format",      str(mc_data.get("output_format", "hdf5"))])
     command.extend(["--mc-output-path",        str(mc_data.get("output_path",
-                                                               "outputs/monte_carlo/mc_output.h5"))])
+                                                               "outputs/ensemble/batch_output.h5"))])
     command.extend(["--result-storage-mode",   str(mc_data.get("result_storage_mode", "auto"))])
     command.extend(["--max-result-memory-gb",  str(mc_data.get("max_result_memory_gb", 1.0))])
     command.extend(["--detect-impact",          bool_to_onoff(bool(mc_data.get("detect_impact", True)))])

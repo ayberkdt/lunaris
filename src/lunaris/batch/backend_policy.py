@@ -1,4 +1,4 @@
-"""Compatibility adapter over the existing core Monte Carlo backend policy."""
+"""Compatibility adapter over the existing core batch backend policy."""
 
 from __future__ import annotations
 

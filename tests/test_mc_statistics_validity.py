@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from lunaris.analysis.monte_carlo.statistics import (
+from lunaris.analysis.ensemble.statistics import (
     compute_ensemble_statistics,
     compute_impact_statistics,
     compute_oe_dispersion,
