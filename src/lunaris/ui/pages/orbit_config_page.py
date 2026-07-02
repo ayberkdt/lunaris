@@ -43,6 +43,7 @@ Dependencies:
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -123,6 +124,168 @@ class _OrbitState:
 # 1.                        3D ORBIT VISUALIZER
 # =============================================================================
 
+class OrbitSchematic2D(QtWidgets.QWidget):
+    """Token-driven 2D orbit schematic for offscreen or no-OpenGL environments."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(360, 260)
+        self._a_km = 2000.0
+        self._e = 0.0
+        self._inc_deg = 90.0
+        self._raan_deg = 0.0
+        self._argp_deg = 0.0
+        self._ta_deg = 0.0
+
+    @staticmethod
+    def _qcolor(token: str, alpha: float | None = None) -> QtGui.QColor:
+        r, g, b, a = rgba_css_to_tuple(token)
+        return QtGui.QColor(
+            int(round(r * 255)),
+            int(round(g * 255)),
+            int(round(b * 255)),
+            int(round((a if alpha is None else alpha) * 255)),
+        )
+
+    def set_orbit_params(
+        self,
+        a_km: float,
+        e: float,
+        inc_deg: float,
+        raan_deg: float,
+        argp_deg: float,
+        ta_deg: float,
+    ) -> None:
+        self._a_km = max(1.0, float(a_km))
+        self._e = max(0.0, min(0.99, float(e)))
+        self._inc_deg = float(inc_deg)
+        self._raan_deg = float(raan_deg)
+        self._argp_deg = float(argp_deg)
+        self._ta_deg = float(ta_deg)
+        self.update()
+
+    def _orbit_xy(self, anomalies: np.ndarray) -> np.ndarray:
+        denom = 1.0 + self._e * np.cos(anomalies)
+        denom = np.where(np.abs(denom) < 1e-9, 1e-9, denom)
+        radius = self._a_km * (1.0 - self._e**2) / denom
+        xy = np.column_stack([radius * np.cos(anomalies), radius * np.sin(anomalies)])
+
+        # Inclination is a visual cue in this fallback, not a true camera
+        # projection. Keep polar orbits legible instead of collapsing them.
+        inc = math.radians(self._inc_deg)
+        xy[:, 1] *= 0.58 + 0.42 * abs(math.cos(inc))
+        theta = math.radians(self._raan_deg + self._argp_deg)
+        rot = np.array(
+            [[math.cos(theta), -math.sin(theta)], [math.sin(theta), math.cos(theta)]]
+        )
+        return xy @ rot.T
+
+    def _point_xy(self, ta_deg: float) -> np.ndarray:
+        return self._orbit_xy(np.array([math.radians(ta_deg)]))[0]
+
+    def paintEvent(self, _event) -> None:
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.Antialiasing, True)
+
+        rect = self.rect().adjusted(2, 2, -2, -2)
+        painter.fillRect(rect, self._qcolor(ORBIT_THEME["space_bg"]))
+
+        anomalies = np.linspace(0.0, 2.0 * math.pi, 361)
+        xy = self._orbit_xy(anomalies)
+        extent = max(float(np.max(np.linalg.norm(xy, axis=1))), R_MOON * 1.08)
+        scale = min(
+            max(0.01, (rect.width() - 112.0) / (2.0 * extent)),
+            max(0.01, (rect.height() - 92.0) / (2.0 * extent)),
+        )
+        center = QtCore.QPointF(rect.center().x(), rect.center().y() + 4)
+
+        def to_screen(point: np.ndarray) -> QtCore.QPointF:
+            return QtCore.QPointF(
+                center.x() + float(point[0]) * scale,
+                center.y() - float(point[1]) * scale,
+            )
+
+        painter.setPen(QtGui.QPen(self._qcolor(THEME["grid_color"], 0.42), 1.0))
+        for frac in (0.35, 0.60, 0.85):
+            grid_radius = extent * frac * scale
+            painter.drawEllipse(center, grid_radius, grid_radius)
+        painter.drawLine(rect.left() + 18, center.y(), rect.right() - 18, center.y())
+        painter.drawLine(center.x(), rect.top() + 34, center.x(), rect.bottom() - 18)
+
+        moon_radius = max(13.0, R_MOON * scale)
+        moon_grad = QtGui.QRadialGradient(
+            center.x() - moon_radius * 0.35,
+            center.y() - moon_radius * 0.35,
+            moon_radius * 1.25,
+        )
+        moon_grad.setColorAt(0.0, self._qcolor(ORBIT_THEME["moon_light"], 0.96))
+        moon_grad.setColorAt(0.55, self._qcolor(ORBIT_THEME["moon_mid"], 0.94))
+        moon_grad.setColorAt(1.0, self._qcolor(ORBIT_THEME["moon_dark"], 0.98))
+        painter.setPen(QtGui.QPen(self._qcolor(ORBIT_THEME["moon_light"], 0.34), 1.0))
+        painter.setBrush(QtGui.QBrush(moon_grad))
+        painter.drawEllipse(center, moon_radius, moon_radius)
+        painter.setBrush(QtCore.Qt.NoBrush)
+        painter.setPen(QtGui.QPen(self._qcolor(ORBIT_THEME["moon_light"], 0.16), 1.0))
+        for factor in (0.35, 0.65):
+            painter.drawEllipse(center, moon_radius * factor, moon_radius * factor)
+        painter.drawLine(
+            QtCore.QPointF(center.x() - moon_radius, center.y()),
+            QtCore.QPointF(center.x() + moon_radius, center.y()),
+        )
+
+        orbit_path = QtGui.QPainterPath(to_screen(xy[0]))
+        for point in xy[1:]:
+            orbit_path.lineTo(to_screen(point))
+        painter.setPen(QtGui.QPen(self._qcolor(ORBIT_THEME["orbit_glow"], 0.30), 7.0))
+        painter.drawPath(orbit_path)
+        painter.setPen(QtGui.QPen(self._qcolor(ORBIT_THEME["orbit_line"]), 2.4))
+        painter.drawPath(orbit_path)
+
+        self._draw_marker(painter, to_screen(self._point_xy(0.0)), "P", ORBIT_THEME["periapsis"])
+        self._draw_marker(painter, to_screen(self._point_xy(180.0)), "A", ORBIT_THEME["apoapsis"])
+        self._draw_marker(
+            painter,
+            to_screen(self._point_xy(self._ta_deg)),
+            "SC",
+            ORBIT_THEME["spacecraft"],
+        )
+
+        self._draw_axis_glyph(painter, rect)
+        self._draw_readout(painter, rect)
+
+    def _draw_marker(
+        self,
+        painter: QtGui.QPainter,
+        point: QtCore.QPointF,
+        label: str,
+        token: str,
+    ) -> None:
+        color = self._qcolor(token)
+        painter.setBrush(color)
+        painter.setPen(QtGui.QPen(self._qcolor(ORBIT_THEME["space_bg"], 0.85), 1.0))
+        painter.drawEllipse(point, 4.5, 4.5)
+        painter.setPen(QtGui.QPen(color, 1.0))
+        painter.drawText(point + QtCore.QPointF(8, -8), label)
+
+    def _draw_axis_glyph(self, painter: QtGui.QPainter, rect: QtCore.QRect) -> None:
+        origin = QtCore.QPointF(rect.left() + 34, rect.bottom() - 30)
+        painter.setPen(QtGui.QPen(self._qcolor(ORBIT_THEME["axis_x"]), 1.8))
+        painter.drawLine(origin, origin + QtCore.QPointF(36, 0))
+        painter.drawText(origin + QtCore.QPointF(41, 4), "X")
+        painter.setPen(QtGui.QPen(self._qcolor(ORBIT_THEME["axis_y"]), 1.8))
+        painter.drawLine(origin, origin + QtCore.QPointF(0, -30))
+        painter.drawText(origin + QtCore.QPointF(-4, -36), "Y")
+
+    def _draw_readout(self, painter: QtGui.QPainter, rect: QtCore.QRect) -> None:
+        readout = (
+            f"ECI schematic   a={self._a_km:,.0f} km   "
+            f"e={self._e:.4f}   i={self._inc_deg:.1f} deg"
+        )
+        text_rect = QtCore.QRectF(rect.left() + 14, rect.top() + 10, rect.width() - 28, 24)
+        painter.setPen(QtGui.QPen(self._qcolor(THEME["fg_soft"]), 1.0))
+        painter.drawText(text_rect, int(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter), readout)
+
+
 class OrbitViz3D(QtWidgets.QWidget):
     """
     3D orbit visualizer using pyqtgraph's OpenGL backend.
@@ -182,6 +345,11 @@ class OrbitViz3D(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+
+        platform = os.environ.get("QT_QPA_PLATFORM", "").strip().lower()
+        if platform in {"offscreen", "minimal", "vnc"}:
+            self._install_fallback(layout)
+            return
 
         if not HAS_OPENGL:
             self._install_fallback(layout)
@@ -323,6 +491,11 @@ class OrbitViz3D(QtWidgets.QWidget):
         self.gl_widget.addItem(self.starfield)
 
     def _install_fallback(self, layout: QtWidgets.QVBoxLayout) -> None:
+        """Install a deterministic engineering schematic when GL cannot paint."""
+        self.schematic_widget = OrbitSchematic2D()
+        layout.addWidget(self.schematic_widget, 1)
+        return
+
         """Designed empty-state shown when OpenGL is unavailable."""
         card = EmptyState(
             "3D preview unavailable",
@@ -490,6 +663,18 @@ class OrbitViz3D(QtWidgets.QWidget):
         reuses existing OpenGL objects instead of churning new ones every frame.
         The camera is never touched here, so the view stays put as values change.
         """
+        schematic = getattr(self, "schematic_widget", None)
+        if schematic is not None:
+            schematic.set_orbit_params(
+                self._a_km,
+                self._e,
+                self._inc_deg,
+                self._raan_deg,
+                self._argp_deg,
+                self._ta_deg,
+            )
+            return
+
         if not HAS_OPENGL or getattr(self, 'gl_widget', None) is None:
             return
 

@@ -29,10 +29,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 REPO_ROOT = Path(os.path.abspath(__file__)).parents[2]
 DEFAULT_OUT = REPO_ROOT / "outputs" / "ui" / "main_window_lunar_graphite.png"
-os.environ.setdefault(
-    "LUNARIS_APP_DATA_DIR",
-    str(REPO_ROOT / "outputs" / "ui" / "capture_runtime"),
-)
+DEFAULT_CAPTURE_DATA_DIR = REPO_ROOT / "outputs" / "ui" / "capture_runtime"
+os.environ.setdefault("LUNARIS_APP_DATA_DIR", str(DEFAULT_CAPTURE_DATA_DIR))
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -142,6 +140,11 @@ def capture(
     """Render the main window and save a PNG; returns the output path."""
     from PySide6 import QtCore, QtWidgets
 
+    if os.environ.get("LUNARIS_APP_DATA_DIR") == str(DEFAULT_CAPTURE_DATA_DIR):
+        os.environ["LUNARIS_APP_DATA_DIR"] = str(
+            DEFAULT_CAPTURE_DATA_DIR / out_path.stem
+        )
+
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     if target == "st-lrps":
         from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import MainWindow
@@ -152,6 +155,9 @@ def capture(
         apply_premium_dark_theme(app)
     else:
         from lunaris.ui.app import MainWindow
+        from lunaris.ui.core.ui_commons import load_fonts
+
+        app.setFont(load_fonts())
 
     window = MainWindow()
     window.resize(width, height)
