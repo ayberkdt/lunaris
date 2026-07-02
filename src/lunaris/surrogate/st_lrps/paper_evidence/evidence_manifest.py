@@ -40,7 +40,13 @@ def compute_file_sha256(path: str | Path | None) -> str | None:
 
 
 def compute_json_hash(obj: Any) -> str:
-    """Stable SHA-256 over a JSON-serializable object (sorted keys, canonical)."""
+    """Stable SHA-256 over a JSON-serializable object (sorted keys, compact).
+
+    Note: this canonical form (no indent, no trailing newline) intentionally
+    differs from ``lunaris.common.hashing.canonical_json_text`` and is frozen:
+    unifying them would silently change the ``content_hash`` values recorded in
+    existing evidence manifests.
+    """
     text = json.dumps(obj, sort_keys=True, ensure_ascii=True, default=str)
     return sha256_text(text)
 

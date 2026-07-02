@@ -10,9 +10,10 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.hashing import canonical_json_text
 from lunaris.common.provenance import utc_now_iso
 
-from .benchmark_config import SYNTHETIC_BANNER, canonical_json_text
+from .benchmark_config import SYNTHETIC_BANNER
 
 REQUIRED_OUTPUT_FILES = (
     "benchmark_manifest.json",
