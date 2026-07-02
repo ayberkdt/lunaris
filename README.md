@@ -47,6 +47,7 @@ This README is a landing page; the canonical detail lives in `docs/`.
 | [docs/DATASET_PIPELINE.md](docs/DATASET_PIPELINE.md) | ST-LRPS dataset contract, validation, quality reports, split manifests, and strict training ingestion |
 | [docs/CONFIG_AND_ARTIFACT_CONTRACTS.md](docs/CONFIG_AND_ARTIFACT_CONTRACTS.md) | ST-LRPS dataset, training, checkpoint, runtime, and benchmark contract rules |
 | [docs/PERTURBATION_BUDGET.md](docs/PERTURBATION_BUDGET.md) | Perturbation-budget assumptions, outputs, and interpretation |
+| [docs/UQ_COVARIANCE.md](docs/UQ_COVARIANCE.md) | Monte Carlo uncertainty quantification: ensemble covariance definition, RIC uncertainty, error ellipsoids, provenance-stamped UQ reports, linear (STM) cross-check |
 | [docs/HPC.md](docs/HPC.md) | Cluster/headless install, Conda environment, Slurm templates, scenario arrays |
 | [docs/profiling.md](docs/profiling.md) | ST-LRPS runtime profiling and timing interpretation |
 | [validation/README.md](validation/README.md) | Independent physics/orbit/gravity validation harnesses |
