@@ -10,7 +10,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from .benchmark_config import canonical_json_text
+from lunaris.common.provenance import utc_now_iso
+
+from .benchmark_config import SYNTHETIC_BANNER, canonical_json_text
 
 REQUIRED_OUTPUT_FILES = (
     "benchmark_manifest.json",
@@ -59,6 +61,8 @@ def validate_benchmark_outputs(
     metrics_json = _read_json(root / "metrics_summary.json", errors)
     manifest_json = _read_json(root / "benchmark_manifest.json", errors)
 
+    evidence = _evidence_block(root, resolved_config, manifest_json)
+    _check_evidence_consistency(evidence, errors, warnings, checked_metrics)
     _check_no_nan_inf("metrics_summary.csv", metrics_rows, errors, checked_metrics)
     _check_no_nan_inf("scenario_results.csv", scenario_rows, errors, checked_metrics)
     _check_no_nan_inf("runtime_summary.csv", runtime_rows, errors, checked_metrics)
@@ -81,6 +85,7 @@ def validate_benchmark_outputs(
         "passed": not errors,
         "errors": errors,
         "warnings": warnings,
+        "evidence": evidence,
         "checked_files": checked_files,
         "checked_metrics": sorted(set(checked_metrics)),
     }
@@ -109,6 +114,81 @@ def _read_json(path: Path, errors: list[str]) -> Any:
     except Exception as exc:
         errors.append(f"could not read JSON {path.name}: {exc}")
         return None
+
+
+def _evidence_block(
+    root: Path,
+    config: Mapping[str, Any] | None,
+    manifest_json: Any,
+) -> dict[str, Any]:
+    """Self-describing evidence stamp for validation_report.json.
+
+    A passing validation report must never be mistakable for scientific
+    benchmark evidence on its own: quick/synthetic smoke runs are stamped
+    ``scientific_evidence=false`` with the synthetic banner, and a missing
+    resolved config fails closed (unknown provenance is never evidence).
+    """
+    if config is None:
+        loaded = _read_json(root / "resolved_config.json", [])
+        config = loaded if isinstance(loaded, Mapping) else None
+    resolved_hash = _manifest_resolved_config_sha256(manifest_json)
+    if config is None:
+        return {
+            "benchmark_name": None,
+            "synthetic": None,
+            "quick": None,
+            "paper_safe": None,
+            "scientific_evidence": False,
+            "reason": "resolved config unavailable; cannot rule out synthetic/quick output",
+            "banner": SYNTHETIC_BANNER,
+            "resolved_config_sha256": resolved_hash,
+            "validated_at_utc": utc_now_iso(),
+        }
+    _ro = config.get("run_options")
+    run_options: Mapping[str, Any] = _ro if isinstance(_ro, Mapping) else {}
+    synthetic = bool(run_options.get("synthetic", False))
+    quick = bool(run_options.get("quick", False))
+    paper_safe = bool(config.get("paper_safe", False) or run_options.get("paper_safe", False))
+    scientific = not synthetic and not quick
+    return {
+        "benchmark_name": config.get("name"),
+        "synthetic": synthetic,
+        "quick": quick,
+        "paper_safe": paper_safe,
+        "scientific_evidence": scientific,
+        "banner": None if scientific else SYNTHETIC_BANNER,
+        "resolved_config_sha256": resolved_hash,
+        "validated_at_utc": utc_now_iso(),
+    }
+
+
+def _manifest_resolved_config_sha256(manifest_json: Any) -> str | None:
+    if not isinstance(manifest_json, Mapping):
+        return None
+    config = manifest_json.get("config")
+    if not isinstance(config, Mapping):
+        return None
+    value = config.get("resolved_config_sha256")
+    return str(value) if value else None
+
+
+def _check_evidence_consistency(
+    evidence: Mapping[str, Any],
+    errors: list[str],
+    warnings: list[str],
+    checked: list[str],
+) -> None:
+    checked.append("paper_safe_evidence_consistency")
+    if evidence.get("paper_safe") and (evidence.get("synthetic") or evidence.get("quick")):
+        errors.append(
+            "resolved config claims paper_safe together with synthetic/quick run options; "
+            "synthetic or quick output can never be paper-safe evidence"
+        )
+    if not evidence.get("scientific_evidence"):
+        warnings.append(
+            f"{SYNTHETIC_BANNER}: validation checks output structure only; "
+            "this run is not scientific benchmark evidence"
+        )
 
 
 def _check_no_nan_inf(

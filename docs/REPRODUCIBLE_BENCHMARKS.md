@@ -101,6 +101,11 @@ committed.
 - dataset hash when a dataset path is configured
 - integrator settings, step sizes, duration, output cadence, and dtype
 - Python, platform, NumPy, SciPy, PyTorch, CUDA availability, and device name
+- final validation status: the manifest is written with
+  `validation.status = "pending"` before execution and updated to
+  `passed`/`failed` (with error/warning counts, the `scientific_evidence`
+  verdict, and a timestamp) after `validation_report.json` is produced — a
+  crashed run stays visibly `pending`
 
 If an optional file does not exist locally, the manifest records `null` plus a
 clear `missing_reason` instead of failing the run.
@@ -130,10 +135,26 @@ manifest path.
   "passed": true,
   "errors": [],
   "warnings": [],
+  "evidence": {
+    "benchmark_name": "…",
+    "synthetic": false,
+    "quick": false,
+    "paper_safe": true,
+    "scientific_evidence": true,
+    "banner": null,
+    "resolved_config_sha256": "…",
+    "validated_at_utc": "…"
+  },
   "checked_files": [],
   "checked_metrics": []
 }
 ```
+
+The `evidence` block makes the report self-describing: quick/synthetic runs are
+stamped `scientific_evidence: false` with the synthetic banner, and a missing
+`resolved_config.json` fails closed (`scientific_evidence: false` with a
+reason) — a passing validation report alone never certifies scientific
+evidence.
 
 Validation fails on impossible or incomplete evidence, including:
 
@@ -156,6 +177,8 @@ Validation fails on impossible or incomplete evidence, including:
   benchmark request
 - missing RIC columns when RIC metrics are requested
 - missing distance/time units in metrics JSON
+- a resolved config that claims `paper_safe` together with synthetic/quick run
+  options (synthetic or quick output can never be paper-safe evidence)
 
 Domain-envelope issues are recorded as warnings. Warnings do not fail the run.
 
@@ -183,7 +206,8 @@ lunaris-benchmark \
 Quick-mode numbers are pipeline smoke-test evidence, not scientific benchmark
 claims. Synthetic artifacts are stamped
 `SYNTHETIC SMOKE TEST - NOT A SCIENTIFIC BENCHMARK` in `report.md` and
-`metrics_summary.json`.
+`metrics_summary.json`, and `validation_report.json` records
+`evidence.scientific_evidence: false` with the same banner.
 
 ## Paper-Safe Mode
 

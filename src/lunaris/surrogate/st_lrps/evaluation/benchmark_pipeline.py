@@ -84,6 +84,9 @@ def run_configured_benchmark(
     )
     manifest["contract_compatibility"] = contract_report
     manifest["paper_safe"] = {"enabled": bool(paper_safe), "enforced": paper_safe_enforced}
+    # A crashed run must be distinguishable from a validated one: the manifest
+    # says "pending" until validation actually finishes below.
+    manifest["validation"] = {"status": "pending"}
     # Always record the exact invocation so a benchmark can be reproduced.
     _write_run_command(output_dir)
     write_json(output_dir / "resolved_config.json", config)
@@ -104,6 +107,19 @@ def run_configured_benchmark(
         write_report=True,
     )
     _write_report(output_dir, config, validation_report=validation_report, warnings=validation_report["warnings"])
+
+    evidence = validation_report.get("evidence", {})
+    manifest["validation"] = {
+        "status": "passed" if validation_report["passed"] else "failed",
+        "passed": bool(validation_report["passed"]),
+        "error_count": len(validation_report["errors"]),
+        "warning_count": len(validation_report["warnings"]),
+        "scientific_evidence": bool(evidence.get("scientific_evidence", False)),
+        "allow_validation_fail": bool(allow_validation_fail),
+        "validated_at_utc": utc_now_iso(),
+        "report_path": "validation_report.json",
+    }
+    write_json(output_dir / "benchmark_manifest.json", manifest)
 
     if not validation_report["passed"] and not allow_validation_fail:
         for message in validation_report["errors"]:

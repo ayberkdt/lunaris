@@ -134,6 +134,16 @@ These checks make scenario-count drift explicit: a report cannot claim one
 scenario count while the result tables, runtime table, or per-scenario runtime
 were produced for a different count.
 
+`validation_report.json` additionally carries a self-describing `evidence`
+block (`benchmark_name`, `synthetic`, `quick`, `paper_safe`,
+`scientific_evidence`, banner, resolved-config hash, timestamp): quick/synthetic
+output is stamped `scientific_evidence: false`, a missing resolved config fails
+closed, and a resolved config claiming `paper_safe` together with
+synthetic/quick run options is a validation **error**. After validation,
+`benchmark_manifest.json` records the final `validation` status
+(`pending` → `passed`/`failed`), so the provenance artifact of a crashed or
+failed run can never be mistaken for a validated one.
+
 ## 6. Validation suite beyond random
 
 `evaluation/validation_suite.py` reports field-level metrics on **each** split
