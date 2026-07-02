@@ -62,6 +62,7 @@ from lunaris.analysis.monte_carlo.statistics import (
     ImpactStatistics,
     MCStatistics,
     OEDispersion,
+    RICUncertainty,
 )
 from lunaris.common.batch_defs import MCRunResult
 from lunaris.common.constants import DAY_S, R_MOON_MEAN
@@ -515,6 +516,64 @@ def plot_position_covariance_history(
     return fig
 
 
+def plot_ric_sigma_history(
+    ric: RICUncertainty,
+    *,
+    figsize: tuple[float, float] | None = None,
+    title: str = "RIC Position Uncertainty (1σ)",
+) -> Any:
+    """
+    Plot 1-σ radial / along-track / cross-track position uncertainty vs time.
+
+    Returns
+    -------
+    matplotlib Figure
+    """
+    _require_mpl()
+    fig, ax = plt.subplots(figsize=figsize or (11, 6))
+    t_days = _days(ric.t)
+    labels = ("Radial", "Along-track", "Cross-track")
+    colors = ("#b04030", "#2060a0", "#3a8050")
+    for j, (lbl, color) in enumerate(zip(labels, colors, strict=True)):
+        ax.plot(t_days, _km(ric.sigma_ric_m[:, j]), label=lbl, color=color, linewidth=1.6)
+    _style_ax(ax, xlabel="Time [days]", ylabel="Position 1-σ [km]", title=title)
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
+def plot_covariance_eigenvalues(
+    ens: EnsembleStatistics,
+    *,
+    figsize: tuple[float, float] | None = None,
+    title: str = "Position Covariance Eigenvalue Spectrum",
+) -> Any:
+    """
+    Plot the three position-covariance eigenvalues (as 1-σ lengths [km]) vs time.
+
+    Eigenvalues are of the 3×3 position block, sorted ascending per epoch;
+    negative round-off is clipped to zero before the square root.
+
+    Returns
+    -------
+    matplotlib Figure
+    """
+    _require_mpl()
+    fig, ax = plt.subplots(figsize=figsize or (11, 6))
+    t_days = _days(ens.t)
+    P_pos = ens.pos_cov()
+    P_sym = 0.5 * (P_pos + np.transpose(P_pos, (0, 2, 1)))
+    eigvals = np.linalg.eigvalsh(P_sym)                      # (T, 3) ascending
+    sigma_km = _km(np.sqrt(np.maximum(eigvals, 0.0)))
+    for j, lbl in enumerate(("λ_min", "λ_mid", "λ_max")):
+        ax.plot(t_days, sigma_km[:, j], label=f"√{lbl}", linewidth=1.6)
+    ax.set_yscale("log")
+    _style_ax(ax, xlabel="Time [days]", ylabel="1-σ principal length [km]", title=title)
+    ax.legend(fontsize=9)
+    fig.tight_layout()
+    return fig
+
+
 # =============================================================================
 # 4.              IMPACT MAP (MOLLWEIDE PROJECTION)
 # =============================================================================
@@ -769,6 +828,8 @@ __all__ = [
     "plot_altitude_envelope",
     "plot_covariance_tubes_3d",
     "plot_position_covariance_history",
+    "plot_ric_sigma_history",
+    "plot_covariance_eigenvalues",
     "plot_impact_map",
     "plot_impact_time_histogram",
     "plot_oe_dispersion",
