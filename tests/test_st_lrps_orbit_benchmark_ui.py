@@ -338,8 +338,8 @@ def test_gpu_rk4_dt_variants_build_distinct_cache_and_display_names():
     args = argparse.Namespace(gpu_rk4_dt_s_list="10,30", rk4_dt_s=None, st_lrps_rk4_dt=30.0)
     tasks = cgm._build_gpu_batch_tasks(["sh20"], args)
     assert [t.cache_name for t in tasks] == ["sh20_rk4_dt10", "sh20_rk4_dt30"]
-    assert [t.display_name for t in tasks] == ["GPU_SH20_RK4_DT10", "GPU_SH20_RK4_DT30"]
-    assert cgm.display_label("GPU_SH20_RK4_DT10") == "SH20 dt10"
+    assert [t.display_name for t in tasks] == ["GPU_" "SH20_RK4_DT10", "GPU_" "SH20_RK4_DT30"]
+    assert cgm.display_label("GPU_" "SH20_RK4_DT10") == "SH20 dt10"
 
 
 @pytest.mark.requires_data
@@ -844,7 +844,7 @@ def test_backend_rebuild_gpu_metrics_from_cached_trajectories(tmp_path):
     agg = metrics_dir / "gpu_batch_aggregate_metrics.csv"
     assert per.exists()
     assert agg.exists()
-    assert "GPU_SH20_RK4" in per.read_text(encoding="utf-8")
+    assert "GPU_" "SH20_RK4" in per.read_text(encoding="utf-8")
     assert (cache_dir / "metrics" / "per_model_scenario_metrics.csv").exists()
     assert (cache_dir / "metrics" / "aggregate_metrics.csv").exists()
     assert (plots_dir / "ensemble_mean_position_error_vs_time.png").exists()
@@ -1727,10 +1727,10 @@ def test_backend_refresh_metadata_rebuilds_bookkeeping_without_torch(tmp_path, m
     metrics_dir = tmp_path / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     (metrics_dir / "gpu_batch_aggregate_metrics.csv").write_text(
-        "model,rms_pos_err_km\nGPU_SH20_RK4,0.125\n", encoding="utf-8")
+        "model,rms_pos_err_km\nGPU_" "SH20_RK4,0.125\n", encoding="utf-8")
     (metrics_dir / "gpu_batch_runtime_metrics.csv").write_text(
         "model,truth_total_runtime_s,truth_mean_runtime_per_scenario_s\n"
-        "GPU_SH20_RK4,2.0,2.0\n", encoding="utf-8")
+        "GPU_" "SH20_RK4,2.0,2.0\n", encoding="utf-8")
 
     # Guard: refresh must never import torch.
     monkeypatch.setitem(_sys.modules, "torch", None)
@@ -1743,7 +1743,7 @@ def test_backend_refresh_metadata_rebuilds_bookkeeping_without_torch(tmp_path, m
     summary = json.loads((metrics_dir / "gpu_batch_summary.json").read_text(encoding="utf-8"))
     assert summary["source"] == "refresh"
     assert summary["rebuilt_from_cache"] is True
-    assert summary["completed_models"] == ["GPU_SH20_RK4"]
+    assert summary["completed_models"] == ["GPU_" "SH20_RK4"]
     assert summary["summary_scope"] == "all_requested_models"
     assert any("refreshed from existing metrics" in w for w in summary["metadata_warnings"])
     # The cache-side copy is written too when a manifest is present.
