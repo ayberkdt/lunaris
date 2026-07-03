@@ -1,5 +1,5 @@
 """
-Torch classic-SH Monte Carlo propagator: scientific validation (task §16).
+Torch classic-SH batch propagator: scientific validation (task §16).
 
 CPU-only with torch (deterministic, no CUDA required); a single CUDA-vs-CPU
 consistency test is gated on ``torch.cuda.is_available()``.
@@ -105,7 +105,7 @@ def test_acceleration_matches_cpu_reference_float32(grav_full: GravityModel, deg
 # Shared propagator harness (identity frame so the reference is unambiguous)
 # ---------------------------------------------------------------------------
 
-def _mc_cfg(degree: int, *, chunk_size: int = 0, dtype: str = "float64"):
+def _batch_cfg(degree: int, *, chunk_size: int = 0, dtype: str = "float64"):
     from types import SimpleNamespace
 
     return SimpleNamespace(
@@ -124,7 +124,7 @@ def _make_propagator(grav: GravityModel, degree: int, *, device="cpu", dtype=tor
     dyn = SimpleNamespace(grav=grav, ephem=None)
     flags = PerturbationFlags(enable_sh=True)
     return TorchSHBatchPropagator(
-        dyn, _mc_cfg(degree, chunk_size=chunk_size),
+        dyn, _batch_cfg(degree, chunk_size=chunk_size),
         flags, device=device, dtype=dtype, chunk_size=chunk_size,
     )
 
@@ -268,7 +268,7 @@ def test_unsupported_physics_raises_preflight_error() -> None:
     dyn = SimpleNamespace(grav=grav, ephem=None)
     flags = PerturbationFlags(enable_sh=True, enable_srp=True)  # gravity-only path can't do SRP
     with pytest.raises(TorchSHPreflightError) as exc:
-        TorchSHBatchPropagator(dyn, _mc_cfg(20), flags, device="cpu", dtype=torch.float64)
+        TorchSHBatchPropagator(dyn, _batch_cfg(20), flags, device="cpu", dtype=torch.float64)
     assert "srp" in str(exc.value).lower()
 
 

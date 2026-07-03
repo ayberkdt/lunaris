@@ -55,7 +55,7 @@ below still apply when you need finer control.
 
 The recommended setup registers the package and its console commands
 (`lunaris-train`, `lunaris-eval`, `lunaris-benchmark`, `lunaris-batch`,
-`lunaris-mc`, …) in an
+`lunaris-batch`, …) in an
 isolated, GUI-free environment.
 
 ### Option A: pip / virtual environment (recommended)
@@ -142,7 +142,7 @@ Recommended scratch layout:
   evaluations/
   gravity_benchmark/
   runtime/
-  monte_carlo/
+  ensemble/
 ```
 
 `LUNARIS_DATA_DIR` is read by the framework when locating external data;
@@ -213,7 +213,7 @@ before submitting.
 | ST-LRPS training | `hpc/slurm_train_stlrps.sbatch` | `lunaris-train` |
 | ST-LRPS scenario arrays (sweeps) | `hpc/slurm_train_scenario_array.sbatch` | `tools/hpc/run_training_scenario.py` |
 | Orbit-level gravity benchmark / validation | `hpc/slurm_benchmark_gpu.sbatch` | `lunaris-benchmark` |
-| Batch propagation / uncertainty ensembles | `hpc/slurm_mc_array.sbatch` | `lunaris-batch` (`lunaris-mc` compatibility alias) |
+| Batch propagation / uncertainty ensembles | `hpc/slurm_batch_array.sbatch` | `lunaris-batch` |
 
 ### 1. ST-LRPS training (primary workload)
 
@@ -394,11 +394,11 @@ sbatch hpc/slurm_benchmark_gpu.sbatch \
 ### 3. Batch propagation / uncertainty ensembles
 
 ```bash
-sbatch hpc/slurm_mc_array.sbatch \
+sbatch hpc/slurm_batch_array.sbatch \
   --sampling-method sobol_scrambled \
-  --mc-backend auto \
+  --batch-backend auto \
   --gpu-sh-degree 24 \
-  --out-dir "$LUNARIS_OUTPUT_DIR/monte_carlo/mc_run"
+  --out-dir "$LUNARIS_OUTPUT_DIR/ensemble/batch_run"
 ```
 
 Sampling and backend selection are explicit and recorded in ensemble outputs:
@@ -407,16 +407,16 @@ Sampling and backend selection are explicit and recorded in ensemble outputs:
 - `--sampling-method lhs`, `sobol`, or `sobol_scrambled` uses a space-filling
   design, which is usually preferable for validation and coverage studies.
 
-- `--mc-backend auto` prefers the safe GPU path when available and records any
+- `--batch-backend auto` prefers the safe GPU path when available and records any
   fallback.
-- `--mc-backend cpu_sh` uses the full CPU spherical-harmonic path and is the
+- `--batch-backend cpu_sh` uses the full CPU spherical-harmonic path and is the
   recommended high-fidelity truth/reference backend.
-- `--mc-backend gpu_sh` selects the true Numba CUDA classic-SH path. The current
+- `--batch-backend gpu_sh` selects the true Numba CUDA classic-SH path. The current
   supported GPU SH tier is degree 24; higher `--gpu-sh-degree` requests fall back
   to CPU SH without silently clipping the degree.
-- `--mc-backend gpu_st_lrps_potential` uses the scalar-potential ST-LRPS artifact
+- `--batch-backend gpu_st_lrps_potential` uses the scalar-potential ST-LRPS artifact
   and autograd residual acceleration on PyTorch CUDA.
-- `--mc-backend gpu_st_lrps_direct` uses direct residual acceleration with a
+- `--batch-backend gpu_st_lrps_direct` uses direct residual acceleration with a
   no-grad PyTorch CUDA forward pass. Keep it experimental until orbit-level
   validation shows acceptable drift for the target scenario set.
 
@@ -424,7 +424,7 @@ For 512-orbit GPU batch propagation, use `auto` or an explicit ST-LRPS GPU
 backend for throughput runs, and keep `cpu_sh` high-degree runs as
 validation/truth jobs.
 Do not describe high-degree SH as a true GPU baseline unless the output metadata
-shows `actual_mc_backend=gpu_sh` and an `actual_sh_degree` at the requested tier.
+shows `actual_batch_backend=gpu_sh` and an `actual_sh_degree` at the requested tier.
 
 ### Dataset generation and evaluation
 

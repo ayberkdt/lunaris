@@ -25,7 +25,7 @@ by leverage with explicit acceptance checks.
 
 ## Verification (applies to every step below)
 
-- `python -m pytest tests/test_ui_*.py tests/test_monte_carlo_page.py -q` green
+- `python -m pytest tests/test_ui_*.py tests/test_batch_propagation_page.py -q` green
   (run per-file with a timeout so one hang never masks results).
 - `python .claude/skills/lunaris-pyside6-ui/scripts/scan_hardcoded_colors.py src/lunaris/ui` → 0.
 - `python .claude/skills/accessibility-audit/scripts/contrast_check.py <fg> <bg>`
@@ -94,10 +94,10 @@ that falls back to CPU visibly shows requested≠actual.
 
 ## Step D — Data-table rollout + copy/CSV everywhere (Phase 3 tail)
 
-`DataTable` exists and is applied to the MC backend-compare table only.
+`DataTable` exists and is applied to the batch backend-compare table only.
 
 1. Adopt `DataTable` for the **artifact browser** (or add Ctrl+C / "Copy CSV"
-   to the existing tree) and the **MC metrics** panel (Metric | Value, monospace
+   to the existing tree) and the **batch metrics** panel (Metric | Value, monospace
    values, CSV export).
 2. Ensure every physical value carries unit-bearing headers (`UnitField` /
    `(label, unit)` headers) and monospace numeric alignment.

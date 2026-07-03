@@ -2,11 +2,11 @@
 
 Last verified: 2026-06-27
 
-This document summarizes the batch/Monte Carlo backend capability surface after
+This document summarizes the batch propagation backend capability surface after
 the modular refactor. The executable source of truth remains the code:
 
 - Capability registry: `src/lunaris/core/backend_capabilities.py`
-- Selection policy: `src/lunaris/core/mc_backend_policy.py`
+- Selection policy: `src/lunaris/batch/backend_policy.py`
 - Batch package adapter: `src/lunaris/batch/backend_policy.py`
 
 Do not update this table without checking those modules and the backend policy
@@ -24,7 +24,7 @@ behavior.
 | `gpu_st_lrps_potential` | ST-LRPS | CUDA | fixed-step RK4 | surrogate artifact | float32, float64 | ST-LRPS gravity only | Uses potential-autograd runtime artifacts. Added perturbations fall back to CPU. |
 | `gpu_st_lrps_direct` | ST-LRPS | CUDA | fixed-step RK4 | surrogate artifact | float32, float64 | ST-LRPS gravity only | Uses direct residual-acceleration artifacts. No scalar-potential fallback is allowed. |
 | `cpu_st_lrps` | ST-LRPS | CPU | adaptive DOP853 | surrogate artifact | float64 | ST-LRPS gravity plus CPU perturbations | CPU path used when ST-LRPS GPU is unavailable or incompatible with requested physics. |
-| `auto` | meta | auto | resolved at runtime | resolved at runtime | resolved at runtime | resolved at runtime | Request name only; `resolve_mc_backend_policy()` picks a concrete backend. |
+| `auto` | meta | auto | resolved at runtime | resolved at runtime | resolved at runtime | resolved at runtime | Request name only; `resolve_batch_backend_policy()` picks a concrete backend. |
 
 ## Aliases
 
@@ -35,7 +35,7 @@ behavior.
 ## Selection Rules
 
 Classic SH selection is centralized in `select_classic_sh_backend()` and then
-consumed by `resolve_mc_backend_policy()`.
+consumed by `resolve_batch_backend_policy()`.
 
 - Explicit `cpu_sh` always selects CPU.
 - Explicit `torch_cuda_sh` requires PyTorch CUDA and SH-only physics.
@@ -55,8 +55,8 @@ Batch archives should keep these fields aligned with the backend plan:
 
 | Field | Meaning |
 |---|---|
-| `requested_mc_backend` | User/config request before alias resolution and fallback. |
-| `actual_mc_backend` | Concrete backend used for propagation. |
+| `requested_batch_backend` | User/config request before alias resolution and fallback. |
+| `actual_batch_backend` | Concrete backend used for propagation. |
 | `requested_sh_degree` | Requested classic-SH degree; never clipped silently. |
 | `actual_sh_degree` | Degree actually evaluated by the selected backend, when applicable. |
 | `fallback_applied` | Whether backend selection substituted a different backend. |

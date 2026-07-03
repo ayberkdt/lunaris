@@ -33,9 +33,9 @@ Oversized modules before the refactor (line counts):
 | File | LOC | Target |
 |---|---|---|
 | `src/lunaris/core/dynamics.py` | 2739 | Target 2 |
-| `src/lunaris/core/monte_carlo_engine.py` | 2106 | Target 1 |
+| `src/lunaris/batch/engine.py` | 2106 | Target 1 |
 | `src/lunaris/core/propagation/propagator.py` | 727 | Target 3 |
-| `src/lunaris/core/mc_propagator.py` | 1958 | (out of scope this pass) |
+| `src/lunaris/core/batch_propagator.py` | 1958 | (out of scope this pass) |
 | `src/lunaris/core/events.py` | 1211 | (consumed by Target 3) |
 | `src/lunaris/surrogate/runtime/adapter.py` | 62 | Target 4 |
 | `src/lunaris/cli/main.py` | 853 | Target 5 (only if needed) |
@@ -45,7 +45,7 @@ Post-refactor measured state (same date):
 
 | Target | Main compatibility/canonical file after split | LOC | Real code moved to |
 |---|---:|---:|---|
-| P1 batch | `src/lunaris/core/monte_carlo_engine.py` shim | 121 | `lunaris/batch/{engine,storage,sampling,provenance,requirements,...}.py` |
+| P1 batch | `src/lunaris/batch/engine.py` shim | 121 | `lunaris/batch/{engine,storage,sampling,provenance,requirements,...}.py` |
 | P1 batch engine | `src/lunaris/batch/engine.py` | 1119 | Storage/sampling/provenance/requirements/memory policy are separate modules |
 | P2 surrogate runtime facade | `src/lunaris/surrogate/runtime/adapter.py` | 62 | `runtime/{artifact,metadata,scalers,networks,gravity_provider,force_runtime,device}.py`; temporary `runtime_adapter.py` shim removed |
 | P3 propagation orchestration | `src/lunaris/core/propagation/propagator.py` | 727 | `propagation/{events,checkpoint,time_grid,telemetry,result,integrators/*}.py` |
@@ -61,19 +61,18 @@ only with stronger physics/performance regression coverage.
 Relevant existing structure (do **not** duplicate these):
 
 - `src/lunaris/physics/` **already holds the force math**: `third_body_effects.py`, `solar_effects.py`, `solid_tides.py`, `lunar_albedo.py`, `thermal_ir.py`, `relativity_effects.py`, `spherical_harmonics.py`, `torch_spherical_harmonics.py`, `ephemeris.py`, `surface_effects.py`, `surrogate_gravity.py`.
-- `src/lunaris/analysis/ensemble/` owns propagated-ensemble post-processing (`plotting.py`, `result_audit.py`, `statistics.py`). The historical `src/lunaris/analysis/monte_carlo/` analysis alias has been removed. The `batch/` package must not absorb or shadow ensemble analysis.
-- `src/lunaris/common/` is already lightweight (`constants`, `hashing`, `lunar_data`, `math_utils`, `batch_defs`, `montecarlo_defs`, `paths`, `time_utils`, `type_defs`).
+- `src/lunaris/analysis/ensemble/` owns propagated-ensemble post-processing (`plotting.py`, `result_audit.py`, `statistics.py`). The `batch/` package must not absorb or shadow ensemble analysis.
+- `src/lunaris/common/` is already lightweight (`constants`, `hashing`, `lunar_data`, `math_utils`, `batch_defs`, `paths`, `time_utils`, `type_defs`).
 
 Entry points that pin internal modules (`pyproject.toml [project.scripts]`):
 
 ```
-lunaris-mc    = "lunaris.cli.batch:mc_entry"
 lunaris-batch = "lunaris.cli.batch:batch_entry"
 lunaris       = "lunaris.cli.main:main_entry"
 ... (lunaris-ui/-train/-eval/-benchmark/-data via lunaris.cli.entrypoints)
 ```
 
-**Consequence:** `mc_entry` and `batch_entry` must remain importable from `lunaris.core.monte_carlo_engine` (re-export from the shim), while packaging resolves through the canonical CLI wrapper.
+**Consequence:** `batch_entry` and `batch_entry` must remain importable from `lunaris.batch.engine` (re-export from the shim), while packaging resolves through the canonical CLI wrapper.
 
 ---
 
@@ -84,7 +83,7 @@ Ordered lowest-risk-highest-value first; each phase is shippable on its own.
 | Phase | Target | Risk | Why this order |
 |---|---|---|---|
 | **P0** | Baseline harness | none | Lock a behavior baseline before touching code |
-| **P1** | Target 1 — `batch/` (monte_carlo_engine) | medium | Highest value; clean responsibility seams; entry points need care |
+| **P1** | Target 1 — `batch/` (batch.engine) | medium | Highest value; clean responsibility seams; entry points need care |
 | **P2** | Target 4 — `surrogate/runtime/` | low–med | Self-contained, optional-torch boundary, good test coverage payoff |
 | **P3** | Target 3 — `core/propagation/` (propagator) | medium | Many private helpers, integrators isolate cleanly |
 | **P4** | Target 2 — `core/dynamics/` (dynamics) | **high** | Hot Numba path, frame conventions, surrogate bridge — do last |
@@ -115,60 +114,60 @@ Deliverable: `docs/refactor_notes.md` started, with the baseline command list + 
 
 ---
 
-## P1 — Target 1: split `monte_carlo_engine.py` → `lunaris/batch/`
+## P1 — Target 1: split `batch.engine.py` → `lunaris/batch/`
 
 ### Responsibility map (from current file)
 
 | Concern | Current symbols | New home |
 |---|---|---|
 | Sampling (normal design, init states, sc props, Sobol/LHS) | `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `_sobol_size_note` | `batch/sampling.py` |
-| Storage / archive IO (HDF5, NPZ, views, writers, loader) | `HDF5TrajectoryView`, `_HDF5Writer`, `_NPZWriter`, `_make_writer`, `_resolve_result_storage`, `_allocate_result_buffer`, `load_mc_result`, `_validate_archive_v2_manifest`, `_infer_valid_mask_from_dataset` | `batch/storage.py` |
+| Storage / archive IO (HDF5, NPZ, views, writers, loader) | `HDF5TrajectoryView`, `_HDF5Writer`, `_NPZWriter`, `_make_writer`, `_resolve_result_storage`, `_allocate_result_buffer`, `load_batch_result`, `_validate_archive_v2_manifest`, `_infer_valid_mask_from_dataset` | `batch/storage.py` |
 | Memory / RAM budgeting | `_available_host_memory_bytes` (+ chunk-size logic inside engine) | `batch/memory_policy.py` |
 | Provenance / metadata encode-decode | `_sha256_file`, `_metadata_value_to_jsonable`, `_decode_archive_metadata`, `_decode_metadata_value`, `_active_physics_capabilities` | `batch/provenance.py` |
 | Ephemeris/requirement prep helpers | `_need_ephemeris`, `_need_body_vectors`, `_build_ephemeris_manager`, `_surface_topography_requested`, `_impact_positions_fixed`, `_state_to_array` | `batch/requirements.py` (or fold into engine if small) |
-| Backend selection / CPU fallback | (currently delegates to `core/mc_backend_policy.py` + `core/backend_capabilities.py`) | `batch/backend_policy.py` = thin re-export/adapter; **do not move** the existing policy yet |
-| Orchestration | `MonteCarloEngine`, `mc_entry`, `batch_entry` | `batch/engine.py` |
-| Shared dataclasses/types | result/run types (`BatchPropagationResult` / `MCRunResult`, etc., sourced from `common/batch_defs` with legacy aliases) | `batch/types.py` (re-export, don't fork) |
+| Backend selection / CPU fallback | (currently delegates to `batch/backend_policy.py` + `core/backend_capabilities.py`) | `batch/backend_policy.py` = thin re-export/adapter; **do not move** the existing policy yet |
+| Orchestration | `BatchPropagationEngine`, `batch_entry`, `batch_entry` | `batch/engine.py` |
+| Shared dataclasses/types | result/run types (`BatchPropagationResult` / `BatchPropagationResult`, etc., sourced from `common/batch_defs` with legacy aliases) | `batch/types.py` (re-export, don't fork) |
 
 ### Target layout
 ```
 src/lunaris/batch/
   __init__.py          # public surface re-exports
-  engine.py            # MonteCarloEngine, mc_entry, batch_entry
+  engine.py            # BatchPropagationEngine, batch_entry, batch_entry
   sampling.py
   storage.py
   memory_policy.py
-  backend_policy.py     # adapter over existing core.mc_backend_policy (no logic move yet)
+  backend_policy.py     # adapter over existing batch.backend_policy (no logic move yet)
   provenance.py
   progress.py          # progress reporting extracted from engine loop
   requirements.py
   types.py
 ```
-(Backend subpackage `batch/backends/{cpu,numba_cuda_sh,torch_cuda_sh}.py` is **deferred** — backend kernels already live in `core/torch_*`/`mc_backend_policy`. Only create it if P1 reveals a clean seam; otherwise leave a TODO in `refactor_notes.md`.)
+(Backend subpackage `batch/backends/{cpu,numba_cuda_sh,torch_cuda_sh}.py` is **deferred** — backend kernels already live in `core/torch_*`/`backend_policy`. Only create it if P1 reveals a clean seam; otherwise leave a TODO in `refactor_notes.md`.)
 
 ### Compatibility shim
-Rewrite `src/lunaris/core/monte_carlo_engine.py` to:
+Rewrite `src/lunaris/batch/engine.py` to:
 ```python
-from lunaris.batch.engine import MonteCarloEngine, mc_entry, batch_entry
-from lunaris.batch.storage import HDF5TrajectoryView, load_mc_result
+from lunaris.batch.engine import BatchPropagationEngine, batch_entry, batch_entry
+from lunaris.batch.storage import HDF5TrajectoryView, load_batch_result
 from lunaris.batch.sampling import (
     generate_standard_normal_design, sample_initial_states, sample_spacecraft_props,
 )
 # ... every name external code / tests / entry points currently import
 __all__ = [...]
 ```
-Entry points in `pyproject.toml` point at `lunaris.cli.batch:mc_entry` / `:batch_entry`; the historical `lunaris.core.monte_carlo_engine` and `lunaris.core.mc_runner` paths remain import-compatible shims.
+Entry points in `pyproject.toml` point at `lunaris.cli.batch:batch_entry`.
 
 ### Tests (add)
-- `tests/test_batch_import_compat.py`: every public symbol importable from **both** `lunaris.core.monte_carlo_engine` and `lunaris.batch`.
+- `tests/test_batch_import_compat.py`: every public symbol importable from `lunaris.batch`.
 - `tests/test_batch_sampling.py`: random design shape + determinism with fixed seed; LHS/Sobol paths guarded by dependency availability (`pytest.importorskip`).
 - `tests/test_batch_memory_policy.py`: chunk/budget math on small synthetic sizes.
-- Reuse existing MC tests unchanged as the behavior oracle.
+- Reuse existing batch tests unchanged as the behavior oracle.
 
 ### Acceptance
 - Archive format byte-compatible (P0 golden hashes unchanged).
 - CPU fallback + provenance strings unchanged.
-- `lunaris-mc --help` / `lunaris-batch --help` unchanged.
+- `lunaris-batch --help` unchanged.
 
 ---
 
@@ -332,8 +331,8 @@ Rules: preserve every `[project.scripts]` entry point and all argparse args/help
 
 Update/create:
 - `docs/ARCHITECTURE.md` — new `batch/`, `core/propagation/`, `core/dynamics/`, `surrogate/runtime/` layout + layer dependency rules.
-- `docs/backend_matrix.md` — backend capability matrix (create; cross-link `mc_backend_policy`/`backend_capabilities`).
-- `docs/refactor_notes.md` — compat shims list, deferred items (batch/backends subpackage), terminology note (Monte Carlo name kept for compat; internal package uses `batch`).
+- `docs/backend_matrix.md` — backend capability matrix (create; cross-link `backend_policy`/`backend_capabilities`).
+- `docs/refactor_notes.md` — deferred items (batch/backends subpackage) and the canonical batch/ensemble terminology.
 
 Architecture guard tests (`tests/test_architecture_boundaries.py`, AST/import-based):
 - `physics/*` must not import `core`, `ui`, `cli`, `analysis`, surrogate-training.
@@ -363,7 +362,7 @@ Architecture guard tests (`tests/test_architecture_boundaries.py`, AST/import-ba
 
 | Risk | Mitigation |
 |---|---|
-| Entry points `lunaris-mc`/`lunaris-batch` break | Keep `mc_entry`/`batch_entry` re-exported from `core/monte_carlo_engine.py`; don't touch `[project.scripts]` |
+| Entry point `lunaris-batch` breaks | Keep `batch_entry` exported from `batch/engine.py` and wired through `cli/batch.py` |
 | Module/package shadowing when `dynamics.py` → `dynamics/` | Delete old `.py` in same commit; verify `python -c "import lunaris.core.dynamics"` resolves to package |
 | Circular imports (engine ↔ packs ↔ physics) | Keep prep one-directional: `core` → `physics`, never reverse; `batch` → `core`, never reverse |
 | Numba perf regression in dynamics | Keep `rhs_numba.py` object-free; benchmark hot path against P0 baseline |
@@ -373,7 +372,7 @@ Architecture guard tests (`tests/test_architecture_boundaries.py`, AST/import-ba
 ## 5. Out of scope (explicit)
 
 - `config.py` aggressive split (Target 6) — leave SSOT intact.
-- `mc_propagator.py` / `events.py` standalone splits (only touched as P3 consumers).
+- `batch_propagator.py` / `events.py` standalone splits (only touched as P3 consumers).
 - `batch/backends/` subpackage — deferred unless a clean seam appears in P1.
 - Full plugin registry — not built; simple module-level prepare/evaluate functions only.
 - Any numerical/algorithmic change.
@@ -383,5 +382,5 @@ Architecture guard tests (`tests/test_architecture_boundaries.py`, AST/import-ba
 1. Refactor summary + files moved/created list (in `refactor_notes.md`).
 2. Compatibility guarantees (shim inventory).
 3. Tests run + results table.
-4. Known limitations / follow-ups (deferred backends subpackage, config split, mc_propagator).
+4. Known limitations / follow-ups (deferred backends subpackage, config split, batch_propagator).
 5. **No numerical-equivalence claim beyond what tests verify** (only the dynamics RHS golden + batch sampling determinism are asserted numerically).

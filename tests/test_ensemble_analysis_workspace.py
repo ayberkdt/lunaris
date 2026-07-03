@@ -1,5 +1,5 @@
 """
-UI regression tests for the Monte Carlo analysis workspace and log-panel collapse.
+UI regression tests for the ensemble analysis workspace and log-panel collapse.
 
 These tests deliberately stay lightweight while still touching the concrete Qt
 widgets that the desktop user interacts with.  They provide coverage for two
@@ -7,7 +7,7 @@ user-visible behaviors that recently regressed:
 
 1. the lower terminal/log panel should collapse to a compact dock rail instead
    of leaving a large dead area behind
-2. the Monte Carlo analysis workspace should be able to load a saved archive
+2. the ensemble analysis workspace should be able to load a saved archive
    and populate its summary metrics without requiring a full app launch
 """
 
@@ -23,11 +23,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6 import QtWidgets
 
-from lunaris.analysis.ensemble.plotting import plot_mc_report
-from lunaris.analysis.ensemble.statistics import compute_mc_statistics
-from lunaris.common.montecarlo_defs import MCRunResult
+from lunaris.analysis.ensemble.plotting import plot_ensemble_report
+from lunaris.analysis.ensemble.statistics import compute_ensemble_report
+from lunaris.common.batch_defs import BatchPropagationResult
 from lunaris.ui.app import MainWindow
-from lunaris.ui.components.monte_carlo_analysis_panel import MonteCarloAnalysisPanel
+from lunaris.ui.components.ensemble_analysis_panel import EnsembleAnalysisPanel
 
 
 def _app() -> QtWidgets.QApplication:
@@ -63,7 +63,7 @@ def test_log_panel_collapse_reduces_splitter_footprint() -> None:
     win.close()
 
 
-def test_mc_analysis_panel_loads_npz_archive_and_populates_summary(tmp_path: Path) -> None:
+def test_batch_analysis_panel_loads_npz_archive_and_populates_summary(tmp_path: Path) -> None:
     app = _app()
 
     t = np.asarray([0.0, 60.0, 120.0], dtype=np.float64)
@@ -98,7 +98,7 @@ def test_mc_analysis_panel_loads_npz_archive_and_populates_summary(tmp_path: Pat
     impact_mask = np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
     t_impact = np.asarray([np.nan, np.nan, 120.0], dtype=np.float64)
 
-    result = MCRunResult(
+    result = BatchPropagationResult(
         t=t,
         Y=Y,
         sc_samples=sc_samples,
@@ -106,7 +106,7 @@ def test_mc_analysis_panel_loads_npz_archive_and_populates_summary(tmp_path: Pat
         t_impact=t_impact,
     )
 
-    output_path = tmp_path / "mc_analysis_test.npz"
+    output_path = tmp_path / "ensemble_analysis_test.npz"
     np.savez_compressed(
         str(output_path),
         t=result.t,
@@ -116,7 +116,7 @@ def test_mc_analysis_panel_loads_npz_archive_and_populates_summary(tmp_path: Pat
         t_impact=result.t_impact,
     )
 
-    panel = MonteCarloAnalysisPanel()
+    panel = EnsembleAnalysisPanel()
     panel.ent_result_path.setText(str(output_path))
     panel._start_analysis()
 
@@ -134,7 +134,7 @@ def test_mc_analysis_panel_loads_npz_archive_and_populates_summary(tmp_path: Pat
     assert panel.btn_refresh_plot.isEnabled() is True
 
 
-def test_plot_mc_report_writes_pdf_with_summary_page(tmp_path: Path) -> None:
+def test_plot_ensemble_report_writes_pdf_with_summary_page(tmp_path: Path) -> None:
     t = np.asarray([0.0, 60.0, 120.0], dtype=np.float64)
     Y = np.asarray(
         [
@@ -166,7 +166,7 @@ def test_plot_mc_report_writes_pdf_with_summary_page(tmp_path: Path) -> None:
     )
     impact_mask = np.asarray([0.0, 0.0, 1.0], dtype=np.float64)
     t_impact = np.asarray([np.nan, np.nan, 120.0], dtype=np.float64)
-    result = MCRunResult(
+    result = BatchPropagationResult(
         t=t,
         Y=Y,
         sc_samples=sc_samples,
@@ -174,9 +174,9 @@ def test_plot_mc_report_writes_pdf_with_summary_page(tmp_path: Path) -> None:
         t_impact=t_impact,
     )
 
-    stats = compute_mc_statistics(result, compute_oe=False)
-    out_pdf = tmp_path / "mc_report.pdf"
-    figures = plot_mc_report(result, stats, output_path=str(out_pdf), show=False)
+    stats = compute_ensemble_report(result, compute_oe=False)
+    out_pdf = tmp_path / "ensemble_report.pdf"
+    figures = plot_ensemble_report(result, stats, output_path=str(out_pdf), show=False)
 
     assert out_pdf.exists()
     assert out_pdf.stat().st_size > 0

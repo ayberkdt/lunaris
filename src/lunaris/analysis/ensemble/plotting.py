@@ -32,7 +32,7 @@ plot_impact_time_histogram
 plot_oe_dispersion
     Semi-major axis, eccentricity, and inclination spread vs time.
 
-plot_mc_report
+plot_ensemble_report
     Master function: all ensemble plots on a single multi-page PDF.
 
 Design conventions
@@ -63,14 +63,14 @@ except ImportError:
     plt = None  # type: ignore[assignment]
 
 from lunaris.analysis.ensemble.statistics import (
+    EnsembleReport,
     EnsembleStatistics,
     ErrorEllipsoids,
     ImpactStatistics,
-    MCStatistics,
     OEDispersion,
     RICUncertainty,
 )
-from lunaris.common.batch_defs import MCRunResult
+from lunaris.common.batch_defs import BatchPropagationResult
 from lunaris.common.constants import DAY_S, R_MOON_MEAN
 
 # =============================================================================
@@ -149,9 +149,9 @@ def _ellipsoid_wireframe(
     return Xw, Yw, Zw
 
 
-def plot_mc_summary(
-    result: MCRunResult,
-    mc_stats: MCStatistics,
+def plot_ensemble_summary(
+    result: BatchPropagationResult,
+    ensemble_report: EnsembleReport,
     *,
     figsize: tuple[float, float] | None = None,
     title: str = "Ensemble Executive Summary",
@@ -169,9 +169,9 @@ def plot_mc_summary(
     fig = plt.figure(figsize=figsize or (11.0, 8.5))
     fig.patch.set_facecolor("white")
 
-    impacts = mc_stats.impacts
-    ensemble = mc_stats.ensemble
-    ellipsoids = mc_stats.ellipsoids
+    impacts = ensemble_report.impacts
+    ensemble = ensemble_report.ensemble
+    ellipsoids = ensemble_report.ellipsoids
 
     # When impact detection was not evaluated (disabled or unavailable), report
     # "Not evaluated" rather than a misleading 0 % impact / 100 % survival.
@@ -259,7 +259,7 @@ def plot_mc_summary(
         ("Initial Altitude 1-sigma", format_km(initial_alt_std_km)),
         ("Final Mean Altitude", format_km(final_alt_mean_km)),
         ("Final Altitude 1-sigma", format_km(final_alt_std_km)),
-        ("OE Dispersion", "Included" if mc_stats.oe_disp is not None else "Not requested"),
+        ("OE Dispersion", "Included" if ensemble_report.oe_disp is not None else "Not requested"),
     ]
 
     def _draw_metric_column(bounds: Sequence[float], heading: str, rows: Sequence[tuple[str, str]]) -> None:
@@ -319,7 +319,7 @@ def plot_mc_summary(
 # =============================================================================
 
 def plot_altitude_envelope(
-    result: MCRunResult,
+    result: BatchPropagationResult,
     stats: EnsembleStatistics,
     *,
     sigma_levels: Sequence[float] = (1.0, 2.0, 3.0),
@@ -333,7 +333,7 @@ def plot_altitude_envelope(
 
     Parameters
     ----------
-    result : MCRunResult
+    result : BatchPropagationResult
     stats  : EnsembleStatistics
     sigma_levels : σ-bands to shade (default 1σ, 2σ, 3σ)
     max_traj : max number of individual trajectories to overlay (thin lines)
@@ -393,7 +393,7 @@ def plot_altitude_envelope(
 # =============================================================================
 
 def plot_covariance_tubes_3d(
-    result: MCRunResult,
+    result: BatchPropagationResult,
     ellipsoids: ErrorEllipsoids,
     *,
     max_traj: int = 30,
@@ -407,7 +407,7 @@ def plot_covariance_tubes_3d(
 
     Parameters
     ----------
-    result     : MCRunResult
+    result     : BatchPropagationResult
     ellipsoids : ErrorEllipsoids from compute_error_ellipsoids()
     ellipsoid_epochs : list of integer epoch indices for ellipsoid rendering.
                        Defaults to 5 evenly spaced indices.
@@ -655,7 +655,7 @@ def plot_impact_map(
 
 def plot_impact_time_histogram(
     impacts: ImpactStatistics | None,
-    result: MCRunResult,
+    result: BatchPropagationResult,
     *,
     n_bins: int = 30,
     figsize: tuple[float, float] | None = None,
@@ -739,23 +739,23 @@ def plot_oe_dispersion(
 
 
 # =============================================================================
-# 7.              MASTER MC REPORT (multi-figure PDF)
+# 7.              MASTER ENSEMBLE REPORT (multi-figure PDF)
 # =============================================================================
 
-def plot_mc_report(
-    result: MCRunResult,
-    mc_stats: MCStatistics,
+def plot_ensemble_report(
+    result: BatchPropagationResult,
+    ensemble_report: EnsembleReport,
     *,
     output_path: str | None = None,
     show: bool = False,
 ) -> list[Any]:
     """
-    Generate the full MC report bundle and optionally save it to a multi-page PDF.
+    Generate the full ensemble report bundle and optionally save it to a multi-page PDF.
 
     Parameters
     ----------
-    result     : MCRunResult
-    mc_stats   : MCStatistics (from compute_mc_statistics)
+    result     : BatchPropagationResult
+    ensemble_report   : EnsembleReport (from compute_ensemble_report)
     output_path: if set, saves all figures to this PDF path
     show       : if True, calls plt.show() after all figures are created
 
@@ -770,38 +770,38 @@ def plot_mc_report(
 
     # Figure 0: Executive summary
     figs.append(
-        plot_mc_summary(result, mc_stats)
+        plot_ensemble_summary(result, ensemble_report)
     )
 
     # Figure 1: Altitude envelope
     figs.append(
-        plot_altitude_envelope(result, mc_stats.ensemble)
+        plot_altitude_envelope(result, ensemble_report.ensemble)
     )
 
     # Figure 2: Covariance tubes 3-D
     figs.append(
-        plot_covariance_tubes_3d(result, mc_stats.ellipsoids)
+        plot_covariance_tubes_3d(result, ensemble_report.ellipsoids)
     )
 
     # Figure 3: Position covariance history
     figs.append(
-        plot_position_covariance_history(mc_stats.ensemble)
+        plot_position_covariance_history(ensemble_report.ensemble)
     )
 
     # Figure 4: Impact map
     figs.append(
-        plot_impact_map(mc_stats.impacts)
+        plot_impact_map(ensemble_report.impacts)
     )
 
     # Figure 5: Impact time histogram
     figs.append(
-        plot_impact_time_histogram(mc_stats.impacts, result)
+        plot_impact_time_histogram(ensemble_report.impacts, result)
     )
 
     # Figure 6: OE dispersion (if available)
-    if mc_stats.oe_disp is not None:
+    if ensemble_report.oe_disp is not None:
         figs.append(
-            plot_oe_dispersion(mc_stats.oe_disp)
+            plot_oe_dispersion(ensemble_report.oe_disp)
         )
 
     # Save to PDF
@@ -817,7 +817,7 @@ def plot_mc_report(
             info["Subject"] = "Ensemble uncertainty, dispersion, and impact-risk summary"
             for fig in figs:
                 pdf.savefig(fig, bbox_inches="tight")
-        print(f"[MC] Report saved → {p}", flush=True)
+        print(f"[BATCH] Report saved → {p}", flush=True)
 
     if show:
         plt.show()
@@ -830,7 +830,7 @@ def plot_mc_report(
 # =============================================================================
 
 __all__ = [
-    "plot_mc_summary",
+    "plot_ensemble_summary",
     "plot_altitude_envelope",
     "plot_covariance_tubes_3d",
     "plot_position_covariance_history",
@@ -839,5 +839,5 @@ __all__ = [
     "plot_impact_map",
     "plot_impact_time_histogram",
     "plot_oe_dispersion",
-    "plot_mc_report",
+    "plot_ensemble_report",
 ]

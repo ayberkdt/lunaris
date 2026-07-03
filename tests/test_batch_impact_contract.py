@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from lunaris.core.mc_propagator import _initial_impact_bookkeeping
+from lunaris.core.batch_propagator import _initial_impact_bookkeeping
 
 
 def test_numba_host_preflight_marks_t0_impacts_at_and_below_boundary() -> None:
@@ -56,7 +56,7 @@ def test_numba_cuda_swept_segment_detects_tunneling_without_false_positive() -> 
             R_EARTH_MEAN,
             R_MOON,
         )
-        from lunaris.core.mc_propagator import _rk4_batch_kernel
+        from lunaris.core.batch_propagator import _rk4_batch_kernel
 
         radius = float(R_MOON)
         dt = 60.0

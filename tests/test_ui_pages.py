@@ -18,9 +18,9 @@ from PySide6 import QtCore, QtWidgets
 
 from lunaris.ui.core.solver_policy import DEFAULT_ADAPTIVE_RTOL, DEFAULT_MAX_STEP_S
 from lunaris.ui.core.ui_commons import THEME
+from lunaris.ui.pages.batch_propagation_page import BatchPropagationPage, UIBatchPropagationConfig
 from lunaris.ui.pages.data_files_page import DataFilesState, DataPage
 from lunaris.ui.pages.mission_propagation_page import MissionPropagationPage, UISolverConfig
-from lunaris.ui.pages.monte_carlo_page import MonteCarloPage, UIMonteCarloConfig
 from lunaris.ui.pages.result_exports_page import OutputPageState, ResultsExportPage
 
 
@@ -163,9 +163,9 @@ def test_mission_propagation_page_normalizes_legacy_integrator_values() -> None:
     page.close()
 
 
-def test_monte_carlo_page_restores_state_and_renders_structured_progress() -> None:
+def test_batch_propagation_page_restores_state_and_renders_structured_progress() -> None:
     app = _app()
-    page = MonteCarloPage(mc_cfg=UIMonteCarloConfig(use_gpu=False))
+    page = BatchPropagationPage(batch_cfg=UIBatchPropagationConfig(use_gpu=False))
     page.show()
     app.processEvents()
 
@@ -179,7 +179,7 @@ def test_monte_carlo_page_restores_state_and_renders_structured_progress() -> No
             "use_gpu": False,
             "gravity_mode_override": "st_lrps",
             "output_format": "npz",
-            "output_path": "mc_results/legacy_output.h5",
+            "output_path": "outputs/ensemble/saved_output.h5",
             "impact_alt_km": 2.0,
         }
     )
@@ -208,7 +208,7 @@ def test_monte_carlo_page_restores_state_and_renders_structured_progress() -> No
     )
     app.processEvents()
 
-    assert page.progress_mc.format() == "47.5%"
+    assert page.progress_batch.format() == "47.5%"
     assert page.lbl_progress_summary.text() == "Propagating scenarios (CPU)"
     assert page.lbl_progress_meta.text() == "~237 / 500 scenarios | Batch 2/4 | ETA 02:16"
 
@@ -461,9 +461,9 @@ def test_results_export_empty_states(tmp_path: Path) -> None:
     page.close()
 
 
-def test_monte_carlo_backend_preview_labels_preview_only(tmp_path: Path) -> None:
+def test_batch_backend_preview_labels_preview_only(tmp_path: Path) -> None:
     app = _app()
-    page = MonteCarloPage()
+    page = BatchPropagationPage()
     page.show()
     app.processEvents()
 
@@ -484,16 +484,16 @@ def test_monte_carlo_backend_preview_labels_preview_only(tmp_path: Path) -> None
             if "preview only" in lbl.text().lower() or "not executed" in lbl.text().lower():
                 notice_text = lbl.text()
                 break
-        assert notice_text, "No 'preview only' notice label found in MC backend preview section"
+        assert notice_text, "No 'preview only' notice label found in batch backend preview section"
     except Exception:
         pass  # tolerate if widget tree not fully built
 
     page.close()
 
 
-def test_monte_carlo_copy_all_backend_commands_smoke(tmp_path: Path) -> None:
+def test_batch_copy_all_backend_commands_smoke(tmp_path: Path) -> None:
     app = _app()
-    page = MonteCarloPage()
+    page = BatchPropagationPage()
     page.show()
     app.processEvents()
 
@@ -501,7 +501,7 @@ def test_monte_carlo_copy_all_backend_commands_smoke(tmp_path: Path) -> None:
         page._copy_all_backend_commands()
         app.processEvents()
         text = page.txt_backend_compare_cmd.toPlainText()
-        assert "mc_runner.py" in text or "mc-gravity-mode" in text
+        assert "batch_runner.py" in text or "batch-gravity-mode" in text
     except AttributeError:
         pass  # method or widget may not yet be wired
 
@@ -519,7 +519,7 @@ def test_session_persists_visual_state_roundtrip() -> None:
         telemetry_time_unit="min",
         artifact_filter="Plots",
         artifact_recursive=True,
-        mc_active_tab=1,
+        batch_active_tab=1,
     )
 
     assert visual["active_page_key"] == "Forces"
@@ -529,7 +529,7 @@ def test_session_persists_visual_state_roundtrip() -> None:
     assert visual["telemetry_time_unit"] == "min"
     assert visual["artifact_filter"] == "Plots"
     assert visual["artifact_recursive"] is True
-    assert visual["mc_active_tab"] == 1
+    assert visual["batch_active_tab"] == 1
 
     # apply_visual_state with no main_window should not crash
     apply_visual_state(visual, main_window=None)

@@ -1,5 +1,5 @@
 """
-Regression tests for Monte Carlo GPU backend selection and tuning helpers.
+Regression tests for batch GPU backend selection and tuning helpers.
 
 These tests stay CPU-only; they validate the decision logic that determines
 when the CUDA backend is allowed, how launch widths are normalized, and when
@@ -7,7 +7,7 @@ the engine deliberately falls back to the CPU full-fidelity path.
 
 New in this revision
 --------------------
-- Backend policy tests using ``core.mc_backend_policy.resolve_mc_backend_policy``.
+- Backend policy tests using ``batch.backend_policy.resolve_batch_backend_policy``.
 - ST-LRPS batch torch inference tests (N=4, CPU tensors).
 - TorchBatchPropagator smoke test (N=4, CPU-emulated, torch required).
 - Fail-fast tests: missing degree_max fails before sample loop.
@@ -23,10 +23,10 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from lunaris.common.montecarlo_defs import MonteCarloConfig
+from lunaris.batch.engine import BatchPropagationEngine
+from lunaris.common.batch_defs import BatchPropagationConfig
 from lunaris.common.type_defs import PerturbationFlags
-from lunaris.core.mc_propagator import _sanitize_gpu_threads_per_block, gpu_unsupported_features
-from lunaris.core.monte_carlo_engine import MonteCarloEngine
+from lunaris.core.batch_propagator import _sanitize_gpu_threads_per_block, gpu_unsupported_features
 
 # =============================================================================
 # Existing tests — updated to also monkeypatch torch CUDA where needed
@@ -54,8 +54,8 @@ def test_sanitize_gpu_threads_per_block_aligns_and_clamps() -> None:
 
 
 def test_engine_falls_back_to_cpu_when_gpu_requested_with_unsupported_physics(monkeypatch) -> None:
-    import lunaris.core.mc_backend_policy as policy_mod
-    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.batch.backend_policy as policy_mod
+    import lunaris.core.batch_propagator as batch_prop
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -66,18 +66,18 @@ def test_engine_falls_back_to_cpu_when_gpu_requested_with_unsupported_physics(mo
         def __init__(self, *args, **kwargs) -> None:
             raise AssertionError("GPU backend should not be constructed for unsupported physics.")
 
-    monkeypatch.setattr(mc_prop, "_CUDA_AVAILABLE", True)
-    monkeypatch.setattr(mc_prop, "CPUBatchPropagator", DummyCPU)
-    monkeypatch.setattr(mc_prop, "GPUBatchPropagator", DummyGPU)
+    monkeypatch.setattr(batch_prop, "_CUDA_AVAILABLE", True)
+    monkeypatch.setattr(batch_prop, "CPUBatchPropagator", DummyCPU)
+    monkeypatch.setattr(batch_prop, "GPUBatchPropagator", DummyGPU)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
 
-    engine = MonteCarloEngine.__new__(MonteCarloEngine)
-    engine._mc = MonteCarloConfig(
+    engine = BatchPropagationEngine.__new__(BatchPropagationEngine)
+    engine._cfg = BatchPropagationConfig(
         n_samples=2,
         use_gpu=True,
         output_format="npz",
-        output_path="mc_results/test_policy_cpu.npz",
+        output_path="outputs/ensemble/test_policy_cpu.npz",
     )
     engine._sim_cfg = SimpleNamespace(flags=PerturbationFlags(enable_albedo=True))
     engine._dyn = object()
@@ -87,7 +87,7 @@ def test_engine_falls_back_to_cpu_when_gpu_requested_with_unsupported_physics(mo
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        prop = MonteCarloEngine._build_propagator(engine)
+        prop = BatchPropagationEngine._build_propagator(engine)
 
     assert isinstance(prop, DummyCPU)
     note_lower = engine._backend_note.lower()
@@ -96,8 +96,8 @@ def test_engine_falls_back_to_cpu_when_gpu_requested_with_unsupported_physics(mo
 
 
 def test_engine_keeps_gpu_path_for_supported_earth_j2_runs(monkeypatch) -> None:
-    import lunaris.core.mc_backend_policy as policy_mod
-    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.batch.backend_policy as policy_mod
+    import lunaris.core.batch_propagator as batch_prop
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -108,18 +108,18 @@ def test_engine_keeps_gpu_path_for_supported_earth_j2_runs(monkeypatch) -> None:
             self.args = args
             self.kwargs = kwargs
 
-    monkeypatch.setattr(mc_prop, "_CUDA_AVAILABLE", True)
-    monkeypatch.setattr(mc_prop, "CPUBatchPropagator", DummyCPU)
-    monkeypatch.setattr(mc_prop, "GPUBatchPropagator", DummyGPU)
+    monkeypatch.setattr(batch_prop, "_CUDA_AVAILABLE", True)
+    monkeypatch.setattr(batch_prop, "CPUBatchPropagator", DummyCPU)
+    monkeypatch.setattr(batch_prop, "GPUBatchPropagator", DummyGPU)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
 
-    engine = MonteCarloEngine.__new__(MonteCarloEngine)
-    engine._mc = MonteCarloConfig(
+    engine = BatchPropagationEngine.__new__(BatchPropagationEngine)
+    engine._cfg = BatchPropagationConfig(
         n_samples=2,
         use_gpu=True,
         output_format="npz",
-        output_path="mc_results/test_policy_gpu.npz",
+        output_path="outputs/ensemble/test_policy_gpu.npz",
     )
     engine._sim_cfg = SimpleNamespace(flags=PerturbationFlags(enable_earth_j2=True))
     engine._dyn = object()
@@ -127,7 +127,7 @@ def test_engine_keeps_gpu_path_for_supported_earth_j2_runs(monkeypatch) -> None:
     engine._topo_grid = None
     engine._backend_note = ""
 
-    prop = MonteCarloEngine._build_propagator(engine)
+    prop = BatchPropagationEngine._build_propagator(engine)
 
     assert isinstance(prop, DummyGPU)
     assert engine._backend_note == ""
@@ -137,8 +137,8 @@ def test_engine_falls_back_to_cpu_when_surrogate_gravity_is_requested_and_torch_
     monkeypatch,
 ) -> None:
     """ST-LRPS + torch CUDA unavailable → CPU fallback."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.batch.backend_policy as policy_mod
+    import lunaris.core.batch_propagator as batch_prop
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -149,19 +149,19 @@ def test_engine_falls_back_to_cpu_when_surrogate_gravity_is_requested_and_torch_
         def __init__(self, *args, **kwargs) -> None:
             raise AssertionError("GPU backend should not be used with surrogate gravity when torch CUDA is unavailable.")
 
-    monkeypatch.setattr(mc_prop, "_CUDA_AVAILABLE", True)
-    monkeypatch.setattr(mc_prop, "CPUBatchPropagator", DummyCPU)
-    monkeypatch.setattr(mc_prop, "GPUBatchPropagator", DummyGPU)
+    monkeypatch.setattr(batch_prop, "_CUDA_AVAILABLE", True)
+    monkeypatch.setattr(batch_prop, "CPUBatchPropagator", DummyCPU)
+    monkeypatch.setattr(batch_prop, "GPUBatchPropagator", DummyGPU)
     # Critical: torch CUDA is NOT available
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
 
-    engine = MonteCarloEngine.__new__(MonteCarloEngine)
-    engine._mc = MonteCarloConfig(
+    engine = BatchPropagationEngine.__new__(BatchPropagationEngine)
+    engine._cfg = BatchPropagationConfig(
         n_samples=2,
         use_gpu=True,
         output_format="npz",
-        output_path="mc_results/test_policy_surrogate.npz",
+        output_path="outputs/ensemble/test_policy_surrogate.npz",
     )
     engine._sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),
@@ -174,7 +174,7 @@ def test_engine_falls_back_to_cpu_when_surrogate_gravity_is_requested_and_torch_
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        prop = MonteCarloEngine._build_propagator(engine)
+        prop = BatchPropagationEngine._build_propagator(engine)
 
     assert isinstance(prop, DummyCPU)
     # The backend note should mention ST-LRPS and fallback
@@ -198,37 +198,37 @@ test_engine_falls_back_to_cpu_when_surrogate_gravity_is_requested = (
 
 def test_policy_cpu_explicit(monkeypatch) -> None:
     """use_gpu=False always → CPU regardless of CUDA."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
 
-    mc_cfg = SimpleNamespace(use_gpu=False, gravity_mode_override="follow_mission")
+    batch_cfg = SimpleNamespace(use_gpu=False, gravity_mode_override="follow_mission")
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(),
         gravity=SimpleNamespace(uses_st_lrps=False),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
-    assert plan.final_backend == MCBackend.CPU
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.CPU
     assert not plan.use_gpu
 
 
 def test_policy_st_lrps_torch_cuda_true(monkeypatch) -> None:
     """ST-LRPS + torch CUDA available + no extra perturbations → GPU_ST_LRPS."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
 
-    mc_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),
         gravity=SimpleNamespace(uses_st_lrps=True),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
-    assert plan.final_backend == MCBackend.GPU_ST_LRPS
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.GPU_ST_LRPS
     assert plan.use_gpu
     assert plan.torch_cuda_available
     assert "fixed-step rk4" in plan.integrator.lower()
@@ -237,19 +237,19 @@ def test_policy_st_lrps_torch_cuda_true(monkeypatch) -> None:
 
 def test_policy_st_lrps_torch_cuda_false_falls_back(monkeypatch) -> None:
     """ST-LRPS + torch CUDA unavailable → CPU."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
 
-    mc_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),
         gravity=SimpleNamespace(uses_st_lrps=True),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
-    assert plan.final_backend == MCBackend.CPU
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.CPU
     assert not plan.use_gpu
     assert len(plan.warnings) > 0
     assert any("st-lrps" in w.lower() for w in plan.warnings)
@@ -262,19 +262,19 @@ def test_policy_st_lrps_torch_cuda_false_falls_back(monkeypatch) -> None:
 
 def test_policy_st_lrps_unsupported_physics_records_fallback_provenance(monkeypatch) -> None:
     """ST-LRPS + torch CUDA + unsupported physics → CPU with honest fallback fields."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
 
-    mc_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True, enable_srp=True),
         gravity=SimpleNamespace(uses_st_lrps=True),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
-    assert plan.final_backend == MCBackend.CPU
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.CPU
     assert plan.actual_backend == "cpu_st_lrps"
     assert plan.fallback_applied is True
     assert plan.requested_device == "cuda"
@@ -284,59 +284,59 @@ def test_policy_st_lrps_unsupported_physics_records_fallback_provenance(monkeypa
 
 def test_policy_st_lrps_gpu_with_third_body_falls_back(monkeypatch) -> None:
     """ST-LRPS + torch CUDA + third-body enabled → CPU (unsupported on torch path)."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
 
-    mc_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True, enable_3rd_body_sun=True),
         gravity=SimpleNamespace(uses_st_lrps=True),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
-    assert plan.final_backend == MCBackend.CPU
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.CPU
     assert any("third-body sun" in w.lower() for w in plan.warnings)
 
 
 def test_policy_classic_sh_numba_cuda_true(monkeypatch) -> None:
     """Classic SH + Numba CUDA available → GPU_CLASSIC_SH."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
 
-    mc_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="follow_mission")
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="follow_mission")
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),
         gravity=SimpleNamespace(uses_st_lrps=False),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
-    assert plan.final_backend == MCBackend.GPU_CLASSIC_SH
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.GPU_CLASSIC_SH
     assert plan.use_gpu
     assert plan.actual_backend == "numba_cuda_sh"
     assert plan.backend_family == "classic_sh"
     assert plan.backend_implementation == "numba_cuda"
-    assert plan.requested_sh_degree == 0 or plan.requested_sh_degree == int(getattr(mc_cfg, "gpu_sh_degree", 0))
+    assert plan.requested_sh_degree == 0 or plan.requested_sh_degree == int(getattr(batch_cfg, "gpu_sh_degree", 0))
 
 
 def test_policy_classic_sh_numba_cuda_false(monkeypatch) -> None:
     """Classic SH + Numba CUDA unavailable → CPU."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
 
-    mc_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="follow_mission")
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="follow_mission")
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),
         gravity=SimpleNamespace(uses_st_lrps=False),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
-    assert plan.final_backend == MCBackend.CPU
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.CPU
     assert not plan.use_gpu
     assert plan.actual_backend == "cpu_sh"
     assert "cuda" in plan.fallback_reason.lower()
@@ -344,16 +344,16 @@ def test_policy_classic_sh_numba_cuda_false(monkeypatch) -> None:
 
 def test_policy_classic_sh_high_degree_falls_back_without_clipping(monkeypatch) -> None:
     """Classic GPU SH degree > true CUDA tier is an explicit CPU fallback."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
     monkeypatch.setattr(policy_mod, "_gpu_sh_limits", lambda: (24, (24,)))
 
-    mc_cfg = SimpleNamespace(
+    batch_cfg = SimpleNamespace(
         use_gpu=True,
-        mc_backend="gpu_sh",
+        batch_backend="gpu_sh",
         gravity_mode_override="follow_mission",
         gpu_sh_degree=80,
     )
@@ -361,8 +361,8 @@ def test_policy_classic_sh_high_degree_falls_back_without_clipping(monkeypatch) 
         flags=PerturbationFlags(enable_sh=True),
         gravity=SimpleNamespace(uses_st_lrps=False),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
-    assert plan.final_backend == MCBackend.CPU
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.CPU
     assert not plan.use_gpu
     assert plan.requested_backend == "gpu_sh"
     assert plan.actual_backend == "cpu_sh"
@@ -376,16 +376,16 @@ def test_policy_classic_sh_high_degree_falls_back_without_clipping(monkeypatch) 
 
 def test_policy_explicit_st_lrps_direct_backend(monkeypatch) -> None:
     """Explicit direct ST-LRPS backend records direct runtime intent."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
-    monkeypatch.setattr(policy_mod, "_read_st_lrps_runtime_kind", lambda mc_cfg, sim_cfg: "force_direct")
+    monkeypatch.setattr(policy_mod, "_read_st_lrps_runtime_kind", lambda batch_cfg, sim_cfg: "force_direct")
 
-    mc_cfg = SimpleNamespace(
+    batch_cfg = SimpleNamespace(
         use_gpu=True,
-        mc_backend="gpu_st_lrps_direct",
+        batch_backend="gpu_st_lrps_direct",
         gravity_mode_override="follow_mission",
         gpu_sh_degree=20,
     )
@@ -393,8 +393,8 @@ def test_policy_explicit_st_lrps_direct_backend(monkeypatch) -> None:
         flags=PerturbationFlags(enable_sh=True),
         gravity=SimpleNamespace(uses_st_lrps=False),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
-    assert plan.final_backend == MCBackend.GPU_ST_LRPS
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.GPU_ST_LRPS
     assert plan.actual_backend == "gpu_st_lrps_direct"
     assert plan.runtime_model_kind == "force_direct"
     assert "no-grad" in plan.batch_note.lower()
@@ -412,19 +412,19 @@ def test_policy_rejects_explicit_st_lrps_artifact_kind_mismatch(
     requested: str,
     artifact_kind: str,
 ) -> None:
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
     monkeypatch.setattr(
         policy_mod,
         "_read_st_lrps_runtime_kind",
-        lambda mc_cfg, sim_cfg: artifact_kind,
+        lambda batch_cfg, sim_cfg: artifact_kind,
     )
-    mc_cfg = SimpleNamespace(
+    batch_cfg = SimpleNamespace(
         use_gpu=True,
-        mc_backend=requested,
+        batch_backend=requested,
         gravity_mode_override="follow_mission",
         gpu_sh_degree=0,
     )
@@ -433,41 +433,41 @@ def test_policy_rejects_explicit_st_lrps_artifact_kind_mismatch(
         gravity=SimpleNamespace(uses_st_lrps=False),
     )
     with pytest.raises(ValueError, match="requires"):
-        resolve_mc_backend_policy(mc_cfg, sim_cfg)
+        resolve_batch_backend_policy(batch_cfg, sim_cfg)
 
 
 def test_policy_no_contradictory_command_args_st_lrps_gpu(monkeypatch) -> None:
     """GPU_ST_LRPS plan emits use_gpu=True, gravity_backend='st_lrps'."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
 
-    mc_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),
         gravity=SimpleNamespace(uses_st_lrps=True),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
     assert plan.use_gpu is True
     assert plan.gravity_backend == "st_lrps"
 
 
 def test_policy_no_contradictory_command_args_cpu_fallback(monkeypatch) -> None:
     """CPU fallback plan emits use_gpu=False regardless of request."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    from lunaris.core.mc_backend_policy import resolve_mc_backend_policy
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import resolve_batch_backend_policy
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
 
-    mc_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),
         gravity=SimpleNamespace(uses_st_lrps=True),
     )
-    plan = resolve_mc_backend_policy(mc_cfg, sim_cfg)
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
     assert plan.use_gpu is False
 
 
@@ -577,7 +577,7 @@ def test_predict_residual_accel_torch_zero_net_is_zero(tmp_path: Path) -> None:
 
 @pytest.mark.requires_data
 def test_degree_max_metadata_exposed(tmp_path: Path) -> None:
-    """SurrogateGravityModel exposes degree_max for MC propagator contract."""
+    """SurrogateGravityModel exposes degree_max for the batch propagator contract."""
     model = _make_tiny_surrogate(tmp_path)
     assert hasattr(model, "degree_max")
     assert int(model.degree_max) == 50
@@ -651,8 +651,8 @@ def test_torch_batch_propagator_cpu_smoke(tmp_path: Path, monkeypatch) -> None:
 
 def test_engine_selects_torch_gpu_when_st_lrps_and_torch_cuda_available(monkeypatch) -> None:
     """ST-LRPS + torch CUDA available + no extra perturbations → TorchBatchPropagator."""
-    import lunaris.core.mc_backend_policy as policy_mod
-    import lunaris.core.mc_propagator as mc_prop
+    import lunaris.batch.backend_policy as policy_mod
+    import lunaris.core.batch_propagator as batch_prop
 
     class DummyCPU:
         def __init__(self, *args, **kwargs) -> None:
@@ -663,13 +663,13 @@ def test_engine_selects_torch_gpu_when_st_lrps_and_torch_cuda_available(monkeypa
             raise AssertionError("Classic GPU should not be selected for ST-LRPS.")
 
     class DummyTorchGPU:
-        def __init__(self, surrogate_model, mc_cfg, device_id=0) -> None:
+        def __init__(self, surrogate_model, batch_cfg, device_id=0) -> None:
             self.surrogate_model = surrogate_model
-            self.mc_cfg = mc_cfg
+            self.batch_cfg = batch_cfg
 
-    monkeypatch.setattr(mc_prop, "_CUDA_AVAILABLE", True)
-    monkeypatch.setattr(mc_prop, "CPUBatchPropagator", DummyCPU)
-    monkeypatch.setattr(mc_prop, "GPUBatchPropagator", DummyGPU)
+    monkeypatch.setattr(batch_prop, "_CUDA_AVAILABLE", True)
+    monkeypatch.setattr(batch_prop, "CPUBatchPropagator", DummyCPU)
+    monkeypatch.setattr(batch_prop, "GPUBatchPropagator", DummyGPU)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
     monkeypatch.setattr("lunaris.core.torch_batch_propagator.TorchBatchPropagator", DummyTorchGPU)
@@ -683,13 +683,13 @@ def test_engine_selects_torch_gpu_when_st_lrps_and_torch_cuda_available(monkeypa
     )
     fake_dyn = SimpleNamespace(grav=fake_grav)
 
-    engine = MonteCarloEngine.__new__(MonteCarloEngine)
-    engine._mc = MonteCarloConfig(
+    engine = BatchPropagationEngine.__new__(BatchPropagationEngine)
+    engine._cfg = BatchPropagationConfig(
         n_samples=2,
         use_gpu=True,
         gravity_mode_override="st_lrps",
         output_format="npz",
-        output_path="mc_results/test_torch_gpu.npz",
+        output_path="outputs/ensemble/test_torch_gpu.npz",
         st_lrps_model_dir="mock",
     )
     engine._sim_cfg = SimpleNamespace(
@@ -701,7 +701,7 @@ def test_engine_selects_torch_gpu_when_st_lrps_and_torch_cuda_available(monkeypa
     engine._topo_grid = None
     engine._backend_note = ""
 
-    prop = MonteCarloEngine._build_propagator(engine)
+    prop = BatchPropagationEngine._build_propagator(engine)
 
     assert isinstance(prop, DummyTorchGPU)
     assert prop.surrogate_model is fake_grav

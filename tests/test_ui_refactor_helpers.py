@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from lunaris.loaders.io_surface import _iter_label_candidates
-from lunaris.ui.core.command_builder import build_command, build_mc_command
+from lunaris.ui.core.command_builder import build_batch_command, build_command
 from lunaris.ui.core.session_persistence import autodetect_data_state
 from lunaris.ui.pages.data_files_page import DataFilesState
 from lunaris.ui.pages.force_models_page import UIGravityConfig
@@ -249,7 +249,7 @@ def test_ui_gravity_config_clamps_adaptive_rules_to_base_degree() -> None:
     assert cfg.adaptive_table == [(10.0, 100), (200.0, 100), (1000.0, 20)]
 
 
-def test_build_mc_command_includes_solver_and_output_controls() -> None:
+def test_build_batch_command_includes_solver_and_output_controls() -> None:
     orbit = {
         "mode": "hp_ha",
         "hp_km": 100.0,
@@ -284,12 +284,12 @@ def test_build_mc_command_includes_solver_and_output_controls() -> None:
             "max_step": "30",
         },
     }
-    mc_data = {
+    batch_data = {
         "n_samples": 8,
         "seed": 7,
         "use_gpu": False,
         "output_format": "npz",
-        "output_path": r"C:\results\mc_case.npz",
+        "output_path": r"C:\results\batch_case.npz",
         "dt_s": 20.0,
         "impact_alt_km": 2.0,
     }
@@ -300,20 +300,20 @@ def test_build_mc_command_includes_solver_and_output_controls() -> None:
         ldem_ppd=16,
     )
 
-    command = build_mc_command(
+    command = build_batch_command(
         python_executable="python",
-        mc_runner_path=Path("mc_runner.py"),
+        batch_runner_path=Path("batch_runner.py"),
         orbit=orbit,
         forces=forces,
         propagation=propagation,
-        mc_data=mc_data,
+        batch_data=batch_data,
         data_files=data_state,
         gravity_cfg=_DummyGravityConfig(),
         solver_cfg=_DummySolverConfig(),
         spacecraft_cfg=_DummySpacecraftConfig(),
     )
 
-    assert command[:2] == ["python", "mc_runner.py"]
+    assert command[:2] == ["python", "batch_runner.py"]
     assert "--output-dt-s" in command
     assert "15" in command
     assert "--method" in command
@@ -374,7 +374,7 @@ def test_build_command_uses_surrogate_gravity_flags_when_requested() -> None:
     assert "--adaptive-table" not in command
 
 
-def test_build_mc_command_can_force_surrogate_gravity_override() -> None:
+def test_build_batch_command_can_force_surrogate_gravity_override() -> None:
     orbit = {
         "mode": "hp_ha",
         "hp_km": 100.0,
@@ -389,13 +389,13 @@ def test_build_mc_command_can_force_surrogate_gravity_override() -> None:
         "timeline": {"epoch": "2027-03-02 23:32:37", "duration": "0.5", "unit": "Days"},
         "integrator": {"method": "DOP853 (Adaptive)", "rtol": "1e-9", "dt_out": "15", "max_step": "30"},
     }
-    mc_data = {
+    batch_data = {
         "n_samples": 8,
         "seed": 7,
         "use_gpu": True,
         "gravity_mode_override": "st_lrps",
         "output_format": "npz",
-        "output_path": r"C:\results\mc_case.npz",
+        "output_path": r"C:\results\batch_case.npz",
         "dt_s": 20.0,
         "impact_alt_km": 2.0,
     }
@@ -407,13 +407,13 @@ def test_build_mc_command_can_force_surrogate_gravity_override() -> None:
         st_lrps_model_dir=r"C:\models\st_lrps_run",
     )
 
-    command = build_mc_command(
+    command = build_batch_command(
         python_executable="python",
-        mc_runner_path=Path("mc_runner.py"),
+        batch_runner_path=Path("batch_runner.py"),
         orbit=orbit,
         forces=forces,
         propagation=propagation,
-        mc_data=mc_data,
+        batch_data=batch_data,
         data_files=DataFilesState(),
         gravity_cfg=gravity_cfg,
         solver_cfg=_DummySolverConfig(),
@@ -422,6 +422,6 @@ def test_build_mc_command_can_force_surrogate_gravity_override() -> None:
 
     assert "--enable-sh" in command
     assert "on" in command
-    assert "--mc-gravity-mode" in command
+    assert "--batch-gravity-mode" in command
     assert "st_lrps" in command
     assert "--surrogate-gravity-model-dir" in command

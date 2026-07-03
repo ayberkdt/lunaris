@@ -105,8 +105,8 @@ class SurrogateGravityModel:
         self._alt_min_km, self._alt_max_km = self._resolve_altitude_envelope(config, force_runtime)
 
         # Degree metadata — required by core.propagation.propagator._get_sh_degree() and
-        # MC result provenance.  Raised at construction time so the error fires
-        # once at load, not N times inside the Monte Carlo sample loop.
+        # batch result provenance.  Raised at construction time so the error fires
+        # once at load, not N times inside the batch sample loop.
         _deg_min, _deg_max = _extract_degree_metadata(config)
         self.degree_min: int = _deg_min
         self.degree_max: int = _deg_max
@@ -639,7 +639,7 @@ class SurrogateGravityModel:
         """
         Move the model and all cached scaling tensors to *device* in-place.
 
-        Call this once before starting a GPU MC run to transfer everything to
+        Call this once before starting a GPU batch run to transfer everything to
         CUDA.  After the call, ``predict_residual_accel_torch`` and
         ``predict_total_accel_torch`` will run natively on that device with no
         host-device transfers per call.

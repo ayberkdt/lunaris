@@ -2,11 +2,11 @@
 Focused regression tests for core-layer fixes.
 
 These tests target small but user-visible behaviors that are easy to regress
-when the core propagation/Monte Carlo code is refactored:
+when the core propagation/batch code is refactored:
 
 - short-run ephemeris rotation tables with a single quaternion sample
-- Monte Carlo archive metadata round-tripping
-- CPU Monte Carlo preservation of refined impact times
+- batch archive metadata round-tripping
+- CPU batch preservation of refined impact times
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from lunaris.common.montecarlo_defs import MonteCarloConfig
+from lunaris.batch.storage import _NPZWriter, load_batch_result
+from lunaris.common.batch_defs import BatchPropagationConfig
 from lunaris.common.type_defs import EventConfig, PropagationResult, PropagatorConfig, TimeConfig
-from lunaris.core.mc_propagator import CPUBatchPropagator
-from lunaris.core.monte_carlo_engine import _NPZWriter, load_mc_result
+from lunaris.core.batch_propagator import CPUBatchPropagator
 from lunaris.core.propagation.propagator import _build_r_i_to_bf_from_rot_table
 
 
@@ -40,8 +40,8 @@ def test_single_sample_quaternion_table_still_builds_fixed_frame_mapper() -> Non
     np.testing.assert_allclose(out, np.asarray([1.0, 2.0, 3.0], dtype=np.float64), atol=1e-12)
 
 
-def test_load_mc_result_restores_npz_metadata_into_diagnostics(tmp_path: Path) -> None:
-    output_path = tmp_path / "mc_metadata.npz"
+def test_load_batch_result_restores_npz_metadata_into_diagnostics(tmp_path: Path) -> None:
+    output_path = tmp_path / "batch_metadata.npz"
     t = np.asarray([0.0, 30.0], dtype=np.float64)
     writer = _NPZWriter(output_path, n_samples=1, t_grid=t)
     writer.write_metadata(seed=7, output_dt_s=30.0, backend="cpu")
@@ -62,7 +62,7 @@ def test_load_mc_result_restores_npz_metadata_into_diagnostics(tmp_path: Path) -
     )
     writer.finalize()
 
-    loaded = load_mc_result(str(output_path))
+    loaded = load_batch_result(str(output_path))
 
     assert loaded.diagnostics["seed"] == 7
     assert loaded.diagnostics["output_dt_s"] == 30.0
@@ -82,14 +82,14 @@ def test_cpu_batch_propagator_preserves_precise_impact_times(monkeypatch) -> Non
         ),
         flags=SimpleNamespace(),
     )
-    mc_cfg = MonteCarloConfig(
+    batch_cfg = BatchPropagationConfig(
         n_samples=2,
         use_gpu=False,
         output_format="npz",
-        output_path="mc_results/test_cpu_batch.npz",
+        output_path="outputs/ensemble/test_cpu_batch.npz",
     )
 
-    batch = CPUBatchPropagator(sim_cfg, mc_cfg)
+    batch = CPUBatchPropagator(sim_cfg, batch_cfg)
     monkeypatch.setattr(batch, "_make_sample_dynamics", lambda **kwargs: object())
 
     def fake_propagate(*, dynamics, y0, cfg, time_cfg, topo_grid=None):

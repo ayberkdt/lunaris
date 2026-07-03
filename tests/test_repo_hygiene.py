@@ -52,7 +52,7 @@ def iter_doc_files(root: Path):
 def iter_source_files(root: Path):
     exclude_dirs = {
         ".git", ".pytest_cache", "__pycache__", ".claude",
-        "data", "results", "mc_results", "runs", "artifacts",
+        "data", "results", "batch_results", "runs", "artifacts",
         "output", "outputs", "reports", ".vscode", ".idea",
         "AIAA SciTech", "LATEX",
     }

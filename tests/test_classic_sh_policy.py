@@ -3,14 +3,14 @@ Degree-aware classic-SH backend selection policy (task §8).
 
 These test the pure decision function ``select_classic_sh_backend`` — the layer
 that chooses between numba_cuda_sh / torch_cuda_sh / cpu_sh — without touching
-the live MC runtime. The key guarantees: degree > 24 is routed to torch before
+the live batch runtime. The key guarantees: degree > 24 is routed to torch before
 CPU, the requested degree is never silently clipped, and explicit requests obey
 the fallback policy.
 """
 
 from __future__ import annotations
 
-from lunaris.core.mc_backend_policy import select_classic_sh_backend
+from lunaris.batch.backend_policy import select_classic_sh_backend
 
 
 def _sel(**kw):

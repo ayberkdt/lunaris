@@ -14,7 +14,7 @@ Console scripts are the most stable user-facing API:
 | --- | --- |
 | `lunaris` | Single-run orbit propagation |
 | `lunaris-data` | External data download, verification, path discovery, ST-LRPS dataset inspection |
-| `lunaris-batch` / `lunaris-mc` | Batch/ensemble propagation; `lunaris-mc` is a historical alias retained for compatibility |
+| `lunaris-batch` | Batch/ensemble propagation |
 | `lunaris-perturbation-budget` | Acceleration and perturbation budget analysis |
 | `lunaris-ui` / `lunaris-launcher` | Mission desktop UI and launcher |
 | `lunaris-studio` | Optional ST-LRPS Studio UI |
@@ -35,14 +35,14 @@ These modules are intended for direct import:
 | Module | Public objects |
 | --- | --- |
 | `lunaris` | `__version__` |
-| `lunaris.api` | `load_default_config`, `replace_sim_config`, `DynamicsEngine`, `propagate`, `BatchPropagationConfig`, `BatchPropagationEngine`, `BatchPropagationResult`, plus legacy `MonteCarloConfig` / `MonteCarloEngine` aliases |
+| `lunaris.api` | `load_default_config`, `replace_sim_config`, `DynamicsEngine`, `propagate`, `BatchPropagationConfig`, `BatchPropagationEngine`, `BatchPropagationResult` |
 | `lunaris.common` | Flat re-exports from `lunaris.common.constants` and `lunaris.common.type_defs` |
 | `lunaris.common.constants` | Physical constants and unit conversions such as `DAY_S`, `C_LIGHT`, `MU_MOON`, `R_MOON`, `AU`, `DEG2RAD`, `RAD2DEG` |
 | `lunaris.common.type_defs` | `GravityConfig`, `AdaptiveDegreeConfig`, `PerturbationFlags`, `SolidTideConfig`, `TimeConfig`, `InitialState`, `SpacecraftProps`, `PropagatorConfig`, `PropagationResult`, `SimulationHistory` |
 | `lunaris.common.hashing` | `canonical_json_text`, `canonical_json_sha256` |
 | `lunaris.common.paths` | `find_project_root`, `project_root_from_file`, `data_dir_from_root` |
-| `lunaris.common.batch_defs` | `BatchPropagationConfig`, `BatchPropagationResult`, `StateUncertainty`, `SpacecraftUncertainty`, `build_mc_output_grid`, `validate_st_lrps_model_dir`, plus legacy `MonteCarloConfig` / `MCRunResult` aliases |
-| `lunaris.batch` | `BatchPropagationEngine`, `BatchPropagationConfig`, `BatchPropagationResult`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_mc_result`, plus legacy `MonteCarloEngine` alias |
+| `lunaris.common.batch_defs` | `BatchPropagationConfig`, `BatchPropagationResult`, `StateUncertainty`, `SpacecraftUncertainty`, `build_batch_output_grid`, `validate_st_lrps_model_dir` |
+| `lunaris.batch` | `BatchPropagationEngine`, `BatchPropagationConfig`, `BatchPropagationResult`, `generate_standard_normal_design`, `sample_initial_states`, `sample_spacecraft_props`, `HDF5TrajectoryView`, `load_batch_result`, `batch_entry` |
 | `lunaris.core.config` | `SimConfig`, `load_default_config`, `get_default_config`, `replace_sim_config`, `VisualConfig`, `OutputConfig` |
 | `lunaris.core.dynamics` | `DynamicsEngine` |
 | `lunaris.core.propagation` | Canonical propagation package; `propagate`, `make_time_grid`, `build_events` |
@@ -52,14 +52,14 @@ These modules are intended for direct import:
 | `lunaris.analysis.postprocess` | `process_simulation_results`, orbital/invariant extraction helpers |
 | `lunaris.analysis.reporting.manager` | `plot_all` |
 | `lunaris.analysis.ensemble.statistics` | Propagated-ensemble statistics, covariance, RIC uncertainty, impact statistics, OE dispersion |
-| `lunaris.analysis.ensemble.plotting` | Ensemble plots and the `plot_mc_report` report assembly helper |
+| `lunaris.analysis.ensemble.plotting` | Ensemble plots and the `plot_ensemble_report` report assembly helper |
 | `lunaris.analysis.ensemble.uq_report` | Provenance-stamped ensemble UQ report builder |
 
-Terminology note: the canonical concept is batch/ensemble propagation. New code
-should prefer `BatchPropagation*` names and `lunaris.analysis.ensemble`. The
-`MonteCarlo*`, `MCRunResult`, `load_mc_result`, `mc_*`, and `lunaris-mc` names
-remain where they are part of stable CLI/archive/API contracts; random Monte
-Carlo is one sampling design alongside Latin Hypercube and Sobol variants.
+Terminology note: the canonical concept is batch/ensemble propagation —
+`BatchPropagation*` names for execution and `lunaris.analysis.ensemble` for
+statistics and reporting. "Monte Carlo" appears only as the statistical
+description of the `random` sampling design, alongside Latin Hypercube and
+Sobol variants.
 
 For new scripts, prefer `lunaris.api` unless you intentionally need a lower-level
 module listed below. The examples in `examples/` are the executable reference for
@@ -97,7 +97,7 @@ listed above:
 
 - `lunaris.physics.*` low-level Numba kernels other than documented loaders or
   model facades.
-- `lunaris.core.mc_backend_policy`, `mc_propagator`, `torch_*` backend internals.
+- `lunaris.batch.backend_policy`, `batch_propagator`, `torch_*` backend internals.
 - `lunaris.cli.*` parser and wiring helpers.
 - `lunaris.ui.*` page/widget internals and web preview implementation details.
 - `lunaris.surrogate.st_lrps.*` training, data, evaluation, UI, and artifact

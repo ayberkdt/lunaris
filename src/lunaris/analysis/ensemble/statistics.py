@@ -3,7 +3,7 @@
 Ensemble Statistical Analysis
 =============================
 
-Post-processes a ``MCRunResult`` ensemble into actionable statistics:
+Post-processes a ``BatchPropagationResult`` ensemble into actionable statistics:
 
 1. **Ensemble statistics** (mean, covariance, σ-bounds as a function of time):
    - Mean trajectory:  μ(t) = E[r(t), v(t)]
@@ -36,7 +36,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.batch_defs import MCRunResult
+from lunaris.common.batch_defs import BatchPropagationResult
 from lunaris.common.constants import R_MOON
 from lunaris.common.type_defs import F64Array
 from lunaris.core.state import cartesian_to_keplerian
@@ -181,7 +181,7 @@ class ImpactStatistics:
 
     Attributes
     ----------
-    n_total       : total number of MC samples
+    n_total       : total number of batch samples
     n_impacts     : number that hit the surface
     p_impact      : MLE estimate of impact probability
     p_impact_ci95 : (lower, upper) Wilson 95% confidence interval
@@ -228,11 +228,11 @@ IMPACT_NOT_EVALUATED = "not_evaluated"
 
 
 @dataclass
-class MCStatistics:
+class EnsembleReport:
     """
     Complete propagated-ensemble analysis output.
 
-    Produced by :func:`compute_mc_statistics`.
+    Produced by :func:`compute_ensemble_report`.
 
     ``impacts`` is ``None`` unless ``impact_status == IMPACT_EVALUATED``; consult
     ``impact_status`` before reading impact probability so a run that never
@@ -245,7 +245,7 @@ class MCStatistics:
     oe_disp:    OEDispersion | None = None
 
     # Raw result reference (not serialised by default)
-    _raw: MCRunResult | None = field(default=None, repr=False)
+    _raw: BatchPropagationResult | None = field(default=None, repr=False)
 
 
 # =============================================================================
@@ -253,7 +253,7 @@ class MCStatistics:
 # =============================================================================
 
 def compute_ensemble_statistics(
-    result: MCRunResult,
+    result: BatchPropagationResult,
     *,
     use_survived_only: bool = False,
     r_ref_m: float = R_MOON,
@@ -263,7 +263,7 @@ def compute_ensemble_statistics(
 
     Parameters
     ----------
-    result : MCRunResult
+    result : BatchPropagationResult
     use_survived_only : bool
         If True, exclude impacted samples from statistics.
     r_ref_m : float
@@ -341,7 +341,7 @@ def compute_error_ellipsoids(
 
 
 def compute_impact_statistics(
-    result: MCRunResult,
+    result: BatchPropagationResult,
     *,
     r_ref_m: float = R_MOON,
 ) -> ImpactStatistics:
@@ -350,7 +350,7 @@ def compute_impact_statistics(
 
     Parameters
     ----------
-    result : MCRunResult
+    result : BatchPropagationResult
     r_ref_m : float
         Reference radius for lat/lon computation [m].
 
@@ -414,7 +414,7 @@ def compute_impact_statistics(
 
 
 def compute_oe_dispersion(
-    result: MCRunResult,
+    result: BatchPropagationResult,
     mu: float = 4.9048695e12,     # μ_Moon [m³/s²]
     *,
     max_samples: int = 500,       # cap for Keplerian conversion (expensive)
@@ -424,7 +424,7 @@ def compute_oe_dispersion(
 
     Parameters
     ----------
-    result : MCRunResult
+    result : BatchPropagationResult
     mu : float
         Gravitational parameter of the central body [m³/s²].
     max_samples : int
@@ -483,7 +483,7 @@ def compute_oe_dispersion(
     )
 
 
-def _impact_detection_was_enabled(result: MCRunResult) -> bool | None:
+def _impact_detection_was_enabled(result: BatchPropagationResult) -> bool | None:
     """Whether this run requested impact statistics, read from its manifest.
 
     Returns ``None`` when the archive predates the impact contract (no flag
@@ -501,21 +501,21 @@ def _impact_detection_was_enabled(result: MCRunResult) -> bool | None:
     return None
 
 
-def compute_mc_statistics(
-    result: MCRunResult,
+def compute_ensemble_report(
+    result: BatchPropagationResult,
     *,
     mu: float = 4.9048695e12,
     r_ref_m: float = R_MOON,
     compute_oe: bool = True,
     use_survived_only: bool = False,
     compute_impacts: bool | None = None,
-) -> MCStatistics:
+) -> EnsembleReport:
     """
-    Master function: runs all analyses and returns ``MCStatistics``.
+    Master function: runs all analyses and returns ``EnsembleReport``.
 
     Parameters
     ----------
-    result : MCRunResult
+    result : BatchPropagationResult
     mu : float
         Lunar gravitational parameter [m³/s²].
     r_ref_m : float
@@ -533,7 +533,7 @@ def compute_mc_statistics(
 
     Returns
     -------
-    MCStatistics
+    EnsembleReport
     """
     ens   = compute_ensemble_statistics(result, use_survived_only=use_survived_only, r_ref_m=r_ref_m)
     ell   = compute_error_ellipsoids(ens)
@@ -557,7 +557,7 @@ def compute_mc_statistics(
 
     oe    = compute_oe_dispersion(result, mu=mu) if compute_oe else None
 
-    return MCStatistics(
+    return EnsembleReport(
         ensemble=ens,
         ellipsoids=ell,
         impacts=imps,
@@ -714,7 +714,7 @@ __all__ = [
     "ErrorEllipsoids",
     "ImpactStatistics",
     "OEDispersion",
-    "MCStatistics",
+    "EnsembleReport",
     "RICUncertainty",
     # Impact-statistics contract states
     "IMPACT_EVALUATED",
@@ -725,7 +725,7 @@ __all__ = [
     "compute_error_ellipsoids",
     "compute_impact_statistics",
     "compute_oe_dispersion",
-    "compute_mc_statistics",
+    "compute_ensemble_report",
     "compute_ric_uncertainty",
     # Helpers
     "ric_basis_from_state",

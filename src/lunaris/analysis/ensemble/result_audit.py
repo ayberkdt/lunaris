@@ -15,7 +15,7 @@ Verdict ladder (most-to-least severe):
 
   * ``invalid``       — structurally not a usable result: a corrupt schema version,
                         or an archive that declares schema v2 yet is missing required
-                        manifest fields (not produced by a complete MonteCarloEngine
+                        manifest fields (not produced by a complete BatchPropagationEngine
                         run). Neither trustworthy nor safe to rerun-from.
   * ``rerun_required``— a loadable result whose impact geography/timing is
                         scientifically wrong (no Moon-fixed frame, or a non-exact
@@ -25,9 +25,9 @@ Verdict ladder (most-to-least severe):
                         NOT auto-rerun (the numbers may still be fine).
   * ``trusted``       — complete v2 provenance and exact impact handling.
 
-The classification functions (``classify_mc_archive`` / ``classify_st_lrps_run``) are
+The classification functions (``classify_batch_archive`` / ``classify_st_lrps_run``) are
 pure and unit-tested. ``audit_root`` / ``main`` handle discovery and I/O. Heavy
-optional dependencies (h5py, the MC loader) are imported lazily so importing this
+optional dependencies (h5py, the batch-result loader) are imported lazily so importing this
 module — e.g. from a unit test — never requires them.
 """
 
@@ -51,7 +51,7 @@ _PROVENANCE_HASH_KEYS = (
 )
 _SHA256_HEX_LENGTH = 64
 
-# Mirrors ``monte_carlo_engine.REQUIRED_ARCHIVE_V2_FIELDS`` so this module stays
+# Mirrors ``batch.engine.REQUIRED_ARCHIVE_V2_FIELDS`` so this module stays
 # importable without the heavy engine deps. A v2 archive missing any of these
 # declares the v2 contract but was not produced by a complete BatchPropagationEngine
 # run -> INVALID (the strict loader rejects the same archives).
@@ -62,9 +62,9 @@ _REQUIRED_V2_FIELDS = (
     "duration_s",
     "output_dt_s",
     "backend",
-    "requested_mc_backend",
-    "actual_mc_backend",
-    "mc_backend",
+    "requested_batch_backend",
+    "actual_batch_backend",
+    "batch_backend",
     "detect_impact",
     "compute_impact_statistics",
 )
@@ -106,7 +106,7 @@ def _has_valid_provenance_hash(metadata: dict[str, Any]) -> bool:
     return any(_is_valid_sha256(metadata.get(key)) for key in _PROVENANCE_HASH_KEYS)
 
 
-def classify_mc_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tuple[str, list[str]]:
+def classify_batch_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tuple[str, list[str]]:
     """Classify one batch/ensemble archive from its manifest metadata.
 
     ``has_impacts`` reflects whether any valid sample impacted (impact geography /
@@ -262,7 +262,7 @@ def classify_st_lrps_run(config: dict[str, Any], *, has_checkpoint: bool) -> tup
 _MC_REQUIRED_KEYS = {"Y", "t", "impact_flags", "sc_samples"}
 
 
-def _is_mc_hdf5(path: Path) -> bool:
+def _is_batch_hdf5(path: Path) -> bool:
     try:
         import h5py
     except ImportError:
@@ -274,7 +274,7 @@ def _is_mc_hdf5(path: Path) -> bool:
         return False
 
 
-def _is_mc_npz(path: Path) -> bool:
+def _is_batch_npz(path: Path) -> bool:
     try:
         with zipfile.ZipFile(str(path)) as zf:
             names = {Path(n).stem for n in zf.namelist()}
@@ -283,16 +283,16 @@ def _is_mc_npz(path: Path) -> bool:
         return False
 
 
-def _audit_mc_archive(path: Path) -> dict[str, Any]:
-    from lunaris.batch import load_mc_result
+def _audit_batch_archive(path: Path) -> dict[str, Any]:
+    from lunaris.batch import load_batch_result
 
-    result = load_mc_result(str(path), lazy=True, strict=False)
+    result = load_batch_result(str(path), lazy=True, strict=False)
     valid = result.valid_sample_mask()
     has_impacts = bool((valid & (result.impact_mask > 0.5)).any())
-    status, reasons = classify_mc_archive(result.diagnostics, has_impacts=has_impacts)
+    status, reasons = classify_batch_archive(result.diagnostics, has_impacts=has_impacts)
     return {
         "path": str(path),
-        "kind": "mc_archive",
+        "kind": "batch_archive",
         "status": status,
         "reasons": reasons,
         "has_impacts": has_impacts,
@@ -315,10 +315,10 @@ def audit_root(root: Path) -> dict[str, Any]:
     entries: list[dict[str, Any]] = []
 
     for path in sorted(root.rglob("*")):
-        if path.suffix.lower() in (".h5", ".hdf5") and _is_mc_hdf5(path):
-            entries.append(_audit_mc_archive(path))
-        elif path.suffix.lower() == ".npz" and _is_mc_npz(path):
-            entries.append(_audit_mc_archive(path))
+        if path.suffix.lower() in (".h5", ".hdf5") and _is_batch_hdf5(path):
+            entries.append(_audit_batch_archive(path))
+        elif path.suffix.lower() == ".npz" and _is_batch_npz(path):
+            entries.append(_audit_batch_archive(path))
 
     for cfg_path in sorted(root.rglob("config.json")):
         run_dir = cfg_path.parent
@@ -343,7 +343,7 @@ def audit_root(root: Path) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Audit legacy MC/ST-LRPS results into a trust manifest.")
+    ap = argparse.ArgumentParser(description="Audit legacy batch/ST-LRPS results into a trust manifest.")
     ap.add_argument("--root", default="outputs", help="Directory to scan (default: outputs)")
     ap.add_argument(
         "--output",

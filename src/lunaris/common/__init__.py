@@ -34,8 +34,7 @@ from . import constants, type_defs
 _LAZY_MODULES: Final[dict[str, str]] = {
     "math_utils":       "Numerical helpers (vectors/quaternions/frames).",
     "time_utils":       "Time & calendar conversions (JD/MJD/J2000, ISO parsing).",
-    "batch_defs":      "Batch/ensemble propagation configuration dataclasses.",
-    "montecarlo_defs":  "Historical compatibility facade for batch propagation dataclasses.",
+    "batch_defs":       "Batch/ensemble propagation configuration dataclasses.",
     "paths":            "Project-root and data-dir resolution (editable/installed).",
     "hashing":          "Canonical JSON hashing (single source for content digests).",
     "provenance":       "Dependency-light file hashing and UTC timestamp helpers.",

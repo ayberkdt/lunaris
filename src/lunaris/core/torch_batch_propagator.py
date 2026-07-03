@@ -1,6 +1,6 @@
 # lunaris.core.torch_batch_propagator
 """
-GPU-Accelerated Batched Monte Carlo Propagator — ST-LRPS Path
+GPU-Accelerated Batch Propagator — ST-LRPS Path
 ==============================================================
 
 Propagates N trajectories simultaneously as a single ``[N, 6]`` CUDA tensor
@@ -30,9 +30,9 @@ Limitations (current version)
 - Gravity only: point-mass + ST-LRPS neural residual.
 - No third-body, SRP, albedo, tides, or relativity.
   Enabling any of those perturbations in ``SimConfig`` forces a CPU fallback
-  (detected by ``core.mc_backend_policy.resolve_mc_backend_policy``).
+  (detected by ``batch.backend_policy.resolve_batch_backend_policy``).
 - Fixed step size; no adaptive step control.
-- State dtype follows ``MonteCarloConfig.torch_dtype`` (float32 by default for
+- State dtype follows ``BatchPropagationConfig.torch_dtype`` (float32 by default for
   throughput, float64 when explicitly requested).
 
 Performance notes
@@ -53,7 +53,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from lunaris.common.batch_defs import build_mc_output_grid
+from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
 from lunaris.core.torch_frame import (
     TorchFrameError,
@@ -76,15 +76,15 @@ class TorchSTLRPSPreflightError(RuntimeError):
 
 class TorchBatchPropagator:
     """
-    Fixed-step RK4 Monte Carlo propagator backed by PyTorch CUDA.
+    Fixed-step RK4 batch propagator backed by PyTorch CUDA.
 
     Parameters
     ----------
     surrogate_model : SurrogateGravityModel
         A loaded ST-LRPS model.  ``to_device`` is called during ``__init__``
         so the model and its scaling tensors are transferred to *device_id*.
-    mc_cfg : MonteCarloConfig
-        Monte Carlo configuration (``dt_s``, ``impact_alt_km``, …).
+    batch_cfg : BatchPropagationConfig
+        Batch propagation configuration (``dt_s``, ``impact_alt_km``, …).
     device_id : int
         CUDA device index (default 0).
     """
@@ -92,7 +92,7 @@ class TorchBatchPropagator:
     def __init__(
         self,
         surrogate_model: Any,
-        mc_cfg: Any,
+        batch_cfg: Any,
         device_id: int = 0,
         ephem: Any = None,
         allow_identity_rotation: bool = False,
@@ -113,14 +113,14 @@ class TorchBatchPropagator:
 
         self._torch = torch
         self._device = torch.device(f"cuda:{int(device_id)}")
-        self._dt = float(getattr(mc_cfg, "dt_s", 60.0))
-        self._impact_alt_m = float(getattr(mc_cfg, "impact_alt_km", 0.0)) * 1_000.0
+        self._dt = float(getattr(batch_cfg, "dt_s", 60.0))
+        self._impact_alt_m = float(getattr(batch_cfg, "impact_alt_km", 0.0)) * 1_000.0
         self._impact_r = float(R_MOON) + self._impact_alt_m
-        self._detect_impact = bool(getattr(mc_cfg, "impact_detection_enabled", True))
+        self._detect_impact = bool(getattr(batch_cfg, "impact_detection_enabled", True))
         self._terrain_requested = self._detect_impact and (
-            str(getattr(mc_cfg, "impact_surface_mode", "sphere")) == "terrain"
+            str(getattr(batch_cfg, "impact_surface_mode", "sphere")) == "terrain"
         )
-        dtype_name = str(getattr(mc_cfg, "torch_dtype", "float32") or "float32").lower()
+        dtype_name = str(getattr(batch_cfg, "torch_dtype", "float32") or "float32").lower()
         self._dtype = torch.float64 if dtype_name == "float64" else torch.float32
 
         # Move surrogate model (weights + scaling tensors) to CUDA
@@ -250,7 +250,7 @@ class TorchBatchPropagator:
         dt = self._dt
 
         # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform.
-        t_out, n_snaps, snap_interval = build_mc_output_grid(duration_s, output_dt_s)
+        t_out, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
         steps_per_snap = max(1, round(snap_interval / dt))
         dt_eff = snap_interval / steps_per_snap  # may differ slightly from dt
         Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
@@ -293,11 +293,11 @@ class TorchBatchPropagator:
         )
         dev_name = torch.cuda.get_device_name(device.index or 0)
         print(
-            f"[MC][GPU-STLRPS] N={N}  device={device} ({dev_name})",
+            f"[BATCH][GPU-STLRPS] N={N}  device={device} ({dev_name})",
             flush=True,
         )
         print(
-            f"[MC][GPU-STLRPS] degree_min={deg_min}  degree_max={deg_max}  "
+            f"[BATCH][GPU-STLRPS] degree_min={deg_min}  degree_max={deg_max}  "
             f"runtime_model_kind={runtime_kind}  "
             f"dt={dt_eff:.1f}s  snaps={n_snaps}  steps/snap={steps_per_snap}  "
             f"dtype={str(self._dtype).replace('torch.', '')}",
@@ -312,7 +312,7 @@ class TorchBatchPropagator:
         torch.cuda.synchronize(device)
         accel_ms = (time.perf_counter() - _t0) * 1_000.0
         print(
-            f"[MC][GPU-STLRPS] one batched accel call: {accel_ms:.2f} ms  "
+            f"[BATCH][GPU-STLRPS] one batched accel call: {accel_ms:.2f} ms  "
             f"state=[{N}, 6]",
             flush=True,
         )
@@ -428,7 +428,7 @@ class TorchBatchPropagator:
         impact_positions = impact_pos_t.detach().cpu().numpy().astype(np.float64)
         self._last_impact_positions_inertial = impact_positions
         print(
-            f"[MC][GPU-STLRPS] propagation complete: "
+            f"[BATCH][GPU-STLRPS] propagation complete: "
             f"{t_prop:.2f}s  {traj_steps_per_s:,.0f} trajectory-steps/s",
             flush=True,
         )

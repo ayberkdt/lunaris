@@ -124,7 +124,6 @@ lunaris-train --help
 lunaris-eval --help
 lunaris-benchmark --help
 lunaris-batch --help
-lunaris-mc --help  # historical alias
 lunaris-perturbation-budget --help
 python -m lunaris.surrogate.st_lrps.training.cli --help
 python -m lunaris.surrogate.st_lrps.evaluation.cli --help
@@ -164,7 +163,6 @@ Console entry points (installed via `pip install -e .`):
 ```text
 lunaris           single-run propagation CLI
 lunaris-batch     batch/ensemble propagation runner
-lunaris-mc        historical alias for batch/ensemble propagation
 lunaris-launcher  welcome hub (picks a workspace; optional offline 3D Moon preview)
 lunaris-ui        mission desktop UI (Lunaris Mission Studio)
 lunaris-studio    ST-LRPS Studio UI
@@ -231,13 +229,12 @@ Single-run propagation is driven by `lunaris`; propagated ensembles are driven
 by the primary `lunaris-batch` command. Each ensemble run declares its sampling
 design: `random` is the classical Monte Carlo design, while `lhs`, `sobol`, and
 `sobol_scrambled` provide space-filling designs for validation and benchmark
-coverage. The historical `lunaris-mc` command remains only as a compatibility
-alias for existing scripts.
+coverage.
 
 Batch backends are explicit (`cpu_sh` truth reference, `numba_cuda_sh`,
 `torch_cuda_sh`, `torch_cpu_sh`, `gpu_st_lrps_potential`,
 `gpu_st_lrps_direct`). Selection is resolved centrally by
-`lunaris.core.mc_backend_policy`, and the requested vs. effective backend,
+`lunaris.batch.backend_policy`, and the requested vs. effective backend,
 device, integrator, sampling method, and any fallback reason are recorded in the
 batch result diagnostics rather than applied silently. The perturbation budget
 tool quantifies acceleration contributions and force-model uncertainty:
@@ -313,9 +310,8 @@ exception is the offline web preview's static demo assets under
 preview, not scientific outputs, and the allowlist is enforced by
 `tests/test_repo_hygiene.py`. The standard layout
 (`outputs/{simulations,ensemble,missions,gravity_benchmark,training,evaluations,runtime,dataset_reports,datasets,validation,visualization}/`)
-keeps a trained run's checkpoints, plots, evals, and provenance together. Older
-scripts and archives may still use `outputs/monte_carlo/`; new examples should
-use `outputs/ensemble/`.
+keeps a trained run's checkpoints, plots, evals, and provenance together.
+Batch/ensemble outputs live under `outputs/ensemble/`.
 
 ## Testing
 

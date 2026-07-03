@@ -902,7 +902,7 @@ def write_runtime_profile_summary(report: RuntimeProfileReport, output_dir: Path
             "",
             "- Batch throughput improves when batch size increases if Python overhead dominates.",
             "- If p95 is much higher than median, runtime jitter or memory pressure may be present.",
-            "- If batch size 1 is slow but batch 1024 is fast per sample, Monte Carlo should use batch force evaluation.",
+            "- If batch size 1 is slow but batch 1024 is fast per sample, batch propagation should use batch force evaluation.",
             "- Potential-only timing is a low-risk proxy for forward-path cost; full acceleration timing includes autograd-gradient work.",
         ]
     )

@@ -12,18 +12,18 @@ from lunaris.analysis.ensemble.statistics import (
     compute_impact_statistics,
     compute_oe_dispersion,
 )
-from lunaris.common.montecarlo_defs import MCRunResult
-from lunaris.core.monte_carlo_engine import HDF5TrajectoryView
+from lunaris.batch.engine import HDF5TrajectoryView
+from lunaris.common.batch_defs import BatchPropagationResult
 
 
-def _result() -> MCRunResult:
+def _result() -> BatchPropagationResult:
     Y = np.zeros((2, 3, 6), dtype=np.float64)
     Y[:, 0, 0] = 1.8e6
     Y[:, 1, 0] = 1.9e6
     Y[:, 2, :] = 1.0e99
     fixed = np.full((3, 3), np.nan)
     fixed[1] = [0.0, 1.0, 0.0]
-    return MCRunResult(
+    return BatchPropagationResult(
         t=np.array([0.0, 1.0]),
         Y=Y,
         sc_samples=np.ones((3, 4)),
@@ -94,14 +94,14 @@ def test_c2_lazy_statistics_use_one_epoch_block_iterator() -> None:
     Y = np.broadcast_to(base, (t.size, 4, 6)).astype(np.float64).copy()
     Y[:, :, 0] += np.arange(4, dtype=np.float64)[None, :] * 100.0
     lazy = _TrackingLazyTrajectory(Y)
-    result = MCRunResult(
+    result = BatchPropagationResult(
         t=t,
         Y=lazy,
         sc_samples=np.ones((4, 4)),
         impact_mask=np.zeros(4),
         t_impact=np.full(4, np.nan),
     )
-    eager_result = MCRunResult(
+    eager_result = BatchPropagationResult(
         t=t,
         Y=Y,
         sc_samples=np.ones((4, 4)),

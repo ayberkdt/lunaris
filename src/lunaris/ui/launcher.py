@@ -239,7 +239,7 @@ class LauncherWindow(QtWidgets.QWidget):
             title="Lunar Propagation",
             description=(
                 "Configure lunar orbits, select force models, run high-precision "
-                "propagation, Monte Carlo studies, telemetry, and result exports."
+                "propagation, ensemble studies, telemetry, and result exports."
             ),
             icon_name="fa6s.rocket",
             accent=THEME["accent"],

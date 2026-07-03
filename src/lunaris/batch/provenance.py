@@ -25,7 +25,7 @@ def _active_physics_capabilities(sim_cfg: Any) -> list[str]:
     """Return the canonical force models active in ``sim_cfg.flags`` for provenance.
 
     Recorded in the run manifest so a reader can see exactly which physics the run
-    requested - and, paired with ``actual_mc_backend``, whether the chosen backend
+    requested - and, paired with ``actual_batch_backend``, whether the chosen backend
     could honor them.
     """
     from lunaris.core.backend_capabilities import FORCE_MODEL_FLAG_ATTR

@@ -6,7 +6,7 @@ The two GPU spherical-harmonics implementations are kept distinct:
 (arbitrary degree, no hard cap). ``gpu_sh`` survives only as a legacy alias to
 ``numba_cuda_sh``.
 
-These lock the registry to the *existing* Monte Carlo behavior (the Numba
+These lock the registry to the *existing* batch propagation behavior (the Numba
 force-model matrix and degree limit) so the split changes labels/structure, not
 physics. CPU-only; no CUDA device required.
 """
@@ -71,7 +71,7 @@ def test_numba_cuda_sh_max_degree_is_24() -> None:
     caps = get_capabilities("numba_cuda_sh")
     assert caps.max_runtime_sh_degree == 24
     # Drift guard against the real kernel workspace constant.
-    from lunaris.core.mc_propagator import GPU_SH_MAX_DEGREE
+    from lunaris.core.batch_propagator import GPU_SH_MAX_DEGREE
 
     assert caps.max_runtime_sh_degree == int(GPU_SH_MAX_DEGREE)
     assert gpu_sh_max_degree() == int(GPU_SH_MAX_DEGREE)
@@ -103,12 +103,12 @@ def test_list_backend_names_can_include_aliases() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Numba matrix locked to legacy MC behavior (physics unchanged by the split)
+# Numba matrix locked to the existing batch behavior (physics unchanged by the split)
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("attr", PERTURBATION_FLAGS)
 def test_numba_cuda_sh_matrix_matches_legacy_classic_function(attr: str) -> None:
-    from lunaris.core.mc_propagator import gpu_unsupported_features
+    from lunaris.core.batch_propagator import gpu_unsupported_features
 
     flags = _flags_with(attr)
     registry_blocked = bool(unsupported_force_models("numba_cuda_sh", flags))
@@ -120,7 +120,7 @@ def test_numba_cuda_sh_matrix_matches_legacy_classic_function(attr: str) -> None
 
 @pytest.mark.parametrize("attr", PERTURBATION_FLAGS)
 def test_gpu_st_lrps_matrix_matches_legacy_function(attr: str) -> None:
-    from lunaris.core.mc_backend_policy import _st_lrps_gpu_unsupported_features
+    from lunaris.batch.backend_policy import _st_lrps_gpu_unsupported_features
 
     flags = _flags_with(attr)
     registry_blocked = bool(unsupported_force_models("gpu_st_lrps_potential", flags))

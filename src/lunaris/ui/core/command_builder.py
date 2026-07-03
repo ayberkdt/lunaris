@@ -383,14 +383,14 @@ def build_command(
     return [str(item) for item in command]
 
 
-def build_mc_command(
+def build_batch_command(
     *,
     python_executable: str,
-    mc_runner_path: Path,
+    batch_runner_path: Path,
     orbit: Mapping[str, Any],
     forces: Mapping[str, Any],
     propagation: Mapping[str, Any],
-    mc_data: Mapping[str, Any],
+    batch_data: Mapping[str, Any],
     data_files: DataFilesState,
     gravity_cfg: Any,
     solver_cfg: Any,
@@ -400,11 +400,11 @@ def build_mc_command(
     """
     Build the CLI command for ``lunaris.cli.batch_runner`` from modular UI state.
 
-    Parameters mirror ``build_command()`` but target the MC runner script and
-    append batch/ensemble specific flags from ``mc_data`` (MonteCarloPage.get_data()).
+    Parameters mirror ``build_command()`` but target the batch runner script and
+    append batch/ensemble specific flags from ``batch_data`` (BatchPropagationPage.get_data()).
     """
 
-    command: list[str] = [python_executable, str(mc_runner_path)]
+    command: list[str] = [python_executable, str(batch_runner_path)]
 
     # -- Orbit ----------------------------------------------------------------
     orbit_mode = orbit.get("mode", "hp_ha")
@@ -448,7 +448,7 @@ def build_mc_command(
 
     # -- Physics flags --------------------------------------------------------
     gravity_section = forces.get("gravity", {}) or {}
-    gravity_mode_override = str(mc_data.get("gravity_mode_override", "follow_mission") or "follow_mission")
+    gravity_mode_override = str(batch_data.get("gravity_mode_override", "follow_mission") or "follow_mission")
     gravity_enabled = bool(gravity_section.get("enabled", True))
     gravity_backend = str(getattr(gravity_cfg, "backend", "classic_sh") or "classic_sh")
     if gravity_mode_override == "classic_sh":
@@ -464,7 +464,7 @@ def build_mc_command(
         if gravity_backend == "st_lrps":
             surrogate_dir = ""
             if gravity_mode_override == "st_lrps":
-                surrogate_dir = str(mc_data.get("st_lrps_model_dir", "") or "").strip()
+                surrogate_dir = str(batch_data.get("st_lrps_model_dir", "") or "").strip()
             if not surrogate_dir:
                 surrogate_dir = str(getattr(gravity_cfg, "st_lrps_model_dir", "") or "").strip()
             if surrogate_dir:
@@ -548,39 +548,39 @@ def build_mc_command(
     command.extend(["--rtol", f"{float(rtol_value):g}"])
     command.extend(["--atol", f"{float(atol_value):g}"])
 
-    command.extend(["--n-samples",             str(mc_data.get("n_samples",  500))])
-    command.extend(["--sampling-method",       str(mc_data.get("sampling_method", "random"))])
-    command.extend(["--seed",                  str(mc_data.get("seed",        42))])
-    command.extend(["--sigma-r-m",             str(mc_data.get("sigma_r_m", 500.0))])
-    command.extend(["--sigma-v-m-s",           str(mc_data.get("sigma_v_m_s", 0.5))])
-    command.extend(["--sigma-mass-kg",         str(mc_data.get("sigma_mass_kg", 0.0))])
-    command.extend(["--sigma-area-m2",         str(mc_data.get("sigma_area_m2", 0.0))])
-    command.extend(["--sigma-cd",              str(mc_data.get("sigma_cd",  0.0))])
-    command.extend(["--sigma-cr",              str(mc_data.get("sigma_cr",  0.0))])
+    command.extend(["--n-samples",             str(batch_data.get("n_samples",  500))])
+    command.extend(["--sampling-method",       str(batch_data.get("sampling_method", "random"))])
+    command.extend(["--seed",                  str(batch_data.get("seed",        42))])
+    command.extend(["--sigma-r-m",             str(batch_data.get("sigma_r_m", 500.0))])
+    command.extend(["--sigma-v-m-s",           str(batch_data.get("sigma_v_m_s", 0.5))])
+    command.extend(["--sigma-mass-kg",         str(batch_data.get("sigma_mass_kg", 0.0))])
+    command.extend(["--sigma-area-m2",         str(batch_data.get("sigma_area_m2", 0.0))])
+    command.extend(["--sigma-cd",              str(batch_data.get("sigma_cd",  0.0))])
+    command.extend(["--sigma-cr",              str(batch_data.get("sigma_cr",  0.0))])
     # use_gpu is forwarded as-is. When ST-LRPS gravity is selected the backend
-    # policy resolver (core.mc_backend_policy) automatically routes to the
+    # policy resolver (batch.backend_policy) automatically routes to the
     # TorchBatchPropagator GPU path when PyTorch CUDA is available, and falls
     # back to CPU DOP853 when it is not.  No command-side override is needed.
-    use_gpu = bool(mc_data.get("use_gpu", True))
+    use_gpu = bool(batch_data.get("use_gpu", True))
     command.extend(["--use-gpu",               bool_to_onoff(use_gpu)])
-    command.extend(["--mc-backend",            str(mc_data.get("mc_backend", "auto"))])
-    command.extend(["--gpu-device-id",         str(mc_data.get("gpu_device_id",  0))])
-    command.extend(["--gpu-sh-degree",         str(mc_data.get("gpu_sh_degree", 10))])
-    command.extend(["--gpu-threads-per-block", str(mc_data.get("gpu_threads_per_block", 128))])
-    command.extend(["--mc-gravity-mode",       gravity_mode_override])
-    command.extend(["--mc-dt-s",               str(mc_data.get("dt_s",       60.0))])
-    command.extend(["--max-vram-gb",           str(mc_data.get("max_vram_gb", 4.0))])
-    command.extend(["--mc-output-format",      str(mc_data.get("output_format", "hdf5"))])
-    command.extend(["--mc-output-path",        str(mc_data.get("output_path",
+    command.extend(["--batch-backend",            str(batch_data.get("batch_backend", "auto"))])
+    command.extend(["--gpu-device-id",         str(batch_data.get("gpu_device_id",  0))])
+    command.extend(["--gpu-sh-degree",         str(batch_data.get("gpu_sh_degree", 10))])
+    command.extend(["--gpu-threads-per-block", str(batch_data.get("gpu_threads_per_block", 128))])
+    command.extend(["--batch-gravity-mode",       gravity_mode_override])
+    command.extend(["--batch-dt-s",               str(batch_data.get("dt_s",       60.0))])
+    command.extend(["--max-vram-gb",           str(batch_data.get("max_vram_gb", 4.0))])
+    command.extend(["--batch-output-format",      str(batch_data.get("output_format", "hdf5"))])
+    command.extend(["--batch-output-path",        str(batch_data.get("output_path",
                                                                "outputs/ensemble/batch_output.h5"))])
-    command.extend(["--result-storage-mode",   str(mc_data.get("result_storage_mode", "auto"))])
-    command.extend(["--max-result-memory-gb",  str(mc_data.get("max_result_memory_gb", 1.0))])
-    command.extend(["--detect-impact",          bool_to_onoff(bool(mc_data.get("detect_impact", True)))])
+    command.extend(["--result-storage-mode",   str(batch_data.get("result_storage_mode", "auto"))])
+    command.extend(["--max-result-memory-gb",  str(batch_data.get("max_result_memory_gb", 1.0))])
+    command.extend(["--detect-impact",          bool_to_onoff(bool(batch_data.get("detect_impact", True)))])
     command.extend([
         "--compute-impact-statistics",
-        bool_to_onoff(bool(mc_data.get("compute_impact_statistics", True))),
+        bool_to_onoff(bool(batch_data.get("compute_impact_statistics", True))),
     ])
-    command.extend(["--impact-alt-km",         str(mc_data.get("impact_alt_km", 0.0))])
+    command.extend(["--impact-alt-km",         str(batch_data.get("impact_alt_km", 0.0))])
 
     return [str(item) for item in command]
 

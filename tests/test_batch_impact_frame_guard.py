@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from lunaris.core.monte_carlo_engine import _impact_positions_fixed
+from lunaris.batch.engine import _impact_positions_fixed
 
 
 def test_impact_positions_fixed_all_nan_without_ephemeris() -> None:

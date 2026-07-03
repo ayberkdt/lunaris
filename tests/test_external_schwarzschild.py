@@ -180,7 +180,7 @@ def _function_block(source: str, name: str, next_name: str) -> str:
 
 
 def test_cuda_external_schwarzschild_source_uses_same_difference_formula() -> None:
-    source = (Path(__file__).resolve().parents[1] / "src" / "lunaris" / "core" / "mc_propagator.py").read_text()
+    source = (Path(__file__).resolve().parents[1] / "src" / "lunaris" / "core" / "batch_propagator.py").read_text()
 
     central = _function_block(source, "_relativity_1pn_cuda", "_external_schwarzschild_diff_cuda")
     assert "fac = mu * inv_r3 / c2" in central

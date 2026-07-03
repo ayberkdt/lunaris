@@ -11,9 +11,9 @@ The batch configuration page already owns a substantial amount of
 run-time UI.  Keeping the post-run analysis workspace separate prevents the
 page from becoming a monolith and makes the intent of each area explicit:
 
-1. `monte_carlo_page.py`
+1. `batch_propagation_page.py`
    Owns ensemble setup, backend selection, live progress, and last-run status.
-2. `monte_carlo_analysis_panel.py`
+2. `ensemble_analysis_panel.py`
    Owns archive loading, statistical post-processing, plot preview, and
    report export for completed ensemble runs.
 
@@ -43,7 +43,7 @@ except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
         import sys
 
-        print("Run as: python -m lunaris.ui.components.monte_carlo_analysis_panel", file=sys.stderr)
+        print("Run as: python -m lunaris.ui.components.ensemble_analysis_panel", file=sys.stderr)
         raise SystemExit(2) from None
     raise
 
@@ -192,18 +192,18 @@ class MCAnalysisWorker(QtCore.QThread):
         """Load the archive and compute the canonical ensemble statistics bundle."""
 
         try:
-            from lunaris.analysis.ensemble.statistics import compute_mc_statistics
-            from lunaris.batch import load_mc_result
+            from lunaris.analysis.ensemble.statistics import compute_ensemble_report
+            from lunaris.batch import load_batch_result
 
             if self._is_cancelled():
                 return
             self.analysis_progress.emit("Loading ensemble archive...")
-            result = load_mc_result(self.result_path)
+            result = load_batch_result(self.result_path)
 
             if self._is_cancelled():
                 return
             self.analysis_progress.emit("Computing ensemble statistics...")
-            stats = compute_mc_statistics(
+            stats = compute_ensemble_report(
                 result,
                 compute_oe=self.compute_oe,
                 use_survived_only=self.use_survived_only,
@@ -216,7 +216,7 @@ class MCAnalysisWorker(QtCore.QThread):
             self.analysis_error.emit(str(exc))
 
 
-class MonteCarloAnalysisPanel(QtWidgets.QWidget):
+class EnsembleAnalysisPanel(QtWidgets.QWidget):
     """
     Dedicated analysis workspace for completed batch/ensemble result archives.
 
@@ -755,7 +755,7 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
 
         The plotting layer already knows how to assemble the engineering report,
         so the workspace simply collects the destination path and delegates to
-        `analysis.ensemble.plotting.plot_mc_report`.
+        `analysis.ensemble.plotting.plot_ensemble_report`.
         """
 
         if self._result is None or self._stats is None or not self._current_result_path:
@@ -780,9 +780,9 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
         try:
             from matplotlib import pyplot as plt
 
-            from lunaris.analysis.ensemble.plotting import plot_mc_report
+            from lunaris.analysis.ensemble.plotting import plot_ensemble_report
 
-            plot_mc_report(self._result, self._stats, output_path=out_path, show=False)
+            plot_ensemble_report(self._result, self._stats, output_path=out_path, show=False)
             plt.close("all")
             self._last_report_path = out_path
             self._set_status(
@@ -1044,5 +1044,5 @@ class MonteCarloAnalysisPanel(QtWidgets.QWidget):
 
 __all__ = [
     "MCAnalysisWorker",
-    "MonteCarloAnalysisPanel",
+    "EnsembleAnalysisPanel",
 ]

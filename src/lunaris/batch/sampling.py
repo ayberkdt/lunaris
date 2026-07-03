@@ -32,7 +32,7 @@ def generate_standard_normal_design(
     """
     Generate standardized normal samples for ensemble propagation.
 
-    ``random`` preserves the historical Monte Carlo draw path. Space-filling
+    ``random`` is the classical Monte Carlo draw. Space-filling
     methods generate unit-hypercube designs and transform them with the inverse
     normal CDF so the existing covariance machinery can be reused.
     """

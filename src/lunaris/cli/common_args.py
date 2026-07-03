@@ -3,7 +3,7 @@
 Lunaris shared CLI helpers.
 
 Pure, import-safe argument helpers shared by the command-line entry points
-(``main.py`` and ``mc_runner.py``). This module is intentionally
+(``main.py`` and ``batch_runner.py``). This module is intentionally
 dependency-light: it imports only from the dependency-light ``common`` layer
 at module scope. Heavy modules (loaders / physics / core) are imported lazily
 inside the functions that need them, never at import time.
@@ -395,7 +395,7 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
         prop_cfg = replace(prop_cfg, atol=float(args.atol))
     if getattr(args, "compute_2body_baseline", None) is not None:
         prop_cfg = replace(prop_cfg, compute_2body_baseline=bool(args.compute_2body_baseline))
-    # Not every entry point defines the telemetry options (the MC batch runner
+    # Not every entry point defines the telemetry options (the batch batch runner
     # has its own parser without them), so probe defensively like the other
     # optional blocks above.
     if getattr(args, "enable_telemetry", None) is not None:

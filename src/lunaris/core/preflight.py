@@ -2,10 +2,10 @@
 Shared pre-flight validation service
 ====================================
 
-Flow-agnostic checks that run **before** a propagation/MC/benchmark/training job
+Flow-agnostic checks that run **before** a propagation/batch/benchmark/training job
 starts, so invalid combinations are caught early instead of failing mid-run or —
 worse — silently dropping physics. This module has no UI/Qt dependency so the
-CLI, the desktop UI, the Monte Carlo engine, the benchmark runner, and the
+CLI, the desktop UI, the batch propagation engine, the benchmark runner, and the
 training/evaluation pipelines can all share one source of truth.
 
 Phase 2 §4/§5 requirements served here:
@@ -221,7 +221,7 @@ def backend_preflight(
     """Run the backend-capability checks (and, if given, the output-dir check).
 
     A convenience aggregator for the common "is this backend request runnable?"
-    question shared by the CLI, UI, MC, and benchmark flows.
+    question shared by the CLI, UI, batch, and benchmark flows.
     """
     report = PreflightReport()
     report.add(

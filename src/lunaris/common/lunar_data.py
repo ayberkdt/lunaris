@@ -3,7 +3,7 @@
 These helpers (the default lunar gravity coefficient path, its resolver, and the
 lunar run-config heuristics) were previously defined in
 ``lunaris.surrogate.st_lrps.data.dataset_parameters``. That forced
-``lunaris.physics`` and, transitively, ``lunaris.core`` via the Monte Carlo
+``lunaris.physics`` and, transitively, ``lunaris.core`` via the batch propagation
 engine to import the ST-LRPS ML subsystem just to resolve a data path and
 sniff a run config.
 

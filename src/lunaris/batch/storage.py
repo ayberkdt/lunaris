@@ -19,7 +19,7 @@ from lunaris.batch.provenance import (
     _decode_metadata_value,
     _metadata_value_to_jsonable,
 )
-from lunaris.common.batch_defs import MCRunResult, MonteCarloConfig
+from lunaris.common.batch_defs import BatchPropagationConfig, BatchPropagationResult
 
 REQUIRED_ARCHIVE_V2_FIELDS: tuple[str, ...] = (
     "archive_schema_version",
@@ -28,23 +28,23 @@ REQUIRED_ARCHIVE_V2_FIELDS: tuple[str, ...] = (
     "duration_s",
     "output_dt_s",
     "backend",
-    "requested_mc_backend",
-    "actual_mc_backend",
-    "mc_backend",
+    "requested_batch_backend",
+    "actual_batch_backend",
+    "batch_backend",
     "detect_impact",
     "compute_impact_statistics",
 )
 
 
 def _resolve_result_storage(
-    mc_cfg: MonteCarloConfig,
+    batch_cfg: BatchPropagationConfig,
     n_steps: int,
     *,
     available_host_memory_bytes: Callable[[], int | None] | None = None,
 ) -> tuple[str, int, int]:
     """Resolve eager versus disk-backed result storage before opening a writer."""
-    result_bytes = mc_cfg.estimated_result_bytes(n_steps)
-    memory_limit_bytes = int(float(mc_cfg.max_result_memory_gb) * (1024.0 ** 3))
+    result_bytes = batch_cfg.estimated_result_bytes(n_steps)
+    memory_limit_bytes = int(float(batch_cfg.max_result_memory_gb) * (1024.0 ** 3))
     # Effective host budget: the configured cap, further bounded by a safety
     # fraction of the RAM actually free now (when measurable). This is the budget
     # the auto storage decision and the per-batch host buffer must both respect.
@@ -53,26 +53,26 @@ def _resolve_result_storage(
     host_budget_bytes = memory_limit_bytes
     if available is not None:
         host_budget_bytes = min(memory_limit_bytes, int(available * _HOST_MEMORY_SAFETY_FACTOR))
-    storage_mode = str(mc_cfg.result_storage_mode)
+    storage_mode = str(batch_cfg.result_storage_mode)
     if storage_mode == "auto":
         storage_mode = (
             "disk"
-            if mc_cfg.output_format == "hdf5" and result_bytes > host_budget_bytes
+            if batch_cfg.output_format == "hdf5" and result_bytes > host_budget_bytes
             else "memory"
         )
     if storage_mode not in {"memory", "disk"}:
         raise ValueError(f"Unsupported result storage mode: {storage_mode!r}")
     if (
-        mc_cfg.output_format == "npz"
+        batch_cfg.output_format == "npz"
         and result_bytes > host_budget_bytes
-        and mc_cfg.result_storage_mode == "auto"
+        and batch_cfg.result_storage_mode == "auto"
     ):
         limit_gib = host_budget_bytes / (1024.0 ** 3)
         budget_note = (
             f"host memory safety budget ({limit_gib:.2f} GiB = "
             f"{_HOST_MEMORY_SAFETY_FACTOR:.0%} of free RAM)"
             if available is not None and host_budget_bytes < memory_limit_bytes
-            else f"max_result_memory_gb={mc_cfg.max_result_memory_gb:g}"
+            else f"max_result_memory_gb={batch_cfg.max_result_memory_gb:g}"
         )
         raise MemoryError(
             "Estimated eager batch/ensemble trajectory size "
@@ -369,13 +369,13 @@ class _NPZWriter:
 
 
 def _make_writer(
-    mc_cfg: MonteCarloConfig,
+    batch_cfg: BatchPropagationConfig,
     n_samples: int,
     t_grid: np.ndarray,
 ) -> Any:
     """Factory: return the appropriate writer based on output_format."""
-    p = mc_cfg.output_path_resolved
-    if mc_cfg.output_format == "hdf5":
+    p = batch_cfg.output_path_resolved
+    if batch_cfg.output_format == "hdf5":
         return _HDF5Writer(p, n_samples, t_grid)
     return _NPZWriter(p, n_samples, t_grid)
 
@@ -417,7 +417,7 @@ def _validate_archive_v2_manifest(metadata: dict[str, Any]) -> None:
         )
 
 
-def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCRunResult:
+def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> BatchPropagationResult:
     """
     Reload a saved batch/ensemble result from HDF5 or NPZ file.
 
@@ -436,7 +436,7 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
 
     Returns
     ----------
-    BatchPropagationResult / legacy MCRunResult
+    BatchPropagationResult / legacy BatchPropagationResult
     """
     p = Path(path).expanduser().resolve()
     suffix = p.suffix.lower()
@@ -477,7 +477,7 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
             }
         if strict:
             _validate_archive_v2_manifest(diagnostics)
-        return MCRunResult(
+        return BatchPropagationResult(
             t=t_arr, Y=Y_arr, sc_samples=sc,
             impact_mask=imask, t_impact=t_imp,
             valid_mask=valid,
@@ -494,7 +494,7 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
                 diagnostics = _decode_archive_metadata(data["metadata_json"])
             if strict:
                 _validate_archive_v2_manifest(diagnostics)
-            return MCRunResult(
+            return BatchPropagationResult(
                 t=data["t"],
                 Y=data["Y"],
                 sc_samples=data["sc_samples"],
@@ -519,7 +519,7 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
                 diagnostics=diagnostics,
             )
 
-    raise ValueError(f"Unrecognised MC output format: {suffix!r} (expected .h5 or .npz)")
+    raise ValueError(f"Unrecognised batch output format: {suffix!r} (expected .h5 or .npz)")
 
 
 __all__ = [
@@ -532,5 +532,5 @@ __all__ = [
     "_allocate_result_buffer",
     "_infer_valid_mask_from_dataset",
     "_validate_archive_v2_manifest",
-    "load_mc_result",
+    "load_batch_result",
 ]

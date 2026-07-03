@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from lunaris.common import GravityConfig
-from lunaris.common.batch_defs import MonteCarloConfig, validate_st_lrps_model_dir
+from lunaris.common.batch_defs import BatchPropagationConfig, validate_st_lrps_model_dir
 
 
 def test_gravity_config_backend_aware():
@@ -24,9 +24,9 @@ def test_gravity_config_backend_aware():
         GravityConfig(file_path="dummy.txt", backend="st_lrps", st_lrps_model_dir="")
 
 
-def test_monte_carlo_config_no_fs_check():
+def test_batch_config_no_fs_check():
     # Should not raise any filesystem errors on construction
-    cfg = MonteCarloConfig(
+    cfg = BatchPropagationConfig(
         n_samples=10,
         gravity_mode_override="st_lrps",
         st_lrps_model_dir="some_nonexistent_dir"
@@ -35,24 +35,24 @@ def test_monte_carlo_config_no_fs_check():
 
     # Should raise if st_lrps_model_dir is empty when backend is st_lrps
     with pytest.raises(ValueError, match="st_lrps_model_dir cannot be empty"):
-        MonteCarloConfig(n_samples=10, gravity_mode_override="st_lrps", st_lrps_model_dir="")
+        BatchPropagationConfig(n_samples=10, gravity_mode_override="st_lrps", st_lrps_model_dir="")
 
     # High-degree GPU SH requests are accepted at config time so backend policy
     # can record an explicit CPU fallback instead of silently clipping degree.
-    cfg = MonteCarloConfig(n_samples=10, gpu_sh_degree=80)
+    cfg = BatchPropagationConfig(n_samples=10, gpu_sh_degree=80)
     assert cfg.gpu_sh_degree == 80
 
 
 def test_batch_sampling_method_validation() -> None:
-    cfg = MonteCarloConfig(n_samples=8, sampling_method="lhs")
+    cfg = BatchPropagationConfig(n_samples=8, sampling_method="lhs")
     assert cfg.sampling_method == "lhs"
 
     with pytest.raises(ValueError, match="sampling_method must be one of"):
-        MonteCarloConfig(n_samples=8, sampling_method="grid")
+        BatchPropagationConfig(n_samples=8, sampling_method="grid")
 
 
-def test_monte_carlo_impact_and_storage_contracts() -> None:
-    cfg = MonteCarloConfig(
+def test_batch_impact_and_storage_contracts() -> None:
+    cfg = BatchPropagationConfig(
         n_samples=10,
         detect_impact=False,
         compute_impact_statistics=True,
@@ -64,7 +64,7 @@ def test_monte_carlo_impact_and_storage_contracts() -> None:
     assert cfg.estimated_result_bytes(20) == 20 * 10 * 6 * 8
 
     with pytest.raises(ValueError, match="requires output_format='hdf5'"):
-        MonteCarloConfig(
+        BatchPropagationConfig(
             n_samples=10,
             output_format="npz",
             result_storage_mode="disk",
@@ -73,7 +73,7 @@ def test_monte_carlo_impact_and_storage_contracts() -> None:
 
 def test_legacy_compute_impact_probability_maps_to_both_flags() -> None:
     with pytest.warns(DeprecationWarning):
-        cfg = MonteCarloConfig(n_samples=10, compute_impact_probability=False)
+        cfg = BatchPropagationConfig(n_samples=10, compute_impact_probability=False)
     assert cfg.impact_detection_enabled is False
     assert cfg.impact_statistics_enabled is False
 
@@ -108,7 +108,7 @@ def test_validate_st_lrps_model_dir(tmp_path: Path):
 
 def test_lazy_imports():
     import lunaris.common as common
-    for name in ("math_utils", "time_utils", "batch_defs", "montecarlo_defs", "paths", "hashing", "lunar_data"):
+    for name in ("math_utils", "time_utils", "batch_defs", "paths", "hashing", "lunar_data"):
         assert hasattr(common, name)
 
     # Accessing them triggers the lazy import
@@ -117,7 +117,6 @@ def test_lazy_imports():
         hashing,
         lunar_data,
         math_utils,
-        montecarlo_defs,
         paths,
         time_utils,
     )
@@ -125,7 +124,6 @@ def test_lazy_imports():
     assert hashing is not None
     assert lunar_data is not None
     assert math_utils is not None
-    assert montecarlo_defs is not None
     assert paths is not None
     assert time_utils is not None
 

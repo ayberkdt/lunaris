@@ -214,7 +214,7 @@ class TestSurrogateGravityModelDegreeAttributes:
         assert int(sgm.degree_max) > 0
 
     def test_missing_degree_max_raises_at_load_time(self, tmp_path: Path) -> None:
-        """degree_max missing → ValueError at from_model_dir(), not inside MC loop."""
+        """degree_max missing → ValueError at from_model_dir(), not inside the batch loop."""
         run_dir = _make_tiny_run(
             tmp_path, "run_no_degree",
             extra_config={"degree_min": None, "degree_max": None},
@@ -282,7 +282,7 @@ class TestCkptLastFallback:
 
 
 # ---------------------------------------------------------------------------
-# Naming: no HNN references in active MC state
+# Naming: no HNN references in active batch state
 # ---------------------------------------------------------------------------
 
 def test_no_hnn_naming_in_surrogate_runtime_module() -> None:

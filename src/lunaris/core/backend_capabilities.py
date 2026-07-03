@@ -4,7 +4,7 @@ Central Backend Capability Registry
 
 Single source of truth (SSOT) for *what each propagator backend can do*.
 
-CLI, UI, the batch/Monte Carlo engine, the benchmark runner, and the
+CLI, UI, the batch propagation engine, the benchmark runner, and the
 report/provenance writers consult **one** capability source so they all make the
 same backend decision and label results identically.
 
@@ -24,7 +24,7 @@ capability:
 ``numba_cuda_sh`` (see :data:`BACKEND_ALIASES`). Machine-readable provenance and
 user-facing output always use the resolved, real backend name.
 
-The Numba force-model support matrix here is locked to the existing batch/MC
+The Numba force-model support matrix here is locked to the existing batch
 behavior by the consistency tests in ``tests/test_backend_capabilities.py``; do
 not change it without updating those tests.
 """
@@ -136,7 +136,7 @@ class BackendCapabilities:
 # Values are FAITHFUL to the current implementation, not the illustrative brief:
 #   * classic-SH Numba GPU and CPU run float64 (no float32 SH kernel today);
 #   * the torch SH path can run float32 or float64;
-#   * the torch SH Monte Carlo runtime is, in its first form, gravity-only — any
+#   * the torch SH batch runtime is, in its first form, gravity-only — any
 #     extra perturbation forces an explicit fallback (see §7 of the task brief).
 
 _CPU_SH = BackendCapabilities(
@@ -165,7 +165,7 @@ _NUMBA_CUDA_SH = BackendCapabilities(
     family="classic_sh",
     implementation="numba_cuda",
     device="cuda",
-    max_runtime_sh_degree=24,          # == mc_propagator.GPU_SH_MAX_DEGREE (guarded by test)
+    max_runtime_sh_degree=24,          # == batch_propagator.GPU_SH_MAX_DEGREE (guarded by test)
     dtype_support=("float64",),
     supports_sh=True,
     supports_third_body=True,
@@ -179,7 +179,7 @@ _NUMBA_CUDA_SH = BackendCapabilities(
     default_dtype="float64",
     fidelity_class="low_degree_screening",
     description=(
-        "Numba CUDA classic-SH fixed-step RK4, one MC sample per CUDA thread "
+        "Numba CUDA classic-SH fixed-step RK4, one batch sample per CUDA thread "
         "(degree <= 24, a thread-local workspace limit — NOT a physical one). "
         "Supports third-body Sun/Earth, Earth J2, SRP, and 1PN relativity; "
         "albedo, thermal IR, and solid tides require the CPU backend. Use for "
@@ -330,7 +330,7 @@ _AUTO = BackendCapabilities(
     integrator="resolved at runtime",
     default_dtype="resolved at runtime",
     is_meta=True,
-    description="Meta request resolved to a concrete backend by mc_backend_policy.",
+    description="Meta request resolved to a concrete backend by backend_policy.",
 )
 
 BACKEND_REGISTRY: dict[str, BackendCapabilities] = {
@@ -433,13 +433,13 @@ def unsupported_force_models(name: str, flags: Any) -> tuple[str, ...]:
 def gpu_sh_max_degree() -> int:
     """Return the Numba CUDA classic-SH degree limit from the kernel workspace.
 
-    Sourced from :data:`lunaris.core.mc_propagator.GPU_SH_MAX_DEGREE` (lazily, to
+    Sourced from :data:`lunaris.core.batch_propagator.GPU_SH_MAX_DEGREE` (lazily, to
     avoid importing the Numba CUDA stack at module load). Falls back to the
     historical default of 24 if that import is unavailable. This is the limit of
     the ``numba_cuda_sh`` backend only; ``torch_cuda_sh`` has no such cap.
     """
     try:
-        from lunaris.core.mc_propagator import GPU_SH_MAX_DEGREE
+        from lunaris.core.batch_propagator import GPU_SH_MAX_DEGREE
 
         return int(GPU_SH_MAX_DEGREE)
     except Exception:
@@ -449,7 +449,7 @@ def gpu_sh_max_degree() -> int:
 def gpu_sh_supported_tiers() -> tuple[int, ...]:
     """Return the supported Numba CUDA classic-SH degree tiers."""
     try:
-        from lunaris.core.mc_propagator import GPU_SH_SUPPORTED_TIERS
+        from lunaris.core.batch_propagator import GPU_SH_SUPPORTED_TIERS
 
         return tuple(int(v) for v in GPU_SH_SUPPORTED_TIERS)
     except Exception:

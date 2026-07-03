@@ -90,7 +90,7 @@ surface.
 The following names are reserved for validation material as the project grows:
 
 - `validation/orbits/`
-- `validation/monte_carlo/`
+- `validation/ensemble/`
 - `validation/reports/`
 
 Keep these directories documentation/source oriented. Store produced artifacts

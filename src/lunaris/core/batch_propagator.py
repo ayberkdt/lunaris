@@ -1,6 +1,6 @@
-# lunaris.core.mc_propagator
+# lunaris.core.batch_propagator
 """
-Batch Monte Carlo Propagators (GPU + CPU)
+Batch Propagators (GPU + CPU)
 =========================================
 
 This module provides two parallel batch propagators that share the same
@@ -27,7 +27,7 @@ CPU path  — ``CPUBatchPropagator``
     Runs the full-fidelity ``core.propagation.propagator.propagate()`` path for each
     sample while reusing the same validated runtime assets as the main mission
     analysis pipeline.  All physics enabled in the parent ``SimConfig`` are
-    therefore available on the CPU Monte Carlo backend.
+    therefore available on the CPU batch backend.
 
 Architecture notes
 ------------------
@@ -57,7 +57,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.batch_defs import build_mc_output_grid
+from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import (
     AU,
     C_LIGHT,
@@ -96,7 +96,7 @@ except ImportError:
 
 
 # Compile-time workspace size: supports SH degree up to _GPU_WS-2 = 24.
-# Higher-degree classic-SH requests must be routed by mc_backend_policy to CPU
+# Higher-degree classic-SH requests must be routed by backend_policy to CPU
 # or another backend; this kernel must never silently clip the requested degree.
 _GPU_WS: int = 26
 GPU_SH_MAX_DEGREE: int = _GPU_WS - 2
@@ -502,7 +502,7 @@ if _CUDA_AVAILABLE:
         Implements the same algorithm as ``_compute_sh_acceleration_serial``
         (lunaris.physics.spherical_harmonics) but with:
           * thread-local workspace arrays (``cuda.local.array``).
-          * No Kahan summation (lower accuracy, adequate for MC spread).
+          * No Kahan summation (lower accuracy, adequate for ensemble spread).
           * Compile-time fixed workspace size (_GPU_WS × _GPU_WS).
 
         Constraint: n_eval must be ≤ _GPU_WS - 2 = 24.
@@ -1186,13 +1186,13 @@ class _GravGPUPack:
 
 class GPUBatchPropagator:
     """
-    Fixed-step RK4 Monte Carlo propagator running on CUDA GPU.
+    Fixed-step RK4 batch propagator running on CUDA GPU.
 
     Parameters
     ----------
     dynamics_engine : DynamicsEngine
         Must have been prepared (``build_rhs()`` called or assets loaded).
-    mc_cfg : MonteCarloConfig
+    batch_cfg : BatchPropagationConfig
         Determines step size, SH degree, output cadence, VRAM budget.
     flags : PerturbationFlags
         Which physics terms to evaluate on GPU.
@@ -1201,7 +1201,7 @@ class GPUBatchPropagator:
     def __init__(
         self,
         dynamics_engine: Any,          # core.dynamics.DynamicsEngine
-        mc_cfg: Any,                   # MonteCarloConfig
+        batch_cfg: Any,                   # BatchPropagationConfig
         flags: Any,                    # PerturbationFlags
         topo_payload: dict[str, Any] | None = None,  # terrain-aware impact freeze
     ) -> None:
@@ -1216,9 +1216,9 @@ class GPUBatchPropagator:
                 "or use CPUBatchPropagator."
             )
 
-        self._mc = mc_cfg
+        self._cfg = batch_cfg
         self._flags = flags
-        self._device_id = int(mc_cfg.gpu_device_id)
+        self._device_id = int(batch_cfg.gpu_device_id)
 
         with cuda.gpus[self._device_id]:
             dev = cuda.get_current_device()
@@ -1229,7 +1229,7 @@ class GPUBatchPropagator:
             self._warp_size = int(getattr(dev, "WARP_SIZE", 32))
             self._max_threads_per_block = int(getattr(dev, "MAX_THREADS_PER_BLOCK", 1024))
             self._launch_tpb = _sanitize_gpu_threads_per_block(
-                getattr(mc_cfg, "gpu_threads_per_block", 128),
+                getattr(batch_cfg, "gpu_threads_per_block", 128),
                 warp_size=self._warp_size,
                 max_threads_per_block=self._max_threads_per_block,
             )
@@ -1259,13 +1259,13 @@ class GPUBatchPropagator:
         self._r_earth  = float(R_EARTH_MEAN)
         self._au       = float(AU)
         self._p1au     = float(P_SUN_1AU)
-        self._detect_impact = bool(getattr(mc_cfg, "impact_detection_enabled", True))
-        self._impact_alt_m = float(getattr(mc_cfg, "impact_alt_km", 0.0)) * 1_000.0
+        self._detect_impact = bool(getattr(batch_cfg, "impact_detection_enabled", True))
+        self._impact_alt_m = float(getattr(batch_cfg, "impact_alt_km", 0.0)) * 1_000.0
 
         # Terrain-aware impact freeze device pack (dummy + disabled unless
         # requested AND a usable topography payload is present).
         terrain_requested = self._detect_impact and (
-            str(getattr(mc_cfg, "impact_surface_mode", "sphere")) == "terrain"
+            str(getattr(batch_cfg, "impact_surface_mode", "sphere")) == "terrain"
         )
         self._topo_pack = self._build_topo_pack(
             topo_payload if terrain_requested else None
@@ -1335,7 +1335,7 @@ class GPUBatchPropagator:
         from lunaris.physics.spherical_harmonics import build_legendre_coeffs
 
         grav = getattr(dyn, "grav", None)
-        n_sh_req = int(self._mc.gpu_sh_degree)
+        n_sh_req = int(self._cfg.gpu_sh_degree)
         self._requested_gpu_sh_degree = int(n_sh_req)
 
         if grav is None or n_sh_req == 0:
@@ -1360,7 +1360,7 @@ class GPUBatchPropagator:
                 f"Requested gpu_sh_degree={n_sh_req}, but the current Numba CUDA "
                 f"classic-SH kernel supports true GPU SH only through degree "
                 f"{GPU_SH_MAX_DEGREE} (workspace {_GPU_WS}x{_GPU_WS}). "
-                "Use mc_backend='auto' or 'cpu_sh' for explicit CPU fallback, "
+                "Use batch_backend='auto' or 'cpu_sh' for explicit CPU fallback, "
                 "or implement a higher-degree specialized/streaming CUDA kernel."
             )
         n_use = min(int(nmax), n_sh_req)
@@ -1471,7 +1471,7 @@ class GPUBatchPropagator:
         Estimate a safe GPU sub-batch size using live device memory when possible.
 
         This stays conservative on purpose. A slightly smaller batch is far less
-        harmful than a launch that overruns device memory and aborts the MC run.
+        harmful than a launch that overruns device memory and aborts the batch run.
         """
 
         bytes_per_sample = (
@@ -1482,7 +1482,7 @@ class GPUBatchPropagator:
             + 3 * 8  # interpolated impact position
             + 32     # launch / scratch safety margin
         )
-        cfg_budget = float(getattr(self._mc, "max_vram_gb", 4.0)) * (1024.0 ** 3) * 0.80
+        cfg_budget = float(getattr(self._cfg, "max_vram_gb", 4.0)) * (1024.0 ** 3) * 0.80
         live_budget = float(self._free_mem_bytes) * 0.70 if self._free_mem_bytes else cfg_budget
         budget = max(1.0, min(cfg_budget, live_budget))
         return max(1, int(budget / max(1, bytes_per_sample)))
@@ -1561,12 +1561,12 @@ class GPUBatchPropagator:
         t_impact : (N,) float64 – linearly interpolated crossing time (NaN if no impact)
         """
         N   = int(Y0.shape[0])
-        dt  = float(self._mc.dt_s)
+        dt  = float(self._cfg.dt_s)
 
         # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform. Steps
         # use dt_eff (grid-aligned) so snapshots land exactly on grid points and
         # the initial state is snapshot 0 (parity with the torch/CPU backends).
-        t_out, n_snaps, snap_interval = build_mc_output_grid(duration_s, output_dt_s)
+        t_out, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
         steps_per_snap = max(1, int(round(snap_interval / dt)))
         dt_eff = snap_interval / steps_per_snap
 
@@ -1575,7 +1575,7 @@ class GPUBatchPropagator:
         tpb = int(self._launch_tpb)
         bpg = (N + tpb - 1) // tpb
 
-        r_impact = float(R_MOON) + float(self._mc.impact_alt_km) * 1_000.0
+        r_impact = float(R_MOON) + float(self._cfg.impact_alt_km) * 1_000.0
 
         Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
         Y_out[0] = np.ascontiguousarray(Y0, dtype=np.float64)  # initial state = snapshot 0
@@ -1669,13 +1669,13 @@ class GPUBatchPropagator:
 # 3.              CPU BATCH PROPAGATOR (full-fidelity multiprocessing)
 # =============================================================================
 
-def _build_cpu_time_and_solver_config(sim_cfg: Any, mc_cfg: Any, duration_s: float, output_dt_s: float) -> tuple[Any, Any]:
+def _build_cpu_time_and_solver_config(sim_cfg: Any, batch_cfg: Any, duration_s: float, output_dt_s: float) -> tuple[Any, Any]:
     """
-    Clone the nominal run configs with MC-specific time and impact settings applied.
+    Clone the nominal run configs with batch-specific time and impact settings applied.
 
     The single-run UI stores the impact threshold inside ``PropagatorConfig.events``,
-    while the MC page owns its own ``impact_alt_km`` control.  This helper makes
-    that mapping explicit so the CPU Monte Carlo path uses the same event logic
+    while the batch page owns its own ``impact_alt_km`` control.  This helper makes
+    that mapping explicit so the CPU batch path uses the same event logic
     the rest of the project uses.
     """
 
@@ -1686,8 +1686,8 @@ def _build_cpu_time_and_solver_config(sim_cfg: Any, mc_cfg: Any, duration_s: flo
     )
     events_cfg = replace(
         sim_cfg.propagator.events,
-        detect_impact=bool(getattr(mc_cfg, "impact_detection_enabled", True)),
-        impact_alt_km=float(getattr(mc_cfg, "impact_alt_km", 0.0)),
+        detect_impact=bool(getattr(batch_cfg, "impact_detection_enabled", True)),
+        impact_alt_km=float(getattr(batch_cfg, "impact_alt_km", 0.0)),
     )
     prop_cfg = replace(sim_cfg.propagator, events=events_cfg)
     return time_cfg, prop_cfg
@@ -1695,13 +1695,13 @@ def _build_cpu_time_and_solver_config(sim_cfg: Any, mc_cfg: Any, duration_s: flo
 
 class CPUBatchPropagator:
     """
-    Full-fidelity Monte Carlo propagator for the CPU backend.
+    Full-fidelity batch propagator for the CPU backend.
 
     The previous implementation attempted to rebuild each sample inside worker
     processes using legacy helper APIs that no longer match the rest of the
     codebase.  This version instead reuses the already-validated runtime assets
     (gravity, ephemeris, surface providers) and constructs a fresh lightweight
-    ``DynamicsEngine`` per sample in-process.  That keeps the CPU MC path fully
+    ``DynamicsEngine`` per sample in-process.  That keeps the CPU batch path fully
     aligned with the main propagation pipeline and, most importantly, reliable.
 
     Notes
@@ -1709,13 +1709,13 @@ class CPUBatchPropagator:
     - The approach is intentionally conservative: correctness and API
       compatibility are prioritized over multiprocessing throughput.
     - Heavy read-only assets are reused from the template dynamics instance, so
-      per-sample overhead remains manageable for the UI-driven MC workloads.
+      per-sample overhead remains manageable for the UI-driven batch workloads.
     """
 
     def __init__(
         self,
         sim_cfg: Any,
-        mc_cfg: Any,
+        batch_cfg: Any,
         dynamics_template: Any | None = None,
         surface_provider: Any = None,
         topo_grid: Any = None,
@@ -1727,8 +1727,8 @@ class CPUBatchPropagator:
         sim_cfg : SimConfig
             Full simulation configuration used to rebuild a ``DynamicsEngine``
             inside each worker process (Numba JIT objects are not picklable).
-        mc_cfg : MonteCarloConfig
-            Monte Carlo parameters (not used directly here; workers read
+        batch_cfg : BatchPropagationConfig
+            Batch propagation parameters (not used directly here; workers read
             ``sim_cfg`` to reconstruct their own state).
         dynamics_template : DynamicsEngine, optional
             Pre-built dynamics instance whose validated gravity / ephemeris
@@ -1741,7 +1741,7 @@ class CPUBatchPropagator:
             metadata for future extensions.
         """
         self._sim_cfg = sim_cfg
-        self._mc = mc_cfg
+        self._cfg = batch_cfg
         self._dyn_template = dynamics_template
         self._surface_provider = surface_provider
         self._topo_grid = topo_grid
@@ -1794,7 +1794,7 @@ class CPUBatchPropagator:
 
     def validate_gravity_assets(self) -> None:
         """
-        Probe gravity attributes before entering the Monte Carlo sample loop.
+        Probe gravity attributes before entering the batch sample loop.
 
         Calls the same helper functions that ``core.propagation.propagator.propagate()``
         uses internally so any missing attribute is caught once, with a single
@@ -1822,8 +1822,8 @@ class CPUBatchPropagator:
             grav = getattr(dyn, "grav", None)
             kind = getattr(grav, "model_kind", "unknown")
             raise RuntimeError(
-                f"[MC] Pre-flight gravity validation failed (backend='{kind}'): {exc}. "
-                "Cannot start Monte Carlo run."
+                f"[BATCH] Pre-flight gravity validation failed (backend='{kind}'): {exc}. "
+                "Cannot start batch propagation run."
             ) from exc
 
     def propagate(
@@ -1850,7 +1850,7 @@ class CPUBatchPropagator:
         N = int(Y0.shape[0])
         time_cfg, prop_cfg = _build_cpu_time_and_solver_config(
             self._sim_cfg,
-            self._mc,
+            self._cfg,
             duration_s=float(duration_s),
             output_dt_s=float(output_dt_s),
         )
@@ -1892,23 +1892,23 @@ class CPUBatchPropagator:
                     ),
                 )
             except Exception as exc:
-                if not getattr(self._mc, "allow_sample_failures", False):
-                    raise RuntimeError(f"Monte Carlo CPU sample {i} failed: {exc}") from exc
-                warnings.warn(f"[MC][CPU] Sample {i} failed: {exc}", RuntimeWarning, stacklevel=2)
+                if not getattr(self._cfg, "allow_sample_failures", False):
+                    raise RuntimeError(f"Batch CPU sample {i} failed: {exc}") from exc
+                warnings.warn(f"[BATCH][CPU] Sample {i} failed: {exc}", RuntimeWarning, stacklevel=2)
                 results_by_idx[i] = (None, None, False, float("nan"), None)
 
             if callback is not None:
                 callback(float(i + 1) / float(max(N, 1)))
 
-        # Reference grid is the shared MC output grid (t[0]=0, t[-1]=duration_s),
+        # Reference grid is the shared batch output grid (t[0]=0, t[-1]=duration_s),
         # not the first successful sample's solver grid, so the CPU ensemble is
         # index-comparable with the GPU/torch backends. Each sample's native
         # solver output is linearly resampled onto it below. Still require at
         # least one successful sample.
         if not any(results_by_idx.get(i, (None,))[0] is not None for i in range(N)):
-            raise RuntimeError("All MC samples failed in CPUBatchPropagator.")
+            raise RuntimeError("All batch samples failed in CPUBatchPropagator.")
 
-        ref_t, _, _ = build_mc_output_grid(duration_s, output_dt_s)
+        ref_t, _, _ = build_batch_output_grid(duration_s, output_dt_s)
         T = len(ref_t)
         Y_out = np.zeros((T, N, 6), dtype=np.float64)
         impact_flags = np.zeros(N, dtype=np.float64)

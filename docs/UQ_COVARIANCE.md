@@ -26,13 +26,12 @@ and sample count are all recorded in the manifest.
 ## Producing a UQ report
 
 With a fresh batch/ensemble run (all `lunaris-batch` physics/backend flags
-apply; `lunaris-mc` is retained as a historical command name for the same
-runner):
+apply):
 
 ```bash
 lunaris-batch --n-samples 512 --seed 42 --sampling-method sobol_scrambled \
     --alt-km 100 --inc-deg 60 --days 1 \
-    --mc-output-path outputs/ensemble/llo_uq.h5 \
+    --batch-output-path outputs/ensemble/llo_uq.h5 \
     --uq-report-dir outputs/ensemble/llo_uq_report
 ```
 
@@ -80,7 +79,7 @@ projection to the benchmark implementation so the two cannot drift.
   For exactly linear dynamics the two agree to sampling error; for a short
   point-mass arc with small dispersion they agree within the sampling +
   mild-nonlinearity budget (both are locked as tests). On real force models,
-  the epoch where MC and linear histories diverge is itself a result — the
+  the epoch where ensemble and linear histories diverge is itself a result — the
   onset of non-linearity for that dispersion — not a failure.
 
 ## Claim discipline

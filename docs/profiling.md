@@ -109,23 +109,23 @@ If the local gravity coefficient file is unavailable, ST-LRPS profiling still ru
 ## Batch Propagation Backend Profiling
 
 Batch propagation profiling must record the sampling method, requested backend,
-and resolved backend. Use `lunaris-batch --mc-backend ...` to compare:
+and resolved backend. Use `lunaris-batch --batch-backend ...` to compare:
 
 ```bash
 lunaris-batch \
     --sampling-method sobol_scrambled \
-    --mc-backend auto \
+    --batch-backend auto \
     --gpu-sh-degree 24 \
     --n-samples 128 \
-    --mc-dt-s 60 \
-    --mc-output-path outputs/ensemble/profile_auto.h5
+    --batch-dt-s 60 \
+    --batch-output-path outputs/ensemble/profile_auto.h5
 ```
 
 Important interpretation rules:
 
 - The current true classic-SH GPU tier is degree 24. Requests above degree 24
   fall back to CPU SH and must be reported as fallback, not GPU high-degree SH.
-- Batch outputs include `sampling_method`, `requested_mc_backend`, `actual_mc_backend`,
+- Batch outputs include `sampling_method`, `requested_batch_backend`, `actual_batch_backend`,
   `requested_sh_degree`, `actual_sh_degree`, `runtime_model_kind`,
   `fallback_reason`, CUDA device name when available, dtype, integrator, and step
   size metadata.

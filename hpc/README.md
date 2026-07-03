@@ -37,7 +37,7 @@ before `--` is passed to `sbatch`; everything after `--` goes to the program.
 | `slurm_train_stlrps.sbatch` | ST-LRPS training (`lunaris-train`). |
 | `slurm_train_scenario_array.sbatch` | Reproducible scenario sweeps (array jobs). |
 | `slurm_benchmark_gpu.sbatch` | Orbit-level gravity benchmark (`lunaris-benchmark`). |
-| `slurm_mc_array.sbatch` | Batch propagation / uncertainty ensembles (`lunaris-batch`). |
+| `slurm_batch_array.sbatch` | Batch propagation / uncertainty ensembles (`lunaris-batch`). |
 | `scenarios/*.jsonl` | Self-describing experiment sweeps (ablations, capacity, encoding/loss). |
 
 ## Common jobs

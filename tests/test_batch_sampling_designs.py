@@ -1,11 +1,11 @@
-"""Core Monte Carlo sampling design contracts."""
+"""Core batch sampling design contracts (random draw is classical Monte Carlo)."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from lunaris.core.monte_carlo_engine import generate_standard_normal_design
+from lunaris.batch.engine import generate_standard_normal_design
 
 
 def test_standard_normal_design_lhs_and_sobol_are_finite_and_deterministic() -> None:

@@ -29,7 +29,7 @@ from lunaris.analysis.ensemble.uq_report import (
     build_uq_report,
     ensemble_content_sha256,
 )
-from lunaris.common.batch_defs import MCRunResult
+from lunaris.common.batch_defs import BatchPropagationResult
 
 MU_MOON = 4.9048695e12  # [m^3/s^2]
 R_ORBIT = 1.9e6         # [m] ~163 km altitude circular orbit
@@ -47,7 +47,7 @@ def _make_result(
     n_epochs: int = 25,
     sigma_r_m: float = 100.0,
     sigma_v_ms: float = 0.1,
-) -> MCRunResult:
+) -> BatchPropagationResult:
     """Synthetic ensemble: dispersed initial states under exact linear drift.
 
     The per-sample trajectory is ``r(t) = r0 + v0 t, v(t) = v0`` — not orbital
@@ -69,7 +69,7 @@ def _make_result(
     for k, tk in enumerate(t):
         Y[k, :, :3] = y_init[:, :3] + y_init[:, 3:] * tk
         Y[k, :, 3:] = y_init[:, 3:]
-    return MCRunResult(
+    return BatchPropagationResult(
         t=t,
         Y=Y,
         sc_samples=np.tile([1000.0, 2.0, 2.2, 1.3], (n_samples, 1)),
@@ -251,7 +251,7 @@ def test_fd_stm_exact_for_linear_dynamics():
         np.testing.assert_allclose(Phi[k], expected, rtol=0.0, atol=1e-6)
 
 
-def test_linear_vs_mc_agree_for_linear_dynamics():
+def test_linear_vs_batch_agree_for_linear_dynamics():
     sigma_r, sigma_v = 100.0, 0.1
     P0 = np.diag([sigma_r**2] * 3 + [sigma_v**2] * 3)
     P_lin = linear_covariance_history(_propagate_drift, _circular_state(), P0)
@@ -290,8 +290,8 @@ def _propagate_two_body(y0: np.ndarray) -> np.ndarray:
     return out[:, 0, :] if out.shape[1] == 1 else out
 
 
-def test_linear_vs_mc_two_body():
-    """MC covariance matches STM propagation on a short point-mass arc."""
+def test_linear_vs_batch_two_body():
+    """Ensemble covariance matches STM propagation on a short point-mass arc."""
     y0 = _circular_state()
     sigma_r, sigma_v = 50.0, 0.05
     P0 = np.diag([sigma_r**2] * 3 + [sigma_v**2] * 3)
@@ -308,11 +308,11 @@ def test_linear_vs_mc_two_body():
     )
     Y_batch = _propagate_two_body(y0[None, :] + dy)  # (T, N, 6)
     T = Y_batch.shape[0]
-    P_mc = np.empty((T, 6, 6), dtype=np.float64)
+    P_ens = np.empty((T, 6, 6), dtype=np.float64)
     for k in range(T):
-        P_mc[k] = np.cov(Y_batch[k].T, ddof=1)
+        P_ens[k] = np.cov(Y_batch[k].T, ddof=1)
 
-    report = compare_covariance_histories(P_lin, P_mc)
+    report = compare_covariance_histories(P_lin, P_ens)
     # Small dispersion + short arc: near-linear regime, budget = sampling error
     # (N=2048 => eigenvalue s.e. ~3%) plus mild nonlinearity growth.
     assert report["max_frobenius_rel_diff"] < 0.25
