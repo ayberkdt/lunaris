@@ -310,6 +310,10 @@ def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> Non
                     "radial_rms_km": rms * 0.05,
                     "along_rms_km": rms * 0.9,
                     "cross_rms_km": rms * 0.03,
+                    "phase_lag_final_s": rms * 0.4 * (1.0 if scenario_id % 2 else -1.0),
+                    "phase_lag_slope_s_per_day": rms * 0.08,
+                    "phase_corrected_rms_km": rms * 0.12,
+                    "phase_explained_fraction": 0.85,
                     "rms_alt_err_km": rms * 0.04,
                     "runtime_s": runtime / scenario_count,
                     "n_steps": n_steps,
@@ -347,6 +351,12 @@ def _aggregate_synthetic_metrics(rows: list[dict[str, Any]]) -> list[dict[str, A
         radial = np.asarray([float(row["radial_rms_km"]) for row in model_rows], dtype=float)
         along = np.asarray([float(row["along_rms_km"]) for row in model_rows], dtype=float)
         cross = np.asarray([float(row["cross_rms_km"]) for row in model_rows], dtype=float)
+        abs_lag = np.asarray(
+            [abs(float(row["phase_lag_final_s"])) for row in model_rows], dtype=float)
+        pcr = np.asarray(
+            [float(row["phase_corrected_rms_km"]) for row in model_rows], dtype=float)
+        pef = np.asarray(
+            [float(row["phase_explained_fraction"]) for row in model_rows], dtype=float)
         out.append(
             {
                 "model": model,
@@ -362,6 +372,9 @@ def _aggregate_synthetic_metrics(rows: list[dict[str, Any]]) -> list[dict[str, A
                 "median_radial_rms_km": float(np.median(radial)),
                 "median_along_rms_km": float(np.median(along)),
                 "median_cross_rms_km": float(np.median(cross)),
+                "median_abs_phase_lag_final_s": float(np.median(abs_lag)),
+                "median_phase_corrected_rms_km": float(np.median(pcr)),
+                "median_phase_explained_fraction": float(np.median(pef)),
             }
         )
     return out

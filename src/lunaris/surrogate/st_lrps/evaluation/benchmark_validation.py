@@ -27,6 +27,13 @@ REQUIRED_OUTPUT_FILES = (
 
 RIC_COLUMNS = ("radial_rms_km", "along_rms_km", "cross_rms_km")
 
+PHASE_COLUMNS = (
+    "phase_lag_final_s",
+    "phase_lag_slope_s_per_day",
+    "phase_corrected_rms_km",
+    "phase_explained_fraction",
+)
+
 
 def validate_benchmark_outputs(
     out_dir: str | Path,
@@ -79,6 +86,7 @@ def validate_benchmark_outputs(
     _check_truth_baseline_duplication(resolved_config, errors, checked_metrics)
     _check_domain_warnings(scenario_rows, warnings)
     _check_ric_columns(scenario_rows, resolved_config, errors, checked_metrics)
+    _check_phase_columns(scenario_rows, resolved_config, errors, checked_metrics)
     _check_units(metrics_json, errors, checked_metrics)
     _include_manifest_contract_findings(manifest_json, errors, warnings, checked_metrics)
 
@@ -512,6 +520,33 @@ def _check_ric_columns(
     missing = [col for col in RIC_COLUMNS if col not in rows[0]]
     if missing:
         errors.append(f"RIC metrics requested but missing columns: {', '.join(missing)}")
+
+
+def _check_phase_columns(
+    rows: list[dict[str, str]],
+    config: Mapping[str, Any] | None,
+    errors: list[str],
+    checked: list[str],
+) -> None:
+    """Phase-drift diagnostic columns (same gating pattern as the RIC check).
+
+    Required by default; a config declaring ``metrics.phase: false`` (e.g. for
+    validating outputs produced before the phase-diagnostics layer existed)
+    disables the requirement explicitly instead of silently.
+    """
+    require_phase = True
+    if config:
+        metrics = config.get("metrics")
+        if isinstance(metrics, Mapping) and metrics.get("phase") is False:
+            require_phase = False
+    if not require_phase or not rows:
+        return
+    checked.append("phase_columns_present")
+    missing = [col for col in PHASE_COLUMNS if col not in rows[0]]
+    if missing:
+        errors.append(
+            f"phase-drift metrics requested but missing columns: {', '.join(missing)}"
+        )
 
 
 def _check_units(metrics_json: Any, errors: list[str], checked: list[str]) -> None:

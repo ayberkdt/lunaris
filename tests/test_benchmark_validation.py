@@ -42,6 +42,10 @@ def _valid_dir(tmp_path: Path) -> Path:
                 "radial_rms_km": 0.1,
                 "along_rms_km": 0.2,
                 "cross_rms_km": 0.3,
+                "phase_lag_final_s": -0.4,
+                "phase_lag_slope_s_per_day": -0.08,
+                "phase_corrected_rms_km": 0.05,
+                "phase_explained_fraction": 0.9,
                 "status": "ok",
                 "domain_warning": "",
             }
@@ -183,6 +187,31 @@ def test_duplicate_model_name_fails(tmp_path):
     assert any("duplicate model names" in e for e in report["errors"])
 
 
+def test_missing_phase_columns_fail(tmp_path):
+    out = _valid_dir(tmp_path)
+    row = _scenario_row(0)
+    for col in ("phase_lag_final_s", "phase_lag_slope_s_per_day",
+                "phase_corrected_rms_km", "phase_explained_fraction"):
+        row.pop(col)
+    _write_csv(out / "scenario_results.csv", [row])
+    report = validate_benchmark_outputs(out, expected_count=1)
+    assert report["passed"] is False
+    assert any("phase-drift metrics requested but missing columns" in e for e in report["errors"])
+
+
+def test_missing_phase_columns_allowed_when_config_disables_them(tmp_path):
+    # Pre-phase-diagnostics outputs stay validatable via an explicit opt-out.
+    out = _valid_dir(tmp_path)
+    row = _scenario_row(0)
+    for col in ("phase_lag_final_s", "phase_lag_slope_s_per_day",
+                "phase_corrected_rms_km", "phase_explained_fraction"):
+        row.pop(col)
+    _write_csv(out / "scenario_results.csv", [row])
+    config = {"metrics": {"phase": False}}
+    report = validate_benchmark_outputs(out, resolved_config=config, expected_count=1)
+    assert report["passed"] is True, report["errors"]
+
+
 def test_warning_only_cases_remain_pass(tmp_path):
     out = _valid_dir(tmp_path)
     _write_csv(
@@ -195,6 +224,10 @@ def test_warning_only_cases_remain_pass(tmp_path):
                 "radial_rms_km": 0.1,
                 "along_rms_km": 0.2,
                 "cross_rms_km": 0.3,
+                "phase_lag_final_s": -0.4,
+                "phase_lag_slope_s_per_day": -0.08,
+                "phase_corrected_rms_km": 0.05,
+                "phase_explained_fraction": 0.9,
                 "status": "ok",
                 "domain_warning": "outside training envelope",
             }
@@ -215,6 +248,10 @@ def _scenario_row(sid, model="SH20"):
         "radial_rms_km": 0.1,
         "along_rms_km": 0.2,
         "cross_rms_km": 0.3,
+        "phase_lag_final_s": -0.4,
+        "phase_lag_slope_s_per_day": -0.08,
+        "phase_corrected_rms_km": 0.05,
+        "phase_explained_fraction": 0.9,
         "status": "ok",
         "domain_warning": "",
     }
