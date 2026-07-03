@@ -9,8 +9,7 @@ report/provenance writers consult **one** capability source so they all make the
 same backend decision and label results identically.
 
 Two distinct GPU spherical-harmonics implementations exist in the repository and
-are kept **separate** here — they must never be merged under a single ``gpu_sh``
-capability:
+are kept **separate** here:
 
 * ``numba_cuda_sh`` — Numba CUDA, one ensemble sample per CUDA thread with a
   fixed thread-local Legendre workspace. The degree-24 ceiling is a *kernel
@@ -19,10 +18,6 @@ capability:
 * ``torch_cuda_sh`` — PyTorch tensors on CUDA (or CPU), evaluating arbitrary
   degrees (SH25/50/100/200…) bounded only by the loaded coefficient file, GPU
   memory, batch size, dtype, and step size — **no** hard degree-24 cap.
-
-``gpu_sh`` is retained only as a **legacy alias** that resolves explicitly to
-``numba_cuda_sh`` (see :data:`BACKEND_ALIASES`). Machine-readable provenance and
-user-facing output always use the resolved, real backend name.
 
 The Numba force-model support matrix here is locked to the existing batch
 behavior by the consistency tests in ``tests/test_backend_capabilities.py``; do
@@ -165,7 +160,7 @@ _NUMBA_CUDA_SH = BackendCapabilities(
     family="classic_sh",
     implementation="numba_cuda",
     device="cuda",
-    max_runtime_sh_degree=24,          # == batch_propagator.GPU_SH_MAX_DEGREE (guarded by test)
+    max_runtime_sh_degree=24,          # == batch_propagator.NUMBA_CUDA_SH_MAX_DEGREE (guarded by test)
     dtype_support=("float64",),
     supports_sh=True,
     supports_third_body=True,
@@ -347,12 +342,9 @@ BACKEND_REGISTRY: dict[str, BackendCapabilities] = {
     )
 }
 
-# Legacy names kept for backward compatibility, resolved to the real backend.
-# ``gpu_sh`` was the single classic-SH GPU capability before the Numba/torch
-# split; it now resolves explicitly to the Numba CUDA backend.
-BACKEND_ALIASES: dict[str, str] = {
-    "gpu_sh": "numba_cuda_sh",
-}
+# Backend aliases are intentionally empty: backend requests must use canonical
+# registry names so provenance records exactly what was requested.
+BACKEND_ALIASES: dict[str, str] = {}
 
 # Backend names the task brief requires to be registered as distinct entries.
 REQUIRED_BACKEND_NAMES: tuple[str, ...] = (
@@ -373,10 +365,7 @@ REQUIRED_BACKEND_NAMES: tuple[str, ...] = (
 
 
 def resolve_backend_alias(name: str) -> str:
-    """Resolve a (possibly legacy) backend name to its canonical registry name.
-
-    ``gpu_sh`` -> ``numba_cuda_sh``. Non-alias names are returned unchanged.
-    """
+    """Resolve a backend name to its canonical registry name."""
     key = str(name).strip()
     return BACKEND_ALIASES.get(key, key)
 
@@ -394,9 +383,8 @@ def get_capabilities(name: str) -> BackendCapabilities:
     except KeyError:
         known = ", ".join(sorted(BACKEND_REGISTRY))
         aliases = ", ".join(sorted(BACKEND_ALIASES))
-        raise KeyError(
-            f"Unknown backend {name!r}; known backends: {known}; aliases: {aliases}"
-        ) from None
+        alias_note = f"; aliases: {aliases}" if aliases else "; no backend aliases are registered"
+        raise KeyError(f"Unknown backend {name!r}; known backends: {known}{alias_note}") from None
 
 
 def list_backend_names(*, include_aliases: bool = False) -> tuple[str, ...]:
@@ -430,30 +418,30 @@ def unsupported_force_models(name: str, flags: Any) -> tuple[str, ...]:
     return tuple(blocked)
 
 
-def gpu_sh_max_degree() -> int:
+def numba_cuda_sh_max_degree() -> int:
     """Return the Numba CUDA classic-SH degree limit from the kernel workspace.
 
-    Sourced from :data:`lunaris.core.batch_propagator.GPU_SH_MAX_DEGREE` (lazily, to
+    Sourced from :data:`lunaris.core.batch_propagator.NUMBA_CUDA_SH_MAX_DEGREE` (lazily, to
     avoid importing the Numba CUDA stack at module load). Falls back to the
     historical default of 24 if that import is unavailable. This is the limit of
     the ``numba_cuda_sh`` backend only; ``torch_cuda_sh`` has no such cap.
     """
     try:
-        from lunaris.core.batch_propagator import GPU_SH_MAX_DEGREE
+        from lunaris.core.batch_propagator import NUMBA_CUDA_SH_MAX_DEGREE
 
-        return int(GPU_SH_MAX_DEGREE)
+        return int(NUMBA_CUDA_SH_MAX_DEGREE)
     except Exception:
         return 24
 
 
-def gpu_sh_supported_tiers() -> tuple[int, ...]:
+def numba_cuda_sh_supported_tiers() -> tuple[int, ...]:
     """Return the supported Numba CUDA classic-SH degree tiers."""
     try:
-        from lunaris.core.batch_propagator import GPU_SH_SUPPORTED_TIERS
+        from lunaris.core.batch_propagator import NUMBA_CUDA_SH_SUPPORTED_TIERS
 
-        return tuple(int(v) for v in GPU_SH_SUPPORTED_TIERS)
+        return tuple(int(v) for v in NUMBA_CUDA_SH_SUPPORTED_TIERS)
     except Exception:
-        return (gpu_sh_max_degree(),)
+        return (numba_cuda_sh_max_degree(),)
 
 
 __all__ = [
@@ -466,6 +454,6 @@ __all__ = [
     "get_capabilities",
     "list_backend_names",
     "unsupported_force_models",
-    "gpu_sh_max_degree",
-    "gpu_sh_supported_tiers",
+    "numba_cuda_sh_max_degree",
+    "numba_cuda_sh_supported_tiers",
 ]

@@ -101,7 +101,7 @@ def _torch_cuda_device_name() -> str | None:
         return None
 
 
-def _gpu_sh_limits() -> tuple[int, tuple[int, ...]]:
+def _numba_cuda_sh_limits() -> tuple[int, tuple[int, ...]]:
     """Return current true-GPU classic-SH max degree and supported tiers.
 
     Sourced from the central backend capability registry
@@ -112,11 +112,11 @@ def _gpu_sh_limits() -> tuple[int, tuple[int, ...]]:
 
     try:
         from lunaris.core.backend_capabilities import (
-            gpu_sh_max_degree,
-            gpu_sh_supported_tiers,
+            numba_cuda_sh_max_degree,
+            numba_cuda_sh_supported_tiers,
         )
 
-        return gpu_sh_max_degree(), gpu_sh_supported_tiers()
+        return numba_cuda_sh_max_degree(), numba_cuda_sh_supported_tiers()
     except Exception:
         return 24, (24,)
 
@@ -168,7 +168,12 @@ def select_classic_sh_backend(
     (:mod:`lunaris.core.torch_sh_propagator`).
     """
     req = resolve_backend_alias_local(requested_backend)
-    limit = int(numba_max_degree if numba_max_degree is not None else _gpu_sh_limits()[0])
+    if req not in {"auto", "cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}:
+        raise ValueError(
+            "requested_backend must be one of: auto, cpu_sh, numba_cuda_sh, "
+            f"torch_cuda_sh, torch_cpu_sh; got {requested_backend!r}"
+        )
+    limit = int(numba_max_degree if numba_max_degree is not None else _numba_cuda_sh_limits()[0])
     degree = int(requested_degree or 0)
 
     def _decide(backend: str, *, applied: bool = False, reason: str = "", err: bool = False) -> ClassicSHDecision:
@@ -256,7 +261,7 @@ def select_classic_sh_backend(
 
 
 def resolve_backend_alias_local(name: str) -> str:
-    """Resolve a backend alias (``gpu_sh`` -> ``numba_cuda_sh``) via the registry."""
+    """Resolve a backend name through the central registry."""
     try:
         from lunaris.core.backend_capabilities import resolve_backend_alias
 
@@ -346,14 +351,13 @@ BATCH_BACKEND_REQUESTS = frozenset(
         "numba_cuda_sh",
         "torch_cuda_sh",
         "torch_cpu_sh",
-        "gpu_sh",  # legacy alias -> numba_cuda_sh
         "gpu_st_lrps_potential",
         "gpu_st_lrps_direct",
     }
 )
 
 # Classic-SH request names that select the Numba CUDA backend (degree <= 24).
-_NUMBA_SH_REQUESTS = frozenset({"gpu_sh", "numba_cuda_sh"})
+_NUMBA_SH_REQUESTS = frozenset({"numba_cuda_sh"})
 # Classic-SH request names that select the PyTorch SH backend (arbitrary degree).
 _TORCH_SH_REQUESTS = frozenset({"torch_cuda_sh", "torch_cpu_sh"})
 
@@ -377,8 +381,8 @@ class BatchBackendPlan:
     backend_implementation: str = ""
     requested_sh_degree: int = 0
     actual_sh_degree: int | None = None
-    gpu_sh_max_degree: int = 24
-    gpu_sh_supported_tiers: tuple[int, ...] = (24,)
+    numba_cuda_sh_max_degree: int = 24
+    numba_cuda_sh_supported_tiers: tuple[int, ...] = (24,)
     runtime_model_kind: str | None = None
     cuda_device_name: str | None = None
     requested_device: str = ""
@@ -493,14 +497,14 @@ def resolve_batch_backend_policy(
     # --- Hardware probes ------------------------------------------------------
     torch_cuda = _torch_cuda_available()
     numba_cuda = _numba_cuda_available()
-    gpu_sh_max_degree, gpu_sh_tiers = _gpu_sh_limits()
+    numba_cuda_sh_max_degree, numba_cuda_sh_tiers = _numba_cuda_sh_limits()
 
     # --- Determine gravity mode -----------------------------------------------
     gravity_cfg = getattr(sim_cfg, "gravity", None)
     mission_st_lrps = bool(getattr(gravity_cfg, "uses_st_lrps", False))
     mode_override = str(getattr(batch_cfg, "gravity_mode_override", "follow_mission") or "follow_mission")
     requested_backend = _clean_requested_backend(getattr(batch_cfg, "batch_backend", "auto"))
-    requested_sh_degree = int(getattr(batch_cfg, "gpu_sh_degree", 0) or 0)
+    requested_sh_degree = int(getattr(batch_cfg, "sh_degree", 0) or 0)
 
     if requested_backend in {"cpu_sh"} | _NUMBA_SH_REQUESTS | _TORCH_SH_REQUESTS:
         is_st_lrps = False
@@ -552,8 +556,8 @@ def resolve_batch_backend_policy(
             actual_backend="cpu_sh" if not is_st_lrps else "cpu_st_lrps",
             requested_sh_degree=requested_sh_degree,
             actual_sh_degree=None,
-            gpu_sh_max_degree=gpu_sh_max_degree,
-            gpu_sh_supported_tiers=gpu_sh_tiers,
+            numba_cuda_sh_max_degree=numba_cuda_sh_max_degree,
+            numba_cuda_sh_supported_tiers=numba_cuda_sh_tiers,
             runtime_model_kind=runtime_model_kind,
             dtype="float64",
             reason="CPU backend explicitly requested",
@@ -584,8 +588,8 @@ def resolve_batch_backend_policy(
                 actual_backend="cpu_st_lrps",
                 requested_sh_degree=requested_sh_degree,
                 actual_sh_degree=None,
-                gpu_sh_max_degree=gpu_sh_max_degree,
-                gpu_sh_supported_tiers=gpu_sh_tiers,
+                numba_cuda_sh_max_degree=numba_cuda_sh_max_degree,
+                numba_cuda_sh_supported_tiers=numba_cuda_sh_tiers,
                 runtime_model_kind=runtime_model_kind,
                 requested_device="cuda",
                 actual_device="cpu",
@@ -617,8 +621,8 @@ def resolve_batch_backend_policy(
                 actual_backend="cpu_st_lrps",
                 requested_sh_degree=requested_sh_degree,
                 actual_sh_degree=None,
-                gpu_sh_max_degree=gpu_sh_max_degree,
-                gpu_sh_supported_tiers=gpu_sh_tiers,
+                numba_cuda_sh_max_degree=numba_cuda_sh_max_degree,
+                numba_cuda_sh_supported_tiers=numba_cuda_sh_tiers,
                 runtime_model_kind=runtime_model_kind,
                 requested_device="cuda",
                 actual_device="cpu",
@@ -650,8 +654,8 @@ def resolve_batch_backend_policy(
             actual_backend=actual_stlrps_backend,
             requested_sh_degree=requested_sh_degree,
             actual_sh_degree=None,
-            gpu_sh_max_degree=gpu_sh_max_degree,
-            gpu_sh_supported_tiers=gpu_sh_tiers,
+            numba_cuda_sh_max_degree=numba_cuda_sh_max_degree,
+            numba_cuda_sh_supported_tiers=numba_cuda_sh_tiers,
             runtime_model_kind=runtime_model_kind or (
                 "force_direct" if actual_stlrps_backend == "gpu_st_lrps_direct" else "potential_autograd"
             ),
@@ -668,7 +672,7 @@ def resolve_batch_backend_policy(
     # =========================================================================
     # Classic SH path — single source of truth is select_classic_sh_backend()
     # =========================================================================
-    # Every classic-SH request (auto / cpu_sh / gpu_sh / numba_cuda_sh /
+    # Every classic-SH request (auto / cpu_sh / numba_cuda_sh /
     # torch_cuda_sh) is routed through ONE decision function; the backend choice
     # is never re-derived in a second if/elif chain here. This is the piece that
     # finally wires torch_cuda_sh into the live batch runtime: degree > 24 with
@@ -690,7 +694,7 @@ def resolve_batch_backend_policy(
     # Numba kernel without importing the CUDA stack here.
     numba_unsupported = unsupported_force_models("numba_cuda_sh", flags) if flags is not None else ()
     torch_unsupported = unsupported_force_models("torch_cuda_sh", flags) if flags is not None else ()
-    fallback_policy = str(getattr(batch_cfg, "gpu_sh_fallback_policy", "compatible_gpu") or "compatible_gpu")
+    fallback_policy = str(getattr(batch_cfg, "sh_fallback_policy", "compatible_gpu") or "compatible_gpu")
     torch_dtype = str(getattr(batch_cfg, "torch_dtype", "float64") or "float64").lower()
     if torch_dtype not in ("float32", "float64"):
         torch_dtype = "float64"
@@ -703,7 +707,7 @@ def resolve_batch_backend_policy(
         numba_physics_ok=(not numba_unsupported),
         torch_physics_ok=(not torch_unsupported),
         fallback_policy=fallback_policy,
-        numba_max_degree=gpu_sh_max_degree,
+        numba_max_degree=numba_cuda_sh_max_degree,
     )
 
     # Explicit request the policy cannot honor under fallback_policy='error'.
@@ -712,7 +716,7 @@ def resolve_batch_backend_policy(
             f"[BATCH] batch_backend={requested_backend!r} cannot be honored "
             f"({decision.fallback_reason}); "
             "the selected fallback policy forbids substituting another backend. "
-            "Check CUDA availability, lower the degree, or set gpu_sh_fallback_policy "
+            "Check CUDA availability, lower the degree, or set sh_fallback_policy "
             "to 'compatible_gpu' or 'cpu'."
         )
 
@@ -730,8 +734,8 @@ def resolve_batch_backend_policy(
             actual_backend="numba_cuda_sh",
             requested_sh_degree=requested_sh_degree,
             actual_sh_degree=effective_degree,
-            gpu_sh_max_degree=gpu_sh_max_degree,
-            gpu_sh_supported_tiers=gpu_sh_tiers,
+            numba_cuda_sh_max_degree=numba_cuda_sh_max_degree,
+            numba_cuda_sh_supported_tiers=numba_cuda_sh_tiers,
             cuda_device_name=_numba_cuda_device_name(),
             requested_device=requested_device,
             actual_device=_numba_cuda_device_name() or "cuda",
@@ -757,8 +761,8 @@ def resolve_batch_backend_policy(
             actual_backend="torch_cuda_sh",
             requested_sh_degree=requested_sh_degree,
             actual_sh_degree=effective_degree,
-            gpu_sh_max_degree=gpu_sh_max_degree,
-            gpu_sh_supported_tiers=gpu_sh_tiers,
+            numba_cuda_sh_max_degree=numba_cuda_sh_max_degree,
+            numba_cuda_sh_supported_tiers=numba_cuda_sh_tiers,
             cuda_device_name=_torch_cuda_device_name(),
             requested_device=requested_device,
             actual_device=_torch_cuda_device_name() or "cuda",
@@ -794,8 +798,8 @@ def resolve_batch_backend_policy(
             actual_backend="torch_cpu_sh",
             requested_sh_degree=requested_sh_degree,
             actual_sh_degree=effective_degree,
-            gpu_sh_max_degree=gpu_sh_max_degree,
-            gpu_sh_supported_tiers=gpu_sh_tiers,
+            numba_cuda_sh_max_degree=numba_cuda_sh_max_degree,
+            numba_cuda_sh_supported_tiers=numba_cuda_sh_tiers,
             requested_device=requested_device,
             actual_device="cpu",
             dtype=torch_dtype,
@@ -824,7 +828,7 @@ def resolve_batch_backend_policy(
     high_degree_numba = bool(
         resolve_backend_alias(requested_backend) == "numba_cuda_sh"
         and sh_enabled
-        and requested_sh_degree > gpu_sh_max_degree
+        and requested_sh_degree > numba_cuda_sh_max_degree
     )
 
     if blocking:
@@ -838,7 +842,7 @@ def resolve_batch_backend_policy(
         fallback_reason = decision.fallback_reason
         msg = (
             f"[BATCH] Requested classic-SH degree {requested_sh_degree} exceeds the "
-            f"numba_cuda_sh kernel limit (degree <= {gpu_sh_max_degree}; a "
+            f"numba_cuda_sh kernel limit (degree <= {numba_cuda_sh_max_degree}; a "
             "thread-local workspace limit, not a physical one) and torch_cuda_sh "
             "is unavailable. Falling back to CPU without clipping the requested "
             "degree. Selected batch backend: CPU."
@@ -858,8 +862,8 @@ def resolve_batch_backend_policy(
         actual_backend="cpu_sh",
         requested_sh_degree=requested_sh_degree,
         actual_sh_degree=None,
-        gpu_sh_max_degree=gpu_sh_max_degree,
-        gpu_sh_supported_tiers=gpu_sh_tiers,
+        numba_cuda_sh_max_degree=numba_cuda_sh_max_degree,
+        numba_cuda_sh_supported_tiers=numba_cuda_sh_tiers,
         requested_device=requested_device,
         actual_device="cpu",
         dtype="float64",

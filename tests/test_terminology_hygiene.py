@@ -10,6 +10,7 @@ own scan.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 _MC = "mc"
 _MONTE = "monte"
 _CARLO = "carlo"
+_BANNED_GPU_ALIAS = "gpu" + "_sh"
 
 BANNED_SUBSTRINGS: tuple[str, ...] = (
     "lunaris-" + _MC,
@@ -43,6 +45,19 @@ BANNED_SUBSTRINGS: tuple[str, ...] = (
     "build_" + _MC + "_output_grid",
     "[" + _MC.upper() + "_PROGRESS]",
     "[" + _MC.upper() + "_METRICS]",
+    _BANNED_GPU_ALIAS,
+)
+
+BANNED_REGEXES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("local variable named mc", re.compile(r"\b" + _MC + r"\s*=")),
+    ("mc attribute alias", re.compile(r"\b" + _MC + r"\.")),
+    (_MC + "_ prefix identifier", re.compile(r"(?<![A-Za-z0-9_])" + _MC + r"_")),
+    (
+        "banned backend-name construction",
+        re.compile(
+            r"['\"]gpu['\"]\s*\+\s*['\"]_sh['\"]"
+        ),
+    ),
 )
 
 SCAN_DIRS = ("src/lunaris", "tests", "docs", "examples", "hpc", "validation", "tools")
@@ -84,6 +99,11 @@ def test_no_banned_mc_terminology_in_active_sources() -> None:
         for banned in BANNED_SUBSTRINGS:
             if banned.lower() in lowered:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {banned}")
+        for label, pattern in BANNED_REGEXES:
+            if path.name == "test_terminology_hygiene.py" and label == "banned backend-name construction":
+                continue
+            if pattern.search(content):
+                offenders.append(f"{path.relative_to(REPO_ROOT)}: {label}")
     assert not offenders, "banned Monte-Carlo-era names found:\n" + "\n".join(offenders)
 
 

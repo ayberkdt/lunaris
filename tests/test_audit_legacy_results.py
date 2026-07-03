@@ -1,4 +1,4 @@
-"""D2 (reviewer §10): unit tests for the legacy-result trust classifier."""
+"""D2 (reviewer §10): unit tests for the result trust classifier."""
 
 from __future__ import annotations
 
@@ -36,17 +36,17 @@ _FULL_V2 = {
 }
 
 
-def test_pre_v2_archive_is_quarantined_not_rerun() -> None:
+def test_missing_schema_archive_is_invalid() -> None:
     status, reasons = classify_batch_archive({"backend": "cpu"}, has_impacts=False)
-    assert status == QUARANTINED
-    assert any("pre-v2" in r for r in reasons)
+    assert status == INVALID
+    assert any("archive_schema_version" in r for r in reasons)
 
 
-def test_pre_contract_schema_v1_is_quarantined() -> None:
+def test_pre_contract_schema_v1_is_invalid() -> None:
     status, reasons = classify_batch_archive(
         {"archive_schema_version": 1}, has_impacts=False
     )
-    assert status == QUARANTINED
+    assert status == INVALID
     assert any("v1" in r for r in reasons)
 
 

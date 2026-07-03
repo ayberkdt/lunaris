@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 st_lrps.training.cli
 ====================
@@ -40,48 +40,56 @@ state-space model.
 from __future__ import annotations
 
 import sys
+from importlib import import_module
+from typing import Any
 
-from lunaris.surrogate.st_lrps.data.datasets import (
-    BlockShuffleSampler,
-    DatasetMeta,
-    H5BlockDataset,
-    TensorMemoryDataset,
-    _build_train_val_indices,
-    _find_latest_dataset,
-    _resolve_loader_worker_count,
-    _resolve_lunar_dataset_contract,
-    collate_h5,
-)
-from lunaris.surrogate.st_lrps.networks.models import (
-    MLP,
-    FourierInputEmbedding,
-    PhysicsNet,
-    Sine,
-    SirenMLP,
-    build_model_from_config,
-)
-from lunaris.surrogate.st_lrps.shared.scaling import (
-    IsometricScaleParams,
-    OnlineIsometricStats,
-    ScalerPack,
-    fit_scaler_streaming,
-)
-from lunaris.surrogate.st_lrps.training.config import TrainConfig, parse_args
-from lunaris.surrogate.st_lrps.training.engine import STLRPSTrainer, train
-from lunaris.surrogate.st_lrps.training.losses import GradNormWeights, LossCurriculum, SobolevLoss
+_EXPORT_MODULES = {
+    "TrainConfig": "lunaris.surrogate.st_lrps.training.config",
+    "parse_args": "lunaris.surrogate.st_lrps.training.config",
+    "train": "lunaris.surrogate.st_lrps.training.engine",
+    "STLRPSTrainer": "lunaris.surrogate.st_lrps.training.engine",
+    "Sine": "lunaris.surrogate.st_lrps.networks.models",
+    "SirenMLP": "lunaris.surrogate.st_lrps.networks.models",
+    "MLP": "lunaris.surrogate.st_lrps.networks.models",
+    "FourierInputEmbedding": "lunaris.surrogate.st_lrps.networks.models",
+    "PhysicsNet": "lunaris.surrogate.st_lrps.networks.models",
+    "build_model_from_config": "lunaris.surrogate.st_lrps.networks.models",
+    "IsometricScaleParams": "lunaris.surrogate.st_lrps.shared.scaling",
+    "ScalerPack": "lunaris.surrogate.st_lrps.shared.scaling",
+    "OnlineIsometricStats": "lunaris.surrogate.st_lrps.shared.scaling",
+    "fit_scaler_streaming": "lunaris.surrogate.st_lrps.shared.scaling",
+    "DatasetMeta": "lunaris.surrogate.st_lrps.data.datasets",
+    "H5BlockDataset": "lunaris.surrogate.st_lrps.data.datasets",
+    "TensorMemoryDataset": "lunaris.surrogate.st_lrps.data.datasets",
+    "BlockShuffleSampler": "lunaris.surrogate.st_lrps.data.datasets",
+    "collate_h5": "lunaris.surrogate.st_lrps.data.datasets",
+    "_build_train_val_indices": "lunaris.surrogate.st_lrps.data.datasets",
+    "_find_latest_dataset": "lunaris.surrogate.st_lrps.data.datasets",
+    "_resolve_loader_worker_count": "lunaris.surrogate.st_lrps.data.datasets",
+    "_resolve_lunar_dataset_contract": "lunaris.surrogate.st_lrps.data.datasets",
+    "SobolevLoss": "lunaris.surrogate.st_lrps.training.losses",
+    "LossCurriculum": "lunaris.surrogate.st_lrps.training.losses",
+    "GradNormWeights": "lunaris.surrogate.st_lrps.training.losses",
+}
 
-__all__ = [
-    'TrainConfig', 'parse_args', 'train', 'STLRPSTrainer',
-    'Sine', 'SirenMLP', 'MLP', 'FourierInputEmbedding', 'PhysicsNet',
-    'build_model_from_config', 'IsometricScaleParams', 'ScalerPack',
-    'OnlineIsometricStats', 'fit_scaler_streaming', 'DatasetMeta',
-    'H5BlockDataset', 'TensorMemoryDataset', 'BlockShuffleSampler', 'collate_h5',
-    '_resolve_loader_worker_count', 'SobolevLoss', 'LossCurriculum', 'GradNormWeights',
-]
+__all__ = list(_EXPORT_MODULES.keys())
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    value = getattr(import_module(module_name), name)
+    globals()[name] = value
+    return value
 
 
 def main() -> None:
+    from lunaris.surrogate.st_lrps.training.config import parse_args
+
     cfg = parse_args()
+    from lunaris.surrogate.st_lrps.training.engine import train
+
     train(cfg)
 
 

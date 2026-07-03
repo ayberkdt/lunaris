@@ -35,6 +35,17 @@ REQUIRED_ARCHIVE_V2_FIELDS: tuple[str, ...] = (
     "compute_impact_statistics",
 )
 
+REQUIRED_ARCHIVE_V2_ARRAYS: tuple[str, ...] = (
+    "t",
+    "Y",
+    "sc_samples",
+    "impact_flags",
+    "t_impact",
+    "valid_mask",
+    "impact_position_inertial_m",
+    "impact_position_fixed_m",
+)
+
 
 def _resolve_result_storage(
     batch_cfg: BatchPropagationConfig,
@@ -236,7 +247,7 @@ class _HDF5Writer:
                 payload = _metadata_value_to_jsonable(v)
                 if payload is None:
                     continue
-                if isinstance(payload, (dict, list)):
+                if isinstance(payload, dict | list):
                     payload = json.dumps(payload, sort_keys=True)
                 self._f.attrs[k] = payload
             except Exception as exc:
@@ -380,40 +391,49 @@ def _make_writer(
     return _NPZWriter(p, n_samples, t_grid)
 
 
-def _infer_valid_mask_from_dataset(dataset: Any, chunk_size: int = 256) -> np.ndarray:
-    """Infer legacy validity without materializing the full trajectory."""
-    n_samples = int(dataset.shape[1])
-    valid = np.zeros(n_samples, dtype=np.float64)
-    for start in range(0, n_samples, chunk_size):
-        end = min(n_samples, start + chunk_size)
-        block = np.asarray(dataset[:, start:end, :], dtype=np.float64)
-        valid[start:end] = np.isfinite(block).all(axis=(0, 2)).astype(np.float64)
-    return valid
-
-
 def _validate_archive_v2_manifest(metadata: dict[str, Any]) -> None:
-    """Enforce required manifest fields for schema-v2 batch archives.
-
-    Pre-v2 / legacy archives (missing ``archive_schema_version`` or < 2) are
-    exempt and loaded best-effort. A v2 archive missing any required field is
-    rejected so incomplete provenance never passes silently as a valid result.
-    """
+    """Enforce the required schema-v2 manifest for batch archives."""
     raw_version = metadata.get("archive_schema_version")
     if raw_version is None:
-        return
+        raise ValueError(
+            "Batch archive is missing archive_schema_version. Current Lunaris "
+            "requires schema v2 archives produced by BatchPropagationEngine; "
+            "regenerate the run with the current batch pipeline."
+        )
     try:
         version = int(raw_version)
     except (TypeError, ValueError):
-        return
+        raise ValueError(
+            f"Batch archive has invalid archive_schema_version={raw_version!r}. "
+            "Current Lunaris requires schema v2 archives."
+        ) from None
     if version < 2:
-        return
+        raise ValueError(
+            f"Unsupported batch archive schema v{version}. Current Lunaris "
+            "requires schema v2 archives; regenerate the run."
+        )
+    if version > 2:
+        raise ValueError(
+            f"Unsupported batch archive schema v{version}. This loader expects "
+            "schema v2; upgrade the loader or regenerate the archive."
+        )
     missing = [f for f in REQUIRED_ARCHIVE_V2_FIELDS if f not in metadata]
     if missing:
         raise ValueError(
             f"Batch archive declares schema v{version} but is missing required "
             f"manifest field(s): {', '.join(sorted(missing))}. The archive is incomplete "
-            "or was not produced by a current BatchPropagationEngine run. Pass strict=False to "
-            "load it as a best-effort legacy archive."
+            "or was not produced by a current BatchPropagationEngine run."
+        )
+
+
+def _require_archive_v2_arrays(names: Any, *, format_label: str) -> None:
+    available = {str(name) for name in names}
+    missing = [name for name in REQUIRED_ARCHIVE_V2_ARRAYS if name not in available]
+    if missing:
+        raise ValueError(
+            f"Batch {format_label} archive is missing required dataset(s): "
+            f"{', '.join(sorted(missing))}. Regenerate the run with the current "
+            "BatchPropagationEngine writer."
         )
 
 
@@ -429,14 +449,12 @@ def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> 
         Return a disk-backed, read-only trajectory view instead of loading the
         full ``Y`` ensemble into memory (HDF5 only).
     strict : bool
-        When True (default), schema-v2 archives must carry every field in
-        ``REQUIRED_ARCHIVE_V2_FIELDS`` or a ``ValueError`` is raised. Pre-v2
-        archives are always loaded best-effort. Pass ``strict=False`` to load a
-        partial/legacy archive without manifest enforcement.
+        Ignored. The loader always requires a complete schema-v2 manifest and
+        the full set of current batch result datasets.
 
     Returns
     ----------
-    BatchPropagationResult / legacy BatchPropagationResult
+    BatchPropagationResult
     """
     p = Path(path).expanduser().resolve()
     suffix = p.suffix.lower()
@@ -447,6 +465,12 @@ def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> 
         except ImportError:
             raise ImportError("h5py required to read HDF5 batch output.") from None
         with h5py.File(str(p), "r") as f:
+            diagnostics = {
+                str(key): _decode_metadata_value(value)
+                for key, value in dict(f.attrs).items()
+            }
+            _validate_archive_v2_manifest(diagnostics)
+            _require_archive_v2_arrays(f.keys(), format_label="HDF5")
             t_arr  = np.asarray(f["t"],           dtype=np.float64)
             Y_arr: Any = (
                 HDF5TrajectoryView(p)
@@ -456,27 +480,9 @@ def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> 
             sc     = np.asarray(f["sc_samples"],  dtype=np.float64)
             imask  = np.asarray(f["impact_flags"], dtype=np.float64)
             t_imp  = np.asarray(f["t_impact"],    dtype=np.float64)
-            valid = (
-                np.asarray(f["valid_mask"], dtype=np.float64)
-                if "valid_mask" in f
-                else _infer_valid_mask_from_dataset(f["Y"])
-            )
-            impact_i = (
-                np.asarray(f["impact_position_inertial_m"], dtype=np.float64)
-                if "impact_position_inertial_m" in f
-                else None
-            )
-            impact_f = (
-                np.asarray(f["impact_position_fixed_m"], dtype=np.float64)
-                if "impact_position_fixed_m" in f
-                else None
-            )
-            diagnostics = {
-                str(key): _decode_metadata_value(value)
-                for key, value in dict(f.attrs).items()
-            }
-        if strict:
-            _validate_archive_v2_manifest(diagnostics)
+            valid = np.asarray(f["valid_mask"], dtype=np.float64)
+            impact_i = np.asarray(f["impact_position_inertial_m"], dtype=np.float64)
+            impact_f = np.asarray(f["impact_position_fixed_m"], dtype=np.float64)
         return BatchPropagationResult(
             t=t_arr, Y=Y_arr, sc_samples=sc,
             impact_mask=imask, t_impact=t_imp,
@@ -492,29 +498,17 @@ def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> 
             diagnostics = {}
             if "metadata_json" in data.files:
                 diagnostics = _decode_archive_metadata(data["metadata_json"])
-            if strict:
-                _validate_archive_v2_manifest(diagnostics)
+            _validate_archive_v2_manifest(diagnostics)
+            _require_archive_v2_arrays(data.files, format_label="NPZ")
             return BatchPropagationResult(
                 t=data["t"],
                 Y=data["Y"],
                 sc_samples=data["sc_samples"],
                 impact_mask=data["impact_flags"],
                 t_impact=data["t_impact"],
-                valid_mask=(
-                    data["valid_mask"]
-                    if "valid_mask" in data.files
-                    else np.isfinite(data["Y"]).all(axis=(0, 2)).astype(np.float64)
-                ),
-                impact_position_inertial_m=(
-                    data["impact_position_inertial_m"]
-                    if "impact_position_inertial_m" in data.files
-                    else None
-                ),
-                impact_position_fixed_m=(
-                    data["impact_position_fixed_m"]
-                    if "impact_position_fixed_m" in data.files
-                    else None
-                ),
+                valid_mask=data["valid_mask"],
+                impact_position_inertial_m=data["impact_position_inertial_m"],
+                impact_position_fixed_m=data["impact_position_fixed_m"],
                 archive_path=str(p),
                 diagnostics=diagnostics,
             )
@@ -524,13 +518,13 @@ def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> 
 
 __all__ = [
     "REQUIRED_ARCHIVE_V2_FIELDS",
+    "REQUIRED_ARCHIVE_V2_ARRAYS",
     "HDF5TrajectoryView",
     "_HDF5Writer",
     "_NPZWriter",
     "_make_writer",
     "_resolve_result_storage",
     "_allocate_result_buffer",
-    "_infer_valid_mask_from_dataset",
     "_validate_archive_v2_manifest",
     "load_batch_result",
 ]

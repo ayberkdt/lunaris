@@ -319,7 +319,7 @@ def test_policy_classic_sh_numba_cuda_true(monkeypatch) -> None:
     assert plan.actual_backend == "numba_cuda_sh"
     assert plan.backend_family == "classic_sh"
     assert plan.backend_implementation == "numba_cuda"
-    assert plan.requested_sh_degree == 0 or plan.requested_sh_degree == int(getattr(batch_cfg, "gpu_sh_degree", 0))
+    assert plan.requested_sh_degree == 0 or plan.requested_sh_degree == int(getattr(batch_cfg, "sh_degree", 0))
 
 
 def test_policy_classic_sh_numba_cuda_false(monkeypatch) -> None:
@@ -349,13 +349,13 @@ def test_policy_classic_sh_high_degree_falls_back_without_clipping(monkeypatch) 
 
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: True)
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: False)
-    monkeypatch.setattr(policy_mod, "_gpu_sh_limits", lambda: (24, (24,)))
+    monkeypatch.setattr(policy_mod, "_numba_cuda_sh_limits", lambda: (24, (24,)))
 
     batch_cfg = SimpleNamespace(
         use_gpu=True,
-        batch_backend="gpu_sh",
+        batch_backend="numba_cuda_sh",
         gravity_mode_override="follow_mission",
-        gpu_sh_degree=80,
+        sh_degree=80,
     )
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),
@@ -364,12 +364,12 @@ def test_policy_classic_sh_high_degree_falls_back_without_clipping(monkeypatch) 
     plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
     assert plan.final_backend == BatchBackend.CPU
     assert not plan.use_gpu
-    assert plan.requested_backend == "gpu_sh"
+    assert plan.requested_backend == "numba_cuda_sh"
     assert plan.actual_backend == "cpu_sh"
     assert plan.requested_sh_degree == 80
     assert plan.actual_sh_degree is None
-    assert plan.gpu_sh_max_degree == 24
-    assert plan.gpu_sh_supported_tiers == (24,)
+    assert plan.numba_cuda_sh_max_degree == 24
+    assert plan.numba_cuda_sh_supported_tiers == (24,)
     assert plan.fallback_reason == "numba_cuda_sh supports degree <= 24"
     assert any("without clipping" in w.lower() for w in plan.warnings)
 
@@ -387,7 +387,7 @@ def test_policy_explicit_st_lrps_direct_backend(monkeypatch) -> None:
         use_gpu=True,
         batch_backend="gpu_st_lrps_direct",
         gravity_mode_override="follow_mission",
-        gpu_sh_degree=20,
+        sh_degree=20,
     )
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),
@@ -426,7 +426,7 @@ def test_policy_rejects_explicit_st_lrps_artifact_kind_mismatch(
         use_gpu=True,
         batch_backend=requested,
         gravity_mode_override="follow_mission",
-        gpu_sh_degree=0,
+        sh_degree=0,
     )
     sim_cfg = SimpleNamespace(
         flags=PerturbationFlags(enable_sh=True),

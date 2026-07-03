@@ -3,8 +3,7 @@ Tests for the central backend capability registry after the GPU SH split.
 
 The two GPU spherical-harmonics implementations are kept distinct:
 ``numba_cuda_sh`` (degree <= 24 kernel-workspace limit) and ``torch_cuda_sh``
-(arbitrary degree, no hard cap). ``gpu_sh`` survives only as a legacy alias to
-``numba_cuda_sh``.
+(arbitrary degree, no hard cap). Backend requests use canonical names only.
 
 These lock the registry to the *existing* batch propagation behavior (the Numba
 force-model matrix and degree limit) so the split changes labels/structure, not
@@ -21,10 +20,9 @@ from lunaris.core.backend_capabilities import (
     BACKEND_REGISTRY,
     REQUIRED_BACKEND_NAMES,
     get_capabilities,
-    gpu_sh_max_degree,
-    gpu_sh_supported_tiers,
     list_backend_names,
-    resolve_backend_alias,
+    numba_cuda_sh_max_degree,
+    numba_cuda_sh_supported_tiers,
     unsupported_force_models,
 )
 
@@ -71,11 +69,11 @@ def test_numba_cuda_sh_max_degree_is_24() -> None:
     caps = get_capabilities("numba_cuda_sh")
     assert caps.max_runtime_sh_degree == 24
     # Drift guard against the real kernel workspace constant.
-    from lunaris.core.batch_propagator import GPU_SH_MAX_DEGREE
+    from lunaris.core.batch_propagator import NUMBA_CUDA_SH_MAX_DEGREE
 
-    assert caps.max_runtime_sh_degree == int(GPU_SH_MAX_DEGREE)
-    assert gpu_sh_max_degree() == int(GPU_SH_MAX_DEGREE)
-    assert gpu_sh_supported_tiers() == (int(GPU_SH_MAX_DEGREE),)
+    assert caps.max_runtime_sh_degree == int(NUMBA_CUDA_SH_MAX_DEGREE)
+    assert numba_cuda_sh_max_degree() == int(NUMBA_CUDA_SH_MAX_DEGREE)
+    assert numba_cuda_sh_supported_tiers() == (int(NUMBA_CUDA_SH_MAX_DEGREE),)
 
 
 def test_torch_sh_backends_have_no_hard_degree_cap() -> None:
@@ -83,23 +81,22 @@ def test_torch_sh_backends_have_no_hard_degree_cap() -> None:
     assert get_capabilities("torch_cpu_sh").max_runtime_sh_degree is None
 
 
-def test_gpu_sh_is_legacy_alias_to_numba() -> None:
-    assert resolve_backend_alias("gpu_sh") == "numba_cuda_sh"
-    assert "gpu_sh" in BACKEND_ALIASES
-    # get_capabilities resolves the alias transparently.
-    assert get_capabilities("gpu_sh").name == "numba_cuda_sh"
+def test_no_backend_aliases_are_registered() -> None:
+    assert BACKEND_ALIASES == {}
+    with pytest.raises(KeyError):
+        get_capabilities("totally_made_up")
 
 
 def test_unknown_backend_raises_with_known_and_aliases() -> None:
     with pytest.raises(KeyError) as exc:
         get_capabilities("totally_made_up")
     text = str(exc.value)
-    assert "numba_cuda_sh" in text and "gpu_sh" in text
+    assert "numba_cuda_sh" in text
+    assert "no backend aliases are registered" in text
 
 
 def test_list_backend_names_can_include_aliases() -> None:
-    assert "gpu_sh" not in list_backend_names()
-    assert "gpu_sh" in list_backend_names(include_aliases=True)
+    assert list_backend_names(include_aliases=True) == list_backend_names()
 
 
 # ---------------------------------------------------------------------------

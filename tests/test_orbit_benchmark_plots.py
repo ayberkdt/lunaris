@@ -44,7 +44,7 @@ def _make_args(**over) -> argparse.Namespace:
 
 
 def _build(n=4, err_scale_km=5e-4, T=10,
-           models=("GPU_SH20_RK4", "GPU_SH80_RK4", "GPU_ST_LRPS_RK4")):
+           models=("NUMBA_CUDA_SH20_RK4", "NUMBA_CUDA_SH80_RK4", "GPU_ST_LRPS_RK4")):
     """Construct a self-consistent fake GPU-batch dataset."""
     np.random.default_rng(0)
     t = np.linspace(0.0, 86400.0, T)
@@ -125,19 +125,19 @@ def test_unit_autoscaling_picks_sensible_units():
 
 def test_model_color_marker_make_st_lrps_stand_out():
     st = cgm.model_color("GPU_ST_LRPS_RK4")
-    sh20 = cgm.model_color("GPU_SH20_RK4")
-    sh200 = cgm.model_color("GPU_SH200_RK4")
+    sh20 = cgm.model_color("NUMBA_CUDA_SH20_RK4")
+    sh200 = cgm.model_color("NUMBA_CUDA_SH200_RK4")
     assert st == cgm._ST_LRPS_COLOR
     assert st != sh20 and st != sh200
     # SH family is degree-ordered (low != high) and consistent across name forms.
-    assert cgm.model_color("sh20") == cgm.model_color("GPU_SH20_RK4")
+    assert cgm.model_color("sh20") == cgm.model_color("NUMBA_CUDA_SH20_RK4")
     assert sh20 != sh200
     # ST-LRPS uses the star marker and a heavier line; SH uses non-star markers.
     assert cgm.model_marker("GPU_ST_LRPS_RK4") == "*"
-    assert cgm.model_marker("GPU_SH20_RK4") != "*"
-    assert cgm.model_linewidth("GPU_ST_LRPS_RK4") > cgm.model_linewidth("GPU_SH20_RK4")
+    assert cgm.model_marker("NUMBA_CUDA_SH20_RK4") != "*"
+    assert cgm.model_linewidth("GPU_ST_LRPS_RK4") > cgm.model_linewidth("NUMBA_CUDA_SH20_RK4")
     assert cgm.display_label("GPU_ST_LRPS_RK4") == "ST-LRPS"
-    assert cgm.display_label("GPU_SH20_RK4") == "SH20"
+    assert cgm.display_label("NUMBA_CUDA_SH20_RK4") == "SH20"
 
 
 def test_should_log_handles_zeros_without_error():
@@ -167,7 +167,7 @@ def test_runtime_metrics_throughput_and_eval_scaling():
     import numpy as np
     T, N = 11, 8
     res = cgm.BatchModelResult(
-        model_name="sh20", display_name="GPU_SH20_RK4", backend="b", device="cuda:0",
+        model_name="sh20", display_name="NUMBA_CUDA_SH20_RK4", backend="b", device="cuda:0",
         dtype="float64", t=np.linspace(0, 600, T), y=np.zeros((T, N, 6)),
         runtime_s=2.0, n_steps=60, n_scenarios=N, rk4_dt_s=10.0, output_dt_s=60.0,
         status="ok")
@@ -224,7 +224,7 @@ def test_st_lrps_figures_present_and_selected(tmp_path):
 
 def test_missing_optional_models_do_not_crash(tmp_path):
     # No ST-LRPS at all — only SH baselines.
-    ds = _build(n=6, err_scale_km=0.05, models=("GPU_SH20_RK4", "GPU_SH80_RK4"))
+    ds = _build(n=6, err_scale_km=0.05, models=("NUMBA_CUDA_SH20_RK4", "NUMBA_CUDA_SH80_RK4"))
     saved, pdf = _run(tmp_path, ds, _make_args(random_scenarios=6, gpu_models="sh20,sh80"))
     names = {p.name for p in saved}
     assert all(Path(p).exists() for p in saved)

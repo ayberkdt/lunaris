@@ -109,7 +109,7 @@ def _batch_cfg(degree: int, *, chunk_size: int = 0, dtype: str = "float64"):
     from types import SimpleNamespace
 
     return SimpleNamespace(
-        gpu_sh_degree=int(degree),
+        sh_degree=int(degree),
         dt_s=60.0,
         impact_alt_km=0.0,
         torch_dtype=dtype,
@@ -280,9 +280,9 @@ def test_provenance_records_requested_and_actual_degree() -> None:
     grav = _make_gravity_model(100, seed=4)
     prop = _make_propagator(grav, degree=100)
     diag = prop.diagnostics_snapshot()
-    assert diag["requested_gpu_sh_degree"] == 100
-    assert diag["actual_gpu_sh_degree"] == 100
-    assert diag["actual_gpu_sh_degree"] != 24  # never clipped to the Numba limit
+    assert diag["requested_sh_degree"] == 100
+    assert diag["actual_sh_degree"] == 100
+    assert diag["actual_sh_degree"] != 24  # never clipped to the Numba limit
     assert diag["backend_implementation"] == "torch"
     assert diag["integrator"] == "fixed-step RK4"
     prov = prop.provenance()

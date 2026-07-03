@@ -102,7 +102,7 @@ class TorchSHBatchPropagator:
         ``degree_max``).  ``.ephem`` (optional) supplies the Moon-fixed
         attitude timeline.
     batch_cfg :
-        ``BatchPropagationConfig`` (reads ``gpu_sh_degree``, ``dt_s``, ``impact_alt_km``,
+        ``BatchPropagationConfig`` (reads ``sh_degree``, ``dt_s``, ``impact_alt_km``,
         ``torch_dtype``, ``torch_sh_chunk_size``, ``gpu_device_id``).
     flags :
         ``PerturbationFlags``.  Must be gravity-only on this path.
@@ -183,12 +183,12 @@ class TorchSHBatchPropagator:
             )
         loaded_max = int(getattr(grav, "degree_max", getattr(grav, "max_degree", 0)))
         sh_enabled = bool(getattr(flags, "enable_sh", True)) if flags is not None else True
-        requested = int(getattr(batch_cfg, "gpu_sh_degree", 0) or 0) if sh_enabled else 0
+        requested = int(getattr(batch_cfg, "sh_degree", 0) or 0) if sh_enabled else 0
         if requested > loaded_max:
             raise TorchSHPreflightError(
                 f"Requested SH degree {requested}, but loaded gravity model supports "
                 f"degree {loaded_max}. The degree is never silently reduced; load a "
-                f"higher-degree coefficient file or lower gpu_sh_degree."
+                f"higher-degree coefficient file or lower sh_degree."
             )
         # Verify the coefficient arrays are actually dimensioned for the request.
         c_arr = np.asarray(grav.Cnm)
@@ -335,9 +335,9 @@ class TorchSHBatchPropagator:
             "device": str(self._device),
             "dtype": str(self._dtype).replace("torch.", ""),
             "integrator": "fixed-step RK4",
-            "requested_gpu_sh_degree": int(self._requested_degree),
-            "gpu_sh_degree": int(self._actual_degree),
-            "actual_gpu_sh_degree": int(self._actual_degree),
+            "requested_sh_degree": int(self._requested_degree),
+            "sh_degree": int(self._actual_degree),
+            "actual_sh_degree": int(self._actual_degree),
             "loaded_degree_max": int(self._loaded_degree_max),
             "chunk_size": int(self._chunk_size),
             "bytes_per_sample": int(self._bytes_per_sample),

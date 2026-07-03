@@ -243,10 +243,10 @@ class BatchPropagationConfig:
                         (full-fidelity physics, slower for large N).
 
     ``batch_backend`` is the explicit backend selector.  The default ``"auto"``
-    preserves the historical ``use_gpu`` + ``gravity_mode_override`` behavior.
+    resolves the backend from ``use_gpu`` + ``gravity_mode_override``.
     Explicit values are ``"cpu_sh"``, ``"numba_cuda_sh"`` (degree <= 24 Numba
-    CUDA screening kernel; ``"gpu_sh"`` is a legacy alias for it),
-    ``"torch_cuda_sh"`` (high-degree PyTorch CUDA classic-SH, gravity-only),
+    CUDA screening kernel), ``"torch_cuda_sh"`` (high-degree PyTorch CUDA
+    classic-SH, gravity-only),
     ``"torch_cpu_sh"`` (PyTorch CPU classic-SH, same evaluator as torch_cuda_sh),
     ``"gpu_st_lrps_potential"``, and ``"gpu_st_lrps_direct"``.  The explicit
     value is recorded verbatim in provenance and is never silently rewritten to
@@ -254,7 +254,7 @@ class BatchPropagationConfig:
 
     GPU physics model
     -----------------
-    - Point-mass + SH gravity up to the resolved ``gpu_sh_degree``.
+    - Point-mass + SH gravity up to the resolved ``sh_degree``.
     - Third-body Sun / Earth (if enabled in SimConfig flags).
     - SRP (if enabled in SimConfig flags).
     - 1PN relativity (if enabled in SimConfig flags).
@@ -290,14 +290,14 @@ class BatchPropagationConfig:
     st_lrps_model_dir: str | None = None
 
     # GPU physics fidelity
-    gpu_sh_degree: int = 10         # requested SH degree (numba_cuda_sh true SH only through 24)
+    sh_degree: int = 10         # requested SH degree (numba_cuda_sh true SH only through 24)
     gpu_threads_per_block: int = 128
 
     # High-degree classic-SH fallback policy when an explicit ``numba_cuda_sh``
     # request exceeds the degree-24 kernel limit: "compatible_gpu" (try
     # torch_cuda_sh, else CPU), "cpu" (force CPU), or "error" (raise instead of
     # substituting).  The requested degree is never clipped.
-    gpu_sh_fallback_policy: str = "compatible_gpu"
+    sh_fallback_policy: str = "compatible_gpu"
 
     # Torch classic-SH path (torch_cuda_sh) controls.
     torch_dtype: str = "float64"    # "float32" or "float64" for the torch SH path
@@ -341,7 +341,6 @@ class BatchPropagationConfig:
         if self.batch_backend not in (
             "auto",
             "cpu_sh",
-            "gpu_sh",            # legacy alias -> numba_cuda_sh
             "numba_cuda_sh",
             "torch_cuda_sh",
             "torch_cpu_sh",
@@ -349,15 +348,15 @@ class BatchPropagationConfig:
             "gpu_st_lrps_direct",
         ):
             raise ValueError(
-                "batch_backend must be one of: 'auto', 'cpu_sh', 'gpu_sh', "
+                "batch_backend must be one of: 'auto', 'cpu_sh', "
                 "'numba_cuda_sh', 'torch_cuda_sh', 'torch_cpu_sh', "
                 "'gpu_st_lrps_potential', "
                 f"'gpu_st_lrps_direct'. Got {self.batch_backend!r}"
             )
-        if self.gpu_sh_fallback_policy not in ("compatible_gpu", "cpu", "error"):
+        if self.sh_fallback_policy not in ("compatible_gpu", "cpu", "error"):
             raise ValueError(
-                "gpu_sh_fallback_policy must be one of: 'compatible_gpu', 'cpu', "
-                f"'error'. Got {self.gpu_sh_fallback_policy!r}"
+                "sh_fallback_policy must be one of: 'compatible_gpu', 'cpu', "
+                f"'error'. Got {self.sh_fallback_policy!r}"
             )
         if str(self.torch_dtype).lower() not in ("float32", "float64"):
             raise ValueError(
@@ -375,10 +374,10 @@ class BatchPropagationConfig:
             raise ValueError(
                 "st_lrps_model_dir cannot be empty when ST-LRPS batch gravity is requested."
             )
-        if int(self.gpu_sh_degree) < 0:
+        if int(self.sh_degree) < 0:
             raise ValueError(
-                f"gpu_sh_degree must be >= 0; backend policy handles GPU support limits. "
-                f"got {self.gpu_sh_degree}."
+                f"sh_degree must be >= 0; backend policy handles GPU support limits. "
+                f"got {self.sh_degree}."
             )
         if not (32 <= self.gpu_threads_per_block <= 1024):
             raise ValueError(

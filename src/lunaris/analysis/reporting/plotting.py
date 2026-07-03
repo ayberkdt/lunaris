@@ -504,11 +504,11 @@ def _as_bool(v: Any) -> bool:
     """
     if v is None:
         return False
-    if isinstance(v, (bool, np.bool_)):
+    if isinstance(v, bool | np.bool_):
         return bool(v)
-    if isinstance(v, (int, np.integer)):
+    if isinstance(v, int | np.integer):
         return bool(int(v))
-    if isinstance(v, (float, np.floating)):
+    if isinstance(v, float | np.floating):
         fv = float(v)
         return bool(fv) if math.isfinite(fv) else False
 

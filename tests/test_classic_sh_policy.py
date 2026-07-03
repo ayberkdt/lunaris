@@ -10,6 +10,8 @@ the fallback policy.
 
 from __future__ import annotations
 
+import pytest
+
 from lunaris.batch.backend_policy import select_classic_sh_backend
 
 
@@ -106,7 +108,6 @@ def test_explicit_numba_high_degree_cpu_policy_uses_cpu() -> None:
     assert d.backend == "cpu_sh"
 
 
-def test_gpu_sh_alias_resolves_in_policy() -> None:
-    # Legacy alias request behaves exactly like numba_cuda_sh.
-    d = _sel(requested_backend="gpu_sh", requested_degree=20, numba_cuda_available=True)
-    assert d.backend == "numba_cuda_sh"
+def test_unknown_classic_sh_backend_is_not_accepted_in_policy() -> None:
+    with pytest.raises(ValueError, match="requested_backend"):
+        _sel(requested_backend="unknown_backend", requested_degree=20, numba_cuda_available=True)

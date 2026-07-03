@@ -7,7 +7,7 @@
 
 #4 (no silent benchmark downgrade): a GPU backend that fails to *initialize* must
    hard-fail -- not silently downgrade to CPU -- when fallback is forbidden
-   (``gpu_sh_fallback_policy='error'`` or a paper-safe / strict-backend flag).
+   (``sh_fallback_policy='error'`` or a paper-safe / strict-backend flag).
 """
 
 from __future__ import annotations
@@ -65,22 +65,22 @@ def _engine(**cfg_attrs) -> BatchPropagationEngine:
 
 
 def test_fallback_forbidden_on_policy_error():
-    assert _engine(gpu_sh_fallback_policy="error")._fallback_forbidden() is True
+    assert _engine(sh_fallback_policy="error")._fallback_forbidden() is True
 
 
 def test_fallback_allowed_by_default():
-    assert _engine(gpu_sh_fallback_policy="compatible_gpu")._fallback_forbidden() is False
-    assert _engine(gpu_sh_fallback_policy="cpu")._fallback_forbidden() is False
+    assert _engine(sh_fallback_policy="compatible_gpu")._fallback_forbidden() is False
+    assert _engine(sh_fallback_policy="cpu")._fallback_forbidden() is False
     assert _engine()._fallback_forbidden() is False  # attribute absent -> default allows
 
 
 @pytest.mark.parametrize("flag", ["paper_safe", "strict_backend", "benchmark_mode"])
 def test_fallback_forbidden_by_explicit_flag(flag):
-    assert _engine(gpu_sh_fallback_policy="compatible_gpu", **{flag: True})._fallback_forbidden() is True
+    assert _engine(sh_fallback_policy="compatible_gpu", **{flag: True})._fallback_forbidden() is True
 
 
 def test_handle_backend_init_failure_raises_when_forbidden():
-    eng = _engine(gpu_sh_fallback_policy="error")
+    eng = _engine(sh_fallback_policy="error")
     plan = SimpleNamespace(gravity_backend="st_lrps")
     with pytest.raises(RuntimeError, match="fallback is forbidden"):
         eng._handle_backend_init_failure(plan, "[BATCH] GPU init failed.", RuntimeError("cuda oom"))
@@ -89,7 +89,7 @@ def test_handle_backend_init_failure_raises_when_forbidden():
 
 
 def test_handle_backend_init_failure_downgrades_when_allowed():
-    eng = _engine(gpu_sh_fallback_policy="compatible_gpu")
+    eng = _engine(sh_fallback_policy="compatible_gpu")
     plan = SimpleNamespace(gravity_backend="st_lrps")
     with pytest.warns(RuntimeWarning):
         eng._handle_backend_init_failure(plan, "[BATCH] GPU init failed.", RuntimeError("cuda oom"))

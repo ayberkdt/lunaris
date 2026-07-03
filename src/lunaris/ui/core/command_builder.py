@@ -565,7 +565,7 @@ def build_batch_command(
     command.extend(["--use-gpu",               bool_to_onoff(use_gpu)])
     command.extend(["--batch-backend",            str(batch_data.get("batch_backend", "auto"))])
     command.extend(["--gpu-device-id",         str(batch_data.get("gpu_device_id",  0))])
-    command.extend(["--gpu-sh-degree",         str(batch_data.get("gpu_sh_degree", 10))])
+    command.extend(["--sh-degree",         str(batch_data.get("sh_degree", 10))])
     command.extend(["--gpu-threads-per-block", str(batch_data.get("gpu_threads_per_block", 128))])
     command.extend(["--batch-gravity-mode",       gravity_mode_override])
     command.extend(["--batch-dt-s",               str(batch_data.get("dt_s",       60.0))])

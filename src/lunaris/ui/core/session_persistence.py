@@ -432,7 +432,7 @@ def sanitize_splitter_sizes(
     * when *total* (the live splitter extent) is known and the saved layout is
       larger, scales the sizes proportionally so they fit the current window.
     """
-    if not isinstance(sizes, (list, tuple)) or len(sizes) < 2:
+    if not isinstance(sizes, list | tuple) or len(sizes) < 2:
         return None
     try:
         vals = [int(round(float(s))) for s in sizes]

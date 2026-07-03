@@ -613,7 +613,7 @@ class STLRPSEvalTab(QWidget):
             sec = rep.get(band)
             if isinstance(sec, dict):
                 n = sec.get("N", sec.get("n", -1))
-                if isinstance(n, (int, float)) and int(n) == 0:
+                if isinstance(n, int | float) and int(n) == 0:
                     ood_warn.append(band)
         if ood_warn:
             lines.append(

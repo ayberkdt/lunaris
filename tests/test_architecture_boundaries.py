@@ -52,7 +52,7 @@ def _is_type_checking_guard(expr: ast.AST) -> bool:
 def _iter_import_nodes(node: ast.AST) -> Iterable[ast.Import | ast.ImportFrom]:
     if isinstance(node, ast.If) and _is_type_checking_guard(node.test):
         return
-    if isinstance(node, (ast.Import, ast.ImportFrom)):
+    if isinstance(node, ast.Import | ast.ImportFrom):
         yield node
         return
     for child in ast.iter_child_nodes(node):

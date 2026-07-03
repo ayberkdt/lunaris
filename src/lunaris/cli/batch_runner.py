@@ -167,19 +167,19 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument(
         "--batch-backend",
         choices=[
-            "auto", "cpu_sh", "gpu_sh", "numba_cuda_sh", "torch_cuda_sh",
+            "auto", "cpu_sh", "numba_cuda_sh", "torch_cuda_sh",
             "torch_cpu_sh", "gpu_st_lrps_potential", "gpu_st_lrps_direct",
         ],
         default="auto",
         help=(
             "Explicit batch propagation backend. 'auto' preserves use-gpu + gravity-mode "
-            "routing. 'numba_cuda_sh' (alias 'gpu_sh') is the degree<=24 Numba CUDA "
-            "screening kernel; 'torch_cuda_sh' is the high-degree PyTorch CUDA "
+            "routing. 'numba_cuda_sh' is the degree<=24 Numba CUDA screening "
+            "kernel; 'torch_cuda_sh' is the high-degree PyTorch CUDA "
             "classic-SH path (gravity-only). Requested SH degree is never clipped."
         ),
     )
     g.add_argument(
-        "--gpu-sh-fallback-policy",
+        "--sh-fallback-policy",
         choices=["compatible_gpu", "cpu", "error"],
         default="compatible_gpu",
         help=(
@@ -193,7 +193,7 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--torch-sh-chunk-size", type=int, default=0,
                    help="Samples per GPU chunk on the torch_cuda_sh path (0 = auto/VRAM-aware).")
     g.add_argument("--gpu-device-id",         type=int,   default=0)
-    g.add_argument("--gpu-sh-degree",         type=int,   default=10,
+    g.add_argument("--sh-degree",         type=int,   default=10,
                    help="Requested SH degree. numba_cuda_sh supports degree <=24; higher degrees use torch_cuda_sh (PyTorch CUDA) or fall back explicitly. Never clipped.")
     g.add_argument("--gpu-threads-per-block", type=int,   default=128)
     g.add_argument(
@@ -390,7 +390,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             from dataclasses import replace
 
             explicit_backend = str(args.batch_backend)
-            if explicit_backend in {"cpu_sh", "gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}:
+            if explicit_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}:
                 forced_backend = "classic_sh"
             elif explicit_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}:
                 forced_backend = "st_lrps"
@@ -455,8 +455,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             use_gpu               = bool(args.use_gpu),
             batch_backend            = str(args.batch_backend),
             gpu_device_id         = int(args.gpu_device_id),
-            gpu_sh_degree         = int(args.gpu_sh_degree),
-            gpu_sh_fallback_policy = str(args.gpu_sh_fallback_policy),
+            sh_degree         = int(args.sh_degree),
+            sh_fallback_policy = str(args.sh_fallback_policy),
             torch_dtype           = str(args.torch_dtype),
             torch_sh_chunk_size   = int(args.torch_sh_chunk_size),
             gpu_threads_per_block = int(args.gpu_threads_per_block),

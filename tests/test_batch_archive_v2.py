@@ -28,27 +28,31 @@ def _archive_arrays() -> tuple[np.ndarray, ...]:
     return t, Y, sc, impact, t_impact, valid, impact_i, impact_f
 
 
+def _v2_metadata(**overrides):
+    metadata = {
+        "archive_schema_version": 2,
+        "n_samples": 4,
+        "seed": 42,
+        "duration_s": 20.0,
+        "output_dt_s": 10.0,
+        "backend": "CPU",
+        "requested_batch_backend": "cpu_sh",
+        "actual_batch_backend": "cpu_sh",
+        "batch_backend": "cpu_sh",
+        "detect_impact": True,
+        "compute_impact_statistics": True,
+    }
+    metadata.update(overrides)
+    return metadata
+
+
 def test_hdf5_archive_v2_batch_streaming_and_lazy_load(tmp_path) -> None:
     path = tmp_path / "batch.h5"
     t, Y, sc, impact, t_impact, valid, impact_i, impact_f = _archive_arrays()
     writer = _HDF5Writer(path, n_samples=4, t_grid=t)
     writer.write_sample_batch(0, 2, Y[:, :2, :])
     writer.write_sample_batch(2, 4, Y[:, 2:, :])
-    writer.write_metadata(
-        archive_schema_version=2,
-        n_samples=4,
-        seed=42,
-        duration_s=20.0,
-        output_dt_s=10.0,
-        backend="CPU",
-        requested_batch_backend="cpu_sh",
-        actual_batch_backend="cpu_sh",
-        batch_backend="cpu_sh",
-        detect_impact=True,
-        compute_impact_statistics=True,
-        backend_diagnostics={"nested": [1, 2, 3]},
-        ordinary_string="cpu_sh",
-    )
+    writer.write_metadata(**_v2_metadata(backend_diagnostics={"nested": [1, 2, 3]}, ordinary_string="cpu_sh"))
     writer.write_final(sc, impact, t_impact, valid, impact_i, impact_f)
     writer.finalize()
 
@@ -104,8 +108,8 @@ def test_hdf5_writer_does_not_swallow_metadata_errors(tmp_path) -> None:
     assert not (tmp_path / "bad_metadata.h5.part").exists()
 
 
-def test_legacy_npz_infers_valid_mask_and_missing_impact_positions(tmp_path) -> None:
-    path = tmp_path / "legacy.npz"
+def test_schema_v2_npz_requires_current_result_arrays(tmp_path) -> None:
+    path = tmp_path / "v2_missing_result_arrays.npz"
     t, Y, sc, impact, t_impact, *_ = _archive_arrays()
     Y[:, 2, :] = np.nan
     np.savez_compressed(
@@ -115,13 +119,11 @@ def test_legacy_npz_infers_valid_mask_and_missing_impact_positions(tmp_path) -> 
         sc_samples=sc,
         impact_flags=impact,
         t_impact=t_impact,
-        metadata_json=np.asarray(json.dumps({"legacy": True}), dtype=np.str_),
+        metadata_json=np.asarray(json.dumps(_v2_metadata()), dtype=np.str_),
     )
 
-    result = load_batch_result(str(path))
-    np.testing.assert_array_equal(result.valid_mask, [1.0, 1.0, 0.0, 1.0])
-    assert result.impact_position_inertial_m is None
-    assert result.impact_position_fixed_m is None
+    with pytest.raises(ValueError, match="missing required dataset"):
+        load_batch_result(str(path))
 
 
 def test_archive_v2_strict_rejects_missing_required_field(tmp_path) -> None:
@@ -138,9 +140,9 @@ def test_archive_v2_strict_rejects_missing_required_field(tmp_path) -> None:
     with pytest.raises(ValueError, match="missing required"):
         load_batch_result(str(path))
 
-    # strict=False loads the partial archive best-effort.
-    result = load_batch_result(str(path), strict=False)
-    assert result.diagnostics["archive_schema_version"] == 2
+    # The strict flag is ignored; manifest enforcement cannot be bypassed.
+    with pytest.raises(ValueError, match="missing required"):
+        load_batch_result(str(path), strict=False)
 
 
 def test_lazy_oe_dispersion_matches_eager_block_read(tmp_path) -> None:
@@ -158,12 +160,7 @@ def test_lazy_oe_dispersion_matches_eager_block_read(tmp_path) -> None:
 
     writer = _HDF5Writer(path, n_samples=4, t_grid=t)
     writer.write_sample_batch(0, 4, Y)
-    writer.write_metadata(
-        archive_schema_version=2, n_samples=4, seed=42, duration_s=20.0,
-        output_dt_s=10.0, backend="CPU", requested_batch_backend="cpu_sh",
-        actual_batch_backend="cpu_sh", batch_backend="cpu_sh", detect_impact=True,
-        compute_impact_statistics=True,
-    )
+    writer.write_metadata(**_v2_metadata())
     writer.write_final(sc, impact, t_impact, valid, impact_i, impact_f)
     writer.finalize()
 
@@ -178,10 +175,8 @@ def test_lazy_oe_dispersion_matches_eager_block_read(tmp_path) -> None:
     np.testing.assert_allclose(oe_lazy.inc_mean_deg, oe_eager.inc_mean_deg, equal_nan=True)
 
 
-def test_archive_v1_legacy_is_exempt_from_strict_manifest(tmp_path) -> None:
-    # An NPZ archive without archive_schema_version is pre-v2 and must load even
-    # under the default strict=True (no manifest enforcement for legacy data).
-    path = tmp_path / "legacy.npz"
+def test_archive_without_schema_version_is_rejected(tmp_path) -> None:
+    path = tmp_path / "missing_schema.npz"
     t, Y, sc, impact, t_impact, *_ = _archive_arrays()
     np.savez_compressed(
         path,
@@ -192,5 +187,5 @@ def test_archive_v1_legacy_is_exempt_from_strict_manifest(tmp_path) -> None:
         t_impact=t_impact,
         metadata_json=np.asarray(json.dumps({"backend": "cpu"}), dtype=np.str_),
     )
-    result = load_batch_result(str(path))
-    assert "archive_schema_version" not in result.diagnostics
+    with pytest.raises(ValueError, match="missing archive_schema_version"):
+        load_batch_result(str(path))

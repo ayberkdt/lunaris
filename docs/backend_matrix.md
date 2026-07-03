@@ -26,12 +26,6 @@ behavior.
 | `cpu_st_lrps` | ST-LRPS | CPU | adaptive DOP853 | surrogate artifact | float64 | ST-LRPS gravity plus CPU perturbations | CPU path used when ST-LRPS GPU is unavailable or incompatible with requested physics. |
 | `auto` | meta | auto | resolved at runtime | resolved at runtime | resolved at runtime | resolved at runtime | Request name only; `resolve_batch_backend_policy()` picks a concrete backend. |
 
-## Aliases
-
-| Alias | Resolves to | Reason |
-|---|---|---|
-| `gpu_sh` | `numba_cuda_sh` | Historical public name retained for compatibility. Provenance should record the resolved backend. |
-
 ## Selection Rules
 
 Classic SH selection is centralized in `select_classic_sh_backend()` and then
@@ -42,7 +36,7 @@ consumed by `resolve_batch_backend_policy()`.
 - Explicit `numba_cuda_sh` requires Numba CUDA, degree <= 24, and physics
   supported by the Numba CUDA kernel.
 - If `numba_cuda_sh` is requested above degree 24, the
-  `gpu_sh_fallback_policy` controls whether the resolver errors, tries
+  `sh_fallback_policy` controls whether the resolver errors, tries
   `torch_cuda_sh`, or falls back to CPU.
 - `auto` prefers compatible GPU backends when `use_gpu=True`; high-degree
   classic SH tries `torch_cuda_sh` before CPU.
@@ -55,7 +49,7 @@ Batch archives should keep these fields aligned with the backend plan:
 
 | Field | Meaning |
 |---|---|
-| `requested_batch_backend` | User/config request before alias resolution and fallback. |
+| `requested_batch_backend` | User/config request before fallback. |
 | `actual_batch_backend` | Concrete backend used for propagation. |
 | `requested_sh_degree` | Requested classic-SH degree; never clipped silently. |
 | `actual_sh_degree` | Degree actually evaluated by the selected backend, when applicable. |

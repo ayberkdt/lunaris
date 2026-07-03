@@ -109,7 +109,7 @@ def _pipeline_key(name: str) -> str:
     """Canonical pipeline-chip key for a model identity.
 
     Accepts either a UI base name (``sh20``, ``st_lrps``) or a runtime display
-    name (``GPU_SH20_RK4``, ``GPU_SH20_RK4_DT10``); always lower-cased so chips
+    name (``NUMBA_CUDA_SH20_RK4``, ``NUMBA_CUDA_SH20_RK4_DT10``); always lower-cased so chips
     match the exact identity the harness emits on stdout.
     """
     return str(name).strip().lower()
@@ -118,8 +118,8 @@ def _pipeline_key(name: str) -> str:
 def _pipeline_label(key: str) -> str:
     """Human label for a pipeline node key (base or runtime display name).
 
-    Examples: ``truth`` -> "Truth", ``sh20`` / ``GPU_SH20_RK4`` -> "SH20",
-    ``GPU_ST_LRPS_RK4`` -> "ST-LRPS", ``GPU_SH20_RK4_DT10`` -> "SH20 Δt10s".
+    Examples: ``truth`` -> "Truth", ``sh20`` / ``NUMBA_CUDA_SH20_RK4`` -> "SH20",
+    ``GPU_ST_LRPS_RK4`` -> "ST-LRPS", ``NUMBA_CUDA_SH20_RK4_DT10`` -> "SH20 Δt10s".
     """
     k = str(key).strip().lower()
     if k == "truth":
@@ -1147,12 +1147,12 @@ class OrbitBenchmarkTab(QWidget):
             self._set_chip_status("truth", "cached")
             return
 
-        # Model start: "[gpu-batch] Model 01/4 | GPU_SH20_RK4 starting for ..."
+        # Model start: "[gpu-batch] Model 01/4 | NUMBA_CUDA_SH20_RK4 starting for ..."
         m = re.search(r"\[gpu-batch\]\s+model\s+\d+/\d+\s+\|\s+(\S+)\s+starting", low)
         if m:
             self._mark_model_running(m.group(1))
             return
-        # Model done: "[gpu-batch] Model 01/4 done | GPU_SH20_RK4: ..."
+        # Model done: "[gpu-batch] Model 01/4 done | NUMBA_CUDA_SH20_RK4: ..."
         m = re.search(r"\[gpu-batch\]\s+model\s+\d+/\d+\s+done\s+\|\s+([^\s:]+)", low)
         if m:
             key = self._ensure_model_chip(m.group(1))

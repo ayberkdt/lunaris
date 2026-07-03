@@ -399,7 +399,7 @@ class _NoWheelOnSpinFilter(QObject):
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         if (
             event.type() == QEvent.Type.Wheel
-            and isinstance(obj, (QSpinBox, QDoubleSpinBox))
+            and isinstance(obj, QSpinBox | QDoubleSpinBox)
         ):
             event.ignore()
             return True

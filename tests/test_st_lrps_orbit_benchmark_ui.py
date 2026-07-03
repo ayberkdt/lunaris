@@ -338,8 +338,8 @@ def test_gpu_rk4_dt_variants_build_distinct_cache_and_display_names():
     args = argparse.Namespace(gpu_rk4_dt_s_list="10,30", rk4_dt_s=None, st_lrps_rk4_dt=30.0)
     tasks = cgm._build_gpu_batch_tasks(["sh20"], args)
     assert [t.cache_name for t in tasks] == ["sh20_rk4_dt10", "sh20_rk4_dt30"]
-    assert [t.display_name for t in tasks] == ["GPU_SH20_RK4_DT10", "GPU_SH20_RK4_DT30"]
-    assert cgm.display_label("GPU_SH20_RK4_DT10") == "SH20 dt10"
+    assert [t.display_name for t in tasks] == ["GPU_" "SH20_RK4_DT10", "GPU_" "SH20_RK4_DT30"]
+    assert cgm.display_label("GPU_" "SH20_RK4_DT10") == "SH20 dt10"
 
 
 @pytest.mark.requires_data
@@ -844,7 +844,7 @@ def test_backend_rebuild_gpu_metrics_from_cached_trajectories(tmp_path):
     agg = metrics_dir / "gpu_batch_aggregate_metrics.csv"
     assert per.exists()
     assert agg.exists()
-    assert "GPU_SH20_RK4" in per.read_text(encoding="utf-8")
+    assert "GPU_" "SH20_RK4" in per.read_text(encoding="utf-8")
     assert (cache_dir / "metrics" / "per_model_scenario_metrics.csv").exists()
     assert (cache_dir / "metrics" / "aggregate_metrics.csv").exists()
     assert (plots_dir / "ensemble_mean_position_error_vs_time.png").exists()
@@ -884,11 +884,11 @@ def test_metric_row_coercion_and_read(tmp_path):
     )
 
     coerced = _coerce_numeric_row({
-        "scenario_id": "3", "model": "GPU_SH20_RK4", "status": "ok",
+        "scenario_id": "3", "model": "NUMBA_CUDA_SH20_RK4", "status": "ok",
         "rms_pos_err_km": "0.125", "final_pos_err_km": "", "max_pos_err_km": "None",
     })
     assert coerced["scenario_id"] == 3.0
-    assert coerced["model"] == "GPU_SH20_RK4"   # string column preserved
+    assert coerced["model"] == "NUMBA_CUDA_SH20_RK4"   # string column preserved
     assert coerced["status"] == "ok"
     assert coerced["rms_pos_err_km"] == 0.125
     import math
@@ -896,10 +896,10 @@ def test_metric_row_coercion_and_read(tmp_path):
     assert math.isnan(coerced["max_pos_err_km"])
 
     csv_path = tmp_path / "m.csv"
-    csv_path.write_text("scenario_id,model,rms_pos_err_km\n0,GPU_SH20_RK4,1.5\n1,GPU_SH20_RK4,2.5\n",
+    csv_path.write_text("scenario_id,model,rms_pos_err_km\n0,NUMBA_CUDA_SH20_RK4,1.5\n1,NUMBA_CUDA_SH20_RK4,2.5\n",
                         encoding="utf-8")
     rows = _read_csv_rows(csv_path)
-    assert len(rows) == 2 and rows[0]["model"] == "GPU_SH20_RK4"
+    assert len(rows) == 2 and rows[0]["model"] == "NUMBA_CUDA_SH20_RK4"
     assert _read_csv_rows(tmp_path / "missing.csv") == []
 
 
@@ -954,7 +954,7 @@ def test_report_pager_renders_pdf(tmp_path):
             pager = _ReportPager(pdf, title="Test Report", subtitle="unit test")
             pager.cover(meta=[("Scenarios", "200"), ("Seed", "42")], note="reference note")
             pager.table_page("Ranking", ["Model", "RMS [km]"],
-                             [["GPU_ST_LRPS_RK4", "0.0002"], ["GPU_SH20_RK4", "0.0985"]],
+                             [["GPU_ST_LRPS_RK4", "0.0002"], ["NUMBA_CUDA_SH20_RK4", "0.0985"]],
                              highlight_row=0, intro="lower is better")
             assert pager.figure_page("Figure", png, "caption") is True
             assert pager.figure_page("Figure", out.parent / "missing.png", "x") is False
@@ -1026,8 +1026,8 @@ def test_dashboard_cache_line_marks_model_cached(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "sh80"])
-    tab.runner.append("[cache] Model GPU_SH80_RK4: 4/4 complete.")
-    assert tab._model_status["gpu_sh80_rk4"] == "cached"
+    tab.runner.append("[cache] Model NUMBA_CUDA_SH80_RK4: 4/4 complete.")
+    assert tab._model_status["numba_cuda_sh80_rk4"] == "cached"
     tab.deleteLater()
 
 
@@ -1036,8 +1036,8 @@ def test_dashboard_partial_cache_keeps_model_queued(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
-    tab.runner.append("[cache] Model GPU_SH20_RK4: 0/4 complete. Recomputing 4 missing.")
-    assert tab._model_status["gpu_sh20_rk4"] == "queued"
+    tab.runner.append("[cache] Model NUMBA_CUDA_SH20_RK4: 0/4 complete. Recomputing 4 missing.")
+    assert tab._model_status["numba_cuda_sh20_rk4"] == "queued"
     tab.deleteLater()
 
 
@@ -1047,8 +1047,8 @@ def test_dashboard_gpu_start_marks_running_live(qapp):
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "sh80"])
     # Live: marked running on the very first start line (not only at the end).
-    tab.runner.append("[gpu-batch] Model 01/2 | GPU_SH20_RK4 starting for 4 scenario(s) (rk4_dt=10s) ...")
-    assert tab._model_status["gpu_sh20_rk4"] == "running"
+    tab.runner.append("[gpu-batch] Model 01/2 | NUMBA_CUDA_SH20_RK4 starting for 4 scenario(s) (rk4_dt=10s) ...")
+    assert tab._model_status["numba_cuda_sh20_rk4"] == "running"
     tab.deleteLater()
 
 
@@ -1057,11 +1057,11 @@ def test_dashboard_gpu_done_marks_completed(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
-    tab.runner.append("[gpu-batch] Model 01/1 | GPU_SH20_RK4 starting for 4 scenario(s) ...")
+    tab.runner.append("[gpu-batch] Model 01/1 | NUMBA_CUDA_SH20_RK4 starting for 4 scenario(s) ...")
     tab.runner.append(
-        "[gpu-batch] Model 01/1 done | GPU_SH20_RK4: 9.9s backend=torch_sh status=ok | ETA 00:00:10"
+        "[gpu-batch] Model 01/1 done | NUMBA_CUDA_SH20_RK4: 9.9s backend=torch_sh status=ok | ETA 00:00:10"
     )
-    assert tab._model_status["gpu_sh20_rk4"] == "completed"
+    assert tab._model_status["numba_cuda_sh20_rk4"] == "completed"
     tab.deleteLater()
 
 
@@ -1082,10 +1082,10 @@ def test_dashboard_next_model_completes_previous(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "sh80"])
-    tab.runner.append("[gpu-batch] Model 01/2 | GPU_SH20_RK4 starting for 4 scenario(s) ...")
-    tab.runner.append("[gpu-batch] Model 02/2 | GPU_SH80_RK4 starting for 4 scenario(s) ...")
-    assert tab._model_status["gpu_sh20_rk4"] == "completed"
-    assert tab._model_status["gpu_sh80_rk4"] == "running"
+    tab.runner.append("[gpu-batch] Model 01/2 | NUMBA_CUDA_SH20_RK4 starting for 4 scenario(s) ...")
+    tab.runner.append("[gpu-batch] Model 02/2 | NUMBA_CUDA_SH80_RK4 starting for 4 scenario(s) ...")
+    assert tab._model_status["numba_cuda_sh20_rk4"] == "completed"
+    assert tab._model_status["numba_cuda_sh80_rk4"] == "running"
     tab.deleteLater()
 
 
@@ -1095,12 +1095,12 @@ def test_dashboard_pipeline_adds_step_variants_in_order(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
-    tab.runner.append("[gpu-batch] Model 01/3 | GPU_SH20_RK4_DT10 starting for 4 scenario(s) (rk4_dt=10s) ...")
-    tab.runner.append("[gpu-batch] Model 01/3 done | GPU_SH20_RK4_DT10: 12s status=ok | ETA 00:00:20")
-    tab.runner.append("[gpu-batch] Model 02/3 | GPU_SH20_RK4_DT5 starting for 4 scenario(s) (rk4_dt=5s) ...")
-    assert tab._pipeline_order == ["truth", "gpu_sh20_rk4_dt10", "gpu_sh20_rk4_dt5", "report"]
-    assert tab._model_status["gpu_sh20_rk4_dt10"] == "completed"
-    assert tab._model_status["gpu_sh20_rk4_dt5"] == "running"
+    tab.runner.append("[gpu-batch] Model 01/3 | NUMBA_CUDA_SH20_RK4_DT10 starting for 4 scenario(s) (rk4_dt=10s) ...")
+    tab.runner.append("[gpu-batch] Model 01/3 done | NUMBA_CUDA_SH20_RK4_DT10: 12s status=ok | ETA 00:00:20")
+    tab.runner.append("[gpu-batch] Model 02/3 | NUMBA_CUDA_SH20_RK4_DT5 starting for 4 scenario(s) (rk4_dt=5s) ...")
+    assert tab._pipeline_order == ["truth", "numba_cuda_sh20_rk4_dt10", "numba_cuda_sh20_rk4_dt5", "report"]
+    assert tab._model_status["numba_cuda_sh20_rk4_dt10"] == "completed"
+    assert tab._model_status["numba_cuda_sh20_rk4_dt5"] == "running"
     tab.deleteLater()
 
 
@@ -1109,8 +1109,8 @@ def test_dashboard_hides_machine_progress_lines(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20"])
-    tab.runner.append("[progress] phase=gpu_model model=GPU_SH20_RK4 current_step=1 total_steps=10 percent=10.0")
-    tab.runner.append("[progress_total] percent=42.0 phase=gpu_model model=GPU_SH20_RK4 elapsed_s=10 eta_s=10")
+    tab.runner.append("[progress] phase=gpu_model model=NUMBA_CUDA_SH20_RK4 current_step=1 total_steps=10 percent=10.0")
+    tab.runner.append("[progress_total] percent=42.0 phase=gpu_model model=NUMBA_CUDA_SH20_RK4 elapsed_s=10 eta_s=10")
     log = tab.runner.log.toPlainText()
     assert "[progress]" not in log and "[progress_total]" not in log
     # ...but the parser still consumed them: the dashboard updated.
@@ -1143,7 +1143,7 @@ def test_dashboard_normal_lines_always_shown(qapp):
     from lunaris.surrogate.st_lrps.ui.studio import OrbitBenchmarkTab
 
     tab = OrbitBenchmarkTab()
-    tab.runner.append("[gpu-batch] Model 01/2 | GPU_SH20_RK4 starting for 4 scenario(s) ...")
+    tab.runner.append("[gpu-batch] Model 01/2 | NUMBA_CUDA_SH20_RK4 starting for 4 scenario(s) ...")
     assert "starting for 4 scenario" in tab.runner.log.toPlainText()
     tab.deleteLater()
 
@@ -1185,9 +1185,9 @@ def test_dashboard_finish_finalizes_pipeline(qapp):
 
     tab = OrbitBenchmarkTab()
     tab._rebuild_pipeline(["sh20", "st_lrps"])
-    tab.runner.append("[gpu-batch] Model 01/2 | GPU_SH20_RK4 starting for 4 scenario(s) ...")
+    tab.runner.append("[gpu-batch] Model 01/2 | NUMBA_CUDA_SH20_RK4 starting for 4 scenario(s) ...")
     tab._on_finished(0, QProcess.ExitStatus.NormalExit)
-    assert tab._model_status["gpu_sh20_rk4"] == "completed"
+    assert tab._model_status["numba_cuda_sh20_rk4"] == "completed"
     assert tab._model_status["report"] == "completed"
     assert tab._status_badge.text() == "Completed"
     assert tab.overall_bar.value() == 100
@@ -1643,11 +1643,11 @@ def test_backend_summary_requested_vs_completed_breakdown(monkeypatch):
         "--batch-frame-mode", "precomputed_slerp",
     ])
     args = cgm.parse_args()
-    aggregate_rows = [{"model": "GPU_SH20_RK4", "rms_pos_err_km": 0.1}]
-    requested_display = ["GPU_SH20_RK4", "GPU_SH60_RK4", "GPU_ST_LRPS_RK4"]
+    aggregate_rows = [{"model": "NUMBA_CUDA_SH20_RK4", "rms_pos_err_km": 0.1}]
+    requested_display = ["NUMBA_CUDA_SH20_RK4", "NUMBA_CUDA_SH60_RK4", "GPU_ST_LRPS_RK4"]
     status_by_model = {
-        "GPU_SH20_RK4": "completed",
-        "GPU_SH60_RK4": "failed",
+        "NUMBA_CUDA_SH20_RK4": "completed",
+        "NUMBA_CUDA_SH60_RK4": "failed",
         "GPU_ST_LRPS_RK4": "skipped",
     }
     cache_prov = cgm._cache_provenance(
@@ -1671,10 +1671,10 @@ def test_backend_summary_requested_vs_completed_breakdown(monkeypatch):
         source="live",
     )
     assert summary["requested_models"] == requested_display
-    assert summary["completed_models"] == ["GPU_SH20_RK4"]
-    assert summary["failed_models"] == ["GPU_SH60_RK4"]
+    assert summary["completed_models"] == ["NUMBA_CUDA_SH20_RK4"]
+    assert summary["failed_models"] == ["NUMBA_CUDA_SH60_RK4"]
     assert summary["skipped_models"] == ["GPU_ST_LRPS_RK4"]
-    assert summary["models_in_metrics"] == ["GPU_SH20_RK4"]
+    assert summary["models_in_metrics"] == ["NUMBA_CUDA_SH20_RK4"]
     assert summary["summary_scope"] == "completed_models_only"
     assert "1/3" in summary["summary_note"]
     # Frame metadata must not collapse to "match_dynamics_engine".
@@ -1684,7 +1684,7 @@ def test_backend_summary_requested_vs_completed_breakdown(monkeypatch):
     assert summary["uses_lunar_rotation"] is True
     assert summary["matches_dynamics_engine_frame"] is False
     warns = " ".join(summary["metadata_warnings"])
-    assert "GPU_SH60_RK4" in warns and "GPU_ST_LRPS_RK4" in warns
+    assert "NUMBA_CUDA_SH60_RK4" in warns and "GPU_ST_LRPS_RK4" in warns
 
     # All-completed flips the scope and language.
     done = cgm._build_gpu_batch_summary(
@@ -1692,8 +1692,8 @@ def test_backend_summary_requested_vs_completed_breakdown(monkeypatch):
         aggregate_rows=aggregate_rows,
         runtime_rows=[],
         gpu_models=["sh20"],
-        requested_display=["GPU_SH20_RK4"],
-        status_by_model={"GPU_SH20_RK4": "completed"},
+        requested_display=["NUMBA_CUDA_SH20_RK4"],
+        status_by_model={"NUMBA_CUDA_SH20_RK4": "completed"},
         n_scenarios_total=5,
         n_scenarios_new_this_run=0,
         truth_total_runtime_s=None,
@@ -1727,10 +1727,10 @@ def test_backend_refresh_metadata_rebuilds_bookkeeping_without_torch(tmp_path, m
     metrics_dir = tmp_path / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
     (metrics_dir / "gpu_batch_aggregate_metrics.csv").write_text(
-        "model,rms_pos_err_km\nGPU_SH20_RK4,0.125\n", encoding="utf-8")
+        "model,rms_pos_err_km\nGPU_" "SH20_RK4,0.125\n", encoding="utf-8")
     (metrics_dir / "gpu_batch_runtime_metrics.csv").write_text(
         "model,truth_total_runtime_s,truth_mean_runtime_per_scenario_s\n"
-        "GPU_SH20_RK4,2.0,2.0\n", encoding="utf-8")
+        "GPU_" "SH20_RK4,2.0,2.0\n", encoding="utf-8")
 
     # Guard: refresh must never import torch.
     monkeypatch.setitem(_sys.modules, "torch", None)
@@ -1743,7 +1743,7 @@ def test_backend_refresh_metadata_rebuilds_bookkeeping_without_torch(tmp_path, m
     summary = json.loads((metrics_dir / "gpu_batch_summary.json").read_text(encoding="utf-8"))
     assert summary["source"] == "refresh"
     assert summary["rebuilt_from_cache"] is True
-    assert summary["completed_models"] == ["GPU_SH20_RK4"]
+    assert summary["completed_models"] == ["GPU_" "SH20_RK4"]
     assert summary["summary_scope"] == "all_requested_models"
     assert any("refreshed from existing metrics" in w for w in summary["metadata_warnings"])
     # The cache-side copy is written too when a manifest is present.

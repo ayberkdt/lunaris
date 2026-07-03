@@ -115,7 +115,7 @@ and resolved backend. Use `lunaris-batch --batch-backend ...` to compare:
 lunaris-batch \
     --sampling-method sobol_scrambled \
     --batch-backend auto \
-    --gpu-sh-degree 24 \
+    --sh-degree 24 \
     --n-samples 128 \
     --batch-dt-s 60 \
     --batch-output-path outputs/ensemble/profile_auto.h5

@@ -154,7 +154,7 @@ def model_zorder(model: str) -> int:
 
 
 def display_label(model: str) -> str:
-    """Human label, e.g. GPU_SH20_RK4 -> SH20, GPU_ST_LRPS_RK4 -> ST-LRPS."""
+    """Human label, e.g. NUMBA_CUDA_SH20_RK4 -> SH20, ST_LRPS_RK4 -> ST-LRPS."""
     m = str(model)
     dt_label: str | None = None
     if "_DT" in m.upper():
@@ -164,7 +164,8 @@ def display_label(model: str) -> str:
     if _is_stlrps(m):
         label = "ST-LRPS"
     else:
-        label = m.replace("GPU_", "").replace("_RK4", "").upper()
+        degree = _model_degree(m)
+        label = f"SH{degree}" if degree is not None else m.replace("GPU_", "").replace("_RK4", "").upper()
     return f"{label} dt{dt_label}" if dt_label else label
 
 
@@ -672,7 +673,7 @@ def estimate_stlrps_equivalent_sh_degree(aggregate_rows: list[dict[str, Any]]) -
         sh_points = []
         for model, row in by_model.items():
             deg = _model_degree(model)
-            if model.startswith("GPU_SH") and deg is not None:
+            if model.startswith("NUMBA_CUDA_SH") and deg is not None:
                 try:
                     sh_points.append((deg, float(row[metric_key]), model))
                 except Exception:
@@ -1017,7 +1018,7 @@ def plot_gpu_batch_report_figures(
     sh_points = []
     for m in models:
         deg = _model_degree(m)
-        if deg is not None and m.upper().startswith("GPU_SH"):
+        if deg is not None and m.upper().startswith("NUMBA_CUDA_SH"):
             sh_points.append((deg, _safe(agg_by_model[m].get("median_rms_pos_err_km")),
                               _safe(agg_by_model[m].get("p95_rms_pos_err_km"))))
     sh_points.sort()

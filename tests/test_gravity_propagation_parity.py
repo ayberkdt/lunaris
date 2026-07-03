@@ -54,7 +54,7 @@ def _gravity_model(*, c20: float = _C20) -> GravityModel:
 
 def _batch_cfg() -> SimpleNamespace:
     return SimpleNamespace(
-        gpu_sh_degree=_DEGREE,
+        sh_degree=_DEGREE,
         dt_s=30.0,
         impact_alt_km=0.0,
         torch_dtype="float64",

@@ -423,7 +423,7 @@ def _write_manifest(manifest_path, run_key, config, config_path, run_out_dir, co
         config_path=config_path,
         config=config,
         out_dir=run_out_dir,
-        artifacts={k: (str(v) if not isinstance(v, (str, Path)) else v) for k, v in artifacts.items()},
+        artifacts={k: (str(v) if not isinstance(v, str | Path) else v) for k, v in artifacts.items()},
         command=[str(c) for c in command],
         dry_run=dry_run,
         extra=extra,

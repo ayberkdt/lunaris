@@ -397,7 +397,7 @@ sbatch hpc/slurm_benchmark_gpu.sbatch \
 sbatch hpc/slurm_batch_array.sbatch \
   --sampling-method sobol_scrambled \
   --batch-backend auto \
-  --gpu-sh-degree 24 \
+  --sh-degree 24 \
   --out-dir "$LUNARIS_OUTPUT_DIR/ensemble/batch_run"
 ```
 
@@ -411,9 +411,10 @@ Sampling and backend selection are explicit and recorded in ensemble outputs:
   fallback.
 - `--batch-backend cpu_sh` uses the full CPU spherical-harmonic path and is the
   recommended high-fidelity truth/reference backend.
-- `--batch-backend gpu_sh` selects the true Numba CUDA classic-SH path. The current
-  supported GPU SH tier is degree 24; higher `--gpu-sh-degree` requests fall back
-  to CPU SH without silently clipping the degree.
+- `--batch-backend numba_cuda_sh` selects the true Numba CUDA classic-SH path. The current
+  supported GPU SH tier is degree 24; higher `--sh-degree` requests follow
+  `--sh-fallback-policy` (`torch_cuda_sh` when compatible, CPU, or error)
+  without silently clipping the degree.
 - `--batch-backend gpu_st_lrps_potential` uses the scalar-potential ST-LRPS artifact
   and autograd residual acceleration on PyTorch CUDA.
 - `--batch-backend gpu_st_lrps_direct` uses direct residual acceleration with a
@@ -424,7 +425,7 @@ For 512-orbit GPU batch propagation, use `auto` or an explicit ST-LRPS GPU
 backend for throughput runs, and keep `cpu_sh` high-degree runs as
 validation/truth jobs.
 Do not describe high-degree SH as a true GPU baseline unless the output metadata
-shows `actual_batch_backend=gpu_sh` and an `actual_sh_degree` at the requested tier.
+shows `actual_batch_backend=torch_cuda_sh` and an `actual_sh_degree` at the requested tier.
 
 ### Dataset generation and evaluation
 
