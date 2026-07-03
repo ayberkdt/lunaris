@@ -1,10 +1,10 @@
-# LEVEL 99 PLAN — Lunaris Extension Roadmap (Executable, Value-Filtered Edition)
+# LEVEL 99 PLAN — Lunaris Extension Roadmap (Verified, Value-Filtered Edition)
 
-> Derived from the "LEVEL 99 Fable v" planning memo (2026-07), verified against
-> the repository at commit `00f1748` (2026-07-03), and **filtered**: every task
-> below states the concrete question it answers or the risk it retires. Items
-> from the memo that do not pass that filter are listed in §3 with the reason
-> they were cut, so they are not silently re-added later.
+> Derived from the "LEVEL 99 Fable v" planning memo (2026-07). Every factual
+> premise below was **verified in source** at commit `00f1748` (2026-07-03) —
+> nothing is assumed from the memo. Tasks that turned out to be already done,
+> unreachable, or duplicative were cut and are listed in §3 with evidence, so
+> they are not silently re-added later.
 >
 > Written as self-contained work orders so any competent agent or developer —
 > including smaller LLMs with no prior repo context — can execute each task
@@ -15,7 +15,7 @@
 ## 0. Execution rules (read before ANY task)
 
 1. **One task per branch.** Branch names: `feature/<task-id-kebab>`
-   (e.g. `feature/t2-uq-convergence`). Never commit directly to `main`.
+   (e.g. `feature/a1-uq-convergence`). Never commit directly to `main`.
 2. **Commit authoring:** author commits as the repository user only. Do NOT
    add any `Co-Authored-By:` trailer (including Claude/AI trailers). Ever.
 3. **Verification gate — run before declaring any task done:**
@@ -44,35 +44,30 @@
 6. **Banned claims** (code comments, docs, figures, commits, paper text):
    "optimal in seconds", "100% fidelity", "AI pilot", "flight-ready",
    "replaces spherical harmonics", any navigation/OD-accuracy language for UQ
-   outputs, any autonomy language for the RL env.
-7. **Naming:** use **ensemble** for the statistics layer
-   (`lunaris.analysis.ensemble`) and **batch** for the propagation engine
+   outputs, any autonomy language for the RL env. `gpu_st_lrps_direct`
+   (force_direct) results back **no claims anywhere** pending curl/orbit-level
+   validation.
+7. **Naming:** **ensemble** for the statistics layer
+   (`lunaris.analysis.ensemble`), **batch** for the propagation engine
    (`lunaris.batch`). Do not reintroduce `monte_carlo`/`mc_` names
    (canonicalized in commits `06473fc`, `46e61ce`).
 
 ---
 
-## 1. Reality delta — what already exists (verified in source; do NOT rebuild)
+## 1. Verified ground truth (checked in source — the plan's factual basis)
 
-The memo predates PR #78 and the ensemble rename. Anything marked DONE below
-was checked in the code, not assumed.
-
-| Memo item | Status | Where it lives now |
-| --- | --- | --- |
-| `analysis/monte_carlo/` namespace | RENAMED | `src/lunaris/analysis/ensemble/` |
-| UQ report bundler | DONE (#78) | `analysis/ensemble/uq_report.py` — `build_uq_report(...)`; post-hoc CLI `main(argv)` with `--archive --out --survived-only --no-figures` |
-| RIC covariance decomposition | DONE (#78) | `statistics.py`: `ric_basis_from_state()`, `compute_ric_uncertainty()`, `RICUncertainty` |
-| Linear FD-STM cross-check | DONE (#78) | `analysis/ensemble/linear_check.py` + `propagate_covariance_linear()` |
-| CLI wiring | DONE (#78) | `lunaris-batch` runner: `--uq-report-dir` (`cli/batch_runner.py:523`); post-hoc: `python -m lunaris.analysis.ensemble.uq_report` |
-| Full (non-diagonal) P₀ sampling | DONE (mechanism) | `StateUncertainty.covariance_6x6` (`common/batch_defs.py:98`) → `cholesky_factor()` → `sample_initial_states()` (`batch/sampling.py:79`) |
-| Covariance eigenvalue figure | DONE | `plot_covariance_eigenvalues` (`analysis/ensemble/plotting.py:551`) |
-| RIC σ history figure | DONE | `plot_ric_sigma_history` (`plotting.py:525`) |
-| Core UQ tests | DONE (#78) | `tests/test_uq_report.py`: PSD/symmetry, zero-dispersion, RIC hand cases, seed-hash reproducibility, manifest completeness, figure smoke, FD-STM linear + two-body |
-| UQ doc | DONE (#78) | `docs/UQ_COVARIANCE.md` |
-| Tudat reference pattern (gravity) | EXISTS | `validation/independent/tudatpy_reference.py` — SRP variant does NOT exist |
-| SRP/eclipse internal validation | EXISTS | `tests/test_srp_eclipse.py`, `docs/FORCE_MODEL_VALIDATION.md` |
-| Differentiable propagation | NOT STARTED | planned home: `src/lunaris/optimization/differentiable/` |
-| RL environment | NOT STARTED | deferred (see §7) |
+| Fact | Evidence |
+| --- | --- |
+| UQ report bundler, RIC decomposition, FD-STM linear check, post-hoc CLI, core tests, `docs/UQ_COVARIANCE.md` — all DONE | PR #78: `analysis/ensemble/uq_report.py` (`build_uq_report`, `main` with `--archive --out --survived-only --no-figures`), `statistics.py:575–711`, `linear_check.py`, `tests/test_uq_report.py` |
+| The UQ manifest already records the full batch config verbatim + hash | `cli/batch_runner.py:532` passes `run_config=asdict(batch_cfg)`; `uq_report.py:323–326` stores it + `canonical_json_sha256`. Post-hoc path stores explicit `run_config: null` (not silently incomplete) |
+| Batch archives store the **full per-member trajectory tensor** | `batch/storage.py`: dataset `Y` shape `(T, n_samples, 6)`, HDF5 with lazy loading (`load_batch_result(..., lazy=True)`) — post-hoc studies need no re-propagation |
+| Full non-diagonal P₀ is mechanism-only, **unreachable from any config/CLI** | `StateUncertainty.covariance_6x6` exists (`common/batch_defs.py:98`) and `sample_initial_states` applies it via `cholesky_factor()`, but `covariance_6x6` appears in no other file under `src/lunaris` |
+| SH batch backends | `cpu_sh`, `numba_cuda_sh`, `torch_cuda_sh`, `torch_cpu_sh` (`batch/backend_policy.py:171`), with requested-vs-actual + fallback-provenance machinery |
+| Surrogate batch backends | `cpu_st_lrps`, `gpu_st_lrps_potential`, `gpu_st_lrps_direct` (`batch/engine.py:54–59`), model dir validated via `validate_st_lrps_model_dir` |
+| Covariance eigenvalue + RIC σ figures already exist | `plot_covariance_eigenvalues` (`plotting.py:551`), `plot_ric_sigma_history` (`plotting.py:525`) |
+| SRP internal tests already cover values | `tests/test_srp_eclipse.py`: closed-form magnitude, direction, inverse-square, shadow bounds, day-side, **deep-umbra zero force**, **penumbra continuity/monotonicity**, zero mass/area, eclipse-disable, wrapper parity |
+| Tudat reference pattern exists for gravity only | `validation/independent/tudatpy_reference.py`; no SRP variant |
+| Differentiable propagation / RL | Not started anywhere |
 
 ---
 
@@ -80,34 +75,38 @@ was checked in the code, not assumed.
 
 Every kept task must answer YES to at least one of:
 
-- **(a)** It produces or protects a **paper claim** (figure, table, methods
-  sentence, or a reviewer question pre-empted).
-- **(b)** It retires a **correctness risk** in something already shipped.
-- **(c)** It is a **gate** that cheaply de-risks a larger planned effort
-  before money/time is spent on it.
+- **(a)** produces or protects a **paper claim** (figure, table, methods
+  sentence, reviewer question pre-empted);
+- **(b)** retires a **correctness risk** in something already shipped;
+- **(c)** is a cheap **gate** that de-risks a larger planned effort before
+  time is spent on it.
 
-Tasks that only add optionality, symmetry, or "nice to have" outputs are cut
-(§3) or deferred (§7).
+**The single most valuable item in the roadmap is not a new feature:** it is
+the Phase-0 paper-evidence run (G0). Everything paper-facing gates on it.
 
-**The single most valuable item in the entire roadmap is not a new feature:**
-it is the Phase-0 paper-evidence run (G0). Everything paper-facing gates on
-it. The memo's own conclusion — kept as the plan's spine.
+The surviving backlog is deliberately small: **two UQ tasks, two SRP tasks,
+one doc close-out, one gated research track.**
 
 ---
 
-## 3. Cut list — memo items removed, with reasons (do not silently re-add)
+## 3. Cut list — removed items, with evidence (do not silently re-add)
 
-| Memo item | Why cut |
+| Item | Why cut |
 | --- | --- |
-| Eigenvalue-spectrum history figure ("new, trivial") | Already exists (`plot_covariance_eigenvalues`). Re-implementing it is negative-value work. |
-| Separate `lunaris-uq` CLI entry point | The post-hoc `python -m lunaris.analysis.ensemble.uq_report` CLI and the `--uq-report-dir` runner flag already cover both workflows. A third entry point adds surface area, docs, and an entry-point-inventory test update for zero new capability. |
-| Direct user-supplied ensembles as UQ input | No user or paper figure needs it; the archive-based post-hoc path already decouples propagation from reporting. Revisit only on a concrete request. |
-| Parquet / new storage formats | Memo already rejected it; reaffirmed — HDF5/NPZ + audited archives suffice. |
-| GMAT SRP cross-check | Script-export + manual runs; Tudat covers the independent-implementation requirement scriptably. GMAT stays optional-forever unless a reviewer demands it. |
-| Mahalanobis normality diagnostics as a default report output | `mahalanobis_distance()` exists for ad-hoc use. Shipping a default "normality verdict" invites over-interpretation of a diagnostic; add only if the paper text needs one number. |
-| Full RL work-order spec in this plan | RL is deferred until after paper submission (memo §6 reasoning stands). Carrying a detailed executable spec here invites premature starts by exactly the smaller models this plan targets. §7 keeps the gate + hard requirements only. |
-| Run-comparison dashboard | Needs a stable comparison schema, which needs ≥2 accepted benchmark runs, which need Phase 0. Nothing to design yet. |
-| torchdiffeq/adjoint integration | Explicitly banned until the fixed-step MVP hits a **measured** memory wall. |
+| "Record full-P₀/dispersion in the UQ manifest" | Already covered: the runner passes `asdict(batch_cfg)` verbatim into the manifest with a canonical hash (`batch_runner.py:532`, `uq_report.py:323`). Nothing to add. |
+| Wiring `covariance_6x6` into config/CLI | The mechanism is dead code today (§1), but the current paper's UQ subsection uses diagonal σ — the memo itself called full-P₀ a fast-follow. Wire it only when a concrete scenario needs a correlated P₀; until then it is untestable surface area. |
+| Eigenvalue-spectrum history figure | Already exists: `plot_covariance_eigenvalues` (`plotting.py:551`). |
+| Deep-umbra zero-SRP test; penumbra continuity test | Already exist in `tests/test_srp_eclipse.py` (`test_deep_umbra_zeros_the_force`, `test_penumbra_is_continuous_and_monotone`). My earlier draft duplicated them. |
+| Deep-umbra SRP **work-integral** test | Pointwise-zero acceleration is already tested; the integral of an identically-zero function adds no information. |
+| β-angle eclipse-fraction sweep | Weak marginal value over the entry/exit **epoch** test (B1), which already validates orbit-level shadow geometry against an independent implementation. |
+| Separate `lunaris-uq` CLI entry point | Post-hoc `python -m lunaris.analysis.ensemble.uq_report` + the runner's `--uq-report-dir` cover both workflows; a third entry point is surface area for zero capability. |
+| Direct user-supplied ensembles as UQ input | No user or figure needs it; the archive-based post-hoc path already decouples propagation from reporting. |
+| Parquet / new storage formats | HDF5/NPZ + audited archives suffice (memo agreed; reaffirmed). |
+| GMAT SRP cross-check | Script-export + manual runs; Tudat satisfies the independent-implementation requirement scriptably. |
+| Mahalanobis "normality verdict" in the default report | `mahalanobis_distance()` exists for ad-hoc use; a default verdict invites over-interpretation. |
+| Full RL work-order spec in this plan | RL is deferred until after paper submission; carrying an executable spec here invites premature starts. §7 keeps the gate + hard requirements only. |
+| Run-comparison dashboard | Needs a stable schema → needs ≥2 accepted benchmark runs → needs G0 twice. Nothing to design yet. |
+| torchdiffeq/adjoint | Banned until the fixed-step MVP hits a **measured** memory wall. |
 | UKF/EnKF/filtering, process noise, panel/attitude SRP, docking/landing envs, multi-agent, web/SaaS | Different projects wearing this project's clothes. Not backlogged. |
 
 ---
@@ -115,7 +114,7 @@ it. The memo's own conclusion — kept as the plan's spine.
 ## 4. Gate G0 — paper-safe evidence run (no new code; maintainer-scheduled)
 
 **Contribution (a):** the first accepted benchmark table; the artifact every
-downstream claim cites. Without it, T3's real study and all of Phase D are idle.
+downstream claim cites.
 
 1. Run the existing pipeline end to end via `lunaris-st-lrps-paper-evidence`:
    dataset → spatial-block training → validation suite → A0–A6 ablation →
@@ -129,48 +128,18 @@ downstream claim cites. Without it, T3's real study and all of Phase D are idle.
 
 ---
 
-## 5. Track A — UQ completion (3 tasks, analysis/ only)
+## 5. Track A — UQ completion (2 tasks, `analysis/` + `tests/` only)
 
-### T1 — Full-P₀ provenance in the UQ manifest  (size S; deps none; filter a+b)
+### A1 — Convergence study: "was N enough?"  (size M; deps none; filter a)
 
-**Contribution:** the sampling mechanism for full 6×6 P₀ exists, but if the
-manifest doesn't faithfully record the input dispersion in that mode, the
-report's provenance story — the whole point of #78 — is silently broken for
-exactly the configuration the paper's UQ subsection will use.
-
-**Steps:**
-1. Read `build_uq_report()` in `analysis/ensemble/uq_report.py`; locate the
-   input-uncertainty serialization.
-2. Verify the manifest records: distribution family (`"gaussian_diagonal"` /
-   `"gaussian_full"`), the σ vector **or** full 6×6 matrix (nested list,
-   canonical-JSON-safe via the existing `_jsonable()`), sampling method,
-   seed, N. Add whatever is missing for the `covariance_6x6` case.
-3. If the post-hoc archive path cannot recover the input dispersion, write
-   `"input_dispersion": "unavailable (post-hoc archive)"` explicitly — the
-   manifest must never be silently incomplete.
-4. **If step 2 shows everything is already recorded, close the task with the
-   two tests below as regression locks and no production change.**
-
-**Tests (`tests/test_uq_report.py`):**
-- `test_uq_manifest_records_full_covariance_input` — non-diagonal P₀ (diag +
-  one r–v off-diagonal term) → manifest carries the matrix and
-  `gaussian_full`.
-- `test_full_covariance_sampling_reproduces_input_covariance` — N=4096 via
-  `sample_initial_states` with known non-diagonal P₀; `np.cov(...,ddof=1)`
-  matches within relative Frobenius < 0.1.
-
-**Acceptance:** both tests green; changes confined to `analysis/ensemble/` + `tests/`.
-
-### T2 — Convergence study: is N sufficient?  (size M; deps none; filter a)
-
-**Contribution:** the first question any reviewer asks about an ensemble
-covariance is "how do you know N was enough?". This produces the figure that
-answers it (memo paper-figure F3), and it needs no GPU and no trained artifact.
+**Contribution:** the first question a reviewer asks about an ensemble
+covariance. Produces the memo's paper figure F3. Needs no GPU, no artifact,
+no re-propagation (archives carry full `Y` — §1).
 
 **Files:** `src/lunaris/analysis/ensemble/convergence.py`,
 `tests/test_uq_convergence.py`.
 
-**Design (implement exactly this — no CLI beyond the one flag):**
+**Design (implement exactly this):**
 1. ```python
    def run_convergence_study(
        result_or_archive,                 # BatchPropagationResult | str path
@@ -179,19 +148,21 @@ answers it (memo paper-figure F3), and it needs no GPU and no trained artifact.
        epochs: str = "final",             # "final" | "all"
    ) -> ConvergenceStudy
    ```
-   For each N: take the **first N members** (prefix subsetting keeps Sobol
-   designs valid at power-of-two lengths — see `_sobol_size_note()` in
-   `batch/sampling.py`), compute `P_N` through the existing
-   `compute_ensemble_statistics` path, record
-   `‖P_N − P_ref‖_F / ‖P_ref‖_F` and the max-eigenvalue ratio against
-   `P_ref = P at max(n_grid)`.
+   Load via `load_batch_result(path, lazy=True, strict=False)` when given a
+   path. For each N (clipped to `n_samples`; skip N > available with a note):
+   slice the member axis — `Y_N = Y[:, :N, :]` — into a trimmed shallow copy
+   of the result (member axis is axis 1; **prefix** subsetting keeps Sobol
+   designs valid at power-of-two lengths, see `_sobol_size_note()` in
+   `batch/sampling.py`), reuse `compute_ensemble_statistics`, and record
+   `‖P_N − P_ref‖_F / ‖P_ref‖_F` plus the max-eigenvalue ratio against
+   `P_ref = P at max usable N`.
 2. `ConvergenceStudy` dataclass: `n_grid`, `frobenius_rel`, `eig_ratio`,
    `sampling_method`, `seed`; `to_npz(path)` writer.
-3. SE proxy at max N: 8 disjoint blocks → per-block covariance → element-wise
-   std. Docstring must call it a proxy, not a rigorous estimator.
+3. SE proxy at max N: 8 disjoint member blocks → per-block covariance →
+   element-wise std. Docstring must call it a proxy, not a rigorous estimator.
 4. `plot_convergence(studies, out_path)`: log-log Frobenius drift vs N, one
    line per study (enables the MC-vs-Sobol overlay from two archives that
-   differ only in `sampling_method`). Matplotlib `Agg`, follow
+   differ only in `sampling_method`). Matplotlib `Agg`; follow
    `docs/UQ_COVARIANCE.md` figure conventions (units + frame stated).
 5. Wire `--convergence` into the existing post-hoc `main()` in
    `uq_report.py`: writes `uq_convergence.npz` + figure into the report dir
@@ -202,119 +173,119 @@ answers it (memo paper-figure F3), and it needs no GPU and no trained artifact.
   Gaussian ensemble (no propagation): drift at 8192 < drift at 128 and
   < 0.05 relative.
 - `test_convergence_cli_flag_writes_outputs` — tmp_path smoke through
-  `main(["--archive",…,"--out",…,"--convergence"])`; assert NPZ keys + figure
-  file + manifest block.
+  `main(["--archive",…,"--out",…,"--convergence"])`; assert NPZ keys, figure
+  file, manifest block.
 
 **Acceptance:** runs on an existing archive without re-propagation; the
 MC-vs-Sobol figure produced once from two real archives and added to
 `docs/UQ_COVARIANCE.md`; suite green.
 
-### T3 — Backend comparison: SH vs ST-LRPS covariance evolution  (size M; deps: plumbing none / study G0; filter a+c)
+### A2 — Backend comparison: `cpu_sh` vs `gpu_st_lrps_potential`  (size M; plumbing deps none, study deps G0; filter a+c)
 
 **Contribution:** converts the paper's throughput claim into a validated
 capability ("the cheap GPU ensemble gives the *same covariance* as the SH
 reference") and doubles as orbit-level surrogate validation. Claim only
-consistency for the tested configuration.
+consistency for the tested configuration. **Never** use
+`gpu_st_lrps_direct` here (rule §0.6).
 
 **Files:** `src/lunaris/analysis/ensemble/backend_comparison.py`,
 `tests/test_uq_backend_comparison.py`.
 
 **Steps:**
-1. `compare_backends(config, backend_a, backend_b, *, seed, n_samples) -> BackendComparison`:
+1. `compare_backends(cfg, batch_cfg, backend_a, backend_b, *, st_lrps_model_dir=None) -> BackendComparison`:
    build ONE standard-normal design via `generate_standard_normal_design`
-   (same seed); map through the same `StateUncertainty`; run the batch engine
-   twice with the two **requested** backends; after each run assert
-   `actual == requested` using the existing backend-policy provenance and
-   **raise with a clear message on mismatch** — never compare a silent
-   fallback.
+   (same seed) and pass it to both runs so the input ensemble is identical;
+   run `BatchPropagationEngine` twice with configs differing **only** in the
+   backend field (+ `st_lrps_model_dir` for the surrogate side, validated by
+   the existing `validate_st_lrps_model_dir`); after each run compare the
+   **actual** backend recorded in the result's provenance/diagnostics against
+   the requested one and **raise with a clear message on mismatch** — never
+   compare a silent fallback.
 2. Metrics per epoch: `frobenius_rel_diff(P_a, P_b)`, RIC σ differences,
    mean-state RIC offset. Output: `backend_comparison.npz` + two-panel figure
-   (RIC σ both backends; relative Frobenius diff vs time) + manifest block
+   (RIC σ both backends; relative Frobenius diff vs time) + a manifest block
    naming both backends, their provenance hashes, and the surrogate artifact
    hash.
 3. No new console entry point: expose via
    `python -m lunaris.analysis.ensemble.backend_comparison`
    (`--config --backend-a --backend-b --n --seed --out`).
 
-**Tests (CPU-only, artifact-free — this is the cheap de-risk):**
-- `test_backend_self_comparison_is_zero` — a backend vs itself: all metrics
-  ≈ 0 to round-off. Validates plumbing everywhere, including CI.
+**Tests (CPU-only, artifact-free — the cheap de-risk):**
+- `test_backend_self_comparison_is_zero` — `cpu_sh` vs `cpu_sh`, small N,
+  short arc: all difference metrics ≈ 0 to round-off. Validates plumbing in
+  CI without GPU.
 - `test_backend_comparison_mismatch_guard` — request an unavailable backend;
-  assert the informative raise (no silent fallback into the comparison).
+  assert an informative raise (no silent fallback into the comparison).
 
-**The real SH-vs-surrogate study is not a unit test:** run once after G0,
-append figure + numbers to `docs/UQ_COVARIANCE.md` with consistency-only
-wording.
+**The real SH-vs-surrogate study is not a unit test:** run once after G0 with
+`gpu_st_lrps_potential`; append figure + numbers to `docs/UQ_COVARIANCE.md`
+with consistency-only wording.
 
 ---
 
 ## 6. Track B — SRP external validation (tests + one reference module; zero kernel edits)
 
 **Phase rule:** validation work, not features. Expected kernel edits: **zero**.
-If a comparison exposes a real discrepancy: stop, open an issue, fix it as a
+If a comparison exposes a real discrepancy: stop, open an issue, fix as a
 separate documented bugfix + regression test. Never tune a kernel inside a
-validation PR to make a comparison pass.
+validation PR.
 
-**Why this track earns its place (filter a):** the paper's methods section
-says the force models were validated; today every SRP check is
-same-author/same-code. One independent-path tier (T4) plus one cross-tool tier
-(T5) is the difference between "we tested our code against itself" and a
-defensible sentence. The matrix in the memo shows the gap is exactly one
-column: external cross-validation.
+**Why it earns its place (a):** every existing SRP check is
+same-author/same-code (§1 — values are well covered internally). The genuine
+gaps are: no independent-path check of the shadow **geometry**, no **event
+epoch** (timing) coverage, no trajectory-level limiting case, and no
+cross-tool comparison. B1 closes the first three cheaply; B2 closes the last.
 
-### T4 — Independent-path shadow & limiting-case tests  (size M; deps none; filter a+b)
+### B1 — Independent-path geometry, timing, and limiting-case tests  (size M; deps none; filter a+b)
 
-One PR, three test files, production untouched.
+One PR, two test files, production untouched. **Do not duplicate existing
+coverage** in `tests/test_srp_eclipse.py` (§1 lists it).
 
-**(i) `tests/test_srp_shadow_geometry.py`**
+**(i) `tests/test_srp_shadow_geometry_timing.py`**
 1. Write a small **independent** conical-shadow geometry helper *inside the
    test file* (different author path — never call the production
    `_shadow_factor_conical` to generate its own expectations). Geometry: with
-   Sun radius R_s, occulting-body radius R_b, Sun–body distance d, the umbra
-   cone half-angle is `asin((R_s − R_b)/d)`, penumbra `asin((R_s + R_b)/d)`;
-   derive boundary offsets at 2–3 fixed geometries (derivation in comments).
-2. Assert production shadow factor = 0 on the umbra inner edge, 1 on the
-   penumbra outer edge, strictly in (0,1) between.
-3. β-angle sweep on a circular orbit: eclipse fraction per orbit monotonically
-   decreasing in β and exactly zero above the analytic no-eclipse β.
+   Sun radius R_s, occulting-body radius R_b, Sun–body distance d: umbra cone
+   half-angle `asin((R_s − R_b)/d)`, penumbra `asin((R_s + R_b)/d)`; derive
+   boundary offsets at 2–3 fixed geometries, derivation in comments.
+2. Boundary placement: production shadow factor = 0 on the umbra inner edge,
+   = 1 on the penumbra outer edge, strictly in (0,1) between.
+3. Entry/exit **epochs** (the missing coverage class — values are tested,
+   timing is not): propagate a short arc through an eclipse; bisect the
+   production shadow factor on the dense output for entry/exit epochs;
+   compare to the independent helper with a stated Δt tolerance, justified
+   from dense-output accuracy in a comment.
 
-**(ii) `tests/test_srp_shadow_timing.py`** — the genuinely missing coverage:
-current tests check shadow *values*, not *event epochs*. Propagate a short arc
-through an eclipse; bisect the production shadow factor on the dense output
-for entry/exit epochs; compare to the independent helper with a stated Δt
-tolerance (justify it from dense-output accuracy in a comment).
-
-**(iii) `tests/test_srp_limits.py`**
-- `test_zero_cr_a_over_m_recovers_gravity_only` — Cr·A/m → 0: SRP-enabled
-  trajectory matches gravity-only to integrator tolerance over ≥ 1 orbit
+**(ii) `tests/test_srp_limits.py`**
+- `test_zero_cr_a_over_m_recovers_gravity_only` — trajectory-level wiring
+  check (pointwise zero is already covered): SRP enabled with Cr·A/m → 0
+  matches the gravity-only trajectory to integrator tolerance over ≥ 1 orbit
   (reuse the vector-atol convention from
   `validation/independent/cross_validation.py`).
-- `test_deep_umbra_srp_acceleration_and_work_are_zero` — arc fully inside
-  umbra: SRP acceleration exactly 0 throughout; SRP work integral 0 to
-  round-off.
 
-**Acceptance:** all green in the normal suite (no external deps); zero
-production diffs.
+**Acceptance:** green in the normal suite (no external deps); zero production
+diffs.
 
-### T5 — Tudat SRP cross-check  (size M; deps none; external friction expected; filter a)
+### B2 — Tudat SRP cross-check  (size M; deps none; external friction expected; filter a)
 
-**File:** `validation/independent/tudatpy_srp_reference.py`, mirroring the
-existing `tudatpy_reference.py` (gravity) structure exactly: same `outputs/`
-conventions, same provenance capture.
+**File:** `validation/independent/tudatpy_srp_reference.py`, mirroring
+`tudatpy_reference.py` (gravity) exactly: same `outputs/` conventions, same
+provenance capture.
 
 1. **Accelerations at fixed geometries first** (≥100 samples spanning
    sunlit/penumbra/umbra), only then a short SRP-enabled trajectory diff —
-   this separates model-definition mismatches from integration differences.
+   separates model-definition mismatches from integration differences.
 2. Every model-definition choice that must match goes in the module docstring
    *before* running: solar-flux constant, AU value, occulting-body radii,
    Tudat shadow-model type. Mismatches here masquerade as bugs.
-3. Guard with a `requires_tudat` pytest marker (add to `conftest.py` mirroring
-   the existing optional-dependency markers); must skip cleanly on Windows —
-   the study runs on the Linux/HPC side.
-4. **Go/no-go:** if Tudat friction stalls this > 2 weeks, ship T4 alone and
-   defer cross-tool. T4 already upgrades the methods sentence.
+3. Guard with a `requires_tudat` pytest marker (add to `conftest.py`
+   mirroring existing optional-dependency markers); must skip cleanly on
+   Windows — the study runs on the Linux/HPC side.
+4. **Go/no-go:** if Tudat friction stalls this > 2 weeks, ship B1 alone and
+   defer cross-tool. B1 already upgrades the methods sentence from "tested
+   against itself" to "checked against an independent implementation".
 
-### T6 — Documentation close-out  (size XS; deps T4[, T5]; filter a)
+### B3 — Documentation close-out  (size XS; deps B1[, B2]; filter a)
 
 1. Append results (tolerances, sample counts, versions) to
    `docs/FORCE_MODEL_VALIDATION.md`. Keep the existing "engineering
@@ -327,22 +298,20 @@ conventions, same provenance capture.
 
 ---
 
-## 7. Track C — differentiable propagation (research bet; explicit kill criterion)
+## 7. Track C — differentiable propagation (research bet; kill criterion armed)
 
 **Status:** paper future-work only (one sentence, memo §8 wording verbatim).
-**Start gate:** after G0 exists (needs a trained `potential_autograd`
-artifact) and Track A tasks T1–T2 are merged. **Filter (c):** the cheap steps
-(C1–C2) de-risk the expensive ones; the kill criterion (C5) caps the downside.
+**Start gate:** G0 artifact exists AND Track A merged. **Filter (c):** C1–C2
+are cheap and de-risk the expensive steps; C5 caps the downside.
 
 **Non-negotiable architecture (decided; do not revisit):**
 - Home `src/lunaris/optimization/differentiable/` — NOT under
   `surrogate/st_lrps/` (consumes the runtime artifact through its public
   contract; keeps a future torch-SH baseline surrogate-agnostic; keeps the
   "ST-LRPS runtime (inference path) stays light" contract intact).
-- **No retrofits:** `core.propagation` (scipy/Numba) and
-  `torch_batch_propagator` (six `.item()/.numpy()/no_grad/detach` sites,
-  inference-tuned) stay untouched. Import only
-  `surrogate.st_lrps.runtime.force_model` + `shared`/`common`.
+- **No retrofits:** `core.propagation` (scipy/Numba) and the batch torch
+  propagator (inference-tuned, `.item()`/`detach` sites) stay untouched.
+  Import only `surrogate.st_lrps.runtime.force_model` + `shared`/`common`.
 - Out of the differentiable path: NumPy round-trips, Numba, runtime SPICE
   (precompute ephemeris/rotation tables as constant tensors), hard eclipse
   switches (gravity-only MVP), `.item()` in the loop, impact events (fixed
@@ -358,7 +327,8 @@ artifact) and Track A tasks T1–T2 are merged. **Filter (c):** the cheap steps
 **C2 — torch RK4 + point-mass parity gate (M).**
 `rk4_rollout(f, y0, t_grid) -> (T,B,6)` — fixed-step, float64, batch-first,
 no `.item()`, no autograd-breaking in-place ops. `point_mass_accel(r, mu)` in
-torch. Gate test `tests/test_diffprop_parity.py::test_zero_dv_point_mass_parity_vs_cpu`:
+torch. Gate test
+`tests/test_diffprop_parity.py::test_zero_dv_point_mass_parity_vs_cpu`:
 zero-ΔV rollout vs `core.propagation` on a 2-orbit near-circular LLO arc,
 match within integrator tolerance. (Kepler-reference trap: the classical
 branch in `validation/independent/cross_validation.py` fails on eccentric
@@ -371,8 +341,8 @@ surrogate rollout vs the existing non-differentiable batch backend with the
 same artifact, ≤1 orbit, stated tolerance. This is the frame-error gate — do
 not proceed until it passes.
 
-**C4 — single-impulse targeting + gradient validation (M).** One ΔV∈ℝ³ at t₀;
-terminal-miss loss over ≤1 orbit; Adam and L-BFGS. Tests
+**C4 — single-impulse targeting + gradient validation (M).** One ΔV∈ℝ³ at
+t₀; terminal-miss loss over ≤1 orbit; Adam and L-BFGS. Tests
 (`tests/test_diffprop_gradients.py`, CPU-only where possible): central-FD vs
 autograd per component (~1e-6 relative, float64, point-mass); strict loss
 decrease for k steps; analytic anchor — residual disabled ⇒ optimized ΔV
@@ -382,27 +352,29 @@ a memo exhibit, not a unit test. All solutions reported as **local**.
 **C5 — pre-registered kill criterion (write BEFORE running).** If autograd
 does not beat an FD-based optimizer baseline (FD + Nelder-Mead/SLSQP) on
 wall-clock **or** robustness for the MVP problem, write up the negative
-result and stop the track. Gradient checkpointing / adjoint methods only
-after a **measured** memory wall — never preemptively.
+result and stop the track. Gradient checkpointing / adjoint only after a
+**measured** memory wall — never preemptively.
 
 ---
 
 ## 8. Deferred — gates only, no work orders
 
 - **RL environment** (`lunaris/envs/`, `[rl]` extra): do not start before the
-  paper is submitted. When started, hard requirements from memo §6 apply:
-  zero-action rollout bit-identical to plain `propagate()`; deadband
+  paper is submitted. When the gate opens, hard requirements from memo §6
+  apply: zero-action rollout bit-identical to plain `propagate()`; deadband
   station-keeping baseline mandatory before any RL claim; RIC observation
   reuses the single `analysis/ensemble/statistics.py` convention; gymnasium
   never enters core deps; framing is "research/demo simulation environment",
   station-keeping only. The detailed design lives in the source memo — do not
-  re-derive it here until the gate opens.
+  re-derive it before the gate opens.
 - **UQ Results-zone UI panel:** fold into the existing UI roadmap P1a
-  (Results-zone figure gallery) rather than running as a separate effort —
-  the UQ report already writes PNG figures + manifest into a run directory,
-  which is exactly what P1a displays. No standalone task.
+  (Results-zone figure gallery) — the UQ report already writes PNG figures +
+  manifest into a run directory, which is exactly what P1a displays. No
+  standalone task.
 - **Run-comparison dashboard / artifact inspector UI:** wait for ≥2 accepted
   benchmark runs (schema stability), i.e. after G0 has run at least twice.
+- **Full-P₀ (`covariance_6x6`) config wiring:** deferred until a concrete
+  scenario needs a correlated initial covariance (see §3).
 
 ---
 
@@ -410,19 +382,18 @@ after a **measured** memory wall — never preemptively.
 
 | # | Task | Needs GPU/artifact? | Rationale |
 | --- | --- | --- | --- |
-| 1 | T1 | no | S-size; locks manifest honesty before studies rely on it |
-| 2 | T4 | no | tests-only, zero production risk, upgrades methods sentence |
-| 3 | T2 | no | the "was N enough?" paper figure; pure analysis |
-| 4 | T3 plumbing + self-comparison tests | no | de-risks the study for free |
-| 5 | T5 | no (Linux/HPC) | external-friction track, run in parallel; 2-week go/no-go |
-| 6 | **G0** (maintainer-scheduled) | yes | gates all paper integration |
-| 7 | T3 real study; T6 | yes / no | consume G0 artifact and T4–T5 results |
-| 8 | C1 → C5 | C3+ yes | research bet, kill criterion armed |
-| 9 | §8 items | — | only after their gates open |
+| 1 | B1 | no | tests-only, zero production risk, upgrades the methods sentence |
+| 2 | A1 | no | the "was N enough?" paper figure; pure analysis over existing archives |
+| 3 | A2 plumbing + self-comparison tests | no | de-risks the study for free |
+| 4 | B2 (Linux/HPC) | no | external-friction track, run in parallel; 2-week go/no-go |
+| 5 | **G0** (maintainer-scheduled) | yes | gates all paper integration |
+| 6 | A2 real study; B3 | yes / no | consume the G0 artifact and B1–B2 results |
+| 7 | C1 → C5 | C3+ yes | research bet, kill criterion armed |
+| 8 | §8 items | — | only after their gates open |
 
 **Definition of done for the whole plan:** the paper carries (F-UQ) one
-ellipsoid/RIC figure + (F-conv) the convergence figure + (T-prov) the
-provenance table, backed by a G0-accepted benchmark; `FORCE_MODEL_VALIDATION.md`
-cites at least the T4 independent-path tier; Track C has either a working
-prototype memo or an honest negative-result memo. Everything else is
-explicitly deferred, not silently pending.
+ellipsoid/RIC figure + (F-conv) the A1 convergence figure + (T-prov) the
+provenance table, backed by a G0-accepted benchmark;
+`docs/FORCE_MODEL_VALIDATION.md` cites at least the B1 independent-path tier;
+Track C has either a working prototype memo or an honest negative-result
+memo. Everything else is explicitly deferred, not silently pending.

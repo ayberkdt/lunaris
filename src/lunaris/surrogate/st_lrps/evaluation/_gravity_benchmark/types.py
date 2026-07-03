@@ -107,6 +107,8 @@ _METRICS_FIELDNAMES = [
     "rms_vel_err_ms", "final_vel_err_ms", "max_vel_err_ms", "p95_vel_err_ms",
     "radial_rms_km", "along_rms_km", "cross_rms_km",
     "radial_max_km", "along_max_km", "cross_max_km",
+    "phase_lag_final_s", "phase_lag_slope_s_per_day",
+    "phase_corrected_rms_km", "phase_explained_fraction",
     "final_alt_err_km", "rms_alt_err_km", "max_abs_alt_err_km",
     "min_alt_model_km", "min_alt_truth_km",
     "status",
@@ -117,6 +119,8 @@ _BATCH_METRICS_FIELDNAMES = [
     "rms_pos_err_km", "final_pos_err_km", "max_pos_err_km", "p95_pos_err_km",
     "rms_vel_err_ms", "final_vel_err_ms",
     "radial_rms_km", "along_rms_km", "cross_rms_km",
+    "phase_lag_final_s", "phase_lag_slope_s_per_day",
+    "phase_corrected_rms_km", "phase_explained_fraction",
     "rms_alt_err_km", "hp_km", "inc_deg", "status",
 ]
 
@@ -128,6 +132,8 @@ _GPU_BATCH_METRICS_FIELDNAMES = [
     "rms_vel_err_ms", "final_vel_err_ms", "max_vel_err_ms", "p95_vel_err_ms",
     "radial_rms_km", "along_rms_km", "cross_rms_km",
     "radial_max_km", "along_max_km", "cross_max_km",
+    "phase_lag_final_s", "phase_lag_slope_s_per_day",
+    "phase_corrected_rms_km", "phase_explained_fraction",
     "rms_alt_err_km", "final_alt_err_km", "max_abs_alt_err_km",
     "min_alt_model_km", "min_alt_truth_km", "status", "failure_reason",
 ]

@@ -18,6 +18,7 @@ matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 from lunaris.common.constants import DAY_S, R_MOON
+from lunaris.surrogate.st_lrps.evaluation.phase_diagnostics import phase_scenario_metrics
 
 from .compute import (
     _model_display_name,
@@ -115,6 +116,7 @@ def compute_trajectory_metrics(
         "radial_max_km":    float(np.max(np.abs(ric_km[:, 0]))),
         "along_max_km":     float(np.max(np.abs(ric_km[:, 1]))),
         "cross_max_km":     float(np.max(np.abs(ric_km[:, 2]))),
+        **phase_scenario_metrics(t_ref, r_test, r_ref, v_ref),
         "final_alt_err_km":    float(alt_err_km[-1]),
         "rms_alt_err_km":      float(np.sqrt(np.mean(alt_err_km ** 2))),
         "max_abs_alt_err_km":  float(np.max(np.abs(alt_err_km))),
@@ -187,6 +189,8 @@ def compute_batch_rk4_metrics(
             "radial_rms_km":    float(np.sqrt(np.mean(ric_km[:, 0] ** 2))),
             "along_rms_km":     float(np.sqrt(np.mean(ric_km[:, 1] ** 2))),
             "cross_rms_km":     float(np.sqrt(np.mean(ric_km[:, 2] ** 2))),
+            **phase_scenario_metrics(
+                t_batch, y_stlrps[:, :3], y_truth[:, :3], y_truth[:, 3:]),
             "rms_alt_err_km":   float(np.sqrt(np.mean((alt_st - alt_tr) ** 2))),
             "hp_km": scenario.hp_km, "inc_deg": scenario.inc_deg,
             "status": "ok",
@@ -213,6 +217,8 @@ def compute_batch_rk4_metrics(
                 "rms_vel_err_ms":   float(np.sqrt(np.mean(dv_m_ms ** 2))),
                 "final_vel_err_ms": float(dv_m_ms[-1]),
                 "radial_rms_km":    np.nan, "along_rms_km": np.nan, "cross_rms_km": np.nan,
+                **phase_scenario_metrics(
+                    t_batch, y_stlrps[:, :3], y_rk4_at_batch[:, :3], y_rk4_at_batch[:, 3:]),
                 "rms_alt_err_km":   np.nan,
                 "hp_km": scenario.hp_km, "inc_deg": scenario.inc_deg,
                 "status": "ok",
@@ -235,6 +241,8 @@ def compute_batch_rk4_metrics(
                 "rms_vel_err_ms":   float(np.sqrt(np.mean(dv_i_ms ** 2))),
                 "final_vel_err_ms": float(dv_i_ms[-1]),
                 "radial_rms_km":    np.nan, "along_rms_km": np.nan, "cross_rms_km": np.nan,
+                **phase_scenario_metrics(
+                    truth_res.t, y_rk4_at_truth[:, :3], truth_res.y[:, :3], truth_res.y[:, 3:6]),
                 "rms_alt_err_km":   np.nan,
                 "hp_km": scenario.hp_km, "inc_deg": scenario.inc_deg,
                 "status": "ok",
@@ -348,6 +356,7 @@ def compute_gpu_batch_metrics_for_model(
             "radial_max_km": float(np.max(np.abs(ric_km[:, 0]))),
             "along_max_km": float(np.max(np.abs(ric_km[:, 1]))),
             "cross_max_km": float(np.max(np.abs(ric_km[:, 2]))),
+            **phase_scenario_metrics(t_truth, r_test, r_ref, v_ref),
             "rms_alt_err_km": float(np.sqrt(np.mean(alt_err_km ** 2))),
             "final_alt_err_km": float(alt_err_km[-1]),
             "max_abs_alt_err_km": float(np.max(np.abs(alt_err_km))),
@@ -391,6 +400,10 @@ def aggregate_gpu_batch_metrics(rows: list[dict[str, Any]]) -> list[dict[str, An
         along = _vals(model_rows, "along_rms_km")
         cross = _vals(model_rows, "cross_rms_km")
         alt = _vals(model_rows, "rms_alt_err_km")
+        # |tau| for the aggregate: signed lags of different scenarios would cancel.
+        abs_lag = np.abs(_vals(model_rows, "phase_lag_final_s"))
+        pcr = _vals(model_rows, "phase_corrected_rms_km")
+        pef = _vals(model_rows, "phase_explained_fraction")
         out.append({
             "model": model,
             "n_scenarios_ok": len(model_rows),
@@ -414,6 +427,9 @@ def aggregate_gpu_batch_metrics(rows: list[dict[str, Any]]) -> list[dict[str, An
             "median_along_rms_km": float(np.median(along)) if along.size else np.nan,
             "median_cross_rms_km": float(np.median(cross)) if cross.size else np.nan,
             "median_rms_alt_err_km": float(np.median(alt)) if alt.size else np.nan,
+            "median_abs_phase_lag_final_s": float(np.median(abs_lag)) if abs_lag.size else np.nan,
+            "median_phase_corrected_rms_km": float(np.median(pcr)) if pcr.size else np.nan,
+            "median_phase_explained_fraction": float(np.median(pef)) if pef.size else np.nan,
         })
     return sorted(out, key=lambda r: r.get("median_rms_pos_err_km", np.inf))
 
