@@ -26,7 +26,7 @@ keywords = [
   "scientific-machine-learning",
   "physics-informed-machine-learning",
   "sobolev-training",
-  "monte-carlo",
+  "uncertainty-propagation",
   "gpu-computing",
   "hpc",
   "st-lrps",
@@ -115,7 +115,6 @@ lunaris = "lunaris.cli.main:main_entry"
 lunaris-ui = "lunaris.cli.entrypoints:ui_main"
 lunaris-launcher = "lunaris.cli.entrypoints:launcher_main"
 lunaris-studio = "lunaris.cli.entrypoints:studio_main"
-lunaris-mc = "lunaris.cli.batch:mc_entry"
 lunaris-batch = "lunaris.cli.batch:batch_entry"
 lunaris-train = "lunaris.cli.entrypoints:train_main"
 lunaris-train-force-direct = "lunaris.cli.entrypoints:train_force_direct_main"
@@ -367,18 +366,12 @@ forbidden_modules = [
 ]
 
 # The engine core must not depend on the CLI wiring or the batch orchestration
-# package. The two historical compatibility shims are the only sanctioned
-# (call-time, lazily folded) exceptions; new edges are architecture violations.
+# package.
 [[tool.importlinter.contracts]]
 name = "core does not import the CLI or batch orchestration layers"
 type = "forbidden"
 source_modules = ["lunaris.core"]
 forbidden_modules = ["lunaris.cli", "lunaris.batch"]
-ignore_imports = [
-  "lunaris.core.mc_runner -> lunaris.cli.*",
-  "lunaris.core.monte_carlo_engine -> lunaris.batch.*",
-]
-unmatched_ignore_imports_alerting = "warn"
 
 [[tool.importlinter.contracts]]
 name = "analysis and visualization do not import the desktop UI"

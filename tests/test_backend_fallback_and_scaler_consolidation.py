@@ -19,7 +19,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from lunaris.batch.engine import MonteCarloEngine
+from lunaris.batch.engine import BatchPropagationEngine
 from lunaris.surrogate.runtime import SurrogateGravityModel
 from st_lrps_contract_test_utils import make_contract_run
 
@@ -57,9 +57,9 @@ def test_potential_autograd_torch_uses_canonical_scaler(tmp_path):
 # #4 GPU init-failure must not silently downgrade under a strict policy
 # ---------------------------------------------------------------------------
 
-def _engine(**mc_attrs) -> MonteCarloEngine:
-    eng = MonteCarloEngine.__new__(MonteCarloEngine)
-    eng._mc = SimpleNamespace(**mc_attrs)  # type: ignore
+def _engine(**cfg_attrs) -> BatchPropagationEngine:
+    eng = BatchPropagationEngine.__new__(BatchPropagationEngine)
+    eng._cfg = SimpleNamespace(**cfg_attrs)  # type: ignore
     eng._backend_note = None  # type: ignore
     return eng
 
@@ -83,7 +83,7 @@ def test_handle_backend_init_failure_raises_when_forbidden():
     eng = _engine(gpu_sh_fallback_policy="error")
     plan = SimpleNamespace(gravity_backend="st_lrps")
     with pytest.raises(RuntimeError, match="fallback is forbidden"):
-        eng._handle_backend_init_failure(plan, "[MC] GPU init failed.", RuntimeError("cuda oom"))
+        eng._handle_backend_init_failure(plan, "[BATCH] GPU init failed.", RuntimeError("cuda oom"))
     # The plan must NOT have been quietly downgraded.
     assert not getattr(plan, "fallback_applied", False)
 
@@ -92,7 +92,7 @@ def test_handle_backend_init_failure_downgrades_when_allowed():
     eng = _engine(gpu_sh_fallback_policy="compatible_gpu")
     plan = SimpleNamespace(gravity_backend="st_lrps")
     with pytest.warns(RuntimeWarning):
-        eng._handle_backend_init_failure(plan, "[MC] GPU init failed.", RuntimeError("cuda oom"))
+        eng._handle_backend_init_failure(plan, "[BATCH] GPU init failed.", RuntimeError("cuda oom"))
     assert plan.fallback_applied is True
     assert plan.use_gpu is False
     assert eng._backend_note is not None

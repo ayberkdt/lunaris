@@ -3,7 +3,7 @@ The desktop pre-flight worker delegates to the shared core.preflight service.
 
 These lock the §5 wiring: the UI maps its snapshot to a registry backend +
 flags, and reaches its output-directory and backend verdicts through the same
-``lunaris.core.preflight`` service the CLI / MC / benchmark use. CPU-only; the
+``lunaris.core.preflight`` service the CLI / batch / benchmark use. CPU-only; the
 desktop mission-propagation path is the CPU full-fidelity backend.
 """
 

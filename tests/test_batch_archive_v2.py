@@ -5,10 +5,10 @@ import json
 import numpy as np
 import pytest
 
-from lunaris.core.monte_carlo_engine import (
+from lunaris.batch.storage import (
     HDF5TrajectoryView,
     _HDF5Writer,
-    load_mc_result,
+    load_batch_result,
 )
 
 h5py = pytest.importorskip("h5py")
@@ -29,7 +29,7 @@ def _archive_arrays() -> tuple[np.ndarray, ...]:
 
 
 def test_hdf5_archive_v2_batch_streaming_and_lazy_load(tmp_path) -> None:
-    path = tmp_path / "mc.h5"
+    path = tmp_path / "batch.h5"
     t, Y, sc, impact, t_impact, valid, impact_i, impact_f = _archive_arrays()
     writer = _HDF5Writer(path, n_samples=4, t_grid=t)
     writer.write_sample_batch(0, 2, Y[:, :2, :])
@@ -41,9 +41,9 @@ def test_hdf5_archive_v2_batch_streaming_and_lazy_load(tmp_path) -> None:
         duration_s=20.0,
         output_dt_s=10.0,
         backend="CPU",
-        requested_mc_backend="cpu_sh",
-        actual_mc_backend="cpu_sh",
-        mc_backend="cpu_sh",
+        requested_batch_backend="cpu_sh",
+        actual_batch_backend="cpu_sh",
+        batch_backend="cpu_sh",
         detect_impact=True,
         compute_impact_statistics=True,
         backend_diagnostics={"nested": [1, 2, 3]},
@@ -53,10 +53,10 @@ def test_hdf5_archive_v2_batch_streaming_and_lazy_load(tmp_path) -> None:
     writer.finalize()
 
     assert path.exists()
-    assert not (tmp_path / "mc.h5.part").exists()
+    assert not (tmp_path / "batch.h5.part").exists()
 
-    eager = load_mc_result(str(path))
-    lazy = load_mc_result(str(path), lazy=True)
+    eager = load_batch_result(str(path))
+    lazy = load_batch_result(str(path), lazy=True)
     np.testing.assert_allclose(eager.Y, Y)
     assert isinstance(lazy.Y, HDF5TrajectoryView)
     assert lazy.is_lazy
@@ -118,7 +118,7 @@ def test_legacy_npz_infers_valid_mask_and_missing_impact_positions(tmp_path) -> 
         metadata_json=np.asarray(json.dumps({"legacy": True}), dtype=np.str_),
     )
 
-    result = load_mc_result(str(path))
+    result = load_batch_result(str(path))
     np.testing.assert_array_equal(result.valid_mask, [1.0, 1.0, 0.0, 1.0])
     assert result.impact_position_inertial_m is None
     assert result.impact_position_fixed_m is None
@@ -136,10 +136,10 @@ def test_archive_v2_strict_rejects_missing_required_field(tmp_path) -> None:
     writer.finalize()
 
     with pytest.raises(ValueError, match="missing required"):
-        load_mc_result(str(path))
+        load_batch_result(str(path))
 
     # strict=False loads the partial archive best-effort.
-    result = load_mc_result(str(path), strict=False)
+    result = load_batch_result(str(path), strict=False)
     assert result.diagnostics["archive_schema_version"] == 2
 
 
@@ -160,15 +160,15 @@ def test_lazy_oe_dispersion_matches_eager_block_read(tmp_path) -> None:
     writer.write_sample_batch(0, 4, Y)
     writer.write_metadata(
         archive_schema_version=2, n_samples=4, seed=42, duration_s=20.0,
-        output_dt_s=10.0, backend="CPU", requested_mc_backend="cpu_sh",
-        actual_mc_backend="cpu_sh", mc_backend="cpu_sh", detect_impact=True,
+        output_dt_s=10.0, backend="CPU", requested_batch_backend="cpu_sh",
+        actual_batch_backend="cpu_sh", batch_backend="cpu_sh", detect_impact=True,
         compute_impact_statistics=True,
     )
     writer.write_final(sc, impact, t_impact, valid, impact_i, impact_f)
     writer.finalize()
 
-    eager = load_mc_result(str(path))
-    lazy = load_mc_result(str(path), lazy=True)
+    eager = load_batch_result(str(path))
+    lazy = load_batch_result(str(path), lazy=True)
     assert lazy.is_lazy
 
     oe_eager = compute_oe_dispersion(eager)
@@ -192,5 +192,5 @@ def test_archive_v1_legacy_is_exempt_from_strict_manifest(tmp_path) -> None:
         t_impact=t_impact,
         metadata_json=np.asarray(json.dumps({"backend": "cpu"}), dtype=np.str_),
     )
-    result = load_mc_result(str(path))
+    result = load_batch_result(str(path))
     assert "archive_schema_version" not in result.diagnostics

@@ -93,9 +93,9 @@ def test_detect_severity_classification() -> None:
 def test_source_tag_is_used_when_provided() -> None:
     panel = _panel()
     try:
-        panel.append("monte carlo line", severity="info", source="MC")
+        panel.append("batch line", severity="info", source="BATCH")
         panel._flush()
-        assert "[MC]" in panel.console.toPlainText()
+        assert "[BATCH]" in panel.console.toPlainText()
     finally:
         panel.deleteLater()
 

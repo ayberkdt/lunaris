@@ -45,7 +45,7 @@ import torch
 from numba import cuda
 from types import SimpleNamespace
 
-from lunaris.core.mc_propagator import _interp4_cuda
+from lunaris.core.batch_propagator import _interp4_cuda
 from lunaris.core.torch_frame import TorchMoonFrame
 
 

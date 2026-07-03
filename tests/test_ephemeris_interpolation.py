@@ -8,7 +8,7 @@ the Moon-fixed attitude quaternion:
 * ``EphemerisManager``  - inertial<->fixed frame round-trip.
 
 It also pins the GPU device kernel's interpolation *formula*. The CUDA
-``_interp3_cuda`` (mc_propagator) was aligned to use the same constant/linear/
+``_interp3_cuda`` (batch_propagator) was aligned to use the same constant/linear/
 Catmull-Rom scheme as the CPU path; this module reproduces that exact device
 logic as a numba.njit mirror and asserts it matches ``interp_vec3_safe`` to
 machine precision. Identical f64 arithmetic on both backends means agreement here

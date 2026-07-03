@@ -118,7 +118,7 @@ def test_real_classic_sh_cpu_matches_gpu_trajectory() -> None:
     degree = 50
     grav = GravityModel.from_file(str(grav_path), requested_degree=degree)
 
-    def _mc_cfg() -> SimpleNamespace:
+    def _batch_cfg() -> SimpleNamespace:
         return SimpleNamespace(
             gpu_sh_degree=degree, dt_s=60.0, impact_alt_km=0.0,
             torch_dtype="float64", torch_sh_chunk_size=0, gpu_device_id=0,
@@ -127,7 +127,7 @@ def test_real_classic_sh_cpu_matches_gpu_trajectory() -> None:
     def _prop(device: str) -> TorchSHBatchPropagator:
         dyn = SimpleNamespace(grav=grav, ephem=None)
         return TorchSHBatchPropagator(
-            dyn, _mc_cfg(), PerturbationFlags(enable_sh=True),
+            dyn, _batch_cfg(), PerturbationFlags(enable_sh=True),
             device=device, dtype=torch.float64,
         )
 
@@ -153,7 +153,7 @@ def _numba_cuda_available() -> bool:
 
 
 def test_real_numba_cuda_sh_impact_positions_on_impact_sphere(tmp_path) -> None:
-    """C1/§9 for the Numba CUDA classic-SH kernel: an end-to-end MC with a real
+    """C1/§9 for the Numba CUDA classic-SH kernel: an end-to-end batch run with a real
     gravity file must record interpolated impact positions that lie on the impact
     sphere (not overshot below it). Gated on a real Numba CUDA device."""
     if not _numba_cuda_available():
@@ -163,27 +163,27 @@ def test_real_numba_cuda_sh_impact_positions_on_impact_sphere(tmp_path) -> None:
 
     from dataclasses import replace
 
-    from lunaris.common.montecarlo_defs import MonteCarloConfig, StateUncertainty
+    from lunaris.batch.engine import BatchPropagationEngine
+    from lunaris.common.batch_defs import BatchPropagationConfig, StateUncertainty
     from lunaris.core.config import load_default_config, replace_sim_config
-    from lunaris.core.monte_carlo_engine import MonteCarloEngine
 
     cfg = load_default_config()
     r0 = float(R_MOON) + 30_000.0
     cfg = replace_sim_config(cfg, initial_state=np.array([r0, 0.0, 0.0, -300.0, 200.0, 0.0]))
     cfg = replace_sim_config(cfg, time=replace(cfg.time, duration_s=1800.0, output_dt_s=300.0))
 
-    mc = MonteCarloConfig(
+    batch_cfg = BatchPropagationConfig(
         n_samples=16, seed=1,
         state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
-        use_gpu=True, mc_backend="numba_cuda_sh", gpu_sh_degree=8,
+        use_gpu=True, batch_backend="numba_cuda_sh", gpu_sh_degree=8,
         dt_s=30.0, impact_alt_km=0.0,
-        output_format="hdf5", output_path=str(tmp_path / "numba_mc.h5"),
+        output_format="hdf5", output_path=str(tmp_path / "numba_batch.h5"),
         result_storage_mode="memory",
     )
-    result = MonteCarloEngine(cfg, mc).run()
+    result = BatchPropagationEngine(cfg, batch_cfg).run()
 
     # The run must actually use the Numba kernel (not fall back).
-    assert result.diagnostics.get("actual_mc_backend") == "numba_cuda_sh"
+    assert result.diagnostics.get("actual_batch_backend") == "numba_cuda_sh"
     ip = result.impact_position_inertial_m
     finite = np.isfinite(ip).all(axis=1)
     assert finite.any(), "expected at least one impact in this steep scenario"
@@ -201,8 +201,8 @@ def test_real_numba_cuda_sh_impact_positions_on_impact_sphere(tmp_path) -> None:
 
 def test_real_ephemeris_provides_nonidentity_rotation() -> None:
     try:
+        from lunaris.batch.engine import _build_ephemeris_manager
         from lunaris.core.config import load_default_config
-        from lunaris.core.monte_carlo_engine import _build_ephemeris_manager
     except Exception as exc:  # pragma: no cover
         pytest.skip(f"config/engine import failed: {exc}")
 

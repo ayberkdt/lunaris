@@ -44,18 +44,21 @@ def test_force_models_icon_buttons_have_accessible_names() -> None:
         assert switch.accessibleName()
 
 
-def test_monte_carlo_selectors_have_accessible_names() -> None:
+def test_batch_page_selectors_have_accessible_names() -> None:
     if not HAS_PYSIDE:
         pytest.skip("PySide6 not available")
     _app()
-    from lunaris.ui.pages.monte_carlo_page import MonteCarloPage, UIMonteCarloConfig
+    from lunaris.ui.pages.batch_propagation_page import (
+        BatchPropagationPage,
+        UIBatchPropagationConfig,
+    )
 
-    page = MonteCarloPage(mc_cfg=UIMonteCarloConfig(use_gpu=False))
+    page = BatchPropagationPage(batch_cfg=UIBatchPropagationConfig(use_gpu=False))
     try:
         for combo in (
             page.cb_sampling_method,
-            page.cb_mc_gravity_mode,
-            page.cb_mc_backend,
+            page.cb_batch_gravity_mode,
+            page.cb_batch_backend,
             page.cb_format,
         ):
             assert combo.accessibleName()

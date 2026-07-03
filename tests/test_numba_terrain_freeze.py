@@ -37,7 +37,7 @@ def test_numba_topo_sampler_matches_cpu_reference() -> None:
 import numpy as np
 from numba import cuda
 
-from lunaris.core.mc_propagator import _sample_topo_radius_cuda, _terrain_residual_cuda
+from lunaris.core.batch_propagator import _sample_topo_radius_cuda, _terrain_residual_cuda
 from lunaris.loaders.io_surface import sample_topo_radius_m
 
 # --- Synthetic regional grid (interior sampling only) ---------------------

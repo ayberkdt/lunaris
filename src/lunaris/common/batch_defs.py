@@ -14,8 +14,6 @@ Layers
 - ``SpacecraftUncertainty`` : mass / Cd / Cr / area perturbations.
 - ``BatchPropagationConfig``: top-level batch/ensemble run configuration.
 - ``BatchPropagationResult``: output container for ensemble trajectories.
-- ``MonteCarloConfig``      : legacy alias for ``BatchPropagationConfig``.
-- ``MCRunResult``           : legacy alias for ``BatchPropagationResult``.
 
 Units
 -----
@@ -48,7 +46,7 @@ BATCH_SAMPLING_METHODS: tuple[str, ...] = (
 )
 
 
-def build_mc_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Array, int, float]:
+def build_batch_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Array, int, float]:
     """Single source of truth for the batch/ensemble output time grid.
 
     Every batch backend (CPU DOP853, Numba CUDA classic SH, torch_cuda_sh /
@@ -205,7 +203,7 @@ class SpacecraftUncertainty:
 
 
 # =============================================================================
-# 3.                       MONTE CARLO CONFIG
+# 3.                       BATCH PROPAGATION CONFIG
 # =============================================================================
 
 def validate_st_lrps_model_dir(path: str | Path) -> Path:
@@ -229,7 +227,7 @@ def validate_st_lrps_model_dir(path: str | Path) -> Path:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class MonteCarloConfig:
+class BatchPropagationConfig:
     """
     Top-level batch/ensemble propagation configuration.
 
@@ -244,7 +242,7 @@ class MonteCarloConfig:
     ``use_gpu=False`` → CPU multiprocessing via existing :func:`core.propagation.propagator.propagate`
                         (full-fidelity physics, slower for large N).
 
-    ``mc_backend`` is the explicit backend selector.  The default ``"auto"``
+    ``batch_backend`` is the explicit backend selector.  The default ``"auto"``
     preserves the historical ``use_gpu`` + ``gravity_mode_override`` behavior.
     Explicit values are ``"cpu_sh"``, ``"numba_cuda_sh"`` (degree <= 24 Numba
     CUDA screening kernel; ``"gpu_sh"`` is a legacy alias for it),
@@ -286,7 +284,7 @@ class MonteCarloConfig:
 
     # Backend selection
     use_gpu: bool = True
-    mc_backend: str = "auto"
+    batch_backend: str = "auto"
     gpu_device_id: int = 0
     gravity_mode_override: str = "follow_mission"
     st_lrps_model_dir: str | None = None
@@ -340,7 +338,7 @@ class MonteCarloConfig:
                 "'follow_mission', 'classic_sh', 'st_lrps'. "
                 f"Got {self.gravity_mode_override!r}"
             )
-        if self.mc_backend not in (
+        if self.batch_backend not in (
             "auto",
             "cpu_sh",
             "gpu_sh",            # legacy alias -> numba_cuda_sh
@@ -351,10 +349,10 @@ class MonteCarloConfig:
             "gpu_st_lrps_direct",
         ):
             raise ValueError(
-                "mc_backend must be one of: 'auto', 'cpu_sh', 'gpu_sh', "
+                "batch_backend must be one of: 'auto', 'cpu_sh', 'gpu_sh', "
                 "'numba_cuda_sh', 'torch_cuda_sh', 'torch_cpu_sh', "
                 "'gpu_st_lrps_potential', "
-                f"'gpu_st_lrps_direct'. Got {self.mc_backend!r}"
+                f"'gpu_st_lrps_direct'. Got {self.batch_backend!r}"
             )
         if self.gpu_sh_fallback_policy not in ("compatible_gpu", "cpu", "error"):
             raise ValueError(
@@ -372,7 +370,7 @@ class MonteCarloConfig:
         st_lrps_model_dir = str(self.st_lrps_model_dir or "").strip()
         if (
             self.gravity_mode_override == "st_lrps"
-            or self.mc_backend in ("gpu_st_lrps_potential", "gpu_st_lrps_direct")
+            or self.batch_backend in ("gpu_st_lrps_potential", "gpu_st_lrps_direct")
         ) and not st_lrps_model_dir:
             raise ValueError(
                 "st_lrps_model_dir cannot be empty when ST-LRPS batch gravity is requested."
@@ -470,7 +468,7 @@ class MonteCarloConfig:
 # =============================================================================
 
 @dataclass(slots=True)
-class MCRunResult:
+class BatchPropagationResult:
     """
     Ensemble simulation output.
 
@@ -607,19 +605,11 @@ class MCRunResult:
 # =============================================================================
 
 __all__ = [
-    "build_mc_output_grid",
+    "build_batch_output_grid",
     "BATCH_SAMPLING_METHODS",
     "StateUncertainty",
     "SpacecraftUncertainty",
     "BatchPropagationConfig",
     "BatchPropagationResult",
-    "MonteCarloConfig",
-    "MCRunResult",
     "validate_st_lrps_model_dir",
 ]
-
-
-# Canonical batch terminology. The historical class names stay as aliases for
-# public API and archive compatibility; the objects are intentionally identical.
-BatchPropagationConfig = MonteCarloConfig
-BatchPropagationResult = MCRunResult

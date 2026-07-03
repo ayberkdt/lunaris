@@ -2,8 +2,8 @@
 
 Scope: the perturbation force models and ephemeris application used by the
 Lunaris equations of motion (`src/lunaris/core/dynamics/`,
-`src/lunaris/physics/*`, and the CUDA Monte-Carlo path
-`src/lunaris/core/mc_propagator.py`). This memo records what was changed, why,
+`src/lunaris/physics/*`, and the CUDA batch propagation path
+`src/lunaris/core/batch_propagator.py`). This memo records what was changed, why,
 and the measured evidence that the result is physically and numerically correct
 to an industry/research standard. It follows the `astrodynamics-validation`
 procedure (dimensions, frames/signs, finite-difference gradients, convergence,
@@ -38,7 +38,7 @@ a  = −mu/|d|³ (r_sc + r_tb·F),   d = r_tb − r_sc
 
 Applied identically to the CPU kernel
 (`physics/third_body_effects.py::accel_third_body_numba`) and the CUDA kernel
-(`mc_propagator.py::_third_body_cuda`) to preserve CPU/GPU parity. Both backends
+(`batch_propagator.py::_third_body_cuda`) to preserve CPU/GPU parity. Both backends
 are float64.
 
 **Evidence** (relative error vs a 50-significant-digit `decimal` reference on the
@@ -109,7 +109,7 @@ Locked by `tests/test_dynamics_invariants.py` and
 
 ## 5. Regression status
 
-All physics, core, Monte-Carlo, parity, and event suites pass after the changes
+All physics, core, batch, parity, and event suites pass after the changes
 (no GPU on the validation host; CUDA kernels compile-guarded and exercised by the
 end-to-end parity tests on a CUDA host). New coverage: 45 tests across the five
 files above.

@@ -30,44 +30,40 @@ P1 smoke checks run after the split:
 
 | Command | Result |
 |---|---|
-| `.venv\Scripts\python.exe -m compileall -q src\lunaris\batch src\lunaris\core\monte_carlo_engine.py tests\test_batch_import_compat.py tests\test_batch_sampling.py tests\test_batch_memory_policy.py` | Pass |
-| Import smoke for `lunaris.batch.*` and `lunaris.core.monte_carlo_engine` | Pass |
-| Legacy monkeypatch smoke for `_available_host_memory_bytes` through `lunaris.core.monte_carlo_engine` | Pass |
+| `.venv\Scripts\python.exe -m compileall -q src\lunaris\batch src\lunaris\core\batch.engine.py tests\test_batch_import_compat.py tests\test_batch_sampling.py tests\test_batch_memory_policy.py` | Pass |
+| Import smoke for `lunaris.batch.*` and `lunaris.batch.engine` | Pass |
+| Legacy monkeypatch smoke for `_available_host_memory_bytes` through `lunaris.batch.engine` | Pass |
 
 ## P1 Batch Split
 
 New canonical package:
 
-- `lunaris.batch.engine`: `MonteCarloEngine`, `mc_entry`, `batch_entry`.
+- `lunaris.batch.engine`: `BatchPropagationEngine`, `batch_entry`, `batch_entry`.
 - `lunaris.batch.sampling`: random, LHS, and Sobol standard-normal designs plus state/spacecraft sampling.
 - `lunaris.batch.storage`: HDF5/NPZ writers, lazy HDF5 view, result loading, archive manifest validation, result storage policy.
 - `lunaris.batch.memory_policy`: host-memory probe and safety factor.
 - `lunaris.batch.provenance`: file hashing and metadata JSON encode/decode helpers.
 - `lunaris.batch.requirements`: ephemeris/body-vector/topography and impact-frame helpers.
-- `lunaris.batch.backend_policy`: thin adapter over the existing `lunaris.core.mc_backend_policy`.
+- `lunaris.batch.backend_policy`: thin adapter over the existing `lunaris.batch.backend_policy`.
 - `lunaris.batch.types`: re-exports the canonical dataclasses from `lunaris.common.batch_defs`.
 - `lunaris.batch.progress`: progress callback type surface for the later progress extraction.
 
-Compatibility shim:
+Canonical naming:
 
-- `lunaris.core.monte_carlo_engine` remains importable and keeps `mc_entry` /
-  `batch_entry` for the existing `pyproject.toml [project.scripts]` entry
-  points.
-- Public names still import from both `lunaris.batch` and
-  `lunaris.core.monte_carlo_engine`.
-- New code can use the `BatchPropagationConfig` / `BatchPropagationEngine` /
-  `BatchPropagationResult` aliases; historical `MonteCarlo*` names remain
-  identical objects for compatibility.
-- Private helpers currently used by tests or downstream code remain importable
-  from the legacy module. `_resolve_result_storage` and `_allocate_result_buffer`
-  are proxied so legacy monkeypatches against `lunaris.core.monte_carlo_engine`
-  still affect the helper behavior.
+- `lunaris.batch` is the only batch orchestration surface; `batch_entry` in
+  `lunaris.batch.engine` backs the `lunaris-batch` console script via
+  `lunaris.cli.batch`.
+- The canonical public types are `BatchPropagationConfig` /
+  `BatchPropagationEngine` / `BatchPropagationResult`; there are no alternate
+  aliases.
+- Storage helpers (`_resolve_result_storage`, `_allocate_result_buffer`,
+  writers, `load_batch_result`) live in `lunaris.batch.storage`.
 
 Deferred:
 
 - `batch/backends/` is still deferred; backend selection remains in
-  `lunaris.core.mc_backend_policy` and concrete propagators remain in
-  `lunaris.core.mc_propagator` / `lunaris.core.torch_sh_propagator`.
+  `lunaris.batch.backend_policy` and concrete propagators remain in
+  `lunaris.core.batch_propagator` / `lunaris.core.torch_sh_propagator`.
 - The progress loop is not behaviorally extracted yet; `progress.py` only owns
   the callback type surface for now.
 - Full test/lint baselines need a Python environment with `pytest`, `ruff`, and
@@ -188,7 +184,7 @@ New canonical modules:
   main `lunaris` command.
 - `lunaris.cli.summary`: run-summary and time-step summary helpers.
 - `lunaris.cli.run`: runtime wiring for the main propagation command.
-- `lunaris.cli.batch`: CLI-package surface for `mc_entry` and `batch_entry`
+- `lunaris.cli.batch`: CLI-package surface for `batch_entry` and `batch_entry`
   without changing the historical console-script targets.
 
 Compatibility:

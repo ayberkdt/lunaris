@@ -1,8 +1,8 @@
 """
-Smoke tests for the Monte Carlo runner entry point.
+Smoke tests for the batch runner entry point.
 
-These tests exercise the real MC bootstrap path with a tiny CPU ensemble so we
-catch contract drift between the UI command builder, ``mc_runner.py``, and the
+These tests exercise the real batch bootstrap path with a tiny CPU ensemble so we
+catch contract drift between the UI command builder, ``batch_runner.py``, and the
 runtime bootstrap helpers used by the rest of the project.
 """
 
@@ -14,17 +14,17 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-import lunaris.core.mc_runner as mc_runner
+import lunaris.cli.batch_runner as batch_runner
 
-# These smoke tests boot the real Monte Carlo runtime, which needs SPICE kernels
+# These smoke tests boot the real batch propagation runtime, which needs SPICE kernels
 # and the lunar gravity model. Skip cleanly when that external data is absent.
 pytestmark = pytest.mark.requires_data
 
 
-def test_mc_runner_cpu_smoke_completes_and_writes_output(tmp_path: Path) -> None:
-    output_path = tmp_path / "mc_smoke.npz"
+def test_batch_runner_cpu_smoke_completes_and_writes_output(tmp_path: Path) -> None:
+    output_path = tmp_path / "batch_smoke.npz"
 
-    exit_code = mc_runner.main(
+    exit_code = batch_runner.main(
         [
             "--start-date", "2027-03-02T23:32:37",
             "--days", "0.0002",
@@ -56,9 +56,9 @@ def test_mc_runner_cpu_smoke_completes_and_writes_output(tmp_path: Path) -> None
             "--n-samples", "2",
             "--seed", "11",
             "--use-gpu", "off",
-            "--mc-dt-s", "10",
-            "--mc-output-format", "npz",
-            "--mc-output-path", str(output_path),
+            "--batch-dt-s", "10",
+            "--batch-output-format", "npz",
+            "--batch-output-path", str(output_path),
             "--impact-alt-km", "0",
         ]
     )
@@ -72,10 +72,10 @@ def test_mc_runner_cpu_smoke_completes_and_writes_output(tmp_path: Path) -> None
     assert data["impact_flags"].shape == (2,)
 
 
-def test_mc_runner_emits_structured_progress_payloads(tmp_path: Path, capsys) -> None:
-    output_path = tmp_path / "mc_progress.npz"
+def test_batch_runner_emits_structured_progress_payloads(tmp_path: Path, capsys) -> None:
+    output_path = tmp_path / "batch_progress.npz"
 
-    exit_code = mc_runner.main(
+    exit_code = batch_runner.main(
         [
             "--start-date", "2027-03-02T23:32:37",
             "--days", "0.0002",
@@ -107,9 +107,9 @@ def test_mc_runner_emits_structured_progress_payloads(tmp_path: Path, capsys) ->
             "--n-samples", "2",
             "--seed", "11",
             "--use-gpu", "off",
-            "--mc-dt-s", "10",
-            "--mc-output-format", "npz",
-            "--mc-output-path", str(output_path),
+            "--batch-dt-s", "10",
+            "--batch-output-format", "npz",
+            "--batch-output-path", str(output_path),
             "--impact-alt-km", "0",
         ]
     )
@@ -117,14 +117,14 @@ def test_mc_runner_emits_structured_progress_payloads(tmp_path: Path, capsys) ->
     captured = capsys.readouterr().out.splitlines()
     progress_lines = [
         line for line in captured
-        if line.startswith("[MC_PROGRESS]")
+        if line.startswith("[BATCH_PROGRESS]")
     ]
 
     assert exit_code == 0
     assert progress_lines
 
     payloads = [
-        json.loads(line[len("[MC_PROGRESS]"):].strip())
+        json.loads(line[len("[BATCH_PROGRESS]"):].strip())
         for line in progress_lines
     ]
 

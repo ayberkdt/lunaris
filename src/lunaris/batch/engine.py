@@ -3,8 +3,7 @@
 Batch / Ensemble Dispatch Engine
 ================================
 
-Canonical batch ensemble orchestration. Compatibility imports remain in
-``lunaris.core.monte_carlo_engine`` for the historical public path.
+Canonical batch ensemble orchestration.
 """
 
 from __future__ import annotations
@@ -38,17 +37,17 @@ from lunaris.batch.storage import (
     _allocate_result_buffer,
     _make_writer,
     _resolve_result_storage,
-    load_mc_result,
+    load_batch_result,
 )
 from lunaris.common.batch_defs import (
-    MCRunResult,
-    MonteCarloConfig,
-    build_mc_output_grid,
+    BatchPropagationConfig,
+    BatchPropagationResult,
+    build_batch_output_grid,
 )
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 
 if TYPE_CHECKING:
-    from lunaris.core.mc_backend_policy import MCBackendPlan
+    from lunaris.batch.backend_policy import BatchBackendPlan
 
 _BACKEND_DISPLAY_NAMES = {
     "cpu_sh": "CPU",
@@ -99,7 +98,7 @@ def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
     return None
 
 
-class MonteCarloEngine:
+class BatchPropagationEngine:
     """
     Orchestrates a full batch/ensemble orbital uncertainty propagation run.
 
@@ -113,13 +112,13 @@ class MonteCarloEngine:
           - Transfer arrays to device (GPU) or dispatch workers (CPU).
           - Iterate over time steps; write snapshots to disk.
        d. Aggregate impact statistics.
-       e. Return ``BatchPropagationResult`` / legacy ``MCRunResult``.
+       e. Return ``BatchPropagationResult``.
 
     Parameters
     ----------
     sim_cfg : SimConfig
         Full simulation configuration (physics flags, gravity, ephemeris, ...).
-    mc_cfg : MonteCarloConfig
+    batch_cfg : BatchPropagationConfig
         Batch/ensemble parameters (N, uncertainties, GPU flags, output format).
     dynamics_engine : optional pre-built DynamicsEngine
         If None, the engine builds one from ``sim_cfg``.
@@ -131,19 +130,19 @@ class MonteCarloEngine:
     def __init__(
         self,
         sim_cfg: Any,                       # config.SimConfig
-        mc_cfg: MonteCarloConfig,
+        batch_cfg: BatchPropagationConfig,
         dynamics_engine: Any = None,        # core.dynamics.DynamicsEngine
         surface_provider: Any = None,
         topo_grid: Any = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._sim_cfg = sim_cfg
-        self._mc      = mc_cfg
+        self._cfg      = batch_cfg
         self._cb      = progress_callback
         self._surface_provider = surface_provider
         self._topo_grid = topo_grid
         self._backend_note = ""
-        self._backend_plan: MCBackendPlan | None = None
+        self._backend_plan: BatchBackendPlan | None = None
         if self._topo_grid is None and self._surface_provider is not None and hasattr(self._surface_provider, "grids"):
             try:
                 self._topo_grid = self._surface_provider.grids().topo
@@ -215,16 +214,16 @@ class MonteCarloEngine:
         """
         Lazily build a DynamicsEngine from the stored SimConfig.
 
-        The MC path intentionally reuses the same gravity / ephemeris bootstrap
+        The batch path intentionally reuses the same gravity / ephemeris bootstrap
         policy as the single-run path so users do not hit "works in Run, breaks
         in batch/ensemble" divergences.
         """
         from lunaris.core.dynamics import DynamicsEngine
 
         cfg = self._sim_cfg
-        mc_backend = str(getattr(self._mc, "mc_backend", "auto") or "auto")
-        mc_forces_classic_sh = mc_backend in {"cpu_sh", "gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
-        mc_forces_st_lrps = mc_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
+        batch_backend = str(getattr(self._cfg, "batch_backend", "auto") or "auto")
+        backend_forces_classic_sh = batch_backend in {"cpu_sh", "gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
+        backend_forces_st_lrps = batch_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
         grav_model = None
         ephem_manager = None
         use_st_lrps_gravity = False
@@ -234,17 +233,17 @@ class MonteCarloEngine:
         if bool(cfg.flags.enable_sh):
             try:
                 use_st_lrps_gravity = (
-                    mc_forces_st_lrps
+                    backend_forces_st_lrps
                     or (
-                        not mc_forces_classic_sh
+                        not backend_forces_classic_sh
                         and bool(getattr(cfg.gravity, "uses_st_lrps", False))
                     )
                 )
                 if use_st_lrps_gravity:
                     from lunaris.surrogate.runtime import SurrogateGravityModel
 
-                    # Prioritize the MC-specific ST-LRPS run directory if provided.
-                    st_lrps_dir = self._mc.st_lrps_model_dir or cfg.gravity.st_lrps_model_dir
+                    # Prioritize the batch-specific ST-LRPS run directory if provided.
+                    st_lrps_dir = self._cfg.st_lrps_model_dir or cfg.gravity.st_lrps_model_dir
 
                     from lunaris.common.batch_defs import validate_st_lrps_model_dir
                     valid_dir = validate_st_lrps_model_dir(st_lrps_dir)
@@ -268,16 +267,16 @@ class MonteCarloEngine:
                     # preflight merely because the mission's nominal degree is
                     # lower. Pure-CPU runs keep the mission degree unchanged so
                     # their physics is not silently altered.
-                    mc_gpu_degree = int(getattr(self._mc, "gpu_sh_degree", 0) or 0)
+                    batch_gpu_degree = int(getattr(self._cfg, "gpu_sh_degree", 0) or 0)
                     gpu_sh_path_requested = (
-                        mc_backend in {"gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
-                        or (mc_backend == "auto" and bool(getattr(self._mc, "use_gpu", False)))
+                        batch_backend in {"gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
+                        or (batch_backend == "auto" and bool(getattr(self._cfg, "use_gpu", False)))
                     )
-                    if gpu_sh_path_requested and mc_gpu_degree > 0:
+                    if gpu_sh_path_requested and batch_gpu_degree > 0:
                         requested_degree = (
-                            mc_gpu_degree
+                            batch_gpu_degree
                             if requested_degree is None
-                            else max(requested_degree, mc_gpu_degree)
+                            else max(requested_degree, batch_gpu_degree)
                         )
 
                     # GravityModel already exposes the full dynamics gravity
@@ -339,7 +338,7 @@ class MonteCarloEngine:
         the same POD contract the CPU ground-truth event consumes, so all backends
         share one terrain definition.
         """
-        if not bool(getattr(self._mc, "impact_surface_terrain_enabled", False)):
+        if not bool(getattr(self._cfg, "impact_surface_terrain_enabled", False)):
             return None
 
         prov = self._surface_provider
@@ -361,13 +360,13 @@ class MonteCarloEngine:
         Instantiate the appropriate batch propagator using the backend policy.
 
         Backend selection is fully delegated to
-        ``core.mc_backend_policy.resolve_mc_backend_policy`` so the routing
+        ``batch.backend_policy.resolve_batch_backend_policy`` so the routing
         logic is testable in isolation without constructing a full engine.
         """
-        from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
-        from lunaris.core.mc_propagator import CPUBatchPropagator
+        from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
+        from lunaris.core.batch_propagator import CPUBatchPropagator
 
-        plan = resolve_mc_backend_policy(self._mc, self._sim_cfg)
+        plan = resolve_batch_backend_policy(self._cfg, self._sim_cfg)
         self._backend_plan = plan
 
         # Terrain-aware impact freeze payload (None unless requested + available).
@@ -385,7 +384,7 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         # GPU ST-LRPS path - PyTorch fixed-step RK4
         # ----------------------------------------------------------------
-        if plan.final_backend == MCBackend.GPU_ST_LRPS:
+        if plan.final_backend == BatchBackend.GPU_ST_LRPS:
             try:
                 from lunaris.core.torch_batch_propagator import (
                     TorchBatchPropagator,
@@ -401,7 +400,7 @@ class MonteCarloEngine:
                 deg_min = getattr(grav_model, "degree_min", "?")
                 deg_max = getattr(grav_model, "degree_max", "?")
                 print(
-                    f"[MC][GPU-STLRPS] Loading surrogate: degree_min={deg_min}  "
+                    f"[BATCH][GPU-STLRPS] Loading surrogate: degree_min={deg_min}  "
                     f"degree_max={deg_max}  model_dir={grav_model.model_dir}",
                     flush=True,
                 )
@@ -415,8 +414,8 @@ class MonteCarloEngine:
                     raise TorchSTLRPSPreflightError(_kind_error)
                 prop_kwargs: dict[str, Any] = {
                     "surrogate_model": grav_model,
-                    "mc_cfg": self._mc,
-                    "device_id": int(getattr(self._mc, "gpu_device_id", 0)),
+                    "batch_cfg": self._cfg,
+                    "device_id": int(getattr(self._cfg, "gpu_device_id", 0)),
                 }
                 constructor_params = inspect.signature(TorchBatchPropagator).parameters
                 if "ephem" in constructor_params:
@@ -432,7 +431,7 @@ class MonteCarloEngine:
                 raise
             except Exception as exc:
                 note = (
-                    f"[MC] GPU ST-LRPS backend initialization failed ({exc}). "
+                    f"[BATCH] GPU ST-LRPS backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
@@ -440,22 +439,22 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         # GPU classic-SH path - Numba CUDA fixed-step RK4 (torch_cuda_sh's sibling)
         # ----------------------------------------------------------------
-        elif plan.final_backend == MCBackend.GPU_CLASSIC_SH:
+        elif plan.final_backend == BatchBackend.GPU_CLASSIC_SH:
             try:
-                from lunaris.core.mc_propagator import GPUBatchPropagator
+                from lunaris.core.batch_propagator import GPUBatchPropagator
 
                 gpu_kwargs: dict[str, Any] = {}
                 if "topo_payload" in inspect.signature(GPUBatchPropagator).parameters and topo_payload is not None:
                     gpu_kwargs["topo_payload"] = topo_payload
                 return GPUBatchPropagator(
                     self._dyn,
-                    self._mc,
+                    self._cfg,
                     self._sim_cfg.flags,
                     **gpu_kwargs,
                 )
             except Exception as exc:
                 note = (
-                    f"[MC] GPU classic-SH backend initialization failed ({exc}). "
+                    f"[BATCH] GPU classic-SH backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
@@ -463,7 +462,7 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         # GPU torch classic-SH path - PyTorch fixed-step RK4 (high-degree)
         # ----------------------------------------------------------------
-        elif plan.final_backend == MCBackend.GPU_TORCH_SH:
+        elif plan.final_backend == BatchBackend.GPU_TORCH_SH:
             from lunaris.core.torch_sh_propagator import (
                 TorchSHBatchPropagator,
                 TorchSHPreflightError,
@@ -472,9 +471,9 @@ class MonteCarloEngine:
             try:
                 return TorchSHBatchPropagator(
                     self._dyn,
-                    self._mc,
+                    self._cfg,
                     self._sim_cfg.flags,
-                    device=f"cuda:{int(getattr(self._mc, 'gpu_device_id', 0) or 0)}",
+                    device=f"cuda:{int(getattr(self._cfg, 'gpu_device_id', 0) or 0)}",
                     topo_payload=topo_payload,
                 )
             except TorchSHPreflightError:
@@ -484,7 +483,7 @@ class MonteCarloEngine:
                 raise
             except Exception as exc:
                 note = (
-                    f"[MC] torch_cuda_sh backend initialization failed ({exc}). "
+                    f"[BATCH] torch_cuda_sh backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
@@ -492,7 +491,7 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         # Torch CPU classic-SH path - PyTorch fixed-step RK4 on CPU
         # ----------------------------------------------------------------
-        elif plan.final_backend == MCBackend.TORCH_CPU_SH:
+        elif plan.final_backend == BatchBackend.TORCH_CPU_SH:
             from lunaris.core.torch_sh_propagator import (
                 TorchSHBatchPropagator,
                 TorchSHPreflightError,
@@ -501,7 +500,7 @@ class MonteCarloEngine:
             try:
                 return TorchSHBatchPropagator(
                     self._dyn,
-                    self._mc,
+                    self._cfg,
                     self._sim_cfg.flags,
                     device="cpu",
                     topo_payload=topo_payload,
@@ -510,7 +509,7 @@ class MonteCarloEngine:
                 raise
             except Exception as exc:
                 note = (
-                    f"[MC] torch_cpu_sh backend initialization failed ({exc}). "
+                    f"[BATCH] torch_cpu_sh backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
@@ -520,7 +519,7 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         return CPUBatchPropagator(
             self._sim_cfg,
-            self._mc,
+            self._cfg,
             dynamics_template=self._dyn,
             surface_provider=self._surface_provider,
             topo_grid=self._topo_grid,
@@ -534,13 +533,13 @@ class MonteCarloEngine:
         existing ``gpu_sh_fallback_policy='error'`` already hard-fails at backend
         *planning*; this extends the same intent to *initialization* failures
         (GPU selected by the policy, but the propagator could not be built), plus
-        any explicit paper-safe / strict-backend flag on the MC config.
+        any explicit paper-safe / strict-backend flag on the batch config.
         """
-        policy = str(getattr(self._mc, "gpu_sh_fallback_policy", "compatible_gpu") or "").strip().lower()
+        policy = str(getattr(self._cfg, "gpu_sh_fallback_policy", "compatible_gpu") or "").strip().lower()
         if policy == "error":
             return True
         return any(
-            bool(getattr(self._mc, attr, False))
+            bool(getattr(self._cfg, attr, False))
             for attr in ("paper_safe", "strict_backend", "benchmark_mode")
         )
 
@@ -563,9 +562,9 @@ class MonteCarloEngine:
         Keeps provenance honest: a run that actually executes on CPU must not be
         labeled with a GPU backend, device, or integrator (task section 13).
         """
-        from lunaris.core.mc_backend_policy import MCBackend
+        from lunaris.batch.backend_policy import BatchBackend
 
-        plan.final_backend = MCBackend.CPU
+        plan.final_backend = BatchBackend.CPU
         plan.use_gpu = False
         plan.actual_backend = "cpu_st_lrps" if plan.gravity_backend == "st_lrps" else "cpu_sh"
         plan.actual_sh_degree = None
@@ -589,16 +588,16 @@ class MonteCarloEngine:
     # Public: run
     # ----------------------------------------------------------------
 
-    def run(self) -> MCRunResult:
+    def run(self) -> BatchPropagationResult:
         """
         Execute the full batch/ensemble propagation.
 
         Returns
         ----------
-        MCRunResult
+        BatchPropagationResult
             Ensemble trajectories, spacecraft samples, impact bookkeeping.
         """
-        mc  = self._mc
+        mc  = self._cfg
         cfg = self._sim_cfg
         N   = int(mc.n_samples)
 
@@ -699,7 +698,7 @@ class MonteCarloEngine:
 
         duration_s  = float(cfg.time.duration_s)
         output_dt_s = float(cfg.time.output_dt_s or mc.dt_s * 10)
-        t_out_contract, _, _ = build_mc_output_grid(duration_s, output_dt_s)
+        t_out_contract, _, _ = build_batch_output_grid(duration_s, output_dt_s)
         storage_mode, result_bytes, memory_limit_bytes = _resolve_result_storage(
             mc,
             len(t_out_contract),
@@ -707,7 +706,7 @@ class MonteCarloEngine:
         writer = _make_writer(mc, N, t_out_contract)
 
         print(
-            f"[MC] N={N}  backend={backend_name}  "
+            f"[BATCH] N={N}  backend={backend_name}  "
             f"T={duration_s / DAY_S:.2f} d  "
             f"step={mc.dt_s:.1f} s  snap={output_dt_s:.1f} s",
             flush=True,
@@ -719,7 +718,7 @@ class MonteCarloEngine:
             tpb = backend_diag.get("threads_per_block")
             if device_name:
                 print(
-                    f"[MC] runtime device={device_name}  tpb={tpb}  "
+                    f"[BATCH] runtime device={device_name}  tpb={tpb}  "
                     f"batch_cap~{max_batch}",
                     flush=True,
                 )
@@ -740,7 +739,7 @@ class MonteCarloEngine:
         )
         if host_batch_cap < max_batch:
             print(
-                f"[MC] Host-RAM cap reduced batch {max_batch} -> {host_batch_cap} "
+                f"[BATCH] Host-RAM cap reduced batch {max_batch} -> {host_batch_cap} "
                 f"(per-batch host buffer ~{host_bytes_per_sample / 1e6:.1f} MB/sample "
                 f"x T={len(t_out_contract)}).",
                 flush=True,
@@ -787,7 +786,7 @@ class MonteCarloEngine:
             b_n     = b_end - b_start
 
             print(
-                f"[MC] Batch {b_idx + 1}/{n_batches}  "
+                f"[BATCH] Batch {b_idx + 1}/{n_batches}  "
                 f"samples {b_start}-{b_end - 1}",
                 flush=True,
             )
@@ -941,15 +940,15 @@ class MonteCarloEngine:
         try:
             _plan = backend_plan
             if _plan is None:
-                from lunaris.core.mc_backend_policy import resolve_mc_backend_policy as _resolve
+                from lunaris.batch.backend_policy import resolve_batch_backend_policy as _resolve
                 _plan = _resolve(mc, self._sim_cfg)
             actual_sh_degree = backend_diag.get("actual_gpu_sh_degree", backend_diag.get("gpu_sh_degree"))
             if actual_sh_degree is None and _grav_model is not None:
                 actual_sh_degree = getattr(_grav_model, "effective_degree_max", getattr(_grav_model, "degree", None))
             _plan_meta: dict[str, Any] = {
-                "requested_mc_backend": getattr(_plan, "requested_backend", "auto"),
-                "actual_mc_backend": getattr(_plan, "actual_backend", _plan.final_backend.value),
-                "mc_backend": _plan.final_backend.value,
+                "requested_batch_backend": getattr(_plan, "requested_backend", "auto"),
+                "actual_batch_backend": getattr(_plan, "actual_backend", _plan.final_backend.value),
+                "batch_backend": _plan.final_backend.value,
                 "backend_family": getattr(_plan, "backend_family", ""),
                 "backend_implementation": backend_diag.get("backend_implementation")
                     or getattr(_plan, "backend_implementation", ""),
@@ -991,12 +990,12 @@ class MonteCarloEngine:
         except Exception:
             # Even on the degenerate provenance path the required v2 manifest
             # fields must be present (and non-null) so the archive still loads
-            # under load_mc_result(strict=True).
-            _fallback_backend = str(getattr(mc, "mc_backend", "auto") or "auto")
+            # under load_batch_result(strict=True).
+            _fallback_backend = str(getattr(mc, "batch_backend", "auto") or "auto")
             _plan_meta = {
-                "requested_mc_backend": _fallback_backend,
-                "actual_mc_backend": _fallback_backend,
-                "mc_backend": _fallback_backend,
+                "requested_batch_backend": _fallback_backend,
+                "actual_batch_backend": _fallback_backend,
+                "batch_backend": _fallback_backend,
                 "requested_sh_degree": int(mc.gpu_sh_degree),
             }
 
@@ -1084,7 +1083,7 @@ class MonteCarloEngine:
         n_hit = int(np.sum(valid_bool & (impact_all > 0.5)))
         impact_fraction = float(n_hit) / n_valid if n_valid else math.nan
         print(
-            f"[MC] Done. Wall={t_wall:.1f}s  "
+            f"[BATCH] Done. Wall={t_wall:.1f}s  "
             f"impacts={n_hit}/{n_valid} "
             f"({100.0 * impact_fraction:.1f}%)",
             flush=True,
@@ -1108,11 +1107,11 @@ class MonteCarloEngine:
             Y_result: Any = HDF5TrajectoryView(mc.output_path_resolved)
         else:
             if Y_all is None:
-                raise RuntimeError("Eager MC result buffer was not initialized.")
+                raise RuntimeError("Eager batch result buffer was not initialized.")
             Y_result = Y_all
         n_failed = int(np.sum(valid_all < 0.5))
 
-        return MCRunResult(
+        return BatchPropagationResult(
             t=t_out_ref,
             Y=Y_result,
             sc_samples=sc_samples,
@@ -1141,8 +1140,8 @@ class MonteCarloEngine:
                 # Throughput metrics from the batched propagator (if available)
                 "raw_batch_state_steps_per_second": backend_diag.get("raw_batch_state_steps_per_second"),
                 "active_state_steps_per_second": backend_diag.get("active_state_steps_per_second"),
-                "requested_mc_backend": _plan_meta.get("requested_mc_backend"),
-                "actual_mc_backend": _plan_meta.get("actual_mc_backend"),
+                "requested_batch_backend": _plan_meta.get("requested_batch_backend"),
+                "actual_batch_backend": _plan_meta.get("actual_batch_backend"),
                 "requested_sh_degree": _plan_meta.get("requested_sh_degree"),
                 "actual_sh_degree": _plan_meta.get("actual_sh_degree"),
                 "runtime_model_kind": _plan_meta.get("runtime_model_kind"),
@@ -1153,29 +1152,19 @@ class MonteCarloEngine:
         )
 
 
-def mc_entry() -> int:
-    """Historical console-script alias for batch/ensemble propagation."""
-    from lunaris.cli.batch_runner import main as _mc_main
-
-    return int(_mc_main())
-
-
 def batch_entry() -> int:
-    """Console-script alias for the batch propagation terminology."""
-    return mc_entry()
+    """Console-script entry point for batch/ensemble propagation."""
+    from lunaris.cli.batch_runner import main as _batch_main
 
-
-BatchPropagationEngine = MonteCarloEngine
+    return int(_batch_main())
 
 
 __all__ = [
     "BatchPropagationEngine",
-    "MonteCarloEngine",
     "generate_standard_normal_design",
     "sample_initial_states",
     "sample_spacecraft_props",
     "HDF5TrajectoryView",
-    "load_mc_result",
-    "mc_entry",
+    "load_batch_result",
     "batch_entry",
 ]

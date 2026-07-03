@@ -1,10 +1,10 @@
 # lunaris.core.torch_sh_propagator
 """
-Torch Classic-SH Batch Monte Carlo Propagator (``torch_cuda_sh`` / ``torch_cpu_sh`` runtime)
+Torch Classic-SH Batch Propagator (``torch_cuda_sh`` / ``torch_cpu_sh`` runtime)
 =========================================================================
 
 This is the live runtime behind the ``torch_cuda_sh`` and ``torch_cpu_sh`` backends.  It propagates
-``N`` Monte Carlo samples simultaneously as a single ``[N, 6]`` PyTorch tensor
+``N`` ensemble samples simultaneously as a single ``[N, 6]`` PyTorch tensor
 using a fixed-step RK4 integrator whose gravity is the canonical batched
 spherical-harmonic evaluator
 :class:`lunaris.physics.torch_spherical_harmonics.TorchSHGravityEvaluator`.
@@ -17,13 +17,13 @@ limitation, **not** a physical one.  This module provides the high-degree GPU
 path: arbitrary SH degree bounded only by the loaded coefficient file, GPU
 memory, batch size, dtype, and step size.
 
-Contract (matches :class:`lunaris.core.mc_propagator.GPUBatchPropagator`)
+Contract (matches :class:`lunaris.core.batch_propagator.GPUBatchPropagator`)
 ------------------------------------------------------------------------
 ``propagate(Y0, masses, areas, cds, crs, duration_s, output_dt_s, callback)``
 returns ``(t_out, Y_out, impact_flags, t_impact)``.  Spacecraft properties are
 accepted for API parity but ignored: this first runtime form is **gravity-only**
 (lunar SH + Moon inertial<->fixed frame transform).  Any active perturbation is
-a hard contract violation here — :func:`resolve_mc_backend_policy` is responsible
+a hard contract violation here — :func:`resolve_batch_backend_policy` is responsible
 for routing physics-incompatible runs elsewhere; if one reaches this module it
 raises :class:`TorchSHPreflightError` rather than silently dropping physics.
 
@@ -51,7 +51,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.batch_defs import build_mc_output_grid
+from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
 from lunaris.core.backend_capabilities import unsupported_force_models
 from lunaris.core.torch_frame import (
@@ -70,7 +70,7 @@ class TorchSHPreflightError(RuntimeError):
 
     Raised for problems that must NOT be silently worked around by dropping to
     another backend: a requested SH degree above the loaded coefficient file, an
-    unsupported active perturbation, or a missing/!invalid gravity model.  The MC
+    unsupported active perturbation, or a missing/!invalid gravity model.  The batch
     engine re-raises this instead of falling back to CPU so the failure is loud.
     """
 
@@ -91,7 +91,7 @@ _TorchMoonFrame = TorchMoonFrame
 
 
 class TorchSHBatchPropagator:
-    """Fixed-step RK4 Monte Carlo propagator for ``torch_cuda_sh`` (gravity-only).
+    """Fixed-step RK4 batch propagator for ``torch_cuda_sh`` (gravity-only).
 
     Parameters
     ----------
@@ -101,8 +101,8 @@ class TorchSHBatchPropagator:
         ``GM_m3s2``, ``Cnm``, ``Snm``, recurrence tables, ``scale_m``,
         ``degree_max``).  ``.ephem`` (optional) supplies the Moon-fixed
         attitude timeline.
-    mc_cfg :
-        ``MonteCarloConfig`` (reads ``gpu_sh_degree``, ``dt_s``, ``impact_alt_km``,
+    batch_cfg :
+        ``BatchPropagationConfig`` (reads ``gpu_sh_degree``, ``dt_s``, ``impact_alt_km``,
         ``torch_dtype``, ``torch_sh_chunk_size``, ``gpu_device_id``).
     flags :
         ``PerturbationFlags``.  Must be gravity-only on this path.
@@ -113,7 +113,7 @@ class TorchSHBatchPropagator:
     def __init__(
         self,
         dynamics_engine: Any,
-        mc_cfg: Any,
+        batch_cfg: Any,
         flags: Any,
         *,
         device: Any = None,
@@ -127,19 +127,19 @@ class TorchSHBatchPropagator:
             raise TorchSHPreflightError("PyTorch is required for torch_cuda_sh.") from exc
 
         self._torch = torch
-        self._mc = mc_cfg
+        self._cfg = batch_cfg
 
         # --- Resolve device --------------------------------------------------
         if device is not None:
             self._device = torch.device(device)
         else:
-            dev_id = int(getattr(mc_cfg, "gpu_device_id", 0) or 0)
+            dev_id = int(getattr(batch_cfg, "gpu_device_id", 0) or 0)
             self._device = (
                 torch.device(f"cuda:{dev_id}") if torch.cuda.is_available() else torch.device("cpu")
             )
 
         # Honest device contract: an explicit CUDA device must never silently
-        # degrade to CPU. If CUDA is unavailable, raise so the MC engine performs
+        # degrade to CPU. If CUDA is unavailable, raise so the batch engine performs
         # a *recorded* fallback (downgrade_plan_to_cpu) instead of a hidden CPU
         # run mislabeled as torch_cuda_sh. This is a plain RuntimeError (not a
         # TorchSHPreflightError) precisely so the engine catches it and falls back.
@@ -153,15 +153,15 @@ class TorchSHBatchPropagator:
         if dtype is not None:
             self._dtype = dtype
         else:
-            dtype_name = str(getattr(mc_cfg, "torch_dtype", "float64") or "float64").lower()
+            dtype_name = str(getattr(batch_cfg, "torch_dtype", "float64") or "float64").lower()
             self._dtype = torch.float64 if dtype_name == "float64" else torch.float32
 
-        self._dt = float(getattr(mc_cfg, "dt_s", 60.0))
-        self._impact_alt_m = float(getattr(mc_cfg, "impact_alt_km", 0.0)) * 1_000.0
+        self._dt = float(getattr(batch_cfg, "dt_s", 60.0))
+        self._impact_alt_m = float(getattr(batch_cfg, "impact_alt_km", 0.0)) * 1_000.0
         self._impact_r = float(R_MOON) + self._impact_alt_m
-        self._detect_impact = bool(getattr(mc_cfg, "impact_detection_enabled", True))
+        self._detect_impact = bool(getattr(batch_cfg, "impact_detection_enabled", True))
         self._terrain_requested = self._detect_impact and (
-            str(getattr(mc_cfg, "impact_surface_mode", "sphere")) == "terrain"
+            str(getattr(batch_cfg, "impact_surface_mode", "sphere")) == "terrain"
         )
         self._topo_payload = topo_payload
 
@@ -171,7 +171,7 @@ class TorchSHBatchPropagator:
             raise TorchSHPreflightError(
                 "torch_cuda_sh is gravity-only; it cannot model: "
                 + ", ".join(unsupported)
-                + ". Route this run through mc_backend='auto' (CPU fallback) instead."
+                + ". Route this run through batch_backend='auto' (CPU fallback) instead."
             )
 
         # --- Gravity model + coefficient/degree preflight (task §8) ----------
@@ -183,7 +183,7 @@ class TorchSHBatchPropagator:
             )
         loaded_max = int(getattr(grav, "degree_max", getattr(grav, "max_degree", 0)))
         sh_enabled = bool(getattr(flags, "enable_sh", True)) if flags is not None else True
-        requested = int(getattr(mc_cfg, "gpu_sh_degree", 0) or 0) if sh_enabled else 0
+        requested = int(getattr(batch_cfg, "gpu_sh_degree", 0) or 0) if sh_enabled else 0
         if requested > loaded_max:
             raise TorchSHPreflightError(
                 f"Requested SH degree {requested}, but loaded gravity model supports "
@@ -236,7 +236,7 @@ class TorchSHBatchPropagator:
         # --- GPU memory preflight + chunk sizing (task §11/§12) --------------
         requested_chunk = (
             int(chunk_size) if chunk_size is not None
-            else int(getattr(mc_cfg, "torch_sh_chunk_size", 0) or 0)
+            else int(getattr(batch_cfg, "torch_sh_chunk_size", 0) or 0)
         )
         self._bytes_per_sample = self._estimate_bytes_per_sample()
         self._free_mem_bytes, self._total_mem_bytes = self._query_device_memory()
@@ -427,7 +427,7 @@ class TorchSHBatchPropagator:
         dt = float(self._dt)
 
         # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform.
-        t_out, n_snaps, snap_interval = build_mc_output_grid(duration_s, output_dt_s)
+        t_out, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
         steps_per_snap = max(1, int(round(snap_interval / dt)))
         dt_eff = snap_interval / steps_per_snap
         Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
@@ -445,7 +445,7 @@ class TorchSHBatchPropagator:
 
         t_start = time.perf_counter()
         print(
-            f"[MC][{log_backend}] N={N}  device={self._device} ({self._device_name})  "
+            f"[BATCH][{log_backend}] N={N}  device={self._device} ({self._device_name})  "
             f"degree={self._actual_degree}  dtype={str(self._dtype).replace('torch.', '')}  "
             f"chunk={chunk}  chunks={n_chunks}  dt={dt_eff:.1f}s  snaps={n_snaps}  "
             f"frame={'moon-fixed' if self._frame.uses_rotation else 'identity'}",
@@ -498,7 +498,7 @@ class TorchSHBatchPropagator:
             "impact_time_resolution_s": float(dt_eff),
         }
         print(
-            f"[MC][{log_backend}] done: {elapsed:.2f}s  "
+            f"[BATCH][{log_backend}] done: {elapsed:.2f}s  "
             f"{self._throughput_metrics['raw_batch_state_steps_per_second']:,.0f} raw-steps/s  "
             f"{self._throughput_metrics['active_state_steps_per_second']:,.0f} active-steps/s",
             flush=True,

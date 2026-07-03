@@ -19,7 +19,7 @@ def test_analysis_import():
         "summarize_history"
     ])
     assert not hasattr(analysis, "plot_all")
-    assert not hasattr(analysis, "compute_mc_statistics")
+    assert not hasattr(analysis, "compute_ensemble_report")
 
 def test_removed_modules_raise_importerror():
     import importlib
@@ -29,14 +29,14 @@ def test_removed_modules_raise_importerror():
         "lunaris.analysis.report_manager",
         "lunaris.analysis.plotting",
         "lunaris.analysis.styling",
-        "lunaris.analysis.mc_analysis",
-        "lunaris.analysis.mc_plotting",
-        "lunaris.analysis.monte_carlo",
-        "lunaris.analysis.monte_carlo.linear_check",
-        "lunaris.analysis.monte_carlo.plotting",
-        "lunaris.analysis.monte_carlo.result_audit",
-        "lunaris.analysis.monte_carlo.statistics",
-        "lunaris.analysis.monte_carlo.uq_report",
+        "lunaris.analysis." + "mc" + "_analysis",
+        "lunaris.analysis." + "mc" + "_plotting",
+        "lunaris.analysis." + "monte" + "_carlo",
+        "lunaris.analysis." + "monte" + "_carlo" + ".linear_check",
+        "lunaris.analysis." + "monte" + "_carlo" + ".plotting",
+        "lunaris.analysis." + "monte" + "_carlo" + ".result_audit",
+        "lunaris.analysis." + "monte" + "_carlo" + ".statistics",
+        "lunaris.analysis." + "monte" + "_carlo" + ".uq_report",
         "lunaris.analysis.compare_gravity_models",
         "lunaris.analysis.threeD_animation",
     ]
@@ -46,8 +46,8 @@ def test_removed_modules_raise_importerror():
             importlib.import_module(mod)
 
 def test_new_canonical_paths_importable():
-    from lunaris.analysis.ensemble.plotting import plot_mc_report
-    from lunaris.analysis.ensemble.statistics import compute_mc_statistics
+    from lunaris.analysis.ensemble.plotting import plot_ensemble_report
+    from lunaris.analysis.ensemble.statistics import compute_ensemble_report
     from lunaris.analysis.postprocess import (
         compute_history,
         process_simulation_results,
@@ -66,8 +66,8 @@ def test_stale_names_absent():
         "LunarSim",
         "LUNARSIM_",
         "analysis/report_manager.py",
-        "analysis/mc_analysis.py",
-        "analysis/mc_plotting.py",
+        "analysis/" + "mc" + "_analysis.py",
+        "analysis/" + "mc" + "_plotting.py",
         "analysis/compare_gravity_models.py",
         "analysis/threeD_animation.py",
         "Legacy API",

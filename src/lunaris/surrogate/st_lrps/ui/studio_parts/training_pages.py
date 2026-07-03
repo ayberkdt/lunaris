@@ -1870,17 +1870,17 @@ class STLRPSTrainTab(QWidget):
         # the right. This avoids the old bottom-opening terminal feel and keeps
         # logs visible without stealing vertical space from the chart.
         monitor_content = QWidget()
-        mc_l = QVBoxLayout(monitor_content)
-        mc_l.setContentsMargins(0, 0, 0, 0)
-        mc_l.setSpacing(12)
-        mc_l.addWidget(train_ctrl_bar)
+        monitor_layout = QVBoxLayout(monitor_content)
+        monitor_layout.setContentsMargins(0, 0, 0, 0)
+        monitor_layout.setSpacing(12)
+        monitor_layout.addWidget(train_ctrl_bar)
         if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
-            mc_l.addWidget(self._kpi_strip)
+            monitor_layout.addWidget(self._kpi_strip)
         if _HAS_DASHBOARD_V2 and self._time_strip is not None:
-            mc_l.addWidget(self._time_strip)
-        mc_l.addWidget(self._live_plot)
-        mc_l.addWidget(queue_collapsible)
-        mc_l.addStretch(0)
+            monitor_layout.addWidget(self._time_strip)
+        monitor_layout.addWidget(self._live_plot)
+        monitor_layout.addWidget(queue_collapsible)
+        monitor_layout.addStretch(0)
 
         console_panel = QFrame()
         _style_surface(console_panel, object_name="trainingConsolePanel")

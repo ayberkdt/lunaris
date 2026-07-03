@@ -48,12 +48,12 @@ def test_extract_surface_provider_strict_fail():
     with pytest.raises(TypeError):
         extract_surface_provider_strict(BadProvider())
 
-def test_mc_sample_failure_fast_fail():
-    from lunaris.common.montecarlo_defs import MonteCarloConfig
+def test_batch_sample_failure_fast_fail():
+    from lunaris.common.batch_defs import BatchPropagationConfig
 
-    mc_cfg = MonteCarloConfig(
+    batch_cfg = BatchPropagationConfig(
         n_samples=2,
     )
 
     # allow_sample_failures defaults to False
-    assert getattr(mc_cfg, "allow_sample_failures", False) is False
+    assert getattr(batch_cfg, "allow_sample_failures", False) is False

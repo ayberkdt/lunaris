@@ -95,27 +95,27 @@ def linear_covariance_history(
 
 def compare_covariance_histories(
     P_lin: F64Array,
-    P_mc: F64Array,
+    P_ens: F64Array,
 ) -> dict[str, Any]:
     """Per-epoch agreement metrics between two (T, 6, 6) covariance histories.
 
     Returns
     -------
     dict with:
-    - ``frobenius_rel_diff``: (T,) ‖P_mc − P_lin‖_F / ‖P_lin‖_F
-    - ``pos_eig_ratio``: (T, 3) MC/linear position-block eigenvalue ratios
+    - ``frobenius_rel_diff``: (T,) ‖P_ens − P_lin‖_F / ‖P_lin‖_F
+    - ``pos_eig_ratio``: (T, 3) ensemble/linear position-block eigenvalue ratios
       (ascending pairing)
     - ``max_frobenius_rel_diff`` / ``median_frobenius_rel_diff``: scalars
     - ``pos_eig_ratio_range``: (min, max) over all epochs/axes
     """
     P_lin = np.asarray(P_lin, dtype=np.float64)
-    P_mc = np.asarray(P_mc, dtype=np.float64)
-    if P_lin.shape != P_mc.shape or P_lin.ndim != 3 or P_lin.shape[1:] != (6, 6):
+    P_ens = np.asarray(P_ens, dtype=np.float64)
+    if P_lin.shape != P_ens.shape or P_lin.ndim != 3 or P_lin.shape[1:] != (6, 6):
         raise ValueError(
-            f"covariance histories must both be (T, 6, 6); got {P_lin.shape} vs {P_mc.shape}"
+            f"covariance histories must both be (T, 6, 6); got {P_lin.shape} vs {P_ens.shape}"
         )
 
-    diff_norm = np.linalg.norm(P_mc - P_lin, axis=(1, 2))
+    diff_norm = np.linalg.norm(P_ens - P_lin, axis=(1, 2))
     lin_norm = np.linalg.norm(P_lin, axis=(1, 2))
     frob = diff_norm / np.maximum(lin_norm, 1e-300)
 
@@ -125,8 +125,8 @@ def compare_covariance_histories(
         return np.linalg.eigvalsh(sym)  # (T, 3) ascending
 
     eig_lin = _pos_eigs(P_lin)
-    eig_mc = _pos_eigs(P_mc)
-    ratio = eig_mc / np.maximum(eig_lin, 1e-300)
+    eig_ens = _pos_eigs(P_ens)
+    ratio = eig_ens / np.maximum(eig_lin, 1e-300)
 
     return {
         "frobenius_rel_diff": frob,

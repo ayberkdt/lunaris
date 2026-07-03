@@ -14,19 +14,16 @@ __all__ = [
     "BatchPropagationEngine",
     "BatchPropagationResult",
     "DynamicsEngine",
-    "MonteCarloConfig",
-    "MonteCarloEngine",
     "load_default_config",
     "propagate",
     "replace_sim_config",
 ]
 
 if TYPE_CHECKING:
-    from lunaris.batch import BatchPropagationEngine, MonteCarloEngine
+    from lunaris.batch import BatchPropagationEngine
     from lunaris.common.batch_defs import (
         BatchPropagationConfig,
         BatchPropagationResult,
-        MonteCarloConfig,
     )
     from lunaris.core.config import load_default_config, replace_sim_config
     from lunaris.core.dynamics import DynamicsEngine
@@ -41,8 +38,6 @@ _LAZY_ATTRS: dict[str, tuple[str, str]] = {
     "BatchPropagationConfig": ("lunaris.common.batch_defs", "BatchPropagationConfig"),
     "BatchPropagationResult": ("lunaris.common.batch_defs", "BatchPropagationResult"),
     "BatchPropagationEngine": ("lunaris.batch", "BatchPropagationEngine"),
-    "MonteCarloConfig": ("lunaris.common.batch_defs", "MonteCarloConfig"),
-    "MonteCarloEngine": ("lunaris.batch", "MonteCarloEngine"),
 }
 
 

@@ -25,7 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY_FILES = (
     "src/lunaris/core/config.py",
     "src/lunaris/cli/main.py",
-    "src/lunaris/core/mc_runner.py",
+    "src/lunaris/cli/batch_runner.py",
 )
 STALE_NAMES = ("LUNAR_SIMULATION", "LUNAR SIMULATION", "LunarSim")
 
@@ -85,10 +85,10 @@ def test_entrypoints_do_not_call_load_default_config_at_import(monkeypatch) -> N
     # Re-execute the module bodies under throwaway names so the global
     # sys.modules entries stay clean for the rest of the suite.
     main_mod = _load_module_by_path("_fresh_main_import", "src/lunaris/cli/main.py")
-    mc_mod = _load_module_by_path("_fresh_mc_runner_import", "src/lunaris/core/mc_runner.py")
+    runner_mod = _load_module_by_path("_fresh_batch_runner_import", "src/lunaris/cli/batch_runner.py")
 
     assert main_mod is not None
-    assert mc_mod is not None
+    assert runner_mod is not None
 
 
 # ---------------------------------------------------------------------------
@@ -178,8 +178,8 @@ def test_no_keplerian_fallback_in_main() -> None:
     assert not hasattr(main, "_initial_state_from_keplerian_fallback")
 
 
-def test_mc_runner_does_not_depend_on_main_private_helpers() -> None:
-    source = _read_source("src/lunaris/core/mc_runner.py")
+def test_batch_runner_does_not_depend_on_main_private_helpers() -> None:
+    source = _read_source("src/lunaris/cli/batch_runner.py")
     assert "from lunaris.cli.main import" not in source
     assert "_initial_state_from_keplerian_fallback" not in source
 
@@ -256,9 +256,9 @@ def test_validate_args_rejects_invalid_st_lrps_dir(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_entrypoints_import_shared_helpers_from_cli() -> None:
+    import lunaris.cli.batch_runner as batch_runner
     import lunaris.cli.common_args as ca
     import lunaris.cli.main as main
-    import lunaris.core.mc_runner as mc_runner
 
     # main re-exports the moved helpers from the neutral module (identity check).
     assert main.str2bool is ca.str2bool
@@ -268,12 +268,12 @@ def test_entrypoints_import_shared_helpers_from_cli() -> None:
     assert main.need_ephemeris is ca.need_ephemeris
     assert main.apply_args_to_config is ca.apply_args_to_config
 
-    # mc_runner pulls the same shared helpers (not from main).
-    assert mc_runner.apply_args_to_config is ca.apply_args_to_config
-    assert mc_runner.resolve_orbit_elements is ca.resolve_orbit_elements
-    assert mc_runner.init_surface_provider is ca.init_surface_provider
-    assert mc_runner.str2bool is ca.str2bool
-    assert mc_runner.parse_adaptive_table is ca.parse_adaptive_table
+    # batch_runner pulls the same shared helpers (not from main).
+    assert batch_runner.apply_args_to_config is ca.apply_args_to_config
+    assert batch_runner.resolve_orbit_elements is ca.resolve_orbit_elements
+    assert batch_runner.init_surface_provider is ca.init_surface_provider
+    assert batch_runner.str2bool is ca.str2bool
+    assert batch_runner.parse_adaptive_table is ca.parse_adaptive_table
 
 
 def test_cli_common_args_is_lightweight() -> None:

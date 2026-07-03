@@ -1,4 +1,4 @@
-# ST_LRPS/ui_parts/monte_carlo_page.py
+# lunaris/ui/pages/batch_propagation_page.py
 """
 Batch Propagation Analysis Page (Page 7)
 ========================================
@@ -26,12 +26,12 @@ The page is split into two workspace tabs:
 
 Integration with the rest of the application
 ---------------------------------------------
-- ``get_data()``   → dict fed to ``build_mc_command()`` in command_builder.py
+- ``get_data()``   → dict fed to ``build_batch_command()`` in command_builder.py
 - ``load_data()``  → called by session_persistence to restore a saved profile
-- ``update_results()`` → called by MainWindow after the MC subprocess finishes
+- ``update_results()`` → called by MainWindow after the batch subprocess finishes
   and the output file has been read back
-- ``update_progress()`` → called by MainWindow for human-readable MC log lines
-- ``update_progress_payload()`` → called by MainWindow for structured MC
+- ``update_progress()`` → called by MainWindow for human-readable batch log lines
+- ``update_progress_payload()`` → called by MainWindow for structured batch
   progress updates containing percent, stage, scenario counts, and ETA
 """
 
@@ -49,7 +49,7 @@ from typing import Any
 from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
-    from lunaris.ui.components.monte_carlo_analysis_panel import MonteCarloAnalysisPanel
+    from lunaris.ui.components.ensemble_analysis_panel import EnsembleAnalysisPanel
     from lunaris.ui.components.primitives import DataTable, InlineNotice, Section
     from lunaris.ui.core.ui_commons import (
         THEME,
@@ -63,7 +63,7 @@ try:
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
         import sys
-        print("Run as:  python -m lunaris.ui.pages.monte_carlo_page", file=sys.stderr)
+        print("Run as:  python -m lunaris.ui.pages.batch_propagation_page", file=sys.stderr)
         raise SystemExit(2) from None
     raise
 
@@ -73,9 +73,9 @@ except ImportError:
 # =============================================================================
 
 @dataclass
-class UIMonteCarloConfig:
+class UIBatchPropagationConfig:
     """
-    Mutable mirror of ``common.batch_defs.MonteCarloConfig`` for the UI.
+    Mutable mirror of ``common.batch_defs.BatchPropagationConfig`` for the UI.
 
     All values are kept as plain Python types so the page can safely serialize
     them to JSON (for session persistence) and pass them to the CLI argument
@@ -98,7 +98,7 @@ class UIMonteCarloConfig:
 
     # Backend
     use_gpu: bool = True
-    mc_backend: str = "auto"
+    batch_backend: str = "auto"
     gpu_device_id: int = 0
     gpu_sh_degree: int = 10        # requested; true GPU classic-SH currently supports <=24
     gpu_threads_per_block: int = 128
@@ -127,7 +127,7 @@ class UIMonteCarloConfig:
 
 def _detect_cuda_available() -> bool:
     """
-    Best-effort CUDA availability probe for the MC page defaults.
+    Best-effort CUDA availability probe for the batch page defaults.
 
     Returns True when *either* PyTorch CUDA (needed for ST-LRPS GPU path) or
     Numba CUDA (needed for classic-SH GPU path) is available.  Either probe
@@ -251,7 +251,7 @@ def _format_clock_span(seconds: float | None) -> str:
 # 3.                       MAIN PAGE WIDGET
 # =============================================================================
 
-class MonteCarloPage(QtWidgets.QWidget):
+class BatchPropagationPage(QtWidgets.QWidget):
     """
     Page 7: Batch propagation analysis - configuration + live metrics.
 
@@ -267,13 +267,13 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def __init__(
         self,
-        mc_cfg: UIMonteCarloConfig | None = None,
+        batch_cfg: UIBatchPropagationConfig | None = None,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        if mc_cfg is None:
-            mc_cfg = UIMonteCarloConfig(use_gpu=_detect_cuda_available())
-        self.mc_cfg = mc_cfg
+        if batch_cfg is None:
+            batch_cfg = UIBatchPropagationConfig(use_gpu=_detect_cuda_available())
+        self.batch_cfg = batch_cfg
         self._last_progress_payload: dict[str, Any] = {}
         self._build_ui()
         self._autoname_grid_fields()
@@ -377,7 +377,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         # preview-only — building a command just writes it to the clipboard.
         left_layout.addWidget(self._card_backend_comparison())
 
-        self.analysis_panel = MonteCarloAnalysisPanel(parent=self)
+        self.analysis_panel = EnsembleAnalysisPanel(parent=self)
 
         self.tabs.addTab(run_tab, "Setup & Run")
         self.tabs.addTab(self.analysis_panel, "Result Analysis")
@@ -392,7 +392,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         Each row maps to a notional backend (classic-SH at three degrees plus
         ST-LRPS).  Generating the command formats the row's parameters into a
-        ready-to-paste ``mc_runner.py`` command line.
+        ready-to-paste ``batch_runner.py`` command line.
 
         IMPORTANT: Nothing is executed here.  This section is PREVIEW ONLY.
         Commands must be copied and run manually in a terminal.
@@ -429,7 +429,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         body_layout.setSpacing(8)
 
         intro = _label(
-            "Each row generates a ready-to-paste mc_runner.py command line.\n"
+            "Each row generates a ready-to-paste batch_runner.py command line.\n"
             "Click 'Copy Command' on a row, or use 'Copy All' to copy all commands.\n"
             "Paste into a terminal to run. No comparison is performed automatically.",
             muted=True,
@@ -442,7 +442,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.tbl_backend_compare.setSortingEnabled(False)
         self.tbl_backend_compare.setColumnCount(5)
         self.tbl_backend_compare.setHorizontalHeaderLabels(
-            ["Backend", "Degree / Model", "MC Gravity Mode", "GPU", "Output Path"]
+            ["Backend", "Degree / Model", "batch Gravity Mode", "GPU", "Output Path"]
         )
         self.tbl_backend_compare.horizontalHeader().setStretchLastSection(True)
         self.tbl_backend_compare.verticalHeader().setVisible(False)
@@ -469,14 +469,14 @@ class MonteCarloPage(QtWidgets.QWidget):
                 "degree": deg,
                 "mode": mode,
                 "gpu_on": gpu.lower() == "on",
-                "mc_backend": backend,
+                "batch_backend": backend,
                 "output_path": out_path,
             })
 
         # "Copy Command" buttons — inserted into a separate column via cellWidget
         self.tbl_backend_compare.setColumnCount(6)
         self.tbl_backend_compare.setHorizontalHeaderLabels(
-            ["Backend", "Degree / Model", "MC Gravity Mode", "GPU", "Output Path", "Action"]
+            ["Backend", "Degree / Model", "batch Gravity Mode", "GPU", "Output Path", "Action"]
         )
         for r in range(len(rows)):
             btn = QtWidgets.QPushButton("Copy Command")
@@ -530,7 +530,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             pass
 
     def _generate_backend_compare_command(self, row: int) -> None:
-        """Render a single-row mc_runner.py command into the preview box."""
+        """Render a single-row batch_runner.py command into the preview box."""
         try:
             if row < 0 or row >= len(self._backend_compare_meta):
                 return
@@ -538,7 +538,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         except Exception:
             return
 
-        runner = str((Path(__file__).resolve().parents[2] / "core" / "mc_runner.py").resolve())
+        runner = str((Path(__file__).resolve().parents[2] / "cli" / "batch_runner.py").resolve())
         try:
             python_exec = sys.executable
         except Exception:
@@ -558,8 +558,8 @@ class MonteCarloPage(QtWidgets.QWidget):
         cmd: list[str] = [python_exec, runner]
         cmd.extend(["--n-samples", n_samples])
         cmd.extend(["--sampling-method", str(self.cb_sampling_method.currentData() or "random")])
-        cmd.extend(["--mc-gravity-mode", gravity_mode])
-        cmd.extend(["--mc-backend", str(meta.get("mc_backend", "auto"))])
+        cmd.extend(["--batch-gravity-mode", gravity_mode])
+        cmd.extend(["--batch-backend", str(meta.get("batch_backend", "auto"))])
         cmd.extend(["--enable-sh", "on"])
         if gravity_mode == "classic_sh":
             try:
@@ -568,8 +568,8 @@ class MonteCarloPage(QtWidgets.QWidget):
             except Exception:
                 pass
         cmd.extend(["--use-gpu", "on" if gpu_on else "off"])
-        cmd.extend(["--mc-output-format", "hdf5"])
-        cmd.extend(["--mc-output-path", out_path])
+        cmd.extend(["--batch-output-format", "hdf5"])
+        cmd.extend(["--batch-output-path", out_path])
 
         if os.name == "nt":
             rendered = subprocess.list2cmdline(cmd)
@@ -596,7 +596,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def _copy_all_backend_commands(self) -> None:
         """Generate and copy all backend preview commands to clipboard."""
-        runner = str((Path(__file__).resolve().parents[2] / "core" / "mc_runner.py").resolve())
+        runner = str((Path(__file__).resolve().parents[2] / "cli" / "batch_runner.py").resolve())
         python_exec = sys.executable
         n_samples = "100"
         try:
@@ -612,8 +612,8 @@ class MonteCarloPage(QtWidgets.QWidget):
             cmd: list[str] = [python_exec, runner]
             cmd.extend(["--n-samples", n_samples])
             cmd.extend(["--sampling-method", str(self.cb_sampling_method.currentData() or "random")])
-            cmd.extend(["--mc-gravity-mode", gravity_mode])
-            cmd.extend(["--mc-backend", str(meta.get("mc_backend", "auto"))])
+            cmd.extend(["--batch-gravity-mode", gravity_mode])
+            cmd.extend(["--batch-backend", str(meta.get("batch_backend", "auto"))])
             cmd.extend(["--enable-sh", "on"])
             if gravity_mode == "classic_sh":
                 try:
@@ -622,8 +622,8 @@ class MonteCarloPage(QtWidgets.QWidget):
                 except Exception:
                     pass
             cmd.extend(["--use-gpu", "on" if gpu_on else "off"])
-            cmd.extend(["--mc-output-format", "hdf5"])
-            cmd.extend(["--mc-output-path", out_path])
+            cmd.extend(["--batch-output-format", "hdf5"])
+            cmd.extend(["--batch-output-path", out_path])
             if os.name == "nt":
                 rendered = subprocess.list2cmdline(cmd)
             else:
@@ -649,7 +649,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         grid.addWidget(_label("Number of Samples:"), 0, 0)
         self.ent_n_samples = NumericDragLineEdit(
-            str(self.mc_cfg.n_samples),
+            str(self.batch_cfg.n_samples),
             step=50, min_value=2, max_value=100_000, decimals=0,
         )
         self.ent_n_samples.setToolTip("Total number of ensemble trajectories (N >= 2)")
@@ -667,13 +667,13 @@ class MonteCarloPage(QtWidgets.QWidget):
             "Random is the classical Monte Carlo option; LHS and Sobol are "
             "space-filling designs for validation coverage."
         )
-        sampling_idx = self.cb_sampling_method.findData(self.mc_cfg.sampling_method)
+        sampling_idx = self.cb_sampling_method.findData(self.batch_cfg.sampling_method)
         self.cb_sampling_method.setCurrentIndex(sampling_idx if sampling_idx >= 0 else 0)
         grid.addWidget(self.cb_sampling_method, 1, 1)
 
         grid.addWidget(_label("Seed:"), 2, 0)
         self.ent_seed = NumericDragLineEdit(
-            str(self.mc_cfg.seed),
+            str(self.batch_cfg.seed),
             step=1, min_value=0, max_value=2**31 - 1, decimals=0,
         )
         self.ent_seed.setToolTip("Seed for random, LHS, and scrambled Sobol reproducibility")
@@ -701,7 +701,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         grid.addWidget(_label("Position σᵣ  [m]:"), 0, 0)
         self.ent_sigma_r = NumericDragLineEdit(
-            str(self.mc_cfg.sigma_r_m),
+            str(self.batch_cfg.sigma_r_m),
             step=100, min_value=0, max_value=1e7, decimals=1,
         )
         self.ent_sigma_r.setToolTip("1-sigma position uncertainty (isotropic, all axes)")
@@ -709,7 +709,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         grid.addWidget(_label("Velocity σ_v  [m/s]:"), 1, 0)
         self.ent_sigma_v = NumericDragLineEdit(
-            str(self.mc_cfg.sigma_v_m_s),
+            str(self.batch_cfg.sigma_v_m_s),
             step=0.1, min_value=0, max_value=1e4, decimals=3,
         )
         self.ent_sigma_v.setToolTip("1-sigma velocity uncertainty (isotropic, all axes)")
@@ -750,19 +750,19 @@ class MonteCarloPage(QtWidgets.QWidget):
         grid.setHorizontalSpacing(12)
 
         grid.addWidget(_label("σ Mass  [kg]:"), 0, 0)
-        self.ent_sigma_mass = NumericDragLineEdit(str(self.mc_cfg.sigma_mass_kg), step=1, min_value=0, decimals=2)
+        self.ent_sigma_mass = NumericDragLineEdit(str(self.batch_cfg.sigma_mass_kg), step=1, min_value=0, decimals=2)
         grid.addWidget(self.ent_sigma_mass, 0, 1)
 
         grid.addWidget(_label("σ Area  [m²]:"), 1, 0)
-        self.ent_sigma_area = NumericDragLineEdit(str(self.mc_cfg.sigma_area_m2), step=0.01, min_value=0, decimals=3)
+        self.ent_sigma_area = NumericDragLineEdit(str(self.batch_cfg.sigma_area_m2), step=0.01, min_value=0, decimals=3)
         grid.addWidget(self.ent_sigma_area, 1, 1)
 
         grid.addWidget(_label("σ C_D  [-]:"), 2, 0)
-        self.ent_sigma_cd = NumericDragLineEdit(str(self.mc_cfg.sigma_cd), step=0.01, min_value=0, decimals=3)
+        self.ent_sigma_cd = NumericDragLineEdit(str(self.batch_cfg.sigma_cd), step=0.01, min_value=0, decimals=3)
         grid.addWidget(self.ent_sigma_cd, 2, 1)
 
         grid.addWidget(_label("σ C_R  [-]:"), 3, 0)
-        self.ent_sigma_cr = NumericDragLineEdit(str(self.mc_cfg.sigma_cr), step=0.01, min_value=0, decimals=3)
+        self.ent_sigma_cr = NumericDragLineEdit(str(self.batch_cfg.sigma_cr), step=0.01, min_value=0, decimals=3)
         grid.addWidget(self.ent_sigma_cr, 3, 1)
 
         layout.addLayout(grid)
@@ -778,7 +778,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         toggle_row.addWidget(_label("Use GPU Acceleration:"))
         self.toggle_gpu = ToggleSwitch()
         self.toggle_gpu.setAccessibleName("Use GPU acceleration")
-        self.toggle_gpu.setChecked(self.mc_cfg.use_gpu)
+        self.toggle_gpu.setChecked(self.batch_cfg.use_gpu)
         self.toggle_gpu.toggled.connect(self._on_backend_changed)
         toggle_row.addWidget(self.toggle_gpu)
         toggle_row.addStretch(1)
@@ -786,13 +786,13 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         gravity_row = QtWidgets.QHBoxLayout()
         gravity_row.addWidget(_label("Central Gravity Source:"))
-        self.cb_mc_gravity_mode = QtWidgets.QComboBox()
-        self.cb_mc_gravity_mode.setAccessibleName("Central gravity source")
-        self.cb_mc_gravity_mode.addItem("Follow Mission Setup", "follow_mission")
-        self.cb_mc_gravity_mode.addItem("Force Classical Gravity", "classic_sh")
-        self.cb_mc_gravity_mode.addItem("Force ST-LRPS Gravity", "st_lrps")
-        self.cb_mc_gravity_mode.currentIndexChanged.connect(self._on_gravity_mode_changed)
-        gravity_row.addWidget(self.cb_mc_gravity_mode, 1)
+        self.cb_batch_gravity_mode = QtWidgets.QComboBox()
+        self.cb_batch_gravity_mode.setAccessibleName("Central gravity source")
+        self.cb_batch_gravity_mode.addItem("Follow Mission Setup", "follow_mission")
+        self.cb_batch_gravity_mode.addItem("Force Classical Gravity", "classic_sh")
+        self.cb_batch_gravity_mode.addItem("Force ST-LRPS Gravity", "st_lrps")
+        self.cb_batch_gravity_mode.currentIndexChanged.connect(self._on_gravity_mode_changed)
+        gravity_row.addWidget(self.cb_batch_gravity_mode, 1)
         layout.addLayout(gravity_row)
 
         gravity_hint = _label(
@@ -805,23 +805,23 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         backend_row = QtWidgets.QHBoxLayout()
         backend_row.addWidget(_label("Batch Backend:"))
-        self.cb_mc_backend = QtWidgets.QComboBox()
-        self.cb_mc_backend.setAccessibleName("Batch propagation backend")
-        self.cb_mc_backend.addItem("Auto Policy", "auto")
-        self.cb_mc_backend.addItem("CPU Spherical Harmonics", "cpu_sh")
-        self.cb_mc_backend.addItem("Numba CUDA SH — degree ≤ 24, low-degree screening", "numba_cuda_sh")
-        self.cb_mc_backend.addItem("Torch CUDA SH — high-degree GPU, gravity-only", "torch_cuda_sh")
-        self.cb_mc_backend.addItem("Torch CPU SH — validation, no CUDA needed", "torch_cpu_sh")
-        self.cb_mc_backend.addItem("GPU ST-LRPS Potential", "gpu_st_lrps_potential")
-        self.cb_mc_backend.addItem("GPU ST-LRPS Direct", "gpu_st_lrps_direct")
-        self.cb_mc_backend.setToolTip(
+        self.cb_batch_backend = QtWidgets.QComboBox()
+        self.cb_batch_backend.setAccessibleName("Batch propagation backend")
+        self.cb_batch_backend.addItem("Auto Policy", "auto")
+        self.cb_batch_backend.addItem("CPU Spherical Harmonics", "cpu_sh")
+        self.cb_batch_backend.addItem("Numba CUDA SH — degree ≤ 24, low-degree screening", "numba_cuda_sh")
+        self.cb_batch_backend.addItem("Torch CUDA SH — high-degree GPU, gravity-only", "torch_cuda_sh")
+        self.cb_batch_backend.addItem("Torch CPU SH — validation, no CUDA needed", "torch_cpu_sh")
+        self.cb_batch_backend.addItem("GPU ST-LRPS Potential", "gpu_st_lrps_potential")
+        self.cb_batch_backend.addItem("GPU ST-LRPS Direct", "gpu_st_lrps_direct")
+        self.cb_batch_backend.setToolTip(
             "Explicit backend selector recorded verbatim in ensemble metadata.\n"
             "Numba CUDA SH: degree ≤ 24 (kernel-workspace limit). Torch CUDA SH: "
             "arbitrary degree on PyTorch CUDA, gravity-only.\n"
             "Auto uses safe GPU paths when available and records any fallback."
         )
-        self.cb_mc_backend.currentIndexChanged.connect(self._on_mc_backend_changed)
-        backend_row.addWidget(self.cb_mc_backend, 1)
+        self.cb_batch_backend.currentIndexChanged.connect(self._on_batch_backend_changed)
+        backend_row.addWidget(self.cb_batch_backend, 1)
         layout.addLayout(backend_row)
 
         backend_hint = _label(
@@ -834,7 +834,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         backend_hint.setWordWrap(True)
         layout.addWidget(backend_hint)
 
-        # ST-LRPS surrogate selection is only relevant when MC explicitly forces
+        # ST-LRPS surrogate selection is only relevant when batch explicitly forces
         # the surrogate backend.  Leaving it blank intentionally falls back to
         # the global Force Models page setting.
         # Warning-tinted sub-panel reuses the global inlineNotice surface so the
@@ -855,19 +855,19 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         st_lrps_help = _label(
             "Select the trained ST-LRPS run used only by this batch propagation run. "
-            "If left empty, MC falls back to the main Force Models ST-LRPS directory.",
+            "If left empty, batch falls back to the main Force Models ST-LRPS directory.",
             muted=True,
         )
         st_lrps_help.setWordWrap(True)
         st_lrps_layout.addWidget(st_lrps_help)
 
         st_lrps_path_row = QtWidgets.QHBoxLayout()
-        self.ent_mc_st_lrps_model_dir = QtWidgets.QLineEdit(self.mc_cfg.st_lrps_model_dir)
-        self.ent_mc_st_lrps_model_dir.setAccessibleName("ST-LRPS model directory")
-        self.ent_mc_st_lrps_model_dir.setPlaceholderText(
+        self.ent_batch_st_lrps_model_dir = QtWidgets.QLineEdit(self.batch_cfg.st_lrps_model_dir)
+        self.ent_batch_st_lrps_model_dir.setAccessibleName("ST-LRPS model directory")
+        self.ent_batch_st_lrps_model_dir.setPlaceholderText(
             str(ST_LRPS_RUNS_DIR / "<trained_run>")
         )
-        self.ent_mc_st_lrps_model_dir.setToolTip(
+        self.ent_batch_st_lrps_model_dir.setToolTip(
             "Path to a trained ST-LRPS run directory. Usually one folder under "
             "st_lrps/runs."
         )
@@ -879,7 +879,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         btn_st_lrps_latest.setIcon(get_icon("fa6s.clock-rotate-left", THEME["fg_muted"]))
         btn_st_lrps_latest.setCursor(QtCore.Qt.PointingHandCursor)
         btn_st_lrps_latest.clicked.connect(self._use_latest_st_lrps_model_dir)
-        st_lrps_path_row.addWidget(self.ent_mc_st_lrps_model_dir, 1)
+        st_lrps_path_row.addWidget(self.ent_batch_st_lrps_model_dir, 1)
         st_lrps_path_row.addWidget(btn_st_lrps_browse)
         st_lrps_path_row.addWidget(btn_st_lrps_latest)
         st_lrps_layout.addLayout(st_lrps_path_row)
@@ -896,7 +896,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         gpu_grid.addWidget(_label("Requested SH Degree:"), 0, 0)
         self.ent_gpu_sh = NumericDragLineEdit(
-            str(self.mc_cfg.gpu_sh_degree),
+            str(self.batch_cfg.gpu_sh_degree),
             step=1, min_value=0, max_value=200, decimals=0,
         )
         self.ent_gpu_sh.setToolTip(
@@ -908,7 +908,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         gpu_grid.addWidget(_label("Threads/Block:"), 1, 0)
         self.ent_tpb = NumericDragLineEdit(
-            str(self.mc_cfg.gpu_threads_per_block),
+            str(self.batch_cfg.gpu_threads_per_block),
             step=32, min_value=32, max_value=1024, decimals=0,
         )
         self.ent_tpb.setToolTip(
@@ -919,7 +919,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         gpu_grid.addWidget(_label("GPU Device ID:"), 2, 0)
         self.ent_gpu_dev = NumericDragLineEdit(
-            str(self.mc_cfg.gpu_device_id),
+            str(self.batch_cfg.gpu_device_id),
             step=1, min_value=0, max_value=7, decimals=0,
         )
         gpu_grid.addWidget(self.ent_gpu_dev, 2, 1)
@@ -935,15 +935,15 @@ class MonteCarloPage(QtWidgets.QWidget):
         gpu_grid.addWidget(warn_lbl, 3, 0, 1, 2)
 
         layout.addWidget(self.gpu_frame)
-        gravity_mode_index = self.cb_mc_gravity_mode.findData(self.mc_cfg.gravity_mode_override)
+        gravity_mode_index = self.cb_batch_gravity_mode.findData(self.batch_cfg.gravity_mode_override)
         if gravity_mode_index < 0:
             gravity_mode_index = 0
-        self.cb_mc_gravity_mode.setCurrentIndex(gravity_mode_index)
-        self.cb_mc_backend.setCurrentIndex(
-            self._mc_backend_combo_index(str(getattr(self.mc_cfg, "mc_backend", "auto") or "auto"))
+        self.cb_batch_gravity_mode.setCurrentIndex(gravity_mode_index)
+        self.cb_batch_backend.setCurrentIndex(
+            self._batch_backend_combo_index(str(getattr(self.batch_cfg, "batch_backend", "auto") or "auto"))
         )
         self._on_gravity_mode_changed()
-        self._on_backend_changed(self.mc_cfg.use_gpu)
+        self._on_backend_changed(self.batch_cfg.use_gpu)
 
         # CPU hint
         self.cpu_hint = _label(
@@ -952,7 +952,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         )
         self.cpu_hint.setWordWrap(True)
         layout.addWidget(self.cpu_hint)
-        self.cpu_hint.setVisible(not self.mc_cfg.use_gpu)
+        self.cpu_hint.setVisible(not self.batch_cfg.use_gpu)
 
         return gb
 
@@ -963,42 +963,42 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def _on_gravity_mode_changed(self, *_args: Any) -> None:
         """
-        Show MC-specific ST-LRPS controls only when the surrogate backend is forced.
+        Show batch-specific ST-LRPS controls only when the surrogate backend is forced.
 
         The global Force Models page remains the default source of truth.  This
-        panel is an explicit per-Monte-Carlo override for experiments where the
+        panel is an explicit per-run override for experiments where the
         operator wants to compare different trained surrogate runs.
         """
 
-        backend = str(self.cb_mc_backend.currentData() or "auto") if hasattr(self, "cb_mc_backend") else "auto"
+        backend = str(self.cb_batch_backend.currentData() or "auto") if hasattr(self, "cb_batch_backend") else "auto"
         is_st_lrps = (
-            str(self.cb_mc_gravity_mode.currentData() or "") == "st_lrps"
+            str(self.cb_batch_gravity_mode.currentData() or "") == "st_lrps"
             or backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
         )
         if hasattr(self, "st_lrps_config_frame"):
             self.st_lrps_config_frame.setVisible(is_st_lrps)
 
-    def _mc_backend_combo_index(self, value: str) -> int:
-        """Resolve a stored mc_backend value to a combo index.
+    def _batch_backend_combo_index(self, value: str) -> int:
+        """Resolve a stored batch_backend value to a combo index.
 
         Handles the legacy ``gpu_sh`` alias (it now resolves to the explicit
         ``numba_cuda_sh`` item) so older saved presets keep selecting the Numba
         CUDA path instead of silently snapping back to Auto.
         """
-        idx = self.cb_mc_backend.findData(str(value or "auto"))
+        idx = self.cb_batch_backend.findData(str(value or "auto"))
         if idx < 0 and str(value) == "gpu_sh":
-            idx = self.cb_mc_backend.findData("numba_cuda_sh")
+            idx = self.cb_batch_backend.findData("numba_cuda_sh")
         return idx if idx >= 0 else 0
 
-    def _on_mc_backend_changed(self, *_args: Any) -> None:
-        if hasattr(self, "cb_mc_backend"):
-            self.mc_cfg.mc_backend = str(self.cb_mc_backend.currentData() or "auto")
+    def _on_batch_backend_changed(self, *_args: Any) -> None:
+        if hasattr(self, "cb_batch_backend"):
+            self.batch_cfg.batch_backend = str(self.cb_batch_backend.currentData() or "auto")
         self._on_gravity_mode_changed()
 
     def _browse_st_lrps_model_dir(self) -> None:
         """Open a folder chooser rooted at the surrogate run directory."""
 
-        current = self.ent_mc_st_lrps_model_dir.text().strip()
+        current = self.ent_batch_st_lrps_model_dir.text().strip()
         if current:
             start_path = Path(current).expanduser()
             if start_path.is_file():
@@ -1014,10 +1014,10 @@ class MonteCarloPage(QtWidgets.QWidget):
             str(start_path),
         )
         if path:
-            self.ent_mc_st_lrps_model_dir.setText(str(Path(path).expanduser().resolve()))
+            self.ent_batch_st_lrps_model_dir.setText(str(Path(path).expanduser().resolve()))
 
     def _use_latest_st_lrps_model_dir(self) -> None:
-        """Fill the MC ST-LRPS directory with the newest valid trained ST-LRPS run."""
+        """Fill the batch ST-LRPS directory with the newest valid trained ST-LRPS run."""
 
         runs = list_st_lrps_model_dirs(ST_LRPS_RUNS_DIR)
         if not runs:
@@ -1028,7 +1028,7 @@ class MonteCarloPage(QtWidgets.QWidget):
                 f"{ST_LRPS_RUNS_DIR}",
             )
             return
-        self.ent_mc_st_lrps_model_dir.setText(str(runs[0]))
+        self.ent_batch_st_lrps_model_dir.setText(str(runs[0]))
 
     def _card_integration(self) -> QtWidgets.QGroupBox:
         gb = _card("Integration  (GPU RK4 and batching)")
@@ -1039,7 +1039,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         grid.addWidget(_label("RK4 Step  dt [s]:"), 0, 0)
         self.ent_dt = NumericDragLineEdit(
-            str(self.mc_cfg.dt_s),
+            str(self.batch_cfg.dt_s),
             step=10, min_value=0.1, max_value=3600, decimals=1,
         )
         self.ent_dt.setToolTip(
@@ -1051,7 +1051,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         grid.addWidget(_label("VRAM Budget  [GB]:"), 1, 0)
         self.ent_vram = NumericDragLineEdit(
-            str(self.mc_cfg.max_vram_gb),
+            str(self.batch_cfg.max_vram_gb),
             step=0.5, min_value=0.5, max_value=80.0, decimals=1,
         )
         self.ent_vram.setToolTip(
@@ -1075,7 +1075,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.cb_format = QtWidgets.QComboBox()
         self.cb_format.setAccessibleName("Output archive format")
         self.cb_format.addItems(["hdf5", "npz"])
-        self.cb_format.setCurrentText(self.mc_cfg.output_format)
+        self.cb_format.setCurrentText(self.batch_cfg.output_format)
         self.cb_format.currentTextChanged.connect(self._on_output_format_changed)
         fmt_row.addWidget(self.cb_format)
         fmt_row.addStretch(1)
@@ -1083,7 +1083,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         # Output path
         path_row = QtWidgets.QHBoxLayout()
-        self.ent_output = QtWidgets.QLineEdit(self.mc_cfg.output_path)
+        self.ent_output = QtWidgets.QLineEdit(self.batch_cfg.output_path)
         self.ent_output.setAccessibleName("Output archive path")
         self.ent_output.setPlaceholderText("outputs/ensemble/batch_output.h5")
         btn_browse = QtWidgets.QPushButton("Browse…")
@@ -1129,7 +1129,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         grid.addWidget(_label("Impact Altitude Threshold:"), 0, 0)
         self.ent_impact_alt = NumericDragLineEdit(
-            str(self.mc_cfg.impact_alt_km),
+            str(self.batch_cfg.impact_alt_km),
             step=1, min_value=0, max_value=100, decimals=1,
         )
         self.ent_impact_alt.setToolTip(
@@ -1160,25 +1160,25 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         # Status badge row
         status_row = QtWidgets.QHBoxLayout()
-        self.badge_mc = QtWidgets.QLabel("IDLE")
-        self.badge_mc.setObjectName("statusBadge")
-        self.badge_mc.setAlignment(QtCore.Qt.AlignCenter)
-        self.badge_mc.setFixedHeight(24)
-        self.badge_mc.setContentsMargins(10, 4, 10, 4)
-        self.badge_mc.setProperty("kind", "info")
-        status_row.addWidget(self.badge_mc)
+        self.badge_batch = QtWidgets.QLabel("IDLE")
+        self.badge_batch.setObjectName("statusBadge")
+        self.badge_batch.setAlignment(QtCore.Qt.AlignCenter)
+        self.badge_batch.setFixedHeight(24)
+        self.badge_batch.setContentsMargins(10, 4, 10, 4)
+        self.badge_batch.setProperty("kind", "info")
+        status_row.addWidget(self.badge_batch)
         status_row.addStretch(1)
         layout.addLayout(status_row)
 
         # Progress bar
-        self.progress_mc = QtWidgets.QProgressBar()
-        self.progress_mc.setRange(0, 100)
-        self.progress_mc.setValue(0)
-        self.progress_mc.setTextVisible(True)
-        self.progress_mc.setFormat("Waiting…")
-        self.progress_mc.setFixedHeight(16)
+        self.progress_batch = QtWidgets.QProgressBar()
+        self.progress_batch.setRange(0, 100)
+        self.progress_batch.setValue(0)
+        self.progress_batch.setTextVisible(True)
+        self.progress_batch.setFormat("Waiting…")
+        self.progress_batch.setFixedHeight(16)
         # Bar/chunk styling comes from the global QProgressBar rules.
-        layout.addWidget(self.progress_mc)
+        layout.addWidget(self.progress_batch)
 
         self.lbl_progress_summary = _label("Waiting for run", muted=False)
         self.lbl_progress_summary.setObjectName("statusValue")
@@ -1228,7 +1228,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self._set_running(True)
         self.clear_results()
         self.txt_progress.clear()
-        self.txt_progress.appendPlainText("[MC] Queuing batch propagation run...")
+        self.txt_progress.appendPlainText("[BATCH] Queuing batch propagation run...")
         self.run_requested.emit()
 
     def _open_output_folder(self) -> None:
@@ -1332,32 +1332,32 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         self.btn_run_mc.setEnabled(not running)
         if running:
-            total = max(1, self._parse_int(self.ent_n_samples.text(), self.mc_cfg.n_samples))
+            total = max(1, self._parse_int(self.ent_n_samples.text(), self.batch_cfg.n_samples))
             self._last_progress_payload = {}
             self._set_badge("RUNNING", "running")
             # Reduced motion: keep the bar determinate instead of a marquee.
             if prefers_reduced_motion():
-                self.progress_mc.setRange(0, 1000)
+                self.progress_batch.setRange(0, 1000)
             else:
-                self.progress_mc.setRange(0, 0)   # indeterminate until first structured payload
-            self.progress_mc.setValue(0)
-            self.progress_mc.setFormat("Preparing…")
+                self.progress_batch.setRange(0, 0)   # indeterminate until first structured payload
+            self.progress_batch.setValue(0)
+            self.progress_batch.setFormat("Preparing…")
             self.lbl_progress_summary.setText("Preparing ensemble samples")
             self.lbl_progress_meta.setText(f"0 / {total} scenarios | Waiting for backend")
         else:
             self._update_validation()
-            if self.progress_mc.maximum() == 0:
-                self.progress_mc.setRange(0, 1000)
+            if self.progress_batch.maximum() == 0:
+                self.progress_batch.setRange(0, 1000)
 
     def _set_badge(self, text: str, kind: str = "info") -> None:
         """Update the status badge text + semantic kind (styled by global QSS)."""
-        self.badge_mc.setText(text)
-        self.badge_mc.setProperty("kind", kind)
-        _repolish(self.badge_mc)
+        self.badge_batch.setText(text)
+        self.badge_batch.setProperty("kind", kind)
+        _repolish(self.badge_batch)
 
     def update_progress(self, line: str) -> None:
         """
-        Append a human-readable MC log line to the page-local mini log.
+        Append a human-readable batch log line to the page-local mini log.
 
         Structured progress payloads are handled by ``update_progress_payload``.
         This method only keeps the operator-facing narrative lines visible and
@@ -1365,7 +1365,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         """
 
         stripped = line.rstrip()
-        if stripped.startswith("[MC_PROGRESS]") or stripped.startswith("[MC_METRICS]"):
+        if stripped.startswith("[BATCH_PROGRESS]") or stripped.startswith("[BATCH_METRICS]"):
             return
 
         self.txt_progress.appendPlainText(stripped)
@@ -1380,9 +1380,9 @@ class MonteCarloPage(QtWidgets.QWidget):
                 parts = stripped.split()[1].split("/")
                 done, total = int(parts[0]), int(parts[1])
                 pct = float(done) / float(max(total, 1))
-                self.progress_mc.setRange(0, 1000)
-                self.progress_mc.setValue(int(round(pct * 1000.0)))
-                self.progress_mc.setFormat(f"{pct * 100.0:.1f}%")
+                self.progress_batch.setRange(0, 1000)
+                self.progress_batch.setValue(int(round(pct * 1000.0)))
+                self.progress_batch.setFormat(f"{pct * 100.0:.1f}%")
                 self.lbl_progress_summary.setText("Propagating scenarios")
                 self.lbl_progress_meta.setText(f"Batch {done}/{total}")
             except Exception:
@@ -1390,7 +1390,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def update_progress_payload(self, payload: dict[str, Any]) -> None:
         """
-        Render a structured backend progress payload in the MC control card.
+        Render a structured backend progress payload in the batch control card.
 
         The backend emits machine-readable progress updates so the page can show
         a professional progress experience: phase label, overall percent,
@@ -1430,9 +1430,9 @@ class MonteCarloPage(QtWidgets.QWidget):
         }.get(stage, "RUNNING")
         self._set_badge(badge_text, "running")
 
-        self.progress_mc.setRange(0, 1000)
-        self.progress_mc.setValue(int(round(fraction * 1000.0)))
-        self.progress_mc.setFormat(f"{percent:.1f}%")
+        self.progress_batch.setRange(0, 1000)
+        self.progress_batch.setValue(int(round(fraction * 1000.0)))
+        self.progress_batch.setFormat(f"{percent:.1f}%")
 
         summary_suffix = f" ({backend})" if backend and backend != "PENDING" else ""
         self.lbl_progress_summary.setText(stage_summary + summary_suffix)
@@ -1458,7 +1458,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         metrics: dict[str, Any] | None = None,
     ) -> None:
         """
-        Called by MainWindow when the MC subprocess exits.
+        Called by MainWindow when the batch subprocess exits.
 
         Parameters
         ----------
@@ -1474,10 +1474,10 @@ class MonteCarloPage(QtWidgets.QWidget):
         self._set_running(False)
         if exit_code == 0:
             self._set_badge("DONE", "completed")
-            total_samples = int((metrics or {}).get("n_samples", self._parse_int(self.ent_n_samples.text(), self.mc_cfg.n_samples)))
-            self.progress_mc.setRange(0, 1000)
-            self.progress_mc.setValue(1000)
-            self.progress_mc.setFormat("100.0%")
+            total_samples = int((metrics or {}).get("n_samples", self._parse_int(self.ent_n_samples.text(), self.batch_cfg.n_samples)))
+            self.progress_batch.setRange(0, 1000)
+            self.progress_batch.setValue(1000)
+            self.progress_batch.setFormat("100.0%")
             self.lbl_progress_summary.setText("Batch propagation completed")
             self.lbl_progress_meta.setText(f"{total_samples} / {total_samples} scenarios | Results ready")
             if metrics:
@@ -1490,9 +1490,9 @@ class MonteCarloPage(QtWidgets.QWidget):
                 self.btn_open_report.setEnabled(True)
         else:
             self._set_badge("FAILED", "failed")
-            if self.progress_mc.maximum() == 0:
-                self.progress_mc.setRange(0, 1000)
-            self.progress_mc.setFormat("Failed")
+            if self.progress_batch.maximum() == 0:
+                self.progress_batch.setRange(0, 1000)
+            self.progress_batch.setFormat("Failed")
             self.lbl_progress_summary.setText("Batch propagation failed")
             if self._last_progress_payload:
                 total_samples = max(1, int(self._last_progress_payload.get("total_samples", 1)))
@@ -1514,7 +1514,7 @@ class MonteCarloPage(QtWidgets.QWidget):
 
     def update_results(self, metrics: dict[str, Any]) -> None:
         """
-        Populate the metrics panel from a dict returned by the MC engine.
+        Populate the metrics panel from a dict returned by the batch engine.
 
         Expected keys (all optional — missing keys show '—'):
             n_samples, n_impacts, p_impact, p_impact_ci95,
@@ -1552,12 +1552,12 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         # Backend provenance: surface requested-vs-actual so a silent GPU->CPU
         # fallback is visible instead of hidden behind one label. Both keys are
-        # emitted by mc_runner from the run diagnostics; when they differ the row
+        # emitted by batch_runner from the run diagnostics; when they differ the row
         # is marked as a warning and carries the fallback reason as a tooltip.
         backend_lbl = self._metric_labels.get("backend")
         if backend_lbl is not None:
-            actual = str(metrics.get("actual_mc_backend") or metrics.get("backend") or "—")
-            requested = str(metrics.get("requested_mc_backend") or "").strip()
+            actual = str(metrics.get("actual_batch_backend") or metrics.get("backend") or "—")
+            requested = str(metrics.get("requested_batch_backend") or "").strip()
             fell_back = bool(requested) and requested.lower() != actual.lower()
             if fell_back:
                 backend_lbl.setText(f"{actual}  (requested: {requested})")
@@ -1600,12 +1600,12 @@ class MonteCarloPage(QtWidgets.QWidget):
             "sigma_cd":              self._parse_float(self.ent_sigma_cd.text(), 0.0),
             "sigma_cr":              self._parse_float(self.ent_sigma_cr.text(), 0.0),
             "use_gpu":               bool(self.toggle_gpu.isChecked()),
-            "mc_backend":            str(self.cb_mc_backend.currentData() or "auto"),
+            "batch_backend":            str(self.cb_batch_backend.currentData() or "auto"),
             "gpu_device_id":         self._parse_int(self.ent_gpu_dev.text(), 0),
             "gpu_sh_degree":         self._parse_int(self.ent_gpu_sh.text(), 10),
             "gpu_threads_per_block": self._parse_int(self.ent_tpb.text(), 128),
-            "gravity_mode_override": str(self.cb_mc_gravity_mode.currentData() or "follow_mission"),
-            "st_lrps_model_dir":     self.ent_mc_st_lrps_model_dir.text().strip(),
+            "gravity_mode_override": str(self.cb_batch_gravity_mode.currentData() or "follow_mission"),
+            "st_lrps_model_dir":     self.ent_batch_st_lrps_model_dir.text().strip(),
             "dt_s":                  self._parse_float(self.ent_dt.text(), 60.0),
             "max_vram_gb":           self._parse_float(self.ent_vram.text(), 4.0),
             "output_format":         self.cb_format.currentText(),
@@ -1613,10 +1613,10 @@ class MonteCarloPage(QtWidgets.QWidget):
                 self.ent_output.text(),
                 self.cb_format.currentText(),
             ),
-            "result_storage_mode":   self.mc_cfg.result_storage_mode,
-            "max_result_memory_gb":  self.mc_cfg.max_result_memory_gb,
-            "detect_impact":         self.mc_cfg.detect_impact,
-            "compute_impact_statistics": self.mc_cfg.compute_impact_statistics,
+            "result_storage_mode":   self.batch_cfg.result_storage_mode,
+            "max_result_memory_gb":  self.batch_cfg.max_result_memory_gb,
+            "detect_impact":         self.batch_cfg.detect_impact,
+            "compute_impact_statistics": self.batch_cfg.compute_impact_statistics,
             "impact_alt_km":         self._parse_float(self.ent_impact_alt.text(), 0.0),
         }
 
@@ -1628,7 +1628,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.ent_n_samples.setText(_s("n_samples", 500))
         self.ent_seed.setText(_s("seed", 42))
         sampling_method = str(data.get("sampling_method", "random") or "random")
-        self.mc_cfg.sampling_method = sampling_method
+        self.batch_cfg.sampling_method = sampling_method
         sampling_idx = self.cb_sampling_method.findData(sampling_method)
         self.cb_sampling_method.setCurrentIndex(sampling_idx if sampling_idx >= 0 else 0)
         self.ent_sigma_r.setText(_s("sigma_r_m", 500.0))
@@ -1638,17 +1638,17 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.ent_sigma_cd.setText(_s("sigma_cd", 0.0))
         self.ent_sigma_cr.setText(_s("sigma_cr", 0.0))
         self.toggle_gpu.setChecked(bool(data.get("use_gpu", True)))
-        self.mc_cfg.mc_backend = str(data.get("mc_backend", "auto") or "auto")
-        self.cb_mc_backend.setCurrentIndex(self._mc_backend_combo_index(self.mc_cfg.mc_backend))
+        self.batch_cfg.batch_backend = str(data.get("batch_backend", "auto") or "auto")
+        self.cb_batch_backend.setCurrentIndex(self._batch_backend_combo_index(self.batch_cfg.batch_backend))
         self.ent_gpu_dev.setText(_s("gpu_device_id", 0))
         self.ent_gpu_sh.setText(_s("gpu_sh_degree", 10))
         self.ent_tpb.setText(_s("gpu_threads_per_block", 128))
         gravity_mode = str(data.get("gravity_mode_override", "follow_mission") or "follow_mission")
-        gravity_idx = self.cb_mc_gravity_mode.findData(gravity_mode)
+        gravity_idx = self.cb_batch_gravity_mode.findData(gravity_mode)
         if gravity_idx < 0:
             gravity_idx = 0
-        self.cb_mc_gravity_mode.setCurrentIndex(gravity_idx)
-        self.ent_mc_st_lrps_model_dir.setText(str(data.get("st_lrps_model_dir", "") or ""))
+        self.cb_batch_gravity_mode.setCurrentIndex(gravity_idx)
+        self.ent_batch_st_lrps_model_dir.setText(str(data.get("st_lrps_model_dir", "") or ""))
         self._on_gravity_mode_changed()
         self.ent_dt.setText(_s("dt_s", 60.0))
         self.ent_vram.setText(_s("max_vram_gb", 4.0))
@@ -1662,14 +1662,14 @@ class MonteCarloPage(QtWidgets.QWidget):
                 fmt,
             )
         )
-        self.mc_cfg.result_storage_mode = str(
+        self.batch_cfg.result_storage_mode = str(
             data.get("result_storage_mode", "auto") or "auto"
         )
-        self.mc_cfg.max_result_memory_gb = float(
+        self.batch_cfg.max_result_memory_gb = float(
             data.get("max_result_memory_gb", 1.0)
         )
-        self.mc_cfg.detect_impact = bool(data.get("detect_impact", True))
-        self.mc_cfg.compute_impact_statistics = bool(
+        self.batch_cfg.detect_impact = bool(data.get("detect_impact", True))
+        self.batch_cfg.compute_impact_statistics = bool(
             data.get("compute_impact_statistics", True)
         )
         self.ent_impact_alt.setText(_s("impact_alt_km", 0.0))
@@ -1732,14 +1732,14 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         # 4. Backend
         gpu_enabled = self.toggle_gpu.isChecked()
-        gravity_mode = self.cb_mc_gravity_mode.currentData() or "follow_mission"
-        mc_backend = str(self.cb_mc_backend.currentData() or "auto")
-        st_lrps_dir = self.ent_mc_st_lrps_model_dir.text().strip()
+        gravity_mode = self.cb_batch_gravity_mode.currentData() or "follow_mission"
+        batch_backend = str(self.cb_batch_backend.currentData() or "auto")
+        st_lrps_dir = self.ent_batch_st_lrps_model_dir.text().strip()
 
         if (
             gpu_enabled
-            and mc_backend != "torch_cuda_sh"  # torch handles degree > 24 natively
-            and (gravity_mode == "classic_sh" or mc_backend in {"gpu_sh", "numba_cuda_sh"})
+            and batch_backend != "torch_cuda_sh"  # torch handles degree > 24 natively
+            and (gravity_mode == "classic_sh" or batch_backend in {"gpu_sh", "numba_cuda_sh"})
         ):
             sh_deg = self._parse_int(self.ent_gpu_sh.text(), 0)
             if sh_deg > 24:
@@ -1751,14 +1751,14 @@ class MonteCarloPage(QtWidgets.QWidget):
 
         if not gpu_enabled:
             warnings.append("GPU disabled: CPU full-fidelity mode may be slower.")
-            if mc_backend.startswith("gpu_") or mc_backend in {"numba_cuda_sh", "torch_cuda_sh"}:
-                warnings.append("Explicit GPU MC backend selected; backend policy will record the resolved fallback or GPU override.")
+            if batch_backend.startswith("gpu_") or batch_backend in {"numba_cuda_sh", "torch_cuda_sh"}:
+                warnings.append("Explicit GPU batch backend selected; backend policy will record the resolved fallback or GPU override.")
 
         if (
             gravity_mode == "st_lrps"
-            or mc_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
+            or batch_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
         ) and not st_lrps_dir:
-            warnings.append("ST-LRPS model dir is blank. MC will fall back to main Force Models setting.")
+            warnings.append("ST-LRPS model dir is blank. batch will fall back to main Force Models setting.")
 
         # 5. Integration
         dt_s = self._parse_float(self.ent_dt.text(), 0.0)
@@ -1807,9 +1807,9 @@ class MonteCarloPage(QtWidgets.QWidget):
         self.ent_sigma_cd.textChanged.connect(trigger)
         self.ent_sigma_cr.textChanged.connect(trigger)
         self.toggle_gpu.toggled.connect(trigger)
-        self.cb_mc_gravity_mode.currentIndexChanged.connect(trigger)
-        self.cb_mc_backend.currentIndexChanged.connect(trigger)
-        self.ent_mc_st_lrps_model_dir.textChanged.connect(trigger)
+        self.cb_batch_gravity_mode.currentIndexChanged.connect(trigger)
+        self.cb_batch_backend.currentIndexChanged.connect(trigger)
+        self.ent_batch_st_lrps_model_dir.textChanged.connect(trigger)
         self.ent_gpu_sh.textChanged.connect(trigger)
         self.ent_dt.textChanged.connect(trigger)
         self.ent_output.textChanged.connect(trigger)
@@ -1848,7 +1848,7 @@ if __name__ == "__main__":
 
     scroll = QtWidgets.QScrollArea()
     scroll.setWidgetResizable(True)
-    page = MonteCarloPage()
+    page = BatchPropagationPage()
 
     def _on_run():
         print("[Test] run_requested signal received")

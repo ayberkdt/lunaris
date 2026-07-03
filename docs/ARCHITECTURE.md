@@ -30,7 +30,7 @@ Dependency-light shared layer.
   `SpacecraftProps`, `InitialState`, …).
 - `math_utils.py`, `time_utils.py` — pure helpers.
 - `batch_defs.py` — canonical batch/ensemble configuration/result dataclasses.
-- `montecarlo_defs.py` — historical compatibility facade for batch dataclasses.
+- `batch_defs.py` — historical compatibility facade for batch dataclasses.
 
 ### Layer 2 — `lunaris.physics`
 Numba-JIT-compiled force-model kernels. Each file is one force model:
@@ -71,8 +71,8 @@ Numerical engine and configuration.
   import `lunaris.core.propagation.propagator` (or `lunaris.core.propagation`)
   directly. See `docs/refactor_notes.md` for the removal rationale.
 - `events.py` — impact / periapsis-apoapsis / eclipse / occultation events.
-- `monte_carlo_engine.py`, `mc_propagator.py`, `mc_backend_policy.py`,
-  `mc_runner.py` — historical compatibility/import surfaces for batch ensemble
+- `batch.engine.py`, `batch_propagator.py`, `backend_policy.py`,
+  `batch_runner.py` — historical compatibility/import surfaces for batch ensemble
   orchestration and CPU/GPU backends. New ensemble orchestration code lives in
   `lunaris.batch`.
 
@@ -82,7 +82,7 @@ Post-processing and presentation.
 - `analysis/reporting/` — report `manager`, `plotting`, `styling`.
 - `analysis/ensemble/` — canonical ensemble uncertainty `statistics`,
   `plotting`, UQ reports, linear covariance checks, and result audits. The
-  historical `analysis/monte_carlo/` analysis namespace has been removed; use
+  historical `analysis/ensemble/` analysis namespace has been removed; use
   `analysis/ensemble/` directly.
 - `analysis/perturbation_budget/` — mission-analysis acceleration budgets,
   spherical-harmonic degree sensitivity, force-model uncertainty comparisons,
@@ -102,11 +102,9 @@ Alongside the four layers:
   SPICE kernels, topography/albedo grids) consumed by layers 2–3.
 - `lunaris.batch` — canonical batch/ensemble orchestration package:
   `engine`, `sampling`, `storage`, `memory_policy`, `requirements`,
-  `provenance`, `backend_policy`, `progress`, and `types`. Legacy Monte Carlo
-  names remain only where public APIs, CLI flags, and archive contracts already
-  expose them.
-- `lunaris.cli` — console entry points (`lunaris`, `lunaris-batch`,
-  `lunaris-mc`, …) and shared CLI argument helpers; wires user input into the
+  `provenance`, `backend_policy`, `progress`, and `types`.
+- `lunaris.cli` — console entry points (`lunaris`, `lunaris-batch`, …) and
+  shared CLI argument helpers; wires user input into the
   `core` configuration. The main `lunaris` command is split into `options`,
   `summary`, and `run`; `cli/main.py` remains the public compatibility facade.
   Optional subsystem commands use import-safe wrappers in `cli/entrypoints.py`.
@@ -277,33 +275,30 @@ companion-file, or SHA-256 verification. See [DATA_PRESETS.md](DATA_PRESETS.md).
 
 The canonical concept is batch/ensemble propagation: Lunaris propagates an
 ensemble of initial states and spacecraft properties through the selected force
-model and backend. New code should use `BatchPropagation*` names and
-`lunaris.analysis.ensemble`. The legacy `MonteCarlo*`, `MCRunResult`,
-`load_mc_result`, `mc_*`, and `lunaris-mc` names remain only where stable
-CLI/archive/API contracts already expose them. Random Monte Carlo is the
-`sampling_method="random"` design; `lhs`, `sobol`, and `sobol_scrambled` provide
-space-filling designs for validation and benchmark coverage.
+model and backend. Execution uses `BatchPropagation*` names; statistics and
+reporting live in `lunaris.analysis.ensemble`. `sampling_method="random"` is
+the classical Monte Carlo sampling design; `lhs`, `sobol`, and
+`sobol_scrambled` provide space-filling designs for validation and benchmark
+coverage.
 
 | Module | Purpose |
 |--------|---------|
-| `common/batch_defs.py` | `BatchPropagationConfig`, `BatchPropagationResult`, `StateUncertainty`, `SpacecraftUncertainty`, sampling-method validation, plus legacy `MonteCarloConfig` / `MCRunResult` aliases |
-| `common/montecarlo_defs.py` | Historical compatibility facade re-exporting `common/batch_defs.py` |
-| `batch/engine.py` | `BatchPropagationEngine.run()` orchestration, backend dispatch, HDF5/NPZ output (`MonteCarloEngine` remains an alias) |
+| `common/batch_defs.py` | `BatchPropagationConfig`, `BatchPropagationResult`, `StateUncertainty`, `SpacecraftUncertainty`, sampling-method validation |
+| `batch/engine.py` | `BatchPropagationEngine.run()` orchestration, backend dispatch, HDF5/NPZ output |
 | `batch/sampling.py` | random/LHS/Sobol standard-normal designs, initial-state and spacecraft-property samples |
 | `batch/storage.py` | HDF5/NPZ writers, archive loading, storage policy |
 | `batch/requirements.py` | ephemeris/body-vector/topography and impact-frame preparation helpers |
-| `batch/backend_policy.py` | Thin adapter over `core/mc_backend_policy.py` |
-| `core/mc_propagator.py` | `GPUBatchPropagator` (CUDA RK4), `CPUBatchPropagator` (process pool) |
-| `core/monte_carlo_engine.py` | Historical compatibility shim for old imports and `lunaris-mc` / `lunaris-batch` entry points |
-| `analysis/ensemble/statistics.py` | `compute_mc_statistics()` → covariance, ellipsoids, impact probability, OE dispersion |
+| `batch/backend_policy.py` | Backend capability matrix and policy resolver (`resolve_batch_backend_policy`) |
+| `core/batch_propagator.py` | `GPUBatchPropagator` (CUDA RK4), `CPUBatchPropagator` (process pool) |
+| `analysis/ensemble/statistics.py` | `compute_ensemble_report()` → covariance, ellipsoids, impact probability, OE dispersion |
 | `analysis/ensemble/plotting.py` | altitude envelopes, 3-D covariance tubes, impact map, OE dispersion |
 
 ```python
 from lunaris.core.config import load_default_config
 from lunaris.common.batch_defs import BatchPropagationConfig, StateUncertainty
 from lunaris.batch import BatchPropagationEngine
-from lunaris.analysis.ensemble.statistics import compute_mc_statistics
-from lunaris.analysis.ensemble.plotting import plot_mc_report
+from lunaris.analysis.ensemble.statistics import compute_ensemble_report
+from lunaris.analysis.ensemble.plotting import plot_ensemble_report
 
 sim_cfg = load_default_config()
 batch_cfg = BatchPropagationConfig(
@@ -311,21 +306,18 @@ batch_cfg = BatchPropagationConfig(
     sampling_method="sobol_scrambled",  # random = Monte Carlo design; lhs/sobol = validation design
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
     use_gpu=True,
-    mc_backend="auto",   # auto, cpu_sh, numba_cuda_sh (alias gpu_sh), torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
+    batch_backend="auto",   # auto, cpu_sh, numba_cuda_sh (alias gpu_sh), torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
     gpu_sh_degree=10,    # requested SH degree; numba_cuda_sh supports <=24, torch_cuda_sh is high-degree
     output_format="hdf5",
     output_path="outputs/ensemble/run.h5",
 )
 result = BatchPropagationEngine(sim_cfg, batch_cfg).run()      # BatchPropagationResult
-stats = compute_mc_statistics(result)
-figs = plot_mc_report(result, stats, output_path="outputs/ensemble/report.pdf")
+stats = compute_ensemble_report(result)
+figs = plot_ensemble_report(result, stats, output_path="outputs/ensemble/report.pdf")
 ```
 
-Reload a saved run with `from lunaris.batch import load_mc_result`. The
-historical `lunaris.core.monte_carlo_engine` and
-`lunaris.common.montecarlo_defs` import paths remain available. The historical
-`lunaris.analysis.monte_carlo` analysis import path has been removed; analysis
-code should import from `lunaris.analysis.ensemble`.
+Reload a saved run with `from lunaris.batch import load_batch_result`.
+Analysis code imports from `lunaris.analysis.ensemble`.
 
 ### GPU classic-SH backends (Numba vs. Torch)
 - Two distinct classic-SH GPU runtimes exist and are kept separate everywhere:
@@ -343,8 +335,8 @@ code should import from `lunaris.analysis.ensemble`.
   degree is never clipped — `requested_sh_degree` and `actual_sh_degree` are
   recorded separately, and a successful SH100 run reports `actual_sh_degree=100`.
 - Backend selection is a single source of truth: `select_classic_sh_backend()`
-  (in `mc_backend_policy`) decides between `numba_cuda_sh` / `torch_cuda_sh` /
-  `cpu_sh`; `resolve_mc_backend_policy()` consumes that decision directly.
+  (in `backend_policy`) decides between `numba_cuda_sh` / `torch_cuda_sh` /
+  `cpu_sh`; `resolve_batch_backend_policy()` consumes that decision directly.
 - An explicit `numba_cuda_sh` request above degree 24 obeys `gpu_sh_fallback_policy`:
   `compatible_gpu` (try `torch_cuda_sh`, else CPU), `cpu`, or `error`.
 - The GPU paths do not support albedo, thermal IR, or solid tides; `torch_cuda_sh`
