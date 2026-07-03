@@ -39,8 +39,8 @@ def test_batch_config_no_fs_check():
 
     # High-degree GPU SH requests are accepted at config time so backend policy
     # can record an explicit CPU fallback instead of silently clipping degree.
-    cfg = BatchPropagationConfig(n_samples=10, gpu_sh_degree=80)
-    assert cfg.gpu_sh_degree == 80
+    cfg = BatchPropagationConfig(n_samples=10, sh_degree=80)
+    assert cfg.sh_degree == 80
 
 
 def test_batch_sampling_method_validation() -> None:
@@ -49,6 +49,11 @@ def test_batch_sampling_method_validation() -> None:
 
     with pytest.raises(ValueError, match="sampling_method must be one of"):
         BatchPropagationConfig(n_samples=8, sampling_method="grid")
+
+
+def test_batch_backend_requires_canonical_names() -> None:
+    with pytest.raises(ValueError, match="batch_backend must be one of"):
+        BatchPropagationConfig(n_samples=8, batch_backend="unknown_backend")
 
 
 def test_batch_impact_and_storage_contracts() -> None:

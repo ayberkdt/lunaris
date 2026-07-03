@@ -13,6 +13,7 @@ user-visible behaviors that recently regressed:
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
@@ -40,27 +41,31 @@ def _app() -> QtWidgets.QApplication:
 def test_log_panel_collapse_reduces_splitter_footprint() -> None:
     app = _app()
     win = MainWindow()
-    win.show()
-    app.processEvents()
+    try:
+        win.show()
+        app.processEvents()
 
-    if not win.log_panel.is_collapsed:
+        if not win.log_panel.is_collapsed:
+            win._toggle_log_collapsed()
+            app.processEvents()
+
+        collapsed_sizes = win.main_splitter.sizes()
+        assert collapsed_sizes[1] <= 60
+        assert win.log_panel.minimumHeight() >= 34
+        assert win.log_panel.is_collapsed is True
+
         win._toggle_log_collapsed()
         app.processEvents()
 
-    collapsed_sizes = win.main_splitter.sizes()
-    assert collapsed_sizes[1] <= 60
-    assert win.log_panel.minimumHeight() >= 34
-    assert win.log_panel.is_collapsed is True
-
-    win._toggle_log_collapsed()
-    app.processEvents()
-
-    restored_sizes = win.main_splitter.sizes()
-    assert restored_sizes[1] >= 120
-    assert win.log_panel.minimumHeight() >= 150
-    assert win.log_panel.is_collapsed is False
-
-    win.close()
+        restored_sizes = win.main_splitter.sizes()
+        assert restored_sizes[1] >= 120
+        assert win.log_panel.minimumHeight() >= 150
+        assert win.log_panel.is_collapsed is False
+    finally:
+        win.tick_timer.stop()
+        win.hide()
+        win.deleteLater()
+        app.processEvents()
 
 
 def test_batch_analysis_panel_loads_npz_archive_and_populates_summary(tmp_path: Path) -> None:
@@ -114,6 +119,27 @@ def test_batch_analysis_panel_loads_npz_archive_and_populates_summary(tmp_path: 
         sc_samples=result.sc_samples,
         impact_flags=result.impact_mask,
         t_impact=result.t_impact,
+        valid_mask=np.ones(3, dtype=np.float64),
+        impact_position_inertial_m=np.full((3, 3), np.nan, dtype=np.float64),
+        impact_position_fixed_m=np.full((3, 3), np.nan, dtype=np.float64),
+        metadata_json=np.asarray(
+            json.dumps(
+                {
+                    "archive_schema_version": 2,
+                    "n_samples": 3,
+                    "seed": 42,
+                    "duration_s": 120.0,
+                    "output_dt_s": 60.0,
+                    "backend": "CPU",
+                    "requested_batch_backend": "cpu_sh",
+                    "actual_batch_backend": "cpu_sh",
+                    "batch_backend": "cpu_sh",
+                    "detect_impact": True,
+                    "compute_impact_statistics": True,
+                }
+            ),
+            dtype=np.str_,
+        ),
     )
 
     panel = EnsembleAnalysisPanel()

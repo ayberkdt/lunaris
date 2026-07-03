@@ -100,7 +100,7 @@ class UIBatchPropagationConfig:
     use_gpu: bool = True
     batch_backend: str = "auto"
     gpu_device_id: int = 0
-    gpu_sh_degree: int = 10        # requested; true GPU classic-SH currently supports <=24
+    sh_degree: int = 10        # requested; true GPU classic-SH currently supports <=24
     gpu_threads_per_block: int = 128
     gravity_mode_override: str = "follow_mission"
     st_lrps_model_dir: str = ""
@@ -564,7 +564,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         if gravity_mode == "classic_sh":
             try:
                 cmd.extend(["--degree", str(int(degree))])
-                cmd.extend(["--gpu-sh-degree", str(int(degree))])
+                cmd.extend(["--sh-degree", str(int(degree))])
             except Exception:
                 pass
         cmd.extend(["--use-gpu", "on" if gpu_on else "off"])
@@ -618,7 +618,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
             if gravity_mode == "classic_sh":
                 try:
                     cmd.extend(["--degree", str(int(degree))])
-                    cmd.extend(["--gpu-sh-degree", str(int(degree))])
+                    cmd.extend(["--sh-degree", str(int(degree))])
                 except Exception:
                     pass
             cmd.extend(["--use-gpu", "on" if gpu_on else "off"])
@@ -895,16 +895,16 @@ class BatchPropagationPage(QtWidgets.QWidget):
         gpu_grid.setHorizontalSpacing(12)
 
         gpu_grid.addWidget(_label("Requested SH Degree:"), 0, 0)
-        self.ent_gpu_sh = NumericDragLineEdit(
-            str(self.batch_cfg.gpu_sh_degree),
+        self.ent_sh_degree = NumericDragLineEdit(
+            str(self.batch_cfg.sh_degree),
             step=1, min_value=0, max_value=200, decimals=0,
         )
-        self.ent_gpu_sh.setToolTip(
+        self.ent_sh_degree.setToolTip(
             "Requested spherical-harmonic degree.\n"
             "The current true GPU classic-SH kernel supports degree <= 24.\n"
             "Higher values fall back to CPU SH with metadata, not silent clipping."
         )
-        gpu_grid.addWidget(self.ent_gpu_sh, 0, 1)
+        gpu_grid.addWidget(self.ent_sh_degree, 0, 1)
 
         gpu_grid.addWidget(_label("Threads/Block:"), 1, 0)
         self.ent_tpb = NumericDragLineEdit(
@@ -979,16 +979,12 @@ class BatchPropagationPage(QtWidgets.QWidget):
             self.st_lrps_config_frame.setVisible(is_st_lrps)
 
     def _batch_backend_combo_index(self, value: str) -> int:
-        """Resolve a stored batch_backend value to a combo index.
-
-        Handles the legacy ``gpu_sh`` alias (it now resolves to the explicit
-        ``numba_cuda_sh`` item) so older saved presets keep selecting the Numba
-        CUDA path instead of silently snapping back to Auto.
-        """
-        idx = self.cb_batch_backend.findData(str(value or "auto"))
-        if idx < 0 and str(value) == "gpu_sh":
-            idx = self.cb_batch_backend.findData("numba_cuda_sh")
-        return idx if idx >= 0 else 0
+        """Resolve a stored batch_backend value to a combo index."""
+        requested = str(value or "auto")
+        idx = self.cb_batch_backend.findData(requested)
+        if idx < 0:
+            raise ValueError(f"Unknown batch backend in saved UI state: {requested!r}")
+        return idx
 
     def _on_batch_backend_changed(self, *_args: Any) -> None:
         if hasattr(self, "cb_batch_backend"):
@@ -1205,12 +1201,12 @@ class BatchPropagationPage(QtWidgets.QWidget):
         # Buttons row
         btn_row = QtWidgets.QHBoxLayout()
 
-        self.btn_run_mc = QtWidgets.QPushButton("  Run Batch")
-        self.btn_run_mc.setObjectName("primaryBtn")
-        self.btn_run_mc.setIcon(get_icon("fa6s.dice", THEME["fg_main"]))
-        self.btn_run_mc.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_run_mc.setFixedHeight(36)
-        self.btn_run_mc.clicked.connect(self._on_run_clicked)
+        self.btn_run_batch = QtWidgets.QPushButton("  Run Batch")
+        self.btn_run_batch.setObjectName("primaryBtn")
+        self.btn_run_batch.setIcon(get_icon("fa6s.dice", THEME["fg_main"]))
+        self.btn_run_batch.setCursor(QtCore.Qt.PointingHandCursor)
+        self.btn_run_batch.setFixedHeight(36)
+        self.btn_run_batch.clicked.connect(self._on_run_clicked)
 
         self.btn_open_folder = QtWidgets.QPushButton("  Open Folder")
         self.btn_open_folder.setIcon(get_icon("fa6s.folder-open", THEME["fg_muted"]))
@@ -1218,7 +1214,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.btn_open_folder.setFixedHeight(36)
         self.btn_open_folder.clicked.connect(self._open_output_folder)
 
-        btn_row.addWidget(self.btn_run_mc, 2)
+        btn_row.addWidget(self.btn_run_batch, 2)
         btn_row.addWidget(self.btn_open_folder, 1)
         layout.addLayout(btn_row)
 
@@ -1330,7 +1326,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         warm-up state so the user immediately sees that the request was queued.
         """
 
-        self.btn_run_mc.setEnabled(not running)
+        self.btn_run_batch.setEnabled(not running)
         if running:
             total = max(1, self._parse_int(self.ent_n_samples.text(), self.batch_cfg.n_samples))
             self._last_progress_payload = {}
@@ -1602,7 +1598,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
             "use_gpu":               bool(self.toggle_gpu.isChecked()),
             "batch_backend":            str(self.cb_batch_backend.currentData() or "auto"),
             "gpu_device_id":         self._parse_int(self.ent_gpu_dev.text(), 0),
-            "gpu_sh_degree":         self._parse_int(self.ent_gpu_sh.text(), 10),
+            "sh_degree":         self._parse_int(self.ent_sh_degree.text(), 10),
             "gpu_threads_per_block": self._parse_int(self.ent_tpb.text(), 128),
             "gravity_mode_override": str(self.cb_batch_gravity_mode.currentData() or "follow_mission"),
             "st_lrps_model_dir":     self.ent_batch_st_lrps_model_dir.text().strip(),
@@ -1641,7 +1637,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.batch_cfg.batch_backend = str(data.get("batch_backend", "auto") or "auto")
         self.cb_batch_backend.setCurrentIndex(self._batch_backend_combo_index(self.batch_cfg.batch_backend))
         self.ent_gpu_dev.setText(_s("gpu_device_id", 0))
-        self.ent_gpu_sh.setText(_s("gpu_sh_degree", 10))
+        self.ent_sh_degree.setText(_s("sh_degree", 10))
         self.ent_tpb.setText(_s("gpu_threads_per_block", 128))
         gravity_mode = str(data.get("gravity_mode_override", "follow_mission") or "follow_mission")
         gravity_idx = self.cb_batch_gravity_mode.findData(gravity_mode)
@@ -1739,9 +1735,9 @@ class BatchPropagationPage(QtWidgets.QWidget):
         if (
             gpu_enabled
             and batch_backend != "torch_cuda_sh"  # torch handles degree > 24 natively
-            and (gravity_mode == "classic_sh" or batch_backend in {"gpu_sh", "numba_cuda_sh"})
+            and (gravity_mode == "classic_sh" or batch_backend == "numba_cuda_sh")
         ):
-            sh_deg = self._parse_int(self.ent_gpu_sh.text(), 0)
+            sh_deg = self._parse_int(self.ent_sh_degree.text(), 0)
             if sh_deg > 24:
                 warnings.append(
                     "Requested SH degree > 24: numba_cuda_sh tops out at degree 24 "
@@ -1810,7 +1806,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.cb_batch_gravity_mode.currentIndexChanged.connect(trigger)
         self.cb_batch_backend.currentIndexChanged.connect(trigger)
         self.ent_batch_st_lrps_model_dir.textChanged.connect(trigger)
-        self.ent_gpu_sh.textChanged.connect(trigger)
+        self.ent_sh_degree.textChanged.connect(trigger)
         self.ent_dt.textChanged.connect(trigger)
         self.ent_output.textChanged.connect(trigger)
         self.cb_format.currentIndexChanged.connect(trigger)
@@ -1820,15 +1816,15 @@ class BatchPropagationPage(QtWidgets.QWidget):
         if not ok:
             self.lbl_validation.setText("⚠ Errors:\n" + "\n".join(errors))
             self.lbl_validation.setProperty("kind", "error")
-            self.btn_run_mc.setEnabled(False)
+            self.btn_run_batch.setEnabled(False)
         elif warnings:
             self.lbl_validation.setText("⚠ Warnings:\n" + "\n".join(warnings))
             self.lbl_validation.setProperty("kind", "warn")
-            self.btn_run_mc.setEnabled(True)
+            self.btn_run_batch.setEnabled(True)
         else:
             self.lbl_validation.setText("Configuration looks ready.")
             self.lbl_validation.setProperty("kind", "ok")
-            self.btn_run_mc.setEnabled(True)
+            self.btn_run_batch.setEnabled(True)
         _repolish(self.lbl_validation)
 
 

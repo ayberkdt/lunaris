@@ -68,7 +68,7 @@ def test_validate_page_inputs_errors(batch_page):
     idx = batch_page.cb_batch_gravity_mode.findData("classic_sh")
     batch_page.cb_batch_gravity_mode.setCurrentIndex(idx)
 
-    batch_page.ent_gpu_sh.setText("30")
+    batch_page.ent_sh_degree.setText("30")
 
     ok, errors, warnings = batch_page.validate_page_inputs()
     assert not ok

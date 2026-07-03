@@ -12,7 +12,7 @@ GPU path  — ``GPUBatchPropagator``
 
     Physics available on GPU:
       * Spherical harmonics gravity up to degree 24 (compile-time fixed workspace).
-      * Point-mass fallback (when ``gpu_sh_degree=0``).
+      * Point-mass fallback (when ``sh_degree=0``).
       * Third-body Sun / Earth point-mass perturbations.
       * Solar Radiation Pressure (flat-plate, eclipse-checked).
       * 1PN relativistic corrections (Moon Schwarzschild plus external-body
@@ -99,8 +99,8 @@ except ImportError:
 # Higher-degree classic-SH requests must be routed by backend_policy to CPU
 # or another backend; this kernel must never silently clip the requested degree.
 _GPU_WS: int = 26
-GPU_SH_MAX_DEGREE: int = _GPU_WS - 2
-GPU_SH_SUPPORTED_TIERS: tuple[int, ...] = (GPU_SH_MAX_DEGREE,)
+NUMBA_CUDA_SH_MAX_DEGREE: int = _GPU_WS - 2
+NUMBA_CUDA_SH_SUPPORTED_TIERS: tuple[int, ...] = (NUMBA_CUDA_SH_MAX_DEGREE,)
 
 
 def gpu_unsupported_features(flags: Any) -> tuple[str, ...]:
@@ -122,14 +122,14 @@ def gpu_unsupported_features(flags: Any) -> tuple[str, ...]:
     return tuple(unsupported)
 
 
-def gpu_sh_capability() -> dict[str, Any]:
+def numba_cuda_sh_capability() -> dict[str, Any]:
     """Return the true classic-SH capability of the current Numba CUDA kernel."""
 
     return {
         "backend": "numba_cuda_classic_sh",
         "supported": bool(_CUDA_AVAILABLE),
-        "max_degree": int(GPU_SH_MAX_DEGREE),
-        "supported_tiers": [int(v) for v in GPU_SH_SUPPORTED_TIERS],
+        "max_degree": int(NUMBA_CUDA_SH_MAX_DEGREE),
+        "supported_tiers": [int(v) for v in NUMBA_CUDA_SH_SUPPORTED_TIERS],
         "workspace": f"{_GPU_WS}x{_GPU_WS}",
         "workspace_policy": "compile_time_thread_local",
         "dtype": "float64",
@@ -1335,8 +1335,8 @@ class GPUBatchPropagator:
         from lunaris.physics.spherical_harmonics import build_legendre_coeffs
 
         grav = getattr(dyn, "grav", None)
-        n_sh_req = int(self._cfg.gpu_sh_degree)
-        self._requested_gpu_sh_degree = int(n_sh_req)
+        n_sh_req = int(self._cfg.sh_degree)
+        self._requested_sh_degree = int(n_sh_req)
 
         if grav is None or n_sh_req == 0:
             # Point-mass only
@@ -1355,11 +1355,11 @@ class GPUBatchPropagator:
                 )
 
         nmax, r_ref, gm, Cnm, Snm, *_ = extract_gravity_strict(grav)
-        if n_sh_req > GPU_SH_MAX_DEGREE:
+        if n_sh_req > NUMBA_CUDA_SH_MAX_DEGREE:
             raise RuntimeError(
-                f"Requested gpu_sh_degree={n_sh_req}, but the current Numba CUDA "
+                f"Requested sh_degree={n_sh_req}, but the current Numba CUDA "
                 f"classic-SH kernel supports true GPU SH only through degree "
-                f"{GPU_SH_MAX_DEGREE} (workspace {_GPU_WS}x{_GPU_WS}). "
+                f"{NUMBA_CUDA_SH_MAX_DEGREE} (workspace {_GPU_WS}x{_GPU_WS}). "
                 "Use batch_backend='auto' or 'cpu_sh' for explicit CPU fallback, "
                 "or implement a higher-degree specialized/streaming CUDA kernel."
             )
@@ -1504,13 +1504,13 @@ class GPUBatchPropagator:
             "gpu_free_mem_bytes": int(self._free_mem_bytes),
             "gpu_total_mem_bytes": int(self._total_mem_bytes),
             "recommended_max_batch": int(self._recommended_max_batch),
-            "requested_gpu_sh_degree": int(getattr(self, "_requested_gpu_sh_degree", 0)),
-            "gpu_sh_degree": int(getattr(self._grav_pack, "n_sh", 0)),
-            "actual_gpu_sh_degree": int(getattr(self._grav_pack, "n_sh", 0)),
-            "gpu_sh_max_degree": int(GPU_SH_MAX_DEGREE),
-            "gpu_sh_supported_tiers": [int(v) for v in GPU_SH_SUPPORTED_TIERS],
-            "gpu_sh_workspace": f"{_GPU_WS}x{_GPU_WS}",
-            "gpu_sh_workspace_policy": "compile_time_thread_local",
+            "requested_sh_degree": int(getattr(self, "_requested_sh_degree", 0)),
+            "sh_degree": int(getattr(self._grav_pack, "n_sh", 0)),
+            "actual_sh_degree": int(getattr(self._grav_pack, "n_sh", 0)),
+            "numba_cuda_sh_max_degree": int(NUMBA_CUDA_SH_MAX_DEGREE),
+            "numba_cuda_sh_supported_tiers": [int(v) for v in NUMBA_CUDA_SH_SUPPORTED_TIERS],
+            "numba_cuda_sh_workspace": f"{_GPU_WS}x{_GPU_WS}",
+            "numba_cuda_sh_workspace_policy": "compile_time_thread_local",
             "supports_earth_j2": bool(self._earth_j2_pack["enabled"]),
             "impact_position_method": (
                 "terrain_bisection_hybrid"
@@ -1953,10 +1953,10 @@ class CPUBatchPropagator:
 # =============================================================================
 
 __all__ = [
-    "GPU_SH_MAX_DEGREE",
-    "GPU_SH_SUPPORTED_TIERS",
+    "NUMBA_CUDA_SH_MAX_DEGREE",
+    "NUMBA_CUDA_SH_SUPPORTED_TIERS",
     "GPUBatchPropagator",
     "CPUBatchPropagator",
-    "gpu_sh_capability",
+    "numba_cuda_sh_capability",
     "gpu_unsupported_features",
 ]

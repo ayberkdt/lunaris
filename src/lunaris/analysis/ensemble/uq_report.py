@@ -132,13 +132,13 @@ def _jsonable(value: Any) -> Any:
     """Best-effort conversion of diagnostics/config values for canonical JSON."""
     if isinstance(value, Mapping):
         return {str(k): _jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_jsonable(v) for v in value]
     if isinstance(value, np.generic):
         return value.item()
     if isinstance(value, np.ndarray):
         return value.tolist() if value.size <= 64 else f"<ndarray shape={value.shape}>"
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, str | int | float | bool) or value is None:
         return value
     return str(value)
 
@@ -351,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from lunaris.batch.storage import load_batch_result
 
-    result = load_batch_result(str(args.archive), lazy=True, strict=False)
+    result = load_batch_result(str(args.archive), lazy=True)
     manifest = build_uq_report(
         result,
         args.out,

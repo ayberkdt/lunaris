@@ -53,9 +53,9 @@ def _metadata_value_to_jsonable(value: Any) -> Any:
         return str(value)
     if isinstance(value, np.generic):
         return value.item()
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, str | int | float | bool) or value is None:
         return value
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_metadata_value_to_jsonable(item) for item in value]
     if isinstance(value, dict):
         return {str(key): _metadata_value_to_jsonable(val) for key, val in value.items()}

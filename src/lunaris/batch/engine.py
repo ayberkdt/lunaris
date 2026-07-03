@@ -222,7 +222,7 @@ class BatchPropagationEngine:
 
         cfg = self._sim_cfg
         batch_backend = str(getattr(self._cfg, "batch_backend", "auto") or "auto")
-        backend_forces_classic_sh = batch_backend in {"cpu_sh", "gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
+        backend_forces_classic_sh = batch_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
         backend_forces_st_lrps = batch_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
         grav_model = None
         ephem_manager = None
@@ -259,24 +259,24 @@ class BatchPropagationEngine:
 
                     requested_degree = int(cfg.gravity.degree) if cfg.gravity.degree is not None else None
 
-                    # The classic-SH GPU batch paths (numba_cuda_sh /
+                    # The classic-SH batch paths (numba_cuda_sh /
                     # torch_cuda_sh / torch_cpu_sh, or use_gpu auto) evaluate SH
-                    # up to mc.gpu_sh_degree. Load coefficients to at least that
-                    # degree (clamped to the file's own max by the loader) so a
-                    # high gpu_sh_degree is not rejected by the propagator
-                    # preflight merely because the mission's nominal degree is
-                    # lower. Pure-CPU runs keep the mission degree unchanged so
-                    # their physics is not silently altered.
-                    batch_gpu_degree = int(getattr(self._cfg, "gpu_sh_degree", 0) or 0)
-                    gpu_sh_path_requested = (
-                        batch_backend in {"gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
+                    # up to batch_cfg.sh_degree. Load coefficients to at
+                    # least that degree (clamped to the file's own max by the
+                    # loader) so a high sh_degree is not rejected by the
+                    # propagator preflight merely because the mission's nominal
+                    # degree is lower. Pure-CPU runs keep the mission degree
+                    # unchanged so their physics is not silently altered.
+                    batch_sh_degree = int(getattr(self._cfg, "sh_degree", 0) or 0)
+                    numba_cuda_sh_path_requested = (
+                        batch_backend in {"numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
                         or (batch_backend == "auto" and bool(getattr(self._cfg, "use_gpu", False)))
                     )
-                    if gpu_sh_path_requested and batch_gpu_degree > 0:
+                    if numba_cuda_sh_path_requested and batch_sh_degree > 0:
                         requested_degree = (
-                            batch_gpu_degree
+                            batch_sh_degree
                             if requested_degree is None
-                            else max(requested_degree, batch_gpu_degree)
+                            else max(requested_degree, batch_sh_degree)
                         )
 
                     # GravityModel already exposes the full dynamics gravity
@@ -530,12 +530,12 @@ class BatchPropagationEngine:
 
         A benchmark / paper-evidence run that asks for a GPU backend and then
         quietly executes on CPU produces a misleading speed/throughput table. The
-        existing ``gpu_sh_fallback_policy='error'`` already hard-fails at backend
+        existing ``sh_fallback_policy='error'`` already hard-fails at backend
         *planning*; this extends the same intent to *initialization* failures
         (GPU selected by the policy, but the propagator could not be built), plus
         any explicit paper-safe / strict-backend flag on the batch config.
         """
-        policy = str(getattr(self._cfg, "gpu_sh_fallback_policy", "compatible_gpu") or "").strip().lower()
+        policy = str(getattr(self._cfg, "sh_fallback_policy", "compatible_gpu") or "").strip().lower()
         if policy == "error":
             return True
         return any(
@@ -547,7 +547,7 @@ class BatchPropagationEngine:
         """Either hard-fail (strict/paper-safe) or downgrade to CPU with provenance."""
         if self._fallback_forbidden():
             raise RuntimeError(
-                f"{note} However, fallback is forbidden (gpu_sh_fallback_policy='error' or "
+                f"{note} However, fallback is forbidden (sh_fallback_policy='error' or "
                 "paper-safe mode): refusing to silently run on CPU for a benchmark/paper run. "
                 "Fix the GPU backend or relax the fallback policy explicitly."
             ) from exc
@@ -597,12 +597,12 @@ class BatchPropagationEngine:
         BatchPropagationResult
             Ensemble trajectories, spacecraft samples, impact bookkeeping.
         """
-        mc  = self._cfg
+        batch_cfg = self._cfg
         cfg = self._sim_cfg
-        N   = int(mc.n_samples)
+        N   = int(batch_cfg.n_samples)
 
         t_wall0 = time.perf_counter()
-        rng = np.random.default_rng(int(mc.seed))
+        rng = np.random.default_rng(int(batch_cfg.seed))
         self._publish_progress(
             stage="sampling",
             stage_fraction=0.0,
@@ -617,7 +617,7 @@ class BatchPropagationEngine:
         # 1) Generate samples
         # ----------------------------------------------------------------
         nominal = _state_to_array(cfg.initial_state)   # (6,)
-        sampling_method = str(getattr(mc, "sampling_method", "random") or "random")
+        sampling_method = str(getattr(batch_cfg, "sampling_method", "random") or "random")
         qmc_design_note = _sobol_size_note(sampling_method, N)
         if sampling_method == "random":
             joint_standard_normals = None
@@ -626,16 +626,16 @@ class BatchPropagationEngine:
                 N,
                 10,
                 sampling_method,
-                int(mc.seed),
+                int(batch_cfg.seed),
             )
 
         Y0 = sample_initial_states(
             nominal,
-            mc.state,
+            batch_cfg.state,
             N,
             rng,
             sampling_method=sampling_method,
-            seed=int(mc.seed),
+            seed=int(batch_cfg.seed),
             standard_normal_samples=(
                 None if joint_standard_normals is None else joint_standard_normals[:, :6]
             ),
@@ -645,11 +645,11 @@ class BatchPropagationEngine:
             nominal_area=float(cfg.spacecraft.area_m2),
             nominal_cd=float(cfg.spacecraft.cd),
             nominal_cr=float(cfg.spacecraft.cr),
-            uncertainty=mc.spacecraft,
+            uncertainty=batch_cfg.spacecraft,
             n_samples=N,
             rng=rng,
             sampling_method=sampling_method,
-            seed=int(mc.seed) + 1,
+            seed=int(batch_cfg.seed) + 1,
             standard_normal_samples=(
                 None if joint_standard_normals is None else joint_standard_normals[:, 6:10]
             ),
@@ -690,25 +690,25 @@ class BatchPropagationEngine:
         backend_name = _BACKEND_DISPLAY_NAMES.get(_plan_actual, "CPU")
         backend_diag = prop.diagnostics_snapshot() if hasattr(prop, "diagnostics_snapshot") else {}
         backend_plan = getattr(self, "_backend_plan", None)
-        requested_max_batch = mc.effective_max_batch()
+        requested_max_batch = batch_cfg.effective_max_batch()
         if hasattr(prop, "recommended_max_batch"):
             max_batch = int(prop.recommended_max_batch(requested_max_batch))
         else:
             max_batch = int(requested_max_batch)
 
         duration_s  = float(cfg.time.duration_s)
-        output_dt_s = float(cfg.time.output_dt_s or mc.dt_s * 10)
+        output_dt_s = float(cfg.time.output_dt_s or batch_cfg.dt_s * 10)
         t_out_contract, _, _ = build_batch_output_grid(duration_s, output_dt_s)
         storage_mode, result_bytes, memory_limit_bytes = _resolve_result_storage(
-            mc,
+            batch_cfg,
             len(t_out_contract),
         )
-        writer = _make_writer(mc, N, t_out_contract)
+        writer = _make_writer(batch_cfg, N, t_out_contract)
 
         print(
             f"[BATCH] N={N}  backend={backend_name}  "
             f"T={duration_s / DAY_S:.2f} d  "
-            f"step={mc.dt_s:.1f} s  snap={output_dt_s:.1f} s",
+            f"step={batch_cfg.dt_s:.1f} s  snap={output_dt_s:.1f} s",
             flush=True,
         )
         if self._backend_note:
@@ -870,7 +870,7 @@ class BatchPropagationEngine:
                         radii = np.linalg.norm(Y_b[:, j, :3], axis=1)
                         hits = np.where(
                             radii
-                            <= float(R_MOON) + float(mc.impact_alt_km) * 1_000.0
+                            <= float(R_MOON) + float(batch_cfg.impact_alt_km) * 1_000.0
                         )[0]
                         hit_idx = int(hits[0]) if hits.size else len(t_b) - 1
                         t_imp_b[j] = float(t_b[hit_idx])
@@ -941,8 +941,8 @@ class BatchPropagationEngine:
             _plan = backend_plan
             if _plan is None:
                 from lunaris.batch.backend_policy import resolve_batch_backend_policy as _resolve
-                _plan = _resolve(mc, self._sim_cfg)
-            actual_sh_degree = backend_diag.get("actual_gpu_sh_degree", backend_diag.get("gpu_sh_degree"))
+                _plan = _resolve(batch_cfg, self._sim_cfg)
+            actual_sh_degree = backend_diag.get("actual_sh_degree", backend_diag.get("sh_degree"))
             if actual_sh_degree is None and _grav_model is not None:
                 actual_sh_degree = getattr(_grav_model, "effective_degree_max", getattr(_grav_model, "degree", None))
             _plan_meta: dict[str, Any] = {
@@ -952,15 +952,15 @@ class BatchPropagationEngine:
                 "backend_family": getattr(_plan, "backend_family", ""),
                 "backend_implementation": backend_diag.get("backend_implementation")
                     or getattr(_plan, "backend_implementation", ""),
-                "requested_use_gpu": bool(mc.use_gpu),
+                "requested_use_gpu": bool(batch_cfg.use_gpu),
                 "final_use_gpu": _plan.use_gpu,
                 "plan_gravity_backend": _plan.gravity_backend,   # renamed: avoids collision with _st_lrps_meta["gravity_backend"]
                 "requested_device": getattr(_plan, "requested_device", ""),
                 "actual_device": backend_diag.get("device_name") or getattr(_plan, "actual_device", ""),
-                "requested_sh_degree": getattr(_plan, "requested_sh_degree", int(mc.gpu_sh_degree)),
+                "requested_sh_degree": getattr(_plan, "requested_sh_degree", int(batch_cfg.sh_degree)),
                 "actual_sh_degree": actual_sh_degree,
-                "gpu_sh_max_degree": getattr(_plan, "gpu_sh_max_degree", None),
-                "gpu_sh_supported_tiers": list(getattr(_plan, "gpu_sh_supported_tiers", ())),
+                "numba_cuda_sh_max_degree": getattr(_plan, "numba_cuda_sh_max_degree", None),
+                "numba_cuda_sh_supported_tiers": list(getattr(_plan, "numba_cuda_sh_supported_tiers", ())),
                 "runtime_model_kind": _st_lrps_meta.get(
                     "runtime_model_kind",
                     getattr(_plan, "runtime_model_kind", None),
@@ -991,12 +991,12 @@ class BatchPropagationEngine:
             # Even on the degenerate provenance path the required v2 manifest
             # fields must be present (and non-null) so the archive still loads
             # under load_batch_result(strict=True).
-            _fallback_backend = str(getattr(mc, "batch_backend", "auto") or "auto")
+            _fallback_backend = str(getattr(batch_cfg, "batch_backend", "auto") or "auto")
             _plan_meta = {
                 "requested_batch_backend": _fallback_backend,
                 "actual_batch_backend": _fallback_backend,
                 "batch_backend": _fallback_backend,
-                "requested_sh_degree": int(mc.gpu_sh_degree),
+                "requested_sh_degree": int(batch_cfg.sh_degree),
             }
 
         # Artifact + coefficient + kernel hash provenance: a path string alone is
@@ -1034,20 +1034,20 @@ class BatchPropagationEngine:
             writer.write_metadata(
                 archive_schema_version=2,
                 n_samples=N,
-                seed=int(mc.seed),
+                seed=int(batch_cfg.seed),
                 sampling_method=sampling_method,
                 sampling_note=qmc_design_note,
                 duration_s=duration_s,
                 output_dt_s=output_dt_s,
-                requested_backend="GPU" if bool(mc.use_gpu) else "CPU",
-                gpu_sh_degree=int(mc.gpu_sh_degree),
+                requested_backend="GPU" if bool(batch_cfg.use_gpu) else "CPU",
+                sh_degree=int(batch_cfg.sh_degree),
                 backend=backend_name,
                 backend_note=self._backend_note,
                 backend_diagnostics=backend_diag,
                 result_storage_mode=storage_mode,
                 estimated_result_bytes=result_bytes,
-                detect_impact=bool(mc.impact_detection_enabled),
-                compute_impact_statistics=bool(mc.impact_statistics_enabled),
+                detect_impact=bool(batch_cfg.impact_detection_enabled),
+                compute_impact_statistics=bool(batch_cfg.impact_statistics_enabled),
                 impact_frame_available=bool(getattr(self._dyn, "ephem", None) is not None),
                 **_provenance_hashes,
                 **_st_lrps_meta,
@@ -1104,7 +1104,7 @@ class BatchPropagationEngine:
         # 5) Build result
         # ----------------------------------------------------------------
         if storage_mode == "disk":
-            Y_result: Any = HDF5TrajectoryView(mc.output_path_resolved)
+            Y_result: Any = HDF5TrajectoryView(batch_cfg.output_path_resolved)
         else:
             if Y_all is None:
                 raise RuntimeError("Eager batch result buffer was not initialized.")
@@ -1120,7 +1120,7 @@ class BatchPropagationEngine:
             valid_mask=valid_all,
             impact_position_inertial_m=impact_position_inertial,
             impact_position_fixed_m=impact_position_fixed,
-            archive_path=str(mc.output_path_resolved),
+            archive_path=str(batch_cfg.output_path_resolved),
             diagnostics={
                 "wall_time_s": float(t_wall),
                 "n_samples": N,
@@ -1130,12 +1130,12 @@ class BatchPropagationEngine:
                 "n_failed_samples": n_failed,
                 "n_impacts": n_hit,
                 "impact_fraction": impact_fraction,
-                "impact_detection_enabled": bool(mc.impact_detection_enabled),
-                "impact_statistics_enabled": bool(mc.impact_statistics_enabled),
+                "impact_detection_enabled": bool(batch_cfg.impact_detection_enabled),
+                "impact_statistics_enabled": bool(batch_cfg.impact_statistics_enabled),
                 "impact_frame_available": bool(getattr(self._dyn, "ephem", None) is not None),
                 "backend": backend_name,
                 "backend_note": self._backend_note,
-                "output_path": str(mc.output_path_resolved),
+                "output_path": str(batch_cfg.output_path_resolved),
                 "backend_diagnostics": backend_diag,
                 # Throughput metrics from the batched propagator (if available)
                 "raw_batch_state_steps_per_second": backend_diag.get("raw_batch_state_steps_per_second"),

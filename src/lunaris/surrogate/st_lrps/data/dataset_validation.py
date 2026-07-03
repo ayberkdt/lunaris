@@ -93,7 +93,7 @@ def validate_dataset_file(
             errors.append(f"contract n_samples={contract.n_samples} does not match HDF5 rows={n_total}")
         if contract is not None:
             layout_shape = (contract.dataset_layout or {}).get("shape")
-            if isinstance(layout_shape, (list, tuple)) and len(layout_shape) >= 2:
+            if isinstance(layout_shape, list | tuple) and len(layout_shape) >= 2:
                 expected_shape = tuple(int(v) for v in layout_shape[:2])
                 if expected_shape != tuple(shape[:2]):
                     errors.append(f"contract dataset_layout.shape={expected_shape} does not match HDF5 shape={shape}")

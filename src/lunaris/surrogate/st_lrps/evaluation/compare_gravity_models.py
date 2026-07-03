@@ -53,7 +53,7 @@ Smoke tests:
       --gpu-models sh200,sh160,sh120,sh60,sh20,st_lrps \\
       --gpu-batch-compare --rk4-dt-s 10 \\
       --torch-dtype float64 --plot-theme report_light \\
-      --output-dir results/gpu_sh_vs_stlrps_100
+      --output-dir results/numba_cuda_sh_vs_stlrps_100
 
   # Faster GPU batch smoke
   python -m lunaris.surrogate.st_lrps.evaluation.compare_gravity_models \\

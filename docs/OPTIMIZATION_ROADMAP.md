@@ -17,12 +17,12 @@ artifact, hardware, force model, and scenario set.
    validation/coverage batches, and `sampling_method="random"` for classical
    random uncertainty draws. Pair that with `batch_backend="auto"` for
    ordinary batch runs, explicit `cpu_sh` for high-fidelity truth/reference,
-   explicit `numba_cuda_sh`/`gpu_sh` for the degree-24 Numba CUDA screening tier,
+   explicit `numba_cuda_sh` for the degree-24 Numba CUDA screening tier,
    explicit `torch_cuda_sh` for high-degree gravity-only PyTorch CUDA runs, and
    explicit ST-LRPS GPU backends for throughput.
 4. Do not remove the Numba CUDA degree-24 limit by raising a constant. The
    Numba evaluator uses fixed `(26 x 26)` per-thread Legendre workspaces; that
-   ceiling belongs to `numba_cuda_sh` and its legacy alias `gpu_sh`, not to the
+   ceiling belongs to `numba_cuda_sh`, not to the
    entire classic-SH GPU family.
 5. For requested classic-SH degrees above 24, route through
    `select_classic_sh_backend()`: use `torch_cuda_sh` when PyTorch CUDA is
@@ -54,16 +54,17 @@ Recommended production workflow:
   until drift and curl validation pass.
 - Run smaller high-degree `batch_backend="cpu_sh"` truth/reference batches to
   quantify the error envelope.
-- Use `batch_backend="gpu_sh"` only as the legacy alias for `numba_cuda_sh`
-  (degree <= 24). For high-degree GPU classic SH, request `torch_cuda_sh`
-  explicitly or let `batch_backend="auto"` select it when the run is gravity-only
-  and PyTorch CUDA is available. Requests that cannot be served on GPU must
-  record the CPU fallback in requested-vs-actual metadata.
+- Use `batch_backend="numba_cuda_sh"` for the degree <= 24 Numba CUDA screening
+  path. For high-degree GPU classic SH, request `torch_cuda_sh` explicitly or
+  let `batch_backend="auto"` select it when the run is gravity-only and PyTorch
+  CUDA is available. Requests that cannot be served on GPU must record the CPU
+  fallback in requested-vs-actual metadata.
 
 ## Implemented Now
 
 - Added `batch_backend` selection with the supported values `auto`, `cpu_sh`,
-  `gpu_sh`, `gpu_st_lrps_potential`, and `gpu_st_lrps_direct`.
+  `numba_cuda_sh`, `torch_cuda_sh`, `torch_cpu_sh`, `gpu_st_lrps_potential`,
+  and `gpu_st_lrps_direct`.
 - Added explicit requested/actual backend metadata, requested/actual SH degree,
   GPU SH capability metadata, runtime model kind, CUDA device name, dtype, and
   fallback reason.

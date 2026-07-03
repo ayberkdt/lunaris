@@ -486,8 +486,8 @@ def compute_oe_dispersion(
 def _impact_detection_was_enabled(result: BatchPropagationResult) -> bool | None:
     """Whether this run requested impact statistics, read from its manifest.
 
-    Returns ``None`` when the archive predates the impact contract (no flag
-    recorded), so callers can fall back to evaluating for backward compatibility.
+    Returns ``None`` when an in-memory result carries no manifest flag, so
+    callers can evaluate impact statistics by default.
     """
     diag = getattr(result, "diagnostics", None) or {}
     for key in ("compute_impact_statistics", "detect_impact"):
@@ -496,7 +496,7 @@ def _impact_detection_was_enabled(result: BatchPropagationResult) -> bool | None
         val = diag[key]
         if isinstance(val, str):
             return val.strip().lower() in {"true", "1", "yes", "on"}
-        if isinstance(val, (bool, np.bool_, int, float, np.integer, np.floating)):
+        if isinstance(val, bool | np.bool_ | int | float | np.integer | np.floating):
             return bool(val)
     return None
 
@@ -540,7 +540,7 @@ def compute_ensemble_report(
 
     if compute_impacts is None:
         enabled = _impact_detection_was_enabled(result)
-        # Legacy archives without the flag default to evaluating (prior behavior).
+        # In-memory results without manifest flags default to evaluating.
         compute_impacts = True if enabled is None else enabled
 
     imps: ImpactStatistics | None = None

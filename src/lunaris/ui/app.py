@@ -1070,7 +1070,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if exit_code == 0:
             wt = metrics.get("wall_time_s")
-            wt_str = f"{wt:.1f}s" if isinstance(wt, (int, float)) else "?"
+            wt_str = f"{wt:.1f}s" if isinstance(wt, int | float) else "?"
             self._log_message(
                 f"[BATCH] Run complete — {metrics.get('n_impacts', '?')}/{metrics.get('n_samples', '?')} "
                 f"impacts  wall={wt_str}",
@@ -1658,7 +1658,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if v is None:
                 return None
-            if isinstance(v, (int, float)):
+            if isinstance(v, int | float):
                 return float(v)
             s = str(v).strip()
             if not s:
@@ -1778,7 +1778,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if isinstance(payload, dict):
                     self.page_output.set_run_diagnostics(payload)
                     wall = payload.get("wall_time_s")
-                    if isinstance(wall, (int, float)):
+                    if isinstance(wall, int | float):
                         self._log_message(
                             f"[Run] Engine diagnostics received (wall {wall:.2f} s) — see Results & Export.",
                             severity="system",

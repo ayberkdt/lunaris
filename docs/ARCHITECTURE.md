@@ -30,7 +30,6 @@ Dependency-light shared layer.
   `SpacecraftProps`, `InitialState`, …).
 - `math_utils.py`, `time_utils.py` — pure helpers.
 - `batch_defs.py` — canonical batch/ensemble configuration/result dataclasses.
-- `batch_defs.py` — historical compatibility facade for batch dataclasses.
 
 ### Layer 2 — `lunaris.physics`
 Numba-JIT-compiled force-model kernels. Each file is one force model:
@@ -71,19 +70,15 @@ Numerical engine and configuration.
   import `lunaris.core.propagation.propagator` (or `lunaris.core.propagation`)
   directly. See `docs/refactor_notes.md` for the removal rationale.
 - `events.py` — impact / periapsis-apoapsis / eclipse / occultation events.
-- `batch.engine.py`, `batch_propagator.py`, `backend_policy.py`,
-  `batch_runner.py` — historical compatibility/import surfaces for batch ensemble
-  orchestration and CPU/GPU backends. New ensemble orchestration code lives in
-  `lunaris.batch`.
+- `batch_propagator.py` — low-level CPU/Numba CUDA batch propagators used by
+  the canonical `lunaris.batch` orchestration layer.
 
 ### Layer 4 — `lunaris.analysis`, `lunaris.visualization`, `lunaris.ui`
 Post-processing and presentation.
 - `analysis/postprocess.py` — orbital elements, invariants, metrics.
 - `analysis/reporting/` — report `manager`, `plotting`, `styling`.
 - `analysis/ensemble/` — canonical ensemble uncertainty `statistics`,
-  `plotting`, UQ reports, linear covariance checks, and result audits. The
-  historical `analysis/ensemble/` analysis namespace has been removed; use
-  `analysis/ensemble/` directly.
+  `plotting`, UQ reports, linear covariance checks, and result audits.
 - `analysis/perturbation_budget/` — mission-analysis acceleration budgets,
   spherical-harmonic degree sensitivity, force-model uncertainty comparisons,
   and per-configuration gravity-degree recommendations. It calls existing
@@ -127,7 +122,7 @@ Alongside the four layers:
 | `physics` does not depend on core, presentation, or surrogate code | import-linter: `physics never imports core/analysis/visualization/ui` and `physics does not depend on the ST-LRPS subsystem` |
 | `core` does not import desktop UI or the ST-LRPS data/training/evaluation/UI pipelines | import-linter: `core does not import the desktop UI or the ST-LRPS ML pipeline` |
 | ST-LRPS inference stays independent of training/evaluation/UI | import-linter: `ST-LRPS runtime (inference path) stays light` and `production ST-LRPS runtime facade stays light` (the `lunaris.surrogate.runtime` facade obeys the same rule) |
-| `core` does not import the CLI wiring or the batch orchestration package (the two historical compatibility shims are the only sanctioned, lazily folded call-time exceptions) | import-linter: `core does not import the CLI or batch orchestration layers` |
+| `core` does not import CLI or batch orchestration layers | import-linter: `core does not import the CLI or batch orchestration layers` |
 | Analysis and visualization do not import desktop UI | import-linter: `analysis and visualization do not import the desktop UI` |
 | ST-LRPS Studio consumes only the published UI foundation | import-linter: `ST-LRPS studio does not import mission-UI internals` |
 | The shared UI foundation imports neither desktop application | import-linter: `UI foundation stays independent of both desktop applications` |
@@ -306,8 +301,8 @@ batch_cfg = BatchPropagationConfig(
     sampling_method="sobol_scrambled",  # random = Monte Carlo design; lhs/sobol = validation design
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
     use_gpu=True,
-    batch_backend="auto",   # auto, cpu_sh, numba_cuda_sh (alias gpu_sh), torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
-    gpu_sh_degree=10,    # requested SH degree; numba_cuda_sh supports <=24, torch_cuda_sh is high-degree
+    batch_backend="auto",   # auto, cpu_sh, numba_cuda_sh, torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
+    sh_degree=10,    # requested SH degree; numba_cuda_sh supports <=24, torch_cuda_sh is high-degree
     output_format="hdf5",
     output_path="outputs/ensemble/run.h5",
 )
@@ -321,7 +316,7 @@ Analysis code imports from `lunaris.analysis.ensemble`.
 
 ### GPU classic-SH backends (Numba vs. Torch)
 - Two distinct classic-SH GPU runtimes exist and are kept separate everywhere:
-  - **`numba_cuda_sh`** (alias `gpu_sh`) — the Numba CUDA RK4 kernel. Its workspace
+  - **`numba_cuda_sh`** — the Numba CUDA RK4 kernel. Its workspace
     uses compile-time fixed `(26 x 26)` per-thread arrays, so its degree ceiling is
     **24**. That ceiling is a kernel-workspace limit, **not** a physical one. Best
     for low-degree, high-throughput screening.
@@ -337,7 +332,7 @@ Analysis code imports from `lunaris.analysis.ensemble`.
 - Backend selection is a single source of truth: `select_classic_sh_backend()`
   (in `backend_policy`) decides between `numba_cuda_sh` / `torch_cuda_sh` /
   `cpu_sh`; `resolve_batch_backend_policy()` consumes that decision directly.
-- An explicit `numba_cuda_sh` request above degree 24 obeys `gpu_sh_fallback_policy`:
+- An explicit `numba_cuda_sh` request above degree 24 obeys `sh_fallback_policy`:
   `compatible_gpu` (try `torch_cuda_sh`, else CPU), `cpu`, or `error`.
 - The GPU paths do not support albedo, thermal IR, or solid tides; `torch_cuda_sh`
   additionally does not yet model third-body, Earth J2, SRP, or relativity (those

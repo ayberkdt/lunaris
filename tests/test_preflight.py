@@ -25,8 +25,8 @@ def test_unknown_backend_is_error() -> None:
     assert issues[0].code == "backend_unknown"
 
 
-def test_gpu_sh_high_degree_is_reported_not_clipped() -> None:
-    issues = check_backend_capability(requested_backend="gpu_sh", requested_sh_degree=100)
+def test_numba_cuda_sh_high_degree_is_reported_not_clipped() -> None:
+    issues = check_backend_capability(requested_backend="numba_cuda_sh", requested_sh_degree=100)
     codes = {i.code for i in issues}
     assert "sh_degree_exceeds_backend" in codes
     issue = next(i for i in issues if i.code == "sh_degree_exceeds_backend")
@@ -36,21 +36,21 @@ def test_gpu_sh_high_degree_is_reported_not_clipped() -> None:
     assert "requested_degree=100" in issue.detail
 
 
-def test_gpu_sh_within_degree_limit_is_clean() -> None:
-    issues = check_backend_capability(requested_backend="gpu_sh", requested_sh_degree=20)
+def test_numba_cuda_sh_within_degree_limit_is_clean() -> None:
+    issues = check_backend_capability(requested_backend="numba_cuda_sh", requested_sh_degree=20)
     assert issues == []
 
 
-def test_gpu_sh_unsupported_force_model_is_error() -> None:
+def test_numba_cuda_sh_unsupported_force_model_is_error() -> None:
     flags = PerturbationFlags(enable_sh=True, enable_albedo=True)
-    issues = check_backend_capability(requested_backend="gpu_sh", requested_sh_degree=20, flags=flags)
+    issues = check_backend_capability(requested_backend="numba_cuda_sh", requested_sh_degree=20, flags=flags)
     codes = {i.code for i in issues}
     assert "force_model_unsupported" in codes
     issue = next(i for i in issues if i.code == "force_model_unsupported")
     assert "albedo" in issue.message and "albedo" in issue.detail
 
 
-def test_gpu_sh_supported_perturbations_are_clean() -> None:
+def test_numba_cuda_sh_supported_perturbations_are_clean() -> None:
     # Classic-SH GPU supports third-body, Earth J2, SRP, and 1PN relativity.
     flags = PerturbationFlags(
         enable_sh=True,
@@ -59,9 +59,8 @@ def test_gpu_sh_supported_perturbations_are_clean() -> None:
         enable_srp=True,
         enable_relativity_1pn=True,
     )
-    issues = check_backend_capability(requested_backend="gpu_sh", requested_sh_degree=20, flags=flags)
+    issues = check_backend_capability(requested_backend="numba_cuda_sh", requested_sh_degree=20, flags=flags)
     assert issues == []
-
 
 def test_gpu_st_lrps_extra_physics_is_error() -> None:
     flags = PerturbationFlags(enable_sh=True, enable_3rd_body_sun=True)
@@ -100,7 +99,7 @@ def test_output_dir_empty_is_error() -> None:
 def test_report_aggregates_and_separates_user_and_technical() -> None:
     flags = PerturbationFlags(enable_sh=True, enable_albedo=True)
     report = backend_preflight(
-        requested_backend="gpu_sh",
+        requested_backend="numba_cuda_sh",
         requested_sh_degree=100,
         flags=flags,
         output_dir="",

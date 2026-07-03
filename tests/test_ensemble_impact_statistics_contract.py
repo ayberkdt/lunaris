@@ -72,7 +72,7 @@ def test_evaluated_run_reports_impacts() -> None:
     assert stats.impacts.n_impacts == 1
 
 
-def test_legacy_archive_without_flag_defaults_to_evaluated() -> None:
+def test_in_memory_result_without_flag_defaults_to_evaluated() -> None:
     result = _result(impacts=True, diagnostics={})
     stats = compute_ensemble_report(result, compute_oe=False)
     assert stats.impact_status == IMPACT_EVALUATED

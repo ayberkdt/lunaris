@@ -44,7 +44,19 @@ def test_load_batch_result_restores_npz_metadata_into_diagnostics(tmp_path: Path
     output_path = tmp_path / "batch_metadata.npz"
     t = np.asarray([0.0, 30.0], dtype=np.float64)
     writer = _NPZWriter(output_path, n_samples=1, t_grid=t)
-    writer.write_metadata(seed=7, output_dt_s=30.0, backend="cpu")
+    writer.write_metadata(
+        archive_schema_version=2,
+        n_samples=1,
+        seed=7,
+        duration_s=30.0,
+        output_dt_s=30.0,
+        backend="cpu",
+        requested_batch_backend="cpu_sh",
+        actual_batch_backend="cpu_sh",
+        batch_backend="cpu_sh",
+        detect_impact=True,
+        compute_impact_statistics=True,
+    )
     writer.write_sample_batch(
         0,
         1,

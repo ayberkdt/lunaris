@@ -120,7 +120,7 @@ def test_real_classic_sh_cpu_matches_gpu_trajectory() -> None:
 
     def _batch_cfg() -> SimpleNamespace:
         return SimpleNamespace(
-            gpu_sh_degree=degree, dt_s=60.0, impact_alt_km=0.0,
+            sh_degree=degree, dt_s=60.0, impact_alt_km=0.0,
             torch_dtype="float64", torch_sh_chunk_size=0, gpu_device_id=0,
         )
 
@@ -175,7 +175,7 @@ def test_real_numba_cuda_sh_impact_positions_on_impact_sphere(tmp_path) -> None:
     batch_cfg = BatchPropagationConfig(
         n_samples=16, seed=1,
         state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
-        use_gpu=True, batch_backend="numba_cuda_sh", gpu_sh_degree=8,
+        use_gpu=True, batch_backend="numba_cuda_sh", sh_degree=8,
         dt_s=30.0, impact_alt_km=0.0,
         output_format="hdf5", output_path=str(tmp_path / "numba_batch.h5"),
         result_storage_mode="memory",

@@ -1,4 +1,4 @@
-"""Audit pre-contract batch / ST-LRPS results into a trust manifest.
+"""Audit batch / ST-LRPS results into a trust manifest.
 
 Reviewer §10: results produced before the freeze-review fixes may rest on now-closed
 contract/physics gaps, so they must be classified before being reused as evidence.
@@ -9,20 +9,18 @@ explicit, item-tagged reasons:
   * §3  impact_frame_available — Moon-fixed impact geography requires real ephemeris.
   * §6  impact_position_method — exact line-sphere crossing vs approximate/step endpoint.
   * §7  artifact / coefficient / kernel hash provenance.
-  * v2  archive schema — pre-v2 archives predate the provenance manifest entirely.
+  * v2  archive schema — only complete schema-v2 batch archives are loadable.
 
 Verdict ladder (most-to-least severe):
 
-  * ``invalid``       — structurally not a usable result: a corrupt schema version,
+  * ``invalid``       — structurally not a usable result: missing/corrupt/old schema,
                         or an archive that declares schema v2 yet is missing required
                         manifest fields (not produced by a complete BatchPropagationEngine
                         run). Neither trustworthy nor safe to rerun-from.
   * ``rerun_required``— a loadable result whose impact geography/timing is
                         scientifically wrong (no Moon-fixed frame, or a non-exact
                         crossing); impact statistics must be regenerated.
-  * ``quarantined``   — usable numbers but unverifiable: a provenance gap, or a
-                        genuine pre-v2 / pre-contract archive. Held for review,
-                        NOT auto-rerun (the numbers may still be fine).
+  * ``quarantined``   — usable numbers but unverifiable due to a provenance gap.
   * ``trusted``       — complete v2 provenance and exact impact handling.
 
 The classification functions (``classify_batch_archive`` / ``classify_st_lrps_run``) are
@@ -116,24 +114,25 @@ def classify_batch_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tu
 
     raw_version = metadata.get("archive_schema_version")
     if raw_version is None:
-        # Genuine pre-v2 legacy archive: no provenance manifest at all. Hold for
-        # review rather than auto-rerunning — the numbers may still be fine.
-        return QUARANTINED, [
-            "pre-v2 archive: no provenance manifest (§5); quarantined for review"
+        return INVALID, [
+            "missing archive_schema_version: regenerate with the current batch schema"
         ]
     try:
         version = int(raw_version)
     except (TypeError, ValueError):
         # A present-but-unparseable schema version is a corrupt manifest, not a
-        # legacy archive: it is not a usable result.
+        # current batch result: it is not usable.
         return INVALID, [
             f"archive_schema_version is not an integer ({raw_version!r}): corrupt manifest"
         ]
 
     if version < 2:
-        return QUARANTINED, [
-            f"pre-contract archive schema v{version}: no v2 provenance (§5); "
-            "quarantined for review"
+        return INVALID, [
+            f"unsupported archive schema v{version}: regenerate with schema v2"
+        ]
+    if version > 2:
+        return INVALID, [
+            f"unsupported archive schema v{version}: this auditor expects schema v2"
         ]
 
     missing = [f for f in _REQUIRED_V2_FIELDS if f not in metadata]
@@ -286,7 +285,17 @@ def _is_batch_npz(path: Path) -> bool:
 def _audit_batch_archive(path: Path) -> dict[str, Any]:
     from lunaris.batch import load_batch_result
 
-    result = load_batch_result(str(path), lazy=True, strict=False)
+    try:
+        result = load_batch_result(str(path), lazy=True)
+    except Exception as exc:
+        return {
+            "path": str(path),
+            "kind": "batch_archive",
+            "status": INVALID,
+            "reasons": [str(exc)],
+            "has_impacts": None,
+            "archive_schema_version": None,
+        }
     valid = result.valid_sample_mask()
     has_impacts = bool((valid & (result.impact_mask > 0.5)).any())
     status, reasons = classify_batch_archive(result.diagnostics, has_impacts=has_impacts)

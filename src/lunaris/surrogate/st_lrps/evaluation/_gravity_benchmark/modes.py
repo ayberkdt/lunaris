@@ -993,7 +993,7 @@ def run_gpu_batch_compare_mode(args: argparse.Namespace, cfg_base: SimConfig, ep
         json.dumps(summary, indent=4, default=str), encoding="utf-8"
     )
 
-    sh200_row = next((r for r in aggregate_rows if r.get("model") == "GPU_SH200_RK4"), None)
+    sh200_row = next((r for r in aggregate_rows if r.get("model") == "NUMBA_CUDA_SH200_RK4"), None)
     if sh200_row and sh200_row.get("median_rms_pos_err_km", 0.0) > 10.0:
         print("[gpu-batch] WARNING: GPU SH200 RK4 vs SH200 DOP853 error is high. "
               "Check RK4 dt, frame mode, and rotation consistency.", flush=True)

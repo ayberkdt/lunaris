@@ -32,7 +32,7 @@ def _patch_availability(monkeypatch, *, torch_avail: bool, numba_avail: bool) ->
 
     monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: torch_avail)
     monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: numba_avail)
-    monkeypatch.setattr(policy_mod, "_gpu_sh_limits", lambda: (24, (24,)))
+    monkeypatch.setattr(policy_mod, "_numba_cuda_sh_limits", lambda: (24, (24,)))
 
 
 def _cfg(**kw):
@@ -40,8 +40,8 @@ def _cfg(**kw):
         use_gpu=True,
         batch_backend="auto",
         gravity_mode_override="follow_mission",
-        gpu_sh_degree=0,
-        gpu_sh_fallback_policy="compatible_gpu",
+        sh_degree=0,
+        sh_fallback_policy="compatible_gpu",
         torch_dtype="float64",
     )
     base.update(kw)
@@ -73,7 +73,7 @@ def test_batch_body_vector_policy_includes_relativity_external_terms() -> None:
 def test_explicit_torch_routing_low_degree(monkeypatch) -> None:
     """backend=torch_cuda_sh, degree=20, torch+numba available, gravity-only."""
     _patch_availability(monkeypatch, torch_avail=True, numba_avail=True)
-    plan = resolve_batch_backend_policy(_cfg(batch_backend="torch_cuda_sh", gpu_sh_degree=20), _sim())
+    plan = resolve_batch_backend_policy(_cfg(batch_backend="torch_cuda_sh", sh_degree=20), _sim())
     assert plan.final_backend == BatchBackend.GPU_TORCH_SH
     assert plan.actual_backend == "torch_cuda_sh"
     assert plan.actual_sh_degree == 20
@@ -84,7 +84,7 @@ def test_explicit_torch_routing_low_degree(monkeypatch) -> None:
 def test_explicit_torch_low_degree_never_routes_to_numba(monkeypatch) -> None:
     """An explicit torch request must never be silently served by numba_cuda_sh."""
     _patch_availability(monkeypatch, torch_avail=True, numba_avail=True)
-    plan = resolve_batch_backend_policy(_cfg(batch_backend="torch_cuda_sh", gpu_sh_degree=20), _sim())
+    plan = resolve_batch_backend_policy(_cfg(batch_backend="torch_cuda_sh", sh_degree=20), _sim())
     assert plan.actual_backend != "numba_cuda_sh"
     assert plan.final_backend != BatchBackend.GPU_CLASSIC_SH
 
@@ -92,7 +92,7 @@ def test_explicit_torch_low_degree_never_routes_to_numba(monkeypatch) -> None:
 def test_high_degree_auto_selects_torch(monkeypatch) -> None:
     """backend=auto, degree=100, torch+numba available → torch_cuda_sh, no fallback."""
     _patch_availability(monkeypatch, torch_avail=True, numba_avail=True)
-    plan = resolve_batch_backend_policy(_cfg(batch_backend="auto", gpu_sh_degree=100), _sim())
+    plan = resolve_batch_backend_policy(_cfg(batch_backend="auto", sh_degree=100), _sim())
     assert plan.final_backend == BatchBackend.GPU_TORCH_SH
     assert plan.actual_backend == "torch_cuda_sh"
     assert plan.requested_sh_degree == 100
@@ -103,7 +103,7 @@ def test_high_degree_auto_selects_torch(monkeypatch) -> None:
 def test_high_degree_auto_torch_unavailable_falls_back_to_cpu(monkeypatch) -> None:
     """backend=auto, degree=100, torch unavailable → cpu_sh with non-empty reason."""
     _patch_availability(monkeypatch, torch_avail=False, numba_avail=True)
-    plan = resolve_batch_backend_policy(_cfg(batch_backend="auto", gpu_sh_degree=100), _sim())
+    plan = resolve_batch_backend_policy(_cfg(batch_backend="auto", sh_degree=100), _sim())
     assert plan.final_backend == BatchBackend.CPU
     assert plan.actual_backend == "cpu_sh"
     assert plan.fallback_applied is True
@@ -115,7 +115,7 @@ def test_physics_mismatch_high_degree_falls_back_to_cpu(monkeypatch) -> None:
     """backend=auto, degree=100, torch available, SRP enabled → cpu_sh (gravity-only torch)."""
     _patch_availability(monkeypatch, torch_avail=True, numba_avail=True)
     plan = resolve_batch_backend_policy(
-        _cfg(batch_backend="auto", gpu_sh_degree=100),
+        _cfg(batch_backend="auto", sh_degree=100),
         _sim(PerturbationFlags(enable_sh=True, enable_srp=True)),
     )
     assert plan.final_backend == BatchBackend.CPU
@@ -128,7 +128,7 @@ def test_explicit_numba_high_degree_compatible_gpu_uses_torch(monkeypatch) -> No
     """backend=numba_cuda_sh, degree=100, compatible_gpu, torch available → torch_cuda_sh."""
     _patch_availability(monkeypatch, torch_avail=True, numba_avail=True)
     plan = resolve_batch_backend_policy(
-        _cfg(batch_backend="numba_cuda_sh", gpu_sh_degree=100, gpu_sh_fallback_policy="compatible_gpu"),
+        _cfg(batch_backend="numba_cuda_sh", sh_degree=100, sh_fallback_policy="compatible_gpu"),
         _sim(),
     )
     assert plan.final_backend == BatchBackend.GPU_TORCH_SH
@@ -142,7 +142,7 @@ def test_explicit_numba_high_degree_error_policy_raises(monkeypatch) -> None:
     _patch_availability(monkeypatch, torch_avail=True, numba_avail=True)
     with pytest.raises(RuntimeError) as exc:
         resolve_batch_backend_policy(
-            _cfg(batch_backend="numba_cuda_sh", gpu_sh_degree=100, gpu_sh_fallback_policy="error"),
+            _cfg(batch_backend="numba_cuda_sh", sh_degree=100, sh_fallback_policy="error"),
             _sim(),
         )
     assert "degree" in str(exc.value).lower()
@@ -152,7 +152,7 @@ def test_explicit_numba_high_degree_error_policy_raises(monkeypatch) -> None:
 def test_requested_degree_100_is_never_reported_as_24(monkeypatch, torch_avail: bool) -> None:
     """No routing path may report the requested degree as the Numba limit (24)."""
     _patch_availability(monkeypatch, torch_avail=torch_avail, numba_avail=True)
-    plan = resolve_batch_backend_policy(_cfg(batch_backend="auto", gpu_sh_degree=100), _sim())
+    plan = resolve_batch_backend_policy(_cfg(batch_backend="auto", sh_degree=100), _sim())
     assert plan.requested_sh_degree == 100
     assert plan.actual_sh_degree in (100, None)
     assert plan.actual_sh_degree != 24
@@ -161,7 +161,7 @@ def test_requested_degree_100_is_never_reported_as_24(monkeypatch, torch_avail: 
 def test_low_degree_auto_still_prefers_numba(monkeypatch) -> None:
     """Regression: the numba_cuda_sh degree<=24 screening path is unchanged."""
     _patch_availability(monkeypatch, torch_avail=True, numba_avail=True)
-    plan = resolve_batch_backend_policy(_cfg(batch_backend="auto", gpu_sh_degree=20), _sim())
+    plan = resolve_batch_backend_policy(_cfg(batch_backend="auto", sh_degree=20), _sim())
     assert plan.final_backend == BatchBackend.GPU_CLASSIC_SH
     assert plan.actual_backend == "numba_cuda_sh"
 
@@ -174,7 +174,7 @@ def test_explicit_torch_cpu_sh_uses_torch_on_cpu(monkeypatch) -> None:
     """backend=torch_cpu_sh → TORCH_CPU_SH plan on CPU, fixed-step RK4, no GPU."""
     pytest.importorskip("torch")
     _patch_availability(monkeypatch, torch_avail=False, numba_avail=False)
-    plan = resolve_batch_backend_policy(_cfg(batch_backend="torch_cpu_sh", gpu_sh_degree=50), _sim())
+    plan = resolve_batch_backend_policy(_cfg(batch_backend="torch_cpu_sh", sh_degree=50), _sim())
     assert plan.final_backend == BatchBackend.TORCH_CPU_SH
     assert plan.actual_backend == "torch_cpu_sh"
     assert plan.use_gpu is False
@@ -188,7 +188,7 @@ def test_cuda_unavailable_cpu_policy_falls_back_to_torch_cpu(monkeypatch) -> Non
     pytest.importorskip("torch")
     _patch_availability(monkeypatch, torch_avail=False, numba_avail=False)
     plan = resolve_batch_backend_policy(
-        _cfg(batch_backend="torch_cuda_sh", gpu_sh_degree=80, gpu_sh_fallback_policy="cpu"),
+        _cfg(batch_backend="torch_cuda_sh", sh_degree=80, sh_fallback_policy="cpu"),
         _sim(),
     )
     assert plan.final_backend == BatchBackend.TORCH_CPU_SH
@@ -202,7 +202,7 @@ def test_cuda_unavailable_error_policy_raises(monkeypatch) -> None:
     _patch_availability(monkeypatch, torch_avail=False, numba_avail=False)
     with pytest.raises(RuntimeError):
         resolve_batch_backend_policy(
-            _cfg(batch_backend="torch_cuda_sh", gpu_sh_degree=80, gpu_sh_fallback_policy="error"),
+            _cfg(batch_backend="torch_cuda_sh", sh_degree=80, sh_fallback_policy="error"),
             _sim(),
         )
 
@@ -214,8 +214,8 @@ def test_cuda_unavailable_compatible_gpu_does_not_fall_back_to_cpu(monkeypatch) 
         resolve_batch_backend_policy(
             _cfg(
                 batch_backend="torch_cuda_sh",
-                gpu_sh_degree=80,
-                gpu_sh_fallback_policy="compatible_gpu",
+                sh_degree=80,
+                sh_fallback_policy="compatible_gpu",
             ),
             _sim(),
         )
@@ -258,7 +258,7 @@ def _torch_plan_engine(monkeypatch, tmp_path, *, batch_backend="torch_cuda_sh", 
         n_samples=2,
         use_gpu=True,
         batch_backend=batch_backend,
-        gpu_sh_degree=degree,
+        sh_degree=degree,
         output_format="npz",
         output_path=str(tmp_path / "batch_torch_sh.npz"),
     )
@@ -328,7 +328,7 @@ def test_engine_dispatches_torch_cpu_sh_with_cpu_device(monkeypatch, tmp_path: P
         n_samples=2,
         use_gpu=True,
         batch_backend="torch_cpu_sh",
-        gpu_sh_degree=50,
+        sh_degree=50,
         output_format="npz",
         output_path=str(tmp_path / "batch_torch_cpu.npz"),
     )
@@ -368,7 +368,7 @@ def test_engine_torch_preflight_error_is_not_silently_downgraded(monkeypatch, tm
 
     engine = BatchPropagationEngine.__new__(BatchPropagationEngine)
     engine._cfg = BatchPropagationConfig(
-        n_samples=2, use_gpu=True, batch_backend="torch_cuda_sh", gpu_sh_degree=100,
+        n_samples=2, use_gpu=True, batch_backend="torch_cuda_sh", sh_degree=100,
         output_format="npz", output_path=str(tmp_path / "batch_torch_err.npz"),
     )
     engine._sim_cfg = _sim()
@@ -402,7 +402,7 @@ def test_engine_torch_cuda_sh_passes_explicit_cuda_device(monkeypatch, tmp_path:
 
     engine = BatchPropagationEngine.__new__(BatchPropagationEngine)
     engine._cfg = BatchPropagationConfig(
-        n_samples=2, use_gpu=True, batch_backend="torch_cuda_sh", gpu_sh_degree=100,
+        n_samples=2, use_gpu=True, batch_backend="torch_cuda_sh", sh_degree=100,
         gpu_device_id=2, output_format="npz", output_path=str(tmp_path / "batch_cuda_dev.npz"),
     )
     engine._sim_cfg = _sim()
@@ -441,7 +441,7 @@ def test_engine_st_lrps_build_failure_downgrades_plan_to_cpu(monkeypatch, tmp_pa
 
     engine = BatchPropagationEngine.__new__(BatchPropagationEngine)
     engine._cfg = BatchPropagationConfig(
-        n_samples=2, use_gpu=True, batch_backend="gpu_st_lrps_potential", gpu_sh_degree=0,
+        n_samples=2, use_gpu=True, batch_backend="gpu_st_lrps_potential", sh_degree=0,
         st_lrps_model_dir=str(tmp_path / "surrogate_run"),
         output_format="npz", output_path=str(tmp_path / "batch_stlrps_fail.npz"),
     )
@@ -492,7 +492,7 @@ def _patch_dynamics_gravity_capture(monkeypatch) -> dict:
     return captured
 
 
-def _engine_for_dynamics(batch_backend: str, *, use_gpu: bool, gpu_sh_degree: int, degree: int = 25):
+def _engine_for_dynamics(batch_backend: str, *, use_gpu: bool, sh_degree: int, degree: int = 25):
     from lunaris.batch.engine import BatchPropagationEngine
 
     cfg = SimpleNamespace(
@@ -506,7 +506,7 @@ def _engine_for_dynamics(batch_backend: str, *, use_gpu: bool, gpu_sh_degree: in
     engine = BatchPropagationEngine.__new__(BatchPropagationEngine)
     engine._sim_cfg = cfg
     engine._cfg = BatchPropagationConfig(
-        n_samples=2, use_gpu=use_gpu, batch_backend=batch_backend, gpu_sh_degree=gpu_sh_degree,
+        n_samples=2, use_gpu=use_gpu, batch_backend=batch_backend, sh_degree=sh_degree,
         output_format="npz", output_path="x.npz",
     )
     engine._surface_provider = None
@@ -514,25 +514,25 @@ def _engine_for_dynamics(batch_backend: str, *, use_gpu: bool, gpu_sh_degree: in
     return engine
 
 
-def test_build_dynamics_loads_gpu_sh_degree_for_gpu_classic_path(monkeypatch) -> None:
+def test_build_dynamics_loads_sh_degree_for_gpu_classic_path(monkeypatch) -> None:
     """A classic-SH GPU batch request (torch_cuda_sh) loads coefficients to at
-    least cfg.gpu_sh_degree, not just the mission degree, so the propagator
-    preflight does not reject a high gpu_sh_degree (reviewer #9)."""
+    least cfg.sh_degree, not just the mission degree, so the propagator
+    preflight does not reject a high sh_degree (reviewer #9)."""
     from lunaris.batch.engine import BatchPropagationEngine
 
     captured = _patch_dynamics_gravity_capture(monkeypatch)
-    engine = _engine_for_dynamics("torch_cuda_sh", use_gpu=True, gpu_sh_degree=100, degree=25)
+    engine = _engine_for_dynamics("torch_cuda_sh", use_gpu=True, sh_degree=100, degree=25)
     BatchPropagationEngine._build_dynamics(engine)
     assert captured["degree"] == 100  # max(25, 100), not 25
 
 
 def test_build_dynamics_keeps_mission_degree_for_cpu_path(monkeypatch) -> None:
-    """A pure-CPU request must NOT inflate the loaded degree to gpu_sh_degree; the
+    """A pure-CPU request must NOT inflate the loaded degree to sh_degree; the
     mission degree is preserved so CPU physics is unchanged (reviewer #9)."""
     from lunaris.batch.engine import BatchPropagationEngine
 
     captured = _patch_dynamics_gravity_capture(monkeypatch)
-    engine = _engine_for_dynamics("cpu_sh", use_gpu=False, gpu_sh_degree=100, degree=25)
+    engine = _engine_for_dynamics("cpu_sh", use_gpu=False, sh_degree=100, degree=25)
     BatchPropagationEngine._build_dynamics(engine)
     assert captured["degree"] == 25
 

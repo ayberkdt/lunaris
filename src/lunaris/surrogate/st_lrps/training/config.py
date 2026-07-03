@@ -32,9 +32,9 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from lunaris.common.paths import project_root_from_file
-from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta, _find_latest_dataset
 
 # Pull altitude defaults from the cloud-generation SSOT so both modules
 # always agree on the training envelope without manual synchronisation.
@@ -47,6 +47,13 @@ except ImportError:  # pragma: no cover - cloud-param defaults are optional
 
 _DEFAULT_ALT_MIN_KM: float = float(getattr(_CLOUD_CFG, "alt_min_km", 200.0))
 _DEFAULT_ALT_MAX_KM: float = float(getattr(_CLOUD_CFG, "alt_max_km", 600.0))
+
+
+def _load_dataset_helpers() -> tuple[Any, Any]:
+    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta, _find_latest_dataset
+
+    return DatasetMeta, _find_latest_dataset
+
 
 @dataclass
 class TrainConfig:
@@ -1290,7 +1297,8 @@ def parse_args() -> TrainConfig:
     data_path_raw = a.data or os.environ.get("SPATIAL_CLOUD_INPUT") or os.environ.get("DATASET_PATH")
 
     if data_path_raw is None and a.train_data is None:
-        found = _find_latest_dataset(script_dir)
+        _, find_latest_dataset = _load_dataset_helpers()
+        found = find_latest_dataset(script_dir)
         if found:
             data_path = found
             print(f"[AUTO] No --data provided. Found latest: {data_path}")
@@ -1312,6 +1320,7 @@ def parse_args() -> TrainConfig:
 
     if data_path.suffix.lower() in (".h5", ".hdf5"):
         try:
+            DatasetMeta, _ = _load_dataset_helpers()
             meta_early = DatasetMeta.from_h5(data_path)
             degree_max_meta = meta_early.requested_degree
             degree_min_meta = meta_early.degree_min
