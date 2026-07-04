@@ -509,13 +509,13 @@ class CloudGenTab(QWidget):
 
         self.degree_max = QSpinBox()
         self.degree_max.setRange(1, 1800)
-        self.degree_max.setValue(int(_cfg_value(cloud_cfg, "degree_max", 100)))
+        self.degree_max.setValue(int(_cfg_value(cloud_cfg, "degree_max", 200)))
         self.degree_max.setToolTip("Hedef SH derecesi (ust sinir).")
 
         self.degree_min = QSpinBox()
         self.degree_min.setSpecialValueText("Tam alan (-1)")
         self.degree_min.setRange(-1, 1800)
-        self.degree_min.setValue(int(_cfg_value(cloud_cfg, "degree_min", 20)))
+        self.degree_min.setValue(int(_cfg_value(cloud_cfg, "degree_min", 25)))
         self.degree_min.setToolTip(
             "Taban model derecesi. -1 = nokta kutlesi dahil tam alan."
         )
@@ -546,14 +546,14 @@ class CloudGenTab(QWidget):
         self.alt_min_km = QDoubleSpinBox()
         self.alt_min_km.setDecimals(1)
         self.alt_min_km.setRange(0.0, 100_000.0)
-        self.alt_min_km.setValue(float(_cfg_value(cloud_cfg, "alt_min_km", 200.0)))
+        self.alt_min_km.setValue(float(_cfg_value(cloud_cfg, "alt_min_km", 100.0)))
         self.alt_min_km.setSingleStep(10.0)
         self.alt_min_km.setSuffix(" km")
 
         self.alt_max_km = QDoubleSpinBox()
         self.alt_max_km.setDecimals(1)
         self.alt_max_km.setRange(0.1, 100_000.0)
-        self.alt_max_km.setValue(float(_cfg_value(cloud_cfg, "alt_max_km", 600.0)))
+        self.alt_max_km.setValue(float(_cfg_value(cloud_cfg, "alt_max_km", 1000.0)))
         self.alt_max_km.setSingleStep(10.0)
         self.alt_max_km.setSuffix(" km")
 
@@ -667,25 +667,25 @@ class CloudGenTab(QWidget):
 
         self.s_degree_min = QSpinBox()
         self.s_degree_min.setRange(0, 1800)
-        self.s_degree_min.setValue(int(_cfg_value(suite_cfg, "degree_min", 20)))
+        self.s_degree_min.setValue(int(_cfg_value(suite_cfg, "degree_min", 25)))
         self.s_degree_min.setToolTip("Taban model derecesi (bas derece).")
 
         self.s_degree_max = QSpinBox()
         self.s_degree_max.setRange(1, 1800)
-        self.s_degree_max.setValue(int(_cfg_value(suite_cfg, "degree_max", 100)))
+        self.s_degree_max.setValue(int(_cfg_value(suite_cfg, "degree_max", 200)))
         self.s_degree_max.setToolTip("Hedef SH derecesi (ust sinir).")
 
         self.s_train_alt_min_km = QDoubleSpinBox()
         self.s_train_alt_min_km.setDecimals(1)
         self.s_train_alt_min_km.setRange(0.0, 50_000.0)
-        self.s_train_alt_min_km.setValue(float(_cfg_value(suite_cfg, "train_alt_min_km", 200.0)))
+        self.s_train_alt_min_km.setValue(float(_cfg_value(suite_cfg, "train_alt_min_km", 100.0)))
         self.s_train_alt_min_km.setSuffix(" km")
         self.s_train_alt_min_km.setToolTip("Lower bound of the training altitude range.")
 
         self.s_train_alt_max_km = QDoubleSpinBox()
         self.s_train_alt_max_km.setDecimals(1)
         self.s_train_alt_max_km.setRange(1.0, 50_000.0)
-        self.s_train_alt_max_km.setValue(float(_cfg_value(suite_cfg, "train_alt_max_km", 600.0)))
+        self.s_train_alt_max_km.setValue(float(_cfg_value(suite_cfg, "train_alt_max_km", 1000.0)))
         self.s_train_alt_max_km.setSuffix(" km")
         self.s_train_alt_max_km.setToolTip("Upper bound of the training altitude range.")
 
@@ -721,25 +721,25 @@ class CloudGenTab(QWidget):
 
         self.s_train_su_n = QSpinBox()
         self.s_train_su_n.setRange(0, 100_000_000)
-        self.s_train_su_n.setValue(int(_cfg_value(suite_cfg, "train_stratified_uniform_n", 2_000_000)))
+        self.s_train_su_n.setValue(int(_cfg_value(suite_cfg, "train_stratified_uniform_n", 4_000_000)))
         self.s_train_su_n.setSingleStep(100_000)
         self.s_train_su_n.setToolTip("Number of stratified-uniform points.")
 
         self.s_train_ir2_n = QSpinBox()
         self.s_train_ir2_n.setRange(0, 100_000_000)
-        self.s_train_ir2_n.setValue(int(_cfg_value(suite_cfg, "train_inverse_r2_n", 1_000_000)))
+        self.s_train_ir2_n.setValue(int(_cfg_value(suite_cfg, "train_inverse_r2_n", 2_000_000)))
         self.s_train_ir2_n.setSingleStep(100_000)
         self.s_train_ir2_n.setToolTip("Number of inverse-r² (surface-focused) points.")
 
         self.s_train_rm_n = QSpinBox()
         self.s_train_rm_n.setRange(0, 100_000_000)
-        self.s_train_rm_n.setValue(int(_cfg_value(suite_cfg, "train_residual_mag_n", 1_000_000)))
+        self.s_train_rm_n.setValue(int(_cfg_value(suite_cfg, "train_residual_mag_n", 2_000_000)))
         self.s_train_rm_n.setSingleStep(100_000)
         self.s_train_rm_n.setToolTip("Number of points sampled with weighting by residual-acceleration magnitude.")
 
         self.s_train_bb_n = QSpinBox()
         self.s_train_bb_n.setRange(0, 100_000_000)
-        self.s_train_bb_n.setValue(int(_cfg_value(suite_cfg, "train_boundary_n", 1_000_000)))
+        self.s_train_bb_n.setValue(int(_cfg_value(suite_cfg, "train_boundary_n", 2_000_000)))
         self.s_train_bb_n.setSingleStep(100_000)
         self.s_train_bb_n.setToolTip("Number of boundary-buffer points (lower/upper altitude edges).")
 
@@ -805,22 +805,22 @@ class CloudGenTab(QWidget):
 
         self.s_val_n = QSpinBox()
         self.s_val_n.setRange(0, 100_000_000)
-        self.s_val_n.setValue(int(_cfg_value(suite_cfg, "val_n", 1_000_000)))
+        self.s_val_n.setValue(int(_cfg_value(suite_cfg, "val_n", 2_000_000)))
         self.s_val_n.setSingleStep(100_000)
 
         self.s_test_n = QSpinBox()
         self.s_test_n.setRange(0, 100_000_000)
-        self.s_test_n.setValue(int(_cfg_value(suite_cfg, "test_n", 1_000_000)))
+        self.s_test_n.setValue(int(_cfg_value(suite_cfg, "test_n", 2_000_000)))
         self.s_test_n.setSingleStep(100_000)
 
         self.s_ood_low_n = QSpinBox()
         self.s_ood_low_n.setRange(0, 100_000_000)
-        self.s_ood_low_n.setValue(int(_cfg_value(suite_cfg, "ood_low_n", 250_000)))
+        self.s_ood_low_n.setValue(int(_cfg_value(suite_cfg, "ood_low_n", 500_000)))
         self.s_ood_low_n.setSingleStep(50_000)
 
         self.s_ood_high_n = QSpinBox()
         self.s_ood_high_n.setRange(0, 100_000_000)
-        self.s_ood_high_n.setValue(int(_cfg_value(suite_cfg, "ood_high_n", 250_000)))
+        self.s_ood_high_n.setValue(int(_cfg_value(suite_cfg, "ood_high_n", 500_000)))
         self.s_ood_high_n.setSingleStep(50_000)
 
         self.s_combine_ood = QCheckBox("Combine OOD low + high")
@@ -1480,6 +1480,8 @@ class CloudGenTab(QWidget):
             return
         try:
             # -- File paths --
+            if hasattr(t, "dataset_suite_dir"):
+                t.dataset_suite_dir.setText(str(suite_dir.resolve()))
             if train_path and hasattr(t, "train_data"):
                 t.train_data.setText(str(train_path))
             if val_path and hasattr(t, "val_data"):
@@ -1841,6 +1843,8 @@ class CloudGenTab(QWidget):
     def _restore_settings(self) -> None:
         s = _settings()
         s.beginGroup("cloudgen")
+        cloud_cfg = DEFAULT_SPATIAL_CLOUD_CONFIG
+        suite_cfg = DEFAULT_CLOUD_SUITE_CONFIG
 
         def _i(k: str, d: int) -> int:
             return int(s.value(k, d)) if s.contains(k) else d
@@ -1858,17 +1862,17 @@ class CloudGenTab(QWidget):
             return str(s.value(k, d)) if s.contains(k) else d
 
         # Single cloud
-        self.degree_max.setValue(_i("degree_max", 100))
-        self.degree_min.setValue(_i("degree_min", 20))
-        self.n_samples.setValue(_i("n_samples", 2_000_000))
-        self.alt_min_km.setValue(_f("alt_min_km", 200.0))
-        self.alt_max_km.setValue(_f("alt_max_km", 600.0))
-        strategy = _st("sampling_strategy", "mixed")
+        self.degree_max.setValue(_i("degree_max", int(_cfg_value(cloud_cfg, "degree_max", 200))))
+        self.degree_min.setValue(_i("degree_min", int(_cfg_value(cloud_cfg, "degree_min", 25))))
+        self.n_samples.setValue(_i("n_samples", int(_cfg_value(cloud_cfg, "n_samples", 2_000_000))))
+        self.alt_min_km.setValue(_f("alt_min_km", float(_cfg_value(cloud_cfg, "alt_min_km", 100.0))))
+        self.alt_max_km.setValue(_f("alt_max_km", float(_cfg_value(cloud_cfg, "alt_max_km", 1000.0))))
+        strategy = _st("sampling_strategy", str(_cfg_value(cloud_cfg, "sampling_strategy", "mixed")))
         idx = self.sampling_strategy.findData(strategy)
         if idx >= 0:
             self.sampling_strategy.setCurrentIndex(idx)
-        self.surface_bias_ratio.setValue(_f("surface_bias_ratio", 0.70))
-        self.chunk_size.setValue(_i("chunk_size", 50_000))
+        self.surface_bias_ratio.setValue(_f("surface_bias_ratio", float(_cfg_value(cloud_cfg, "surface_bias_ratio", 0.70))))
+        self.chunk_size.setValue(_i("chunk_size", int(_cfg_value(cloud_cfg, "chunk_size", 50_000))))
         self.workers.setValue(_i("workers", self.workers.value()))
         fmt = _st("out_format", "h5")
         idx = self.out_format.findData(fmt)
@@ -1880,47 +1884,47 @@ class CloudGenTab(QWidget):
         if idx >= 0:
             self.dtype.setCurrentIndex(idx)
         self.canonical.setChecked(_b("canonical", False))
-        self.seed.setValue(_i("seed", 12345))
+        self.seed.setValue(_i("seed", int(_cfg_value(cloud_cfg, "seed", 12345))))
         self.gfc_path.setText(_st("gfc_path", ""))
         self.no_multiprocessing.setChecked(_b("no_multiprocessing", False))
         # Mode
-        saved_mode = _i("mode", self._MODE_SINGLE)
+        saved_mode = _i("mode", self._MODE_SUITE)
         idx = self._mode_combo.findData(saved_mode)
         if idx >= 0:
             self._mode_combo.setCurrentIndex(idx)
             self._stack.setCurrentIndex(saved_mode)
         # Suite
-        self.s_degree_min.setValue(_i("s_degree_min", 20))
-        self.s_degree_max.setValue(_i("s_degree_max", 100))
-        self.s_train_alt_min_km.setValue(_f("s_train_alt_min_km", 200.0))
-        self.s_train_alt_max_km.setValue(_f("s_train_alt_max_km", 600.0))
-        self.s_ood_margin_km.setValue(_f("s_ood_margin_km", 40.0))
-        self.s_train_su_n.setValue(_i("s_train_su_n", 2_000_000))
-        self.s_train_ir2_n.setValue(_i("s_train_ir2_n", 1_000_000))
-        self.s_train_rm_n.setValue(_i("s_train_rm_n", 1_000_000))
-        self.s_train_bb_n.setValue(_i("s_train_bb_n", 1_000_000))
-        self.s_val_n.setValue(_i("s_val_n", 1_000_000))
-        self.s_test_n.setValue(_i("s_test_n", 1_000_000))
-        self.s_ood_low_n.setValue(_i("s_ood_low_n", 250_000))
-        self.s_ood_high_n.setValue(_i("s_ood_high_n", 250_000))
-        self.s_seed_base.setValue(_i("s_seed_base", 42))
-        self.s_seed_train_uniform.setValue(_i("s_seed_train_uniform", 42))
-        self.s_seed_train_ir2.setValue(_i("s_seed_train_ir2", 142))
-        self.s_seed_train_rm.setValue(_i("s_seed_train_rm", 242))
-        self.s_seed_train_bb.setValue(_i("s_seed_train_bb", 342))
-        self.s_seed_val.setValue(_i("s_seed_val", 1042))
-        self.s_seed_test.setValue(_i("s_seed_test", 2042))
-        self.s_seed_ood_low.setValue(_i("s_seed_ood_low", 3042))
-        self.s_seed_ood_high.setValue(_i("s_seed_ood_high", 4042))
-        self.s_residual_mag_candidate_multiplier.setValue(_i("s_residual_mag_candidate_multiplier", 5))
-        self.s_residual_mag_weight_power.setValue(_f("s_residual_mag_weight_power", 0.5))
-        bm = _st("s_boundary_mode", "strict")
+        self.s_degree_min.setValue(_i("s_degree_min", int(_cfg_value(suite_cfg, "degree_min", 25))))
+        self.s_degree_max.setValue(_i("s_degree_max", int(_cfg_value(suite_cfg, "degree_max", 200))))
+        self.s_train_alt_min_km.setValue(_f("s_train_alt_min_km", float(_cfg_value(suite_cfg, "train_alt_min_km", 100.0))))
+        self.s_train_alt_max_km.setValue(_f("s_train_alt_max_km", float(_cfg_value(suite_cfg, "train_alt_max_km", 1000.0))))
+        self.s_ood_margin_km.setValue(_f("s_ood_margin_km", float(_cfg_value(suite_cfg, "ood_margin_km", 40.0))))
+        self.s_train_su_n.setValue(_i("s_train_su_n", int(_cfg_value(suite_cfg, "train_stratified_uniform_n", 4_000_000))))
+        self.s_train_ir2_n.setValue(_i("s_train_ir2_n", int(_cfg_value(suite_cfg, "train_inverse_r2_n", 2_000_000))))
+        self.s_train_rm_n.setValue(_i("s_train_rm_n", int(_cfg_value(suite_cfg, "train_residual_mag_n", 2_000_000))))
+        self.s_train_bb_n.setValue(_i("s_train_bb_n", int(_cfg_value(suite_cfg, "train_boundary_n", 2_000_000))))
+        self.s_val_n.setValue(_i("s_val_n", int(_cfg_value(suite_cfg, "val_n", 2_000_000))))
+        self.s_test_n.setValue(_i("s_test_n", int(_cfg_value(suite_cfg, "test_n", 2_000_000))))
+        self.s_ood_low_n.setValue(_i("s_ood_low_n", int(_cfg_value(suite_cfg, "ood_low_n", 500_000))))
+        self.s_ood_high_n.setValue(_i("s_ood_high_n", int(_cfg_value(suite_cfg, "ood_high_n", 500_000))))
+        self.s_seed_base.setValue(_i("s_seed_base", int(_cfg_value(suite_cfg, "base_seed", 42))))
+        self.s_seed_train_uniform.setValue(_i("s_seed_train_uniform", int(_cfg_value(suite_cfg, "train_uniform_seed", 42))))
+        self.s_seed_train_ir2.setValue(_i("s_seed_train_ir2", int(_cfg_value(suite_cfg, "train_inverse_r2_seed", 142))))
+        self.s_seed_train_rm.setValue(_i("s_seed_train_rm", int(_cfg_value(suite_cfg, "train_residual_mag_seed", 242))))
+        self.s_seed_train_bb.setValue(_i("s_seed_train_bb", int(_cfg_value(suite_cfg, "train_boundary_seed", 342))))
+        self.s_seed_val.setValue(_i("s_seed_val", int(_cfg_value(suite_cfg, "val_seed", 1042))))
+        self.s_seed_test.setValue(_i("s_seed_test", int(_cfg_value(suite_cfg, "test_seed", 2042))))
+        self.s_seed_ood_low.setValue(_i("s_seed_ood_low", int(_cfg_value(suite_cfg, "ood_low_seed", 3042))))
+        self.s_seed_ood_high.setValue(_i("s_seed_ood_high", int(_cfg_value(suite_cfg, "ood_high_seed", 4042))))
+        self.s_residual_mag_candidate_multiplier.setValue(_i("s_residual_mag_candidate_multiplier", int(_cfg_value(suite_cfg, "residual_mag_candidate_multiplier", 5))))
+        self.s_residual_mag_weight_power.setValue(_f("s_residual_mag_weight_power", float(_cfg_value(suite_cfg, "residual_mag_weight_power", 0.5))))
+        bm = _st("s_boundary_mode", str(_cfg_value(suite_cfg, "boundary_mode", "strict")))
         idx = self.s_boundary_mode.findData(bm)
         if idx >= 0:
             self.s_boundary_mode.setCurrentIndex(idx)
-        self.s_boundary_width_km.setValue(_f("s_boundary_width_km", 20.0))
-        self.s_chunk_size.setValue(_i("s_chunk_size", 50_000))
-        s_dtype_val = _st("s_dtype", "float32")
+        self.s_boundary_width_km.setValue(_f("s_boundary_width_km", float(_cfg_value(suite_cfg, "boundary_width_km", 20.0))))
+        self.s_chunk_size.setValue(_i("s_chunk_size", int(_cfg_value(suite_cfg, "chunk_size", 50_000))))
+        s_dtype_val = _st("s_dtype", str(_cfg_value(suite_cfg, "dtype", "float32")))
         idx = self.s_dtype.findData(s_dtype_val)
         if idx >= 0:
             self.s_dtype.setCurrentIndex(idx)

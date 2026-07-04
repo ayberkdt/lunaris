@@ -180,44 +180,60 @@ from .workspace_widgets import StudioStatusBadge
 
 def _base_preset(**overrides) -> dict[str, Any]:
     base = {
-        "dataset_mode": "single",
-        "hidden": 512, "depth": 5, "activation": "sine",
+        "dataset_mode": "independent",
+        "dataset_suite_dir": "",
+        "hidden": 512, "depth": 6, "activation": "sine",
         "w0_first": 30.0, "w0_hidden": 30.0, "dropout": 0.0,
+        "model_preset": "recommended_physical_radial_decay",
         "use_fourier": False, "fourier_n": 256, "fourier_sigma": 1.0,
         "fourier_append_raw": True,
-        "epochs": 200, "batch_size": 8192,
+        "epochs": 400, "batch_size": 8192,
         "lr": 1e-4, "weight_decay": 1e-6, "output_head_lr_mult": 1.0,
-        "t_max": 200, "warmup_epochs": 5, "min_lr_ratio": 0.05,
+        "t_max": 390, "warmup_epochs": 5, "min_lr_ratio": 0.05,
         "patience": 30, "no_amp": False,
         "w_u": 1.0, "w_a": 1.0, "gradnorm_mode": "ntk_init",
         "gradnorm_w_a_min": 0.05, "gradnorm_w_a_max": 2.0,
-        "potential_only_epochs": 0, "accel_ramp_epochs": 80,
+        "potential_only_epochs": 10, "accel_ramp_epochs": 80,
         "accel_min_factor": 0.05,
         "a_sign": "auto", "use_si_index": 0,
         "direction_loss_weight": 0.10, "direction_loss_start_epoch": 30,
         "direction_loss_ramp_epochs": 50, "direction_loss_floor_abs": 3e-6,
         "best_ckpt_start_epoch": -1, "checkpoint_settle_epochs": 5,
-        "use_altitude_balanced_loss": False,
+        "use_altitude_balanced_loss": True,
         "altitude_bin_width_km": 50.0,
-        "altitude_min_km": _cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_min_km", 200.0),
-        "altitude_max_km": _cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_max_km", 600.0),
+        "altitude_min_km": _cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_min_km", 100.0),
+        "altitude_max_km": _cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_max_km", 1000.0),
         "resume_enabled": False, "resume_from": "",
         "resume_checkpoint": "last", "resume_nonstrict": False,
         "resume_history_mode": "append",
-        "use_radial_cross_loss": False,
-        "radial_loss_weight": 0.0,
-        "cross_loss_weight": 0.0,
-        "use_laplacian_regularization": False,
-        "laplacian_weight": 0.0,
-        "laplacian_every_n_batches": 5,
+        "use_radial_cross_loss": True,
+        "radial_loss_weight": 0.05,
+        "cross_loss_weight": 0.05,
+        "use_laplacian_regularization": True,
+        "laplacian_weight": 2e-9,
+        "laplacian_every_n_batches": 100,
         "laplacian_subset_size": 512,
         "max_grad_norm": 0.5, "num_workers": 2, "cache_rows": 65536,
         "fit_rows": 500_000, "seed": 42, "split_seed": 42,
-        "log_every": 50, "preload_data": False, "auto_preload_mb": 256.0,
+        "log_every": 10, "log_every_mode": "auto",
+        "preload_data": False, "auto_preload_mb": 2048.0,
         "pin_memory": True, "quick_check": False, "extra_args": "",
+        "use_residual_blocks": True,
+        "n_bands": 3,
     }
     base.update(overrides)
     return base
+
+
+def _legacy_reference_preset(**overrides) -> dict[str, Any]:
+    legacy = {
+        "depth": 5,
+        "auto_preload_mb": 256.0,
+        "use_residual_blocks": False,
+        "n_bands": 1,
+    }
+    legacy.update(overrides)
+    return _base_preset(**legacy)
 
 
 _BUILTIN_PRESETS: dict[str, dict[str, Any]] = {
@@ -227,7 +243,20 @@ _BUILTIN_PRESETS: dict[str, dict[str, Any]] = {
         patience=5, num_workers=0, cache_rows=8192, fit_rows=50_000,
         direction_loss_weight=0.0, quick_check=True,
     ),
+    "Strong Benchmark": _base_preset(),
     "Default SIREN": _base_preset(),
+    "Legacy Reference": _legacy_reference_preset(),
+    "Ablation: Raw Input": _base_preset(model_preset="baseline_raw"),
+    "Ablation: Single Band": _base_preset(n_bands=1),
+    "Ablation: No Aux Losses": _base_preset(
+        direction_loss_weight=0.0,
+        use_altitude_balanced_loss=False,
+        use_radial_cross_loss=False,
+        use_laplacian_regularization=False,
+        radial_loss_weight=0.0,
+        cross_loss_weight=0.0,
+        laplacian_weight=0.0,
+    ),
     "Physics-Strong SIREN": _base_preset(
         use_altitude_balanced_loss=True,
         use_radial_cross_loss=True,
@@ -244,6 +273,7 @@ _BUILTIN_PRESETS: dict[str, dict[str, Any]] = {
         laplacian_subset_size=512,
     ),
     "SiLU + Fourier": _base_preset(
+        model_preset="custom",
         activation="silu", use_fourier=True, fourier_n=256, fourier_sigma=1.0,
         hidden=512, depth=4, lr=2e-4, weight_decay=1e-6, batch_size=8192,
     ),
@@ -253,6 +283,7 @@ _BUILTIN_PRESETS: dict[str, dict[str, Any]] = {
         warmup_epochs=5, potential_only_epochs=0, accel_ramp_epochs=80,
         accel_min_factor=0.05,
         gradnorm_mode="ntk_init", gradnorm_w_a_min=0.05, gradnorm_w_a_max=2.0,
+        use_laplacian_regularization=False,
         laplacian_weight=0.0, radial_loss_weight=0.0, cross_loss_weight=0.0,
         direction_loss_weight=0.05, direction_loss_start_epoch=30,
         direction_loss_ramp_epochs=50, batch_size=8192,
@@ -614,11 +645,11 @@ class STLRPSTrainTab(QWidget):
         _tune_form(form_data)
 
         self.dataset_mode = NoScrollComboBox()
+        self.dataset_mode.addItem("Dataset suite / independent files", "independent")
         self.dataset_mode.addItem("Single dataset + internal split", "single")
-        self.dataset_mode.addItem("Independent train/val/test/OOD datasets", "independent")
         self.dataset_mode.setToolTip(
-            f"Single mode passes --data and lets python -m {TRAIN_CLI_MODULE} split train/val. "
-            "Independent mode passes --train-data and --val-data explicitly."
+            "Suite/independent mode passes --train-data and --val-data explicitly. "
+            f"Single mode passes --data and lets python -m {TRAIN_CLI_MODULE} split train/val."
         )
 
         self.data = ValidatedPathEdit(
@@ -637,17 +668,22 @@ class STLRPSTrainTab(QWidget):
         self.val_data = ValidatedPathEdit(placeholder="Required in independent mode", check_file=True)
         self.test_data = ValidatedPathEdit(placeholder="Optional independent in-band test cloud", check_file=True)
         self.ood_data = ValidatedPathEdit(placeholder="Optional OOD/extrapolation cloud", check_file=True)
+        self.dataset_suite_dir = ValidatedPathEdit(
+            placeholder="Select generated suite folder", check_file=False
+        )
         self._last_dataset_dir: Path | None = None
+        btn_suite_dir = QPushButton("Select...")
         btn_train_data = QPushButton("Select...")
         btn_val_data = QPushButton("Select...")
         btn_test_data = QPushButton("Select...")
         btn_ood_data = QPushButton("Select...")
-        btn_apply_suite = QPushButton("Apply Suite Folder...")
+        btn_apply_suite = QPushButton("Apply")
         btn_apply_suite.setProperty("kind", "ghost")
         btn_apply_suite.setToolTip(
-            "Select a generated dataset-suite folder once and fill train/validation/test/OOD paths automatically."
+            "Read the selected suite folder and fill train/validation/test/OOD paths."
         )
-        btn_apply_suite.clicked.connect(self._pick_dataset_suite)
+        btn_suite_dir.clicked.connect(self._pick_dataset_suite)
+        btn_apply_suite.clicked.connect(self._apply_dataset_suite_from_field)
         btn_train_data.clicked.connect(lambda: self._pick_dataset_path(self.train_data, "Select train dataset"))
         btn_val_data.clicked.connect(lambda: self._pick_dataset_path(self.val_data, "Select validation dataset"))
         btn_test_data.clicked.connect(lambda: self._pick_dataset_path(self.test_data, "Select test dataset"))
@@ -659,6 +695,7 @@ class STLRPSTrainTab(QWidget):
         self.train_data.path_validated.connect(
             lambda path, exists: self._on_dataset_path_validated(path, exists, self._train_ds_info, update_primary=True)
         )
+        self.dataset_suite_dir.textChanged.connect(self._refresh_checklist)
         self.val_data.path_validated.connect(
             lambda path, exists: self._on_dataset_path_validated(path, exists, self._val_ds_info)
         )
@@ -679,14 +716,15 @@ class STLRPSTrainTab(QWidget):
         self._independent_data_widget = QWidget()
         independent_form = QFormLayout()
         _tune_form(independent_form)
-        suite_actions = QHBoxLayout()
-        suite_actions.setContentsMargins(0, 0, 0, 0)
-        suite_actions.setSpacing(8)
-        suite_actions.addWidget(btn_apply_suite)
-        suite_actions.addStretch(1)
-        suite_actions_widget = QWidget()
-        suite_actions_widget.setLayout(suite_actions)
-        independent_form.addRow("Dataset Suite", suite_actions_widget)
+        suite_row = QHBoxLayout()
+        suite_row.setContentsMargins(0, 0, 0, 0)
+        suite_row.setSpacing(8)
+        suite_row.addWidget(self.dataset_suite_dir, 1)
+        suite_row.addWidget(btn_suite_dir)
+        suite_row.addWidget(btn_apply_suite)
+        suite_row_widget = QWidget()
+        suite_row_widget.setLayout(suite_row)
+        independent_form.addRow("Dataset Suite Folder", suite_row_widget)
         independent_form.addRow("Train Dataset", _row_lineedit_with_button(self.train_data, btn_train_data))
         independent_form.addRow("", self._train_ds_info)
         independent_form.addRow("Validation Dataset", _row_lineedit_with_button(self.val_data, btn_val_data))
@@ -820,11 +858,11 @@ class STLRPSTrainTab(QWidget):
         )
         self.depth = QSpinBox()
         self.depth.setRange(1, 64)
-        self.depth.setValue(5)
+        self.depth.setValue(6)
         self.depth.setToolTip(
             "Number of hidden layers (depth).\n"
-            "Very deep networks (>6) can cause vanishing gradients in SIREN.\n"
-            "Recommended: 3–5."
+            "Residual SIREN blocks keep the benchmark default stable at depth 6.\n"
+            "Recommended benchmark: 6."
         )
         self.activation = NoScrollComboBox()
         self.activation.addItems(["sine", "silu", "tanh", "softplus"])
@@ -931,7 +969,7 @@ class STLRPSTrainTab(QWidget):
 
         self.epochs = QSpinBox()
         self.epochs.setRange(1, 5_000_000)
-        self.epochs.setValue(200)
+        self.epochs.setValue(400)
         self.epochs.setToolTip(
             "Total number of training epochs.\n"
             "Each epoch is one pass over the entire training dataset."
@@ -974,7 +1012,7 @@ class STLRPSTrainTab(QWidget):
         )
         self.t_max = QSpinBox()
         self.t_max.setRange(1, 1_000_000)
-        self.t_max.setValue(200)
+        self.t_max.setValue(390)
         self.t_max.setToolTip("Cosine LR T_max. If left empty, same as epochs.")
         self.warmup_epochs = QSpinBox()
         self.warmup_epochs.setRange(0, 100)
@@ -1049,7 +1087,7 @@ class STLRPSTrainTab(QWidget):
 
         self.potential_only_epochs = QSpinBox()
         self.potential_only_epochs.setRange(0, 1000)
-        self.potential_only_epochs.setValue(0)
+        self.potential_only_epochs.setValue(10)
         self.potential_only_epochs.setToolTip(
             "Initial warm-up epoch count. Acceleration stays active at the accel_min_factor floor."
         )
@@ -1167,7 +1205,7 @@ class STLRPSTrainTab(QWidget):
         _tune_form(form_field)
 
         self.use_altitude_balanced_loss = QCheckBox("Use altitude-balanced loss")
-        self.use_altitude_balanced_loss.setChecked(False)
+        self.use_altitude_balanced_loss.setChecked(True)
         self.use_altitude_balanced_loss.setToolTip(
             "Average loss over altitude bins so dense/easy shells do not dominate the fit."
         )
@@ -1178,14 +1216,14 @@ class STLRPSTrainTab(QWidget):
         self.altitude_min_km = QDoubleSpinBox()
         self.altitude_min_km.setDecimals(2)
         self.altitude_min_km.setRange(0.0, 1_000_000.0)
-        self.altitude_min_km.setValue(float(_cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_min_km", 200.0)))
+        self.altitude_min_km.setValue(float(_cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_min_km", 100.0)))
         self.altitude_max_km = QDoubleSpinBox()
         self.altitude_max_km.setDecimals(2)
         self.altitude_max_km.setRange(0.0, 1_000_000.0)
-        self.altitude_max_km.setValue(float(_cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_max_km", 600.0)))
+        self.altitude_max_km.setValue(float(_cfg_value(DEFAULT_SPATIAL_CLOUD_CONFIG, "alt_max_km", 1000.0)))
 
         self.use_radial_cross_loss = QCheckBox("Use radial / cross-radial loss")
-        self.use_radial_cross_loss.setChecked(False)
+        self.use_radial_cross_loss.setChecked(True)
         self.use_radial_cross_loss.setToolTip(
             "Adds lightweight radial and cross-radial acceleration error penalties."
         )
@@ -1199,7 +1237,7 @@ class STLRPSTrainTab(QWidget):
         self.cross_loss_weight.setValue(0.05)
 
         self.use_laplacian_regularization = QCheckBox("Use sparse Laplacian regularization")
-        self.use_laplacian_regularization.setChecked(False)
+        self.use_laplacian_regularization.setChecked(True)
         self.use_laplacian_regularization.setToolTip(
             "Computes second derivatives on a sparse subset. Expensive; keep subset size small."
         )
@@ -1211,11 +1249,11 @@ class STLRPSTrainTab(QWidget):
         self.laplacian_weight = QDoubleSpinBox()
         self.laplacian_weight.setDecimals(10)
         self.laplacian_weight.setRange(0.0, 1.0)
-        self.laplacian_weight.setValue(0.0)
+        self.laplacian_weight.setValue(2e-9)
         self.laplacian_weight.setSingleStep(1e-5)
         self.laplacian_every_n_batches = QSpinBox()
         self.laplacian_every_n_batches.setRange(1, 100000)
-        self.laplacian_every_n_batches.setValue(5)
+        self.laplacian_every_n_batches.setValue(100)
         self.laplacian_subset_size = QSpinBox()
         self.laplacian_subset_size.setRange(1, 1_000_000)
         self.laplacian_subset_size.setValue(512)
@@ -1304,7 +1342,7 @@ class STLRPSTrainTab(QWidget):
         self.auto_preload_mb = QDoubleSpinBox()
         self.auto_preload_mb.setDecimals(0)
         self.auto_preload_mb.setRange(0.0, 102400.0)
-        self.auto_preload_mb.setValue(256.0)
+        self.auto_preload_mb.setValue(2048.0)
         self.auto_preload_mb.setSingleStep(64.0)
         self.auto_preload_mb.setToolTip(
             "Datasets smaller than this MB value are loaded into RAM automatically (0 → disabled)."
@@ -1320,14 +1358,14 @@ class STLRPSTrainTab(QWidget):
 
         # PINN Architecture (new)
         self.use_residual_blocks = QCheckBox("Residual SIREN Blocks (SirenResBlock)")
-        self.use_residual_blocks.setChecked(False)
+        self.use_residual_blocks.setChecked(True)
         self.use_residual_blocks.setToolTip(
             "Wraps hidden layers with pre-norm + zero-init skip (SirenResBlock).\n"
             "Recommended for depth >= 6. Adds no extra parameters."
         )
         self.n_bands = QSpinBox()
         self.n_bands.setRange(1, 16)
-        self.n_bands.setValue(1)
+        self.n_bands.setValue(3)
         self.n_bands.setToolTip(
             "Multi-scale SIREN band count. >1 → MultiScaleSirenMLP.\n"
             "1 = standard SirenMLP. Band w0 values are derived automatically from degree_min/max."
@@ -2361,7 +2399,7 @@ class STLRPSTrainTab(QWidget):
                             False,
                             f"{label} selected",
                             hard=True,
-                            fail_text=f"{label} missing - use Apply Suite Folder or select the file.",
+                            fail_text=f"{label} missing - select a Dataset Suite Folder or choose the file.",
                         )
                     else:
                         readiness_items.append(("info", f"{label} not selected (optional)."))
@@ -2481,6 +2519,7 @@ class STLRPSTrainTab(QWidget):
         return {
             # Dataset routing
             "dataset_mode": self.dataset_mode.currentData() or "single",
+            "dataset_suite_dir": self.dataset_suite_dir.text(),
             "data": self.data.text(),
             "train_data": self.train_data.text(),
             "val_data": self.val_data.text(),
@@ -2728,6 +2767,7 @@ class STLRPSTrainTab(QWidget):
             if idx >= 0:
                 self.dataset_mode.setCurrentIndex(idx)
         for key, widget in (
+            ("dataset_suite_dir", self.dataset_suite_dir),
             ("data", self.data),
             ("train_data", self.train_data),
             ("val_data", self.val_data),
@@ -2745,6 +2785,8 @@ class STLRPSTrainTab(QWidget):
             if self.applied_suite_manifest_path:
                 self._suite_manifest_label.setText(self.applied_suite_manifest_path)
                 self._suite_manifest_label.setStyleSheet(f"color: {THEME['success']}; font-size: 10px;")
+                if not self.dataset_suite_dir.text().strip():
+                    self.dataset_suite_dir.setText(str(Path(self.applied_suite_manifest_path).parent))
             else:
                 self._suite_manifest_label.setText("(no suite applied)")
                 self._suite_manifest_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
@@ -2886,13 +2928,23 @@ class STLRPSTrainTab(QWidget):
             self._dataset_dialog_start_dir(),
         )
         if suite_dir:
+            self.dataset_suite_dir.setText(_norm_path(suite_dir))
             self._apply_dataset_suite(Path(suite_dir))
+
+    def _apply_dataset_suite_from_field(self) -> None:
+        suite_text = self.dataset_suite_dir.text().strip()
+        if not suite_text:
+            QMessageBox.warning(self, "Dataset Suite", "Select a dataset suite folder first.")
+            return
+        self._apply_dataset_suite(Path(suite_text))
 
     def _apply_dataset_suite(self, suite_dir: Path) -> None:
         suite_dir = Path(suite_dir).expanduser()
         if not suite_dir.exists() or not suite_dir.is_dir():
             QMessageBox.warning(self, "Dataset Suite", f"Folder not found:\n{suite_dir}")
             return
+        if self.dataset_suite_dir.text().strip() != str(suite_dir):
+            self.dataset_suite_dir.setText(_norm_path(suite_dir))
         self._remember_dataset_dir(suite_dir)
 
         manifest_path = suite_dir / "manifest.json"
@@ -3423,15 +3475,21 @@ class STLRPSTrainTab(QWidget):
         # Field-structure losses
         if self.use_altitude_balanced_loss.isChecked():
             args += ["--use-altitude-balanced-loss"]
+        else:
+            args += ["--no-altitude-balanced-loss"]
         args += ["--altitude-bin-width-km", str(self.altitude_bin_width_km.value())]
         args += ["--altitude-min-km", str(self.altitude_min_km.value())]
         args += ["--altitude-max-km", str(self.altitude_max_km.value())]
         if self.use_radial_cross_loss.isChecked():
             args += ["--use-radial-cross-loss"]
+        else:
+            args += ["--no-radial-cross-loss"]
         args += ["--radial-loss-weight", str(self.radial_loss_weight.value())]
         args += ["--cross-loss-weight", str(self.cross_loss_weight.value())]
         if self.use_laplacian_regularization.isChecked():
             args += ["--use-laplacian-regularization"]
+        else:
+            args += ["--no-laplacian-regularization"]
         args += ["--laplacian-weight", str(self.laplacian_weight.value())]
         args += ["--laplacian-every-n-batches", str(self.laplacian_every_n_batches.value())]
         args += ["--laplacian-subset-size", str(self.laplacian_subset_size.value())]

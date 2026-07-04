@@ -10,17 +10,18 @@ drift apart.
 
 Configuration policy
 --------------------
-* ``TrainConfig`` defaults ARE the recommended production/research configuration.
-  There is no alternate default mode. Older configurations are reproduced by passing
-  the corresponding CLI flags explicitly (e.g. ``--no-residual-blocks --n-bands 1``)
-  or via ``st_lrps.evaluation.ablation``.
+* ``TrainConfig`` defaults are the strong benchmark-candidate configuration:
+  SH25 -> SH200 data, 100-1000 km training shell, physical radial features,
+  residual SIREN blocks, and multi-band SIREN. Use explicit CLI flags or
+  scenario presets for ablations away from that profile.
 * Experimental input encodings (off by default): ``--use-radial-decay-encoding``
   (scaled inverse-radius decay features inspired by the R/r radial decay of
   spherical-harmonic terms; evaluate through ablation) and
   ``--use-real-sh-basis`` (genuine 4π-normalized real spherical harmonics).
   Treat both as ablation/experimental until benchmarked.
-* The Laplacian regulariser is OFF by default and adds no overhead unless
-  explicitly requested. JAX migration is out of scope for this stack.
+* The sparse Laplacian regulariser follows the strong benchmark-candidate
+  profile by default and can be disabled with
+  ``--no-laplacian-regularization``.
 """
 
 from __future__ import annotations
@@ -45,8 +46,8 @@ try:
 except ImportError:  # pragma: no cover - cloud-param defaults are optional
     _CLOUD_CFG = None
 
-_DEFAULT_ALT_MIN_KM: float = float(getattr(_CLOUD_CFG, "alt_min_km", 200.0))
-_DEFAULT_ALT_MAX_KM: float = float(getattr(_CLOUD_CFG, "alt_max_km", 600.0))
+_DEFAULT_ALT_MIN_KM: float = float(getattr(_CLOUD_CFG, "alt_min_km", 100.0))
+_DEFAULT_ALT_MAX_KM: float = float(getattr(_CLOUD_CFG, "alt_max_km", 1000.0))
 
 
 def _load_dataset_helpers() -> tuple[Any, Any]:
@@ -83,7 +84,7 @@ class TrainConfig:
     run_preset: str = "custom"
 
     seed: int = 42
-    epochs: int = 200
+    epochs: int = 400
     batch_size: int = 8192
 
     cache_rows: int = 65_536
@@ -120,7 +121,7 @@ class TrainConfig:
     weight_decay: float = 1e-6
     output_head_lr_mult: float = 1.0
     max_grad_norm: float = 0.5
-    t_max: int | None = None   # defaults to epochs for monotonic cosine decay
+    t_max: int | None = 390
     warmup_epochs: int = 5
     min_lr_ratio: float = 0.05
     patience: int = 30
@@ -136,12 +137,12 @@ class TrainConfig:
     gradnorm_mode: str = "ntk_init"
     gradnorm_w_a_min: float = 0.05
     gradnorm_w_a_max: float = 2.0
-    potential_only_epochs: int = 0
-    accel_ramp_epochs: int = 40
+    potential_only_epochs: int = 10
+    accel_ramp_epochs: int = 80
     # Minimum acceleration factor applied even during potential_only phase.
     # Prevents the derivative field from drifting completely unconstrained.
     # Set to 0.0 for a pure potential-only warm-up (no acceleration floor).
-    accel_min_factor: float = 0.15
+    accel_min_factor: float = 0.05
     a_sign: float | str = "auto"
 
     # SSOT / Physics Meta behavior
@@ -156,7 +157,7 @@ class TrainConfig:
     # and is the control representation. "recommended_physical_radial_decay"
     # enables the physically scaled R_ref/r encoding. "custom" preserves manual
     # flag-level control for ablations and old configs.
-    model_preset: str = "baseline_raw"
+    model_preset: str = "recommended_physical_radial_decay"
     runtime_model_kind: str = "potential_autograd"
     output_dim: int = 1
 
@@ -172,7 +173,7 @@ class TrainConfig:
     log_every: int = 10
     # "fixed" honors log_every literally; "auto" derives ~10 progress updates
     # per epoch from the batch count (always logging the first and last batch).
-    log_every_mode: str = "fixed"
+    log_every_mode: str = "auto"
 
     # RAM preload → load whole dataset into CPU tensors for better GPU throughput
     # On Windows, HDF5 forces num_workers=0; RAM mode removes that constraint.
@@ -191,10 +192,10 @@ class TrainConfig:
     # Acceleration direction loss -> penalises angular error between a_pred and a_true.
     # L_dir = mean(1 - cos_sim(a_pred, a_true)) for points where ||a_true|| > floor.
     # Ramped in after direction_loss_start_epoch to avoid destabilising early training.
-    direction_loss_weight: float = 0.20
-    direction_loss_start_epoch: int = 10
-    direction_loss_ramp_epochs: int = 40
-    direction_loss_floor_abs: float = 1e-7   # mask threshold on ||a_true||
+    direction_loss_weight: float = 0.10
+    direction_loss_start_epoch: int = 30
+    direction_loss_ramp_epochs: int = 50
+    direction_loss_floor_abs: float = 3e-6   # mask threshold on ||a_true||
 
     # Best-checkpoint selection burn-in.
     # -1 (default) = auto: if direction_loss_weight > 0, delays to
@@ -226,13 +227,13 @@ class TrainConfig:
     # Optional radial / cross-radial acceleration penalties.
     use_radial_cross_loss: bool = True
     radial_loss_weight: float = 0.05
-    cross_loss_weight: float = 0.10
+    cross_loss_weight: float = 0.05
 
     # Optional sparse Laplacian regularisation for the residual potential.
     # Uses the Hutchinson stochastic trace estimator (AMP-compatible, O(K) passes).
-    use_laplacian_regularization: bool = False
-    laplacian_weight: float = 0.0
-    laplacian_every_n_batches: int = 5
+    use_laplacian_regularization: bool = True
+    laplacian_weight: float = 2e-9
+    laplacian_every_n_batches: int = 100
     laplacian_subset_size: int = 512
     n_hutchinson_samples: int = 4   # Rademacher samples per Laplacian estimate
     collocation_laplacian_weight: float = 0.0
@@ -291,7 +292,7 @@ class TrainConfig:
 
     # Multi-scale SIREN — parallel frequency bands matched to the harmonic range.
     # n_bands > 1 uses a multi-scale SIREN; requires degree_min/degree_max metadata.
-    # Default 3 (recommended); set --n-bands 1 for a single-scale SirenMLP.
+    # Default 3 is the strong benchmark-candidate multi-scale SIREN.
     n_bands: int = 3
     # Multi-scale composition: "concat_shared" (parallel bands -> concat -> shared
     # trunk, default) or "additive" (per-band trunks summed: dU = sum_k dU_k).
@@ -654,16 +655,16 @@ def parse_args() -> TrainConfig:
 
     # Architecture
     group_arch = ap.add_argument_group("Model Architecture")
-    group_arch.add_argument("--hidden", type=int, default=512, help="Neurons per hidden layer (default: 512).")
+    group_arch.add_argument("--hidden", type=int, default=_TC_DEFAULTS["hidden"], help="Neurons per hidden layer.")
     group_arch.add_argument("--depth", type=int, default=_TC_DEFAULTS["depth"],
-                            help="Number of hidden layers (default: 6).")
-    group_arch.add_argument("--activation", type=str, default="sine",
+                            help="Number of hidden layers.")
+    group_arch.add_argument("--activation", type=str, default=_TC_DEFAULTS["activation"],
                             choices=["sine", "silu", "tanh", "softplus"],
                             help="Activation function. 'sine' = SIREN.")
     group_arch.add_argument(
         "--model-preset",
         choices=MODEL_PRESETS,
-        default=_TC_DEFAULTS.get("model_preset", "baseline_raw"),
+        default=_TC_DEFAULTS.get("model_preset", "recommended_physical_radial_decay"),
         help=(
             "Named architecture preset. baseline_raw keeps raw xyz as the control; "
             "recommended_physical_radial_decay enables true R_ref/r radial features; "
@@ -682,11 +683,11 @@ def parse_args() -> TrainConfig:
         default=_TC_DEFAULTS.get("output_dim", 1),
         help="Model output dimension. potential_autograd uses 1; force_direct uses 3.",
     )
-    group_arch.add_argument("--w0-first", type=float, default=None,
-                            help="SIREN w0 for first layer (default: auto-derived from dataset degree_max).")
-    group_arch.add_argument("--w0-hidden", type=float, default=None,
-                            help="SIREN w0 for hidden layers (default: auto-derived from dataset degree_max).")
-    group_arch.add_argument("--dropout", type=float, default=0.0)
+    group_arch.add_argument("--w0-first", type=float, default=_TC_DEFAULTS["w0_first"],
+                            help="SIREN w0 for first layer.")
+    group_arch.add_argument("--w0-hidden", type=float, default=_TC_DEFAULTS["w0_hidden"],
+                            help="SIREN w0 for hidden layers.")
+    group_arch.add_argument("--dropout", type=float, default=_TC_DEFAULTS["dropout"])
     fourier_group = group_arch.add_mutually_exclusive_group()
     fourier_group.add_argument("--use-fourier", action="store_true", dest="use_fourier",
                                help="Enable Random Fourier Feature input embedding.")
@@ -697,30 +698,30 @@ def parse_args() -> TrainConfig:
                                 help="Concatenate raw scaled xyz with Fourier features before the backbone.")
     raw_skip_group.add_argument("--no-fourier-append-raw", action="store_false", dest="fourier_append_raw",
                                 help="Use Fourier features without the raw-coordinate skip path.")
-    group_arch.add_argument("--fourier-n", type=int, default=256,
+    group_arch.add_argument("--fourier-n", type=int, default=_TC_DEFAULTS["fourier_n_features"],
                             help="Number of Fourier features (embedding dim = 2*n).")
-    group_arch.add_argument("--fourier-sigma", type=float, default=1.0,
+    group_arch.add_argument("--fourier-sigma", type=float, default=_TC_DEFAULTS["fourier_sigma"],
                             help="Std of frequency matrix B; larger = finer spatial detail.")
-    group_arch.add_argument("--fourier-seed", type=int, default=42,
+    group_arch.add_argument("--fourier-seed", type=int, default=_TC_DEFAULTS["fourier_seed"],
                             help="Seed used to construct the fixed Fourier feature matrix.")
 
     # Optimization
     group_opt = ap.add_argument_group("Optimization")
-    group_opt.add_argument("--epochs", type=int, default=200)
-    group_opt.add_argument("--batch-size", type=int, default=8192)
-    group_opt.add_argument("--lr", type=float, default=1e-4)
-    group_opt.add_argument("--weight-decay", type=float, default=1e-6)
-    group_opt.add_argument("--output-head-lr-mult", type=float, default=1.0,
+    group_opt.add_argument("--epochs", type=int, default=_TC_DEFAULTS["epochs"])
+    group_opt.add_argument("--batch-size", type=int, default=_TC_DEFAULTS["batch_size"])
+    group_opt.add_argument("--lr", type=float, default=_TC_DEFAULTS["lr"])
+    group_opt.add_argument("--weight-decay", type=float, default=_TC_DEFAULTS["weight_decay"])
+    group_opt.add_argument("--output-head-lr-mult", type=float, default=_TC_DEFAULTS["output_head_lr_mult"],
                            help="Learning-rate multiplier applied only to the final scalar output head.")
-    group_opt.add_argument("--grad-clip", "--max-grad-norm", dest="grad_clip", type=float, default=0.5,
+    group_opt.add_argument("--grad-clip", "--max-grad-norm", dest="grad_clip", type=float, default=_TC_DEFAULTS["max_grad_norm"],
                            help="Global gradient clipping threshold.")
-    group_opt.add_argument("--t-max", type=int, default=None,
-                           help="Cosine scheduler T_max (default: equals --epochs for monotonic decay).")
-    group_opt.add_argument("--warmup-epochs", type=int, default=5,
+    group_opt.add_argument("--t-max", type=int, default=_TC_DEFAULTS["t_max"],
+                           help="Cosine scheduler T_max.")
+    group_opt.add_argument("--warmup-epochs", type=int, default=_TC_DEFAULTS["warmup_epochs"],
                            help="Linear learning-rate warm-up duration before cosine decay.")
-    group_opt.add_argument("--min-lr-ratio", type=float, default=0.05,
+    group_opt.add_argument("--min-lr-ratio", type=float, default=_TC_DEFAULTS["min_lr_ratio"],
                            help="Final cosine-decay learning-rate ratio relative to the base LR.")
-    group_opt.add_argument("--patience", type=int, default=30,
+    group_opt.add_argument("--patience", type=int, default=_TC_DEFAULTS["patience"],
                            help="Early-stopping patience measured on validation total loss.")
     amp_group = group_opt.add_mutually_exclusive_group()
     amp_group.add_argument("--amp", action="store_true", dest="amp",
@@ -730,28 +731,28 @@ def parse_args() -> TrainConfig:
 
     # Physics & Sobolev Weights
     group_phys = ap.add_argument_group("Physics & Loss Weights")
-    group_phys.add_argument("--w-u", type=float, default=1.0, help="Initial weight for Potential (ΔU) loss.")
-    group_phys.add_argument("--w-a", type=float, default=1.0, help="Initial weight for Acceleration (Δa) loss.")
-    group_phys.add_argument("--gradnorm-mode", choices=["fixed", "ntk_init", "dynamic"], default="ntk_init",
+    group_phys.add_argument("--w-u", type=float, default=_TC_DEFAULTS["w_u"], help="Initial weight for Potential (ΔU) loss.")
+    group_phys.add_argument("--w-a", type=float, default=_TC_DEFAULTS["w_a"], help="Initial weight for Acceleration (Δa) loss.")
+    group_phys.add_argument("--gradnorm-mode", choices=["fixed", "ntk_init", "dynamic"], default=_TC_DEFAULTS["gradnorm_mode"],
                             help="Loss-weighting policy for the Sobolev objective: 'ntk_init' "
                                  "(default; compute w_a once then freeze), 'fixed' (use w_u/w_a "
                                  "as set), or 'dynamic' (EMA GradNorm; ablation only).")
-    group_phys.add_argument("--gradnorm-w-a-min", type=float, default=0.05,
+    group_phys.add_argument("--gradnorm-w-a-min", type=float, default=_TC_DEFAULTS["gradnorm_w_a_min"],
                             help="Lower clamp for NTK/dynamic acceleration-loss weight.")
-    group_phys.add_argument("--gradnorm-w-a-max", type=float, default=2.0,
+    group_phys.add_argument("--gradnorm-w-a-max", type=float, default=_TC_DEFAULTS["gradnorm_w_a_max"],
                             help="Upper clamp for NTK/dynamic acceleration-loss weight.")
-    group_phys.add_argument("--potential-only-epochs", type=int, default=0,
+    group_phys.add_argument("--potential-only-epochs", type=int, default=_TC_DEFAULTS["potential_only_epochs"],
                             help="Initial epochs that optimise only the residual potential ΔU.")
     group_phys.add_argument("--accel-ramp-epochs", type=int, default=_TC_DEFAULTS["accel_ramp_epochs"],
-                            help="Epochs used to linearly ramp the acceleration loss from accel_min_factor to full weight (default: 40).")
+                            help="Epochs used to linearly ramp the acceleration loss from accel_min_factor to full weight.")
     group_phys.add_argument("--accel-min-factor", type=float, default=_TC_DEFAULTS["accel_min_factor"],
                             help="Minimum acceleration loss factor during curriculum warm-up (floor). "
-                                 "0.0 = pure potential-only; 0.15 = floor to prevent derivative drift (default: 0.15).")
-    group_phys.add_argument("--a-sign", default="auto", help="Sign of -grad(U). 'auto' or +1/-1.")
+                                 "0.0 = pure potential-only; positive values keep a derivative floor.")
+    group_phys.add_argument("--a-sign", default=_TC_DEFAULTS["a_sign"], help="Sign of -grad(U). 'auto' or +1/-1.")
     group_phys.add_argument("--use-si", action="store_true", dest="use_si", help="Convert canonical units to SI.")
     group_phys.add_argument("--no-si", action="store_false", dest="use_si", help="Keep dataset units as-is.")
-    ap.set_defaults(use_si=True, pin_memory=True)
-    ap.set_defaults(use_fourier=False, fourier_append_raw=True, amp=False)
+    ap.set_defaults(use_si=_TC_DEFAULTS["use_si"], pin_memory=_TC_DEFAULTS["pin_memory"])
+    ap.set_defaults(use_fourier=_TC_DEFAULTS["use_fourier"], fourier_append_raw=_TC_DEFAULTS["fourier_append_raw"], amp=_TC_DEFAULTS["amp"])
     ap.set_defaults(use_residual_blocks=_TC_DEFAULTS["use_residual_blocks"])
     ap.set_defaults(
         use_altitude_balanced_loss=_TC_DEFAULTS["use_altitude_balanced_loss"],
@@ -760,10 +761,10 @@ def parse_args() -> TrainConfig:
 
     # Hardware & Performance
     group_perf = ap.add_argument_group("Performance & Scaler")
-    group_perf.add_argument("--num-workers", type=int, default=2)
-    group_perf.add_argument("--cache-rows", type=int, default=65536, help="H5BlockDataset cache size.")
-    group_perf.add_argument("--fit-rows", type=int, default=500_000, help="Rows for isometric scaler fitting.")
-    group_perf.add_argument("--seed", type=int, default=42)
+    group_perf.add_argument("--num-workers", type=int, default=_TC_DEFAULTS["num_workers"])
+    group_perf.add_argument("--cache-rows", type=int, default=_TC_DEFAULTS["cache_rows"], help="H5BlockDataset cache size.")
+    group_perf.add_argument("--fit-rows", type=int, default=_TC_DEFAULTS["fit_rows"], help="Rows for isometric scaler fitting.")
+    group_perf.add_argument("--seed", type=int, default=_TC_DEFAULTS["seed"])
     pin_group = group_perf.add_mutually_exclusive_group()
     pin_group.add_argument("--pin-memory", action="store_true", dest="pin_memory",
                            help="Pin CPU tensors for faster CUDA transfers (default: True on CUDA).")
@@ -778,7 +779,7 @@ def parse_args() -> TrainConfig:
     preload_group.add_argument("--no-auto-preload", action="store_true", dest="no_auto_preload",
                                help="Disable automatic RAM preload even for small datasets.")
     group_perf.add_argument("--auto-preload-mb", type=float, default=_TC_DEFAULTS["auto_preload_mb"],
-                            help="Auto-preload when dataset size is at most this many MB (default: 2048).")
+                            help="Auto-preload when dataset size is at most this many MB.")
     group_perf.add_argument("--preload-policy", choices=["auto", "always", "never"],
                             default=_TC_DEFAULTS["preload_policy"],
                             help="RAM preload policy: 'auto' (preload if estimated size <= --auto-preload-mb "
@@ -794,11 +795,11 @@ def parse_args() -> TrainConfig:
                            help="Epochs over which direction loss ramps from 0 to full weight.")
     group_dir.add_argument("--direction-loss-floor-abs", type=float, default=_TC_DEFAULTS['direction_loss_floor_abs'],
                            help="||a_true|| threshold below which direction loss is masked out.")
-    group_dir.add_argument("--best-ckpt-start-epoch", type=int, default=-1,
+    group_dir.add_argument("--best-ckpt-start-epoch", type=int, default=_TC_DEFAULTS["best_ckpt_start_epoch"],
                            help="Epoch from which best-checkpoint tracking and patience counting begin. "
                                 "-1 = auto (delays to direction_loss_start_epoch + "
                                 "direction_loss_ramp_epochs + checkpoint_settle_epochs when direction loss is active).")
-    group_dir.add_argument("--checkpoint-settle-epochs", type=int, default=5,
+    group_dir.add_argument("--checkpoint-settle-epochs", type=int, default=_TC_DEFAULTS["checkpoint_settle_epochs"],
                            help="Additional settled epochs after the direction-loss ramp before auto best-checkpoint tracking starts.")
     group_dir.add_argument("--best-metric",
                            choices=["val_total_loss", "val_base_loss", "total_loss", "direction_loss", "hybrid"],
@@ -831,7 +832,7 @@ def parse_args() -> TrainConfig:
                                help="Compute acceleration error by altitude bins instead of raw sample mean (default: on).")
     alt_bal_group.add_argument("--no-altitude-balanced-loss", action="store_false", dest="use_altitude_balanced_loss",
                                help="Use the raw per-sample mean instead of altitude-binned balancing.")
-    group_alt.add_argument("--altitude-bin-width-km", type=float, default=50.0, help="Bin width in km.")
+    group_alt.add_argument("--altitude-bin-width-km", type=float, default=_TC_DEFAULTS["altitude_bin_width_km"], help="Bin width in km.")
     group_alt.add_argument("--altitude-min-km", type=float, default=_DEFAULT_ALT_MIN_KM, help="Min altitude in km.")
     group_alt.add_argument("--altitude-max-km", type=float, default=_DEFAULT_ALT_MAX_KM, help="Max altitude in km.")
 
@@ -849,13 +850,17 @@ def parse_args() -> TrainConfig:
 
     # Sparse Laplacian Regularization
     group_lap = ap.add_argument_group("Sparse Laplacian Regularization")
-    group_lap.add_argument("--use-laplacian-regularization", action="store_true", default=False,
+    lap_reg_group = group_lap.add_mutually_exclusive_group()
+    lap_reg_group.add_argument("--use-laplacian-regularization", action="store_true", dest="use_laplacian_regularization",
                            help="Apply sparse Laplacian regularization (∇²U=0 physics constraint).")
-    group_lap.add_argument("--laplacian-weight", type=float, default=0.0, help="Weight for Laplacian loss.")
-    group_lap.add_argument("--laplacian-every-n-batches", type=int, default=5, help="Compute every N batches.")
-    group_lap.add_argument("--laplacian-subset-size", type=int, default=512,
+    lap_reg_group.add_argument("--no-laplacian-regularization", action="store_false", dest="use_laplacian_regularization",
+                               help="Disable sparse Laplacian regularization.")
+    ap.set_defaults(use_laplacian_regularization=_TC_DEFAULTS["use_laplacian_regularization"])
+    group_lap.add_argument("--laplacian-weight", type=float, default=_TC_DEFAULTS["laplacian_weight"], help="Weight for Laplacian loss.")
+    group_lap.add_argument("--laplacian-every-n-batches", type=int, default=_TC_DEFAULTS["laplacian_every_n_batches"], help="Compute every N batches.")
+    group_lap.add_argument("--laplacian-subset-size", type=int, default=_TC_DEFAULTS["laplacian_subset_size"],
                            help="Batch subset size for Hutchinson Laplacian estimator.")
-    group_lap.add_argument("--n-hutchinson-samples", type=int, default=4,
+    group_lap.add_argument("--n-hutchinson-samples", type=int, default=_TC_DEFAULTS["n_hutchinson_samples"],
                            help="Rademacher samples per Hutchinson trace estimate (K=4 → ~50%% relative error).")
     group_lap.add_argument("--laplacian-mode",
         choices=["off", "diagnostic", "train"], default=_TC_DEFAULTS.get('laplacian_mode', 'diagnostic'),
@@ -1072,7 +1077,7 @@ def parse_args() -> TrainConfig:
     group_pinn.add_argument("--n-bands", type=int, default=_TC_DEFAULTS["n_bands"],
                             help="Number of harmonic frequency bands for multi-scale SIREN. "
                                  ">1 uses a multi-scale SIREN with band w0s derived from "
-                                 "degree_min/degree_max. (default: 3; requires degree_max "
+                                 "degree_min/degree_max. Values >1 require degree_max "
                                  "metadata. Use 1 for a standard single-scale SirenMLP.)")
     group_pinn.add_argument("--multiscale-mode", choices=["concat_shared", "additive"],
                             default=_TC_DEFAULTS.get("multiscale_mode", "concat_shared"),
@@ -1117,10 +1122,10 @@ def parse_args() -> TrainConfig:
 
     # Logging & Quick-check
     group_log = ap.add_argument_group("Logging & Quick-check")
-    group_log.add_argument("--log-every", type=int, default=10,
+    group_log.add_argument("--log-every", type=int, default=_TC_DEFAULTS["log_every"],
                            help="Print batch-level progress every N batches (0 to disable). "
                                 "Used when --log-every-mode is 'fixed'.")
-    group_log.add_argument("--log-every-mode", choices=["fixed", "auto"], default="fixed",
+    group_log.add_argument("--log-every-mode", choices=["fixed", "auto"], default=_TC_DEFAULTS["log_every_mode"],
                            help="'fixed' uses --log-every literally; 'auto' logs roughly 10 "
                                 "progress updates per epoch (always including the first and "
                                 "last batch).")
@@ -1214,20 +1219,18 @@ def parse_args() -> TrainConfig:
     ap.set_defaults(periodic_eval_continue_on_fail=True)
 
     # ---------------------------------------------------------------------------
-    # TrainConfig is the single source of truth for the recommended configuration.
-    # There is no alternate default mode: the dataclass defaults ARE the recommended
-    # production/research architecture. Any older configuration is reproduced by
-    # passing the corresponding CLI flags explicitly (or via st_lrps.evaluation.ablation).
+    # TrainConfig is the single source of truth for the current default
+    # configuration. For this benchmark-reproduction phase, that default is the
+    # strong SH25 -> SH200 multi-band SIREN profile.
     #
     # The minimal recommended run is simply:
     #
-    #   python -m lunaris.surrogate.st_lrps.training.cli --data path/to/train.h5 --epochs 250
+    #   python -m lunaris.surrogate.st_lrps.training.cli --data path/to/train.h5
     #
     # Notes:
-    #   - n_bands=3 (multi-scale SIREN) REQUIRES degree_max in the dataset metadata.
-    #     Use --n-bands 1 for datasets without it.
-    #   - If direction-loss-floor-abs=1e-7 causes noise in low-residual regions,
-    #     increase to 3e-7 or 1e-6.
+    #   - n_bands>1 (multi-scale SIREN) REQUIRES degree_max in the dataset metadata.
+    #   - If direction-loss-floor-abs=3e-6 masks too much of a low-residual region,
+    #     lower it deliberately and record the ablation.
     #   - If VRAM is insufficient: --batch-size 4096 --grad-accumulation-steps 4
     #     (an advisory warning is printed at startup when batch_size looks large
     #     for the detected GPU).
