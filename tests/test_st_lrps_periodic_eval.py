@@ -291,8 +291,9 @@ def test_ui_disabled_emits_no_periodic_flags(qapp):
     from lunaris.surrogate.st_lrps.ui.studio import STLRPSTrainTab
 
     tab = STLRPSTrainTab()
-    tab.data.setText("dummy.h5")
-    tab.out_dir.setText("dummy_out")
+    tab.dataset_mode.setCurrentIndex(tab.dataset_mode.findData("single"))
+    tab.data.setText("")
+    tab.out_dir.setText("")
     args = tab._build_args(show_errors=False)
     assert args is not None
     assert not any(a.startswith("--periodic-eval") for a in args)
@@ -303,8 +304,9 @@ def test_ui_count_mode_emits_count_flag(qapp):
     from lunaris.surrogate.st_lrps.ui.studio import STLRPSTrainTab
 
     tab = STLRPSTrainTab()
-    tab.data.setText("dummy.h5")
-    tab.out_dir.setText("dummy_out")
+    tab.dataset_mode.setCurrentIndex(tab.dataset_mode.findData("single"))
+    tab.data.setText("")
+    tab.out_dir.setText("")
     tab.periodic_eval_enabled.setChecked(True)
     tab.periodic_eval_mode.setCurrentIndex(tab.periodic_eval_mode.findData("count"))
     tab.periodic_eval_count.setValue(10)
@@ -320,8 +322,9 @@ def test_ui_every_mode_emits_every_flag(qapp):
     from lunaris.surrogate.st_lrps.ui.studio import STLRPSTrainTab
 
     tab = STLRPSTrainTab()
-    tab.data.setText("dummy.h5")
-    tab.out_dir.setText("dummy_out")
+    tab.dataset_mode.setCurrentIndex(tab.dataset_mode.findData("single"))
+    tab.data.setText("")
+    tab.out_dir.setText("")
     tab.periodic_eval_enabled.setChecked(True)
     tab.periodic_eval_mode.setCurrentIndex(tab.periodic_eval_mode.findData("every"))
     tab.periodic_eval_every.setValue(25)
