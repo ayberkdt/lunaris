@@ -19,7 +19,6 @@ from pathlib import Path
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import DEFAULT_DATASET_CONFIG
 
-
 STRONG_BENCHMARK_DEGREE_MIN: int = 25
 STRONG_BENCHMARK_DEGREE_MAX: int = 200
 STRONG_BENCHMARK_ALT_MIN_KM: float = 100.0
