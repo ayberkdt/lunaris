@@ -19,6 +19,19 @@ from pathlib import Path
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import DEFAULT_DATASET_CONFIG
 
+
+STRONG_BENCHMARK_DEGREE_MIN: int = 25
+STRONG_BENCHMARK_DEGREE_MAX: int = 200
+STRONG_BENCHMARK_ALT_MIN_KM: float = 100.0
+STRONG_BENCHMARK_ALT_MAX_KM: float = 1000.0
+
+# Backward-compatible constant aliases for older imports. New defaults and
+# provenance should refer to the strong benchmark names above.
+LEGACY_BENCHMARK_DEGREE_MIN: int = STRONG_BENCHMARK_DEGREE_MIN
+LEGACY_BENCHMARK_DEGREE_MAX: int = STRONG_BENCHMARK_DEGREE_MAX
+LEGACY_BENCHMARK_ALT_MIN_KM: float = STRONG_BENCHMARK_ALT_MIN_KM
+LEGACY_BENCHMARK_ALT_MAX_KM: float = STRONG_BENCHMARK_ALT_MAX_KM
+
 # =============================================================================
 # 1.                      SAMPLING ENUMS / HELPERS
 # =============================================================================
@@ -75,16 +88,16 @@ class SpatialCloudConfig:
     # ----------------------------
     # Gravity field source
     # ----------------------------
-    degree_max: int = 100
-    degree_min: int = 20  # Network learns residual for degrees (degree_min, degree_max]. -1 = full field.
+    degree_max: int = STRONG_BENCHMARK_DEGREE_MAX
+    degree_min: int = STRONG_BENCHMARK_DEGREE_MIN  # Network learns residual for degrees (degree_min, degree_max]. -1 = full field.
     gfc_path: str | None = None  # None => DEFAULT_DATASET_CONFIG.gravity_gfc_path
 
     # ----------------------------
     # Spatial sampling envelope
     # ----------------------------
     n_samples: int = 2_000_000
-    alt_min_km: float = 200.0
-    alt_max_km: float = 600.0
+    alt_min_km: float = STRONG_BENCHMARK_ALT_MIN_KM
+    alt_max_km: float = STRONG_BENCHMARK_ALT_MAX_KM
     sampling_strategy: str = SamplingStrategy.MIXED.value
     surface_bias_ratio: float = 0.70
 
@@ -218,12 +231,12 @@ class SpatialCloudConfig:
             payload = json.load(handle)
 
         return SpatialCloudConfig(
-            degree_max=int(payload.get("degree_max", 100)),
-            degree_min=int(payload.get("degree_min", 20)),
+            degree_max=int(payload.get("degree_max", STRONG_BENCHMARK_DEGREE_MAX)),
+            degree_min=int(payload.get("degree_min", STRONG_BENCHMARK_DEGREE_MIN)),
             gfc_path=payload.get("gfc_path", None),
             n_samples=int(payload.get("n_samples", 500_000)),
-            alt_min_km=float(payload.get("alt_min_km", 200.0)),
-            alt_max_km=float(payload.get("alt_max_km", 600.0)),
+            alt_min_km=float(payload.get("alt_min_km", STRONG_BENCHMARK_ALT_MIN_KM)),
+            alt_max_km=float(payload.get("alt_max_km", STRONG_BENCHMARK_ALT_MAX_KM)),
             sampling_strategy=str(payload.get("sampling_strategy", SamplingStrategy.MIXED.value)),
             surface_bias_ratio=float(payload.get("surface_bias_ratio", 0.70)),
             chunk_size=int(payload.get("chunk_size", 50_000)),
@@ -310,32 +323,32 @@ class CloudSuiteConfig:
     # ----------------------------
     # Gravity field source
     # ----------------------------
-    degree_min: int = 20
-    degree_max: int = 100
+    degree_min: int = STRONG_BENCHMARK_DEGREE_MIN
+    degree_max: int = STRONG_BENCHMARK_DEGREE_MAX
     gfc_path: str | None = None  # None => DEFAULT_DATASET_CONFIG.gravity_gfc_path
 
     # ----------------------------
     # Spatial sampling envelope
     # ----------------------------
-    train_alt_min_km: float = 200.0
-    train_alt_max_km: float = 600.0
+    train_alt_min_km: float = STRONG_BENCHMARK_ALT_MIN_KM
+    train_alt_max_km: float = STRONG_BENCHMARK_ALT_MAX_KM
     ood_margin_km: float = 40.0
 
     # ----------------------------
     # Train hybrid component allocation
     # ----------------------------
-    train_stratified_uniform_n: int = 2_000_000
-    train_inverse_r2_n: int = 1_000_000
-    train_residual_mag_n: int = 1_000_000
-    train_boundary_n: int = 1_000_000
+    train_stratified_uniform_n: int = 4_000_000
+    train_inverse_r2_n: int = 2_000_000
+    train_residual_mag_n: int = 2_000_000
+    train_boundary_n: int = 2_000_000
 
     # ----------------------------
     # Independent validation/test/OOD
     # ----------------------------
-    val_n: int = 1_000_000
-    test_n: int = 1_000_000
-    ood_low_n: int = 250_000
-    ood_high_n: int = 250_000
+    val_n: int = 2_000_000
+    test_n: int = 2_000_000
+    ood_low_n: int = 500_000
+    ood_high_n: int = 500_000
 
     # ----------------------------
     # Reproducibility seeds
@@ -518,6 +531,14 @@ SUITE_PRESETS: dict[str, CloudSuiteConfig] = {
 
 
 __all__ = [
+    "STRONG_BENCHMARK_DEGREE_MIN",
+    "STRONG_BENCHMARK_DEGREE_MAX",
+    "STRONG_BENCHMARK_ALT_MIN_KM",
+    "STRONG_BENCHMARK_ALT_MAX_KM",
+    "LEGACY_BENCHMARK_DEGREE_MIN",
+    "LEGACY_BENCHMARK_DEGREE_MAX",
+    "LEGACY_BENCHMARK_ALT_MIN_KM",
+    "LEGACY_BENCHMARK_ALT_MAX_KM",
     "SamplingStrategy",
     "SpatialCloudConfig",
     "DEFAULT_SPATIAL_CLOUD_CONFIG",
