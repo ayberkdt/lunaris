@@ -52,6 +52,7 @@ def _make_min_run(run_dir: Path):
         data="d.h5", out=str(run_dir),
         activation="silu", hidden=8, depth=2,
         n_bands=1, use_residual_blocks=False, use_fourier=False,
+        use_physical_radial_decay_encoding=False,
         degree_min=20, degree_max=100,
     )
     cfg.w0_bands = None
