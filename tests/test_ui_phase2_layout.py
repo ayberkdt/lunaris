@@ -72,7 +72,7 @@ def test_st_lrps_shell_uses_shared_palette_and_compact_navigation() -> None:
         # page-local headers, so the shell no longer mounts one.
         assert window._experiment_header is None
         # The Data workspace section nav is now a compact horizontal strip.
-        assert window._data_page._section_nav.maximumHeight() == 64
+        assert window._data_page._section_nav.maximumHeight() == 50
 
         window._navigate(2)
         app.processEvents()

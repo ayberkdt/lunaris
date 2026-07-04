@@ -691,7 +691,42 @@ def resolve_cloud_config(args: argparse.Namespace) -> SpatialCloudConfig:
     return cfg
 
 
+_PROGRESS_STATE: dict[str, float] = {}
+
+
+def _emit_progress(current: int, total: int) -> None:
+    """Print a machine-parseable, comma-free progress line with a % and ETA.
+
+    The UI parses ``[progress] <cur>/<tot>`` to drive a determinate bar; the
+    trailing ``pct``/``eta`` fields are for humans reading the raw log. Output
+    is throttled to at most one line per ~0.5% so very fine chunking does not
+    flood the log, while always emitting the final 100% line.
+    """
+    total = max(1, int(total))
+    current = max(0, min(int(current), total))
+    frac = current / total
+    now = time.monotonic()
+    if not _PROGRESS_STATE:
+        _PROGRESS_STATE["start"] = now
+        _PROGRESS_STATE["last_frac"] = -1.0
+    last = _PROGRESS_STATE.get("last_frac", -1.0)
+    if current < total and (frac - last) < 0.005:
+        return
+    _PROGRESS_STATE["last_frac"] = frac
+    elapsed = max(1e-9, now - _PROGRESS_STATE["start"])
+    eta_s = (elapsed / frac - elapsed) if frac > 0.0 else 0.0
+    eta_txt = f"{int(eta_s // 60):d}m{int(eta_s % 60):02d}s" if frac > 0.0 else "--"
+    rate = current / elapsed
+    print(
+        f"[progress] {current}/{total} pct={frac * 100:.1f}% "
+        f"eta={eta_txt} rate={rate:,.0f}/s"
+    )
+    if current >= total:
+        _PROGRESS_STATE.clear()
+
+
 def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
+    _PROGRESS_STATE.clear()
     C, S, meta = load_coeffs_from_ssot(degree_max=int(cfg.degree_max), gfc_path=cfg.gfc_path)
     mu_si = float(meta["mu_si"])
     r_ref_m = float(meta["r_ref_m"])
@@ -824,8 +859,10 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
                     start_i, chunk = _worker_compute_chunk(offset, n_i, seed_i)
                     dset[start_i : start_i + n_i, :] = chunk
                     offset += n_i
-                    if (i + 1) % max(1, n_chunks // 20) == 0:
-                        print(f"[progress] {offset:,}/{n_samples:,}")
+                    # Flush each chunk so a long run survives an interruption
+                    # with all completed rows already persisted to disk.
+                    f.flush()
+                    _emit_progress(offset, n_samples)
             else:
                 workers = int(cfg.workers)
                 print(f"[info] multiprocessing enabled (workers={workers}). HDF5 writes are serialized in main.")
@@ -843,8 +880,8 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
                         start_i, chunk = fut.result()
                         dset[start_i : start_i + chunk.shape[0], :] = chunk
                         done += chunk.shape[0]
-                        if done % max(1, n_samples // 20) < chunk.shape[0]:
-                            print(f"[progress] {done:,}/{n_samples:,}")
+                        f.flush()
+                        _emit_progress(done, n_samples)
 
             f.flush()
         stamp_hdf5_content_hash(out_path, dataset_name="data")
@@ -869,8 +906,8 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
                 seed_i = base_seed + i
                 _worker_write_memmap(str(memmap_path), n_samples, offset, n_i, seed_i)
                 offset += n_i
-                if (i + 1) % max(1, n_chunks // 20) == 0:
-                    print(f"[progress] {offset:,}/{n_samples:,}")
+                # Each worker already flushes its memmap slice to disk.
+                _emit_progress(offset, n_samples)
         else:
             workers = int(cfg.workers)
             print(f"[info] multiprocessing enabled (workers={workers}). Workers write non-overlapping memmap slices.")
@@ -886,8 +923,7 @@ def run_generation(cfg: SpatialCloudConfig, *, overwrite: bool = False) -> None:
                 done = 0
                 for fut in as_completed(futures):
                     done += int(fut.result())
-                    if done % max(1, n_samples // 20) < chunk_size:
-                        print(f"[progress] {done:,}/{n_samples:,}")
+                    _emit_progress(done, n_samples)
 
         print(f"[info] finalizing .pt to: {out_path}")
         finalize_pt_from_memmap(memmap_path, out_path, n_samples, dtype_out, attrs, delete_memmap=True)

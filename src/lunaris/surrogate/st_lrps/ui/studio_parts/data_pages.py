@@ -168,7 +168,7 @@ from .common_widgets import (
     _tune_form,
     _tune_inputs,
 )
-from .workspace_widgets import StudioNotice, StudioWorkflowOverview
+from .workspace_widgets import StudioNotice
 
 
 def _legacy_introspect_h5(path: str) -> dict[str, Any] | None:
@@ -268,6 +268,7 @@ def _data_action_card(
     primary_button: QPushButton,
     *,
     secondary_buttons: list[QPushButton] | None = None,
+    leading: QBoxLayout | QWidget | None = None,
     detail: QWidget | None = None,
     object_name: str = "dataActionCard",
 ) -> QFrame:
@@ -314,12 +315,20 @@ def _data_action_card(
     action_row = QHBoxLayout()
     action_row.setContentsMargins(0, 0, 0, 0)
     action_row.setSpacing(8)
+    # Optional leading content (e.g. a workflow selector) sits on the far left so
+    # the card resolves to a single dense action row instead of stacked, mostly
+    # empty button rows.
+    if leading is not None:
+        if isinstance(leading, QWidget):
+            action_row.addWidget(leading)
+        else:
+            action_row.addLayout(leading)
+    action_row.addStretch(1)
     if secondary_buttons:
         for button in secondary_buttons:
             button.setProperty("kind", button.property("kind") or "ghost")
             button.setMinimumHeight(36)
             action_row.addWidget(button)
-    action_row.addStretch(1)
     action_row.addWidget(primary_button)
     top.addLayout(action_row)
     layout.addLayout(top)
@@ -397,7 +406,6 @@ class CloudGenTab(QWidget):
         )
         mode_bar.addWidget(mode_lbl)
         mode_bar.addWidget(self._mode_combo)
-        mode_bar.addStretch(1)
 
         # ── Sync banner (shared) ─────────────────────────────────────────────
         self._sync_banner = QLabel("")
@@ -436,26 +444,16 @@ class CloudGenTab(QWidget):
         )
         self._btn_generate_now = QPushButton("Start Cloud Generation")
         self._btn_generate_now.clicked.connect(self._start)
-        preview_btns = QHBoxLayout()
-        preview_btns.setContentsMargins(0, 0, 0, 0)
-        preview_btns.setSpacing(8)
-        preview_btns.addLayout(mode_bar)
-        preview_btns.addStretch(1)
-        preview_btns.addWidget(btn_preview)
-        preview_btns.addWidget(btn_copy_cmd)
 
-        preview_w = QWidget()
-        preview_vbox = QVBoxLayout()
-        preview_vbox.setContentsMargins(0, 0, 0, 0)
-        preview_vbox.setSpacing(6)
-        preview_vbox.addLayout(preview_btns)
-        preview_vbox.addWidget(self.command_preview)
-        preview_w.setLayout(preview_vbox)
+        # Single dense action row: [Workflow] … [Show Command] [Copy] [Start].
+        # The command preview stays hidden below until Show Command is pressed.
         generator_card = _data_action_card(
             "Generate Dataset",
             "Pick a workflow, tune the cards below, then launch the dataset job.",
             self._btn_generate_now,
-            detail=preview_w,
+            secondary_buttons=[btn_preview, btn_copy_cmd],
+            leading=mode_bar,
+            detail=self.command_preview,
         )
         analysis_panel = self._build_analysis_panel()
 
@@ -1700,6 +1698,9 @@ class CloudGenTab(QWidget):
             return
         self._sync_banner.setVisible(False)
         self._save_settings()
+        # Indeterminate until the first [progress] line arrives; clear any
+        # stale percentage text from a previous run.
+        self.runner.progress.setFormat("Preparing…")
         self.runner.progress.setRange(0, 0)
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
@@ -1766,12 +1767,32 @@ class CloudGenTab(QWidget):
             self._run_suite_analysis(Path(suite_dir))
 
     def _parse_progress(self, line: str) -> None:
+        # Preferred: the generator's machine-readable
+        # ``[progress] <cur>/<tot> pct=.. eta=.. rate=..`` line. Drives a
+        # determinate bar with a live percentage + ETA rendered in the bar text.
+        m = re.search(r"\[progress\]\s+(\d+)\s*/\s*(\d+)", line)
+        if m:
+            cur = int(m.group(1))
+            tot = max(1, int(m.group(2)))
+            cur = min(cur, tot)
+            self.runner.progress.setRange(0, tot)
+            self.runner.progress.setValue(cur)
+            pct = 100.0 * cur / tot
+            segments = [f"{pct:.0f}%"]
+            eta_m = re.search(r"eta=(\S+)", line)
+            if eta_m and eta_m.group(1) not in ("--", ""):
+                segments.append(f"ETA {eta_m.group(1)}")
+            segments.append(f"{cur:,}/{tot:,} rows")
+            self.runner.progress.setFormat("  •  ".join(segments))
+            return
+        # Legacy fallbacks (older generators / other tools).
         m = re.search(r"(?i)chunk\s*(\d+)\s*/\s*(\d+)", line)
         if m:
             cur = int(m.group(1))
             tot = int(m.group(2))
             self.runner.progress.setRange(0, max(1, tot))
             self.runner.progress.setValue(min(cur, tot))
+            return
         m2 = re.search(r"(\d+(?:\.\d+)?)\s*%", line)
         if m2:
             pct = min(100, int(float(m2.group(1))))
@@ -2267,7 +2288,7 @@ class DatasetInspectionPanel(QWidget):
         file_detail_l.addWidget(self.path_edit)
 
         action_card = _data_action_card(
-            "Inspect Dataset",
+            "Validate Dataset",
             "Choose an HDF5 cloud, validate it, then send it to Training.",
             self.btn_validate,
             secondary_buttons=[btn_browse, self.btn_send, btn_path],
@@ -2418,17 +2439,14 @@ class DataPage(QWidget):
     def __init__(self, cloud_tab: QWidget, analysis_tab: QWidget,
                  parent: QWidget | None = None):
         super().__init__(parent)
-        self.inspect_panel = DatasetInspectionPanel()
         self._stack = QStackedWidget()
-        # Wrap DatasetInspectionPanel in scroll area to prevent metadata and log clipping
-        self._stack.addWidget(_scroll_wrap(self.inspect_panel))
-        self._stack.addWidget(cloud_tab)
-        self._stack.addWidget(analysis_tab)
+        self._stack.addWidget(cloud_tab)       # index 0: Generate
+        self._stack.addWidget(analysis_tab)    # index 1: Analyze
         self._section_buttons: list[QPushButton] = []
 
         nav = QFrame()
         nav.setObjectName("dataSectionNav")
-        nav.setMaximumHeight(64)
+        nav.setMaximumHeight(50)
         nav.setStyleSheet(
             f"QFrame#dataSectionNav {{"
             f"  background: {with_alpha(THEME['bg_card'], 0.74)};"
@@ -2437,21 +2455,23 @@ class DataPage(QWidget):
             f"}}"
         )
         nav_l = QHBoxLayout()
-        nav_l.setContentsMargins(10, 10, 10, 10)
-        nav_l.setSpacing(8)
+        nav_l.setContentsMargins(8, 8, 8, 8)
+        nav_l.setSpacing(6)
 
         def _nav_btn(label: str, hint: str, idx: int) -> QPushButton:
             btn = QPushButton(label)
             btn.setToolTip(hint)
             btn.setCheckable(True)
-            btn.setMinimumHeight(36)
-            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn.setMinimumHeight(32)
+            # Content-width segmented control, left-aligned, rather than two
+            # full-width slabs — reads as a compact tab bar, not two giant buttons.
+            btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(
                 f"QPushButton {{"
-                f"  text-align: center; padding: 0 14px;"
+                f"  text-align: center; padding: 0 24px;"
                 f"  border: 1px solid {with_alpha(THEME['border'], 0.10)};"
                 f"  border-radius: {DESIGN_TOKENS.radii.control}px; background: {with_alpha(THEME['fg_main'], 0.025)};"
-                f"  color: {THEME['fg_soft']}; font-weight: 750; font-size: 13px;"
+                f"  color: {THEME['fg_soft']}; font-weight: 700; font-size: 12px;"
                 f"}}"
                 f"QPushButton:hover {{ background: {with_alpha(THEME['accent'], 0.06)}; color: {THEME['fg_main']}; }}"
                 f"QPushButton:checked {{"
@@ -2464,9 +2484,9 @@ class DataPage(QWidget):
             self._section_buttons.append(btn)
             return btn
 
-        nav_l.addWidget(_nav_btn("Inspect", "Readiness and metadata", 0))
-        nav_l.addWidget(_nav_btn("Generate", "Single cloud or train/val/test/OOD suite", 1))
-        nav_l.addWidget(_nav_btn("Analyze", "Coverage and field reports", 2))
+        nav_l.addWidget(_nav_btn("Generate", "Single cloud or train/val/test/OOD suite", 0))
+        nav_l.addWidget(_nav_btn("Analyze", "Coverage and field reports", 1))
+        nav_l.addStretch(1)
         nav.setLayout(nav_l)
         _style_surface(nav, object_name="dataSectionNav")
 
@@ -2479,25 +2499,15 @@ class DataPage(QWidget):
         self._workspace_layout = workspace
 
         lo = QVBoxLayout()
-        lo.setContentsMargins(12, 8, 18, 16)
-        lo.setSpacing(12)
+        lo.setContentsMargins(16, 10, 18, 14)
+        lo.setSpacing(10)
+        # The readiness guidance lives in the subtitle now; the previous
+        # separate step-strip + info banner duplicated the Generate/Analyze
+        # switch below and left large empty bands.
         lo.addWidget(_make_page_header(
             "Data Workspace",
-            "Choose a data task, then act from the primary card on that page.",
+            "Generate and analyze datasets here, then validate them under Training ▸ Dataset Readiness before launching a run.",
             "Dataset Pipeline",
-        ))
-        self._workflow_overview = StudioWorkflowOverview(
-            (
-                ("Inspect", "Validate metadata, units, and dataset contract."),
-                ("Generate", "Create a single cloud or train/val/test/OOD suite."),
-                ("Analyze", "Review coverage and field diagnostics before training."),
-            )
-        )
-        lo.addWidget(self._workflow_overview)
-        lo.addWidget(StudioNotice(
-            "Inspect before training",
-            "Use Inspect as the handoff gate: dataset name, unit system, split policy, and OOD coverage should be visible before sending data into Training.",
-            kind="info",
         ))
         lo.addLayout(workspace, 1)
         self.setLayout(lo)
@@ -2507,5 +2517,34 @@ class DataPage(QWidget):
         self._stack.setCurrentIndex(idx)
         for i, btn in enumerate(self._section_buttons):
             btn.setChecked(i == idx)
-        if hasattr(self, "_workflow_overview"):
-            self._workflow_overview.set_current(idx)
+
+
+class TrainingReadinessPage(QWidget):
+    """Pre-launch dataset-readiness gate, homed on the Training side.
+
+    This is the check performed immediately before training: validate the
+    chosen dataset's metadata, unit system, split policy, and OOD coverage,
+    then hand it off to Training Setup. It hosts the same
+    :class:`DatasetInspectionPanel` that previously lived under Data ▸ Inspect,
+    where its purpose (a training gate, not a data-authoring task) was unclear.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.inspect_panel = DatasetInspectionPanel()
+
+        lo = QVBoxLayout()
+        lo.setContentsMargins(12, 8, 18, 16)
+        lo.setSpacing(12)
+        lo.addWidget(_make_page_header(
+            "Dataset Readiness",
+            "Validate the dataset you are about to train on, then send it to Training Setup.",
+            "Pre-Launch Check",
+        ))
+        lo.addWidget(StudioNotice(
+            "The gate before training",
+            "Confirm the dataset name, unit system, split policy, and OOD coverage here before launching a long run. Use “Send to Training” to carry the path into Setup.",
+            kind="info",
+        ))
+        lo.addWidget(_scroll_wrap(self.inspect_panel), 1)
+        self.setLayout(lo)
