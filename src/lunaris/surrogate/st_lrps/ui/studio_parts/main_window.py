@@ -48,7 +48,7 @@ from typing import Any
 
 from lunaris.common.paths import project_root_from_file
 
-from .data_pages import CloudAnalysisTab, CloudGenTab, DataPage
+from .data_pages import CloudAnalysisTab, CloudGenTab, DataPage, TrainingReadinessPage
 from .evaluation_pages import EvaluationPage, STLRPSEvalTab
 from .orbit_benchmark_pages import (
     OrbitBenchmarkPage,
@@ -190,15 +190,19 @@ class MainWindow(QMainWindow):
 
         # --- Top-level workspace pages ---
         self._data_page = DataPage(self._cloud_tab, self._analysis_tab)
+        self._readiness_page = TrainingReadinessPage()
         self._train_setup_page = self._train_tab.setup_page
         self._train_monitor_page = self._train_tab.monitor_page
         self._eval_page = EvaluationPage(self._eval_tab)
         self._runtime_page = RuntimePerformancePage(self._profile_tab)
         self._orbit_benchmark_page = OrbitBenchmarkPage(self._orbit_benchmark_tab)
         self._orbit_plots_page = OrbitBenchmarkPlotsPage(self._orbit_plots_tab)
-        self._data_page.inspect_panel.send_to_training.connect(self._on_dataset_to_training)
+        self._readiness_page.inspect_panel.send_to_training.connect(self._on_dataset_to_training)
         self._train_tab.navigate_monitor_requested.connect(lambda: self._navigate(2))
 
+        # Indices 0-6 are kept stable; the readiness page is appended at the end
+        # of the stack so existing navigation targets do not shift, while the
+        # sidebar surfaces it under TRAINING as the pre-launch step.
         self._stack = QStackedWidget()
         self._stack.addWidget(self._data_page)              # index 0: Data
         self._stack.addWidget(self._train_setup_page)       # index 1: Training Setup
@@ -207,6 +211,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._runtime_page)           # index 4: Runtime Performance
         self._stack.addWidget(self._orbit_benchmark_page)   # index 5: Orbit-Level Benchmark
         self._stack.addWidget(self._orbit_plots_page)       # index 6: Gravity Plots
+        self._readiness_page_index = self._stack.addWidget(self._readiness_page)  # index 7
         self._page_titles = [
             "Data",
             "Training Setup",
@@ -215,6 +220,7 @@ class MainWindow(QMainWindow):
             "Runtime Performance",
             "Orbit-Level Benchmark",
             "Gravity Plots",
+            "Dataset Readiness",
         ]
 
         dep_info = []
@@ -289,15 +295,22 @@ class MainWindow(QMainWindow):
         sidebar.setObjectName("navSidebar")
         sidebar.setFixedWidth(DESIGN_TOKENS.layout.nav_width)
 
-        def _section_lbl(text: str) -> QLabel:
+        def _section_lbl(text: str, section: str) -> QLabel:
             lbl = QLabel(text)
             lbl.setObjectName("navSectionLabel")
+            lbl.setProperty("section", section)
             return lbl
 
-        def _nav_btn(label: str, page_idx: int, hint: str = "") -> QPushButton:
+        def _nav_btn(label: str, page_idx: int, hint: str = "", section: str = "") -> QPushButton:
             btn = QPushButton(label)
             btn.setObjectName("navButton")
             btn.setCheckable(True)
+            btn.setProperty("section", section)
+            # The button's stack index is stored explicitly because the sidebar
+            # order no longer matches the stack order (Dataset Readiness is
+            # appended at the end of the stack but shown under TRAINING). The
+            # active-highlight logic in _navigate keys off this, not list order.
+            btn.setProperty("page_index", page_idx)
             btn.setAccessibleName(f"{label} workspace")
             if hint:
                 btn.setToolTip(hint)
@@ -318,23 +331,24 @@ class MainWindow(QMainWindow):
         lo.setSpacing(6)
 
         # ── DATA ──
-        lo.addWidget(_section_lbl("DATA"))
-        lo.addWidget(_nav_btn("Data", 0, "Inspect, generate, and analyze ST-LRPS datasets."))
+        lo.addWidget(_section_lbl("DATA", "data"))
+        lo.addWidget(_nav_btn("Data", 0, "Generate and analyze ST-LRPS datasets.", "data"))
 
-        # ── TRAINING (Setup + Monitor are one category, boxed together) ──
-        lo.addWidget(_section_lbl("TRAINING"))
+        # ── TRAINING (Readiness → Setup → Monitor, boxed together) ──
+        lo.addWidget(_section_lbl("TRAINING", "train"))
         train_box, train_l = _group_box()
-        train_l.addWidget(_nav_btn("Training Setup", 1, "Configure data, model, loss, resume, and launch readiness."))
-        train_l.addWidget(_nav_btn("Training Monitor", 2, "Track lifecycle, loss, checkpoints, logs, and queue state."))
+        train_l.addWidget(_nav_btn("Dataset Readiness", 7, "Validate the dataset and hand it off before launching a run.", "train"))
+        train_l.addWidget(_nav_btn("Training Setup", 1, "Configure data, model, loss, resume, and launch readiness.", "train"))
+        train_l.addWidget(_nav_btn("Training Monitor", 2, "Track lifecycle, loss, checkpoints, logs, and queue state.", "train"))
         lo.addWidget(train_box)
 
         # ── ANALYSIS ──
-        lo.addWidget(_section_lbl("ANALYSIS"))
+        lo.addWidget(_section_lbl("ANALYSIS", "analysis"))
         analysis_box, analysis_l = _group_box()
-        analysis_l.addWidget(_nav_btn("Evaluation", 3, "Inspect artifacts and run in-band or OOD accuracy analysis."))
-        analysis_l.addWidget(_nav_btn("Runtime Performance", 4, "Profile artifact loading, batching, chunks, and device throughput."))
-        analysis_l.addWidget(_nav_btn("Orbit-Level Benchmark", 5, "Run orbit-level SH versus ST-LRPS validation scenarios."))
-        analysis_l.addWidget(_nav_btn("Gravity Plots", 6, "Regenerate figures from cached benchmark results."))
+        analysis_l.addWidget(_nav_btn("Evaluation", 3, "Inspect artifacts and run in-band or OOD accuracy analysis.", "analysis"))
+        analysis_l.addWidget(_nav_btn("Runtime Performance", 4, "Profile artifact loading, batching, chunks, and device throughput.", "analysis"))
+        analysis_l.addWidget(_nav_btn("Orbit-Level Benchmark", 5, "Run orbit-level SH versus ST-LRPS validation scenarios.", "analysis"))
+        analysis_l.addWidget(_nav_btn("Gravity Plots", 6, "Regenerate figures from cached benchmark results.", "analysis"))
         lo.addWidget(analysis_box)
 
         lo.addStretch(1)
@@ -359,8 +373,8 @@ class MainWindow(QMainWindow):
 
     def _navigate(self, page_idx: int) -> None:
         self._stack.setCurrentIndex(page_idx)
-        for i, btn in enumerate(self._nav_buttons):
-            btn.setChecked(i == page_idx)
+        for btn in self._nav_buttons:
+            btn.setChecked(btn.property("page_index") == page_idx)
         # Reflect the active page in the header.
         hdr = getattr(self, "_experiment_header", None)
         if hdr is not None and hasattr(hdr, "set_page"):

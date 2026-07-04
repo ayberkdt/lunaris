@@ -164,7 +164,7 @@ def test_benchmark_page_registered_in_nav(qapp):
     from lunaris.surrogate.st_lrps.ui.studio_parts.main_window import MainWindow
 
     w = MainWindow()
-    assert w._stack.count() == 7
+    assert w._stack.count() == 8
     assert "Orbit-Level Benchmark" in w._page_titles
     assert "Gravity Plots" in w._page_titles
     w.deleteLater()

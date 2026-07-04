@@ -681,120 +681,6 @@ class LiveLossPlot(QWidget):
                 color: {THEME['fg_main']};
                 font-size: 14px;
                 font-weight: 700;
-        card_layout.setContentsMargins(16, 14, 16, 16)
-        card_layout.setSpacing(12)
-        self._card.setLayout(card_layout)
-
-        # ----------------------------
-        # Row 1: title  |  controls
-        # ----------------------------
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(12)
-
-        title_col = QVBoxLayout()
-        title_col.setContentsMargins(0, 0, 0, 0)
-        title_col.setSpacing(3)
-        title = QLabel("Live Training Monitor")
-        title.setObjectName("lossTitle")
-        subtitle = QLabel("Training / validation loss curve  ·  logarithmic scale recommended")
-        subtitle.setObjectName("lossSubtitle")
-        title_col.addWidget(title)
-        title_col.addWidget(subtitle)
-        top_row.addLayout(title_col, 1)
-
-        self._chk_log_y = QCheckBox("Log Y")
-        self._chk_log_y.setChecked(True)
-        self._chk_log_y.setToolTip(
-            "Shows the Y axis on a logarithmic scale.\n"
-            "Recommended because loss values span several orders of magnitude."
-        )
-        self._chk_log_y.toggled.connect(self._on_log_toggle)
-        top_row.addWidget(self._chk_log_y)
-
-        self._chk_smooth = QCheckBox("Smooth")
-        self._chk_smooth.setChecked(False)
-        self._chk_smooth.setToolTip("Display-only moving-average smoothing. History files and metrics are unchanged.")
-        self._chk_smooth.toggled.connect(lambda _checked: self._update_plot())
-        top_row.addWidget(self._chk_smooth)
-
-        self._smooth_window = QSpinBox()
-        self._smooth_window.setRange(2, 101)
-        self._smooth_window.setValue(5)
-        self._smooth_window.setMaximumWidth(70)
-        self._smooth_window.setToolTip("Smoothing window in plotted points.")
-        self._smooth_window.valueChanged.connect(lambda _value: self._update_plot())
-        top_row.addWidget(self._smooth_window)
-
-        self._btn_fit = QPushButton("Auto Scale")
-        self._btn_fit.setProperty("plotControl", True)
-        self._btn_fit.setToolTip("Automatically refits the plot to the current data.")
-        self._btn_fit.clicked.connect(self._auto_range)
-        top_row.addWidget(self._btn_fit)
-
-        self._btn_clear = QPushButton("Reset")
-        self._btn_clear.setProperty("plotControl", True)
-        self._btn_clear.setToolTip("Resets all loss history and metrics in the live plot.")
-        self._btn_clear.clicked.connect(self.clear)
-        top_row.addWidget(self._btn_clear)
-
-        card_layout.addLayout(top_row)
-
-        # ----------------------------
-        # Row 2: metric chips (7 equal widths)
-        # ----------------------------
-        self._lbl_train = self._metric_label("Train opt/ref", "—")
-        self._lbl_val   = self._metric_label("Validation",    "—")
-        self._lbl_best  = self._metric_label("Best Val",      "—")
-        self._lbl_best_epoch  = self._metric_label("Best Epoch",      "—")
-        self._lbl_no_improve  = self._metric_label("No Improvement",  "—")
-        self._lbl_lam_dir     = self._metric_label("λ Dir Weight",    "—")
-        self._lbl_lr          = self._metric_label("Learning Rate",   "—")
-
-        self._lbl_score = self._metric_label("Checkpoint Score", "...")
-        self._lbl_formula = self._metric_label("Formula", "N/A")
-
-        # Metric chips are wrapped in containers so they can be hidden in
-        # compact mode (when an external KPI strip already shows these values).
-        self._metrics_row1 = QWidget()
-        metrics_row = QHBoxLayout(self._metrics_row1)
-        metrics_row.setContentsMargins(0, 0, 0, 0)
-        metrics_row.setSpacing(6)
-        for w in (
-            self._lbl_train, self._lbl_val, self._lbl_best,
-            self._lbl_best_epoch, self._lbl_no_improve, self._lbl_lam_dir, self._lbl_lr,
-        ):
-            metrics_row.addWidget(w, 1)
-        card_layout.addWidget(self._metrics_row1)
-
-        self._metrics_row2 = QWidget()
-        metrics_row2 = QHBoxLayout(self._metrics_row2)
-        metrics_row2.setContentsMargins(0, 0, 0, 0)
-        metrics_row2.setSpacing(6)
-        metrics_row2.addWidget(self._lbl_score, 1)
-        metrics_row2.addWidget(self._lbl_formula, 3)
-        card_layout.addWidget(self._metrics_row2)
-
-        self._help_label = QLabel(
-            "Best metric selects ckpt_best.pt. Hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
-        )
-        self._help_label.setWordWrap(True)
-        self._help_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
-        self._help_label.setToolTip(
-            "Best metric is the scalar score used to select ckpt_best.pt. "
-            "For hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
-        )
-        card_layout.addWidget(self._help_label)
-
-        # status label (bottom-aligned)
-        self._lbl_status = QLabel("Waiting for training…")
-        self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._lbl_status.setStyleSheet(f"color: {THEME['fg_disabled']}; font-size: 11px;")
-
-        # ----------------------------
-        # Plot body
-        # ----------------------------
-        if _HAS_PYQTGRAPH:
             }}
             QLabel#lossSubtitle {{
                 color: {THEME['fg_muted']};
@@ -827,7 +713,7 @@ class LiveLossPlot(QWidget):
         title_col.setSpacing(3)
         title = QLabel("Live Training Monitor")
         title.setObjectName("lossTitle")
-        subtitle = QLabel("Training / validation loss curve  ·  logarithmic scale recommended")
+        subtitle = QLabel("Training / validation loss  ·  log scale recommended  ·  Ctrl + scroll to zoom")
         subtitle.setObjectName("lossSubtitle")
         title_col.addWidget(title)
         title_col.addWidget(subtitle)
@@ -842,31 +728,11 @@ class LiveLossPlot(QWidget):
         self._chk_log_y.toggled.connect(self._on_log_toggle)
         top_row.addWidget(self._chk_log_y)
 
-        self._chk_smooth = QCheckBox("Smooth")
-        self._chk_smooth.setChecked(False)
-        self._chk_smooth.setToolTip("Display-only moving-average smoothing. History files and metrics are unchanged.")
-        self._chk_smooth.toggled.connect(lambda _checked: self._update_plot())
-        top_row.addWidget(self._chk_smooth)
-
-        self._smooth_window = QSpinBox()
-        self._smooth_window.setRange(2, 101)
-        self._smooth_window.setValue(5)
-        self._smooth_window.setMaximumWidth(70)
-        self._smooth_window.setToolTip("Smoothing window in plotted points.")
-        self._smooth_window.valueChanged.connect(lambda _value: self._update_plot())
-        top_row.addWidget(self._smooth_window)
-
         self._btn_fit = QPushButton("Auto Scale")
         self._btn_fit.setProperty("plotControl", True)
         self._btn_fit.setToolTip("Automatically refits the plot to the current data.")
         self._btn_fit.clicked.connect(self._auto_range)
         top_row.addWidget(self._btn_fit)
-
-        self._btn_clear = QPushButton("Reset")
-        self._btn_clear.setProperty("plotControl", True)
-        self._btn_clear.setToolTip("Resets all loss history and metrics in the live plot.")
-        self._btn_clear.clicked.connect(self.clear)
-        top_row.addWidget(self._btn_clear)
 
         card_layout.addLayout(top_row)
 
@@ -956,10 +822,15 @@ class LiveLossPlot(QWidget):
                     tickLength=4,
                 )
 
-            self._pen_train = pg.mkPen(color=THEME["accent"], width=2.6)
-            self._pen_val = pg.mkPen(color=THEME["info"], width=2.6)
-            self._pen_train_shadow = pg.mkPen(color=QColor(with_alpha(THEME["accent"], 0.27)), width=7)
-            self._pen_val_shadow = pg.mkPen(color=QColor(with_alpha(THEME["info"], 0.27)), width=7)
+            # Train = cool blue, Validation = teal. Two clearly separated hues
+            # (previously train=accent / val=info were near-identical blues that
+            # differed only by line width, which read as a single noisy curve).
+            _c_train = THEME["accent"]
+            _c_val = THEME["secondary"]
+            self._pen_train = pg.mkPen(color=_c_train, width=2.4)
+            self._pen_val = pg.mkPen(color=_c_val, width=2.4)
+            self._pen_train_shadow = pg.mkPen(color=QColor(with_alpha(_c_train, 0.22)), width=7)
+            self._pen_val_shadow = pg.mkPen(color=QColor(with_alpha(_c_val, 0.22)), width=7)
 
             self._curve_train_shadow = self._plot_widget.plot([], [], pen=self._pen_train_shadow)
             self._curve_val_shadow = self._plot_widget.plot([], [], pen=self._pen_val_shadow)
@@ -968,28 +839,28 @@ class LiveLossPlot(QWidget):
                 pen=self._pen_train,
                 symbol="o",
                 symbolSize=5,
-                symbolBrush=pg.mkBrush(THEME["accent"]),
+                symbolBrush=pg.mkBrush(_c_train),
                 symbolPen=pg.mkPen(THEME["bg_space"]),
-                name="train_total",
+                name="Train — total loss",
             )
             self._curve_val = self._plot_widget.plot(
                 [], [],
                 pen=self._pen_val,
-                symbol="o",
+                symbol="s",
                 symbolSize=5,
-                symbolBrush=pg.mkBrush(THEME["info"]),
+                symbolBrush=pg.mkBrush(_c_val),
                 symbolPen=pg.mkPen(THEME["bg_space"]),
-                name="val_total",
+                name="Validation — total loss",
             )
             self._curve_train_opt = self._plot_widget.plot(
                 [], [],
-                pen=pg.mkPen(color=THEME["accent"], width=1.8, style=pg_QtCore.Qt.PenStyle.DashLine),
-                name="train_objective",
+                pen=pg.mkPen(color=_c_train, width=1.6, style=pg_QtCore.Qt.PenStyle.DashLine),
+                name="Train — objective",
             )
             self._curve_val_base = self._plot_widget.plot(
                 [], [],
-                pen=pg.mkPen(color=THEME["info"], width=1.8, style=pg_QtCore.Qt.PenStyle.DashLine),
-                name="val_base",
+                pen=pg.mkPen(color=_c_val, width=1.6, style=pg_QtCore.Qt.PenStyle.DashLine),
+                name="Validation — base",
             )
 
             self._best_line = pg.InfiniteLine(
@@ -1019,10 +890,15 @@ class LiveLossPlot(QWidget):
             self._direction_plot.showGrid(x=True, y=True, alpha=0.10)
             self._direction_plot.setLabel("bottom", "Epoch", color=THEME["fg_soft"], size="9pt")
             self._direction_plot.setLogMode(x=False, y=True)
-            self._curve_train_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["success"], width=2.1), name="train a")
-            self._curve_val_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["success"], width=2.4), name="val a")
-            self._curve_train_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["warning"], width=2.1), name="train dir")
-            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["warning"], width=2.4), name="val dir")
+            # Hue encodes the metric (magnitude=blue, direction=amber); dash
+            # style encodes the split (train=solid, validation=dashed). This is
+            # far more legible than the previous same-color/width-only pairs.
+            _solid = pg_QtCore.Qt.PenStyle.SolidLine
+            _dash = pg_QtCore.Qt.PenStyle.DashLine
+            self._curve_train_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["info"], width=2.2, style=_solid), name="Train — magnitude")
+            self._curve_val_loss_a = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["info"], width=2.0, style=_dash), name="Val — magnitude")
+            self._curve_train_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["warning"], width=2.2, style=_solid), name="Train — direction")
+            self._curve_val_dir = self._direction_plot.plot([], [], pen=pg.mkPen(color=THEME["warning"], width=2.0, style=_dash), name="Val — direction")
 
             self._direction_quality_plot = pg.PlotWidget()
             self._direction_quality_plot.setMinimumHeight(180)
@@ -1030,9 +906,9 @@ class LiveLossPlot(QWidget):
             self._direction_quality_plot.setMenuEnabled(False)
             self._direction_quality_plot.showGrid(x=True, y=True, alpha=0.10)
             self._direction_quality_plot.setLabel("bottom", "Epoch", color=THEME["fg_soft"], size="9pt")
-            self._curve_val_angular = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color=THEME["info"], width=2.4), name="val ang°")
-            self._curve_train_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color=THEME["accent"], width=2.1), name="train cos")
-            self._curve_val_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color=THEME["accent"], width=2.4), name="val cos")
+            self._curve_val_angular = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color=THEME["warning"], width=2.2, style=_solid), name="Val — angular error (°)")
+            self._curve_train_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color=THEME["accent"], width=2.2, style=_solid), name="Train — cosine sim")
+            self._curve_val_cossim = self._direction_quality_plot.plot([], [], pen=pg.mkPen(color=THEME["accent"], width=2.0, style=_dash), name="Val — cosine sim")
 
             self._direction_tab = QWidget()
             direction_layout = QVBoxLayout()
@@ -1049,8 +925,8 @@ class LiveLossPlot(QWidget):
             self._checkpoint_plot.showGrid(x=True, y=True, alpha=0.10)
             self._checkpoint_plot.setLabel("bottom", "Epoch", color=THEME["fg_soft"], size="9pt")
             self._checkpoint_plot.setLogMode(x=False, y=True)
-            self._curve_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color=THEME["success"], width=2.6), name="score")
-            self._curve_best_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color=THEME["accent"], width=2.2, style=pg_QtCore.Qt.PenStyle.DashLine), name="best")
+            self._curve_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color=THEME["success"], width=2.4, style=_solid), name="Checkpoint score")
+            self._curve_best_score = self._checkpoint_plot.plot([], [], pen=pg.mkPen(color=THEME["accent"], width=2.0, style=_dash), name="Best-so-far")
 
             # Consistent clean axes + a compact legend on every companion plot.
             for _p in (self._direction_plot, self._direction_quality_plot, self._checkpoint_plot):
@@ -1069,6 +945,15 @@ class LiveLossPlot(QWidget):
                                   pen=pg.mkPen(QColor(with_alpha(THEME["border"], 0.25))))
                 except TypeError:
                     _pi.addLegend(offset=(8, 8))
+
+            # Plain mouse-wheel now scrolls the page instead of rescaling the
+            # plots; zooming requires Ctrl+scroll. This stops the charts from
+            # jumping in size when the user scrolls past them.
+            for _pw in (
+                self._plot_widget, self._direction_plot,
+                self._direction_quality_plot, self._checkpoint_plot,
+            ):
+                self._install_ctrl_only_zoom(_pw)
 
             # ── Dashboard grid: all charts visible at once (no hidden tabs) ──
             # A dominant Loss panel on top, with Acceleration/Direction and
@@ -1536,23 +1421,11 @@ class LiveLossPlot(QWidget):
         weight = pos - lo
         return float(ordered[lo] * (1.0 - weight) + ordered[hi] * weight)
 
-    def _smooth_plot_values(self, values: list[float]) -> list[float]:
-        if not self._chk_smooth.isChecked() or len(values) < 3:
-            return values
-        window = max(2, int(self._smooth_window.value()))
-        smoothed: list[float] = []
-        for idx in range(len(values)):
-            start = max(0, idx - window + 1)
-            chunk = values[start : idx + 1]
-            smoothed.append(sum(chunk) / max(1, len(chunk)))
-        return smoothed
-
     def _valid_xy(
         self,
         values: list[float],
         *,
         log_y: bool | None = None,
-        smooth: bool = True,
     ) -> tuple[list[int], list[float]]:
         if log_y is None:
             log_y = self._chk_log_y.isChecked()
@@ -1566,8 +1439,6 @@ class LiveLossPlot(QWidget):
             if finite and (not log_y or float(v) > 0.0):
                 xs.append(int(e))
                 ys.append(float(v))
-        if smooth:
-            ys = self._smooth_plot_values(ys)
         return xs, ys
 
     def _set_group_title(self, plot: Any, title: str, has_data: bool) -> None:
@@ -1795,6 +1666,33 @@ class LiveLossPlot(QWidget):
     def _auto_range(self) -> None:
         if self._plot_widget and _HAS_PYQTGRAPH:
             self._apply_plot_ranges()
+
+    @staticmethod
+    def _install_ctrl_only_zoom(plot_widget: Any) -> None:
+        """Require Ctrl to be held for mouse-wheel zoom on a pyqtgraph plot.
+
+        pyqtgraph's ViewBox zooms on every wheel tick by default, so scrolling
+        the page over a plot rescales it unexpectedly. We wrap the ViewBox's
+        wheelEvent so a plain scroll is ignored (and bubbles up to the page
+        scroll area) while Ctrl+scroll still zooms.
+        """
+        try:
+            from pyqtgraph.Qt import QtCore as pg_QtCore
+
+            view_box = plot_widget.getPlotItem().getViewBox()
+        except Exception:
+            return
+        original_wheel = view_box.wheelEvent
+
+        def _wheel(event, axis=None):
+            mods = event.modifiers()
+            if mods & pg_QtCore.Qt.KeyboardModifier.ControlModifier:
+                original_wheel(event, axis)
+            else:
+                # Let the surrounding scroll area handle the gesture instead.
+                event.ignore()
+
+        view_box.wheelEvent = _wheel
 
     def clear(self) -> None:
         self._epochs.clear()
@@ -2045,6 +1943,7 @@ class ProcessPane(QWidget):
 
         self.btn_start = QPushButton("Start")
         self.btn_stop = QPushButton("Stop")
+        self.btn_copy = QPushButton("Copy Log")
         self.btn_clear = QPushButton("Clear Log")
         self.btn_open_folder = QPushButton("Open Output Folder")
         self.btn_open_folder.setProperty("kind", "ghost")
@@ -2053,6 +1952,11 @@ class ProcessPane(QWidget):
 
         self.btn_start.setProperty("kind", "primary")
         self.btn_stop.setProperty("kind", "danger")
+        self.btn_copy.setProperty("kind", "ghost")
+        self.btn_copy.setToolTip(
+            "Copy the terminal output to the clipboard.\n"
+            "Copies the current selection if any text is selected, otherwise the whole log."
+        )
         self.btn_clear.setProperty("kind", "ghost")
         self.btn_stop.setEnabled(False)
 
@@ -2064,6 +1968,7 @@ class ProcessPane(QWidget):
         btn_row.addWidget(self.btn_open_folder)
         btn_row.addStretch(1)
         btn_row.addWidget(self._auto_scroll)
+        btn_row.addWidget(self.btn_copy)
         btn_row.addWidget(self.btn_clear)
 
         self.status.setStyleSheet(
@@ -2089,8 +1994,26 @@ class ProcessPane(QWidget):
         _style_command_preview(self.log, min_h=180)
 
         self.btn_clear.clicked.connect(self.log.clear)
+        self.btn_copy.clicked.connect(self._copy_log)
         self.btn_stop.clicked.connect(self.stop)
         self.btn_open_folder.clicked.connect(self._open_output_folder)
+
+    def _copy_log(self) -> None:
+        """Copy the terminal output to the clipboard.
+
+        Copies the active selection when the user has highlighted text;
+        otherwise copies the entire log so long runs can be grabbed in one click.
+        """
+        clipboard = QApplication.clipboard()
+        if clipboard is None:
+            return
+        selected = self.log.textCursor().selectedText()
+        if selected:
+            # QTextCursor uses U+2029 (paragraph separator) for line breaks;
+            # normalize it back to real newlines for pasted output.
+            clipboard.setText(selected.replace(" ", "\n"))
+            return
+        clipboard.setText(self.log.toPlainText())
 
     def raw_log_widget(self) -> QWidget:
         """Return a standalone widget holding ONLY the raw log text plus a
@@ -2112,6 +2035,7 @@ class ProcessPane(QWidget):
         bar.addWidget(self.status)
         bar.addStretch(1)
         bar.addWidget(self._auto_scroll)
+        bar.addWidget(self.btn_copy)
         bar.addWidget(self.btn_clear)
         lo.addLayout(bar)
         lo.addWidget(self.log, 1)

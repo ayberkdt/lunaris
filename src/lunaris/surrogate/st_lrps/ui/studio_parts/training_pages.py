@@ -1749,14 +1749,26 @@ class STLRPSTrainTab(QWidget):
         # LAYOUT ASSEMBLY RE-WRITE (Phases 1-10)
         # =====================================================================
 
-        # ── 1. Compact Saved Profiles Card ──
-        saved_profiles_section = CollapsibleSection("Saved Profiles")
+        # ── 1. Saved Profiles — prominent, always-visible card ──
+        # Profiles are the fastest path to a configured run, so the card sits
+        # at the top of the page (it was previously collapsed and buried at the
+        # very bottom of the parameter grid, where it was easy to miss).
+        saved_profiles_card = QFrame()
+        saved_profiles_card.setObjectName("savedProfilesCard")
+        _style_surface(saved_profiles_card, object_name="savedProfilesCard")
         saved_profiles_l = QVBoxLayout()
-        saved_profiles_l.setContentsMargins(0, 0, 0, 0)
-        preset_bar_wrap = QWidget()
-        preset_bar_wrap.setLayout(preset_bar)
-        saved_profiles_l.addWidget(preset_bar_wrap)
-        saved_profiles_section.set_content_layout(saved_profiles_l)
+        saved_profiles_l.setContentsMargins(16, 12, 16, 12)
+        saved_profiles_l.setSpacing(8)
+        _profiles_heading = QLabel("Saved Profiles")
+        _profiles_heading.setStyleSheet(
+            f"font-weight: 700; color: {THEME['fg_main']}; font-size: 13px;"
+        )
+        _profiles_hint = QLabel("Load a saved hyperparameter set, or save the current configuration.")
+        _profiles_hint.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
+        saved_profiles_l.addWidget(_profiles_heading)
+        saved_profiles_l.addLayout(preset_bar)
+        saved_profiles_l.addWidget(_profiles_hint)
+        saved_profiles_card.setLayout(saved_profiles_l)
 
         # ── 2. Add Model Preset to grp_arch ──
         form_arch.insertRow(0, "Model Preset", self.model_preset)
@@ -1843,9 +1855,9 @@ class STLRPSTrainTab(QWidget):
         cmd_vbox.addWidget(cmd_inner)
         cmd_section.set_content_layout(cmd_vbox)
 
-        # Add both to the bottom of the grid layout
-        workspace_grid.addWidget(saved_profiles_section, 11, 0)
-        workspace_grid.addWidget(cmd_section, 12, 0)
+        # Command preview stays at the bottom of the grid; Saved Profiles now
+        # lives in its own prominent card above the launch strip.
+        workspace_grid.addWidget(cmd_section, 11, 0)
 
         workspace_inner = QWidget()
         workspace_inner.setLayout(workspace_grid)
@@ -1862,6 +1874,7 @@ class STLRPSTrainTab(QWidget):
             "Shape the dataset, architecture, optimization, resume behavior, and launch plan before starting a long run.",
             "Experiment Design",
         ))
+        setup_l.addWidget(saved_profiles_card)
         setup_l.addWidget(launch_strip)
         setup_l.addWidget(params_page, 1)
 
