@@ -462,6 +462,8 @@ def _extract_config_block(ckpt: Mapping[str, Any]) -> dict[str, Any]:
         try:
             cfg["architecture_signature"] = compute_architecture_signature(cfg)
         except Exception:
+            # R29b-justified: best-effort backfill for legacy configs; a missing
+            # signature is caught by strict checkpoint validation downstream.
             pass
     if cfg and cfg.get("model_builder_version") in (None, ""):
         cfg["model_builder_version"] = MODEL_BUILDER_VERSION
@@ -679,6 +681,8 @@ def validate_checkpoint_schema(ckpt: dict, *, strict: bool = True) -> dict:
         try:
             cfg["architecture_signature"] = compute_architecture_signature(cfg)
         except Exception:
+            # R29b-justified: best-effort backfill; the strict signature
+            # cross-check right below still fails on real inconsistency.
             pass
     if arch.get("signature") in (None, "") and cfg.get("architecture_signature"):
         arch["signature"] = cfg.get("architecture_signature")

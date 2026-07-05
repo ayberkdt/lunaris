@@ -171,6 +171,9 @@ class TorchBatchPropagator:
             if model_obj is not None:
                 model_dtype = str(next(model_obj.parameters()).dtype).replace("torch.", "")
         except Exception:
+            # R29b-justified: dtype probe for the progress-log diagnostics only;
+            # authoritative dtype provenance comes from the backend plan
+            # (requested_dtype/effective_dtype), not this display string.
             pass
         diagnostics = {
             "backend": "GPU-ST-LRPS",

@@ -477,6 +477,8 @@ class TorchSHBatchPropagator:
             try:
                 self._torch.cuda.synchronize(self._device)
             except Exception:
+                # R29b-justified: synchronize only tightens the wall-clock timing
+                # below; a failure degrades timing accuracy, never the physics.
                 pass
         elapsed = time.perf_counter() - t_start
 
