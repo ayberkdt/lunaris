@@ -40,6 +40,9 @@ from lunaris.analysis.frozen.refine import (
 )
 from lunaris.analysis.frozen.search import (
     STAGE0_SAMPLES,
+    STAGE1_OUTPUT_FULL,
+    STAGE1_OUTPUT_SUMMARY_ONLY,
+    STAGE1_SCREENING,
     STAGE2_CANDIDATES,
     STAGE3_VALIDATION,
     STAGE4_FAMILIES,
@@ -477,6 +480,51 @@ def test_classifier_never_grants_frozen_status_without_classical_backend():
     assert not via_surrogate.validated
 
 
+def test_third_body_selector_normalization():
+    from lunaris.analysis.frozen.search_backends import normalize_third_body_selection
+
+    assert normalize_third_body_selection("none") == ()
+    assert normalize_third_body_selection("sun,earth") == ("sun", "earth")
+    assert normalize_third_body_selection("earth+sun") == ("sun", "earth")
+    assert normalize_third_body_selection(True) == ("sun", "earth")
+    with pytest.raises(ValueError, match="third-body selector"):
+        normalize_third_body_selection("mars")
+
+
+def test_classical_validation_third_body_requires_ephemeris(monkeypatch):
+    import lunaris.analysis.frozen.search_backends as backends
+
+    monkeypatch.setattr(backends, "_load_gravity_model", lambda *_args, **_kwargs: object())
+    with pytest.raises(RuntimeError, match="ephemeris-wired"):
+        backends.ClassicalSHValidationPropagator(degree=8, third_body="sun")
+
+
+def test_classical_validation_third_body_wires_flags_and_provenance(monkeypatch):
+    import lunaris.analysis.frozen.search_backends as backends
+    import lunaris.core.dynamics as dynamics_mod
+
+    class DummyEngine:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    monkeypatch.setattr(backends, "_load_gravity_model", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(dynamics_mod, "DynamicsEngine", DummyEngine)
+    ephem = object()
+    prop = backends.ClassicalSHValidationPropagator(
+        degree=8,
+        third_body="sun,earth",
+        ephem_manager=ephem,
+    )
+
+    assert prop.backend_label == "classical_sh_deg8_3b_sun_earth"
+    assert prop.provenance["third_body"] == {"earth": True, "sun": True}
+    assert "ephemeris-wired" in prop.provenance["frame"]
+    flags = prop._engine.kwargs["flags"]
+    assert flags.enable_3rd_body_sun is True
+    assert flags.enable_3rd_body_earth is True
+    assert prop._engine.kwargs["ephem_manager"] is ephem
+
+
 # ---------------------------------------------------------------------------
 # R04 — staged pipeline end-to-end (analytic backends)
 # ---------------------------------------------------------------------------
@@ -521,12 +569,21 @@ def test_pipeline_end_to_end_with_analytic_backends(tmp_path):
 
     # File contracts exist.
     for name in (STAGE0_SAMPLES, STAGE2_CANDIDATES, STAGE3_VALIDATION, STAGE4_FAMILIES,
-                 "manifest.json", "stage1_screening.npz"):
+                 "manifest.json", STAGE1_SCREENING):
         assert (tmp_path / name).exists(), name
+
+    with np.load(tmp_path / STAGE1_SCREENING, allow_pickle=False) as stage1:
+        assert str(stage1["output_mode"].item()) == STAGE1_OUTPUT_SUMMARY_ONLY
+        assert "Y_out" not in stage1.files
+        assert "summary__score" in stage1.files
+        assert "topk_Y_out" in stage1.files
+        assert stage1["topk_Y_out"].shape[1] <= 4
 
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["sampling_provenance"]["sobol_seed"] == 7
     assert manifest["sampling_provenance"]["sample_count"] == 16
+    assert manifest["stages"]["stage1"]["output_mode"] == STAGE1_OUTPUT_SUMMARY_ONLY
+    assert manifest["stages"]["stage1"]["full_trajectory_stored"] is False
     assert set(manifest["stages"]) == {"stage0", "stage1", "stage2", "stage3", "stage4"}
 
     candidates = products["candidates"]
@@ -547,6 +604,25 @@ def test_pipeline_end_to_end_with_analytic_backends(tmp_path):
     report = products["family_report"]
     validate_family_report(report)
     assert len(report["families"]) >= 1
+
+
+def test_pipeline_full_stage1_mode_keeps_legacy_trajectory_contract(tmp_path):
+    pipeline = FrozenSearchPipeline(
+        _config(screening_output_mode=STAGE1_OUTPUT_FULL),
+        screening=KeplerScreeningPropagator(),
+        validation=KeplerValidationPropagator("classical_sh_deg8"),
+        out_dir=tmp_path,
+    )
+    products = pipeline.run(resume=True)
+    assert len(products["candidates"]) >= 1
+
+    with np.load(tmp_path / STAGE1_SCREENING, allow_pickle=False) as stage1:
+        assert str(stage1["output_mode"].item()) == STAGE1_OUTPUT_FULL
+        assert "Y_out" in stage1.files
+        assert stage1["Y_out"].ndim == 3
+
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["stages"]["stage1"]["full_trajectory_stored"] is True
 
 
 def test_pipeline_resume_reuses_stage_files(tmp_path):

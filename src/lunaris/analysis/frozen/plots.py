@@ -286,7 +286,7 @@ def generate_frozen_report_figures(
     written: list[Path] = []
     source = f"frozen-search run {run_path.name}"
 
-    elements = scores = t_out = Y_out = None
+    elements = scores = t_out = Y_out = topk_indices = topk_Y_out = None
     manifest_path = run_path / "manifest.json"
     manifest = (
         json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
@@ -297,20 +297,26 @@ def generate_frozen_report_figures(
     samples_path = run_path / STAGE0_SAMPLES
     screening_path = run_path / STAGE1_SCREENING
     if samples_path.exists() and screening_path.exists():
-        with np.load(samples_path) as data:
+        with np.load(samples_path, allow_pickle=False) as data:
             elements = np.asarray(data["elements"], dtype=np.float64)
-        with np.load(screening_path) as data:
-            summary = summarize_ensemble(
-                data["t_out"],
-                data["Y_out"],
-                data["impact_flags"],
-                data["t_impact"],
-                mu_m3s2=mu,
-                r_ref_m=r_ref,
-            )
-            scores = np.asarray(summary["fields"]["score"], dtype=np.float64)
+        with np.load(screening_path, allow_pickle=False) as data:
             t_out = np.asarray(data["t_out"], dtype=np.float64)
-            Y_out = np.asarray(data["Y_out"], dtype=np.float64)
+            if "Y_out" in data.files:
+                summary = summarize_ensemble(
+                    data["t_out"],
+                    data["Y_out"],
+                    data["impact_flags"],
+                    data["t_impact"],
+                    mu_m3s2=mu,
+                    r_ref_m=r_ref,
+                )
+                scores = np.asarray(summary["fields"]["score"], dtype=np.float64)
+                Y_out = np.asarray(data["Y_out"], dtype=np.float64)
+            elif "summary__score" in data.files:
+                scores = np.asarray(data["summary__score"], dtype=np.float64)
+                if "topk_sample_indices" in data.files and "topk_Y_out" in data.files:
+                    topk_indices = np.asarray(data["topk_sample_indices"], dtype=np.int64)
+                    topk_Y_out = np.asarray(data["topk_Y_out"], dtype=np.float64)
 
     if elements is not None and scores is not None:
         for fn in (plot_score_histogram,):
@@ -338,13 +344,23 @@ def generate_frozen_report_figures(
 
     # Element histories for the top candidates, recomputed from the screening
     # block (histories are not persisted per-sample; the screening npz is).
-    if candidates and elements is not None and Y_out is not None:
+    if candidates and elements is not None and (Y_out is not None or topk_Y_out is not None):
         from lunaris.batch.summary import _osculating_elements
 
         histories: list[dict[str, Any]] = []
+        topk_lookup = (
+            {int(idx): col for col, idx in enumerate(np.asarray(topk_indices, dtype=np.int64))}
+            if topk_indices is not None
+            else {}
+        )
         for record in candidates[:8]:
             j = int(record["sample_index"])
-            y = Y_out[:, j, :]
+            if Y_out is not None:
+                y = Y_out[:, j, :]
+            elif j in topk_lookup and topk_Y_out is not None:
+                y = topk_Y_out[:, topk_lookup[j], :]
+            else:
+                continue
             a_m, e, _inc, argp = _osculating_elements(y[:, :3], y[:, 3:], mu)
             histories.append(
                 {
