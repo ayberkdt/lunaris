@@ -137,6 +137,30 @@ Reference tiers, by independence from Lunaris:
 | Orekit / GMAT | Separate ecosystems (Java / C++) | Not yet wired; natural further references |
 | Energy / angular-momentum invariants | Model-free physics | **Verified** (~1e-15 relative over the committed arc) |
 
+## GMAT/STK Parity Protocol
+
+GMAT/STK parity is a future trajectory-validation tier, not a current claim.
+Until a parity artefact is generated and checked in, use the wording
+`optimized compiled CPU SH reference path`, not `Comparable to GMAT/STK`.
+
+The parity run must pin and report:
+
+- identical initial state, epoch, central-body constants, state frame, gravity
+  frame, gravity degree/order, and spherical-harmonic normalization assumptions
+- force model = lunar SH only unless both tools explicitly enable the same
+  additional force; third-body, SRP, albedo, thermal IR, tides, relativity,
+  maneuvers, and empirical accelerations are off by default
+- Lunaris JIT/load warm-up excluded from warm timing and reported separately
+  as cold time / warm time / JIT compile time
+- output interval, integration method, tolerances, and interpolation policy
+- wall time, function/RHS evaluations when available, final state difference,
+  trajectory RMS difference, RIC components, phase lag, phase-corrected RMS,
+  and energy-like diagnostics
+
+If the external tool or the exact force/frame contract is unavailable, the
+parity result remains `REFERENCE_GENERATION_REQUIRED`; no GMAT/STK performance
+or accuracy claim is promoted.
+
 **Field** is cross-validated to machine precision against pyshtools (the
 strongest currently-installed independent SH library). Beyond the 8-point smoke
 benchmark, `grail_degree120_pyshtools_sobol` is a **statistical** benchmark: a

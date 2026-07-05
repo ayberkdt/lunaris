@@ -27,9 +27,10 @@ Architecture
 
 Limitations (current version)
 ------------------------------
-- Gravity only: point-mass + ST-LRPS neural residual.
-- No third-body, SRP, albedo, tides, or relativity.
-  Enabling any of those perturbations in ``SimConfig`` forces a CPU fallback
+- Base path: ST-LRPS lunar gravity only.
+- Hybrid path: ST-LRPS lunar gravity plus analytic Sun/Earth third-body
+  acceleration.
+- SRP, albedo, tides, Earth J2, and relativity still force a CPU fallback
   (detected by ``batch.backend_policy.resolve_batch_backend_policy``).
 - Fixed step size; no adaptive step control.
 - State dtype follows ``BatchPropagationConfig.torch_dtype`` (float32 by default for
@@ -55,7 +56,12 @@ import numpy as np
 
 from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
-from lunaris.core.batched_fixed_step import rhs_batch, run_batched_fixed_step
+from lunaris.core.batched_fixed_step import (
+    query_device_memory,
+    resolve_vram_aware_chunk_size,
+    rhs_batch,
+    run_batched_fixed_step,
+)
 from lunaris.core.torch_frame import (
     TorchFrameError,
     TorchMoonFrame,
@@ -92,6 +98,99 @@ class _STLRPSAccelerationProvider:
         return self._frame.fixed_to_inertial(t_s, a_f)
 
 
+class _STLRPSThirdBodyAccelerationProvider(_STLRPSAccelerationProvider):
+    """R03 hybrid provider: ST-LRPS lunar gravity + analytic Earth/Sun third-body.
+
+    ``a_total = a_STLRPS(lunar, via frame rotation) + a_3rd(Sun) + a_3rd(Earth)``
+    with the third-body terms evaluated directly in the Moon-centred inertial
+    frame from Catmull-Rom-interpolated ephemeris positions — the same
+    formulation (cancellation-free Battin F(q)) and tables as the CPU path.
+    """
+
+    def __init__(
+        self,
+        model: Any,
+        frame: Any,
+        *,
+        ephem_tables: Any,
+        use_sun: bool,
+        use_earth: bool,
+        mu_sun: float,
+        mu_earth: float,
+    ) -> None:
+        super().__init__(model, frame)
+        self._tables = ephem_tables
+        self._use_sun = bool(use_sun)
+        self._use_earth = bool(use_earth)
+        self._mu_sun = float(mu_sun)
+        self._mu_earth = float(mu_earth)
+
+    def acceleration(self, t_s: float, s: Tensor) -> Tensor:
+        from lunaris.core.torch_third_body import third_body_accel_batch
+
+        a_i = super().acceleration(t_s, s)
+        r_i = s[:, :3]
+        if self._use_sun:
+            a_i = a_i + third_body_accel_batch(
+                r_i, self._tables.sun_position(t_s).to(dtype=r_i.dtype), self._mu_sun
+            )
+        if self._use_earth:
+            a_i = a_i + third_body_accel_batch(
+                r_i, self._tables.earth_position(t_s).to(dtype=r_i.dtype), self._mu_earth
+            )
+        return a_i
+
+
+def _resolve_third_body_tables(
+    third_body: tuple[str, ...],
+    ephem: Any,
+    *,
+    device: Any,
+    dtype: Any,
+) -> Any:
+    """Build device-resident ephemeris tables for the ST-LRPS third-body hybrid."""
+
+    bodies = tuple(str(body) for body in (third_body or ()) if str(body))
+    if not bodies:
+        return None
+
+    supported = {"third_body_sun", "third_body_earth"}
+    unknown = tuple(sorted(set(bodies) - supported))
+    if unknown:
+        raise TorchSTLRPSPreflightError(
+            "gpu_st_lrps_third_body received unsupported third-body selector(s): "
+            + ", ".join(unknown)
+        )
+
+    if ephem is None:
+        raise TorchSTLRPSPreflightError(
+            "gpu_st_lrps_third_body requires an ephemeris (Sun/Earth position "
+            "tables), but none is attached. Load an ephemeris or disable the "
+            "third-body perturbations."
+        )
+
+    try:
+        from lunaris.core.dynamics import extract_ephem_tables_strict
+        from lunaris.core.torch_third_body import TorchEphemerisTables
+
+        dt_s, sun_tab, earth_tab, _q_tab = extract_ephem_tables_strict(ephem)
+        return TorchEphemerisTables(
+            dt_s=dt_s,
+            r_sun_tab_m=sun_tab,
+            r_earth_tab_m=earth_tab,
+            device=device,
+            dtype=dtype,
+            need_sun="third_body_sun" in bodies,
+            need_earth="third_body_earth" in bodies,
+        )
+    except TorchSTLRPSPreflightError:
+        raise
+    except Exception as exc:
+        raise TorchSTLRPSPreflightError(
+            f"gpu_st_lrps_third_body ephemeris preflight failed: {exc}"
+        ) from exc
+
+
 class TorchBatchPropagator:
     """
     Fixed-step RK4 batch propagator backed by PyTorch CUDA.
@@ -115,6 +214,7 @@ class TorchBatchPropagator:
         ephem: Any = None,
         allow_identity_rotation: bool = False,
         topo_payload: dict | None = None,
+        third_body: tuple[str, ...] = (),
     ) -> None:
         try:
             import torch
@@ -172,7 +272,43 @@ class TorchBatchPropagator:
                 RuntimeWarning,
                 stacklevel=2,
             )
+
+        # R03: analytic vectorized third-body gravity (hybrid backend).
+        self._third_body = tuple(str(b) for b in (third_body or ()))
+        self._ephem_tables = _resolve_third_body_tables(
+            self._third_body, ephem, device=self._device, dtype=self._dtype
+        )
+
+        # R06: VRAM-aware chunking. The shared loop merges chunk results into
+        # one output and halves the chunk on OOM (recorded in the metrics).
+        requested_chunk = int(getattr(batch_cfg, "torch_sh_chunk_size", 0) or 0)
+        self._bytes_per_sample = self._estimate_bytes_per_sample()
+        self._free_mem_bytes, self._total_mem_bytes = query_device_memory(torch, self._device)
+        self._chunk_size, self._chunk_provenance = resolve_vram_aware_chunk_size(
+            bytes_per_sample=self._bytes_per_sample,
+            free_bytes=self._free_mem_bytes,
+            total_bytes=self._total_mem_bytes,
+            requested=requested_chunk,
+        )
         self._throughput_metrics: dict[str, Any] = {}
+
+    def _estimate_bytes_per_sample(self) -> int:
+        """Per-sample device-memory estimate for the ST-LRPS chunk preflight.
+
+        Assumptions (auditable, not magic):
+          * dominant cost is the MLP activations kept for the autograd pass:
+            ``~hidden * (depth + 1)`` elements/sample per forward, doubled for
+            the backward workspace;
+          * RK4 keeps state + 4 stage derivatives + temporaries -> ``~60`` elems;
+          * inflated 8x for transient tensors inside the evaluator (same safety
+            posture as the classic-SH estimate).
+        """
+        cfg = getattr(self._model, "config", {}) or {}
+        hidden = int(cfg.get("hidden", 256) or 256)
+        depth = int(cfg.get("depth", 4) or 4)
+        dtype_bytes = 8 if self._dtype == self._torch.float64 else 4
+        activation_elems = 2 * hidden * (depth + 1) + 60
+        return int(activation_elems * dtype_bytes * 8.0)
 
     # ------------------------------------------------------------------
     # Public interface (matches GPUBatchPropagator / CPUBatchPropagator)
@@ -193,11 +329,16 @@ class TorchBatchPropagator:
             # authoritative dtype provenance comes from the backend plan
             # (requested_dtype/effective_dtype), not this display string.
             pass
+        third_body = tuple(getattr(self, "_third_body", ()) or ())
         diagnostics = {
             "backend": "GPU-ST-LRPS",
             "device_name": torch.cuda.get_device_name(dev.index or 0),
             "torch_cuda_version": str(torch.version.cuda or "unknown"),
             "threads_per_block": "managed by PyTorch",
+            # R03 provenance: gravity source + on-device third-body modeling.
+            "lunar_gravity_backend": "st_lrps",
+            "third_body_backend": "analytic_vectorized" if third_body else "",
+            "third_body_bodies": list(third_body),
             "runtime_model_kind": str(
                 getattr(getattr(self._model, "_force_runtime", None), "runtime_model_kind", "")
                 or getattr(self._model, "config", {}).get("runtime_model_kind", "potential_autograd")
@@ -276,7 +417,21 @@ class TorchBatchPropagator:
         steps_per_snap = max(1, round(snap_interval / dt))
         dt_eff = snap_interval / steps_per_snap  # may differ slightly from dt
 
-        provider = _STLRPSAccelerationProvider(model, frame)
+        third_body = tuple(getattr(self, "_third_body", ()) or ())
+        if third_body:
+            from lunaris.common.constants import MU_EARTH, MU_SUN
+
+            provider: _STLRPSAccelerationProvider = _STLRPSThirdBodyAccelerationProvider(
+                model,
+                frame,
+                ephem_tables=self._ephem_tables,
+                use_sun="third_body_sun" in third_body,
+                use_earth="third_body_earth" in third_body,
+                mu_sun=float(MU_SUN),
+                mu_earth=float(MU_EARTH),
+            )
+        else:
+            provider = _STLRPSAccelerationProvider(model, frame)
         state = torch.as_tensor(Y0, dtype=self._dtype, device=device)
 
         # ------------------------------------------------------------------
@@ -331,7 +486,9 @@ class TorchBatchPropagator:
             detect_impact=detect_impact,
             topo=topo,
             impact_alt_m=impact_alt_m,
-            chunk_size=None,
+            # R06: VRAM-aware chunk (falls back to a single chunk for the
+            # __new__-constructed smoke-test path that skips __init__).
+            chunk_size=getattr(self, "_chunk_size", None),
             callback=callback,
             callback_granularity="snapshot",
         )
@@ -351,6 +508,10 @@ class TorchBatchPropagator:
                 else "line_sphere_quadratic"
             ),
             "impact_time_resolution_s": float(dt_eff),
+            # R06 chunk provenance from the shared loop (OOM recoveries included).
+            "chunk_size_requested": int(result.metrics["chunk_size_requested"]),
+            "chunk_size_effective": int(result.metrics["chunk_size_effective"]),
+            "oom_recoveries": result.metrics["oom_recoveries"],
         }
         self._last_impact_positions_inertial = result.impact_positions_inertial
         print(

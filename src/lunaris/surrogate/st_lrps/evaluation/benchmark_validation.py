@@ -34,6 +34,32 @@ PHASE_COLUMNS = (
     "phase_explained_fraction",
 )
 
+RUNTIME_TIMING_COLUMNS = (
+    "cold_time_s",
+    "warm_time_s",
+    "jit_compile_time_s",
+    "propagation_time_s",
+)
+
+RUNTIME_THROUGHPUT_COLUMNS = (
+    "acceleration_evaluations_per_second",
+    "propagated_seconds_per_wall_second",
+)
+
+EXTENDED_SCENARIO_COLUMNS = (
+    "trajectory_rms_km",
+    "final_pos_err_km",
+    "max_pos_err_km",
+    "p95_pos_err_km",
+    "rms_vel_err_ms",
+    "final_vel_err_ms",
+    "energy_drift_rel",
+    "accel_max_error_m_s2",
+    "potential_error_m2_s2",
+    "impact_count",
+    "domain_exit_count",
+)
+
 
 def validate_benchmark_outputs(
     out_dir: str | Path,
@@ -87,6 +113,10 @@ def validate_benchmark_outputs(
     _check_domain_warnings(scenario_rows, warnings)
     _check_ric_columns(scenario_rows, resolved_config, errors, checked_metrics)
     _check_phase_columns(scenario_rows, resolved_config, errors, checked_metrics)
+    _check_extended_validation_columns(
+        scenario_rows, resolved_config, evidence, errors, warnings, checked_metrics
+    )
+    _check_runtime_timing_columns(runtime_rows, resolved_config, errors, checked_metrics)
     _check_units(metrics_json, errors, checked_metrics)
     _include_manifest_contract_findings(manifest_json, errors, warnings, checked_metrics)
 
@@ -549,6 +579,92 @@ def _check_phase_columns(
         )
 
 
+def _metric_opt_out(config: Mapping[str, Any] | None, key: str) -> bool:
+    if not config:
+        return False
+    metrics = config.get("metrics")
+    return isinstance(metrics, Mapping) and metrics.get(key) is False
+
+
+def _check_extended_validation_columns(
+    rows: list[dict[str, str]],
+    config: Mapping[str, Any] | None,
+    evidence: Mapping[str, Any],
+    errors: list[str],
+    warnings: list[str],
+    checked: list[str],
+) -> None:
+    if _metric_opt_out(config, "extended") or not rows:
+        return
+    checked.append("extended_validation_columns_present")
+    missing = [col for col in EXTENDED_SCENARIO_COLUMNS if col not in rows[0]]
+    if missing:
+        errors.append(
+            f"extended validation metrics requested but missing columns: {', '.join(missing)}"
+        )
+        return
+    scientific = bool(evidence.get("scientific_evidence", False))
+    for index, row in enumerate(rows):
+        for col in EXTENDED_SCENARIO_COLUMNS:
+            value = _to_float(row.get(col))
+            if value is None:
+                if scientific:
+                    errors.append(
+                        f"scenario_results.csv row {index} column {col} is required "
+                        "for scientific benchmark evidence"
+                    )
+                continue
+            checked.append(f"extended:{col}:finite")
+            if not math.isfinite(value):
+                errors.append(f"scenario_results.csv row {index} column {col} is not finite")
+    if not scientific:
+        warnings.append(
+            "extended validation columns are structurally present, but this run is not "
+            "scientific benchmark evidence"
+        )
+
+
+def _check_runtime_timing_columns(
+    rows: list[dict[str, str]],
+    config: Mapping[str, Any] | None,
+    errors: list[str],
+    checked: list[str],
+) -> None:
+    if _metric_opt_out(config, "timing") or not rows:
+        return
+    checked.append("runtime_timing_columns_present")
+    required = (*RUNTIME_TIMING_COLUMNS, *RUNTIME_THROUGHPUT_COLUMNS)
+    missing = [col for col in required if col not in rows[0]]
+    if missing:
+        errors.append(
+            f"runtime timing protocol requested but missing columns: {', '.join(missing)}"
+        )
+        return
+    for index, row in enumerate(rows):
+        for col in required:
+            value = _to_float(row.get(col))
+            if value is None:
+                errors.append(f"runtime_summary.csv row {index} column {col} is required")
+                continue
+            checked.append(f"runtime_timing:{col}:finite")
+            if not math.isfinite(value) or value < 0.0:
+                errors.append(
+                    f"runtime_summary.csv row {index} column {col} must be finite and non-negative"
+                )
+        cold = _to_float(row.get("cold_time_s"))
+        warm = _to_float(row.get("warm_time_s"))
+        jit = _to_float(row.get("jit_compile_time_s"))
+        if cold is not None and warm is not None and jit is not None:
+            if cold + 1e-9 < warm:
+                errors.append(
+                    f"runtime_summary.csv row {index}: cold_time_s must be >= warm_time_s"
+                )
+            if cold + 1e-9 < warm + jit:
+                errors.append(
+                    f"runtime_summary.csv row {index}: cold_time_s must cover warm_time_s+jit_compile_time_s"
+                )
+
+
 def _check_units(metrics_json: Any, errors: list[str], checked: list[str]) -> None:
     checked.append("metric_units_present")
     if not isinstance(metrics_json, Mapping):
@@ -561,6 +677,9 @@ def _check_units(metrics_json: Any, errors: list[str], checked: list[str]) -> No
     required_units = {
         "distance": {"km", "m"},
         "time": {"s", "seconds"},
+        "acceleration": {"m/s^2", "m/s2"},
+        "potential": {"m^2/s^2", "m2/s2"},
+        "energy_drift": {"relative", "dimensionless"},
     }
     for key, allowed in required_units.items():
         value = str(units.get(key, "")).lower()

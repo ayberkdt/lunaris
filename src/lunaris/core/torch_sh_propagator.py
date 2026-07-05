@@ -54,6 +54,8 @@ from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
 from lunaris.core.backend_capabilities import unsupported_force_models
 from lunaris.core.batched_fixed_step import (
+    query_device_memory,
+    resolve_vram_aware_chunk_size,
     rhs_batch,
     rk4_step,
     run_batched_fixed_step,
@@ -292,38 +294,33 @@ class TorchSHBatchPropagator:
         return int(workspace_elems * self._dtype_bytes() * _VRAM_SAFETY_FACTOR)
 
     def _query_device_memory(self) -> tuple[int, int]:
-        torch = self._torch
-        if self._device.type != "cuda":
-            return (0, 0)
-        try:
-            free, total = torch.cuda.mem_get_info(self._device)
-            return (int(free), int(total))
-        except Exception:
-            return (0, 0)
+        return query_device_memory(self._torch, self._device)
 
     def _resolve_chunk_size(self, requested_chunk: int) -> int:
-        """Pick a chunk size that fits the per-sample VRAM budget.
+        """Pick a chunk size that fits the per-sample VRAM budget (R06).
 
         Chunking changes only memory use, never the numbers: each chunk is an
         independent slice of the (per-sample-independent) sample axis, so any
-        chunk size yields identical trajectories.
+        chunk size yields identical trajectories. Delegates to the shared
+        resolver so classic-SH and ST-LRPS batch paths size chunks identically.
         """
-        base = int(requested_chunk) if requested_chunk and requested_chunk > 0 else _DEFAULT_CHUNK
-        if self._device.type != "cuda" or self._free_mem_bytes <= 0:
-            return max(1, base)
-
-        budget = float(self._free_mem_bytes) * _VRAM_SAFE_FRACTION
-        cap = int(budget / max(1, self._bytes_per_sample))
-        if cap < 1:
+        try:
+            chunk, provenance = resolve_vram_aware_chunk_size(
+                bytes_per_sample=self._bytes_per_sample,
+                free_bytes=self._free_mem_bytes,
+                total_bytes=self._total_mem_bytes,
+                requested=int(requested_chunk or 0),
+                cpu_default=_DEFAULT_CHUNK,
+            )
+        except RuntimeError as exc:
             # A single sample does not fit the safe VRAM fraction: fail loudly
             # rather than launching into a silent OOM.
             raise TorchSHPreflightError(
-                f"Estimated {self._bytes_per_sample / 1e6:.1f} MB/sample for torch_cuda_sh "
-                f"at degree {self._actual_degree} ({str(self._dtype).replace('torch.', '')}) "
-                f"exceeds the safe VRAM budget ({budget / 1e6:.1f} MB free*{_VRAM_SAFE_FRACTION:g}). "
-                "Lower the degree, use float32, or free GPU memory."
-            )
-        return max(1, min(base, cap))
+                f"torch_cuda_sh at degree {self._actual_degree} "
+                f"({str(self._dtype).replace('torch.', '')}): {exc}"
+            ) from exc
+        self._chunk_provenance = provenance
+        return chunk
 
     def _resolve_device_name(self) -> str:
         torch = self._torch
@@ -498,6 +495,10 @@ class TorchSHBatchPropagator:
                 else "line_sphere_quadratic"
             ),
             "impact_time_resolution_s": float(dt_eff),
+            # R06 chunk provenance from the shared loop (OOM recoveries included).
+            "chunk_size_requested": int(result.metrics["chunk_size_requested"]),
+            "chunk_size_effective": int(result.metrics["chunk_size_effective"]),
+            "oom_recoveries": result.metrics["oom_recoveries"],
         }
         print(
             f"[BATCH][{log_backend}] done: {elapsed:.2f}s  "

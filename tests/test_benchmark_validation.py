@@ -14,6 +14,33 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
+def _scenario_contract_fields() -> dict:
+    return {
+        "trajectory_rms_km": 1.0,
+        "final_pos_err_km": 1.1,
+        "max_pos_err_km": 1.5,
+        "p95_pos_err_km": 1.3,
+        "rms_vel_err_ms": 0.1,
+        "final_vel_err_ms": 0.12,
+        "energy_drift_rel": 1.0e-8,
+        "accel_max_error_m_s2": 1.0e-12,
+        "potential_error_m2_s2": 1.0e-6,
+        "impact_count": 0,
+        "domain_exit_count": 0,
+    }
+
+
+def _runtime_contract_fields(total_runtime: float = 1.0) -> dict:
+    return {
+        "cold_time_s": total_runtime + 0.1,
+        "warm_time_s": total_runtime,
+        "jit_compile_time_s": 0.1,
+        "propagation_time_s": total_runtime,
+        "acceleration_evaluations_per_second": 40.0,
+        "propagated_seconds_per_wall_second": 864.0,
+    }
+
+
 def _valid_dir(tmp_path: Path) -> Path:
     out = tmp_path / "run"
     out.mkdir()
@@ -46,6 +73,7 @@ def _valid_dir(tmp_path: Path) -> Path:
                 "phase_lag_slope_s_per_day": -0.08,
                 "phase_corrected_rms_km": 0.05,
                 "phase_explained_fraction": 0.9,
+                **_scenario_contract_fields(),
                 "status": "ok",
                 "domain_warning": "",
             }
@@ -60,11 +88,23 @@ def _valid_dir(tmp_path: Path) -> Path:
                 "total_runtime_s": 1.0,
                 "runtime_per_scenario_s": 1.0,
                 "n_steps": 10,
+                **_runtime_contract_fields(1.0),
             }
         ],
     )
     (out / "metrics_summary.json").write_text(
-        json.dumps({"units": {"distance": "km", "time": "s"}, "rows": []}),
+        json.dumps(
+            {
+                "units": {
+                    "distance": "km",
+                    "time": "s",
+                    "acceleration": "m/s^2",
+                    "potential": "m^2/s^2",
+                    "energy_drift": "relative",
+                },
+                "rows": [],
+            }
+        ),
         encoding="utf-8",
     )
     return out
@@ -212,6 +252,35 @@ def test_missing_phase_columns_allowed_when_config_disables_them(tmp_path):
     assert report["passed"] is True, report["errors"]
 
 
+def test_missing_extended_validation_columns_fail(tmp_path):
+    out = _valid_dir(tmp_path)
+    row = _scenario_row(0)
+    row.pop("energy_drift_rel")
+    _write_csv(out / "scenario_results.csv", [row])
+    report = validate_benchmark_outputs(out, expected_count=1)
+    assert report["passed"] is False
+    assert any("extended validation metrics requested" in e for e in report["errors"])
+
+
+def test_missing_runtime_timing_columns_fail(tmp_path):
+    out = _valid_dir(tmp_path)
+    _write_csv(
+        out / "runtime_summary.csv",
+        [
+            {
+                "model": "SH20",
+                "n_scenarios": 1,
+                "total_runtime_s": 1.0,
+                "runtime_per_scenario_s": 1.0,
+                "n_steps": 10,
+            }
+        ],
+    )
+    report = validate_benchmark_outputs(out, expected_count=1)
+    assert report["passed"] is False
+    assert any("runtime timing protocol requested" in e for e in report["errors"])
+
+
 def test_warning_only_cases_remain_pass(tmp_path):
     out = _valid_dir(tmp_path)
     _write_csv(
@@ -228,6 +297,7 @@ def test_warning_only_cases_remain_pass(tmp_path):
                 "phase_lag_slope_s_per_day": -0.08,
                 "phase_corrected_rms_km": 0.05,
                 "phase_explained_fraction": 0.9,
+                **_scenario_contract_fields(),
                 "status": "ok",
                 "domain_warning": "outside training envelope",
             }
@@ -252,6 +322,7 @@ def _scenario_row(sid, model="SH20"):
         "phase_lag_slope_s_per_day": -0.08,
         "phase_corrected_rms_km": 0.05,
         "phase_explained_fraction": 0.9,
+        **_scenario_contract_fields(),
         "status": "ok",
         "domain_warning": "",
     }
@@ -278,7 +349,14 @@ def _build_dir(
     _write_csv(
         out / "runtime_summary.csv",
         [
-            {"model": m, "n_scenarios": rn, "total_runtime_s": total_runtime, "runtime_per_scenario_s": rp, "n_steps": 10}
+            {
+                "model": m,
+                "n_scenarios": rn,
+                "total_runtime_s": total_runtime,
+                "runtime_per_scenario_s": rp,
+                "n_steps": 10,
+                **_runtime_contract_fields(total_runtime),
+            }
             for m in models
         ],
     )

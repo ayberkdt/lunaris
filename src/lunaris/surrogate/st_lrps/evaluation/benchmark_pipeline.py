@@ -344,9 +344,11 @@ def _standardize_legacy_outputs(output_dir: Path, config: Mapping[str, Any]) -> 
             },
         )
     if per_scenario.exists():
-        shutil.copyfile(per_scenario, output_dir / "scenario_results.csv")
+        rows = _standardize_scenario_rows(_read_csv(per_scenario), synthetic=False)
+        _write_csv(output_dir / "scenario_results.csv", rows)
     if runtime.exists():
-        shutil.copyfile(runtime, output_dir / "runtime_summary.csv")
+        rows = _standardize_runtime_rows(_read_csv(runtime), config, synthetic=False)
+        _write_csv(output_dir / "runtime_summary.csv", rows)
 
 
 def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> None:
@@ -363,18 +365,30 @@ def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> Non
         model_factor = 1.0 + 0.35 * model_index
         runtime = max(0.001, 0.02 * scenario_count * model_factor)
         runtime_rows.append(
-            {
-                "model": model,
-                "backend": "synthetic",
-                "device": "cpu",
-                "dtype": config["propagation"]["dtype"],
+                {
+                    "model": model,
+                    "backend": "synthetic",
+                    "device": "cpu",
+                    "dtype": config["propagation"]["dtype"],
                 "n_scenarios": scenario_count,
                 "n_steps": n_steps * scenario_count,
-                "total_runtime_s": runtime,
-                "runtime_per_scenario_s": runtime / scenario_count,
-                "status": "synthetic",
-            }
-        )
+                    "total_runtime_s": runtime,
+                    "runtime_per_scenario_s": runtime / scenario_count,
+                    "cold_time_s": runtime + 0.002,
+                    "warm_time_s": runtime,
+                    "jit_compile_time_s": 0.002,
+                    "propagation_time_s": runtime,
+                    "acceleration_evaluations_per_second": (
+                        scenario_count * n_steps * 4 / max(runtime, 1e-9)
+                    ),
+                    "propagated_seconds_per_wall_second": (
+                        scenario_count * duration_days * DAY_S / max(runtime, 1e-9)
+                    ),
+                    "peak_memory_mb": 0.0,
+                    "chunk_size": scenario_count,
+                    "status": "synthetic",
+                }
+            )
         for scenario_id in range(scenario_count):
             base = (scenario_id + 1) * 0.001 * model_factor
             jitter = float(rng.uniform(0.0, 0.0002))
@@ -398,6 +412,13 @@ def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> Non
                     "phase_corrected_rms_km": rms * 0.12,
                     "phase_explained_fraction": 0.85,
                     "rms_alt_err_km": rms * 0.04,
+                    "trajectory_rms_km": rms,
+                    "energy_drift_rel": rms * 1.0e-8,
+                    "accel_max_error_m_s2": rms * 1.0e-9,
+                    "potential_error_m2_s2": rms * 1.0e-3,
+                    "impact_count": 0,
+                    "domain_exit_count": 0,
+                    "extended_metrics_source": "synthetic_smoke",
                     "runtime_s": runtime / scenario_count,
                     "n_steps": n_steps,
                     "status": "ok",
@@ -552,7 +573,78 @@ def _metric_units() -> dict[str, str]:
         "velocity": "m/s",
         "time": "s",
         "runtime": "s",
+        "acceleration": "m/s^2",
+        "potential": "m^2/s^2",
+        "energy_drift": "relative",
     }
+
+
+def _standardize_scenario_rows(
+    rows: list[dict[str, Any]],
+    *,
+    synthetic: bool,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    source = "synthetic_smoke" if synthetic else "not_evaluated"
+    for row in rows:
+        item = dict(row)
+        item.setdefault("trajectory_rms_km", item.get("rms_pos_err_km", ""))
+        item.setdefault("final_pos_err_km", item.get("rms_pos_err_km", ""))
+        item.setdefault("max_pos_err_km", item.get("rms_pos_err_km", ""))
+        item.setdefault("p95_pos_err_km", item.get("rms_pos_err_km", ""))
+        item.setdefault("rms_vel_err_ms", item.get("final_vel_err_ms", ""))
+        item.setdefault("final_vel_err_ms", item.get("rms_vel_err_ms", ""))
+        item.setdefault("energy_drift_rel", "" if not synthetic else 0.0)
+        item.setdefault("accel_max_error_m_s2", "" if not synthetic else 0.0)
+        item.setdefault("potential_error_m2_s2", "" if not synthetic else 0.0)
+        item.setdefault("impact_count", "" if not synthetic else 0)
+        item.setdefault("domain_exit_count", "" if not synthetic else 0)
+        item.setdefault("extended_metrics_source", source)
+        out.append(item)
+    return out
+
+
+def _standardize_runtime_rows(
+    rows: list[dict[str, Any]],
+    config: Mapping[str, Any],
+    *,
+    synthetic: bool,
+) -> list[dict[str, Any]]:
+    scenario_count = int(config.get("scenario", {}).get("count", 1))
+    duration_days = float(config.get("propagation", {}).get("duration_days", 0.0))
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        total = _float_or_default(item.get("total_runtime_s"), 0.0)
+        warm = _float_or_default(item.get("warm_time_s"), total)
+        jit = _float_or_default(item.get("jit_compile_time_s"), 0.0 if not synthetic else 0.002)
+        cold = _float_or_default(item.get("cold_time_s"), warm + jit)
+        steps = _float_or_default(item.get("n_steps"), 0.0)
+        n_scenarios = _float_or_default(item.get("n_scenarios"), scenario_count)
+        item.setdefault("cold_time_s", cold)
+        item.setdefault("warm_time_s", warm)
+        item.setdefault("jit_compile_time_s", jit)
+        item.setdefault("propagation_time_s", _float_or_default(item.get("propagation_time_s"), warm))
+        item.setdefault(
+            "acceleration_evaluations_per_second",
+            n_scenarios * max(steps, 0.0) * 4.0 / max(warm, 1.0e-9),
+        )
+        item.setdefault(
+            "propagated_seconds_per_wall_second",
+            n_scenarios * duration_days * DAY_S / max(warm, 1.0e-9),
+        )
+        item.setdefault("peak_memory_mb", "")
+        item.setdefault("chunk_size", "")
+        out.append(item)
+    return out
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return out if math.isfinite(out) else float(default)
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:

@@ -79,6 +79,8 @@ Post-processing and presentation.
 - `analysis/reporting/` — report `manager`, `plotting`, `styling`.
 - `analysis/ensemble/` — canonical ensemble uncertainty `statistics`,
   `plotting`, UQ reports, linear covariance checks, and result audits.
+- `analysis/frozen/` — frozen-orbit candidate metrics, scoring, and
+  candidate-vs-validated classification for the staged search workflow.
 - `analysis/perturbation_budget/` — mission-analysis acceleration budgets,
   spherical-harmonic degree sensitivity, force-model uncertainty comparisons,
   and per-configuration gravity-degree recommendations. It calls existing
@@ -301,7 +303,7 @@ batch_cfg = BatchPropagationConfig(
     sampling_method="sobol_scrambled",  # random = Monte Carlo design; lhs/sobol = validation design
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
     use_gpu=True,
-    batch_backend="auto",   # auto, cpu_sh, numba_cuda_sh, torch_cuda_sh, gpu_st_lrps_potential
+    batch_backend="auto",   # auto, cpu_sh, numba_cuda_sh, torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_third_body
     sh_degree=10,    # requested SH degree; numba_cuda_sh supports <=24, torch_cuda_sh is high-degree
     output_format="hdf5",
     output_path="outputs/ensemble/run.h5",
@@ -336,7 +338,9 @@ Analysis code imports from `lunaris.analysis.ensemble`.
   `compatible_gpu` (try `torch_cuda_sh`, else CPU), `cpu`, or `error`.
 - The GPU paths do not support albedo, thermal IR, or solid tides; `torch_cuda_sh`
   additionally does not yet model third-body, Earth J2, SRP, or relativity (those
-  force an explicit, recorded fallback). Use the CPU path for those models.
+  force an explicit, recorded fallback). `gpu_st_lrps_third_body` is the narrow
+  ST-LRPS hybrid exception for analytic Sun/Earth third-body only. Use the CPU
+  path for all other models.
 - `numba_cuda_sh` requires `numba` plus a CUDA GPU; `torch_cuda_sh` and the ST-LRPS
   GPU paths require PyTorch CUDA. The engine falls back to CPU with a warning and
   metadata when the requested GPU path is unavailable — and a CPU run is never
@@ -399,8 +403,10 @@ keeping the runtime path aligned with the scaler and loss.
 **Runtime.** The engine-facing API is
 `lunaris.surrogate.runtime.SurrogateGravityModel`. The runtime package owns artifact discovery,
 metadata/scaler loading, checkpoint/network construction, device selection, and
-the gravity-provider facade; neural force inference still delegates to the
-internal ST-LRPS API in `runtime/force_model.py`.
+the gravity-provider facade; neural force inference delegates to the canonical
+internal ST-LRPS API in `runtime/canonical_runtime.py` (R11 — the single home
+of scaler / domain-guard / model-kind logic; `runtime/force_model.py` remains
+as a dynamic compat shim over it).
 `potential_autograd` (`SurrogateForceModel`) evaluates the learned scalar
 potential and differentiates it with autograd to obtain residual acceleration,
 which is added to the SH(`degree_min`) baseline. This is the only supported

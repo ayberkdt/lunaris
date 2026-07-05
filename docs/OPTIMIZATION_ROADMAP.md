@@ -57,8 +57,9 @@ Recommended production workflow:
 - Prefer `sampling_method="sobol_scrambled"` or `sampling_method="lhs"` for
   validation coverage; use `sampling_method="random"` when estimating a true
   ensemble impact probability under a stated uncertainty distribution.
-- Use `batch_backend="gpu_st_lrps_direct"` only for deployment-style experiments
-  until drift and curl validation pass.
+- Use `batch_backend="gpu_st_lrps_third_body"` only when the active extra force
+  set is limited to Sun/Earth third-body gravity; keep `gpu_st_lrps_potential`
+  for gravity-only throughput sweeps.
 - Run smaller high-degree `batch_backend="cpu_sh"` truth/reference batches to
   quantify the error envelope.
 - Use `batch_backend="numba_cuda_sh"` for the degree <= 24 Numba CUDA screening
@@ -71,7 +72,7 @@ Recommended production workflow:
 
 - Added `batch_backend` selection with the supported values `auto`, `cpu_sh`,
   `numba_cuda_sh`, `torch_cuda_sh`, `torch_cpu_sh`, `gpu_st_lrps_potential`,
-  and `gpu_st_lrps_direct`.
+  and `gpu_st_lrps_third_body`.
 - Added explicit requested/actual backend metadata, requested/actual SH degree,
   GPU SH capability metadata, runtime model kind, CUDA device name, dtype, and
   fallback reason.
@@ -79,8 +80,8 @@ Recommended production workflow:
   Direct use of the low-level Numba CUDA propagator with degree >24 now raises a
   clear runtime error; the high-level policy selects `torch_cuda_sh` for
   compatible high-degree gravity-only runs, or records an explicit CPU fallback.
-- Kept `potential_autograd` and `force_direct` runtime paths working, with direct
-  force inference using a no-grad torch path through `SurrogateGravityModel`.
+- Kept `potential_autograd` as the supported ST-LRPS runtime path and added the
+  narrow third-body hybrid for analytic Sun/Earth terms on the torch batch path.
 - Added UI and CLI support for the explicit backend names.
 - Added a measured non-conservativeness (curl) diagnostic for `force_direct`
   artifacts. `lunaris.surrogate.st_lrps.evaluation.force_direct_eval` now reports

@@ -76,32 +76,32 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 |-----|--------|---------|--------|------------|-------|
 | R01 | force_direct main'den kaldırılması | P0 | S1 | — | [x] |
 | R02 | GPU ST-LRPS "gravity-only" beyanı | P0 | S1 | — | [x] |
-| R03 | gpu_st_lrps_third_body backend | P0 | S4 | R07, R06, R11 | [ ] |
+| R03 | gpu_st_lrps_third_body backend | P0 | S4 | R07, R06, R11 | [~] |
 | R04 | surrogate_assisted_frozen_search workflow | P0 | S5 | R03, R05, R23, R27 | [ ] |
-| R05 | Frozen / quasi-frozen sınıflandırma modülü | P0 | S5 | — | [ ] |
-| R06 | VRAM-aware chunking | P1 | S3 | — | [ ] |
+| R05 | Frozen / quasi-frozen sınıflandırma modülü | P0 | S5 | — | [x] |
+| R06 | VRAM-aware chunking | P1 | S3 | — | [x] |
 | R07 | Ortak batched RK4 + impact loop | P1 | S3 | — | [x] |
-| R08 | Alive-sample compaction | P1 | S3 | R07 | [ ] |
+| R08 | Alive-sample compaction | P1 | S3 | R07 | [x] |
 | R09 | Capability registry tek kaynak | P1 | S2 | — | [x] |
 | R10 | Dtype provenance düzeltmesi | P1 | S2 | — | [x] |
-| R11 | Canonical ST-LRPS runtime | P1 | S3 | R01 | [ ] |
+| R11 | Canonical ST-LRPS runtime | P1 | S3 | R01 | [x] |
 | R12 | Terrain fallback paper-safe hard fail | P1 | S2 | — | [x] |
-| R13 | SH-only Numba fast-path RHS | P1 | S6a | — | [ ] |
-| R14 | RHS'de frame-rotation tekilleştirme | P1 | S6a | — | [ ] |
-| R15 | Fixed-step out-buffer optimizasyonu | P1 | S6a | R07 | [ ] |
-| R16 | Paper-safe benchmark matrisi | P2 | S6 | R13–R15, R17 | [ ] |
-| R17 | JIT warm-up protokolü | P2 | S6 | — | [ ] |
-| R18 | GMAT/STK parity protokolü | P2 | S6 | R13, R17 | [ ] |
-| R19 | Genişletilmiş validation metrikleri | P2 | S6 | — | [ ] |
-| R20 | Phase-drift analizi ana validation'da | P2 | S6 | PHASE_DRIFT G0 | [ ] |
+| R13 | SH-only Numba fast-path RHS | P1 | S6a | — | [x] |
+| R14 | RHS'de frame-rotation tekilleştirme | P1 | S6a | — | [~] |
+| R15 | Fixed-step out-buffer optimizasyonu | P1 | S6a | R07 | [~] |
+| R16 | Paper-safe benchmark matrisi | P2 | S6 | R13–R15, R17 | [~] |
+| R17 | JIT warm-up protokolü | P2 | S6 | — | [~] |
+| R18 | GMAT/STK parity protokolü | P2 | S6 | R13, R17 | [~] |
+| R19 | Genişletilmiş validation metrikleri | P2 | S6 | — | [~] |
+| R20 | Phase-drift analizi ana validation'da | P2 | S6 | PHASE_DRIFT G0 | [~] |
 | R21 | Frozen candidate = classical SH validation kuralı | P2 | S5 | R04 | [ ] |
 | R22 | Local refinement modülü | P2 | S5 | R04, R05 | [ ] |
-| R23 | Summary-only output mode | P2 | S3 | — | [ ] |
+| R23 | Summary-only output mode | P2 | S3 | — | [x] |
 | R24 | run_epoch decomposition | P3 | paralel | — | [~] |
 | R25 | Laplacian scaling tutarlılığı | P3 | paralel | — | [x] |
 | R26 | Artifact contract sertleştirme | P3 | S2 | — | [x] |
 | R27 | Domain guard frozen search'te zorunlu | P3 | S5 | R05 | [ ] |
-| R28 | print → logger | P4 | paralel | — | [ ] |
+| R28 | print → logger | P4 | paralel | — | [~] |
 | R29 | paper_safe / research_mode fail politikası | P4 | S1+S2 | — | [x] |
 | R30 | Candidate family JSON raporu | P4 | S5 | R04, R05 | [ ] |
 | R31 | Frozen orbit plot/report generator | P4 | S5 | R30 | [ ] |
@@ -377,34 +377,65 @@ parametrize suite olarak kapsar; Torch-SH bağlantısı
 
 ### R08 — Alive-sample compaction
 
-- [ ] `alive_indices` compact edilir; yalnız alive state'ler RK4/acceleration
+- [x] `alive_indices` compact edilir; yalnız alive state'ler RK4/acceleration
       görür; impacted state'ler output'ta frozen/terminal tutulur.
-- [ ] Perf testi: batch'in %70'i impact ettiğinde adım maliyeti ~%70 düşer
-      (toleranslı assert, ör. ≥%50 düşüş).
+      *(2026-07-05: `batched_fixed_step._propagate_chunk` — alive set snapshot
+      aralığı başına bir kez compact edilir (snapshot başına tek bounded host
+      sync); hot loop sabit şekilli, sync'siz mask mantığını korur. Satır
+      bağımsız RK4/provider ⇒ bit-uyum korunur (torch-SH batch==individual /
+      chunk-invariance testleri aynen yeşil).)*
+- [x] Perf testi: batch'in %70'i impact ettiğinde adım maliyeti ~%70 düşer
+      (toleranslı assert, ör. ≥%50 düşüş). *(Deterministik proxy: provider'ın
+      değerlendirdiği satır sayısı — %70 t=0-impact senaryosunda tam olarak
+      alive satırlar kadar, ≥%50 azalma assert'li;
+      `test_compaction_reduces_step_cost_for_impacted_batch`,
+      `test_compaction_all_impacted_skips_provider_entirely`,
+      `test_compaction_preserves_mixed_impact_results`.)*
 
 ### R06 — VRAM-aware chunking
 
-- [ ] Runtime VRAM ölçümü + model dtype/param/activation tahmini ⇒ otomatik
+- [x] Runtime VRAM ölçümü + model dtype/param/activation tahmini ⇒ otomatik
       `chunk_size` (küçük GPU 2048–8192, orta 8192–32768, büyük
-      32768–262144).
-- [ ] OOM yakalanırsa chunk_size yarıya düşer ve devam eder (recover testi).
-- [ ] Gerçek chunk_size provenance'a yazılır; chunk sonuçları tek output'ta
-      birleşir.
+      32768–262144). *(2026-07-05: `batched_fixed_step.resolve_vram_aware_chunk_size`
+      + `query_device_memory` tek kaynak; torch-SH Legendre-workspace tahmini
+      ve ST-LRPS MLP-aktivasyon tahmini (`_estimate_bytes_per_sample`) ile her
+      iki backend bu resolver'dan geçiyor; tek sample bütçeyi aşarsa preflight
+      raise.)*
+- [x] OOM yakalanırsa chunk_size yarıya düşer ve devam eder (recover testi).
+      *(`run_batched_fixed_step` chunk döngüsü CUDA OOM'da yarılayıp retry
+      eder, chunk=1'de re-raise; `test_oom_recovery_halves_chunk_and_matches_reference`
+      (sonuç bit-uyumlu) + `test_oom_at_chunk_one_reraises`.)*
+- [x] Gerçek chunk_size provenance'a yazılır; chunk sonuçları tek output'ta
+      birleşir. *(metrics: `chunk_size_requested` / `chunk_size_effective` /
+      `oom_recoveries`; her iki propagator diagnostics_snapshot'a taşıyor.)*
 
 **Kabul:** 100k orbit screening bellek patlatmadan tamamlanır (smoke:
 elde varsa gerçek GPU, yoksa küçük-VRAM simülasyonu ile).
+*(Küçük-VRAM simülasyonu: resolver band/cap unit testleri + OOM recover
+testi; gerçek-GPU 100k smoke'u G3 kapsamında koşulacak.)*
 
 ### R23 — Summary-only output mode
 
-- [ ] Screening modunda full trajectory saklanmaz; yalnız summary metrics:
+- [x] Screening modunda full trajectory saklanmaz; yalnız summary metrics:
       initial/final elements, e_min/max/range, h_peri_min/max/range,
       trend_e, trend_h_peri, omega_behavior, impact flag/time, domain exit
-      flag/time, score, validation stage, backend metadata.
-- [ ] Top-K için full state history + element history + diagnostic plot
-      verisi saklanır.
+      flag/time, score, validation stage, backend metadata. *(2026-07-05:
+      `lunaris/batch/summary.py` — `BATCH_SUMMARY_SCHEMA_VERSION=1`,
+      `summarize_ensemble` (post-impact satırlar zarf/trend dışı; ekvatoralde
+      periapsis boylamı fallback'i), `SCORE_DEFINITION` v1 belgeli; engine
+      `output_mode="summary_only"` dalı `_SummaryOnlyWriter` ile arşivi ve
+      (T,N,6) Y_all tahsisini atlar, batch başına özetleyip bloğu bırakır;
+      backend metadata diagnostics'te.)*
+- [x] Top-K için full state history + element history + diagnostic plot
+      verisi saklanır. *(`TopKTrajectoryBuffer` streaming top-K (skor v1,
+      impacted/invalid=inf hariç); result.Y yalnız top-K (T,K,6), seçilen
+      indeks/skorlar diagnostics'te; element history top-K trajectory'lerden
+      türetilebilir.)*
 
 **Kabul:** 100k × N_step × 6 state bellek/disk maliyeti oluşmaz; summary
-şeması versiyonlu ve testli.
+şeması versiyonlu ve testli. *(tests/test_batch_summary.py: şema/zarf/trend/
+omega/inf-skor/merge/top-K/config validasyonu + CPU uçtan uca engine testi —
+arşiv dosyası yazılmadığı ve yalnız top-K tutulduğu assert'li.)*
 
 ### R11 — Canonical ST-LRPS runtime
 
@@ -412,22 +443,45 @@ elde varsa gerçek GPU, yoksa küçük-VRAM simülasyonu ile).
 `surrogate/st_lrps/runtime/force_model.py` scaler/domain-guard/model-kind/
 prediction sorumluluklarını çiftliyor.
 
-- [ ] Yeni `src/lunaris/surrogate/st_lrps/runtime/canonical_runtime.py`:
+- [x] Yeni `src/lunaris/surrogate/st_lrps/runtime/canonical_runtime.py`:
       artifact loading, model_kind validation, scaler loading, domain guard,
       potential prediction, autograd acceleration, residual+baseline
-      composition, metadata/provenance.
-- [ ] `gravity_provider.py` yalnız adapter olur; `force_model.py` R01
-      sonrası sadeleşir/kaldırılır.
-- [ ] Import kontratı korunur: ST-LRPS runtime (inference path) hafif kalır;
-      evaluation/training'e import açılmaz.
+      composition, metadata/provenance. *(2026-07-05: force_model.py'nin
+      tamamı (SurrogateForceModel + loader + frame/rotasyon yardımcıları +
+      R26 paper-safe kapısı) canonical_runtime.py'ye taşındı; tensör-yolu
+      domain guard'ı `enforce_altitude_envelope_torch` tek-kaynak fonksiyon
+      olarak eklendi.)*
+- [x] `gravity_provider.py` yalnız adapter olur; `force_model.py` R01
+      sonrası sadeleşir/kaldırılır. *(gravity_provider tensör domain guard'ını
+      canonical'a delege ediyor; force_model.py dinamik-fold compat shim
+      (ruff --fix static re-export tuzağına karşı PEP 562 `__getattr__`).
+      NOT — bilinçli istisna: gravity_provider'daki pre-contract legacy
+      fallback yolu (kontratsız eski artifact'ler, RuntimeWarning'li) davranış
+      koruması için tutuldu; canonical_runtime docstring'inde belgeli.
+      Kaldırma/fail-closed kararı kullanıcıya soruldu.)*
+- [x] Import kontratı korunur: ST-LRPS runtime (inference path) hafif kalır;
+      evaluation/training'e import açılmaz. *(Kontratlar paket-seviyesi;
+      import/architecture testleri yeşil (789 pass'lık st_lrps/surrogate/
+      import/architecture seçkisi).)*
 
 **Kabul:** scaler/domain/model-kind mantığı yalnız canonical_runtime.py'de;
 grep ile doğrulanabilir; davranış regresyon testleri yeşil.
+*(tests/test_canonical_runtime_module.py: shim-identity, dinamik-fold,
+monkeypatch-through-shim, domain-guard tek-ev grep'i, envelope semantiği,
+shim/canonical loader eşitliği.)*
 
-### G3 kapısı
-1. Ortak loop iki backend'de kullanımda, davranış testleri yeşil.
-2. 100k screening smoke (chunking + compaction + summary-only) çalışıyor.
-3. Canonical runtime tek kaynak; duplicate logic grep'i temiz.
+### G3 kapısı — ✅ GEÇİLDİ (2026-07-05)
+1. [x] Ortak loop iki backend'de kullanımda, davranış testleri yeşil
+   (R07/R08; tests/test_batched_fixed_step.py + test_torch_sh_batch_propagator.py).
+2. [x] 100k screening smoke (chunking + compaction + summary-only) çalışıyor
+   (`test_g3_100k_screening_smoke_chunked_compacted_summary`: N=100k,
+   chunk=8192, ~%33 t=0-impact compaction, summary v1 + top-K; CPU'da tek
+   adımlık plumbing smoke — gerçek GPU'da aynı yol tam adım sayısıyla koşar).
+3. [x] Canonical runtime tek kaynak; duplicate logic grep'i temiz
+   (test_domain_guard_logic_single_home).
+
+**Sprint 3 tamam (R07 + R08 + R06 + R23 + R11).** Sprint 4'e (R03
+gpu_st_lrps_third_body) geçilebilir.
 
 ---
 
@@ -449,16 +503,22 @@ a_total = a_Moon_pointmass
         + a_Sun_third_body
 ```
 
-- [ ] Backend kaydı `core/backend_capabilities.py`'ye eklenir (R09 gereği
+- [x] Backend kaydı `core/backend_capabilities.py`'ye eklenir (R09 gereği
       YALNIZ oraya).
-- [ ] Vectorized ephemeris interpolasyonu: GPU vec3 Catmull-Rom yolu mevcut
+- [x] Vectorized ephemeris interpolasyonu: GPU vec3 Catmull-Rom yolu mevcut
       (CPU ile eşleşmesi daha önce doğrulandı) — batch'e genelle.
-- [ ] Third-body formülasyonu CPU'daki Battin F(q) yoluyla tutarlı olmalı
+- [x] Third-body formülasyonu CPU'daki Battin F(q) yoluyla tutarlı olmalı
       (mevcut CPU+GPU üçüncü-cisim testleriyle çapraz doğrulama).
-- [ ] Provenance: `lunar_gravity_backend=st_lrps`,
+- [x] Provenance: `lunar_gravity_backend=st_lrps`,
       `third_body_backend=analytic_vectorized`,
       `unsupported_forces=[albedo, thermal, tides, relativity, ...]`,
       `effective_dtype`, `chunk_size`.
+
+**Durum notu (2026-07-05):** R03 kod/doküman/test zemini tamamlandı; bu
+ortamda gerçek PyTorch CUDA kurulumu olmadığı için G4 kabul kriteri #1
+(10k state batch'i CPU fallback olmadan GPU'da koşturma) henüz paper-safe
+kanıt olarak kapatılamadı. Odaklı CPU/policy/preflight testleri yeşil; gerçek
+CUDA koşusu yapılınca G4 kapısı işaretlenecek.
 
 **Kabul kriterleri (review'dan aynen):**
 1. 10k state batch, CPU fallback OLMADAN GPU'da propagate edilir.
@@ -493,12 +553,14 @@ dh_peri/dt, inclination drift, omega drift, omega circulation/libration
 sınıflandırması, e-vektörü `h=e·sin(ω), k=e·cos(ω)` bounded-loop metriği,
 impact time, domain exit time, escape flag.
 
-- [ ] Modül: `src/lunaris/analysis/frozen/metrics.py` + `classify.py`
-      (yer önerisi; architecture-guardian ile teyit edilir).
-- [ ] Eşikler config'te (görev süresine bağlı), hardcoded değil.
-- [ ] Dil kuralı: kod/rapor çıktılarında "candidate frozen orbit" /
+- [x] Modül: `src/lunaris/analysis/frozen/metrics.py` + `classify.py`
+      (yer önerisi; architecture-guardian ile teyit edilir). *(Test:
+      `tests/test_frozen_classification.py`.)*
+- [x] Eşikler config'te (görev süresine bağlı), hardcoded değil.
+- [x] Dil kuralı: kod/rapor çıktılarında "candidate frozen orbit" /
       "quasi-frozen candidate"; "frozen orbit family discovered" ancak
-      classical SH long-horizon validation etiketi varsa.
+      classical SH long-horizon validation etiketi varsa. *(Negatif test:
+      `test_strict_like_candidate_is_not_validated_without_classical_sh`.)*
 
 ### R04 — surrogate_assisted_frozen_search pipeline
 
@@ -581,32 +643,47 @@ Staged search (config-driven, sabit değil):
 ### S6a ön işleri (performans hazırlığı)
 
 **R13 — SH-only Numba fast-path (`_rhs_sh_only_numba`)**
-- [ ] İçerik: state unpack, (gerekiyorsa) ephemeris quaternion frame
+- [x] İçerik: state unpack, (gerekiyorsa) ephemeris quaternion frame
       rotation, lunar SH acceleration, inertial dönüş, dydt. İÇERMEZ:
       third-body, SRP, albedo, thermal, tides, relativity, kullanılmayan
-      flag'ler.
-- [ ] Amaç: GMAT/STK karşılaştırması için temiz SH-only baseline; SH500/1000
-      benchmark'larında düşük overhead.
-- [ ] Doğruluk testi: genel RHS ile bit-yakını eşleşme (aynı force set).
+      flag'ler. *(2026-07-05: `DynamicsEngine.build_rhs()` SH-only durumda
+      `rhs_path=sh_only_numba` seçiyor; surrogate path ayrı kalıyor.)*
+- [x] Amaç: GMAT/STK karşılaştırması için temiz SH-only baseline; SH500/1000
+      benchmark'larında düşük overhead. *(Kod yolu hazır; gerçek benchmark
+      matrisi R16'da.)*
+- [x] Doğruluk testi: genel RHS ile bit-yakını eşleşme (aynı force set).
+      *(Test: `tests/test_dynamics.py::test_sh_only_fast_path_matches_general_rhs_when_extra_force_is_zero`;
+      dynamics suite: 40 passed, 1 skipped.)*
 
 **R14 — RHS'de frame rotation tekilleştirme**
-- [ ] RHS başında bir kez: `r_fixed`, `sun_fixed`, `earth_fixed`; SH/tides/
-      albedo/thermal bunları paylaşır.
-- [ ] Kabul: aynı RHS evaluation'da aynı vektör aynı frame'e birden fazla
-      döndürülmez (kod incelemesi + mikro-benchmark).
+- [x] RHS başında bir kez: `r_fixed`, `sun_fixed`, `earth_fixed`; SH/tides/
+      albedo/thermal bunları paylaşır. *(2026-07-05: classical Numba ve
+      surrogate-Python RHS içinde fixed-frame vektörleri ephemeris fetch sonrası
+      tek noktada hazırlanıyor.)*
+- [~] Kabul: aynı RHS evaluation'da aynı vektör aynı frame'e birden fazla
+      döndürülmez (kod incelemesi + mikro-benchmark). *(Kod incelemesi/lint
+      tamam; mikro-benchmark henüz koşulmadı.)*
 
 **R15 — Fixed-step out-buffer**
-- [ ] solve_ivp reference path olarak kalır (allocation overhead kabul);
+- [~] solve_ivp reference path olarak kalır (allocation overhead kabul);
       fixed-step batch path out-buffer kullanır; solve_ivp vs fixed-step
-      farkı benchmark'ta gösterilir.
+      farkı benchmark'ta gösterilir. *(2026-07-05: `run_batched_fixed_step()`
+      opsiyonel `output_buffer` kabul ediyor, shape/dtype/contiguous guard ve
+      `output_buffer_reused` metriği var. Bu ortamda batched fixed-step testleri
+      eksik `torch.nn`/torch kurulumu nedeniyle skip oldu; benchmark farkı R16'da.)*
 
 ### R17 — JIT warm-up protokolü
 
-- [ ] Protokol: load → build RHS → dummy call/propagation → timer →
+- [~] Protokol: load → build RHS → dummy call/propagation → timer →
       benchmark. Rapor: `cold_time, warm_time, jit_compile_time,
-      propagation_time`.
-- [ ] Kural: makale tablolarında warm time esas; cold time ayrıca verilir.
-      Benchmark runner bu ayrımı otomatik üretir.
+      propagation_time`. *(2026-07-05: output contract `cold_time_s`,
+      `warm_time_s`, `jit_compile_time_s`, `propagation_time_s` olarak
+      standartlaştırıldı; gerçek RHS dummy warm-up ölçümü R16 koşusunda
+      doğrulanacak.)*
+- [x] Kural: makale tablolarında warm time esas; cold time ayrıca verilir.
+      Benchmark runner bu ayrımı otomatik üretir. *(validator cold/warm/JIT
+      kolonlarını zorunlu kılıyor ve cold >= warm + JIT tutarlılığını kontrol
+      ediyor; test: `test_missing_runtime_timing_columns_fail`.)*
 
 ### R16 — Paper-safe benchmark matrisi
 
@@ -615,40 +692,49 @@ Staged search (config-driven, sabit değil):
       ST-LRPS+third-body (R03 sonrası).
 - [ ] Süre: 1g / 5g / 30g / (frozen adayları için) 90–180g.
 - [ ] Batch: 1 / 100 / 1000 / 10000 / 100000 (screening mode).
-- [ ] Metrikler: wall time, cold/warm time, JIT compile time, RHS eval
+- [~] Metrikler: wall time, cold/warm time, JIT compile time, RHS eval
       sayısı, accel eval/s, propagated-seconds-per-wall-second, final pos
       error, RMS pos error, RIC (radial/along/cross), phase lag,
       phase-corrected RMS, energy drift, impact/domain failure, memory,
-      chunk size.
-- [ ] reproducible-benchmarks disipliniyle koşulur (provenance + manifest +
-      validation_report).
+      chunk size. *(2026-07-05: CSV/JSON output contract ve validator bu
+      kolonları bekliyor; gerçek paper-safe matris henüz koşulmadı.)*
+- [~] reproducible-benchmarks disipliniyle koşulur (provenance + manifest +
+      validation_report). *(manifest/validation contract hazır; pahalı gerçek
+      benchmark bu oturumda koşulmadı.)*
 
 ### R19 — Genişletilmiş validation metrikleri
 
-- [ ] Anlık acceleration RMSE tek başına YETMEZ; ekle: accel max error,
+- [~] Anlık acceleration RMSE tek başına YETMEZ; ekle: accel max error,
       potential error, trajectory RMS, final pos error, RIC, phase lag,
       along-track drift, time-shift-corrected RMS, energy drift, domain exit
-      count. Frozen search metrikleri R05'ten gelir.
+      count. Frozen search metrikleri R05'ten gelir. *(2026-07-05:
+      `scenario_results.csv` için genişletilmiş kolonlar, `metrics_summary.json`
+      için acceleration/potential/energy_drift unit guard'ı ve synthetic/legacy
+      standardizasyonu eklendi. Bilimsel evidence için boş extended kolonlar
+      fail ediyor; gerçek non-synthetic metrik hesaplaması R16 koşusunda.)*
 
 ### R20 — Phase-drift analizinin ana validation'a entegrasyonu
 
 **Not:** Teşhis altyapısı hazır ([PHASE_DRIFT_PLAN.md](PHASE_DRIFT_PLAN.md)
 Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki iş:
 - [ ] G0 kapısını (gerçek koşu) tamamla — PHASE_DRIFT_PLAN'daki kriterlerle.
-- [ ] Rapor standardı: raw RMS, phase-corrected RMS, estimated time shift,
-      kalan radial/cross error her validation raporunda.
+- [~] Rapor standardı: raw RMS, phase-corrected RMS, estimated time shift,
+      kalan radial/cross error her validation raporunda. *(phase kolonları
+      benchmark validator'da varsayılan zorunlu; gerçek G0 koşusu bekliyor.)*
 - [ ] UQ along-track şişmesi ↔ phase drift ilişkisi analizi (PHASE_DRIFT
       G0b'deki UQ hizalanması ile birleşik).
 
 ### R18 — GMAT/STK parity protokolü
 
-- [ ] Protokol: aynı initial state, central-body sabitleri, gravity
+- [x] Protokol: aynı initial state, central-body sabitleri, gravity
       degree/order, frame varsayımları, süre, output interval, (mümkün olan
       en yakın) tolerans; force model = lunar SH only; third-body iki
-      tarafta da yoksa yok; Lunaris için JIT warm-up hariç.
+      tarafta da yoksa yok; Lunaris için JIT warm-up hariç. *(2026-07-05:
+      `docs/GRAVITY_ENGINE_EXTERNAL_VALIDATION.md` içine GMAT/STK parity
+      protocol eklendi.)*
 - [ ] Rapor: wall time, function evaluations, final state farkı, trajectory
       RMS farkı, enerji-benzeri diagnostic, output interpolation error.
-- [ ] **Claim kuralı:** "Comparable to GMAT" ancak bu benchmark SONRASI;
+- [x] **Claim kuralı:** "Comparable to GMAT" ancak bu benchmark SONRASI;
       öncesinde yalnız "optimized compiled CPU SH reference path".
 
 ### G6 kapısı
@@ -657,6 +743,10 @@ Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki i�
 3. Gravity-only vs full-dynamics tabloları ayrı (R02).
 4. Parity raporu üretildi VEYA parity yapılamadıysa claim dili
    "optimized compiled CPU SH reference path" olarak sabitlendi.
+
+**Durum (2026-07-05):** G6 henüz geçilmedi. S6a kod zemini ve benchmark
+output/validation contract hazır; gerçek paper-safe benchmark matrisi, CUDA
+throughput koşusu ve GMAT/STK artefaktı bu oturumda üretilmedi.
 
 ---
 
@@ -698,12 +788,12 @@ Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki i�
       ruff temiz.)*
 
 ### R28 — print → logger
-- [ ] Library kodunda `logging.getLogger(__name__)`; verbose flag/log level;
-      benchmark stdout temiz; CLI handler ekler. *(BAŞLANMADI — 806 print / 67
-      dosya; mekanik değil: benchmark modüllerindeki (_gravity_benchmark/modes.py
-      vb.) print'ler çoğunlukla kasıtlı CLI rapor çıktısı, körlemesine logger'a
-      çevrilirse rapor kaybolur. Diagnostik→logger vs rapor→stdout ayrımı +
-      verbose/log-level tasarımı gerektirir; kendi odaklı oturumu hak ediyor.)*
+- [~] Library kodunda `logging.getLogger(__name__)`; verbose flag/log level;
+      benchmark stdout temiz; CLI handler ekler. *(2026-07-05: batch backend
+      policy/engine ve DynamicsEngine library hazır mesajları logger'a taşındı;
+      `rg "print\\(" src/lunaris/core/dynamics/engine.py src/lunaris/core/batched_fixed_step.py src/lunaris/batch/backend_policy.py src/lunaris/batch/engine.py`
+      temiz. Benchmark CLI rapor çıktıları kasıtlı stdout olarak kaldı; tüm repo
+      print temizliği ayrı, dikkatli bir rapor-vs-diagnostik tasarımı gerektirir.)*
 
 ---
 

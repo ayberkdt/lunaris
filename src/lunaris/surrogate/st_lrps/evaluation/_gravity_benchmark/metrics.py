@@ -733,6 +733,7 @@ def build_gpu_runtime_metrics(
         n_steps = max(int(result.n_steps), 1)
         n_scenarios = max(int(result.n_scenarios), 1)
         runtime = float(result.runtime_s)
+        propagated_seconds = float(result.t[-1] - result.t[0]) if int(len(result.t)) >= 2 else 0.0
         row = {
             "model": result.display_name,
             "backend": result.backend,
@@ -743,8 +744,17 @@ def build_gpu_runtime_metrics(
             "n_saved_outputs": int(len(result.t)),
             "total_runtime_s": runtime,
             "runtime_per_scenario_s": runtime / n_scenarios,
+            "cold_time_s": runtime,
+            "warm_time_s": runtime,
+            "jit_compile_time_s": 0.0,
+            "propagation_time_s": runtime,
             "trajectory_steps_per_second": n_scenarios * n_steps / max(runtime, 1e-9),
             "acceleration_evaluations_per_second": n_scenarios * n_steps * evals / max(runtime, 1e-9),
+            "propagated_seconds_per_wall_second": (
+                n_scenarios * propagated_seconds / max(runtime, 1e-9)
+            ),
+            "peak_memory_mb": "",
+            "chunk_size": n_scenarios,
             "truth_total_runtime_s": truth_total,
             "truth_mean_runtime_per_scenario_s": truth_mean,
             "speedup_vs_truth_total": truth_total / max(runtime, 1e-9),

@@ -9,6 +9,7 @@ Canonical batch ensemble orchestration.
 from __future__ import annotations
 
 import inspect
+import logging
 import math
 import time
 import warnings
@@ -37,6 +38,7 @@ from lunaris.batch.storage import (
     _allocate_result_buffer,
     _make_writer,
     _resolve_result_storage,
+    _SummaryOnlyWriter,
     load_batch_result,
 )
 from lunaris.common.batch_defs import (
@@ -45,6 +47,8 @@ from lunaris.common.batch_defs import (
     build_batch_output_grid,
 )
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from lunaris.batch.backend_policy import BatchBackendPlan
@@ -56,6 +60,7 @@ _BACKEND_DISPLAY_NAMES = {
     "torch_cuda_sh": "GPU-TORCH-SH",
     "torch_cpu_sh": "CPU-TORCH-SH",
     "gpu_st_lrps_potential": "GPU-ST-LRPS",
+    "gpu_st_lrps_third_body": "GPU-ST-LRPS+3B",
 }
 
 
@@ -213,7 +218,10 @@ class BatchPropagationEngine:
         cfg = self._sim_cfg
         batch_backend = str(getattr(self._cfg, "batch_backend", "auto") or "auto")
         backend_forces_classic_sh = batch_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
-        backend_forces_st_lrps = batch_backend in {"gpu_st_lrps_potential"}
+        backend_forces_st_lrps = batch_backend in {
+            "gpu_st_lrps_potential",
+            "gpu_st_lrps_third_body",
+        }
         grav_model = None
         ephem_manager = None
         use_st_lrps_gravity = False
@@ -417,10 +425,9 @@ class BatchPropagationEngine:
                     )
                 deg_min = getattr(grav_model, "degree_min", "?")
                 deg_max = getattr(grav_model, "degree_max", "?")
-                print(
+                logger.info(
                     f"[BATCH][GPU-STLRPS] Loading surrogate: degree_min={deg_min}  "
-                    f"degree_max={deg_max}  model_dir={grav_model.model_dir}",
-                    flush=True,
+                    f"degree_max={deg_max}  model_dir={grav_model.model_dir}"
                 )
                 actual_runtime_kind = str(
                     getattr(getattr(grav_model, "_force_runtime", None), "runtime_model_kind", "")
@@ -444,6 +451,20 @@ class BatchPropagationEngine:
                     )
                 if "topo_payload" in constructor_params and topo_payload is not None:
                     prop_kwargs["topo_payload"] = topo_payload
+                # R03: the hybrid backend models Earth/Sun third-body on-device.
+                if (
+                    "third_body" in constructor_params
+                    and str(getattr(plan, "actual_backend", "")) == "gpu_st_lrps_third_body"
+                ):
+                    from lunaris.core.backend_capabilities import FORCE_MODEL_FLAG_ATTR
+
+                    _flags = getattr(self._sim_cfg, "flags", None)
+                    _bodies = tuple(
+                        name
+                        for name in ("third_body_sun", "third_body_earth")
+                        if bool(getattr(_flags, FORCE_MODEL_FLAG_ATTR[name], False))
+                    )
+                    prop_kwargs["third_body"] = _bodies
                 return TorchBatchPropagator(**prop_kwargs)
             except TorchSTLRPSPreflightError:
                 raise
@@ -727,24 +748,39 @@ class BatchPropagationEngine:
             batch_cfg,
             len(t_out_contract),
         )
-        writer = _make_writer(batch_cfg, N, t_out_contract)
+        # R23: summary-only screening mode never materializes or archives the
+        # full (T, N, 6) ensemble tensor. Each sub-batch is reduced to the
+        # versioned screening summary; only the top-K full histories survive.
+        summary_only = str(getattr(batch_cfg, "output_mode", "full")) == "summary_only"
+        if summary_only:
+            from lunaris.batch.summary import TopKTrajectoryBuffer, summarize_ensemble
 
-        print(
+            writer = _SummaryOnlyWriter()
+            _summary_parts: list[dict[str, Any]] = []
+            _topk_buffer = TopKTrajectoryBuffer(int(getattr(batch_cfg, "summary_top_k", 16)))
+            _summary_mu = float(
+                getattr(getattr(self._dyn, "grav", None), "GM_m3s2", 0.0) or MU_MOON
+            )
+            _summary_r_ref = float(
+                getattr(getattr(self._dyn, "grav", None), "R_ref_m", 0.0) or R_MOON
+            )
+        else:
+            writer = _make_writer(batch_cfg, N, t_out_contract)
+
+        logger.info(
             f"[BATCH] N={N}  backend={backend_name}  "
             f"T={duration_s / DAY_S:.2f} d  "
-            f"step={batch_cfg.dt_s:.1f} s  snap={output_dt_s:.1f} s",
-            flush=True,
+            f"step={batch_cfg.dt_s:.1f} s  snap={output_dt_s:.1f} s"
         )
         if self._backend_note:
-            print(self._backend_note, flush=True)
+            logger.info("%s", self._backend_note)
         if backend_diag:
             device_name = str(backend_diag.get("device_name", "")).strip()
             tpb = backend_diag.get("threads_per_block")
             if device_name:
-                print(
+                logger.info(
                     f"[BATCH] runtime device={device_name}  tpb={tpb}  "
-                    f"batch_cap~{max_batch}",
-                    flush=True,
+                    f"batch_cap~{max_batch}"
                 )
 
         # ----------------------------------------------------------------
@@ -762,11 +798,10 @@ class BatchPropagationEngine:
             1, int(memory_limit_bytes / max(1, host_bytes_per_sample))
         )
         if host_batch_cap < max_batch:
-            print(
+            logger.info(
                 f"[BATCH] Host-RAM cap reduced batch {max_batch} -> {host_batch_cap} "
                 f"(per-batch host buffer ~{host_bytes_per_sample / 1e6:.1f} MB/sample "
-                f"x T={len(t_out_contract)}).",
-                flush=True,
+                f"x T={len(t_out_contract)})."
             )
             max_batch = host_batch_cap
 
@@ -786,10 +821,14 @@ class BatchPropagationEngine:
         # sample batch directly into the final HDF5 trajectory dataset.
         t_out_ref = t_out_contract
         writer_buffer = getattr(writer, "memory_buffer", None)
-        Y_all = _allocate_result_buffer(
-            storage_mode,
-            writer_buffer,
-            (len(t_out_ref), N, 6),
+        Y_all = (
+            None
+            if summary_only
+            else _allocate_result_buffer(
+                storage_mode,
+                writer_buffer,
+                (len(t_out_ref), N, 6),
+            )
         )
         impact_all   = np.zeros(N, dtype=np.float64)
         t_impact_all = np.full(N, np.nan, dtype=np.float64)
@@ -809,10 +848,9 @@ class BatchPropagationEngine:
             b_end   = min(N, b_start + max_batch)
             b_n     = b_end - b_start
 
-            print(
+            logger.info(
                 f"[BATCH] Batch {b_idx + 1}/{n_batches}  "
-                f"samples {b_start}-{b_end - 1}",
-                flush=True,
+                f"samples {b_start}-{b_end - 1}"
             )
 
             # Loop variables are bound as defaults: the callback is invoked
@@ -907,13 +945,34 @@ class BatchPropagationEngine:
                 batch_impact_positions,
             )
 
-            try:
-                writer.write_sample_batch(b_start, b_end, Y_ref)
-            except Exception:
-                writer.abort()
-                raise
-            if Y_all is not None and Y_all is not writer_buffer:
-                Y_all[:, b_start:b_end, :] = Y_ref
+            if summary_only:
+                # R23: reduce the batch to the screening summary + top-K full
+                # histories, then let the (T, b_n, 6) block go out of scope.
+                _part = summarize_ensemble(
+                    t_out_ref,
+                    Y_ref,
+                    imp_b,
+                    t_imp_b,
+                    mu_m3s2=_summary_mu,
+                    r_ref_m=_summary_r_ref,
+                    valid_mask=valid_b,
+                )
+                _summary_parts.append(_part)
+                _topk_buffer.offer_batch(
+                    global_start=b_start,
+                    scores=np.asarray(_part["fields"]["score"], dtype=np.float64),
+                    Y_batch=Y_ref,
+                    impact_flags=np.asarray(imp_b, dtype=np.float64),
+                    t_impact=np.asarray(t_imp_b, dtype=np.float64),
+                )
+            else:
+                try:
+                    writer.write_sample_batch(b_start, b_end, Y_ref)
+                except Exception:
+                    writer.abort()
+                    raise
+                if Y_all is not None and Y_all is not writer_buffer:
+                    Y_all[:, b_start:b_end, :] = Y_ref
 
             self._publish_progress(
                 stage="propagating",
@@ -1001,6 +1060,11 @@ class BatchPropagationEngine:
                     or getattr(_plan, "effective_dtype", "")
                     or getattr(_plan, "dtype", "float64"),
                 "dtype_downgraded": bool(getattr(_plan, "dtype_downgraded", False)),
+                # R03 provenance: on-device third-body modeling + the backend's
+                # statically unsupported force models (capability registry).
+                "third_body_backend": backend_diag.get("third_body_backend")
+                    or getattr(_plan, "third_body_backend", ""),
+                "unsupported_forces": list(getattr(_plan, "unsupported_forces", ())),
                 "state_dtype": backend_diag.get("state_dtype")
                     or backend_diag.get("dtype")
                     or getattr(_plan, "dtype", "float64"),
@@ -1121,11 +1185,10 @@ class BatchPropagationEngine:
         n_valid = int(np.sum(valid_bool))
         n_hit = int(np.sum(valid_bool & (impact_all > 0.5)))
         impact_fraction = float(n_hit) / n_valid if n_valid else math.nan
-        print(
+        logger.info(
             f"[BATCH] Done. Wall={t_wall:.1f}s  "
             f"impacts={n_hit}/{n_valid} "
-            f"({100.0 * impact_fraction:.1f}%)",
-            flush=True,
+            f"({100.0 * impact_fraction:.1f}%)"
         )
         self._publish_progress(
             stage="finalizing",
@@ -1142,13 +1205,61 @@ class BatchPropagationEngine:
         # ----------------------------------------------------------------
         # 5) Build result
         # ----------------------------------------------------------------
+        n_failed = int(np.sum(valid_all < 0.5))
+
+        if summary_only:
+            from lunaris.batch.summary import merge_summaries
+
+            merged_summary = merge_summaries(_summary_parts)
+            sel = np.asarray(_topk_buffer.selected_indices, dtype=np.int64)
+            return BatchPropagationResult(
+                t=t_out_ref,
+                Y=_topk_buffer.stacked_trajectories(len(t_out_ref)),
+                sc_samples=(
+                    sc_samples[sel] if sel.size else np.empty((0, 4), dtype=np.float64)
+                ),
+                impact_mask=impact_all[sel],
+                t_impact=t_impact_all[sel],
+                valid_mask=valid_all[sel],
+                impact_position_inertial_m=impact_position_inertial[sel],
+                impact_position_fixed_m=impact_position_fixed[sel],
+                archive_path=None,
+                diagnostics={
+                    "wall_time_s": float(t_wall),
+                    "n_samples": N,
+                    "sampling_method": sampling_method,
+                    "sampling_note": qmc_design_note,
+                    "n_valid_samples": n_valid,
+                    "n_failed_samples": n_failed,
+                    "n_impacts": n_hit,
+                    "impact_fraction": impact_fraction,
+                    "backend": backend_name,
+                    "backend_note": self._backend_note,
+                    "backend_diagnostics": backend_diag,
+                    "requested_batch_backend": _plan_meta.get("requested_batch_backend"),
+                    "actual_batch_backend": _plan_meta.get("actual_batch_backend"),
+                    "requested_sh_degree": _plan_meta.get("requested_sh_degree"),
+                    "actual_sh_degree": _plan_meta.get("actual_sh_degree"),
+                    "runtime_model_kind": _plan_meta.get("runtime_model_kind"),
+                    "fallback_reason": _plan_meta.get("fallback_reason"),
+                    "selection_reason": _plan_meta.get("selection_reason"),
+                    # R23 summary-mode payload: full-N screening summary +
+                    # top-K bookkeeping. Y above holds ONLY the top-K histories.
+                    "output_mode": "summary_only",
+                    "batch_summary": merged_summary,
+                    "summary_top_k": int(getattr(batch_cfg, "summary_top_k", 16)),
+                    "summary_selected_indices": sel.tolist(),
+                    "summary_selected_scores": list(_topk_buffer.scores),
+                    "result_storage_mode": "summary_only",
+                },
+            )
+
         if storage_mode == "disk":
             Y_result: Any = HDF5TrajectoryView(batch_cfg.output_path_resolved)
         else:
             if Y_all is None:
                 raise RuntimeError("Eager batch result buffer was not initialized.")
             Y_result = Y_all
-        n_failed = int(np.sum(valid_all < 0.5))
 
         return BatchPropagationResult(
             t=t_out_ref,

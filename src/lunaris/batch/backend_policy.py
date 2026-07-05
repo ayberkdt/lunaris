@@ -41,10 +41,13 @@ Notes
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # 1.                      CUDA AVAILABILITY PROBES
@@ -365,8 +368,13 @@ BATCH_BACKEND_REQUESTS = frozenset(
         "torch_cuda_sh",
         "torch_cpu_sh",
         "gpu_st_lrps_potential",
+        "gpu_st_lrps_third_body",
     }
 )
+
+# ST-LRPS request names (both select the torch surrogate batch runtime; the
+# third-body variant adds analytic vectorized Earth/Sun gravity, R03).
+_ST_LRPS_REQUESTS = frozenset({"gpu_st_lrps_potential", "gpu_st_lrps_third_body"})
 
 # Classic-SH request names that select the Numba CUDA backend (degree <= 24).
 _NUMBA_SH_REQUESTS = frozenset({"numba_cuda_sh"})
@@ -405,6 +413,11 @@ class BatchBackendPlan:
     requested_dtype: str = ""
     effective_dtype: str = ""
     dtype_downgraded: bool = False
+    # R03 provenance: how third-body gravity is modeled by the resolved backend
+    # ("" = not modeled on-device) and the backend's statically unsupported
+    # force models straight from the capability registry.
+    third_body_backend: str = ""
+    unsupported_forces: tuple[str, ...] = ()
     warnings: list[str] = field(default_factory=list)
     reason: str = ""
     fallback_applied: bool = False
@@ -439,19 +452,18 @@ class BatchBackendPlan:
             self.requested_dtype = self.effective_dtype
 
     def log_summary(self) -> None:
-        """Print a one-line backend decision summary suitable for the batch log."""
-        print(
+        """Log a one-line backend decision summary suitable for the batch log."""
+        logger.info(
             f"[BATCH] Backend plan: {self.final_backend.value}  "
             f"gravity={self.gravity_backend}  "
             f"requested_backend={self.requested_backend}  "
             f"actual_backend={self.actual_backend}  "
             f"torch_cuda={self.torch_cuda_available}  "
             f"numba_cuda={self.numba_cuda_available}  "
-            f"integrator={self.integrator}",
-            flush=True,
+            f"integrator={self.integrator}"
         )
         if self.batch_note:
-            print(f"[BATCH] {self.batch_note}", flush=True)
+            logger.info("[BATCH] %s", self.batch_note)
 
 
 # =============================================================================
@@ -540,7 +552,7 @@ def resolve_batch_backend_policy(
 
     if requested_backend in {"cpu_sh"} | _NUMBA_SH_REQUESTS | _TORCH_SH_REQUESTS:
         is_st_lrps = False
-    elif requested_backend == "gpu_st_lrps_potential":
+    elif requested_backend in _ST_LRPS_REQUESTS:
         is_st_lrps = True
     else:
         is_st_lrps = mission_st_lrps or (mode_override == "st_lrps")
@@ -550,15 +562,15 @@ def resolve_batch_backend_policy(
     if requested_backend == "cpu_sh":
         requested_gpu = False
     elif requested_backend in (
-        _NUMBA_SH_REQUESTS | _TORCH_SH_REQUESTS | {"gpu_st_lrps_potential"}
+        _NUMBA_SH_REQUESTS | _TORCH_SH_REQUESTS | _ST_LRPS_REQUESTS
     ):
         requested_gpu = True
 
     runtime_model_kind = _read_st_lrps_runtime_kind(batch_cfg, sim_cfg) if is_st_lrps else None
-    if requested_backend == "gpu_st_lrps_potential":
+    if requested_backend in _ST_LRPS_REQUESTS:
         if runtime_model_kind not in (None, "potential_autograd"):
             raise ValueError(
-                "batch_backend='gpu_st_lrps_potential' requires a potential_autograd "
+                f"batch_backend={requested_backend!r} requires a potential_autograd "
                 f"artifact, but config.json declares {runtime_model_kind!r}."
             )
         runtime_model_kind = "potential_autograd"
@@ -635,12 +647,39 @@ def resolve_batch_backend_policy(
                 integrator="adaptive (DOP853)",
             )
 
-        # PyTorch CUDA is available — check for incompatible perturbations
-        gpu_st_lrps_unsupported = _st_lrps_gpu_unsupported_features(flags)
+        # PyTorch CUDA is available — pick the surrogate backend variant and
+        # check for incompatible perturbations (R03). Explicit requests are
+        # honored verbatim; 'auto'/mission ST-LRPS upgrades to the third-body
+        # hybrid exactly when the active force set needs (and it suffices).
+        from lunaris.core.backend_capabilities import (  # noqa: PLC0415
+            unsupported_force_models as _unsupported_for,
+        )
+
+        potential_unsupported = _st_lrps_gpu_unsupported_features(flags)
+        third_body_unsupported = (
+            _unsupported_for("gpu_st_lrps_third_body", flags) if flags is not None else ()
+        )
+        if requested_backend == "gpu_st_lrps_potential":
+            actual_stlrps_backend = "gpu_st_lrps_potential"
+            gpu_st_lrps_unsupported = potential_unsupported
+        elif requested_backend == "gpu_st_lrps_third_body":
+            actual_stlrps_backend = "gpu_st_lrps_third_body"
+            gpu_st_lrps_unsupported = third_body_unsupported
+        elif potential_unsupported != third_body_unsupported:
+            # Earth/Sun third-body is active, so evaluate the narrow hybrid
+            # backend. It may still fall back for the *remaining* unsupported
+            # forces, but third-body itself is no longer reported as missing.
+            actual_stlrps_backend = "gpu_st_lrps_third_body"
+            gpu_st_lrps_unsupported = third_body_unsupported
+        else:
+            actual_stlrps_backend = "gpu_st_lrps_potential"
+            gpu_st_lrps_unsupported = potential_unsupported
+
         if gpu_st_lrps_unsupported:
             pretty = ", ".join(gpu_st_lrps_unsupported)
             msg = (
-                f"[BATCH] GPU ST-LRPS batch propagator does not currently model: {pretty}. "
+                f"[BATCH] GPU ST-LRPS batch propagator ({actual_stlrps_backend}) "
+                f"does not currently model: {pretty}. "
                 "Falling back to the CPU full-fidelity backend. "
                 "Selected batch backend: CPU."
             )
@@ -676,12 +715,31 @@ def resolve_batch_backend_policy(
                 integrator="adaptive (DOP853)",
             )
 
-        actual_stlrps_backend = "gpu_st_lrps_potential"
-        stlrps_note = "ST-LRPS acceleration via batched autograd on CUDA device."
-        # Dtype from the single source (R10): resolve the config-requested dtype
-        # against the backend's registered support instead of hardcoding float32.
+        is_third_body_backend = actual_stlrps_backend == "gpu_st_lrps_third_body"
+        stlrps_note = (
+            "ST-LRPS acceleration via batched autograd on CUDA device"
+            + (
+                " + analytic vectorized Earth/Sun third-body (Battin F(q), "
+                "Catmull-Rom ephemeris interpolation)."
+                if is_third_body_backend
+                else "."
+            )
+        )
+        # R03 provenance: the selected backend's statically unsupported force
+        # models, straight from the capability registry (single source, R09).
         from lunaris.core.backend_capabilities import (  # noqa: PLC0415
+            FORCE_MODEL_FLAG_ATTR,
+            get_capabilities,
             resolve_effective_dtype,
+        )
+
+        _caps = get_capabilities(actual_stlrps_backend)
+        plan_unsupported_forces = tuple(
+            sorted(
+                name
+                for name in FORCE_MODEL_FLAG_ATTR
+                if name != "spherical_harmonics" and not _caps.supports_force_model(name)
+            )
         )
 
         stlrps_dtype = resolve_effective_dtype(
@@ -717,8 +775,13 @@ def resolve_batch_backend_policy(
             requested_dtype=stlrps_dtype.requested,
             effective_dtype=stlrps_dtype.effective,
             dtype_downgraded=stlrps_dtype.downgraded,
+            third_body_backend="analytic_vectorized" if is_third_body_backend else "",
+            unsupported_forces=plan_unsupported_forces,
             warnings=warns,
-            reason=f"ST-LRPS + PyTorch CUDA available. {_avail_str}. Selected batch backend: GPU-ST-LRPS.",
+            reason=(
+                f"ST-LRPS + PyTorch CUDA available. {_avail_str}. "
+                f"Selected batch backend: {actual_stlrps_backend}."
+            ),
             integrator="fixed-step RK4",
             batch_note=(
                 "Batch propagation: N trajectories simultaneously on CUDA tensor [N, 6]. "

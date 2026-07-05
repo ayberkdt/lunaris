@@ -407,6 +407,9 @@ Sampling and backend selection are explicit and recorded in ensemble outputs:
 - `--batch-backend gpu_st_lrps_potential` uses the scalar-potential ST-LRPS artifact
   and autograd residual acceleration on PyTorch CUDA. (The former
   `gpu_st_lrps_direct` backend is archived in `experimental/force-direct-archive`.)
+- `--batch-backend gpu_st_lrps_third_body` uses the same scalar-potential
+  artifact and keeps analytic Sun/Earth third-body gravity on the PyTorch CUDA
+  batch path. Other perturbations still fall back explicitly.
 
 For 512-orbit GPU batch propagation, use `auto` or an explicit ST-LRPS GPU
 backend for throughput runs, and keep `cpu_sh` high-degree runs as

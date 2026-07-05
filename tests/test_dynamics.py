@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -292,6 +293,7 @@ def test_cpu_sh_rhs_uses_i2f_then_conjugate_frame_bridge() -> None:
     )
     rhs = engine.build_rhs(force_rebuild=True)
     dy = np.asarray(rhs(0.0, state), dtype=np.float64)
+    assert engine._prep["rhs_path"] == "sh_only_numba"
 
     fixed_position = quat_rotate_np(q_i2f, state[:3])
     fixed_accel = gravity.accel_fixed(fixed_position, degree=degree)
@@ -299,6 +301,68 @@ def test_cpu_sh_rhs_uses_i2f_then_conjugate_frame_bridge() -> None:
 
     np.testing.assert_allclose(dy[:3], state[3:], rtol=0.0, atol=0.0)
     np.testing.assert_allclose(dy[3:6], expected_inertial_accel, rtol=1e-12, atol=1e-12)
+
+
+def test_sh_only_fast_path_matches_general_rhs_when_extra_force_is_zero() -> None:
+    """R13 fast path is a route optimization, not a physics fork."""
+
+    class _ConstantEphem:
+        def __init__(self, q_i2f: np.ndarray) -> None:
+            self.q_i2f = np.asarray(q_i2f, dtype=np.float64)
+
+        def get_data_provider(self):
+            earth = np.array([384_400_000.0, 0.0, 0.0], dtype=np.float64)
+            return {
+                "dt_s": 1.0,
+                "r_sun_tab_m": np.zeros((2, 3), dtype=np.float64),
+                "r_earth_tab_m": np.vstack([earth, earth]),
+                "q_i2f_tab": np.vstack([self.q_i2f, self.q_i2f]),
+            }
+
+    degree = 4
+    r_ref = 1_737_400.0
+    gm = 4.904_869_5e12
+    c = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    s = np.zeros_like(c)
+    c[2, 0] = -9.0e-5
+    c[2, 2] = 1.5e-5
+    s[3, 1] = -2.0e-6
+    gravity = GravityModel.from_arrays(degree, r_ref, gm, c, s)
+    q_i2f = np.array([math.sqrt(0.5), 0.0, 0.0, math.sqrt(0.5)], dtype=np.float64)
+    ephem = _ConstantEphem(q_i2f)
+    state = np.array(
+        [r_ref + 210_000.0, -40_000.0, 88_000.0, 0.0, 1580.0, 20.0],
+        dtype=np.float64,
+    )
+    sc = SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3)
+
+    fast = DynamicsEngine(
+        sc_props=sc,
+        flags=PerturbationFlags(enable_sh=True),
+        gravity_model=gravity,
+        ephem_manager=ephem,
+        allow_identity_rotation=False,
+    )
+    generic = DynamicsEngine(
+        sc_props=sc,
+        flags=PerturbationFlags(enable_sh=True, enable_earth_j2=True),
+        gravity_model=gravity,
+        ephem_manager=ephem,
+        earth_j2=SimpleNamespace(j2_coeff=0.0, r_eq_m=6_378_137.0, spin_axis_i=(0.0, 0.0, 1.0)),
+        allow_identity_rotation=False,
+    )
+
+    fast_rhs = fast.build_rhs(force_rebuild=True)
+    generic_rhs = generic.build_rhs(force_rebuild=True)
+
+    assert fast._prep["rhs_path"] == "sh_only_numba"
+    assert generic._prep["rhs_path"] == "general_numba"
+    np.testing.assert_allclose(
+        fast_rhs(0.0, state),
+        generic_rhs(0.0, state),
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 @pytest.mark.skipif(os.getenv("RUN_SLOW") != "1", reason="Set RUN_SLOW=1 to run slow integration test.")

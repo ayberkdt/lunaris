@@ -457,34 +457,24 @@ class SurrogateGravityModel:
     def _enforce_domain_torch(self, x_m: torch.Tensor, *, caller: str) -> None:
         """Guard the tensor path against out-of-training-envelope extrapolation.
 
-        Mirrors the canonical ``SurrogateForceModel._enforce_domain`` (same ~1 km
-        slack): hard-fail when ``strict_domain=True``, otherwise warn once. No-op
-        when the envelope is unknown. This closes the gap where the GPU batch
-        propagator's per-step ``predict_*_accel_torch`` calls bypassed the domain
-        check that the CPU ``_fixed`` path performs.
+        R11: delegates to the canonical runtime's single-source envelope guard
+        (same ~1 km slack, strict raise / warn-once semantics). This closes the
+        gap where the GPU batch propagator's per-step ``predict_*_accel_torch``
+        calls bypassed the domain check that the CPU ``_fixed`` path performs.
         """
-        if self._alt_min_km is None or self._alt_max_km is None:
-            return
-        with torch.no_grad():
-            r = torch.linalg.norm(x_m.detach().to(dtype=torch.float32), dim=1)
-            alt_km = (r - float(self.R_ref_m)) / 1000.0
-            lo = float(torch.min(alt_km))
-            hi = float(torch.max(alt_km))
-        tol = 1.0  # km, matches the canonical runtime's slack
-        if lo >= self._alt_min_km - tol and hi <= self._alt_max_km + tol:
-            return
-        msg = (
-            f"{caller}: input altitude range [{lo:.1f}, {hi:.1f}] km is outside the surrogate "
-            f"training envelope [{self._alt_min_km:.1f}, {self._alt_max_km:.1f}] km; GPU tensor "
-            "predictions here are extrapolation."
+        from lunaris.surrogate.st_lrps.runtime.canonical_runtime import (
+            enforce_altitude_envelope_torch,
         )
-        if self.strict_domain:
-            raise RuntimeError(
-                msg + " strict_domain=True: refusing to return an extrapolated prediction."
-            )
-        if not self._warned_out_of_domain:
-            self._warned_out_of_domain = True
-            warnings.warn(msg + " Pass strict_domain=True to hard-fail.", RuntimeWarning, stacklevel=3)
+
+        self._warned_out_of_domain = enforce_altitude_envelope_torch(
+            x_m,
+            r_ref_m=float(self.R_ref_m),
+            alt_min_km=self._alt_min_km,
+            alt_max_km=self._alt_max_km,
+            strict=self.strict_domain,
+            already_warned=self._warned_out_of_domain,
+            caller=caller,
+        )
 
     def _base_potential(self, x_phys: torch.Tensor) -> torch.Tensor:
         """Geodesy potential baseline, consistent with :meth:`_base_acceleration`.

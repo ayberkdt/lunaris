@@ -63,6 +63,97 @@ def build_output_grid(duration_s: float, output_dt_s: float) -> tuple[np.ndarray
     return build_batch_output_grid(duration_s, output_dt_s)
 
 
+# ---------------------------------------------------------------------------
+# R06 — VRAM-aware chunk sizing + OOM recovery
+# ---------------------------------------------------------------------------
+
+# Automatic chunk bands by total device memory (roadmap R06): small GPUs get
+# 2048-8192 samples per chunk, mid-size 8192-32768, large 32768-262144. The
+# per-sample memory estimate always caps the band from above.
+_VRAM_BANDS: tuple[tuple[int | None, int, int], ...] = (
+    (8 * 2**30, 2048, 8192),
+    (24 * 2**30, 8192, 32768),
+    (None, 32768, 262144),
+)
+_VRAM_SAFE_FRACTION = 0.80
+_DEFAULT_CPU_CHUNK = 1024
+
+
+def query_device_memory(torch_mod: Any, device: Any) -> tuple[int, int]:
+    """Return ``(free_bytes, total_bytes)``; ``(0, 0)`` off-CUDA or unknown."""
+    if getattr(device, "type", "") != "cuda":
+        return (0, 0)
+    try:
+        free, total = torch_mod.cuda.mem_get_info(device)
+        return (int(free), int(total))
+    except Exception:
+        return (0, 0)
+
+
+def resolve_vram_aware_chunk_size(
+    *,
+    bytes_per_sample: int,
+    free_bytes: int,
+    total_bytes: int,
+    requested: int = 0,
+    safe_fraction: float = _VRAM_SAFE_FRACTION,
+    cpu_default: int = _DEFAULT_CPU_CHUNK,
+) -> tuple[int, dict[str, Any]]:
+    """Resolve the batch chunk size from device memory (R06).
+
+    Returns ``(chunk_size, provenance)``. An explicit ``requested`` chunk is
+    honored but still capped by the memory budget; without a request the chunk
+    is picked from the total-VRAM band, capped by the safe free-memory budget.
+    Raises ``RuntimeError`` when even a single sample exceeds the budget
+    (never launch into a guaranteed OOM).
+    """
+    provenance: dict[str, Any] = {
+        "chunk_size_requested": int(requested) if requested else None,
+        "bytes_per_sample": int(bytes_per_sample),
+        "gpu_free_mem_bytes": int(free_bytes),
+        "gpu_total_mem_bytes": int(total_bytes),
+        "vram_safe_fraction": float(safe_fraction),
+    }
+    if free_bytes <= 0 or total_bytes <= 0:
+        chunk = int(requested) if requested and requested > 0 else int(cpu_default)
+        provenance.update({"chunk_size_source": "requested" if requested else "cpu_default"})
+        return max(1, chunk), provenance
+
+    budget = float(free_bytes) * float(safe_fraction)
+    cap = int(budget / max(1, int(bytes_per_sample)))
+    provenance["chunk_size_memory_cap"] = cap
+    if cap < 1:
+        raise RuntimeError(
+            f"Estimated {bytes_per_sample / 1e6:.1f} MB/sample exceeds the safe VRAM "
+            f"budget ({budget / 1e6:.1f} MB free*{safe_fraction:g}); refusing to launch "
+            "into a guaranteed OOM. Lower the model degree/width, use float32, or free "
+            "GPU memory."
+        )
+    if requested and requested > 0:
+        chunk = min(int(requested), cap)
+        provenance["chunk_size_source"] = "requested_capped" if chunk < requested else "requested"
+        return max(1, chunk), provenance
+
+    band_lo, band_hi = _VRAM_BANDS[-1][1], _VRAM_BANDS[-1][2]
+    for limit, lo, hi in _VRAM_BANDS:
+        if limit is None or total_bytes < limit:
+            band_lo, band_hi = lo, hi
+            break
+    chunk = max(1, min(band_hi, cap))
+    provenance.update(
+        {"chunk_size_source": "vram_band", "vram_band": [band_lo, band_hi]}
+    )
+    return chunk, provenance
+
+
+def _is_cuda_oom(torch_mod: Any, exc: BaseException) -> bool:
+    """True when ``exc`` is a CUDA out-of-memory error (typed or message-based)."""
+    oom_type = getattr(getattr(torch_mod, "cuda", None), "OutOfMemoryError", None)
+    if oom_type is not None and isinstance(exc, oom_type):
+        return True
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+
+
 def rhs_batch(torch_mod: Any, provider: BatchedAccelerationProvider, t_s: float, s: Tensor) -> Tensor:
     """Evaluate ``[v; a]`` for state ``[N, 6]`` at epoch ``t_s``."""
     v_i = s[:, 3:]
@@ -113,6 +204,7 @@ def run_batched_fixed_step(
     topo: Any = None,
     impact_alt_m: float = 0.0,
     chunk_size: int | None = None,
+    output_buffer: np.ndarray | None = None,
     callback: Callable[[float], None] | None = None,
     callback_granularity: str = "chunk",
 ) -> BatchedFixedStepResult:
@@ -132,6 +224,10 @@ def run_batched_fixed_step(
         Samples per device chunk; ``None`` or ``<= 0`` propagates the whole
         ensemble as a single chunk. Chunking changes only memory use, never
         the numbers.
+    output_buffer :
+        Optional preallocated host buffer with shape ``(len(t_out), N, 6)`` and
+        dtype ``float64``. When supplied, snapshots are written into this array
+        instead of allocating a fresh ``Y_out`` array.
     callback_granularity :
         ``"chunk"`` invokes ``callback`` once per finished chunk with the
         completed-sample fraction (classic-SH behavior); ``"snapshot"``
@@ -151,51 +247,90 @@ def run_batched_fixed_step(
     t_out, n_snaps, snap_interval = build_output_grid(duration_s, output_dt_s)
     steps_per_snap = max(1, int(round(snap_interval / dt)))
     dt_eff = snap_interval / steps_per_snap
-    Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
+    expected_output_shape = (n_snaps + 1, N, 6)
+    output_buffer_reused = output_buffer is not None
+    if output_buffer is None:
+        Y_out = np.empty(expected_output_shape, dtype=np.float64)
+    else:
+        Y_out = np.asarray(output_buffer)
+        if Y_out.shape != expected_output_shape:
+            raise ValueError(
+                "output_buffer must have shape "
+                f"{expected_output_shape}, got {Y_out.shape}."
+            )
+        if Y_out.dtype != np.float64:
+            raise ValueError(f"output_buffer dtype must be float64, got {Y_out.dtype}.")
+        if not Y_out.flags.c_contiguous:
+            raise ValueError("output_buffer must be C-contiguous.")
     impact_flags = np.zeros(N, dtype=np.float64)
     t_impact = np.full(N, np.nan, dtype=np.float64)
     impact_positions = np.full((N, 3), np.nan, dtype=np.float64)
 
     chunk = int(chunk_size) if chunk_size and int(chunk_size) > 0 else N
     chunk = max(1, chunk)
-    n_chunks = max(1, int(np.ceil(N / chunk)))
+    chunk_requested = chunk
 
     total_raw_state_steps = 0
     total_active_state_steps = 0
     total_steps_per_sample = n_snaps * steps_per_snap
+    oom_recoveries: list[dict[str, Any]] = []
 
     t_start = time.perf_counter()
 
-    for ci in range(n_chunks):
-        a = ci * chunk
+    # R06: chunks are retried with a halved chunk size on CUDA OOM instead of
+    # failing the whole ensemble; every recovery is recorded in the metrics so
+    # the effective chunk size is honest provenance, never a silent change.
+    a = 0
+    while a < N:
         b = min(N, a + chunk)
         chunk_n = b - a
-        active_steps = _propagate_chunk(
-            torch_mod=torch,
-            device=device,
-            dtype=dtype,
-            provider=provider,
-            frame=frame,
-            Y0_chunk=Y0[a:b],
-            a=a,
-            b=b,
-            steps_per_snap=steps_per_snap,
-            dt_eff=dt_eff,
-            n_snaps=n_snaps,
-            Y_out=Y_out,
-            impact_flags=impact_flags,
-            t_impact=t_impact,
-            impact_positions=impact_positions,
-            impact_r_m=float(impact_r_m),
-            detect_impact=bool(detect_impact),
-            topo=topo,
-            impact_alt_m=float(impact_alt_m),
-            callback=callback if callback_granularity == "snapshot" else None,
-            snap_fraction_base=float(ci) / float(n_chunks),
-            snap_fraction_span=1.0 / float(n_chunks),
-        )
+        try:
+            active_steps = _propagate_chunk(
+                torch_mod=torch,
+                device=device,
+                dtype=dtype,
+                provider=provider,
+                frame=frame,
+                Y0_chunk=Y0[a:b],
+                a=a,
+                b=b,
+                steps_per_snap=steps_per_snap,
+                dt_eff=dt_eff,
+                n_snaps=n_snaps,
+                Y_out=Y_out,
+                impact_flags=impact_flags,
+                t_impact=t_impact,
+                impact_positions=impact_positions,
+                impact_r_m=float(impact_r_m),
+                detect_impact=bool(detect_impact),
+                topo=topo,
+                impact_alt_m=float(impact_alt_m),
+                callback=callback if callback_granularity == "snapshot" else None,
+                snap_fraction_base=float(a) / float(max(N, 1)),
+                snap_fraction_span=float(chunk_n) / float(max(N, 1)),
+            )
+        except Exception as exc:
+            if not _is_cuda_oom(torch, exc) or chunk <= 1:
+                raise
+            new_chunk = max(1, chunk // 2)
+            oom_recoveries.append(
+                {
+                    "sample_start": int(a),
+                    "failed_chunk_size": int(chunk),
+                    "retry_chunk_size": int(new_chunk),
+                }
+            )
+            chunk = new_chunk
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                # R29b-justified: cache flush is a best-effort recovery aid; the
+                # retry below decides success, not this call.
+                pass
+            continue
         total_raw_state_steps += chunk_n * total_steps_per_sample
         total_active_state_steps += active_steps
+        a = b
         if callback is not None and callback_granularity == "chunk":
             callback(float(b) / float(max(N, 1)))
 
@@ -222,6 +357,12 @@ def run_batched_fixed_step(
             "terrain_bisection_hybrid" if topo is not None else "line_sphere_quadratic"
         ),
         "impact_time_resolution_s": float(dt_eff),
+        # R06 chunk provenance: what was asked for, what actually ran, and
+        # every OOM-driven halving along the way.
+        "chunk_size_requested": int(chunk_requested),
+        "chunk_size_effective": int(chunk),
+        "output_buffer_reused": bool(output_buffer_reused),
+        "oom_recoveries": oom_recoveries,
     }
     return BatchedFixedStepResult(
         t_out=t_out,
@@ -294,52 +435,96 @@ def _propagate_chunk(
 
     t_curr = 0.0
     global_step = 0
+    # R08 — alive-sample compaction. The alive set is compacted once per
+    # snapshot interval (one bounded host sync per snapshot for the gather
+    # size); inside the interval the loop advances ONLY the compacted subset
+    # with the same mask-based freeze/impact logic as before, so the hot loop
+    # keeps fixed shapes and stays free of per-step device-host syncs. RK4 and
+    # every provider are row-independent, so subsetting the sample axis is
+    # bitwise-neutral; impacted samples stay frozen/terminal in the output.
     with torch.no_grad():
         for snap_idx in range(n_snaps):
-            for _ in range(steps_per_snap):
-                active_steps_acc += alive.sum()
-                # Freeze impacted samples: only alive trajectories advance;
-                # impacted ones hold their last state (no propagation through
-                # the Moon). Fixed batch shape is preserved (no compaction).
-                prev_state = state
-                candidate = rk4_step(torch, provider, state, t_curr, dt_eff)
-                state = torch.where(alive.unsqueeze(1), candidate, state)
-                t_curr += dt_eff
-                global_step += 1
-                if detect_impact:
-                    # True segment intersection over the step, then replace the
-                    # main state with the crossing state so impacted trajectories
-                    # freeze ON the surface (position+velocity), not at the
-                    # sub-surface step endpoint. Terrain-aware when a topography
-                    # payload is present; otherwise the constant impact sphere.
-                    if topo is not None:
-                        segment_hit, alpha = terrain_segment_intersection(
-                            prev_state[:, :3],
-                            state[:, :3],
-                            t_prev_s=t_curr - dt_eff,
-                            dt_s=dt_eff,
-                            frame=frame,
-                            topo=topo,
-                            impact_alt_m=impact_alt_m,
+            alive_idx = torch.nonzero(alive, as_tuple=False).squeeze(1)
+            m = int(alive_idx.numel())
+            full = m == n
+            if m == 0:
+                # Everyone impacted: nothing advances; time bookkeeping keeps
+                # the identical step-by-step arithmetic for consistency.
+                for _ in range(steps_per_snap):
+                    t_curr += dt_eff
+                    global_step += 1
+            else:
+                if full:
+                    sub_state = state
+                    sub_alive = alive
+                    sub_impact_step = impact_step
+                    sub_impact_time = impact_time
+                    sub_impact_pos = impact_pos
+                else:
+                    sub_state = state.index_select(0, alive_idx)
+                    sub_alive = torch.ones(m, dtype=torch.bool, device=device)
+                    sub_impact_step = impact_step.index_select(0, alive_idx)
+                    sub_impact_time = impact_time.index_select(0, alive_idx)
+                    sub_impact_pos = impact_pos.index_select(0, alive_idx)
+                for _ in range(steps_per_snap):
+                    active_steps_acc += sub_alive.sum()
+                    # Freeze impacted samples: only alive trajectories advance;
+                    # impacted ones hold their last state (no propagation
+                    # through the Moon).
+                    prev_state = sub_state
+                    candidate = rk4_step(torch, provider, sub_state, t_curr, dt_eff)
+                    sub_state = torch.where(sub_alive.unsqueeze(1), candidate, sub_state)
+                    t_curr += dt_eff
+                    global_step += 1
+                    if detect_impact:
+                        # True segment intersection over the step, then replace
+                        # the main state with the crossing state so impacted
+                        # trajectories freeze ON the surface (position+velocity),
+                        # not at the sub-surface step endpoint. Terrain-aware
+                        # when a topography payload is present; otherwise the
+                        # constant impact sphere.
+                        if topo is not None:
+                            segment_hit, alpha = terrain_segment_intersection(
+                                prev_state[:, :3],
+                                sub_state[:, :3],
+                                t_prev_s=t_curr - dt_eff,
+                                dt_s=dt_eff,
+                                frame=frame,
+                                topo=topo,
+                                impact_alt_m=impact_alt_m,
+                            )
+                        else:
+                            segment_hit, alpha = line_sphere_intersection(
+                                prev_state[:, :3],
+                                sub_state[:, :3],
+                                impact_r_m,
+                            )
+                        newly = sub_alive & segment_hit
+                        cross_state = prev_state + alpha.unsqueeze(1) * (sub_state - prev_state)
+                        t_cross = (float(global_step - 1) + alpha) * dt_eff
+                        sub_impact_step = torch.where(
+                            newly, torch.full_like(sub_impact_step, global_step), sub_impact_step
                         )
-                    else:
-                        segment_hit, alpha = line_sphere_intersection(
-                            prev_state[:, :3],
-                            state[:, :3],
-                            impact_r_m,
+                        sub_impact_time = torch.where(newly, t_cross, sub_impact_time)
+                        sub_impact_pos = torch.where(
+                            newly.unsqueeze(1), cross_state[:, :3], sub_impact_pos
                         )
-                    newly = alive & segment_hit
-                    cross_state = prev_state + alpha.unsqueeze(1) * (state - prev_state)
-                    t_cross = (float(global_step - 1) + alpha) * dt_eff
-                    impact_step = torch.where(
-                        newly, torch.full_like(impact_step, global_step), impact_step
-                    )
-                    impact_time = torch.where(newly, t_cross, impact_time)
-                    impact_pos = torch.where(
-                        newly.unsqueeze(1), cross_state[:, :3], impact_pos
-                    )
-                    state = torch.where(newly.unsqueeze(1), cross_state, state)
-                    alive = alive & ~newly
+                        sub_state = torch.where(newly.unsqueeze(1), cross_state, sub_state)
+                        sub_alive = sub_alive & ~newly
+                # Scatter the compacted subset back into the full-chunk tensors.
+                if full:
+                    state = sub_state
+                    alive = sub_alive
+                    impact_step = sub_impact_step
+                    impact_time = sub_impact_time
+                    impact_pos = sub_impact_pos
+                else:
+                    state = state.index_copy(0, alive_idx, sub_state)
+                    alive = alive.clone()
+                    alive[alive_idx] = sub_alive
+                    impact_step = impact_step.index_copy(0, alive_idx, sub_impact_step)
+                    impact_time = impact_time.index_copy(0, alive_idx, sub_impact_time)
+                    impact_pos = impact_pos.index_copy(0, alive_idx, sub_impact_pos)
             Y_out[snap_idx + 1, a:b, :] = state.detach().cpu().numpy().astype(np.float64)
             if callback is not None:
                 callback(
@@ -367,6 +552,8 @@ __all__ = [
     "BatchedAccelerationProvider",
     "BatchedFixedStepResult",
     "build_output_grid",
+    "query_device_memory",
+    "resolve_vram_aware_chunk_size",
     "rhs_batch",
     "rk4_step",
     "run_batched_fixed_step",
