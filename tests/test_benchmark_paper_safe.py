@@ -85,7 +85,7 @@ def test_apply_paper_safe_requires_surrogate_model_dir():
 torch = pytest.importorskip("torch")
 
 from lunaris.surrogate.st_lrps.evaluation.benchmark_pipeline import run_configured_benchmark
-from st_lrps_contract_test_utils import make_contract_run
+from st_lrps_contract_test_utils import make_contract_run, strip_paper_safe_fields
 
 
 def _write_config(
@@ -171,6 +171,21 @@ def test_paper_safe_overrides_allow_domain_extrapolation(tmp_path):
             model_dir=run["run_dir"],
             paper_safe=True,
             allow_domain_extrapolation=True,
+        )
+
+
+def test_paper_safe_rejects_metadata_incomplete_artifact(tmp_path):
+    # R26: paper-safe benchmarks refuse artifacts whose required metadata
+    # (loss_config / parameter_count / ...) is missing.
+    run = make_contract_run(tmp_path, degree_min=20, degree_max=60)
+    strip_paper_safe_fields(run, fields=("loss_config", "parameter_count"))
+    config = _write_config(tmp_path / "bench.json")
+    with pytest.raises(Exception, match="parameter_count|incomplete"):
+        run_configured_benchmark(
+            config,
+            out_dir=tmp_path / "out",
+            model_dir=run["run_dir"],
+            paper_safe=True,
         )
 
 

@@ -50,6 +50,10 @@ def _resolved_cfg(*, determinism=_DETERMINISM, with_split=True):
     dataset_meta = tiny_dataset_meta()
     if with_split:
         dataset_meta["split_manifest"] = dict(_SPLIT_MANIFEST)
+    else:
+        # tiny_dataset_meta now ships a split_manifest by default (paper-safe
+        # complete fixture); this test exercises the split-free legacy path.
+        dataset_meta.pop("split_manifest", None)
     return build_resolved_config(
         cfg, dataset_meta, model, tiny_scaler(), arch_sig, determinism=determinism
     )

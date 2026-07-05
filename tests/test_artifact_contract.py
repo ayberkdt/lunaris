@@ -3,7 +3,13 @@ from __future__ import annotations
 import pytest
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
-from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContract, ArtifactContractError
+from lunaris.surrogate.st_lrps.shared.contracts import (
+    PAPER_SAFE_REQUIRED_METADATA,
+    ArtifactContract,
+    ArtifactContractError,
+    paper_safe_metadata_report,
+    require_paper_safe_metadata,
+)
 
 
 def _scaler() -> dict:
@@ -116,6 +122,89 @@ def test_altitude_range_mismatch_warning_or_error():
     requested = _contract(altitude_min_km=50.0, altitude_max_km=600.0)
     assert artifact.compatibility_report(requested)["warnings"]
     assert artifact.compatibility_report(requested, strict_domain=True)["errors"]
+
+
+# ---------------------------------------------------------------------------
+# Paper-safe required metadata (R26)
+# ---------------------------------------------------------------------------
+
+
+def _paper_safe_sources() -> tuple[ArtifactContract, dict, dict]:
+    contract = _contract(
+        scaler_contract={**_scaler(), "provenance": {"fit_rows": 16, "alt_min_km": 100.0, "alt_max_km": 1000.0}},
+        dataset_contract={
+            **_dataset(),
+            "dataset_sha256": "0" * 64,
+            "source_gravity_model": "gggrx_1200a",
+            "source_gravity_file_sha256": "1" * 64,
+        },
+    )
+    config = {
+        "central_body": "moon",
+        "dtype": "float32",
+        "parameter_count": 12345,
+        "loss_config": {"w_u": 1.0, "w_a": 1.0, "laplacian_weight": 2e-9},
+        "domain_guard_policy": "warn",
+    }
+    provenance = {
+        "model_kind": "potential_autograd",
+        "git_commit": "deadbeef" * 5,
+        "created_at_utc": "2026-07-05T00:00:00Z",
+        "training_config_hash": "2" * 64,
+        "split_manifest_sha256": "3" * 64,
+    }
+    return contract, config, provenance
+
+
+def test_paper_safe_metadata_report_complete():
+    contract, config, provenance = _paper_safe_sources()
+    report = paper_safe_metadata_report(contract=contract, config=config, run_provenance=provenance)
+    assert report["complete"] is True
+    assert report["missing"] == []
+    # Every required logical field resolved to a value.
+    for name in PAPER_SAFE_REQUIRED_METADATA:
+        assert report["fields"][name] is not None, name
+
+
+def test_paper_safe_metadata_report_lists_missing_fields():
+    contract, config, provenance = _paper_safe_sources()
+    config.pop("loss_config")
+    config.pop("parameter_count")
+    provenance.pop("git_commit")
+    report = paper_safe_metadata_report(contract=contract, config=config, run_provenance=provenance)
+    assert report["complete"] is False
+    assert {"loss_config", "parameter_count", "git_commit"}.issubset(set(report["missing"]))
+
+
+def test_require_paper_safe_metadata_raises_naming_missing_fields():
+    contract, config, provenance = _paper_safe_sources()
+    provenance.pop("git_commit")
+    config.pop("domain_guard_policy")
+    with pytest.raises(ArtifactContractError, match="git_commit") as excinfo:
+        require_paper_safe_metadata(contract=contract, config=config, run_provenance=provenance)
+    assert "domain_guard_policy" in str(excinfo.value)
+    assert "paper_safe" in str(excinfo.value)
+
+
+def test_require_paper_safe_metadata_passes_and_returns_report():
+    contract, config, provenance = _paper_safe_sources()
+    report = require_paper_safe_metadata(contract=contract, config=config, run_provenance=provenance)
+    assert report["complete"] is True
+
+
+def test_paper_safe_metadata_missing_scaler_provenance_detected():
+    contract, config, provenance = _paper_safe_sources()
+    # _scaler() has no provenance block -> scaler_source unresolvable.
+    bare = _contract(
+        dataset_contract={
+            **_dataset(),
+            "dataset_sha256": "0" * 64,
+            "source_gravity_model": "gggrx_1200a",
+            "source_gravity_file_sha256": "1" * 64,
+        }
+    )
+    report = paper_safe_metadata_report(contract=bare, config=config, run_provenance=provenance)
+    assert "scaler_source" in report["missing"]
 
 
 def test_roundtrip_to_dict_from_dict():

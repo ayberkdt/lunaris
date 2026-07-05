@@ -78,6 +78,7 @@ def run_configured_benchmark(
         config,
         strict=not bool(allow_contract_mismatch),
         strict_domain=not bool(allow_domain_extrapolation),
+        paper_safe=bool(paper_safe),
     )
     config.setdefault("contract_compatibility", contract_report)
     resolved_hash = sha256_payload(config)
@@ -199,6 +200,7 @@ def _benchmark_contract_report(
     *,
     strict: bool,
     strict_domain: bool,
+    paper_safe: bool = False,
 ) -> dict[str, Any]:
     surrogate = config.get("surrogate", {}) if isinstance(config.get("surrogate"), Mapping) else {}
     if not surrogate.get("enabled"):
@@ -212,7 +214,10 @@ def _benchmark_contract_report(
         }
     requested = ArtifactContract.from_benchmark_config(config)
     try:
-        from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
+        from lunaris.surrogate.st_lrps.artifacts.manager import (
+            paper_safe_metadata_report_for_run,
+            read_artifact_contract,
+        )
 
         artifact = read_artifact_contract(
             model_dir,
@@ -220,6 +225,18 @@ def _benchmark_contract_report(
         )
         report = artifact.compatibility_report(requested, strict_domain=strict_domain)
         report["checked"] = True
+        if paper_safe:
+            # R26: a paper-safe benchmark refuses to start when the artifact's
+            # required metadata is incomplete. The completeness report lands in
+            # the manifest via contract_compatibility for provenance.
+            ps_report = paper_safe_metadata_report_for_run(model_dir)
+            report["paper_safe_metadata"] = ps_report
+            if not ps_report["complete"]:
+                raise ArtifactContractError(
+                    "paper_safe benchmark refused: surrogate artifact metadata is "
+                    f"incomplete (missing: {', '.join(ps_report['missing'])}). "
+                    "Regenerate the artifact with the current training pipeline."
+                )
         if strict and report["errors"]:
             raise ArtifactContractError("; ".join(report["errors"]))
         if not strict and report["errors"]:
