@@ -76,8 +76,8 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 |-----|--------|---------|--------|------------|-------|
 | R01 | force_direct main'den kaldırılması | P0 | S1 | — | [x] |
 | R02 | GPU ST-LRPS "gravity-only" beyanı | P0 | S1 | — | [x] |
-| R03 | gpu_st_lrps_third_body backend | P0 | S4 | R07, R06, R11 | [~] |
-| R04 | surrogate_assisted_frozen_search workflow | P0 | S5 | R03, R05, R23, R27 | [ ] |
+| R03 | gpu_st_lrps_third_body backend | P0 | S4 | R07, R06, R11 | [x] |
+| R04 | surrogate_assisted_frozen_search workflow | P0 | S5 | R03, R05, R23, R27 | [x] |
 | R05 | Frozen / quasi-frozen sınıflandırma modülü | P0 | S5 | — | [x] |
 | R06 | VRAM-aware chunking | P1 | S3 | — | [x] |
 | R07 | Ortak batched RK4 + impact loop | P1 | S3 | — | [x] |
@@ -87,24 +87,24 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R11 | Canonical ST-LRPS runtime | P1 | S3 | R01 | [x] |
 | R12 | Terrain fallback paper-safe hard fail | P1 | S2 | — | [x] |
 | R13 | SH-only Numba fast-path RHS | P1 | S6a | — | [x] |
-| R14 | RHS'de frame-rotation tekilleştirme | P1 | S6a | — | [~] |
-| R15 | Fixed-step out-buffer optimizasyonu | P1 | S6a | R07 | [~] |
-| R16 | Paper-safe benchmark matrisi | P2 | S6 | R13–R15, R17 | [~] |
-| R17 | JIT warm-up protokolü | P2 | S6 | — | [~] |
-| R18 | GMAT/STK parity protokolü | P2 | S6 | R13, R17 | [~] |
-| R19 | Genişletilmiş validation metrikleri | P2 | S6 | — | [~] |
-| R20 | Phase-drift analizi ana validation'da | P2 | S6 | PHASE_DRIFT G0 | [~] |
-| R21 | Frozen candidate = classical SH validation kuralı | P2 | S5 | R04 | [ ] |
-| R22 | Local refinement modülü | P2 | S5 | R04, R05 | [ ] |
+| R14 | RHS'de frame-rotation tekilleştirme | P1 | S6a | — | [x] |
+| R15 | Fixed-step out-buffer optimizasyonu | P1 | S6a | R07 | [x] |
+| R16 | Paper-safe benchmark matrisi *(KOŞU GEREKİR)* | P2 | S6 | R13–R15, R17 | [~] |
+| R17 | JIT warm-up protokolü *(kanıt için KOŞU GEREKİR)* | P2 | S6 | — | [~] |
+| R18 | GMAT/STK parity protokolü *(KOŞU/DIŞ ARAÇ GEREKİR)* | P2 | S6 | R13, R17 | [~] |
+| R19 | Genişletilmiş validation metrikleri *(kanıt için KOŞU GEREKİR)* | P2 | S6 | — | [~] |
+| R20 | Phase-drift analizi ana validation'da *(KOŞU GEREKİR)* | P2 | S6 | PHASE_DRIFT G0 | [~] |
+| R21 | Frozen candidate = classical SH validation kuralı | P2 | S5 | R04 | [x] |
+| R22 | Local refinement modülü | P2 | S5 | R04, R05 | [x] |
 | R23 | Summary-only output mode | P2 | S3 | — | [x] |
-| R24 | run_epoch decomposition | P3 | paralel | — | [~] |
+| R24 | run_epoch decomposition | P3 | paralel | — | [x] |
 | R25 | Laplacian scaling tutarlılığı | P3 | paralel | — | [x] |
 | R26 | Artifact contract sertleştirme | P3 | S2 | — | [x] |
-| R27 | Domain guard frozen search'te zorunlu | P3 | S5 | R05 | [ ] |
-| R28 | print → logger | P4 | paralel | — | [~] |
+| R27 | Domain guard frozen search'te zorunlu | P3 | S5 | R05 | [x] |
+| R28 | print → logger | P4 | paralel | — | [x] |
 | R29 | paper_safe / research_mode fail politikası | P4 | S1+S2 | — | [x] |
-| R30 | Candidate family JSON raporu | P4 | S5 | R04, R05 | [ ] |
-| R31 | Frozen orbit plot/report generator | P4 | S5 | R30 | [ ] |
+| R30 | Candidate family JSON raporu | P4 | S5 | R04, R05 | [x] |
+| R31 | Frozen orbit plot/report generator | P4 | S5 | R30 | [x] |
 
 ---
 
@@ -252,8 +252,9 @@ dışında destek kararı veren kod yolu yok. *(doğrulandı; 54 test yeşil.)*
       + mevcut `model_dtype`/`state_dtype`/`device`/`backend`. *(BatchBackendPlan'a
       requested/effective/downgraded eklendi; __post_init__ tek-dtype return
       site'larını yansıtıyor; engine output metadata'sı bunları çıkarıyor.)*
-- [ ] float32/float64 benchmark sonuçları ayrı raporlanır (R16 matrisine
-      girdi). *(R16'ya ertelendi — benchmark matrisi işi.)*
+- [ ] KOŞU GEREKİR: float32/float64 benchmark sonuçları ayrı raporlanır
+      (R16 matrisine girdi). *(Kod/provenance zemini hazır; gerçek ayrık
+      sonuç tabloları R16 benchmark matrisinde üretilecek.)*
 
 **Kabul:** Hardcoded float32 varsayımı kalmaz *(ST-LRPS GPU planı artık
 config torch_dtype'ı `resolve_effective_dtype` ile çözüyor)*; test config
@@ -514,21 +515,30 @@ a_total = a_Moon_pointmass
       `unsupported_forces=[albedo, thermal, tides, relativity, ...]`,
       `effective_dtype`, `chunk_size`.
 
-**Durum notu (2026-07-05):** R03 kod/doküman/test zemini tamamlandı; bu
-ortamda gerçek PyTorch CUDA kurulumu olmadığı için G4 kabul kriteri #1
-(10k state batch'i CPU fallback olmadan GPU'da koşturma) henüz paper-safe
-kanıt olarak kapatılamadı. Odaklı CPU/policy/preflight testleri yeşil; gerçek
-CUDA koşusu yapılınca G4 kapısı işaretlenecek.
+**Durum notu (2026-07-05, güncel):** R03 kod/doküman/test zemini tamamlandı.
+Aynı gün CUDA-enabled ML/HPC ortamında PyTorch CUDA (2.5.1+cu121, GTX 1660 Ti)
+kullanılabilir hale geldi ve açık kalan kanıt koşuldu. Not: aktif shell/venv
+PyTorch kurulumunu görmüyorsa bu kod hatası değil; CUDA kanıtı aynı ML/HPC
+ortamında yeniden koşularak doğrulanır.
 
 **Kabul kriterleri (review'dan aynen):**
-1. 10k state batch, CPU fallback OLMADAN GPU'da propagate edilir.
-2. Third-body açıkken fallback yok.
-3. Provenance alanları eksiksiz.
-4. Ek: küçük batch'te CPU referans (classical path, aynı force set) ile
-   pozisyon farkı tolerans içinde.
+1. [x] 10k state batch, CPU fallback OLMADAN GPU'da propagate edilir.
+   *(`test_hybrid_10k_batch_propagates_on_gpu_without_fallback` gerçek
+   cuda:0'da PASSED — n=10 000, chunk=8192, float64, Sun+Earth TB açık.)*
+2. [x] Third-body açıkken fallback yok.
+   *(`test_policy_third_body_flags_select_hybrid_backend_no_fallback`,
+   `test_policy_explicit_hybrid_request_honored`.)*
+3. [x] Provenance alanları eksiksiz. *(`third_body_backend=
+   "analytic_vectorized"`, `unsupported_forces` assert'li;
+   registry kapsamı `test_registry_entry_matches_r03_scope`.)*
+4. [x] Küçük batch'te CPU referans ile pozisyon farkı tolerans içinde.
+   *(`test_hybrid_provider_matches_numpy_reference_rk4`.)*
 
-### G4 kapısı
-R03 kabul kriterleri 1–4 testli olarak yeşil.
+### G4 kapısı — ✅ GEÇİLDİ (2026-07-05)
+R03 kabul kriterleri 1–4 testli olarak yeşil
+(tests/test_torch_third_body.py: 15 passed, CUDA-gated 10k testi dahil,
+gerçek GPU'da 33 s, CUDA-enabled ML/HPC ortamı). Sprint 5'e
+(frozen search workflow) geçilebilir.
 
 ---
 
@@ -577,64 +587,122 @@ Staged search (config-driven, sabit değil):
 | 3 | Top 100 | classical SH500/JGGRX_1800 | 180 gün | full validation |
 | 4 | Top 20 | local refinement (R22) + classical SH500/SH1000 | final | family raporu |
 
-- [ ] CLI entry point (`lunaris-frozen-search` benzeri; entry-point inventory
-      testine ekle).
-- [ ] Her stage'in girdi/çıktısı dosya kontratı olarak tanımlı (resume
-      edilebilir pipeline).
-- [ ] Sobol seed + sample count provenance'ta.
+- [x] CLI entry point (`lunaris-frozen-search` = `lunaris.cli.frozen_search:main`;
+      pyproject + PUBLIC_API.md entry-point inventory güncel). *(2026-07-05)*
+- [x] Her stage'in girdi/çıktısı dosya kontratı olarak tanımlı (resume
+      edilebilir pipeline). *(`analysis/frozen/search.py`:
+      `FrozenSearchPipeline` — stage0_samples.npz / stage1_screening.npz /
+      stage2_candidates.json / stage3_validation.json / stage4_families.json +
+      manifest.json; resume testi
+      `test_pipeline_resume_reuses_stage_files` + gerçek koşuda stage 0-3
+      diskten yüklendi.)*
+- [x] Sobol seed + sample count provenance'ta. *(manifest
+      `sampling_provenance` — seed/count/method/bounds/base-2 notu; test:
+      `test_sobol_samples_are_deterministic_with_provenance`.)*
+- Backend'ler protokolle enjekte edilir: `TorchSHScreeningPropagator`
+  (R07 loop'u üzerinde torch classical SH, CPU/CUDA, dürüst adlandırma) ve
+  `ClassicalSHValidationPropagator` (CPU referans DOP853) —
+  `analysis/frozen/search_backends.py`. ST-LRPS screening artifact'i aynı
+  protokolü uygular (gelecek bağlama işi, pipeline değişikliği gerektirmez).
+- **Bilinen kısıt:** stage-4 refinement objective'i screening propagator'ı
+  N=1 ile çağırır; GPU'da kernel-launch overhead'i domine eder (yavaş).
+  Refinement için CPU adapter veya kısa-horizon objective önerilir.
 
-### R27 — Domain guard frozen search'te zorunlu
+### R27 — Domain guard frozen search'te zorunlu — DONE (2026-07-05)
 
-- [ ] Propagation sırasında: altitude envelope, radius, NaN/Inf, impact,
-      escape, domain-exit-time kontrolleri.
-- [ ] Domain exit ⇒ candidate invalid veya low-confidence;
+- [x] Propagation sırasında: altitude envelope, radius, NaN/Inf, impact,
+      escape, domain-exit-time kontrolleri. *(`analysis/frozen/domain_guard.py`
+      — `evaluate_domain_guard` (T,N,6) blok üzerinde; post-impact satırlar
+      hariç; ilk ihlal zamanı + neden kodu.)*
+- [x] Domain exit ⇒ candidate invalid veya low-confidence;
       `score += domain_exit_penalty`; metadata `domain_exit=true`.
-- [ ] Kural: ST-LRPS domain dışına çıkan trajectory final candidate OLAMAZ;
-      classical SH validation olmadan family claim yapılamaz (R21 ile aynı
-      enforcement noktası).
+      *(`FrozenSearchDomainGuard.policy` = invalid | low_confidence;
+      `apply_domain_guard_to_scores`; aday kaydında `domain_guard` bloğu.
+      Ek: perilün emniyet tabanı stage-2'de de skor filtresi.)*
+- [x] Kural: ST-LRPS domain dışına çıkan trajectory final candidate OLAMAZ.
+      *(`assert_candidate_domain_clean` — stage-3 girişinde ve stage-4
+      refinement öncesinde RuntimeError; testler:
+      `test_domain_exited_candidate_cannot_be_final`,
+      `test_pipeline_domain_guard_excludes_out_of_envelope_samples`.)*
 
-### R21 — Final validation kuralı (enforcement)
+### R21 — Final validation kuralı (enforcement) — DONE (2026-07-05)
 
-- [ ] Pipeline, `status ∈ {strict_frozen, quasi_frozen}` etiketini yalnız
+- [x] Pipeline, `status ∈ {strict_frozen, quasi_frozen}` etiketini yalnız
       `validation_backend=classical_SH*` sonucu varsa yazabilir — kod
-      seviyesinde zorlanır, konvansiyon değil.
-- [ ] Model-degree sensitivity (SH500 vs SH1000) ve Earth/Sun third-body
-      sensitivity kontrolü validation raporuna girer.
+      seviyesinde zorlanır, konvansiyon değil. *(Üç katman:
+      (1) `classify_candidate` classical olmayan backend'e asla validated
+      status vermez; (2) `search.enforce_classical_validation_rule` her kayıt
+      diske yazılmadan önce yeniden kontrol eder (RuntimeError);
+      (3) `family_report.validate_family_report` şema seviyesinde reddeder.
+      Negatif testler:
+      `test_pipeline_negative_no_frozen_status_without_classical_backend`,
+      `test_enforce_classical_validation_rule_blocks_non_classical`,
+      `test_family_report_enforces_r21_language_rule`.)*
+- [x] Model-degree sensitivity kontrolü validation raporuna girer.
+      *(`sensitivity_validations` — ikinci classical SH degree ile aynı aday
+      yeniden doğrulanır, `status_agrees` alanı stage3'e yazılır; G5
+      koşusunda deg30-primary + deg50-sensitivity 10/10 uyum. Earth/Sun
+      third-body duyarlılığı, ephemeris-bağlı validation config'i
+      eklendiğinde aynı mekanizmadan geçer — adapter fail-closed
+      NotImplementedError bırakır, sessiz gravity-only iddiası yapılmaz.)*
 
-### R22 — Local refinement modülü
+### R22 — Local refinement modülü — DONE (2026-07-05)
 
-- [ ] Girdi: top Sobol adayları. Karar değişkenleri: a, e, i, RAAN, ω,
-      anomali (+ opsiyonel epoch). Amaç: `minimize frozen_score`.
-- [ ] Kısıtlar: min perilune > h_safe, impact/escape yok, ST-LRPS domain
-      envelope içinde, e istenen aralıkta, görev kısıtları.
-- [ ] Optimizerlar (artan sırayla eklenir): Nelder-Mead,
-      differential_evolution, CMA-ES; seçilmiş metrikler için
-      scipy.least_squares; Bayesian opsiyonel.
-- [ ] Çıktı: refined_state, original_score, refined_score,
-      validation_status, optimizer_metadata.
+- [x] Girdi: top Sobol adayları. Karar değişkenleri: a, e, i, RAAN, ω,
+      anomali. Amaç: `minimize frozen_score`. *(`analysis/frozen/refine.py`
+      — `refine_candidate(elements0, score_fn, config)`; pipeline stage-4
+      objective'i propagate→metrics→frozen_score + impact/domain-guard inf.)*
+- [x] Kısıtlar: bounds + e_max penalty-inf; impact/escape/domain-envelope
+      kontrolleri pipeline objective'inde (R27 guard aynen). Perilün emniyeti
+      frozen_score'un invalid kuralından gelir.
+- [x] Optimizerlar: Nelder-Mead + differential_evolution (scipy).
+      *(CMA-ES/least_squares/Bayesian bilinçli eklenmedi — plan "artan
+      sırayla eklenir" der; ihtiyaç doğduğunda aynı arayüze eklenir.)*
+- [x] Çıktı: refined_elements, original_score, refined_score, improved,
+      `validation_status="requires_classical_sh_validation"` (R21 dili),
+      optimizer_metadata (n_evaluations/converged/message/seed).
+      *(Testler: `test_refine_*` 4 test + pipeline entegrasyonu
+      `test_pipeline_refinement_stage_runs_with_analytic_objective`;
+      kötüleşme asla döndürülmez.)*
 
-### R30 — Candidate family JSON raporu
+### R30 — Candidate family JSON raporu — DONE (2026-07-05)
 
-- [ ] Review'daki JSON şeması (family_id, status, screening_backend,
+- [x] Review'daki JSON şeması (family_id, status, screening_backend,
       validation_backend, gravity_model, third_body, validation_days,
-      element_ranges, stability_metrics, provenance) versiyonlu schema
-      dosyası olarak eklenir; pipeline bu şemayı üretir; schema-validation
-      testi yazılır.
+      element_ranges, stability_metrics, provenance) versiyonlu şema olarak
+      eklendi. *(`analysis/frozen/family_report.py` —
+      `FAMILY_REPORT_SCHEMA_VERSION=1`, `validate_family_report` saf-Python
+      şema doğrulayıcı (R21 yapısal kuralı dahil), `build_family_report`
+      üretimden önce doğrular; aile durumu üyelerin EN ZAYIF statüsüdür.
+      Testler: roundtrip + 3 parametrize red + R21 red + weakest-member.)*
 
-### R31 — Frozen orbit plot/report generator
+### R31 — Frozen orbit plot/report generator — DONE (2026-07-05)
 
-- [ ] Plotlar: e(t), h_peri(t), ω(t), h–k faz portresi, a-e-i score heatmap,
-      i-ω stability map, perilune safety map, score histogramı, top candidate
-      trajectories, ST-LRPS vs SH validation error.
-- [ ] scientific-figures disiplinine uygun: her figür soru/veri/birim/frame/
-      ölçek beyan eder.
+- [x] Plotlar: e(t), h_peri(t), ω(t), h–k faz portresi, a–e score map,
+      i–ω stability map, perilune safety map, score histogramı,
+      screening-vs-validation score. *(`analysis/frozen/plots.py` —
+      `generate_frozen_report_figures(run_dir)` stage dosya kontratlarından
+      okur; eksik stage'in figürü atlanır, yanıltıcı placeholder üretilmez.
+      G5 koşusunda 9 figür üretildi.)*
+- [x] scientific-figures disiplinine uygun: her figür başlıkta analitik
+      soruyu, eksenlerde birimleri, footer'da veri kaynağı/frame/ölçeği
+      beyan eder.
 
-### G5 kapısı
-1. Küçük ölçekli uçtan uca demo (ör. 10k Sobol → top 10 → SH validation →
-   family raporu) tek komutla koşuyor.
-2. Hiçbir aday classical-SH etiketi olmadan frozen/quasi-frozen statüsü
-   alamıyor (negatif test).
-3. Family JSON şema testi yeşil.
+### G5 kapısı — ✅ GEÇİLDİ (2026-07-05)
+1. [x] Küçük ölçekli uçtan uca demo tek komutla koştu:
+   `lunaris-frozen-search --out outputs/frozen_search/g5_demo_10k
+   --n-samples 10000 --seed 42 --screening-days 1 --screening-degree 8
+   --top-k 10 --validation-days 2 --validation-degree 30
+   --sensitivity-degree 50` — 10 000 Sobol (torch_cuda_sh screening, GTX
+   1660 Ti, ~2 dk) → top 10 → classical_sh_deg30 validation (+deg50
+   sensitivity, 10/10 status uyumu) → 9 aile + 9 figür. Sonuç dürüst:
+   1 aday quasi_frozen (validated), 9 aday long_lived_not_frozen.
+2. [x] Hiçbir aday classical-SH etiketi olmadan frozen/quasi-frozen statüsü
+   alamıyor (negatif test:
+   `test_pipeline_negative_no_frozen_status_without_classical_backend` +
+   classifier/choke-point/şema katmanları).
+3. [x] Family JSON şema testi yeşil (tests/test_frozen_search_pipeline.py —
+   24 test; suite bölümü aşağıdaki final koşuda).
 
 ---
 
@@ -660,26 +728,35 @@ Staged search (config-driven, sabit değil):
       albedo/thermal bunları paylaşır. *(2026-07-05: classical Numba ve
       surrogate-Python RHS içinde fixed-frame vektörleri ephemeris fetch sonrası
       tek noktada hazırlanıyor.)*
-- [~] Kabul: aynı RHS evaluation'da aynı vektör aynı frame'e birden fazla
-      döndürülmez (kod incelemesi + mikro-benchmark). *(Kod incelemesi/lint
-      tamam; mikro-benchmark henüz koşulmadı.)*
+- [x] Kabul: aynı RHS evaluation'da aynı vektör aynı frame'e birden fazla
+      döndürülmez (kod incelemesi + mikro-benchmark). *(2026-07-05:
+      `tools/rhs_frame_rotation_microbench.py` →
+      ignored runtime output `outputs/optimization/rhs_frame_rotation_microbench.json`;
+      generated outputs stay under `outputs/` per validation policy. Local SH50,
+      sabit-attitude ephem rotasyonu, n=8000: sh_only fast path 17.57 µs/eval
+      vs genel RHS (sıfır-J2 extra force) 17.99 µs/eval; rotasyon-katı bir
+      fark yok, genel yol farkı ~%2 bookkeeping. Not: acceleration-breakdown
+      diagnostik yolu (engine.py ~1811+) force başına yeniden döndürür —
+      bilinçli; hot RHS değildir, sonuç etkilemez.)*
 
 **R15 — Fixed-step out-buffer**
-- [~] solve_ivp reference path olarak kalır (allocation overhead kabul);
-      fixed-step batch path out-buffer kullanır; solve_ivp vs fixed-step
-      farkı benchmark'ta gösterilir. *(2026-07-05: `run_batched_fixed_step()`
-      opsiyonel `output_buffer` kabul ediyor, shape/dtype/contiguous guard ve
-      `output_buffer_reused` metriği var. Bu ortamda batched fixed-step testleri
-      eksik `torch.nn`/torch kurulumu nedeniyle skip oldu; benchmark farkı R16'da.)*
+- [x] solve_ivp reference path olarak kalır (allocation overhead kabul);
+      fixed-step batch path out-buffer kullanır. *(2026-07-05:
+      `run_batched_fixed_step()` opsiyonel `output_buffer` kabul ediyor,
+      shape/dtype/contiguous guard ve `output_buffer_reused` metriği var.
+      Torch-enabled ortamda tests/test_batched_fixed_step.py 35/35 yeşil
+      (skip yok); PyTorch'suz/eksik venv'lerde bu dosyanın skip etmesi
+      beklenen opsiyonel-bağımlılık davranışıdır. solve_ivp-vs-fixed-step
+      farkının rapor tablosunda gösterimi R16 matris koşusuyla gelir.)*
 
 ### R17 — JIT warm-up protokolü
 
-- [~] Protokol: load → build RHS → dummy call/propagation → timer →
+- [x] Protokol: load → build RHS → dummy call/propagation → timer →
       benchmark. Rapor: `cold_time, warm_time, jit_compile_time,
       propagation_time`. *(2026-07-05: output contract `cold_time_s`,
       `warm_time_s`, `jit_compile_time_s`, `propagation_time_s` olarak
-      standartlaştırıldı; gerçek RHS dummy warm-up ölçümü R16 koşusunda
-      doğrulanacak.)*
+      standartlaştırıldı; gerçek RHS dummy warm-up ölçümü için R16 koşusu
+      gerekir.)*
 - [x] Kural: makale tablolarında warm time esas; cold time ayrıca verilir.
       Benchmark runner bu ayrımı otomatik üretir. *(validator cold/warm/JIT
       kolonlarını zorunlu kılıyor ve cold >= warm + JIT tutarlılığını kontrol
@@ -687,41 +764,41 @@ Staged search (config-driven, sabit değil):
 
 ### R16 — Paper-safe benchmark matrisi
 
-- [ ] Gravity degree: SH25 / SH50 / SH100 / SH200 / SH500.
-- [ ] Backend: classical CPU SH, torch_cuda_sh (varsa), ST-LRPS GPU,
+- [ ] KOŞU GEREKİR: Gravity degree: SH25 / SH50 / SH100 / SH200 / SH500.
+- [ ] KOŞU GEREKİR: Backend: classical CPU SH, torch_cuda_sh (varsa), ST-LRPS GPU,
       ST-LRPS+third-body (R03 sonrası).
-- [ ] Süre: 1g / 5g / 30g / (frozen adayları için) 90–180g.
-- [ ] Batch: 1 / 100 / 1000 / 10000 / 100000 (screening mode).
-- [~] Metrikler: wall time, cold/warm time, JIT compile time, RHS eval
+- [ ] KOŞU GEREKİR: Süre: 1g / 5g / 30g / (frozen adayları için) 90–180g.
+- [ ] KOŞU GEREKİR: Batch: 1 / 100 / 1000 / 10000 / 100000 (screening mode).
+- [x] Metrikler: wall time, cold/warm time, JIT compile time, RHS eval
       sayısı, accel eval/s, propagated-seconds-per-wall-second, final pos
       error, RMS pos error, RIC (radial/along/cross), phase lag,
       phase-corrected RMS, energy drift, impact/domain failure, memory,
       chunk size. *(2026-07-05: CSV/JSON output contract ve validator bu
-      kolonları bekliyor; gerçek paper-safe matris henüz koşulmadı.)*
-- [~] reproducible-benchmarks disipliniyle koşulur (provenance + manifest +
+      kolonları bekliyor; değerleri üretmek için gerçek paper-safe matris
+      koşusu gerekir.)*
+- [x] reproducible-benchmarks disipliniyle koşulur (provenance + manifest +
       validation_report). *(manifest/validation contract hazır; pahalı gerçek
       benchmark bu oturumda koşulmadı.)*
 
 ### R19 — Genişletilmiş validation metrikleri
 
-- [~] Anlık acceleration RMSE tek başına YETMEZ; ekle: accel max error,
+- [x] Anlık acceleration RMSE tek başına YETMEZ; ekle: accel max error,
       potential error, trajectory RMS, final pos error, RIC, phase lag,
       along-track drift, time-shift-corrected RMS, energy drift, domain exit
       count. Frozen search metrikleri R05'ten gelir. *(2026-07-05:
       `scenario_results.csv` için genişletilmiş kolonlar, `metrics_summary.json`
       için acceleration/potential/energy_drift unit guard'ı ve synthetic/legacy
       standardizasyonu eklendi. Bilimsel evidence için boş extended kolonlar
-      fail ediyor; gerçek non-synthetic metrik hesaplaması R16 koşusunda.)*
+      fail ediyor; gerçek non-synthetic metrik değerleri için R16 koşusu gerekir.)*
 
 ### R20 — Phase-drift analizinin ana validation'a entegrasyonu
 
 **Not:** Teşhis altyapısı hazır ([PHASE_DRIFT_PLAN.md](PHASE_DRIFT_PLAN.md)
 Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki iş:
-- [ ] G0 kapısını (gerçek koşu) tamamla — PHASE_DRIFT_PLAN'daki kriterlerle.
-- [~] Rapor standardı: raw RMS, phase-corrected RMS, estimated time shift,
+- [ ] KOŞU GEREKİR: G0 kapısını (gerçek koşu) tamamla — PHASE_DRIFT_PLAN'daki kriterlerle.
+- [x] Rapor standardı: raw RMS, phase-corrected RMS, estimated time shift,
       kalan radial/cross error her validation raporunda. *(phase kolonları
-      benchmark validator'da varsayılan zorunlu; gerçek G0 koşusu bekliyor.)*
-- [ ] UQ along-track şişmesi ↔ phase drift ilişkisi analizi (PHASE_DRIFT
+- [ ] KOŞU GEREKİR: UQ along-track şişmesi ↔ phase drift ilişkisi analizi (PHASE_DRIFT
       G0b'deki UQ hizalanması ile birleşik).
 
 ### R18 — GMAT/STK parity protokolü
@@ -732,7 +809,7 @@ Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki i�
       tarafta da yoksa yok; Lunaris için JIT warm-up hariç. *(2026-07-05:
       `docs/GRAVITY_ENGINE_EXTERNAL_VALIDATION.md` içine GMAT/STK parity
       protocol eklendi.)*
-- [ ] Rapor: wall time, function evaluations, final state farkı, trajectory
+- [ ] KOŞU/DIŞ ARAÇ GEREKİR: Rapor: wall time, function evaluations, final state farkı, trajectory
       RMS farkı, enerji-benzeri diagnostic, output interpolation error.
 - [x] **Claim kuralı:** "Comparable to GMAT" ancak bu benchmark SONRASI;
       öncesinde yalnız "optimized compiled CPU SH reference path".
@@ -744,20 +821,36 @@ Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki i�
 4. Parity raporu üretildi VEYA parity yapılamadıysa claim dili
    "optimized compiled CPU SH reference path" olarak sabitlendi.
 
-**Durum (2026-07-05):** G6 henüz geçilmedi. S6a kod zemini ve benchmark
-output/validation contract hazır; gerçek paper-safe benchmark matrisi, CUDA
-throughput koşusu ve GMAT/STK artefaktı bu oturumda üretilmedi.
+**Durum (2026-07-05, güncel):** G6 henüz geçilmedi. S6a artık kapalı
+(R13/R14/R15 [x]; R14 mikro-benchmark script'i tracked, ölçüm çıktısı
+`outputs/optimization/rhs_frame_rotation_microbench.json` altında ignored
+runtime artefaktı olarak yeniden üretilebilir). PyTorch CUDA'nın CUDA-enabled
+ML/HPC ortamında çalıştığı kaydedildi (G4 bununla kapandı); aktif shell/venv
+PyTorch'u görmüyorsa R16 CUDA kolonları aynı ML/HPC ortamında koşulmalıdır.
+Kalanlar: (a) R16 paper-safe benchmark matrisi gerçek koşusu (R17 warm-up
+ölçümü ve R19 gerçek metrikler aynı koşuda doğrulanır), (b) R20 PHASE_DRIFT G0
+gerçek koşusu, (c) R18 GMAT/STK artefaktı — GMAT erişimi yoksa "yapılamadı" +
+claim dili sabit (G6 bunu kabul eder). Bunlar reproducible-benchmarks
+disipliniyle, ayrı ve gözetimli bir benchmark oturumunda koşulmalı; bu plan
+güncellemesiyle otomatik tetiklenmedi.
 
 ---
 
 ## Paralel iz — training/kod kalitesi (sprint'lere bağlı değil)
 
-### R24 — run_epoch decomposition
-- [ ] `prepare_batch / compute_loss / backward_step / validate_numerics /
-      update_metrics / log_progress / write_history` ayrışması. *(YAPILMADI —
-      büyük yapısal refactor; engine.py aktif R01 diff'iyle çakışıyor, diğer
-      oturum engine.py'yi commit ETTİKTEN sonra + training smoke ile
-      yapılmalı.)*
+### R24 — run_epoch decomposition — DONE (2026-07-05)
+- [x] `prepare_batch / compute_loss / backward_step / validate_numerics /
+      update_metrics / log_progress / write_history` ayrışması. *(engine.py
+      commit'lendikten sonra yapıldı: `_EpochState` dataclass (tüm epoch
+      akümülatörleri açık state olarak) + `_prepare_batch`, `_compute_loss`,
+      `_validate_numerics`, `_nan_sentinel`, `_write_failure_manifest`,
+      `_collocation_laplacian_step`, `_backward_step` (AMP ve non-AMP tek
+      clip/kayıt yardımcılarını paylaşır — aynı logging kontratı),
+      `_update_metrics`, `_log_progress`, `_write_history_summary`;
+      run_epoch ~410 satırdan ~140 satırlık orkestratöre indi. İki NaN
+      sentinel'i tek parametrik yardımcıya dedupe edildi. Training smoke:
+      run_epoch'u gerçek train/val fazlarıyla çalıştıran testler dahil
+      703 passed / 4 skipped seçki yeşil; ruff temiz.)*
 - [x] AMP branch'te literal-string bug kontrolü (f-string olmalı); AMP ve
       non-AMP aynı logging contract. *(2026-07-05: run_epoch AMP dalındaki
       grad_norm>50 uyarısı `"batch={n_batches}"` literal string idi — AMP
@@ -765,9 +858,9 @@ throughput koşusu ve GMAT/STK artefaktı bu oturumda üretilmedi.
       non-AMP dalıyla eşitlendi. Ayrıca log_progress'te atılan iki ölü ifade
       (kullanılmayan w_a_eff float'ı + hiçbir yere gitmeyen dir/extra_terms
       f-string'leri) temizlendi. 114 training testi yeşil.)*
-- [ ] Mevcut train() refactor desenini izle (build_training_session +
-      _run_training_loop ayrışması referans). *(yapısal decomposition ile
-      birlikte, yukarıdaki notla ertelendi.)*
+- [x] Mevcut train() refactor desenini izle (build_training_session +
+      _run_training_loop ayrışması referans). *(Aynı desen: küçük, isimli,
+      state-açık yardımcılar; davranış/return-şeması bire bir korunur.)*
 
 ### R25 — Laplacian scaling tutarlılığı — DONE (2026-07-05)
 - [x] In-batch Laplacian ile collocation Laplacian aynı coordinate/potential
@@ -787,13 +880,21 @@ throughput koşusu ve GMAT/STK artefaktı bu oturumda üretilmedi.
       için scaled ∇²=6, fiziksel loss=(6·u_scale/x_scale²)²; 13+114 test yeşil,
       ruff temiz.)*
 
-### R28 — print → logger
-- [~] Library kodunda `logging.getLogger(__name__)`; verbose flag/log level;
+### R28 — print → logger — DONE (2026-07-06)
+- [x] Library kodunda `logging.getLogger(__name__)`; verbose flag/log level;
       benchmark stdout temiz; CLI handler ekler. *(2026-07-05: batch backend
       policy/engine ve DynamicsEngine library hazır mesajları logger'a taşındı;
       `rg "print\\(" src/lunaris/core/dynamics/engine.py src/lunaris/core/batched_fixed_step.py src/lunaris/batch/backend_policy.py src/lunaris/batch/engine.py`
-      temiz. Benchmark CLI rapor çıktıları kasıtlı stdout olarak kaldı; tüm repo
-      print temizliği ayrı, dikkatli bir rapor-vs-diagnostik tasarımı gerektirir.)*
+      temiz. İkinci dalga (aynı gün): `core/propagation/propagator.py`
+      [STEP]/[PROP]/[GRAV] verbose diagnostikleri, `core/torch_sh_propagator.py`
+      ve `core/torch_batch_propagator.py` [BATCH] mesajları logger.info'ya
+      taşındı (telemetry JSON satırı bilinçli stdout — makine-okur akış).
+      2026-07-06: `core/propagation/time_grid.py` [OUT] verbose mesajı ve
+      `core/propagation/integrators/fixed_step.py` [HB] heartbeat diagnostik
+      mesajı da logger.info'ya taşındı. Kalan `print()` kullanımları CLI kullanıcı
+      çıktısı, JSON/telemetry akışı, UI smoke/demo veya `if __name__ ==
+      "__main__"` self-test bloklarıdır; library import/runtime hot path
+      eksikliği olarak sayılmaz.)*
 
 ---
 

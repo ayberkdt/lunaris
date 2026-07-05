@@ -20,6 +20,7 @@ from lunaris.ui.core.solver_policy import DEFAULT_ADAPTIVE_RTOL, DEFAULT_MAX_STE
 from lunaris.ui.core.ui_commons import THEME
 from lunaris.ui.pages.batch_propagation_page import BatchPropagationPage, UIBatchPropagationConfig
 from lunaris.ui.pages.data_files_page import DataFilesState, DataPage
+from lunaris.ui.pages.frozen_search_page import FrozenSearchPage
 from lunaris.ui.pages.mission_propagation_page import MissionPropagationPage, UISolverConfig
 from lunaris.ui.pages.result_exports_page import OutputPageState, ResultsExportPage
 
@@ -33,6 +34,42 @@ def _app() -> QtWidgets.QApplication:
 
 def _create_card(title: str) -> QtWidgets.QGroupBox:
     return QtWidgets.QGroupBox(title)
+
+
+def test_frozen_search_page_builds_cli_command_and_validates(tmp_path: Path) -> None:
+    app = _app()
+    page = FrozenSearchPage()
+    page.show()
+    app.processEvents()
+
+    page.ent_out_dir.setText(str(tmp_path / "frozen_run"))
+    page.spin_n_samples.setValue(64)
+    page.spin_top_k.setValue(8)
+    page.spin_validation_degree.setValue(30)
+    page.spin_sensitivity_degree.setValue(50)
+    page.chk_figures.setChecked(False)
+    page.chk_resume.setChecked(False)
+    app.processEvents()
+
+    cmd = page.build_command()
+    assert cmd[1:3] == ["-m", "lunaris.cli.frozen_search"]
+    assert cmd[cmd.index("--out") + 1].endswith("frozen_run")
+    assert cmd[cmd.index("--n-samples") + 1] == "64"
+    assert cmd[cmd.index("--top-k") + 1] == "8"
+    assert cmd[cmd.index("--validation-degree") + 1] == "30"
+    assert cmd[cmd.index("--sensitivity-degree") + 1] == "50"
+    assert "--no-figures" in cmd
+    assert "--no-resume" in cmd
+    assert page.validate_state()[0] is True
+
+    page.spin_top_k.setValue(128)
+    app.processEvents()
+    ok, errors = page.validate_state()
+    assert ok is False
+    assert any("Top candidates" in err for err in errors)
+    assert page.btn_run.isEnabled() is False
+
+    page.close()
 
 
 def test_data_page_reuses_ldem_root_for_albedo_when_requested(tmp_path: Path) -> None:

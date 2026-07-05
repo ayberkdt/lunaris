@@ -42,11 +42,12 @@ Each RK4 step launches 4 batched neural forward passes + 4 autograd calls on
 the CUDA device.  No per-step CPU round-trips occur once the run is started.
 Snapshots are copied to host only at the ``output_dt_s`` cadence.
 
-Timing metrics are printed to stdout at run start and end.
+Timing metrics are emitted through this module's logger at run start and end.
 """
 
 from __future__ import annotations
 
+import logging
 import time
 import warnings
 from collections.abc import Callable
@@ -56,6 +57,8 @@ import numpy as np
 
 from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
+
+logger = logging.getLogger(__name__)
 from lunaris.core.batched_fixed_step import (
     query_device_memory,
     resolve_vram_aware_chunk_size,
@@ -444,16 +447,12 @@ class TorchBatchPropagator:
             or getattr(model, "config", {}).get("runtime_model_kind", "potential_autograd")
         )
         dev_name = torch.cuda.get_device_name(device.index or 0)
-        print(
-            f"[BATCH][GPU-STLRPS] N={N}  device={device} ({dev_name})",
-            flush=True,
-        )
-        print(
+        logger.info(f"[BATCH][GPU-STLRPS] N={N}  device={device} ({dev_name})")
+        logger.info(
             f"[BATCH][GPU-STLRPS] degree_min={deg_min}  degree_max={deg_max}  "
             f"runtime_model_kind={runtime_kind}  "
             f"dt={dt_eff:.1f}s  snaps={n_snaps}  steps/snap={steps_per_snap}  "
-            f"dtype={str(self._dtype).replace('torch.', '')}",
-            flush=True,
+            f"dtype={str(self._dtype).replace('torch.', '')}"
         )
 
         # Time one batched acceleration call for the log
@@ -463,10 +462,9 @@ class TorchBatchPropagator:
         _ = rhs_batch(torch, provider, 0.0, state)
         torch.cuda.synchronize(device)
         accel_ms = (time.perf_counter() - _t0) * 1_000.0
-        print(
+        logger.info(
             f"[BATCH][GPU-STLRPS] one batched accel call: {accel_ms:.2f} ms  "
-            f"state=[{N}, 6]",
-            flush=True,
+            f"state=[{N}, 6]"
         )
 
         # ------------------------------------------------------------------
@@ -514,10 +512,9 @@ class TorchBatchPropagator:
             "oom_recoveries": result.metrics["oom_recoveries"],
         }
         self._last_impact_positions_inertial = result.impact_positions_inertial
-        print(
+        logger.info(
             f"[BATCH][GPU-STLRPS] propagation complete: "
-            f"{t_prop:.2f}s  {traj_steps_per_s:,.0f} trajectory-steps/s",
-            flush=True,
+            f"{t_prop:.2f}s  {traj_steps_per_s:,.0f} trajectory-steps/s"
         )
 
         return result.t_out, result.Y_out, result.impact_flags, result.t_impact
