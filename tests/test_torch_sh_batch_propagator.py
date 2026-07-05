@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
+pytestmark = pytest.mark.requires_torch
 
 from lunaris.common.type_defs import PerturbationFlags  # noqa: E402
 from lunaris.core.torch_sh_propagator import (  # noqa: E402
@@ -118,9 +119,11 @@ def _batch_cfg(degree: int, *, chunk_size: int = 0, dtype: str = "float64"):
     )
 
 
-def _make_propagator(grav: GravityModel, degree: int, *, device="cpu", dtype=torch.float64, chunk_size=0):
+def _make_propagator(grav: GravityModel, degree: int, *, device="cpu", dtype=None, chunk_size=0):
     from types import SimpleNamespace
 
+    if dtype is None:
+        dtype = torch.float64
     dyn = SimpleNamespace(grav=grav, ephem=None)
     flags = PerturbationFlags(enable_sh=True)
     return TorchSHBatchPropagator(
@@ -294,7 +297,10 @@ def test_provenance_records_requested_and_actual_degree() -> None:
 # CUDA-vs-CPU consistency (gated; only runs with a real CUDA device)
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device available")
+_cuda_available = bool(hasattr(torch, "cuda") and torch.cuda.is_available())
+
+
+@pytest.mark.skipif(not _cuda_available, reason="no CUDA device available")
 def test_cuda_matches_cpu_trajectory_float64() -> None:
     degree = 50
     grav = _make_gravity_model(degree, seed=9)

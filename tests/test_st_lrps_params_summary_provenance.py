@@ -190,6 +190,13 @@ def test_build_benchmark_manifest_and_write_json(tmp_path):
     assert manifest["models"]["baselines"][0]["name"] == "sh20"
     assert manifest["environment"]["numpy_version"] is not None
     assert manifest["scenario"]["seed"] == 7
+    # G2/R10: dtype provenance (requested vs effective per GPU backend) is in
+    # the manifest, resolved through the single-source capability registry.
+    dtype_prov = manifest["numerics"]["dtype_provenance"]
+    assert dtype_prov["requested"] == "float64"
+    assert dtype_prov["torch_cuda_sh"]["effective"] == "float64"
+    assert dtype_prov["torch_cuda_sh"]["downgraded"] is False
+    assert "gpu_st_lrps_potential" not in dtype_prov  # surrogate disabled
 
     written = prov.write_json(tmp_path / "manifest.json", manifest)
     assert written.exists()
@@ -197,7 +204,7 @@ def test_build_benchmark_manifest_and_write_json(tmp_path):
 
 
 def test_build_benchmark_manifest_resolves_surrogate_artifacts(tmp_path):
-    pytest.importorskip("torch")
+    pytest.importorskip("torch.nn")
     from st_lrps_contract_test_utils import make_contract_run
 
     run = make_contract_run(tmp_path, degree_min=20, degree_max=60)
@@ -222,3 +229,7 @@ def test_build_benchmark_manifest_resolves_surrogate_artifacts(tmp_path):
     assert surrogate["checkpoint"]["sha256"] is not None
     assert surrogate["checkpoint"]["missing_reason"] is None
     assert surrogate["config"]["path"].endswith("config.json")
+    # Surrogate enabled → the ST-LRPS GPU backend's dtype resolution is recorded.
+    dtype_prov = manifest["numerics"]["dtype_provenance"]
+    assert "gpu_st_lrps_potential" in dtype_prov
+    assert dtype_prov["gpu_st_lrps_potential"]["effective"] in ("float32", "float64")

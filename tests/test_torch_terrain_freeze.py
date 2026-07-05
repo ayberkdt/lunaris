@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
+pytestmark = pytest.mark.requires_torch
 
 from lunaris.common.constants import R_MOON  # noqa: E402
 from lunaris.core.torch_frame import (  # noqa: E402

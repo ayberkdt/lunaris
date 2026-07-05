@@ -55,11 +55,10 @@ import numpy as np
 
 from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
+from lunaris.core.batched_fixed_step import rhs_batch, run_batched_fixed_step
 from lunaris.core.torch_frame import (
     TorchFrameError,
     TorchMoonFrame,
-    line_sphere_intersection,
-    terrain_segment_intersection,
     topo_payload_to_torch,
 )
 
@@ -72,6 +71,25 @@ if TYPE_CHECKING:
 
 class TorchSTLRPSPreflightError(RuntimeError):
     """Hard ST-LRPS runtime contract violation that must not fall back silently."""
+
+
+class _STLRPSAccelerationProvider:
+    """R07 acceleration provider: frame rotation + ST-LRPS total acceleration.
+
+    Same composition as the pre-R07 in-loop ``_rhs``: rotate the inertial
+    position into the Moon-fixed frame, evaluate the surrogate total
+    acceleration there, rotate the result back to inertial.
+    """
+
+    def __init__(self, model: Any, frame: Any) -> None:
+        self._model = model
+        self._frame = frame
+
+    def acceleration(self, t_s: float, s: Tensor) -> Tensor:
+        r_i = s[:, :3]
+        r_f = self._frame.inertial_to_fixed(t_s, r_i)
+        a_f = self._model.predict_total_accel_torch(r_f)
+        return self._frame.fixed_to_inertial(t_s, a_f)
 
 
 class TorchBatchPropagator:
@@ -252,38 +270,14 @@ class TorchBatchPropagator:
         N = int(Y0.shape[0])
         dt = self._dt
 
-        # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform.
-        t_out, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
+        # Grid preview for the run header only; the shared loop (R07) rebuilds
+        # the same grid (single contract: build_batch_output_grid).
+        _t_preview, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
         steps_per_snap = max(1, round(snap_interval / dt))
         dt_eff = snap_interval / steps_per_snap  # may differ slightly from dt
-        Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
-        impact_flags = np.zeros(N, dtype=np.float64)
-        t_impact_arr = np.full(N, np.nan, dtype=np.float64)
 
-        # Transfer initial state to CUDA (float32 for performance)
+        provider = _STLRPSAccelerationProvider(model, frame)
         state = torch.as_tensor(Y0, dtype=self._dtype, device=device)
-        alive = torch.ones(N, dtype=torch.bool, device=device)
-        r_impact_t = torch.tensor(self._impact_r, dtype=self._dtype, device=device)
-
-        # ------------------------------------------------------------------
-        # Inner helpers (closures capture `model` and `device`)
-        # ------------------------------------------------------------------
-
-        def _rhs(t_s: float, s: Tensor) -> Tensor:
-            """Evaluate [v; a] for state [N, 6]."""
-            r_i = s[:, :3]                             # positions [N, 3]
-            v = s[:, 3:]                               # velocities [N, 3]
-            r_f = frame.inertial_to_fixed(t_s, r_i)
-            a_f = model.predict_total_accel_torch(r_f)
-            a_i = frame.fixed_to_inertial(t_s, a_f)
-            return torch.cat([v, a_i], dim=1)
-
-        def _rk4(t_s: float, s: Tensor, h: float) -> Tensor:
-            k1 = _rhs(t_s, s)
-            k2 = _rhs(t_s + 0.5 * h, s + (h * 0.5) * k1)
-            k3 = _rhs(t_s + 0.5 * h, s + (h * 0.5) * k2)
-            k4 = _rhs(t_s + h, s + h * k3)
-            return s + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
         # ------------------------------------------------------------------
         # Print run header
@@ -308,10 +302,10 @@ class TorchBatchPropagator:
         )
 
         # Time one batched acceleration call for the log
-        _ = _rhs(0.0, state)
+        _ = rhs_batch(torch, provider, 0.0, state)
         torch.cuda.synchronize(device)
         _t0 = time.perf_counter()
-        _ = _rhs(0.0, state)
+        _ = rhs_batch(torch, provider, 0.0, state)
         torch.cuda.synchronize(device)
         accel_ms = (time.perf_counter() - _t0) * 1_000.0
         print(
@@ -321,106 +315,36 @@ class TorchBatchPropagator:
         )
 
         # ------------------------------------------------------------------
-        # Initial snapshot
+        # Shared batched fixed-step RK4 + impact loop (R07)
         # ------------------------------------------------------------------
-        Y_out[0] = state.detach().cpu().numpy().astype(np.float64)
+        result = run_batched_fixed_step(
+            torch_mod=torch,
+            device=device,
+            dtype=self._dtype,
+            provider=provider,
+            frame=frame,
+            Y0=Y0,
+            duration_s=duration_s,
+            output_dt_s=output_dt_s,
+            dt_s=dt,
+            impact_r_m=float(self._impact_r),
+            detect_impact=detect_impact,
+            topo=topo,
+            impact_alt_m=impact_alt_m,
+            chunk_size=None,
+            callback=callback,
+            callback_granularity="snapshot",
+        )
 
-        # t=0 surface check: samples already at/under the impact radius impact at
-        # t=0 and are frozen there instead of being propagated through the body.
-        r0 = torch.linalg.norm(state[:, :3], dim=1)
-        hit0 = r0 <= r_impact_t
-        impact_step = torch.full((N,), -1, dtype=torch.int64, device=device)
-        # Interpolated crossing time / inertial position (NaN until a sample hits).
-        impact_time_t = torch.full((N,), float("nan"), dtype=self._dtype, device=device)
-        impact_pos_t = torch.full((N, 3), float("nan"), dtype=self._dtype, device=device)
-        if detect_impact:
-            impact_step = torch.where(hit0, torch.zeros_like(impact_step), impact_step)
-            impact_time_t = torch.where(hit0, torch.zeros_like(impact_time_t), impact_time_t)
-            impact_pos_t = torch.where(hit0.unsqueeze(1), state[:, :3], impact_pos_t)
-            alive = alive & ~hit0
-
-        t_curr = 0.0
-        t_prop_start = time.perf_counter()
-        active_steps_acc = torch.zeros((), dtype=torch.int64, device=device)
-        global_step = 0
-
-        # ------------------------------------------------------------------
-        # Main integration loop
-        # ------------------------------------------------------------------
-        for snap_idx in range(n_snaps):
-            for _ in range(steps_per_snap):
-                # Freeze impacted samples: only alive trajectories advance; an
-                # impacted sample holds its last state (no propagation through
-                # the Moon). Fixed batch shape is preserved (no compaction).
-                active_steps_acc += alive.sum()
-                prev_state = state
-                candidate = _rk4(t_curr, state, dt_eff)
-                state = torch.where(alive.unsqueeze(1), candidate, state)
-                t_curr += dt_eff
-                global_step += 1
-
-                # Impact detection on GPU — only alive samples. The crossing is
-                # the true line-sphere intersection over the step segment, and the
-                # main propagated state is replaced by that crossing state (on the
-                # impact sphere) so impacted trajectories freeze on the surface
-                # instead of at the sub-surface step endpoint.
-                if detect_impact:
-                    if topo is not None:
-                        segment_hit, alpha = terrain_segment_intersection(
-                            prev_state[:, :3],
-                            state[:, :3],
-                            t_prev_s=t_curr - dt_eff,
-                            dt_s=dt_eff,
-                            frame=frame,
-                            topo=topo,
-                            impact_alt_m=impact_alt_m,
-                        )
-                    else:
-                        segment_hit, alpha = line_sphere_intersection(
-                            prev_state[:, :3],
-                            state[:, :3],
-                            r_impact_t,
-                        )
-                    newly_hit = alive & segment_hit
-                    cross_state = prev_state + alpha.unsqueeze(1) * (state - prev_state)
-                    t_cross = (float(global_step - 1) + alpha) * dt_eff
-                    impact_step = torch.where(
-                        newly_hit,
-                        torch.full_like(impact_step, global_step),
-                        impact_step,
-                    )
-                    impact_time_t = torch.where(newly_hit, t_cross, impact_time_t)
-                    impact_pos_t = torch.where(
-                        newly_hit.unsqueeze(1), cross_state[:, :3], impact_pos_t
-                    )
-                    # Freeze the main state at the surface crossing (position+velocity).
-                    state = torch.where(newly_hit.unsqueeze(1), cross_state, state)
-                    alive = alive & ~newly_hit
-
-            Y_out[snap_idx + 1] = state.detach().cpu().numpy().astype(np.float64)
-
-            if callback is not None:
-                callback(float(snap_idx + 1) / float(n_snaps))
-
-        # ------------------------------------------------------------------
-        # Print timing summary
-        # ------------------------------------------------------------------
-        t_prop = time.perf_counter() - t_prop_start
-        total_steps = n_snaps * steps_per_snap
-        impact_step_host = impact_step.detach().cpu().numpy()
-        hit_indices = np.nonzero(impact_step_host >= 0)[0]
-        impact_flags[hit_indices] = 1.0
-        t_impact_arr = impact_time_t.detach().cpu().numpy().astype(np.float64)
-        total_raw_steps = N * total_steps
-        total_active_steps = int(active_steps_acc.item())
-        traj_steps_per_s = total_raw_steps / max(t_prop, 1e-9)
+        t_prop = float(result.metrics["propagation_elapsed_s"])
+        traj_steps_per_s = float(result.metrics["raw_batch_state_steps_per_second"])
         self._throughput_metrics = {
-            "total_raw_state_steps": int(total_raw_steps),
-            "total_active_state_steps": int(total_active_steps),
-            "raw_batch_state_steps_per_second": float(traj_steps_per_s),
-            "active_state_steps_per_second": float(total_active_steps) / max(t_prop, 1e-9),
-            "propagation_elapsed_s": float(t_prop),
-            "impacted_sample_count": int(hit_indices.size),
+            "total_raw_state_steps": int(result.metrics["total_raw_state_steps"]),
+            "total_active_state_steps": int(result.metrics["total_active_state_steps"]),
+            "raw_batch_state_steps_per_second": traj_steps_per_s,
+            "active_state_steps_per_second": float(result.metrics["active_state_steps_per_second"]),
+            "propagation_elapsed_s": t_prop,
+            "impacted_sample_count": int(result.metrics["impacted_sample_count"]),
             "impact_position_method": (
                 "terrain_bisection_hybrid"
                 if getattr(self, "_terrain_enabled", False)
@@ -428,15 +352,14 @@ class TorchBatchPropagator:
             ),
             "impact_time_resolution_s": float(dt_eff),
         }
-        impact_positions = impact_pos_t.detach().cpu().numpy().astype(np.float64)
-        self._last_impact_positions_inertial = impact_positions
+        self._last_impact_positions_inertial = result.impact_positions_inertial
         print(
             f"[BATCH][GPU-STLRPS] propagation complete: "
             f"{t_prop:.2f}s  {traj_steps_per_s:,.0f} trajectory-steps/s",
             flush=True,
         )
 
-        return t_out, Y_out, impact_flags, t_impact_arr
+        return result.t_out, result.Y_out, result.impact_flags, result.t_impact
 
     def last_impact_positions_inertial(self) -> np.ndarray:
         """Return fixed-step endpoint impact positions for the latest batch."""
