@@ -784,7 +784,7 @@ class STLRPSTrainer:
                             if float(grad_norm) > 50.0:
                                 logger.warning(
                                     f"[train] grad_norm={float(grad_norm):.1f} > 50 at epoch={epoch+1} "
-                                    "batch={n_batches}: possible derivative explosion. "
+                                    f"batch={n_batches}: possible derivative explosion. "
                                     "Consider lower lr or max_grad_norm."
                                 )
                     else:
@@ -834,25 +834,10 @@ class STLRPSTrainer:
                     eta = max(0.0, spb * (total_batches_est - n_batches))
                     sps = samples_done / max(elapsed, 1e-9)
                     cur_lr = float(self.optimizer.param_groups[0]["lr"])
-                    float(last_stats.get("w_a_eff", last_stats.get("w_a", self.cfg.w_a)))
                     mem_str = _cuda_memory_string(self.device)
-                    (
-                        f" dir={total_dir/n_batches:.3e} cossim={total_cossim/n_batches:.4f}"
-                        f" ang={total_angular_mean_deg/n_batches:.2f}deg"
-                        f" mask_frac={total_mask_frac/n_batches:.2f} lam_dir={lambda_dir_eff:.3e}"
-                        if lambda_dir_eff > 0.0 else ""
-                    )
-                    extra_terms = ""
-                    if bool(self.cfg.use_radial_cross_loss):
-                        extra_terms += (
-                            f" radial={total_radial/n_batches:.3e}"
-                            f" cross={total_cross/n_batches:.3e}"
-                        )
-                    if bool(self.cfg.use_laplacian_regularization):
-                        extra_terms += f" lap={total_lap/n_batches:.3e}"
-                    if bool(self.cfg.use_altitude_balanced_loss):
-                        extra_terms += " alt-balance=on"
-                    # loss_opt = optimizer loss (uses accel_factor); loss_ref = full diagnostic loss
+                    # loss_opt = optimizer loss (uses accel_factor); loss_ref = full diagnostic loss.
+                    # Per-batch extras (radial/cross/lap/alt-balance) are only surfaced in the
+                    # end-of-phase summary below via format_batch_summary's fixed field set.
                     logger.info(
                         format_batch_summary(
                             phase=phase.strip(),
@@ -2233,10 +2218,10 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     apply_model_preset(cfg)
     if str(getattr(cfg, "runtime_model_kind", "potential_autograd")) == "force_direct":
         raise NotImplementedError(
-            "runtime_model_kind='force_direct' uses the direct residual-acceleration "
-            "training path. Run `lunaris-train-force-direct` or "
-            "`python -m lunaris.surrogate.st_lrps.training.force_direct_cli`; "
-            "the main Sobolev trainer remains scalar-potential/autograd only."
+            "runtime_model_kind='force_direct' is archived in the "
+            "experimental/force-direct-archive branch and is no longer trainable on "
+            "main. The Sobolev trainer supports only the conservative scalar-potential "
+            "(potential_autograd) surrogate."
         )
     _determinism_flags = set_seed(
         cfg.seed,

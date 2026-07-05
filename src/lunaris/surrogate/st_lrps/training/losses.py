@@ -544,7 +544,9 @@ class SobolevLoss(nn.Module):
             trace_acc = trace_acc + (Hv_full[idx] * v).sum(dim=-1)   # (k,)
 
         trace_est = trace_acc / float(K)
-        # Chain-rule scaling: ∇²U_phys = ∇²U_scaled · (u_scale / x_scale²)
+        # Chain-rule scaling to physical units (R25): ∇²U_phys [s⁻²] =
+        # ∇²U_scaled · (u_scale / x_scale²). collocation_laplacian_loss() applies
+        # the identical factor so both estimators report mean((∇²U_phys)²) [s⁻⁴].
         lap_phys = trace_est * (self.u_scale.squeeze(0) / (self.x_scale.squeeze(0) ** 2))
         loss_lap = torch.mean(lap_phys ** 2)
         if mode == "train" and not loss_lap.requires_grad:
@@ -766,6 +768,8 @@ class SobolevLoss(nn.Module):
             "mask_frac": mask_frac_val,
             "loss_radial": loss_radial_val,
             "loss_cross": loss_cross_val,
+            # Laplacian metrics are mean((∇²U_phys)²) in PHYSICAL units [s⁻⁴]
+            # (∇²U_phys in s⁻²), consistent with collocation_laplacian_loss (R25).
             "loss_laplacian": loss_lap_val,
             "loss_laplacian_diag": loss_lap_diag,
             "loss_laplacian_train": loss_lap_train,
@@ -838,6 +842,30 @@ def _gradnorm_shared_params(model: nn.Module, mode: str) -> list[torch.Tensor]:
     return _get_backbone_shared_params(model)
 
 
+def _extract_xu_scale(scaler: Any) -> tuple[float, float]:
+    """Return ``(x_scale, u_scale)`` as floats from either a ScalerPack or a SobolevLoss.
+
+    The isometric scalers store a single global characteristic scale per quantity
+    (see :class:`IsometricScaleParams`), so the coordinate/potential rescaling is
+    isotropic and the chain-rule factor is a scalar. Two carriers expose it:
+
+    * :class:`ScalerPack` — ``scaler.x.scale`` / ``scaler.u.scale`` (Python floats).
+    * :class:`SobolevLoss` (nn.Module) — ``scaler.x_scale`` / ``scaler.u_scale``
+      (1-element registered buffers).
+
+    Both are duck-typed as "the thing that also provides ``scale_x``", so this
+    helper normalises them to plain floats.
+    """
+    x_obj = getattr(scaler, "x", None)
+    if x_obj is not None and hasattr(x_obj, "scale"):
+        return float(x_obj.scale), float(scaler.u.scale)
+    # Only a SobolevLoss (nn.Module with registered x_scale/u_scale buffers)
+    # reaches here; ScalerPack already returned via the x_obj branch above.
+    x_scale = scaler.x_scale
+    u_scale = scaler.u_scale
+    return float(x_scale.reshape(-1)[0]), float(u_scale.reshape(-1)[0])
+
+
 def collocation_laplacian_loss(
     model: torch.nn.Module,
     scaler: ScalerPack,
@@ -856,6 +884,16 @@ def collocation_laplacian_loss(
     ``[r_min_m, r_max_m]`` (in physical metres) and evaluates the squared mean
     Laplacian of the network's prediction using a Hutchinson stochastic-trace
     estimator with ``n_hutchinson`` Rademacher samples.
+
+    Units (R25)
+    -----------
+    The raw Hutchinson trace estimates ``∇²U`` in *scaled network coordinates*.
+    It is converted to physical units via the isotropic chain-rule factor
+    ``u_scale / x_scale²`` so the returned loss is ``mean((∇²U_phys)²)`` with
+    ``∇²U_phys`` in ``s⁻²`` (loss in ``s⁻⁴``). This matches
+    :meth:`SobolevLoss._laplacian_penalty` exactly, so the same ``laplacian``
+    weight carries the same physical meaning in both estimators and the two
+    logged Laplacian metrics are directly comparable.
 
     Modes
     -----
@@ -902,8 +940,15 @@ def collocation_laplacian_loss(
         )[0]
         lap_acc = lap_acc + (hvp * v).sum(dim=-1)
 
-    lap = lap_acc / float(K)
-    loss_val = (lap ** 2).mean()
+    lap_scaled = lap_acc / float(K)  # ∇²U in scaled network coordinates
+    # Chain-rule to physical units so this matches SobolevLoss._laplacian_penalty
+    # (R25): ∇²U_phys [s⁻²] = ∇²U_scaled · (u_scale / x_scale²). Without this
+    # factor the collocation penalty lived in scaled units while the in-batch
+    # penalty was physical, so the same `laplacian` weight meant two different
+    # physical strengths and the logged metrics were not comparable.
+    x_scale, u_scale = _extract_xu_scale(scaler)
+    lap_phys = lap_scaled * (u_scale / (x_scale ** 2))
+    loss_val = (lap_phys ** 2).mean()
     if mode == "train" and not loss_val.requires_grad:
         raise RuntimeError(
             "collocation_laplacian_loss(mode='train'): computed loss does not require_grad. "
