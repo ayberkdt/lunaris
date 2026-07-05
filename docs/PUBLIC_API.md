@@ -22,6 +22,7 @@ Console scripts are the most stable user-facing API:
 | `lunaris-validate` | Validation runners: gravity-reference field/trajectory checks and the ST-LRPS validation suite |
 | `lunaris-ablation` | ST-LRPS ablation suite runner |
 | `lunaris-st-lrps-paper-evidence` | End-to-end paper-evidence pipeline (multi-seed training, benchmarks, ablation, evidence manifest) |
+| `lunaris-frozen-search` | Surrogate-assisted frozen-orbit candidate search (staged screening -> classical SH validation -> family report; experimental) |
 
 This table is the canonical console-script inventory: every entry in
 `pyproject.toml [project.scripts]` must appear here (enforced by

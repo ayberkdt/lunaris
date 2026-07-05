@@ -176,6 +176,22 @@ lunaris-perturbation-budget
   -> CSV + Markdown outputs
 ```
 
+Surrogate-assisted frozen-orbit search (roadmap R04/S5) is another sibling
+analysis flow with a staged, resumable file contract per run directory:
+
+```text
+lunaris-frozen-search
+  -> lunaris.analysis.frozen.search (FrozenSearchPipeline; Sobol provenance)
+  -> lunaris.analysis.frozen.search_backends
+       (screening: TorchSHBatchPropagator on the shared R07 loop;
+        validation: classical SH CPU reference propagate)
+  -> lunaris.analysis.frozen.{metrics,classify,domain_guard}
+       (R27 domain guard is mandatory; R21: strict/quasi frozen statuses
+        require a classical SH validation backend — enforced in code)
+  -> lunaris.analysis.frozen.family_report (versioned JSON schema)
+  -> lunaris.analysis.frozen.plots (figure set from stage files)
+```
+
 ## Perturbation flags
 
 `PerturbationFlags` (in `lunaris.common.type_defs`) all default to `False` except

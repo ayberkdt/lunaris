@@ -124,6 +124,7 @@ lunaris-st-lrps-paper-evidence = "lunaris.surrogate.st_lrps.paper_evidence.runne
 lunaris-benchmark = "lunaris.cli.entrypoints:benchmark_main"
 lunaris-data = "lunaris.cli.data:main"
 lunaris-perturbation-budget = "lunaris.analysis.perturbation_budget.cli:main"
+lunaris-frozen-search = "lunaris.cli.frozen_search:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
