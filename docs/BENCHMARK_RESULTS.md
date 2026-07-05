@@ -58,7 +58,7 @@ is a numerical reference, not physical truth.
 
 Every published benchmark table must state:
 
-- ST-LRPS model kind: `potential_autograd` or `force_direct`.
+- ST-LRPS model kind: `potential_autograd` (the only supported kind).
 - Target contract: `target_mode`, `baseline_kind`, baseline degree, target
   degree, and spherical-harmonic convention.
 - Scenario domain: count, seed, altitude/eccentricity/inclination envelope, and

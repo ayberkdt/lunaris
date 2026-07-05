@@ -2,6 +2,13 @@
 
 Date: 2026-06-25
 
+> **Superseded note (2026-07-05):** the `force_direct` / `gpu_st_lrps_direct`
+> direction discussed below was reversed by roadmap item R01. The direct
+> residual-acceleration runtime is now archived in the
+> `experimental/force-direct-archive` branch and is fail-closed on main; only
+> the conservative `potential_autograd` surrogate remains. Sections mentioning
+> `force_direct` are retained as historical record.
+
 This roadmap records the current ST-LRPS and batch propagation backend decision. It is
 intentionally conservative: do not claim a faster or more accurate method as the
 default until runtime and orbit-level validation have both been run for the same

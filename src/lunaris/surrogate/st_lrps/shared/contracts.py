@@ -27,10 +27,12 @@ LUNAR_BODY_ALIASES = frozenset({"moon", "lunar", "selene"})
 TARGET_MODES = frozenset({"residual", "full"})
 BASELINE_KINDS = frozenset({"none", "point_mass", "spherical_harmonics"})
 ARTIFACT_CONTRACT_SCHEMA_VERSION = 1
-RUNTIME_MODEL_KINDS = frozenset({"potential_autograd", "force_direct"})
-PREDICTION_KINDS = frozenset(
-    {"potential", "residual_potential", "force", "residual_force", "acceleration", "residual_acceleration", "total"}
-)
+RUNTIME_MODEL_KINDS = frozenset({"potential_autograd"})
+# Model kinds that once existed on main but are no longer loadable. Kept as an
+# explicit set so old artifacts are rejected with a pointer to the archive
+# instead of a generic "unknown kind" error.
+ARCHIVED_RUNTIME_MODEL_KINDS = frozenset({"force_direct"})
+PREDICTION_KINDS = frozenset({"potential", "residual_potential", "total"})
 
 
 class ArtifactContractError(RuntimeError):
@@ -414,10 +416,16 @@ class ArtifactContract:
             errors.append("target_mode must be 'residual' or 'full'")
         if self.baseline_kind not in BASELINE_KINDS:
             errors.append(f"baseline_kind must be one of {sorted(BASELINE_KINDS)}")
-        if self.runtime_model_kind not in RUNTIME_MODEL_KINDS:
+        if self.runtime_model_kind in ARCHIVED_RUNTIME_MODEL_KINDS:
+            errors.append(
+                f"runtime_model_kind={self.runtime_model_kind!r} is archived in the "
+                "experimental/force-direct-archive branch and cannot be loaded on main; "
+                "only 'potential_autograd' artifacts are supported"
+            )
+        elif self.runtime_model_kind not in RUNTIME_MODEL_KINDS:
             errors.append(
                 f"unsupported runtime_model_kind={self.runtime_model_kind!r}; "
-                "expected 'potential_autograd' or 'force_direct'"
+                "expected 'potential_autograd'"
             )
         if self.prediction_kind not in PREDICTION_KINDS:
             errors.append(f"unsupported prediction_kind={self.prediction_kind!r}")
@@ -428,11 +436,6 @@ class ArtifactContract:
                 errors.append("potential_autograd artifacts must have output_dim=1")
             if self.prediction_kind not in {"potential", "residual_potential", "total"}:
                 errors.append("potential_autograd artifacts must predict scalar potential targets")
-        if self.runtime_model_kind == "force_direct":
-            if self.output_dim != 3:
-                errors.append("force_direct artifacts must have output_dim=3")
-            if self.prediction_kind not in {"force", "residual_force", "acceleration", "residual_acceleration"}:
-                errors.append("force_direct artifacts must predict residual acceleration, not scalar potential")
         if self.target_mode == "residual":
             if self.baseline_kind == "none":
                 errors.append("residual contracts require a non-none baseline_kind")
@@ -491,10 +494,7 @@ class ArtifactContract:
             input_encoding=_mapping(payload.get("input_encoding")),
             scaler_contract=_mapping(payload.get("scaler_contract")),
             dataset_contract=_mapping(payload.get("dataset_contract")),
-            output_dim=_as_int(
-                payload.get("output_dim"),
-                3 if payload.get("runtime_model_kind") == "force_direct" else 1,
-            ),
+            output_dim=_as_int(payload.get("output_dim"), 1),
             architecture_signature=payload.get("architecture_signature"),
         )
 
@@ -546,10 +546,10 @@ class ArtifactContract:
                 "provenance": {},
             }
         runtime_kind = config.get("runtime_model_kind", "potential_autograd")
-        output_dim = _as_int(config.get("output_dim"), 3 if runtime_kind == "force_direct" else 1)
+        output_dim = _as_int(config.get("output_dim"), 1)
         prediction_kind = config.get(
             "prediction_kind",
-            "residual_force" if runtime_kind == "force_direct" else ("residual_potential" if target.is_residual else "potential"),
+            "residual_potential" if target.is_residual else "potential",
         )
         return cls(
             schema_version=ARTIFACT_CONTRACT_SCHEMA_VERSION,

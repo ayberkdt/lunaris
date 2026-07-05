@@ -1118,10 +1118,7 @@ def build_resolved_config(
     )
     cfg_dict["model_preset"] = str(cfg_dict.get("model_preset", "custom"))
     cfg_dict["runtime_model_kind"] = str(cfg_dict.get("runtime_model_kind", "potential_autograd"))
-    cfg_dict["output_dim"] = _coerce_int(
-        cfg_dict.get("output_dim", 3 if cfg_dict["runtime_model_kind"] == "force_direct" else 1),
-        default=(3 if cfg_dict["runtime_model_kind"] == "force_direct" else 1),
-    )
+    cfg_dict["output_dim"] = _coerce_int(cfg_dict.get("output_dim", 1), default=1)
     cfg_dict["n_bands"] = _coerce_int(cfg_dict.get("n_bands", 1), default=1)
     cfg_dict["degree_min"] = _coerce_int(cfg_dict.get("degree_min", ds_meta.get("degree_min", -1)), default=-1)
     cfg_dict["degree_max"] = _coerce_int(cfg_dict.get("degree_max", ds_meta.get("degree_max", -1)), default=-1)

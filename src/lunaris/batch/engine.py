@@ -56,7 +56,6 @@ _BACKEND_DISPLAY_NAMES = {
     "torch_cuda_sh": "GPU-TORCH-SH",
     "torch_cpu_sh": "CPU-TORCH-SH",
     "gpu_st_lrps_potential": "GPU-ST-LRPS",
-    "gpu_st_lrps_direct": "GPU-ST-LRPS",
 }
 
 
@@ -68,10 +67,6 @@ def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
     Rules:
 
     - expected empty: nothing to enforce (``None``).
-    - expected ``force_direct`` but the artifact declares nothing: **fail
-      closed**. An explicit direct-force request must be provable from the
-      artifact — legacy kind-less artifacts are potential-only by construction,
-      so assuming ``force_direct`` would run the wrong physics.
     - expected ``potential_autograd`` with a kind-less artifact: allowed (the
       legacy loader only ever builds scalar-potential models).
     - both declared and different: fail.
@@ -81,14 +76,6 @@ def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
     if not expected:
         return None
     if not actual:
-        if expected == "force_direct":
-            return (
-                "GPU ST-LRPS artifact kind mismatch: backend policy expects "
-                "'force_direct', but the loaded artifact does not declare "
-                "runtime_model_kind. An explicit direct-force request must be "
-                "provable from the artifact (legacy kind-less artifacts are "
-                "potential-only); refusing to assume."
-            )
         return None
     if actual != expected:
         return (
@@ -143,6 +130,9 @@ class BatchPropagationEngine:
         self._topo_grid = topo_grid
         self._backend_note = ""
         self._backend_plan: BatchBackendPlan | None = None
+        # R12: "sphere" once a terrain impact request was downgraded to a sphere
+        # in research mode; None when terrain was honored or never requested.
+        self._terrain_fallback: str | None = None
         if self._topo_grid is None and self._surface_provider is not None and hasattr(self._surface_provider, "grids"):
             try:
                 self._topo_grid = self._surface_provider.grids().topo
@@ -223,7 +213,7 @@ class BatchPropagationEngine:
         cfg = self._sim_cfg
         batch_backend = str(getattr(self._cfg, "batch_backend", "auto") or "auto")
         backend_forces_classic_sh = batch_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
-        backend_forces_st_lrps = batch_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
+        backend_forces_st_lrps = batch_backend in {"gpu_st_lrps_potential"}
         grav_model = None
         ephem_manager = None
         use_st_lrps_gravity = False
@@ -372,6 +362,34 @@ class BatchPropagationEngine:
         # Terrain-aware impact freeze payload (None unless requested + available).
         # Shared across every batch backend so they agree on the surface.
         topo_payload = self._resolve_topo_payload()
+
+        # R12: terrain impact requested but no usable topography payload would
+        # silently degrade the impact freeze to a constant sphere. Paper-safe /
+        # strict runs hard-fail; research mode warns and records the fallback so
+        # it is never silent.
+        if (
+            bool(getattr(self._cfg, "impact_surface_terrain_enabled", False))
+            and topo_payload is None
+        ):
+            terrain_msg = (
+                "impact_surface_mode='terrain' was requested but no usable "
+                "topography payload is available (no surface provider or topo grid "
+                "with elevation data); the impact freeze would fall back to a "
+                "constant sphere."
+            )
+            if self._fallback_forbidden():
+                raise RuntimeError(
+                    terrain_msg
+                    + " Paper-safe/strict mode forbids this silent simplification: "
+                    "provide a topography grid/provider or set "
+                    "impact_surface_mode='sphere' explicitly."
+                )
+            warnings.warn(
+                terrain_msg + " Falling back to a constant sphere (research mode).",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._terrain_fallback = "sphere"
 
         # Emit all warnings produced by the policy resolver
         for w in plan.warnings:
@@ -570,7 +588,16 @@ class BatchPropagationEngine:
         plan.actual_sh_degree = None
         plan.actual_device = "cpu"
         plan.cuda_device_name = None
+        # CPU full-fidelity path runs float64; keep dtype provenance honest by
+        # recording the effective change and flagging it as a downgrade when the
+        # request was something else.
+        prior_requested = getattr(plan, "requested_dtype", "") or getattr(plan, "dtype", "float64")
         plan.dtype = "float64"
+        plan.effective_dtype = "float64"
+        if not getattr(plan, "requested_dtype", ""):
+            plan.requested_dtype = prior_requested
+        if prior_requested and prior_requested != "float64":
+            plan.dtype_downgraded = True
         plan.integrator = "adaptive (DOP853)"
         plan.fallback_applied = True
         plan.fallback_reason = reason
@@ -969,12 +996,24 @@ class BatchPropagationEngine:
                 "numba_cuda_available": _plan.numba_cuda_available,
                 "cuda_device_name": backend_diag.get("device_name") or getattr(_plan, "cuda_device_name", None),
                 "dtype": backend_diag.get("dtype") or getattr(_plan, "dtype", "float64"),
+                # Dtype provenance (R10): what was requested vs what actually ran,
+                # plus whether an unsupported request was downgraded.
+                "requested_dtype": getattr(_plan, "requested_dtype", "")
+                    or getattr(_plan, "dtype", "float64"),
+                "effective_dtype": backend_diag.get("dtype")
+                    or getattr(_plan, "effective_dtype", "")
+                    or getattr(_plan, "dtype", "float64"),
+                "dtype_downgraded": bool(getattr(_plan, "dtype_downgraded", False)),
                 "state_dtype": backend_diag.get("state_dtype")
                     or backend_diag.get("dtype")
                     or getattr(_plan, "dtype", "float64"),
                 "model_dtype": backend_diag.get("model_dtype"),
                 "acceleration_output_dtype": backend_diag.get("acceleration_output_dtype"),
                 "frame_mode": backend_diag.get("frame_mode", "unknown"),
+                # R12: records a research-mode terrain->sphere downgrade so the
+                # impact surface used is never ambiguous. None when terrain was
+                # honored or never requested.
+                "terrain_fallback": getattr(self, "_terrain_fallback", None),
                 "integrator": backend_diag.get("integrator") or _plan.integrator,
                 "batch_size": max_batch,
                 "chunk_size": backend_diag.get("chunk_size", max_batch),

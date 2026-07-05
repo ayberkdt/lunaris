@@ -301,7 +301,7 @@ batch_cfg = BatchPropagationConfig(
     sampling_method="sobol_scrambled",  # random = Monte Carlo design; lhs/sobol = validation design
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
     use_gpu=True,
-    batch_backend="auto",   # auto, cpu_sh, numba_cuda_sh, torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
+    batch_backend="auto",   # auto, cpu_sh, numba_cuda_sh, torch_cuda_sh, gpu_st_lrps_potential
     sh_degree=10,    # requested SH degree; numba_cuda_sh supports <=24, torch_cuda_sh is high-degree
     output_format="hdf5",
     output_path="outputs/ensemble/run.h5",
@@ -403,15 +403,17 @@ the gravity-provider facade; neural force inference still delegates to the
 internal ST-LRPS API in `runtime/force_model.py`.
 `potential_autograd` (`SurrogateForceModel`) evaluates the learned scalar
 potential and differentiates it with autograd to obtain residual acceleration,
-which is added to the SH(`degree_min`) baseline. `force_direct`
-(`DirectForceRuntime`) loads a 3-output residual-acceleration artifact and uses
-`torch.no_grad()` inference with the acceleration scaler; it never predicts
-`DeltaU`. `load_surrogate_force_model` dispatches by `runtime_model_kind` and
-strictly validates artifact contracts, output dimension, and frame. Direct-force
-is a faster inference target but is not conservative by construction and needs
-separate curl / orbit-level validation; the propagator's symplectic guard
-accordingly flags a `force_direct` gravity provider as a non-conservative force
-(warning, or hard failure under `strict_symplectic=True`).
+which is added to the SH(`degree_min`) baseline. This is the only supported
+runtime kind on main; the earlier non-conservative `force_direct` (3-output
+direct residual-acceleration) runtime is archived in the
+`experimental/force-direct-archive` branch and is rejected fail-closed here.
+`load_surrogate_force_model` validates `runtime_model_kind` (rejecting the
+archived kind), artifact contracts, output dimension, and frame. The
+propagator's symplectic guard still reads a gravity provider's
+`is_conservative` taxonomy flag and flags any non-conservative surrogate as a
+non-conservative force (warning, or hard failure under
+`strict_symplectic=True`), so the guard stays correct if a non-conservative
+kind is ever reintroduced.
 
 Artifacts that declare a versioned contract (`artifact_contract` /
 `target_contract` / `runtime_model_kind`) must load through the canonical

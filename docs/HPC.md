@@ -265,7 +265,6 @@ The committed sweep files live under `hpc/scenarios/`:
 | `st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl` | `0-6` | Cumulative scalar-potential ablation A0→A6 (mirrors `lunaris-ablation`) |
 | `st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl` | `0-4` | A6-full architecture-size sweep (4×256 … 5×768) |
 | `st_lrps_potential_autograd_encoding_and_loss_sweep.jsonl` | `0-6` | 5×512 direction-weight + input-encoding matrix |
-| `st_lrps_force_direct_student_sweep.jsonl` | `0-3` | Direct residual-acceleration student sweep |
 | `st_lrps_runtime_benchmark_smoke.jsonl` | `0-1` | CPU/CUDA timing smoke checks |
 
 **How submission works.** The first positional argument to the `.sbatch` file is
@@ -320,19 +319,9 @@ sbatch --array=0-6 hpc/slurm_train_scenario_array.sbatch \
   --split-policy spatial_block
 ```
 
-Force-direct student sweep (4 tasks). **`force_direct` is a deployment/student
-runtime**: it predicts residual acceleration directly, does **not** predict the
-scalar potential, and needs field, curl, and orbit-level validation before any
-scientific claim. It uses the single-file `--data` flag (no train/val split
-flags), and it must never be mixed into the scalar-potential ablation matrix:
-
-```bash
-sbatch --array=0-3 hpc/slurm_train_scenario_array.sbatch \
-  hpc/scenarios/st_lrps_force_direct_student_sweep.jsonl \
-  --data "$TRAIN_DATA" \
-  --epochs 100 \
-  --batch-size 8192
-```
+The former `force_direct` student sweep has been removed: the direct
+residual-acceleration runtime is archived in the
+`experimental/force-direct-archive` branch and is no longer trainable on main.
 
 Runtime-benchmark smoke (2 tasks; pure SH timing, no artifact required):
 
@@ -416,10 +405,8 @@ Sampling and backend selection are explicit and recorded in ensemble outputs:
   `--sh-fallback-policy` (`torch_cuda_sh` when compatible, CPU, or error)
   without silently clipping the degree.
 - `--batch-backend gpu_st_lrps_potential` uses the scalar-potential ST-LRPS artifact
-  and autograd residual acceleration on PyTorch CUDA.
-- `--batch-backend gpu_st_lrps_direct` uses direct residual acceleration with a
-  no-grad PyTorch CUDA forward pass. Keep it experimental until orbit-level
-  validation shows acceptable drift for the target scenario set.
+  and autograd residual acceleration on PyTorch CUDA. (The former
+  `gpu_st_lrps_direct` backend is archived in `experimental/force-direct-archive`.)
 
 For 512-orbit GPU batch propagation, use `auto` or an explicit ST-LRPS GPU
 backend for throughput runs, and keep `cpu_sh` high-degree runs as

@@ -35,14 +35,10 @@ def test_checked_in_matrix_matches_registry() -> None:
     )
 
 
-def test_force_direct_has_no_scalar_potential_by_design() -> None:
-    cap = next(
-        c for c in CAPABILITIES
-        if c.key == ("runtime", "force_direct", "scalar_residual_potential")
-    )
-    assert cap.status is CapabilityStatus.BY_DESIGN_NA
-    with pytest.raises(UnsupportedCapability):
-        require_runtime_potential("force_direct")
+def test_force_direct_runtime_kind_is_not_registered() -> None:
+    # force_direct is archived in experimental/force-direct-archive; it must not
+    # appear anywhere in the capability registry.
+    assert not any(c.subject == "force_direct" for c in CAPABILITIES)
 
 
 def test_potential_autograd_potential_is_supported() -> None:

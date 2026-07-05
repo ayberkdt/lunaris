@@ -813,7 +813,6 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.cb_batch_backend.addItem("Torch CUDA SH — high-degree GPU, gravity-only", "torch_cuda_sh")
         self.cb_batch_backend.addItem("Torch CPU SH — validation, no CUDA needed", "torch_cpu_sh")
         self.cb_batch_backend.addItem("GPU ST-LRPS Potential", "gpu_st_lrps_potential")
-        self.cb_batch_backend.addItem("GPU ST-LRPS Direct", "gpu_st_lrps_direct")
         self.cb_batch_backend.setToolTip(
             "Explicit backend selector recorded verbatim in ensemble metadata.\n"
             "Numba CUDA SH: degree ≤ 24 (kernel-workspace limit). Torch CUDA SH: "
@@ -973,7 +972,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         backend = str(self.cb_batch_backend.currentData() or "auto") if hasattr(self, "cb_batch_backend") else "auto"
         is_st_lrps = (
             str(self.cb_batch_gravity_mode.currentData() or "") == "st_lrps"
-            or backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
+            or backend == "gpu_st_lrps_potential"
         )
         if hasattr(self, "st_lrps_config_frame"):
             self.st_lrps_config_frame.setVisible(is_st_lrps)
@@ -1752,7 +1751,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         if (
             gravity_mode == "st_lrps"
-            or batch_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
+            or batch_backend == "gpu_st_lrps_potential"
         ) and not st_lrps_dir:
             warnings.append("ST-LRPS model dir is blank. batch will fall back to main Force Models setting.")
 

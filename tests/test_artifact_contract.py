@@ -75,17 +75,11 @@ def test_missing_target_mode_fails():
         _contract(target_mode="")
 
 
-def test_valid_force_direct_contract_passes():
-    c = _contract(runtime_model_kind="force_direct", prediction_kind="residual_force", output_dim=3)
-    assert c.runtime_model_kind == "force_direct"
-    assert c.output_dim == 3
-
-
-def test_force_direct_requires_vector_output_and_accel_prediction():
-    with pytest.raises(ArtifactContractError, match="output_dim"):
-        _contract(runtime_model_kind="force_direct", prediction_kind="residual_force", output_dim=1)
-    with pytest.raises(ArtifactContractError, match="residual acceleration|scalar potential"):
-        _contract(runtime_model_kind="force_direct", prediction_kind="residual_potential", output_dim=3)
+def test_force_direct_contract_is_rejected_as_archived():
+    # force_direct is archived in experimental/force-direct-archive and can no
+    # longer be validated/loaded on main.
+    with pytest.raises(ArtifactContractError, match="archive|force_direct"):
+        _contract(runtime_model_kind="force_direct", prediction_kind="residual_force", output_dim=3)
 
 
 def test_residual_contract_missing_baseline_degree_fails():

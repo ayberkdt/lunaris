@@ -56,17 +56,10 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     )
     q = _queries(args.n, args.seed, args.alt_min_km, args.alt_max_km)
     runtime_kind = getattr(runtime, "runtime_model_kind", "potential_autograd")
-    if runtime_kind != "force_direct":
-        runtime.predict_residual_potential(q)
+    runtime.predict_residual_potential(q)
     runtime.predict_residual_accel(q)
 
-    if runtime_kind == "force_direct":
-        potential: dict[str, Any] = {
-            "available": False,
-            "skipped": "force_direct artifacts do not predict scalar residual potential",
-        }
-    else:
-        potential = _time(lambda: runtime.predict_residual_potential(q), args.repeat)
+    potential: dict[str, Any] = _time(lambda: runtime.predict_residual_potential(q), args.repeat)
     residual_accel = _time(lambda: runtime.predict_residual_accel(q), args.repeat)
     total_accel: dict[str, float] | None = None
     try:

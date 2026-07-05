@@ -427,49 +427,6 @@ def _resolve_training_heldout_guard(
     }
 
 
-def _maybe_curl_diagnostics(
-    fm: Any,
-    xyz: np.ndarray,
-    n_rows: int,
-    seed: int,
-    *,
-    max_points: int = 4096,
-    step_m: float = 1.0,
-) -> dict[str, Any]:
-    """Finite-difference non-conservativeness (curl) report for a force field.
-
-    ``force_direct`` artifacts predict acceleration directly and carry no
-    structural guarantee of conservativeness (a true ``a = -grad U`` has zero
-    curl). This quantifies that warning so a field-validation report can never
-    present a direct-force surrogate as if it were a conservative potential model.
-    """
-    from lunaris.surrogate.st_lrps.evaluation.force_direct_eval import curl_diagnostics
-
-    if n_rows <= 0:
-        return {"error": "no points available for curl diagnostics"}
-    if max_points < n_rows:
-        rng = np.random.default_rng(int(seed))
-        idx = np.sort(rng.choice(int(n_rows), size=int(max_points), replace=False).astype(np.int64))
-        points = xyz[idx]
-    else:
-        points = xyz
-    try:
-        report = curl_diagnostics(
-            lambda pts: np.asarray(fm.predict_residual_accel_fixed(pts), dtype=np.float64),
-            points,
-            step_m=step_m,
-        )
-    except Exception as exc:  # pragma: no cover - defensive
-        return {"error": str(exc)}
-    report["warning"] = (
-        "force_direct artifact predicts residual acceleration directly and is NOT "
-        "guaranteed conservative; nonconservative_ratio > 0 means the field is not the "
-        "gradient of any potential, which can inject spurious energy over long orbit "
-        "propagation."
-    )
-    return report
-
-
 def _load_residual_rows(dataset_path: Path, dataset_name: str = "data") -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     """Load (xyz, u, a) residual rows in SI plus the reference radius."""
     import h5py
@@ -517,15 +474,8 @@ def run_field_validation(
     ``split_seed`` matches the training seed. If the held-out set cannot be
     verified (no manifest, dataset drift, or hash mismatch) the report is flagged
     accordingly; ``strict_leakage=True`` turns that flag into a hard error.
-
-    Conservativeness
-    ----------------
-    For ``force_direct`` artifacts (which predict acceleration with no potential)
-    a finite-difference curl diagnostic is attached under ``conservativeness`` so
-    a non-conservative field can never be reported as a clean potential model.
     """
     from lunaris.surrogate.st_lrps.runtime.force_model import (
-        DirectForceRuntime,
         load_surrogate_force_model,
     )
 
@@ -612,9 +562,10 @@ def run_field_validation(
             results[policy] = {"kind": SPLIT_KIND.get(policy, "unknown"), "error": str(exc)}
 
     runtime_kind = str(getattr(fm, "runtime_model_kind", "potential_autograd"))
+    # Only the conservative potential_autograd surrogate is loadable on main;
+    # its acceleration is the autograd gradient of a scalar potential, so the
+    # finite-difference curl check is analytically zero and no longer computed.
     conservativeness = None
-    if isinstance(fm, DirectForceRuntime) or runtime_kind == "force_direct":
-        conservativeness = _maybe_curl_diagnostics(fm, xyz, n_rows, split_seed)
 
     return {
         "schema_version": 1,
@@ -792,16 +743,6 @@ def write_validation_report(report: Mapping[str, Any], out_dir: str | Path) -> d
             "disjoint from the training set, so the interpolation numbers below may be "
             "optimistic. Re-run with a present, matching `split_manifest.json` or pass "
             "`strict_leakage=True` to hard-fail.",
-            "",
-        ]
-    conservativeness = report.get("conservativeness")
-    if isinstance(conservativeness, Mapping) and "nonconservative_ratio" in conservativeness:
-        lines += [
-            f"> 🔶 **Non-conservative field** (`force_direct`): nonconservative_ratio = "
-            f"{_fmt(conservativeness.get('nonconservative_ratio'))} "
-            f"(0 = conservative), curl RMS = "
-            f"{_fmt(conservativeness.get('curl_abs_rms'))} 1/s². Direct-force surrogates "
-            "are not gradients of any potential.",
             "",
         ]
     section_titles = {

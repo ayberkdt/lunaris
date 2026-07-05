@@ -20,11 +20,10 @@ What is measured vs estimated
 -----------------------------
 FLOP counts here are **measured**, not guessed, with
 ``torch.utils.flop_counter.FlopCounterMode`` running on the real network for a
-representative batch. This captures the model-kind difference automatically: a
-``potential_autograd`` model evaluates an acceleration as ``a = a_sign·∇ΔU``, so
-its acceleration eval includes an autograd gradient pass (and its training step a
-double backward); a ``force_direct`` model predicts ``Δa`` directly with a single
-forward. FlopCounterMode counts the matmuls of whichever path actually runs.
+representative batch. The ``potential_autograd`` model evaluates an acceleration
+as ``a = a_sign·∇ΔU``, so its acceleration eval includes an autograd gradient
+pass (and its training step a double backward). FlopCounterMode counts the
+matmuls of whichever path actually runs.
 
 Convention: FlopCounterMode counts a fused multiply-add as **2 FLOP** (a
 ``(m,k)·(k,n)`` matmul is ``2·m·k·n`` FLOP). Elementwise activations
@@ -61,7 +60,7 @@ PFLOP_S_DAY_IN_FLOPS: float = 1.0e15 * DAY_S  # == 8.64e19
 # 2*m*k*n). Recorded into the artifact so the unit is unambiguous downstream.
 FLOP_CONVENTION: str = "1 multiply-add = 2 FLOP (matmul (m,k)x(k,n) = 2*m*k*n)"
 
-_VALID_MODEL_KINDS = ("potential_autograd", "force_direct")
+_VALID_MODEL_KINDS = ("potential_autograd",)
 
 # Theoretical peak FP32 (non-tensor-core) throughput, FLOP/s, by a distinctive
 # lower-cased substring of ``torch.cuda.get_device_name()``. Sources: NVIDIA
@@ -471,28 +470,24 @@ def measure_inference_flops_per_eval(
     This is the honest, hardware-independent "model speed" number — directly
     comparable across surrogates (and against a classical SH model's per-eval FLOP
     cost). For ``potential_autograd`` it includes the ``∇ΔU`` autograd pass that
-    runtime force evaluation actually performs; for ``force_direct`` it is the
-    single forward that yields ``Δa`` directly.
+    runtime force evaluation actually performs.
     """
-    mk = _check_model_kind(model_kind)
+    _check_model_kind(model_kind)
     x = _as_2d(sample_input)
     batch = int(x.shape[0])
     with _eval_mode(model):
-        if mk == "force_direct":
-            with torch.no_grad():
-                total = _measure_flops(lambda: model(x.detach()))
-        else:  # potential_autograd: a = ∇ΔU requires an autograd gradient pass.
-            # Use .backward() rather than autograd.grad(): the latter triggers a
-            # FlopCounterMode incompatibility ("leaf node ... _will_engine_execute_node")
-            # when the gradient target is a leaf input. A reverse pass through the
-            # whole graph has the same matmul FLOP either way.
-            def _accel_eval() -> None:
-                model.zero_grad(set_to_none=True)
-                xr = x.detach().clone().requires_grad_(True)
-                u = model(xr)
-                u.sum().backward()
+        # potential_autograd: a = ∇ΔU requires an autograd gradient pass.
+        # Use .backward() rather than autograd.grad(): the latter triggers a
+        # FlopCounterMode incompatibility ("leaf node ... _will_engine_execute_node")
+        # when the gradient target is a leaf input. A reverse pass through the
+        # whole graph has the same matmul FLOP either way.
+        def _accel_eval() -> None:
+            model.zero_grad(set_to_none=True)
+            xr = x.detach().clone().requires_grad_(True)
+            u = model(xr)
+            u.sum().backward()
 
-            total = _measure_flops(_accel_eval)
+        total = _measure_flops(_accel_eval)
         model.zero_grad(set_to_none=True)
     return float(total) / batch
 
@@ -509,30 +504,26 @@ def measure_train_step_flops_per_sample(
     true double-backward through the network parameters. The model weights are
     **not** modified (no optimiser step); gradients are zeroed afterwards.
     """
-    mk = _check_model_kind(model_kind)
+    _check_model_kind(model_kind)
     x = _as_2d(sample_input)
     batch = int(x.shape[0])
     with _eval_mode(model):
         model.zero_grad(set_to_none=True)
 
         def _train_step() -> None:
-            if mk == "force_direct":
-                a = model(x.detach())
-                loss = a.pow(2).sum()
-                loss.backward()
-            else:
-                # forward U, then ∇U (graph-retaining) via .backward(create_graph=True),
-                # then an outer backward on the acceleration loss — the true
-                # double-backward through the network parameters. .backward() is
-                # used instead of autograd.grad() to avoid the FlopCounterMode
-                # leaf-target incompatibility (see measure_inference_flops_per_eval).
-                xr = x.detach().clone().requires_grad_(True)
-                u = model(xr)
-                u.sum().backward(create_graph=True)
-                a = xr.grad
-                assert a is not None
-                loss = a.pow(2).sum()
-                loss.backward()
+            # potential_autograd: forward U, then ∇U (graph-retaining) via
+            # .backward(create_graph=True), then an outer backward on the
+            # acceleration loss — the true double-backward through the network
+            # parameters. .backward() is used instead of autograd.grad() to avoid
+            # the FlopCounterMode leaf-target incompatibility (see
+            # measure_inference_flops_per_eval).
+            xr = x.detach().clone().requires_grad_(True)
+            u = model(xr)
+            u.sum().backward(create_graph=True)
+            a = xr.grad
+            assert a is not None
+            loss = a.pow(2).sum()
+            loss.backward()
 
         with warnings.catch_warnings():
             # create_graph=True warns about a param/grad reference cycle; we break
@@ -647,7 +638,7 @@ def build_compute_accounting(
         A representative ``(batch, in_dim)`` input in the network's scaled
         coordinates (the same thing the training loop feeds the model).
     model_kind:
-        ``"potential_autograd"`` or ``"force_direct"``.
+        ``"potential_autograd"``.
     total_samples_processed:
         Total number of training samples the optimiser actually consumed across
         the whole run (sum of batch sizes over all steps). The portable training

@@ -25,6 +25,12 @@ from .benchmark_config import (
 from .benchmark_validation import validate_benchmark_outputs
 from .provenance import build_benchmark_manifest, sha256_payload, write_json
 
+# This pipeline compares gravity models only (classical SH vs ST-LRPS); no
+# non-gravity perturbation is ever enabled here. Results produced with a
+# full-dynamics force set belong in a separate table and must not be merged
+# with rows carrying this scope.
+FORCE_MODEL_SCOPE = "gravity_only"
+
 
 def run_configured_benchmark(
     config_path: str | Path,
@@ -258,7 +264,12 @@ def _standardize_legacy_outputs(output_dir: Path, config: Mapping[str, Any]) -> 
         rows = _read_csv(aggregate)
         write_json(
             output_dir / "metrics_summary.json",
-            {"schema_version": 1, "units": _metric_units(), "rows": rows},
+            {
+                "schema_version": 1,
+                "units": _metric_units(),
+                "force_model_scope": FORCE_MODEL_SCOPE,
+                "rows": rows,
+            },
         )
     if per_scenario.exists():
         shutil.copyfile(per_scenario, output_dir / "scenario_results.csv")
@@ -333,6 +344,7 @@ def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> Non
         {
             "schema_version": 1,
             "units": _metric_units(),
+            "force_model_scope": FORCE_MODEL_SCOPE,
             "rows": summary_rows,
             "synthetic": True,
             "warning": SYNTHETIC_BANNER,
@@ -406,6 +418,9 @@ def _write_report(
         f"- Scenario count: {scenario['count']}",
         f"- Duration days: {config['propagation']['duration_days']}",
         f"- Truth model: {truth['model']} degree {truth['degree']}",
+        f"- Force-model scope: {FORCE_MODEL_SCOPE} (lunar gravity models only; "
+        "no third-body, SRP, albedo, thermal IR, tides, or relativity). "
+        "Gravity-only and full-dynamics results must never share a table.",
         f"- Compared models: {models}",
         f"- Validation status: {status}",
         f"- Metrics CSV: {output_dir / 'metrics_summary.csv'}",

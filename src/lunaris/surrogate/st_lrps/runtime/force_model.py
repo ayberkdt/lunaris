@@ -105,10 +105,6 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     resolve_run_dir as resolve_run_dir_from_artifacts,
 )
-from lunaris.surrogate.st_lrps.shared.capabilities import (
-    UnsupportedCapability,
-    get_capability,
-)
 from lunaris.surrogate.st_lrps.shared.contracts import (
     MOON_FIXED_FRAME,
     REQUIRED_DERIVATIVE_CONVENTION,
@@ -120,14 +116,6 @@ from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
 # The only runtime frame ST-LRPS artifacts currently support. Inputs to the
 # ``*_fixed`` methods are interpreted in this body-fixed Cartesian frame.
 SUPPORTED_RUNTIME_FRAME = MOON_FIXED_FRAME
-
-# Direct-force artifacts predict acceleration only; the scalar residual potential
-# is not-applicable by design (see the ST-LRPS capability matrix). Resolved once
-# so the runtime raises the single registry-backed exception type everywhere.
-_FORCE_DIRECT_NO_POTENTIAL = get_capability(
-    "runtime", "force_direct", "scalar_residual_potential"
-)
-
 
 def _artifact_declares_frame(cfg: dict | None) -> bool:
     """True when the artifact's raw config explicitly declares a coordinate frame.
@@ -181,12 +169,9 @@ def _to_tensor(x: np.ndarray | torch.Tensor, device: torch.device) -> torch.Tens
 class BaseSurrogateRuntime:
     """Runtime contract for current and future ST-LRPS surrogate kinds.
 
-    .. warning::
-       Do **not** use ``isinstance()`` to decide whether a runtime is
-       conservative: :class:`DirectForceRuntime` inherits from
-       :class:`SurrogateForceModel` for implementation reuse, so isinstance
-       checks against the potential classes are also True for ``force_direct``.
-       Use :attr:`is_conservative` (or ``runtime_model_kind``) instead.
+    Only the conservative ``potential_autograd`` surrogate is supported on
+    main. Prefer :attr:`is_conservative` (or ``runtime_model_kind``) over
+    ``isinstance`` checks when a future non-conservative kind is reintroduced.
     """
 
     runtime_model_kind = "base"
@@ -717,70 +702,6 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         return _rotate_fixed_to_inertial(a_fixed, q_i2f)
 
 
-class DirectForceRuntime(SurrogateForceModel):
-    """Direct residual-acceleration ST-LRPS runtime.
-
-    ``force_direct`` artifacts predict scaled residual acceleration directly:
-    ``NN(r_fixed_scaled) -> Delta_a_fixed_scaled``. Inference unscales with the
-    acceleration scaler and never differentiates a scalar potential. These
-    artifacts are therefore faster inference targets but are not conservative
-    potential models unless separately validated.
-    """
-
-    runtime_model_kind = "force_direct"
-    # Direct residual acceleration has no underlying scalar potential; zero curl
-    # is not guaranteed unless separately validated. isinstance() against the
-    # potential classes is True for this class too — use this flag instead.
-    is_conservative = False
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        if self.artifact_contract.runtime_model_kind != "force_direct":
-            raise ValueError(
-                "DirectForceRuntime accepts only artifact_contract.runtime_model_kind='force_direct'; "
-                f"got {self.artifact_contract.runtime_model_kind!r}."
-            )
-        if int(getattr(self.artifact_contract, "output_dim", 1)) != 3:
-            raise ValueError("DirectForceRuntime requires artifact_contract.output_dim=3.")
-        model_output_dim = getattr(self.model, "output_dim", None)
-        if model_output_dim is None:
-            linears = [m for m in self.model.modules() if isinstance(m, nn.Linear)]
-            model_output_dim = linears[-1].out_features if linears else None
-        if model_output_dim is not None and int(model_output_dim) != 3:
-            raise RuntimeError(
-                f"DirectForceRuntime requires a 3-output model head; got output_dim={model_output_dim}."
-            )
-
-    def _predict_chunk(self, x_t: torch.Tensor) -> tuple[np.ndarray, np.ndarray]:
-        with torch.no_grad():
-            x_scaled = self.scaler.scale_x(x_t)
-            delta_a_scaled = self.model(x_scaled)
-            if delta_a_scaled.ndim != 2 or delta_a_scaled.shape[1] != 3:
-                raise RuntimeError(
-                    "force_direct model must return shape (N,3) scaled residual acceleration; "
-                    f"got {tuple(delta_a_scaled.shape)}."
-                )
-            delta_a = self.scaler.unscale_a(delta_a_scaled)
-        # NaN, not zeros: force_direct artifacts have no scalar potential, and a
-        # zero could masquerade as a real DeltaU downstream. The public potential
-        # methods raise UnsupportedCapability; this internal column must poison,
-        # not placate, any accidental consumer.
-        nan_u = np.full((int(x_t.shape[0]), 1), np.nan, dtype=np.float64)
-        return nan_u, delta_a.detach().cpu().numpy()
-
-    def _predict_potential_only_chunk(self, x_t: torch.Tensor) -> np.ndarray:
-        raise UnsupportedCapability(_FORCE_DIRECT_NO_POTENTIAL)
-
-    def predict_residual_potential_fixed(self, r_fixed_m):
-        raise UnsupportedCapability(_FORCE_DIRECT_NO_POTENTIAL)
-
-    def predict_residual_potential_inertial(self, r_inertial_m, q_i2f):
-        raise UnsupportedCapability(_FORCE_DIRECT_NO_POTENTIAL)
-
-    def predict_residual_potential(self, x_m):
-        return self.predict_residual_potential_fixed(x_m)
-
-
 def load_surrogate_force_model(
     model_dir: str | Path,
     device: str = "auto",
@@ -865,10 +786,15 @@ def load_surrogate_force_model(
     if runtime_kind == "potential_autograd":
         return SurrogateForceModel(**runtime_kwargs)
     if runtime_kind == "force_direct":
-        return DirectForceRuntime(**runtime_kwargs)
+        raise RuntimeError(
+            "force_direct artifacts are no longer loadable: the direct "
+            "residual-acceleration variant is archived in the "
+            "experimental/force-direct-archive branch. Main supports only the "
+            "conservative 'potential_autograd' surrogate."
+        )
     raise ValueError(
         f"Unsupported ST-LRPS runtime_model_kind={runtime_kind!r}. "
-        "Expected 'potential_autograd' or 'force_direct'."
+        "Expected 'potential_autograd'."
     )
 
 
@@ -876,7 +802,6 @@ __all__ = [
     "SUPPORTED_RUNTIME_FRAME",
     "BaseSurrogateRuntime",
     "PotentialAutogradRuntime",
-    "DirectForceRuntime",
     "SurrogateForceModel",
     "load_surrogate_force_model",
 ]
@@ -904,10 +829,7 @@ if __name__ == "__main__":
     x = (r * dirs).astype(np.float32)
 
     da = fm.predict_residual_accel_fixed(x)
-    if isinstance(fm, DirectForceRuntime):
-        print("dU range: N/A (force_direct artifacts do not predict scalar potential)")
-    else:
-        du = fm.predict_residual_potential_fixed(x)
-        print(f"dU range: [{du.min():.3e}, {du.max():.3e}] m^2/s^2")
+    du = fm.predict_residual_potential_fixed(x)
+    print(f"dU range: [{du.min():.3e}, {du.max():.3e}] m^2/s^2")
     print(f"|da| range: [{np.linalg.norm(da, axis=1).min():.3e}, {np.linalg.norm(da, axis=1).max():.3e}] m/s^2")
     print("Smoke test passed.")

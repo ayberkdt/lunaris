@@ -83,7 +83,9 @@ _ST_LRPS_PROVENANCE_CORE_FIELDS = (
     "torch_version",
     "model_kind",
 )
-_ST_LRPS_VALID_MODEL_KINDS = ("potential_autograd", "force_direct")
+# force_direct is archived in experimental/force-direct-archive and can no
+# longer be loaded; only potential_autograd is a valid ST-LRPS model kind.
+_ST_LRPS_VALID_MODEL_KINDS = ("potential_autograd",)
 
 INVALID = "invalid"
 TRUSTED = "trusted"
