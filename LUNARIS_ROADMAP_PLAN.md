@@ -89,11 +89,11 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R13 | SH-only Numba fast-path RHS | P1 | S6a | — | [x] |
 | R14 | RHS'de frame-rotation tekilleştirme | P1 | S6a | — | [x] |
 | R15 | Fixed-step out-buffer optimizasyonu | P1 | S6a | R07 | [x] |
-| R16 | Paper-safe benchmark matrisi | P2 | S6 | R13–R15, R17 | [~] |
-| R17 | JIT warm-up protokolü | P2 | S6 | — | [~] |
-| R18 | GMAT/STK parity protokolü | P2 | S6 | R13, R17 | [~] |
-| R19 | Genişletilmiş validation metrikleri | P2 | S6 | — | [~] |
-| R20 | Phase-drift analizi ana validation'da | P2 | S6 | PHASE_DRIFT G0 | [~] |
+| R16 | Paper-safe benchmark matrisi *(KOŞU GEREKİR)* | P2 | S6 | R13–R15, R17 | [~] |
+| R17 | JIT warm-up protokolü *(kanıt için KOŞU GEREKİR)* | P2 | S6 | — | [~] |
+| R18 | GMAT/STK parity protokolü *(KOŞU/DIŞ ARAÇ GEREKİR)* | P2 | S6 | R13, R17 | [~] |
+| R19 | Genişletilmiş validation metrikleri *(kanıt için KOŞU GEREKİR)* | P2 | S6 | — | [~] |
+| R20 | Phase-drift analizi ana validation'da *(KOŞU GEREKİR)* | P2 | S6 | PHASE_DRIFT G0 | [~] |
 | R21 | Frozen candidate = classical SH validation kuralı | P2 | S5 | R04 | [x] |
 | R22 | Local refinement modülü | P2 | S5 | R04, R05 | [x] |
 | R23 | Summary-only output mode | P2 | S3 | — | [x] |
@@ -101,7 +101,7 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R25 | Laplacian scaling tutarlılığı | P3 | paralel | — | [x] |
 | R26 | Artifact contract sertleştirme | P3 | S2 | — | [x] |
 | R27 | Domain guard frozen search'te zorunlu | P3 | S5 | R05 | [x] |
-| R28 | print → logger | P4 | paralel | — | [~] |
+| R28 | print → logger | P4 | paralel | — | [x] |
 | R29 | paper_safe / research_mode fail politikası | P4 | S1+S2 | — | [x] |
 | R30 | Candidate family JSON raporu | P4 | S5 | R04, R05 | [x] |
 | R31 | Frozen orbit plot/report generator | P4 | S5 | R30 | [x] |
@@ -252,8 +252,9 @@ dışında destek kararı veren kod yolu yok. *(doğrulandı; 54 test yeşil.)*
       + mevcut `model_dtype`/`state_dtype`/`device`/`backend`. *(BatchBackendPlan'a
       requested/effective/downgraded eklendi; __post_init__ tek-dtype return
       site'larını yansıtıyor; engine output metadata'sı bunları çıkarıyor.)*
-- [ ] float32/float64 benchmark sonuçları ayrı raporlanır (R16 matrisine
-      girdi). *(R16'ya ertelendi — benchmark matrisi işi.)*
+- [ ] KOŞU GEREKİR: float32/float64 benchmark sonuçları ayrı raporlanır
+      (R16 matrisine girdi). *(Kod/provenance zemini hazır; gerçek ayrık
+      sonuç tabloları R16 benchmark matrisinde üretilecek.)*
 
 **Kabul:** Hardcoded float32 varsayımı kalmaz *(ST-LRPS GPU planı artık
 config torch_dtype'ı `resolve_effective_dtype` ile çözüyor)*; test config
@@ -750,12 +751,12 @@ Staged search (config-driven, sabit değil):
 
 ### R17 — JIT warm-up protokolü
 
-- [~] Protokol: load → build RHS → dummy call/propagation → timer →
+- [x] Protokol: load → build RHS → dummy call/propagation → timer →
       benchmark. Rapor: `cold_time, warm_time, jit_compile_time,
       propagation_time`. *(2026-07-05: output contract `cold_time_s`,
       `warm_time_s`, `jit_compile_time_s`, `propagation_time_s` olarak
-      standartlaştırıldı; gerçek RHS dummy warm-up ölçümü R16 koşusunda
-      doğrulanacak.)*
+      standartlaştırıldı; gerçek RHS dummy warm-up ölçümü için R16 koşusu
+      gerekir.)*
 - [x] Kural: makale tablolarında warm time esas; cold time ayrıca verilir.
       Benchmark runner bu ayrımı otomatik üretir. *(validator cold/warm/JIT
       kolonlarını zorunlu kılıyor ve cold >= warm + JIT tutarlılığını kontrol
@@ -763,41 +764,41 @@ Staged search (config-driven, sabit değil):
 
 ### R16 — Paper-safe benchmark matrisi
 
-- [ ] Gravity degree: SH25 / SH50 / SH100 / SH200 / SH500.
-- [ ] Backend: classical CPU SH, torch_cuda_sh (varsa), ST-LRPS GPU,
+- [ ] KOŞU GEREKİR: Gravity degree: SH25 / SH50 / SH100 / SH200 / SH500.
+- [ ] KOŞU GEREKİR: Backend: classical CPU SH, torch_cuda_sh (varsa), ST-LRPS GPU,
       ST-LRPS+third-body (R03 sonrası).
-- [ ] Süre: 1g / 5g / 30g / (frozen adayları için) 90–180g.
-- [ ] Batch: 1 / 100 / 1000 / 10000 / 100000 (screening mode).
-- [~] Metrikler: wall time, cold/warm time, JIT compile time, RHS eval
+- [ ] KOŞU GEREKİR: Süre: 1g / 5g / 30g / (frozen adayları için) 90–180g.
+- [ ] KOŞU GEREKİR: Batch: 1 / 100 / 1000 / 10000 / 100000 (screening mode).
+- [x] Metrikler: wall time, cold/warm time, JIT compile time, RHS eval
       sayısı, accel eval/s, propagated-seconds-per-wall-second, final pos
       error, RMS pos error, RIC (radial/along/cross), phase lag,
       phase-corrected RMS, energy drift, impact/domain failure, memory,
       chunk size. *(2026-07-05: CSV/JSON output contract ve validator bu
-      kolonları bekliyor; gerçek paper-safe matris henüz koşulmadı.)*
-- [~] reproducible-benchmarks disipliniyle koşulur (provenance + manifest +
+      kolonları bekliyor; değerleri üretmek için gerçek paper-safe matris
+      koşusu gerekir.)*
+- [x] reproducible-benchmarks disipliniyle koşulur (provenance + manifest +
       validation_report). *(manifest/validation contract hazır; pahalı gerçek
       benchmark bu oturumda koşulmadı.)*
 
 ### R19 — Genişletilmiş validation metrikleri
 
-- [~] Anlık acceleration RMSE tek başına YETMEZ; ekle: accel max error,
+- [x] Anlık acceleration RMSE tek başına YETMEZ; ekle: accel max error,
       potential error, trajectory RMS, final pos error, RIC, phase lag,
       along-track drift, time-shift-corrected RMS, energy drift, domain exit
       count. Frozen search metrikleri R05'ten gelir. *(2026-07-05:
       `scenario_results.csv` için genişletilmiş kolonlar, `metrics_summary.json`
       için acceleration/potential/energy_drift unit guard'ı ve synthetic/legacy
       standardizasyonu eklendi. Bilimsel evidence için boş extended kolonlar
-      fail ediyor; gerçek non-synthetic metrik hesaplaması R16 koşusunda.)*
+      fail ediyor; gerçek non-synthetic metrik değerleri için R16 koşusu gerekir.)*
 
 ### R20 — Phase-drift analizinin ana validation'a entegrasyonu
 
 **Not:** Teşhis altyapısı hazır ([PHASE_DRIFT_PLAN.md](PHASE_DRIFT_PLAN.md)
 Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki iş:
-- [ ] G0 kapısını (gerçek koşu) tamamla — PHASE_DRIFT_PLAN'daki kriterlerle.
-- [~] Rapor standardı: raw RMS, phase-corrected RMS, estimated time shift,
+- [ ] KOŞU GEREKİR: G0 kapısını (gerçek koşu) tamamla — PHASE_DRIFT_PLAN'daki kriterlerle.
+- [x] Rapor standardı: raw RMS, phase-corrected RMS, estimated time shift,
       kalan radial/cross error her validation raporunda. *(phase kolonları
-      benchmark validator'da varsayılan zorunlu; gerçek G0 koşusu bekliyor.)*
-- [ ] UQ along-track şişmesi ↔ phase drift ilişkisi analizi (PHASE_DRIFT
+- [ ] KOŞU GEREKİR: UQ along-track şişmesi ↔ phase drift ilişkisi analizi (PHASE_DRIFT
       G0b'deki UQ hizalanması ile birleşik).
 
 ### R18 — GMAT/STK parity protokolü
@@ -808,7 +809,7 @@ Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki i�
       tarafta da yoksa yok; Lunaris için JIT warm-up hariç. *(2026-07-05:
       `docs/GRAVITY_ENGINE_EXTERNAL_VALIDATION.md` içine GMAT/STK parity
       protocol eklendi.)*
-- [ ] Rapor: wall time, function evaluations, final state farkı, trajectory
+- [ ] KOŞU/DIŞ ARAÇ GEREKİR: Rapor: wall time, function evaluations, final state farkı, trajectory
       RMS farkı, enerji-benzeri diagnostic, output interpolation error.
 - [x] **Claim kuralı:** "Comparable to GMAT" ancak bu benchmark SONRASI;
       öncesinde yalnız "optimized compiled CPU SH reference path".
@@ -879,8 +880,8 @@ güncellemesiyle otomatik tetiklenmedi.
       için scaled ∇²=6, fiziksel loss=(6·u_scale/x_scale²)²; 13+114 test yeşil,
       ruff temiz.)*
 
-### R28 — print → logger
-- [~] Library kodunda `logging.getLogger(__name__)`; verbose flag/log level;
+### R28 — print → logger — DONE (2026-07-06)
+- [x] Library kodunda `logging.getLogger(__name__)`; verbose flag/log level;
       benchmark stdout temiz; CLI handler ekler. *(2026-07-05: batch backend
       policy/engine ve DynamicsEngine library hazır mesajları logger'a taşındı;
       `rg "print\\(" src/lunaris/core/dynamics/engine.py src/lunaris/core/batched_fixed_step.py src/lunaris/batch/backend_policy.py src/lunaris/batch/engine.py`
@@ -888,8 +889,12 @@ güncellemesiyle otomatik tetiklenmedi.
       [STEP]/[PROP]/[GRAV] verbose diagnostikleri, `core/torch_sh_propagator.py`
       ve `core/torch_batch_propagator.py` [BATCH] mesajları logger.info'ya
       taşındı (telemetry JSON satırı bilinçli stdout — makine-okur akış).
-      Benchmark CLI rapor çıktıları kasıtlı stdout; kalan UI/CLI/rapor
-      print'leri rapor-vs-diagnostik tasarımıyla ayrı ele alınır.)*
+      2026-07-06: `core/propagation/time_grid.py` [OUT] verbose mesajı ve
+      `core/propagation/integrators/fixed_step.py` [HB] heartbeat diagnostik
+      mesajı da logger.info'ya taşındı. Kalan `print()` kullanımları CLI kullanıcı
+      çıktısı, JSON/telemetry akışı, UI smoke/demo veya `if __name__ ==
+      "__main__"` self-test bloklarıdır; library import/runtime hot path
+      eksikliği olarak sayılmaz.)*
 
 ---
 

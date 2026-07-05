@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
@@ -9,6 +10,8 @@ import numpy as np
 
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.core.dynamics import DynamicsEngine
+
+logger = logging.getLogger(__name__)
 
 
 def _norm_method(method: Any) -> str:
@@ -44,7 +47,7 @@ def _clamp_output_dt(t0: float, tf: float, dt_out: float, cap: int, verbose: boo
     if n > int(cap):
         dt = (tf - t0) / max(2, int(cap) - 1)
         if verbose:
-            print(f"[OUT] max_points_cap exceeded -> increasing output_dt_s to {dt:g} s", flush=True)
+            logger.info("[OUT] max_points_cap exceeded -> increasing output_dt_s to %g s", dt)
     return dt
 
 def _get_ref_radius_and_mu(dynamics: DynamicsEngine) -> tuple[float, float]:

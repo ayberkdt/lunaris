@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -20,6 +21,8 @@ from lunaris.core.propagation.integrators.symplectic import (
     _y8_step,
 )
 from lunaris.core.propagation.time_grid import _norm_method
+
+logger = logging.getLogger(__name__)
 
 # Acceleration-based symplectic + Nystrom methods operate on the 6-D [r, v]
 # state only. RK4 operates on the full state (augmented states allowed).
@@ -363,9 +366,12 @@ def _integrate_fixed_step(
             alt_max_km = max(alt_max_km, alt_now_km)
             if (t_hr - last_hb_hr) >= float(heartbeat_hours):
                 if verbose:
-                    print(
-                        f"[HB] t={t_hr:7.2f} h | alt={alt_now_km:9.3f} km | min={alt_min_km:9.3f} | max={alt_max_km:9.3f}",
-                        flush=True,
+                    logger.info(
+                        "[HB] t=%7.2f h | alt=%9.3f km | min=%9.3f | max=%9.3f",
+                        t_hr,
+                        alt_now_km,
+                        alt_min_km,
+                        alt_max_km,
                     )
                 last_hb_hr = t_hr
 
