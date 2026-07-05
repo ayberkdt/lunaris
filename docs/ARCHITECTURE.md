@@ -399,8 +399,10 @@ keeping the runtime path aligned with the scaler and loss.
 **Runtime.** The engine-facing API is
 `lunaris.surrogate.runtime.SurrogateGravityModel`. The runtime package owns artifact discovery,
 metadata/scaler loading, checkpoint/network construction, device selection, and
-the gravity-provider facade; neural force inference still delegates to the
-internal ST-LRPS API in `runtime/force_model.py`.
+the gravity-provider facade; neural force inference delegates to the canonical
+internal ST-LRPS API in `runtime/canonical_runtime.py` (R11 — the single home
+of scaler / domain-guard / model-kind logic; `runtime/force_model.py` remains
+as a dynamic compat shim over it).
 `potential_autograd` (`SurrogateForceModel`) evaluates the learned scalar
 potential and differentiates it with autograd to obtain residual acceleration,
 which is added to the SH(`degree_min`) baseline. This is the only supported

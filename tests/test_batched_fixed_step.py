@@ -451,6 +451,61 @@ def test_oom_at_chunk_one_reraises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# G3 — 100k screening smoke: chunking + compaction + summary-only together
+# ---------------------------------------------------------------------------
+
+
+def test_g3_100k_screening_smoke_chunked_compacted_summary() -> None:
+    """G3 gate: a 100k-sample screening pass runs through the shared loop with
+    VRAM-style chunking and alive compaction, then reduces to the versioned
+    summary + top-K without ever holding more than one output grid of states.
+
+    CPU-sized: one RK4 step per sample (the memory/plumbing is what's under
+    test; per-step physics cost is covered elsewhere). On a real GPU the same
+    path runs with the full step count.
+    """
+    from lunaris.batch.summary import TopKTrajectoryBuffer, summarize_ensemble
+
+    n_total = 100_000
+    rng = np.random.default_rng(42)
+    Y0 = np.repeat(_circular_state(120.0)[None, :], n_total, axis=0)
+    Y0[:, :3] += rng.normal(0.0, 5_000.0, size=(n_total, 3))
+    Y0[:, 3:] += rng.normal(0.0, 2.0, size=(n_total, 3))
+    # ~30% start below the surface: compaction drops them after the t=0 check.
+    dead = rng.choice(n_total, size=n_total // 3, replace=False)
+    Y0[dead, :3] *= 0.5
+
+    res = _run(
+        Y0,
+        duration_s=60.0,
+        output_dt_s=60.0,
+        dt_s=60.0,
+        chunk_size=8192,  # VRAM-band-sized chunks (small-GPU band)
+    )
+
+    assert res.Y_out.shape == (2, n_total, 6)
+    assert res.metrics["impacted_sample_count"] >= dead.size
+    # Compaction: dead samples never reached the provider.
+    assert res.metrics["total_active_state_steps"] < res.metrics["total_raw_state_steps"]
+    assert res.metrics["chunk_size_effective"] == 8192
+
+    summary = summarize_ensemble(
+        res.t_out, res.Y_out, res.impact_flags, res.t_impact,
+        mu_m3s2=GM, r_ref_m=R_REF,
+    )
+    assert summary["n_samples"] == n_total
+    scores = np.asarray(summary["fields"]["score"], dtype=np.float64)
+    topk = TopKTrajectoryBuffer(16)
+    topk.offer_batch(
+        global_start=0, scores=scores, Y_batch=res.Y_out,
+        impact_flags=res.impact_flags, t_impact=res.t_impact,
+    )
+    kept = topk.stacked_trajectories(res.Y_out.shape[0])
+    assert kept.shape[1] <= 16
+    assert all(np.isfinite(s) for s in topk.scores)
+
+
+# ---------------------------------------------------------------------------
 # Autograd safety of the shared stepper
 # ---------------------------------------------------------------------------
 

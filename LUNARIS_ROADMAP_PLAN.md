@@ -84,7 +84,7 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R08 | Alive-sample compaction | P1 | S3 | R07 | [x] |
 | R09 | Capability registry tek kaynak | P1 | S2 | — | [x] |
 | R10 | Dtype provenance düzeltmesi | P1 | S2 | — | [x] |
-| R11 | Canonical ST-LRPS runtime | P1 | S3 | R01 | [ ] |
+| R11 | Canonical ST-LRPS runtime | P1 | S3 | R01 | [x] |
 | R12 | Terrain fallback paper-safe hard fail | P1 | S2 | — | [x] |
 | R13 | SH-only Numba fast-path RHS | P1 | S6a | — | [ ] |
 | R14 | RHS'de frame-rotation tekilleştirme | P1 | S6a | — | [ ] |
@@ -443,22 +443,45 @@ arşiv dosyası yazılmadığı ve yalnız top-K tutulduğu assert'li.)*
 `surrogate/st_lrps/runtime/force_model.py` scaler/domain-guard/model-kind/
 prediction sorumluluklarını çiftliyor.
 
-- [ ] Yeni `src/lunaris/surrogate/st_lrps/runtime/canonical_runtime.py`:
+- [x] Yeni `src/lunaris/surrogate/st_lrps/runtime/canonical_runtime.py`:
       artifact loading, model_kind validation, scaler loading, domain guard,
       potential prediction, autograd acceleration, residual+baseline
-      composition, metadata/provenance.
-- [ ] `gravity_provider.py` yalnız adapter olur; `force_model.py` R01
-      sonrası sadeleşir/kaldırılır.
-- [ ] Import kontratı korunur: ST-LRPS runtime (inference path) hafif kalır;
-      evaluation/training'e import açılmaz.
+      composition, metadata/provenance. *(2026-07-05: force_model.py'nin
+      tamamı (SurrogateForceModel + loader + frame/rotasyon yardımcıları +
+      R26 paper-safe kapısı) canonical_runtime.py'ye taşındı; tensör-yolu
+      domain guard'ı `enforce_altitude_envelope_torch` tek-kaynak fonksiyon
+      olarak eklendi.)*
+- [x] `gravity_provider.py` yalnız adapter olur; `force_model.py` R01
+      sonrası sadeleşir/kaldırılır. *(gravity_provider tensör domain guard'ını
+      canonical'a delege ediyor; force_model.py dinamik-fold compat shim
+      (ruff --fix static re-export tuzağına karşı PEP 562 `__getattr__`).
+      NOT — bilinçli istisna: gravity_provider'daki pre-contract legacy
+      fallback yolu (kontratsız eski artifact'ler, RuntimeWarning'li) davranış
+      koruması için tutuldu; canonical_runtime docstring'inde belgeli.
+      Kaldırma/fail-closed kararı kullanıcıya soruldu.)*
+- [x] Import kontratı korunur: ST-LRPS runtime (inference path) hafif kalır;
+      evaluation/training'e import açılmaz. *(Kontratlar paket-seviyesi;
+      import/architecture testleri yeşil (789 pass'lık st_lrps/surrogate/
+      import/architecture seçkisi).)*
 
 **Kabul:** scaler/domain/model-kind mantığı yalnız canonical_runtime.py'de;
 grep ile doğrulanabilir; davranış regresyon testleri yeşil.
+*(tests/test_canonical_runtime_module.py: shim-identity, dinamik-fold,
+monkeypatch-through-shim, domain-guard tek-ev grep'i, envelope semantiği,
+shim/canonical loader eşitliği.)*
 
-### G3 kapısı
-1. Ortak loop iki backend'de kullanımda, davranış testleri yeşil.
-2. 100k screening smoke (chunking + compaction + summary-only) çalışıyor.
-3. Canonical runtime tek kaynak; duplicate logic grep'i temiz.
+### G3 kapısı — ✅ GEÇİLDİ (2026-07-05)
+1. [x] Ortak loop iki backend'de kullanımda, davranış testleri yeşil
+   (R07/R08; tests/test_batched_fixed_step.py + test_torch_sh_batch_propagator.py).
+2. [x] 100k screening smoke (chunking + compaction + summary-only) çalışıyor
+   (`test_g3_100k_screening_smoke_chunked_compacted_summary`: N=100k,
+   chunk=8192, ~%33 t=0-impact compaction, summary v1 + top-K; CPU'da tek
+   adımlık plumbing smoke — gerçek GPU'da aynı yol tam adım sayısıyla koşar).
+3. [x] Canonical runtime tek kaynak; duplicate logic grep'i temiz
+   (test_domain_guard_logic_single_home).
+
+**Sprint 3 tamam (R07 + R08 + R06 + R23 + R11).** Sprint 4'e (R03
+gpu_st_lrps_third_body) geçilebilir.
 
 ---
 
