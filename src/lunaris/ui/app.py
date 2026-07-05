@@ -62,6 +62,7 @@ NAV_PAGES = [
     ("Telemetry",   "Live Telemetry",    "fa6s.chart-line"),
     ("Data",        "Data & Files",      "fa6s.database"),
     ("BatchPropagation",  "Batch Propagation", "fa6s.dice"),
+    ("FrozenSearch", "Frozen Search",    "fa6s.snowflake"),
 ]
 
 PAGE_DESCRIPTIONS = {
@@ -72,6 +73,7 @@ PAGE_DESCRIPTIONS = {
     "Telemetry": "Monitor the active run and compare live engineering signals.",
     "Data": "Locate, validate, and manage mission data sources.",
     "BatchPropagation": "Configure ensemble sampling, execute batch propagation, and inspect distributions.",
+    "FrozenSearch": "Run the staged frozen-orbit search and inspect its output contract.",
 }
 
 # Default UI values (Internal SI units convention)
@@ -585,6 +587,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_telemetry = self._build_page_telemetry()
         self.page_data = self._build_page_data()
         self.page_batch = self._build_page_batch()
+        self.page_frozen_search = self._build_page_frozen_search()
 
         self.page_shells = {
             "Orbit": PageShell(
@@ -627,6 +630,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Batch Propagation",
                 PAGE_DESCRIPTIONS["BatchPropagation"],
                 content=self.page_batch,
+                scrollable=False,
+            ),
+            "FrozenSearch": PageShell(
+                "Frozen Search",
+                PAGE_DESCRIPTIONS["FrozenSearch"],
+                content=self.page_frozen_search,
                 scrollable=False,
             ),
         }
@@ -949,6 +958,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_batch = BatchPropagationPage(parent=self)
         self.page_batch.run_requested.connect(self._on_batch_run_requested)
         return self.page_batch
+
+    def _build_page_frozen_search(self) -> QtWidgets.QWidget:
+        """Page 8: Frozen-orbit staged search launcher."""
+        from lunaris.ui.pages.frozen_search_page import FrozenSearchPage
+        self.page_frozen_search = FrozenSearchPage(parent=self)
+        return self.page_frozen_search
 
     def _on_batch_run_requested(self) -> None:
         """Slot: user clicked 'Run Batch' on the batch page."""
@@ -2442,6 +2457,13 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if hasattr(self, "page_batch"):
                 self.page_batch.shutdown()
+        except Exception:
+            pass
+
+        # Stop any frozen-search subprocess owned by the dedicated page.
+        try:
+            if hasattr(self, "page_frozen_search"):
+                self.page_frozen_search.shutdown()
         except Exception:
             pass
 
