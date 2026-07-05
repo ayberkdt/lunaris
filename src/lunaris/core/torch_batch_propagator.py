@@ -55,7 +55,12 @@ import numpy as np
 
 from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
-from lunaris.core.batched_fixed_step import rhs_batch, run_batched_fixed_step
+from lunaris.core.batched_fixed_step import (
+    query_device_memory,
+    resolve_vram_aware_chunk_size,
+    rhs_batch,
+    run_batched_fixed_step,
+)
 from lunaris.core.torch_frame import (
     TorchFrameError,
     TorchMoonFrame,
@@ -172,7 +177,37 @@ class TorchBatchPropagator:
                 RuntimeWarning,
                 stacklevel=2,
             )
+
+        # R06: VRAM-aware chunking. The shared loop merges chunk results into
+        # one output and halves the chunk on OOM (recorded in the metrics).
+        requested_chunk = int(getattr(batch_cfg, "torch_sh_chunk_size", 0) or 0)
+        self._bytes_per_sample = self._estimate_bytes_per_sample()
+        self._free_mem_bytes, self._total_mem_bytes = query_device_memory(torch, self._device)
+        self._chunk_size, self._chunk_provenance = resolve_vram_aware_chunk_size(
+            bytes_per_sample=self._bytes_per_sample,
+            free_bytes=self._free_mem_bytes,
+            total_bytes=self._total_mem_bytes,
+            requested=requested_chunk,
+        )
         self._throughput_metrics: dict[str, Any] = {}
+
+    def _estimate_bytes_per_sample(self) -> int:
+        """Per-sample device-memory estimate for the ST-LRPS chunk preflight.
+
+        Assumptions (auditable, not magic):
+          * dominant cost is the MLP activations kept for the autograd pass:
+            ``~hidden * (depth + 1)`` elements/sample per forward, doubled for
+            the backward workspace;
+          * RK4 keeps state + 4 stage derivatives + temporaries -> ``~60`` elems;
+          * inflated 8x for transient tensors inside the evaluator (same safety
+            posture as the classic-SH estimate).
+        """
+        cfg = getattr(self._model, "config", {}) or {}
+        hidden = int(cfg.get("hidden", 256) or 256)
+        depth = int(cfg.get("depth", 4) or 4)
+        dtype_bytes = 8 if self._dtype == self._torch.float64 else 4
+        activation_elems = 2 * hidden * (depth + 1) + 60
+        return int(activation_elems * dtype_bytes * 8.0)
 
     # ------------------------------------------------------------------
     # Public interface (matches GPUBatchPropagator / CPUBatchPropagator)
@@ -331,7 +366,9 @@ class TorchBatchPropagator:
             detect_impact=detect_impact,
             topo=topo,
             impact_alt_m=impact_alt_m,
-            chunk_size=None,
+            # R06: VRAM-aware chunk (falls back to a single chunk for the
+            # __new__-constructed smoke-test path that skips __init__).
+            chunk_size=getattr(self, "_chunk_size", None),
             callback=callback,
             callback_granularity="snapshot",
         )
@@ -351,6 +388,10 @@ class TorchBatchPropagator:
                 else "line_sphere_quadratic"
             ),
             "impact_time_resolution_s": float(dt_eff),
+            # R06 chunk provenance from the shared loop (OOM recoveries included).
+            "chunk_size_requested": int(result.metrics["chunk_size_requested"]),
+            "chunk_size_effective": int(result.metrics["chunk_size_effective"]),
+            "oom_recoveries": result.metrics["oom_recoveries"],
         }
         self._last_impact_positions_inertial = result.impact_positions_inertial
         print(

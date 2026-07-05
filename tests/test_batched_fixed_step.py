@@ -18,6 +18,7 @@ pytestmark = pytest.mark.requires_torch
 
 from lunaris.core.batched_fixed_step import (  # noqa: E402
     build_output_grid,
+    resolve_vram_aware_chunk_size,
     rhs_batch,
     rk4_step,
     run_batched_fixed_step,
@@ -242,6 +243,210 @@ def test_invalid_callback_granularity_raises() -> None:
             duration_s=60.0,
             output_dt_s=60.0,
             callback_granularity="sample",
+        )
+
+
+# ---------------------------------------------------------------------------
+# R08 — alive-sample compaction
+# ---------------------------------------------------------------------------
+
+
+class _CountingProvider(_PointMassProvider):
+    """Counts the state rows it evaluates: a deterministic step-cost proxy."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rows_evaluated = 0
+
+    def acceleration(self, t_s: float, s):
+        self.rows_evaluated += int(s.shape[0])
+        return super().acceleration(t_s, s)
+
+
+def _run_counting(Y0: np.ndarray, *, duration_s: float, output_dt_s: float,
+                  dt_s: float = 60.0, chunk_size=None):
+    provider = _CountingProvider()
+    res = run_batched_fixed_step(
+        torch_mod=torch,
+        device=torch.device("cpu"),
+        dtype=torch.float64,
+        provider=provider,
+        frame=_frame(),
+        Y0=Y0,
+        duration_s=duration_s,
+        output_dt_s=output_dt_s,
+        dt_s=dt_s,
+        impact_r_m=R_REF,
+        detect_impact=True,
+        chunk_size=chunk_size,
+    )
+    return res, provider
+
+
+def test_compaction_reduces_step_cost_for_impacted_batch() -> None:
+    """R08 acceptance: with 70% of the batch impacted, the per-step evaluation
+    cost drops accordingly (tolerant assert: >= 50% fewer provider rows than
+    the raw N x steps x 4-stage count)."""
+    n_total, n_dead = 10, 7
+    states = [_circular_state(120.0) for _ in range(n_total - n_dead)]
+    states += [_circular_state(-10.0) for _ in range(n_dead)]  # impact at t=0
+    Y0 = np.stack(states)
+
+    res, provider = _run_counting(Y0, duration_s=600.0, output_dt_s=120.0)
+
+    assert res.metrics["impacted_sample_count"] == n_dead
+    total_steps = int(res.metrics["total_raw_state_steps"]) // n_total
+    raw_rows = n_total * total_steps * 4  # 4 RK4 stages per step
+    assert provider.rows_evaluated <= 0.5 * raw_rows
+    # Exactly the alive samples are evaluated once compacted at t=0.
+    assert provider.rows_evaluated == (n_total - n_dead) * total_steps * 4
+    # Alive trajectories are unaffected by their dead neighbours.
+    assert np.all(np.isfinite(res.Y_out))
+
+
+def test_compaction_all_impacted_skips_provider_entirely() -> None:
+    Y0 = np.stack([_circular_state(-10.0), _circular_state(-20.0)])
+    res, provider = _run_counting(Y0, duration_s=600.0, output_dt_s=120.0)
+    assert provider.rows_evaluated == 0
+    assert np.all(res.impact_flags == 1.0)
+    assert np.all(res.t_impact == 0.0)
+    # Frozen/terminal output: every snapshot repeats the initial states.
+    for snap in range(res.Y_out.shape[0]):
+        np.testing.assert_array_equal(res.Y_out[snap], Y0)
+
+
+@pytest.mark.parametrize("chunk", [None, 2])
+def test_compaction_preserves_mixed_impact_results(chunk) -> None:
+    """Compacted runs are result-invariant across chunk sizes with mid-run
+    impacts present (compaction is a memory/dispatch optimization, never a
+    physics change)."""
+    r0 = R_REF + 60_000.0
+    Y0 = np.stack(
+        [
+            _circular_state(120.0),
+            np.array([r0, 0.0, 0.0, -700.0, 0.0, 0.0], dtype=np.float64),  # impacts mid-run
+            _circular_state(200.0),
+            _circular_state(-10.0),  # impacts at t=0
+        ]
+    )
+    ref = _run(Y0, duration_s=900.0, output_dt_s=300.0, chunk_size=None)
+    res = _run(Y0, duration_s=900.0, output_dt_s=300.0, chunk_size=chunk)
+    np.testing.assert_allclose(res.Y_out, ref.Y_out, rtol=0.0, atol=0.0)
+    np.testing.assert_array_equal(res.impact_flags, ref.impact_flags)
+    np.testing.assert_allclose(res.t_impact, ref.t_impact, rtol=0.0, atol=0.0)
+
+
+# ---------------------------------------------------------------------------
+# R06 — VRAM-aware chunk sizing + OOM recovery
+# ---------------------------------------------------------------------------
+
+GiB = 2**30
+
+
+def test_chunk_resolver_cpu_uses_requested_or_default() -> None:
+    chunk, prov = resolve_vram_aware_chunk_size(
+        bytes_per_sample=1_000, free_bytes=0, total_bytes=0, requested=0
+    )
+    assert chunk == 1024 and prov["chunk_size_source"] == "cpu_default"
+    chunk, prov = resolve_vram_aware_chunk_size(
+        bytes_per_sample=1_000, free_bytes=0, total_bytes=0, requested=7
+    )
+    assert chunk == 7 and prov["chunk_size_source"] == "requested"
+
+
+def test_chunk_resolver_band_by_total_vram() -> None:
+    # Small GPU (4 GB): band cap 8192.
+    chunk, prov = resolve_vram_aware_chunk_size(
+        bytes_per_sample=1_000, free_bytes=3 * GiB, total_bytes=4 * GiB
+    )
+    assert chunk == 8192 and prov["vram_band"] == [2048, 8192]
+    # Mid GPU (12 GB): band cap 32768.
+    chunk, prov = resolve_vram_aware_chunk_size(
+        bytes_per_sample=1_000, free_bytes=10 * GiB, total_bytes=12 * GiB
+    )
+    assert chunk == 32768 and prov["vram_band"] == [8192, 32768]
+    # Large GPU (48 GB): band cap 262144.
+    chunk, prov = resolve_vram_aware_chunk_size(
+        bytes_per_sample=1_000, free_bytes=40 * GiB, total_bytes=48 * GiB
+    )
+    assert chunk == 262144 and prov["vram_band"] == [32768, 262144]
+
+
+def test_chunk_resolver_memory_cap_dominates_band_and_request() -> None:
+    # 1 MB/sample with 100 MB free -> cap = 80 samples, far below any band.
+    chunk, prov = resolve_vram_aware_chunk_size(
+        bytes_per_sample=2**20, free_bytes=100 * 2**20, total_bytes=4 * GiB
+    )
+    assert chunk == 80 and prov["chunk_size_memory_cap"] == 80
+    # An explicit request above the cap is capped, recorded as such.
+    chunk, prov = resolve_vram_aware_chunk_size(
+        bytes_per_sample=2**20, free_bytes=100 * 2**20, total_bytes=4 * GiB, requested=512
+    )
+    assert chunk == 80 and prov["chunk_size_source"] == "requested_capped"
+
+
+def test_chunk_resolver_single_sample_over_budget_raises() -> None:
+    with pytest.raises(RuntimeError, match="VRAM"):
+        resolve_vram_aware_chunk_size(
+            bytes_per_sample=10 * GiB, free_bytes=1 * GiB, total_bytes=4 * GiB
+        )
+
+
+class _OOMOnLargeBatchProvider(_PointMassProvider):
+    """Simulates CUDA OOM whenever a chunk larger than ``max_rows`` arrives."""
+
+    def __init__(self, max_rows: int) -> None:
+        super().__init__()
+        self.max_rows = int(max_rows)
+
+    def acceleration(self, t_s: float, s):
+        if int(s.shape[0]) > self.max_rows:
+            raise RuntimeError("CUDA out of memory. Tried to allocate everything.")
+        return super().acceleration(t_s, s)
+
+
+def test_oom_recovery_halves_chunk_and_matches_reference() -> None:
+    rng = np.random.default_rng(9)
+    Y0 = np.repeat(_circular_state(150.0)[None, :], 6, axis=0)
+    Y0[:, :3] += rng.normal(0.0, 3_000.0, size=(6, 3))
+
+    ref = _run(Y0, duration_s=600.0, output_dt_s=300.0, chunk_size=1)
+
+    res = run_batched_fixed_step(
+        torch_mod=torch,
+        device=torch.device("cpu"),
+        dtype=torch.float64,
+        provider=_OOMOnLargeBatchProvider(max_rows=2),
+        frame=_frame(),
+        Y0=Y0,
+        duration_s=600.0,
+        output_dt_s=300.0,
+        dt_s=60.0,
+        impact_r_m=R_REF,
+        chunk_size=6,
+    )
+    # Halvings 6 -> 3 -> 1 recorded; the run completes with the smaller chunk.
+    assert [r["retry_chunk_size"] for r in res.metrics["oom_recoveries"]] == [3, 1]
+    assert res.metrics["chunk_size_requested"] == 6
+    assert res.metrics["chunk_size_effective"] == 1
+    np.testing.assert_allclose(res.Y_out, ref.Y_out, rtol=0.0, atol=0.0)
+
+
+def test_oom_at_chunk_one_reraises() -> None:
+    Y0 = _circular_state(150.0)[None, :]
+    with pytest.raises(RuntimeError, match="out of memory"):
+        run_batched_fixed_step(
+            torch_mod=torch,
+            device=torch.device("cpu"),
+            dtype=torch.float64,
+            provider=_OOMOnLargeBatchProvider(max_rows=0),
+            frame=_frame(),
+            Y0=Y0,
+            duration_s=120.0,
+            output_dt_s=120.0,
+            dt_s=60.0,
+            impact_r_m=R_REF,
+            chunk_size=1,
         )
 
 

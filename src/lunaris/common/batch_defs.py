@@ -311,6 +311,11 @@ class BatchPropagationConfig:
     max_vram_gb: float = 4.0        # VRAM budget (caps batch size automatically)
     result_storage_mode: str = "auto"  # "auto", "memory", or "disk"
     max_result_memory_gb: float = 1.0
+    # R23 screening output: "full" keeps every trajectory; "summary_only" keeps
+    # the versioned per-sample screening summary plus the top-K full histories
+    # (the (T, N, 6) ensemble tensor is never materialized or archived).
+    output_mode: str = "full"       # "full" or "summary_only"
+    summary_top_k: int = 16         # full histories retained in summary mode
 
     # Statistical analysis
     detect_impact: bool | None = None
@@ -392,6 +397,12 @@ class BatchPropagationConfig:
             )
         if self.result_storage_mode == "disk" and self.output_format != "hdf5":
             raise ValueError("result_storage_mode='disk' requires output_format='hdf5'.")
+        if self.output_mode not in ("full", "summary_only"):
+            raise ValueError(
+                f"output_mode must be 'full' or 'summary_only', got {self.output_mode!r}"
+            )
+        if int(self.summary_top_k) < 1:
+            raise ValueError(f"summary_top_k must be >= 1, got {self.summary_top_k}")
         if self.max_result_memory_gb <= 0.0:
             raise ValueError(
                 f"max_result_memory_gb must be > 0, got {self.max_result_memory_gb}"

@@ -325,6 +325,33 @@ class _HDF5Writer:
             pass
 
 
+class _SummaryOnlyWriter:
+    """R23 screening writer: a no-op — summary mode never archives trajectories.
+
+    The batch engine reduces every sub-batch to the versioned screening
+    summary (``lunaris.batch.summary``) and keeps only the top-K full
+    histories in the in-memory result; there is deliberately no ``(T, N, 6)``
+    archive to write.
+    """
+
+    memory_buffer = None
+
+    def write_sample_batch(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def write_metadata(self, **kwargs: Any) -> None:
+        return None
+
+    def write_final(self, *args: Any) -> None:
+        return None
+
+    def finalize(self) -> None:
+        return None
+
+    def abort(self) -> None:
+        return None
+
+
 class _NPZWriter:
     """Writes an eager trajectory archive in one compressed NPZ operation."""
 

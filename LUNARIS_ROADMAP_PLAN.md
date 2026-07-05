@@ -79,9 +79,9 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R03 | gpu_st_lrps_third_body backend | P0 | S4 | R07, R06, R11 | [ ] |
 | R04 | surrogate_assisted_frozen_search workflow | P0 | S5 | R03, R05, R23, R27 | [ ] |
 | R05 | Frozen / quasi-frozen sınıflandırma modülü | P0 | S5 | — | [ ] |
-| R06 | VRAM-aware chunking | P1 | S3 | — | [ ] |
+| R06 | VRAM-aware chunking | P1 | S3 | — | [x] |
 | R07 | Ortak batched RK4 + impact loop | P1 | S3 | — | [x] |
-| R08 | Alive-sample compaction | P1 | S3 | R07 | [ ] |
+| R08 | Alive-sample compaction | P1 | S3 | R07 | [x] |
 | R09 | Capability registry tek kaynak | P1 | S2 | — | [x] |
 | R10 | Dtype provenance düzeltmesi | P1 | S2 | — | [x] |
 | R11 | Canonical ST-LRPS runtime | P1 | S3 | R01 | [ ] |
@@ -96,7 +96,7 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R20 | Phase-drift analizi ana validation'da | P2 | S6 | PHASE_DRIFT G0 | [ ] |
 | R21 | Frozen candidate = classical SH validation kuralı | P2 | S5 | R04 | [ ] |
 | R22 | Local refinement modülü | P2 | S5 | R04, R05 | [ ] |
-| R23 | Summary-only output mode | P2 | S3 | — | [ ] |
+| R23 | Summary-only output mode | P2 | S3 | — | [x] |
 | R24 | run_epoch decomposition | P3 | paralel | — | [~] |
 | R25 | Laplacian scaling tutarlılığı | P3 | paralel | — | [x] |
 | R26 | Artifact contract sertleştirme | P3 | S2 | — | [x] |
@@ -377,34 +377,65 @@ parametrize suite olarak kapsar; Torch-SH bağlantısı
 
 ### R08 — Alive-sample compaction
 
-- [ ] `alive_indices` compact edilir; yalnız alive state'ler RK4/acceleration
+- [x] `alive_indices` compact edilir; yalnız alive state'ler RK4/acceleration
       görür; impacted state'ler output'ta frozen/terminal tutulur.
-- [ ] Perf testi: batch'in %70'i impact ettiğinde adım maliyeti ~%70 düşer
-      (toleranslı assert, ör. ≥%50 düşüş).
+      *(2026-07-05: `batched_fixed_step._propagate_chunk` — alive set snapshot
+      aralığı başına bir kez compact edilir (snapshot başına tek bounded host
+      sync); hot loop sabit şekilli, sync'siz mask mantığını korur. Satır
+      bağımsız RK4/provider ⇒ bit-uyum korunur (torch-SH batch==individual /
+      chunk-invariance testleri aynen yeşil).)*
+- [x] Perf testi: batch'in %70'i impact ettiğinde adım maliyeti ~%70 düşer
+      (toleranslı assert, ör. ≥%50 düşüş). *(Deterministik proxy: provider'ın
+      değerlendirdiği satır sayısı — %70 t=0-impact senaryosunda tam olarak
+      alive satırlar kadar, ≥%50 azalma assert'li;
+      `test_compaction_reduces_step_cost_for_impacted_batch`,
+      `test_compaction_all_impacted_skips_provider_entirely`,
+      `test_compaction_preserves_mixed_impact_results`.)*
 
 ### R06 — VRAM-aware chunking
 
-- [ ] Runtime VRAM ölçümü + model dtype/param/activation tahmini ⇒ otomatik
+- [x] Runtime VRAM ölçümü + model dtype/param/activation tahmini ⇒ otomatik
       `chunk_size` (küçük GPU 2048–8192, orta 8192–32768, büyük
-      32768–262144).
-- [ ] OOM yakalanırsa chunk_size yarıya düşer ve devam eder (recover testi).
-- [ ] Gerçek chunk_size provenance'a yazılır; chunk sonuçları tek output'ta
-      birleşir.
+      32768–262144). *(2026-07-05: `batched_fixed_step.resolve_vram_aware_chunk_size`
+      + `query_device_memory` tek kaynak; torch-SH Legendre-workspace tahmini
+      ve ST-LRPS MLP-aktivasyon tahmini (`_estimate_bytes_per_sample`) ile her
+      iki backend bu resolver'dan geçiyor; tek sample bütçeyi aşarsa preflight
+      raise.)*
+- [x] OOM yakalanırsa chunk_size yarıya düşer ve devam eder (recover testi).
+      *(`run_batched_fixed_step` chunk döngüsü CUDA OOM'da yarılayıp retry
+      eder, chunk=1'de re-raise; `test_oom_recovery_halves_chunk_and_matches_reference`
+      (sonuç bit-uyumlu) + `test_oom_at_chunk_one_reraises`.)*
+- [x] Gerçek chunk_size provenance'a yazılır; chunk sonuçları tek output'ta
+      birleşir. *(metrics: `chunk_size_requested` / `chunk_size_effective` /
+      `oom_recoveries`; her iki propagator diagnostics_snapshot'a taşıyor.)*
 
 **Kabul:** 100k orbit screening bellek patlatmadan tamamlanır (smoke:
 elde varsa gerçek GPU, yoksa küçük-VRAM simülasyonu ile).
+*(Küçük-VRAM simülasyonu: resolver band/cap unit testleri + OOM recover
+testi; gerçek-GPU 100k smoke'u G3 kapsamında koşulacak.)*
 
 ### R23 — Summary-only output mode
 
-- [ ] Screening modunda full trajectory saklanmaz; yalnız summary metrics:
+- [x] Screening modunda full trajectory saklanmaz; yalnız summary metrics:
       initial/final elements, e_min/max/range, h_peri_min/max/range,
       trend_e, trend_h_peri, omega_behavior, impact flag/time, domain exit
-      flag/time, score, validation stage, backend metadata.
-- [ ] Top-K için full state history + element history + diagnostic plot
-      verisi saklanır.
+      flag/time, score, validation stage, backend metadata. *(2026-07-05:
+      `lunaris/batch/summary.py` — `BATCH_SUMMARY_SCHEMA_VERSION=1`,
+      `summarize_ensemble` (post-impact satırlar zarf/trend dışı; ekvatoralde
+      periapsis boylamı fallback'i), `SCORE_DEFINITION` v1 belgeli; engine
+      `output_mode="summary_only"` dalı `_SummaryOnlyWriter` ile arşivi ve
+      (T,N,6) Y_all tahsisini atlar, batch başına özetleyip bloğu bırakır;
+      backend metadata diagnostics'te.)*
+- [x] Top-K için full state history + element history + diagnostic plot
+      verisi saklanır. *(`TopKTrajectoryBuffer` streaming top-K (skor v1,
+      impacted/invalid=inf hariç); result.Y yalnız top-K (T,K,6), seçilen
+      indeks/skorlar diagnostics'te; element history top-K trajectory'lerden
+      türetilebilir.)*
 
 **Kabul:** 100k × N_step × 6 state bellek/disk maliyeti oluşmaz; summary
-şeması versiyonlu ve testli.
+şeması versiyonlu ve testli. *(tests/test_batch_summary.py: şema/zarf/trend/
+omega/inf-skor/merge/top-K/config validasyonu + CPU uçtan uca engine testi —
+arşiv dosyası yazılmadığı ve yalnız top-K tutulduğu assert'li.)*
 
 ### R11 — Canonical ST-LRPS runtime
 

@@ -37,6 +37,7 @@ from lunaris.batch.storage import (
     _allocate_result_buffer,
     _make_writer,
     _resolve_result_storage,
+    _SummaryOnlyWriter,
     load_batch_result,
 )
 from lunaris.common.batch_defs import (
@@ -727,7 +728,24 @@ class BatchPropagationEngine:
             batch_cfg,
             len(t_out_contract),
         )
-        writer = _make_writer(batch_cfg, N, t_out_contract)
+        # R23: summary-only screening mode never materializes or archives the
+        # full (T, N, 6) ensemble tensor. Each sub-batch is reduced to the
+        # versioned screening summary; only the top-K full histories survive.
+        summary_only = str(getattr(batch_cfg, "output_mode", "full")) == "summary_only"
+        if summary_only:
+            from lunaris.batch.summary import TopKTrajectoryBuffer, summarize_ensemble
+
+            writer = _SummaryOnlyWriter()
+            _summary_parts: list[dict[str, Any]] = []
+            _topk_buffer = TopKTrajectoryBuffer(int(getattr(batch_cfg, "summary_top_k", 16)))
+            _summary_mu = float(
+                getattr(getattr(self._dyn, "grav", None), "GM_m3s2", 0.0) or MU_MOON
+            )
+            _summary_r_ref = float(
+                getattr(getattr(self._dyn, "grav", None), "R_ref_m", 0.0) or R_MOON
+            )
+        else:
+            writer = _make_writer(batch_cfg, N, t_out_contract)
 
         print(
             f"[BATCH] N={N}  backend={backend_name}  "
@@ -786,10 +804,14 @@ class BatchPropagationEngine:
         # sample batch directly into the final HDF5 trajectory dataset.
         t_out_ref = t_out_contract
         writer_buffer = getattr(writer, "memory_buffer", None)
-        Y_all = _allocate_result_buffer(
-            storage_mode,
-            writer_buffer,
-            (len(t_out_ref), N, 6),
+        Y_all = (
+            None
+            if summary_only
+            else _allocate_result_buffer(
+                storage_mode,
+                writer_buffer,
+                (len(t_out_ref), N, 6),
+            )
         )
         impact_all   = np.zeros(N, dtype=np.float64)
         t_impact_all = np.full(N, np.nan, dtype=np.float64)
@@ -907,13 +929,34 @@ class BatchPropagationEngine:
                 batch_impact_positions,
             )
 
-            try:
-                writer.write_sample_batch(b_start, b_end, Y_ref)
-            except Exception:
-                writer.abort()
-                raise
-            if Y_all is not None and Y_all is not writer_buffer:
-                Y_all[:, b_start:b_end, :] = Y_ref
+            if summary_only:
+                # R23: reduce the batch to the screening summary + top-K full
+                # histories, then let the (T, b_n, 6) block go out of scope.
+                _part = summarize_ensemble(
+                    t_out_ref,
+                    Y_ref,
+                    imp_b,
+                    t_imp_b,
+                    mu_m3s2=_summary_mu,
+                    r_ref_m=_summary_r_ref,
+                    valid_mask=valid_b,
+                )
+                _summary_parts.append(_part)
+                _topk_buffer.offer_batch(
+                    global_start=b_start,
+                    scores=np.asarray(_part["fields"]["score"], dtype=np.float64),
+                    Y_batch=Y_ref,
+                    impact_flags=np.asarray(imp_b, dtype=np.float64),
+                    t_impact=np.asarray(t_imp_b, dtype=np.float64),
+                )
+            else:
+                try:
+                    writer.write_sample_batch(b_start, b_end, Y_ref)
+                except Exception:
+                    writer.abort()
+                    raise
+                if Y_all is not None and Y_all is not writer_buffer:
+                    Y_all[:, b_start:b_end, :] = Y_ref
 
             self._publish_progress(
                 stage="propagating",
@@ -1142,13 +1185,61 @@ class BatchPropagationEngine:
         # ----------------------------------------------------------------
         # 5) Build result
         # ----------------------------------------------------------------
+        n_failed = int(np.sum(valid_all < 0.5))
+
+        if summary_only:
+            from lunaris.batch.summary import merge_summaries
+
+            merged_summary = merge_summaries(_summary_parts)
+            sel = np.asarray(_topk_buffer.selected_indices, dtype=np.int64)
+            return BatchPropagationResult(
+                t=t_out_ref,
+                Y=_topk_buffer.stacked_trajectories(len(t_out_ref)),
+                sc_samples=(
+                    sc_samples[sel] if sel.size else np.empty((0, 4), dtype=np.float64)
+                ),
+                impact_mask=impact_all[sel],
+                t_impact=t_impact_all[sel],
+                valid_mask=valid_all[sel],
+                impact_position_inertial_m=impact_position_inertial[sel],
+                impact_position_fixed_m=impact_position_fixed[sel],
+                archive_path=None,
+                diagnostics={
+                    "wall_time_s": float(t_wall),
+                    "n_samples": N,
+                    "sampling_method": sampling_method,
+                    "sampling_note": qmc_design_note,
+                    "n_valid_samples": n_valid,
+                    "n_failed_samples": n_failed,
+                    "n_impacts": n_hit,
+                    "impact_fraction": impact_fraction,
+                    "backend": backend_name,
+                    "backend_note": self._backend_note,
+                    "backend_diagnostics": backend_diag,
+                    "requested_batch_backend": _plan_meta.get("requested_batch_backend"),
+                    "actual_batch_backend": _plan_meta.get("actual_batch_backend"),
+                    "requested_sh_degree": _plan_meta.get("requested_sh_degree"),
+                    "actual_sh_degree": _plan_meta.get("actual_sh_degree"),
+                    "runtime_model_kind": _plan_meta.get("runtime_model_kind"),
+                    "fallback_reason": _plan_meta.get("fallback_reason"),
+                    "selection_reason": _plan_meta.get("selection_reason"),
+                    # R23 summary-mode payload: full-N screening summary +
+                    # top-K bookkeeping. Y above holds ONLY the top-K histories.
+                    "output_mode": "summary_only",
+                    "batch_summary": merged_summary,
+                    "summary_top_k": int(getattr(batch_cfg, "summary_top_k", 16)),
+                    "summary_selected_indices": sel.tolist(),
+                    "summary_selected_scores": list(_topk_buffer.scores),
+                    "result_storage_mode": "summary_only",
+                },
+            )
+
         if storage_mode == "disk":
             Y_result: Any = HDF5TrajectoryView(batch_cfg.output_path_resolved)
         else:
             if Y_all is None:
                 raise RuntimeError("Eager batch result buffer was not initialized.")
             Y_result = Y_all
-        n_failed = int(np.sum(valid_all < 0.5))
 
         return BatchPropagationResult(
             t=t_out_ref,
