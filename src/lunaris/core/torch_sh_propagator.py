@@ -43,6 +43,7 @@ Runs on CUDA or CPU; float32 or float64.  CPU + float64 is the validation path
 
 from __future__ import annotations
 
+import logging
 import math
 import warnings
 from collections.abc import Callable
@@ -52,6 +53,8 @@ import numpy as np
 
 from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
+
+logger = logging.getLogger(__name__)
 from lunaris.core.backend_capabilities import unsupported_force_models
 from lunaris.core.batched_fixed_step import (
     query_device_memory,
@@ -446,12 +449,11 @@ class TorchSHBatchPropagator:
         n_chunks = int(math.ceil(N / chunk))
         log_backend = "torch_cuda_sh" if self._device.type == "cuda" else "torch_cpu_sh"
 
-        print(
+        logger.info(
             f"[BATCH][{log_backend}] N={N}  device={self._device} ({self._device_name})  "
             f"degree={self._actual_degree}  dtype={str(self._dtype).replace('torch.', '')}  "
             f"chunk={chunk}  chunks={n_chunks}  dt={dt_eff:.1f}s  snaps={n_snaps}  "
-            f"frame={'moon-fixed' if self._frame.uses_rotation else 'identity'}",
-            flush=True,
+            f"frame={'moon-fixed' if self._frame.uses_rotation else 'identity'}"
         )
 
         result = run_batched_fixed_step(
@@ -500,11 +502,10 @@ class TorchSHBatchPropagator:
             "chunk_size_effective": int(result.metrics["chunk_size_effective"]),
             "oom_recoveries": result.metrics["oom_recoveries"],
         }
-        print(
+        logger.info(
             f"[BATCH][{log_backend}] done: {elapsed:.2f}s  "
             f"{self._throughput_metrics['raw_batch_state_steps_per_second']:,.0f} raw-steps/s  "
-            f"{self._throughput_metrics['active_state_steps_per_second']:,.0f} active-steps/s",
-            flush=True,
+            f"{self._throughput_metrics['active_state_steps_per_second']:,.0f} active-steps/s"
         )
         self._last_impact_positions_inertial = impact_positions
         return t_out, Y_out, impact_flags, t_impact

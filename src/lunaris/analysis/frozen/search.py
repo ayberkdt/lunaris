@@ -312,20 +312,20 @@ def _json_safe(value: Any) -> Any:
     """Recursively convert numpy scalars/arrays and NaN/Inf to JSON-safe values."""
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_json_safe(v) for v in value]
     if isinstance(value, np.ndarray):
         return [_json_safe(v) for v in value.tolist()]
-    if isinstance(value, (np.floating, float)):
+    if isinstance(value, np.floating | float):
         f = float(value)
         if math.isnan(f):
             return None
         if math.isinf(f):
             return "inf" if f > 0 else "-inf"
         return f
-    if isinstance(value, (np.integer,)):
+    if isinstance(value, np.integer):
         return int(value)
-    if isinstance(value, (np.bool_,)):
+    if isinstance(value, np.bool_):
         return bool(value)
     return value
 

@@ -8,6 +8,7 @@ point and owns the propagation orchestration surface.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 import warnings
@@ -19,6 +20,8 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 from lunaris.common.constants import R_MOON
+
+logger = logging.getLogger(__name__)
 from lunaris.common.math_utils import (
     nyquist_max_step_s,
     recommended_sh_degree,
@@ -327,11 +330,14 @@ def propagate(
     if user_max_step_s is None:
         max_step = float(nyq_max)
         if verbose:
-            print(f"[STEP] Nyquist max_step_s={max_step:.6f} (deg={degree})", flush=True)
+            logger.info(f"[STEP] Nyquist max_step_s={max_step:.6f} (deg={degree})")
     else:
         max_step = min(float(user_max_step_s), float(nyq_max))
         if verbose:
-            print(f"[STEP] user_max_step={float(user_max_step_s):g}s, nyquist={nyq_max:.6f}s -> using {max_step:.6f}s", flush=True)
+            logger.info(
+                f"[STEP] user_max_step={float(user_max_step_s):g}s, "
+                f"nyquist={nyq_max:.6f}s -> using {max_step:.6f}s"
+            )
 
     # -------------------------------------------------------------------------
     # 4) Events
@@ -393,7 +399,9 @@ def propagate(
     if _is_fixed_step_method(getattr(cfg, "method", "DOP853")):
         meth_name = str(getattr(cfg, "method", "VV"))
         if verbose:
-            print(f"[PROP] Fixed-step {meth_name}: dt_out={dt_out:g}s, max_step={max_step:.6f}s", flush=True)
+            logger.info(
+                f"[PROP] Fixed-step {meth_name}: dt_out={dt_out:g}s, max_step={max_step:.6f}s"
+            )
 
         if _fixed_step_requires_6d(meth_name) and y0_arr.size != 6:
             raise ValueError(
@@ -448,13 +456,14 @@ def propagate(
 
         if verbose:
             if isinstance(atol_arg, np.ndarray):
-                print(
+                logger.info(
                     f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s "
-                    f"| atol=vector(pos={getattr(cfg, 'atol_pos', None)}, vel={getattr(cfg, 'atol_vel', None)})",
-                    flush=True,
+                    f"| atol=vector(pos={getattr(cfg, 'atol_pos', None)}, vel={getattr(cfg, 'atol_vel', None)})"
                 )
             else:
-                print(f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s", flush=True)
+                logger.info(
+                    f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s"
+                )
 
         def _solve_span(t_start: float, t_end: float, y_start: np.ndarray, t_eval_span: np.ndarray):
             return solve_ivp(
@@ -755,7 +764,7 @@ def propagate(
                     )
                     warnings.warn(_deg_msg, RuntimeWarning, stacklevel=2)
                     if verbose:
-                        print(f"[GRAV] {_deg_msg}", flush=True)
+                        logger.info(f"[GRAV] {_deg_msg}")
     except Exception:
         # R29b-justified: advisory degree-adequacy diagnostics only; failure
         # here never alters the propagated trajectory.

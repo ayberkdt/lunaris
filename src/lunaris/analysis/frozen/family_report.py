@@ -97,9 +97,9 @@ def validate_family_report(payload: dict[str, Any]) -> None:
         for key in _ELEMENT_RANGE_KEYS:
             rng = family["element_ranges"].get(key)
             if (
-                not isinstance(rng, (list, tuple))
+                not isinstance(rng, list | tuple)
                 or len(rng) != 2
-                or not all(isinstance(v, (int, float)) for v in rng)
+                or not all(isinstance(v, int | float) for v in rng)
             ):
                 _fail(f"{path}.element_ranges.{key}", "must be a [lo, hi] number pair")
             if float(rng[0]) > float(rng[1]):
