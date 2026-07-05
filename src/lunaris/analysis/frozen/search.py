@@ -11,6 +11,8 @@ Staged, resumable search over lunar orbital-element space:
 Each stage's output is a file contract: re-running the pipeline with
 ``resume=True`` loads finished stages instead of recomputing them. Sobol seed,
 sample count, and backend provenance are recorded in ``manifest.json``.
+Stage 1 defaults to a summary-only artifact: per-sample metrics plus top-K full
+histories, not the full ``(T, N, 6)`` ensemble tensor.
 
 Backend policy: propagation is injected via two small protocols so the same
 pipeline runs on the batch GPU/CPU screening backends and on the classical
@@ -48,6 +50,7 @@ from .classify import (
     is_classical_validation_backend,
 )
 from .domain_guard import (
+    DomainGuardResult,
     FrozenSearchDomainGuard,
     apply_domain_guard_to_scores,
     assert_candidate_domain_clean,
@@ -74,6 +77,23 @@ STAGE2_CANDIDATES = "stage2_candidates.json"
 STAGE3_VALIDATION = "stage3_validation.json"
 STAGE4_FAMILIES = "stage4_families.json"
 MANIFEST = "manifest.json"
+
+STAGE1_SCREENING_SCHEMA_VERSION = 2
+STAGE1_OUTPUT_FULL = "full"
+STAGE1_OUTPUT_SUMMARY_ONLY = "summary_only"
+_STAGE1_OUTPUT_MODES = frozenset({STAGE1_OUTPUT_FULL, STAGE1_OUTPUT_SUMMARY_ONLY})
+
+_SCREENING_SUMMARY_FIELDS = (
+    "e_min",
+    "e_max",
+    "e_range",
+    "h_peri_min_km",
+    "h_peri_max_km",
+    "h_peri_range_km",
+    "trend_e_per_day",
+    "trend_h_peri_km_per_day",
+    "omega_behavior",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +241,9 @@ class FrozenSearchConfig:
 
     screening_duration_s: float = 7.0 * 86_400.0
     screening_output_dt_s: float = 3_600.0
+    screening_output_mode: str = STAGE1_OUTPUT_SUMMARY_ONLY
+    screening_summary_batch_size: int = 4_096
+    stage1_history_top_k: int | None = None
 
     top_k: int = 10
 
@@ -246,6 +269,17 @@ class FrozenSearchConfig:
             raise ValueError("n_samples must be >= 2")
         if int(self.top_k) < 1:
             raise ValueError("top_k must be >= 1")
+        mode = str(self.screening_output_mode).strip().lower()
+        if mode not in _STAGE1_OUTPUT_MODES:
+            raise ValueError(
+                "screening_output_mode must be one of "
+                + ", ".join(sorted(_STAGE1_OUTPUT_MODES))
+            )
+        object.__setattr__(self, "screening_output_mode", mode)
+        if int(self.screening_summary_batch_size) < 1:
+            raise ValueError("screening_summary_batch_size must be >= 1")
+        if self.stage1_history_top_k is not None and int(self.stage1_history_top_k) < 1:
+            raise ValueError("stage1_history_top_k must be >= 1 when set")
         for name in ("screening_duration_s", "validation_duration_s"):
             if float(getattr(self, name)) <= 0.0:
                 raise ValueError(f"{name} must be > 0")
@@ -359,6 +393,98 @@ def _element_history(t: np.ndarray, y: np.ndarray, mu: float, r_ref: float) -> d
     }
 
 
+def _scalar_string(arrays: dict[str, np.ndarray], key: str, default: str = "") -> str:
+    if key not in arrays:
+        return default
+    value = np.asarray(arrays[key])
+    if value.shape == ():
+        return str(value.item())
+    if value.size == 0:
+        return default
+    return str(value.ravel()[0])
+
+
+def _stage1_output_mode(arrays: dict[str, np.ndarray]) -> str:
+    if "Y_out" in arrays:
+        return STAGE1_OUTPUT_FULL
+    return _scalar_string(arrays, "output_mode", STAGE1_OUTPUT_SUMMARY_ONLY)
+
+
+def _stage1_is_summary_only(arrays: dict[str, np.ndarray]) -> bool:
+    return _stage1_output_mode(arrays) == STAGE1_OUTPUT_SUMMARY_ONLY and "Y_out" not in arrays
+
+
+def _string_array(values: Any) -> np.ndarray:
+    return np.asarray(values, dtype=np.str_)
+
+
+def _summary_arrays(
+    *,
+    summary: dict[str, Any],
+    guard_result: DomainGuardResult,
+    scores: np.ndarray,
+    raw_scores: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Flatten the batch summary + guard result into the stage-1 npz contract."""
+    fields = summary["fields"]
+    arrays: dict[str, np.ndarray] = {}
+    for key in _SCREENING_SUMMARY_FIELDS:
+        value = fields[key]
+        if key == "omega_behavior":
+            arrays[f"summary__{key}"] = _string_array(value)
+        else:
+            arrays[f"summary__{key}"] = np.asarray(value, dtype=np.float64)
+    arrays.update(
+        {
+            "summary__impact_flag": np.asarray(fields["impact_flag"], dtype=np.float64),
+            "summary__t_impact_s": np.asarray(fields["t_impact_s"], dtype=np.float64),
+            "summary__domain_exit_flag": np.asarray(
+                guard_result.domain_exit_flag, dtype=np.float64
+            ),
+            "summary__t_domain_exit_s": np.asarray(
+                guard_result.t_domain_exit_s, dtype=np.float64
+            ),
+            "summary__escape_flag": np.asarray(guard_result.escape_flag, dtype=np.float64),
+            "summary__nonfinite_flag": np.asarray(
+                guard_result.nonfinite_flag, dtype=np.float64
+            ),
+            "summary__domain_exit_reason": _string_array(guard_result.reasons),
+            "summary__score_raw": np.asarray(raw_scores, dtype=np.float64),
+            "summary__score": np.asarray(scores, dtype=np.float64),
+            "summary__valid": np.asarray(fields["valid"], dtype=np.float64),
+        }
+    )
+    return arrays
+
+
+def _concat_summary_array_parts(parts: list[dict[str, np.ndarray]]) -> dict[str, np.ndarray]:
+    if not parts:
+        raise ValueError("cannot concatenate an empty stage-1 summary")
+    merged: dict[str, np.ndarray] = {}
+    for key in parts[0]:
+        merged[key] = np.concatenate([np.asarray(part[key]) for part in parts], axis=0)
+    return merged
+
+
+def _guard_from_stage1_summary(screening: dict[str, np.ndarray]) -> DomainGuardResult:
+    return DomainGuardResult(
+        domain_exit_flag=np.asarray(screening["summary__domain_exit_flag"], dtype=np.float64)
+        > 0.5,
+        t_domain_exit_s=np.asarray(screening["summary__t_domain_exit_s"], dtype=np.float64),
+        escape_flag=np.asarray(screening["summary__escape_flag"], dtype=np.float64) > 0.5,
+        nonfinite_flag=np.asarray(screening["summary__nonfinite_flag"], dtype=np.float64)
+        > 0.5,
+        reasons=np.asarray(screening["summary__domain_exit_reason"], dtype=np.str_),
+    )
+
+
+def _summary_fields_from_stage1(screening: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    return {
+        key: np.asarray(screening[f"summary__{key}"])
+        for key in _SCREENING_SUMMARY_FIELDS
+    }
+
+
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
@@ -440,6 +566,23 @@ class FrozenSearchPipeline:
         if resume and path.exists():
             with np.load(path, allow_pickle=False) as data:
                 return {key: np.asarray(data[key]) for key in data.files}
+
+        if str(self.config.screening_output_mode) == STAGE1_OUTPUT_SUMMARY_ONLY:
+            arrays = self._stage1_screening_summary_only(elements)
+            np.savez_compressed(path, **arrays)
+            self._mark_stage(
+                manifest,
+                "stage1",
+                STAGE1_SCREENING,
+                backend=str(self.screening.backend_name),
+                output_mode=STAGE1_OUTPUT_SUMMARY_ONLY,
+                full_trajectory_stored=False,
+                n_snapshots=int(arrays["t_out"].shape[0]),
+                n_histories=int(arrays["topk_sample_indices"].shape[0]),
+                batch_size=int(self.config.screening_summary_batch_size),
+            )
+            return arrays
+
         Y0 = elements_to_states(elements, self.config.mu_m3s2)
         t_out, Y_out, impact_flags, t_impact = self.screening.propagate(
             Y0,
@@ -447,6 +590,8 @@ class FrozenSearchPipeline:
             float(self.config.screening_output_dt_s),
         )
         arrays = {
+            "schema_version": np.asarray(STAGE1_SCREENING_SCHEMA_VERSION, dtype=np.int64),
+            "output_mode": np.asarray(STAGE1_OUTPUT_FULL),
             "t_out": np.asarray(t_out, dtype=np.float64),
             "Y_out": np.asarray(Y_out, dtype=np.float64),
             "impact_flags": np.asarray(impact_flags, dtype=np.float64),
@@ -458,30 +603,29 @@ class FrozenSearchPipeline:
             "stage1",
             STAGE1_SCREENING,
             backend=str(self.screening.backend_name),
+            output_mode=STAGE1_OUTPUT_FULL,
+            full_trajectory_stored=True,
             n_snapshots=int(arrays["t_out"].shape[0]),
         )
         return arrays
 
-    # -- stage 2: guard + score + top-K ---------------------------------------
+    def _stage1_history_top_k(self) -> int:
+        configured = self.config.stage1_history_top_k
+        return max(
+            int(self.config.top_k),
+            int(self.config.refine_top_n),
+            int(configured) if configured is not None else 0,
+            1,
+        )
 
-    def stage2_candidates(
+    def _screening_scores_for_block(
         self,
-        manifest: dict[str, Any],
-        elements: np.ndarray,
-        screening: dict[str, np.ndarray],
-        *,
-        resume: bool,
-    ) -> list[dict[str, Any]]:
-        path = self.out_dir / STAGE2_CANDIDATES
-        if resume and path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))["candidates"]
-
-        from lunaris.batch.summary import SCORE_DEFINITION, summarize_ensemble
-
-        t_out = screening["t_out"]
-        Y_out = screening["Y_out"]
-        impact_flags = screening["impact_flags"]
-        t_impact = screening["t_impact"]
+        t_out: np.ndarray,
+        Y_out: np.ndarray,
+        impact_flags: np.ndarray,
+        t_impact: np.ndarray,
+    ) -> tuple[dict[str, Any], DomainGuardResult, np.ndarray, np.ndarray]:
+        from lunaris.batch.summary import summarize_ensemble
 
         summary = summarize_ensemble(
             t_out,
@@ -501,11 +645,112 @@ class FrozenSearchPipeline:
         )
         raw_scores = np.asarray(summary["fields"]["score"], dtype=np.float64)
         scores = apply_domain_guard_to_scores(raw_scores, guard_result, self.config.guard)
-        # Perilune safety floor is a hard candidate constraint (same rule the
-        # stage-3 classifier applies); filtering here keeps the top-K honest.
         h_peri_min_km = np.asarray(summary["fields"]["h_peri_min_km"], dtype=np.float64)
         below_floor = h_peri_min_km < float(self.config.perilune_safety_min_m) / 1_000.0
         scores = np.where(below_floor, np.inf, scores)
+        return summary, guard_result, raw_scores, scores
+
+    def _stage1_screening_summary_only(self, elements: np.ndarray) -> dict[str, np.ndarray]:
+        from lunaris.batch.summary import TopKTrajectoryBuffer
+
+        Y0 = elements_to_states(elements, self.config.mu_m3s2)
+        n_samples = int(Y0.shape[0])
+        batch_size = int(self.config.screening_summary_batch_size)
+        topk = TopKTrajectoryBuffer(self._stage1_history_top_k())
+        summary_parts: list[dict[str, np.ndarray]] = []
+        t_ref: np.ndarray | None = None
+
+        for start in range(0, n_samples, batch_size):
+            end = min(start + batch_size, n_samples)
+            t_out, Y_out, impact_flags, t_impact = self.screening.propagate(
+                Y0[start:end],
+                float(self.config.screening_duration_s),
+                float(self.config.screening_output_dt_s),
+            )
+            t_arr = np.asarray(t_out, dtype=np.float64)
+            Y_arr = np.asarray(Y_out, dtype=np.float64)
+            impacts = np.asarray(impact_flags, dtype=np.float64)
+            t_imp = np.asarray(t_impact, dtype=np.float64)
+            if t_ref is None:
+                t_ref = t_arr
+            elif t_arr.shape != t_ref.shape or not np.allclose(t_arr, t_ref, rtol=0.0, atol=1e-9):
+                raise RuntimeError(
+                    "screening propagator returned inconsistent time grids across "
+                    "summary batches"
+                )
+
+            summary, guard_result, raw_scores, scores = self._screening_scores_for_block(
+                t_arr,
+                Y_arr,
+                impacts,
+                t_imp,
+            )
+            summary_parts.append(
+                _summary_arrays(
+                    summary=summary,
+                    guard_result=guard_result,
+                    scores=scores,
+                    raw_scores=raw_scores,
+                )
+            )
+            topk.offer_batch(
+                global_start=start,
+                scores=scores,
+                Y_batch=Y_arr,
+                impact_flags=impacts,
+                t_impact=t_imp,
+            )
+
+        if t_ref is None:
+            raise RuntimeError("stage-1 screening produced no batches")
+
+        topk_arrays = topk.entry_arrays()
+        arrays: dict[str, np.ndarray] = {
+            "schema_version": np.asarray(STAGE1_SCREENING_SCHEMA_VERSION, dtype=np.int64),
+            "output_mode": np.asarray(STAGE1_OUTPUT_SUMMARY_ONLY),
+            "t_out": np.asarray(t_ref, dtype=np.float64),
+            **_concat_summary_array_parts(summary_parts),
+            "topk_sample_indices": topk_arrays["sample_indices"],
+            "topk_scores": topk_arrays["scores"],
+            "topk_Y_out": topk.stacked_trajectories(int(t_ref.shape[0])),
+            "topk_impact_flags": topk_arrays["impact_flags"],
+            "topk_t_impact_s": topk_arrays["t_impact_s"],
+        }
+        return arrays
+
+    # -- stage 2: guard + score + top-K ---------------------------------------
+
+    def stage2_candidates(
+        self,
+        manifest: dict[str, Any],
+        elements: np.ndarray,
+        screening: dict[str, np.ndarray],
+        *,
+        resume: bool,
+    ) -> list[dict[str, Any]]:
+        path = self.out_dir / STAGE2_CANDIDATES
+        if resume and path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))["candidates"]
+
+        from lunaris.batch.summary import SCORE_DEFINITION
+
+        if _stage1_is_summary_only(screening):
+            fields = _summary_fields_from_stage1(screening)
+            raw_scores = np.asarray(screening["summary__score_raw"], dtype=np.float64)
+            scores = np.asarray(screening["summary__score"], dtype=np.float64)
+            guard_result = _guard_from_stage1_summary(screening)
+        else:
+            t_out = screening["t_out"]
+            Y_out = screening["Y_out"]
+            impact_flags = screening["impact_flags"]
+            t_impact = screening["t_impact"]
+            summary, guard_result, raw_scores, scores = self._screening_scores_for_block(
+                t_out,
+                Y_out,
+                impact_flags,
+                t_impact,
+            )
+            fields = summary["fields"]
 
         order = np.argsort(scores, kind="stable")
         candidates: list[dict[str, Any]] = []
@@ -514,7 +759,6 @@ class FrozenSearchPipeline:
                 break
             if not np.isfinite(scores[j]):
                 break  # remaining samples are +inf (impacted/invalid/domain-exit)
-            fields = summary["fields"]
             record = {
                 "sample_index": int(j),
                 "elements": {name: float(elements[j, k]) for k, name in enumerate(ELEMENT_NAMES)},
@@ -804,6 +1048,9 @@ __all__ = [
     "MANIFEST",
     "STAGE0_SAMPLES",
     "STAGE1_SCREENING",
+    "STAGE1_SCREENING_SCHEMA_VERSION",
+    "STAGE1_OUTPUT_FULL",
+    "STAGE1_OUTPUT_SUMMARY_ONLY",
     "STAGE2_CANDIDATES",
     "STAGE3_VALIDATION",
     "STAGE4_FAMILIES",

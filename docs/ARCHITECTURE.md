@@ -183,11 +183,16 @@ analysis flow with a staged, resumable file contract per run directory:
 lunaris-frozen-search
   -> lunaris.analysis.frozen.search (FrozenSearchPipeline; Sobol provenance)
   -> lunaris.analysis.frozen.search_backends
-       (screening: TorchSHBatchPropagator on the shared R07 loop;
-        validation: classical SH CPU reference propagate)
+       (screening: ST-LRPS TorchBatchPropagator when an ST-LRPS model
+        directory is provided, otherwise TorchSHBatchPropagator on the shared
+        R07 loop; validation: classical SH CPU reference propagate, optionally
+        ephemeris-wired Sun/Earth third-body)
   -> lunaris.analysis.frozen.{metrics,classify,domain_guard}
        (R27 domain guard is mandatory; R21: strict/quasi frozen statuses
         require a classical SH validation backend — enforced in code)
+  -> stage1_screening.npz
+       (default summary_only contract: per-sample screening metrics + top-K
+        histories; explicit full mode retains the legacy (T,N,6) tensor)
   -> lunaris.analysis.frozen.family_report (versioned JSON schema)
   -> lunaris.analysis.frozen.plots (figure set from stage files)
 ```
