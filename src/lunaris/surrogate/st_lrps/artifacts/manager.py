@@ -462,6 +462,8 @@ def _extract_config_block(ckpt: Mapping[str, Any]) -> dict[str, Any]:
         try:
             cfg["architecture_signature"] = compute_architecture_signature(cfg)
         except Exception:
+            # R29b-justified: best-effort backfill for legacy configs; a missing
+            # signature is caught by strict checkpoint validation downstream.
             pass
     if cfg and cfg.get("model_builder_version") in (None, ""):
         cfg["model_builder_version"] = MODEL_BUILDER_VERSION
@@ -599,6 +601,7 @@ def normalize_checkpoint_payload(ckpt: dict) -> dict:
         "training_config_hash",
         "dataset_hash",
         "model_builder_version",
+        "parameter_count",
     ):
         if key in ckpt:
             normalized[key] = ckpt.get(key)
@@ -678,6 +681,8 @@ def validate_checkpoint_schema(ckpt: dict, *, strict: bool = True) -> dict:
         try:
             cfg["architecture_signature"] = compute_architecture_signature(cfg)
         except Exception:
+            # R29b-justified: best-effort backfill; the strict signature
+            # cross-check right below still fails on real inconsistency.
             pass
     if arch.get("signature") in (None, "") and cfg.get("architecture_signature"):
         arch["signature"] = cfg.get("architecture_signature")
@@ -1058,6 +1063,37 @@ def load_scaler_for_run(
     }
 
 
+# Loss-shaping fields snapshotted into ``config.loss_config`` so a paper-safe
+# consumer can state exactly which loss the artifact was trained with. Keys
+# absent from the training config are simply not recorded.
+_LOSS_CONFIG_KEYS: tuple[str, ...] = (
+    "w_u",
+    "w_a",
+    "gradnorm_mode",
+    "gradnorm_w_a_min",
+    "gradnorm_w_a_max",
+    "direction_loss_weight",
+    "radial_loss_weight",
+    "cross_loss_weight",
+    "use_laplacian_regularization",
+    "laplacian_weight",
+    "laplacian_mode",
+    "laplacian_every_n_batches",
+    "laplacian_subset_size",
+    "collocation_laplacian_weight",
+    "collocation_laplacian_every",
+    "collocation_laplacian_samples",
+    "collocation_laplacian_hutchinson_samples",
+)
+
+
+def _loss_config_from_cfg(cfg_dict: Mapping[str, Any]) -> dict[str, Any]:
+    existing = cfg_dict.get("loss_config")
+    if isinstance(existing, Mapping) and existing:
+        return {str(k): v for k, v in existing.items()}
+    return {key: cfg_dict[key] for key in _LOSS_CONFIG_KEYS if cfg_dict.get(key) is not None}
+
+
 def build_resolved_config(
     cfg: Any,
     dataset_meta: Any,
@@ -1118,6 +1154,13 @@ def build_resolved_config(
     )
     cfg_dict["model_preset"] = str(cfg_dict.get("model_preset", "custom"))
     cfg_dict["runtime_model_kind"] = str(cfg_dict.get("runtime_model_kind", "potential_autograd"))
+    # Paper-safe required metadata (roadmap R26): every field the paper-safe
+    # gate (contracts.require_paper_safe_metadata) demands must be written at
+    # artifact-creation time, never inferred at load time.
+    cfg_dict["dtype"] = str(cfg_dict.get("dtype") or "float32")
+    cfg_dict["domain_guard_policy"] = str(cfg_dict.get("domain_guard_policy") or "warn")
+    cfg_dict["loss_config"] = _loss_config_from_cfg(cfg_dict)
+    cfg_dict["parameter_count"] = int(sum(p.numel() for p in model.parameters()))
     cfg_dict["output_dim"] = _coerce_int(cfg_dict.get("output_dim", 1), default=1)
     cfg_dict["n_bands"] = _coerce_int(cfg_dict.get("n_bands", 1), default=1)
     cfg_dict["degree_min"] = _coerce_int(cfg_dict.get("degree_min", ds_meta.get("degree_min", -1)), default=-1)
@@ -1273,6 +1316,38 @@ def read_artifact_contract(
     return ArtifactContract.from_dict(report["artifact_contract"])
 
 
+def paper_safe_metadata_report_for_run(
+    run_dir: Path | str,
+    *,
+    prefer: str = "best",
+    device: torch.device | None = None,
+) -> dict[str, Any]:
+    """Paper-safe (R26) metadata completeness report for a run directory.
+
+    Loads the preferred checkpoint + resolved config and resolves every
+    :data:`lunaris.surrogate.st_lrps.shared.contracts.PAPER_SAFE_REQUIRED_METADATA`
+    field. Callers enforcing paper-safe mode must refuse to start inference
+    when ``report["complete"]`` is False.
+    """
+    from lunaris.surrogate.st_lrps.shared.contracts import paper_safe_metadata_report
+
+    layout = make_run_layout(resolve_run_dir(run_dir))
+    _, ckpt = load_best_or_last(layout, prefer=prefer, device=device or torch.device("cpu"))
+    cfg = dict(ckpt.get("config") or {})
+    if layout.config_json.exists():
+        try:
+            cfg = json.loads(layout.config_json.read_text(encoding="utf-8"))
+        except Exception:
+            cfg = dict(ckpt.get("config") or {})
+    contract_report = validate_checkpoint_contract(ckpt, cfg=cfg, strict=False)
+    return paper_safe_metadata_report(
+        contract=contract_report["artifact_contract"],
+        config=cfg,
+        run_provenance=ckpt.get("run_provenance") or cfg.get("run_provenance"),
+        checkpoint=ckpt,
+    )
+
+
 def compare_artifact_contracts(
     artifact: ArtifactContract | Mapping[str, Any],
     requested: ArtifactContract | Mapping[str, Any],
@@ -1406,6 +1481,8 @@ def build_checkpoint_payload(
         if isinstance((cfg_dict.get("dataset_contract") or dataset), Mapping)
         else None,
         "model_builder_version": cfg_dict.get("model_builder_version", MODEL_BUILDER_VERSION),
+        "parameter_count": _coerce_int_or_none(cfg_dict.get("parameter_count"))
+        or int(sum(p.numel() for p in model.parameters())),
         "scoring": scoring,
         "training_state": training_state,
         "run_provenance": (

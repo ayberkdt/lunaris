@@ -644,8 +644,15 @@ def propagate(
                     impacted = True
                     t_imp = float(np.asarray(t_events[idx_impact])[0])
                     y_imp = np.asarray(np.asarray(y_events[idx_impact])[0], dtype=np.float64)
-            except Exception:
-                pass
+            except Exception as exc:
+                # Losing the impact flag silently would flip a result-affecting
+                # boolean (R29b): a malformed solver event payload must be visible.
+                warnings.warn(
+                    f"Impact-event extraction failed on malformed solver output: {exc}. "
+                    "The trajectory is reported as non-impacting.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         try:
             if impacted:
@@ -661,6 +668,8 @@ def propagate(
                 if stop_reason is None and any((te is not None and np.asarray(te).size > 0) for te in t_events):
                     stop_reason = "event"
         except Exception:
+            # R29b-justified: stop_reason is a human-readable label; the actual
+            # termination behavior was already decided by the solver events.
             pass
 
         t_stop = None
@@ -722,6 +731,8 @@ def propagate(
         for _k, _v in specific_energy_drift_stats(res.t, res.y, float(mu_m3s2)).items():
             res.diagnostics[_k] = float(_v)
     except Exception:
+        # R29b-justified: optional diagnostics enrichment; the trajectory itself
+        # is already computed and returned unchanged.
         pass
 
     # SH truncation-degree adequacy for the orbit's periapsis altitude. Below the
@@ -746,6 +757,8 @@ def propagate(
                     if verbose:
                         print(f"[GRAV] {_deg_msg}", flush=True)
     except Exception:
+        # R29b-justified: advisory degree-adequacy diagnostics only; failure
+        # here never alters the propagated trajectory.
         pass
 
     if bool(getattr(cfg, "compute_2body_baseline", False)):

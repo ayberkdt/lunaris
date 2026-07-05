@@ -218,7 +218,10 @@ def select_classic_sh_backend(
                            reason="PyTorch CUDA unavailable for torch_cuda_sh and no compatible GPU backend available",
                            err=True)
         if not torch_physics_ok:
-            return _decide("cpu_sh", applied=True, reason="requested physics not supported by torch_cuda_sh")
+            reason = "requested physics not supported by torch_cuda_sh"
+            if str(fallback_policy or "").strip().lower() == "error":
+                return _decide("torch_cuda_sh", applied=False, reason=reason, err=True)
+            return _decide("cpu_sh", applied=True, reason=reason)
         return _decide("torch_cuda_sh")
 
     # --- Explicit Numba ------------------------------------------------------
@@ -232,11 +235,18 @@ def select_classic_sh_backend(
                 return _decide("cpu_sh", applied=True, reason=reason)
             return _high_degree_gpu_or_cpu(reason)  # compatible_gpu (default)
         if not numba_cuda_available:
-            return _high_degree_gpu_or_cpu("Numba CUDA unavailable for numba_cuda_sh") \
-                if (str(fallback_policy).lower() != "cpu") else _decide(
-                    "cpu_sh", applied=True, reason="Numba CUDA unavailable for numba_cuda_sh")
+            reason = "Numba CUDA unavailable for numba_cuda_sh"
+            policy = str(fallback_policy or "compatible_gpu").strip().lower()
+            if policy == "error":
+                return _decide("numba_cuda_sh", applied=False, reason=reason, err=True)
+            if policy == "cpu":
+                return _decide("cpu_sh", applied=True, reason=reason)
+            return _high_degree_gpu_or_cpu(reason)
         if not numba_physics_ok:
-            return _decide("cpu_sh", applied=True, reason="requested physics not supported by numba_cuda_sh")
+            reason = "requested physics not supported by numba_cuda_sh"
+            if str(fallback_policy or "").strip().lower() == "error":
+                return _decide("numba_cuda_sh", applied=False, reason=reason, err=True)
+            return _decide("cpu_sh", applied=True, reason=reason)
         return _decide("numba_cuda_sh")
 
     # --- auto ----------------------------------------------------------------
@@ -299,6 +309,9 @@ def _read_st_lrps_runtime_kind(batch_cfg: Any, sim_cfg: Any) -> str | None:
                 if kind:
                     return kind
         except Exception:
+            # R29b-justified: best-effort probe over *candidate* artifact dirs; an
+            # unreadable candidate just means "no declared kind here". The actual
+            # artifact load validates the contract fail-closed later.
             continue
     return None
 
@@ -413,6 +426,9 @@ class BatchBackendPlan:
                 if not self.backend_implementation:
                     self.backend_implementation = caps.implementation
             except Exception:
+                # R29b-justified: family/implementation are cosmetic provenance
+                # labels; an unknown backend name must not break plan creation
+                # (the plan's actual_backend field still records the truth).
                 pass
         # Dtype provenance: when a return site set only ``dtype`` (the effective
         # value), mirror it into requested/effective so every plan carries the
@@ -441,6 +457,24 @@ class BatchBackendPlan:
 # =============================================================================
 # 3.                   CPU-ONLY PHYSICS CHECKS
 # =============================================================================
+
+
+def fallback_forbidden(batch_cfg: Any) -> bool:
+    """True when a silent backend/dtype downgrade must NOT happen (R29b).
+
+    Single source for the paper-safe/strict fallback posture: honored at
+    backend *planning* time here and at backend *initialization* time by
+    ``BatchPropagationEngine._fallback_forbidden`` (which delegates to this).
+    A benchmark / paper-evidence run that asks for a GPU backend or a dtype and
+    quietly gets something else produces a misleading result table.
+    """
+    policy = str(getattr(batch_cfg, "sh_fallback_policy", "compatible_gpu") or "").strip().lower()
+    if policy == "error":
+        return True
+    return any(
+        bool(getattr(batch_cfg, attr, False))
+        for attr in ("paper_safe", "strict_backend", "benchmark_mode")
+    )
 
 
 def _st_lrps_gpu_unsupported_features(flags: Any) -> tuple[str, ...]:
@@ -561,6 +595,7 @@ def resolve_batch_backend_policy(
     # ST-LRPS path
     # =========================================================================
     if is_st_lrps:
+        forbid_fallback = fallback_forbidden(batch_cfg)
         if not torch_cuda:
             msg = (
                 f"[BATCH] use_gpu=True with ST-LRPS gravity, but PyTorch CUDA is unavailable. "
@@ -568,6 +603,14 @@ def resolve_batch_backend_policy(
                 "Falling back to the CPU full-fidelity backend. "
                 "Selected batch backend: CPU."
             )
+            if forbid_fallback:
+                raise RuntimeError(
+                    "[BATCH] ST-LRPS GPU backend requested but PyTorch CUDA is "
+                    "unavailable, and fallback is forbidden (paper_safe/strict/"
+                    "benchmark mode or sh_fallback_policy='error'): refusing to "
+                    "silently plan a CPU run. Fix the GPU environment or relax "
+                    "the fallback policy explicitly."
+                )
             warns.append(msg)
             return BatchBackendPlan(
                 final_backend=BatchBackend.CPU,
@@ -601,6 +644,14 @@ def resolve_batch_backend_policy(
                 "Falling back to the CPU full-fidelity backend. "
                 "Selected batch backend: CPU."
             )
+            if forbid_fallback:
+                raise RuntimeError(
+                    f"[BATCH] GPU ST-LRPS backend does not model: {pretty}, and "
+                    "fallback is forbidden (paper_safe/strict/benchmark mode or "
+                    "sh_fallback_policy='error'): refusing to silently plan a CPU "
+                    "run. Disable the unsupported perturbations or relax the "
+                    "fallback policy explicitly."
+                )
             warns.append(msg)
             return BatchBackendPlan(
                 final_backend=BatchBackend.CPU,
@@ -637,6 +688,16 @@ def resolve_batch_backend_policy(
             getattr(batch_cfg, "torch_dtype", None), actual_stlrps_backend
         )
         if stlrps_dtype.downgraded:
+            # R29b (#4): a paper-safe/strict run that requested float64 must not
+            # silently produce float32 numbers — the dtype is part of the claim.
+            if forbid_fallback:
+                raise RuntimeError(
+                    f"[BATCH] {stlrps_dtype.reason} Fallback is forbidden "
+                    "(paper_safe/strict/benchmark mode or sh_fallback_policy="
+                    "'error'): refusing to silently downgrade the requested "
+                    "dtype. Request a supported dtype or relax the policy "
+                    "explicitly."
+                )
             warns.append(f"[BATCH] {stlrps_dtype.reason}")
         return BatchBackendPlan(
             final_backend=BatchBackend.GPU_ST_LRPS,
@@ -691,6 +752,10 @@ def resolve_batch_backend_policy(
     numba_unsupported = unsupported_force_models("numba_cuda_sh", flags) if flags is not None else ()
     torch_unsupported = unsupported_force_models("torch_cuda_sh", flags) if flags is not None else ()
     fallback_policy = str(getattr(batch_cfg, "sh_fallback_policy", "compatible_gpu") or "compatible_gpu")
+    # R29b (#3): paper-safe/strict/benchmark posture forces 'error' semantics so
+    # a requested backend is never silently substituted at planning time.
+    if fallback_forbidden(batch_cfg):
+        fallback_policy = "error"
     torch_dtype = str(getattr(batch_cfg, "torch_dtype", "float64") or "float64").lower()
     if torch_dtype not in ("float32", "float64"):
         torch_dtype = "float64"
@@ -846,6 +911,15 @@ def resolve_batch_backend_policy(
     else:
         fallback_reason = decision.fallback_reason or "no compatible GPU classic-SH backend available"
         msg = f"[BATCH] {fallback_reason}. Falling back to CPU. Selected batch backend: CPU."
+    # R29b (#3): even an 'auto' GPU request must not silently plan a CPU run
+    # under the paper-safe/strict posture — the throughput table would lie.
+    if fallback_forbidden(batch_cfg):
+        raise RuntimeError(
+            f"[BATCH] {fallback_reason}, and fallback is forbidden (paper_safe/"
+            "strict/benchmark mode or sh_fallback_policy='error'): refusing to "
+            "silently plan a CPU run for a GPU request. Fix the GPU environment "
+            "or relax the fallback policy explicitly."
+        )
     warns.append(msg)
 
     return BatchBackendPlan(
@@ -874,6 +948,7 @@ def resolve_batch_backend_policy(
 __all__ = [
     "BatchBackend",
     "BatchBackendPlan",
+    "fallback_forbidden",
     "resolve_batch_backend_policy",
     "select_classic_sh_backend",
     "ClassicSHDecision",

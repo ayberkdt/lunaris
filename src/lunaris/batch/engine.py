@@ -546,20 +546,15 @@ class BatchPropagationEngine:
     def _fallback_forbidden(self) -> bool:
         """True when a silent GPU->CPU downgrade must NOT happen.
 
-        A benchmark / paper-evidence run that asks for a GPU backend and then
-        quietly executes on CPU produces a misleading speed/throughput table. The
-        existing ``sh_fallback_policy='error'`` already hard-fails at backend
-        *planning*; this extends the same intent to *initialization* failures
+        Delegates to ``backend_policy.fallback_forbidden`` (single source,
+        R29b) — the same posture that hard-fails at backend *planning* also
+        applies to *initialization* failures
         (GPU selected by the policy, but the propagator could not be built), plus
         any explicit paper-safe / strict-backend flag on the batch config.
         """
-        policy = str(getattr(self._cfg, "sh_fallback_policy", "compatible_gpu") or "").strip().lower()
-        if policy == "error":
-            return True
-        return any(
-            bool(getattr(self._cfg, attr, False))
-            for attr in ("paper_safe", "strict_backend", "benchmark_mode")
-        )
+        from lunaris.batch.backend_policy import fallback_forbidden
+
+        return fallback_forbidden(self._cfg)
 
     def _handle_backend_init_failure(self, plan: Any, note: str, exc: Exception) -> None:
         """Either hard-fail (strict/paper-safe) or downgrade to CPU with provenance."""
@@ -609,6 +604,8 @@ class BatchPropagationEngine:
             plan.backend_family = caps.family
             plan.backend_implementation = caps.implementation
         except Exception:
+            # R29b-justified: cosmetic provenance labels only; the downgrade
+            # itself is already recorded via fallback_applied/fallback_reason.
             pass
 
     # ----------------------------------------------------------------
@@ -1067,6 +1064,9 @@ class BatchPropagationEngine:
                 inspect.getsourcefile(type(prop))
             )
         except Exception:
+            # R29b-justified: supplementary kernel-source fingerprint (frozen /
+            # zipapp installs have no source file). Mandatory identity hashes
+            # (gravity file, ST-LRPS artifact) are recorded unconditionally above.
             pass
 
         try:

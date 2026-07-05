@@ -313,6 +313,8 @@ class _HDF5Writer:
         self._part_path.replace(self._path)
 
     def abort(self) -> None:
+        # R29b-justified: abort() runs on the failure path; best-effort cleanup
+        # of the .part file must never mask the original exception being raised.
         try:
             self._f.close()
         except Exception:

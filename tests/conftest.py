@@ -18,8 +18,10 @@ belt-and-suspenders that keeps an *unfiltered* no-data run green too.
 from __future__ import annotations
 
 import ast
+import importlib
 import importlib.util
 import os
+from functools import lru_cache
 
 # Pin the Qt binding for the whole test process BEFORE any Qt-aware library is
 # imported. qtawesome / qtpy / pyqtgraph otherwise bind to whichever Qt wrapper
@@ -81,10 +83,26 @@ def _module_available(module_name: str) -> bool:
         return False
 
 
+@lru_cache(maxsize=1)
 def _torch_available() -> bool:
-    """Return True only when the optional ``torch`` package is importable."""
+    """Return True only when the optional ``torch`` package is functional.
 
-    return _module_available("torch")
+    A broken/partial install can expose a namespace package named ``torch``
+    without core symbols such as ``Tensor`` or ``torch.nn``. Treat that the same
+    as "not installed" so optional torch tests skip instead of failing during
+    collection or first use.
+    """
+
+    if not _module_available("torch"):
+        return False
+    try:
+        torch_mod = importlib.import_module("torch")
+    except Exception:
+        return False
+    required_attrs = ("Tensor", "as_tensor", "device", "float32", "float64")
+    if not all(hasattr(torch_mod, attr) for attr in required_attrs):
+        return False
+    return _module_available("torch.nn")
 
 
 def _h5py_available() -> bool:

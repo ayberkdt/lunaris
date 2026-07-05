@@ -380,13 +380,26 @@ class DynamicsEngine:
         raw_table = getattr(adaptive, "altitude_table", None)
         if raw_table:
             parsed_rows: list[tuple[float, int]] = []
+            skipped_rows: list[Any] = []
             for row in raw_table:
                 try:
                     alt_km = max(0.0, float(row[0]))
                     degree = max(min_degree, min(int(nmax), int(row[1])))
-                except Exception:
+                except (TypeError, ValueError, IndexError):
+                    # Malformed user row (wrong arity / non-numeric). Dropping it
+                    # changes the effective gravity degree schedule, so it must
+                    # never be silent (R29b).
+                    skipped_rows.append(row)
                     continue
                 parsed_rows.append((alt_km, degree))
+            if skipped_rows:
+                warnings.warn(
+                    f"Adaptive SH degree table: skipped {len(skipped_rows)} malformed "
+                    f"row(s) {skipped_rows!r}; the remaining rows define the degree "
+                    "schedule. Fix the altitude_table entries.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
             parsed_rows.sort(key=lambda item: item[0])
             cleaned_rows: list[tuple[float, int]] = []

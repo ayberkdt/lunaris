@@ -194,11 +194,37 @@ def build_benchmark_manifest(
             "dt_s": propagation.get("dt_s"),
             "output_dt_s": propagation.get("output_dt_s"),
             "dtype": propagation.get("dtype"),
+            # R10/G2: requested-vs-effective dtype provenance per GPU backend the
+            # benchmark may use, resolved through the single-source registry.
+            "dtype_provenance": _dtype_provenance(
+                propagation.get("dtype"), surrogate_enabled=bool(surrogate.get("enabled"))
+            ),
             "duration_days": propagation.get("duration_days"),
         },
         "environment": collect_environment(),
     }
     return manifest
+
+
+def _dtype_provenance(requested_dtype: Any, *, surrogate_enabled: bool) -> dict[str, Any]:
+    """Requested/effective/downgraded dtype resolution per benchmark GPU backend."""
+    from lunaris.core.backend_capabilities import resolve_effective_dtype
+
+    backends = ["torch_cuda_sh"]
+    if surrogate_enabled:
+        backends.append("gpu_st_lrps_potential")
+    out: dict[str, Any] = {"requested": str(requested_dtype) if requested_dtype else None}
+    for backend in backends:
+        resolution = resolve_effective_dtype(
+            str(requested_dtype) if requested_dtype else None, backend
+        )
+        out[backend] = {
+            "requested": resolution.requested,
+            "effective": resolution.effective,
+            "downgraded": resolution.downgraded,
+            "reason": resolution.reason or None,
+        }
+    return out
 
 
 def write_json(path: str | Path, payload: Mapping[str, Any]) -> Path:

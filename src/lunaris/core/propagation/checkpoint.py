@@ -44,6 +44,8 @@ def _atomic_save_npz(path: str, **arrays) -> None:
                 if p.exists():
                     p.unlink()
             except Exception:
+                # R29b-justified: temp-file cleanup on the (possibly failing)
+                # save path; masking the original np.savez error would be worse.
                 pass
 
 

@@ -80,7 +80,7 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R04 | surrogate_assisted_frozen_search workflow | P0 | S5 | R03, R05, R23, R27 | [ ] |
 | R05 | Frozen / quasi-frozen sınıflandırma modülü | P0 | S5 | — | [ ] |
 | R06 | VRAM-aware chunking | P1 | S3 | — | [ ] |
-| R07 | Ortak batched RK4 + impact loop | P1 | S3 | — | [ ] |
+| R07 | Ortak batched RK4 + impact loop | P1 | S3 | — | [x] |
 | R08 | Alive-sample compaction | P1 | S3 | R07 | [ ] |
 | R09 | Capability registry tek kaynak | P1 | S2 | — | [x] |
 | R10 | Dtype provenance düzeltmesi | P1 | S2 | — | [x] |
@@ -99,10 +99,10 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R23 | Summary-only output mode | P2 | S3 | — | [ ] |
 | R24 | run_epoch decomposition | P3 | paralel | — | [~] |
 | R25 | Laplacian scaling tutarlılığı | P3 | paralel | — | [x] |
-| R26 | Artifact contract sertleştirme | P3 | S2 | — | [ ] |
+| R26 | Artifact contract sertleştirme | P3 | S2 | — | [x] |
 | R27 | Domain guard frozen search'te zorunlu | P3 | S5 | R05 | [ ] |
 | R28 | print → logger | P4 | paralel | — | [ ] |
-| R29 | paper_safe / research_mode fail politikası | P4 | S1+S2 | — | [ ] |
+| R29 | paper_safe / research_mode fail politikası | P4 | S1+S2 | — | [x] |
 | R30 | Candidate family JSON raporu | P4 | S5 | R04, R05 | [ ] |
 | R31 | Frozen orbit plot/report generator | P4 | S5 | R30 | [ ] |
 
@@ -282,29 +282,62 @@ fallback-kayıtlı), her ikisi yeşil.
 
 ### R26 — Artifact contract sertleştirme
 
-- [ ] Zorunlu alanlar: `model_kind, runtime_kind, body, gravity_model_name,
+- [x] Zorunlu alanlar: `model_kind, runtime_kind, body, gravity_model_name,
       gravity_model_hash, baseline_degree, residual_degree_range,
       train_altitude_min_km, train_altitude_max_km, scaler_source, x_scale,
       u_scale, dtype, architecture, parameter_count, training_data_hash,
       validation_data_hash, git_commit, created_at, training_config_hash,
-      loss_config, domain_guard_policy`.
-- [ ] `paper_safe=true` iken eksik metadata ⇒ inference başlamaz.
-- [ ] `tests/test_artifact_contract.py` genişletilir; eski artifact'ler için
+      loss_config, domain_guard_policy`. *(2026-07-05:
+      `contracts.PAPER_SAFE_REQUIRED_METADATA` — 22 mantıksal alan, her biri
+      kanonik kaynağına eşlenmiş; üretici tarafı `build_resolved_config` artık
+      `dtype`, `domain_guard_policy`, `loss_config`, `parameter_count` yazıyor;
+      checkpoint payload'ı `parameter_count` taşıyor.)*
+- [x] `paper_safe=true` iken eksik metadata ⇒ inference başlamaz.
+      *(`load_surrogate_force_model(paper_safe=True)` →
+      `require_paper_safe_metadata` ArtifactContractError; paper-safe benchmark
+      `paper_safe_metadata_report_for_run` ile aynı kapıyı uygular, rapor
+      manifest'e yazılır.)*
+- [x] `tests/test_artifact_contract.py` genişletilir; eski artifact'ler için
       açık legacy-override yolu (research_mode'da, metadata kaydıyla).
+      *(5 kontrat-seviyesi test + 3 load-path testi
+      (test_runtime_contract_validation.py: accept/reject/legacy-override) +
+      benchmark reddi (test_benchmark_paper_safe.py); research yüklemesi
+      `paper_safe_metadata.legacy_override=True` + missing listesi kaydeder.
+      Commit: 63e14c29.)*
 
 ### R29b — Silent fallback / broad exception temizliği (uygulama)
 
-- [ ] R29a politikasını koda dök: paper_safe iken missing ephemeris,
+- [x] R29a politikasını koda dök: paper_safe iken missing ephemeris,
       backend fallback (allow_fallback=false), dtype/model-kind/gravity-file
       mismatch ⇒ hard fail; research_mode ⇒ warning + metadata.
-- [ ] Broad `except Exception` taraması; daraltılamayanlar gerekçeli yorumla
-      işaretlenir.
+      *(2026-07-05: `backend_policy.fallback_forbidden()` tek kaynak; ST-LRPS
+      GPU→CPU, dtype downgrade ve classic-SH ikameleri planlama anında raise;
+      `select_classic_sh_backend` policy='error'ı artık tüm dallarda onurlandırıyor;
+      gravity-file kimliği `_gravity_file_identity_check` (match/mismatch/
+      unverified manifest'te, mismatch raise); ephemeris zaten iki katmanda
+      fail-closed (bootstrap + `_prepare_ephem` sıfır-tablo guard'ı). Testler:
+      test_batch_gpu_policy.py R29b bloğu. Commit: e79d5d2e.)*
+- [x] Broad `except Exception` taraması; daraltılamayanlar gerekçeli yorumla
+      işaretlenir. *(Bilimsel yol (batch/core/physics/surrogate-runtime)
+      sessiz `pass/continue` siteleri tek tek incelendi: sonuç-etkileyen 2 yer
+      düzeltildi (adaptive degree tablosu bozuk satır uyarısı; impact-event
+      çıkarımı başarısızlığı uyarısı), kalanlar `R29b-justified:` yorumu taşıyor;
+      UI/plot/report handler'ları kategorik savunmacı olarak
+      PAPER_SAFE_POLICY.md'de belgelendi.)*
 
-### G2 kapısı
-1. paper_safe fail-closed davranışları testli (terrain, artifact, dtype,
-   fallback).
-2. Capability registry dışında destek kararı yok (kontrat testi yeşil).
-3. Provenance şeması (dtype alanları dahil) benchmark manifest'inde görünür.
+### G2 kapısı — ✅ GEÇİLDİ (2026-07-05)
+1. [x] paper_safe fail-closed davranışları testli (terrain:
+   test_terrain_paper_safe_fallback.py; artifact:
+   test_runtime_contract_validation.py + test_benchmark_paper_safe.py; dtype +
+   fallback: test_batch_gpu_policy.py R29b bloğu).
+2. [x] Capability registry dışında destek kararı yok (kontrat testi yeşil:
+   test_backend_capabilities.py, 54+ test).
+3. [x] Provenance şeması (dtype alanları dahil) benchmark manifest'inde görünür
+   (`numerics.dtype_provenance` — requested/effective/downgraded per backend;
+   test_st_lrps_params_summary_provenance.py).
+
+**Sprint 2 tamam (R09 + R10 + R12 + R26 + R29b).** Sprint 3'e (batch
+infrastructure: R07/R08/R06/R23/R11) geçilebilir.
 
 ---
 
@@ -316,21 +349,31 @@ fallback-kayıtlı), her ikisi yeşil.
 RK4/output-grid/alive-mask/impact/snapshot mantığını kopyalıyor (DRY ihlali;
 impact bugfix'leri iki yerde yapılıyor).
 
-- [ ] Yeni modül `src/lunaris/core/batched_fixed_step.py`:
+- [x] Yeni modül `src/lunaris/core/batched_fixed_step.py`:
       `build_output_grid`, `rk4_step`, alive mask, impact detection
       (terrain/sphere mode), snapshot yazımı, callback/progress, result
-      packaging, impact-pozisyon interpolasyonu.
-- [ ] Backend'ler yalnız acceleration provider verir:
+      packaging, impact-pozisyon interpolasyonu. *(2026-07-05:
+      `build_output_grid`, `rhs_batch`, `rk4_step`, `run_batched_fixed_step`
+      ve `BatchedFixedStepResult`; callback modu açık validate edilir.)*
+- [x] Backend'ler yalnız acceleration provider verir:
       `class BatchedAccelerationProvider: def acceleration(t, state_batch)
-      -> accel_batch`.
-- [ ] Torch SH ve ST-LRPS bu loop'a taşınır; eski loop'lar silinir
+      -> accel_batch`. *(Torch-SH `_SHAccelerationProvider`, ST-LRPS
+      `_STLRPSAccelerationProvider`.)*
+- [x] Torch SH ve ST-LRPS bu loop'a taşınır; eski loop'lar silinir
       (compat shim gerekirse dinamik fold — ruff static re-export'ları
-      siliyor, bilinen tuzak).
-- [ ] Taşınan Numba fonksiyonlarında `@njit` dekoratörlerinin düşmediğini
-      doğrula (bilinen tuzak).
+      siliyor, bilinen tuzak). *(Her iki backend de aynı
+      `run_batched_fixed_step` yolundan geçiyor; eski Torch loop kopyaları
+      kaldırıldı.)*
+- [x] Taşınan Numba fonksiyonlarında `@njit` dekoratörlerinin düşmediğini
+      doğrula (bilinen tuzak). *(R07 yalnız Torch fixed-step loop'unu ortakladı;
+      Numba `@njit` fonksiyon taşınmadı. `rg "@njit"` ile core/dynamics
+      dekoratörleri yerinde görüldü.)*
 
 **Kabul:** İki backend bit-uyumlu (veya tolerans-içi) aynı sonuçları ortak
 loop'tan üretir; impact davranış testleri tek parametrize suite olur.
+`tests/test_batched_fixed_step.py` impact ve chunk invariant davranışını tek
+parametrize suite olarak kapsar; Torch-SH bağlantısı
+`tests/test_torch_sh_batch_propagator.py` kapsamındadır.
 
 ### R08 — Alive-sample compaction
 

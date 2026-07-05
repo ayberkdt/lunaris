@@ -110,6 +110,8 @@ from lunaris.surrogate.st_lrps.shared.contracts import (
     REQUIRED_DERIVATIVE_CONVENTION,
     ArtifactContract,
     TargetContract,
+    paper_safe_metadata_report,
+    require_paper_safe_metadata,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack
 
@@ -236,6 +238,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         artifact_contract: ArtifactContract | dict | None = None,
         run_manifest: dict | None = None,
         strict_domain: bool = False,
+        paper_safe_metadata: dict | None = None,
     ):
         self.model = model.eval()
         self.scaler = scaler
@@ -246,6 +249,11 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         self.checkpoint_epoch = checkpoint_epoch
         self.architecture_signature = architecture_signature
         self.run_manifest = dict(run_manifest or {})
+        # R26 paper-safe metadata completeness report (may carry
+        # ``legacy_override=True`` when a research-mode load accepted an
+        # incomplete legacy artifact). None only for directly-constructed
+        # runtimes that bypassed load_surrogate_force_model.
+        self.paper_safe_metadata = dict(paper_safe_metadata) if paper_safe_metadata else None
         # When True, predict_residual_accel / predict_total_accel raise if the
         # domain check recommends falling back (extrapolation outside the trained
         # shell / scaler radius). Default False preserves prior behaviour.
@@ -708,6 +716,7 @@ def load_surrogate_force_model(
     chunk_size: int = 8192,
     allow_config_mismatch: bool = False,
     strict_domain: bool = False,
+    paper_safe: bool = False,
 ) -> BaseSurrogateRuntime:
     """
     Load a trained surrogate force model from a run directory.
@@ -730,6 +739,14 @@ def load_surrogate_force_model(
         RuntimeError if the input lies outside the surrogate's valid domain
         (see SurrogateForceModel.domain_status). Default False keeps the prior
         behaviour of always returning a (possibly extrapolated) prediction.
+    paper_safe : bool
+        When True, the artifact must carry every paper-safe required metadata
+        field (R26: gravity model identity, degree range, scaler, dtype,
+        parameter count, data hashes, git commit, loss config, ...). Missing
+        metadata raises ArtifactContractError before inference starts. When
+        False (research mode), an incomplete legacy artifact still loads, but
+        the runtime records the missing-field list with ``legacy_override=True``
+        in ``paper_safe_metadata`` and emits a RuntimeWarning.
     Returns
     -------
     SurrogateForceModel
@@ -768,6 +785,37 @@ def load_surrogate_force_model(
         strict=True,
     )
     artifact_contract = ArtifactContract.from_dict(contract_report["artifact_contract"])
+
+    # R26 paper-safe metadata gate: paper_safe loads fail closed on incomplete
+    # artifact metadata; research-mode loads record an explicit legacy override.
+    run_provenance = ckpt.get("run_provenance") or cfg.get("run_provenance")
+    if paper_safe:
+        ps_report = require_paper_safe_metadata(
+            contract=artifact_contract,
+            config=cfg,
+            run_provenance=run_provenance,
+            checkpoint=ckpt,
+            context=f"inference load of {run_dir}",
+        )
+    else:
+        ps_report = paper_safe_metadata_report(
+            contract=artifact_contract,
+            config=cfg,
+            run_provenance=run_provenance,
+            checkpoint=ckpt,
+        )
+        if not ps_report["complete"]:
+            ps_report["legacy_override"] = True
+            warnings.warn(
+                "[ST-LRPS] Artifact metadata is incomplete for paper-safe use "
+                f"(missing: {', '.join(ps_report['missing'])}). Loading in research "
+                "mode with a recorded legacy metadata override; this artifact "
+                "cannot back a paper_safe result. Run dir: "
+                f"{run_dir}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
     runtime_kind = str(cfg.get("runtime_model_kind", "potential_autograd") or "potential_autograd")
     runtime_kind = str(artifact_contract.runtime_model_kind or runtime_kind)
     runtime_kwargs = dict(
@@ -782,6 +830,7 @@ def load_surrogate_force_model(
         artifact_contract=artifact_contract,
         run_manifest=read_run_manifest(layout),
         strict_domain=strict_domain,
+        paper_safe_metadata=ps_report,
     )
     if runtime_kind == "potential_autograd":
         return SurrogateForceModel(**runtime_kwargs)

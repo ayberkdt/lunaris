@@ -44,7 +44,6 @@ Runs on CUDA or CPU; float32 or float64.  CPU + float64 is the validation path
 from __future__ import annotations
 
 import math
-import time
 import warnings
 from collections.abc import Callable
 from typing import Any
@@ -54,13 +53,16 @@ import numpy as np
 from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
 from lunaris.core.backend_capabilities import unsupported_force_models
+from lunaris.core.batched_fixed_step import (
+    rhs_batch,
+    rk4_step,
+    run_batched_fixed_step,
+)
 from lunaris.core.torch_frame import (
     TorchFrameError,
     TorchMoonFrame,
-    line_sphere_intersection,
     quat_conjugate_torch,
     quat_rotate_torch,
-    terrain_segment_intersection,
     topo_payload_to_torch,
 )
 
@@ -88,6 +90,27 @@ _DEFAULT_CHUNK = 1024
 
 _quat_rotate = quat_rotate_torch
 _TorchMoonFrame = TorchMoonFrame
+
+
+class _SHAccelerationProvider:
+    """R07 acceleration provider: per-stage frame rotation + batched SH gravity.
+
+    The quaternion is resolved once per stage and reused for the forward and
+    inverse rotation (identical numerics to the pre-R07 in-class ``_rhs``).
+    """
+
+    def __init__(self, evaluator: Any, frame: Any) -> None:
+        self._evaluator = evaluator
+        self._frame = frame
+
+    def acceleration(self, t_s: float, s: Any) -> Any:
+        r_i = s[:, :3]
+        if self._frame.uses_rotation:
+            q = self._frame.quat_i2f(t_s)
+            r_f = quat_rotate_torch(q, r_i)
+            a_f = self._evaluator.acceleration(r_f)
+            return quat_rotate_torch(quat_conjugate_torch(q), a_f)
+        return self._evaluator.acceleration(r_i)
 
 
 class TorchSHBatchPropagator:
@@ -378,30 +401,20 @@ class TorchSHBatchPropagator:
         }
 
     # ------------------------------------------------------------------
-    # RHS + RK4
+    # RHS + RK4 — thin wrappers over the shared loop (R07)
     # ------------------------------------------------------------------
+
+    @property
+    def _provider(self) -> _SHAccelerationProvider:
+        return _SHAccelerationProvider(self._evaluator, self._frame)
 
     def _rhs(self, t_s: float, s: Any) -> Any:
         """Evaluate ``[v; a]`` for state ``[N, 6]`` at epoch ``t_s``."""
-        torch = self._torch
-        r_i = s[:, :3]
-        v_i = s[:, 3:]
-        if self._frame.uses_rotation:
-            q = self._frame.quat_i2f(t_s)
-            r_f = quat_rotate_torch(q, r_i)
-            a_f = self._evaluator.acceleration(r_f)
-            a_i = quat_rotate_torch(quat_conjugate_torch(q), a_f)
-        else:
-            a_i = self._evaluator.acceleration(r_i)
-        return torch.cat((v_i, a_i), dim=1)
+        return rhs_batch(self._torch, self._provider, t_s, s)
 
     def _rk4_step(self, s: Any, t_s: float, h: float) -> Any:
         """One classic RK4 step with per-stage frame transforms (task §7)."""
-        k1 = self._rhs(t_s, s)
-        k2 = self._rhs(t_s + 0.5 * h, s + (0.5 * h) * k1)
-        k3 = self._rhs(t_s + 0.5 * h, s + (0.5 * h) * k2)
-        k4 = self._rhs(t_s + h, s + h * k3)
-        return s + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        return rk4_step(self._torch, self._provider, s, t_s, h)
 
     # ------------------------------------------------------------------
     # Public: propagate batch
@@ -426,24 +439,16 @@ class TorchSHBatchPropagator:
         N = int(Y0.shape[0])
         dt = float(self._dt)
 
-        # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform.
-        t_out, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
+        # Grid preview for the run header only; the shared loop rebuilds the
+        # same grid (single contract: build_batch_output_grid).
+        _t_out, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
         steps_per_snap = max(1, int(round(snap_interval / dt)))
         dt_eff = snap_interval / steps_per_snap
-        Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
-        impact_flags = np.zeros(N, dtype=np.float64)
-        t_impact = np.full(N, np.nan, dtype=np.float64)
-        impact_positions = np.full((N, 3), np.nan, dtype=np.float64)
 
         chunk = max(1, int(self._chunk_size))
         n_chunks = int(math.ceil(N / chunk))
-
-        total_raw_state_steps = 0
-        total_active_state_steps = 0
-        total_steps_per_sample = n_snaps * steps_per_snap
         log_backend = "torch_cuda_sh" if self._device.type == "cuda" else "torch_cpu_sh"
 
-        t_start = time.perf_counter()
         print(
             f"[BATCH][{log_backend}] N={N}  device={self._device} ({self._device_name})  "
             f"degree={self._actual_degree}  dtype={str(self._dtype).replace('torch.', '')}  "
@@ -452,43 +457,40 @@ class TorchSHBatchPropagator:
             flush=True,
         )
 
-        for ci in range(n_chunks):
-            a = ci * chunk
-            b = min(N, a + chunk)
-            chunk_n = b - a
-            active_steps = self._propagate_chunk(
-                Y0[a:b],
-                a,
-                b,
-                steps_per_snap,
-                dt_eff,
-                n_snaps,
-                Y_out,
-                impact_flags,
-                t_impact,
-                impact_positions,
-            )
-            total_raw_state_steps += chunk_n * total_steps_per_sample
-            total_active_state_steps += active_steps
-            if callback is not None:
-                callback(float(b) / float(max(N, 1)))
+        result = run_batched_fixed_step(
+            torch_mod=self._torch,
+            device=self._device,
+            dtype=self._dtype,
+            provider=self._provider,
+            frame=self._frame,
+            Y0=Y0,
+            duration_s=duration_s,
+            output_dt_s=output_dt_s,
+            dt_s=dt,
+            impact_r_m=self._impact_r,
+            detect_impact=self._detect_impact,
+            topo=getattr(self, "_topo", None),
+            impact_alt_m=float(getattr(self, "_impact_alt_m", 0.0)),
+            chunk_size=chunk,
+            callback=callback,
+            callback_granularity="chunk",
+        )
+        t_out = result.t_out
+        Y_out = result.Y_out
+        impact_flags = result.impact_flags
+        t_impact = result.t_impact
+        impact_positions = result.impact_positions_inertial
+        elapsed = float(result.metrics["propagation_elapsed_s"])
 
-        if self._device.type == "cuda":
-            try:
-                self._torch.cuda.synchronize(self._device)
-            except Exception:
-                pass
-        elapsed = time.perf_counter() - t_start
-
-        n_impacts = int(np.sum(impact_flags > 0.5))
+        n_impacts = int(result.metrics["impacted_sample_count"])
         self._throughput_metrics = {
-            "raw_batch_state_steps_per_second": float(total_raw_state_steps) / max(elapsed, 1e-9),
-            "active_state_steps_per_second": float(total_active_state_steps) / max(elapsed, 1e-9),
+            "raw_batch_state_steps_per_second": result.metrics["raw_batch_state_steps_per_second"],
+            "active_state_steps_per_second": result.metrics["active_state_steps_per_second"],
             "active_sample_count": int(N - n_impacts),
             "impacted_sample_count": n_impacts,
             "impact_fraction": float(n_impacts) / max(N, 1),
-            "total_raw_state_steps": total_raw_state_steps,
-            "total_active_state_steps": total_active_state_steps,
+            "total_raw_state_steps": int(result.metrics["total_raw_state_steps"]),
+            "total_active_state_steps": int(result.metrics["total_active_state_steps"]),
             "propagation_elapsed_s": float(elapsed),
             "impact_position_method": (
                 "terrain_bisection_hybrid"
@@ -505,131 +507,6 @@ class TorchSHBatchPropagator:
         )
         self._last_impact_positions_inertial = impact_positions
         return t_out, Y_out, impact_flags, t_impact
-
-    def _propagate_chunk(
-        self,
-        Y0_chunk: np.ndarray,
-        a: int,
-        b: int,
-        steps_per_snap: int,
-        dt_eff: float,
-        n_snaps: int,
-        Y_out: np.ndarray,
-        impact_flags: np.ndarray,
-        t_impact: np.ndarray,
-        impact_positions: np.ndarray,
-    ) -> int:
-        """Propagate one chunk of samples through the RK4 loop.
-
-        Returns the total number of active state-step evaluations executed
-        in this chunk (for throughput accounting).
-        """
-        torch = self._torch
-        device = self._device
-        # Defensive (mirrors other getattr fallbacks): absent topo => sphere freeze.
-        topo = getattr(self, "_topo", None)
-        impact_alt_m = float(getattr(self, "_impact_alt_m", 0.0))
-
-        state = torch.as_tensor(
-            np.ascontiguousarray(Y0_chunk, dtype=np.float64), device=device, dtype=self._dtype
-        )
-        n = int(state.shape[0])
-        alive = torch.ones(n, dtype=torch.bool, device=device)
-
-        Y_out[0, a:b, :] = state.detach().cpu().numpy().astype(np.float64)
-
-        # Device-side accumulators: avoid per-step host synchronization. Both the
-        # active-step count and the first-impact step index are tracked on device
-        # and converted to host scalars exactly once, at the end of the chunk
-        # (task §3: no per-step .item()/CPU<->GPU sync in the RK4 hot loop — a
-        # device-to-host sync every step would distort the very throughput we are
-        # trying to measure on CUDA).
-        active_steps_acc = torch.zeros((), dtype=torch.int64, device=device)
-        impact_step = torch.full((n,), -1, dtype=torch.int64, device=device)
-        # Interpolated crossing time / inertial position (NaN until a sample hits).
-        impact_time = torch.full((n,), float("nan"), dtype=self._dtype, device=device)
-        impact_pos = torch.full((n, 3), float("nan"), dtype=self._dtype, device=device)
-
-        # t=0 surface check: a sample already at/under the impact radius before
-        # any step has impacted at t=0. Flag it (t_impact=0.0, position = initial
-        # state) and mark it not-alive so it is frozen from the start instead of
-        # being propagated through the body.
-        r0 = torch.linalg.norm(state[:, :3], dim=1)
-        at_surface0 = r0 <= self._impact_r
-        if self._detect_impact:
-            impact_step = torch.where(at_surface0, torch.zeros_like(impact_step), impact_step)
-            impact_time = torch.where(at_surface0, torch.zeros_like(impact_time), impact_time)
-            impact_pos = torch.where(at_surface0.unsqueeze(1), state[:, :3], impact_pos)
-            alive = alive & ~at_surface0
-
-        t_curr = 0.0
-        global_step = 0
-        # TODO(perf): Benchmark masking or compacting impacted samples so they
-        # no longer participate in SH evaluation. Deferred to preserve fixed
-        # batch shapes and avoid gather/scatter overhead until profiling shows
-        # a net benefit.
-        with torch.no_grad():
-            for snap_idx in range(n_snaps):
-                for _ in range(steps_per_snap):
-                    active_steps_acc += alive.sum()
-                    # Freeze impacted samples: only alive trajectories advance;
-                    # impacted ones hold their last state (no propagation through
-                    # the Moon). Fixed batch shape is preserved (no compaction).
-                    prev_state = state
-                    candidate = self._rk4_step(state, t_curr, dt_eff)
-                    state = torch.where(alive.unsqueeze(1), candidate, state)
-                    t_curr += dt_eff
-                    global_step += 1
-                    if self._detect_impact:
-                        # True segment intersection over the step, then replace the
-                        # main state with the crossing state so impacted trajectories
-                        # freeze ON the surface (position+velocity), not at the
-                        # sub-surface step endpoint. Terrain-aware when a topography
-                        # payload is present; otherwise the constant impact sphere.
-                        if topo is not None:
-                            segment_hit, alpha = terrain_segment_intersection(
-                                prev_state[:, :3],
-                                state[:, :3],
-                                t_prev_s=t_curr - dt_eff,
-                                dt_s=dt_eff,
-                                frame=self._frame,
-                                topo=topo,
-                                impact_alt_m=impact_alt_m,
-                            )
-                        else:
-                            segment_hit, alpha = line_sphere_intersection(
-                                prev_state[:, :3],
-                                state[:, :3],
-                                self._impact_r,
-                            )
-                        newly = alive & segment_hit
-                        cross_state = prev_state + alpha.unsqueeze(1) * (state - prev_state)
-                        t_cross = (float(global_step - 1) + alpha) * dt_eff
-                        impact_step = torch.where(
-                            newly, torch.full_like(impact_step, global_step), impact_step
-                        )
-                        impact_time = torch.where(newly, t_cross, impact_time)
-                        impact_pos = torch.where(
-                            newly.unsqueeze(1), cross_state[:, :3], impact_pos
-                        )
-                        state = torch.where(newly.unsqueeze(1), cross_state, state)
-                        alive = alive & ~newly
-                Y_out[snap_idx + 1, a:b, :] = state.detach().cpu().numpy().astype(np.float64)
-
-        # Single host sync per chunk: resolve impact bookkeeping. The crossing
-        # time/position were interpolated on device, so they resolve the exact
-        # sub-step crossing instead of the coarse fixed-step endpoint.
-        impact_step_host = impact_step.detach().cpu().numpy()
-        impact_time_host = impact_time.detach().cpu().numpy().astype(np.float64)
-        impact_pos_host = impact_pos.detach().cpu().numpy().astype(np.float64)
-        for li in np.nonzero(impact_step_host >= 0)[0].tolist():
-            gi = a + int(li)
-            if impact_flags[gi] == 0.0:
-                impact_flags[gi] = 1.0
-                t_impact[gi] = float(impact_time_host[li])
-                impact_positions[gi] = impact_pos_host[li]
-
-        return int(active_steps_acc.item())
 
     def last_impact_positions_inertial(self) -> np.ndarray:
         """Return fixed-step endpoint impact positions for the latest batch."""

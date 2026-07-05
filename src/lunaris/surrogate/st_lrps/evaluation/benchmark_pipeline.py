@@ -78,6 +78,7 @@ def run_configured_benchmark(
         config,
         strict=not bool(allow_contract_mismatch),
         strict_domain=not bool(allow_domain_extrapolation),
+        paper_safe=bool(paper_safe),
     )
     config.setdefault("contract_compatibility", contract_report)
     resolved_hash = sha256_payload(config)
@@ -199,6 +200,7 @@ def _benchmark_contract_report(
     *,
     strict: bool,
     strict_domain: bool,
+    paper_safe: bool = False,
 ) -> dict[str, Any]:
     surrogate = config.get("surrogate", {}) if isinstance(config.get("surrogate"), Mapping) else {}
     if not surrogate.get("enabled"):
@@ -212,7 +214,10 @@ def _benchmark_contract_report(
         }
     requested = ArtifactContract.from_benchmark_config(config)
     try:
-        from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
+        from lunaris.surrogate.st_lrps.artifacts.manager import (
+            paper_safe_metadata_report_for_run,
+            read_artifact_contract,
+        )
 
         artifact = read_artifact_contract(
             model_dir,
@@ -220,6 +225,30 @@ def _benchmark_contract_report(
         )
         report = artifact.compatibility_report(requested, strict_domain=strict_domain)
         report["checked"] = True
+        if paper_safe:
+            # R26: a paper-safe benchmark refuses to start when the artifact's
+            # required metadata is incomplete. The completeness report lands in
+            # the manifest via contract_compatibility for provenance.
+            ps_report = paper_safe_metadata_report_for_run(model_dir)
+            report["paper_safe_metadata"] = ps_report
+            if not ps_report["complete"]:
+                raise ArtifactContractError(
+                    "paper_safe benchmark refused: surrogate artifact metadata is "
+                    f"incomplete (missing: {', '.join(ps_report['missing'])}). "
+                    "Regenerate the artifact with the current training pipeline."
+                )
+            # R29b (#6): gravity-file identity. The artifact records the SHA-256
+            # of the gravity model its labels came from; a paper-safe benchmark
+            # against a *different* gravity file is comparing apples to oranges.
+            identity = _gravity_file_identity_check(config, ps_report["fields"])
+            report["gravity_file_identity"] = identity
+            if identity["status"] == "mismatch":
+                raise ArtifactContractError(
+                    "paper_safe benchmark refused: configured truth gravity file "
+                    f"{identity['configured_path']} (sha256={identity['configured_sha256']}) "
+                    "does not match the artifact's training gravity model "
+                    f"(sha256={identity['artifact_sha256']})."
+                )
         if strict and report["errors"]:
             raise ArtifactContractError("; ".join(report["errors"]))
         if not strict and report["errors"]:
@@ -238,6 +267,49 @@ def _benchmark_contract_report(
             "errors": [],
             "warnings": [f"contract mismatch allowed explicitly: {exc}"],
         }
+
+
+def _gravity_file_identity_check(
+    config: Mapping[str, Any],
+    metadata_fields: Mapping[str, Any],
+) -> dict[str, Any]:
+    """R29b (#6): compare the configured truth gravity file with the artifact's.
+
+    Returns a JSON-serializable status block. ``status`` is one of:
+    ``match`` / ``mismatch`` / ``unverified`` (no truth.gravity_file configured,
+    or the file cannot be hashed). Only ``mismatch`` is fatal under paper-safe;
+    ``unverified`` is recorded so the gap is visible in the manifest.
+    """
+    artifact_sha = metadata_fields.get("gravity_model_hash")
+    truth = config.get("truth") if isinstance(config.get("truth"), Mapping) else {}
+    gravity_file = truth.get("gravity_file")
+    if not gravity_file:
+        return {
+            "status": "unverified",
+            "reason": "truth.gravity_file not configured; artifact hash recorded only",
+            "configured_path": None,
+            "configured_sha256": None,
+            "artifact_sha256": artifact_sha,
+        }
+    path = Path(str(gravity_file))
+    if not path.exists():
+        return {
+            "status": "unverified",
+            "reason": f"truth.gravity_file does not exist: {path}",
+            "configured_path": str(path),
+            "configured_sha256": None,
+            "artifact_sha256": artifact_sha,
+        }
+    from lunaris.common.provenance import sha256_file
+
+    configured_sha = str(sha256_file(path))
+    return {
+        "status": "match" if configured_sha == str(artifact_sha) else "mismatch",
+        "reason": None,
+        "configured_path": str(path),
+        "configured_sha256": configured_sha,
+        "artifact_sha256": artifact_sha,
+    }
 
 
 def _run_existing_harness(output_dir: Path, config: Mapping[str, Any]) -> None:
