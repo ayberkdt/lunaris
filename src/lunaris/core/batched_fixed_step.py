@@ -204,6 +204,7 @@ def run_batched_fixed_step(
     topo: Any = None,
     impact_alt_m: float = 0.0,
     chunk_size: int | None = None,
+    output_buffer: np.ndarray | None = None,
     callback: Callable[[float], None] | None = None,
     callback_granularity: str = "chunk",
 ) -> BatchedFixedStepResult:
@@ -223,6 +224,10 @@ def run_batched_fixed_step(
         Samples per device chunk; ``None`` or ``<= 0`` propagates the whole
         ensemble as a single chunk. Chunking changes only memory use, never
         the numbers.
+    output_buffer :
+        Optional preallocated host buffer with shape ``(len(t_out), N, 6)`` and
+        dtype ``float64``. When supplied, snapshots are written into this array
+        instead of allocating a fresh ``Y_out`` array.
     callback_granularity :
         ``"chunk"`` invokes ``callback`` once per finished chunk with the
         completed-sample fraction (classic-SH behavior); ``"snapshot"``
@@ -242,7 +247,21 @@ def run_batched_fixed_step(
     t_out, n_snaps, snap_interval = build_output_grid(duration_s, output_dt_s)
     steps_per_snap = max(1, int(round(snap_interval / dt)))
     dt_eff = snap_interval / steps_per_snap
-    Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
+    expected_output_shape = (n_snaps + 1, N, 6)
+    output_buffer_reused = output_buffer is not None
+    if output_buffer is None:
+        Y_out = np.empty(expected_output_shape, dtype=np.float64)
+    else:
+        Y_out = np.asarray(output_buffer)
+        if Y_out.shape != expected_output_shape:
+            raise ValueError(
+                "output_buffer must have shape "
+                f"{expected_output_shape}, got {Y_out.shape}."
+            )
+        if Y_out.dtype != np.float64:
+            raise ValueError(f"output_buffer dtype must be float64, got {Y_out.dtype}.")
+        if not Y_out.flags.c_contiguous:
+            raise ValueError("output_buffer must be C-contiguous.")
     impact_flags = np.zeros(N, dtype=np.float64)
     t_impact = np.full(N, np.nan, dtype=np.float64)
     impact_positions = np.full((N, 3), np.nan, dtype=np.float64)
@@ -342,6 +361,7 @@ def run_batched_fixed_step(
         # every OOM-driven halving along the way.
         "chunk_size_requested": int(chunk_requested),
         "chunk_size_effective": int(chunk),
+        "output_buffer_reused": bool(output_buffer_reused),
         "oom_recoveries": oom_recoveries,
     }
     return BatchedFixedStepResult(

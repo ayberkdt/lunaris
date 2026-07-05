@@ -44,6 +44,7 @@ Implementation notes
 
 from __future__ import annotations
 
+import logging
 import math
 import time
 import warnings
@@ -117,6 +118,8 @@ from lunaris.physics.thermal_ir import (
     normalize_thermal_mode,
 )
 from lunaris.physics.third_body_effects import accel_j2_oblate_diff_numba, accel_third_body_numba
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # 1.                             DYNAMICS ENGINE
@@ -898,6 +901,21 @@ class DynamicsEngine:
         USE_TIDE_EARTH = bool(req["use_tide_earth"])
         USE_TIDE_SUN = bool(req["use_tide_sun"])
         USE_THERMAL = bool(req["use_thermal"])
+        SH_ONLY_FAST_PATH = bool(
+            USE_SH
+            and not USE_SURROGATE
+            and not USE_3RD_SUN
+            and not USE_3RD_EARTH
+            and not USE_SRP
+            and not USE_ALBEDO
+            and not USE_REL
+            and not USE_EJ2
+            and not USE_TIDES
+            and not USE_THERMAL
+        )
+        NEED_FIXED_FRAME = bool(USE_SH or USE_TIDES or USE_ALBEDO or USE_THERMAL)
+        NEED_SUN_FIXED = bool(USE_TIDE_SUN or USE_ALBEDO or USE_THERMAL)
+        NEED_EARTH_FIXED = bool(USE_TIDE_EARTH or USE_ALBEDO or USE_THERMAL)
 
         # Ephemeris fetch needed inside kernel only if we actually have ephem_manager.
         HAVE_EPH = bool(self.ephem is not None)
@@ -1057,8 +1075,23 @@ class DynamicsEngine:
                         float(t), EPH_DT_S, EPH_SUN, EPH_EARTH, EPH_QTAB
                     )
 
-                if USE_SH:
+                rfx = rx
+                rfy = ry
+                rfz = rz
+                sfx = sunx
+                sfy = suny
+                sfz = sunz
+                efx = earthx
+                efy = earthy
+                efz = earthz
+                if NEED_FIXED_FRAME:
                     rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
+                if NEED_SUN_FIXED:
+                    sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
+                if NEED_EARTH_FIXED:
+                    efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
+
+                if USE_SH:
                     s_ax, s_ay, s_az = surrogate.acceleration_fixed((rfx, rfy, rfz))
                     agx, agy, agz = quat_rotate_vec(
                         q0, -q1, -q2, -q3, float(s_ax), float(s_ay), float(s_az)
@@ -1093,10 +1126,7 @@ class DynamicsEngine:
                     az += j2z
 
                 if USE_TIDES:
-                    rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-
                     if USE_TIDE_EARTH:
-                        efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
                         atx_f, aty_f, atz_f = accel_solid_tides_numba(
                             rfx, rfy, rfz, efx, efy, efz, MU_E, TIDE_RREF, TIDE_K2, TIDE_K3, TIDE_USE_K2, TIDE_USE_K3
                         )
@@ -1106,7 +1136,6 @@ class DynamicsEngine:
                         az += atz
 
                     if USE_TIDE_SUN:
-                        sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
                         atx_f, aty_f, atz_f = accel_solid_tides_numba(
                             rfx, rfy, rfz, sfx, sfy, sfz, MU_S, TIDE_RREF, TIDE_K2, TIDE_K3, TIDE_USE_K2, TIDE_USE_K3
                         )
@@ -1128,12 +1157,8 @@ class DynamicsEngine:
                     az += asz
 
                 if USE_ALBEDO:
-                    rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-                    sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
-
                     if ALB_BACKEND == 1:
                         # Lambertian facet model (reflected solar; Moon-fixed sum).
-                        efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
                         aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
                             rfx, rfy, rfz, sfx, sfy, sfz, efx, efy, efz,
                             ALB_FACET_POS, ALB_FACET_NORM, ALB_FACET_AREA, ALB_FACET_ALB,
@@ -1172,9 +1197,6 @@ class DynamicsEngine:
                     az += aaz
 
                 if USE_THERMAL:
-                    rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-                    sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
-                    efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
                     athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
                         rfx,
                         rfy,
@@ -1251,6 +1273,7 @@ class DynamicsEngine:
                 return dydt
 
             self._rhs_cache = rhs
+            self._prep["rhs_path"] = "surrogate_python"
             dt_build = time.perf_counter() - t0
             # Unlike the SH path below, this RHS is a plain Python closure (it
             # calls the PyTorch surrogate, which Numba cannot compile). It pays
@@ -1258,11 +1281,95 @@ class DynamicsEngine:
             # single-trajectory CPU run is NOT a like-for-like speed comparison
             # against the @njit SH kernel; the surrogate only amortizes that
             # overhead in the GPU batch path. See the dynamics path asymmetry note.
-            print(
+            logger.info(
                 f"[Dynamics] RHS ready. (build={dt_build:.3f}s | surrogate gravity, "
                 "interpreted Python+autograd path -- not @njit; single-trajectory CPU "
                 "timings are not comparable to the SH kernel)"
             )
+            return rhs
+
+        if SH_ONLY_FAST_PATH:
+            # R13: minimal classical-SH RHS for paper-safe SH-only baselines.
+            # It keeps only state unpacking, optional Moon-fixed frame rotation,
+            # SH acceleration, inverse rotation, and dy/dt assembly.
+            @njit(cache=False, nogil=True)
+            def _rhs_sh_only_numba(
+                t: float,
+                y: np.ndarray,
+                WS_P: np.ndarray,
+                WS_DP: np.ndarray,
+                WS_COS: np.ndarray,
+                WS_SIN: np.ndarray,
+            ) -> np.ndarray:
+                rx, ry, rz = y[0], y[1], y[2]
+                vx, vy, vz = y[3], y[4], y[5]
+
+                q0 = 1.0
+                q1 = 0.0
+                q2 = 0.0
+                q3 = 0.0
+                if NEED_EPH:
+                    _sunx, _suny, _sunz, _earthx, _earthy, _earthz, q0, q1, q2, q3 = get_ephem_state(
+                        t, EPH_DT_S, EPH_SUN, EPH_EARTH, EPH_QTAB
+                    )
+
+                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
+                n_eval = G_NMAX
+                if G_ADAPTIVE_ENABLED:
+                    r_norm = math.sqrt(rx * rx + ry * ry + rz * rz)
+                    n_eval = _select_adaptive_sh_degree(
+                        r_norm,
+                        G_RREF,
+                        G_NMAX,
+                        G_ADAPTIVE_MODE,
+                        G_ADAPTIVE_POWER,
+                        G_ADAPTIVE_MIN_DEG,
+                        G_ADAPTIVE_QSTEP,
+                        G_ADAPTIVE_ALT_KM,
+                        G_ADAPTIVE_DEG,
+                        G_ADAPTIVE_TABLE_LEN,
+                    )
+                afx, afy, afz = sh_accel_fixed_numba(
+                    rfx,
+                    rfy,
+                    rfz,
+                    n_eval,
+                    G_RREF,
+                    G_GM,
+                    G_CNM,
+                    G_SNM,
+                    G_DIAG,
+                    G_SUB,
+                    G_A,
+                    G_B,
+                    G_SCL,
+                    WS_P,
+                    WS_DP,
+                    WS_COS,
+                    WS_SIN,
+                )
+                ax, ay, az = quat_rotate_vec(q0, -q1, -q2, -q3, afx, afy, afz)
+
+                dydt = np.empty_like(y)
+                dydt[0] = vx
+                dydt[1] = vy
+                dydt[2] = vz
+                dydt[3] = ax
+                dydt[4] = ay
+                dydt[5] = az
+                if y.shape[0] > 6:
+                    dydt[6] = 0.0
+                return dydt
+
+            def rhs(t: float, y: np.ndarray) -> np.ndarray:  # type: ignore[no-redef]
+                return _rhs_sh_only_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
+
+            self._rhs_cache = rhs
+            self._prep["rhs_path"] = "sh_only_numba"
+
+            dt_build = time.perf_counter() - t0
+            logger.info(f"[Dynamics] RHS ready. (build={dt_build:.3f}s | sh-only numba fast path)")
+
             return rhs
 
         # This closure captures runtime-sized arrays/config values, so Numba
@@ -1304,9 +1411,24 @@ class DynamicsEngine:
                     t, EPH_DT_S, EPH_SUN, EPH_EARTH, EPH_QTAB
                 )
 
+            rfx = rx
+            rfy = ry
+            rfz = rz
+            sfx = sunx
+            sfy = suny
+            sfz = sunz
+            efx = earthx
+            efy = earthy
+            efz = earthz
+            if NEED_FIXED_FRAME:
+                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
+            if NEED_SUN_FIXED:
+                sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
+            if NEED_EARTH_FIXED:
+                efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
+
             # A) Central gravity
             if USE_SH:
-                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
                 n_eval = G_NMAX
                 if G_ADAPTIVE_ENABLED:
                     r_norm = math.sqrt(rx * rx + ry * ry + rz * rz)
@@ -1385,10 +1507,7 @@ class DynamicsEngine:
 
             # C) Solid-body tides (Moon-fixed potential gradient)
             if USE_TIDES:
-                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-
                 if USE_TIDE_EARTH:
-                    efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
                     atx_f, aty_f, atz_f = accel_solid_tides_numba(
                         rfx,
                         rfy,
@@ -1409,7 +1528,6 @@ class DynamicsEngine:
                     az += atz
 
                 if USE_TIDE_SUN:
-                    sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
                     atx_f, aty_f, atz_f = accel_solid_tides_numba(
                         rfx,
                         rfy,
@@ -1460,14 +1578,9 @@ class DynamicsEngine:
 
             # E) Albedo (reflected solar radiation pressure)
             if USE_ALBEDO:
-                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-                # Sun inertial -> fixed
-                sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
-
                 if ALB_BACKEND == 1:
                     # Lambertian facet model: sum reflected-solar contributions
                     # from sunlit, visible facets in the Moon-fixed frame.
-                    efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
                     aax_f, aay_f, aaz_f = accel_albedo_facets_numba(
                         rfx,
                         rfy,
@@ -1559,9 +1672,6 @@ class DynamicsEngine:
 
             # F) Lunar thermal IR radiation pressure
             if USE_THERMAL:
-                rfx, rfy, rfz = quat_rotate_vec(q0, q1, q2, q3, rx, ry, rz)
-                sfx, sfy, sfz = quat_rotate_vec(q0, q1, q2, q3, sunx, suny, sunz)
-                efx, efy, efz = quat_rotate_vec(q0, q1, q2, q3, earthx, earthy, earthz)
                 athx_f, athy_f, athz_f = accel_thermal_ir_facets_numba(
                     rfx,
                     rfy,
@@ -1642,9 +1752,10 @@ class DynamicsEngine:
             return _rhs_kernel_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
 
         self._rhs_cache = rhs
+        self._prep["rhs_path"] = "general_numba"
 
         dt_build = time.perf_counter() - t0
-        print(f"[Dynamics] RHS ready. (build={dt_build:.3f}s)")
+        logger.info(f"[Dynamics] RHS ready. (build={dt_build:.3f}s)")
 
         return rhs
 

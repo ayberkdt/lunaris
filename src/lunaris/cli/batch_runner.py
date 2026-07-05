@@ -168,14 +168,16 @@ def _build_parser() -> argparse.ArgumentParser:
         "--batch-backend",
         choices=[
             "auto", "cpu_sh", "numba_cuda_sh", "torch_cuda_sh",
-            "torch_cpu_sh", "gpu_st_lrps_potential",
+            "torch_cpu_sh", "gpu_st_lrps_potential", "gpu_st_lrps_third_body",
         ],
         default="auto",
         help=(
             "Explicit batch propagation backend. 'auto' preserves use-gpu + gravity-mode "
             "routing. 'numba_cuda_sh' is the degree<=24 Numba CUDA screening "
             "kernel; 'torch_cuda_sh' is the high-degree PyTorch CUDA "
-            "classic-SH path (gravity-only). Requested SH degree is never clipped."
+            "classic-SH path (gravity-only). 'gpu_st_lrps_third_body' adds "
+            "analytic Sun/Earth third-body terms to the ST-LRPS CUDA path. "
+            "Requested SH degree is never clipped."
         ),
     )
     g.add_argument(
@@ -392,7 +394,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             explicit_backend = str(args.batch_backend)
             if explicit_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}:
                 forced_backend = "classic_sh"
-            elif explicit_backend == "gpu_st_lrps_potential":
+            elif explicit_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_third_body"}:
                 forced_backend = "st_lrps"
             else:
                 forced_backend = str(getattr(cfg.gravity, "backend", "classic_sh"))

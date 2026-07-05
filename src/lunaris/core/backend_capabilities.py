@@ -259,6 +259,36 @@ _GPU_ST_LRPS_POTENTIAL = BackendCapabilities(
     ),
 )
 
+# R03 hybrid backend: ST-LRPS lunar gravity + analytic, vectorized Earth/Sun
+# third-body on the shared torch fixed-step loop. Deliberately NOT full
+# dynamics: albedo, thermal, tides, relativity, SRP, and Earth J2 still force
+# an explicit fallback.
+_GPU_ST_LRPS_THIRD_BODY = BackendCapabilities(
+    name="gpu_st_lrps_third_body",
+    family="st_lrps",
+    implementation="torch",
+    device="cuda",
+    max_runtime_sh_degree=None,        # surrogate gravity, not an SH evaluator
+    dtype_support=("float32", "float64"),
+    supports_sh=True,                  # central gravity via the surrogate
+    supports_third_body=True,          # analytic vectorized Battin F(q) Sun/Earth
+    supports_earth_j2=False,
+    supports_srp=False,
+    supports_albedo=False,
+    supports_thermal=False,
+    supports_solid_tides=False,
+    supports_relativity_1pn=False,
+    integrator="fixed-step RK4",
+    default_dtype="float32",
+    fidelity_class="surrogate",
+    description=(
+        "PyTorch CUDA fixed-step RK4; ST-LRPS lunar gravity (SH baseline + "
+        "neural residual) plus analytic vectorized Earth/Sun third-body "
+        "(cancellation-free Battin F(q), Catmull-Rom ephemeris interpolation). "
+        "Any other perturbation forces a CPU fallback."
+    ),
+)
+
 # NOTE: the former gpu_st_lrps_direct backend (direct residual-acceleration
 # artifacts) was removed from main and archived in the
 # experimental/force-direct-archive branch. Only the conservative
@@ -317,6 +347,7 @@ BACKEND_REGISTRY: dict[str, BackendCapabilities] = {
         _TORCH_CUDA_SH,
         _TORCH_CPU_SH,
         _GPU_ST_LRPS_POTENTIAL,
+        _GPU_ST_LRPS_THIRD_BODY,
         _CPU_ST_LRPS,
         _AUTO,
     )
@@ -333,6 +364,7 @@ REQUIRED_BACKEND_NAMES: tuple[str, ...] = (
     "torch_cuda_sh",
     "torch_cpu_sh",
     "gpu_st_lrps_potential",
+    "gpu_st_lrps_third_body",
     "cpu_st_lrps",
     "auto",
 )

@@ -546,4 +546,5 @@ def test_backend_display_name_distinguishes_torch_cpu_from_cuda() -> None:
     assert _BACKEND_DISPLAY_NAMES["torch_cpu_sh"] == "CPU-TORCH-SH"
     assert _BACKEND_DISPLAY_NAMES["torch_cuda_sh"] == "GPU-TORCH-SH"
     assert _BACKEND_DISPLAY_NAMES["cpu_st_lrps"] == "CPU-ST-LRPS"
+    assert _BACKEND_DISPLAY_NAMES["gpu_st_lrps_third_body"] == "GPU-ST-LRPS+3B"
     assert _BACKEND_DISPLAY_NAMES["torch_cpu_sh"] != _BACKEND_DISPLAY_NAMES["torch_cuda_sh"]

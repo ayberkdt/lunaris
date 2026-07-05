@@ -310,8 +310,8 @@ def test_policy_st_lrps_unsupported_physics_records_fallback_provenance(monkeypa
     assert "srp" in plan.fallback_reason.lower()
 
 
-def test_policy_st_lrps_gpu_with_third_body_falls_back(monkeypatch) -> None:
-    """ST-LRPS + torch CUDA + third-body enabled → CPU (unsupported on torch path)."""
+def test_policy_st_lrps_gpu_with_third_body_selects_hybrid(monkeypatch) -> None:
+    """ST-LRPS + torch CUDA + third-body enabled -> hybrid ST-LRPS backend."""
     import lunaris.batch.backend_policy as policy_mod
     from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 
@@ -324,9 +324,32 @@ def test_policy_st_lrps_gpu_with_third_body_falls_back(monkeypatch) -> None:
         gravity=SimpleNamespace(uses_st_lrps=True),
     )
     plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+    assert plan.final_backend == BatchBackend.GPU_ST_LRPS
+    assert plan.actual_backend == "gpu_st_lrps_third_body"
+    assert plan.third_body_backend == "analytic_vectorized"
+    assert plan.fallback_applied is False
+    assert "third_body_sun" not in plan.unsupported_forces
+
+
+def test_policy_st_lrps_third_body_plus_srp_reports_remaining_unsupported(monkeypatch) -> None:
+    """Hybrid compatibility removes third-body from the fallback reason."""
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
+
+    monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
+    monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
+
+    batch_cfg = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps")
+    sim_cfg = SimpleNamespace(
+        flags=PerturbationFlags(enable_sh=True, enable_3rd_body_sun=True, enable_srp=True),
+        gravity=SimpleNamespace(uses_st_lrps=True),
+    )
+    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
+
     assert plan.final_backend == BatchBackend.CPU
-    # Canonical force-model name from the capability registry (single source).
-    assert any("third_body_sun" in w.lower() for w in plan.warnings)
+    assert plan.fallback_applied is True
+    assert "srp" in plan.fallback_reason.lower()
+    assert "third_body_sun" not in plan.fallback_reason
 
 
 # =============================================================================

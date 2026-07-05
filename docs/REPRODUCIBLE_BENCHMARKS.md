@@ -176,6 +176,17 @@ Validation fails on impossible or incomplete evidence, including:
 - artifact-contract incompatibility between a configured ST-LRPS model and the
   benchmark request
 - missing RIC columns when RIC metrics are requested
+- missing phase-drift columns when phase metrics are requested:
+  `phase_lag_final_s`, `phase_lag_slope_s_per_day`,
+  `phase_corrected_rms_km`, and `phase_explained_fraction`
+- missing Sprint 6 extended validation columns when extended metrics are
+  requested: trajectory/final/max/P95 position error, velocity error,
+  relative energy drift, acceleration max error, potential error,
+  impact count, and domain-exit count
+- missing Sprint 6 runtime timing columns: `cold_time_s`, `warm_time_s`,
+  `jit_compile_time_s`, `propagation_time_s`,
+  `acceleration_evaluations_per_second`, and
+  `propagated_seconds_per_wall_second`
 - missing distance/time units in metrics JSON
 - a resolved config that claims `paper_safe` together with synthetic/quick run
   options (synthetic or quick output can never be paper-safe evidence)
@@ -208,6 +219,11 @@ claims. Synthetic artifacts are stamped
 `SYNTHETIC SMOKE TEST - NOT A SCIENTIFIC BENCHMARK` in `report.md` and
 `metrics_summary.json`, and `validation_report.json` records
 `evidence.scientific_evidence: false` with the same banner.
+
+Quick-mode synthetic artifacts still carry the full Sprint 6 output schema so
+CI exercises the same manifest, runtime-timing, phase, RIC, and
+extended-metric validation contract as a real run. The numbers themselves
+remain synthetic.
 
 ## Paper-Safe Mode
 

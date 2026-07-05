@@ -9,6 +9,7 @@ Canonical batch ensemble orchestration.
 from __future__ import annotations
 
 import inspect
+import logging
 import math
 import time
 import warnings
@@ -47,6 +48,8 @@ from lunaris.common.batch_defs import (
 )
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from lunaris.batch.backend_policy import BatchBackendPlan
 
@@ -57,6 +60,7 @@ _BACKEND_DISPLAY_NAMES = {
     "torch_cuda_sh": "GPU-TORCH-SH",
     "torch_cpu_sh": "CPU-TORCH-SH",
     "gpu_st_lrps_potential": "GPU-ST-LRPS",
+    "gpu_st_lrps_third_body": "GPU-ST-LRPS+3B",
 }
 
 
@@ -214,7 +218,10 @@ class BatchPropagationEngine:
         cfg = self._sim_cfg
         batch_backend = str(getattr(self._cfg, "batch_backend", "auto") or "auto")
         backend_forces_classic_sh = batch_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
-        backend_forces_st_lrps = batch_backend in {"gpu_st_lrps_potential"}
+        backend_forces_st_lrps = batch_backend in {
+            "gpu_st_lrps_potential",
+            "gpu_st_lrps_third_body",
+        }
         grav_model = None
         ephem_manager = None
         use_st_lrps_gravity = False
@@ -418,10 +425,9 @@ class BatchPropagationEngine:
                     )
                 deg_min = getattr(grav_model, "degree_min", "?")
                 deg_max = getattr(grav_model, "degree_max", "?")
-                print(
+                logger.info(
                     f"[BATCH][GPU-STLRPS] Loading surrogate: degree_min={deg_min}  "
-                    f"degree_max={deg_max}  model_dir={grav_model.model_dir}",
-                    flush=True,
+                    f"degree_max={deg_max}  model_dir={grav_model.model_dir}"
                 )
                 actual_runtime_kind = str(
                     getattr(getattr(grav_model, "_force_runtime", None), "runtime_model_kind", "")
@@ -445,6 +451,20 @@ class BatchPropagationEngine:
                     )
                 if "topo_payload" in constructor_params and topo_payload is not None:
                     prop_kwargs["topo_payload"] = topo_payload
+                # R03: the hybrid backend models Earth/Sun third-body on-device.
+                if (
+                    "third_body" in constructor_params
+                    and str(getattr(plan, "actual_backend", "")) == "gpu_st_lrps_third_body"
+                ):
+                    from lunaris.core.backend_capabilities import FORCE_MODEL_FLAG_ATTR
+
+                    _flags = getattr(self._sim_cfg, "flags", None)
+                    _bodies = tuple(
+                        name
+                        for name in ("third_body_sun", "third_body_earth")
+                        if bool(getattr(_flags, FORCE_MODEL_FLAG_ATTR[name], False))
+                    )
+                    prop_kwargs["third_body"] = _bodies
                 return TorchBatchPropagator(**prop_kwargs)
             except TorchSTLRPSPreflightError:
                 raise
@@ -747,22 +767,20 @@ class BatchPropagationEngine:
         else:
             writer = _make_writer(batch_cfg, N, t_out_contract)
 
-        print(
+        logger.info(
             f"[BATCH] N={N}  backend={backend_name}  "
             f"T={duration_s / DAY_S:.2f} d  "
-            f"step={batch_cfg.dt_s:.1f} s  snap={output_dt_s:.1f} s",
-            flush=True,
+            f"step={batch_cfg.dt_s:.1f} s  snap={output_dt_s:.1f} s"
         )
         if self._backend_note:
-            print(self._backend_note, flush=True)
+            logger.info("%s", self._backend_note)
         if backend_diag:
             device_name = str(backend_diag.get("device_name", "")).strip()
             tpb = backend_diag.get("threads_per_block")
             if device_name:
-                print(
+                logger.info(
                     f"[BATCH] runtime device={device_name}  tpb={tpb}  "
-                    f"batch_cap~{max_batch}",
-                    flush=True,
+                    f"batch_cap~{max_batch}"
                 )
 
         # ----------------------------------------------------------------
@@ -780,11 +798,10 @@ class BatchPropagationEngine:
             1, int(memory_limit_bytes / max(1, host_bytes_per_sample))
         )
         if host_batch_cap < max_batch:
-            print(
+            logger.info(
                 f"[BATCH] Host-RAM cap reduced batch {max_batch} -> {host_batch_cap} "
                 f"(per-batch host buffer ~{host_bytes_per_sample / 1e6:.1f} MB/sample "
-                f"x T={len(t_out_contract)}).",
-                flush=True,
+                f"x T={len(t_out_contract)})."
             )
             max_batch = host_batch_cap
 
@@ -831,10 +848,9 @@ class BatchPropagationEngine:
             b_end   = min(N, b_start + max_batch)
             b_n     = b_end - b_start
 
-            print(
+            logger.info(
                 f"[BATCH] Batch {b_idx + 1}/{n_batches}  "
-                f"samples {b_start}-{b_end - 1}",
-                flush=True,
+                f"samples {b_start}-{b_end - 1}"
             )
 
             # Loop variables are bound as defaults: the callback is invoked
@@ -1044,6 +1060,11 @@ class BatchPropagationEngine:
                     or getattr(_plan, "effective_dtype", "")
                     or getattr(_plan, "dtype", "float64"),
                 "dtype_downgraded": bool(getattr(_plan, "dtype_downgraded", False)),
+                # R03 provenance: on-device third-body modeling + the backend's
+                # statically unsupported force models (capability registry).
+                "third_body_backend": backend_diag.get("third_body_backend")
+                    or getattr(_plan, "third_body_backend", ""),
+                "unsupported_forces": list(getattr(_plan, "unsupported_forces", ())),
                 "state_dtype": backend_diag.get("state_dtype")
                     or backend_diag.get("dtype")
                     or getattr(_plan, "dtype", "float64"),
@@ -1164,11 +1185,10 @@ class BatchPropagationEngine:
         n_valid = int(np.sum(valid_bool))
         n_hit = int(np.sum(valid_bool & (impact_all > 0.5)))
         impact_fraction = float(n_hit) / n_valid if n_valid else math.nan
-        print(
+        logger.info(
             f"[BATCH] Done. Wall={t_wall:.1f}s  "
             f"impacts={n_hit}/{n_valid} "
-            f"({100.0 * impact_fraction:.1f}%)",
-            flush=True,
+            f"({100.0 * impact_fraction:.1f}%)"
         )
         self._publish_progress(
             stage="finalizing",

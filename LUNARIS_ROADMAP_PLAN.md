@@ -76,9 +76,9 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 |-----|--------|---------|--------|------------|-------|
 | R01 | force_direct main'den kaldırılması | P0 | S1 | — | [x] |
 | R02 | GPU ST-LRPS "gravity-only" beyanı | P0 | S1 | — | [x] |
-| R03 | gpu_st_lrps_third_body backend | P0 | S4 | R07, R06, R11 | [ ] |
+| R03 | gpu_st_lrps_third_body backend | P0 | S4 | R07, R06, R11 | [~] |
 | R04 | surrogate_assisted_frozen_search workflow | P0 | S5 | R03, R05, R23, R27 | [ ] |
-| R05 | Frozen / quasi-frozen sınıflandırma modülü | P0 | S5 | — | [ ] |
+| R05 | Frozen / quasi-frozen sınıflandırma modülü | P0 | S5 | — | [x] |
 | R06 | VRAM-aware chunking | P1 | S3 | — | [x] |
 | R07 | Ortak batched RK4 + impact loop | P1 | S3 | — | [x] |
 | R08 | Alive-sample compaction | P1 | S3 | R07 | [x] |
@@ -86,14 +86,14 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R10 | Dtype provenance düzeltmesi | P1 | S2 | — | [x] |
 | R11 | Canonical ST-LRPS runtime | P1 | S3 | R01 | [x] |
 | R12 | Terrain fallback paper-safe hard fail | P1 | S2 | — | [x] |
-| R13 | SH-only Numba fast-path RHS | P1 | S6a | — | [ ] |
-| R14 | RHS'de frame-rotation tekilleştirme | P1 | S6a | — | [ ] |
-| R15 | Fixed-step out-buffer optimizasyonu | P1 | S6a | R07 | [ ] |
-| R16 | Paper-safe benchmark matrisi | P2 | S6 | R13–R15, R17 | [ ] |
-| R17 | JIT warm-up protokolü | P2 | S6 | — | [ ] |
-| R18 | GMAT/STK parity protokolü | P2 | S6 | R13, R17 | [ ] |
-| R19 | Genişletilmiş validation metrikleri | P2 | S6 | — | [ ] |
-| R20 | Phase-drift analizi ana validation'da | P2 | S6 | PHASE_DRIFT G0 | [ ] |
+| R13 | SH-only Numba fast-path RHS | P1 | S6a | — | [x] |
+| R14 | RHS'de frame-rotation tekilleştirme | P1 | S6a | — | [~] |
+| R15 | Fixed-step out-buffer optimizasyonu | P1 | S6a | R07 | [~] |
+| R16 | Paper-safe benchmark matrisi | P2 | S6 | R13–R15, R17 | [~] |
+| R17 | JIT warm-up protokolü | P2 | S6 | — | [~] |
+| R18 | GMAT/STK parity protokolü | P2 | S6 | R13, R17 | [~] |
+| R19 | Genişletilmiş validation metrikleri | P2 | S6 | — | [~] |
+| R20 | Phase-drift analizi ana validation'da | P2 | S6 | PHASE_DRIFT G0 | [~] |
 | R21 | Frozen candidate = classical SH validation kuralı | P2 | S5 | R04 | [ ] |
 | R22 | Local refinement modülü | P2 | S5 | R04, R05 | [ ] |
 | R23 | Summary-only output mode | P2 | S3 | — | [x] |
@@ -101,7 +101,7 @@ görmemiş; ilgili maddelerde "kısmen hazır" notu düşülmüştür):
 | R25 | Laplacian scaling tutarlılığı | P3 | paralel | — | [x] |
 | R26 | Artifact contract sertleştirme | P3 | S2 | — | [x] |
 | R27 | Domain guard frozen search'te zorunlu | P3 | S5 | R05 | [ ] |
-| R28 | print → logger | P4 | paralel | — | [ ] |
+| R28 | print → logger | P4 | paralel | — | [~] |
 | R29 | paper_safe / research_mode fail politikası | P4 | S1+S2 | — | [x] |
 | R30 | Candidate family JSON raporu | P4 | S5 | R04, R05 | [ ] |
 | R31 | Frozen orbit plot/report generator | P4 | S5 | R30 | [ ] |
@@ -503,16 +503,22 @@ a_total = a_Moon_pointmass
         + a_Sun_third_body
 ```
 
-- [ ] Backend kaydı `core/backend_capabilities.py`'ye eklenir (R09 gereği
+- [x] Backend kaydı `core/backend_capabilities.py`'ye eklenir (R09 gereği
       YALNIZ oraya).
-- [ ] Vectorized ephemeris interpolasyonu: GPU vec3 Catmull-Rom yolu mevcut
+- [x] Vectorized ephemeris interpolasyonu: GPU vec3 Catmull-Rom yolu mevcut
       (CPU ile eşleşmesi daha önce doğrulandı) — batch'e genelle.
-- [ ] Third-body formülasyonu CPU'daki Battin F(q) yoluyla tutarlı olmalı
+- [x] Third-body formülasyonu CPU'daki Battin F(q) yoluyla tutarlı olmalı
       (mevcut CPU+GPU üçüncü-cisim testleriyle çapraz doğrulama).
-- [ ] Provenance: `lunar_gravity_backend=st_lrps`,
+- [x] Provenance: `lunar_gravity_backend=st_lrps`,
       `third_body_backend=analytic_vectorized`,
       `unsupported_forces=[albedo, thermal, tides, relativity, ...]`,
       `effective_dtype`, `chunk_size`.
+
+**Durum notu (2026-07-05):** R03 kod/doküman/test zemini tamamlandı; bu
+ortamda gerçek PyTorch CUDA kurulumu olmadığı için G4 kabul kriteri #1
+(10k state batch'i CPU fallback olmadan GPU'da koşturma) henüz paper-safe
+kanıt olarak kapatılamadı. Odaklı CPU/policy/preflight testleri yeşil; gerçek
+CUDA koşusu yapılınca G4 kapısı işaretlenecek.
 
 **Kabul kriterleri (review'dan aynen):**
 1. 10k state batch, CPU fallback OLMADAN GPU'da propagate edilir.
@@ -547,12 +553,14 @@ dh_peri/dt, inclination drift, omega drift, omega circulation/libration
 sınıflandırması, e-vektörü `h=e·sin(ω), k=e·cos(ω)` bounded-loop metriği,
 impact time, domain exit time, escape flag.
 
-- [ ] Modül: `src/lunaris/analysis/frozen/metrics.py` + `classify.py`
-      (yer önerisi; architecture-guardian ile teyit edilir).
-- [ ] Eşikler config'te (görev süresine bağlı), hardcoded değil.
-- [ ] Dil kuralı: kod/rapor çıktılarında "candidate frozen orbit" /
+- [x] Modül: `src/lunaris/analysis/frozen/metrics.py` + `classify.py`
+      (yer önerisi; architecture-guardian ile teyit edilir). *(Test:
+      `tests/test_frozen_classification.py`.)*
+- [x] Eşikler config'te (görev süresine bağlı), hardcoded değil.
+- [x] Dil kuralı: kod/rapor çıktılarında "candidate frozen orbit" /
       "quasi-frozen candidate"; "frozen orbit family discovered" ancak
-      classical SH long-horizon validation etiketi varsa.
+      classical SH long-horizon validation etiketi varsa. *(Negatif test:
+      `test_strict_like_candidate_is_not_validated_without_classical_sh`.)*
 
 ### R04 — surrogate_assisted_frozen_search pipeline
 
@@ -635,32 +643,47 @@ Staged search (config-driven, sabit değil):
 ### S6a ön işleri (performans hazırlığı)
 
 **R13 — SH-only Numba fast-path (`_rhs_sh_only_numba`)**
-- [ ] İçerik: state unpack, (gerekiyorsa) ephemeris quaternion frame
+- [x] İçerik: state unpack, (gerekiyorsa) ephemeris quaternion frame
       rotation, lunar SH acceleration, inertial dönüş, dydt. İÇERMEZ:
       third-body, SRP, albedo, thermal, tides, relativity, kullanılmayan
-      flag'ler.
-- [ ] Amaç: GMAT/STK karşılaştırması için temiz SH-only baseline; SH500/1000
-      benchmark'larında düşük overhead.
-- [ ] Doğruluk testi: genel RHS ile bit-yakını eşleşme (aynı force set).
+      flag'ler. *(2026-07-05: `DynamicsEngine.build_rhs()` SH-only durumda
+      `rhs_path=sh_only_numba` seçiyor; surrogate path ayrı kalıyor.)*
+- [x] Amaç: GMAT/STK karşılaştırması için temiz SH-only baseline; SH500/1000
+      benchmark'larında düşük overhead. *(Kod yolu hazır; gerçek benchmark
+      matrisi R16'da.)*
+- [x] Doğruluk testi: genel RHS ile bit-yakını eşleşme (aynı force set).
+      *(Test: `tests/test_dynamics.py::test_sh_only_fast_path_matches_general_rhs_when_extra_force_is_zero`;
+      dynamics suite: 40 passed, 1 skipped.)*
 
 **R14 — RHS'de frame rotation tekilleştirme**
-- [ ] RHS başında bir kez: `r_fixed`, `sun_fixed`, `earth_fixed`; SH/tides/
-      albedo/thermal bunları paylaşır.
-- [ ] Kabul: aynı RHS evaluation'da aynı vektör aynı frame'e birden fazla
-      döndürülmez (kod incelemesi + mikro-benchmark).
+- [x] RHS başında bir kez: `r_fixed`, `sun_fixed`, `earth_fixed`; SH/tides/
+      albedo/thermal bunları paylaşır. *(2026-07-05: classical Numba ve
+      surrogate-Python RHS içinde fixed-frame vektörleri ephemeris fetch sonrası
+      tek noktada hazırlanıyor.)*
+- [~] Kabul: aynı RHS evaluation'da aynı vektör aynı frame'e birden fazla
+      döndürülmez (kod incelemesi + mikro-benchmark). *(Kod incelemesi/lint
+      tamam; mikro-benchmark henüz koşulmadı.)*
 
 **R15 — Fixed-step out-buffer**
-- [ ] solve_ivp reference path olarak kalır (allocation overhead kabul);
+- [~] solve_ivp reference path olarak kalır (allocation overhead kabul);
       fixed-step batch path out-buffer kullanır; solve_ivp vs fixed-step
-      farkı benchmark'ta gösterilir.
+      farkı benchmark'ta gösterilir. *(2026-07-05: `run_batched_fixed_step()`
+      opsiyonel `output_buffer` kabul ediyor, shape/dtype/contiguous guard ve
+      `output_buffer_reused` metriği var. Bu ortamda batched fixed-step testleri
+      eksik `torch.nn`/torch kurulumu nedeniyle skip oldu; benchmark farkı R16'da.)*
 
 ### R17 — JIT warm-up protokolü
 
-- [ ] Protokol: load → build RHS → dummy call/propagation → timer →
+- [~] Protokol: load → build RHS → dummy call/propagation → timer →
       benchmark. Rapor: `cold_time, warm_time, jit_compile_time,
-      propagation_time`.
-- [ ] Kural: makale tablolarında warm time esas; cold time ayrıca verilir.
-      Benchmark runner bu ayrımı otomatik üretir.
+      propagation_time`. *(2026-07-05: output contract `cold_time_s`,
+      `warm_time_s`, `jit_compile_time_s`, `propagation_time_s` olarak
+      standartlaştırıldı; gerçek RHS dummy warm-up ölçümü R16 koşusunda
+      doğrulanacak.)*
+- [x] Kural: makale tablolarında warm time esas; cold time ayrıca verilir.
+      Benchmark runner bu ayrımı otomatik üretir. *(validator cold/warm/JIT
+      kolonlarını zorunlu kılıyor ve cold >= warm + JIT tutarlılığını kontrol
+      ediyor; test: `test_missing_runtime_timing_columns_fail`.)*
 
 ### R16 — Paper-safe benchmark matrisi
 
@@ -669,40 +692,49 @@ Staged search (config-driven, sabit değil):
       ST-LRPS+third-body (R03 sonrası).
 - [ ] Süre: 1g / 5g / 30g / (frozen adayları için) 90–180g.
 - [ ] Batch: 1 / 100 / 1000 / 10000 / 100000 (screening mode).
-- [ ] Metrikler: wall time, cold/warm time, JIT compile time, RHS eval
+- [~] Metrikler: wall time, cold/warm time, JIT compile time, RHS eval
       sayısı, accel eval/s, propagated-seconds-per-wall-second, final pos
       error, RMS pos error, RIC (radial/along/cross), phase lag,
       phase-corrected RMS, energy drift, impact/domain failure, memory,
-      chunk size.
-- [ ] reproducible-benchmarks disipliniyle koşulur (provenance + manifest +
-      validation_report).
+      chunk size. *(2026-07-05: CSV/JSON output contract ve validator bu
+      kolonları bekliyor; gerçek paper-safe matris henüz koşulmadı.)*
+- [~] reproducible-benchmarks disipliniyle koşulur (provenance + manifest +
+      validation_report). *(manifest/validation contract hazır; pahalı gerçek
+      benchmark bu oturumda koşulmadı.)*
 
 ### R19 — Genişletilmiş validation metrikleri
 
-- [ ] Anlık acceleration RMSE tek başına YETMEZ; ekle: accel max error,
+- [~] Anlık acceleration RMSE tek başına YETMEZ; ekle: accel max error,
       potential error, trajectory RMS, final pos error, RIC, phase lag,
       along-track drift, time-shift-corrected RMS, energy drift, domain exit
-      count. Frozen search metrikleri R05'ten gelir.
+      count. Frozen search metrikleri R05'ten gelir. *(2026-07-05:
+      `scenario_results.csv` için genişletilmiş kolonlar, `metrics_summary.json`
+      için acceleration/potential/energy_drift unit guard'ı ve synthetic/legacy
+      standardizasyonu eklendi. Bilimsel evidence için boş extended kolonlar
+      fail ediyor; gerçek non-synthetic metrik hesaplaması R16 koşusunda.)*
 
 ### R20 — Phase-drift analizinin ana validation'a entegrasyonu
 
 **Not:** Teşhis altyapısı hazır ([PHASE_DRIFT_PLAN.md](PHASE_DRIFT_PLAN.md)
 Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki iş:
 - [ ] G0 kapısını (gerçek koşu) tamamla — PHASE_DRIFT_PLAN'daki kriterlerle.
-- [ ] Rapor standardı: raw RMS, phase-corrected RMS, estimated time shift,
-      kalan radial/cross error her validation raporunda.
+- [~] Rapor standardı: raw RMS, phase-corrected RMS, estimated time shift,
+      kalan radial/cross error her validation raporunda. *(phase kolonları
+      benchmark validator'da varsayılan zorunlu; gerçek G0 koşusu bekliyor.)*
 - [ ] UQ along-track şişmesi ↔ phase drift ilişkisi analizi (PHASE_DRIFT
       G0b'deki UQ hizalanması ile birleşik).
 
 ### R18 — GMAT/STK parity protokolü
 
-- [ ] Protokol: aynı initial state, central-body sabitleri, gravity
+- [x] Protokol: aynı initial state, central-body sabitleri, gravity
       degree/order, frame varsayımları, süre, output interval, (mümkün olan
       en yakın) tolerans; force model = lunar SH only; third-body iki
-      tarafta da yoksa yok; Lunaris için JIT warm-up hariç.
+      tarafta da yoksa yok; Lunaris için JIT warm-up hariç. *(2026-07-05:
+      `docs/GRAVITY_ENGINE_EXTERNAL_VALIDATION.md` içine GMAT/STK parity
+      protocol eklendi.)*
 - [ ] Rapor: wall time, function evaluations, final state farkı, trajectory
       RMS farkı, enerji-benzeri diagnostic, output interpolation error.
-- [ ] **Claim kuralı:** "Comparable to GMAT" ancak bu benchmark SONRASI;
+- [x] **Claim kuralı:** "Comparable to GMAT" ancak bu benchmark SONRASI;
       öncesinde yalnız "optimized compiled CPU SH reference path".
 
 ### G6 kapısı
@@ -711,6 +743,10 @@ Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki i�
 3. Gravity-only vs full-dynamics tabloları ayrı (R02).
 4. Parity raporu üretildi VEYA parity yapılamadıysa claim dili
    "optimized compiled CPU SH reference path" olarak sabitlendi.
+
+**Durum (2026-07-05):** G6 henüz geçilmedi. S6a kod zemini ve benchmark
+output/validation contract hazır; gerçek paper-safe benchmark matrisi, CUDA
+throughput koşusu ve GMAT/STK artefaktı bu oturumda üretilmedi.
 
 ---
 
@@ -752,12 +788,12 @@ Faz 1–4 tamam; benchmark CSV phase kolonlarını zaten üretiyor). Buradaki i�
       ruff temiz.)*
 
 ### R28 — print → logger
-- [ ] Library kodunda `logging.getLogger(__name__)`; verbose flag/log level;
-      benchmark stdout temiz; CLI handler ekler. *(BAŞLANMADI — 806 print / 67
-      dosya; mekanik değil: benchmark modüllerindeki (_gravity_benchmark/modes.py
-      vb.) print'ler çoğunlukla kasıtlı CLI rapor çıktısı, körlemesine logger'a
-      çevrilirse rapor kaybolur. Diagnostik→logger vs rapor→stdout ayrımı +
-      verbose/log-level tasarımı gerektirir; kendi odaklı oturumu hak ediyor.)*
+- [~] Library kodunda `logging.getLogger(__name__)`; verbose flag/log level;
+      benchmark stdout temiz; CLI handler ekler. *(2026-07-05: batch backend
+      policy/engine ve DynamicsEngine library hazır mesajları logger'a taşındı;
+      `rg "print\\(" src/lunaris/core/dynamics/engine.py src/lunaris/core/batched_fixed_step.py src/lunaris/batch/backend_policy.py src/lunaris/batch/engine.py`
+      temiz. Benchmark CLI rapor çıktıları kasıtlı stdout olarak kaldı; tüm repo
+      print temizliği ayrı, dikkatli bir rapor-vs-diagnostik tasarımı gerektirir.)*
 
 ---
 

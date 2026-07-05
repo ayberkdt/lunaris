@@ -47,7 +47,7 @@ def _frame() -> TorchMoonFrame:
 
 def _run(Y0: np.ndarray, *, duration_s: float, output_dt_s: float, dt_s: float = 60.0,
          chunk_size=None, detect_impact: bool = True, callback=None,
-         callback_granularity: str = "chunk"):
+         callback_granularity: str = "chunk", output_buffer: np.ndarray | None = None):
     return run_batched_fixed_step(
         torch_mod=torch,
         device=torch.device("cpu"),
@@ -61,6 +61,7 @@ def _run(Y0: np.ndarray, *, duration_s: float, output_dt_s: float, dt_s: float =
         impact_r_m=R_REF,
         detect_impact=detect_impact,
         chunk_size=chunk_size,
+        output_buffer=output_buffer,
         callback=callback,
         callback_granularity=callback_granularity,
     )
@@ -91,6 +92,26 @@ def test_output_grid_endpoints_and_shapes(chunk) -> None:
     assert res.t_impact.shape == (3,)
     assert res.impact_positions_inertial.shape == (3, 3)
     assert np.all(np.isfinite(res.Y_out))
+
+
+def test_preallocated_output_buffer_is_reused() -> None:
+    Y0 = np.stack([_circular_state(100.0), _circular_state(150.0)])
+    t_out, _n_snaps, _snap_interval = build_output_grid(600.0, 300.0)
+    buffer = np.full((len(t_out), Y0.shape[0], 6), np.nan, dtype=np.float64)
+
+    res = _run(Y0, duration_s=600.0, output_dt_s=300.0, output_buffer=buffer)
+
+    assert res.Y_out is buffer
+    assert res.metrics["output_buffer_reused"] is True
+    assert np.all(np.isfinite(buffer))
+
+
+def test_preallocated_output_buffer_shape_is_validated() -> None:
+    Y0 = np.stack([_circular_state(100.0), _circular_state(150.0)])
+    bad = np.empty((1, Y0.shape[0], 6), dtype=np.float64)
+
+    with pytest.raises(ValueError, match="output_buffer must have shape"):
+        _run(Y0, duration_s=600.0, output_dt_s=300.0, output_buffer=bad)
 
 
 def test_build_output_grid_delegates_to_canonical_contract() -> None:

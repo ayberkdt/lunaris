@@ -813,10 +813,12 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.cb_batch_backend.addItem("Torch CUDA SH — high-degree GPU, gravity-only", "torch_cuda_sh")
         self.cb_batch_backend.addItem("Torch CPU SH — validation, no CUDA needed", "torch_cpu_sh")
         self.cb_batch_backend.addItem("GPU ST-LRPS Potential", "gpu_st_lrps_potential")
+        self.cb_batch_backend.addItem("GPU ST-LRPS + Third Body", "gpu_st_lrps_third_body")
         self.cb_batch_backend.setToolTip(
             "Explicit backend selector recorded verbatim in ensemble metadata.\n"
             "Numba CUDA SH: degree ≤ 24 (kernel-workspace limit). Torch CUDA SH: "
             "arbitrary degree on PyTorch CUDA, gravity-only.\n"
+            "GPU ST-LRPS + Third Body keeps Earth/Sun third-body terms on the torch path.\n"
             "Auto uses safe GPU paths when available and records any fallback."
         )
         self.cb_batch_backend.currentIndexChanged.connect(self._on_batch_backend_changed)
@@ -926,7 +928,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         # GPU-only warning banner
         warn_lbl = _label(
             "- Classic-SH GPU uses Numba CUDA and supports true SH through degree 24.\n"
-            "- ST-LRPS GPU uses PyTorch CUDA and is gravity-only.\n"
+            "- ST-LRPS Potential is gravity-only; ST-LRPS + Third Body adds analytic Sun/Earth terms.\n"
             "- Full-fidelity non-gravity perturbations can force CPU fallback depending on selected physics.",
             muted=True,
         )
@@ -972,7 +974,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         backend = str(self.cb_batch_backend.currentData() or "auto") if hasattr(self, "cb_batch_backend") else "auto"
         is_st_lrps = (
             str(self.cb_batch_gravity_mode.currentData() or "") == "st_lrps"
-            or backend == "gpu_st_lrps_potential"
+            or backend in {"gpu_st_lrps_potential", "gpu_st_lrps_third_body"}
         )
         if hasattr(self, "st_lrps_config_frame"):
             self.st_lrps_config_frame.setVisible(is_st_lrps)
@@ -1751,7 +1753,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         if (
             gravity_mode == "st_lrps"
-            or batch_backend == "gpu_st_lrps_potential"
+            or batch_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_third_body"}
         ) and not st_lrps_dir:
             warnings.append("ST-LRPS model dir is blank. batch will fall back to main Force Models setting.")
 

@@ -127,8 +127,9 @@ Important interpretation rules:
   `requested_sh_degree`, `actual_sh_degree`, `runtime_model_kind`,
   `fallback_reason`, CUDA device name when available, dtype, integrator, and step
   size metadata.
-- `gpu_st_lrps_potential` keeps the scalar-potential/autograd path and is the
-  only supported ST-LRPS runtime (conservative by construction).
+- `gpu_st_lrps_potential` keeps the scalar-potential/autograd path; the
+  `gpu_st_lrps_third_body` hybrid adds analytic Sun/Earth third-body terms while
+  preserving the same potential-autograd ST-LRPS runtime.
 
 ## Generated Outputs
 
