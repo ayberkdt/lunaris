@@ -248,9 +248,8 @@ class BatchPropagationConfig:
     CUDA screening kernel), ``"torch_cuda_sh"`` (high-degree PyTorch CUDA
     classic-SH, gravity-only),
     ``"torch_cpu_sh"`` (PyTorch CPU classic-SH, same evaluator as torch_cuda_sh),
-    ``"gpu_st_lrps_potential"``, and ``"gpu_st_lrps_direct"``.  The explicit
-    value is recorded verbatim in provenance and is never silently rewritten to
-    another backend name.
+    and ``"gpu_st_lrps_potential"``.  The explicit value is recorded verbatim in
+    provenance and is never silently rewritten to another backend name.
 
     GPU physics model
     -----------------
@@ -345,13 +344,11 @@ class BatchPropagationConfig:
             "torch_cuda_sh",
             "torch_cpu_sh",
             "gpu_st_lrps_potential",
-            "gpu_st_lrps_direct",
         ):
             raise ValueError(
                 "batch_backend must be one of: 'auto', 'cpu_sh', "
                 "'numba_cuda_sh', 'torch_cuda_sh', 'torch_cpu_sh', "
-                "'gpu_st_lrps_potential', "
-                f"'gpu_st_lrps_direct'. Got {self.batch_backend!r}"
+                f"'gpu_st_lrps_potential'. Got {self.batch_backend!r}"
             )
         if self.sh_fallback_policy not in ("compatible_gpu", "cpu", "error"):
             raise ValueError(
@@ -369,7 +366,7 @@ class BatchPropagationConfig:
         st_lrps_model_dir = str(self.st_lrps_model_dir or "").strip()
         if (
             self.gravity_mode_override == "st_lrps"
-            or self.batch_backend in ("gpu_st_lrps_potential", "gpu_st_lrps_direct")
+            or self.batch_backend == "gpu_st_lrps_potential"
         ) and not st_lrps_model_dir:
             raise ValueError(
                 "st_lrps_model_dir cannot be empty when ST-LRPS batch gravity is requested."

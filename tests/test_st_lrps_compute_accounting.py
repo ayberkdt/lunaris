@@ -1,9 +1,9 @@
 """Unit tests for ST-LRPS hardware-independent compute accounting.
 
 The FLOP convention is pinned against a hand-computed analytic count on a
-Linear-only MLP, so the measurement cannot silently drift. The model-kind
-behaviour (potential_autograd includes the ∇ΔU gradient pass; force_direct does
-not) is asserted as a strict inequality rather than a magic number.
+Linear-only MLP, so the measurement cannot silently drift. The potential_autograd
+acceleration eval includes the ∇ΔU gradient pass, asserted as a strict
+inequality against the bare forward rather than a magic number.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ def test_total_training_flops_scale_with_samples():
     model = _linear_only_mlp(3, 16, 3, 1)
     x = torch.randn(4, 3)
     acc = build_compute_accounting(
-        model, x, model_kind="force_direct", total_samples_processed=1_000_000
+        model, x, model_kind="potential_autograd", total_samples_processed=1_000_000
     )
     assert acc.total_training_flops == pytest.approx(
         acc.train_step_flops_per_sample * 1_000_000
@@ -83,7 +83,7 @@ def test_total_training_flops_scale_with_samples():
     )
     # Zero samples -> zero portable compute, no division blow-ups.
     acc0 = build_compute_accounting(
-        model, x, model_kind="force_direct", total_samples_processed=0
+        model, x, model_kind="potential_autograd", total_samples_processed=0
     )
     assert acc0.total_training_flops == 0.0
     assert acc0.total_training_pflops_days == 0.0
@@ -92,8 +92,8 @@ def test_total_training_flops_scale_with_samples():
 def test_train_step_costs_more_than_inference():
     model = _linear_only_mlp(3, 32, 3, 2)
     x = torch.randn(8, 3)
-    infer = measure_inference_flops_per_eval(model, x, model_kind="force_direct")
-    step = measure_train_step_flops_per_sample(model, x, model_kind="force_direct")
+    infer = measure_inference_flops_per_eval(model, x, model_kind="potential_autograd")
+    step = measure_train_step_flops_per_sample(model, x, model_kind="potential_autograd")
     # A backward pass adds matmul work on top of the forward.
     assert step > infer > 0.0
 
@@ -145,7 +145,7 @@ def test_eval_mode_restored_and_weights_unchanged():
     model.train()
     before = [p.detach().clone() for p in model.parameters()]
     x = torch.randn(4, 3)
-    measure_train_step_flops_per_sample(model, x, model_kind="force_direct")
+    measure_train_step_flops_per_sample(model, x, model_kind="potential_autograd")
     # Measurement must not flip the module out of train mode...
     assert model.training is True
     # ...nor mutate any weights (no optimiser step).
@@ -163,7 +163,7 @@ def test_invalid_inputs_rejected():
         measure_inference_flops_per_eval(model, torch.randn(4, 3), model_kind="bogus")
     with pytest.raises(ValueError):
         build_compute_accounting(
-            model, torch.randn(4, 3), model_kind="force_direct", total_samples_processed=-1
+            model, torch.randn(4, 3), model_kind="potential_autograd", total_samples_processed=-1
         )
 
 
@@ -329,7 +329,7 @@ def test_mfu_computed_for_known_device():
     acc = build_compute_accounting(
         model,
         x,
-        model_kind="force_direct",
+        model_kind="potential_autograd",
         total_samples_processed=10_000_000,
         wall_clock_seconds=60.0,
         device="NVIDIA GeForce GTX 1660 Ti",
@@ -348,14 +348,14 @@ def test_mfu_none_for_unknown_device_or_no_wallclock():
     x = torch.randn(4, 3)
     # Unknown device -> no peak, no MFU even with wall-clock.
     a1 = build_compute_accounting(
-        model, x, model_kind="force_direct", total_samples_processed=1000,
+        model, x, model_kind="potential_autograd", total_samples_processed=1000,
         wall_clock_seconds=10.0, device="Mystery GPU",
     )
     assert a1.device_peak_flops_per_s is None
     assert a1.model_flops_utilization is None
     # Known device but no wall-clock -> peak known, MFU still None.
     a2 = build_compute_accounting(
-        model, x, model_kind="force_direct", total_samples_processed=1000,
+        model, x, model_kind="potential_autograd", total_samples_processed=1000,
         device="NVIDIA A100",
     )
     assert a2.device_peak_flops_per_s == pytest.approx(1.95e13)

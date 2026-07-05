@@ -23,6 +23,7 @@ from lunaris.core.backend_capabilities import (
     list_backend_names,
     numba_cuda_sh_max_degree,
     numba_cuda_sh_supported_tiers,
+    resolve_effective_dtype,
     unsupported_force_models,
 )
 
@@ -154,3 +155,66 @@ def test_backcompat_property_aliases() -> None:
     assert caps.supports_float64 is True and caps.supports_float32 is False
     torch = get_capabilities("torch_cuda_sh")
     assert torch.supports_float32 is True and torch.supports_float64 is True
+
+
+# ---------------------------------------------------------------------------
+# R09: the capability registry is the single source of support decisions
+# ---------------------------------------------------------------------------
+
+def test_st_lrps_gpu_unsupported_delegates_to_registry() -> None:
+    # The ST-LRPS GPU support decision must match the registry exactly, so a new
+    # force flag is honored without editing backend_policy.
+    from lunaris.batch.backend_policy import _st_lrps_gpu_unsupported_features
+
+    flags = PerturbationFlags(
+        enable_sh=True, enable_3rd_body_sun=True, enable_srp=True,
+        enable_albedo=True, enable_relativity_1pn=True,
+    )
+    assert (
+        set(_st_lrps_gpu_unsupported_features(flags))
+        == set(unsupported_force_models("gpu_st_lrps_potential", flags))
+    )
+    assert _st_lrps_gpu_unsupported_features(None) == ()
+
+
+def test_resolve_effective_dtype_honors_supported_request() -> None:
+    # cpu_sh supports float64; torch_cuda_sh supports both — a supported request
+    # passes through unchanged, no downgrade.
+    res = resolve_effective_dtype("float64", "torch_cuda_sh")
+    assert (res.requested, res.effective, res.downgraded) == ("float64", "float64", False)
+    res32 = resolve_effective_dtype("float32", "torch_cuda_sh")
+    assert (res32.effective, res32.downgraded) == ("float32", False)
+
+
+def test_resolve_effective_dtype_records_downgrade_when_unsupported() -> None:
+    # cpu_sh runs float64 only; a float32 request is downgraded, not silently run.
+    res = resolve_effective_dtype("float32", "cpu_sh")
+    assert res.requested == "float32"
+    assert res.effective == "float64"
+    assert res.downgraded is True
+    assert "float32" in res.reason and "cpu_sh" in res.reason
+
+
+def test_resolve_effective_dtype_defaults_to_backend_default() -> None:
+    # An empty/None request falls back to the backend's registered default.
+    res = resolve_effective_dtype(None, "gpu_st_lrps_potential")
+    assert res.requested == get_capabilities("gpu_st_lrps_potential").default_dtype
+    assert res.downgraded is False
+
+
+def test_backend_policy_holds_no_hardcoded_perturbation_flag_literals() -> None:
+    # Contract: support/fallback decisions live only in the capability registry.
+    # backend_policy must not name a perturbation flag attribute directly (that
+    # would be a second, drift-prone source of truth). enable_sh is central
+    # gravity, not an optional perturbation, so it is allowed.
+    import pathlib
+
+    from lunaris.batch import backend_policy
+
+    source = pathlib.Path(backend_policy.__file__).read_text(encoding="utf-8")
+    offenders = [flag for flag in PERTURBATION_FLAGS if flag in source]
+    assert not offenders, (
+        "backend_policy.py hardcodes perturbation flag literals "
+        f"{offenders}; route support decisions through "
+        "core.backend_capabilities.unsupported_force_models instead."
+    )

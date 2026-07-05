@@ -24,20 +24,20 @@ _EXPECTED_COUNTS = {
     "st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl": 7,
     "st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl": 5,
     "st_lrps_potential_autograd_encoding_and_loss_sweep.jsonl": 7,
-    "st_lrps_force_direct_student_sweep.jsonl": 4,
 }
 
 _REQUIRED_FIELDS = ("name", "entrypoint", "description", "runtime_model_kind", "flags")
 _KIND_TO_ENTRYPOINT = {
     "potential_autograd": "lunaris-train",
-    "force_direct": "lunaris-train-force-direct",
 }
 _ALLOWED_ENTRYPOINTS = {
     "lunaris-train",
-    "lunaris-train-force-direct",
     "lunaris-eval",
     "lunaris-benchmark",
 }
+# A representative potential_autograd scenario file for launcher-behaviour tests
+# that are not specific to any one scenario.
+_SAMPLE_SCENARIO_FILE = "st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl"
 _OUTPUT_FLAGS = {"--out", "--out-dir", "--output-dir", "--output"}
 
 
@@ -148,25 +148,17 @@ def test_kind_entrypoint_consistency():
             )
 
 
-def test_no_direct_or_force_named_scenario_uses_plain_train():
-    # A direct/force-acceleration scenario must never use the scalar-potential
-    # trainer. We key on the "force"/"forcedirect" naming (the "Direction" loss
-    # token legitimately contains the substring "direct" and is not a match) and
-    # on the force_direct tag.
+def test_no_force_direct_scenarios_remain():
+    # force_direct is archived in experimental/force-direct-archive; no shipped
+    # scenario may declare or be tagged with it.
     for fname, obj in _all_scenarios():
-        lowered = obj["name"].lower()
         tags = {str(t).lower() for t in obj.get("tags", [])}
-        is_force_direct = (
-            "forcedirect" in lowered
-            or "force" in lowered
-            or "force_direct" in tags
-            or obj["runtime_model_kind"] == "force_direct"
+        assert obj["runtime_model_kind"] != "force_direct", (
+            f"{fname}: scenario {obj['name']!r} declares archived force_direct kind"
         )
-        if is_force_direct:
-            assert obj["entrypoint"] == "lunaris-train-force-direct", (
-                f"{fname}: force-direct scenario {obj['name']!r} must use "
-                f"lunaris-train-force-direct, not {obj['entrypoint']!r}"
-            )
+        assert "force_direct" not in tags, (
+            f"{fname}: scenario {obj['name']!r} carries archived force_direct tag"
+        )
 
 
 def test_no_scenario_writes_under_src():
@@ -234,32 +226,9 @@ def test_dry_run_prints_command_without_launching(tmp_path):
     assert not (tmp_path / "training" / "PotentialAutograd_A0RawSirenSobolev_1Band_RawXYZ_NoAuxLosses_Seed42").exists()
 
 
-def test_dry_run_force_direct_uses_force_direct_module(tmp_path):
-    scenario_file = _SCENARIO_DIR / "st_lrps_force_direct_student_sweep.jsonl"
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(_LAUNCHER),
-            str(scenario_file),
-            "--index",
-            "0",
-            "--dry-run",
-            "--output-root",
-            str(tmp_path / "training"),
-            "--data",
-            "dummy.h5",
-        ],
-        cwd=str(_REPO_ROOT),
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-    assert "force_direct_cli" in result.stdout
-
-
 def test_common_flag_output_override_is_rejected(tmp_path):
     # A forwarded --out must not silently change the launcher-owned output dir.
-    scenario_file = _SCENARIO_DIR / "st_lrps_force_direct_student_sweep.jsonl"
+    scenario_file = _SCENARIO_DIR / _SAMPLE_SCENARIO_FILE
     result = subprocess.run(
         [
             sys.executable,
@@ -280,7 +249,7 @@ def test_common_flag_output_override_is_rejected(tmp_path):
 
 
 def test_index_out_of_range_fails_cleanly(tmp_path):
-    scenario_file = _SCENARIO_DIR / "st_lrps_force_direct_student_sweep.jsonl"
+    scenario_file = _SCENARIO_DIR / _SAMPLE_SCENARIO_FILE
     result = subprocess.run(
         [
             sys.executable,

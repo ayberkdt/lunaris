@@ -1,11 +1,10 @@
-"""A2: a force_direct ST-LRPS artifact must never silently fall back to the
-legacy local potential model.
+"""R01: a force_direct ST-LRPS artifact is fail-closed on main.
 
-The legacy local runtime path (``_build_model_from_config``) only ever builds a
-scalar-potential MLP evaluated via autograd. That is the wrong physics for a
-``force_direct`` artifact (which predicts residual acceleration directly from a
-3-output head). When the canonical runtime loader fails, a force_direct artifact
-must hard-fail rather than degrade to a potential model.
+The direct residual-acceleration (force_direct) variant is archived in the
+``experimental/force-direct-archive`` branch. On main only the conservative
+``potential_autograd`` surrogate is loadable. An artifact whose contract still
+declares ``runtime_model_kind='force_direct'`` must be rejected with a clear
+error rather than loaded (or silently degraded to a potential model).
 """
 
 from __future__ import annotations
@@ -15,25 +14,31 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from lunaris.surrogate.runtime import SurrogateGravityModel  # noqa: E402
+from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract  # noqa: E402
+from lunaris.surrogate.st_lrps.shared.contracts import ArtifactContractError  # noqa: E402
 from st_lrps_contract_test_utils import make_contract_run  # noqa: E402
 
 
-def _raise_canonical_failure(*_args, **_kwargs):
-    raise RuntimeError("simulated canonical force_model loader failure")
-
-
-def test_force_direct_artifact_has_no_legacy_fallback(tmp_path, monkeypatch) -> None:
-    art = make_contract_run(
+def _force_direct_contract_run(tmp_path):
+    # The fixture builds a valid potential_autograd model (build_model_from_config
+    # no longer accepts force_direct), then we override ONLY the recorded contract
+    # so it declares the archived kind — exactly the "legacy artifact on disk"
+    # case the fail-closed guard must catch.
+    return make_contract_run(
         tmp_path,
-        cfg_overrides={"runtime_model_kind": "force_direct", "output_dim": 3},
         contract_overrides={"runtime_model_kind": "force_direct", "output_dim": 3},
     )
 
-    import lunaris.surrogate.st_lrps.runtime.force_model as fm
 
-    monkeypatch.setattr(fm, "load_surrogate_force_model", _raise_canonical_failure)
+def test_force_direct_contract_is_rejected_fail_closed(tmp_path) -> None:
+    art = _force_direct_contract_run(tmp_path)
+    with pytest.raises(ArtifactContractError, match="archive|force_direct"):
+        read_artifact_contract(art["run_dir"], strict=True)
 
-    with pytest.raises(RuntimeError, match="force_direct"):
+
+def test_force_direct_artifact_does_not_load_as_gravity_model(tmp_path) -> None:
+    art = _force_direct_contract_run(tmp_path)
+    with pytest.raises(Exception, match="force_direct|archive"):
         SurrogateGravityModel.from_model_dir(str(art["run_dir"]), device_preference="cpu")
 
 
@@ -46,6 +51,9 @@ def test_potential_autograd_artifact_still_allows_fallback(tmp_path, monkeypatch
 
     import lunaris.surrogate.st_lrps.runtime.force_model as fm
 
+    def _raise_canonical_failure(*_args, **_kwargs):
+        raise RuntimeError("simulated canonical force_model loader failure")
+
     monkeypatch.setattr(fm, "load_surrogate_force_model", _raise_canonical_failure)
 
     # The fallback may still fail for an unrelated reason (e.g. a state-dict
@@ -54,4 +62,4 @@ def test_potential_autograd_artifact_still_allows_fallback(tmp_path, monkeypatch
     try:
         SurrogateGravityModel.from_model_dir(str(art["run_dir"]), device_preference="cpu")
     except Exception as exc:
-        assert "force_direct ST-LRPS artifact could not be loaded" not in str(exc)
+        assert "force_direct ST-LRPS artifacts are archived" not in str(exc)

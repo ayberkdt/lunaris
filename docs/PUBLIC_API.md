@@ -19,7 +19,6 @@ Console scripts are the most stable user-facing API:
 | `lunaris-ui` / `lunaris-launcher` | Mission desktop UI and launcher |
 | `lunaris-studio` | Optional ST-LRPS Studio UI |
 | `lunaris-train`, `lunaris-eval`, `lunaris-benchmark` | Optional ST-LRPS workflows (`potential_autograd`) |
-| `lunaris-train-force-direct`, `lunaris-eval-force-direct` | Experimental `force_direct` ST-LRPS workflows (direct residual acceleration; not conservative by construction — requires curl / orbit-level validation before scientific claims) |
 | `lunaris-validate` | Validation runners: gravity-reference field/trajectory checks and the ST-LRPS validation suite |
 | `lunaris-ablation` | ST-LRPS ablation suite runner |
 | `lunaris-st-lrps-paper-evidence` | End-to-end paper-evidence pipeline (multi-seed training, benchmarks, ablation, evidence manifest) |

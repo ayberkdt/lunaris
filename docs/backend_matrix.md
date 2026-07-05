@@ -1,6 +1,11 @@
 # Backend Capability Matrix
 
-Last verified: 2026-06-27
+Last verified: 2026-07-05
+
+> The former `gpu_st_lrps_direct` backend (direct residual-acceleration ST-LRPS
+> artifacts) was removed from main and archived in the
+> `experimental/force-direct-archive` branch. Only the conservative
+> `gpu_st_lrps_potential` ST-LRPS backend remains.
 
 This document summarizes the batch propagation backend capability surface after
 the modular refactor. The executable source of truth remains the code:
@@ -22,7 +27,6 @@ behavior.
 | `torch_cuda_sh` | classic SH | CUDA | fixed-step RK4 | coefficient file / VRAM / batch | float32, float64 | SH only | High-degree GPU SH route. Any added perturbation causes an explicit recorded fallback. |
 | `torch_cpu_sh` | classic SH | CPU | fixed-step RK4 | coefficient file / memory | float32, float64 | SH only | CUDA-free validation route for the torch SH evaluator. |
 | `gpu_st_lrps_potential` | ST-LRPS | CUDA | fixed-step RK4 | surrogate artifact | float32, float64 | ST-LRPS gravity only | Uses potential-autograd runtime artifacts. Added perturbations fall back to CPU. |
-| `gpu_st_lrps_direct` | ST-LRPS | CUDA | fixed-step RK4 | surrogate artifact | float32, float64 | ST-LRPS gravity only | Uses direct residual-acceleration artifacts. No scalar-potential fallback is allowed. |
 | `cpu_st_lrps` | ST-LRPS | CPU | adaptive DOP853 | surrogate artifact | float64 | ST-LRPS gravity plus CPU perturbations | CPU path used when ST-LRPS GPU is unavailable or incompatible with requested physics. |
 | `auto` | meta | auto | resolved at runtime | resolved at runtime | resolved at runtime | resolved at runtime | Request name only; `resolve_batch_backend_policy()` picks a concrete backend. |
 

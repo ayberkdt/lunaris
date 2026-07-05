@@ -168,7 +168,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--batch-backend",
         choices=[
             "auto", "cpu_sh", "numba_cuda_sh", "torch_cuda_sh",
-            "torch_cpu_sh", "gpu_st_lrps_potential", "gpu_st_lrps_direct",
+            "torch_cpu_sh", "gpu_st_lrps_potential",
         ],
         default="auto",
         help=(
@@ -392,7 +392,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             explicit_backend = str(args.batch_backend)
             if explicit_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}:
                 forced_backend = "classic_sh"
-            elif explicit_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}:
+            elif explicit_backend == "gpu_st_lrps_potential":
                 forced_backend = "st_lrps"
             else:
                 forced_backend = str(getattr(cfg.gravity, "backend", "classic_sh"))

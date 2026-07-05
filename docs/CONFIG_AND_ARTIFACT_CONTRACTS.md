@@ -44,9 +44,9 @@ Core fields:
 - `target_mode`: `residual` or `full`
 - `baseline_kind`: `none`, `point_mass`, or `spherical_harmonics`
 - `base_degree` and `target_degree`
-- `runtime_model_kind`: `potential_autograd` or `force_direct`
-- `prediction_kind`: potential/residual/force label for the model output
-- `output_dim`: `1` for scalar-potential artifacts, `3` for direct-force artifacts
+- `runtime_model_kind`: `potential_autograd` (the archived `force_direct` kind is rejected)
+- `prediction_kind`: potential/residual label for the model output
+- `output_dim`: `1` for scalar-potential artifacts
 - `mu_si`, `r_ref_m`, and `a_sign`
 - `altitude_min_km` and `altitude_max_km`
 - `input_encoding`
@@ -56,9 +56,10 @@ Core fields:
 
 The contract validates lunar body constants, residual degree ordering, runtime
 kind, output dimension, scaler x/u/a blocks, dataset target/degree metadata, and
-altitude range ordering. `force_direct` artifacts must use
-`prediction_kind="residual_force"` (or an equivalent acceleration label) and
-`output_dim=3`; `potential_autograd` artifacts must use scalar potential output.
+altitude range ordering. `potential_autograd` artifacts must use scalar
+potential output (`output_dim=1`). An artifact declaring the archived
+`force_direct` kind is rejected fail-closed (see the
+`experimental/force-direct-archive` branch).
 
 ## Dataset Contract
 
@@ -128,10 +129,10 @@ returning a runtime object. The returned `SurrogateForceModel` exposes:
 Strict loading requires an embedded versioned contract. Contract-free
 checkpoints are rejected and must be regenerated.
 
-`load_surrogate_force_model` dispatches `potential_autograd` artifacts to
-`SurrogateForceModel` and `force_direct` artifacts to `DirectForceRuntime`.
-Direct-force artifacts predict residual acceleration directly and do not expose
-residual-potential prediction methods.
+`load_surrogate_force_model` loads `potential_autograd` artifacts as
+`SurrogateForceModel`. An artifact declaring the archived `force_direct` kind is
+rejected with a clear error pointing at the `experimental/force-direct-archive`
+branch.
 Domain checks use the artifact altitude envelope, and `strict_domain=True`
 raises instead of extrapolating when inputs leave the trained shell or scaler
 radius.
@@ -171,9 +172,8 @@ current dataset and artifact contracts.
 
 ## Limitations
 
-- The default runtime model kind is `potential_autograd`.
-- `force_direct` is implemented for direct residual-acceleration artifacts and
-  requires `output_dim=3`, acceleration target scaling, and separate validation.
+- The only supported runtime model kind is `potential_autograd`; the archived
+  `force_direct` kind (`experimental/force-direct-archive`) is rejected.
 - Dataset and source gravity hashes are recorded when known. Old local datasets
   may lack these hashes, which is reported as a warning.
 - The contract does not prove model accuracy; it proves that the artifact and

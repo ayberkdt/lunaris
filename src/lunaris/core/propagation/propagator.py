@@ -355,10 +355,10 @@ def propagate(
     _method = getattr(cfg, "method", "DOP853")
     _flags = getattr(dynamics, "flags", None)
     _violations = symplectic_nonconservative_violations(_method, _flags)
-    # The gravity model itself can void the guarantee: a force_direct ST-LRPS
-    # surrogate predicts acceleration directly (no underlying scalar potential),
-    # so it is non-conservative by construction even with every perturbation
-    # flag off. potential_autograd surrogates and classical SH stay exempt.
+    # The gravity model itself can void the guarantee: a non-conservative
+    # surrogate (one whose acceleration is not the gradient of a scalar
+    # potential) breaks bounded energy drift even with every perturbation flag
+    # off. potential_autograd surrogates and classical SH stay exempt.
     _violations += symplectic_nonconservative_gravity(_method, getattr(dynamics, "grav", None))
     if _violations:
         _msg = (

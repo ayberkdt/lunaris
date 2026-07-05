@@ -14,15 +14,10 @@ numbers. It doubles as the developer summary for the validation-hygiene work.
 * In that default path **acceleration is the autograd gradient** of the learned
   residual potential: `Δa = a_sign · ∇ΔU`. The `potential_autograd` model has no
   separately trained force head; acceleration is always derived from `ΔU`.
-* A **separate `force_direct` student runtime** exists
-  (`runtime_model_kind="force_direct"`, trained via `lunaris-train-force-direct`).
-  It is a direct residual-**acceleration** model: it predicts `Δa` directly with
-  no inference-time autograd and does **not** predict `ΔU`. It is a distinct
-  artifact, **not** the scalar-potential model's force head. `force_direct` is
-  **not** part of the A0–A6 scalar-potential ablation matrix; evaluate it only in
-  its own student sweep
-  (`hpc/scenarios/st_lrps_force_direct_student_sweep.jsonl`) and gate any
-  scientific claim on explicit acceleration, curl, and orbit-level validation.
+* The earlier **`force_direct` student runtime** (a direct residual-acceleration
+  model, `runtime_model_kind="force_direct"`) has been **archived** in the
+  `experimental/force-direct-archive` branch and is rejected fail-closed on main.
+  Only the conservative `potential_autograd` surrogate is supported here.
 * Dataset labels are **residual or full-field** according to an explicit
   `TargetContract` (`target_mode`, `baseline_kind`, `base_degree`,
   `target_degree`). Residual datasets carry `ΔU`/`Δa`; full-field datasets carry
@@ -210,9 +205,7 @@ python -m lunaris.surrogate.st_lrps.evaluation.ablation \
   level; it does not re-derive the truth model's own numerical accuracy.
 * `runtime_model_kind="potential_autograd"` is the scalar residual-potential
   path: acceleration comes from autograd and is conservative by construction up
-  to network smoothness/numerics.
-* `runtime_model_kind="force_direct"` predicts residual acceleration directly
-  with no inference-time autograd. It does not predict `DeltaU`, may have
-  non-zero curl / energy drift, and needs explicit acceleration, curl, and
-  orbit-level validation before scientific claims.
+  to network smoothness/numerics. It is the only supported runtime kind; the
+  archived `force_direct` kind is rejected fail-closed
+  (`experimental/force-direct-archive`).
 

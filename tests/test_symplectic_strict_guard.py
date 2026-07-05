@@ -86,10 +86,11 @@ def test_strict_symplectic_does_not_affect_adaptive_method():
 
 
 # ---------------------------------------------------------------------------
-# Audit F1 — the gravity model itself can void symplecticity: a force_direct
-# ST-LRPS surrogate predicts acceleration directly (no scalar potential) and is
-# non-conservative by construction, even with every perturbation flag off.
-# potential_autograd surrogates and classical SH gravity stay exempt.
+# Audit F1 — the gravity model itself can void symplecticity: a non-conservative
+# surrogate (acceleration is not the gradient of a scalar potential) breaks the
+# bounded-energy-drift guarantee even with every perturbation flag off. The
+# supported potential_autograd surrogate and classical SH gravity stay exempt.
+# The guard reads the provider's is_conservative taxonomy flag, never a class.
 # ---------------------------------------------------------------------------
 
 class _FakeSurrogateGrav:
@@ -102,19 +103,21 @@ class _FakeSurrogateGrav:
 
     def __init__(self, kind: str):
         self.config = {"runtime_model_kind": kind}
+        # Mirror the runtime taxonomy flag: only potential_autograd is conservative.
+        self.is_conservative = kind == "potential_autograd"
 
 
-def test_strict_symplectic_raises_with_force_direct_gravity():
+def test_strict_symplectic_raises_with_nonconservative_gravity():
     dyn = _FakeDyn()
     dyn.grav = _FakeSurrogateGrav("force_direct")
     with pytest.raises(ValueError, match="strict_symplectic"):
         propagate(dyn, _state(), _cfg("VV", True), time_cfg=_tc())
 
 
-def test_force_direct_gravity_warns_when_not_strict():
+def test_nonconservative_gravity_warns_when_not_strict():
     dyn = _FakeDyn()
     dyn.grav = _FakeSurrogateGrav("force_direct")
-    with pytest.warns(RuntimeWarning, match="force_direct"):
+    with pytest.warns(RuntimeWarning, match="non-conservative"):
         propagate(dyn, _state(), _cfg("VV", False), time_cfg=_tc())
 
 
@@ -125,7 +128,7 @@ def test_potential_autograd_gravity_does_not_trip_guard():
     assert res.t.size > 1
 
 
-def test_force_direct_gravity_ok_under_adaptive_method():
+def test_nonconservative_gravity_ok_under_adaptive_method():
     # No symplectic guarantee to void under DOP853 -> no guard trip.
     dyn = _FakeDyn()
     dyn.grav = _FakeSurrogateGrav("force_direct")
@@ -133,13 +136,13 @@ def test_force_direct_gravity_ok_under_adaptive_method():
     assert res.t.size > 1
 
 
-def test_gravity_guard_reads_kind_from_force_runtime_attr():
+def test_gravity_guard_reads_is_conservative_flag():
     from lunaris.core.propagation.integrators.fixed_step import (
         symplectic_nonconservative_gravity,
     )
 
-    grav = _FakeSurrogateGrav("")  # config kind empty -> runtime attr wins
-    grav._force_runtime = SimpleNamespace(runtime_model_kind="force_direct")
+    grav = _FakeSurrogateGrav("potential_autograd")
+    grav.is_conservative = False  # taxonomy flag is authoritative
     assert symplectic_nonconservative_gravity("VV", grav)
     assert symplectic_nonconservative_gravity("DOP853", grav) == []
     assert symplectic_nonconservative_gravity("VV", None) == []

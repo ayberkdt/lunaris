@@ -259,29 +259,10 @@ _GPU_ST_LRPS_POTENTIAL = BackendCapabilities(
     ),
 )
 
-_GPU_ST_LRPS_DIRECT = BackendCapabilities(
-    name="gpu_st_lrps_direct",
-    family="st_lrps",
-    implementation="torch",
-    device="cuda",
-    max_runtime_sh_degree=None,
-    dtype_support=("float32", "float64"),
-    supports_sh=True,
-    supports_third_body=False,
-    supports_earth_j2=False,
-    supports_srp=False,
-    supports_albedo=False,
-    supports_thermal=False,
-    supports_solid_tides=False,
-    supports_relativity_1pn=False,
-    integrator="fixed-step RK4",
-    default_dtype="float32",
-    fidelity_class="surrogate",
-    description=(
-        "PyTorch CUDA fixed-step RK4; ST-LRPS direct residual acceleration via a "
-        "batched no-grad forward pass. Gravity only."
-    ),
-)
+# NOTE: the former gpu_st_lrps_direct backend (direct residual-acceleration
+# artifacts) was removed from main and archived in the
+# experimental/force-direct-archive branch. Only the conservative
+# potential_autograd surrogate is a supported ST-LRPS runtime.
 
 # CPU ST-LRPS full-fidelity path (the actual_backend emitted when an ST-LRPS GPU
 # run is forced back to CPU).
@@ -336,7 +317,6 @@ BACKEND_REGISTRY: dict[str, BackendCapabilities] = {
         _TORCH_CUDA_SH,
         _TORCH_CPU_SH,
         _GPU_ST_LRPS_POTENTIAL,
-        _GPU_ST_LRPS_DIRECT,
         _CPU_ST_LRPS,
         _AUTO,
     )
@@ -353,7 +333,6 @@ REQUIRED_BACKEND_NAMES: tuple[str, ...] = (
     "torch_cuda_sh",
     "torch_cpu_sh",
     "gpu_st_lrps_potential",
-    "gpu_st_lrps_direct",
     "cpu_st_lrps",
     "auto",
 )
@@ -418,6 +397,47 @@ def unsupported_force_models(name: str, flags: Any) -> tuple[str, ...]:
     return tuple(blocked)
 
 
+@dataclass(frozen=True)
+class DtypeResolution:
+    """Single-source dtype decision for a backend.
+
+    ``requested`` is what the caller/config asked for; ``effective`` is what the
+    backend will actually run. ``downgraded`` is True when the backend cannot
+    honor the request and the default was substituted — a recorded, never
+    silent, event. The reason is empty unless a downgrade occurred.
+    """
+
+    requested: str
+    effective: str
+    downgraded: bool
+    reason: str = ""
+
+
+def resolve_effective_dtype(requested_dtype: str | None, backend_name: str) -> DtypeResolution:
+    """Resolve the effective dtype for ``backend_name`` from a requested dtype.
+
+    This is the single source of truth for dtype selection: both the batch
+    backend policy and the runtime resolve through here so provenance can never
+    disagree with what actually ran. When the requested dtype is unsupported by
+    the backend, its registered ``default_dtype`` is substituted and the result
+    is flagged ``downgraded`` with a human-readable reason (never a silent
+    substitution).
+    """
+    caps = get_capabilities(backend_name)
+    requested = str(requested_dtype or "").strip().lower() or caps.default_dtype
+    if requested in caps.dtype_support:
+        return DtypeResolution(requested=requested, effective=requested, downgraded=False)
+    effective = caps.default_dtype
+    supported = ", ".join(caps.dtype_support)
+    reason = (
+        f"backend {backend_name!r} does not support dtype {requested!r} "
+        f"(supported: {supported}); using {effective!r}"
+    )
+    return DtypeResolution(
+        requested=requested, effective=effective, downgraded=True, reason=reason
+    )
+
+
 def numba_cuda_sh_max_degree() -> int:
     """Return the Numba CUDA classic-SH degree limit from the kernel workspace.
 
@@ -454,6 +474,8 @@ __all__ = [
     "get_capabilities",
     "list_backend_names",
     "unsupported_force_models",
+    "DtypeResolution",
+    "resolve_effective_dtype",
     "numba_cuda_sh_max_degree",
     "numba_cuda_sh_supported_tiers",
 ]

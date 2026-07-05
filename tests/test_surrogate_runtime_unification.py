@@ -16,8 +16,6 @@ from lunaris.surrogate.st_lrps.networks.models import (
     compute_architecture_signature,
 )
 from lunaris.surrogate.st_lrps.runtime.force_model import (
-    BaseSurrogateRuntime,
-    DirectForceRuntime,
     load_surrogate_force_model,
 )
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
@@ -112,11 +110,6 @@ def test_force_model_and_gravity_provider_return_same_total_accel(tmp_path: Path
     assert force.degree_min == provider.degree_min == 0
     assert force.degree_max == provider.degree_max == 50
     assert force.target_contract.target_mode == "residual"
-
-
-def test_force_direct_runtime_class_is_available() -> None:
-    assert DirectForceRuntime.runtime_model_kind == "force_direct"
-    assert issubclass(DirectForceRuntime, BaseSurrogateRuntime)
 
 
 def test_retired_physics_import_is_removed() -> None:

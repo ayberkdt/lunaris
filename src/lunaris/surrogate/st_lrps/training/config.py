@@ -673,15 +673,18 @@ def parse_args() -> TrainConfig:
     )
     group_arch.add_argument(
         "--runtime-model-kind",
-        choices=["potential_autograd", "force_direct"],
+        choices=["potential_autograd"],
         default=_TC_DEFAULTS.get("runtime_model_kind", "potential_autograd"),
-        help="Runtime model contract. Main Sobolev training uses potential_autograd; use force_direct_cli for direct-force artifacts.",
+        help=(
+            "Runtime model contract. Only potential_autograd is supported; the "
+            "force_direct variant is archived in experimental/force-direct-archive."
+        ),
     )
     group_arch.add_argument(
         "--output-dim",
         type=int,
         default=_TC_DEFAULTS.get("output_dim", 1),
-        help="Model output dimension. potential_autograd uses 1; force_direct uses 3.",
+        help="Model output dimension. potential_autograd uses 1.",
     )
     group_arch.add_argument("--w0-first", type=float, default=_TC_DEFAULTS["w0_first"],
                             help="SIREN w0 for first layer.")

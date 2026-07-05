@@ -5,6 +5,11 @@ Owner: Ayberk
 Date: 2026-06-27
 Scope: structural refactor only — **no numerical, CLI, or workflow behavior changes**
 
+> **Historical note (2026-07-05):** references below to the `force_direct`
+> runtime / `DirectForceRuntime` predate roadmap item R01, which archived that
+> runtime in the `experimental/force-direct-archive` branch. On main only the
+> `potential_autograd` surrogate loads; `force_direct` is fail-closed.
+
 ---
 
 ## 0. Guardrails (apply to every phase)

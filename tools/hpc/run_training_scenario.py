@@ -52,7 +52,6 @@ from typing import Any
 # ``python -m`` (more robust than relying on console scripts being on PATH).
 ENTRYPOINT_MODULES: dict[str, str] = {
     "lunaris-train": "lunaris.surrogate.st_lrps.training.cli",
-    "lunaris-train-force-direct": "lunaris.surrogate.st_lrps.training.force_direct_cli",
     "lunaris-eval": "lunaris.surrogate.st_lrps.evaluation.cli",
     "lunaris-benchmark": "lunaris.surrogate.st_lrps.evaluation.compare_gravity_models",
 }

@@ -82,27 +82,21 @@ def symplectic_nonconservative_gravity(method: str, gravity_model: Any) -> list[
     """Return labels when the gravity provider itself voids symplecticity.
 
     Classical SH gravity is the gradient of a scalar potential (conservative),
-    and so is an ST-LRPS ``potential_autograd`` surrogate (acceleration is the
-    autograd gradient of a learned potential). A ``force_direct`` ST-LRPS
-    artifact predicts residual acceleration directly and is **not conservative
-    by construction** (zero curl is not guaranteed unless separately validated),
-    so the bounded-energy-drift guarantee of a symplectic method does not apply
-    to it. Empty when ``method`` is not symplectic, no surrogate provider is
-    attached, or the surrogate is a potential-based (conservative) kind.
+    and so is the supported ST-LRPS ``potential_autograd`` surrogate (its
+    acceleration is the autograd gradient of a learned potential). A gravity
+    provider that is *not* conservative by construction voids the
+    bounded-energy-drift guarantee of a symplectic method. This is decided from
+    the provider's ``is_conservative`` taxonomy flag (never an ``isinstance``
+    check), so it stays correct if a non-conservative kind is ever reintroduced.
+    Empty when ``method`` is not symplectic or no surrogate provider is attached.
     """
     if gravity_model is None or not _is_symplectic_method(method):
         return []
     if getattr(gravity_model, "model_kind", None) != "st_lrps":
         return []
-    kind = str(
-        getattr(getattr(gravity_model, "_force_runtime", None), "runtime_model_kind", "") or ""
-    ).strip().lower()
-    if not kind:
-        cfg = getattr(gravity_model, "config", None)
-        if isinstance(cfg, dict):
-            kind = str(cfg.get("runtime_model_kind", "") or "").strip().lower()
-    if kind == "force_direct":
-        return ["force_direct surrogate gravity (non-conservative by construction)"]
+    is_conservative = getattr(gravity_model, "is_conservative", True)
+    if not bool(is_conservative):
+        return ["non-conservative surrogate gravity (bounded energy drift not guaranteed)"]
     return []
 
 def symplectic_breaks_separability(method: str, flags: Any) -> bool:

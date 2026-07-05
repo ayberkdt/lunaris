@@ -235,6 +235,34 @@ def test_policy_st_lrps_torch_cuda_true(monkeypatch) -> None:
     assert plan.batch_note != ""
 
 
+def test_policy_st_lrps_gpu_dtype_provenance_honors_config(monkeypatch) -> None:
+    """R10: the ST-LRPS GPU plan resolves dtype from config, not a hardcode."""
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
+
+    monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
+    monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
+
+    sim_cfg = SimpleNamespace(
+        flags=PerturbationFlags(enable_sh=True),
+        gravity=SimpleNamespace(uses_st_lrps=True),
+    )
+    # gpu_st_lrps_potential supports float64, so a float64 request is honored and
+    # surfaces in provenance rather than being overwritten by a float32 default.
+    cfg64 = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps", torch_dtype="float64")
+    plan64 = resolve_batch_backend_policy(cfg64, sim_cfg)
+    assert plan64.final_backend == BatchBackend.GPU_ST_LRPS
+    assert plan64.requested_dtype == "float64"
+    assert plan64.effective_dtype == "float64"
+    assert plan64.dtype == "float64"
+    assert plan64.dtype_downgraded is False
+
+    cfg32 = SimpleNamespace(use_gpu=True, gravity_mode_override="st_lrps", torch_dtype="float32")
+    plan32 = resolve_batch_backend_policy(cfg32, sim_cfg)
+    assert plan32.effective_dtype == "float32"
+    assert plan32.dtype_downgraded is False
+
+
 def test_policy_st_lrps_torch_cuda_false_falls_back(monkeypatch) -> None:
     """ST-LRPS + torch CUDA unavailable → CPU."""
     import lunaris.batch.backend_policy as policy_mod
@@ -297,7 +325,8 @@ def test_policy_st_lrps_gpu_with_third_body_falls_back(monkeypatch) -> None:
     )
     plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
     assert plan.final_backend == BatchBackend.CPU
-    assert any("third-body sun" in w.lower() for w in plan.warnings)
+    # Canonical force-model name from the capability registry (single source).
+    assert any("third_body_sun" in w.lower() for w in plan.warnings)
 
 
 def test_policy_classic_sh_numba_cuda_true(monkeypatch) -> None:
@@ -374,37 +403,10 @@ def test_policy_classic_sh_high_degree_falls_back_without_clipping(monkeypatch) 
     assert any("without clipping" in w.lower() for w in plan.warnings)
 
 
-def test_policy_explicit_st_lrps_direct_backend(monkeypatch) -> None:
-    """Explicit direct ST-LRPS backend records direct runtime intent."""
-    import lunaris.batch.backend_policy as policy_mod
-    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
-
-    monkeypatch.setattr(policy_mod, "_torch_cuda_available", lambda: True)
-    monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
-    monkeypatch.setattr(policy_mod, "_read_st_lrps_runtime_kind", lambda batch_cfg, sim_cfg: "force_direct")
-
-    batch_cfg = SimpleNamespace(
-        use_gpu=True,
-        batch_backend="gpu_st_lrps_direct",
-        gravity_mode_override="follow_mission",
-        sh_degree=20,
-    )
-    sim_cfg = SimpleNamespace(
-        flags=PerturbationFlags(enable_sh=True),
-        gravity=SimpleNamespace(uses_st_lrps=False),
-    )
-    plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
-    assert plan.final_backend == BatchBackend.GPU_ST_LRPS
-    assert plan.actual_backend == "gpu_st_lrps_direct"
-    assert plan.runtime_model_kind == "force_direct"
-    assert "no-grad" in plan.batch_note.lower()
-
-
 @pytest.mark.parametrize(
     ("requested", "artifact_kind"),
     [
         ("gpu_st_lrps_potential", "force_direct"),
-        ("gpu_st_lrps_direct", "potential_autograd"),
     ],
 )
 def test_policy_rejects_explicit_st_lrps_artifact_kind_mismatch(

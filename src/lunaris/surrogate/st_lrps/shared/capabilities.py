@@ -1,8 +1,8 @@
 """Single source of truth for ST-LRPS capability status.
 
 Historically, "this combination is not supported" decisions were scattered as
-ad-hoc ``NotImplementedError`` raises across the scaling, runtime, training, and
-force-direct modules. That made it impossible to tell, from one place, which
+ad-hoc ``NotImplementedError`` raises across the scaling, runtime, and training
+modules. That made it impossible to tell, from one place, which
 surrogate kind implements which feature, and whether a gap is a deliberate
 *by-design* limitation or a *not-yet-implemented* one.
 
@@ -98,22 +98,6 @@ CAPABILITIES: tuple[Capability, ...] = (
         CapabilityStatus.SUPPORTED,
         "a_total = a_base + residual acceleration, with the analytical baseline.",
     ),
-    Capability(
-        "runtime", "force_direct", "residual_acceleration",
-        CapabilityStatus.SUPPORTED,
-        "The network outputs the 3-vector residual acceleration directly.",
-    ),
-    Capability(
-        "runtime", "force_direct", "total_acceleration",
-        CapabilityStatus.SUPPORTED,
-        "a_total = a_base + predicted residual acceleration.",
-    ),
-    Capability(
-        "runtime", "force_direct", "scalar_residual_potential",
-        CapabilityStatus.BY_DESIGN_NA,
-        "A direct-force model predicts acceleration only; there is no scalar "
-        "potential DeltaU to return. Use the acceleration API instead.",
-    ),
     # -- Analytical baseline subtracted to form residual targets --------------
     Capability(
         "baseline", "residual", "any_baseline_kind",
@@ -145,12 +129,6 @@ CAPABILITIES: tuple[Capability, ...] = (
         CapabilityStatus.SUPPORTED,
         "Main trainer (lunaris-train-st-lrps): scalar-potential SIREN with a "
         "Sobolev U/a objective and autograd acceleration.",
-    ),
-    Capability(
-        "training", "force_direct", "direct_residual_accel",
-        CapabilityStatus.SUPPORTED,
-        "Separate trainer (lunaris-train-force-direct): regress the residual "
-        "acceleration directly with a 3-output head.",
     ),
 )
 

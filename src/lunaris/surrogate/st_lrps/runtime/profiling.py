@@ -8,9 +8,8 @@ resolves a run directory, selects ``ckpt_best.pt`` with ``ckpt_last.pt``
 fallback through ``st_lrps.artifacts.manager``, reconstructs the trained
 network and scaler, then returns the contract-matched runtime object.  Scalar
 ``potential_autograd`` artifacts compute acceleration as the autograd gradient
-of the learned residual potential; ``force_direct`` artifacts return a
-three-component residual acceleration head and do not expose potential timing.
-Large inputs are processed through the runtime chunk size.
+of the learned residual potential.  Large inputs are processed through the
+runtime chunk size.
 
 This module measures that path without changing physics, model architecture,
 checkpoint schema, loss functions, or propagation algorithms.

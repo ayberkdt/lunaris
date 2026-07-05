@@ -61,10 +61,10 @@ def test_build_run_provenance_has_valid_hashes_and_kind() -> None:
         artifact_contract=contract,
         split_manifest=_SPLIT_MANIFEST,
         determinism=_DETERMINISM,
-        runtime_model_kind="force_direct",
+        runtime_model_kind="potential_autograd",
     )
     assert prov["provenance_version"] == ST_LRPS_PROVENANCE_VERSION
-    assert prov["model_kind"] == "force_direct"
+    assert prov["model_kind"] == "potential_autograd"
     assert prov["determinism"] == _DETERMINISM
     assert _is_valid_sha256(prov["artifact_contract_sha256"])
     assert _is_valid_sha256(prov["split_manifest_sha256"])

@@ -73,7 +73,7 @@ def test_feature_summary_from_dict_reflects_config():
         "model_preset": "recommended_physical_radial_decay",
         "run_preset": "paper",
         "split_policy": "spatial_block",
-        "runtime_model_kind": "force_direct",
+        "runtime_model_kind": "potential_autograd",
         "use_residual_blocks": True,
         "n_bands": 3,
         "use_altitude_balanced_loss": True,
@@ -84,7 +84,7 @@ def test_feature_summary_from_dict_reflects_config():
     assert s["model_preset"] == "recommended_physical_radial_decay"
     assert s["run_preset"] == "paper"
     assert s["split_policy"] == "spatial_block"
-    assert s["runtime_model_kind"] == "force_direct"
+    assert s["runtime_model_kind"] == "potential_autograd"
     assert s["residual_blocks"] is True
     assert s["n_bands"] == 3
     assert s["altitude_balanced_loss"] is True
