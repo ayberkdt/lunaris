@@ -1361,7 +1361,7 @@ class DynamicsEngine:
                     dydt[6] = 0.0
                 return dydt
 
-            def rhs(t: float, y: np.ndarray) -> np.ndarray:  # type: ignore[no-redef]
+            def rhs(t: float, y: np.ndarray) -> np.ndarray:
                 return _rhs_sh_only_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
 
             self._rhs_cache = rhs
