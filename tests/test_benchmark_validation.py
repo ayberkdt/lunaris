@@ -122,6 +122,82 @@ def test_paper_safe_with_synthetic_run_options_is_error(tmp_path):
     assert any("paper_safe" in e and "synthetic" in e for e in report["errors"])
 
 
+def test_paper_safe_with_identity_frame_mode_is_error(tmp_path):
+    """A paper-safe run whose manifest records an identity/inertial frame mode
+    (Moon-fixed gravity evaluated in inertial coordinates) fails closed."""
+    out = _valid_dir(tmp_path)
+    (out / "resolved_config.json").write_text(
+        json.dumps({"name": "bad_frame", "paper_safe": True}),
+        encoding="utf-8",
+    )
+    (out / "benchmark_manifest.json").write_text(
+        json.dumps({"numerics": {"frame_mode": "inertial_fixed_legacy"}}),
+        encoding="utf-8",
+    )
+    report = validate_benchmark_outputs(out, expected_count=1)
+    assert report["passed"] is False
+    assert any("frame_mode" in e and "identity rotation" in e for e in report["errors"])
+
+
+def test_paper_safe_with_rotating_frame_mode_passes(tmp_path):
+    out = _valid_dir(tmp_path)
+    (out / "resolved_config.json").write_text(
+        json.dumps({"name": "good_frame", "paper_safe": True}),
+        encoding="utf-8",
+    )
+    (out / "benchmark_manifest.json").write_text(
+        json.dumps({"numerics": {"frame_mode": "match_dynamics_engine"}}),
+        encoding="utf-8",
+    )
+    report = validate_benchmark_outputs(out, expected_count=1)
+    assert not any("frame_mode" in e for e in report["errors"])
+    assert "paper_safe_frame_mode" in report["checked_metrics"]
+
+
+def test_validation_report_includes_evidence_taxonomy(tmp_path):
+    """The report self-describes its metric columns by evidence category so a
+    trajectory-only run cannot be read as ST-LRPS field accuracy."""
+    out = _valid_dir(tmp_path)  # metrics are trajectory error only
+    report = validate_benchmark_outputs(out, expected_count=1)
+    tax = report["evidence_taxonomy"]
+    assert tax["has_field_level_evidence"] is False
+    assert tax["trajectory_error_only"] is True
+    assert any("trajectory error only" in w for w in report["warnings"])
+    assert "evidence_taxonomy_field_vs_trajectory" in report["checked_metrics"]
+
+
+def test_paper_safe_trajectory_only_run_is_not_failed_by_taxonomy(tmp_path):
+    out = _valid_dir(tmp_path)
+    (out / "resolved_config.json").write_text(
+        json.dumps({"name": "traj_paper", "paper_safe": True}),
+        encoding="utf-8",
+    )
+    (out / "benchmark_manifest.json").write_text(
+        json.dumps({"numerics": {"frame_mode": "match_dynamics_engine"}}),
+        encoding="utf-8",
+    )
+    report = validate_benchmark_outputs(out, expected_count=1)
+    # Trajectory-only under paper_safe is labeled + warned, not a hard error.
+    assert not any("field" in e.lower() for e in report["errors"])
+    assert report["evidence_taxonomy"]["trajectory_error_only"] is True
+
+
+def test_non_paper_safe_identity_frame_mode_is_not_error(tmp_path):
+    """Identity frame mode is a legitimate explicit diagnostic mode; it is only
+    forbidden under paper_safe, not in general."""
+    out = _valid_dir(tmp_path)
+    (out / "resolved_config.json").write_text(
+        json.dumps({"name": "diag", "run_options": {"synthetic": False}}),
+        encoding="utf-8",
+    )
+    (out / "benchmark_manifest.json").write_text(
+        json.dumps({"numerics": {"frame_mode": "inertial_fixed_legacy"}}),
+        encoding="utf-8",
+    )
+    report = validate_benchmark_outputs(out, expected_count=1)
+    assert not any("frame_mode" in e for e in report["errors"])
+
+
 def test_evidence_block_prefers_explicit_resolved_config_arg(tmp_path):
     out = _valid_dir(tmp_path)  # file on disk says "{}"
     report = validate_benchmark_outputs(

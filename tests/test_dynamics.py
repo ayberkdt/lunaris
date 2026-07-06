@@ -395,3 +395,39 @@ def test_build_rhs_degrades_external_1pn_on_zero_tables_with_warning() -> None:
     assert eng._prep["req"]["use_rel_external"] is False
     dy = rhs(0.0, _build_default_state())
     assert np.all(np.isfinite(dy))
+
+
+def test_body_fixed_gravity_without_ephemeris_fails_closed() -> None:
+    """Phase 6 frame safety: body-fixed SH gravity needs q_i2f. Without an
+    ephemeris AND without an explicit identity opt-in, construction must fail
+    rather than silently evaluate Moon-fixed gravity in inertial coordinates."""
+    degree = 2
+    c = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    s = np.zeros_like(c)
+    gravity = GravityModel.from_arrays(degree, 1_737_400.0, MU_MOON, c, s)
+    with pytest.raises(ValueError, match="Ephemeris is required"):
+        DynamicsEngine(
+            sc_props=SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3),
+            flags=PerturbationFlags(enable_sh=True),
+            gravity_model=gravity,
+            ephem_manager=None,
+            allow_identity_rotation=False,
+        )
+
+
+def test_body_fixed_gravity_identity_rotation_requires_explicit_opt_in() -> None:
+    """The identity-rotation smoke path is legal only when explicitly allowed."""
+    degree = 2
+    c = np.zeros((degree + 1, degree + 1), dtype=np.float64)
+    s = np.zeros_like(c)
+    gravity = GravityModel.from_arrays(degree, 1_737_400.0, MU_MOON, c, s)
+    eng = DynamicsEngine(
+        sc_props=SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3),
+        flags=PerturbationFlags(enable_sh=True),
+        gravity_model=gravity,
+        ephem_manager=None,
+        allow_identity_rotation=True,
+    )
+    assert eng.allow_identity_rotation is True
+    dy = eng.build_rhs(force_rebuild=True)(0.0, _build_default_state())
+    assert np.all(np.isfinite(dy))

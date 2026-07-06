@@ -522,6 +522,16 @@ def validate_training_dataset_convention(
     # --- units and altitude envelope ---
     if meta.unit_system not in ("si", "canonical"):
         raise ValueError(f"Dataset {name!r} has missing or unsupported unit_system={meta.unit_system!r}.")
+    # Canonical datasets are non-dimensional; the SI field is ambiguous without
+    # the DU/TU/VU scaling constants. Reject at preflight rather than failing
+    # deep inside data loading (convert_xyz_U_a_to_si) after training has begun.
+    if meta.unit_system == "canonical" and not meta.can_convert_to_si():
+        raise ValueError(
+            f"Dataset {name!r} declares unit_system='canonical' but is missing the "
+            "DU_m/TU_s/VU_m_s scaling constants required to convert to SI; the physical "
+            "field is ambiguous. Regenerate with explicit canonical scaling constants "
+            "or provide an SI dataset."
+        )
     if meta.alt_min_km is None or meta.alt_max_km is None:
         msg = f"Dataset {name!r} is missing altitude bounds."
         raise ValueError(msg)

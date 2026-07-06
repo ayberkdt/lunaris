@@ -3,7 +3,7 @@
 batch_runner.py — CLI entry point for batch/ensemble propagation.
 
 This script mirrors main.py's orbit/physics/timeline argument interface and
-adds batch uncertainty-propagation flags.  It is invoked by the GUI as a subprocess
+adds batch injection-dispersion flags.  It is invoked by the GUI as a subprocess
 so that progress can be streamed line-by-line and the main application stays
 responsive.
 
@@ -189,7 +189,7 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     g.add_argument("--torch-dtype", choices=["float32", "float64"], default="float64",
-                   help="Floating-point dtype for the torch_cuda_sh classic-SH path.")
+                   help="Floating-point dtype for torch_cuda_sh and GPU ST-LRPS torch paths.")
     g.add_argument("--torch-sh-chunk-size", type=int, default=0,
                    help="Samples per GPU chunk on the torch_cuda_sh path (0 = auto/VRAM-aware).")
     g.add_argument("--gpu-device-id",         type=int,   default=0)

@@ -4,7 +4,7 @@ Batch Propagation Analysis Page (Page 7)
 ========================================
 
 Provides a dedicated PySide6 page for configuring, launching, and monitoring
-batch orbital uncertainty propagation runs. Random sampling is the Monte Carlo
+batch orbital injection-dispersion runs. Random sampling is the Monte Carlo
 option; LHS and Sobol designs support validation-oriented coverage.
 
 Layout
@@ -14,8 +14,8 @@ The page is split into two workspace tabs:
 1. **Setup & Run**
    Left column  (60%) — scrollable configuration cards:
      - Ensemble
-     - State uncertainty
-     - Spacecraft uncertainty
+     - Injection state dispersion
+     - Spacecraft property dispersion
      - Backend / integration
      - Output / impact settings
    Right column (40%) — run controls + live metrics
@@ -86,11 +86,11 @@ class UIMonteCarloConfig:
     seed: int = 42
     sampling_method: str = "random"
 
-    # State uncertainty
+    # Injection state dispersion
     sigma_r_m: float = 500.0    # position 1-sigma [m]
     sigma_v_m_s: float = 0.5    # velocity 1-sigma [m/s]
 
-    # Spacecraft uncertainty (0 = deterministic)
+    # Spacecraft property dispersion (0 = deterministic)
     sigma_mass_kg: float = 0.0
     sigma_area_m2: float = 0.0
     sigma_cd: float = 0.0
@@ -683,7 +683,7 @@ class MonteCarloPage(QtWidgets.QWidget):
         return gb
 
     def _card_state_uncertainty(self) -> QtWidgets.QGroupBox:
-        gb = _card("Initial State Uncertainty  (1-σ, Isotropic)")
+        gb = _card("Injection State Dispersion  (1-σ, Isotropic)")
         layout = gb.content_layout
         layout.setSpacing(10)
 
@@ -704,7 +704,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             str(self.mc_cfg.sigma_r_m),
             step=100, min_value=0, max_value=1e7, decimals=1,
         )
-        self.ent_sigma_r.setToolTip("1-sigma position uncertainty (isotropic, all axes)")
+        self.ent_sigma_r.setToolTip("1-sigma injection position dispersion (isotropic, all axes)")
         grid.addWidget(self.ent_sigma_r, 0, 1)
 
         grid.addWidget(_label("Velocity σ_v  [m/s]:"), 1, 0)
@@ -712,7 +712,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             str(self.mc_cfg.sigma_v_m_s),
             step=0.1, min_value=0, max_value=1e4, decimals=3,
         )
-        self.ent_sigma_v.setToolTip("1-sigma velocity uncertainty (isotropic, all axes)")
+        self.ent_sigma_v.setToolTip("1-sigma injection velocity dispersion (isotropic, all axes)")
         grid.addWidget(self.ent_sigma_v, 1, 1)
 
         layout.addLayout(grid)
@@ -737,7 +737,7 @@ class MonteCarloPage(QtWidgets.QWidget):
             pass
 
     def _card_spacecraft_uncertainty(self) -> QtWidgets.QGroupBox:
-        gb = _card("Spacecraft Property Uncertainty  (optional)")
+        gb = _card("Spacecraft Property Dispersion  (optional)")
         layout = gb.content_layout
         layout.setSpacing(10)
 
@@ -1709,25 +1709,25 @@ class MonteCarloPage(QtWidgets.QWidget):
             errors.append("Sampling seed must be non-negative.")
             ok = False
 
-        # 2. State uncertainty
+        # 2. Injection state dispersion
         sigma_r = self._parse_float(self.ent_sigma_r.text(), -1.0)
         sigma_v = self._parse_float(self.ent_sigma_v.text(), -1.0)
 
         if sigma_r < 0:
-            errors.append("Position uncertainty (σ_r) must be non-negative.")
+            errors.append("Injection position dispersion (σ_r) must be non-negative.")
             ok = False
         if sigma_v < 0:
-            errors.append("Velocity uncertainty (σ_v) must be non-negative.")
+            errors.append("Injection velocity dispersion (σ_v) must be non-negative.")
             ok = False
 
-        # 3. Spacecraft uncertainty
+        # 3. Spacecraft property dispersion
         sigma_mass = self._parse_float(self.ent_sigma_mass.text(), -1.0)
         sigma_area = self._parse_float(self.ent_sigma_area.text(), -1.0)
         sigma_cd = self._parse_float(self.ent_sigma_cd.text(), -1.0)
         sigma_cr = self._parse_float(self.ent_sigma_cr.text(), -1.0)
 
         if any(v < 0 for v in (sigma_mass, sigma_area, sigma_cd, sigma_cr)):
-            errors.append("Spacecraft property uncertainties must be non-negative.")
+            errors.append("Spacecraft property dispersions must be non-negative.")
             ok = False
 
         # 4. Backend

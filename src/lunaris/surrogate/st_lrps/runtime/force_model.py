@@ -163,12 +163,38 @@ def _find_checkpoint(run_dir: Path) -> Path:
     return ckpt_path
 
 
-def _to_tensor(x: np.ndarray | torch.Tensor, device: torch.device) -> torch.Tensor:
-    """Accept numpy or torch, return float32 tensor on device with shape (N,3)."""
+def _coerce_torch_dtype(dtype: torch.dtype | str | None, default: torch.dtype = torch.float32) -> torch.dtype:
+    if dtype is None:
+        return default
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    name = str(dtype).replace("torch.", "").strip().lower()
+    if name == "float64":
+        return torch.float64
+    if name == "float32":
+        return torch.float32
+    raise ValueError(f"Unsupported ST-LRPS runtime dtype {dtype!r}; expected float32 or float64.")
+
+
+def _module_dtype(model: nn.Module, default: torch.dtype = torch.float32) -> torch.dtype:
+    try:
+        return next(model.parameters()).dtype
+    except StopIteration:
+        return default
+
+
+def _to_tensor(
+    x: np.ndarray | torch.Tensor,
+    device: torch.device,
+    dtype: torch.dtype | str | None = None,
+) -> torch.Tensor:
+    """Accept numpy or torch, return a tensor on device with shape (N,3)."""
+    target_dtype = _coerce_torch_dtype(dtype)
     if isinstance(x, torch.Tensor):
-        t = x.to(device=device, dtype=torch.float32)
+        t = x.to(device=device, dtype=target_dtype)
     else:
-        t = torch.from_numpy(np.asarray(x, dtype=np.float32)).to(device)
+        np_dtype = np.float64 if target_dtype == torch.float64 else np.float32
+        t = torch.from_numpy(np.asarray(x, dtype=np_dtype)).to(device)
     if t.ndim == 1:
         if t.shape[0] != 3:
             raise ValueError(f"1-D input must have shape (3,). Got {t.shape}.")
@@ -256,6 +282,9 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         self.scaler = scaler
         self.cfg = cfg
         self.device = device
+        self._dtype = _module_dtype(self.model)
+        self.model = self.model.to(device=device, dtype=self._dtype)
+        self.scaler.to_tensors(device=device, dtype=self._dtype)
         self.chunk_size = int(chunk_size)
         self.checkpoint_path = checkpoint_path
         self.checkpoint_epoch = checkpoint_epoch
@@ -376,6 +405,20 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         if self.artifact_contract.altitude_max_km is not None:
             self._train_alt_max_km = float(self.artifact_contract.altitude_max_km)
 
+    def to_device(
+        self,
+        device: torch.device | str,
+        dtype: torch.dtype | str | None = None,
+    ) -> SurrogateForceModel:
+        """Move model weights and cached scaler tensors to a device/dtype."""
+        resolved_device = torch.device(device)
+        resolved_dtype = _coerce_torch_dtype(dtype, default=getattr(self, "_dtype", torch.float32))
+        self.model = self.model.to(device=resolved_device, dtype=resolved_dtype)
+        self.scaler.to_tensors(device=resolved_device, dtype=resolved_dtype)
+        self.device = resolved_device
+        self._dtype = resolved_dtype
+        return self
+
     def _predict_chunk(self, x_t: torch.Tensor) -> tuple:
         """Forward + autograd for one chunk. Returns (delta_u_np, delta_a_np)."""
         x_scaled = self.scaler.scale_x(x_t).requires_grad_(True)
@@ -401,7 +444,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         self, x: np.ndarray | torch.Tensor
     ) -> tuple:
         """Chunked inference over arbitrary-length inputs."""
-        x_t = _to_tensor(x, self.device)
+        x_t = _to_tensor(x, self.device, dtype=getattr(self, "_dtype", torch.float32))
         N = x_t.shape[0]
         u_out = np.empty((N, 1), dtype=np.float64)
         a_out = np.empty((N, 3), dtype=np.float64)
@@ -444,7 +487,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
                 "All position components must be finite real numbers."
             )
         single = x_arr.ndim == 1
-        x_t = _to_tensor(x_arr, self.device)
+        x_t = _to_tensor(x_arr, self.device, dtype=getattr(self, "_dtype", torch.float32))
         N = x_t.shape[0]
         u_out = np.empty((N, 1), dtype=np.float64)
         for s in range(0, N, self.chunk_size):

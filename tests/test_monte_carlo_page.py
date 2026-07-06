@@ -73,7 +73,7 @@ def test_validate_page_inputs_errors(mc_page):
     ok, errors, warnings = mc_page.validate_page_inputs()
     assert not ok
     assert any("Ensemble must have at least 2 samples" in e for e in errors)
-    assert any("Position uncertainty" in e for e in errors)
+    assert any("Injection position dispersion" in e for e in errors)
     assert any("Requested SH degree > 24" in w for w in warnings)
 
 def test_validate_page_inputs_warnings(mc_page):

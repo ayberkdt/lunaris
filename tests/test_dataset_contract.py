@@ -21,6 +21,7 @@ from lunaris.surrogate.st_lrps.data.datasets import (
     DatasetMeta,
     read_dataset_contract_from_h5,
     validate_dataset_contract,
+    validate_training_dataset_convention,
 )
 
 
@@ -121,6 +122,14 @@ def test_missing_target_mode_fails(tmp_path):
         validate_dataset_contract(meta, data_path=path)
 
 
+def test_residual_with_inverted_degree_bounds_fails(tmp_path):
+    """degree_max <= degree_min is not a valid residual band."""
+    path = _write_h5(tmp_path / "data.h5", degree_min=200, degree_max=20)
+    meta = DatasetMeta.from_h5(path)
+    with pytest.raises(ValueError, match="degree_max"):
+        validate_training_dataset_convention(meta, data_path=path)
+
+
 def test_derivative_convention_mismatch_rejected(tmp_path):
     path = _write_h5(tmp_path / "data.h5", derivative_convention_version="legacy")
     meta = DatasetMeta.from_h5(path)
@@ -140,6 +149,46 @@ def test_units_are_validated(tmp_path):
     meta = DatasetMeta.from_h5(path)
     with pytest.raises(ValueError, match="unit_system"):
         validate_dataset_contract(meta, data_path=path)
+
+
+def test_canonical_units_without_scaling_constants_fail(tmp_path):
+    """Phase 7: a canonical (non-dimensional) dataset with no DU/TU/VU cannot be
+    converted to SI unambiguously, so preflight must fail before training."""
+    path = _write_h5(tmp_path / "data.h5", unit_system="canonical")
+    meta = DatasetMeta.from_h5(path)
+    assert meta.can_convert_to_si() is False
+    with pytest.raises(ValueError, match="canonical"):
+        validate_training_dataset_convention(meta, data_path=path)
+
+
+def test_canonical_units_with_scaling_constants_pass_convention_check(tmp_path):
+    path = _write_h5(
+        tmp_path / "data.h5",
+        unit_system="canonical",
+        DU_m=1.7e6,
+        TU_s=5.0e3,
+        VU_m_s=340.0,
+    )
+    meta = DatasetMeta.from_h5(path)
+    assert meta.can_convert_to_si() is True
+    # Must not raise: canonical WITH scaling constants is unambiguous.
+    validate_training_dataset_convention(meta, data_path=path)
+
+
+def test_non_lunar_body_fails(tmp_path):
+    path = _write_h5(tmp_path / "data.h5", central_body="earth")
+    meta = DatasetMeta.from_h5(path)
+    with pytest.raises(ValueError, match="not lunar"):
+        validate_training_dataset_convention(meta, data_path=path)
+
+
+def test_missing_derivative_convention_fails(tmp_path):
+    # None override is skipped when writing attrs, so the attr is absent entirely.
+    path = _write_h5(tmp_path / "data.h5", derivative_convention_version=None)
+    meta = DatasetMeta.from_h5(path)
+    assert meta.derivative_convention_version is None
+    with pytest.raises(ValueError, match="derivative_convention"):
+        validate_training_dataset_convention(meta, data_path=path)
 
 
 def test_dataset_contract_content_hash_can_be_stamped(tmp_path):

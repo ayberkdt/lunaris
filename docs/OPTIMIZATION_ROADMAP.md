@@ -15,7 +15,7 @@ artifact, hardware, force model, and scenario set.
    validated against the target truth model.
 3. Use `sampling_method="sobol_scrambled"` or `sampling_method="lhs"` for
    validation/coverage batches, and `sampling_method="random"` for classical
-   Monte Carlo uncertainty draws. Pair that with `mc_backend="auto"` for
+   Monte Carlo injection-dispersion draws. Pair that with `mc_backend="auto"` for
    ordinary batch runs, explicit `cpu_sh` for high-fidelity truth/reference,
    explicit `numba_cuda_sh`/`gpu_sh` for the degree-24 Numba CUDA screening tier,
    explicit `torch_cuda_sh` for high-degree gravity-only PyTorch CUDA runs, and

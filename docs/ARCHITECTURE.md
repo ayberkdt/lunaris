@@ -80,7 +80,7 @@ Numerical engine and configuration.
 Post-processing and presentation.
 - `analysis/postprocess.py` — orbital elements, invariants, metrics.
 - `analysis/reporting/` — report `manager`, `plotting`, `styling`.
-- `analysis/ensemble/` — canonical ensemble uncertainty `statistics`,
+- `analysis/ensemble/` — canonical ensemble dispersion `statistics`,
   `plotting`, UQ reports, linear covariance checks, and result audits. The
   historical `analysis/monte_carlo/` analysis namespace has been removed; use
   `analysis/ensemble/` directly.

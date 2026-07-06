@@ -275,11 +275,12 @@ def _make_gpu_accelerator(model_name: str, gravity_model: Any, *, device: Any, d
 
     name = str(model_name).lower()
     if name == "st_lrps":
-        if str(getattr(gravity_model, "device", "")) != str(device):
-            gravity_model.to_device(device)
+        if hasattr(gravity_model, "to_device"):
+            gravity_model.to_device(device, dtype=dtype)
 
         def _accel_st(pos_fixed: Any) -> Any:
-            return gravity_model.predict_total_accel_torch(pos_fixed).to(device=device, dtype=dtype)
+            pos = pos_fixed.to(device=device, dtype=dtype)
+            return gravity_model.predict_total_accel_torch(pos).to(device=device, dtype=dtype)
 
         return _accel_st, "torch_st_lrps"
 
@@ -1093,9 +1094,8 @@ def _run_batch_rk4_gpu(
     device = torch.device("cuda:0")
     dev_name = torch.cuda.get_device_name(0)
 
-    # Move model to GPU if needed
-    if str(surrogate_model.device) != str(device):
-        surrogate_model.to_device(device)
+    # Move model to GPU with the requested dtype if needed.
+    surrogate_model.to_device(device, dtype=_torch_dtype_from_name(getattr(args, "torch_dtype", "float32")))
 
     mc_cfg = _BatchMCCfg(dt_s=dt_s, torch_dtype=getattr(args, "torch_dtype", "float32"))
     use_legacy_identity = effective_frame_mode == "inertial_fixed_legacy"

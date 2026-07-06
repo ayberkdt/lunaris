@@ -199,6 +199,53 @@ def test_unknown_method_falls_back_to_dop853_and_runs():
 
 
 # =============================================================================
+# Output-grid monotonicity and chunk invariance (Phase 9 behaviour locks)
+# =============================================================================
+
+def test_adaptive_and_fixed_step_time_arrays_are_strictly_monotonic():
+    """Both the solve_ivp (adaptive) and symplectic fixed-step paths must return
+    strictly increasing output time grids — a duplicated or out-of-order sample
+    would corrupt every downstream interpolation."""
+    y0, r0, _ = _circular_state(150e3)
+    T = _period(r0)
+    tc = TimeConfig(duration_s=T / 2.0, output_dt_s=T / 200.0, samples_per_period=200)
+
+    res_adaptive = propagate(FakePointMassDynamics(), y0, _cfg(method="DOP853"), time_cfg=tc)
+    res_fixed = propagate(
+        FakePointMassDynamics(), y0,
+        _cfg(method="VV", events=EventConfig(detect_impact=False, enable_peri_apo_events=False)),
+        time_cfg=tc,
+    )
+    for res in (res_adaptive, res_fixed):
+        assert res.t.size >= 2
+        assert np.all(np.diff(res.t) > 0.0), "output time grid must be strictly increasing"
+        assert res.t[0] == pytest.approx(0.0)
+
+
+def test_chunked_and_unchunked_adaptive_agree_for_two_body():
+    """Chunked solve_ivp must reproduce the unchunked result: the chunk boundary
+    is an integration-bookkeeping detail, not a physics change."""
+    y0, r0, _ = _circular_state(200e3)
+    T = _period(r0)
+    tc = TimeConfig(duration_s=T / 2.0, output_dt_s=T / 100.0, samples_per_period=100)
+
+    res_unchunked = propagate(
+        FakePointMassDynamics(), y0,
+        _cfg(events=EventConfig(detect_impact=False, enable_peri_apo_events=False)),
+        time_cfg=tc,
+    )
+    res_chunked = propagate(
+        FakePointMassDynamics(), y0,
+        _cfg(events=EventConfig(detect_impact=False, enable_peri_apo_events=False),
+             chunk_s=T / 8.0),
+        time_cfg=tc,
+    )
+    np.testing.assert_allclose(res_chunked.t, res_unchunked.t, rtol=0.0, atol=1e-9)
+    # Same output grid, same trajectory to integrator tolerance.
+    np.testing.assert_allclose(res_chunked.y, res_unchunked.y, rtol=1e-7, atol=1e-6)
+
+
+# =============================================================================
 # Time-grid helpers
 # =============================================================================
 

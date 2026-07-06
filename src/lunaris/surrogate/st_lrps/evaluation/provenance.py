@@ -195,10 +195,28 @@ def build_benchmark_manifest(
             "output_dt_s": propagation.get("output_dt_s"),
             "dtype": propagation.get("dtype"),
             "duration_days": propagation.get("duration_days"),
+            # Frame provenance: the config-driven benchmark always propagates the
+            # GPU batch in the rotating Moon-fixed frame (match_dynamics_engine);
+            # the identity/inertial_fixed_legacy approximation is only reachable
+            # through the explicit CLI harness and must never back a paper claim.
+            # Recording it here lets validate_benchmark_outputs fail closed if a
+            # paper-safe manifest ever reports an identity frame mode.
+            "frame_mode": _frame_mode(propagation),
+            "uses_frame_rotation": _frame_mode(propagation) != "inertial_fixed_legacy",
         },
         "environment": collect_environment(),
     }
     return manifest
+
+
+def _frame_mode(propagation: Mapping[str, Any]) -> str:
+    """Resolved GPU-batch frame mode for the config-driven benchmark.
+
+    Defaults to ``match_dynamics_engine`` (rotating Moon-fixed frame), which is
+    the only mode ``config_to_legacy_argv`` ever selects. An explicit config
+    override is honored so provenance stays truthful if the mapping is extended.
+    """
+    return str(propagation.get("frame_mode", "match_dynamics_engine")).strip() or "match_dynamics_engine"
 
 
 def write_json(path: str | Path, payload: Mapping[str, Any]) -> Path:

@@ -14,6 +14,10 @@ from lunaris.common.hashing import canonical_json_text
 from lunaris.common.provenance import utc_now_iso
 
 from .benchmark_config import SYNTHETIC_BANNER
+from .benchmark_evidence_taxonomy import (
+    field_evidence_error_for_paper_safe,
+    summarize_evidence_taxonomy,
+)
 
 REQUIRED_OUTPUT_FILES = (
     "benchmark_manifest.json",
@@ -64,6 +68,7 @@ def validate_benchmark_outputs(
 
     evidence = _evidence_block(root, resolved_config, manifest_json)
     _check_evidence_consistency(evidence, errors, warnings, checked_metrics)
+    _check_paper_safe_frame_mode(evidence, manifest_json, errors, checked_metrics)
     _check_no_nan_inf("metrics_summary.csv", metrics_rows, errors, checked_metrics)
     _check_no_nan_inf("scenario_results.csv", scenario_rows, errors, checked_metrics)
     _check_no_nan_inf("runtime_summary.csv", runtime_rows, errors, checked_metrics)
@@ -82,11 +87,15 @@ def validate_benchmark_outputs(
     _check_units(metrics_json, errors, checked_metrics)
     _include_manifest_contract_findings(manifest_json, errors, warnings, checked_metrics)
 
+    taxonomy = _evidence_taxonomy_block(metrics_rows, scenario_rows, runtime_rows, evidence)
+    _check_paper_safe_field_evidence(evidence, taxonomy, errors, warnings, checked_metrics)
+
     report = {
         "passed": not errors,
         "errors": errors,
         "warnings": warnings,
         "evidence": evidence,
+        "evidence_taxonomy": taxonomy,
         "checked_files": checked_files,
         "checked_metrics": sorted(set(checked_metrics)),
     }
@@ -189,6 +198,97 @@ def _check_evidence_consistency(
         warnings.append(
             f"{SYNTHETIC_BANNER}: validation checks output structure only; "
             "this run is not scientific benchmark evidence"
+        )
+
+
+#: Frame modes that evaluate Moon-fixed gravity in inertial coordinates with an
+#: identity rotation. Physically approximate; never valid for paper-safe claims.
+_IDENTITY_FRAME_MODES = frozenset({"inertial_fixed_legacy", "identity", "inertial"})
+
+
+def _manifest_frame_mode(manifest_json: Any) -> str | None:
+    if not isinstance(manifest_json, Mapping):
+        return None
+    numerics = manifest_json.get("numerics")
+    if not isinstance(numerics, Mapping):
+        return None
+    value = numerics.get("frame_mode")
+    return str(value) if value is not None else None
+
+
+def _check_paper_safe_frame_mode(
+    evidence: Mapping[str, Any],
+    manifest_json: Any,
+    errors: list[str],
+    checked: list[str],
+) -> None:
+    """Fail closed if a paper-safe run recorded an identity/inertial frame mode.
+
+    ST-LRPS and SH gravity are body-fixed. The config-driven benchmark always
+    propagates in the rotating Moon-fixed frame, so this is belt-and-suspenders:
+    it guarantees that even a hand-edited or future-wired manifest cannot present
+    identity-rotation output as paper-safe evidence.
+    """
+    checked.append("paper_safe_frame_mode")
+    if not evidence.get("paper_safe"):
+        return
+    frame_mode = _manifest_frame_mode(manifest_json)
+    if frame_mode is None:
+        return  # missing-manifest provenance is handled by _evidence_block
+    if str(frame_mode).strip().lower() in _IDENTITY_FRAME_MODES:
+        errors.append(
+            f"paper_safe run recorded frame_mode={frame_mode!r}: Moon-fixed gravity "
+            "evaluated in inertial coordinates with identity rotation can never be "
+            "paper-safe evidence"
+        )
+
+
+def _evidence_taxonomy_block(
+    metrics_rows: list[dict[str, str]],
+    scenario_rows: list[dict[str, str]],
+    runtime_rows: list[dict[str, str]],
+    evidence: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Classify the benchmark's metric columns into the evidence taxonomy.
+
+    The block makes the artifact self-describing: a reader (or a downstream
+    paper-safe gate) can see whether the run carries model-error field evidence
+    or only orbit-level trajectory error.
+    """
+    names: set[str] = set()
+    for rows in (metrics_rows, scenario_rows, runtime_rows):
+        for row in rows:
+            names.update(row.keys())
+    # Drop obvious non-metric identity/label columns.
+    names -= {"model", "reference", "scenario_id", "status", "backend", "device",
+              "domain_warning", "n_scenarios", "n_steps"}
+    synthetic = bool(evidence.get("synthetic") or evidence.get("quick"))
+    return summarize_evidence_taxonomy(names, synthetic=synthetic)
+
+
+def _check_paper_safe_field_evidence(
+    evidence: Mapping[str, Any],
+    taxonomy: Mapping[str, Any],
+    errors: list[str],
+    warnings: list[str],
+    checked: list[str],
+) -> None:
+    """Paper-safe runs may not present trajectory error as field accuracy.
+
+    A hard error only fires under paper_safe; otherwise a trajectory-only run
+    gets an informational warning so the honest scope stays visible without
+    breaking the ordinary orbit-benchmark workflow.
+    """
+    checked.append("evidence_taxonomy_field_vs_trajectory")
+    paper_safe = bool(evidence.get("paper_safe"))
+    error = field_evidence_error_for_paper_safe(taxonomy, paper_safe=paper_safe)
+    if error is not None:
+        errors.append(error)
+    elif taxonomy.get("trajectory_error_only"):
+        warnings.append(
+            "benchmark reports orbit-level trajectory error only (no "
+            "model_error_field metrics); this measures propagated orbit error, "
+            "not ST-LRPS gravity-field accuracy"
         )
 
 

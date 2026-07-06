@@ -123,9 +123,11 @@ class TorchBatchPropagator:
         dtype_name = str(getattr(mc_cfg, "torch_dtype", "float32") or "float32").lower()
         self._dtype = torch.float64 if dtype_name == "float64" else torch.float32
 
-        # Move surrogate model (weights + scaling tensors) to CUDA
+        # Move surrogate model (weights + scaling tensors) to CUDA with the
+        # requested torch dtype; paper-safe diagnostics must reflect the dtype
+        # actually used by the neural runtime, not only the state tensor dtype.
         self._model = surrogate_model
-        self._model.to_device(self._device)
+        self._model.to_device(self._device, dtype=self._dtype)
         try:
             self._frame = TorchMoonFrame(
                 ephem,
@@ -165,6 +167,9 @@ class TorchBatchPropagator:
         torch = self._torch
         dev = self._device
         runtime = getattr(self._model, "_force_runtime", None)
+        dtype_diag = {}
+        if hasattr(self._model, "dtype_diagnostics"):
+            dtype_diag = dict(self._model.dtype_diagnostics(requested_dtype=self._dtype))
         model_dtype = "float32"
         try:
             model_obj = getattr(runtime, "model", None)
@@ -182,8 +187,13 @@ class TorchBatchPropagator:
                 or getattr(self._model, "config", {}).get("runtime_model_kind", "potential_autograd")
             ),
             "dtype": str(self._dtype).replace("torch.", ""),
+            "requested_dtype": dtype_diag.get("requested_dtype") or str(self._dtype).replace("torch.", ""),
+            "effective_dtype": dtype_diag.get("effective_dtype") or model_dtype,
+            "dtype_downgraded": bool(dtype_diag.get("dtype_downgraded", False)),
             "state_dtype": str(self._dtype).replace("torch.", ""),
-            "model_dtype": model_dtype,
+            "model_dtype": dtype_diag.get("model_dtype") or model_dtype,
+            "scaler_dtype": dtype_diag.get("scaler_dtype"),
+            "force_runtime_scaler_dtype": dtype_diag.get("force_runtime_scaler_dtype"),
             "acceleration_output_dtype": str(self._dtype).replace("torch.", ""),
             "frame_mode": "moon_fixed_slerp" if self._frame.uses_rotation else "identity",
             "frame_interpolation": "slerp_shortest_path",

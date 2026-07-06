@@ -31,6 +31,35 @@ from lunaris.surrogate.runtime.scalers import _load_scaler_bundle, _ScalerBundle
 logger = logging.getLogger(__name__)
 
 
+def _coerce_torch_dtype(dtype: Any, default: Any | None = None) -> Any:
+    if torch is None:  # pragma: no cover - import guard
+        return None
+    if dtype is None:
+        return default if default is not None else torch.float32
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    name = str(dtype).replace("torch.", "").strip().lower()
+    if name == "float64":
+        return torch.float64
+    if name == "float32":
+        return torch.float32
+    raise ValueError(f"Unsupported surrogate runtime dtype {dtype!r}; expected float32 or float64.")
+
+
+def _module_dtype(model: Any, default: Any | None = None) -> Any:
+    if torch is None:  # pragma: no cover - import guard
+        return None
+    resolved_default = default if default is not None else torch.float32
+    try:
+        return next(model.parameters()).dtype
+    except (AttributeError, StopIteration):
+        return resolved_default
+
+
+def _dtype_name(dtype: Any) -> str:
+    return str(dtype).replace("torch.", "")
+
+
 def _cfg_values_differ(file_val: Any, ckpt_val: Any) -> bool:
     """Compare config values across the JSON/pickle boundary.
 
@@ -93,6 +122,7 @@ class SurrogateGravityModel:
         self._force_runtime = force_runtime
         self._baseline_torch_evaluator: Any | None = None
         self._baseline_torch_signature: tuple[str, str, int] | None = None
+        self._torch_dtype = _module_dtype(model, torch.float32)
 
         # Domain guard for the GPU tensor path. The canonical ``_fixed`` runtime
         # enforces the training-altitude envelope, but the tensor entry points
@@ -115,11 +145,11 @@ class SurrogateGravityModel:
         self.target_degree: int = _deg_max      # high-fidelity SH equivalent
         self.effective_degree_max: int = _deg_max
 
-        self._x_mean = torch.as_tensor(self.scaler.x.mean, device=self.device, dtype=torch.float32)
-        self._x_scale = torch.as_tensor(self.scaler.x.scale, device=self.device, dtype=torch.float32)
-        self._u_mean = torch.as_tensor(self.scaler.u.mean, device=self.device, dtype=torch.float32)
-        self._u_scale = torch.as_tensor(self.scaler.u.scale, device=self.device, dtype=torch.float32)
-        self._mu_tensor = torch.tensor(float(mu_m3s2), device=self.device, dtype=torch.float32)
+        self._x_mean = torch.as_tensor(self.scaler.x.mean, device=self.device, dtype=self._torch_dtype)
+        self._x_scale = torch.as_tensor(self.scaler.x.scale, device=self.device, dtype=self._torch_dtype)
+        self._u_mean = torch.as_tensor(self.scaler.u.mean, device=self.device, dtype=self._torch_dtype)
+        self._u_scale = torch.as_tensor(self.scaler.u.scale, device=self.device, dtype=self._torch_dtype)
+        self._mu_tensor = torch.tensor(float(mu_m3s2), device=self.device, dtype=self._torch_dtype)
 
         self.metadata = SurrogateGravityMetadata(
             model_dir=str(self.model_dir),
@@ -571,7 +601,7 @@ class SurrogateGravityModel:
         if pos.ndim != 2 or pos.shape[1] != 3:
             raise ValueError(f"positions_m must be shape (3,) or (N,3), got {pos.shape}")
 
-        x_phys = torch.as_tensor(pos, device=self.device, dtype=torch.float32)
+        x_phys = torch.as_tensor(pos, device=self.device, dtype=self._torch_dtype)
         if self._force_runtime is not None:
             is_direct = str(getattr(self._force_runtime, "runtime_model_kind", "") or "") == "force_direct"
             if is_direct:
@@ -579,8 +609,8 @@ class SurrogateGravityModel:
             else:
                 delta_u_np = np.asarray(self._force_runtime.predict_residual_potential(pos), dtype=np.float64).reshape(-1, 1)
             delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
-            potential = torch.as_tensor(delta_u_np, device=self.device, dtype=torch.float32)
-            accel = torch.as_tensor(delta_a_np, device=self.device, dtype=torch.float32)
+            potential = torch.as_tensor(delta_u_np, device=self.device, dtype=self._torch_dtype)
+            accel = torch.as_tensor(delta_a_np, device=self.device, dtype=self._torch_dtype)
             if self.training_mode == "residual_potential":
                 accel = accel + self._base_acceleration(x_phys)
                 if not is_direct:
@@ -635,7 +665,7 @@ class SurrogateGravityModel:
     # Batched GPU inference — torch tensor I/O
     # ------------------------------------------------------------------
 
-    def to_device(self, device: torch.device) -> None:
+    def to_device(self, device: torch.device, dtype: torch.dtype | str | None = None) -> None:
         """
         Move the model and all cached scaling tensors to *device* in-place.
 
@@ -645,24 +675,52 @@ class SurrogateGravityModel:
         host-device transfers per call.
         """
 
-        self.model = self.model.to(device=device)
+        resolved_dtype = _coerce_torch_dtype(dtype, default=getattr(self, "_torch_dtype", torch.float32))
+        self.model = self.model.to(device=device, dtype=resolved_dtype)
         # Reassign in-place: tensors are not registered as nn.Module parameters
         # so model.to() does not move them automatically.
-        self._x_mean = self._x_mean.to(device=device)
-        self._x_scale = self._x_scale.to(device=device)
-        self._u_mean = self._u_mean.to(device=device)
-        self._u_scale = self._u_scale.to(device=device)
-        self._mu_tensor = self._mu_tensor.to(device=device)
+        self._x_mean = self._x_mean.to(device=device, dtype=resolved_dtype)
+        self._x_scale = self._x_scale.to(device=device, dtype=resolved_dtype)
+        self._u_mean = self._u_mean.to(device=device, dtype=resolved_dtype)
+        self._u_scale = self._u_scale.to(device=device, dtype=resolved_dtype)
+        self._mu_tensor = self._mu_tensor.to(device=device, dtype=resolved_dtype)
         self._baseline_torch_evaluator = None
         self._baseline_torch_signature = None
         if self._force_runtime is not None:
-            self._force_runtime.device = device
-            self._force_runtime.model = self.model
-            if hasattr(self._force_runtime.scaler, "to_tensors"):
-                self._force_runtime.scaler.to_tensors(device=device, dtype=torch.float32)
+            if hasattr(self._force_runtime, "to_device"):
+                self._force_runtime.to_device(device, dtype=resolved_dtype)
+                self.model = self._force_runtime.model
+            else:
+                self._force_runtime.device = device
+                self._force_runtime.model = self.model
+                if hasattr(self._force_runtime.scaler, "to_tensors"):
+                    self._force_runtime.scaler.to_tensors(device=device, dtype=resolved_dtype)
         # Update the stored device so _scale_x and _base_acceleration stay
         # consistent with future inputs.
         object.__setattr__(self, "device", device)  # bypass any frozen guard
+        self._torch_dtype = resolved_dtype
+
+    def dtype_diagnostics(self, requested_dtype: torch.dtype | str | None = None) -> dict[str, Any]:
+        """Return requested/effective dtype provenance for paper-safe diagnostics."""
+        requested = _coerce_torch_dtype(requested_dtype, default=None) if requested_dtype is not None else None
+        model_dtype = _module_dtype(self.model, getattr(self, "_torch_dtype", torch.float32))
+        scaler_dtype = getattr(self._x_mean, "dtype", None)
+        force_scaler = None
+        if self._force_runtime is not None:
+            force_scaler = getattr(getattr(self._force_runtime, "scaler", None), "_x_mean", None)
+        force_scaler_dtype = getattr(force_scaler, "dtype", None)
+        effective = model_dtype
+        downgraded = bool(requested is not None and requested != effective)
+        return {
+            "requested_dtype": _dtype_name(requested) if requested is not None else None,
+            "effective_dtype": _dtype_name(effective),
+            "dtype_downgraded": downgraded,
+            "model_dtype": _dtype_name(model_dtype),
+            "scaler_dtype": _dtype_name(scaler_dtype),
+            "force_runtime_scaler_dtype": (
+                _dtype_name(force_scaler_dtype) if force_scaler_dtype is not None else None
+            ),
+        }
 
     def predict_residual_accel_torch(
         self,
@@ -674,15 +732,15 @@ class SurrogateGravityModel:
         Parameters
         ----------
         x_m : torch.Tensor
-            Body-fixed position batch, shape ``(N, 3)``, float32.
-            The tensor may live on any device; it is moved to the model device
+            Body-fixed position batch, shape ``(N, 3)``. The tensor may live on
+            any device; it is moved to the model device and runtime dtype
             automatically.
 
         Returns
         -------
         torch.Tensor
             Residual acceleration ``Δa = a_sign * ∇ΔU``, shape ``(N, 3)``,
-            float32, on the same device as the model.
+            in the caller's floating dtype, on the same device as the model.
 
         Notes
         -----
@@ -699,8 +757,8 @@ class SurrogateGravityModel:
         # Domain guard (covers predict_total_accel_torch too, which routes here).
         self._enforce_domain_torch(x_m, caller="predict_residual_accel_torch")
 
-        out_dtype = x_m.dtype if x_m.is_floating_point() else torch.float32
-        x = x_m.to(device=self.device, dtype=torch.float32)
+        out_dtype = x_m.dtype if x_m.is_floating_point() else self._torch_dtype
+        x = x_m.to(device=self.device, dtype=self._torch_dtype)
         if (
             self._force_runtime is not None
             and str(getattr(self._force_runtime, "runtime_model_kind", "") or "") == "force_direct"
@@ -725,13 +783,15 @@ class SurrogateGravityModel:
         fr = self._force_runtime
         if fr is not None:
             scale_x = fr.scaler.scale_x
-            u_over_x = fr.scaler._u_scale / fr.scaler._x_scale
         else:
             scale_x = self._scale_x
-            u_over_x = self._u_scale / self._x_scale
 
         with torch.enable_grad():
             x_scaled = scale_x(x).requires_grad_(True)
+            if fr is not None:
+                u_over_x = fr.scaler._u_scale / fr.scaler._x_scale
+            else:
+                u_over_x = self._u_scale / self._x_scale
             u_scaled = self.model(x_scaled)
             (grad_u_scaled,) = torch.autograd.grad(
                 outputs=(u_scaled.sum(),),
@@ -757,20 +817,22 @@ class SurrogateGravityModel:
         Parameters
         ----------
         x_m : torch.Tensor
-            Body-fixed position batch, shape ``(N, 3)``, float32.
+            Body-fixed position batch, shape ``(N, 3)``; converted to the
+            runtime dtype internally.
 
         Returns
         -------
         torch.Tensor
-            Total acceleration, shape ``(N, 3)``, float32, on the model device.
+            Total acceleration, shape ``(N, 3)``, in the caller's floating
+            dtype, on the model device.
         """
 
         if torch is None:  # pragma: no cover
             raise RuntimeError("PyTorch is not available.")
 
-        out_dtype = x_m.dtype if x_m.is_floating_point() else torch.float32
-        x = x_m.to(device=self.device, dtype=out_dtype)
-        delta_a = self.predict_residual_accel_torch(x_m)
+        out_dtype = x_m.dtype if x_m.is_floating_point() else self._torch_dtype
+        x = x_m.to(device=self.device, dtype=self._torch_dtype)
+        delta_a = self.predict_residual_accel_torch(x)
 
         if self.training_mode == "residual_potential":
             a_base = self._base_acceleration_torch(x)
