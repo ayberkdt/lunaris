@@ -4,7 +4,11 @@ Tests for the ST-LRPS surrogate AI/ML training-system upgrade.
 Covers the targeted production-quality changes:
   * TensorMemoryDataset returns torch tensors; generalized collate handles both backends
   * single-source-of-truth strong benchmark defaults
-  * Laplacian is off by default; diagnostic mode never enters the objective
+  * Laplacian: the strong benchmark default requests diagnostic Laplacian
+    (use_laplacian_regularization=True, laplacian_weight=2e-9,
+    laplacian_mode="diagnostic"); diagnostic mode reports metrics only and
+    never enters the optimizer objective; laplacian_mode="off" is the
+    explicit hard-disable
   * trainable vs diagnostic Laplacian gradient flow
   * radial decay + real spherical-harmonic input encodings (experimental)
   * encoding mutual exclusion

@@ -37,6 +37,10 @@ def _coerce_torch_dtype(dtype: Any, default: Any | None = None) -> Any:
     if dtype is None:
         return default if default is not None else torch.float32
     if isinstance(dtype, torch.dtype):
+        if dtype not in (torch.float32, torch.float64):
+            raise ValueError(
+                f"Unsupported surrogate runtime dtype {dtype!r}; expected float32 or float64."
+            )
         return dtype
     name = str(dtype).replace("torch.", "").strip().lower()
     if name == "float64":

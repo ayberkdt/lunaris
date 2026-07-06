@@ -35,6 +35,7 @@ import os
 import subprocess
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -264,6 +265,13 @@ class FrozenSearchConfig:
     mu_m3s2: float = 4.9028001224453001e12
     reference_radius_m: float = 1.7374e6
 
+    # Paper-safe / strict-frame guard: Moon-fixed gravity evaluated in an
+    # identity (frozen) integration frame is acceptable for smoke/exploratory
+    # runs, never for paper-grade claims. When either flag is set, backends
+    # whose frame provenance is identity/unresolved are rejected outright.
+    paper_safe: bool = False
+    strict_frame: bool = False
+
     def __post_init__(self) -> None:
         if int(self.n_samples) < 2:
             raise ValueError("n_samples must be >= 2")
@@ -286,6 +294,11 @@ class FrozenSearchConfig:
         if int(self.refine_top_n) > 0 and self.refinement is None:
             raise ValueError("refine_top_n > 0 requires a RefinementConfig")
 
+    @property
+    def strict_frame_required(self) -> bool:
+        """True when identity/unresolved rotation frames must be rejected."""
+        return bool(self.paper_safe) or bool(self.strict_frame)
+
     def classification_config(self) -> FrozenClassificationConfig:
         return FrozenClassificationConfig.for_mission_duration(
             float(self.validation_duration_s),
@@ -298,12 +311,65 @@ class FrozenSearchConfig:
         out["bounds"] = self.bounds.to_dict()
         out["guard"] = self.guard.to_dict()
         out["refinement"] = self.refinement.to_dict() if self.refinement else None
+        out["strict_frame_required"] = self.strict_frame_required
         return out
 
 
 # ---------------------------------------------------------------------------
-# R21 enforcement
+# R21 + strict-frame enforcement
 # ---------------------------------------------------------------------------
+
+#: Frame-provenance markers that mean "Moon-fixed gravity was evaluated
+#: without a real inertial->body rotation" (see search_backends._frame_provenance).
+_IDENTITY_FRAME_MARKERS = (
+    "identity",
+    "unresolved",
+    "gravity field fixed in the integration frame",
+)
+
+
+def is_identity_or_unresolved_frame(provenance: Mapping[str, Any] | None) -> bool:
+    """True when a backend's frame provenance is identity/unresolved.
+
+    Fail-closed: a missing provenance block or a missing/empty ``frame`` entry
+    counts as unresolved, because an unlabeled frame can never support a
+    paper-grade Moon-fixed gravity claim.
+    """
+    if not isinstance(provenance, Mapping):
+        return True
+    frame = str(provenance.get("frame", "")).strip().lower()
+    if not frame:
+        return True
+    return any(marker in frame for marker in _IDENTITY_FRAME_MARKERS)
+
+
+def enforce_strict_frame_rule(
+    provenance: Mapping[str, Any] | None,
+    *,
+    strict_frame_required: bool,
+    role: str,
+) -> None:
+    """Refuse identity/unresolved rotation frames under paper_safe/strict_frame.
+
+    Raises ``RuntimeError`` when *strict_frame_required* is true and the
+    backend's frame provenance is identity, unresolved, or absent. Called at
+    pipeline construction (fail-fast) and again before stage-2/3 persistence
+    (belt: a manually constructed pipeline or edited manifest must not survive
+    the write).
+    """
+    if not strict_frame_required:
+        return
+    if is_identity_or_unresolved_frame(provenance):
+        frame = (
+            provenance.get("frame") if isinstance(provenance, Mapping) else None
+        )
+        raise RuntimeError(
+            f"paper_safe/strict_frame forbids the {role} backend's rotation frame "
+            f"provenance {frame!r}: Moon-fixed gravity evaluated in an identity/"
+            "unresolved integration frame can never back a paper-grade frozen-orbit "
+            "claim. Wire an ephemeris manager (moon_fixed_slerp) or drop the "
+            "paper_safe/strict_frame flag for exploratory runs."
+        )
 
 
 def enforce_classical_validation_rule(record: dict[str, Any]) -> None:
@@ -506,6 +572,25 @@ class FrozenSearchPipeline:
         self.screening = screening
         self.validation = validation
         self.sensitivity_validations = list(sensitivity_validations or [])
+        # Paper-safe / strict-frame guard: fail at construction, before any
+        # stage file is written (belt checks re-run at stage-2/3 persistence).
+        strict = config.strict_frame_required
+        enforce_strict_frame_rule(
+            getattr(screening, "provenance", None),
+            strict_frame_required=strict,
+            role="screening",
+        )
+        enforce_strict_frame_rule(
+            getattr(validation, "provenance", None),
+            strict_frame_required=strict,
+            role="validation",
+        )
+        for extra in self.sensitivity_validations:
+            enforce_strict_frame_rule(
+                getattr(extra, "provenance", None),
+                strict_frame_required=strict,
+                role=f"sensitivity validation ({getattr(extra, 'backend_label', '?')})",
+            )
         self.out_dir = Path(out_dir)
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.run_id = uuid.uuid4().hex[:12]
@@ -781,6 +866,13 @@ class FrozenSearchPipeline:
             }
             candidates.append(record)
 
+        # Strict-frame belt: screened candidates from an identity/unresolved
+        # frame must not be persisted under paper_safe/strict_frame.
+        enforce_strict_frame_rule(
+            getattr(self.screening, "provenance", None),
+            strict_frame_required=self.config.strict_frame_required,
+            role="screening",
+        )
         payload = {
             "run_id": manifest["run_id"],
             "score_definition": SCORE_DEFINITION,
@@ -897,6 +989,13 @@ class FrozenSearchPipeline:
             out["sensitivity"] = sensitivity
             out["validation_stage"] = "validated"
             enforce_classical_validation_rule(out)  # R21 choke point
+            # Strict-frame belt: a validated status must never be written from
+            # an identity/unresolved validation frame under paper_safe.
+            enforce_strict_frame_rule(
+                getattr(self.validation, "provenance", None),
+                strict_frame_required=self.config.strict_frame_required,
+                role="validation",
+            )
             validated.append(out)
 
         payload = {
@@ -1061,5 +1160,7 @@ __all__ = [
     "ValidationPropagator",
     "elements_to_states",
     "enforce_classical_validation_rule",
+    "enforce_strict_frame_rule",
+    "is_identity_or_unresolved_frame",
     "sobol_element_samples",
 ]

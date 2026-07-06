@@ -23,8 +23,18 @@ Capability matrix
 Notes
 -----
 - GPU_ST_LRPS uses PyTorch fixed-step RK4 with the surrogate model on CUDA.
-  It currently supports gravity only (no third-body/SRP/relativity on this path).
-  Those perturbations force a CPU fallback.
+  Two request variants share this runtime (R03):
+
+  * ``gpu_st_lrps_potential`` — surrogate lunar gravity only.
+  * ``gpu_st_lrps_third_body`` — surrogate lunar gravity plus analytic
+    vectorized Sun/Earth third-body (Battin F(q), Catmull-Rom ephemeris
+    interpolation). ``auto``/mission requests upgrade to this narrow hybrid
+    exactly when Earth/Sun third-body is the only extra active force.
+
+  SRP, tides, relativity, albedo, thermal, and every other perturbation
+  remain unsupported on the ST-LRPS GPU path: they force an explicit,
+  recorded CPU fallback, or a hard error when fallback is forbidden
+  (paper_safe / strict_backend / benchmark mode / ``sh_fallback_policy='error'``).
 - GPU_CLASSIC_SH uses the existing Numba CUDA RK4 kernel (``numba_cuda_sh``).
   Its degree-24 ceiling is a thread-local kernel-workspace limit, not a physical
   one. Requested degrees above 24 are never clipped.

@@ -118,6 +118,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="UTC start date for ephemeris-wired ST-LRPS/third-body runs",
     )
+    parser.add_argument(
+        "--paper-safe",
+        action="store_true",
+        help="reject identity/unresolved rotation-frame backends (paper-grade runs)",
+    )
+    parser.add_argument(
+        "--strict-frame",
+        action="store_true",
+        help="same frame guard as --paper-safe without the paper-safe label",
+    )
     parser.add_argument("--refine-top-n", type=int, default=0,
                         help="stage-4 Nelder-Mead refinement for the top N candidates (0 = off)")
     parser.add_argument("--refine-max-iterations", type=int, default=60)
@@ -217,6 +227,8 @@ def main(argv: list[str] | None = None) -> int:
         perilune_safety_min_m=float(args.perilune_safety_km) * 1_000.0,
         refine_top_n=int(args.refine_top_n),
         refinement=refinement,
+        paper_safe=bool(args.paper_safe),
+        strict_frame=bool(args.strict_frame),
     )
 
     ephem_manager = None
