@@ -16,7 +16,7 @@ def _state_to_array(state_like: Any) -> np.ndarray:
     """
     Convert the configured nominal state to a plain row-major float64 vector.
 
-    MC sampling works in Cartesian state space, so we accept the same state
+    batch sampling works in Cartesian state space, so we accept the same state
     container styles as the single-run pipeline: ``InitialState``,
     ``OrbitState``-like objects exposing ``.y``, or raw array-likes.
     """
@@ -38,10 +38,10 @@ def _state_to_array(state_like: Any) -> np.ndarray:
 
 def _surface_topography_requested(surface_provider: Any, topo_grid: Any) -> bool:
     """
-    Return True when the MC run needs Moon-fixed ephemeris because terrain is active.
+    Return True when the batch run needs Moon-fixed ephemeris because terrain is active.
 
     Topography can influence both surface-force sampling and impact detection, so
-    the MC bootstrap mirrors the main runner by treating terrain availability as
+    the batch bootstrap mirrors the main runner by treating terrain availability as
     an ephemeris requirement even when third-body vectors are disabled.
     """
 

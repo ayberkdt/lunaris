@@ -635,7 +635,7 @@ if _HAS_QT:
         for k, v in d.items():
             if isinstance(v, dict):
                 for k2, v2 in v.items():
-                    if not isinstance(v2, (dict, list)):
+                    if not isinstance(v2, dict | list):
                         out[f"{k}_{k2}"] = v2
             elif not isinstance(v, list):
                 out[k] = v

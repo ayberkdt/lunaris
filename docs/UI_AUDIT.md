@@ -124,7 +124,7 @@ controls.
 - Widget smoke tests for all shared primitives.
 - Console buffering, filtering, collapse, and counter tests.
 - Offscreen screenshots at 1280x860 and 1024x768.
-- Existing launcher, page, session, command-builder, and batch/Monte Carlo tests remain
+- Existing launcher, page, session, command-builder, and batch propagation tests remain
   green.
 
 ## Phase 2 Follow-up

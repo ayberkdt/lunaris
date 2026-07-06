@@ -146,10 +146,10 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
     multi_agg = multi["agg"]
     multi_rt = multi["rt"]
 
-    sh20_per = _model_frame(multi_per, "GPU_SH20_RK4")
-    sh60_per = _model_frame(multi_per, "GPU_SH60_RK4")
-    sh20_agg = multi_agg[multi_agg["model"] == "GPU_SH20_RK4"].iloc[0]
-    sh60_agg = multi_agg[multi_agg["model"] == "GPU_SH60_RK4"].iloc[0]
+    sh20_per = _model_frame(multi_per, "NUMBA_CUDA_SH20_RK4")
+    sh60_per = _model_frame(multi_per, "NUMBA_CUDA_SH60_RK4")
+    sh20_agg = multi_agg[multi_agg["model"] == "NUMBA_CUDA_SH20_RK4"].iloc[0]
+    sh60_agg = multi_agg[multi_agg["model"] == "NUMBA_CUDA_SH60_RK4"].iloc[0]
     st_agg_row = st_agg[st_agg["model"] == "GPU_ST_LRPS_RK4"]
     st_agg_row = st_agg_row.iloc[0] if not st_agg_row.empty else st_agg.iloc[0]
 
@@ -164,11 +164,11 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
     # ---- Figure 1: speed-accuracy tradeoff ----------------------------
     print("Fig 1: Speed-accuracy tradeoff")
     models = {
-        "SH20": {"t": multi_rt[multi_rt["model"] == "GPU_SH20_RK4"]["total_runtime_s"].iloc[0],
+        "SH20": {"t": multi_rt[multi_rt["model"] == "NUMBA_CUDA_SH20_RK4"]["total_runtime_s"].iloc[0],
                  "err": sh20_agg["median_rms_pos_err_km"] * KM2M},
         "ST-LRPS": {"t": st_rt["total_runtime_s"].iloc[0],
                     "err": st_agg_row["median_rms_pos_err_km"] * KM2M},
-        "SH60": {"t": multi_rt[multi_rt["model"] == "GPU_SH60_RK4"]["total_runtime_s"].iloc[0],
+        "SH60": {"t": multi_rt[multi_rt["model"] == "NUMBA_CUDA_SH60_RK4"]["total_runtime_s"].iloc[0],
                  "err": sh60_agg["median_rms_pos_err_km"] * KM2M},
     }
     fig1, ax = plt.subplots(figsize=(3.5, 2.8))
@@ -302,8 +302,8 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
 
     # ---- LaTeX summary table ------------------------------------------
     print("Table: validation summary (LaTeX)")
-    sh20_rt = multi_rt[multi_rt["model"] == "GPU_SH20_RK4"].iloc[0]
-    sh60_rt = multi_rt[multi_rt["model"] == "GPU_SH60_RK4"].iloc[0]
+    sh20_rt = multi_rt[multi_rt["model"] == "NUMBA_CUDA_SH20_RK4"].iloc[0]
+    sh60_rt = multi_rt[multi_rt["model"] == "NUMBA_CUDA_SH60_RK4"].iloc[0]
     st_rt_row = st_rt.iloc[0]
     denom = float(sh60_rt["total_runtime_s"]) or 1.0
     rows = [

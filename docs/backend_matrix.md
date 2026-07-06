@@ -1,12 +1,17 @@
 # Backend Capability Matrix
 
-Last verified: 2026-06-27
+Last verified: 2026-07-05
 
-This document summarizes the batch/Monte Carlo backend capability surface after
+> The former `gpu_st_lrps_direct` backend (direct residual-acceleration ST-LRPS
+> artifacts) was removed from main and archived in the
+> `experimental/force-direct-archive` branch. The supported CUDA ST-LRPS
+> backends are the conservative potential path and the third-body hybrid.
+
+This document summarizes the batch propagation backend capability surface after
 the modular refactor. The executable source of truth remains the code:
 
 - Capability registry: `src/lunaris/core/backend_capabilities.py`
-- Selection policy: `src/lunaris/core/mc_backend_policy.py`
+- Selection policy: `src/lunaris/batch/backend_policy.py`
 - Batch package adapter: `src/lunaris/batch/backend_policy.py`
 
 Do not update this table without checking those modules and the backend policy
@@ -22,30 +27,26 @@ behavior.
 | `torch_cuda_sh` | classic SH | CUDA | fixed-step RK4 | coefficient file / VRAM / batch | float32, float64 | SH only | High-degree GPU SH route. Any added perturbation causes an explicit recorded fallback. |
 | `torch_cpu_sh` | classic SH | CPU | fixed-step RK4 | coefficient file / memory | float32, float64 | SH only | CUDA-free validation route for the torch SH evaluator. |
 | `gpu_st_lrps_potential` | ST-LRPS | CUDA | fixed-step RK4 | surrogate artifact | float32, float64 | ST-LRPS gravity only | Uses potential-autograd runtime artifacts. Added perturbations fall back to CPU. |
-| `gpu_st_lrps_direct` | ST-LRPS | CUDA | fixed-step RK4 | surrogate artifact | float32, float64 | ST-LRPS gravity only | Uses direct residual-acceleration artifacts. No scalar-potential fallback is allowed. |
+| `gpu_st_lrps_third_body` | ST-LRPS | CUDA | fixed-step RK4 | surrogate artifact | float32, float64 | ST-LRPS gravity plus Sun/Earth third-body | Uses potential-autograd runtime artifacts plus analytic vectorized Battin F(q) third-body terms. Other perturbations fall back to CPU. |
 | `cpu_st_lrps` | ST-LRPS | CPU | adaptive DOP853 | surrogate artifact | float64 | ST-LRPS gravity plus CPU perturbations | CPU path used when ST-LRPS GPU is unavailable or incompatible with requested physics. |
-| `auto` | meta | auto | resolved at runtime | resolved at runtime | resolved at runtime | resolved at runtime | Request name only; `resolve_mc_backend_policy()` picks a concrete backend. |
-
-## Aliases
-
-| Alias | Resolves to | Reason |
-|---|---|---|
-| `gpu_sh` | `numba_cuda_sh` | Historical public name retained for compatibility. Provenance should record the resolved backend. |
+| `auto` | meta | auto | resolved at runtime | resolved at runtime | resolved at runtime | resolved at runtime | Request name only; `resolve_batch_backend_policy()` picks a concrete backend. |
 
 ## Selection Rules
 
 Classic SH selection is centralized in `select_classic_sh_backend()` and then
-consumed by `resolve_mc_backend_policy()`.
+consumed by `resolve_batch_backend_policy()`.
 
 - Explicit `cpu_sh` always selects CPU.
 - Explicit `torch_cuda_sh` requires PyTorch CUDA and SH-only physics.
 - Explicit `numba_cuda_sh` requires Numba CUDA, degree <= 24, and physics
   supported by the Numba CUDA kernel.
 - If `numba_cuda_sh` is requested above degree 24, the
-  `gpu_sh_fallback_policy` controls whether the resolver errors, tries
+  `sh_fallback_policy` controls whether the resolver errors, tries
   `torch_cuda_sh`, or falls back to CPU.
 - `auto` prefers compatible GPU backends when `use_gpu=True`; high-degree
   classic SH tries `torch_cuda_sh` before CPU.
+- ST-LRPS `auto` upgrades to `gpu_st_lrps_third_body` only when the active
+  extras are Sun/Earth third-body and PyTorch CUDA is available.
 - GPU paths never silently disable requested perturbations. Unsupported physics
   produces either a hard error or a recorded fallback.
 
@@ -55,8 +56,8 @@ Batch archives should keep these fields aligned with the backend plan:
 
 | Field | Meaning |
 |---|---|
-| `requested_mc_backend` | User/config request before alias resolution and fallback. |
-| `actual_mc_backend` | Concrete backend used for propagation. |
+| `requested_batch_backend` | User/config request before fallback. |
+| `actual_batch_backend` | Concrete backend used for propagation. |
 | `requested_sh_degree` | Requested classic-SH degree; never clipped silently. |
 | `actual_sh_degree` | Degree actually evaluated by the selected backend, when applicable. |
 | `fallback_applied` | Whether backend selection substituted a different backend. |

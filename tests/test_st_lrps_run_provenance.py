@@ -50,6 +50,10 @@ def _resolved_cfg(*, determinism=_DETERMINISM, with_split=True):
     dataset_meta = tiny_dataset_meta()
     if with_split:
         dataset_meta["split_manifest"] = dict(_SPLIT_MANIFEST)
+    else:
+        # tiny_dataset_meta now ships a split_manifest by default (paper-safe
+        # complete fixture); this test exercises the split-free legacy path.
+        dataset_meta.pop("split_manifest", None)
     return build_resolved_config(
         cfg, dataset_meta, model, tiny_scaler(), arch_sig, determinism=determinism
     )
@@ -61,10 +65,10 @@ def test_build_run_provenance_has_valid_hashes_and_kind() -> None:
         artifact_contract=contract,
         split_manifest=_SPLIT_MANIFEST,
         determinism=_DETERMINISM,
-        runtime_model_kind="force_direct",
+        runtime_model_kind="potential_autograd",
     )
     assert prov["provenance_version"] == ST_LRPS_PROVENANCE_VERSION
-    assert prov["model_kind"] == "force_direct"
+    assert prov["model_kind"] == "potential_autograd"
     assert prov["determinism"] == _DETERMINISM
     assert _is_valid_sha256(prov["artifact_contract_sha256"])
     assert _is_valid_sha256(prov["split_manifest_sha256"])

@@ -161,27 +161,27 @@ def test_build_command_targets_main_with_canonical_flags() -> None:
         assert token not in preview
 
 
-def test_build_mc_command_targets_runner_with_canonical_flags() -> None:
-    from lunaris.ui.core.command_builder import build_command_preview, build_mc_command
+def test_build_batch_command_targets_runner_with_canonical_flags() -> None:
+    from lunaris.ui.core.command_builder import build_batch_command, build_command_preview
 
-    cmd = build_mc_command(
+    cmd = build_batch_command(
         python_executable="python",
-        mc_runner_path=Path("mc_runner.py"),
+        batch_runner_path=Path("batch_runner.py"),
         orbit=_orbit(),
         forces=_forces(),
         propagation=_propagation(),
-        mc_data={"n_samples": 16, "gravity_mode_override": "follow_mission"},
+        batch_data={"n_samples": 16, "gravity_mode_override": "follow_mission"},
         data_files=_data_files(),
         gravity_cfg=_gravity_cfg(),
         solver_cfg=_solver_cfg(),
         spacecraft_cfg=_spacecraft_cfg(),
     )
 
-    assert cmd[1] == "mc_runner.py"
+    assert cmd[1] == "batch_runner.py"
     assert "--gravity-backend" in cmd
     assert "--n-samples" in cmd
     assert "--sampling-method" in cmd
-    assert "--mc-gravity-mode" in cmd
+    assert "--batch-gravity-mode" in cmd
 
     preview = build_command_preview(cmd)
     for token in STALE_TOKENS:

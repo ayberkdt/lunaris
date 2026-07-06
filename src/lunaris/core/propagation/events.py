@@ -50,6 +50,9 @@ def _build_r_i_to_bf_from_rot_table(
         return None
 
     def _try_get_dt_and_qtab() -> tuple[float, np.ndarray] | None:
+        # R29b-justified: capability probe over heterogeneous ephemeris shapes;
+        # returning None only disables the *optional* terrain/telemetry rotation
+        # helper, never the propagation itself.
         # Tables-style (strict)
         if hasattr(eph, "tables"):
 
@@ -131,6 +134,9 @@ def _wrap_event_first6(ev: Callable[[float, np.ndarray], float]) -> Callable[[fl
 def _get_event_cfg(cfg: Any) -> Any:
     return getattr(cfg, "events", None)
 
+# R29b-justified (getter family below): config objects are polymorphic
+# (dataclass / SimpleNamespace / UI adapters); a non-coercible attribute means
+# "not configured" and falls back to the documented default.
 def _get_cfg_bool(cfg: Any, name: str, default: bool) -> bool:
     evc = _get_event_cfg(cfg)
     if evc is not None and hasattr(evc, name):
@@ -197,6 +203,9 @@ def _terminal_event_endpoint(
         try:
             t_ev = np.asarray(sol.t_events[i], dtype=np.float64).reshape(-1)
         except Exception:
+            # R29b-justified: a malformed per-event array from the solver means
+            # "this event did not fire usably"; other terminal events are still
+            # considered, and no-event runs keep their full trajectory.
             continue
         if t_ev.size == 0 or i >= len(y_events_raw):
             continue
@@ -204,6 +213,7 @@ def _terminal_event_endpoint(
         try:
             y_ev = np.asarray(y_events_raw[i], dtype=np.float64)
         except Exception:
+            # R29b-justified: same rationale as t_events above.
             continue
         if y_ev.size == 0:
             continue

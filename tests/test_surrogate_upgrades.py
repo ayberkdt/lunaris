@@ -3,7 +3,7 @@ Tests for the ST-LRPS surrogate AI/ML training-system upgrade.
 
 Covers the targeted production-quality changes:
   * TensorMemoryDataset returns torch tensors; generalized collate handles both backends
-  * single-source-of-truth production defaults
+  * single-source-of-truth strong benchmark defaults
   * Laplacian is off by default; diagnostic mode never enters the objective
   * trainable vs diagnostic Laplacian gradient flow
   * radial decay + real spherical-harmonic input encodings (experimental)
@@ -178,18 +178,22 @@ def test_no_legacy_defaults_flag_exists(tmp_path, monkeypatch):
 
 def test_current_defaults_are_single_source_of_truth():
     cfg = TrainConfig(data="x.h5", out="o")
+    assert cfg.epochs == 400
     assert cfg.depth == 6
+    assert cfg.model_preset == "recommended_physical_radial_decay"
     assert cfg.use_residual_blocks is True
     assert cfg.n_bands == 3
-    assert cfg.accel_ramp_epochs == 40
-    assert cfg.accel_min_factor == pytest.approx(0.15)
-    assert cfg.direction_loss_weight == pytest.approx(0.20)
-    assert cfg.direction_loss_start_epoch == 10
-    assert cfg.direction_loss_floor_abs == pytest.approx(1e-7)
+    assert cfg.potential_only_epochs == 10
+    assert cfg.accel_ramp_epochs == 80
+    assert cfg.accel_min_factor == pytest.approx(0.05)
+    assert cfg.direction_loss_weight == pytest.approx(0.10)
+    assert cfg.direction_loss_start_epoch == 30
+    assert cfg.direction_loss_ramp_epochs == 50
+    assert cfg.direction_loss_floor_abs == pytest.approx(3e-6)
     assert cfg.use_altitude_balanced_loss is True
     assert cfg.use_radial_cross_loss is True
     assert cfg.radial_loss_weight == pytest.approx(0.05)
-    assert cfg.cross_loss_weight == pytest.approx(0.10)
+    assert cfg.cross_loss_weight == pytest.approx(0.05)
     assert cfg.best_metric == "hybrid"
     assert cfg.hybrid_direction_alpha == pytest.approx(0.30)
     assert cfg.auto_preload_mb == pytest.approx(2048.0)
@@ -198,8 +202,10 @@ def test_current_defaults_are_single_source_of_truth():
     # Experimental encodings off by default.
     assert cfg.use_radial_decay_encoding is False
     assert cfg.use_real_sh_basis is False
-    # Laplacian off by default.
-    assert cfg.use_laplacian_regularization is False
+    # Strong benchmark profile uses a sparse Laplacian penalty.
+    assert cfg.use_laplacian_regularization is True
+    assert cfg.laplacian_weight == pytest.approx(2e-9)
+    assert cfg.laplacian_every_n_batches == 100
     assert cfg.collocation_laplacian_weight == pytest.approx(0.0)
 
 
@@ -238,9 +244,11 @@ def test_laplacian_train_mode_has_gradients():
 # Item 3 / 4 — Laplacian gating and objective purity
 # ---------------------------------------------------------------------------
 
-def test_laplacian_not_requested_by_default():
+def test_laplacian_requested_by_strong_benchmark_default():
     cfg = TrainConfig(data="x.h5", out="o")
-    assert _laplacian_requested(cfg) is False
+    assert _laplacian_requested(cfg) is True
+    # laplacian_mode="off" is a hard-disable that wins even over stale nonzero
+    # weights / compatibility flags.
     assert _laplacian_requested(TrainConfig(
         data="x",
         out="o",

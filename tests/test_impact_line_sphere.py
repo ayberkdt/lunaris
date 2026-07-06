@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 torch = pytest.importorskip("torch")
+pytestmark = pytest.mark.requires_torch
 
 from lunaris.core.torch_frame import (  # noqa: E402
     line_sphere_alpha,

@@ -45,6 +45,14 @@ class ColorTokens:
     secondary_hov: str = "#4DE8C4"
     secondary_dim: str = "rgba(21,214,166,0.16)"
 
+    # A third widget-level accent (violet) used to give navigation sections
+    # distinct identities without leaning on the semantic status colors. It is
+    # deliberately high-value on the graphite canvas (6.1:1 as text on bg_shell)
+    # so a section label reads clearly; ``tertiary_dim`` is the tinted active fill.
+    tertiary: str = "#AE9BFF"
+    tertiary_hov: str = "#C6B8FF"
+    tertiary_dim: str = "rgba(174,155,255,0.18)"
+
     # ``success`` is a true green, deliberately separated in hue from the
     # ``secondary`` teal (#15D6A6) above. They previously sat ~1-8 per channel
     # apart (#14D49E vs #15D6A6) so a "completed" status and a comparison data

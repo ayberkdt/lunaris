@@ -49,6 +49,19 @@ def build_app_stylesheet(
     acc_35 = with_alpha(acc, 0.35)
     acc_40 = with_alpha(acc, 0.40)
 
+    # Per-section navigation accents. Each sidebar group gets its own hue so the
+    # workspace areas read as distinct zones (Data = teal, Training = blue,
+    # Analysis = violet) instead of one monochrome blue rail.
+    sec_data = theme["secondary"]
+    sec_data_wash = with_alpha(sec_data, 0.09)
+    sec_data_fill = with_alpha(sec_data, 0.16)
+    sec_train = theme["accent"]
+    sec_train_wash = with_alpha(sec_train, 0.09)
+    sec_train_fill = acc_dim
+    sec_analysis = theme["tertiary"]
+    sec_analysis_wash = with_alpha(sec_analysis, 0.09)
+    sec_analysis_fill = theme["tertiary_dim"]
+
     # Semantic badge tints.
     info_bg, info_bd = with_alpha(theme["accent"], 0.12), with_alpha(theme["accent"], 0.35)
     ok_bg, ok_bd = with_alpha(theme["success"], 0.12), with_alpha(theme["success"], 0.32)
@@ -286,25 +299,41 @@ def build_app_stylesheet(
             border: 1px solid {theme['border_soft']};
             border-radius: 12px;
         }}
+        /* Section labels carry a colored rail so each workspace zone is
+           immediately distinguishable and the sidebar feels structured. */
         QLabel#navSectionLabel {{
             color: {theme['fg_muted']};
             font-size: 9pt;
-            font-weight: 700;
-            padding: 10px 10px 3px 12px;
+            font-weight: 800;
+            letter-spacing: 1.4px;
+            padding: 4px 10px 4px 9px;
+            margin-top: 6px;
+            border-left: 3px solid {theme['border_strong']};
+        }}
+        QLabel#navSectionLabel[section="data"] {{
+            color: {sec_data}; border-left-color: {sec_data};
+        }}
+        QLabel#navSectionLabel[section="train"] {{
+            color: {sec_train}; border-left-color: {sec_train};
+        }}
+        QLabel#navSectionLabel[section="analysis"] {{
+            color: {sec_analysis}; border-left-color: {sec_analysis};
         }}
         QFrame#navGroup {{
-            background: {acc_06};
+            background: {with_alpha(theme['bg_card'], 0.35)};
             border: 1px solid {theme['border_soft']};
             border-radius: 10px;
         }}
         QPushButton#navButton {{
             text-align: left;
-            color: {theme['fg_muted']};
+            color: {theme['fg_soft']};
             background: transparent;
             border: 1px solid transparent;
             border-left: 3px solid transparent;
+            border-radius: 8px;
             min-height: 38px;
             padding: 7px 12px;
+            font-weight: 500;
         }}
         QPushButton#navButton:hover {{
             color: {theme['fg_main']};
@@ -314,6 +343,20 @@ def build_app_stylesheet(
             color: {theme['fg_main']};
             background: {acc_dim};
             border-left: 3px solid {theme['accent']};
+            font-weight: 600;
+        }}
+        /* Per-section active + hover accents (override the generic blue rail). */
+        QPushButton#navButton[section="data"]:hover {{ background: {sec_data_wash}; }}
+        QPushButton#navButton[section="data"]:checked {{
+            background: {sec_data_fill}; border-left-color: {sec_data};
+        }}
+        QPushButton#navButton[section="train"]:hover {{ background: {sec_train_wash}; }}
+        QPushButton#navButton[section="train"]:checked {{
+            background: {sec_train_fill}; border-left-color: {sec_train};
+        }}
+        QPushButton#navButton[section="analysis"]:hover {{ background: {sec_analysis_wash}; }}
+        QPushButton#navButton[section="analysis"]:checked {{
+            background: {sec_analysis_fill}; border-left-color: {sec_analysis};
         }}
 
         /* INPUTS — clean, legible, subtle states */

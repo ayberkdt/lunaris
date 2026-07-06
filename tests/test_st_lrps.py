@@ -692,6 +692,42 @@ def test_laplacian_train_backward_changes_params() -> None:
     print("[PASS] test_laplacian_train_backward_changes_params")
 
 
+def test_collocation_laplacian_physical_units() -> None:
+    """R25: the collocation Laplacian must be reported in PHYSICAL units, matching
+    the in-batch penalty. For U_scaled = Σ x_scaled² the scaled Laplacian is exactly
+    6 (Hessian = 2I, Rademacher vᵀ(2I)v = 6), so after the chain-rule factor the
+    loss must equal (6·u_scale/x_scale²)². Before the fix it was the un-scaled 6²=36,
+    off by (u_scale/x_scale²)²."""
+    try:
+        from lunaris.surrogate.st_lrps.shared.scaling import IsometricScaleParams, ScalerPack
+        from lunaris.surrogate.st_lrps.training.losses import collocation_laplacian_loss
+    except ImportError:
+        print("[SKIP] test_collocation_laplacian_physical_units"); return
+    import torch
+
+    class _Quad(torch.nn.Module):
+        def forward(self, x: torch.Tensor) -> torch.Tensor:  # U = Σ x²
+            return (x ** 2).sum(dim=-1, keepdim=True)
+
+    x_scale, u_scale = 2.0e6, 3.0
+    sp = ScalerPack(
+        x=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=x_scale),
+        u=IsometricScaleParams(mean=[0.0], scale=u_scale),
+        a=IsometricScaleParams(mean=[0.0, 0.0, 0.0], scale=1e-3),
+    ).to_tensors(torch.device("cpu"), torch.float32)
+    loss = collocation_laplacian_loss(
+        _Quad(), sp, r_min_m=1.8e6, r_max_m=1.9e6, n_points=64,
+        device=torch.device("cpu"), n_hutchinson=4, mode="diagnostic",
+    )
+    expected = (6.0 * u_scale / (x_scale ** 2)) ** 2
+    got = float(loss)
+    assert abs(got - expected) <= 1e-4 * expected, (
+        f"collocation Laplacian not in physical units: got {got:.3e}, expected {expected:.3e} "
+        f"(un-scaled would be {36.0:.3e})"
+    )
+    print("[PASS] test_collocation_laplacian_physical_units")
+
+
 def test_cli_defaults_match_trainconfig_defaults() -> None:
     """Key CLI parser defaults must match TrainConfig field defaults."""
     import dataclasses

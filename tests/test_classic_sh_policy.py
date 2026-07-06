@@ -3,14 +3,16 @@ Degree-aware classic-SH backend selection policy (task §8).
 
 These test the pure decision function ``select_classic_sh_backend`` — the layer
 that chooses between numba_cuda_sh / torch_cuda_sh / cpu_sh — without touching
-the live MC runtime. The key guarantees: degree > 24 is routed to torch before
+the live batch runtime. The key guarantees: degree > 24 is routed to torch before
 CPU, the requested degree is never silently clipped, and explicit requests obey
 the fallback policy.
 """
 
 from __future__ import annotations
 
-from lunaris.core.mc_backend_policy import select_classic_sh_backend
+import pytest
+
+from lunaris.batch.backend_policy import select_classic_sh_backend
 
 
 def _sel(**kw):
@@ -106,7 +108,6 @@ def test_explicit_numba_high_degree_cpu_policy_uses_cpu() -> None:
     assert d.backend == "cpu_sh"
 
 
-def test_gpu_sh_alias_resolves_in_policy() -> None:
-    # Legacy alias request behaves exactly like numba_cuda_sh.
-    d = _sel(requested_backend="gpu_sh", requested_degree=20, numba_cuda_available=True)
-    assert d.backend == "numba_cuda_sh"
+def test_unknown_classic_sh_backend_is_not_accepted_in_policy() -> None:
+    with pytest.raises(ValueError, match="requested_backend"):
+        _sel(requested_backend="unknown_backend", requested_degree=20, numba_cuda_available=True)

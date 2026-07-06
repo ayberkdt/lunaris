@@ -13,7 +13,6 @@ propagator physically wrong (but error-free) accelerations:
 - output shapes/types for single point and batch,
 - finite-input rejection (NaN / Inf),
 - domain reporting + ``strict_domain`` hard-fail outside the trained shell,
-- the ``force_direct`` runtime class being available for direct artifacts,
 - the residual SH-baseline requiring an explicit ``base_accel_fn``,
 - the point-mass fallback only firing when the target contract allows it.
 """
@@ -30,7 +29,6 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import (  # noqa: E402
     R_MOON_SI,
 )
 from lunaris.surrogate.st_lrps.runtime.force_model import (  # noqa: E402
-    DirectForceRuntime,
     SurrogateForceModel,
 )
 from lunaris.surrogate.st_lrps.shared.scaling import (  # noqa: E402
@@ -172,10 +170,6 @@ def test_non_strict_domain_still_returns_prediction():
 # =============================================================================
 # Runtime-kind & baseline contracts
 # =============================================================================
-
-def test_force_direct_runtime_class_is_available():
-    assert DirectForceRuntime.runtime_model_kind == "force_direct"
-
 
 def test_residual_sh_baseline_requires_base_accel_fn():
     # residual / SH baseline through degree 20 -> point-mass fallback is NOT valid.

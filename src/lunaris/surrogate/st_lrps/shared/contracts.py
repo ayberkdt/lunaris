@@ -27,10 +27,12 @@ LUNAR_BODY_ALIASES = frozenset({"moon", "lunar", "selene"})
 TARGET_MODES = frozenset({"residual", "full"})
 BASELINE_KINDS = frozenset({"none", "point_mass", "spherical_harmonics"})
 ARTIFACT_CONTRACT_SCHEMA_VERSION = 1
-RUNTIME_MODEL_KINDS = frozenset({"potential_autograd", "force_direct"})
-PREDICTION_KINDS = frozenset(
-    {"potential", "residual_potential", "force", "residual_force", "acceleration", "residual_acceleration", "total"}
-)
+RUNTIME_MODEL_KINDS = frozenset({"potential_autograd"})
+# Model kinds that once existed on main but are no longer loadable. Kept as an
+# explicit set so old artifacts are rejected with a pointer to the archive
+# instead of a generic "unknown kind" error.
+ARCHIVED_RUNTIME_MODEL_KINDS = frozenset({"force_direct"})
+PREDICTION_KINDS = frozenset({"potential", "residual_potential", "total"})
 
 
 class ArtifactContractError(RuntimeError):
@@ -414,10 +416,16 @@ class ArtifactContract:
             errors.append("target_mode must be 'residual' or 'full'")
         if self.baseline_kind not in BASELINE_KINDS:
             errors.append(f"baseline_kind must be one of {sorted(BASELINE_KINDS)}")
-        if self.runtime_model_kind not in RUNTIME_MODEL_KINDS:
+        if self.runtime_model_kind in ARCHIVED_RUNTIME_MODEL_KINDS:
+            errors.append(
+                f"runtime_model_kind={self.runtime_model_kind!r} is archived in the "
+                "experimental/force-direct-archive branch and cannot be loaded on main; "
+                "only 'potential_autograd' artifacts are supported"
+            )
+        elif self.runtime_model_kind not in RUNTIME_MODEL_KINDS:
             errors.append(
                 f"unsupported runtime_model_kind={self.runtime_model_kind!r}; "
-                "expected 'potential_autograd' or 'force_direct'"
+                "expected 'potential_autograd'"
             )
         if self.prediction_kind not in PREDICTION_KINDS:
             errors.append(f"unsupported prediction_kind={self.prediction_kind!r}")
@@ -428,11 +436,6 @@ class ArtifactContract:
                 errors.append("potential_autograd artifacts must have output_dim=1")
             if self.prediction_kind not in {"potential", "residual_potential", "total"}:
                 errors.append("potential_autograd artifacts must predict scalar potential targets")
-        if self.runtime_model_kind == "force_direct":
-            if self.output_dim != 3:
-                errors.append("force_direct artifacts must have output_dim=3")
-            if self.prediction_kind not in {"force", "residual_force", "acceleration", "residual_acceleration"}:
-                errors.append("force_direct artifacts must predict residual acceleration, not scalar potential")
         if self.target_mode == "residual":
             if self.baseline_kind == "none":
                 errors.append("residual contracts require a non-none baseline_kind")
@@ -491,10 +494,7 @@ class ArtifactContract:
             input_encoding=_mapping(payload.get("input_encoding")),
             scaler_contract=_mapping(payload.get("scaler_contract")),
             dataset_contract=_mapping(payload.get("dataset_contract")),
-            output_dim=_as_int(
-                payload.get("output_dim"),
-                3 if payload.get("runtime_model_kind") == "force_direct" else 1,
-            ),
+            output_dim=_as_int(payload.get("output_dim"), 1),
             architecture_signature=payload.get("architecture_signature"),
         )
 
@@ -546,10 +546,10 @@ class ArtifactContract:
                 "provenance": {},
             }
         runtime_kind = config.get("runtime_model_kind", "potential_autograd")
-        output_dim = _as_int(config.get("output_dim"), 3 if runtime_kind == "force_direct" else 1)
+        output_dim = _as_int(config.get("output_dim"), 1)
         prediction_kind = config.get(
             "prediction_kind",
-            "residual_force" if runtime_kind == "force_direct" else ("residual_potential" if target.is_residual else "potential"),
+            "residual_potential" if target.is_residual else "potential",
         )
         return cls(
             schema_version=ARTIFACT_CONTRACT_SCHEMA_VERSION,
@@ -703,16 +703,211 @@ class ArtifactContract:
         return report
 
 
+# ---------------------------------------------------------------------------
+# Paper-safe artifact metadata requirements (roadmap R26).
+#
+# ``paper_safe=True`` inference/benchmark runs refuse to start unless every
+# logical field below can be resolved from the artifact (contract + resolved
+# config + run_provenance + checkpoint). Research mode may load an incomplete
+# legacy artifact, but only through an explicit override that is recorded in
+# the runtime's metadata (``legacy_override=True`` + the missing-field list).
+# ---------------------------------------------------------------------------
+
+PAPER_SAFE_METADATA_SCHEMA_VERSION = 1
+
+#: Logical field name -> short description of the canonical source.
+PAPER_SAFE_REQUIRED_METADATA: dict[str, str] = {
+    "model_kind": "run_provenance.model_kind (surrogate model identity)",
+    "runtime_kind": "artifact_contract.runtime_model_kind",
+    "body": "resolved config central_body (lunar-compatible)",
+    "gravity_model_name": "dataset_contract.source_gravity_model",
+    "gravity_model_hash": "dataset_contract.source_gravity_file_sha256",
+    "baseline_degree": "artifact_contract.base_degree",
+    "residual_degree_range": "artifact_contract.[base_degree, target_degree]",
+    "train_altitude_min_km": "artifact_contract.altitude_min_km",
+    "train_altitude_max_km": "artifact_contract.altitude_max_km",
+    "scaler_source": "scaler_contract.provenance (fit provenance)",
+    "x_scale": "scaler_contract.x.scale",
+    "u_scale": "scaler_contract.u.scale",
+    "dtype": "resolved config dtype (training/inference precision)",
+    "architecture": "artifact_contract.architecture_signature",
+    "parameter_count": "resolved config parameter_count",
+    "training_data_hash": "dataset_contract.dataset_sha256",
+    "validation_data_hash": "run_provenance.split_manifest_sha256",
+    "git_commit": "run_provenance.git_commit",
+    "created_at": "run_provenance.created_at_utc",
+    "training_config_hash": "run_provenance.training_config_hash",
+    "loss_config": "resolved config loss_config block",
+    "domain_guard_policy": "resolved config domain_guard_policy",
+}
+
+
+def _nonempty_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _nonempty_mapping(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, Mapping) and value:
+        return {str(k): v for k, v in value.items()}
+    return None
+
+
+def _positive_float(value: Any) -> float | None:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return None
+    return out if out > 0.0 else None
+
+
+def collect_paper_safe_metadata(
+    *,
+    contract: ArtifactContract | Mapping[str, Any],
+    config: Mapping[str, Any] | None = None,
+    run_provenance: Mapping[str, Any] | None = None,
+    checkpoint: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve every R26 paper-safe metadata field from its canonical source.
+
+    Returns a mapping ``logical_field -> value`` where ``None`` means the field
+    could not be resolved (missing metadata). Resolution never invents values:
+    each field comes only from the artifact contract, the resolved training
+    config, the run provenance block, or the checkpoint payload.
+    """
+    art = contract if isinstance(contract, ArtifactContract) else ArtifactContract.from_dict(contract)
+    cfg = dict(config or {})
+    ckpt = dict(checkpoint or {})
+    prov = _nonempty_mapping(run_provenance)
+    if prov is None:
+        prov = _nonempty_mapping(cfg.get("run_provenance")) or _nonempty_mapping(ckpt.get("run_provenance")) or {}
+
+    dataset = _mapping(art.dataset_contract)
+    scaler = _mapping(art.scaler_contract)
+    scaler_x = _mapping(scaler.get("x"))
+    scaler_u = _mapping(scaler.get("u"))
+
+    degree_range: list[int] | None = None
+    if art.target_degree >= 0:
+        degree_range = [int(art.base_degree), int(art.target_degree)]
+
+    parameter_count = cfg.get("parameter_count")
+    if parameter_count is None:
+        parameter_count = ckpt.get("parameter_count")
+    try:
+        parameter_count = int(parameter_count) if parameter_count is not None else None
+    except (TypeError, ValueError):
+        parameter_count = None
+    if parameter_count is not None and parameter_count <= 0:
+        parameter_count = None
+
+    return {
+        "model_kind": _nonempty_str(prov.get("model_kind")) or _nonempty_str(cfg.get("runtime_model_kind")),
+        "runtime_kind": _nonempty_str(art.runtime_model_kind),
+        "body": _nonempty_str(cfg.get("central_body") or dataset.get("central_body")),
+        "gravity_model_name": _nonempty_str(dataset.get("source_gravity_model")),
+        "gravity_model_hash": _nonempty_str(dataset.get("source_gravity_file_sha256")),
+        "baseline_degree": int(art.base_degree),
+        "residual_degree_range": degree_range,
+        "train_altitude_min_km": art.altitude_min_km,
+        "train_altitude_max_km": art.altitude_max_km,
+        "scaler_source": _nonempty_mapping(scaler.get("provenance")),
+        "x_scale": _positive_float(scaler_x.get("scale")),
+        "u_scale": _positive_float(scaler_u.get("scale")),
+        "dtype": _nonempty_str(cfg.get("dtype") or cfg.get("torch_dtype")),
+        "architecture": _nonempty_str(art.architecture_signature),
+        "parameter_count": parameter_count,
+        "training_data_hash": _nonempty_str(dataset.get("dataset_sha256") or cfg.get("dataset_hash")),
+        "validation_data_hash": _nonempty_str(
+            prov.get("split_manifest_sha256") or cfg.get("validation_data_hash")
+        ),
+        "git_commit": _nonempty_str(prov.get("git_commit")),
+        "created_at": _nonempty_str(prov.get("created_at_utc") or ckpt.get("created_at_utc") or cfg.get("created_at_utc")),
+        "training_config_hash": _nonempty_str(prov.get("training_config_hash") or cfg.get("training_config_hash")),
+        "loss_config": _nonempty_mapping(cfg.get("loss_config")),
+        "domain_guard_policy": _nonempty_str(cfg.get("domain_guard_policy")),
+    }
+
+
+def paper_safe_metadata_report(
+    *,
+    contract: ArtifactContract | Mapping[str, Any],
+    config: Mapping[str, Any] | None = None,
+    run_provenance: Mapping[str, Any] | None = None,
+    checkpoint: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the paper-safe metadata completeness report for an artifact.
+
+    ``complete=True`` only when every :data:`PAPER_SAFE_REQUIRED_METADATA` field
+    resolved to a value. The report is JSON-serializable and intended to be
+    recorded verbatim into benchmark manifests / runtime metadata.
+    """
+    fields = collect_paper_safe_metadata(
+        contract=contract,
+        config=config,
+        run_provenance=run_provenance,
+        checkpoint=checkpoint,
+    )
+    missing = sorted(name for name in PAPER_SAFE_REQUIRED_METADATA if fields.get(name) is None)
+    return {
+        "schema_version": PAPER_SAFE_METADATA_SCHEMA_VERSION,
+        "fields": fields,
+        "missing": missing,
+        "complete": not missing,
+    }
+
+
+def require_paper_safe_metadata(
+    *,
+    contract: ArtifactContract | Mapping[str, Any],
+    config: Mapping[str, Any] | None = None,
+    run_provenance: Mapping[str, Any] | None = None,
+    checkpoint: Mapping[str, Any] | None = None,
+    context: str = "inference",
+) -> dict[str, Any]:
+    """Fail closed when paper-safe required metadata is missing.
+
+    Raises :class:`ArtifactContractError` naming every missing field. Returns
+    the completeness report when the artifact is fully described, so callers
+    can record it as provenance.
+    """
+    report = paper_safe_metadata_report(
+        contract=contract,
+        config=config,
+        run_provenance=run_provenance,
+        checkpoint=checkpoint,
+    )
+    if not report["complete"]:
+        details = "; ".join(
+            f"{name} (expected from {PAPER_SAFE_REQUIRED_METADATA[name]})" for name in report["missing"]
+        )
+        raise ArtifactContractError(
+            f"paper_safe {context} refused: artifact metadata is incomplete. "
+            f"Missing {len(report['missing'])} required field(s): {details}. "
+            "Regenerate the artifact with the current training pipeline, or load it "
+            "explicitly in research mode (paper_safe=False), which records a "
+            "legacy metadata override instead of silently trusting the artifact."
+        )
+    return report
+
+
 __all__ = [
     "ARTIFACT_CONTRACT_SCHEMA_VERSION",
     "ArtifactContract",
     "ArtifactContractError",
     "BASELINE_KINDS",
     "LUNAR_BODY_ALIASES",
+    "PAPER_SAFE_METADATA_SCHEMA_VERSION",
+    "PAPER_SAFE_REQUIRED_METADATA",
     "PREDICTION_KINDS",
     "MOON_FIXED_FRAME",
     "REQUIRED_DERIVATIVE_CONVENTION",
     "RUNTIME_MODEL_KINDS",
     "TARGET_MODES",
     "TargetContract",
+    "collect_paper_safe_metadata",
+    "paper_safe_metadata_report",
+    "require_paper_safe_metadata",
 ]

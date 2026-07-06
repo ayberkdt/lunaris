@@ -1,7 +1,7 @@
 """Provenance-stamped uncertainty-quantification report over an ensemble.
 
 One call (or ``python -m lunaris.analysis.ensemble.uq_report``) turns a
-batch-propagated :class:`~lunaris.common.batch_defs.MCRunResult` ensemble into a run
+batch-propagated :class:`~lunaris.common.batch_defs.BatchPropagationResult` ensemble into a run
 directory containing:
 
 - ``uq_covariance.npz`` — epochs, mean state, 6×6 covariance history, RIC
@@ -39,7 +39,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.batch_defs import MCRunResult
+from lunaris.common.batch_defs import BatchPropagationResult
 from lunaris.common.constants import R_MOON
 from lunaris.common.hashing import canonical_json_sha256, canonical_json_text
 from lunaris.common.provenance import sha256_file, utc_now_iso
@@ -132,13 +132,13 @@ def _jsonable(value: Any) -> Any:
     """Best-effort conversion of diagnostics/config values for canonical JSON."""
     if isinstance(value, Mapping):
         return {str(k): _jsonable(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_jsonable(v) for v in value]
     if isinstance(value, np.generic):
         return value.item()
     if isinstance(value, np.ndarray):
         return value.tolist() if value.size <= 64 else f"<ndarray shape={value.shape}>"
-    if isinstance(value, (str, int, float, bool)) or value is None:
+    if isinstance(value, str | int | float | bool) or value is None:
         return value
     return str(value)
 
@@ -185,7 +185,7 @@ def _write_summary_csv(
 
 def _write_figures(
     out_dir: Path,
-    result: MCRunResult,
+    result: BatchPropagationResult,
     ens: EnsembleStatistics,
     ric: RICUncertainty,
     ell: ErrorEllipsoids,
@@ -228,7 +228,7 @@ def _write_figures(
 
 
 def build_uq_report(
-    result: MCRunResult,
+    result: BatchPropagationResult,
     out_dir: str | Path,
     *,
     run_config: Mapping[str, Any] | None = None,
@@ -241,7 +241,7 @@ def build_uq_report(
 
     Parameters
     ----------
-    result : MCRunResult
+    result : BatchPropagationResult
         In-memory ensemble (fresh run or loaded archive).
     out_dir : path
         Report directory (created if needed).
@@ -349,9 +349,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-figures", action="store_true", help="Skip figure rendering")
     args = parser.parse_args(argv)
 
-    from lunaris.batch.storage import load_mc_result
+    from lunaris.batch.storage import load_batch_result
 
-    result = load_mc_result(str(args.archive), lazy=True, strict=False)
+    result = load_batch_result(str(args.archive), lazy=True)
     manifest = build_uq_report(
         result,
         args.out,

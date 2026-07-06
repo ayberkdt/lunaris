@@ -377,7 +377,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         context = "Engine-reported values from the last completed run"
         if method:
             context += f" ({method})"
-        if isinstance(wall, (int, float)):
+        if isinstance(wall, int | float):
             context += f", {wall:.2f} s wall time"
         self.lbl_diag_context.setText(context + ".")
 

@@ -105,7 +105,7 @@ outputs/
 reports/
 checkpoints/
 evals/
-mc_results/
+batch_results/
 mission_results/
 
 # Ad-hoc validation run outputs (committed artifacts live under validation/, not the repo root)

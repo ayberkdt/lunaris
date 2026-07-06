@@ -9,13 +9,13 @@ responsive.
 
 Progress lines (stdout, consumed by the UI)
 -------------------------------------------
-    [MC] N=500  backend=GPU  T=1.00 d  step=60.0 s  snap=600.0 s
-    [MC_PROGRESS] {"stage": "propagating", "percent": 42.5, ...}
-    [MC] Batch 1/5  samples 0-99
-    [MC] Batch 2/5  samples 100-199
+    [BATCH] N=500  backend=GPU  T=1.00 d  step=60.0 s  snap=600.0 s
+    [BATCH_PROGRESS] {"stage": "propagating", "percent": 42.5, ...}
+    [BATCH] Batch 1/5  samples 0-99
+    [BATCH] Batch 2/5  samples 100-199
     ...
-    [MC] Done. Wall=42.3s  impacts=3/500 (0.6%)
-    [MC_METRICS] {"n_samples": 500, "n_impacts": 3, ...}
+    [BATCH] Done. Wall=42.3s  impacts=3/500 (0.6%)
+    [BATCH_METRICS] {"n_samples": 500, "n_impacts": 3, ...}
 
 Exit codes
 ----------
@@ -47,8 +47,8 @@ from lunaris.cli.common_args import (  # noqa: E402
 )
 from lunaris.common.batch_defs import (  # noqa: E402
     BATCH_SAMPLING_METHODS,
-    MCRunResult,
-    MonteCarloConfig,
+    BatchPropagationConfig,
+    BatchPropagationResult,
     SpacecraftUncertainty,
     StateUncertainty,
 )
@@ -60,7 +60,7 @@ from lunaris.core.config import load_default_config, replace_sim_config  # noqa:
 # =============================================================================
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Return the combined sim + MC argument parser."""
+    """Return the combined sim + batch argument parser."""
     p = argparse.ArgumentParser(
         description="Lunaris batch/ensemble propagation runner",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -126,7 +126,7 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--ldem-root",    type=str)
     g.add_argument("--albedo-root",  type=str)
     g.add_argument("--ldem-ppd",     type=int)
-    # Accepted but unused in MC path (orbit output goes to mc-output-path)
+    # Accepted but unused in batch path (orbit output goes to batch-output-path)
     g.add_argument("--out-dir",        type=str)
     g.add_argument("--make-3d-plots",  type=str2bool)
     g.add_argument("--downsample-3d",  type=int)
@@ -165,21 +165,23 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--use-gpu",               type=str2bool, default=True,
                    help="Use CUDA RK4 propagator (on/off)")
     g.add_argument(
-        "--mc-backend",
+        "--batch-backend",
         choices=[
-            "auto", "cpu_sh", "gpu_sh", "numba_cuda_sh", "torch_cuda_sh",
-            "torch_cpu_sh", "gpu_st_lrps_potential", "gpu_st_lrps_direct",
+            "auto", "cpu_sh", "numba_cuda_sh", "torch_cuda_sh",
+            "torch_cpu_sh", "gpu_st_lrps_potential", "gpu_st_lrps_third_body",
         ],
         default="auto",
         help=(
             "Explicit batch propagation backend. 'auto' preserves use-gpu + gravity-mode "
-            "routing. 'numba_cuda_sh' (alias 'gpu_sh') is the degree<=24 Numba CUDA "
-            "screening kernel; 'torch_cuda_sh' is the high-degree PyTorch CUDA "
-            "classic-SH path (gravity-only). Requested SH degree is never clipped."
+            "routing. 'numba_cuda_sh' is the degree<=24 Numba CUDA screening "
+            "kernel; 'torch_cuda_sh' is the high-degree PyTorch CUDA "
+            "classic-SH path (gravity-only). 'gpu_st_lrps_third_body' adds "
+            "analytic Sun/Earth third-body terms to the ST-LRPS CUDA path. "
+            "Requested SH degree is never clipped."
         ),
     )
     g.add_argument(
-        "--gpu-sh-fallback-policy",
+        "--sh-fallback-policy",
         choices=["compatible_gpu", "cpu", "error"],
         default="compatible_gpu",
         help=(
@@ -193,21 +195,21 @@ def _build_parser() -> argparse.ArgumentParser:
     g.add_argument("--torch-sh-chunk-size", type=int, default=0,
                    help="Samples per GPU chunk on the torch_cuda_sh path (0 = auto/VRAM-aware).")
     g.add_argument("--gpu-device-id",         type=int,   default=0)
-    g.add_argument("--gpu-sh-degree",         type=int,   default=10,
+    g.add_argument("--sh-degree",         type=int,   default=10,
                    help="Requested SH degree. numba_cuda_sh supports degree <=24; higher degrees use torch_cuda_sh (PyTorch CUDA) or fall back explicitly. Never clipped.")
     g.add_argument("--gpu-threads-per-block", type=int,   default=128)
     g.add_argument(
-        "--mc-gravity-mode",
+        "--batch-gravity-mode",
         choices=["follow_mission", "classic_sh", "st_lrps"],
         default="follow_mission",
         help="Whether batch propagation follows the mission gravity setup or forces classical/ST-LRPS gravity.",
     )
-    g.add_argument("--mc-dt-s",               type=float, default=60.0,
+    g.add_argument("--batch-dt-s",               type=float, default=60.0,
                    help="Fixed RK4 step size [s]")
     g.add_argument("--max-vram-gb",           type=float, default=4.0)
-    g.add_argument("--mc-output-format",      choices=["hdf5", "npz"],
+    g.add_argument("--batch-output-format",      choices=["hdf5", "npz"],
                    default="hdf5")
-    g.add_argument("--mc-output-path",        type=str,
+    g.add_argument("--batch-output-path",        type=str,
                    default="outputs/ensemble/batch_output.h5")
     g.add_argument(
         "--result-storage-mode",
@@ -246,8 +248,8 @@ def _wilson_ci(k: int, n: int, z: float = 1.96):
     return (max(0.0, centre - margin), min(1.0, centre + margin))
 
 
-def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloConfig) -> dict:
-    """Extract summary statistics from an MCRunResult for the UI metrics panel."""
+def _build_metrics(result: BatchPropagationResult, wall_time_s: float, batch_cfg: BatchPropagationConfig) -> dict:
+    """Extract summary statistics from an BatchPropagationResult for the UI metrics panel."""
     import numpy as np
 
     Y          = result.Y            # (T, N, 6)
@@ -272,7 +274,7 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
     # computation entirely and record *why*, so the flag is observable rather
     # than inert provenance. (The richer statistics live in the analysis layer,
     # which the headless runner — an entry point — is allowed to import.)
-    if mc_cfg.impact_statistics_enabled:
+    if batch_cfg.impact_statistics_enabled:
         try:
             from lunaris.analysis.ensemble.statistics import compute_impact_statistics
 
@@ -303,7 +305,7 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
     # Altitude at t=0 and t=-1
     def _alt_stats(step: int):
         if n_valid < 1:
-            raise ValueError("altitude metrics require at least one valid MC sample")
+            raise ValueError("altitude metrics require at least one valid batch sample")
         r = np.linalg.norm(Y[step, np.where(valid)[0], :3], axis=1)
         alt_km = (r - float(R_MOON)) / 1000.0
         return float(np.mean(alt_km)), float(np.std(alt_km))
@@ -312,13 +314,13 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
     alt_mean_f, alt_std_f = _alt_stats(-1)
 
     diagnostics = getattr(result, "diagnostics", {}) or {}
-    backend_name = str(diagnostics.get("backend", "GPU" if mc_cfg.use_gpu else "CPU"))
+    backend_name = str(diagnostics.get("backend", "GPU" if batch_cfg.use_gpu else "CPU"))
     backend_note = str(diagnostics.get("backend_note", "") or "")
     backend_diag = diagnostics.get("backend_diagnostics", {}) or {}
 
     return {
         "n_samples":        N,
-        "sampling_method":  str(getattr(mc_cfg, "sampling_method", "random")),
+        "sampling_method":  str(getattr(batch_cfg, "sampling_method", "random")),
         "sampling_note":    str(diagnostics.get("sampling_note", "") or ""),
         "n_valid_samples":  n_valid,
         "n_impacts":        n_hit,
@@ -332,8 +334,8 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
         "wall_time_s":      round(wall_time_s, 2),
         "backend":          backend_name,
         "backend_note":     backend_note,
-        "actual_mc_backend": diagnostics.get("actual_mc_backend"),
-        "requested_mc_backend": diagnostics.get("requested_mc_backend"),
+        "actual_batch_backend": diagnostics.get("actual_batch_backend"),
+        "requested_batch_backend": diagnostics.get("requested_batch_backend"),
         "runtime_model_kind": diagnostics.get("runtime_model_kind"),
         "fallback_reason": diagnostics.get("fallback_reason"),
         "requested_sh_degree": diagnostics.get("requested_sh_degree"),
@@ -341,7 +343,7 @@ def _build_metrics(result: MCRunResult, wall_time_s: float, mc_cfg: MonteCarloCo
         "device_name":      str(backend_diag.get("device_name", "") or ""),
         "threads_per_block": backend_diag.get("threads_per_block"),
         **impact_stats_block,
-        "output_path":      str(mc_cfg.output_path_resolved),
+        "output_path":      str(batch_cfg.output_path_resolved),
     }
 
 
@@ -349,12 +351,12 @@ def _emit_progress_line(payload: dict) -> None:
     """
     Stream one structured batch/ensemble progress update to stdout.
 
-    The desktop UI treats ``[MC_PROGRESS]`` as a machine-readable control line
+    The desktop UI treats ``[BATCH_PROGRESS]`` as a machine-readable control line
     rather than as human log text.  Keeping this emission centralized ensures
     every backend phase uses the same JSON envelope.
     """
 
-    print(f"[MC_PROGRESS] {json.dumps(payload)}", flush=True)
+    print(f"[BATCH_PROGRESS] {json.dumps(payload)}", flush=True)
 
 
 # =============================================================================
@@ -369,30 +371,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         cfg = load_default_config()
         cfg = apply_args_to_config(cfg, args)
     except Exception as exc:
-        print(f"[MC][FATAL] Config init failed: {exc}", flush=True)
+        print(f"[BATCH][FATAL] Config init failed: {exc}", flush=True)
         return 1
 
-    if str(args.mc_gravity_mode) != "follow_mission":
+    if str(args.batch_gravity_mode) != "follow_mission":
         try:
             from dataclasses import replace
-            forced_backend = str(args.mc_gravity_mode)
+            forced_backend = str(args.batch_gravity_mode)
             cfg = replace_sim_config(
                 cfg,
                 gravity=replace(cfg.gravity, backend=forced_backend),
                 flags=replace(cfg.flags, enable_sh=True),
             )
         except Exception as exc:
-            print(f"[MC][FATAL] Gravity override failed: {exc}", flush=True)
+            print(f"[BATCH][FATAL] Gravity override failed: {exc}", flush=True)
             return 1
 
-    if str(args.mc_backend) != "auto":
+    if str(args.batch_backend) != "auto":
         try:
             from dataclasses import replace
 
-            explicit_backend = str(args.mc_backend)
-            if explicit_backend in {"cpu_sh", "gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}:
+            explicit_backend = str(args.batch_backend)
+            if explicit_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}:
                 forced_backend = "classic_sh"
-            elif explicit_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}:
+            elif explicit_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_third_body"}:
                 forced_backend = "st_lrps"
             else:
                 forced_backend = str(getattr(cfg.gravity, "backend", "classic_sh"))
@@ -402,7 +404,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 flags=replace(cfg.flags, enable_sh=True),
             )
         except Exception as exc:
-            print(f"[MC][FATAL] MC backend gravity override failed: {exc}", flush=True)
+            print(f"[BATCH][FATAL] batch backend gravity override failed: {exc}", flush=True)
             return 1
 
     # ---- Resolve orbit → InitialState ---------------------------------------
@@ -433,12 +435,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             from dataclasses import replace
             cfg = replace_sim_config(cfg, initial_state=y0)
         except Exception as exc:
-            print(f"[MC][FATAL] Orbit init failed: {exc}", flush=True)
+            print(f"[BATCH][FATAL] Orbit init failed: {exc}", flush=True)
             return 1
 
-    # ---- Build MonteCarloConfig ---------------------------------------------
+    # ---- Build BatchPropagationConfig ---------------------------------------------
     try:
-        mc_cfg = MonteCarloConfig(
+        batch_cfg = BatchPropagationConfig(
             n_samples             = int(args.n_samples),
             seed                  = int(args.seed),
             state                 = StateUncertainty(
@@ -453,23 +455,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             sampling_method       = str(args.sampling_method),
             use_gpu               = bool(args.use_gpu),
-            mc_backend            = str(args.mc_backend),
+            batch_backend            = str(args.batch_backend),
             gpu_device_id         = int(args.gpu_device_id),
-            gpu_sh_degree         = int(args.gpu_sh_degree),
-            gpu_sh_fallback_policy = str(args.gpu_sh_fallback_policy),
+            sh_degree         = int(args.sh_degree),
+            sh_fallback_policy = str(args.sh_fallback_policy),
             torch_dtype           = str(args.torch_dtype),
             torch_sh_chunk_size   = int(args.torch_sh_chunk_size),
             gpu_threads_per_block = int(args.gpu_threads_per_block),
-            gravity_mode_override = str(args.mc_gravity_mode),
+            gravity_mode_override = str(args.batch_gravity_mode),
             st_lrps_model_dir       = (
                 str(Path(str(args.surrogate_gravity_model_dir)).expanduser().resolve())
                 if args.surrogate_gravity_model_dir
                 else None
             ),
-            dt_s                  = float(args.mc_dt_s),
+            dt_s                  = float(args.batch_dt_s),
             max_vram_gb           = float(args.max_vram_gb),
-            output_format         = str(args.mc_output_format),
-            output_path           = str(args.mc_output_path),
+            output_format         = str(args.batch_output_format),
+            output_path           = str(args.batch_output_path),
             result_storage_mode   = str(args.result_storage_mode),
             max_result_memory_gb  = float(args.max_result_memory_gb),
             detect_impact         = bool(args.detect_impact),
@@ -477,7 +479,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             impact_alt_km         = float(args.impact_alt_km),
         )
     except Exception as exc:
-        print(f"[MC][FATAL] MonteCarloConfig build failed: {exc}", flush=True)
+        print(f"[BATCH][FATAL] BatchPropagationConfig build failed: {exc}", flush=True)
         return 1
 
     # ---- Surface / terrain assets -------------------------------------------
@@ -491,33 +493,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             except Exception:
                 topo_grid = None
     except Exception as exc:
-        print(f"[MC][FATAL] Surface asset init failed: {exc}", flush=True)
+        print(f"[BATCH][FATAL] Surface asset init failed: {exc}", flush=True)
         return 1
 
     # ---- Run -----------------------------------------------------------------
     t0 = time.perf_counter()
     try:
-        from lunaris.batch import MonteCarloEngine
-        engine = MonteCarloEngine(
+        from lunaris.batch import BatchPropagationEngine
+        engine = BatchPropagationEngine(
             cfg,
-            mc_cfg,
+            batch_cfg,
             surface_provider=surface_provider,
             topo_grid=topo_grid,
             progress_callback=_emit_progress_line,
         )
         result = engine.run()
     except Exception as exc:
-        print(f"[MC][FATAL] MC run failed: {exc}", flush=True)
+        print(f"[BATCH][FATAL] batch run failed: {exc}", flush=True)
         return 2
 
     wall_time = time.perf_counter() - t0
 
     # ---- Emit metrics line (consumed by UI) ---------------------------------
     try:
-        metrics = _build_metrics(result, wall_time, mc_cfg)
-        print(f"[MC_METRICS] {json.dumps(metrics)}", flush=True)
+        metrics = _build_metrics(result, wall_time, batch_cfg)
+        print(f"[BATCH_METRICS] {json.dumps(metrics)}", flush=True)
     except Exception as exc:
-        print(f"[MC][WARN] Could not build metrics: {exc}", flush=True)
+        print(f"[BATCH][WARN] Could not build metrics: {exc}", flush=True)
 
     # ---- Optional UQ report (explicitly requested => fail loudly) -----------
     if args.uq_report_dir:
@@ -529,16 +531,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             manifest = build_uq_report(
                 result,
                 args.uq_report_dir,
-                run_config=asdict(mc_cfg),
-                source_archive=result.archive_path or mc_cfg.output_path_resolved,
+                run_config=asdict(batch_cfg),
+                source_archive=result.archive_path or batch_cfg.output_path_resolved,
             )
             print(
-                f"[MC] UQ report written: {Path(args.uq_report_dir) / 'uq_manifest.json'} "
+                f"[BATCH] UQ report written: {Path(args.uq_report_dir) / 'uq_manifest.json'} "
                 f"(content hash {manifest['covariance_content_sha256'][:12]}...)",
                 flush=True,
             )
         except Exception as exc:
-            print(f"[MC][FATAL] UQ report failed: {exc}", flush=True)
+            print(f"[BATCH][FATAL] UQ report failed: {exc}", flush=True)
             return 3
 
     return 0

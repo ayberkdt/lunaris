@@ -163,7 +163,7 @@ def collect_session_snapshot(
     solver_cfg: Any,
     spacecraft_cfg: Any,
     app_version: str,
-    mc_page: Any | None = None,
+    batch_page: Any | None = None,
 ) -> dict[str, Any]:
     """
     Collect a full UI session payload suitable for JSON persistence.
@@ -241,8 +241,8 @@ def collect_session_snapshot(
         # This top-level copy keeps advanced gravity settings recoverable even if
         # older consumers ignore the nested forces payload.
         "gravity_config": gravity_cfg.to_dict(),
-        # Monte Carlo configuration (absent when mc_page is not wired in)
-        "monte_carlo": _safe_call({}, lambda: mc_page.get_data()) if mc_page is not None else {},
+        # Batch propagation configuration (absent when batch_page is not wired in)
+        "batch_propagation": _safe_call({}, lambda: batch_page.get_data()) if batch_page is not None else {},
         # Visual workspace state — absent in old sessions; restore tolerates absence.
         "visual_state": {},   # populated via collect_visual_state() if caller fills it
     }
@@ -262,7 +262,7 @@ def apply_session_snapshot(
     spacecraft_cfg: Any,
     project_root: Path,
     log_warning: Callable[[str], None] | None = None,
-    mc_page: Any | None = None,
+    batch_page: Any | None = None,
 ) -> None:
     """
     Restore a previously saved payload back into the modular UI.
@@ -377,12 +377,12 @@ def apply_session_snapshot(
         except Exception as exc:
             warn(f"[Warning] Data page restore failed: {exc}")
 
-    mc_payload = payload.get("monte_carlo", {}) or {}
-    if mc_payload and mc_page is not None:
+    batch_payload = payload.get("batch_propagation", {}) or {}
+    if batch_payload and batch_page is not None:
         try:
-            mc_page.load_data(mc_payload)
+            batch_page.load_data(batch_payload)
         except Exception as exc:
-            warn(f"[Warning] Monte Carlo page restore failed: {exc}")
+            warn(f"[Warning] Batch propagation page restore failed: {exc}")
 
 
 def collect_visual_state(
@@ -394,7 +394,7 @@ def collect_visual_state(
     telemetry_time_unit: str = "",
     artifact_filter: str = "",
     artifact_recursive: bool = False,
-    mc_active_tab: int = 0,
+    batch_active_tab: int = 0,
 ) -> dict[str, Any]:
     """
     Build the ``visual_state`` sub-dict for session persistence.
@@ -410,7 +410,7 @@ def collect_visual_state(
         "telemetry_time_unit": telemetry_time_unit,
         "artifact_filter":     artifact_filter,
         "artifact_recursive":  bool(artifact_recursive),
-        "mc_active_tab":       int(mc_active_tab),
+        "batch_active_tab":       int(batch_active_tab),
     }
 
 
@@ -432,7 +432,7 @@ def sanitize_splitter_sizes(
     * when *total* (the live splitter extent) is known and the saved layout is
       larger, scales the sizes proportionally so they fit the current window.
     """
-    if not isinstance(sizes, (list, tuple)) or len(sizes) < 2:
+    if not isinstance(sizes, list | tuple) or len(sizes) < 2:
         return None
     try:
         vals = [int(round(float(s))) for s in sizes]
@@ -499,12 +499,12 @@ def apply_visual_state(
         if output_page is not None:
             _safe_call(None, lambda: _restore_artifact_visual(output_page, artifact_filter, artifact_recursive))
 
-    # MC active tab
-    mc_tab = int(visual.get("mc_active_tab", 0) or 0)
+    # batch active tab
+    batch_tab = int(visual.get("batch_active_tab", 0) or 0)
     if main_window is not None:
-        mc_page = getattr(main_window, "page_mc", None)
-        if mc_page is not None and hasattr(mc_page, "tabs"):
-            _safe_call(None, lambda: mc_page.tabs.setCurrentIndex(mc_tab))
+        batch_page = getattr(main_window, "page_batch", None)
+        if batch_page is not None and hasattr(batch_page, "tabs"):
+            _safe_call(None, lambda: batch_page.tabs.setCurrentIndex(batch_tab))
 
 
 def _restore_log_collapsed(mw: Any, collapsed: bool) -> None:

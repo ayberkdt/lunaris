@@ -130,7 +130,7 @@ def _get_first(mapping: Mapping[str, Any], *keys: str, default: Any = None) -> A
 
 
 def _columns(value: Any) -> list[str]:
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [str(item).strip() for item in value if str(item).strip()]
     text = str(value or "").strip()
     if not text:

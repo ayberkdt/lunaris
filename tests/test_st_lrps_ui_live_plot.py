@@ -77,8 +77,6 @@ def test_live_loss_plot_handles_history_gaps_and_duplicate_epochs(qapp, tmp_path
 
     widget = LiveLossPlot()
     widget.load_history_file(str(history_path))
-    widget._chk_smooth.setChecked(True)
-    widget._smooth_window.setValue(3)
     widget._chk_log_y.setChecked(True)
     widget._auto_range()
     widget.parse_line("[train] epoch=2 batch=1/1 loss_opt=1.0e+00 loss_ref=1.0e+00 U=5.0e-01 a=5.0e-01 dir=0.0e+00 cossim=0.95 lr=1e-5")

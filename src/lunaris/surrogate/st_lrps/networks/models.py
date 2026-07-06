@@ -980,15 +980,14 @@ def build_model_from_config(
     activation = str(_cfg_value(cfg, "activation", "sine")).lower()
     runtime_model_kind = str(_cfg_value(cfg, "runtime_model_kind", "potential_autograd") or "potential_autograd")
     output_dim_raw = _cfg_value(cfg, "output_dim", None)
-    output_dim = int(output_dim_raw) if output_dim_raw is not None else (3 if runtime_model_kind == "force_direct" else 1)
+    output_dim = int(output_dim_raw) if output_dim_raw is not None else 1
     if runtime_model_kind == "potential_autograd" and output_dim != 1:
         raise ValueError("potential_autograd models must use output_dim=1 for scalar residual potential.")
-    if runtime_model_kind == "force_direct" and output_dim != 3:
-        raise ValueError("force_direct models must use output_dim=3 for residual acceleration vectors.")
-    if runtime_model_kind not in {"potential_autograd", "force_direct"}:
+    if runtime_model_kind != "potential_autograd":
         raise ValueError(
             f"Unsupported runtime_model_kind={runtime_model_kind!r}; "
-            "expected 'potential_autograd' or 'force_direct'."
+            "expected 'potential_autograd' (the force_direct variant is archived "
+            "in experimental/force-direct-archive)."
         )
     encoding_flags = _encoding_flags_from_preset(cfg)
     use_fourier = bool(encoding_flags["use_fourier"])

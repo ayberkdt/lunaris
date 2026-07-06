@@ -21,6 +21,8 @@ advanced subsystem.
 | [Gravity Engine External Validation](GRAVITY_ENGINE_EXTERNAL_VALIDATION.md) | Independent gravity/orbit validation harness |
 | [Perturbation Budget](PERTURBATION_BUDGET.md) | Acceleration budgets and interpretation |
 | [Reproducible Benchmarks](REPRODUCIBLE_BENCHMARKS.md) | Benchmark manifests, provenance, and CI smoke mode |
+| [Benchmark Results](BENCHMARK_RESULTS.md) | Accepted benchmark table contract and Sprint 6 metric definitions |
+| [Paper-Safe Fail Policy](PAPER_SAFE_POLICY.md) | Which conditions hard-fail under `paper_safe=true` vs warn-and-record in research mode |
 | [HPC](HPC.md) | Headless and cluster setup |
 
 ## ST-LRPS

@@ -25,7 +25,7 @@ import os
 import random
 import time
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -431,13 +431,13 @@ def move_batch_to_device(
     )
 
 def _laplacian_requested(cfg: TrainConfig) -> bool:
-    """Return True only if the user explicitly asked for any Laplacian work.
+    """Return True when the config asks for any Laplacian work.
 
-    With the default config (use_laplacian_regularization=False,
-    laplacian_mode="diagnostic", collocation_laplacian_weight=0,
-    laplacian_weight=0) this is False, so normal training does ZERO Laplacian
-    computation — no in-batch penalty, no collocation diagnostics, no autograd
-    overhead, and no Laplacian term in the objective.
+    The strong benchmark default (use_laplacian_regularization=True,
+    laplacian_weight>0, laplacian_mode="diagnostic") requests Laplacian work.
+    A config with all Laplacian flags/weights off/zero returns False, so normal
+    training then does ZERO Laplacian computation — no in-batch penalty, no
+    collocation diagnostics, no autograd overhead, no Laplacian term.
 
     ``laplacian_mode="off"`` is an explicit hard-disable. It wins over stale
     nonzero weights or compatibility flags so a config can turn all Laplacian
@@ -452,6 +452,41 @@ def _laplacian_requested(cfg: TrainConfig) -> bool:
         or float(getattr(cfg, "collocation_laplacian_weight", 0.0)) > 0.0
         or float(getattr(cfg, "laplacian_weight", 0.0)) > 0.0
     )
+
+
+@dataclass
+class _EpochState:
+    """Mutable per-epoch accumulators for :meth:`STLRPSTrainer.run_epoch`.
+
+    One instance per epoch keeps the run_epoch decomposition honest: every
+    helper reads/writes this state explicitly instead of sharing loop locals.
+    """
+
+    total_loss: float = 0.0
+    total_opt_loss: float = 0.0
+    total_u: float = 0.0
+    total_a: float = 0.0
+    total_grad_norm: float = 0.0
+    total_dir: float = 0.0
+    total_cossim: float = 0.0
+    total_radial: float = 0.0
+    total_cross: float = 0.0
+    total_lap: float = 0.0
+    total_mask_frac: float = 0.0
+    total_a_norm_mean: float = 0.0
+    total_angular_mean_deg: float = 0.0
+    total_col_lap_diag: float = 0.0
+    total_col_lap_train: float = 0.0
+    col_lap_diag_count: int = 0
+    col_lap_train_count: int = 0
+    col_lap_attempt_count: int = 0
+    col_lap_fail_count: int = 0
+    col_lap_success_count: int = 0
+    a_norm_max: float = 0.0
+    n_batches: int = 0
+    optimizer_steps_done: int = 0
+    samples_done: int = 0
+    last_stats: dict[str, float] = field(default_factory=dict)
 
 
 class STLRPSTrainer:
@@ -532,17 +567,7 @@ class STLRPSTrainer:
                 pass
         accel_factor = self.curriculum.accel_factor(epoch) if is_train else 1.0
 
-        total_loss = total_opt_loss = total_u = total_a = total_grad_norm = 0.0
-        total_dir = total_cossim = total_radial = total_cross = total_lap = 0.0
-        total_mask_frac = total_a_norm_mean = total_angular_mean_deg = 0.0
-        total_col_lap_diag = total_col_lap_train = 0.0
-        col_lap_diag_count = col_lap_train_count = 0
-        col_lap_attempt_count = col_lap_fail_count = col_lap_success_count = 0
-        a_norm_max = 0.0
-        n_batches = 0
-        optimizer_steps_done = 0
-        samples_done = 0
-        last_stats: dict[str, float] = {}
+        state = _EpochState()
 
         if is_train:
             lambda_dir_eff = _direction_loss_factor(epoch, self.cfg)
@@ -569,7 +594,7 @@ class STLRPSTrainer:
                 if max_batches is not None and batch_idx >= int(max_batches):
                     break
 
-                xb, ub, ab = move_batch_to_device(xb, ub, ab, self.device)
+                xb, ub, ab = self._prepare_batch(xb, ub, ab)
 
                 # Gradient accumulation bookkeeping
                 is_last_batch = (
@@ -592,356 +617,501 @@ class STLRPSTrainer:
                 # GradNorm weight update only happens on optimizer steps
                 allow_weight_update = bool(accel_factor > 0.0 and is_accum_boundary)
 
-                with torch.autocast(device_type=self.device.type, dtype=self._amp_dtype, enabled=self.use_amp):
-                    loss, stats = self.loss_fn(
-                        self.model,
-                        xb,
-                        ub,
-                        ab,
-                        self.weights,
-                        is_train=is_train,
-                        accel_factor=accel_factor,
-                        allow_dynamic_weight_update=allow_weight_update,
-                        direction_lambda=lambda_dir_eff,
-                        direction_floor_abs=self.cfg.direction_loss_floor_abs,
-                        use_altitude_balanced_loss=bool(self.cfg.use_altitude_balanced_loss),
-                        altitude_bin_width_km=float(self.cfg.altitude_bin_width_km),
-                        altitude_min_km=float(self.cfg.altitude_min_km),
-                        altitude_max_km=float(self.cfg.altitude_max_km),
-                        use_radial_cross_loss=bool(self.cfg.use_radial_cross_loss),
-                        radial_lambda=float(self.cfg.radial_loss_weight),
-                        cross_lambda=float(self.cfg.cross_loss_weight),
-                        apply_laplacian=bool(apply_lap),
-                        laplacian_lambda=float(self.cfg.laplacian_weight),
-                        laplacian_subset_size=int(self.cfg.laplacian_subset_size),
-                        laplacian_n_hutchinson=int(getattr(self.cfg, "n_hutchinson_samples", 4)),
-                        laplacian_mode=self.laplacian_mode,
-                    )
+                loss, stats = self._compute_loss(
+                    xb,
+                    ub,
+                    ab,
+                    is_train=is_train,
+                    accel_factor=accel_factor,
+                    allow_weight_update=allow_weight_update,
+                    lambda_dir_eff=lambda_dir_eff,
+                    apply_lap=apply_lap,
+                )
 
                 # Explosion guard: stop on NaN/Inf immediately to avoid corrupt checkpoints.
-                _loss_check = float(stats.get("loss_opt", loss.item()))
-                if math.isnan(_loss_check) or math.isinf(_loss_check):
-                    logger.error(
-                        f"[{phase}] NaN/Inf loss detected at epoch={epoch+1} batch={n_batches}. "
-                        "Possible derivative instability. "
-                        "Suggestions: lower lr, ensure accel_min_factor>0, lower w0, increase accel_ramp_epochs. "
-                        "Stopping epoch early."
-                    )
+                if not self._validate_numerics(
+                    stats, loss, phase=phase, epoch=epoch, batch=state.n_batches
+                ):
                     # Return a sentinel so the caller can save a failure manifest.
-                    return {
-                        "loss": float("nan"), "objective_loss": float("nan"),
-                        "mse_u": float("nan"), "mse_a": float("nan"),
-                        "loss_dir": 0.0, "cossim_mean": 0.0,
-                        "loss_radial": 0.0, "loss_cross": 0.0, "loss_laplacian": 0.0,
-                        "loss_laplacian_diag": 0.0, "loss_laplacian_train": 0.0,
-                        "lambda_laplacian_eff": float(getattr(self.cfg, "collocation_laplacian_weight", 0.0)),
-                        "collocation_laplacian_applied": False,
-                        "lambda_dir_eff": lambda_dir_eff,
-                        "lr": float(self.optimizer.param_groups[0]["lr"]),
-                        "w_u": float(last_stats.get("w_u", self.cfg.w_u)),
-                        "w_a": float(last_stats.get("w_a", self.cfg.w_a)),
-                        "w_a_raw": float(last_stats.get("w_a_raw", self.cfg.w_a)),
-                        "accel_factor": float(accel_factor),
-                        "grad_norm": 0.0,
-                        "nan_detected": True,
-                        "val_base_loss": float("nan"),
-                        "val_physics_loss": float("nan"),
-                        "val_total_loss": float("nan"),
-                        "train_base_loss": float("nan"),
-                        "train_physics_loss": float("nan"),
-                        "optimizer_steps": int(optimizer_steps_done),
-                        "samples_seen": int(samples_done),
-                    }
+                    return self._nan_sentinel(
+                        state, accel_factor=accel_factor, lambda_dir_eff=lambda_dir_eff
+                    )
 
                 if is_train:
-                    # Collocation Laplacian: computed BEFORE backward so it can be added to
-                    # the loss in "train" mode, or logged only in "diagnostic" mode.
-                    _col_lap_weight = float(getattr(self.cfg, "collocation_laplacian_weight", 0.0))
-                    _col_lap_every = max(1, int(getattr(self.cfg, "collocation_laplacian_every", 25)))
-                    _col_lap_active = (
-                        self.laplacian_requested
-                        and self.laplacian_mode in ("diagnostic", "train")
-                        and self.collocation_r_min_m is not None
-                        and self.collocation_r_max_m is not None
-                        and optimizer_steps_done % _col_lap_every == 0
+                    col_lap_loss_val, col_lap_scalar, col_lap_weight = (
+                        self._collocation_laplacian_step(state, epoch)
                     )
-                    _col_lap_loss_val: torch.Tensor | None = None
-                    _col_lap_scalar = 0.0
-                    if _col_lap_active:
-                        _n_pts = max(1, int(getattr(self.cfg, "collocation_laplacian_samples",
-                                                     getattr(self.cfg, "laplacian_subset_size", 512))))
-                        _n_hutch = max(1, int(getattr(self.cfg, "collocation_laplacian_hutchinson_samples",
-                                                       getattr(self.cfg, "n_hutchinson_samples", 4))))
-                        col_lap_attempt_count += 1
-                        try:
-                            # Always use the ScalerPack from loss_fn for consistent scaling
-                            _cl_loss = collocation_laplacian_loss(
-                                self.model, self.loss_fn,
-                                r_min_m=float(self.collocation_r_min_m),
-                                r_max_m=float(self.collocation_r_max_m),
-                                n_points=_n_pts,
-                                device=self.device,
-                                dtype=DTYPE,
-                                n_hutchinson=_n_hutch,
-                                mode=self.laplacian_mode,
-                            )
-                            _col_lap_scalar = float(_cl_loss.detach().item())
-                            if math.isfinite(_col_lap_scalar):
-                                col_lap_success_count += 1
-                                if self.laplacian_mode == "train":
-                                    total_col_lap_train += _col_lap_scalar
-                                    col_lap_train_count += 1
-                                    _col_lap_loss_val = _cl_loss
-                                else:  # diagnostic
-                                    total_col_lap_diag += _col_lap_scalar
-                                    col_lap_diag_count += 1
-                            else:
-                                col_lap_fail_count += 1
-                                if self.laplacian_mode == "train":
-                                    raise RuntimeError(
-                                        f"collocation_laplacian_loss returned non-finite "
-                                        f"value {_col_lap_scalar} in train mode."
-                                    )
-                                logger.warning(
-                                    "[train] collocation_laplacian_loss non-finite "
-                                    f"({_col_lap_scalar}); skipped this step (diagnostic mode)."
-                                )
-                        except Exception as _col_e:
-                            col_lap_fail_count += 1
-                            # In train mode the Laplacian is part of the objective; a
-                            # silent skip would disable the physics constraint while the
-                            # logs/metrics still claim it is active. Fail loudly instead.
-                            if self.laplacian_mode == "train":
-                                raise RuntimeError(
-                                    "collocation_laplacian_loss failed in train mode "
-                                    f"(epoch={epoch+1}, batch={n_batches}): {_col_e}. "
-                                    "The physics constraint cannot be silently dropped; "
-                                    "fix the cause or switch laplacian_mode to 'diagnostic'/'off'."
-                                ) from _col_e
-                            logger.warning(f"[train] collocation_laplacian_loss failed: {_col_e}")
 
                     # Scale loss by accumulation steps so gradients average over the
                     # effective batch rather than summing (preserves LR invariance).
                     scaled_loss = loss / float(grad_accum)
 
                     # Add collocation laplacian to loss in "train" mode
-                    if _col_lap_loss_val is not None and self.laplacian_mode == "train" and _col_lap_weight > 0.0:
-                        scaled_loss = scaled_loss + (_col_lap_weight * _col_lap_loss_val) / float(grad_accum)
+                    if (
+                        col_lap_loss_val is not None
+                        and self.laplacian_mode == "train"
+                        and col_lap_weight > 0.0
+                    ):
+                        scaled_loss = scaled_loss + (
+                            col_lap_weight * col_lap_loss_val
+                        ) / float(grad_accum)
                         # NaN/Inf guard for collocation Laplacian contribution
                         _cl_check = float(scaled_loss.item())
                         if math.isnan(_cl_check) or math.isinf(_cl_check):
                             logger.error(
                                 f"[train] NaN/Inf after adding collocation Laplacian at epoch={epoch+1} "
-                                f"batch={n_batches}. Saving failure manifest and stopping."
+                                f"batch={state.n_batches}. Saving failure manifest and stopping."
                             )
-                            import json as _json_mod
-                            try:
-                                _fm_path = Path(self.cfg.out) / "failure_manifest.json"
-                                _fm_path.parent.mkdir(parents=True, exist_ok=True)
-                                _fm_path.write_text(
-                                    _json_mod.dumps({
-                                        "epoch": epoch, "batch": n_batches,
-                                        "reason": "nan_loss_after_collocation_laplacian",
-                                        "collocation_laplacian_scalar": _col_lap_scalar,
-                                    }, indent=2, default=str)
-                                )
-                            except Exception:
-                                pass
-                            return {
-                                "loss": float("nan"), "objective_loss": float("nan"),
-                                "mse_u": float("nan"), "mse_a": float("nan"),
-                                "loss_dir": 0.0, "cossim_mean": 0.0,
-                                "loss_radial": 0.0, "loss_cross": 0.0, "loss_laplacian": 0.0,
-                                "loss_laplacian_diag": 0.0, "loss_laplacian_train": _col_lap_scalar,
-                                "lambda_laplacian_eff": _col_lap_weight,
-                                "collocation_laplacian_applied": True,
-                                "lambda_dir_eff": lambda_dir_eff,
-                                "lr": float(self.optimizer.param_groups[0]["lr"]),
-                                "w_u": float(last_stats.get("w_u", self.cfg.w_u)),
-                                "w_a": float(last_stats.get("w_a", self.cfg.w_a)),
-                                "w_a_raw": float(last_stats.get("w_a_raw", self.cfg.w_a)),
-                                "accel_factor": float(accel_factor),
-                                "grad_norm": 0.0,
-                                "nan_detected": True,
-                                "val_base_loss": float("nan"),
-                                "val_physics_loss": float("nan"),
-                                "val_total_loss": float("nan"),
-                                "train_base_loss": float("nan"),
-                                "train_physics_loss": float("nan"),
-                                "optimizer_steps": int(optimizer_steps_done),
-                                "samples_seen": int(samples_done),
-                            }
+                            self._write_failure_manifest(
+                                epoch=epoch,
+                                batch=state.n_batches,
+                                reason="nan_loss_after_collocation_laplacian",
+                                extra={"collocation_laplacian_scalar": col_lap_scalar},
+                            )
+                            return self._nan_sentinel(
+                                state,
+                                accel_factor=accel_factor,
+                                lambda_dir_eff=lambda_dir_eff,
+                                collocation_applied=True,
+                                collocation_train_scalar=col_lap_scalar,
+                            )
 
-                    if self.use_amp and self.scaler_amp is not None:
-                        self.scaler_amp.scale(scaled_loss).backward()
-                        if is_accum_boundary:
-                            self.scaler_amp.unscale_(self.optimizer)
-                            if self.cfg.max_grad_norm > 0:
-                                grad_norm = torch.nn.utils.clip_grad_norm_(
-                                    self.model.parameters(), max_norm=self.cfg.max_grad_norm
-                                )
-                            else:
-                                grad_norm = torch.tensor(0.0, device=self.device)
-                            self.scaler_amp.step(self.optimizer)
-                            self.scaler_amp.update()
-                            optimizer_steps_done += 1
-                            total_grad_norm += float(grad_norm)
-                            if float(grad_norm) > 50.0:
-                                logger.warning(
-                                    f"[train] grad_norm={float(grad_norm):.1f} > 50 at epoch={epoch+1} "
-                                    "batch={n_batches}: possible derivative explosion. "
-                                    "Consider lower lr or max_grad_norm."
-                                )
-                    else:
-                        scaled_loss.backward()
-                        if is_accum_boundary:
-                            if self.cfg.max_grad_norm > 0:
-                                grad_norm = torch.nn.utils.clip_grad_norm_(
-                                    self.model.parameters(), max_norm=self.cfg.max_grad_norm
-                                )
-                            else:
-                                grad_norm = torch.tensor(0.0, device=self.device)
-                            self.optimizer.step()
-                            optimizer_steps_done += 1
-                            total_grad_norm += float(grad_norm)
-                            if float(grad_norm) > 50.0:
-                                logger.warning(
-                                    f"[train] grad_norm={float(grad_norm):.1f} > 50 at epoch={epoch+1} "
-                                    f"batch={n_batches}: possible derivative explosion. "
-                                    "Consider lower lr or max_grad_norm."
-                                )
-
-                samples_done += int(xb.shape[0])
-                total_loss += float(stats["loss_ref"])
-                total_opt_loss += float(stats["loss_opt"])
-                total_u += float(stats["mse_u"])
-                total_a += float(stats["mse_a"])
-                total_dir += float(stats.get("loss_dir", 0.0))
-                total_cossim += float(stats.get("cossim_mean", 1.0))
-                total_angular_mean_deg += float(stats.get("angular_mean_deg", 0.0))
-                total_mask_frac += float(stats.get("mask_frac", 0.0))
-                total_radial += float(stats.get("loss_radial", 0.0))
-                total_cross += float(stats.get("loss_cross", 0.0))
-                total_lap += float(stats.get("loss_laplacian", 0.0))
-                _a_norm_b = float(ab.detach().norm(dim=-1).mean().item())
-                total_a_norm_mean += _a_norm_b
-                a_norm_max = max(a_norm_max, _a_norm_b)
-                n_batches += 1
-                last_stats = stats
-
-                if log_every > 0 and (
-                    n_batches == 1
-                    or n_batches % log_every == 0
-                    or n_batches == total_batches_est
-                ):
-                    elapsed = time.perf_counter() - phase_t0
-                    spb = elapsed / max(1, n_batches)
-                    eta = max(0.0, spb * (total_batches_est - n_batches))
-                    sps = samples_done / max(elapsed, 1e-9)
-                    cur_lr = float(self.optimizer.param_groups[0]["lr"])
-                    float(last_stats.get("w_a_eff", last_stats.get("w_a", self.cfg.w_a)))
-                    mem_str = _cuda_memory_string(self.device)
-                    (
-                        f" dir={total_dir/n_batches:.3e} cossim={total_cossim/n_batches:.4f}"
-                        f" ang={total_angular_mean_deg/n_batches:.2f}deg"
-                        f" mask_frac={total_mask_frac/n_batches:.2f} lam_dir={lambda_dir_eff:.3e}"
-                        if lambda_dir_eff > 0.0 else ""
-                    )
-                    extra_terms = ""
-                    if bool(self.cfg.use_radial_cross_loss):
-                        extra_terms += (
-                            f" radial={total_radial/n_batches:.3e}"
-                            f" cross={total_cross/n_batches:.3e}"
-                        )
-                    if bool(self.cfg.use_laplacian_regularization):
-                        extra_terms += f" lap={total_lap/n_batches:.3e}"
-                    if bool(self.cfg.use_altitude_balanced_loss):
-                        extra_terms += " alt-balance=on"
-                    # loss_opt = optimizer loss (uses accel_factor); loss_ref = full diagnostic loss
-                    logger.info(
-                        format_batch_summary(
-                            phase=phase.strip(),
-                            epoch=epoch + 1,
-                            batch=n_batches,
-                            total_batches=total_batches_est,
-                            loss_opt=total_opt_loss / n_batches,
-                            loss_ref=total_loss / n_batches,
-                            loss_u=total_u / n_batches,
-                            loss_a=total_a / n_batches,
-                            loss_dir=(total_dir / n_batches if lambda_dir_eff > 0.0 else None),
-                            lr=cur_lr,
-                            eta_s=eta,
-                            samples_per_s=sps,
-                            memory=mem_str,
-                        )
+                    self._backward_step(
+                        state,
+                        scaled_loss,
+                        is_accum_boundary=is_accum_boundary,
+                        epoch=epoch,
                     )
 
-        phase_time = time.perf_counter() - phase_t0
-        n_safe = max(1, n_batches)
+                self._update_metrics(state, stats, xb, ab)
+
+                self._log_progress(
+                    state,
+                    phase=phase,
+                    epoch=epoch,
+                    log_every=log_every,
+                    total_batches_est=total_batches_est,
+                    lambda_dir_eff=lambda_dir_eff,
+                    phase_t0=phase_t0,
+                )
+
+        return self._write_history_summary(
+            state,
+            phase=phase,
+            epoch=epoch,
+            accel_factor=accel_factor,
+            lambda_dir_eff=lambda_dir_eff,
+            phase_time=time.perf_counter() - phase_t0,
+        )
+
+    # ------------------------------------------------------------------
+    # run_epoch decomposition (R24): prepare_batch / compute_loss /
+    # backward_step / validate_numerics / update_metrics / log_progress /
+    # write_history. Each helper reads/writes the explicit _EpochState.
+    # ------------------------------------------------------------------
+
+    def _prepare_batch(
+        self, xb: torch.Tensor, ub: torch.Tensor, ab: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Move one loader batch to the training device."""
+        return move_batch_to_device(xb, ub, ab, self.device)
+
+    def _compute_loss(
+        self,
+        xb: torch.Tensor,
+        ub: torch.Tensor,
+        ab: torch.Tensor,
+        *,
+        is_train: bool,
+        accel_factor: float,
+        allow_weight_update: bool,
+        lambda_dir_eff: float,
+        apply_lap: bool,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        """Evaluate the Sobolev loss under the configured autocast policy."""
+        with torch.autocast(
+            device_type=self.device.type, dtype=self._amp_dtype, enabled=self.use_amp
+        ):
+            return self.loss_fn(
+                self.model,
+                xb,
+                ub,
+                ab,
+                self.weights,
+                is_train=is_train,
+                accel_factor=accel_factor,
+                allow_dynamic_weight_update=allow_weight_update,
+                direction_lambda=lambda_dir_eff,
+                direction_floor_abs=self.cfg.direction_loss_floor_abs,
+                use_altitude_balanced_loss=bool(self.cfg.use_altitude_balanced_loss),
+                altitude_bin_width_km=float(self.cfg.altitude_bin_width_km),
+                altitude_min_km=float(self.cfg.altitude_min_km),
+                altitude_max_km=float(self.cfg.altitude_max_km),
+                use_radial_cross_loss=bool(self.cfg.use_radial_cross_loss),
+                radial_lambda=float(self.cfg.radial_loss_weight),
+                cross_lambda=float(self.cfg.cross_loss_weight),
+                apply_laplacian=bool(apply_lap),
+                laplacian_lambda=float(self.cfg.laplacian_weight),
+                laplacian_subset_size=int(self.cfg.laplacian_subset_size),
+                laplacian_n_hutchinson=int(getattr(self.cfg, "n_hutchinson_samples", 4)),
+                laplacian_mode=self.laplacian_mode,
+            )
+
+    def _validate_numerics(
+        self,
+        stats: dict[str, float],
+        loss: torch.Tensor,
+        *,
+        phase: str,
+        epoch: int,
+        batch: int,
+    ) -> bool:
+        """Return False (and log) when the optimizer loss went NaN/Inf."""
+        loss_check = float(stats.get("loss_opt", loss.item()))
+        if math.isnan(loss_check) or math.isinf(loss_check):
+            logger.error(
+                f"[{phase}] NaN/Inf loss detected at epoch={epoch+1} batch={batch}. "
+                "Possible derivative instability. "
+                "Suggestions: lower lr, ensure accel_min_factor>0, lower w0, increase accel_ramp_epochs. "
+                "Stopping epoch early."
+            )
+            return False
+        return True
+
+    def _nan_sentinel(
+        self,
+        state: _EpochState,
+        *,
+        accel_factor: float,
+        lambda_dir_eff: float,
+        collocation_applied: bool = False,
+        collocation_train_scalar: float = 0.0,
+    ) -> dict[str, float]:
+        """Sentinel epoch result after a NaN/Inf abort (caller saves manifest)."""
+        return {
+            "loss": float("nan"), "objective_loss": float("nan"),
+            "mse_u": float("nan"), "mse_a": float("nan"),
+            "loss_dir": 0.0, "cossim_mean": 0.0,
+            "loss_radial": 0.0, "loss_cross": 0.0, "loss_laplacian": 0.0,
+            "loss_laplacian_diag": 0.0,
+            "loss_laplacian_train": float(collocation_train_scalar),
+            "lambda_laplacian_eff": float(
+                getattr(self.cfg, "collocation_laplacian_weight", 0.0)
+            ),
+            "collocation_laplacian_applied": bool(collocation_applied),
+            "lambda_dir_eff": lambda_dir_eff,
+            "lr": float(self.optimizer.param_groups[0]["lr"]),
+            "w_u": float(state.last_stats.get("w_u", self.cfg.w_u)),
+            "w_a": float(state.last_stats.get("w_a", self.cfg.w_a)),
+            "w_a_raw": float(state.last_stats.get("w_a_raw", self.cfg.w_a)),
+            "accel_factor": float(accel_factor),
+            "grad_norm": 0.0,
+            "nan_detected": True,
+            "val_base_loss": float("nan"),
+            "val_physics_loss": float("nan"),
+            "val_total_loss": float("nan"),
+            "train_base_loss": float("nan"),
+            "train_physics_loss": float("nan"),
+            "optimizer_steps": int(state.optimizer_steps_done),
+            "samples_seen": int(state.samples_done),
+        }
+
+    def _write_failure_manifest(
+        self, *, epoch: int, batch: int, reason: str, extra: dict[str, Any]
+    ) -> None:
+        try:
+            fm_path = Path(self.cfg.out) / "failure_manifest.json"
+            fm_path.parent.mkdir(parents=True, exist_ok=True)
+            fm_path.write_text(
+                json.dumps(
+                    {"epoch": epoch, "batch": batch, "reason": reason, **extra},
+                    indent=2,
+                    default=str,
+                )
+            )
+        except Exception:  # R29b-justified: the abort itself must still propagate
+            pass
+
+    def _collocation_laplacian_step(
+        self, state: _EpochState, epoch: int
+    ) -> tuple[torch.Tensor | None, float, float]:
+        """Collocation Laplacian, computed BEFORE backward so it can be added
+        to the loss in "train" mode or logged only in "diagnostic" mode.
+
+        Returns ``(loss_tensor_or_None, scalar_value, configured_weight)``.
+        """
+        col_lap_weight = float(getattr(self.cfg, "collocation_laplacian_weight", 0.0))
+        col_lap_every = max(1, int(getattr(self.cfg, "collocation_laplacian_every", 25)))
+        col_lap_active = (
+            self.laplacian_requested
+            and self.laplacian_mode in ("diagnostic", "train")
+            and self.collocation_r_min_m is not None
+            and self.collocation_r_max_m is not None
+            and state.optimizer_steps_done % col_lap_every == 0
+        )
+        col_lap_loss_val: torch.Tensor | None = None
+        col_lap_scalar = 0.0
+        if not col_lap_active:
+            return col_lap_loss_val, col_lap_scalar, col_lap_weight
+
+        n_pts = max(1, int(getattr(self.cfg, "collocation_laplacian_samples",
+                                   getattr(self.cfg, "laplacian_subset_size", 512))))
+        n_hutch = max(1, int(getattr(self.cfg, "collocation_laplacian_hutchinson_samples",
+                                     getattr(self.cfg, "n_hutchinson_samples", 4))))
+        state.col_lap_attempt_count += 1
+        try:
+            # Always use the ScalerPack from loss_fn for consistent scaling
+            cl_loss = collocation_laplacian_loss(
+                self.model, self.loss_fn,
+                r_min_m=float(self.collocation_r_min_m),
+                r_max_m=float(self.collocation_r_max_m),
+                n_points=n_pts,
+                device=self.device,
+                dtype=DTYPE,
+                n_hutchinson=n_hutch,
+                mode=self.laplacian_mode,
+            )
+            col_lap_scalar = float(cl_loss.detach().item())
+            if math.isfinite(col_lap_scalar):
+                state.col_lap_success_count += 1
+                if self.laplacian_mode == "train":
+                    state.total_col_lap_train += col_lap_scalar
+                    state.col_lap_train_count += 1
+                    col_lap_loss_val = cl_loss
+                else:  # diagnostic
+                    state.total_col_lap_diag += col_lap_scalar
+                    state.col_lap_diag_count += 1
+            else:
+                state.col_lap_fail_count += 1
+                if self.laplacian_mode == "train":
+                    raise RuntimeError(
+                        f"collocation_laplacian_loss returned non-finite "
+                        f"value {col_lap_scalar} in train mode."
+                    )
+                logger.warning(
+                    "[train] collocation_laplacian_loss non-finite "
+                    f"({col_lap_scalar}); skipped this step (diagnostic mode)."
+                )
+        except Exception as col_e:
+            state.col_lap_fail_count += 1
+            # In train mode the Laplacian is part of the objective; a
+            # silent skip would disable the physics constraint while the
+            # logs/metrics still claim it is active. Fail loudly instead.
+            if self.laplacian_mode == "train":
+                raise RuntimeError(
+                    "collocation_laplacian_loss failed in train mode "
+                    f"(epoch={epoch+1}, batch={state.n_batches}): {col_e}. "
+                    "The physics constraint cannot be silently dropped; "
+                    "fix the cause or switch laplacian_mode to 'diagnostic'/'off'."
+                ) from col_e
+            logger.warning(f"[train] collocation_laplacian_loss failed: {col_e}")
+        return col_lap_loss_val, col_lap_scalar, col_lap_weight
+
+    def _backward_step(
+        self,
+        state: _EpochState,
+        scaled_loss: torch.Tensor,
+        *,
+        is_accum_boundary: bool,
+        epoch: int,
+    ) -> None:
+        """Backward + (on accumulation boundaries) clip, optimizer step, and
+        gradient-norm bookkeeping. AMP and non-AMP share one logging contract."""
+
+        def _clip_grad_norm() -> torch.Tensor:
+            if self.cfg.max_grad_norm > 0:
+                return torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), max_norm=self.cfg.max_grad_norm
+                )
+            return torch.tensor(0.0, device=self.device)
+
+        def _record_grad_norm(grad_norm: torch.Tensor) -> None:
+            state.optimizer_steps_done += 1
+            state.total_grad_norm += float(grad_norm)
+            if float(grad_norm) > 50.0:
+                logger.warning(
+                    f"[train] grad_norm={float(grad_norm):.1f} > 50 at epoch={epoch+1} "
+                    f"batch={state.n_batches}: possible derivative explosion. "
+                    "Consider lower lr or max_grad_norm."
+                )
+
+        if self.use_amp and self.scaler_amp is not None:
+            self.scaler_amp.scale(scaled_loss).backward()
+            if is_accum_boundary:
+                self.scaler_amp.unscale_(self.optimizer)
+                grad_norm = _clip_grad_norm()
+                self.scaler_amp.step(self.optimizer)
+                self.scaler_amp.update()
+                _record_grad_norm(grad_norm)
+        else:
+            scaled_loss.backward()
+            if is_accum_boundary:
+                grad_norm = _clip_grad_norm()
+                self.optimizer.step()
+                _record_grad_norm(grad_norm)
+
+    def _update_metrics(
+        self,
+        state: _EpochState,
+        stats: dict[str, float],
+        xb: torch.Tensor,
+        ab: torch.Tensor,
+    ) -> None:
+        """Accumulate the per-batch statistics into the epoch state."""
+        state.samples_done += int(xb.shape[0])
+        state.total_loss += float(stats["loss_ref"])
+        state.total_opt_loss += float(stats["loss_opt"])
+        state.total_u += float(stats["mse_u"])
+        state.total_a += float(stats["mse_a"])
+        state.total_dir += float(stats.get("loss_dir", 0.0))
+        state.total_cossim += float(stats.get("cossim_mean", 1.0))
+        state.total_angular_mean_deg += float(stats.get("angular_mean_deg", 0.0))
+        state.total_mask_frac += float(stats.get("mask_frac", 0.0))
+        state.total_radial += float(stats.get("loss_radial", 0.0))
+        state.total_cross += float(stats.get("loss_cross", 0.0))
+        state.total_lap += float(stats.get("loss_laplacian", 0.0))
+        a_norm_b = float(ab.detach().norm(dim=-1).mean().item())
+        state.total_a_norm_mean += a_norm_b
+        state.a_norm_max = max(state.a_norm_max, a_norm_b)
+        state.n_batches += 1
+        state.last_stats = stats
+
+    def _log_progress(
+        self,
+        state: _EpochState,
+        *,
+        phase: str,
+        epoch: int,
+        log_every: int,
+        total_batches_est: int,
+        lambda_dir_eff: float,
+        phase_t0: float,
+    ) -> None:
+        """Periodic in-epoch progress line (first, every Nth, and last batch)."""
+        n_batches = state.n_batches
+        if not (
+            log_every > 0
+            and (
+                n_batches == 1
+                or n_batches % log_every == 0
+                or n_batches == total_batches_est
+            )
+        ):
+            return
+        elapsed = time.perf_counter() - phase_t0
+        spb = elapsed / max(1, n_batches)
+        eta = max(0.0, spb * (total_batches_est - n_batches))
+        sps = state.samples_done / max(elapsed, 1e-9)
+        cur_lr = float(self.optimizer.param_groups[0]["lr"])
+        mem_str = _cuda_memory_string(self.device)
+        # loss_opt = optimizer loss (uses accel_factor); loss_ref = full diagnostic loss.
+        # Per-batch extras (radial/cross/lap/alt-balance) are only surfaced in the
+        # end-of-phase summary via format_batch_summary's fixed field set.
+        logger.info(
+            format_batch_summary(
+                phase=phase.strip(),
+                epoch=epoch + 1,
+                batch=n_batches,
+                total_batches=total_batches_est,
+                loss_opt=state.total_opt_loss / n_batches,
+                loss_ref=state.total_loss / n_batches,
+                loss_u=state.total_u / n_batches,
+                loss_a=state.total_a / n_batches,
+                loss_dir=(state.total_dir / n_batches if lambda_dir_eff > 0.0 else None),
+                lr=cur_lr,
+                eta_s=eta,
+                samples_per_s=sps,
+                memory=mem_str,
+            )
+        )
+
+    def _write_history_summary(
+        self,
+        state: _EpochState,
+        *,
+        phase: str,
+        epoch: int,
+        accel_factor: float,
+        lambda_dir_eff: float,
+        phase_time: float,
+    ) -> dict[str, float]:
+        """End-of-phase summary log + the epoch history record (return value)."""
+        n_safe = max(1, state.n_batches)
         dir_summary = (
-            f" dir={total_dir/n_safe:.3e} cossim={total_cossim/n_safe:.4f}"
-            f" ang={total_angular_mean_deg/n_safe:.2f}deg"
-            f" mask_frac={total_mask_frac/n_safe:.2f} lam_dir={lambda_dir_eff:.3e}"
+            f" dir={state.total_dir/n_safe:.3e} cossim={state.total_cossim/n_safe:.4f}"
+            f" ang={state.total_angular_mean_deg/n_safe:.2f}deg"
+            f" mask_frac={state.total_mask_frac/n_safe:.2f} lam_dir={lambda_dir_eff:.3e}"
             if lambda_dir_eff > 0.0 else ""
         )
         extra_summary = ""
         if bool(self.cfg.use_radial_cross_loss):
-            extra_summary += f" radial={total_radial/n_safe:.3e} cross={total_cross/n_safe:.3e}"
+            extra_summary += (
+                f" radial={state.total_radial/n_safe:.3e} cross={state.total_cross/n_safe:.3e}"
+            )
         if bool(self.cfg.use_laplacian_regularization):
-            extra_summary += f" lap={total_lap/n_safe:.3e}"
+            extra_summary += f" lap={state.total_lap/n_safe:.3e}"
         if bool(self.cfg.use_altitude_balanced_loss):
             extra_summary += " alt-balance=on"
         # loss_ref is always the full reference (val uses full weight; train uses accel_factor)
         logger.info(
-            f"[{phase}] epoch={epoch+1} done: {samples_done:,} samples in {_format_seconds(phase_time)}"
+            f"[{phase}] epoch={epoch+1} done: {state.samples_done:,} samples in "
+            f"{_format_seconds(phase_time)}"
             f" ({phase_time / n_safe * 1000:.1f}ms/batch)"
-            f" loss_opt={total_opt_loss/n_safe:.5e} loss_ref={total_loss/n_safe:.5e}"
-            f" U={total_u/n_safe:.3e} a={total_a/n_safe:.3e}"
-            f" a_norm_mean={total_a_norm_mean/n_safe:.3e} a_norm_max={a_norm_max:.3e}"
+            f" loss_opt={state.total_opt_loss/n_safe:.5e} loss_ref={state.total_loss/n_safe:.5e}"
+            f" U={state.total_u/n_safe:.3e} a={state.total_a/n_safe:.3e}"
+            f" a_norm_mean={state.total_a_norm_mean/n_safe:.3e} a_norm_max={state.a_norm_max:.3e}"
             f" accel_f={accel_factor:.3f}{dir_summary}{extra_summary}"
         )
 
-        _n_col_diag = max(1, col_lap_diag_count)
-        _n_col_train = max(1, col_lap_train_count)
-        _col_lap_diag_avg = total_col_lap_diag / _n_col_diag if col_lap_diag_count > 0 else 0.0
-        _col_lap_train_avg = total_col_lap_train / _n_col_train if col_lap_train_count > 0 else 0.0
-        _col_lap_applied = (col_lap_diag_count > 0 or col_lap_train_count > 0)
-        _col_lap_weight_eff = float(getattr(self.cfg, "collocation_laplacian_weight", 0.0))
+        n_col_diag = max(1, state.col_lap_diag_count)
+        n_col_train = max(1, state.col_lap_train_count)
+        col_lap_diag_avg = (
+            state.total_col_lap_diag / n_col_diag if state.col_lap_diag_count > 0 else 0.0
+        )
+        col_lap_train_avg = (
+            state.total_col_lap_train / n_col_train if state.col_lap_train_count > 0 else 0.0
+        )
+        col_lap_applied = state.col_lap_diag_count > 0 or state.col_lap_train_count > 0
+        col_lap_weight_eff = float(getattr(self.cfg, "collocation_laplacian_weight", 0.0))
+        physics_loss = (
+            state.total_dir + state.total_radial + state.total_cross
+            + state.total_lap + col_lap_train_avg
+        ) / n_safe
         return {
-            "loss": total_loss / n_safe,
-            "objective_loss": total_opt_loss / n_safe,
-            "mse_u": total_u / n_safe,
-            "mse_a": total_a / n_safe,
-            "loss_dir": total_dir / n_safe,
-            "cossim_mean": total_cossim / n_safe,
-            "angular_mean_deg": total_angular_mean_deg / n_safe,
-            "mask_frac": total_mask_frac / n_safe,
-            "a_norm_mean": total_a_norm_mean / n_safe,
-            "a_norm_max": a_norm_max,
-            "loss_radial": total_radial / n_safe,
-            "loss_cross": total_cross / n_safe,
-            "loss_laplacian": total_lap / n_safe,
-            "loss_laplacian_diag": _col_lap_diag_avg,
-            "loss_laplacian_train": _col_lap_train_avg,
-            "lambda_laplacian_eff": _col_lap_weight_eff,
-            "collocation_laplacian_applied": _col_lap_applied,
-            "collocation_laplacian_attempt_count": int(col_lap_attempt_count),
-            "collocation_laplacian_success_count": int(col_lap_success_count),
-            "collocation_laplacian_fail_count": int(col_lap_fail_count),
+            "loss": state.total_loss / n_safe,
+            "objective_loss": state.total_opt_loss / n_safe,
+            "mse_u": state.total_u / n_safe,
+            "mse_a": state.total_a / n_safe,
+            "loss_dir": state.total_dir / n_safe,
+            "cossim_mean": state.total_cossim / n_safe,
+            "angular_mean_deg": state.total_angular_mean_deg / n_safe,
+            "mask_frac": state.total_mask_frac / n_safe,
+            "a_norm_mean": state.total_a_norm_mean / n_safe,
+            "a_norm_max": state.a_norm_max,
+            "loss_radial": state.total_radial / n_safe,
+            "loss_cross": state.total_cross / n_safe,
+            "loss_laplacian": state.total_lap / n_safe,
+            "loss_laplacian_diag": col_lap_diag_avg,
+            "loss_laplacian_train": col_lap_train_avg,
+            "lambda_laplacian_eff": col_lap_weight_eff,
+            "collocation_laplacian_applied": col_lap_applied,
+            "collocation_laplacian_attempt_count": int(state.col_lap_attempt_count),
+            "collocation_laplacian_success_count": int(state.col_lap_success_count),
+            "collocation_laplacian_fail_count": int(state.col_lap_fail_count),
             "lambda_dir_eff": lambda_dir_eff,
             "lr": float(self.optimizer.param_groups[0]["lr"]),
-            "w_u": float(last_stats.get("w_u", self.cfg.w_u)),
-            "w_a": float(last_stats.get("w_a", self.cfg.w_a)),
-            "w_a_raw": float(last_stats.get("w_a_raw", self.cfg.w_a)),
-            "accel_factor": float(last_stats.get("accel_factor", accel_factor)),
-            "grad_norm": total_grad_norm / n_safe,
-            "val_base_loss": (total_u + total_a) / n_safe,  # U + accel MSE only
-            "val_physics_loss": (total_dir + total_radial + total_cross + total_lap + _col_lap_train_avg) / n_safe,
-            "val_total_loss": total_loss / n_safe,   # alias for "loss"
-            "train_base_loss": (total_u + total_a) / n_safe,
-            "train_physics_loss": (total_dir + total_radial + total_cross + total_lap + _col_lap_train_avg) / n_safe,
-            "optimizer_steps": int(optimizer_steps_done),
-            "samples_seen": int(samples_done),
+            "w_u": float(state.last_stats.get("w_u", self.cfg.w_u)),
+            "w_a": float(state.last_stats.get("w_a", self.cfg.w_a)),
+            "w_a_raw": float(state.last_stats.get("w_a_raw", self.cfg.w_a)),
+            "accel_factor": float(state.last_stats.get("accel_factor", accel_factor)),
+            "grad_norm": state.total_grad_norm / n_safe,
+            "val_base_loss": (state.total_u + state.total_a) / n_safe,  # U + accel MSE only
+            "val_physics_loss": physics_loss,
+            "val_total_loss": state.total_loss / n_safe,   # alias for "loss"
+            "train_base_loss": (state.total_u + state.total_a) / n_safe,
+            "train_physics_loss": physics_loss,
+            "optimizer_steps": int(state.optimizer_steps_done),
+            "samples_seen": int(state.samples_done),
         }
 
 def _lr_multiplier_for_epoch(
@@ -2238,10 +2408,10 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     apply_model_preset(cfg)
     if str(getattr(cfg, "runtime_model_kind", "potential_autograd")) == "force_direct":
         raise NotImplementedError(
-            "runtime_model_kind='force_direct' uses the direct residual-acceleration "
-            "training path. Run `lunaris-train-force-direct` or "
-            "`python -m lunaris.surrogate.st_lrps.training.force_direct_cli`; "
-            "the main Sobolev trainer remains scalar-potential/autograd only."
+            "runtime_model_kind='force_direct' is archived in the "
+            "experimental/force-direct-archive branch and is no longer trainable on "
+            "main. The Sobolev trainer supports only the conservative scalar-potential "
+            "(potential_autograd) surrogate."
         )
     _determinism_flags = set_seed(
         cfg.seed,

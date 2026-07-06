@@ -7,7 +7,7 @@
 
 #4 (no silent benchmark downgrade): a GPU backend that fails to *initialize* must
    hard-fail -- not silently downgrade to CPU -- when fallback is forbidden
-   (``gpu_sh_fallback_policy='error'`` or a paper-safe / strict-backend flag).
+   (``sh_fallback_policy='error'`` or a paper-safe / strict-backend flag).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pytest
 torch = pytest.importorskip("torch")
 pytest.importorskip("torch.nn")
 
-from lunaris.batch.engine import MonteCarloEngine
+from lunaris.batch.engine import BatchPropagationEngine
 from lunaris.surrogate.runtime import SurrogateGravityModel
 from st_lrps_contract_test_utils import make_contract_run
 
@@ -113,42 +113,42 @@ def test_torch_batch_diagnostics_report_effective_surrogate_dtype(tmp_path, monk
 # #4 GPU init-failure must not silently downgrade under a strict policy
 # ---------------------------------------------------------------------------
 
-def _engine(**mc_attrs) -> MonteCarloEngine:
-    eng = MonteCarloEngine.__new__(MonteCarloEngine)
-    eng._mc = SimpleNamespace(**mc_attrs)  # type: ignore
+def _engine(**cfg_attrs) -> BatchPropagationEngine:
+    eng = BatchPropagationEngine.__new__(BatchPropagationEngine)
+    eng._cfg = SimpleNamespace(**cfg_attrs)  # type: ignore
     eng._backend_note = None  # type: ignore
     return eng
 
 
 def test_fallback_forbidden_on_policy_error():
-    assert _engine(gpu_sh_fallback_policy="error")._fallback_forbidden() is True
+    assert _engine(sh_fallback_policy="error")._fallback_forbidden() is True
 
 
 def test_fallback_allowed_by_default():
-    assert _engine(gpu_sh_fallback_policy="compatible_gpu")._fallback_forbidden() is False
-    assert _engine(gpu_sh_fallback_policy="cpu")._fallback_forbidden() is False
+    assert _engine(sh_fallback_policy="compatible_gpu")._fallback_forbidden() is False
+    assert _engine(sh_fallback_policy="cpu")._fallback_forbidden() is False
     assert _engine()._fallback_forbidden() is False  # attribute absent -> default allows
 
 
 @pytest.mark.parametrize("flag", ["paper_safe", "strict_backend", "benchmark_mode"])
 def test_fallback_forbidden_by_explicit_flag(flag):
-    assert _engine(gpu_sh_fallback_policy="compatible_gpu", **{flag: True})._fallback_forbidden() is True
+    assert _engine(sh_fallback_policy="compatible_gpu", **{flag: True})._fallback_forbidden() is True
 
 
 def test_handle_backend_init_failure_raises_when_forbidden():
-    eng = _engine(gpu_sh_fallback_policy="error")
+    eng = _engine(sh_fallback_policy="error")
     plan = SimpleNamespace(gravity_backend="st_lrps")
     with pytest.raises(RuntimeError, match="fallback is forbidden"):
-        eng._handle_backend_init_failure(plan, "[MC] GPU init failed.", RuntimeError("cuda oom"))
+        eng._handle_backend_init_failure(plan, "[BATCH] GPU init failed.", RuntimeError("cuda oom"))
     # The plan must NOT have been quietly downgraded.
     assert not getattr(plan, "fallback_applied", False)
 
 
 def test_handle_backend_init_failure_downgrades_when_allowed():
-    eng = _engine(gpu_sh_fallback_policy="compatible_gpu")
+    eng = _engine(sh_fallback_policy="compatible_gpu")
     plan = SimpleNamespace(gravity_backend="st_lrps")
     with pytest.warns(RuntimeWarning):
-        eng._handle_backend_init_failure(plan, "[MC] GPU init failed.", RuntimeError("cuda oom"))
+        eng._handle_backend_init_failure(plan, "[BATCH] GPU init failed.", RuntimeError("cuda oom"))
     assert plan.fallback_applied is True
     assert plan.use_gpu is False
     assert eng._backend_note is not None
@@ -157,11 +157,11 @@ def test_handle_backend_init_failure_downgrades_when_allowed():
 def test_downgrade_to_cpu_rewrites_full_provenance_st_lrps():
     """A GPU->CPU downgrade must relabel EVERY provenance field so a CPU run is
     never presented as a GPU run (Phase 8: no run labelled GPU when CPU used)."""
-    from lunaris.core.mc_backend_policy import MCBackend
+    from lunaris.batch.backend_policy import BatchBackend
 
     plan = SimpleNamespace(
         gravity_backend="st_lrps",
-        final_backend=MCBackend.GPU_ST_LRPS,
+        final_backend=BatchBackend.GPU_ST_LRPS,
         use_gpu=True,
         actual_backend="gpu_st_lrps",
         actual_sh_degree=200,
@@ -170,9 +170,9 @@ def test_downgrade_to_cpu_rewrites_full_provenance_st_lrps():
         dtype="float32",
         integrator="fixed RK4",
     )
-    MonteCarloEngine._downgrade_plan_to_cpu(plan, "cuda unavailable")
+    BatchPropagationEngine._downgrade_plan_to_cpu(plan, "cuda unavailable")
 
-    assert plan.final_backend == MCBackend.CPU
+    assert plan.final_backend == BatchBackend.CPU
     assert plan.use_gpu is False
     assert plan.actual_backend == "cpu_st_lrps"
     assert plan.actual_sh_degree is None
@@ -185,11 +185,11 @@ def test_downgrade_to_cpu_rewrites_full_provenance_st_lrps():
 
 
 def test_downgrade_to_cpu_uses_cpu_sh_for_classic_backend():
-    from lunaris.core.mc_backend_policy import MCBackend
+    from lunaris.batch.backend_policy import BatchBackend
 
     plan = SimpleNamespace(
         gravity_backend="sh",
-        final_backend=MCBackend.GPU_CLASSIC_SH,
+        final_backend=BatchBackend.GPU_CLASSIC_SH,
         use_gpu=True,
         actual_backend="numba_cuda_sh",
         actual_sh_degree=24,
@@ -198,6 +198,6 @@ def test_downgrade_to_cpu_uses_cpu_sh_for_classic_backend():
         dtype="float32",
         integrator="fixed RK4",
     )
-    MonteCarloEngine._downgrade_plan_to_cpu(plan, "cuda oom")
+    BatchPropagationEngine._downgrade_plan_to_cpu(plan, "cuda oom")
     assert plan.actual_backend == "cpu_sh"
     assert plan.use_gpu is False

@@ -917,8 +917,8 @@ def _synchronize_model_device_if_cuda(model: Any) -> None:
 # Batch GPU/CPU RK4 for ST-LRPS
 # =============================================================================
 
-class _BatchMCCfg:
-    """Minimal mc_cfg duck-type for TorchBatchPropagator."""
+class _BatchCfg:
+    """Minimal batch_cfg duck-type for TorchBatchPropagator."""
     def __init__(self, dt_s: float, impact_alt_km: float = 0.0, torch_dtype: str = "float32") -> None:
         self.dt_s = float(dt_s)
         self.impact_alt_km = float(impact_alt_km)
@@ -1097,11 +1097,11 @@ def _run_batch_rk4_gpu(
     # Move model to GPU with the requested dtype if needed.
     surrogate_model.to_device(device, dtype=_torch_dtype_from_name(getattr(args, "torch_dtype", "float32")))
 
-    mc_cfg = _BatchMCCfg(dt_s=dt_s, torch_dtype=getattr(args, "torch_dtype", "float32"))
+    batch_cfg = _BatchCfg(dt_s=dt_s, torch_dtype=getattr(args, "torch_dtype", "float32"))
     use_legacy_identity = effective_frame_mode == "inertial_fixed_legacy"
     prop = TorchBatchPropagator(
         surrogate_model,
-        mc_cfg,
+        batch_cfg,
         device_id=0,
         ephem=None if use_legacy_identity else ephem,
         allow_identity_rotation=use_legacy_identity,

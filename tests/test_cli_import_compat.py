@@ -43,5 +43,4 @@ def test_cli_batch_surface_points_at_batch_engine() -> None:
     cli_batch = importlib.import_module("lunaris.cli.batch")
     batch_engine = importlib.import_module("lunaris.batch.engine")
 
-    assert cli_batch.mc_entry is batch_engine.mc_entry
     assert cli_batch.batch_entry is batch_engine.batch_entry

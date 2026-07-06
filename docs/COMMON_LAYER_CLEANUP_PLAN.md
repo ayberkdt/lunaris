@@ -12,9 +12,9 @@ The common layer is in good shape:
 - done: `common` has no runtime imports from `physics`, `core`, `analysis`,
   `visualization`, `ui`, or `surrogate`.
 - done: `common.__init__` exposes the real lazy submodules:
-  `math_utils`, `time_utils`, `batch_defs`, `montecarlo_defs`, `paths`,
+  `math_utils`, `time_utils`, `batch_defs`, `batch_defs`, `paths`,
   `hashing`, and `lunar_data`.
-- done: `C_LIGHT` use in CUDA/MC relativity paths comes from
+- done: `C_LIGHT` use in CUDA/batch relativity paths comes from
   `common.constants`.
 - done: `math_utils` exposes the advertised helpers (`dot3`, `cross3`,
   `vec3_normalize`, `safe_acos`, `wrap_angle_pi`, `coe_to_rv`) and uses the
@@ -34,8 +34,8 @@ The common layer is in good shape:
 ### R2 - Keep common tests common-only
 
 - done: `tests/test_common_refactor.py` no longer imports
-  `lunaris.core.monte_carlo_engine`.
-- done: Core sampling design checks moved to `tests/test_monte_carlo_sampling.py`.
+  `lunaris.batch.engine`.
+- done: Core sampling design checks moved to `tests/test_batch_sampling_designs.py`.
 - todo: Keep future tests under `test_common_*` limited to `lunaris.common`
   modules and standard-library/numpy assertions.
 
@@ -51,7 +51,7 @@ The common layer is in good shape:
 Run the focused common checks:
 
 ```bash
-.venv\Scripts\python.exe -m pytest tests/test_common_refactor.py tests/test_math_utils.py tests/test_time_utils.py tests/test_type_defs.py tests/test_type_defs_contracts.py tests/test_mc_output_grid.py tests/test_monte_carlo_sampling.py -q
+.venv\Scripts\python.exe -m pytest tests/test_common_refactor.py tests/test_math_utils.py tests/test_time_utils.py tests/test_type_defs.py tests/test_type_defs_contracts.py tests/test_batch_output_grid.py tests/test_batch_sampling_designs.py -q
 ```
 
 Run import-boundary checks when the dependency is installed:

@@ -8,6 +8,7 @@ point and owns the propagation orchestration surface.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import time
 import warnings
@@ -19,6 +20,8 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 from lunaris.common.constants import R_MOON
+
+logger = logging.getLogger(__name__)
 from lunaris.common.math_utils import (
     nyquist_max_step_s,
     recommended_sh_degree,
@@ -327,11 +330,14 @@ def propagate(
     if user_max_step_s is None:
         max_step = float(nyq_max)
         if verbose:
-            print(f"[STEP] Nyquist max_step_s={max_step:.6f} (deg={degree})", flush=True)
+            logger.info(f"[STEP] Nyquist max_step_s={max_step:.6f} (deg={degree})")
     else:
         max_step = min(float(user_max_step_s), float(nyq_max))
         if verbose:
-            print(f"[STEP] user_max_step={float(user_max_step_s):g}s, nyquist={nyq_max:.6f}s -> using {max_step:.6f}s", flush=True)
+            logger.info(
+                f"[STEP] user_max_step={float(user_max_step_s):g}s, "
+                f"nyquist={nyq_max:.6f}s -> using {max_step:.6f}s"
+            )
 
     # -------------------------------------------------------------------------
     # 4) Events
@@ -355,10 +361,10 @@ def propagate(
     _method = getattr(cfg, "method", "DOP853")
     _flags = getattr(dynamics, "flags", None)
     _violations = symplectic_nonconservative_violations(_method, _flags)
-    # The gravity model itself can void the guarantee: a force_direct ST-LRPS
-    # surrogate predicts acceleration directly (no underlying scalar potential),
-    # so it is non-conservative by construction even with every perturbation
-    # flag off. potential_autograd surrogates and classical SH stay exempt.
+    # The gravity model itself can void the guarantee: a non-conservative
+    # surrogate (one whose acceleration is not the gradient of a scalar
+    # potential) breaks bounded energy drift even with every perturbation flag
+    # off. potential_autograd surrogates and classical SH stay exempt.
     _violations += symplectic_nonconservative_gravity(_method, getattr(dynamics, "grav", None))
     if _violations:
         _msg = (
@@ -393,7 +399,9 @@ def propagate(
     if _is_fixed_step_method(getattr(cfg, "method", "DOP853")):
         meth_name = str(getattr(cfg, "method", "VV"))
         if verbose:
-            print(f"[PROP] Fixed-step {meth_name}: dt_out={dt_out:g}s, max_step={max_step:.6f}s", flush=True)
+            logger.info(
+                f"[PROP] Fixed-step {meth_name}: dt_out={dt_out:g}s, max_step={max_step:.6f}s"
+            )
 
         if _fixed_step_requires_6d(meth_name) and y0_arr.size != 6:
             raise ValueError(
@@ -448,13 +456,14 @@ def propagate(
 
         if verbose:
             if isinstance(atol_arg, np.ndarray):
-                print(
+                logger.info(
                     f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s "
-                    f"| atol=vector(pos={getattr(cfg, 'atol_pos', None)}, vel={getattr(cfg, 'atol_vel', None)})",
-                    flush=True,
+                    f"| atol=vector(pos={getattr(cfg, 'atol_pos', None)}, vel={getattr(cfg, 'atol_vel', None)})"
                 )
             else:
-                print(f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s", flush=True)
+                logger.info(
+                    f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s"
+                )
 
         def _solve_span(t_start: float, t_end: float, y_start: np.ndarray, t_eval_span: np.ndarray):
             return solve_ivp(
@@ -644,8 +653,15 @@ def propagate(
                     impacted = True
                     t_imp = float(np.asarray(t_events[idx_impact])[0])
                     y_imp = np.asarray(np.asarray(y_events[idx_impact])[0], dtype=np.float64)
-            except Exception:
-                pass
+            except Exception as exc:
+                # Losing the impact flag silently would flip a result-affecting
+                # boolean (R29b): a malformed solver event payload must be visible.
+                warnings.warn(
+                    f"Impact-event extraction failed on malformed solver output: {exc}. "
+                    "The trajectory is reported as non-impacting.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         try:
             if impacted:
@@ -661,6 +677,8 @@ def propagate(
                 if stop_reason is None and any((te is not None and np.asarray(te).size > 0) for te in t_events):
                     stop_reason = "event"
         except Exception:
+            # R29b-justified: stop_reason is a human-readable label; the actual
+            # termination behavior was already decided by the solver events.
             pass
 
         t_stop = None
@@ -722,6 +740,8 @@ def propagate(
         for _k, _v in specific_energy_drift_stats(res.t, res.y, float(mu_m3s2)).items():
             res.diagnostics[_k] = float(_v)
     except Exception:
+        # R29b-justified: optional diagnostics enrichment; the trajectory itself
+        # is already computed and returned unchanged.
         pass
 
     # SH truncation-degree adequacy for the orbit's periapsis altitude. Below the
@@ -744,8 +764,10 @@ def propagate(
                     )
                     warnings.warn(_deg_msg, RuntimeWarning, stacklevel=2)
                     if verbose:
-                        print(f"[GRAV] {_deg_msg}", flush=True)
+                        logger.info(f"[GRAV] {_deg_msg}")
     except Exception:
+        # R29b-justified: advisory degree-adequacy diagnostics only; failure
+        # here never alters the propagated trajectory.
         pass
 
     if bool(getattr(cfg, "compute_2body_baseline", False)):

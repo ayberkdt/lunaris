@@ -25,6 +25,15 @@ own training, evaluation, and Studio UI.
 > batch/ensemble. Do **not** benchmark "ST-LRPS vs SH" by timing one
 > CPU trajectory — that measures the wrong path. Compare like-for-like on the GPU
 > batch backend. See [docs/profiling.md](docs/profiling.md).
+>
+> **GPU ST-LRPS currently supports lunar gravity surrogate propagation only.**
+> It is not a full-dynamics propagator: third-body, SRP, albedo, thermal IR,
+> solid tides, and relativity are not evaluated on the GPU ST-LRPS path.
+> Requesting them produces an explicit, recorded CPU fallback (never a silent
+> simplification); see [docs/backend_matrix.md](docs/backend_matrix.md).
+> Non-gravity perturbations are handled separately in validation or future
+> hybrid backends, and gravity-only results are never mixed with full-dynamics
+> results in a single benchmark table.
 
 > **Project status.** Lunaris is **actively developed research software** with
 > versioned on-disk contracts (datasets, checkpoints, runtime, and benchmark
@@ -44,6 +53,7 @@ This README is a landing page; the canonical detail lives in `docs/`.
 | [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD split policies, runtime frame safety, paper-safe benchmarks, validation + ablation suites |
 | [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
 | [docs/REPRODUCIBLE_BENCHMARKS.md](docs/REPRODUCIBLE_BENCHMARKS.md) | Config-driven benchmark runs, provenance manifests, validation reports, and CI smoke mode |
+| [docs/PAPER_SAFE_POLICY.md](docs/PAPER_SAFE_POLICY.md) | Paper-safe vs research-mode failure policy: what hard-fails, what warns-and-records |
 | [docs/DATASET_PIPELINE.md](docs/DATASET_PIPELINE.md) | ST-LRPS dataset contract, validation, quality reports, split manifests, and strict training ingestion |
 | [docs/CONFIG_AND_ARTIFACT_CONTRACTS.md](docs/CONFIG_AND_ARTIFACT_CONTRACTS.md) | ST-LRPS dataset, training, checkpoint, runtime, and benchmark contract rules |
 | [docs/PERTURBATION_BUDGET.md](docs/PERTURBATION_BUDGET.md) | Perturbation-budget assumptions, outputs, and interpretation |
@@ -124,7 +134,6 @@ lunaris-train --help
 lunaris-eval --help
 lunaris-benchmark --help
 lunaris-batch --help
-lunaris-mc --help  # historical alias
 lunaris-perturbation-budget --help
 python -m lunaris.surrogate.st_lrps.training.cli --help
 python -m lunaris.surrogate.st_lrps.evaluation.cli --help
@@ -164,12 +173,11 @@ Console entry points (installed via `pip install -e .`):
 ```text
 lunaris           single-run propagation CLI
 lunaris-batch     batch/ensemble propagation runner
-lunaris-mc        historical alias for batch/ensemble propagation
 lunaris-launcher  welcome hub (picks a workspace; optional offline 3D Moon preview)
 lunaris-ui        mission desktop UI (Lunaris Mission Studio)
 lunaris-studio    ST-LRPS Studio UI
-lunaris-train / lunaris-train-force-direct      ST-LRPS training CLIs
-lunaris-eval  / lunaris-eval-force-direct       ST-LRPS evaluation CLIs
+lunaris-train     ST-LRPS training CLI (potential_autograd surrogate)
+lunaris-eval      ST-LRPS evaluation CLI
 lunaris-benchmark ST-LRPS orbit-level gravity benchmark / validation CLI
 lunaris-validate  gravity-reference checks + ST-LRPS validation suite
 lunaris-ablation  ST-LRPS ablation suite runner
@@ -197,13 +205,14 @@ python -m lunaris.surrogate.st_lrps.evaluation.cli --help
 python -m lunaris.surrogate.st_lrps.evaluation.ablation --help
 ```
 
-At runtime ST-LRPS supports two artifact contracts: the default
-`potential_autograd` (learned scalar residual potential, acceleration via
-autograd; validation-safe) and the experimental `force_direct` (3-output
-direct residual acceleration, not conservative by construction; requires curl
-and orbit-level validation before scientific claims). Versioned
-`artifact_contract` / `dataset_contract` blocks record target semantics, baseline
-degree, altitude envelope, scaler contract, encoding, and runtime kind.
+At runtime ST-LRPS is a single artifact contract: `potential_autograd` (learned
+scalar residual potential, acceleration via autograd; conservative by
+construction and validation-safe). The earlier experimental `force_direct`
+(3-output direct residual acceleration, not conservative by construction) has
+been archived in the `experimental/force-direct-archive` branch and is
+fail-closed on main. Versioned `artifact_contract` / `dataset_contract` blocks
+record target semantics, baseline degree, altitude envelope, scaler contract,
+encoding, and runtime kind.
 
 Run-level posture is selected with `--run-preset {development,quick,paper}`;
 `paper` enforces a generalization split, deterministic execution, and the
@@ -231,13 +240,11 @@ Single-run propagation is driven by `lunaris`; propagated ensembles are driven
 by the primary `lunaris-batch` command. Each ensemble run declares its sampling
 design: `random` is the classical Monte Carlo design, while `lhs`, `sobol`, and
 `sobol_scrambled` provide space-filling designs for validation and benchmark
-coverage. The historical `lunaris-mc` command remains only as a compatibility
-alias for existing scripts.
+coverage.
 
 Batch backends are explicit (`cpu_sh` truth reference, `numba_cuda_sh`,
-`torch_cuda_sh`, `torch_cpu_sh`, `gpu_st_lrps_potential`,
-`gpu_st_lrps_direct`). Selection is resolved centrally by
-`lunaris.core.mc_backend_policy`, and the requested vs. effective backend,
+`torch_cuda_sh`, `torch_cpu_sh`, `gpu_st_lrps_potential`). Selection is resolved centrally by
+`lunaris.batch.backend_policy`, and the requested vs. effective backend,
 device, integrator, sampling method, and any fallback reason are recorded in the
 batch result diagnostics rather than applied silently. The perturbation budget
 tool quantifies acceleration contributions and force-model uncertainty:
@@ -313,9 +320,8 @@ exception is the offline web preview's static demo assets under
 preview, not scientific outputs, and the allowlist is enforced by
 `tests/test_repo_hygiene.py`. The standard layout
 (`outputs/{simulations,ensemble,missions,gravity_benchmark,training,evaluations,runtime,dataset_reports,datasets,validation,visualization}/`)
-keeps a trained run's checkpoints, plots, evals, and provenance together. Older
-scripts and archives may still use `outputs/monte_carlo/`; new examples should
-use `outputs/ensemble/`.
+keeps a trained run's checkpoints, plots, evals, and provenance together.
+Batch/ensemble outputs live under `outputs/ensemble/`.
 
 ## Testing
 

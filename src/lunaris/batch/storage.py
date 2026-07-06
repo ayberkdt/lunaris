@@ -19,7 +19,7 @@ from lunaris.batch.provenance import (
     _decode_metadata_value,
     _metadata_value_to_jsonable,
 )
-from lunaris.common.batch_defs import MCRunResult, MonteCarloConfig
+from lunaris.common.batch_defs import BatchPropagationConfig, BatchPropagationResult
 
 REQUIRED_ARCHIVE_V2_FIELDS: tuple[str, ...] = (
     "archive_schema_version",
@@ -28,23 +28,34 @@ REQUIRED_ARCHIVE_V2_FIELDS: tuple[str, ...] = (
     "duration_s",
     "output_dt_s",
     "backend",
-    "requested_mc_backend",
-    "actual_mc_backend",
-    "mc_backend",
+    "requested_batch_backend",
+    "actual_batch_backend",
+    "batch_backend",
     "detect_impact",
     "compute_impact_statistics",
 )
 
+REQUIRED_ARCHIVE_V2_ARRAYS: tuple[str, ...] = (
+    "t",
+    "Y",
+    "sc_samples",
+    "impact_flags",
+    "t_impact",
+    "valid_mask",
+    "impact_position_inertial_m",
+    "impact_position_fixed_m",
+)
+
 
 def _resolve_result_storage(
-    mc_cfg: MonteCarloConfig,
+    batch_cfg: BatchPropagationConfig,
     n_steps: int,
     *,
     available_host_memory_bytes: Callable[[], int | None] | None = None,
 ) -> tuple[str, int, int]:
     """Resolve eager versus disk-backed result storage before opening a writer."""
-    result_bytes = mc_cfg.estimated_result_bytes(n_steps)
-    memory_limit_bytes = int(float(mc_cfg.max_result_memory_gb) * (1024.0 ** 3))
+    result_bytes = batch_cfg.estimated_result_bytes(n_steps)
+    memory_limit_bytes = int(float(batch_cfg.max_result_memory_gb) * (1024.0 ** 3))
     # Effective host budget: the configured cap, further bounded by a safety
     # fraction of the RAM actually free now (when measurable). This is the budget
     # the auto storage decision and the per-batch host buffer must both respect.
@@ -53,26 +64,26 @@ def _resolve_result_storage(
     host_budget_bytes = memory_limit_bytes
     if available is not None:
         host_budget_bytes = min(memory_limit_bytes, int(available * _HOST_MEMORY_SAFETY_FACTOR))
-    storage_mode = str(mc_cfg.result_storage_mode)
+    storage_mode = str(batch_cfg.result_storage_mode)
     if storage_mode == "auto":
         storage_mode = (
             "disk"
-            if mc_cfg.output_format == "hdf5" and result_bytes > host_budget_bytes
+            if batch_cfg.output_format == "hdf5" and result_bytes > host_budget_bytes
             else "memory"
         )
     if storage_mode not in {"memory", "disk"}:
         raise ValueError(f"Unsupported result storage mode: {storage_mode!r}")
     if (
-        mc_cfg.output_format == "npz"
+        batch_cfg.output_format == "npz"
         and result_bytes > host_budget_bytes
-        and mc_cfg.result_storage_mode == "auto"
+        and batch_cfg.result_storage_mode == "auto"
     ):
         limit_gib = host_budget_bytes / (1024.0 ** 3)
         budget_note = (
             f"host memory safety budget ({limit_gib:.2f} GiB = "
             f"{_HOST_MEMORY_SAFETY_FACTOR:.0%} of free RAM)"
             if available is not None and host_budget_bytes < memory_limit_bytes
-            else f"max_result_memory_gb={mc_cfg.max_result_memory_gb:g}"
+            else f"max_result_memory_gb={batch_cfg.max_result_memory_gb:g}"
         )
         raise MemoryError(
             "Estimated eager batch/ensemble trajectory size "
@@ -236,7 +247,7 @@ class _HDF5Writer:
                 payload = _metadata_value_to_jsonable(v)
                 if payload is None:
                     continue
-                if isinstance(payload, (dict, list)):
+                if isinstance(payload, dict | list):
                     payload = json.dumps(payload, sort_keys=True)
                 self._f.attrs[k] = payload
             except Exception as exc:
@@ -302,6 +313,8 @@ class _HDF5Writer:
         self._part_path.replace(self._path)
 
     def abort(self) -> None:
+        # R29b-justified: abort() runs on the failure path; best-effort cleanup
+        # of the .part file must never mask the original exception being raised.
         try:
             self._f.close()
         except Exception:
@@ -310,6 +323,33 @@ class _HDF5Writer:
             self._part_path.unlink(missing_ok=True)
         except Exception:
             pass
+
+
+class _SummaryOnlyWriter:
+    """R23 screening writer: a no-op — summary mode never archives trajectories.
+
+    The batch engine reduces every sub-batch to the versioned screening
+    summary (``lunaris.batch.summary``) and keeps only the top-K full
+    histories in the in-memory result; there is deliberately no ``(T, N, 6)``
+    archive to write.
+    """
+
+    memory_buffer = None
+
+    def write_sample_batch(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    def write_metadata(self, **kwargs: Any) -> None:
+        return None
+
+    def write_final(self, *args: Any) -> None:
+        return None
+
+    def finalize(self) -> None:
+        return None
+
+    def abort(self) -> None:
+        return None
 
 
 class _NPZWriter:
@@ -369,55 +409,64 @@ class _NPZWriter:
 
 
 def _make_writer(
-    mc_cfg: MonteCarloConfig,
+    batch_cfg: BatchPropagationConfig,
     n_samples: int,
     t_grid: np.ndarray,
 ) -> Any:
     """Factory: return the appropriate writer based on output_format."""
-    p = mc_cfg.output_path_resolved
-    if mc_cfg.output_format == "hdf5":
+    p = batch_cfg.output_path_resolved
+    if batch_cfg.output_format == "hdf5":
         return _HDF5Writer(p, n_samples, t_grid)
     return _NPZWriter(p, n_samples, t_grid)
 
 
-def _infer_valid_mask_from_dataset(dataset: Any, chunk_size: int = 256) -> np.ndarray:
-    """Infer legacy validity without materializing the full trajectory."""
-    n_samples = int(dataset.shape[1])
-    valid = np.zeros(n_samples, dtype=np.float64)
-    for start in range(0, n_samples, chunk_size):
-        end = min(n_samples, start + chunk_size)
-        block = np.asarray(dataset[:, start:end, :], dtype=np.float64)
-        valid[start:end] = np.isfinite(block).all(axis=(0, 2)).astype(np.float64)
-    return valid
-
-
 def _validate_archive_v2_manifest(metadata: dict[str, Any]) -> None:
-    """Enforce required manifest fields for schema-v2 batch archives.
-
-    Pre-v2 / legacy archives (missing ``archive_schema_version`` or < 2) are
-    exempt and loaded best-effort. A v2 archive missing any required field is
-    rejected so incomplete provenance never passes silently as a valid result.
-    """
+    """Enforce the required schema-v2 manifest for batch archives."""
     raw_version = metadata.get("archive_schema_version")
     if raw_version is None:
-        return
+        raise ValueError(
+            "Batch archive is missing archive_schema_version. Current Lunaris "
+            "requires schema v2 archives produced by BatchPropagationEngine; "
+            "regenerate the run with the current batch pipeline."
+        )
     try:
         version = int(raw_version)
     except (TypeError, ValueError):
-        return
+        raise ValueError(
+            f"Batch archive has invalid archive_schema_version={raw_version!r}. "
+            "Current Lunaris requires schema v2 archives."
+        ) from None
     if version < 2:
-        return
+        raise ValueError(
+            f"Unsupported batch archive schema v{version}. Current Lunaris "
+            "requires schema v2 archives; regenerate the run."
+        )
+    if version > 2:
+        raise ValueError(
+            f"Unsupported batch archive schema v{version}. This loader expects "
+            "schema v2; upgrade the loader or regenerate the archive."
+        )
     missing = [f for f in REQUIRED_ARCHIVE_V2_FIELDS if f not in metadata]
     if missing:
         raise ValueError(
             f"Batch archive declares schema v{version} but is missing required "
             f"manifest field(s): {', '.join(sorted(missing))}. The archive is incomplete "
-            "or was not produced by a current BatchPropagationEngine run. Pass strict=False to "
-            "load it as a best-effort legacy archive."
+            "or was not produced by a current BatchPropagationEngine run."
         )
 
 
-def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCRunResult:
+def _require_archive_v2_arrays(names: Any, *, format_label: str) -> None:
+    available = {str(name) for name in names}
+    missing = [name for name in REQUIRED_ARCHIVE_V2_ARRAYS if name not in available]
+    if missing:
+        raise ValueError(
+            f"Batch {format_label} archive is missing required dataset(s): "
+            f"{', '.join(sorted(missing))}. Regenerate the run with the current "
+            "BatchPropagationEngine writer."
+        )
+
+
+def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> BatchPropagationResult:
     """
     Reload a saved batch/ensemble result from HDF5 or NPZ file.
 
@@ -429,14 +478,12 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
         Return a disk-backed, read-only trajectory view instead of loading the
         full ``Y`` ensemble into memory (HDF5 only).
     strict : bool
-        When True (default), schema-v2 archives must carry every field in
-        ``REQUIRED_ARCHIVE_V2_FIELDS`` or a ``ValueError`` is raised. Pre-v2
-        archives are always loaded best-effort. Pass ``strict=False`` to load a
-        partial/legacy archive without manifest enforcement.
+        Ignored. The loader always requires a complete schema-v2 manifest and
+        the full set of current batch result datasets.
 
     Returns
     ----------
-    BatchPropagationResult / legacy MCRunResult
+    BatchPropagationResult
     """
     p = Path(path).expanduser().resolve()
     suffix = p.suffix.lower()
@@ -447,6 +494,12 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
         except ImportError:
             raise ImportError("h5py required to read HDF5 batch output.") from None
         with h5py.File(str(p), "r") as f:
+            diagnostics = {
+                str(key): _decode_metadata_value(value)
+                for key, value in dict(f.attrs).items()
+            }
+            _validate_archive_v2_manifest(diagnostics)
+            _require_archive_v2_arrays(f.keys(), format_label="HDF5")
             t_arr  = np.asarray(f["t"],           dtype=np.float64)
             Y_arr: Any = (
                 HDF5TrajectoryView(p)
@@ -456,28 +509,10 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
             sc     = np.asarray(f["sc_samples"],  dtype=np.float64)
             imask  = np.asarray(f["impact_flags"], dtype=np.float64)
             t_imp  = np.asarray(f["t_impact"],    dtype=np.float64)
-            valid = (
-                np.asarray(f["valid_mask"], dtype=np.float64)
-                if "valid_mask" in f
-                else _infer_valid_mask_from_dataset(f["Y"])
-            )
-            impact_i = (
-                np.asarray(f["impact_position_inertial_m"], dtype=np.float64)
-                if "impact_position_inertial_m" in f
-                else None
-            )
-            impact_f = (
-                np.asarray(f["impact_position_fixed_m"], dtype=np.float64)
-                if "impact_position_fixed_m" in f
-                else None
-            )
-            diagnostics = {
-                str(key): _decode_metadata_value(value)
-                for key, value in dict(f.attrs).items()
-            }
-        if strict:
-            _validate_archive_v2_manifest(diagnostics)
-        return MCRunResult(
+            valid = np.asarray(f["valid_mask"], dtype=np.float64)
+            impact_i = np.asarray(f["impact_position_inertial_m"], dtype=np.float64)
+            impact_f = np.asarray(f["impact_position_fixed_m"], dtype=np.float64)
+        return BatchPropagationResult(
             t=t_arr, Y=Y_arr, sc_samples=sc,
             impact_mask=imask, t_impact=t_imp,
             valid_mask=valid,
@@ -492,45 +527,33 @@ def load_mc_result(path: str, *, lazy: bool = False, strict: bool = True) -> MCR
             diagnostics = {}
             if "metadata_json" in data.files:
                 diagnostics = _decode_archive_metadata(data["metadata_json"])
-            if strict:
-                _validate_archive_v2_manifest(diagnostics)
-            return MCRunResult(
+            _validate_archive_v2_manifest(diagnostics)
+            _require_archive_v2_arrays(data.files, format_label="NPZ")
+            return BatchPropagationResult(
                 t=data["t"],
                 Y=data["Y"],
                 sc_samples=data["sc_samples"],
                 impact_mask=data["impact_flags"],
                 t_impact=data["t_impact"],
-                valid_mask=(
-                    data["valid_mask"]
-                    if "valid_mask" in data.files
-                    else np.isfinite(data["Y"]).all(axis=(0, 2)).astype(np.float64)
-                ),
-                impact_position_inertial_m=(
-                    data["impact_position_inertial_m"]
-                    if "impact_position_inertial_m" in data.files
-                    else None
-                ),
-                impact_position_fixed_m=(
-                    data["impact_position_fixed_m"]
-                    if "impact_position_fixed_m" in data.files
-                    else None
-                ),
+                valid_mask=data["valid_mask"],
+                impact_position_inertial_m=data["impact_position_inertial_m"],
+                impact_position_fixed_m=data["impact_position_fixed_m"],
                 archive_path=str(p),
                 diagnostics=diagnostics,
             )
 
-    raise ValueError(f"Unrecognised MC output format: {suffix!r} (expected .h5 or .npz)")
+    raise ValueError(f"Unrecognised batch output format: {suffix!r} (expected .h5 or .npz)")
 
 
 __all__ = [
     "REQUIRED_ARCHIVE_V2_FIELDS",
+    "REQUIRED_ARCHIVE_V2_ARRAYS",
     "HDF5TrajectoryView",
     "_HDF5Writer",
     "_NPZWriter",
     "_make_writer",
     "_resolve_result_storage",
     "_allocate_result_buffer",
-    "_infer_valid_mask_from_dataset",
     "_validate_archive_v2_manifest",
-    "load_mc_result",
+    "load_batch_result",
 ]

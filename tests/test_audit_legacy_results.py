@@ -1,4 +1,4 @@
-"""D2 (reviewer §10): unit tests for the legacy-result trust classifier."""
+"""D2 (reviewer §10): unit tests for the result trust classifier."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from lunaris.analysis.ensemble.result_audit import (
     QUARANTINED,
     RERUN,
     TRUSTED,
-    classify_mc_archive,
+    classify_batch_archive,
     classify_st_lrps_run,
 )
 from lunaris.common.hashing import canonical_json_sha256
@@ -20,9 +20,9 @@ _V2_BACKBONE = {
     "duration_s": 3600.0,
     "output_dt_s": 60.0,
     "backend": "cpu",
-    "requested_mc_backend": "cpu",
-    "actual_mc_backend": "cpu",
-    "mc_backend": "cpu",
+    "requested_batch_backend": "cpu",
+    "actual_batch_backend": "cpu",
+    "batch_backend": "cpu",
     "detect_impact": True,
     "compute_impact_statistics": True,
 }
@@ -36,22 +36,22 @@ _FULL_V2 = {
 }
 
 
-def test_pre_v2_archive_is_quarantined_not_rerun() -> None:
-    status, reasons = classify_mc_archive({"backend": "cpu"}, has_impacts=False)
-    assert status == QUARANTINED
-    assert any("pre-v2" in r for r in reasons)
+def test_missing_schema_archive_is_invalid() -> None:
+    status, reasons = classify_batch_archive({"backend": "cpu"}, has_impacts=False)
+    assert status == INVALID
+    assert any("archive_schema_version" in r for r in reasons)
 
 
-def test_pre_contract_schema_v1_is_quarantined() -> None:
-    status, reasons = classify_mc_archive(
+def test_pre_contract_schema_v1_is_invalid() -> None:
+    status, reasons = classify_batch_archive(
         {"archive_schema_version": 1}, has_impacts=False
     )
-    assert status == QUARANTINED
+    assert status == INVALID
     assert any("v1" in r for r in reasons)
 
 
 def test_corrupt_schema_version_is_invalid() -> None:
-    status, reasons = classify_mc_archive(
+    status, reasons = classify_batch_archive(
         {"archive_schema_version": "not-an-int"}, has_impacts=False
     )
     assert status == INVALID
@@ -61,13 +61,13 @@ def test_corrupt_schema_version_is_invalid() -> None:
 def test_v2_missing_required_manifest_field_is_invalid() -> None:
     meta = dict(_FULL_V2)
     del meta["seed"]
-    status, reasons = classify_mc_archive(meta, has_impacts=True)
+    status, reasons = classify_batch_archive(meta, has_impacts=True)
     assert status == INVALID
     assert any("seed" in r for r in reasons)
 
 
 def test_full_v2_with_impacts_is_trusted() -> None:
-    status, reasons = classify_mc_archive(_FULL_V2, has_impacts=True)
+    status, reasons = classify_batch_archive(_FULL_V2, has_impacts=True)
     assert status == TRUSTED
     assert reasons == []
 
@@ -75,7 +75,7 @@ def test_full_v2_with_impacts_is_trusted() -> None:
 def test_v2_impacts_without_frame_is_rerun() -> None:
     meta = dict(_FULL_V2)
     meta["impact_frame_available"] = False
-    status, reasons = classify_mc_archive(meta, has_impacts=True)
+    status, reasons = classify_batch_archive(meta, has_impacts=True)
     assert status == RERUN
     assert any("§3" in r for r in reasons)
 
@@ -83,7 +83,7 @@ def test_v2_impacts_without_frame_is_rerun() -> None:
 def test_v2_impacts_with_step_endpoint_is_rerun() -> None:
     meta = dict(_FULL_V2)
     meta["backend_diagnostics"] = {"impact_position_method": "rk4_step_frozen"}
-    status, reasons = classify_mc_archive(meta, has_impacts=True)
+    status, reasons = classify_batch_archive(meta, has_impacts=True)
     assert status == RERUN
     assert any("§6" in r for r in reasons)
 
@@ -93,7 +93,7 @@ def test_v2_impacts_with_old_radius_interpolation_is_rerun() -> None:
     meta["backend_diagnostics"] = {
         "impact_position_method": "rk4_crossing_interpolated"
     }
-    status, reasons = classify_mc_archive(meta, has_impacts=True)
+    status, reasons = classify_batch_archive(meta, has_impacts=True)
     assert status == RERUN
     assert any("line-sphere" in r for r in reasons)
 
@@ -104,7 +104,7 @@ def test_v2_no_impacts_missing_hashes_is_quarantined() -> None:
         "impact_frame_available": False,  # irrelevant: no impacts
         "backend_diagnostics": {},
     }
-    status, reasons = classify_mc_archive(meta, has_impacts=False)
+    status, reasons = classify_batch_archive(meta, has_impacts=False)
     assert status == QUARANTINED
     assert any("§7" in r for r in reasons)
 
@@ -113,7 +113,7 @@ def test_v2_empty_or_malformed_hash_is_not_provenance() -> None:
     for value in (None, "", "not-a-sha256", "g" * 64):
         meta = dict(_FULL_V2)
         meta["kernel_source_sha256"] = value
-        status, reasons = classify_mc_archive(meta, has_impacts=False)
+        status, reasons = classify_batch_archive(meta, has_impacts=False)
         assert status == QUARANTINED
         assert any("§7" in r for r in reasons)
 

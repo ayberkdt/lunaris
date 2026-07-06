@@ -43,7 +43,7 @@ case "${job}" in
   train)     script="slurm_train_stlrps.sbatch" ;;
   scenario)  script="slurm_train_scenario_array.sbatch" ;;
   benchmark) script="slurm_benchmark_gpu.sbatch" ;;
-  batch|mc)  script="slurm_mc_array.sbatch" ;;
+  batch)     script="slurm_batch_array.sbatch" ;;
   -h|--help) usage 0 ;;
   *) echo "error: unknown job '${job}' (use train|scenario|benchmark|batch)" >&2; usage 64 ;;
 esac

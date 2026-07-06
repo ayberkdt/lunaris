@@ -41,12 +41,12 @@ def build_run_diagnostics_payload(result: Any, method: str) -> dict[str, Any]:
 
     diagnostics = getattr(result, "diagnostics", None) or {}
     for key, value in diagnostics.items():
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             if np.isfinite(value):
                 payload[key] = float(value)
-        elif isinstance(value, (str, bool)):
+        elif isinstance(value, str | bool):
             payload[key] = value
-        elif isinstance(value, (list, tuple)):
+        elif isinstance(value, list | tuple):
             payload[key] = [str(v) for v in value]
 
     if method:
@@ -54,7 +54,7 @@ def build_run_diagnostics_payload(result: Any, method: str) -> dict[str, Any]:
 
     payload["impacted"] = bool(getattr(result, "impacted", False))
     t_impact = getattr(result, "t_impact_s", None)
-    if isinstance(t_impact, (int, float)) and np.isfinite(t_impact):
+    if isinstance(t_impact, int | float) and np.isfinite(t_impact):
         payload["t_impact_s"] = float(t_impact)
     stop_reason = getattr(result, "stop_reason", None)
     if stop_reason:

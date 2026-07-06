@@ -168,7 +168,7 @@ from .common_widgets import (
     _tune_form,
     _tune_inputs,
 )
-from .workspace_widgets import StudioNotice, StudioWorkflowOverview
+from .workspace_widgets import StudioNotice
 
 
 def _legacy_introspect_h5(path: str) -> dict[str, Any] | None:
@@ -268,6 +268,7 @@ def _data_action_card(
     primary_button: QPushButton,
     *,
     secondary_buttons: list[QPushButton] | None = None,
+    leading: QBoxLayout | QWidget | None = None,
     detail: QWidget | None = None,
     object_name: str = "dataActionCard",
 ) -> QFrame:
@@ -314,12 +315,20 @@ def _data_action_card(
     action_row = QHBoxLayout()
     action_row.setContentsMargins(0, 0, 0, 0)
     action_row.setSpacing(8)
+    # Optional leading content (e.g. a workflow selector) sits on the far left so
+    # the card resolves to a single dense action row instead of stacked, mostly
+    # empty button rows.
+    if leading is not None:
+        if isinstance(leading, QWidget):
+            action_row.addWidget(leading)
+        else:
+            action_row.addLayout(leading)
+    action_row.addStretch(1)
     if secondary_buttons:
         for button in secondary_buttons:
             button.setProperty("kind", button.property("kind") or "ghost")
             button.setMinimumHeight(36)
             action_row.addWidget(button)
-    action_row.addStretch(1)
     action_row.addWidget(primary_button)
     top.addLayout(action_row)
     layout.addLayout(top)
@@ -397,7 +406,6 @@ class CloudGenTab(QWidget):
         )
         mode_bar.addWidget(mode_lbl)
         mode_bar.addWidget(self._mode_combo)
-        mode_bar.addStretch(1)
 
         # ── Sync banner (shared) ─────────────────────────────────────────────
         self._sync_banner = QLabel("")
@@ -436,26 +444,16 @@ class CloudGenTab(QWidget):
         )
         self._btn_generate_now = QPushButton("Start Cloud Generation")
         self._btn_generate_now.clicked.connect(self._start)
-        preview_btns = QHBoxLayout()
-        preview_btns.setContentsMargins(0, 0, 0, 0)
-        preview_btns.setSpacing(8)
-        preview_btns.addLayout(mode_bar)
-        preview_btns.addStretch(1)
-        preview_btns.addWidget(btn_preview)
-        preview_btns.addWidget(btn_copy_cmd)
 
-        preview_w = QWidget()
-        preview_vbox = QVBoxLayout()
-        preview_vbox.setContentsMargins(0, 0, 0, 0)
-        preview_vbox.setSpacing(6)
-        preview_vbox.addLayout(preview_btns)
-        preview_vbox.addWidget(self.command_preview)
-        preview_w.setLayout(preview_vbox)
+        # Single dense action row: [Workflow] … [Show Command] [Copy] [Start].
+        # The command preview stays hidden below until Show Command is pressed.
         generator_card = _data_action_card(
             "Generate Dataset",
             "Pick a workflow, tune the cards below, then launch the dataset job.",
             self._btn_generate_now,
-            detail=preview_w,
+            secondary_buttons=[btn_preview, btn_copy_cmd],
+            leading=mode_bar,
+            detail=self.command_preview,
         )
         analysis_panel = self._build_analysis_panel()
 
@@ -509,13 +507,13 @@ class CloudGenTab(QWidget):
 
         self.degree_max = QSpinBox()
         self.degree_max.setRange(1, 1800)
-        self.degree_max.setValue(int(_cfg_value(cloud_cfg, "degree_max", 100)))
+        self.degree_max.setValue(int(_cfg_value(cloud_cfg, "degree_max", 200)))
         self.degree_max.setToolTip("Hedef SH derecesi (ust sinir).")
 
         self.degree_min = QSpinBox()
         self.degree_min.setSpecialValueText("Tam alan (-1)")
         self.degree_min.setRange(-1, 1800)
-        self.degree_min.setValue(int(_cfg_value(cloud_cfg, "degree_min", 20)))
+        self.degree_min.setValue(int(_cfg_value(cloud_cfg, "degree_min", 25)))
         self.degree_min.setToolTip(
             "Taban model derecesi. -1 = nokta kutlesi dahil tam alan."
         )
@@ -546,14 +544,14 @@ class CloudGenTab(QWidget):
         self.alt_min_km = QDoubleSpinBox()
         self.alt_min_km.setDecimals(1)
         self.alt_min_km.setRange(0.0, 100_000.0)
-        self.alt_min_km.setValue(float(_cfg_value(cloud_cfg, "alt_min_km", 200.0)))
+        self.alt_min_km.setValue(float(_cfg_value(cloud_cfg, "alt_min_km", 100.0)))
         self.alt_min_km.setSingleStep(10.0)
         self.alt_min_km.setSuffix(" km")
 
         self.alt_max_km = QDoubleSpinBox()
         self.alt_max_km.setDecimals(1)
         self.alt_max_km.setRange(0.1, 100_000.0)
-        self.alt_max_km.setValue(float(_cfg_value(cloud_cfg, "alt_max_km", 600.0)))
+        self.alt_max_km.setValue(float(_cfg_value(cloud_cfg, "alt_max_km", 1000.0)))
         self.alt_max_km.setSingleStep(10.0)
         self.alt_max_km.setSuffix(" km")
 
@@ -667,25 +665,25 @@ class CloudGenTab(QWidget):
 
         self.s_degree_min = QSpinBox()
         self.s_degree_min.setRange(0, 1800)
-        self.s_degree_min.setValue(int(_cfg_value(suite_cfg, "degree_min", 20)))
+        self.s_degree_min.setValue(int(_cfg_value(suite_cfg, "degree_min", 25)))
         self.s_degree_min.setToolTip("Taban model derecesi (bas derece).")
 
         self.s_degree_max = QSpinBox()
         self.s_degree_max.setRange(1, 1800)
-        self.s_degree_max.setValue(int(_cfg_value(suite_cfg, "degree_max", 100)))
+        self.s_degree_max.setValue(int(_cfg_value(suite_cfg, "degree_max", 200)))
         self.s_degree_max.setToolTip("Hedef SH derecesi (ust sinir).")
 
         self.s_train_alt_min_km = QDoubleSpinBox()
         self.s_train_alt_min_km.setDecimals(1)
         self.s_train_alt_min_km.setRange(0.0, 50_000.0)
-        self.s_train_alt_min_km.setValue(float(_cfg_value(suite_cfg, "train_alt_min_km", 200.0)))
+        self.s_train_alt_min_km.setValue(float(_cfg_value(suite_cfg, "train_alt_min_km", 100.0)))
         self.s_train_alt_min_km.setSuffix(" km")
         self.s_train_alt_min_km.setToolTip("Lower bound of the training altitude range.")
 
         self.s_train_alt_max_km = QDoubleSpinBox()
         self.s_train_alt_max_km.setDecimals(1)
         self.s_train_alt_max_km.setRange(1.0, 50_000.0)
-        self.s_train_alt_max_km.setValue(float(_cfg_value(suite_cfg, "train_alt_max_km", 600.0)))
+        self.s_train_alt_max_km.setValue(float(_cfg_value(suite_cfg, "train_alt_max_km", 1000.0)))
         self.s_train_alt_max_km.setSuffix(" km")
         self.s_train_alt_max_km.setToolTip("Upper bound of the training altitude range.")
 
@@ -721,25 +719,25 @@ class CloudGenTab(QWidget):
 
         self.s_train_su_n = QSpinBox()
         self.s_train_su_n.setRange(0, 100_000_000)
-        self.s_train_su_n.setValue(int(_cfg_value(suite_cfg, "train_stratified_uniform_n", 2_000_000)))
+        self.s_train_su_n.setValue(int(_cfg_value(suite_cfg, "train_stratified_uniform_n", 4_000_000)))
         self.s_train_su_n.setSingleStep(100_000)
         self.s_train_su_n.setToolTip("Number of stratified-uniform points.")
 
         self.s_train_ir2_n = QSpinBox()
         self.s_train_ir2_n.setRange(0, 100_000_000)
-        self.s_train_ir2_n.setValue(int(_cfg_value(suite_cfg, "train_inverse_r2_n", 1_000_000)))
+        self.s_train_ir2_n.setValue(int(_cfg_value(suite_cfg, "train_inverse_r2_n", 2_000_000)))
         self.s_train_ir2_n.setSingleStep(100_000)
         self.s_train_ir2_n.setToolTip("Number of inverse-r² (surface-focused) points.")
 
         self.s_train_rm_n = QSpinBox()
         self.s_train_rm_n.setRange(0, 100_000_000)
-        self.s_train_rm_n.setValue(int(_cfg_value(suite_cfg, "train_residual_mag_n", 1_000_000)))
+        self.s_train_rm_n.setValue(int(_cfg_value(suite_cfg, "train_residual_mag_n", 2_000_000)))
         self.s_train_rm_n.setSingleStep(100_000)
         self.s_train_rm_n.setToolTip("Number of points sampled with weighting by residual-acceleration magnitude.")
 
         self.s_train_bb_n = QSpinBox()
         self.s_train_bb_n.setRange(0, 100_000_000)
-        self.s_train_bb_n.setValue(int(_cfg_value(suite_cfg, "train_boundary_n", 1_000_000)))
+        self.s_train_bb_n.setValue(int(_cfg_value(suite_cfg, "train_boundary_n", 2_000_000)))
         self.s_train_bb_n.setSingleStep(100_000)
         self.s_train_bb_n.setToolTip("Number of boundary-buffer points (lower/upper altitude edges).")
 
@@ -805,22 +803,22 @@ class CloudGenTab(QWidget):
 
         self.s_val_n = QSpinBox()
         self.s_val_n.setRange(0, 100_000_000)
-        self.s_val_n.setValue(int(_cfg_value(suite_cfg, "val_n", 1_000_000)))
+        self.s_val_n.setValue(int(_cfg_value(suite_cfg, "val_n", 2_000_000)))
         self.s_val_n.setSingleStep(100_000)
 
         self.s_test_n = QSpinBox()
         self.s_test_n.setRange(0, 100_000_000)
-        self.s_test_n.setValue(int(_cfg_value(suite_cfg, "test_n", 1_000_000)))
+        self.s_test_n.setValue(int(_cfg_value(suite_cfg, "test_n", 2_000_000)))
         self.s_test_n.setSingleStep(100_000)
 
         self.s_ood_low_n = QSpinBox()
         self.s_ood_low_n.setRange(0, 100_000_000)
-        self.s_ood_low_n.setValue(int(_cfg_value(suite_cfg, "ood_low_n", 250_000)))
+        self.s_ood_low_n.setValue(int(_cfg_value(suite_cfg, "ood_low_n", 500_000)))
         self.s_ood_low_n.setSingleStep(50_000)
 
         self.s_ood_high_n = QSpinBox()
         self.s_ood_high_n.setRange(0, 100_000_000)
-        self.s_ood_high_n.setValue(int(_cfg_value(suite_cfg, "ood_high_n", 250_000)))
+        self.s_ood_high_n.setValue(int(_cfg_value(suite_cfg, "ood_high_n", 500_000)))
         self.s_ood_high_n.setSingleStep(50_000)
 
         self.s_combine_ood = QCheckBox("Combine OOD low + high")
@@ -1480,6 +1478,8 @@ class CloudGenTab(QWidget):
             return
         try:
             # -- File paths --
+            if hasattr(t, "dataset_suite_dir"):
+                t.dataset_suite_dir.setText(str(suite_dir.resolve()))
             if train_path and hasattr(t, "train_data"):
                 t.train_data.setText(str(train_path))
             if val_path and hasattr(t, "val_data"):
@@ -1698,6 +1698,9 @@ class CloudGenTab(QWidget):
             return
         self._sync_banner.setVisible(False)
         self._save_settings()
+        # Indeterminate until the first [progress] line arrives; clear any
+        # stale percentage text from a previous run.
+        self.runner.progress.setFormat("Preparing…")
         self.runner.progress.setRange(0, 0)
         self.runner.start(sys.executable, args, workdir=str(_REPO_ROOT))
 
@@ -1764,12 +1767,32 @@ class CloudGenTab(QWidget):
             self._run_suite_analysis(Path(suite_dir))
 
     def _parse_progress(self, line: str) -> None:
+        # Preferred: the generator's machine-readable
+        # ``[progress] <cur>/<tot> pct=.. eta=.. rate=..`` line. Drives a
+        # determinate bar with a live percentage + ETA rendered in the bar text.
+        m = re.search(r"\[progress\]\s+(\d+)\s*/\s*(\d+)", line)
+        if m:
+            cur = int(m.group(1))
+            tot = max(1, int(m.group(2)))
+            cur = min(cur, tot)
+            self.runner.progress.setRange(0, tot)
+            self.runner.progress.setValue(cur)
+            pct = 100.0 * cur / tot
+            segments = [f"{pct:.0f}%"]
+            eta_m = re.search(r"eta=(\S+)", line)
+            if eta_m and eta_m.group(1) not in ("--", ""):
+                segments.append(f"ETA {eta_m.group(1)}")
+            segments.append(f"{cur:,}/{tot:,} rows")
+            self.runner.progress.setFormat("  •  ".join(segments))
+            return
+        # Legacy fallbacks (older generators / other tools).
         m = re.search(r"(?i)chunk\s*(\d+)\s*/\s*(\d+)", line)
         if m:
             cur = int(m.group(1))
             tot = int(m.group(2))
             self.runner.progress.setRange(0, max(1, tot))
             self.runner.progress.setValue(min(cur, tot))
+            return
         m2 = re.search(r"(\d+(?:\.\d+)?)\s*%", line)
         if m2:
             pct = min(100, int(float(m2.group(1))))
@@ -1841,6 +1864,8 @@ class CloudGenTab(QWidget):
     def _restore_settings(self) -> None:
         s = _settings()
         s.beginGroup("cloudgen")
+        cloud_cfg = DEFAULT_SPATIAL_CLOUD_CONFIG
+        suite_cfg = DEFAULT_CLOUD_SUITE_CONFIG
 
         def _i(k: str, d: int) -> int:
             return int(s.value(k, d)) if s.contains(k) else d
@@ -1858,17 +1883,17 @@ class CloudGenTab(QWidget):
             return str(s.value(k, d)) if s.contains(k) else d
 
         # Single cloud
-        self.degree_max.setValue(_i("degree_max", 100))
-        self.degree_min.setValue(_i("degree_min", 20))
-        self.n_samples.setValue(_i("n_samples", 2_000_000))
-        self.alt_min_km.setValue(_f("alt_min_km", 200.0))
-        self.alt_max_km.setValue(_f("alt_max_km", 600.0))
-        strategy = _st("sampling_strategy", "mixed")
+        self.degree_max.setValue(_i("degree_max", int(_cfg_value(cloud_cfg, "degree_max", 200))))
+        self.degree_min.setValue(_i("degree_min", int(_cfg_value(cloud_cfg, "degree_min", 25))))
+        self.n_samples.setValue(_i("n_samples", int(_cfg_value(cloud_cfg, "n_samples", 2_000_000))))
+        self.alt_min_km.setValue(_f("alt_min_km", float(_cfg_value(cloud_cfg, "alt_min_km", 100.0))))
+        self.alt_max_km.setValue(_f("alt_max_km", float(_cfg_value(cloud_cfg, "alt_max_km", 1000.0))))
+        strategy = _st("sampling_strategy", str(_cfg_value(cloud_cfg, "sampling_strategy", "mixed")))
         idx = self.sampling_strategy.findData(strategy)
         if idx >= 0:
             self.sampling_strategy.setCurrentIndex(idx)
-        self.surface_bias_ratio.setValue(_f("surface_bias_ratio", 0.70))
-        self.chunk_size.setValue(_i("chunk_size", 50_000))
+        self.surface_bias_ratio.setValue(_f("surface_bias_ratio", float(_cfg_value(cloud_cfg, "surface_bias_ratio", 0.70))))
+        self.chunk_size.setValue(_i("chunk_size", int(_cfg_value(cloud_cfg, "chunk_size", 50_000))))
         self.workers.setValue(_i("workers", self.workers.value()))
         fmt = _st("out_format", "h5")
         idx = self.out_format.findData(fmt)
@@ -1880,47 +1905,47 @@ class CloudGenTab(QWidget):
         if idx >= 0:
             self.dtype.setCurrentIndex(idx)
         self.canonical.setChecked(_b("canonical", False))
-        self.seed.setValue(_i("seed", 12345))
+        self.seed.setValue(_i("seed", int(_cfg_value(cloud_cfg, "seed", 12345))))
         self.gfc_path.setText(_st("gfc_path", ""))
         self.no_multiprocessing.setChecked(_b("no_multiprocessing", False))
         # Mode
-        saved_mode = _i("mode", self._MODE_SINGLE)
+        saved_mode = _i("mode", self._MODE_SUITE)
         idx = self._mode_combo.findData(saved_mode)
         if idx >= 0:
             self._mode_combo.setCurrentIndex(idx)
             self._stack.setCurrentIndex(saved_mode)
         # Suite
-        self.s_degree_min.setValue(_i("s_degree_min", 20))
-        self.s_degree_max.setValue(_i("s_degree_max", 100))
-        self.s_train_alt_min_km.setValue(_f("s_train_alt_min_km", 200.0))
-        self.s_train_alt_max_km.setValue(_f("s_train_alt_max_km", 600.0))
-        self.s_ood_margin_km.setValue(_f("s_ood_margin_km", 40.0))
-        self.s_train_su_n.setValue(_i("s_train_su_n", 2_000_000))
-        self.s_train_ir2_n.setValue(_i("s_train_ir2_n", 1_000_000))
-        self.s_train_rm_n.setValue(_i("s_train_rm_n", 1_000_000))
-        self.s_train_bb_n.setValue(_i("s_train_bb_n", 1_000_000))
-        self.s_val_n.setValue(_i("s_val_n", 1_000_000))
-        self.s_test_n.setValue(_i("s_test_n", 1_000_000))
-        self.s_ood_low_n.setValue(_i("s_ood_low_n", 250_000))
-        self.s_ood_high_n.setValue(_i("s_ood_high_n", 250_000))
-        self.s_seed_base.setValue(_i("s_seed_base", 42))
-        self.s_seed_train_uniform.setValue(_i("s_seed_train_uniform", 42))
-        self.s_seed_train_ir2.setValue(_i("s_seed_train_ir2", 142))
-        self.s_seed_train_rm.setValue(_i("s_seed_train_rm", 242))
-        self.s_seed_train_bb.setValue(_i("s_seed_train_bb", 342))
-        self.s_seed_val.setValue(_i("s_seed_val", 1042))
-        self.s_seed_test.setValue(_i("s_seed_test", 2042))
-        self.s_seed_ood_low.setValue(_i("s_seed_ood_low", 3042))
-        self.s_seed_ood_high.setValue(_i("s_seed_ood_high", 4042))
-        self.s_residual_mag_candidate_multiplier.setValue(_i("s_residual_mag_candidate_multiplier", 5))
-        self.s_residual_mag_weight_power.setValue(_f("s_residual_mag_weight_power", 0.5))
-        bm = _st("s_boundary_mode", "strict")
+        self.s_degree_min.setValue(_i("s_degree_min", int(_cfg_value(suite_cfg, "degree_min", 25))))
+        self.s_degree_max.setValue(_i("s_degree_max", int(_cfg_value(suite_cfg, "degree_max", 200))))
+        self.s_train_alt_min_km.setValue(_f("s_train_alt_min_km", float(_cfg_value(suite_cfg, "train_alt_min_km", 100.0))))
+        self.s_train_alt_max_km.setValue(_f("s_train_alt_max_km", float(_cfg_value(suite_cfg, "train_alt_max_km", 1000.0))))
+        self.s_ood_margin_km.setValue(_f("s_ood_margin_km", float(_cfg_value(suite_cfg, "ood_margin_km", 40.0))))
+        self.s_train_su_n.setValue(_i("s_train_su_n", int(_cfg_value(suite_cfg, "train_stratified_uniform_n", 4_000_000))))
+        self.s_train_ir2_n.setValue(_i("s_train_ir2_n", int(_cfg_value(suite_cfg, "train_inverse_r2_n", 2_000_000))))
+        self.s_train_rm_n.setValue(_i("s_train_rm_n", int(_cfg_value(suite_cfg, "train_residual_mag_n", 2_000_000))))
+        self.s_train_bb_n.setValue(_i("s_train_bb_n", int(_cfg_value(suite_cfg, "train_boundary_n", 2_000_000))))
+        self.s_val_n.setValue(_i("s_val_n", int(_cfg_value(suite_cfg, "val_n", 2_000_000))))
+        self.s_test_n.setValue(_i("s_test_n", int(_cfg_value(suite_cfg, "test_n", 2_000_000))))
+        self.s_ood_low_n.setValue(_i("s_ood_low_n", int(_cfg_value(suite_cfg, "ood_low_n", 500_000))))
+        self.s_ood_high_n.setValue(_i("s_ood_high_n", int(_cfg_value(suite_cfg, "ood_high_n", 500_000))))
+        self.s_seed_base.setValue(_i("s_seed_base", int(_cfg_value(suite_cfg, "base_seed", 42))))
+        self.s_seed_train_uniform.setValue(_i("s_seed_train_uniform", int(_cfg_value(suite_cfg, "train_uniform_seed", 42))))
+        self.s_seed_train_ir2.setValue(_i("s_seed_train_ir2", int(_cfg_value(suite_cfg, "train_inverse_r2_seed", 142))))
+        self.s_seed_train_rm.setValue(_i("s_seed_train_rm", int(_cfg_value(suite_cfg, "train_residual_mag_seed", 242))))
+        self.s_seed_train_bb.setValue(_i("s_seed_train_bb", int(_cfg_value(suite_cfg, "train_boundary_seed", 342))))
+        self.s_seed_val.setValue(_i("s_seed_val", int(_cfg_value(suite_cfg, "val_seed", 1042))))
+        self.s_seed_test.setValue(_i("s_seed_test", int(_cfg_value(suite_cfg, "test_seed", 2042))))
+        self.s_seed_ood_low.setValue(_i("s_seed_ood_low", int(_cfg_value(suite_cfg, "ood_low_seed", 3042))))
+        self.s_seed_ood_high.setValue(_i("s_seed_ood_high", int(_cfg_value(suite_cfg, "ood_high_seed", 4042))))
+        self.s_residual_mag_candidate_multiplier.setValue(_i("s_residual_mag_candidate_multiplier", int(_cfg_value(suite_cfg, "residual_mag_candidate_multiplier", 5))))
+        self.s_residual_mag_weight_power.setValue(_f("s_residual_mag_weight_power", float(_cfg_value(suite_cfg, "residual_mag_weight_power", 0.5))))
+        bm = _st("s_boundary_mode", str(_cfg_value(suite_cfg, "boundary_mode", "strict")))
         idx = self.s_boundary_mode.findData(bm)
         if idx >= 0:
             self.s_boundary_mode.setCurrentIndex(idx)
-        self.s_boundary_width_km.setValue(_f("s_boundary_width_km", 20.0))
-        self.s_chunk_size.setValue(_i("s_chunk_size", 50_000))
-        s_dtype_val = _st("s_dtype", "float32")
+        self.s_boundary_width_km.setValue(_f("s_boundary_width_km", float(_cfg_value(suite_cfg, "boundary_width_km", 20.0))))
+        self.s_chunk_size.setValue(_i("s_chunk_size", int(_cfg_value(suite_cfg, "chunk_size", 50_000))))
+        s_dtype_val = _st("s_dtype", str(_cfg_value(suite_cfg, "dtype", "float32")))
         idx = self.s_dtype.findData(s_dtype_val)
         if idx >= 0:
             self.s_dtype.setCurrentIndex(idx)
@@ -2263,7 +2288,7 @@ class DatasetInspectionPanel(QWidget):
         file_detail_l.addWidget(self.path_edit)
 
         action_card = _data_action_card(
-            "Inspect Dataset",
+            "Validate Dataset",
             "Choose an HDF5 cloud, validate it, then send it to Training.",
             self.btn_validate,
             secondary_buttons=[btn_browse, self.btn_send, btn_path],
@@ -2414,17 +2439,14 @@ class DataPage(QWidget):
     def __init__(self, cloud_tab: QWidget, analysis_tab: QWidget,
                  parent: QWidget | None = None):
         super().__init__(parent)
-        self.inspect_panel = DatasetInspectionPanel()
         self._stack = QStackedWidget()
-        # Wrap DatasetInspectionPanel in scroll area to prevent metadata and log clipping
-        self._stack.addWidget(_scroll_wrap(self.inspect_panel))
-        self._stack.addWidget(cloud_tab)
-        self._stack.addWidget(analysis_tab)
+        self._stack.addWidget(cloud_tab)       # index 0: Generate
+        self._stack.addWidget(analysis_tab)    # index 1: Analyze
         self._section_buttons: list[QPushButton] = []
 
         nav = QFrame()
         nav.setObjectName("dataSectionNav")
-        nav.setMaximumHeight(64)
+        nav.setMaximumHeight(50)
         nav.setStyleSheet(
             f"QFrame#dataSectionNav {{"
             f"  background: {with_alpha(THEME['bg_card'], 0.74)};"
@@ -2433,21 +2455,23 @@ class DataPage(QWidget):
             f"}}"
         )
         nav_l = QHBoxLayout()
-        nav_l.setContentsMargins(10, 10, 10, 10)
-        nav_l.setSpacing(8)
+        nav_l.setContentsMargins(8, 8, 8, 8)
+        nav_l.setSpacing(6)
 
         def _nav_btn(label: str, hint: str, idx: int) -> QPushButton:
             btn = QPushButton(label)
             btn.setToolTip(hint)
             btn.setCheckable(True)
-            btn.setMinimumHeight(36)
-            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn.setMinimumHeight(32)
+            # Content-width segmented control, left-aligned, rather than two
+            # full-width slabs — reads as a compact tab bar, not two giant buttons.
+            btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             btn.setStyleSheet(
                 f"QPushButton {{"
-                f"  text-align: center; padding: 0 14px;"
+                f"  text-align: center; padding: 0 24px;"
                 f"  border: 1px solid {with_alpha(THEME['border'], 0.10)};"
                 f"  border-radius: {DESIGN_TOKENS.radii.control}px; background: {with_alpha(THEME['fg_main'], 0.025)};"
-                f"  color: {THEME['fg_soft']}; font-weight: 750; font-size: 13px;"
+                f"  color: {THEME['fg_soft']}; font-weight: 700; font-size: 12px;"
                 f"}}"
                 f"QPushButton:hover {{ background: {with_alpha(THEME['accent'], 0.06)}; color: {THEME['fg_main']}; }}"
                 f"QPushButton:checked {{"
@@ -2460,9 +2484,9 @@ class DataPage(QWidget):
             self._section_buttons.append(btn)
             return btn
 
-        nav_l.addWidget(_nav_btn("Inspect", "Readiness and metadata", 0))
-        nav_l.addWidget(_nav_btn("Generate", "Single cloud or train/val/test/OOD suite", 1))
-        nav_l.addWidget(_nav_btn("Analyze", "Coverage and field reports", 2))
+        nav_l.addWidget(_nav_btn("Generate", "Single cloud or train/val/test/OOD suite", 0))
+        nav_l.addWidget(_nav_btn("Analyze", "Coverage and field reports", 1))
+        nav_l.addStretch(1)
         nav.setLayout(nav_l)
         _style_surface(nav, object_name="dataSectionNav")
 
@@ -2475,25 +2499,15 @@ class DataPage(QWidget):
         self._workspace_layout = workspace
 
         lo = QVBoxLayout()
-        lo.setContentsMargins(12, 8, 18, 16)
-        lo.setSpacing(12)
+        lo.setContentsMargins(16, 10, 18, 14)
+        lo.setSpacing(10)
+        # The readiness guidance lives in the subtitle now; the previous
+        # separate step-strip + info banner duplicated the Generate/Analyze
+        # switch below and left large empty bands.
         lo.addWidget(_make_page_header(
             "Data Workspace",
-            "Choose a data task, then act from the primary card on that page.",
+            "Generate and analyze datasets here, then validate them under Training ▸ Dataset Readiness before launching a run.",
             "Dataset Pipeline",
-        ))
-        self._workflow_overview = StudioWorkflowOverview(
-            (
-                ("Inspect", "Validate metadata, units, and dataset contract."),
-                ("Generate", "Create a single cloud or train/val/test/OOD suite."),
-                ("Analyze", "Review coverage and field diagnostics before training."),
-            )
-        )
-        lo.addWidget(self._workflow_overview)
-        lo.addWidget(StudioNotice(
-            "Inspect before training",
-            "Use Inspect as the handoff gate: dataset name, unit system, split policy, and OOD coverage should be visible before sending data into Training.",
-            kind="info",
         ))
         lo.addLayout(workspace, 1)
         self.setLayout(lo)
@@ -2503,5 +2517,34 @@ class DataPage(QWidget):
         self._stack.setCurrentIndex(idx)
         for i, btn in enumerate(self._section_buttons):
             btn.setChecked(i == idx)
-        if hasattr(self, "_workflow_overview"):
-            self._workflow_overview.set_current(idx)
+
+
+class TrainingReadinessPage(QWidget):
+    """Pre-launch dataset-readiness gate, homed on the Training side.
+
+    This is the check performed immediately before training: validate the
+    chosen dataset's metadata, unit system, split policy, and OOD coverage,
+    then hand it off to Training Setup. It hosts the same
+    :class:`DatasetInspectionPanel` that previously lived under Data ▸ Inspect,
+    where its purpose (a training gate, not a data-authoring task) was unclear.
+    """
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.inspect_panel = DatasetInspectionPanel()
+
+        lo = QVBoxLayout()
+        lo.setContentsMargins(12, 8, 18, 16)
+        lo.setSpacing(12)
+        lo.addWidget(_make_page_header(
+            "Dataset Readiness",
+            "Validate the dataset you are about to train on, then send it to Training Setup.",
+            "Pre-Launch Check",
+        ))
+        lo.addWidget(StudioNotice(
+            "The gate before training",
+            "Confirm the dataset name, unit system, split policy, and OOD coverage here before launching a long run. Use “Send to Training” to carry the path into Setup.",
+            kind="info",
+        ))
+        lo.addWidget(_scroll_wrap(self.inspect_panel), 1)
+        self.setLayout(lo)

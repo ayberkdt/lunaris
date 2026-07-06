@@ -8,9 +8,8 @@ resolves a run directory, selects ``ckpt_best.pt`` with ``ckpt_last.pt``
 fallback through ``st_lrps.artifacts.manager``, reconstructs the trained
 network and scaler, then returns the contract-matched runtime object.  Scalar
 ``potential_autograd`` artifacts compute acceleration as the autograd gradient
-of the learned residual potential; ``force_direct`` artifacts return a
-three-component residual acceleration head and do not expose potential timing.
-Large inputs are processed through the runtime chunk size.
+of the learned residual potential.  Large inputs are processed through the
+runtime chunk size.
 
 This module measures that path without changing physics, model architecture,
 checkpoint schema, loss functions, or propagation algorithms.
@@ -807,7 +806,7 @@ def _json_safe(value: Any) -> Any:
         return str(value)
     if isinstance(value, dict):
         return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_json_safe(v) for v in value]
     if isinstance(value, np.ndarray):
         return value.tolist()
@@ -902,7 +901,7 @@ def write_runtime_profile_summary(report: RuntimeProfileReport, output_dir: Path
             "",
             "- Batch throughput improves when batch size increases if Python overhead dominates.",
             "- If p95 is much higher than median, runtime jitter or memory pressure may be present.",
-            "- If batch size 1 is slow but batch 1024 is fast per sample, Monte Carlo should use batch force evaluation.",
+            "- If batch size 1 is slow but batch 1024 is fast per sample, batch propagation should use batch force evaluation.",
             "- Potential-only timing is a low-risk proxy for forward-path cost; full acceleration timing includes autograd-gradient work.",
         ]
     )

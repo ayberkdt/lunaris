@@ -97,26 +97,10 @@ def train_main() -> Any:
     )
 
 
-def train_force_direct_main() -> Any:
-    return _run_optional(
-        module_name="lunaris.surrogate.st_lrps.training.force_direct_cli",
-        description="Train an ST-LRPS direct-force surrogate",
-        extra="ml",
-    )
-
-
 def eval_main() -> Any:
     return _run_optional(
         module_name="lunaris.surrogate.st_lrps.evaluation.cli",
         description="Evaluate an ST-LRPS potential surrogate",
-        extra="ml",
-    )
-
-
-def eval_force_direct_main() -> Any:
-    return _run_optional(
-        module_name="lunaris.surrogate.st_lrps.evaluation.force_direct_eval",
-        description="Evaluate an ST-LRPS direct-force surrogate",
         extra="ml",
     )
 
@@ -154,9 +138,7 @@ __all__ = [
     "launcher_main",
     "studio_main",
     "train_main",
-    "train_force_direct_main",
     "eval_main",
-    "eval_force_direct_main",
     "validate_main",
     "benchmark_main",
 ]

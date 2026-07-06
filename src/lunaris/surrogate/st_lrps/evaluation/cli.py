@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import csv
 import heapq
+import importlib
 import json
 import math
 import os
@@ -35,13 +36,38 @@ import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import h5py
-import matplotlib.pyplot as plt
 import numpy as np
-import torch
-import torch.nn as nn
+
+if TYPE_CHECKING:
+    import torch
+    import torch.nn as nn
+
+
+class _LazyModule:
+    def __init__(self, module_name: str, package_name: str) -> None:
+        self._module_name = module_name
+        self._package_name = package_name
+        self._module: Any | None = None
+
+    def _load(self) -> Any:
+        if self._module is None:
+            try:
+                self._module = importlib.import_module(self._module_name)
+            except ImportError as exc:
+                raise RuntimeError(
+                    f"{self._package_name} requires optional dependency {self._module_name!r}."
+                ) from exc
+        return self._module
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._load(), name)
+
+
+torch = _LazyModule("torch", "ST-LRPS evaluation")
+nn = _LazyModule("torch.nn", "ST-LRPS evaluation")
+plt = _LazyModule("matplotlib.pyplot", "ST-LRPS evaluation plotting")
 
 
 class _StreamingMetrics:
@@ -321,7 +347,6 @@ from lunaris.surrogate.st_lrps.artifacts.manager import (
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     reload_model_from_run_dir as reload_model_from_artifact_run_dir,
 )
-from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
 from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
 from lunaris.surrogate.st_lrps.shared.scaling import (
     ScalerPack,
@@ -331,11 +356,26 @@ from lunaris.surrogate.st_lrps.shared.scaling import (
 )
 
 
+def _load_h5py() -> Any:
+    try:
+        import h5py
+    except ImportError as exc:  # pragma: no cover - exercised on core-only envs
+        raise RuntimeError("HDF5 evaluation datasets require optional dependency 'h5py'.") from exc
+    return h5py
+
+
+def _load_dataset_meta() -> Any:
+    from lunaris.surrogate.st_lrps.data.datasets import DatasetMeta
+
+    return DatasetMeta
+
+
 def infer_r_ref_m_from_dataset(path: Path, dataset_name: str = "data") -> float | None:
     """Read the lunar reference radius from dataset metadata when available."""
     if Path(path).suffix.lower() not in {".h5", ".hdf5"}:
         return None
     try:
+        DatasetMeta = _load_dataset_meta()
         meta = DatasetMeta.from_h5(Path(path))
     except Exception:
         return None
@@ -346,6 +386,7 @@ def _read_eval_dataset_meta(path: Path, dataset_name: str = "data") -> dict[str,
     """Return evaluation dataset metadata in the existing evaluator dict shape."""
     if Path(path).suffix.lower() not in {".h5", ".hdf5"}:
         return {"unit_system": "unknown"}
+    DatasetMeta = _load_dataset_meta()
     meta = DatasetMeta.from_h5(Path(path))
     central_body = (
         meta.raw_attrs.get("central_body")
@@ -416,6 +457,7 @@ def reload_model_from_run_dir(
 
 
 def _discover_h5_dataset_name(path: Path, preferred: str = "data") -> str:
+    h5py = _load_h5py()
     with h5py.File(path, "r") as handle:
         if preferred in handle and isinstance(handle[preferred], h5py.Dataset):
             return preferred
@@ -433,6 +475,7 @@ def iter_h5_batches(
     start: int = 0,
     end: int | None = None,
 ) -> Iterator[np.ndarray]:
+    h5py = _load_h5py()
     with h5py.File(path, "r") as handle:
         ds = handle[dataset_name]
         stop = int(ds.shape[0]) if end is None else min(int(end), int(ds.shape[0]))
@@ -1983,6 +2026,7 @@ def evaluate(
     suffix = data_path.suffix.lower()
     if suffix in [".h5", ".hdf5"]:
         dset_name = dataset_name
+        h5py = _load_h5py()
         try:
             with h5py.File(data_path, "r") as f:
                 _ = f[dset_name]
@@ -2651,6 +2695,7 @@ def evaluate(
     bench_n = min(int(total), 200_000)
 
     if suffix in [".h5", ".hdf5"]:
+        h5py = _load_h5py()
         with h5py.File(data_path, "r") as f:
             dsn = _discover_h5_dataset_name(data_path, preferred=dataset_name)
             x_for_bench = np.asarray(f[dsn][0:bench_n, 0:3], dtype=np.float32, order="C")

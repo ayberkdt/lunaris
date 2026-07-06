@@ -1,10 +1,9 @@
 """Orbit-level drift harness for ST-LRPS force-model validation.
 
-The pointwise evaluator (:mod:`force_direct_eval`) measures field error and the
-local non-conservativeness (curl) of a ``force_direct`` artifact. Those are
-necessary but not sufficient: a small per-point field error can still integrate
-into a large trajectory error, and a non-conservative field can pump or drain
-mechanical energy secularly over many revolutions.
+Pointwise field-error metrics are necessary but not sufficient: a small
+per-point acceleration error can still integrate into a large trajectory error,
+and any non-conservative content can pump or drain mechanical energy secularly
+over many revolutions.
 
 This module supplies the orbit-level half of that validation as a small,
 model-independent harness:
@@ -16,8 +15,7 @@ model-independent harness:
 * :func:`energy_drift` tracks the mechanical energy ``0.5|v|^2 + U(r)`` of an
   orbit propagated under one field, relative to a supplied reference potential.
   For a conservative field this stays bounded by integrator truncation error;
-  secular growth exposes the non-conservative content of a ``force_direct``
-  field at the orbit level.
+  secular growth would expose any non-conservative content at the orbit level.
 
 The acceleration callables are position-only, evaluated in a single Cartesian
 frame (the Moon-fixed frame ST-LRPS predicts in). This is the honest scope of a
@@ -140,8 +138,8 @@ def orbit_drift(
 
     Both models are propagated from the same initial state with identical
     integrator settings, so the divergence is attributable to the difference
-    between ``accel_ref`` (e.g. the conservative ``potential_autograd`` field or
-    a truth model) and ``accel_test`` (e.g. the ``force_direct`` field).
+    between ``accel_ref`` (e.g. a truth model or SH baseline) and ``accel_test``
+    (e.g. the ``potential_autograd`` surrogate field).
 
     Returns position/velocity drift time series plus ``final/max/rms`` summaries
     and a scale-free ``position_drift_rel_max`` (max drift over the reference
@@ -224,19 +222,19 @@ def circular_orbit_state(mu: float, radius_m: float) -> tuple[np.ndarray, np.nda
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         description=(
-            "Orbit-drift harness: propagate a circular orbit under a force_direct "
-            "artifact and its potential counterpart and report trajectory drift."
+            "Orbit-drift harness: propagate a circular orbit under an ST-LRPS "
+            "surrogate artifact and a reference field and report trajectory drift."
         )
     )
-    ap.add_argument("--model-dir", required=True, help="force_direct ST-LRPS run directory.")
+    ap.add_argument("--model-dir", required=True, help="ST-LRPS run directory to evaluate.")
     ap.add_argument(
         "--ref-model-dir", default=None,
-        help="potential_autograd run directory to compare against (default: point-mass base only).",
+        help="Reference ST-LRPS run directory to compare against (default: point-mass base only).",
     )
     ap.add_argument("--altitude-km", type=float, default=200.0)
     ap.add_argument("--orbits", type=float, default=10.0)
     ap.add_argument("--steps-per-orbit", type=int, default=720)
-    ap.add_argument("--out", default="outputs/force_direct_eval/orbit_drift.json")
+    ap.add_argument("--out", default="outputs/orbit_drift/orbit_drift.json")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     ap.add_argument(
         "--strict-domain", action="store_true",

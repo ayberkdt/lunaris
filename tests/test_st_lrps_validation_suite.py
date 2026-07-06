@@ -288,30 +288,3 @@ def test_dataset_identity_verified_with_matching_hash(tmp_path):
     assert guard["method"] == "persisted_indices"
 
 
-def test_curl_diagnostics_flag_non_conservative_field(tmp_path):
-    """force_direct conservativeness surfacing (Risk 2): a rotational field must
-    report nonconservative_ratio > 0, a gradient field ~0."""
-    from lunaris.surrogate.st_lrps.evaluation.validation_suite import _maybe_curl_diagnostics
-
-    rng = np.random.default_rng(0)
-    xyz = R_MOON_SI * np.ones((256, 1)) * np.array([1.0, 0.0, 0.0]) + rng.normal(0, 50e3, (256, 3))
-
-    class _Rotational:
-        runtime_model_kind = "force_direct"
-        def predict_residual_accel_fixed(self, pts):
-            pts = np.asarray(pts, dtype=np.float64).reshape(-1, 3)
-            out = np.zeros_like(pts)
-            out[:, 0] = -pts[:, 1]
-            out[:, 1] = pts[:, 0]
-            return out
-
-    class _Conservative:
-        runtime_model_kind = "force_direct"
-        def predict_residual_accel_fixed(self, pts):
-            return -np.asarray(pts, dtype=np.float64).reshape(-1, 3)
-
-    rot = _maybe_curl_diagnostics(_Rotational(), xyz, xyz.shape[0], seed=1, max_points=256, step_m=1.0)
-    cons = _maybe_curl_diagnostics(_Conservative(), xyz, xyz.shape[0], seed=1, max_points=256, step_m=1.0)
-    assert rot["nonconservative_ratio"] > 0.5, rot
-    assert cons["nonconservative_ratio"] < 1e-6, cons
-    assert "warning" in rot

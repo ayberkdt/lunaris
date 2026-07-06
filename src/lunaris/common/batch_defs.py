@@ -14,8 +14,6 @@ Layers
 - ``SpacecraftUncertainty`` : mass / Cd / Cr / area perturbations.
 - ``BatchPropagationConfig``: top-level batch/ensemble run configuration.
 - ``BatchPropagationResult``: output container for ensemble trajectories.
-- ``MonteCarloConfig``      : legacy alias for ``BatchPropagationConfig``.
-- ``MCRunResult``           : legacy alias for ``BatchPropagationResult``.
 
 Units
 -----
@@ -48,7 +46,7 @@ BATCH_SAMPLING_METHODS: tuple[str, ...] = (
 )
 
 
-def build_mc_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Array, int, float]:
+def build_batch_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Array, int, float]:
     """Single source of truth for the batch/ensemble output time grid.
 
     Every batch backend (CPU DOP853, Numba CUDA classic SH, torch_cuda_sh /
@@ -205,7 +203,7 @@ class SpacecraftUncertainty:
 
 
 # =============================================================================
-# 3.                       MONTE CARLO CONFIG
+# 3.                       BATCH PROPAGATION CONFIG
 # =============================================================================
 
 def validate_st_lrps_model_dir(path: str | Path) -> Path:
@@ -229,7 +227,7 @@ def validate_st_lrps_model_dir(path: str | Path) -> Path:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class MonteCarloConfig:
+class BatchPropagationConfig:
     """
     Top-level batch/ensemble propagation configuration.
 
@@ -244,19 +242,19 @@ class MonteCarloConfig:
     ``use_gpu=False`` → CPU multiprocessing via existing :func:`core.propagation.propagator.propagate`
                         (full-fidelity physics, slower for large N).
 
-    ``mc_backend`` is the explicit backend selector.  The default ``"auto"``
-    preserves the historical ``use_gpu`` + ``gravity_mode_override`` behavior.
+    ``batch_backend`` is the explicit backend selector.  The default ``"auto"``
+    resolves the backend from ``use_gpu`` + ``gravity_mode_override``.
     Explicit values are ``"cpu_sh"``, ``"numba_cuda_sh"`` (degree <= 24 Numba
-    CUDA screening kernel; ``"gpu_sh"`` is a legacy alias for it),
-    ``"torch_cuda_sh"`` (high-degree PyTorch CUDA classic-SH, gravity-only),
+    CUDA screening kernel), ``"torch_cuda_sh"`` (high-degree PyTorch CUDA
+    classic-SH, gravity-only),
     ``"torch_cpu_sh"`` (PyTorch CPU classic-SH, same evaluator as torch_cuda_sh),
-    ``"gpu_st_lrps_potential"``, and ``"gpu_st_lrps_direct"``.  The explicit
+    ``"gpu_st_lrps_potential"``, and ``"gpu_st_lrps_third_body"``.  The explicit
     value is recorded verbatim in provenance and is never silently rewritten to
     another backend name.
 
     GPU physics model
     -----------------
-    - Point-mass + SH gravity up to the resolved ``gpu_sh_degree``.
+    - Point-mass + SH gravity up to the resolved ``sh_degree``.
     - Third-body Sun / Earth (if enabled in SimConfig flags).
     - SRP (if enabled in SimConfig flags).
     - 1PN relativity (if enabled in SimConfig flags).
@@ -286,20 +284,20 @@ class MonteCarloConfig:
 
     # Backend selection
     use_gpu: bool = True
-    mc_backend: str = "auto"
+    batch_backend: str = "auto"
     gpu_device_id: int = 0
     gravity_mode_override: str = "follow_mission"
     st_lrps_model_dir: str | None = None
 
     # GPU physics fidelity
-    gpu_sh_degree: int = 10         # requested SH degree (numba_cuda_sh true SH only through 24)
+    sh_degree: int = 10         # requested SH degree (numba_cuda_sh true SH only through 24)
     gpu_threads_per_block: int = 128
 
     # High-degree classic-SH fallback policy when an explicit ``numba_cuda_sh``
     # request exceeds the degree-24 kernel limit: "compatible_gpu" (try
     # torch_cuda_sh, else CPU), "cpu" (force CPU), or "error" (raise instead of
     # substituting).  The requested degree is never clipped.
-    gpu_sh_fallback_policy: str = "compatible_gpu"
+    sh_fallback_policy: str = "compatible_gpu"
 
     # Torch backend controls (torch_cuda_sh and GPU ST-LRPS paths).
     torch_dtype: str = "float64"    # "float32" or "float64" for torch backends
@@ -314,6 +312,11 @@ class MonteCarloConfig:
     max_vram_gb: float = 4.0        # VRAM budget (caps batch size automatically)
     result_storage_mode: str = "auto"  # "auto", "memory", or "disk"
     max_result_memory_gb: float = 1.0
+    # R23 screening output: "full" keeps every trajectory; "summary_only" keeps
+    # the versioned per-sample screening summary plus the top-K full histories
+    # (the (T, N, 6) ensemble tensor is never materialized or archived).
+    output_mode: str = "full"       # "full" or "summary_only"
+    summary_top_k: int = 16         # full histories retained in summary mode
 
     # Statistical analysis
     detect_impact: bool | None = None
@@ -340,26 +343,25 @@ class MonteCarloConfig:
                 "'follow_mission', 'classic_sh', 'st_lrps'. "
                 f"Got {self.gravity_mode_override!r}"
             )
-        if self.mc_backend not in (
+        if self.batch_backend not in (
             "auto",
             "cpu_sh",
-            "gpu_sh",            # legacy alias -> numba_cuda_sh
             "numba_cuda_sh",
             "torch_cuda_sh",
             "torch_cpu_sh",
             "gpu_st_lrps_potential",
-            "gpu_st_lrps_direct",
+            "gpu_st_lrps_third_body",
         ):
             raise ValueError(
-                "mc_backend must be one of: 'auto', 'cpu_sh', 'gpu_sh', "
+                "batch_backend must be one of: 'auto', 'cpu_sh', "
                 "'numba_cuda_sh', 'torch_cuda_sh', 'torch_cpu_sh', "
-                "'gpu_st_lrps_potential', "
-                f"'gpu_st_lrps_direct'. Got {self.mc_backend!r}"
+                "'gpu_st_lrps_potential', 'gpu_st_lrps_third_body'. "
+                f"Got {self.batch_backend!r}"
             )
-        if self.gpu_sh_fallback_policy not in ("compatible_gpu", "cpu", "error"):
+        if self.sh_fallback_policy not in ("compatible_gpu", "cpu", "error"):
             raise ValueError(
-                "gpu_sh_fallback_policy must be one of: 'compatible_gpu', 'cpu', "
-                f"'error'. Got {self.gpu_sh_fallback_policy!r}"
+                "sh_fallback_policy must be one of: 'compatible_gpu', 'cpu', "
+                f"'error'. Got {self.sh_fallback_policy!r}"
             )
         if str(self.torch_dtype).lower() not in ("float32", "float64"):
             raise ValueError(
@@ -372,15 +374,15 @@ class MonteCarloConfig:
         st_lrps_model_dir = str(self.st_lrps_model_dir or "").strip()
         if (
             self.gravity_mode_override == "st_lrps"
-            or self.mc_backend in ("gpu_st_lrps_potential", "gpu_st_lrps_direct")
+            or self.batch_backend in ("gpu_st_lrps_potential", "gpu_st_lrps_third_body")
         ) and not st_lrps_model_dir:
             raise ValueError(
                 "st_lrps_model_dir cannot be empty when ST-LRPS batch gravity is requested."
             )
-        if int(self.gpu_sh_degree) < 0:
+        if int(self.sh_degree) < 0:
             raise ValueError(
-                f"gpu_sh_degree must be >= 0; backend policy handles GPU support limits. "
-                f"got {self.gpu_sh_degree}."
+                f"sh_degree must be >= 0; backend policy handles GPU support limits. "
+                f"got {self.sh_degree}."
             )
         if not (32 <= self.gpu_threads_per_block <= 1024):
             raise ValueError(
@@ -398,6 +400,12 @@ class MonteCarloConfig:
             )
         if self.result_storage_mode == "disk" and self.output_format != "hdf5":
             raise ValueError("result_storage_mode='disk' requires output_format='hdf5'.")
+        if self.output_mode not in ("full", "summary_only"):
+            raise ValueError(
+                f"output_mode must be 'full' or 'summary_only', got {self.output_mode!r}"
+            )
+        if int(self.summary_top_k) < 1:
+            raise ValueError(f"summary_top_k must be >= 1, got {self.summary_top_k}")
         if self.max_result_memory_gb <= 0.0:
             raise ValueError(
                 f"max_result_memory_gb must be > 0, got {self.max_result_memory_gb}"
@@ -470,7 +478,7 @@ class MonteCarloConfig:
 # =============================================================================
 
 @dataclass(slots=True)
-class MCRunResult:
+class BatchPropagationResult:
     """
     Ensemble simulation output.
 
@@ -607,19 +615,11 @@ class MCRunResult:
 # =============================================================================
 
 __all__ = [
-    "build_mc_output_grid",
+    "build_batch_output_grid",
     "BATCH_SAMPLING_METHODS",
     "StateUncertainty",
     "SpacecraftUncertainty",
     "BatchPropagationConfig",
     "BatchPropagationResult",
-    "MonteCarloConfig",
-    "MCRunResult",
     "validate_st_lrps_model_dir",
 ]
-
-
-# Canonical batch terminology. The historical class names stay as aliases for
-# public API and archive compatibility; the objects are intentionally identical.
-BatchPropagationConfig = MonteCarloConfig
-BatchPropagationResult = MCRunResult

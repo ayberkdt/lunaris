@@ -9,7 +9,7 @@ reproducible for research use:
   outside the explicitly allowed fixture locations,
 - no data files are committed under ``src/`` (the package tree is code-only),
 - no generated output directories (``outputs/ runs/ checkpoints/ evals/
-  reports/ mc_results/``) are committed.
+  reports/ batch_results/``) are committed.
 
 Exceptions are explicit and minimal: ``tests/fixtures/`` and
 ``examples/st_lrps_minimal_artifact/``.
@@ -32,7 +32,7 @@ BINARY_ARTIFACT_SUFFIXES = (".pt", ".pth", ".ckpt", ".h5", ".hdf5", ".npz", ".np
 SRC_DATA_SUFFIXES = BINARY_ARTIFACT_SUFFIXES + (".csv", ".tab", ".bsp", ".tpc", ".tls", ".bpc")
 
 # Directory names that only ever hold generated run output.
-GENERATED_DIRS = ("outputs", "runs", "checkpoints", "evals", "reports", "mc_results")
+GENERATED_DIRS = ("outputs", "runs", "checkpoints", "evals", "reports", "batch_results")
 
 
 def _project_root() -> Path:

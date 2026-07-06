@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -20,6 +21,8 @@ from lunaris.core.propagation.integrators.symplectic import (
     _y8_step,
 )
 from lunaris.core.propagation.time_grid import _norm_method
+
+logger = logging.getLogger(__name__)
 
 # Acceleration-based symplectic + Nystrom methods operate on the 6-D [r, v]
 # state only. RK4 operates on the full state (augmented states allowed).
@@ -82,27 +85,21 @@ def symplectic_nonconservative_gravity(method: str, gravity_model: Any) -> list[
     """Return labels when the gravity provider itself voids symplecticity.
 
     Classical SH gravity is the gradient of a scalar potential (conservative),
-    and so is an ST-LRPS ``potential_autograd`` surrogate (acceleration is the
-    autograd gradient of a learned potential). A ``force_direct`` ST-LRPS
-    artifact predicts residual acceleration directly and is **not conservative
-    by construction** (zero curl is not guaranteed unless separately validated),
-    so the bounded-energy-drift guarantee of a symplectic method does not apply
-    to it. Empty when ``method`` is not symplectic, no surrogate provider is
-    attached, or the surrogate is a potential-based (conservative) kind.
+    and so is the supported ST-LRPS ``potential_autograd`` surrogate (its
+    acceleration is the autograd gradient of a learned potential). A gravity
+    provider that is *not* conservative by construction voids the
+    bounded-energy-drift guarantee of a symplectic method. This is decided from
+    the provider's ``is_conservative`` taxonomy flag (never an ``isinstance``
+    check), so it stays correct if a non-conservative kind is ever reintroduced.
+    Empty when ``method`` is not symplectic or no surrogate provider is attached.
     """
     if gravity_model is None or not _is_symplectic_method(method):
         return []
     if getattr(gravity_model, "model_kind", None) != "st_lrps":
         return []
-    kind = str(
-        getattr(getattr(gravity_model, "_force_runtime", None), "runtime_model_kind", "") or ""
-    ).strip().lower()
-    if not kind:
-        cfg = getattr(gravity_model, "config", None)
-        if isinstance(cfg, dict):
-            kind = str(cfg.get("runtime_model_kind", "") or "").strip().lower()
-    if kind == "force_direct":
-        return ["force_direct surrogate gravity (non-conservative by construction)"]
+    is_conservative = getattr(gravity_model, "is_conservative", True)
+    if not bool(is_conservative):
+        return ["non-conservative surrogate gravity (bounded energy drift not guaranteed)"]
     return []
 
 def symplectic_breaks_separability(method: str, flags: Any) -> bool:
@@ -369,9 +366,12 @@ def _integrate_fixed_step(
             alt_max_km = max(alt_max_km, alt_now_km)
             if (t_hr - last_hb_hr) >= float(heartbeat_hours):
                 if verbose:
-                    print(
-                        f"[HB] t={t_hr:7.2f} h | alt={alt_now_km:9.3f} km | min={alt_min_km:9.3f} | max={alt_max_km:9.3f}",
-                        flush=True,
+                    logger.info(
+                        "[HB] t=%7.2f h | alt=%9.3f km | min=%9.3f | max=%9.3f",
+                        t_hr,
+                        alt_now_km,
+                        alt_min_km,
+                        alt_max_km,
                     )
                 last_hb_hr = t_hr
 

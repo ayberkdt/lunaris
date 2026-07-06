@@ -3,13 +3,13 @@
 Batch / Ensemble Dispatch Engine
 ================================
 
-Canonical batch ensemble orchestration. Compatibility imports remain in
-``lunaris.core.monte_carlo_engine`` for the historical public path.
+Canonical batch ensemble orchestration.
 """
 
 from __future__ import annotations
 
 import inspect
+import logging
 import math
 import time
 import warnings
@@ -38,17 +38,20 @@ from lunaris.batch.storage import (
     _allocate_result_buffer,
     _make_writer,
     _resolve_result_storage,
-    load_mc_result,
+    _SummaryOnlyWriter,
+    load_batch_result,
 )
 from lunaris.common.batch_defs import (
-    MCRunResult,
-    MonteCarloConfig,
-    build_mc_output_grid,
+    BatchPropagationConfig,
+    BatchPropagationResult,
+    build_batch_output_grid,
 )
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
-    from lunaris.core.mc_backend_policy import MCBackendPlan
+    from lunaris.batch.backend_policy import BatchBackendPlan
 
 _BACKEND_DISPLAY_NAMES = {
     "cpu_sh": "CPU",
@@ -57,7 +60,7 @@ _BACKEND_DISPLAY_NAMES = {
     "torch_cuda_sh": "GPU-TORCH-SH",
     "torch_cpu_sh": "CPU-TORCH-SH",
     "gpu_st_lrps_potential": "GPU-ST-LRPS",
-    "gpu_st_lrps_direct": "GPU-ST-LRPS",
+    "gpu_st_lrps_third_body": "GPU-ST-LRPS+3B",
 }
 
 
@@ -69,10 +72,6 @@ def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
     Rules:
 
     - expected empty: nothing to enforce (``None``).
-    - expected ``force_direct`` but the artifact declares nothing: **fail
-      closed**. An explicit direct-force request must be provable from the
-      artifact — legacy kind-less artifacts are potential-only by construction,
-      so assuming ``force_direct`` would run the wrong physics.
     - expected ``potential_autograd`` with a kind-less artifact: allowed (the
       legacy loader only ever builds scalar-potential models).
     - both declared and different: fail.
@@ -82,14 +81,6 @@ def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
     if not expected:
         return None
     if not actual:
-        if expected == "force_direct":
-            return (
-                "GPU ST-LRPS artifact kind mismatch: backend policy expects "
-                "'force_direct', but the loaded artifact does not declare "
-                "runtime_model_kind. An explicit direct-force request must be "
-                "provable from the artifact (legacy kind-less artifacts are "
-                "potential-only); refusing to assume."
-            )
         return None
     if actual != expected:
         return (
@@ -99,7 +90,7 @@ def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
     return None
 
 
-class MonteCarloEngine:
+class BatchPropagationEngine:
     """
     Orchestrates a full batch/ensemble injection-dispersion propagation run.
 
@@ -113,13 +104,13 @@ class MonteCarloEngine:
           - Transfer arrays to device (GPU) or dispatch workers (CPU).
           - Iterate over time steps; write snapshots to disk.
        d. Aggregate impact statistics.
-       e. Return ``BatchPropagationResult`` / legacy ``MCRunResult``.
+       e. Return ``BatchPropagationResult``.
 
     Parameters
     ----------
     sim_cfg : SimConfig
         Full simulation configuration (physics flags, gravity, ephemeris, ...).
-    mc_cfg : MonteCarloConfig
+    batch_cfg : BatchPropagationConfig
         Batch/ensemble parameters (N, uncertainties, GPU flags, output format).
     dynamics_engine : optional pre-built DynamicsEngine
         If None, the engine builds one from ``sim_cfg``.
@@ -131,19 +122,22 @@ class MonteCarloEngine:
     def __init__(
         self,
         sim_cfg: Any,                       # config.SimConfig
-        mc_cfg: MonteCarloConfig,
+        batch_cfg: BatchPropagationConfig,
         dynamics_engine: Any = None,        # core.dynamics.DynamicsEngine
         surface_provider: Any = None,
         topo_grid: Any = None,
         progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self._sim_cfg = sim_cfg
-        self._mc      = mc_cfg
+        self._cfg      = batch_cfg
         self._cb      = progress_callback
         self._surface_provider = surface_provider
         self._topo_grid = topo_grid
         self._backend_note = ""
-        self._backend_plan: MCBackendPlan | None = None
+        self._backend_plan: BatchBackendPlan | None = None
+        # R12: "sphere" once a terrain impact request was downgraded to a sphere
+        # in research mode; None when terrain was honored or never requested.
+        self._terrain_fallback: str | None = None
         if self._topo_grid is None and self._surface_provider is not None and hasattr(self._surface_provider, "grids"):
             try:
                 self._topo_grid = self._surface_provider.grids().topo
@@ -215,16 +209,19 @@ class MonteCarloEngine:
         """
         Lazily build a DynamicsEngine from the stored SimConfig.
 
-        The MC path intentionally reuses the same gravity / ephemeris bootstrap
+        The batch path intentionally reuses the same gravity / ephemeris bootstrap
         policy as the single-run path so users do not hit "works in Run, breaks
         in batch/ensemble" divergences.
         """
         from lunaris.core.dynamics import DynamicsEngine
 
         cfg = self._sim_cfg
-        mc_backend = str(getattr(self._mc, "mc_backend", "auto") or "auto")
-        mc_forces_classic_sh = mc_backend in {"cpu_sh", "gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
-        mc_forces_st_lrps = mc_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_direct"}
+        batch_backend = str(getattr(self._cfg, "batch_backend", "auto") or "auto")
+        backend_forces_classic_sh = batch_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
+        backend_forces_st_lrps = batch_backend in {
+            "gpu_st_lrps_potential",
+            "gpu_st_lrps_third_body",
+        }
         grav_model = None
         ephem_manager = None
         use_st_lrps_gravity = False
@@ -234,17 +231,17 @@ class MonteCarloEngine:
         if bool(cfg.flags.enable_sh):
             try:
                 use_st_lrps_gravity = (
-                    mc_forces_st_lrps
+                    backend_forces_st_lrps
                     or (
-                        not mc_forces_classic_sh
+                        not backend_forces_classic_sh
                         and bool(getattr(cfg.gravity, "uses_st_lrps", False))
                     )
                 )
                 if use_st_lrps_gravity:
                     from lunaris.surrogate.runtime import SurrogateGravityModel
 
-                    # Prioritize the MC-specific ST-LRPS run directory if provided.
-                    st_lrps_dir = self._mc.st_lrps_model_dir or cfg.gravity.st_lrps_model_dir
+                    # Prioritize the batch-specific ST-LRPS run directory if provided.
+                    st_lrps_dir = self._cfg.st_lrps_model_dir or cfg.gravity.st_lrps_model_dir
 
                     from lunaris.common.batch_defs import validate_st_lrps_model_dir
                     valid_dir = validate_st_lrps_model_dir(st_lrps_dir)
@@ -260,24 +257,24 @@ class MonteCarloEngine:
 
                     requested_degree = int(cfg.gravity.degree) if cfg.gravity.degree is not None else None
 
-                    # The classic-SH GPU batch paths (numba_cuda_sh /
+                    # The classic-SH batch paths (numba_cuda_sh /
                     # torch_cuda_sh / torch_cpu_sh, or use_gpu auto) evaluate SH
-                    # up to mc.gpu_sh_degree. Load coefficients to at least that
-                    # degree (clamped to the file's own max by the loader) so a
-                    # high gpu_sh_degree is not rejected by the propagator
-                    # preflight merely because the mission's nominal degree is
-                    # lower. Pure-CPU runs keep the mission degree unchanged so
-                    # their physics is not silently altered.
-                    mc_gpu_degree = int(getattr(self._mc, "gpu_sh_degree", 0) or 0)
-                    gpu_sh_path_requested = (
-                        mc_backend in {"gpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
-                        or (mc_backend == "auto" and bool(getattr(self._mc, "use_gpu", False)))
+                    # up to batch_cfg.sh_degree. Load coefficients to at
+                    # least that degree (clamped to the file's own max by the
+                    # loader) so a high sh_degree is not rejected by the
+                    # propagator preflight merely because the mission's nominal
+                    # degree is lower. Pure-CPU runs keep the mission degree
+                    # unchanged so their physics is not silently altered.
+                    batch_sh_degree = int(getattr(self._cfg, "sh_degree", 0) or 0)
+                    numba_cuda_sh_path_requested = (
+                        batch_backend in {"numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}
+                        or (batch_backend == "auto" and bool(getattr(self._cfg, "use_gpu", False)))
                     )
-                    if gpu_sh_path_requested and mc_gpu_degree > 0:
+                    if numba_cuda_sh_path_requested and batch_sh_degree > 0:
                         requested_degree = (
-                            mc_gpu_degree
+                            batch_sh_degree
                             if requested_degree is None
-                            else max(requested_degree, mc_gpu_degree)
+                            else max(requested_degree, batch_sh_degree)
                         )
 
                     # GravityModel already exposes the full dynamics gravity
@@ -339,7 +336,7 @@ class MonteCarloEngine:
         the same POD contract the CPU ground-truth event consumes, so all backends
         share one terrain definition.
         """
-        if not bool(getattr(self._mc, "impact_surface_terrain_enabled", False)):
+        if not bool(getattr(self._cfg, "impact_surface_terrain_enabled", False)):
             return None
 
         prov = self._surface_provider
@@ -361,18 +358,46 @@ class MonteCarloEngine:
         Instantiate the appropriate batch propagator using the backend policy.
 
         Backend selection is fully delegated to
-        ``core.mc_backend_policy.resolve_mc_backend_policy`` so the routing
+        ``batch.backend_policy.resolve_batch_backend_policy`` so the routing
         logic is testable in isolation without constructing a full engine.
         """
-        from lunaris.core.mc_backend_policy import MCBackend, resolve_mc_backend_policy
-        from lunaris.core.mc_propagator import CPUBatchPropagator
+        from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
+        from lunaris.core.batch_propagator import CPUBatchPropagator
 
-        plan = resolve_mc_backend_policy(self._mc, self._sim_cfg)
+        plan = resolve_batch_backend_policy(self._cfg, self._sim_cfg)
         self._backend_plan = plan
 
         # Terrain-aware impact freeze payload (None unless requested + available).
         # Shared across every batch backend so they agree on the surface.
         topo_payload = self._resolve_topo_payload()
+
+        # R12: terrain impact requested but no usable topography payload would
+        # silently degrade the impact freeze to a constant sphere. Paper-safe /
+        # strict runs hard-fail; research mode warns and records the fallback so
+        # it is never silent.
+        if (
+            bool(getattr(self._cfg, "impact_surface_terrain_enabled", False))
+            and topo_payload is None
+        ):
+            terrain_msg = (
+                "impact_surface_mode='terrain' was requested but no usable "
+                "topography payload is available (no surface provider or topo grid "
+                "with elevation data); the impact freeze would fall back to a "
+                "constant sphere."
+            )
+            if self._fallback_forbidden():
+                raise RuntimeError(
+                    terrain_msg
+                    + " Paper-safe/strict mode forbids this silent simplification: "
+                    "provide a topography grid/provider or set "
+                    "impact_surface_mode='sphere' explicitly."
+                )
+            warnings.warn(
+                terrain_msg + " Falling back to a constant sphere (research mode).",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._terrain_fallback = "sphere"
 
         # Emit all warnings produced by the policy resolver
         for w in plan.warnings:
@@ -385,7 +410,7 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         # GPU ST-LRPS path - PyTorch fixed-step RK4
         # ----------------------------------------------------------------
-        if plan.final_backend == MCBackend.GPU_ST_LRPS:
+        if plan.final_backend == BatchBackend.GPU_ST_LRPS:
             try:
                 from lunaris.core.torch_batch_propagator import (
                     TorchBatchPropagator,
@@ -400,10 +425,9 @@ class MonteCarloEngine:
                     )
                 deg_min = getattr(grav_model, "degree_min", "?")
                 deg_max = getattr(grav_model, "degree_max", "?")
-                print(
-                    f"[MC][GPU-STLRPS] Loading surrogate: degree_min={deg_min}  "
-                    f"degree_max={deg_max}  model_dir={grav_model.model_dir}",
-                    flush=True,
+                logger.info(
+                    f"[BATCH][GPU-STLRPS] Loading surrogate: degree_min={deg_min}  "
+                    f"degree_max={deg_max}  model_dir={grav_model.model_dir}"
                 )
                 actual_runtime_kind = str(
                     getattr(getattr(grav_model, "_force_runtime", None), "runtime_model_kind", "")
@@ -415,8 +439,8 @@ class MonteCarloEngine:
                     raise TorchSTLRPSPreflightError(_kind_error)
                 prop_kwargs: dict[str, Any] = {
                     "surrogate_model": grav_model,
-                    "mc_cfg": self._mc,
-                    "device_id": int(getattr(self._mc, "gpu_device_id", 0)),
+                    "batch_cfg": self._cfg,
+                    "device_id": int(getattr(self._cfg, "gpu_device_id", 0)),
                 }
                 constructor_params = inspect.signature(TorchBatchPropagator).parameters
                 if "ephem" in constructor_params:
@@ -427,12 +451,26 @@ class MonteCarloEngine:
                     )
                 if "topo_payload" in constructor_params and topo_payload is not None:
                     prop_kwargs["topo_payload"] = topo_payload
+                # R03: the hybrid backend models Earth/Sun third-body on-device.
+                if (
+                    "third_body" in constructor_params
+                    and str(getattr(plan, "actual_backend", "")) == "gpu_st_lrps_third_body"
+                ):
+                    from lunaris.core.backend_capabilities import FORCE_MODEL_FLAG_ATTR
+
+                    _flags = getattr(self._sim_cfg, "flags", None)
+                    _bodies = tuple(
+                        name
+                        for name in ("third_body_sun", "third_body_earth")
+                        if bool(getattr(_flags, FORCE_MODEL_FLAG_ATTR[name], False))
+                    )
+                    prop_kwargs["third_body"] = _bodies
                 return TorchBatchPropagator(**prop_kwargs)
             except TorchSTLRPSPreflightError:
                 raise
             except Exception as exc:
                 note = (
-                    f"[MC] GPU ST-LRPS backend initialization failed ({exc}). "
+                    f"[BATCH] GPU ST-LRPS backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
@@ -440,22 +478,22 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         # GPU classic-SH path - Numba CUDA fixed-step RK4 (torch_cuda_sh's sibling)
         # ----------------------------------------------------------------
-        elif plan.final_backend == MCBackend.GPU_CLASSIC_SH:
+        elif plan.final_backend == BatchBackend.GPU_CLASSIC_SH:
             try:
-                from lunaris.core.mc_propagator import GPUBatchPropagator
+                from lunaris.core.batch_propagator import GPUBatchPropagator
 
                 gpu_kwargs: dict[str, Any] = {}
                 if "topo_payload" in inspect.signature(GPUBatchPropagator).parameters and topo_payload is not None:
                     gpu_kwargs["topo_payload"] = topo_payload
                 return GPUBatchPropagator(
                     self._dyn,
-                    self._mc,
+                    self._cfg,
                     self._sim_cfg.flags,
                     **gpu_kwargs,
                 )
             except Exception as exc:
                 note = (
-                    f"[MC] GPU classic-SH backend initialization failed ({exc}). "
+                    f"[BATCH] GPU classic-SH backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
@@ -463,7 +501,7 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         # GPU torch classic-SH path - PyTorch fixed-step RK4 (high-degree)
         # ----------------------------------------------------------------
-        elif plan.final_backend == MCBackend.GPU_TORCH_SH:
+        elif plan.final_backend == BatchBackend.GPU_TORCH_SH:
             from lunaris.core.torch_sh_propagator import (
                 TorchSHBatchPropagator,
                 TorchSHPreflightError,
@@ -472,9 +510,9 @@ class MonteCarloEngine:
             try:
                 return TorchSHBatchPropagator(
                     self._dyn,
-                    self._mc,
+                    self._cfg,
                     self._sim_cfg.flags,
-                    device=f"cuda:{int(getattr(self._mc, 'gpu_device_id', 0) or 0)}",
+                    device=f"cuda:{int(getattr(self._cfg, 'gpu_device_id', 0) or 0)}",
                     topo_payload=topo_payload,
                 )
             except TorchSHPreflightError:
@@ -484,7 +522,7 @@ class MonteCarloEngine:
                 raise
             except Exception as exc:
                 note = (
-                    f"[MC] torch_cuda_sh backend initialization failed ({exc}). "
+                    f"[BATCH] torch_cuda_sh backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
@@ -492,7 +530,7 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         # Torch CPU classic-SH path - PyTorch fixed-step RK4 on CPU
         # ----------------------------------------------------------------
-        elif plan.final_backend == MCBackend.TORCH_CPU_SH:
+        elif plan.final_backend == BatchBackend.TORCH_CPU_SH:
             from lunaris.core.torch_sh_propagator import (
                 TorchSHBatchPropagator,
                 TorchSHPreflightError,
@@ -501,7 +539,7 @@ class MonteCarloEngine:
             try:
                 return TorchSHBatchPropagator(
                     self._dyn,
-                    self._mc,
+                    self._cfg,
                     self._sim_cfg.flags,
                     device="cpu",
                     topo_payload=topo_payload,
@@ -510,7 +548,7 @@ class MonteCarloEngine:
                 raise
             except Exception as exc:
                 note = (
-                    f"[MC] torch_cpu_sh backend initialization failed ({exc}). "
+                    f"[BATCH] torch_cpu_sh backend initialization failed ({exc}). "
                     "Falling back to the CPU full-fidelity backend."
                 )
                 self._handle_backend_init_failure(plan, note, exc)
@@ -520,7 +558,7 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         return CPUBatchPropagator(
             self._sim_cfg,
-            self._mc,
+            self._cfg,
             dynamics_template=self._dyn,
             surface_provider=self._surface_provider,
             topo_grid=self._topo_grid,
@@ -529,26 +567,21 @@ class MonteCarloEngine:
     def _fallback_forbidden(self) -> bool:
         """True when a silent GPU->CPU downgrade must NOT happen.
 
-        A benchmark / paper-evidence run that asks for a GPU backend and then
-        quietly executes on CPU produces a misleading speed/throughput table. The
-        existing ``gpu_sh_fallback_policy='error'`` already hard-fails at backend
-        *planning*; this extends the same intent to *initialization* failures
+        Delegates to ``backend_policy.fallback_forbidden`` (single source,
+        R29b) — the same posture that hard-fails at backend *planning* also
+        applies to *initialization* failures
         (GPU selected by the policy, but the propagator could not be built), plus
-        any explicit paper-safe / strict-backend flag on the MC config.
+        any explicit paper-safe / strict-backend flag on the batch config.
         """
-        policy = str(getattr(self._mc, "gpu_sh_fallback_policy", "compatible_gpu") or "").strip().lower()
-        if policy == "error":
-            return True
-        return any(
-            bool(getattr(self._mc, attr, False))
-            for attr in ("paper_safe", "strict_backend", "benchmark_mode")
-        )
+        from lunaris.batch.backend_policy import fallback_forbidden
+
+        return fallback_forbidden(self._cfg)
 
     def _handle_backend_init_failure(self, plan: Any, note: str, exc: Exception) -> None:
         """Either hard-fail (strict/paper-safe) or downgrade to CPU with provenance."""
         if self._fallback_forbidden():
             raise RuntimeError(
-                f"{note} However, fallback is forbidden (gpu_sh_fallback_policy='error' or "
+                f"{note} However, fallback is forbidden (sh_fallback_policy='error' or "
                 "paper-safe mode): refusing to silently run on CPU for a benchmark/paper run. "
                 "Fix the GPU backend or relax the fallback policy explicitly."
             ) from exc
@@ -563,15 +596,24 @@ class MonteCarloEngine:
         Keeps provenance honest: a run that actually executes on CPU must not be
         labeled with a GPU backend, device, or integrator (task section 13).
         """
-        from lunaris.core.mc_backend_policy import MCBackend
+        from lunaris.batch.backend_policy import BatchBackend
 
-        plan.final_backend = MCBackend.CPU
+        plan.final_backend = BatchBackend.CPU
         plan.use_gpu = False
         plan.actual_backend = "cpu_st_lrps" if plan.gravity_backend == "st_lrps" else "cpu_sh"
         plan.actual_sh_degree = None
         plan.actual_device = "cpu"
         plan.cuda_device_name = None
+        # CPU full-fidelity path runs float64; keep dtype provenance honest by
+        # recording the effective change and flagging it as a downgrade when the
+        # request was something else.
+        prior_requested = getattr(plan, "requested_dtype", "") or getattr(plan, "dtype", "float64")
         plan.dtype = "float64"
+        plan.effective_dtype = "float64"
+        if not getattr(plan, "requested_dtype", ""):
+            plan.requested_dtype = prior_requested
+        if prior_requested and prior_requested != "float64":
+            plan.dtype_downgraded = True
         plan.integrator = "adaptive (DOP853)"
         plan.fallback_applied = True
         plan.fallback_reason = reason
@@ -583,27 +625,29 @@ class MonteCarloEngine:
             plan.backend_family = caps.family
             plan.backend_implementation = caps.implementation
         except Exception:
+            # R29b-justified: cosmetic provenance labels only; the downgrade
+            # itself is already recorded via fallback_applied/fallback_reason.
             pass
 
     # ----------------------------------------------------------------
     # Public: run
     # ----------------------------------------------------------------
 
-    def run(self) -> MCRunResult:
+    def run(self) -> BatchPropagationResult:
         """
         Execute the full batch/ensemble propagation.
 
         Returns
         ----------
-        MCRunResult
+        BatchPropagationResult
             Ensemble trajectories, spacecraft samples, impact bookkeeping.
         """
-        mc  = self._mc
+        batch_cfg = self._cfg
         cfg = self._sim_cfg
-        N   = int(mc.n_samples)
+        N   = int(batch_cfg.n_samples)
 
         t_wall0 = time.perf_counter()
-        rng = np.random.default_rng(int(mc.seed))
+        rng = np.random.default_rng(int(batch_cfg.seed))
         self._publish_progress(
             stage="sampling",
             stage_fraction=0.0,
@@ -618,7 +662,7 @@ class MonteCarloEngine:
         # 1) Generate samples
         # ----------------------------------------------------------------
         nominal = _state_to_array(cfg.initial_state)   # (6,)
-        sampling_method = str(getattr(mc, "sampling_method", "random") or "random")
+        sampling_method = str(getattr(batch_cfg, "sampling_method", "random") or "random")
         qmc_design_note = _sobol_size_note(sampling_method, N)
         if sampling_method == "random":
             joint_standard_normals = None
@@ -627,16 +671,16 @@ class MonteCarloEngine:
                 N,
                 10,
                 sampling_method,
-                int(mc.seed),
+                int(batch_cfg.seed),
             )
 
         Y0 = sample_initial_states(
             nominal,
-            mc.state,
+            batch_cfg.state,
             N,
             rng,
             sampling_method=sampling_method,
-            seed=int(mc.seed),
+            seed=int(batch_cfg.seed),
             standard_normal_samples=(
                 None if joint_standard_normals is None else joint_standard_normals[:, :6]
             ),
@@ -646,11 +690,11 @@ class MonteCarloEngine:
             nominal_area=float(cfg.spacecraft.area_m2),
             nominal_cd=float(cfg.spacecraft.cd),
             nominal_cr=float(cfg.spacecraft.cr),
-            uncertainty=mc.spacecraft,
+            uncertainty=batch_cfg.spacecraft,
             n_samples=N,
             rng=rng,
             sampling_method=sampling_method,
-            seed=int(mc.seed) + 1,
+            seed=int(batch_cfg.seed) + 1,
             standard_normal_samples=(
                 None if joint_standard_normals is None else joint_standard_normals[:, 6:10]
             ),
@@ -691,37 +735,52 @@ class MonteCarloEngine:
         backend_name = _BACKEND_DISPLAY_NAMES.get(_plan_actual, "CPU")
         backend_diag = prop.diagnostics_snapshot() if hasattr(prop, "diagnostics_snapshot") else {}
         backend_plan = getattr(self, "_backend_plan", None)
-        requested_max_batch = mc.effective_max_batch()
+        requested_max_batch = batch_cfg.effective_max_batch()
         if hasattr(prop, "recommended_max_batch"):
             max_batch = int(prop.recommended_max_batch(requested_max_batch))
         else:
             max_batch = int(requested_max_batch)
 
         duration_s  = float(cfg.time.duration_s)
-        output_dt_s = float(cfg.time.output_dt_s or mc.dt_s * 10)
-        t_out_contract, _, _ = build_mc_output_grid(duration_s, output_dt_s)
+        output_dt_s = float(cfg.time.output_dt_s or batch_cfg.dt_s * 10)
+        t_out_contract, _, _ = build_batch_output_grid(duration_s, output_dt_s)
         storage_mode, result_bytes, memory_limit_bytes = _resolve_result_storage(
-            mc,
+            batch_cfg,
             len(t_out_contract),
         )
-        writer = _make_writer(mc, N, t_out_contract)
+        # R23: summary-only screening mode never materializes or archives the
+        # full (T, N, 6) ensemble tensor. Each sub-batch is reduced to the
+        # versioned screening summary; only the top-K full histories survive.
+        summary_only = str(getattr(batch_cfg, "output_mode", "full")) == "summary_only"
+        if summary_only:
+            from lunaris.batch.summary import TopKTrajectoryBuffer, summarize_ensemble
 
-        print(
-            f"[MC] N={N}  backend={backend_name}  "
+            writer = _SummaryOnlyWriter()
+            _summary_parts: list[dict[str, Any]] = []
+            _topk_buffer = TopKTrajectoryBuffer(int(getattr(batch_cfg, "summary_top_k", 16)))
+            _summary_mu = float(
+                getattr(getattr(self._dyn, "grav", None), "GM_m3s2", 0.0) or MU_MOON
+            )
+            _summary_r_ref = float(
+                getattr(getattr(self._dyn, "grav", None), "R_ref_m", 0.0) or R_MOON
+            )
+        else:
+            writer = _make_writer(batch_cfg, N, t_out_contract)
+
+        logger.info(
+            f"[BATCH] N={N}  backend={backend_name}  "
             f"T={duration_s / DAY_S:.2f} d  "
-            f"step={mc.dt_s:.1f} s  snap={output_dt_s:.1f} s",
-            flush=True,
+            f"step={batch_cfg.dt_s:.1f} s  snap={output_dt_s:.1f} s"
         )
         if self._backend_note:
-            print(self._backend_note, flush=True)
+            logger.info("%s", self._backend_note)
         if backend_diag:
             device_name = str(backend_diag.get("device_name", "")).strip()
             tpb = backend_diag.get("threads_per_block")
             if device_name:
-                print(
-                    f"[MC] runtime device={device_name}  tpb={tpb}  "
-                    f"batch_cap~{max_batch}",
-                    flush=True,
+                logger.info(
+                    f"[BATCH] runtime device={device_name}  tpb={tpb}  "
+                    f"batch_cap~{max_batch}"
                 )
 
         # ----------------------------------------------------------------
@@ -739,11 +798,10 @@ class MonteCarloEngine:
             1, int(memory_limit_bytes / max(1, host_bytes_per_sample))
         )
         if host_batch_cap < max_batch:
-            print(
-                f"[MC] Host-RAM cap reduced batch {max_batch} -> {host_batch_cap} "
+            logger.info(
+                f"[BATCH] Host-RAM cap reduced batch {max_batch} -> {host_batch_cap} "
                 f"(per-batch host buffer ~{host_bytes_per_sample / 1e6:.1f} MB/sample "
-                f"x T={len(t_out_contract)}).",
-                flush=True,
+                f"x T={len(t_out_contract)})."
             )
             max_batch = host_batch_cap
 
@@ -763,10 +821,14 @@ class MonteCarloEngine:
         # sample batch directly into the final HDF5 trajectory dataset.
         t_out_ref = t_out_contract
         writer_buffer = getattr(writer, "memory_buffer", None)
-        Y_all = _allocate_result_buffer(
-            storage_mode,
-            writer_buffer,
-            (len(t_out_ref), N, 6),
+        Y_all = (
+            None
+            if summary_only
+            else _allocate_result_buffer(
+                storage_mode,
+                writer_buffer,
+                (len(t_out_ref), N, 6),
+            )
         )
         impact_all   = np.zeros(N, dtype=np.float64)
         t_impact_all = np.full(N, np.nan, dtype=np.float64)
@@ -786,10 +848,9 @@ class MonteCarloEngine:
             b_end   = min(N, b_start + max_batch)
             b_n     = b_end - b_start
 
-            print(
-                f"[MC] Batch {b_idx + 1}/{n_batches}  "
-                f"samples {b_start}-{b_end - 1}",
-                flush=True,
+            logger.info(
+                f"[BATCH] Batch {b_idx + 1}/{n_batches}  "
+                f"samples {b_start}-{b_end - 1}"
             )
 
             # Loop variables are bound as defaults: the callback is invoked
@@ -871,7 +932,7 @@ class MonteCarloEngine:
                         radii = np.linalg.norm(Y_b[:, j, :3], axis=1)
                         hits = np.where(
                             radii
-                            <= float(R_MOON) + float(mc.impact_alt_km) * 1_000.0
+                            <= float(R_MOON) + float(batch_cfg.impact_alt_km) * 1_000.0
                         )[0]
                         hit_idx = int(hits[0]) if hits.size else len(t_b) - 1
                         t_imp_b[j] = float(t_b[hit_idx])
@@ -884,13 +945,34 @@ class MonteCarloEngine:
                 batch_impact_positions,
             )
 
-            try:
-                writer.write_sample_batch(b_start, b_end, Y_ref)
-            except Exception:
-                writer.abort()
-                raise
-            if Y_all is not None and Y_all is not writer_buffer:
-                Y_all[:, b_start:b_end, :] = Y_ref
+            if summary_only:
+                # R23: reduce the batch to the screening summary + top-K full
+                # histories, then let the (T, b_n, 6) block go out of scope.
+                _part = summarize_ensemble(
+                    t_out_ref,
+                    Y_ref,
+                    imp_b,
+                    t_imp_b,
+                    mu_m3s2=_summary_mu,
+                    r_ref_m=_summary_r_ref,
+                    valid_mask=valid_b,
+                )
+                _summary_parts.append(_part)
+                _topk_buffer.offer_batch(
+                    global_start=b_start,
+                    scores=np.asarray(_part["fields"]["score"], dtype=np.float64),
+                    Y_batch=Y_ref,
+                    impact_flags=np.asarray(imp_b, dtype=np.float64),
+                    t_impact=np.asarray(t_imp_b, dtype=np.float64),
+                )
+            else:
+                try:
+                    writer.write_sample_batch(b_start, b_end, Y_ref)
+                except Exception:
+                    writer.abort()
+                    raise
+                if Y_all is not None and Y_all is not writer_buffer:
+                    Y_all[:, b_start:b_end, :] = Y_ref
 
             self._publish_progress(
                 stage="propagating",
@@ -941,27 +1023,27 @@ class MonteCarloEngine:
         try:
             _plan = backend_plan
             if _plan is None:
-                from lunaris.core.mc_backend_policy import resolve_mc_backend_policy as _resolve
-                _plan = _resolve(mc, self._sim_cfg)
-            actual_sh_degree = backend_diag.get("actual_gpu_sh_degree", backend_diag.get("gpu_sh_degree"))
+                from lunaris.batch.backend_policy import resolve_batch_backend_policy as _resolve
+                _plan = _resolve(batch_cfg, self._sim_cfg)
+            actual_sh_degree = backend_diag.get("actual_sh_degree", backend_diag.get("sh_degree"))
             if actual_sh_degree is None and _grav_model is not None:
                 actual_sh_degree = getattr(_grav_model, "effective_degree_max", getattr(_grav_model, "degree", None))
             _plan_meta: dict[str, Any] = {
-                "requested_mc_backend": getattr(_plan, "requested_backend", "auto"),
-                "actual_mc_backend": getattr(_plan, "actual_backend", _plan.final_backend.value),
-                "mc_backend": _plan.final_backend.value,
+                "requested_batch_backend": getattr(_plan, "requested_backend", "auto"),
+                "actual_batch_backend": getattr(_plan, "actual_backend", _plan.final_backend.value),
+                "batch_backend": _plan.final_backend.value,
                 "backend_family": getattr(_plan, "backend_family", ""),
                 "backend_implementation": backend_diag.get("backend_implementation")
                     or getattr(_plan, "backend_implementation", ""),
-                "requested_use_gpu": bool(mc.use_gpu),
+                "requested_use_gpu": bool(batch_cfg.use_gpu),
                 "final_use_gpu": _plan.use_gpu,
                 "plan_gravity_backend": _plan.gravity_backend,   # renamed: avoids collision with _st_lrps_meta["gravity_backend"]
                 "requested_device": getattr(_plan, "requested_device", ""),
                 "actual_device": backend_diag.get("device_name") or getattr(_plan, "actual_device", ""),
-                "requested_sh_degree": getattr(_plan, "requested_sh_degree", int(mc.gpu_sh_degree)),
+                "requested_sh_degree": getattr(_plan, "requested_sh_degree", int(batch_cfg.sh_degree)),
                 "actual_sh_degree": actual_sh_degree,
-                "gpu_sh_max_degree": getattr(_plan, "gpu_sh_max_degree", None),
-                "gpu_sh_supported_tiers": list(getattr(_plan, "gpu_sh_supported_tiers", ())),
+                "numba_cuda_sh_max_degree": getattr(_plan, "numba_cuda_sh_max_degree", None),
+                "numba_cuda_sh_supported_tiers": list(getattr(_plan, "numba_cuda_sh_supported_tiers", ())),
                 "runtime_model_kind": _st_lrps_meta.get(
                     "runtime_model_kind",
                     getattr(_plan, "runtime_model_kind", None),
@@ -970,12 +1052,29 @@ class MonteCarloEngine:
                 "numba_cuda_available": _plan.numba_cuda_available,
                 "cuda_device_name": backend_diag.get("device_name") or getattr(_plan, "cuda_device_name", None),
                 "dtype": backend_diag.get("dtype") or getattr(_plan, "dtype", "float64"),
+                # Dtype provenance (R10): what was requested vs what actually ran,
+                # plus whether an unsupported request was downgraded.
+                "requested_dtype": getattr(_plan, "requested_dtype", "")
+                    or getattr(_plan, "dtype", "float64"),
+                "effective_dtype": backend_diag.get("dtype")
+                    or getattr(_plan, "effective_dtype", "")
+                    or getattr(_plan, "dtype", "float64"),
+                "dtype_downgraded": bool(getattr(_plan, "dtype_downgraded", False)),
+                # R03 provenance: on-device third-body modeling + the backend's
+                # statically unsupported force models (capability registry).
+                "third_body_backend": backend_diag.get("third_body_backend")
+                    or getattr(_plan, "third_body_backend", ""),
+                "unsupported_forces": list(getattr(_plan, "unsupported_forces", ())),
                 "state_dtype": backend_diag.get("state_dtype")
                     or backend_diag.get("dtype")
                     or getattr(_plan, "dtype", "float64"),
                 "model_dtype": backend_diag.get("model_dtype"),
                 "acceleration_output_dtype": backend_diag.get("acceleration_output_dtype"),
                 "frame_mode": backend_diag.get("frame_mode", "unknown"),
+                # R12: records a research-mode terrain->sphere downgrade so the
+                # impact surface used is never ambiguous. None when terrain was
+                # honored or never requested.
+                "terrain_fallback": getattr(self, "_terrain_fallback", None),
                 "integrator": backend_diag.get("integrator") or _plan.integrator,
                 "batch_size": max_batch,
                 "chunk_size": backend_diag.get("chunk_size", max_batch),
@@ -991,13 +1090,13 @@ class MonteCarloEngine:
         except Exception:
             # Even on the degenerate provenance path the required v2 manifest
             # fields must be present (and non-null) so the archive still loads
-            # under load_mc_result(strict=True).
-            _fallback_backend = str(getattr(mc, "mc_backend", "auto") or "auto")
+            # under load_batch_result(strict=True).
+            _fallback_backend = str(getattr(batch_cfg, "batch_backend", "auto") or "auto")
             _plan_meta = {
-                "requested_mc_backend": _fallback_backend,
-                "actual_mc_backend": _fallback_backend,
-                "mc_backend": _fallback_backend,
-                "requested_sh_degree": int(mc.gpu_sh_degree),
+                "requested_batch_backend": _fallback_backend,
+                "actual_batch_backend": _fallback_backend,
+                "batch_backend": _fallback_backend,
+                "requested_sh_degree": int(batch_cfg.sh_degree),
             }
 
         # Artifact + coefficient + kernel hash provenance: a path string alone is
@@ -1029,26 +1128,29 @@ class MonteCarloEngine:
                 inspect.getsourcefile(type(prop))
             )
         except Exception:
+            # R29b-justified: supplementary kernel-source fingerprint (frozen /
+            # zipapp installs have no source file). Mandatory identity hashes
+            # (gravity file, ST-LRPS artifact) are recorded unconditionally above.
             pass
 
         try:
             writer.write_metadata(
                 archive_schema_version=2,
                 n_samples=N,
-                seed=int(mc.seed),
+                seed=int(batch_cfg.seed),
                 sampling_method=sampling_method,
                 sampling_note=qmc_design_note,
                 duration_s=duration_s,
                 output_dt_s=output_dt_s,
-                requested_backend="GPU" if bool(mc.use_gpu) else "CPU",
-                gpu_sh_degree=int(mc.gpu_sh_degree),
+                requested_backend="GPU" if bool(batch_cfg.use_gpu) else "CPU",
+                sh_degree=int(batch_cfg.sh_degree),
                 backend=backend_name,
                 backend_note=self._backend_note,
                 backend_diagnostics=backend_diag,
                 result_storage_mode=storage_mode,
                 estimated_result_bytes=result_bytes,
-                detect_impact=bool(mc.impact_detection_enabled),
-                compute_impact_statistics=bool(mc.impact_statistics_enabled),
+                detect_impact=bool(batch_cfg.impact_detection_enabled),
+                compute_impact_statistics=bool(batch_cfg.impact_statistics_enabled),
                 impact_frame_available=bool(getattr(self._dyn, "ephem", None) is not None),
                 **_provenance_hashes,
                 **_st_lrps_meta,
@@ -1083,11 +1185,10 @@ class MonteCarloEngine:
         n_valid = int(np.sum(valid_bool))
         n_hit = int(np.sum(valid_bool & (impact_all > 0.5)))
         impact_fraction = float(n_hit) / n_valid if n_valid else math.nan
-        print(
-            f"[MC] Done. Wall={t_wall:.1f}s  "
+        logger.info(
+            f"[BATCH] Done. Wall={t_wall:.1f}s  "
             f"impacts={n_hit}/{n_valid} "
-            f"({100.0 * impact_fraction:.1f}%)",
-            flush=True,
+            f"({100.0 * impact_fraction:.1f}%)"
         )
         self._publish_progress(
             stage="finalizing",
@@ -1104,15 +1205,63 @@ class MonteCarloEngine:
         # ----------------------------------------------------------------
         # 5) Build result
         # ----------------------------------------------------------------
-        if storage_mode == "disk":
-            Y_result: Any = HDF5TrajectoryView(mc.output_path_resolved)
-        else:
-            if Y_all is None:
-                raise RuntimeError("Eager MC result buffer was not initialized.")
-            Y_result = Y_all
         n_failed = int(np.sum(valid_all < 0.5))
 
-        return MCRunResult(
+        if summary_only:
+            from lunaris.batch.summary import merge_summaries
+
+            merged_summary = merge_summaries(_summary_parts)
+            sel = np.asarray(_topk_buffer.selected_indices, dtype=np.int64)
+            return BatchPropagationResult(
+                t=t_out_ref,
+                Y=_topk_buffer.stacked_trajectories(len(t_out_ref)),
+                sc_samples=(
+                    sc_samples[sel] if sel.size else np.empty((0, 4), dtype=np.float64)
+                ),
+                impact_mask=impact_all[sel],
+                t_impact=t_impact_all[sel],
+                valid_mask=valid_all[sel],
+                impact_position_inertial_m=impact_position_inertial[sel],
+                impact_position_fixed_m=impact_position_fixed[sel],
+                archive_path=None,
+                diagnostics={
+                    "wall_time_s": float(t_wall),
+                    "n_samples": N,
+                    "sampling_method": sampling_method,
+                    "sampling_note": qmc_design_note,
+                    "n_valid_samples": n_valid,
+                    "n_failed_samples": n_failed,
+                    "n_impacts": n_hit,
+                    "impact_fraction": impact_fraction,
+                    "backend": backend_name,
+                    "backend_note": self._backend_note,
+                    "backend_diagnostics": backend_diag,
+                    "requested_batch_backend": _plan_meta.get("requested_batch_backend"),
+                    "actual_batch_backend": _plan_meta.get("actual_batch_backend"),
+                    "requested_sh_degree": _plan_meta.get("requested_sh_degree"),
+                    "actual_sh_degree": _plan_meta.get("actual_sh_degree"),
+                    "runtime_model_kind": _plan_meta.get("runtime_model_kind"),
+                    "fallback_reason": _plan_meta.get("fallback_reason"),
+                    "selection_reason": _plan_meta.get("selection_reason"),
+                    # R23 summary-mode payload: full-N screening summary +
+                    # top-K bookkeeping. Y above holds ONLY the top-K histories.
+                    "output_mode": "summary_only",
+                    "batch_summary": merged_summary,
+                    "summary_top_k": int(getattr(batch_cfg, "summary_top_k", 16)),
+                    "summary_selected_indices": sel.tolist(),
+                    "summary_selected_scores": list(_topk_buffer.scores),
+                    "result_storage_mode": "summary_only",
+                },
+            )
+
+        if storage_mode == "disk":
+            Y_result: Any = HDF5TrajectoryView(batch_cfg.output_path_resolved)
+        else:
+            if Y_all is None:
+                raise RuntimeError("Eager batch result buffer was not initialized.")
+            Y_result = Y_all
+
+        return BatchPropagationResult(
             t=t_out_ref,
             Y=Y_result,
             sc_samples=sc_samples,
@@ -1121,7 +1270,7 @@ class MonteCarloEngine:
             valid_mask=valid_all,
             impact_position_inertial_m=impact_position_inertial,
             impact_position_fixed_m=impact_position_fixed,
-            archive_path=str(mc.output_path_resolved),
+            archive_path=str(batch_cfg.output_path_resolved),
             diagnostics={
                 "wall_time_s": float(t_wall),
                 "n_samples": N,
@@ -1131,18 +1280,18 @@ class MonteCarloEngine:
                 "n_failed_samples": n_failed,
                 "n_impacts": n_hit,
                 "impact_fraction": impact_fraction,
-                "impact_detection_enabled": bool(mc.impact_detection_enabled),
-                "impact_statistics_enabled": bool(mc.impact_statistics_enabled),
+                "impact_detection_enabled": bool(batch_cfg.impact_detection_enabled),
+                "impact_statistics_enabled": bool(batch_cfg.impact_statistics_enabled),
                 "impact_frame_available": bool(getattr(self._dyn, "ephem", None) is not None),
                 "backend": backend_name,
                 "backend_note": self._backend_note,
-                "output_path": str(mc.output_path_resolved),
+                "output_path": str(batch_cfg.output_path_resolved),
                 "backend_diagnostics": backend_diag,
                 # Throughput metrics from the batched propagator (if available)
                 "raw_batch_state_steps_per_second": backend_diag.get("raw_batch_state_steps_per_second"),
                 "active_state_steps_per_second": backend_diag.get("active_state_steps_per_second"),
-                "requested_mc_backend": _plan_meta.get("requested_mc_backend"),
-                "actual_mc_backend": _plan_meta.get("actual_mc_backend"),
+                "requested_batch_backend": _plan_meta.get("requested_batch_backend"),
+                "actual_batch_backend": _plan_meta.get("actual_batch_backend"),
                 "requested_sh_degree": _plan_meta.get("requested_sh_degree"),
                 "actual_sh_degree": _plan_meta.get("actual_sh_degree"),
                 "runtime_model_kind": _plan_meta.get("runtime_model_kind"),
@@ -1153,29 +1302,19 @@ class MonteCarloEngine:
         )
 
 
-def mc_entry() -> int:
-    """Historical console-script alias for batch/ensemble propagation."""
-    from lunaris.cli.batch_runner import main as _mc_main
-
-    return int(_mc_main())
-
-
 def batch_entry() -> int:
-    """Console-script alias for the batch propagation terminology."""
-    return mc_entry()
+    """Console-script entry point for batch/ensemble propagation."""
+    from lunaris.cli.batch_runner import main as _batch_main
 
-
-BatchPropagationEngine = MonteCarloEngine
+    return int(_batch_main())
 
 
 __all__ = [
     "BatchPropagationEngine",
-    "MonteCarloEngine",
     "generate_standard_normal_design",
     "sample_initial_states",
     "sample_spacecraft_props",
     "HDF5TrajectoryView",
-    "load_mc_result",
-    "mc_entry",
+    "load_batch_result",
     "batch_entry",
 ]

@@ -96,8 +96,10 @@ Implementation note, 2026-07-06:
 - User-facing batch/ensemble workflow language was changed from generic
   uncertainty propagation to injection-dispersion terminology in the UI, CLI
   help, architecture/HPC/README docs, and batch config prose.
-- Public compatibility names such as `StateUncertainty`,
-  `SpacecraftUncertainty`, and `MonteCarloConfig` were preserved.
+- The dispersion-model dataclass names `StateUncertainty` and
+  `SpacecraftUncertainty` are preserved. (After merging main's batch-subsystem
+  rework, the top-level config is `BatchPropagationConfig`; the older
+  `MonteCarloConfig` name was retired by that rework, not by this branch.)
 - The UQ covariance report terminology was left intact where it specifically
   describes the provenance-stamped covariance artifact.
 

@@ -3,7 +3,7 @@ Architecture + Laplacian-cleanup validation tests for the ST-LRPS surrogate.
 
 This is a self-contained, CPU-only suite covering the post-upgrade state:
   * removed ``--legacy-defaults`` preset is rejected; no dynamic-weight alias
-  * single-source-of-truth recommended defaults
+  * single-source-of-truth strong benchmark defaults
   * Laplacian off by default; diagnostic mode never enters the objective;
     train mode backpropagates
   * RadialDecayEncoding + RealSHBasisEncoding (shape, finiteness, signature)
@@ -115,16 +115,19 @@ def test_current_defaults_are_single_source_of_truth(tmp_path, monkeypatch):
     )
     cfg = parse_args()
     assert cfg.activation == "sine"
+    assert cfg.epochs == 400
     assert cfg.depth == 6
     assert cfg.use_residual_blocks is True
     assert cfg.n_bands == 3
     assert cfg.use_altitude_balanced_loss is True
     assert cfg.use_radial_cross_loss is True
+    assert cfg.use_laplacian_regularization is True
     assert cfg.best_metric == "hybrid"
     assert cfg.preload_policy == "auto"
     assert cfg.auto_preload_mb == pytest.approx(2048.0)
     assert cfg.use_radial_decay_encoding is False
-    assert cfg.model_preset == "baseline_raw"
+    assert cfg.model_preset == "recommended_physical_radial_decay"
+    assert cfg.use_physical_radial_decay_encoding is True
     assert cfg.use_real_sh_basis is False
     assert cfg.multiscale_mode == "concat_shared"
     removed_attr = "dynamic" + "_weights"
@@ -132,12 +135,14 @@ def test_current_defaults_are_single_source_of_truth(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 4.3 — Laplacian not requested by default
+# 4.3 — Strong benchmark default requests sparse Laplacian
 # ---------------------------------------------------------------------------
 
-def test_laplacian_not_requested_by_default():
+def test_laplacian_requested_by_strong_benchmark_default():
     cfg = TrainConfig(data="x.h5", out="o")
-    assert _laplacian_requested(cfg) is False
+    assert _laplacian_requested(cfg) is True
+    # laplacian_mode="off" is a hard-disable that wins even over stale nonzero
+    # weights / compatibility flags.
     assert _laplacian_requested(TrainConfig(
         data="x",
         out="o",

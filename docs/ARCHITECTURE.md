@@ -30,7 +30,6 @@ Dependency-light shared layer.
   `SpacecraftProps`, `InitialState`, …).
 - `math_utils.py`, `time_utils.py` — pure helpers.
 - `batch_defs.py` — canonical batch/ensemble configuration/result dataclasses.
-- `montecarlo_defs.py` — historical compatibility facade for batch dataclasses.
 
 ### Layer 2 — `lunaris.physics`
 Numba-JIT-compiled force-model kernels. Each file is one force model:
@@ -71,10 +70,8 @@ Numerical engine and configuration.
   import `lunaris.core.propagation.propagator` (or `lunaris.core.propagation`)
   directly. See `docs/refactor_notes.md` for the removal rationale.
 - `events.py` — impact / periapsis-apoapsis / eclipse / occultation events.
-- `monte_carlo_engine.py`, `mc_propagator.py`, `mc_backend_policy.py`,
-  `mc_runner.py` — historical compatibility/import surfaces for batch ensemble
-  orchestration and CPU/GPU backends. New ensemble orchestration code lives in
-  `lunaris.batch`.
+- `batch_propagator.py` — low-level CPU/Numba CUDA batch propagators used by
+  the canonical `lunaris.batch` orchestration layer.
 
 ### Layer 4 — `lunaris.analysis`, `lunaris.visualization`, `lunaris.ui`
 Post-processing and presentation.
@@ -84,6 +81,8 @@ Post-processing and presentation.
   `plotting`, UQ reports, linear covariance checks, and result audits. The
   historical `analysis/monte_carlo/` analysis namespace has been removed; use
   `analysis/ensemble/` directly.
+- `analysis/frozen/` — frozen-orbit candidate metrics, scoring, and
+  candidate-vs-validated classification for the staged search workflow.
 - `analysis/perturbation_budget/` — mission-analysis acceleration budgets,
   spherical-harmonic degree sensitivity, force-model uncertainty comparisons,
   and per-configuration gravity-degree recommendations. It calls existing
@@ -102,11 +101,9 @@ Alongside the four layers:
   SPICE kernels, topography/albedo grids) consumed by layers 2–3.
 - `lunaris.batch` — canonical batch/ensemble orchestration package:
   `engine`, `sampling`, `storage`, `memory_policy`, `requirements`,
-  `provenance`, `backend_policy`, `progress`, and `types`. Legacy Monte Carlo
-  names remain only where public APIs, CLI flags, and archive contracts already
-  expose them.
-- `lunaris.cli` — console entry points (`lunaris`, `lunaris-batch`,
-  `lunaris-mc`, …) and shared CLI argument helpers; wires user input into the
+  `provenance`, `backend_policy`, `progress`, and `types`.
+- `lunaris.cli` — console entry points (`lunaris`, `lunaris-batch`, …) and
+  shared CLI argument helpers; wires user input into the
   `core` configuration. The main `lunaris` command is split into `options`,
   `summary`, and `run`; `cli/main.py` remains the public compatibility facade.
   Optional subsystem commands use import-safe wrappers in `cli/entrypoints.py`.
@@ -129,7 +126,7 @@ Alongside the four layers:
 | `physics` does not depend on core, presentation, or surrogate code | import-linter: `physics never imports core/analysis/visualization/ui` and `physics does not depend on the ST-LRPS subsystem` |
 | `core` does not import desktop UI or the ST-LRPS data/training/evaluation/UI pipelines | import-linter: `core does not import the desktop UI or the ST-LRPS ML pipeline` |
 | ST-LRPS inference stays independent of training/evaluation/UI | import-linter: `ST-LRPS runtime (inference path) stays light` and `production ST-LRPS runtime facade stays light` (the `lunaris.surrogate.runtime` facade obeys the same rule) |
-| `core` does not import the CLI wiring or the batch orchestration package (the two historical compatibility shims are the only sanctioned, lazily folded call-time exceptions) | import-linter: `core does not import the CLI or batch orchestration layers` |
+| `core` does not import CLI or batch orchestration layers | import-linter: `core does not import the CLI or batch orchestration layers` |
 | Analysis and visualization do not import desktop UI | import-linter: `analysis and visualization do not import the desktop UI` |
 | ST-LRPS Studio consumes only the published UI foundation | import-linter: `ST-LRPS studio does not import mission-UI internals` |
 | The shared UI foundation imports neither desktop application | import-linter: `UI foundation stays independent of both desktop applications` |
@@ -179,6 +176,27 @@ lunaris-perturbation-budget
   -> existing physics kernels / gravity loader
   -> acceleration, SH-increment, uncertainty, and recommendation tables
   -> CSV + Markdown outputs
+```
+
+Surrogate-assisted frozen-orbit search (roadmap R04/S5) is another sibling
+analysis flow with a staged, resumable file contract per run directory:
+
+```text
+lunaris-frozen-search
+  -> lunaris.analysis.frozen.search (FrozenSearchPipeline; Sobol provenance)
+  -> lunaris.analysis.frozen.search_backends
+       (screening: ST-LRPS TorchBatchPropagator when an ST-LRPS model
+        directory is provided, otherwise TorchSHBatchPropagator on the shared
+        R07 loop; validation: classical SH CPU reference propagate, optionally
+        ephemeris-wired Sun/Earth third-body)
+  -> lunaris.analysis.frozen.{metrics,classify,domain_guard}
+       (R27 domain guard is mandatory; R21: strict/quasi frozen statuses
+        require a classical SH validation backend — enforced in code)
+  -> stage1_screening.npz
+       (default summary_only contract: per-sample screening metrics + top-K
+        histories; explicit full mode retains the legacy (T,N,6) tensor)
+  -> lunaris.analysis.frozen.family_report (versioned JSON schema)
+  -> lunaris.analysis.frozen.plots (figure set from stage files)
 ```
 
 ## Perturbation flags
@@ -277,33 +295,30 @@ companion-file, or SHA-256 verification. See [DATA_PRESETS.md](DATA_PRESETS.md).
 
 The canonical concept is batch/ensemble propagation: Lunaris propagates an
 ensemble of initial states and spacecraft properties through the selected force
-model and backend. New code should use `BatchPropagation*` names and
-`lunaris.analysis.ensemble`. The legacy `MonteCarlo*`, `MCRunResult`,
-`load_mc_result`, `mc_*`, and `lunaris-mc` names remain only where stable
-CLI/archive/API contracts already expose them. Random Monte Carlo is the
-`sampling_method="random"` design; `lhs`, `sobol`, and `sobol_scrambled` provide
-space-filling designs for validation and benchmark coverage.
+model and backend. Execution uses `BatchPropagation*` names; statistics and
+reporting live in `lunaris.analysis.ensemble`. `sampling_method="random"` is
+the classical Monte Carlo sampling design; `lhs`, `sobol`, and
+`sobol_scrambled` provide space-filling designs for validation and benchmark
+coverage.
 
 | Module | Purpose |
 |--------|---------|
-| `common/batch_defs.py` | `BatchPropagationConfig`, `BatchPropagationResult`, `StateUncertainty`, `SpacecraftUncertainty`, sampling-method validation, plus legacy `MonteCarloConfig` / `MCRunResult` aliases |
-| `common/montecarlo_defs.py` | Historical compatibility facade re-exporting `common/batch_defs.py` |
-| `batch/engine.py` | `BatchPropagationEngine.run()` orchestration, backend dispatch, HDF5/NPZ output (`MonteCarloEngine` remains an alias) |
+| `common/batch_defs.py` | `BatchPropagationConfig`, `BatchPropagationResult`, `StateUncertainty`, `SpacecraftUncertainty`, sampling-method validation |
+| `batch/engine.py` | `BatchPropagationEngine.run()` orchestration, backend dispatch, HDF5/NPZ output |
 | `batch/sampling.py` | random/LHS/Sobol standard-normal designs, initial-state and spacecraft-property samples |
 | `batch/storage.py` | HDF5/NPZ writers, archive loading, storage policy |
 | `batch/requirements.py` | ephemeris/body-vector/topography and impact-frame preparation helpers |
-| `batch/backend_policy.py` | Thin adapter over `core/mc_backend_policy.py` |
-| `core/mc_propagator.py` | `GPUBatchPropagator` (CUDA RK4), `CPUBatchPropagator` (process pool) |
-| `core/monte_carlo_engine.py` | Historical compatibility shim for old imports and `lunaris-mc` / `lunaris-batch` entry points |
-| `analysis/ensemble/statistics.py` | `compute_mc_statistics()` → covariance, ellipsoids, impact probability, OE dispersion |
+| `batch/backend_policy.py` | Backend capability matrix and policy resolver (`resolve_batch_backend_policy`) |
+| `core/batch_propagator.py` | `GPUBatchPropagator` (CUDA RK4), `CPUBatchPropagator` (process pool) |
+| `analysis/ensemble/statistics.py` | `compute_ensemble_report()` → covariance, ellipsoids, impact probability, OE dispersion |
 | `analysis/ensemble/plotting.py` | altitude envelopes, 3-D covariance tubes, impact map, OE dispersion |
 
 ```python
 from lunaris.core.config import load_default_config
 from lunaris.common.batch_defs import BatchPropagationConfig, StateUncertainty
 from lunaris.batch import BatchPropagationEngine
-from lunaris.analysis.ensemble.statistics import compute_mc_statistics
-from lunaris.analysis.ensemble.plotting import plot_mc_report
+from lunaris.analysis.ensemble.statistics import compute_ensemble_report
+from lunaris.analysis.ensemble.plotting import plot_ensemble_report
 
 sim_cfg = load_default_config()
 batch_cfg = BatchPropagationConfig(
@@ -311,25 +326,22 @@ batch_cfg = BatchPropagationConfig(
     sampling_method="sobol_scrambled",  # random = Monte Carlo design; lhs/sobol = validation design
     state=StateUncertainty(sigma_r_m=500.0, sigma_v_m_s=0.5),
     use_gpu=True,
-    mc_backend="auto",   # auto, cpu_sh, numba_cuda_sh (alias gpu_sh), torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_direct
-    gpu_sh_degree=10,    # requested SH degree; numba_cuda_sh supports <=24, torch_cuda_sh is high-degree
+    batch_backend="auto",   # auto, cpu_sh, numba_cuda_sh, torch_cuda_sh, gpu_st_lrps_potential, gpu_st_lrps_third_body
+    sh_degree=10,    # requested SH degree; numba_cuda_sh supports <=24, torch_cuda_sh is high-degree
     output_format="hdf5",
     output_path="outputs/ensemble/run.h5",
 )
 result = BatchPropagationEngine(sim_cfg, batch_cfg).run()      # BatchPropagationResult
-stats = compute_mc_statistics(result)
-figs = plot_mc_report(result, stats, output_path="outputs/ensemble/report.pdf")
+stats = compute_ensemble_report(result)
+figs = plot_ensemble_report(result, stats, output_path="outputs/ensemble/report.pdf")
 ```
 
-Reload a saved run with `from lunaris.batch import load_mc_result`. The
-historical `lunaris.core.monte_carlo_engine` and
-`lunaris.common.montecarlo_defs` import paths remain available. The historical
-`lunaris.analysis.monte_carlo` analysis import path has been removed; analysis
-code should import from `lunaris.analysis.ensemble`.
+Reload a saved run with `from lunaris.batch import load_batch_result`.
+Analysis code imports from `lunaris.analysis.ensemble`.
 
 ### GPU classic-SH backends (Numba vs. Torch)
 - Two distinct classic-SH GPU runtimes exist and are kept separate everywhere:
-  - **`numba_cuda_sh`** (alias `gpu_sh`) — the Numba CUDA RK4 kernel. Its workspace
+  - **`numba_cuda_sh`** — the Numba CUDA RK4 kernel. Its workspace
     uses compile-time fixed `(26 x 26)` per-thread arrays, so its degree ceiling is
     **24**. That ceiling is a kernel-workspace limit, **not** a physical one. Best
     for low-degree, high-throughput screening.
@@ -343,13 +355,15 @@ code should import from `lunaris.analysis.ensemble`.
   degree is never clipped — `requested_sh_degree` and `actual_sh_degree` are
   recorded separately, and a successful SH100 run reports `actual_sh_degree=100`.
 - Backend selection is a single source of truth: `select_classic_sh_backend()`
-  (in `mc_backend_policy`) decides between `numba_cuda_sh` / `torch_cuda_sh` /
-  `cpu_sh`; `resolve_mc_backend_policy()` consumes that decision directly.
-- An explicit `numba_cuda_sh` request above degree 24 obeys `gpu_sh_fallback_policy`:
+  (in `backend_policy`) decides between `numba_cuda_sh` / `torch_cuda_sh` /
+  `cpu_sh`; `resolve_batch_backend_policy()` consumes that decision directly.
+- An explicit `numba_cuda_sh` request above degree 24 obeys `sh_fallback_policy`:
   `compatible_gpu` (try `torch_cuda_sh`, else CPU), `cpu`, or `error`.
 - The GPU paths do not support albedo, thermal IR, or solid tides; `torch_cuda_sh`
   additionally does not yet model third-body, Earth J2, SRP, or relativity (those
-  force an explicit, recorded fallback). Use the CPU path for those models.
+  force an explicit, recorded fallback). `gpu_st_lrps_third_body` is the narrow
+  ST-LRPS hybrid exception for analytic Sun/Earth third-body only. Use the CPU
+  path for all other models.
 - `numba_cuda_sh` requires `numba` plus a CUDA GPU; `torch_cuda_sh` and the ST-LRPS
   GPU paths require PyTorch CUDA. The engine falls back to CPU with a warning and
   metadata when the requested GPU path is unavailable — and a CPU run is never
@@ -412,19 +426,23 @@ keeping the runtime path aligned with the scaler and loss.
 **Runtime.** The engine-facing API is
 `lunaris.surrogate.runtime.SurrogateGravityModel`. The runtime package owns artifact discovery,
 metadata/scaler loading, checkpoint/network construction, device selection, and
-the gravity-provider facade; neural force inference still delegates to the
-internal ST-LRPS API in `runtime/force_model.py`.
+the gravity-provider facade; neural force inference delegates to the canonical
+internal ST-LRPS API in `runtime/canonical_runtime.py` (R11 — the single home
+of scaler / domain-guard / model-kind logic; `runtime/force_model.py` remains
+as a dynamic compat shim over it).
 `potential_autograd` (`SurrogateForceModel`) evaluates the learned scalar
 potential and differentiates it with autograd to obtain residual acceleration,
-which is added to the SH(`degree_min`) baseline. `force_direct`
-(`DirectForceRuntime`) loads a 3-output residual-acceleration artifact and uses
-`torch.no_grad()` inference with the acceleration scaler; it never predicts
-`DeltaU`. `load_surrogate_force_model` dispatches by `runtime_model_kind` and
-strictly validates artifact contracts, output dimension, and frame. Direct-force
-is a faster inference target but is not conservative by construction and needs
-separate curl / orbit-level validation; the propagator's symplectic guard
-accordingly flags a `force_direct` gravity provider as a non-conservative force
-(warning, or hard failure under `strict_symplectic=True`).
+which is added to the SH(`degree_min`) baseline. This is the only supported
+runtime kind on main; the earlier non-conservative `force_direct` (3-output
+direct residual-acceleration) runtime is archived in the
+`experimental/force-direct-archive` branch and is rejected fail-closed here.
+`load_surrogate_force_model` validates `runtime_model_kind` (rejecting the
+archived kind), artifact contracts, output dimension, and frame. The
+propagator's symplectic guard still reads a gravity provider's
+`is_conservative` taxonomy flag and flags any non-conservative surrogate as a
+non-conservative force (warning, or hard failure under
+`strict_symplectic=True`), so the guard stays correct if a non-conservative
+kind is ever reintroduced.
 
 Artifacts that declare a versioned contract (`artifact_contract` /
 `target_contract` / `runtime_model_kind`) must load through the canonical

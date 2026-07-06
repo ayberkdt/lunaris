@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -96,6 +97,101 @@ def test_train_tab_has_no_legacy_dataset_contract_flag(qapp):
     assert args is not None
     assert "--allow-legacy-dataset-contract" not in args
     assert not hasattr(tab, "allow_legacy_dataset_contract")
+    tab.deleteLater()
+
+
+def test_train_tab_applies_dataset_suite_folder(qapp, tmp_path):
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    train = suite / "train_hybrid_10M.h5"
+    val = suite / "val_uniform_2M.h5"
+    test = suite / "test_uniform_2M.h5"
+    ood = suite / "ood_combined_1000k.h5"
+    for path in (train, val, test, ood):
+        path.write_bytes(b"")
+    manifest = suite / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "output_files": {
+                    "train": train.name,
+                    "val": val.name,
+                    "test": test.name,
+                    "ood_combined": ood.name,
+                },
+                "train_alt_min_km": 100.0,
+                "train_alt_max_km": 1000.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    tab = STLRPSTrainTab()
+    _set_combo_data(tab.workflow_mode, "train_only")
+    tab._apply_dataset_suite(suite)
+
+    args = tab._build_args(show_errors=False)
+
+    assert args is not None
+    assert tab.dataset_mode.currentData() == "independent"
+    assert Path(tab.dataset_suite_dir.text()) == suite
+    assert Path(tab.train_data.text()) == train
+    assert Path(tab.val_data.text()) == val
+    assert Path(tab.test_data.text()) == test
+    assert Path(tab.ood_data.text()) == ood
+    assert tab.altitude_min_km.value() == pytest.approx(100.0)
+    assert tab.altitude_max_km.value() == pytest.approx(1000.0)
+    for flag, path in (
+        ("--train-data", train),
+        ("--val-data", val),
+        ("--test-data", test),
+        ("--ood-data", ood),
+        ("--suite-manifest", manifest),
+    ):
+        assert flag in args
+        assert args[args.index(flag) + 1] == str(path.resolve())
+    tab.deleteLater()
+
+
+def test_train_tab_exposes_strong_benchmark_scenarios(qapp):
+    tab = STLRPSTrainTab()
+
+    profile_keys = {
+        tab._preset_combo.itemData(i)
+        for i in range(tab._preset_combo.count())
+        if tab._preset_combo.itemData(i)
+    }
+
+    assert tab._preset_combo.itemData(0) == "Strong Benchmark"
+    assert {
+        "Strong Benchmark",
+        "Legacy Reference",
+        "Ablation: Raw Input",
+        "Ablation: Single Band",
+        "Ablation: No Aux Losses",
+        "Scenario Strong Benchmark",
+        "Scenario Legacy Reference",
+        "Scenario Ablation Raw Input",
+        "Scenario Ablation Single Band",
+        "Scenario Ablation No Aux Losses",
+    }.issubset(profile_keys)
+    assert tab.depth.value() == 6
+    assert tab.auto_preload_mb.value() == pytest.approx(2048.0)
+    assert tab.use_residual_blocks.isChecked() is True
+    assert tab.n_bands.value() == 3
+
+    _set_combo_data(tab._preset_combo, "Legacy Reference")
+    tab._load_preset()
+    assert tab.depth.value() == 5
+    assert tab.auto_preload_mb.value() == pytest.approx(256.0)
+    assert tab.use_residual_blocks.isChecked() is False
+    assert tab.n_bands.value() == 1
+
+    _set_combo_data(tab._preset_combo, "Scenario Ablation Single Band")
+    tab._load_preset()
+    assert tab.depth.value() == 6
+    assert tab.use_residual_blocks.isChecked() is True
+    assert tab.n_bands.value() == 1
     tab.deleteLater()
 
 

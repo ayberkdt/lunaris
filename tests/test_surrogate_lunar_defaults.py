@@ -38,8 +38,13 @@ from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     resolve_lunar_gravity_path,
 )
 from lunaris.surrogate.st_lrps.data.spatial_cloud_parameters import (
+    DEFAULT_CLOUD_SUITE_CONFIG,
     DEFAULT_SPATIAL_CLOUD_CONFIG,
     PRESETS,
+    STRONG_BENCHMARK_ALT_MAX_KM,
+    STRONG_BENCHMARK_ALT_MIN_KM,
+    STRONG_BENCHMARK_DEGREE_MAX,
+    STRONG_BENCHMARK_DEGREE_MIN,
 )
 
 
@@ -60,8 +65,19 @@ def test_dataset_parameters_reexports_common_lunar_helpers() -> None:
 
 def test_spatial_cloud_presets_are_lunar_and_default_preset_is_lunar() -> None:
     assert DEFAULT_SPATIAL_CLOUD_CONFIG.coeff_source == "gfc"
-    assert DEFAULT_SPATIAL_CLOUD_CONFIG.alt_min_km == 200.0
-    assert DEFAULT_SPATIAL_CLOUD_CONFIG.alt_max_km == 600.0
+    assert DEFAULT_SPATIAL_CLOUD_CONFIG.degree_min == STRONG_BENCHMARK_DEGREE_MIN
+    assert DEFAULT_SPATIAL_CLOUD_CONFIG.degree_max == STRONG_BENCHMARK_DEGREE_MAX
+    assert DEFAULT_SPATIAL_CLOUD_CONFIG.alt_min_km == STRONG_BENCHMARK_ALT_MIN_KM
+    assert DEFAULT_SPATIAL_CLOUD_CONFIG.alt_max_km == STRONG_BENCHMARK_ALT_MAX_KM
+    assert DEFAULT_CLOUD_SUITE_CONFIG.degree_min == STRONG_BENCHMARK_DEGREE_MIN
+    assert DEFAULT_CLOUD_SUITE_CONFIG.degree_max == STRONG_BENCHMARK_DEGREE_MAX
+    assert DEFAULT_CLOUD_SUITE_CONFIG.train_alt_min_km == STRONG_BENCHMARK_ALT_MIN_KM
+    assert DEFAULT_CLOUD_SUITE_CONFIG.train_alt_max_km == STRONG_BENCHMARK_ALT_MAX_KM
+    assert DEFAULT_CLOUD_SUITE_CONFIG.train_total_n == 10_000_000
+    assert DEFAULT_CLOUD_SUITE_CONFIG.val_n == 2_000_000
+    assert DEFAULT_CLOUD_SUITE_CONFIG.test_n == 2_000_000
+    assert DEFAULT_CLOUD_SUITE_CONFIG.ood_low_n == 500_000
+    assert DEFAULT_CLOUD_SUITE_CONFIG.ood_high_n == 500_000
     assert DEFAULT_SPATIAL_CLOUD_CONFIG.resolved_out_path().startswith("potential_cloud_moon_")
     assert PRESETS
     assert all(name.startswith(("moon_", "debug_")) for name in PRESETS)

@@ -55,7 +55,7 @@ below still apply when you need finer control.
 
 The recommended setup registers the package and its console commands
 (`lunaris-train`, `lunaris-eval`, `lunaris-benchmark`, `lunaris-batch`,
-`lunaris-mc`, …) in an
+`lunaris-batch`, …) in an
 isolated, GUI-free environment.
 
 ### Option A: pip / virtual environment (recommended)
@@ -142,7 +142,7 @@ Recommended scratch layout:
   evaluations/
   gravity_benchmark/
   runtime/
-  monte_carlo/
+  ensemble/
 ```
 
 `LUNARIS_DATA_DIR` is read by the framework when locating external data;
@@ -213,7 +213,7 @@ before submitting.
 | ST-LRPS training | `hpc/slurm_train_stlrps.sbatch` | `lunaris-train` |
 | ST-LRPS scenario arrays (sweeps) | `hpc/slurm_train_scenario_array.sbatch` | `tools/hpc/run_training_scenario.py` |
 | Orbit-level gravity benchmark / validation | `hpc/slurm_benchmark_gpu.sbatch` | `lunaris-benchmark` |
-| Batch propagation / injection dispersion ensembles | `hpc/slurm_mc_array.sbatch` | `lunaris-batch` (`lunaris-mc` compatibility alias) |
+| Batch propagation / injection dispersion ensembles | `hpc/slurm_batch_array.sbatch` | `lunaris-batch` |
 
 ### 1. ST-LRPS training (primary workload)
 
@@ -265,7 +265,6 @@ The committed sweep files live under `hpc/scenarios/`:
 | `st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl` | `0-6` | Cumulative scalar-potential ablation A0→A6 (mirrors `lunaris-ablation`) |
 | `st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl` | `0-4` | A6-full architecture-size sweep (4×256 … 5×768) |
 | `st_lrps_potential_autograd_encoding_and_loss_sweep.jsonl` | `0-6` | 5×512 direction-weight + input-encoding matrix |
-| `st_lrps_force_direct_student_sweep.jsonl` | `0-3` | Direct residual-acceleration student sweep |
 | `st_lrps_runtime_benchmark_smoke.jsonl` | `0-1` | CPU/CUDA timing smoke checks |
 
 **How submission works.** The first positional argument to the `.sbatch` file is
@@ -320,19 +319,9 @@ sbatch --array=0-6 hpc/slurm_train_scenario_array.sbatch \
   --split-policy spatial_block
 ```
 
-Force-direct student sweep (4 tasks). **`force_direct` is a deployment/student
-runtime**: it predicts residual acceleration directly, does **not** predict the
-scalar potential, and needs field, curl, and orbit-level validation before any
-scientific claim. It uses the single-file `--data` flag (no train/val split
-flags), and it must never be mixed into the scalar-potential ablation matrix:
-
-```bash
-sbatch --array=0-3 hpc/slurm_train_scenario_array.sbatch \
-  hpc/scenarios/st_lrps_force_direct_student_sweep.jsonl \
-  --data "$TRAIN_DATA" \
-  --epochs 100 \
-  --batch-size 8192
-```
+The former `force_direct` student sweep has been removed: the direct
+residual-acceleration runtime is archived in the
+`experimental/force-direct-archive` branch and is no longer trainable on main.
 
 Runtime-benchmark smoke (2 tasks; pure SH timing, no artifact required):
 
@@ -394,11 +383,11 @@ sbatch hpc/slurm_benchmark_gpu.sbatch \
 ### 3. Batch propagation / injection dispersion ensembles
 
 ```bash
-sbatch hpc/slurm_mc_array.sbatch \
+sbatch hpc/slurm_batch_array.sbatch \
   --sampling-method sobol_scrambled \
-  --mc-backend auto \
-  --gpu-sh-degree 24 \
-  --out-dir "$LUNARIS_OUTPUT_DIR/monte_carlo/mc_run"
+  --batch-backend auto \
+  --sh-degree 24 \
+  --out-dir "$LUNARIS_OUTPUT_DIR/ensemble/batch_run"
 ```
 
 Sampling and backend selection are explicit and recorded in ensemble outputs:
@@ -407,24 +396,26 @@ Sampling and backend selection are explicit and recorded in ensemble outputs:
 - `--sampling-method lhs`, `sobol`, or `sobol_scrambled` uses a space-filling
   design, which is usually preferable for validation and coverage studies.
 
-- `--mc-backend auto` prefers the safe GPU path when available and records any
+- `--batch-backend auto` prefers the safe GPU path when available and records any
   fallback.
-- `--mc-backend cpu_sh` uses the full CPU spherical-harmonic path and is the
+- `--batch-backend cpu_sh` uses the full CPU spherical-harmonic path and is the
   recommended high-fidelity truth/reference backend.
-- `--mc-backend gpu_sh` selects the true Numba CUDA classic-SH path. The current
-  supported GPU SH tier is degree 24; higher `--gpu-sh-degree` requests fall back
-  to CPU SH without silently clipping the degree.
-- `--mc-backend gpu_st_lrps_potential` uses the scalar-potential ST-LRPS artifact
-  and autograd residual acceleration on PyTorch CUDA.
-- `--mc-backend gpu_st_lrps_direct` uses direct residual acceleration with a
-  no-grad PyTorch CUDA forward pass. Keep it experimental until orbit-level
-  validation shows acceptable drift for the target scenario set.
+- `--batch-backend numba_cuda_sh` selects the true Numba CUDA classic-SH path. The current
+  supported GPU SH tier is degree 24; higher `--sh-degree` requests follow
+  `--sh-fallback-policy` (`torch_cuda_sh` when compatible, CPU, or error)
+  without silently clipping the degree.
+- `--batch-backend gpu_st_lrps_potential` uses the scalar-potential ST-LRPS artifact
+  and autograd residual acceleration on PyTorch CUDA. (The former
+  `gpu_st_lrps_direct` backend is archived in `experimental/force-direct-archive`.)
+- `--batch-backend gpu_st_lrps_third_body` uses the same scalar-potential
+  artifact and keeps analytic Sun/Earth third-body gravity on the PyTorch CUDA
+  batch path. Other perturbations still fall back explicitly.
 
 For 512-orbit GPU batch propagation, use `auto` or an explicit ST-LRPS GPU
 backend for throughput runs, and keep `cpu_sh` high-degree runs as
 validation/truth jobs.
 Do not describe high-degree SH as a true GPU baseline unless the output metadata
-shows `actual_mc_backend=gpu_sh` and an `actual_sh_degree` at the requested tier.
+shows `actual_batch_backend=torch_cuda_sh` and an `actual_sh_degree` at the requested tier.
 
 ### Dataset generation and evaluation
 

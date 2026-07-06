@@ -61,7 +61,8 @@ NAV_PAGES = [
     ("Output",      "Results & Export",  "fa6s.folder-open"),
     ("Telemetry",   "Live Telemetry",    "fa6s.chart-line"),
     ("Data",        "Data & Files",      "fa6s.database"),
-    ("MonteCarlo",  "Batch Propagation", "fa6s.dice"),
+    ("BatchPropagation",  "Batch Propagation", "fa6s.dice"),
+    ("FrozenSearch", "Frozen Search",    "fa6s.snowflake"),
 ]
 
 PAGE_DESCRIPTIONS = {
@@ -71,7 +72,8 @@ PAGE_DESCRIPTIONS = {
     "Output": "Choose result destinations and inspect generated artifacts.",
     "Telemetry": "Monitor the active run and compare live engineering signals.",
     "Data": "Locate, validate, and manage mission data sources.",
-    "MonteCarlo": "Configure ensemble sampling, execute batch propagation, and inspect distributions.",
+    "BatchPropagation": "Configure ensemble sampling, execute batch propagation, and inspect distributions.",
+    "FrozenSearch": "Run the staged frozen-orbit search and inspect its output contract.",
 }
 
 # Default UI values (Internal SI units convention)
@@ -99,9 +101,9 @@ ASSETS_DIR = UI_ASSETS_DIR
 # 4.                          ICON UTILITIES
 # =============================================================================
 from lunaris.ui.core.command_builder import (
+    build_batch_command,
     build_command,
     build_command_preview,
-    build_mc_command,
     build_preflight_snapshot,
 )
 from lunaris.ui.core.log_stream import LineAssembler
@@ -272,10 +274,10 @@ class MainWindow(QtWidgets.QMainWindow):
         # 3. Application State & Sub-Configs
         # ---------------------------------------------------------------------
         self.process: QtCore.QProcess | None = None
-        self.mc_process: QtCore.QProcess | None = None
+        self.batch_process: QtCore.QProcess | None = None
         self.preflight_worker: PreFlightWorker | None = None
-        self.mc_script_path   = _lunaris_pkg / "core" / "mc_runner.py"
-        self._mc_stdout_buf: str = ""
+        self.batch_runner_script_path   = _lunaris_pkg / "cli" / "batch_runner.py"
+        self._batch_stdout_buf: str = ""
 
         # UI State Containers (Mutable)
         self.sim_state = SimulationState()
@@ -584,7 +586,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.page_output = self._build_page_output()
         self.page_telemetry = self._build_page_telemetry()
         self.page_data = self._build_page_data()
-        self.page_mc = self._build_page_mc()
+        self.page_batch = self._build_page_batch()
+        self.page_frozen_search = self._build_page_frozen_search()
 
         self.page_shells = {
             "Orbit": PageShell(
@@ -623,10 +626,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 PAGE_DESCRIPTIONS["Data"],
                 content=self.page_data,
             ),
-            "MonteCarlo": PageShell(
+            "BatchPropagation": PageShell(
                 "Batch Propagation",
-                PAGE_DESCRIPTIONS["MonteCarlo"],
-                content=self.page_mc,
+                PAGE_DESCRIPTIONS["BatchPropagation"],
+                content=self.page_batch,
+                scrollable=False,
+            ),
+            "FrozenSearch": PageShell(
+                "Frozen Search",
+                PAGE_DESCRIPTIONS["FrozenSearch"],
+                content=self.page_frozen_search,
                 scrollable=False,
             ),
         }
@@ -940,37 +949,43 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     # =========================================================================
-    # 24b. PAGE BUILDERS: MONTE CARLO (PAGE 7)
+    # 24b. PAGE BUILDERS: BATCH PROPAGATION (PAGE 7)
     # =========================================================================
 
-    def _build_page_mc(self) -> QtWidgets.QWidget:
+    def _build_page_batch(self) -> QtWidgets.QWidget:
         """Page 7: Batch propagation analysis - configuration + live metrics."""
-        from lunaris.ui.pages.monte_carlo_page import MonteCarloPage
-        self.page_mc = MonteCarloPage(parent=self)
-        self.page_mc.run_requested.connect(self._on_mc_run_requested)
-        return self.page_mc
+        from lunaris.ui.pages.batch_propagation_page import BatchPropagationPage
+        self.page_batch = BatchPropagationPage(parent=self)
+        self.page_batch.run_requested.connect(self._on_batch_run_requested)
+        return self.page_batch
 
-    def _on_mc_run_requested(self) -> None:
+    def _build_page_frozen_search(self) -> QtWidgets.QWidget:
+        """Page 8: Frozen-orbit staged search launcher."""
+        from lunaris.ui.pages.frozen_search_page import FrozenSearchPage
+        self.page_frozen_search = FrozenSearchPage(parent=self)
+        return self.page_frozen_search
+
+    def _on_batch_run_requested(self) -> None:
         """Slot: user clicked 'Run Batch' on the batch page."""
-        if self.mc_process is not None:
+        if self.batch_process is not None:
             try:
-                state = self.mc_process.state()
+                state = self.batch_process.state()
                 if state != QtCore.QProcess.NotRunning:
-                    self._log_message("[MC] A run is already in progress.", severity="warning")
+                    self._log_message("[BATCH] A run is already in progress.", severity="warning")
                     return
             except RuntimeError:
-                self.mc_process = None
+                self.batch_process = None
 
-        mc_data = self.page_mc.get_data()
+        batch_data = self.page_batch.get_data()
 
         try:
-            cmd = build_mc_command(
+            cmd = build_batch_command(
                 python_executable=sys.executable,
-                mc_runner_path=self.mc_script_path,
+                batch_runner_path=self.batch_runner_script_path,
                 orbit=self.page_orbit.get_data(),
                 forces=self.page_forces.get_data(),
                 propagation=self.page_propagation.to_dict(),
-                mc_data=mc_data,
+                batch_data=batch_data,
                 data_files=self.page_data.get_state(),
                 gravity_cfg=self.gravity_cfg,
                 solver_cfg=self.solver_cfg,
@@ -978,109 +993,109 @@ class MainWindow(QtWidgets.QMainWindow):
                 log_warning=lambda m: self._log_message(m, severity="warning"),
             )
         except Exception as exc:
-            self._log_message(f"[MC][Error] Failed to build command: {exc}", severity="error")
-            self.page_mc.on_run_finished(1, "", None, None)
+            self._log_message(f"[BATCH][Error] Failed to build command: {exc}", severity="error")
+            self.page_batch.on_run_finished(1, "", None, None)
             return
 
         self._log_separator()
-        self._log_message("[MC] Starting batch propagation run…", severity="system")
+        self._log_message("[BATCH] Starting batch propagation run…", severity="system")
 
-        self.mc_process = QtCore.QProcess(self)
-        self.mc_process.readyReadStandardOutput.connect(self._on_mc_stdout)
-        self.mc_process.readyReadStandardError.connect(self._on_mc_stderr)
-        self.mc_process.finished.connect(self._on_mc_finished)
+        self.batch_process = QtCore.QProcess(self)
+        self.batch_process.readyReadStandardOutput.connect(self._on_batch_stdout)
+        self.batch_process.readyReadStandardError.connect(self._on_batch_stderr)
+        self.batch_process.finished.connect(self._on_batch_finished)
 
         env = QtCore.QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")
-        self.mc_process.setProcessEnvironment(env)
+        self.batch_process.setProcessEnvironment(env)
 
-        self._mc_stdout_buf = ""
-        self._mc_metrics: dict = {}
-        self._mc_output_path: str = mc_data.get("output_path", "")
+        self._batch_stdout_buf = ""
+        self._batch_metrics: dict = {}
+        self._batch_output_path: str = batch_data.get("output_path", "")
 
-        self.mc_process.start(cmd[0], cmd[1:])
-        if not self.mc_process.waitForStarted(2000):
-            self._log_message("[MC][Error] Failed to start MC process.", severity="error")
-            self.page_mc.on_run_finished(1, "", None, None)
-            self.mc_process = None
+        self.batch_process.start(cmd[0], cmd[1:])
+        if not self.batch_process.waitForStarted(2000):
+            self._log_message("[BATCH][Error] Failed to start batch process.", severity="error")
+            self.page_batch.on_run_finished(1, "", None, None)
+            self.batch_process = None
 
-    def _on_mc_stdout(self) -> None:
+    def _on_batch_stdout(self) -> None:
         """
-        Stream stdout from the MC subprocess to the page progress log.
+        Stream stdout from the batch subprocess to the page progress log.
 
         Batch runs now emit two kinds of structured control lines:
-        ``[MC_PROGRESS]`` for live progress payloads and ``[MC_METRICS]`` for
+        ``[BATCH_PROGRESS]`` for live progress payloads and ``[BATCH_METRICS]`` for
         the final summary blob.  These are consumed directly by the page rather
         than dumped into the human-readable log stream.
         """
-        if self.mc_process is None:
+        if self.batch_process is None:
             return
         try:
-            raw = bytes(self.mc_process.readAllStandardOutput()).decode("utf-8", errors="replace")
+            raw = bytes(self.batch_process.readAllStandardOutput()).decode("utf-8", errors="replace")
         except Exception:
             return
 
-        self._mc_stdout_buf += raw
-        while "\n" in self._mc_stdout_buf:
-            line, self._mc_stdout_buf = self._mc_stdout_buf.split("\n", 1)
+        self._batch_stdout_buf += raw
+        while "\n" in self._batch_stdout_buf:
+            line, self._batch_stdout_buf = self._batch_stdout_buf.split("\n", 1)
             line = line.rstrip()
             if not line:
                 continue
 
-            if line.startswith("[MC_PROGRESS]"):
+            if line.startswith("[BATCH_PROGRESS]"):
                 try:
-                    payload = json.loads(line[len("[MC_PROGRESS]"):].strip())
+                    payload = json.loads(line[len("[BATCH_PROGRESS]"):].strip())
                 except Exception:
-                    self._log_message("[MC] Ignored malformed progress payload.", severity="warning")
+                    self._log_message("[BATCH] Ignored malformed progress payload.", severity="warning")
                 else:
-                    if hasattr(self, "page_mc"):
-                        self.page_mc.update_progress_payload(payload)
+                    if hasattr(self, "page_batch"):
+                        self.page_batch.update_progress_payload(payload)
                 continue
 
-            if line.startswith("[MC_METRICS]"):
+            if line.startswith("[BATCH_METRICS]"):
                 try:
-                    payload = line[len("[MC_METRICS]"):].strip()
-                    self._mc_metrics = json.loads(payload)
+                    payload = line[len("[BATCH_METRICS]"):].strip()
+                    self._batch_metrics = json.loads(payload)
                 except Exception:
-                    self._log_message("[MC] Ignored malformed metrics payload.", severity="warning")
+                    self._log_message("[BATCH] Ignored malformed metrics payload.", severity="warning")
                 continue
 
-            self._log_message(line, severity="info", source="MC")
+            self._log_message(line, severity="info", source="batch")
 
             # Forward to the page's mini-log + progress bar
-            if hasattr(self, "page_mc"):
-                self.page_mc.update_progress(line)
+            if hasattr(self, "page_batch"):
+                self.page_batch.update_progress(line)
 
-    def _on_mc_stderr(self) -> None:
-        """Route MC stderr to the main log as warnings."""
-        if self.mc_process is None:
+    def _on_batch_stderr(self) -> None:
+        """Route batch stderr to the main log as warnings."""
+        if self.batch_process is None:
             return
         try:
-            raw = bytes(self.mc_process.readAllStandardError()).decode("utf-8", errors="replace")
+            raw = bytes(self.batch_process.readAllStandardError()).decode("utf-8", errors="replace")
         except Exception:
             return
         for line in raw.splitlines():
             if line.strip():
-                self._log_message(f"[MC] {line.strip()}", severity="warning")
+                self._log_message(f"[BATCH] {line.strip()}", severity="warning")
 
-    def _on_mc_finished(self, exit_code: int, _exit_status) -> None:
-        """Handle MC subprocess completion and update the page."""
-        metrics = getattr(self, "_mc_metrics", {}) or {}
-        output_path = metrics.get("output_path", getattr(self, "_mc_output_path", ""))
+    def _on_batch_finished(self, exit_code: int, _exit_status) -> None:
+        """Handle batch subprocess completion and update the page."""
+        metrics = getattr(self, "_batch_metrics", {}) or {}
+        output_path = metrics.get("output_path", getattr(self, "_batch_output_path", ""))
 
         if exit_code == 0:
             wt = metrics.get("wall_time_s")
-            wt_str = f"{wt:.1f}s" if isinstance(wt, (int, float)) else "?"
+            wt_str = f"{wt:.1f}s" if isinstance(wt, int | float) else "?"
             self._log_message(
-                f"[MC] Run complete — {metrics.get('n_impacts', '?')}/{metrics.get('n_samples', '?')} "
+                f"[BATCH] Run complete — {metrics.get('n_impacts', '?')}/{metrics.get('n_samples', '?')} "
                 f"impacts  wall={wt_str}",
                 severity="success",
             )
         else:
-            self._log_message(f"[MC] Run failed (exit code {exit_code}).", severity="error")
+            self._log_message(f"[BATCH] Run failed (exit code {exit_code}).", severity="error")
 
-        if hasattr(self, "page_mc"):
-            self.page_mc.on_run_finished(
+        if hasattr(self, "page_batch"):
+            self.page_batch.on_run_finished(
                 exit_code=exit_code,
                 output_path=str(output_path),
                 report_path=None,
@@ -1088,11 +1103,11 @@ class MainWindow(QtWidgets.QMainWindow):
             )
 
         try:
-            if self.mc_process is not None:
-                self.mc_process.deleteLater()
+            if self.batch_process is not None:
+                self.batch_process.deleteLater()
         except Exception:
             pass
-        self.mc_process = None
+        self.batch_process = None
 
     # =========================================================================
     # 25. LOG PANEL BUILDER
@@ -1658,7 +1673,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if v is None:
                 return None
-            if isinstance(v, (int, float)):
+            if isinstance(v, int | float):
                 return float(v)
             s = str(v).strip()
             if not s:
@@ -1778,7 +1793,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 if isinstance(payload, dict):
                     self.page_output.set_run_diagnostics(payload)
                     wall = payload.get("wall_time_s")
-                    if isinstance(wall, (int, float)):
+                    if isinstance(wall, int | float):
                         self._log_message(
                             f"[Run] Engine diagnostics received (wall {wall:.2f} s) — see Results & Export.",
                             severity="system",
@@ -1989,7 +2004,7 @@ class MainWindow(QtWidgets.QMainWindow):
             solver_cfg=self.solver_cfg,
             spacecraft_cfg=self.spacecraft_cfg,
             app_version=APP_VERSION,
-            mc_page=getattr(self, "page_mc", None),
+            batch_page=getattr(self, "page_batch", None),
         )
 
         # Collect visual workspace state (Task 11)
@@ -2035,11 +2050,11 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             pass
 
-        mc_active_tab = 0
+        batch_active_tab = 0
         try:
-            mc_tabs = getattr(getattr(self, "page_mc", None), "tabs", None)
-            if mc_tabs:
-                mc_active_tab = mc_tabs.currentIndex()
+            batch_tabs = getattr(getattr(self, "page_batch", None), "tabs", None)
+            if batch_tabs:
+                batch_active_tab = batch_tabs.currentIndex()
         except Exception:
             pass
 
@@ -2051,7 +2066,7 @@ class MainWindow(QtWidgets.QMainWindow):
             telemetry_time_unit=telemetry_time_unit,
             artifact_filter=artifact_filter,
             artifact_recursive=artifact_recursive,
-            mc_active_tab=mc_active_tab,
+            batch_active_tab=batch_active_tab,
         )
         return snapshot
 
@@ -2071,7 +2086,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 spacecraft_cfg=self.spacecraft_cfg,
                 project_root=PROJECT_ROOT,
                 log_warning=lambda msg: self._log_message(msg, severity="warning"),
-                mc_page=getattr(self, "page_mc", None),
+                batch_page=getattr(self, "page_batch", None),
             )
 
             state = self.page_data.get_state()
@@ -2429,19 +2444,26 @@ class MainWindow(QtWidgets.QMainWindow):
             self.preflight_worker.stop()
             self.preflight_worker.wait(1000)
 
-        # Stop any MC subprocess
-        if self.mc_process is not None:
+        # Stop any batch subprocess
+        if self.batch_process is not None:
             try:
-                if self.mc_process.state() != QtCore.QProcess.NotRunning:
-                    self.mc_process.kill()
-                    self.mc_process.waitForFinished(1000)
+                if self.batch_process.state() != QtCore.QProcess.NotRunning:
+                    self.batch_process.kill()
+                    self.batch_process.waitForFinished(1000)
             except Exception:
                 pass
 
         # Stop any background analysis work owned by the batch propagation page.
         try:
-            if hasattr(self, "page_mc"):
-                self.page_mc.shutdown()
+            if hasattr(self, "page_batch"):
+                self.page_batch.shutdown()
+        except Exception:
+            pass
+
+        # Stop any frozen-search subprocess owned by the dedicated page.
+        try:
+            if hasattr(self, "page_frozen_search"):
+                self.page_frozen_search.shutdown()
         except Exception:
             pass
 

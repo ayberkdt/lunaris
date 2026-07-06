@@ -88,6 +88,16 @@ def tiny_training_cfg(
         "output_dim": 1,
         "model_preset": "custom",
         "best_metric": "val_total_loss",
+        # Loss-shaping fields: build_resolved_config snapshots these into
+        # config.loss_config, which the paper-safe metadata gate requires.
+        "w_u": 1.0,
+        "w_a": 1.0,
+        "direction_loss_weight": 0.10,
+        "radial_loss_weight": 0.05,
+        "cross_loss_weight": 0.05,
+        "use_laplacian_regularization": True,
+        "laplacian_weight": 2e-9,
+        "laplacian_mode": "diagnostic",
         "altitude_min_km": float(alt_min_km),
         "altitude_max_km": float(alt_max_km),
         "run_name": "contract_fixture",
@@ -126,6 +136,19 @@ def tiny_dataset_meta(
         "gravity_label_engine_version": "lunaris_sh_v2",
         "coordinate_frame": "moon_fixed_cartesian",
         "units": {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
+        "source_gravity_model": "synthetic_gggrx_1200a_fixture",
+        "source_gravity_file_sha256": "1" * 64,
+        # Split identity: build_run_provenance hashes this into
+        # split_manifest_sha256, the paper-safe validation-data identity.
+        "split_manifest": {
+            "schema_version": 1,
+            "split_policy": "random_holdout",
+            "train_count": 12,
+            "val_count": 2,
+            "test_count": 2,
+            "ood_count": 0,
+            "index_hashes": {"train": "a" * 64, "val": "b" * 64, "test": "c" * 64},
+        },
         "dataset_contract": {
             "schema_version": 1,
             "dataset_kind": "st_lrps_spatial_cloud",
@@ -141,6 +164,7 @@ def tiny_dataset_meta(
             "altitude_max_km": float(alt_max_km),
             "coordinate_frame": "moon_fixed_cartesian",
             "units": {"position": "m", "potential": "m^2/s^2", "acceleration": "m/s^2"},
+            "source_gravity_model": "synthetic_gggrx_1200a_fixture",
             "source_gravity_file_sha256": "1" * 64,
             "spherical_harmonic_convention": "4pi_geodesy_no_condon_shortley_v1",
             "gravity_label_engine_version": "lunaris_sh_v2",
@@ -241,3 +265,32 @@ def make_contract_run(
         "architecture_signature": arch_sig,
         "scaler_payload": asdict(scaler),
     }
+
+
+def strip_paper_safe_fields(
+    run: dict[str, Any],
+    fields: tuple[str, ...] = ("loss_config", "parameter_count", "domain_guard_policy"),
+) -> None:
+    """Rewrite a fixture run on disk as a legacy artifact missing R26 metadata.
+
+    Removes the given resolved-config fields from ``config.json`` and from the
+    checkpoint's embedded config copies so the paper-safe metadata gate sees
+    them as unresolvable.
+    """
+    run_dir = Path(run["run_dir"])
+    cfg_path = run_dir / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    for field in fields:
+        cfg.pop(field, None)
+    cfg_path.write_text(json.dumps(cfg, indent=2, sort_keys=True), encoding="utf-8")
+
+    ckpt_path = run_dir / "checkpoints" / "ckpt_best.pt"
+    payload = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    for field in fields:
+        payload.pop(field, None)
+    for sub_key in ("config", "resolved_config"):
+        sub = payload.get(sub_key)
+        if isinstance(sub, dict):
+            for field in fields:
+                sub.pop(field, None)
+    torch.save(payload, ckpt_path)

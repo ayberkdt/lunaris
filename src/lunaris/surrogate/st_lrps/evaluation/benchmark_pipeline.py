@@ -25,6 +25,12 @@ from .benchmark_config import (
 from .benchmark_validation import validate_benchmark_outputs
 from .provenance import build_benchmark_manifest, sha256_payload, write_json
 
+# This pipeline compares gravity models only (classical SH vs ST-LRPS); no
+# non-gravity perturbation is ever enabled here. Results produced with a
+# full-dynamics force set belong in a separate table and must not be merged
+# with rows carrying this scope.
+FORCE_MODEL_SCOPE = "gravity_only"
+
 
 def run_configured_benchmark(
     config_path: str | Path,
@@ -72,6 +78,7 @@ def run_configured_benchmark(
         config,
         strict=not bool(allow_contract_mismatch),
         strict_domain=not bool(allow_domain_extrapolation),
+        paper_safe=bool(paper_safe),
     )
     config.setdefault("contract_compatibility", contract_report)
     resolved_hash = sha256_payload(config)
@@ -193,6 +200,7 @@ def _benchmark_contract_report(
     *,
     strict: bool,
     strict_domain: bool,
+    paper_safe: bool = False,
 ) -> dict[str, Any]:
     surrogate = config.get("surrogate", {}) if isinstance(config.get("surrogate"), Mapping) else {}
     if not surrogate.get("enabled"):
@@ -206,7 +214,10 @@ def _benchmark_contract_report(
         }
     requested = ArtifactContract.from_benchmark_config(config)
     try:
-        from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract
+        from lunaris.surrogate.st_lrps.artifacts.manager import (
+            paper_safe_metadata_report_for_run,
+            read_artifact_contract,
+        )
 
         artifact = read_artifact_contract(
             model_dir,
@@ -214,6 +225,30 @@ def _benchmark_contract_report(
         )
         report = artifact.compatibility_report(requested, strict_domain=strict_domain)
         report["checked"] = True
+        if paper_safe:
+            # R26: a paper-safe benchmark refuses to start when the artifact's
+            # required metadata is incomplete. The completeness report lands in
+            # the manifest via contract_compatibility for provenance.
+            ps_report = paper_safe_metadata_report_for_run(model_dir)
+            report["paper_safe_metadata"] = ps_report
+            if not ps_report["complete"]:
+                raise ArtifactContractError(
+                    "paper_safe benchmark refused: surrogate artifact metadata is "
+                    f"incomplete (missing: {', '.join(ps_report['missing'])}). "
+                    "Regenerate the artifact with the current training pipeline."
+                )
+            # R29b (#6): gravity-file identity. The artifact records the SHA-256
+            # of the gravity model its labels came from; a paper-safe benchmark
+            # against a *different* gravity file is comparing apples to oranges.
+            identity = _gravity_file_identity_check(config, ps_report["fields"])
+            report["gravity_file_identity"] = identity
+            if identity["status"] == "mismatch":
+                raise ArtifactContractError(
+                    "paper_safe benchmark refused: configured truth gravity file "
+                    f"{identity['configured_path']} (sha256={identity['configured_sha256']}) "
+                    "does not match the artifact's training gravity model "
+                    f"(sha256={identity['artifact_sha256']})."
+                )
         if strict and report["errors"]:
             raise ArtifactContractError("; ".join(report["errors"]))
         if not strict and report["errors"]:
@@ -232,6 +267,49 @@ def _benchmark_contract_report(
             "errors": [],
             "warnings": [f"contract mismatch allowed explicitly: {exc}"],
         }
+
+
+def _gravity_file_identity_check(
+    config: Mapping[str, Any],
+    metadata_fields: Mapping[str, Any],
+) -> dict[str, Any]:
+    """R29b (#6): compare the configured truth gravity file with the artifact's.
+
+    Returns a JSON-serializable status block. ``status`` is one of:
+    ``match`` / ``mismatch`` / ``unverified`` (no truth.gravity_file configured,
+    or the file cannot be hashed). Only ``mismatch`` is fatal under paper-safe;
+    ``unverified`` is recorded so the gap is visible in the manifest.
+    """
+    artifact_sha = metadata_fields.get("gravity_model_hash")
+    truth = config.get("truth") if isinstance(config.get("truth"), Mapping) else {}
+    gravity_file = truth.get("gravity_file")
+    if not gravity_file:
+        return {
+            "status": "unverified",
+            "reason": "truth.gravity_file not configured; artifact hash recorded only",
+            "configured_path": None,
+            "configured_sha256": None,
+            "artifact_sha256": artifact_sha,
+        }
+    path = Path(str(gravity_file))
+    if not path.exists():
+        return {
+            "status": "unverified",
+            "reason": f"truth.gravity_file does not exist: {path}",
+            "configured_path": str(path),
+            "configured_sha256": None,
+            "artifact_sha256": artifact_sha,
+        }
+    from lunaris.common.provenance import sha256_file
+
+    configured_sha = str(sha256_file(path))
+    return {
+        "status": "match" if configured_sha == str(artifact_sha) else "mismatch",
+        "reason": None,
+        "configured_path": str(path),
+        "configured_sha256": configured_sha,
+        "artifact_sha256": artifact_sha,
+    }
 
 
 def _run_existing_harness(output_dir: Path, config: Mapping[str, Any]) -> None:
@@ -258,12 +336,19 @@ def _standardize_legacy_outputs(output_dir: Path, config: Mapping[str, Any]) -> 
         rows = _read_csv(aggregate)
         write_json(
             output_dir / "metrics_summary.json",
-            {"schema_version": 1, "units": _metric_units(), "rows": rows},
+            {
+                "schema_version": 1,
+                "units": _metric_units(),
+                "force_model_scope": FORCE_MODEL_SCOPE,
+                "rows": rows,
+            },
         )
     if per_scenario.exists():
-        shutil.copyfile(per_scenario, output_dir / "scenario_results.csv")
+        rows = _standardize_scenario_rows(_read_csv(per_scenario), synthetic=False)
+        _write_csv(output_dir / "scenario_results.csv", rows)
     if runtime.exists():
-        shutil.copyfile(runtime, output_dir / "runtime_summary.csv")
+        rows = _standardize_runtime_rows(_read_csv(runtime), config, synthetic=False)
+        _write_csv(output_dir / "runtime_summary.csv", rows)
 
 
 def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> None:
@@ -280,18 +365,30 @@ def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> Non
         model_factor = 1.0 + 0.35 * model_index
         runtime = max(0.001, 0.02 * scenario_count * model_factor)
         runtime_rows.append(
-            {
-                "model": model,
-                "backend": "synthetic",
-                "device": "cpu",
-                "dtype": config["propagation"]["dtype"],
+                {
+                    "model": model,
+                    "backend": "synthetic",
+                    "device": "cpu",
+                    "dtype": config["propagation"]["dtype"],
                 "n_scenarios": scenario_count,
                 "n_steps": n_steps * scenario_count,
-                "total_runtime_s": runtime,
-                "runtime_per_scenario_s": runtime / scenario_count,
-                "status": "synthetic",
-            }
-        )
+                    "total_runtime_s": runtime,
+                    "runtime_per_scenario_s": runtime / scenario_count,
+                    "cold_time_s": runtime + 0.002,
+                    "warm_time_s": runtime,
+                    "jit_compile_time_s": 0.002,
+                    "propagation_time_s": runtime,
+                    "acceleration_evaluations_per_second": (
+                        scenario_count * n_steps * 4 / max(runtime, 1e-9)
+                    ),
+                    "propagated_seconds_per_wall_second": (
+                        scenario_count * duration_days * DAY_S / max(runtime, 1e-9)
+                    ),
+                    "peak_memory_mb": 0.0,
+                    "chunk_size": scenario_count,
+                    "status": "synthetic",
+                }
+            )
         for scenario_id in range(scenario_count):
             base = (scenario_id + 1) * 0.001 * model_factor
             jitter = float(rng.uniform(0.0, 0.0002))
@@ -310,7 +407,18 @@ def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> Non
                     "radial_rms_km": rms * 0.05,
                     "along_rms_km": rms * 0.9,
                     "cross_rms_km": rms * 0.03,
+                    "phase_lag_final_s": rms * 0.4 * (1.0 if scenario_id % 2 else -1.0),
+                    "phase_lag_slope_s_per_day": rms * 0.08,
+                    "phase_corrected_rms_km": rms * 0.12,
+                    "phase_explained_fraction": 0.85,
                     "rms_alt_err_km": rms * 0.04,
+                    "trajectory_rms_km": rms,
+                    "energy_drift_rel": rms * 1.0e-8,
+                    "accel_max_error_m_s2": rms * 1.0e-9,
+                    "potential_error_m2_s2": rms * 1.0e-3,
+                    "impact_count": 0,
+                    "domain_exit_count": 0,
+                    "extended_metrics_source": "synthetic_smoke",
                     "runtime_s": runtime / scenario_count,
                     "n_steps": n_steps,
                     "status": "ok",
@@ -329,6 +437,7 @@ def _write_synthetic_outputs(output_dir: Path, config: Mapping[str, Any]) -> Non
         {
             "schema_version": 1,
             "units": _metric_units(),
+            "force_model_scope": FORCE_MODEL_SCOPE,
             "rows": summary_rows,
             "synthetic": True,
             "warning": SYNTHETIC_BANNER,
@@ -347,6 +456,12 @@ def _aggregate_synthetic_metrics(rows: list[dict[str, Any]]) -> list[dict[str, A
         radial = np.asarray([float(row["radial_rms_km"]) for row in model_rows], dtype=float)
         along = np.asarray([float(row["along_rms_km"]) for row in model_rows], dtype=float)
         cross = np.asarray([float(row["cross_rms_km"]) for row in model_rows], dtype=float)
+        abs_lag = np.asarray(
+            [abs(float(row["phase_lag_final_s"])) for row in model_rows], dtype=float)
+        pcr = np.asarray(
+            [float(row["phase_corrected_rms_km"]) for row in model_rows], dtype=float)
+        pef = np.asarray(
+            [float(row["phase_explained_fraction"]) for row in model_rows], dtype=float)
         out.append(
             {
                 "model": model,
@@ -362,6 +477,9 @@ def _aggregate_synthetic_metrics(rows: list[dict[str, Any]]) -> list[dict[str, A
                 "median_radial_rms_km": float(np.median(radial)),
                 "median_along_rms_km": float(np.median(along)),
                 "median_cross_rms_km": float(np.median(cross)),
+                "median_abs_phase_lag_final_s": float(np.median(abs_lag)),
+                "median_phase_corrected_rms_km": float(np.median(pcr)),
+                "median_phase_explained_fraction": float(np.median(pef)),
             }
         )
     return out
@@ -393,6 +511,9 @@ def _write_report(
         f"- Scenario count: {scenario['count']}",
         f"- Duration days: {config['propagation']['duration_days']}",
         f"- Truth model: {truth['model']} degree {truth['degree']}",
+        f"- Force-model scope: {FORCE_MODEL_SCOPE} (lunar gravity models only; "
+        "no third-body, SRP, albedo, thermal IR, tides, or relativity). "
+        "Gravity-only and full-dynamics results must never share a table.",
         f"- Compared models: {models}",
         f"- Validation status: {status}",
         f"- Metrics CSV: {output_dir / 'metrics_summary.csv'}",
@@ -452,7 +573,78 @@ def _metric_units() -> dict[str, str]:
         "velocity": "m/s",
         "time": "s",
         "runtime": "s",
+        "acceleration": "m/s^2",
+        "potential": "m^2/s^2",
+        "energy_drift": "relative",
     }
+
+
+def _standardize_scenario_rows(
+    rows: list[dict[str, Any]],
+    *,
+    synthetic: bool,
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    source = "synthetic_smoke" if synthetic else "not_evaluated"
+    for row in rows:
+        item = dict(row)
+        item.setdefault("trajectory_rms_km", item.get("rms_pos_err_km", ""))
+        item.setdefault("final_pos_err_km", item.get("rms_pos_err_km", ""))
+        item.setdefault("max_pos_err_km", item.get("rms_pos_err_km", ""))
+        item.setdefault("p95_pos_err_km", item.get("rms_pos_err_km", ""))
+        item.setdefault("rms_vel_err_ms", item.get("final_vel_err_ms", ""))
+        item.setdefault("final_vel_err_ms", item.get("rms_vel_err_ms", ""))
+        item.setdefault("energy_drift_rel", "" if not synthetic else 0.0)
+        item.setdefault("accel_max_error_m_s2", "" if not synthetic else 0.0)
+        item.setdefault("potential_error_m2_s2", "" if not synthetic else 0.0)
+        item.setdefault("impact_count", "" if not synthetic else 0)
+        item.setdefault("domain_exit_count", "" if not synthetic else 0)
+        item.setdefault("extended_metrics_source", source)
+        out.append(item)
+    return out
+
+
+def _standardize_runtime_rows(
+    rows: list[dict[str, Any]],
+    config: Mapping[str, Any],
+    *,
+    synthetic: bool,
+) -> list[dict[str, Any]]:
+    scenario_count = int(config.get("scenario", {}).get("count", 1))
+    duration_days = float(config.get("propagation", {}).get("duration_days", 0.0))
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        total = _float_or_default(item.get("total_runtime_s"), 0.0)
+        warm = _float_or_default(item.get("warm_time_s"), total)
+        jit = _float_or_default(item.get("jit_compile_time_s"), 0.0 if not synthetic else 0.002)
+        cold = _float_or_default(item.get("cold_time_s"), warm + jit)
+        steps = _float_or_default(item.get("n_steps"), 0.0)
+        n_scenarios = _float_or_default(item.get("n_scenarios"), scenario_count)
+        item.setdefault("cold_time_s", cold)
+        item.setdefault("warm_time_s", warm)
+        item.setdefault("jit_compile_time_s", jit)
+        item.setdefault("propagation_time_s", _float_or_default(item.get("propagation_time_s"), warm))
+        item.setdefault(
+            "acceleration_evaluations_per_second",
+            n_scenarios * max(steps, 0.0) * 4.0 / max(warm, 1.0e-9),
+        )
+        item.setdefault(
+            "propagated_seconds_per_wall_second",
+            n_scenarios * duration_days * DAY_S / max(warm, 1.0e-9),
+        )
+        item.setdefault("peak_memory_mb", "")
+        item.setdefault("chunk_size", "")
+        out.append(item)
+    return out
+
+
+def _float_or_default(value: Any, default: float) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return out if math.isfinite(out) else float(default)
 
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:

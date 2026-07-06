@@ -52,9 +52,9 @@ def _gravity_model(*, c20: float = _C20) -> GravityModel:
     return GravityModel.from_arrays(_DEGREE, R, MU, C, S)
 
 
-def _mc_cfg() -> SimpleNamespace:
+def _batch_cfg() -> SimpleNamespace:
     return SimpleNamespace(
-        gpu_sh_degree=_DEGREE,
+        sh_degree=_DEGREE,
         dt_s=30.0,
         impact_alt_km=0.0,
         torch_dtype="float64",
@@ -66,7 +66,7 @@ def _mc_cfg() -> SimpleNamespace:
 def _propagator(grav: GravityModel, *, device: str, dtype) -> TorchSHBatchPropagator:
     dyn = SimpleNamespace(grav=grav, ephem=None)
     return TorchSHBatchPropagator(
-        dyn, _mc_cfg(), PerturbationFlags(enable_sh=True), device=device, dtype=dtype
+        dyn, _batch_cfg(), PerturbationFlags(enable_sh=True), device=device, dtype=dtype
     )
 
 

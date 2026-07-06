@@ -4,13 +4,12 @@ Central Backend Capability Registry
 
 Single source of truth (SSOT) for *what each propagator backend can do*.
 
-CLI, UI, the batch/Monte Carlo engine, the benchmark runner, and the
+CLI, UI, the batch propagation engine, the benchmark runner, and the
 report/provenance writers consult **one** capability source so they all make the
 same backend decision and label results identically.
 
 Two distinct GPU spherical-harmonics implementations exist in the repository and
-are kept **separate** here — they must never be merged under a single ``gpu_sh``
-capability:
+are kept **separate** here:
 
 * ``numba_cuda_sh`` — Numba CUDA, one ensemble sample per CUDA thread with a
   fixed thread-local Legendre workspace. The degree-24 ceiling is a *kernel
@@ -20,11 +19,7 @@ capability:
   degrees (SH25/50/100/200…) bounded only by the loaded coefficient file, GPU
   memory, batch size, dtype, and step size — **no** hard degree-24 cap.
 
-``gpu_sh`` is retained only as a **legacy alias** that resolves explicitly to
-``numba_cuda_sh`` (see :data:`BACKEND_ALIASES`). Machine-readable provenance and
-user-facing output always use the resolved, real backend name.
-
-The Numba force-model support matrix here is locked to the existing batch/MC
+The Numba force-model support matrix here is locked to the existing batch
 behavior by the consistency tests in ``tests/test_backend_capabilities.py``; do
 not change it without updating those tests.
 """
@@ -136,7 +131,7 @@ class BackendCapabilities:
 # Values are FAITHFUL to the current implementation, not the illustrative brief:
 #   * classic-SH Numba GPU and CPU run float64 (no float32 SH kernel today);
 #   * the torch SH path can run float32 or float64;
-#   * the torch SH Monte Carlo runtime is, in its first form, gravity-only — any
+#   * the torch SH batch runtime is, in its first form, gravity-only — any
 #     extra perturbation forces an explicit fallback (see §7 of the task brief).
 
 _CPU_SH = BackendCapabilities(
@@ -165,7 +160,7 @@ _NUMBA_CUDA_SH = BackendCapabilities(
     family="classic_sh",
     implementation="numba_cuda",
     device="cuda",
-    max_runtime_sh_degree=24,          # == mc_propagator.GPU_SH_MAX_DEGREE (guarded by test)
+    max_runtime_sh_degree=24,          # == batch_propagator.NUMBA_CUDA_SH_MAX_DEGREE (guarded by test)
     dtype_support=("float64",),
     supports_sh=True,
     supports_third_body=True,
@@ -179,7 +174,7 @@ _NUMBA_CUDA_SH = BackendCapabilities(
     default_dtype="float64",
     fidelity_class="low_degree_screening",
     description=(
-        "Numba CUDA classic-SH fixed-step RK4, one MC sample per CUDA thread "
+        "Numba CUDA classic-SH fixed-step RK4, one batch sample per CUDA thread "
         "(degree <= 24, a thread-local workspace limit — NOT a physical one). "
         "Supports third-body Sun/Earth, Earth J2, SRP, and 1PN relativity; "
         "albedo, thermal IR, and solid tides require the CPU backend. Use for "
@@ -264,15 +259,19 @@ _GPU_ST_LRPS_POTENTIAL = BackendCapabilities(
     ),
 )
 
-_GPU_ST_LRPS_DIRECT = BackendCapabilities(
-    name="gpu_st_lrps_direct",
+# R03 hybrid backend: ST-LRPS lunar gravity + analytic, vectorized Earth/Sun
+# third-body on the shared torch fixed-step loop. Deliberately NOT full
+# dynamics: albedo, thermal, tides, relativity, SRP, and Earth J2 still force
+# an explicit fallback.
+_GPU_ST_LRPS_THIRD_BODY = BackendCapabilities(
+    name="gpu_st_lrps_third_body",
     family="st_lrps",
     implementation="torch",
     device="cuda",
-    max_runtime_sh_degree=None,
+    max_runtime_sh_degree=None,        # surrogate gravity, not an SH evaluator
     dtype_support=("float32", "float64"),
-    supports_sh=True,
-    supports_third_body=False,
+    supports_sh=True,                  # central gravity via the surrogate
+    supports_third_body=True,          # analytic vectorized Battin F(q) Sun/Earth
     supports_earth_j2=False,
     supports_srp=False,
     supports_albedo=False,
@@ -283,10 +282,17 @@ _GPU_ST_LRPS_DIRECT = BackendCapabilities(
     default_dtype="float32",
     fidelity_class="surrogate",
     description=(
-        "PyTorch CUDA fixed-step RK4; ST-LRPS direct residual acceleration via a "
-        "batched no-grad forward pass. Gravity only."
+        "PyTorch CUDA fixed-step RK4; ST-LRPS lunar gravity (SH baseline + "
+        "neural residual) plus analytic vectorized Earth/Sun third-body "
+        "(cancellation-free Battin F(q), Catmull-Rom ephemeris interpolation). "
+        "Any other perturbation forces a CPU fallback."
     ),
 )
+
+# NOTE: the former gpu_st_lrps_direct backend (direct residual-acceleration
+# artifacts) was removed from main and archived in the
+# experimental/force-direct-archive branch. Only the conservative
+# potential_autograd surrogate is a supported ST-LRPS runtime.
 
 # CPU ST-LRPS full-fidelity path (the actual_backend emitted when an ST-LRPS GPU
 # run is forced back to CPU).
@@ -330,7 +336,7 @@ _AUTO = BackendCapabilities(
     integrator="resolved at runtime",
     default_dtype="resolved at runtime",
     is_meta=True,
-    description="Meta request resolved to a concrete backend by mc_backend_policy.",
+    description="Meta request resolved to a concrete backend by backend_policy.",
 )
 
 BACKEND_REGISTRY: dict[str, BackendCapabilities] = {
@@ -341,18 +347,15 @@ BACKEND_REGISTRY: dict[str, BackendCapabilities] = {
         _TORCH_CUDA_SH,
         _TORCH_CPU_SH,
         _GPU_ST_LRPS_POTENTIAL,
-        _GPU_ST_LRPS_DIRECT,
+        _GPU_ST_LRPS_THIRD_BODY,
         _CPU_ST_LRPS,
         _AUTO,
     )
 }
 
-# Legacy names kept for backward compatibility, resolved to the real backend.
-# ``gpu_sh`` was the single classic-SH GPU capability before the Numba/torch
-# split; it now resolves explicitly to the Numba CUDA backend.
-BACKEND_ALIASES: dict[str, str] = {
-    "gpu_sh": "numba_cuda_sh",
-}
+# Backend aliases are intentionally empty: backend requests must use canonical
+# registry names so provenance records exactly what was requested.
+BACKEND_ALIASES: dict[str, str] = {}
 
 # Backend names the task brief requires to be registered as distinct entries.
 REQUIRED_BACKEND_NAMES: tuple[str, ...] = (
@@ -361,7 +364,7 @@ REQUIRED_BACKEND_NAMES: tuple[str, ...] = (
     "torch_cuda_sh",
     "torch_cpu_sh",
     "gpu_st_lrps_potential",
-    "gpu_st_lrps_direct",
+    "gpu_st_lrps_third_body",
     "cpu_st_lrps",
     "auto",
 )
@@ -373,10 +376,7 @@ REQUIRED_BACKEND_NAMES: tuple[str, ...] = (
 
 
 def resolve_backend_alias(name: str) -> str:
-    """Resolve a (possibly legacy) backend name to its canonical registry name.
-
-    ``gpu_sh`` -> ``numba_cuda_sh``. Non-alias names are returned unchanged.
-    """
+    """Resolve a backend name to its canonical registry name."""
     key = str(name).strip()
     return BACKEND_ALIASES.get(key, key)
 
@@ -394,9 +394,8 @@ def get_capabilities(name: str) -> BackendCapabilities:
     except KeyError:
         known = ", ".join(sorted(BACKEND_REGISTRY))
         aliases = ", ".join(sorted(BACKEND_ALIASES))
-        raise KeyError(
-            f"Unknown backend {name!r}; known backends: {known}; aliases: {aliases}"
-        ) from None
+        alias_note = f"; aliases: {aliases}" if aliases else "; no backend aliases are registered"
+        raise KeyError(f"Unknown backend {name!r}; known backends: {known}{alias_note}") from None
 
 
 def list_backend_names(*, include_aliases: bool = False) -> tuple[str, ...]:
@@ -430,30 +429,71 @@ def unsupported_force_models(name: str, flags: Any) -> tuple[str, ...]:
     return tuple(blocked)
 
 
-def gpu_sh_max_degree() -> int:
+@dataclass(frozen=True)
+class DtypeResolution:
+    """Single-source dtype decision for a backend.
+
+    ``requested`` is what the caller/config asked for; ``effective`` is what the
+    backend will actually run. ``downgraded`` is True when the backend cannot
+    honor the request and the default was substituted — a recorded, never
+    silent, event. The reason is empty unless a downgrade occurred.
+    """
+
+    requested: str
+    effective: str
+    downgraded: bool
+    reason: str = ""
+
+
+def resolve_effective_dtype(requested_dtype: str | None, backend_name: str) -> DtypeResolution:
+    """Resolve the effective dtype for ``backend_name`` from a requested dtype.
+
+    This is the single source of truth for dtype selection: both the batch
+    backend policy and the runtime resolve through here so provenance can never
+    disagree with what actually ran. When the requested dtype is unsupported by
+    the backend, its registered ``default_dtype`` is substituted and the result
+    is flagged ``downgraded`` with a human-readable reason (never a silent
+    substitution).
+    """
+    caps = get_capabilities(backend_name)
+    requested = str(requested_dtype or "").strip().lower() or caps.default_dtype
+    if requested in caps.dtype_support:
+        return DtypeResolution(requested=requested, effective=requested, downgraded=False)
+    effective = caps.default_dtype
+    supported = ", ".join(caps.dtype_support)
+    reason = (
+        f"backend {backend_name!r} does not support dtype {requested!r} "
+        f"(supported: {supported}); using {effective!r}"
+    )
+    return DtypeResolution(
+        requested=requested, effective=effective, downgraded=True, reason=reason
+    )
+
+
+def numba_cuda_sh_max_degree() -> int:
     """Return the Numba CUDA classic-SH degree limit from the kernel workspace.
 
-    Sourced from :data:`lunaris.core.mc_propagator.GPU_SH_MAX_DEGREE` (lazily, to
+    Sourced from :data:`lunaris.core.batch_propagator.NUMBA_CUDA_SH_MAX_DEGREE` (lazily, to
     avoid importing the Numba CUDA stack at module load). Falls back to the
     historical default of 24 if that import is unavailable. This is the limit of
     the ``numba_cuda_sh`` backend only; ``torch_cuda_sh`` has no such cap.
     """
     try:
-        from lunaris.core.mc_propagator import GPU_SH_MAX_DEGREE
+        from lunaris.core.batch_propagator import NUMBA_CUDA_SH_MAX_DEGREE
 
-        return int(GPU_SH_MAX_DEGREE)
+        return int(NUMBA_CUDA_SH_MAX_DEGREE)
     except Exception:
         return 24
 
 
-def gpu_sh_supported_tiers() -> tuple[int, ...]:
+def numba_cuda_sh_supported_tiers() -> tuple[int, ...]:
     """Return the supported Numba CUDA classic-SH degree tiers."""
     try:
-        from lunaris.core.mc_propagator import GPU_SH_SUPPORTED_TIERS
+        from lunaris.core.batch_propagator import NUMBA_CUDA_SH_SUPPORTED_TIERS
 
-        return tuple(int(v) for v in GPU_SH_SUPPORTED_TIERS)
+        return tuple(int(v) for v in NUMBA_CUDA_SH_SUPPORTED_TIERS)
     except Exception:
-        return (gpu_sh_max_degree(),)
+        return (numba_cuda_sh_max_degree(),)
 
 
 __all__ = [
@@ -466,6 +506,8 @@ __all__ = [
     "get_capabilities",
     "list_backend_names",
     "unsupported_force_models",
-    "gpu_sh_max_degree",
-    "gpu_sh_supported_tiers",
+    "DtypeResolution",
+    "resolve_effective_dtype",
+    "numba_cuda_sh_max_degree",
+    "numba_cuda_sh_supported_tiers",
 ]

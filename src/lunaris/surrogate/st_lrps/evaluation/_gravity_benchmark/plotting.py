@@ -23,6 +23,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 from lunaris.common.constants import DAY_S, R_MOON
+from lunaris.surrogate.st_lrps.evaluation.phase_diagnostics import estimate_phase_lag
 
 from .compute import (
     _gpu_rk4_dt_values,
@@ -154,7 +155,7 @@ def model_zorder(model: str) -> int:
 
 
 def display_label(model: str) -> str:
-    """Human label, e.g. GPU_SH20_RK4 -> SH20, GPU_ST_LRPS_RK4 -> ST-LRPS."""
+    """Human label, e.g. NUMBA_CUDA_SH20_RK4 -> SH20, ST_LRPS_RK4 -> ST-LRPS."""
     m = str(model)
     dt_label: str | None = None
     if "_DT" in m.upper():
@@ -164,7 +165,8 @@ def display_label(model: str) -> str:
     if _is_stlrps(m):
         label = "ST-LRPS"
     else:
-        label = m.replace("GPU_", "").replace("_RK4", "").upper()
+        degree = _model_degree(m)
+        label = f"SH{degree}" if degree is not None else m.replace("GPU_", "").replace("_RK4", "").upper()
     return f"{label} dt{dt_label}" if dt_label else label
 
 
@@ -672,7 +674,7 @@ def estimate_stlrps_equivalent_sh_degree(aggregate_rows: list[dict[str, Any]]) -
         sh_points = []
         for model, row in by_model.items():
             deg = _model_degree(model)
-            if model.startswith("GPU_SH") and deg is not None:
+            if model.startswith("NUMBA_CUDA_SH") and deg is not None:
                 try:
                     sh_points.append((deg, float(row[metric_key]), model))
                 except Exception:
@@ -1017,7 +1019,7 @@ def plot_gpu_batch_report_figures(
     sh_points = []
     for m in models:
         deg = _model_degree(m)
-        if deg is not None and m.upper().startswith("GPU_SH"):
+        if deg is not None and m.upper().startswith("NUMBA_CUDA_SH"):
             sh_points.append((deg, _safe(agg_by_model[m].get("median_rms_pos_err_km")),
                               _safe(agg_by_model[m].get("p95_rms_pos_err_km"))))
     sh_points.sort()
@@ -1178,6 +1180,54 @@ def plot_gpu_batch_report_figures(
         p = plots_dir / "ensemble_ric_rms_vs_time.png"
         fig_ric.savefig(p); plt.close(fig_ric); saved.append(p)
 
+    # ----- Phase diagnostics summary (raw vs phase-corrected RMS) --------
+    # Diagnostic-only view: the corrected RMS uses a <=3-parameter time
+    # alignment against ground truth, so it supports "error is
+    # phase-dominated", never a model-accuracy claim.
+    phase_data = {
+        m: (
+            _model_vals(m, "rms_pos_err_km"),
+            _model_vals(m, "phase_corrected_rms_km"),
+            _model_vals(m, "phase_explained_fraction"),
+        )
+        for m in models
+    }
+    phase_data = {m: v for m, v in phase_data.items()
+                  if v[0] and v[1] and len(v[0]) == len(v[1])}
+    if phase_data:
+        fig_ph, (ax_sc, ax_fr) = plt.subplots(1, 2, figsize=(12.5, 5.2))
+        lo = hi = None
+        for m, (raw, corr, _frac) in phase_data.items():
+            ax_sc.scatter(raw, corr, s=22, color=model_color(m), marker=model_marker(m),
+                          label=display_label(m), zorder=model_zorder(m), alpha=0.85)
+            pos_vals = [v for v in (*raw, *corr) if v > 0.0]
+            if pos_vals:
+                lo = min(pos_vals) if lo is None else min(lo, min(pos_vals))
+                hi = max(pos_vals) if hi is None else max(hi, max(pos_vals))
+        if lo is not None and hi is not None and hi > lo:
+            ax_sc.plot([lo, hi], [lo, hi], color="0.5", lw=0.9, ls="--", zorder=1)
+            ax_sc.set_xscale("log")
+            ax_sc.set_yscale("log")
+        _legend(ax_sc)
+        _style_ax(ax_sc, title="Phase-Corrected vs Raw Position RMS",
+                  xlabel="Raw RMS [km]", ylabel="Phase-corrected RMS [km]",
+                  subtitle="Points far below the dashed y = x line are phase-drift dominated.")
+        frac_models = [m for m in phase_data if phase_data[m][2]]
+        if frac_models:
+            ax_fr.boxplot([phase_data[m][2] for m in frac_models],
+                          tick_labels=[display_label(m) for m in frac_models],
+                          showfliers=True)
+            ax_fr.set_ylim(0.0, 1.05)
+            ax_fr.tick_params(axis="x", rotation=30)
+        else:
+            _empty_note(ax_fr, "phase_explained_fraction unavailable")
+        _style_ax(ax_fr, title="Phase-Explained Fraction per Scenario",
+                  ylabel="1 − corrected MS / raw MS",
+                  subtitle=ctx)
+        fig_ph.tight_layout()
+        p = plots_dir / "phase_diagnostics_summary.png"
+        fig_ph.savefig(p); plt.close(fig_ph); saved.append(p)
+
     # ----- Selected ST-LRPS scenarios ------------------------------------
     scenario_by_id = {s.scenario_id: s for s in scenarios}
     selection_source = str(selected.get("_selection_source", "ST-LRPS"))
@@ -1197,6 +1247,7 @@ def plot_gpu_batch_report_figures(
         pos_by_model: dict[str, np.ndarray] = {}
         alt_by_model: dict[str, np.ndarray] = {}
         ric_by_model = {}
+        tau_by_model: dict[str, np.ndarray] = {}
         for result in results:
             if result.status != "ok":
                 continue
@@ -1207,6 +1258,11 @@ def plot_gpu_batch_report_figures(
                 np.linalg.norm(y_model[:, :3], axis=1) - np.linalg.norm(y_truth[:, :3], axis=1)) / 1000.0
             ric_by_model[result.display_name] = (
                 compute_ric_errors(y_truth[:, :3], y_truth[:, 3:], y_model[:, :3]) / 1000.0)
+            try:
+                tau_by_model[result.display_name] = estimate_phase_lag(
+                    t_truth, y_model[:, :3], y_truth[:, :3], y_truth[:, 3:]).tau_s
+            except ValueError:
+                pass  # degenerate geometry: skip the phase panel for this model
 
         pos_max_km = max(_finite_positive([float(np.max(v)) for v in pos_by_model.values()]) or [0.0])
         unit, mult = select_length_unit(pos_max_km)
@@ -1275,6 +1331,24 @@ def plot_gpu_batch_report_figures(
         fig_ric_sel.tight_layout()
         p = plots_dir / f"selected_{label}_ric_error_all_models.png"
         fig_ric_sel.savefig(p); plt.close(fig_ric_sel); saved.append(p)
+
+        # Phase lag tau(t): + = model leads truth, - = model falls behind.
+        if tau_by_model:
+            fig_tau, ax_tau = plt.subplots(figsize=(10, 5.0))
+            for name, tau in tau_by_model.items():
+                ax_tau.plot(t_days, tau, color=model_color(name),
+                            lw=model_linewidth(name), label=display_label(name),
+                            zorder=model_zorder(name))
+            ax_tau.axhline(0.0, color="0.5", lw=0.8, ls="--")
+            _legend(ax_tau, outside=True)
+            _style_ax(ax_tau,
+                      title=f"{label.title()} {selection_source} Scenario: Phase Lag",
+                      xlabel="Time [days]",
+                      ylabel="Phase lag [s]  (+ = model leads truth)",
+                      subtitle=sub)
+            fig_tau.tight_layout()
+            p = plots_dir / f"selected_{label}_phase_lag_all_models.png"
+            fig_tau.savefig(p); plt.close(fig_tau); saved.append(p)
 
         # 3D trajectory (optional)
         if getattr(args, "plot_3d", False):

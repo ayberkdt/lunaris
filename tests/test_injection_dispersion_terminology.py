@@ -5,8 +5,9 @@ parameters; its user-facing language must be the specific "injection dispersion"
 terminology, not the generic "uncertainty analysis" label. These checks read the
 source/docs text directly (no Qt/display needed) so they run in plain CI.
 
-They also lock the compatibility contract: the public Python dataclass names
-(`StateUncertainty`, `SpacecraftUncertainty`, `MonteCarloConfig`) are preserved,
+They also lock the compatibility contract: the dispersion-model dataclass names
+(`StateUncertainty`, `SpacecraftUncertainty`) are preserved through the
+batch-subsystem rework (the top-level config is now `BatchPropagationConfig`),
 and the UQ covariance report keeps its own defined meaning.
 """
 
@@ -24,7 +25,7 @@ def _read(rel: str) -> str:
 
 
 def test_ui_page_uses_injection_dispersion_card_labels():
-    text = _read("src/lunaris/ui/pages/monte_carlo_page.py")
+    text = _read("src/lunaris/ui/pages/batch_propagation_page.py")
     assert "Injection State Dispersion" in text
     assert "Spacecraft Property Dispersion" in text
     # The generic card titles must be gone.
@@ -33,7 +34,7 @@ def test_ui_page_uses_injection_dispersion_card_labels():
 
 
 def test_ui_validation_messages_use_dispersion_language():
-    text = _read("src/lunaris/ui/pages/monte_carlo_page.py")
+    text = _read("src/lunaris/ui/pages/batch_propagation_page.py")
     assert "Injection position dispersion" in text
     assert "Injection velocity dispersion" in text
 
@@ -51,14 +52,15 @@ def test_docs_use_injection_dispersion_terminology():
 
 
 def test_public_dataclass_names_are_preserved():
-    # Compatibility contract: terminology change must not break the public API.
+    # The dispersion-model dataclass names are kept even though the top-level
+    # config was renamed to BatchPropagationConfig in the batch-subsystem rework.
     from lunaris.common.batch_defs import (  # noqa: F401
-        MonteCarloConfig,
+        BatchPropagationConfig,
         SpacecraftUncertainty,
         StateUncertainty,
     )
 
-    cfg = MonteCarloConfig()
+    cfg = BatchPropagationConfig()
     assert hasattr(cfg, "state")
     assert hasattr(cfg, "spacecraft")
 

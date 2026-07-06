@@ -23,7 +23,7 @@ from typing import Any
 from PySide6 import QtCore
 
 # Shared, flow-agnostic preflight service: the UI reaches the same backend
-# verdict (and the same output-directory check) as the CLI / MC / benchmark.
+# verdict (and the same output-directory check) as the CLI / batch / benchmark.
 from lunaris.core.preflight import check_backend_capability, check_output_dir_writable
 
 try:
@@ -254,7 +254,7 @@ class PreFlightWorker(QtCore.QThread):
                 return False, summary
 
             # Additionally verify that degree metadata is present so the
-            # MC propagator does not fail inside the sample loop.
+            # batch propagator does not fail inside the sample loop.
             if model_dir:
                 cfg_path = Path(model_dir) / "config.json"
                 if cfg_path.is_file():
@@ -335,7 +335,7 @@ class PreFlightWorker(QtCore.QThread):
         Check the requested backend against the central capability registry.
 
         Delegates to the shared :mod:`lunaris.core.preflight` service so the UI
-        reaches the same verdict as the CLI / MC / benchmark flows: an invalid
+        reaches the same verdict as the CLI / batch / benchmark flows: an invalid
         backend, an over-limit SH degree, or an unsupported force model is caught
         here instead of being silently clipped or dropped at run time. The
         desktop mission-propagation path is CPU full-fidelity, which supports

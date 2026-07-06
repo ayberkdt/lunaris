@@ -135,8 +135,8 @@ class SurrogateGravityModel:
         self._alt_min_km, self._alt_max_km = self._resolve_altitude_envelope(config, force_runtime)
 
         # Degree metadata — required by core.propagation.propagator._get_sh_degree() and
-        # MC result provenance.  Raised at construction time so the error fires
-        # once at load, not N times inside the Monte Carlo sample loop.
+        # batch result provenance.  Raised at construction time so the error fires
+        # once at load, not N times inside the batch sample loop.
         _deg_min, _deg_max = _extract_degree_metadata(config)
         self.degree_min: int = _deg_min
         self.degree_max: int = _deg_max
@@ -288,11 +288,12 @@ class SurrogateGravityModel:
         except Exception as exc:
             if declared_runtime_kind == "force_direct":
                 raise RuntimeError(
-                    "force_direct ST-LRPS artifact could not be loaded through the canonical "
-                    "runtime (st_lrps.runtime.force_model) and has NO legacy fallback: the "
-                    "legacy local path builds a scalar-potential model, which is the wrong "
-                    "physics for a direct residual-acceleration artifact. Fix the artifact / "
-                    f"contract instead of degrading to a potential model. Original error: {exc}"
+                    "force_direct ST-LRPS artifacts are archived in the "
+                    "experimental/force-direct-archive branch and are no longer loadable "
+                    "on main: only the conservative 'potential_autograd' surrogate is "
+                    "supported. There is deliberately NO legacy fallback (the legacy local "
+                    "path builds a scalar-potential model, which is the wrong physics for a "
+                    f"direct residual-acceleration artifact). Original error: {exc}"
                 ) from exc
             # The legacy local path skips strict checkpoint-contract validation
             # (validate_checkpoint_contract), the frame guard, and the scaler
@@ -427,20 +428,16 @@ class SurrogateGravityModel:
 
     @property
     def is_conservative(self) -> bool:
-        """False for ``force_direct`` artifacts (no underlying scalar potential).
+        """Whether the surrogate acceleration is the gradient of a scalar potential.
 
-        Mirrors the runtime taxonomy flag on the canonical ST-LRPS runtimes; do
-        not use ``isinstance()`` on the wrapped runtime for this distinction.
+        Main supports only the conservative ``potential_autograd`` surrogate, so
+        this is True in practice; it still mirrors the runtime taxonomy flag on
+        the wrapped runtime rather than relying on ``isinstance()`` checks.
         """
         fr = self._force_runtime
         if fr is not None and hasattr(fr, "is_conservative"):
             return bool(fr.is_conservative)
-        kind = str(
-            getattr(fr, "runtime_model_kind", "")
-            or self.config.get("runtime_model_kind", "")
-            or "potential_autograd"
-        ).strip().lower()
-        return kind != "force_direct"
+        return True
 
     # ------------------------------------------------------------------
     # Physics evaluation
@@ -490,34 +487,24 @@ class SurrogateGravityModel:
     def _enforce_domain_torch(self, x_m: torch.Tensor, *, caller: str) -> None:
         """Guard the tensor path against out-of-training-envelope extrapolation.
 
-        Mirrors the canonical ``SurrogateForceModel._enforce_domain`` (same ~1 km
-        slack): hard-fail when ``strict_domain=True``, otherwise warn once. No-op
-        when the envelope is unknown. This closes the gap where the GPU batch
-        propagator's per-step ``predict_*_accel_torch`` calls bypassed the domain
-        check that the CPU ``_fixed`` path performs.
+        R11: delegates to the canonical runtime's single-source envelope guard
+        (same ~1 km slack, strict raise / warn-once semantics). This closes the
+        gap where the GPU batch propagator's per-step ``predict_*_accel_torch``
+        calls bypassed the domain check that the CPU ``_fixed`` path performs.
         """
-        if self._alt_min_km is None or self._alt_max_km is None:
-            return
-        with torch.no_grad():
-            r = torch.linalg.norm(x_m.detach().to(dtype=torch.float32), dim=1)
-            alt_km = (r - float(self.R_ref_m)) / 1000.0
-            lo = float(torch.min(alt_km))
-            hi = float(torch.max(alt_km))
-        tol = 1.0  # km, matches the canonical runtime's slack
-        if lo >= self._alt_min_km - tol and hi <= self._alt_max_km + tol:
-            return
-        msg = (
-            f"{caller}: input altitude range [{lo:.1f}, {hi:.1f}] km is outside the surrogate "
-            f"training envelope [{self._alt_min_km:.1f}, {self._alt_max_km:.1f}] km; GPU tensor "
-            "predictions here are extrapolation."
+        from lunaris.surrogate.st_lrps.runtime.canonical_runtime import (
+            enforce_altitude_envelope_torch,
         )
-        if self.strict_domain:
-            raise RuntimeError(
-                msg + " strict_domain=True: refusing to return an extrapolated prediction."
-            )
-        if not self._warned_out_of_domain:
-            self._warned_out_of_domain = True
-            warnings.warn(msg + " Pass strict_domain=True to hard-fail.", RuntimeWarning, stacklevel=3)
+
+        self._warned_out_of_domain = enforce_altitude_envelope_torch(
+            x_m,
+            r_ref_m=float(self.R_ref_m),
+            alt_min_km=self._alt_min_km,
+            alt_max_km=self._alt_max_km,
+            strict=self.strict_domain,
+            already_warned=self._warned_out_of_domain,
+            caller=caller,
+        )
 
     def _base_potential(self, x_phys: torch.Tensor) -> torch.Tensor:
         """Geodesy potential baseline, consistent with :meth:`_base_acceleration`.
@@ -603,18 +590,13 @@ class SurrogateGravityModel:
 
         x_phys = torch.as_tensor(pos, device=self.device, dtype=self._torch_dtype)
         if self._force_runtime is not None:
-            is_direct = str(getattr(self._force_runtime, "runtime_model_kind", "") or "") == "force_direct"
-            if is_direct:
-                delta_u_np = np.full((pos.shape[0], 1), np.nan, dtype=np.float64)
-            else:
-                delta_u_np = np.asarray(self._force_runtime.predict_residual_potential(pos), dtype=np.float64).reshape(-1, 1)
+            delta_u_np = np.asarray(self._force_runtime.predict_residual_potential(pos), dtype=np.float64).reshape(-1, 1)
             delta_a_np = np.asarray(self._force_runtime.predict_residual_accel(pos), dtype=np.float64).reshape(-1, 3)
             potential = torch.as_tensor(delta_u_np, device=self.device, dtype=self._torch_dtype)
             accel = torch.as_tensor(delta_a_np, device=self.device, dtype=self._torch_dtype)
             if self.training_mode == "residual_potential":
                 accel = accel + self._base_acceleration(x_phys)
-                if not is_direct:
-                    potential = potential + self._base_potential(x_phys)
+                potential = potential + self._base_potential(x_phys)
             return (
                 potential.detach().cpu().numpy().astype(np.float64, copy=False),
                 accel.detach().cpu().numpy().astype(np.float64, copy=False),
@@ -669,7 +651,7 @@ class SurrogateGravityModel:
         """
         Move the model and all cached scaling tensors to *device* in-place.
 
-        Call this once before starting a GPU MC run to transfer everything to
+        Call this once before starting a GPU batch run to transfer everything to
         CUDA.  After the call, ``predict_residual_accel_torch`` and
         ``predict_total_accel_torch`` will run natively on that device with no
         host-device transfers per call.
@@ -759,21 +741,6 @@ class SurrogateGravityModel:
 
         out_dtype = x_m.dtype if x_m.is_floating_point() else self._torch_dtype
         x = x_m.to(device=self.device, dtype=self._torch_dtype)
-        if (
-            self._force_runtime is not None
-            and str(getattr(self._force_runtime, "runtime_model_kind", "") or "") == "force_direct"
-        ):
-            with torch.no_grad():
-                x_scaled = self._force_runtime.scaler.scale_x(x)
-                delta_a_scaled = self.model(x_scaled)
-                if delta_a_scaled.ndim != 2 or delta_a_scaled.shape[1] != 3:
-                    raise RuntimeError(
-                        "force_direct ST-LRPS tensor inference requires model output shape (N,3); "
-                        f"got {tuple(delta_a_scaled.shape)}."
-                    )
-                delta_a = self._force_runtime.scaler.unscale_a(delta_a_scaled)
-            return delta_a.detach().to(dtype=out_dtype)
-
         # Single source of truth for scaling: when the canonical runtime is
         # loaded, scale with ITS scaler (the model is already shared via
         # from_model_dir). This collapses the dual-scaler "second truth" — the

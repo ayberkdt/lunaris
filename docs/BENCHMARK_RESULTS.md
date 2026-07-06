@@ -47,8 +47,18 @@ Use these definitions whenever publishing a table or figure.
 | Radial RMS error | km | RIC radial component; closest to altitude error. |
 | Along-track RMS error | km | RIC along-track component; mainly phase/timing drift. |
 | Cross-track RMS error | km | RIC cross-track component; mainly orbital-plane error. |
+| Phase lag | s | Estimated along-track time shift; positive means the model leads the reference. |
+| Phase-corrected RMS | km | Residual RMS after fitting and removing secular phase lag; diagnostic, not a replacement accuracy number. |
+| Energy drift | relative | Relative change in the model trajectory's diagnostic specific energy. |
+| Acceleration max error | m/s² | Maximum acceleration-vector error when acceleration samples are available. |
+| Potential error | m²/s² | Potential error when potential samples are available. |
 | Runtime | s | Wall-clock time for the benchmark stage being reported. |
+| Cold time | s | Load/build/warm-up plus propagation timing. Reported separately from warm timing. |
+| Warm time | s | Timing used for paper tables after load/JIT warm-up. |
+| JIT compile time | s | Cold minus warm timing attributed to JIT/build warm-up when measured. |
 | Steps/s | steps/s | Propagation throughput for the reported backend and hardware. |
+| Acceleration eval/s | eval/s | RHS/acceleration evaluations per wall second, scaled by the active integrator stage count. |
+| Propagated seconds per wall second | s/s | Scenario-duration throughput; useful across different output cadences. |
 | Speedup | dimensionless | Runtime ratio against the named baseline/reference on the same scenario set. |
 
 Always state the comparison frame for vector errors. A high-degree SH DOP853 run
@@ -58,7 +68,7 @@ is a numerical reference, not physical truth.
 
 Every published benchmark table must state:
 
-- ST-LRPS model kind: `potential_autograd` or `force_direct`.
+- ST-LRPS model kind: `potential_autograd` (the only supported kind).
 - Target contract: `target_mode`, `baseline_kind`, baseline degree, target
   degree, and spherical-harmonic convention.
 - Scenario domain: count, seed, altitude/eccentricity/inclination envelope, and
