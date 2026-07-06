@@ -8,7 +8,7 @@
 
 Lunaris is a Python framework for lunar-orbit propagation and gravity modeling. It
 bundles spherical-harmonic lunar gravity, configurable physical force models, orbit
-propagation, batch/ensemble uncertainty analysis, validation harnesses,
+propagation, batch/ensemble injection dispersion analysis, validation harnesses,
 visualization tools, and a PySide6 desktop UI.
 
 It also ships **ST-LRPS** (Sobolev-Trained Lunar Residual Potential Surrogate), a
@@ -155,7 +155,7 @@ src/lunaris/
   common/          [layer 1] shared constants, config dataclasses, math/time helpers
   physics/         [layer 2] Numba force-model kernels, ephemeris (SPICE), gravity adapters
   core/            [layer 3] config (SimConfig SSOT), dynamics RHS, propagator, events, batch ensembles
-  analysis/        [layer 4] post-processing, reports, ensemble uncertainty analysis
+  analysis/        [layer 4] post-processing, reports, ensemble injection dispersion analysis
   visualization/   [layer 4] standalone visualization tools
   ui/              [layer 4] Lunar Orbit Simulator desktop UI (PySide6)
   loaders/         (support) gravity / topography / ephemeris / data loading

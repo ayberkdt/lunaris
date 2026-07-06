@@ -69,3 +69,27 @@ def test_manifest_captures_config_model_and_environment_hashes(tmp_path):
     assert manifest["models"]["truth"]["gravity_file"]["sha256"] == sha256_file(gravity_file)
     assert manifest["models"]["surrogate"]["checkpoint"]["sha256"] == sha256_file(model_dir / "checkpoints" / "ckpt_best.pt")
     assert manifest["environment"]["python_version"]
+    # Frame provenance: config-driven benchmark always propagates the GPU batch
+    # in the rotating Moon-fixed frame (never identity rotation).
+    assert manifest["numerics"]["frame_mode"] == "match_dynamics_engine"
+    assert manifest["numerics"]["uses_frame_rotation"] is True
+
+
+def test_manifest_frame_mode_honors_explicit_override(tmp_path):
+    config_path = tmp_path / "benchmark.json"
+    gravity_file = tmp_path / "gravity.grv"
+    gravity_file.write_text("gravity", encoding="utf-8")
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    config = _config(tmp_path, gravity_file, model_dir)
+    config["propagation"]["frame_mode"] = "inertial_fixed_legacy"
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    manifest = build_benchmark_manifest(
+        config=config,
+        config_path=config_path,
+        resolved_config_sha256=sha256_payload(config),
+        output_dir=tmp_path,
+        cwd=tmp_path,
+    )
+    assert manifest["numerics"]["frame_mode"] == "inertial_fixed_legacy"
+    assert manifest["numerics"]["uses_frame_rotation"] is False

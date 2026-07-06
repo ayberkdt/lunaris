@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
+pytest.importorskip("torch.nn")
 
 from lunaris.batch.engine import BatchPropagationEngine
 from lunaris.surrogate.runtime import SurrogateGravityModel
@@ -51,6 +52,61 @@ def test_potential_autograd_torch_uses_canonical_scaler(tmp_path):
     a_torch = model.predict_residual_accel_torch(x).cpu().numpy()
     a_numpy = np.asarray(fr.predict_residual_accel(x.cpu().numpy()), dtype=np.float64)
     assert np.allclose(a_torch, a_numpy, atol=1e-9)
+
+
+def test_surrogate_to_device_float64_moves_model_and_scalers(tmp_path):
+    art = make_contract_run(tmp_path, degree_min=1)
+    model = SurrogateGravityModel.from_model_dir(str(art["run_dir"]), device_preference="cpu")
+    assert model._force_runtime is not None
+
+    model.to_device(torch.device("cpu"), dtype=torch.float64)
+
+    assert next(model.model.parameters()).dtype == torch.float64
+    assert model._x_mean.dtype == torch.float64
+    assert model._x_scale.dtype == torch.float64
+    assert model._u_mean.dtype == torch.float64
+    assert model._u_scale.dtype == torch.float64
+    assert model._mu_tensor.dtype == torch.float64
+    assert model._force_runtime.scaler._x_mean.dtype == torch.float64
+    assert model._force_runtime.scaler._u_scale.dtype == torch.float64
+
+    x = torch.tensor([[2.038e6, 2.0e4, -1.0e4]], dtype=torch.float64)
+    a_torch = model.predict_residual_accel_torch(x)
+    assert a_torch.dtype == torch.float64
+
+    diag = model.dtype_diagnostics(requested_dtype=torch.float64)
+    assert diag["requested_dtype"] == "float64"
+    assert diag["effective_dtype"] == "float64"
+    assert diag["model_dtype"] == "float64"
+    assert diag["scaler_dtype"] == "float64"
+    assert diag["force_runtime_scaler_dtype"] == "float64"
+    assert diag["dtype_downgraded"] is False
+
+
+def test_torch_batch_diagnostics_report_effective_surrogate_dtype(tmp_path, monkeypatch):
+    from lunaris.core.torch_batch_propagator import TorchBatchPropagator
+
+    art = make_contract_run(tmp_path, degree_min=1)
+    model = SurrogateGravityModel.from_model_dir(str(art["run_dir"]), device_preference="cpu")
+    model.to_device(torch.device("cpu"), dtype=torch.float64)
+
+    prop = object.__new__(TorchBatchPropagator)
+    prop._torch = torch
+    prop._device = torch.device("cpu")
+    prop._model = model
+    prop._dtype = torch.float64
+    prop._frame = SimpleNamespace(uses_rotation=False)
+    prop._throughput_metrics = {}
+
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda idx: "FakeCUDA")
+
+    diag = prop.diagnostics_snapshot()
+    assert diag["requested_dtype"] == "float64"
+    assert diag["effective_dtype"] == "float64"
+    assert diag["model_dtype"] == "float64"
+    assert diag["scaler_dtype"] == "float64"
+    assert diag["force_runtime_scaler_dtype"] == "float64"
+    assert diag["dtype_downgraded"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -96,3 +152,52 @@ def test_handle_backend_init_failure_downgrades_when_allowed():
     assert plan.fallback_applied is True
     assert plan.use_gpu is False
     assert eng._backend_note is not None
+
+
+def test_downgrade_to_cpu_rewrites_full_provenance_st_lrps():
+    """A GPU->CPU downgrade must relabel EVERY provenance field so a CPU run is
+    never presented as a GPU run (Phase 8: no run labelled GPU when CPU used)."""
+    from lunaris.batch.backend_policy import BatchBackend
+
+    plan = SimpleNamespace(
+        gravity_backend="st_lrps",
+        final_backend=BatchBackend.GPU_ST_LRPS,
+        use_gpu=True,
+        actual_backend="gpu_st_lrps",
+        actual_sh_degree=200,
+        actual_device="cuda:0",
+        cuda_device_name="FakeGPU",
+        dtype="float32",
+        integrator="fixed RK4",
+    )
+    BatchPropagationEngine._downgrade_plan_to_cpu(plan, "cuda unavailable")
+
+    assert plan.final_backend == BatchBackend.CPU
+    assert plan.use_gpu is False
+    assert plan.actual_backend == "cpu_st_lrps"
+    assert plan.actual_sh_degree is None
+    assert plan.actual_device == "cpu"
+    assert plan.cuda_device_name is None
+    assert plan.dtype == "float64"
+    assert "DOP853" in plan.integrator
+    assert plan.fallback_applied is True
+    assert plan.fallback_reason == "cuda unavailable"
+
+
+def test_downgrade_to_cpu_uses_cpu_sh_for_classic_backend():
+    from lunaris.batch.backend_policy import BatchBackend
+
+    plan = SimpleNamespace(
+        gravity_backend="sh",
+        final_backend=BatchBackend.GPU_CLASSIC_SH,
+        use_gpu=True,
+        actual_backend="numba_cuda_sh",
+        actual_sh_degree=24,
+        actual_device="cuda:0",
+        cuda_device_name="FakeGPU",
+        dtype="float32",
+        integrator="fixed RK4",
+    )
+    BatchPropagationEngine._downgrade_plan_to_cpu(plan, "cuda oom")
+    assert plan.actual_backend == "cpu_sh"
+    assert plan.use_gpu is False

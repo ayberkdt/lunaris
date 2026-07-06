@@ -14,7 +14,7 @@ session works through, in order:
 2. **ST-LRPS training**
 3. **ST-LRPS evaluation**
 4. **Orbit-level gravity benchmark / validation**
-5. **Batch propagation / uncertainty ensembles**
+5. **Batch propagation / injection dispersion ensembles**
 
 > **Keep GUIs off compute nodes.** The desktop UI (`lunaris-ui`) and the ST-LRPS
 > Studio (`lunaris-studio`) are interactive tools. Do not install or launch them
@@ -213,7 +213,7 @@ before submitting.
 | ST-LRPS training | `hpc/slurm_train_stlrps.sbatch` | `lunaris-train` |
 | ST-LRPS scenario arrays (sweeps) | `hpc/slurm_train_scenario_array.sbatch` | `tools/hpc/run_training_scenario.py` |
 | Orbit-level gravity benchmark / validation | `hpc/slurm_benchmark_gpu.sbatch` | `lunaris-benchmark` |
-| Batch propagation / uncertainty ensembles | `hpc/slurm_batch_array.sbatch` | `lunaris-batch` |
+| Batch propagation / injection dispersion ensembles | `hpc/slurm_batch_array.sbatch` | `lunaris-batch` |
 
 ### 1. ST-LRPS training (primary workload)
 
@@ -380,7 +380,7 @@ sbatch hpc/slurm_benchmark_gpu.sbatch \
   --output-dir "$LUNARIS_OUTPUT_DIR/gravity_benchmark/<run_name>"
 ```
 
-### 3. Batch propagation / uncertainty ensembles
+### 3. Batch propagation / injection dispersion ensembles
 
 ```bash
 sbatch hpc/slurm_batch_array.sbatch \

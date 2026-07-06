@@ -247,16 +247,17 @@ def test_laplacian_train_mode_has_gradients():
 def test_laplacian_requested_by_strong_benchmark_default():
     cfg = TrainConfig(data="x.h5", out="o")
     assert _laplacian_requested(cfg) is True
-    assert _laplacian_requested(
-        TrainConfig(
-            data="x",
-            out="o",
-            use_laplacian_regularization=False,
-            laplacian_weight=0.0,
-            collocation_laplacian_weight=0.0,
-            laplacian_mode="off",
-        )
-    ) is False
+    # laplacian_mode="off" is a hard-disable that wins even over stale nonzero
+    # weights / compatibility flags.
+    assert _laplacian_requested(TrainConfig(
+        data="x",
+        out="o",
+        laplacian_mode="off",
+        use_laplacian_regularization=True,
+        laplacian_weight=1e-6,
+        collocation_laplacian_weight=1e-6,
+    )) is False
+    # Any explicit request flips it on.
     assert _laplacian_requested(TrainConfig(data="x", out="o", laplacian_mode="train")) is True
     assert _laplacian_requested(TrainConfig(data="x", out="o", use_laplacian_regularization=True)) is True
     assert _laplacian_requested(TrainConfig(data="x", out="o", collocation_laplacian_weight=1e-12)) is True

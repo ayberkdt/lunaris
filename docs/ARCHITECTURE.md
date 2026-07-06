@@ -77,8 +77,10 @@ Numerical engine and configuration.
 Post-processing and presentation.
 - `analysis/postprocess.py` — orbital elements, invariants, metrics.
 - `analysis/reporting/` — report `manager`, `plotting`, `styling`.
-- `analysis/ensemble/` — canonical ensemble uncertainty `statistics`,
-  `plotting`, UQ reports, linear covariance checks, and result audits.
+- `analysis/ensemble/` — canonical ensemble dispersion `statistics`,
+  `plotting`, UQ reports, linear covariance checks, and result audits. The
+  historical `analysis/monte_carlo/` analysis namespace has been removed; use
+  `analysis/ensemble/` directly.
 - `analysis/frozen/` — frozen-orbit candidate metrics, scoring, and
   candidate-vs-validated classification for the staged search workflow.
 - `analysis/perturbation_budget/` — mission-analysis acceleration budgets,

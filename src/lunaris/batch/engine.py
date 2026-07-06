@@ -92,7 +92,7 @@ def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
 
 class BatchPropagationEngine:
     """
-    Orchestrates a full batch/ensemble orbital uncertainty propagation run.
+    Orchestrates a full batch/ensemble injection-dispersion propagation run.
 
     Workflow
     ----------

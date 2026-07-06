@@ -431,17 +431,24 @@ def move_batch_to_device(
     )
 
 def _laplacian_requested(cfg: TrainConfig) -> bool:
-    """Return True only if the user explicitly asked for any Laplacian work.
+    """Return True when the config asks for any Laplacian work.
 
-    With the default config (use_laplacian_regularization=False,
-    laplacian_mode="diagnostic", collocation_laplacian_weight=0,
-    laplacian_weight=0) this is False, so normal training does ZERO Laplacian
-    computation — no in-batch penalty, no collocation diagnostics, no autograd
-    overhead, and no Laplacian term in the objective.
+    The strong benchmark default (use_laplacian_regularization=True,
+    laplacian_weight>0, laplacian_mode="diagnostic") requests Laplacian work.
+    A config with all Laplacian flags/weights off/zero returns False, so normal
+    training then does ZERO Laplacian computation — no in-batch penalty, no
+    collocation diagnostics, no autograd overhead, no Laplacian term.
+
+    ``laplacian_mode="off"`` is an explicit hard-disable. It wins over stale
+    nonzero weights or compatibility flags so a config can turn all Laplacian
+    work off without also cleaning every related field.
     """
+    mode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
+    if mode == "off":
+        return False
     return (
         bool(getattr(cfg, "use_laplacian_regularization", False))
-        or str(getattr(cfg, "laplacian_mode", "off")).strip().lower() == "train"
+        or mode == "train"
         or float(getattr(cfg, "collocation_laplacian_weight", 0.0)) > 0.0
         or float(getattr(cfg, "laplacian_weight", 0.0)) > 0.0
     )
@@ -516,8 +523,6 @@ class STLRPSTrainer:
         self.laplacian_requested: bool = _laplacian_requested(cfg)
         _lmode = str(getattr(cfg, "laplacian_mode", "diagnostic")).strip().lower()
         if _lmode not in ("off", "diagnostic", "train"):
-            _lmode = "diagnostic"
-        if _lmode == "off" and bool(getattr(cfg, "use_laplacian_regularization", False)):
             _lmode = "diagnostic"
         self.laplacian_mode: str = _lmode
 

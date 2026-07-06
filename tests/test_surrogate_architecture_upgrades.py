@@ -141,16 +141,16 @@ def test_current_defaults_are_single_source_of_truth(tmp_path, monkeypatch):
 def test_laplacian_requested_by_strong_benchmark_default():
     cfg = TrainConfig(data="x.h5", out="o")
     assert _laplacian_requested(cfg) is True
-    assert _laplacian_requested(
-        TrainConfig(
-            data="x",
-            out="o",
-            use_laplacian_regularization=False,
-            laplacian_weight=0.0,
-            collocation_laplacian_weight=0.0,
-            laplacian_mode="off",
-        )
-    ) is False
+    # laplacian_mode="off" is a hard-disable that wins even over stale nonzero
+    # weights / compatibility flags.
+    assert _laplacian_requested(TrainConfig(
+        data="x",
+        out="o",
+        laplacian_mode="off",
+        use_laplacian_regularization=True,
+        laplacian_weight=1e-6,
+        collocation_laplacian_weight=1e-6,
+    )) is False
     assert _laplacian_requested(TrainConfig(data="x", out="o", use_laplacian_regularization=True)) is True
     assert _laplacian_requested(TrainConfig(data="x", out="o", laplacian_weight=1e-12)) is True
     assert _laplacian_requested(TrainConfig(data="x", out="o", collocation_laplacian_weight=1e-12)) is True

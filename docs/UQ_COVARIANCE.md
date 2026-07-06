@@ -4,6 +4,14 @@ This page documents the ensemble uncertainty-quantification (UQ) report:
 what the propagated covariance *is*, how to produce a provenance-stamped UQ
 run, what the outputs contain, and how the result is validated.
 
+**Terminology.** The batch workflow that perturbs injection conditions and
+spacecraft parameters is the **Injection Dispersion Analysis** (Enjeksiyon
+Tolerans Analizi). The **UQ report** described here is the covariance
+*evidence product* generated from an ensemble archive of such a run. Neither
+is orbit determination, navigation covariance, or process-noise estimation;
+"force-model uncertainty" (perturbation budget) and numerical solver
+"tolerances" remain separate concepts.
+
 ## What the covariance is (and is not)
 
 > The reported covariance is the **unbiased sample covariance** (`ddof=1`) of

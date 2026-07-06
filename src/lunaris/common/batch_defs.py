@@ -3,10 +3,10 @@
 Batch Propagation Configuration Definitions
 ===========================================
 
-Configuration dataclasses for batch/ensemble uncertainty propagation. Random
-Monte Carlo is one sampling design; Latin-hypercube and Sobol designs are also
-available for validation-oriented batch propagation. All types follow the
-project SSOT pattern: frozen dataclasses with __post_init__ validation.
+Configuration dataclasses for batch/ensemble injection-dispersion propagation.
+Random Monte Carlo is one sampling design; Latin-hypercube and Sobol designs
+are also available for validation-oriented batch propagation. All types follow
+the project SSOT pattern: frozen dataclasses with __post_init__ validation.
 
 Layers
 ------
@@ -234,7 +234,7 @@ class BatchPropagationConfig:
     ``sampling_method="random"`` is the Monte Carlo sampling design. Use
     ``"lhs"``, ``"sobol"``, or ``"sobol_scrambled"`` when the goal is a
     space-filling validation or benchmark design rather than a purely random
-    uncertainty draw.
+    injection-dispersion draw.
 
     Routing
     -------
@@ -278,7 +278,7 @@ class BatchPropagationConfig:
     seed: int = 42
     sampling_method: str = "random"
 
-    # Uncertainty models
+    # Injection-dispersion models
     state: StateUncertainty = field(default_factory=StateUncertainty)
     spacecraft: SpacecraftUncertainty = field(default_factory=SpacecraftUncertainty)
 
@@ -299,8 +299,8 @@ class BatchPropagationConfig:
     # substituting).  The requested degree is never clipped.
     sh_fallback_policy: str = "compatible_gpu"
 
-    # Torch classic-SH path (torch_cuda_sh) controls.
-    torch_dtype: str = "float64"    # "float32" or "float64" for the torch SH path
+    # Torch backend controls (torch_cuda_sh and GPU ST-LRPS paths).
+    torch_dtype: str = "float64"    # "float32" or "float64" for torch backends
     torch_sh_chunk_size: int = 0    # 0 = auto (VRAM-aware); else samples per GPU chunk
 
     # Fixed-step RK4 integration (GPU path)
