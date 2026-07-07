@@ -56,7 +56,9 @@ Numerical engine and configuration.
   config; `validate()` does cross-field checks).
 - `dynamics/` — assembles a Numba-compiled RHS closure by wiring the active
   physics models together. `dynamics.engine` owns `DynamicsEngine` and the
-  jitted RHS closure;
+  jitted RHS closure; `dynamics.preparation` owns the config->pack stage
+  (requirement computation, dependency validation, and the `prepare_*`
+  provider-to-pack conversions) as pure module-level functions;
   `requirements`, `gravity_pack`, `ephemeris_pack`, `perturbation_packs`,
   `adaptive_degree`, and `surrogate_bridge` own validation helpers, data packs,
   adaptive kernels, and surrogate-provider detection without changing the hot
