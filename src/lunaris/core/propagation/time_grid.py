@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.core.dynamics import DynamicsEngine
 
@@ -25,16 +26,8 @@ def make_time_grid(t0: float, tf: float, dt: float) -> np.ndarray:
     if (not np.isfinite(t0)) or (not np.isfinite(tf)) or (tf <= t0) or (dt <= 0.0) or (not np.isfinite(dt)):
         return np.array([t0, tf], dtype=np.float64)
 
-    n = int(math.floor((tf - t0) / dt))
-    if n < 1:
-        return np.array([t0, tf], dtype=np.float64)
-
-    t = t0 + np.arange(n + 1, dtype=np.float64) * dt
-    if t[-1] < tf:
-        t = np.append(t, tf)
-    else:
-        t[-1] = tf
-    return t
+    t_rel, _n_snaps, _snap = build_batch_output_grid(tf - t0, dt)
+    return np.ascontiguousarray(t0 + t_rel, dtype=np.float64)
 
 def _clamp_output_dt(t0: float, tf: float, dt_out: float, cap: int, verbose: bool) -> float:
     dt = float(dt_out)

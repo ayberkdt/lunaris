@@ -26,14 +26,19 @@ own training, evaluation, and Studio UI.
 > CPU trajectory — that measures the wrong path. Compare like-for-like on the GPU
 > batch backend. See [docs/profiling.md](docs/profiling.md).
 >
-> **GPU ST-LRPS currently supports lunar gravity surrogate propagation only.**
-> It is not a full-dynamics propagator: third-body, SRP, albedo, thermal IR,
-> solid tides, and relativity are not evaluated on the GPU ST-LRPS path.
-> Requesting them produces an explicit, recorded CPU fallback (never a silent
-> simplification); see [docs/backend_matrix.md](docs/backend_matrix.md).
-> Non-gravity perturbations are handled separately in validation or future
-> hybrid backends, and gravity-only results are never mixed with full-dynamics
-> results in a single benchmark table.
+> **GPU ST-LRPS supports two backend variants:**
+>
+> - `gpu_st_lrps_potential`: surrogate lunar gravity only.
+> - `gpu_st_lrps_third_body`: surrogate lunar gravity **plus analytic vectorized
+>   Sun/Earth third-body** (Battin F(q) formulation).
+>
+> SRP, albedo, thermal IR, solid tides, relativity, and Earth J2 remain
+> unsupported on GPU ST-LRPS and trigger a recorded CPU fallback or a hard
+> error depending on the strict/backend policy — never a silent simplification;
+> see [docs/backend_matrix.md](docs/backend_matrix.md). Non-gravity
+> perturbations are handled separately in validation or future hybrid backends,
+> and gravity-only results are never mixed with full-dynamics results in a
+> single benchmark table.
 
 > **Project status.** Lunaris is **actively developed research software** with
 > versioned on-disk contracts (datasets, checkpoints, runtime, and benchmark
@@ -49,6 +54,7 @@ This README is a landing page; the canonical detail lives in `docs/`.
 
 | Document | Contents |
 |----------|----------|
+| [docs/README.md](docs/README.md) | Documentation index, including development notes and subsystem guides |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layered design, data flow, configuration model, **force-model / perturbation flags**, batch/ensemble propagation internals, ST-LRPS surrogate |
 | [docs/ST_LRPS_VALIDATION_HYGIENE.md](docs/ST_LRPS_VALIDATION_HYGIENE.md) | Train-only scalers, spatial/OOD split policies, runtime frame safety, paper-safe benchmarks, validation + ablation suites |
 | [docs/BENCHMARK_RESULTS.md](docs/BENCHMARK_RESULTS.md) | Full gravity-model benchmark tables and reproduction steps |
@@ -243,7 +249,8 @@ design: `random` is the classical Monte Carlo design, while `lhs`, `sobol`, and
 coverage.
 
 Batch backends are explicit (`cpu_sh` truth reference, `numba_cuda_sh`,
-`torch_cuda_sh`, `torch_cpu_sh`, `gpu_st_lrps_potential`). Selection is resolved centrally by
+`torch_cuda_sh`, `torch_cpu_sh`, `gpu_st_lrps_potential`,
+`gpu_st_lrps_third_body`). Selection is resolved centrally by
 `lunaris.batch.backend_policy`, and the requested vs. effective backend,
 device, integrator, sampling method, and any fallback reason are recorded in the
 batch result diagnostics rather than applied silently. The perturbation budget

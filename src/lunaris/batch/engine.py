@@ -25,7 +25,7 @@ from lunaris.batch.requirements import (
     _impact_positions_fixed,
     _need_ephemeris,
     _state_to_array,
-    _surface_topography_requested,
+    _topography_requested,
 )
 from lunaris.batch.sampling import (
     _sobol_size_note,
@@ -52,6 +52,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from lunaris.batch.backend_policy import BatchBackendPlan
+
+_surface_topography_requested = _topography_requested
 
 _BACKEND_DISPLAY_NAMES = {
     "cpu_sh": "CPU",
@@ -226,7 +228,7 @@ class BatchPropagationEngine:
         ephem_manager = None
         use_st_lrps_gravity = False
         surface_provider = self._surface_provider
-        topo_requested = _surface_topography_requested(surface_provider, self._topo_grid)
+        topo_requested = _topography_requested(surface_provider, self._topo_grid)
 
         if bool(cfg.flags.enable_sh):
             try:

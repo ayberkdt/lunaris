@@ -23,7 +23,8 @@ from lunaris.cli.options import parse_args
 from lunaris.cli.summary import median_dt, print_summary
 from lunaris.common.constants import DAY_S, DEG2RAD, MU_MOON, R_MOON
 from lunaris.common.force_requirements import force_requirements_for_config
-from lunaris.common.type_defs import InitialState, PropagationResult
+from lunaris.common.state_vector import normalize_cartesian_state
+from lunaris.common.type_defs import PropagationResult
 from lunaris.core.config import SimConfig, load_default_config
 
 if TYPE_CHECKING:
@@ -98,31 +99,13 @@ def init_ephemeris(cfg: SimConfig, tf_s: float) -> EphemerisManager:
 
 
 def _y0_to_array(y0: Any) -> np.ndarray:
-    """Strict: produce a 1D float array (>=6) for propagate()."""
-    if y0 is None:
-        raise ValueError("Initial state (y0) is None.")
+    """Strict: produce the exact 6/7-element float64 vector propagate() supports.
 
-    # common.type_defs.InitialState
-    if hasattr(y0, "to_array"):
-        arr = np.asarray(y0.to_array(), dtype=float).reshape(-1)
-    # core.state.OrbitState (or similar): packed vector via `.y`
-    elif hasattr(y0, "y"):
-        arr = np.asarray(y0.y, dtype=float).reshape(-1)
-    # Plain object with x,y,z,vx,vy,vz
-    elif all(hasattr(y0, k) for k in ("x", "y", "z", "vx", "vy", "vz")):
-        arr = np.asarray(
-            (
-                y0.x, y0.y, y0.z,
-                y0.vx, y0.vy, y0.vz,
-            ),
-            dtype=float,
-        ).reshape(-1)
-    else:
-        arr = np.asarray(y0, dtype=float).reshape(-1)
-
-    if arr.size < 6:
-        raise ValueError(f"Initial state must have at least 6 elements, got {arr.size}.")
-    return arr.astype(float, copy=False)
+    Accepts ``InitialState`` (``to_array()``), ``OrbitState``-like packed ``.y``
+    vectors, plain x/y/z/vx/vy/vz records, or raw array-likes. Oversized states
+    are rejected here rather than failing later inside DynamicsEngine.
+    """
+    return normalize_cartesian_state(y0, allow_mass=True, name="Initial state")
 
 
 def main() -> int:
@@ -144,7 +127,7 @@ def main() -> int:
         return 1
 
     # Gravity model (STRICT)
-    gravity_core = None
+    gravity_core: Any | None = None
     mu = float(MU_MOON)
     try:
         if bool(cfg.flags.enable_sh) and cfg.gravity.uses_st_lrps:
@@ -202,7 +185,7 @@ def main() -> int:
     topo_grid = None
     if surface_provider is not None and hasattr(surface_provider, "grids"):
         try:
-            topo_grid = surface_provider.grids().topo  # type: ignore[attr-defined]
+            topo_grid = surface_provider.grids().topo
         except Exception:
             topo_grid = None
 
@@ -217,7 +200,7 @@ def main() -> int:
 
     # Initial state: if orbit init flags provided -> COE -> Cartesian; else cfg.initial_state
     orbit_params: dict[str, float] | None = None
-    y0: InitialState = cfg.initial_state
+    y0: Any = cfg.initial_state
 
     orbit_init_requested = any(
         v is not None
@@ -230,7 +213,7 @@ def main() -> int:
         try:
             orbit_params = resolve_orbit_elements(args)
             a_m = float(orbit_params["a_km"]) * 1000.0
-            e = float(orbit_params["e"])
+            ecc = float(orbit_params["e"])
             inc = float(orbit_params["inc_deg"]) * DEG2RAD
             raan = float(orbit_params["raan_deg"]) * DEG2RAD
             argp = float(orbit_params["argp_deg"]) * DEG2RAD
@@ -241,7 +224,7 @@ def main() -> int:
 
             y0 = create_state_from_keplerian(
                 semi_major_axis=a_m,
-                eccentricity=e,
+                eccentricity=ecc,
                 inclination=inc,
                 raan=raan,
                 argp=argp,
