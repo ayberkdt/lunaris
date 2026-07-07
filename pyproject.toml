@@ -222,6 +222,14 @@ files = [
   "src/lunaris/common",
   "src/lunaris/core",
   "src/lunaris/physics",
+  # --- Batch/CLI contracts and archive plumbing ---
+  "src/lunaris/batch/backend_policy.py",
+  "src/lunaris/batch/requirements.py",
+  "src/lunaris/batch/storage.py",
+  "src/lunaris/batch/provenance.py",
+  "src/lunaris/cli/options.py",
+  "src/lunaris/cli/common_args.py",
+  "src/lunaris/cli/run.py",
   # --- ST-LRPS foundational SSOT layers (shared contracts, scaling, constants) ---
   "src/lunaris/surrogate/st_lrps/shared/capabilities.py",
   "src/lunaris/surrogate/st_lrps/shared/contracts.py",

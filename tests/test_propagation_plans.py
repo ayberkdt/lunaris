@@ -140,6 +140,29 @@ def test_step_size_policy_invalid_nyquist_falls_back_to_output_dt() -> None:
     assert plan.limiting_reason == "output_dt_fallback"
 
 
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
+def test_step_size_policy_rejects_invalid_user_max_step(bad: float) -> None:
+    cfg = SimpleNamespace(
+        use_nyquist_max_step=True,
+        user_max_step_s=bad,
+        nyquist_safety_div=8.0,
+        nyquist_v_margin=1.2,
+        events=EventConfig(detect_impact=False, enable_peri_apo_events=False),
+    )
+
+    with pytest.raises(ValueError, match="user_max_step_s must be positive and finite"):
+        resolve_step_size_policy(
+            cfg=cfg,
+            y0=_state(),
+            R_ref_m=float(R_MOON),
+            mu_m3s2=float(MU_MOON),
+            sh_degree=10,
+            output_dt_s=300.0,
+            topo_present=False,
+            nyquist_func=lambda **_kwargs: 50.0,
+        )
+
+
 def test_integration_plan_distinguishes_fixed_step_and_chunked_scipy() -> None:
     fixed = resolve_integration_plan(_cfg(method="VV"), duration_s=100.0)
     assert fixed.backend == "fixed_step"

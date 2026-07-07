@@ -37,6 +37,10 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.contracts.batch_archive import (
+    BATCH_ARCHIVE_SCHEMA_VERSION,
+    REQUIRED_ARCHIVE_V2_FIELDS,
+)
 from lunaris.common.hashing import canonical_json_sha256
 
 # Hash-provenance keys written by BatchPropagationEngine.run (§7). Presence of any one
@@ -49,23 +53,9 @@ _PROVENANCE_HASH_KEYS = (
 )
 _SHA256_HEX_LENGTH = 64
 
-# Mirrors ``batch.engine.REQUIRED_ARCHIVE_V2_FIELDS`` so this module stays
-# importable without the heavy engine deps. A v2 archive missing any of these
-# declares the v2 contract but was not produced by a complete BatchPropagationEngine
-# run -> INVALID (the strict loader rejects the same archives).
-_REQUIRED_V2_FIELDS = (
-    "archive_schema_version",
-    "n_samples",
-    "seed",
-    "duration_s",
-    "output_dt_s",
-    "backend",
-    "requested_batch_backend",
-    "actual_batch_backend",
-    "batch_backend",
-    "detect_impact",
-    "compute_impact_statistics",
-)
+# Shared batch archive contract. This stays dependency-light because the registry
+# lives under ``lunaris.common`` rather than the batch engine.
+_REQUIRED_V2_FIELDS = REQUIRED_ARCHIVE_V2_FIELDS
 
 # ST-LRPS run_provenance contract (mirrors
 # ``lunaris.surrogate.st_lrps.artifacts.manager.build_run_provenance``). Two
@@ -128,13 +118,13 @@ def classify_batch_archive(metadata: dict[str, Any], *, has_impacts: bool) -> tu
             f"archive_schema_version is not an integer ({raw_version!r}): corrupt manifest"
         ]
 
-    if version < 2:
+    if version < BATCH_ARCHIVE_SCHEMA_VERSION:
         return INVALID, [
-            f"unsupported archive schema v{version}: regenerate with schema v2"
+            f"unsupported archive schema v{version}: regenerate with schema v{BATCH_ARCHIVE_SCHEMA_VERSION}"
         ]
-    if version > 2:
+    if version > BATCH_ARCHIVE_SCHEMA_VERSION:
         return INVALID, [
-            f"unsupported archive schema v{version}: this auditor expects schema v2"
+            f"unsupported archive schema v{version}: this auditor expects schema v{BATCH_ARCHIVE_SCHEMA_VERSION}"
         ]
 
     missing = [f for f in _REQUIRED_V2_FIELDS if f not in metadata]

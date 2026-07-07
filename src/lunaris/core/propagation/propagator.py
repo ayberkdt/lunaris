@@ -22,11 +22,7 @@ from scipy.integrate import solve_ivp
 from lunaris.common.constants import R_MOON
 
 logger = logging.getLogger(__name__)
-from lunaris.common.math_utils import (
-    nyquist_max_step_s,
-    recommended_sh_degree,
-    specific_energy_drift_stats,
-)
+from lunaris.common.math_utils import nyquist_max_step_s, specific_energy_drift_stats
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig, TimeConfig
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagation.checkpoint import (
@@ -34,6 +30,7 @@ from lunaris.core.propagation.checkpoint import (
     _checkpoint_metadata,
     _stop_requested,
 )
+from lunaris.core.propagation.diagnostics import build_propagation_diagnostics
 from lunaris.core.propagation.events import (
     EventOutcome,
     _build_r_i_to_bf_from_rot_table,
@@ -42,26 +39,15 @@ from lunaris.core.propagation.events import (
     build_events,
     event_outcome_from_solver_events,
 )
+from lunaris.core.propagation.fixed_step_runner import run_fixed_step_propagation
 from lunaris.core.propagation.integrators.fixed_step import (
-    _ACCEL_METHODS,
-    _RHS_METHODS,
-    _accel_stepper,
-    _fixed_step_requires_6d,
     _integrate_fixed_step,
     _is_fixed_step_method,
-    _is_symplectic_method,
     symplectic_breaks_separability,
     symplectic_nonconservative_gravity,
     symplectic_nonconservative_violations,
 )
-from lunaris.core.propagation.integrators.rk import _rk4_step_full, _rk8_step_full
 from lunaris.core.propagation.integrators.scipy import _resolve_scipy_method
-from lunaris.core.propagation.integrators.symplectic import (
-    _Y4_WEIGHTS,
-    _Y6_WEIGHTS,
-    _Y8_WEIGHTS,
-    _composition_weights,
-)
 from lunaris.core.propagation.plans import (
     IntegrationPlan,
     StepSizePlan,
@@ -77,10 +63,8 @@ from lunaris.core.propagation.telemetry import (
     _make_telem_dict,
 )
 from lunaris.core.propagation.time_grid import (
-    _clamp_output_dt,
     _get_ref_radius_and_mu,
     _get_sh_degree,
-    _norm_method,
     make_time_grid,
 )
 
@@ -136,18 +120,6 @@ def _rhs_path_for_diagnostics(dynamics: Any) -> str:
     if grav is None:
         return "point_mass_python"
     return "unknown"
-
-
-def _uses_surrogate_python_autograd(dynamics: Any, rhs_path: str) -> bool:
-    """True when a single-trajectory run is using the interpreted ST-LRPS path."""
-
-    if rhs_path == "surrogate_python_autograd":
-        return True
-    grav = getattr(dynamics, "grav", None)
-    return bool(
-        getattr(grav, "model_kind", None) == "st_lrps"
-        and "surrogate" in str(rhs_path)
-    )
 
 
 def propagate(
@@ -363,28 +335,12 @@ def propagate(
     # 5) Integrate
     # -------------------------------------------------------------------------
     if integration_plan.backend == "fixed_step":
-        meth_name = integration_plan.method
-        if verbose:
-            logger.info(
-                f"[PROP] Fixed-step {meth_name}: dt_out={dt_out:g}s, max_step={max_step:.6f}s"
-            )
-
-        if _fixed_step_requires_6d(meth_name) and y0_arr.size != 6:
-            raise ValueError(
-                f"Fixed-step method {meth_name!r} (symplectic/Nystrom) supports only the 6D state "
-                "[x,y,z,vx,vy,vz]. "
-                f"Got initial state size={int(y0_arr.size)}. Use RK4 or a SciPy integrator (e.g., "
-                "DOP853/RK45) for augmented states."
-            )
-
-        y0_fixed = y0_arr[:6] if _fixed_step_requires_6d(meth_name) else y0_arr
-
-        ode_like, impacted, t_imp, y_imp, stopped_early, stop_reason, t_stop = _integrate_fixed_step(
+        res = run_fixed_step_propagation(
             rhs=rhs,
             t_eval=t_eval,
-            y0=y0_fixed,
-            max_step=max_step,
-            method=meth_name,
+            y0=y0_arr,
+            max_step_s=max_step,
+            method=integration_plan.method,
             events=events,
             R_ref_m=float(R_ref_m),
             mu_m3s2=float(mu_m3s2),
@@ -393,35 +349,12 @@ def propagate(
             stop_file=stop_file,
             checkpoint_path=checkpoint_path,
             checkpoint_metadata=checkpoint_meta,
-        )
-
-        t_out = np.asarray(ode_like.t, dtype=np.float64)
-        y_row = np.asarray(ode_like.y, dtype=np.float64).T  # (N,6)
-        outcome = EventOutcome(
-            impacted=bool(impacted),
-            t_impact_s=(float(t_imp) if t_imp is not None else None),
-            y_impact=(np.asarray(y_imp, dtype=np.float64) if y_imp is not None else None),
-            stopped_early=bool(stopped_early),
-            stop_reason=stop_reason if stop_reason else ("impact" if impacted else None),
-            t_stop_s=t_stop,
-        )
-
-        res = PropagationResult(
-            t=t_out,
-            y=y_row,
-            ode=ode_like,
-            t_events=list(getattr(ode_like, "t_events", [])),
-            y_events=list(getattr(ode_like, "y_events", [])),
-            impacted=outcome.impacted,
-            t_impact_s=outcome.t_impact_s,
-            y_impact=outcome.y_impact,
-            stopped_early=outcome.stopped_early,
-            stop_reason=outcome.stop_reason,
-            t_stop_s=outcome.t_stop_s,
-            diagnostics={},
+            logger=logger,
         )
 
     else:
+        # TODO(P3): extract the SciPy/chunked branch into ``scipy_runner.py` once
+        # the diagnostics and fixed-step seams have stayed stable.
         if solve_ivp is None:
             raise ImportError("SciPy is required for adaptive integration (solve_ivp not available).")
 
@@ -667,75 +600,25 @@ def propagate(
     # 6) Diagnostics + Optional 2-body baseline
     # -------------------------------------------------------------------------
     wall = time.perf_counter() - t_wall0
-    nfev = float(getattr(res.ode, "nfev", np.nan)) if res.ode is not None else np.nan
-    res.diagnostics = {
-        "diagnostics_schema_version": 1,
-        "wall_time_s": float(wall),
-        "output_dt_s": float(dt_out),
-        "requested_output_dt_s": time_plan.requested_output_dt_s,
-        "realized_output_dt_s": time_plan.realized_output_dt_s,
-        "output_grid_max_points_cap": float(time_plan.max_points_cap),
-        "max_step_s": float(max_step),
-        "requested_user_max_step_s": step_plan.user_max_step_s,
-        "nyquist_max_step_s": float(step_plan.nyquist_max_step_s),
-        "actual_max_step_s": float(step_plan.actual_max_step_s),
-        "max_step_limiting_reason": step_plan.limiting_reason,
-        "nyquist_r_min_alt_km": step_plan.nyquist_r_min_alt_km,
-        "sh_degree_for_step_policy": float(step_plan.sh_degree),
-        "periapsis_alt_km_for_step_policy": step_plan.periapsis_alt_km,
-        "degree": float(degree),
-        "n_points": float(res.t.size),
-        "nfev": float(nfev) if np.isfinite(nfev) else float("nan"),
-        "integration_backend": integration_plan.backend,
-        "integrator": integration_plan.method,
-        "integration_chunk_s": integration_plan.chunk_s,
-        "rhs_path": rhs_path,
-        "method_symplectic": float(1.0 if _is_symplectic_method(getattr(cfg, "method", "DOP853")) else 0.0),
-        "symplectic_violation": float(1.0 if _violations else 0.0),
-    }
-    if _uses_surrogate_python_autograd(dynamics, rhs_path):
-        res.diagnostics["single_run_stlrps_cpu_warning"] = True
-        res.diagnostics["benchmark_comparable_to_numba_sh"] = False
-    if _violations:
-        res.diagnostics["symplectic_violation_forces"] = list(_violations)
-
-    # Energy / angular-momentum drift over the trajectory. This is a combined
-    # physical+numerical drift on the full run (a bounded oscillation is physical;
-    # a monotone secular trend signals numerical error). It is a *pure* numerical
-    # accuracy proxy on the conservative/autonomous 2-body baseline below.
-    try:
-        for _k, _v in specific_energy_drift_stats(res.t, res.y, float(mu_m3s2)).items():
-            res.diagnostics[_k] = float(_v)
-    except Exception:
-        # R29b-justified: optional diagnostics enrichment; the trajectory itself
-        # is already computed and returned unchanged.
-        pass
-
-    # SH truncation-degree adequacy for the orbit's periapsis altitude. Below the
-    # recommended degree, low-degree truncation (not the integrator) is the
-    # dominant position-error term, so we surface it rather than let it pass.
-    try:
-        if int(degree) >= 2 and y0_arr.size >= 6 and float(mu_m3s2) > 0.0:
-            alt_peri_km = _osculating_periapsis_alt_km(y0_arr, float(mu_m3s2), float(R_ref_m))
-            if alt_peri_km is not None:
-                rec_deg = recommended_sh_degree(alt_peri_km, float(R_ref_m))
-                res.diagnostics["periapsis_alt_km"] = float(alt_peri_km)
-                res.diagnostics["recommended_degree"] = float(rec_deg)
-                if rec_deg > int(degree):
-                    _deg_msg = (
-                        f"SH truncation degree={int(degree)} may be too low for periapsis "
-                        f"altitude {alt_peri_km:.1f} km: upward continuation suggests degree "
-                        f">= {rec_deg} to retain gravity signal above the 1e-3 floor. "
-                        "Low-degree truncation, not the integrator, is then the dominant "
-                        "position-error term."
-                    )
-                    warnings.warn(_deg_msg, RuntimeWarning, stacklevel=2)
-                    if verbose:
-                        logger.info(f"[GRAV] {_deg_msg}")
-    except Exception:
-        # R29b-justified: advisory degree-adequacy diagnostics only; failure
-        # here never alters the propagated trajectory.
-        pass
+    res.diagnostics = build_propagation_diagnostics(
+        dynamics=dynamics,
+        cfg=cfg,
+        result=res,
+        time_plan=time_plan,
+        step_plan=step_plan,
+        integration_plan=integration_plan,
+        degree=int(degree),
+        output_dt_s=float(dt_out),
+        max_step_s=float(max_step),
+        wall_time_s=float(wall),
+        rhs_path=rhs_path,
+        symplectic_violations=_violations,
+        y0=y0_arr,
+        R_ref_m=float(R_ref_m),
+        mu_m3s2=float(mu_m3s2),
+        verbose=verbose,
+        logger=logger,
+    )
 
     if bool(getattr(cfg, "compute_2body_baseline", False)):
         res.baseline = _compute_2body_baseline(
@@ -878,29 +761,14 @@ __all__ = [
     "propagate",
     "PropagationResult",
     "EventOutcome",
-    "IntegrationPlan",
-    "StepSizePlan",
     "TimeGridPlan",
-    "make_time_grid",
+    "StepSizePlan",
+    "IntegrationPlan",
     "build_events",
-    "event_outcome_from_solver_events",
-    "resolve_integration_plan",
-    "resolve_step_size_policy",
+    "make_time_grid",
     "resolve_time_grid_plan",
-    "_clamp_output_dt",
-    "_ACCEL_METHODS",
-    "_RHS_METHODS",
-    "_Y4_WEIGHTS",
-    "_Y6_WEIGHTS",
-    "_Y8_WEIGHTS",
-    "_accel_stepper",
-    "_composition_weights",
-    "_is_fixed_step_method",
-    "_is_symplectic_method",
-    "symplectic_nonconservative_violations",
-    "symplectic_nonconservative_gravity",
-    "symplectic_breaks_separability",
-    "_norm_method",
-    "_rk4_step_full",
-    "_rk8_step_full",
+    "resolve_step_size_policy",
+    "resolve_integration_plan",
+    "event_outcome_from_solver_events",
+    "_osculating_periapsis_alt_km",
 ]

@@ -383,12 +383,14 @@ def _compute_req(flags: PerturbationFlags, *, have_ephem: bool):
 
 
 def test_compute_requirements_returns_frozen_typed_object():
-    from lunaris.core.dynamics.preparation import DynamicsRequirements
+    from lunaris.core.dynamics.contracts import DynamicsRequirements
+    from lunaris.core.dynamics.preparation import DynamicsRequirements as CompatRequirements
 
     req = _compute_req(
         PerturbationFlags(enable_sh=False, enable_srp=True), have_ephem=True
     )
     assert isinstance(req, DynamicsRequirements)
+    assert CompatRequirements is DynamicsRequirements
     # mypy-friendly usage: attribute access, no dict lookups.
     assert req.use_srp is True
     assert req.need_sun is True
@@ -398,7 +400,7 @@ def test_compute_requirements_returns_frozen_typed_object():
     import dataclasses
 
     with pytest.raises(dataclasses.FrozenInstanceError):
-        req.albedo_model = "simple"  # type: ignore[misc]  # frozen dataclass
+        req.albedo_model = "simple"
 
 
 def test_external_1pn_downgrade_returns_new_object_and_never_mutates_raw():
@@ -423,6 +425,41 @@ def test_external_1pn_downgrade_returns_new_object_and_never_mutates_raw():
     assert eff.use_rel_external is False
     assert raw.use_rel_external is True  # raw requirements never mutated
     assert eff.use_rel is True  # central-body Schwarzschild term survives
+
+
+def test_external_relativity_downgrade_recomputes_derived_requirements():
+    raw = _compute_req(
+        PerturbationFlags(enable_sh=False, enable_srp=True, enable_relativity_1pn=True),
+        have_ephem=True,
+    )
+    assert raw.use_rel_external is True
+    assert raw.need_sun is True
+    assert raw.need_earth is True
+    assert raw.need_vectors is True
+    assert raw.need_ephem is True
+
+    downgraded = raw.without_external_relativity()
+
+    assert downgraded.use_rel_external is False
+    assert downgraded.need_sun is True
+    assert downgraded.need_earth is False
+    assert downgraded.need_vectors is True
+    assert downgraded.need_ephem is True
+    assert raw.need_sun is True
+    assert raw.need_earth is True
+
+
+def test_engine_prep_stores_contract_requirements_object():
+    from lunaris.core.dynamics.contracts import DynamicsRequirements
+
+    eng = DynamicsEngine(
+        _sc(),
+        PerturbationFlags(enable_sh=False),
+        allow_identity_rotation=True,
+    )
+    eng.build_rhs()
+
+    assert isinstance(eng._prep["req"], DynamicsRequirements)
 
 
 def test_effective_requirements_pass_through_when_tables_present():

@@ -24,12 +24,14 @@ import numpy as np
 import pytest
 
 from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.common.contracts.diagnostics import PROPAGATION_DIAGNOSTICS_SCHEMA_VERSION
 from lunaris.common.type_defs import EventConfig, PropagatorConfig, TimeConfig
 from lunaris.core.propagation.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION,
     load_propagation_checkpoint,
 )
-from lunaris.core.propagation.propagator import _clamp_output_dt, make_time_grid, propagate
+from lunaris.core.propagation.propagator import make_time_grid, propagate
+from lunaris.core.propagation.time_grid import _clamp_output_dt
 
 MU = float(MU_MOON)
 R = float(R_MOON)
@@ -213,7 +215,37 @@ def test_diagnostics_schema_backend_integrator_and_rhs_path_are_present():
     tc = TimeConfig(duration_s=60.0, output_dt_s=20.0, samples_per_period=3)
     res = propagate(FakePointMassDynamics(), y0, _cfg(), time_cfg=tc)
 
-    assert res.diagnostics["diagnostics_schema_version"] == 1
+    expected_keys = {
+        "diagnostics_schema_version",
+        "wall_time_s",
+        "output_dt_s",
+        "requested_output_dt_s",
+        "realized_output_dt_s",
+        "output_grid_max_points_cap",
+        "max_step_s",
+        "requested_user_max_step_s",
+        "nyquist_max_step_s",
+        "actual_max_step_s",
+        "max_step_limiting_reason",
+        "nyquist_r_min_alt_km",
+        "sh_degree_for_step_policy",
+        "periapsis_alt_km_for_step_policy",
+        "degree",
+        "n_points",
+        "nfev",
+        "integration_backend",
+        "integrator",
+        "integration_chunk_s",
+        "rhs_path",
+        "method_symplectic",
+        "symplectic_violation",
+        "kepler_energy_rel_drift",
+        "kepler_energy_rel_spread",
+        "angmom_rel_drift",
+        "angmom_rel_spread",
+    }
+    assert set(res.diagnostics) == expected_keys
+    assert res.diagnostics["diagnostics_schema_version"] == PROPAGATION_DIAGNOSTICS_SCHEMA_VERSION
     assert res.diagnostics["integration_backend"] == "scipy"
     assert res.diagnostics["integrator"] == "DOP853"
     assert res.diagnostics["rhs_path"] == "point_mass_python"

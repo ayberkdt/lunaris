@@ -8,7 +8,12 @@ from types import SimpleNamespace
 import pytest
 
 from lunaris.common.type_defs import PerturbationFlags
-from lunaris.core.propagation import propagator as P
+from lunaris.core.propagation.integrators.fixed_step import (
+    _is_fixed_step_method,
+    _is_symplectic_method,
+    symplectic_breaks_separability,
+    symplectic_nonconservative_violations,
+)
 from lunaris.ui.core.integrator_catalog import (
     INTEGRATOR_CATALOG,
     catalog_labels,
@@ -29,9 +34,9 @@ def test_keys_are_recognized_by_the_propagator():
     for spec in INTEGRATOR_CATALOG:
         if spec.family == "adaptive":
             # SciPy adaptive methods are dispatched by name, not in-house.
-            assert not P._is_fixed_step_method(spec.key), spec.key
+            assert not _is_fixed_step_method(spec.key), spec.key
         else:
-            assert P._is_fixed_step_method(spec.key), spec.key
+            assert _is_fixed_step_method(spec.key), spec.key
 
 
 def test_family_matches_solver_policy_adaptive_flag():
@@ -43,9 +48,9 @@ def test_family_matches_solver_policy_adaptive_flag():
 def test_symplectic_specs_align_with_propagator():
     for spec in INTEGRATOR_CATALOG:
         if spec.family == "symplectic":
-            assert P._is_symplectic_method(spec.key), spec.key
+            assert _is_symplectic_method(spec.key), spec.key
         else:
-            assert not P._is_symplectic_method(spec.key), spec.key
+            assert not _is_symplectic_method(spec.key), spec.key
 
 
 def test_fixed_step_methods_use_fixed_step_mode():
@@ -74,10 +79,10 @@ def test_spec_for_label_unknown_returns_none():
 def test_symplectic_guard_flags_nonconservative_forces():
     # SRP under a symplectic method voids the bounded-drift guarantee -> flagged.
     flags = PerturbationFlags(enable_sh=True, enable_srp=True)
-    assert P.symplectic_nonconservative_violations("PEFRL", flags) == ["SRP"]
+    assert symplectic_nonconservative_violations("PEFRL", flags) == ["SRP"]
     # ... but SRP under a non-symplectic method is fine (no guarantee to void).
-    assert P.symplectic_nonconservative_violations("DOP853", flags) == []
-    assert P.symplectic_nonconservative_violations("RK4", flags) == []
+    assert symplectic_nonconservative_violations("DOP853", flags) == []
+    assert symplectic_nonconservative_violations("RK4", flags) == []
 
 
 def test_symplectic_guard_silent_for_conservative_only():
@@ -87,8 +92,8 @@ def test_symplectic_guard_silent_for_conservative_only():
         enable_sh=True, enable_3rd_body_sun=True, enable_3rd_body_earth=True
     )
     for method in ("VV", "PEFRL", "YOSHIDA4", "YOSHIDA6", "YOSHIDA8"):
-        assert P.symplectic_nonconservative_violations(method, flags) == []
-        assert not P.symplectic_breaks_separability(method, flags)
+        assert symplectic_nonconservative_violations(method, flags) == []
+        assert not symplectic_breaks_separability(method, flags)
 
 
 def test_symplectic_guard_collects_all_active_nonconservative_forces():
@@ -96,24 +101,24 @@ def test_symplectic_guard_collects_all_active_nonconservative_forces():
         enable_sh=True, enable_srp=True, enable_albedo=True,
         enable_thermal=True, enable_relativity_1pn=True,
     )
-    violations = P.symplectic_nonconservative_violations("YOSHIDA6", flags)
+    violations = symplectic_nonconservative_violations("YOSHIDA6", flags)
     assert set(violations) == {"SRP", "albedo", "thermal IR", "1PN relativity"}
 
 
 def test_symplectic_guard_separability_only_for_velocity_dependent():
     # 1PN relativity is velocity-dependent -> breaks separability (worse mode).
     rel = PerturbationFlags(enable_sh=True, enable_relativity_1pn=True)
-    assert P.symplectic_breaks_separability("PEFRL", rel)
+    assert symplectic_breaks_separability("PEFRL", rel)
     # SRP is non-conservative but position/time-only -> not a separability break.
     srp = PerturbationFlags(enable_sh=True, enable_srp=True)
-    assert not P.symplectic_breaks_separability("PEFRL", srp)
+    assert not symplectic_breaks_separability("PEFRL", srp)
 
 
 def test_symplectic_guard_safe_on_partial_flag_objects_and_none():
     # Helper must tolerate arbitrary flag-like objects and None.
-    assert P.symplectic_nonconservative_violations("PEFRL", None) == []
+    assert symplectic_nonconservative_violations("PEFRL", None) == []
     partial = SimpleNamespace(enable_srp=True)  # missing other attrs
-    assert P.symplectic_nonconservative_violations("PEFRL", partial) == ["SRP"]
+    assert symplectic_nonconservative_violations("PEFRL", partial) == ["SRP"]
 
 
 def test_grouped_labels_cover_catalog_in_order():

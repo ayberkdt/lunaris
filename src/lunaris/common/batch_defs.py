@@ -24,7 +24,6 @@ Units
 
 from __future__ import annotations
 
-import math
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +31,7 @@ from typing import Any
 
 import numpy as np
 
+from .time_grid_contract import build_output_time_grid
 from .type_defs import F64Array
 
 # =============================================================================
@@ -77,17 +77,7 @@ def build_batch_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64A
         ``dt_eff = snap_interval_s / steps_per_snap`` so steps align with grid
         points exactly.
     """
-    duration = float(duration_s)
-    out_dt = float(output_dt_s)
-    if not (duration > 0.0):
-        raise ValueError(f"duration_s must be > 0, got {duration_s!r}")
-    if not (out_dt > 0.0):
-        raise ValueError(f"output_dt_s must be > 0, got {output_dt_s!r}")
-
-    n_snaps = max(1, int(math.ceil(duration / out_dt)))
-    t_out = np.linspace(0.0, duration, n_snaps + 1, dtype=np.float64)
-    snap_interval_s = duration / n_snaps
-    return t_out, n_snaps, snap_interval_s
+    return build_output_time_grid(duration_s, output_dt_s)
 
 
 # =============================================================================
