@@ -1724,9 +1724,9 @@ torch==2.12.1 \
     --hash=sha256:f92609e3b3ce72f25e2eb780d043ced2480c1a86c47c852604fc7a9108648386 \
     --hash=sha256:fcb61ccd20784b62bdd78ec84238a5cfb383b4994902e03bac95505ab360884c
     # via lunaris (pyproject.toml)
-tqdm==4.68.3 \
-    --hash=sha256:00dfa48452b6b6cfae3dd9885636c23d3422d1ec97c66d96818cbd5e0821d482 \
-    --hash=sha256:39832cc2def2789a6f29df83f172db7416cea70052c0907a57801c5f2fdccb03
+tqdm==4.68.4 \
+    --hash=sha256:19829c9673638f2a0b8617da4cdcb927e831cd88bcfcb6e78d42a4d1af131520 \
+    --hash=sha256:5168118b2368f48c561afda8020fd79195b1bdb0bdf8086b88442c267a315dc2
     # via lunaris (pyproject.toml)
 triton==3.7.1 \
     --hash=sha256:10ba85fa2cca4a2fbdeb36bf1cb082f2c252bda55bf9fccd74f65ec5bc647e68 \
