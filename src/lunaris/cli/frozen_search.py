@@ -231,8 +231,15 @@ def main(argv: list[str] | None = None) -> int:
         strict_frame=bool(args.strict_frame),
     )
 
+    # Paper-safe / strict-frame requires the rotating Moon-fixed frame on every
+    # backend, so an ephemeris must be built even when no third-body is active.
+    strict_frame_required = bool(args.paper_safe or args.strict_frame)
     ephem_manager = None
-    needs_ephemeris = screening_backend == "st-lrps" or bool(validation_third_body)
+    needs_ephemeris = (
+        screening_backend == "st-lrps"
+        or bool(validation_third_body)
+        or strict_frame_required
+    )
     if needs_ephemeris:
         try:
             ephem_dt_s = min(
@@ -275,17 +282,26 @@ def main(argv: list[str] | None = None) -> int:
                 ),
                 gravity_file=args.gravity_file,
                 chunk_size=args.screening_chunk_size,
+                # Under paper-safe/strict-frame, wire the ephemeris so classic-SH
+                # screening runs in the rotating Moon-fixed frame, not identity.
+                ephem_manager=ephem_manager if strict_frame_required else None,
+                allow_identity_rotation=not strict_frame_required,
             )
     except (ImportError, RuntimeError, ValueError) as exc:
         print(f"[FATAL] screening backend unavailable: {exc}", file=sys.stderr)
         return 2
 
+    # Validation runs in the rotating frame when third-body is active OR under
+    # paper-safe/strict-frame, so a "rotating Moon-fixed SH only, no third-body"
+    # paper-safe run no longer has to enable third-body just to pass the guard.
+    validation_needs_ephem = bool(validation_third_body) or strict_frame_required
     try:
         validation = ClassicalSHValidationPropagator(
             degree=int(args.validation_degree),
             gravity_file=args.gravity_file,
             third_body=validation_third_body,
-            ephem_manager=ephem_manager if validation_third_body else None,
+            ephem_manager=ephem_manager if validation_needs_ephem else None,
+            allow_identity_rotation=False if strict_frame_required else None,
         )
     except (RuntimeError, ValueError) as exc:
         print(f"[FATAL] validation backend unavailable: {exc}", file=sys.stderr)
@@ -297,7 +313,8 @@ def main(argv: list[str] | None = None) -> int:
                 degree=int(args.sensitivity_degree),
                 gravity_file=args.gravity_file,
                 third_body=validation_third_body,
-                ephem_manager=ephem_manager if validation_third_body else None,
+                ephem_manager=ephem_manager if validation_needs_ephem else None,
+                allow_identity_rotation=False if strict_frame_required else None,
             )
         )
 

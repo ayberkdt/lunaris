@@ -210,10 +210,90 @@ def test_validation_report_includes_evidence_taxonomy(tmp_path):
     assert "evidence_taxonomy_field_vs_trajectory" in report["checked_metrics"]
 
 
-def test_paper_safe_trajectory_only_run_is_not_failed_by_taxonomy(tmp_path):
+def _paper_safe_manifest(frame_mode: str = "match_dynamics_engine") -> str:
+    """A manifest with the numerics provenance a real paper-safe run records."""
+    return json.dumps(
+        {
+            "numerics": {
+                "frame_mode": frame_mode,
+                "dtype": "float64",
+                "dtype_provenance": {
+                    "requested": "float64",
+                    "gpu_st_lrps_potential": {
+                        "requested": "float64",
+                        "effective": "float64",
+                        "downgraded": False,
+                    },
+                },
+            }
+        }
+    )
+
+
+def test_paper_safe_explicit_trajectory_only_run_passes(tmp_path):
+    out = _valid_dir(tmp_path)  # metrics are trajectory error only
+    (out / "resolved_config.json").write_text(
+        json.dumps(
+            {
+                "name": "traj_paper",
+                "paper_safe": True,
+                "paper_safe_claim_type": "trajectory_only",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out / "benchmark_manifest.json").write_text(_paper_safe_manifest(), encoding="utf-8")
+    report = validate_benchmark_outputs(out, expected_count=1)
+    # An explicit trajectory-only paper-safe run is labeled + warned, not failed.
+    assert not any("field" in e.lower() for e in report["errors"]), report["errors"]
+    assert report["evidence_taxonomy"]["trajectory_error_only"] is True
+    assert report["passed"] is True
+
+
+def test_paper_safe_default_claim_fails_trajectory_only_run(tmp_path):
+    """No claim_type -> strict default (full_surrogate_validation): a trajectory-
+    only paper-safe run is rejected because it carries no field evidence."""
     out = _valid_dir(tmp_path)
     (out / "resolved_config.json").write_text(
-        json.dumps({"name": "traj_paper", "paper_safe": True}),
+        json.dumps({"name": "traj_default", "paper_safe": True}),
+        encoding="utf-8",
+    )
+    (out / "benchmark_manifest.json").write_text(_paper_safe_manifest(), encoding="utf-8")
+    report = validate_benchmark_outputs(out, expected_count=1)
+    assert report["passed"] is False
+    assert any("model_error_field" in e or "field accuracy" in e for e in report["errors"])
+    assert report["evidence"]["paper_safe_claim_type"] == "full_surrogate_validation"
+
+
+def test_error_decomposition_block_present_in_report(tmp_path):
+    out = _valid_dir(tmp_path)
+    (out / "benchmark_manifest.json").write_text(_paper_safe_manifest(), encoding="utf-8")
+    report = validate_benchmark_outputs(out, expected_count=1)
+    block = report["error_decomposition"]
+    assert block["schema_version"] == "st_lrps_error_decomposition_v1"
+    for name in ("field_error", "orbit_error", "integrator_error",
+                 "phase_corrected_error", "runtime", "provenance"):
+        assert name in block
+    # Trajectory columns are present; field columns absent for this fixture.
+    assert block["orbit_error"]["present"] is True
+    assert block["runtime"]["present"] is True
+    assert block["field_error"]["present"] is False
+    assert block["provenance"]["frame_mode"] == "match_dynamics_engine"
+    assert block["provenance"]["effective_dtype"] == "float64"
+
+
+def test_paper_safe_error_decomposition_requires_provenance(tmp_path):
+    """A paper-safe run whose manifest lacks backend/dtype provenance fails the
+    error-decomposition contract even for a trajectory_only claim."""
+    out = _valid_dir(tmp_path)
+    (out / "resolved_config.json").write_text(
+        json.dumps(
+            {
+                "name": "traj_incomplete",
+                "paper_safe": True,
+                "paper_safe_claim_type": "trajectory_only",
+            }
+        ),
         encoding="utf-8",
     )
     (out / "benchmark_manifest.json").write_text(
@@ -221,9 +301,32 @@ def test_paper_safe_trajectory_only_run_is_not_failed_by_taxonomy(tmp_path):
         encoding="utf-8",
     )
     report = validate_benchmark_outputs(out, expected_count=1)
-    # Trajectory-only under paper_safe is labeled + warned, not a hard error.
-    assert not any("field" in e.lower() for e in report["errors"])
-    assert report["evidence_taxonomy"]["trajectory_error_only"] is True
+    assert report["passed"] is False
+    assert any(
+        "error_decomposition" in e and "dtype" in e for e in report["errors"]
+    ), report["errors"]
+
+
+def test_paper_safe_error_decomposition_rejects_identity_frame(tmp_path):
+    out = _valid_dir(tmp_path)
+    (out / "resolved_config.json").write_text(
+        json.dumps(
+            {
+                "name": "identity_ed",
+                "paper_safe": True,
+                "paper_safe_claim_type": "trajectory_only",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (out / "benchmark_manifest.json").write_text(
+        _paper_safe_manifest(frame_mode="inertial_fixed_legacy"), encoding="utf-8"
+    )
+    report = validate_benchmark_outputs(out, expected_count=1)
+    assert report["passed"] is False
+    assert any(
+        "error_decomposition" in e and "identity" in e for e in report["errors"]
+    ), report["errors"]
 
 
 def test_non_paper_safe_identity_frame_mode_is_not_error(tmp_path):

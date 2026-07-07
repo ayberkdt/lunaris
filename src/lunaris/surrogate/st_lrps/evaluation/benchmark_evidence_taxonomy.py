@@ -34,6 +34,53 @@ TRAJECTORY_ERROR = "trajectory_error"
 PHASE_CORRECTED_ERROR = "phase_corrected_error"
 RUNTIME_METRICS = "runtime_metrics"
 
+# --- Paper-safe claim taxonomy ------------------------------------------------
+# What a paper-safe benchmark is *claiming*. This decides whether field-level
+# evidence (model_error_field) is mandatory. A trajectory benchmark that never
+# claims field accuracy is legitimate; an ST-LRPS field/full-surrogate claim is
+# not defensible on trajectory error alone.
+CLAIM_TRAJECTORY_ONLY = "trajectory_only"
+CLAIM_FIELD_ACCURACY = "field_accuracy"
+CLAIM_FULL_SURROGATE_VALIDATION = "full_surrogate_validation"
+
+PAPER_SAFE_CLAIM_TYPES: frozenset[str] = frozenset(
+    {CLAIM_TRAJECTORY_ONLY, CLAIM_FIELD_ACCURACY, CLAIM_FULL_SURROGATE_VALIDATION}
+)
+
+#: Default when a paper-safe benchmark does not declare a claim type. The strict
+#: default: a paper-safe ST-LRPS benchmark implies a field claim, so field-level
+#: evidence is required unless the author explicitly downgrades to
+#: ``trajectory_only``.
+DEFAULT_PAPER_SAFE_CLAIM_TYPE = CLAIM_FULL_SURROGATE_VALIDATION
+
+#: Claim types that make model_error_field evidence mandatory.
+FIELD_REQUIRING_CLAIM_TYPES: frozenset[str] = frozenset(
+    {CLAIM_FIELD_ACCURACY, CLAIM_FULL_SURROGATE_VALIDATION}
+)
+
+
+def normalize_claim_type(value: Any) -> str:
+    """Resolve/validate a paper-safe claim type, falling back to the default.
+
+    ``None``/empty resolves to :data:`DEFAULT_PAPER_SAFE_CLAIM_TYPE`. An
+    unrecognized value raises ``ValueError`` (fail closed: a typo must not
+    silently downgrade the field-evidence requirement).
+    """
+    if value is None or str(value).strip() == "":
+        return DEFAULT_PAPER_SAFE_CLAIM_TYPE
+    resolved = str(value).strip().lower()
+    if resolved not in PAPER_SAFE_CLAIM_TYPES:
+        raise ValueError(
+            f"unknown paper_safe_claim_type {value!r}; expected one of "
+            + ", ".join(sorted(PAPER_SAFE_CLAIM_TYPES))
+        )
+    return resolved
+
+
+def claim_type_requires_field_evidence(claim_type: Any) -> bool:
+    """True when the claim type makes model_error_field evidence mandatory."""
+    return normalize_claim_type(claim_type) in FIELD_REQUIRING_CLAIM_TYPES
+
 #: Category -> human description + whether it constitutes ST-LRPS *field* evidence.
 EVIDENCE_CATEGORIES: dict[str, dict[str, Any]] = {
     MODEL_ERROR_FIELD: {
@@ -153,14 +200,23 @@ def field_evidence_error_for_paper_safe(
     taxonomy: Mapping[str, Any],
     *,
     paper_safe: bool,
+    claim_type: Any = None,
 ) -> str | None:
     """Return an error string if a paper-safe run's evidence is non-scientific.
 
-    A synthetic/quick run can never be paper-safe evidence. This is a hard
-    error. Trajectory-only-vs-field is deliberately NOT an error here: an orbit
-    benchmark reporting propagated trajectory error is legitimate evidence for
-    *trajectory* accuracy — it just must not be *labeled* field accuracy, which
-    the taxonomy block and the ``trajectory_error_only`` warning make explicit.
+    A synthetic/quick run can never be paper-safe evidence — always a hard
+    error. Beyond that, whether *field-level* evidence is mandatory depends on
+    ``claim_type`` (see :data:`PAPER_SAFE_CLAIM_TYPES`):
+
+    * ``trajectory_only`` — trajectory error is legitimate evidence for
+      *trajectory* accuracy; missing field evidence is NOT an error (it is only
+      surfaced as the ``trajectory_error_only`` warning). It must simply never
+      be *labeled* field accuracy.
+    * ``field_accuracy`` / ``full_surrogate_validation`` — the run claims
+      ST-LRPS gravity-field accuracy, so ``model_error_field`` evidence is
+      mandatory: a field claim on trajectory error alone is a hard error.
+
+    ``claim_type=None`` resolves to :data:`DEFAULT_PAPER_SAFE_CLAIM_TYPE`.
     """
     if not paper_safe:
         return None
@@ -168,6 +224,16 @@ def field_evidence_error_for_paper_safe(
         return (
             "paper_safe run has synthetic/non-scientific evidence taxonomy; "
             "synthetic output can never be paper-safe field evidence"
+        )
+    resolved_claim = normalize_claim_type(claim_type)
+    if resolved_claim in FIELD_REQUIRING_CLAIM_TYPES and not taxonomy.get(
+        "has_field_level_evidence", False
+    ):
+        return (
+            f"paper_safe run declares claim_type={resolved_claim!r} but carries no "
+            "model_error_field evidence (only orbit-level trajectory metrics); "
+            "ST-LRPS field accuracy cannot be claimed from trajectory error alone. "
+            "Add gravity-field error metrics or set claim_type='trajectory_only'."
         )
     return None
 
@@ -179,6 +245,14 @@ __all__ = [
     "PHASE_CORRECTED_ERROR",
     "RUNTIME_METRICS",
     "EVIDENCE_CATEGORIES",
+    "CLAIM_TRAJECTORY_ONLY",
+    "CLAIM_FIELD_ACCURACY",
+    "CLAIM_FULL_SURROGATE_VALIDATION",
+    "PAPER_SAFE_CLAIM_TYPES",
+    "DEFAULT_PAPER_SAFE_CLAIM_TYPE",
+    "FIELD_REQUIRING_CLAIM_TYPES",
+    "normalize_claim_type",
+    "claim_type_requires_field_evidence",
     "classify_metric",
     "summarize_evidence_taxonomy",
     "field_evidence_error_for_paper_safe",

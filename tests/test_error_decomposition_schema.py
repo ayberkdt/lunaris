@@ -119,6 +119,36 @@ def test_paper_safe_fails_without_field_error():
         validate_paper_safe_error_decomposition(block)
 
 
+def test_paper_safe_trajectory_only_claim_does_not_require_field_error():
+    # A trajectory_only claim relaxes the field_error requirement but still
+    # demands orbit_error, runtime, provenance, non-synthetic, non-identity.
+    block = _complete_block(field_error=None, paper_safe_claim_type="trajectory_only")
+    validate_paper_safe_error_decomposition(block, claim_type="trajectory_only")  # no raise
+
+
+def test_paper_safe_trajectory_only_still_requires_orbit_and_runtime():
+    block = _complete_block(
+        field_error=None, orbit_error=None, paper_safe_claim_type="trajectory_only"
+    )
+    with pytest.raises(ValueError, match="orbit_error"):
+        validate_paper_safe_error_decomposition(block, claim_type="trajectory_only")
+
+
+def test_paper_safe_field_claim_requires_field_error_explicitly():
+    block = _complete_block(field_error=None)
+    with pytest.raises(ValueError, match="field_error"):
+        validate_paper_safe_error_decomposition(block, claim_type="field_accuracy")
+
+
+def test_build_records_claim_type_in_provenance():
+    block = _complete_block(paper_safe_claim_type="trajectory_only")
+    assert block["provenance"]["paper_safe_claim_type"] == "trajectory_only"
+    # Default resolves to the strict full_surrogate_validation.
+    assert _complete_block()["provenance"]["paper_safe_claim_type"] == (
+        "full_surrogate_validation"
+    )
+
+
 def test_paper_safe_fails_without_orbit_error():
     block = _complete_block(orbit_error=None)
     with pytest.raises(ValueError, match="orbit_error"):

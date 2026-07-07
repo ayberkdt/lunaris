@@ -40,6 +40,8 @@ from .benchmark_evidence_taxonomy import (
     PHASE_CORRECTED_ERROR,
     RUNTIME_METRICS,
     TRAJECTORY_ERROR,
+    claim_type_requires_field_evidence,
+    normalize_claim_type,
 )
 
 ERROR_DECOMPOSITION_SCHEMA_VERSION = "st_lrps_error_decomposition_v1"
@@ -62,9 +64,9 @@ REQUIRED_TOP_LEVEL_BLOCKS: tuple[str, ...] = (
     "provenance",
 )
 
-#: Blocks a paper-safe artifact must actually carry (``present=True``).
-_PAPER_SAFE_REQUIRED_PRESENT: tuple[str, ...] = (
-    "field_error",
+#: Blocks a paper-safe artifact must always carry (``present=True``), for every
+#: claim type. ``field_error`` is added on top for field-requiring claim types.
+_PAPER_SAFE_REQUIRED_PRESENT_BASE: tuple[str, ...] = (
     "orbit_error",
     "runtime",
 )
@@ -104,6 +106,7 @@ def build_error_decomposition_schema(
     identity_rotation_used: bool = False,
     synthetic: bool = False,
     paper_safe: bool = False,
+    paper_safe_claim_type: Any = None,
 ) -> dict[str, Any]:
     """Build the versioned error-decomposition block.
 
@@ -135,6 +138,7 @@ def build_error_decomposition_schema(
             "identity_rotation_used": bool(identity_rotation_used),
             "synthetic": bool(synthetic),
             "paper_safe": bool(paper_safe),
+            "paper_safe_claim_type": normalize_claim_type(paper_safe_claim_type),
         },
         "scientific_evidence": not bool(synthetic),
     }
@@ -176,22 +180,37 @@ def validate_error_decomposition(block: Mapping[str, Any]) -> list[str]:
     return problems
 
 
-def validate_paper_safe_error_decomposition(block: Mapping[str, Any]) -> None:
+def validate_paper_safe_error_decomposition(
+    block: Mapping[str, Any],
+    *,
+    claim_type: Any = None,
+) -> None:
     """Reject a decomposition block that cannot back a paper-safe claim.
 
     Raises ``ValueError`` listing every violation. A paper-safe artifact must
-    separate field error from orbit error (both measured), carry runtime and
-    full backend/dtype/frame provenance, must not be synthetic, and must not
-    have used identity rotation for Moon-fixed gravity.
+    always carry orbit_error and runtime, full backend/dtype/frame provenance,
+    must not be synthetic, and must not have used identity rotation for
+    Moon-fixed gravity. Whether ``field_error`` is additionally mandatory
+    depends on ``claim_type`` (see
+    :data:`benchmark_evidence_taxonomy.PAPER_SAFE_CLAIM_TYPES`): field/full
+    claims require it, ``trajectory_only`` does not. ``claim_type=None``
+    resolves to the strict default (field required).
     """
     problems = validate_error_decomposition(block)
 
-    for name in _PAPER_SAFE_REQUIRED_PRESENT:
+    resolved_claim = normalize_claim_type(claim_type)
+    required_present = list(_PAPER_SAFE_REQUIRED_PRESENT_BASE)
+    if claim_type_requires_field_evidence(resolved_claim):
+        required_present.append("field_error")
+    for name in required_present:
         sub = block.get(name)
         if isinstance(sub, Mapping) and not bool(sub.get("present", False)):
             msg = f"paper-safe reports require a measured {name!r} block (present=True)"
             if name == "field_error":
-                msg += "; trajectory error alone must not imply field accuracy"
+                msg += (
+                    f"; claim_type={resolved_claim!r} claims ST-LRPS field accuracy, "
+                    "which trajectory error alone cannot support"
+                )
             problems.append(msg)
 
     provenance = block.get("provenance")
