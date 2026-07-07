@@ -23,6 +23,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 from lunaris.common.constants import DAY_S, R_MOON
+from lunaris.common.frame_policy import is_identity_frame_mode
 from lunaris.surrogate.st_lrps.evaluation.phase_diagnostics import estimate_phase_lag
 
 from .compute import (
@@ -1779,7 +1780,7 @@ def write_gpu_batch_report_pdf(
             "- ST-LRPS includes surrogate-model error plus integration error.",
             f"- Frame mode: {args.batch_frame_mode}.",
         ]
-        if args.batch_frame_mode == "inertial_fixed_legacy":
+        if is_identity_frame_mode(args.batch_frame_mode):
             notes.append("- Legacy frame mode is approximate and should not be used for final claims.")
         pager.text_page("Notes & Caveats", notes)
 

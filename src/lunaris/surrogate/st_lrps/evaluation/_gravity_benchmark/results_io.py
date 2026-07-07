@@ -24,6 +24,11 @@ import numpy as np
 matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
+from lunaris.common.frame_policy import (
+    FRAME_MODE_MOON_FIXED_EPHEMERIS,
+    canonical_frame_mode,
+    frame_mode_uses_rotation,
+)
 from lunaris.common.provenance import sha256_file, sha256_text, utc_now_iso
 from lunaris.core.config import SimConfig
 from lunaris.physics.ephemeris import EphemerisManager
@@ -498,6 +503,7 @@ def _file_sha256(path: str | None) -> str | None:
 
 def _cache_metadata(args: argparse.Namespace) -> dict[str, Any]:
     weight_file = _find_st_lrps_weight_file(getattr(args, "st_lrps_model_dir", None))
+    frame = _effective_frame_modes(args)
     return {
         "cache_schema_version": BENCHMARK_CACHE_SCHEMA_VERSION,
         "truth": str(args.truth).lower(),
@@ -512,7 +518,9 @@ def _cache_metadata(args: argparse.Namespace) -> dict[str, Any]:
         "st_lrps_rk4_dt": float(getattr(args, "st_lrps_rk4_dt", 30.0)),
         "gpu_integrator": str(getattr(args, "gpu_integrator", "medium")),
         "torch_dtype": str(getattr(args, "torch_dtype", "float64")),
-        "batch_frame_mode": str(getattr(args, "batch_frame_mode", "match_dynamics_engine")),
+        "batch_frame_mode": frame["effective_batch_frame_mode"],
+        "requested_batch_frame_mode": frame["requested_batch_frame_mode"],
+        "frame_interpolation": frame["frame_interpolation"],
         "st_lrps_model_dir": getattr(args, "st_lrps_model_dir", None),
         "st_lrps_weight_file": weight_file,
         "st_lrps_weight_sha256": _file_sha256(weight_file),
@@ -640,6 +648,7 @@ def _save_cached_trajectory(
     path = _trajectory_cache_path(cache_dir, model_type, model_name, scenario.scenario_id, args)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
+    frame = _effective_frame_modes(args)
     payload = {
         "cache_schema_version": np.asarray(BENCHMARK_CACHE_SCHEMA_VERSION, dtype=np.int64),
         "scenario_id": np.asarray(int(scenario.scenario_id), dtype=np.int64),
@@ -666,7 +675,9 @@ def _save_cached_trajectory(
         "raan_deg": np.asarray(float(scenario.raan_deg), dtype=np.float64),
         "argp_deg": np.asarray(float(scenario.argp_deg), dtype=np.float64),
         "ta_deg": np.asarray(float(scenario.ta_deg), dtype=np.float64),
-        "frame_mode": np.asarray(str(getattr(args, "batch_frame_mode", ""))),
+        "frame_mode": np.asarray(frame["effective_batch_frame_mode"]),
+        "requested_frame_mode": np.asarray(frame["requested_batch_frame_mode"]),
+        "frame_interpolation": np.asarray(frame["frame_interpolation"]),
         "gpu_integrator": np.asarray(str(getattr(args, "gpu_integrator", ""))),
     }
     try:
@@ -794,7 +805,7 @@ BENCHMARK_METADATA_SCHEMA_VERSION = 2
 _FINGERPRINT_FIELDS = (
     "cache_schema_version", "truth", "truth_integrator", "duration_days", "dt_out",
     "rk4_dt_s", "gpu_rk4_dt_s_list", "st_lrps_rk4_dt", "gpu_integrator", "torch_dtype",
-    "batch_frame_mode", "st_lrps_weight_sha256",
+    "batch_frame_mode", "frame_interpolation", "st_lrps_weight_sha256",
 )
 
 
@@ -889,16 +900,25 @@ def _config_fingerprint(args: argparse.Namespace) -> str:
 def _effective_frame_modes(args: argparse.Namespace) -> dict[str, str]:
     """Unambiguous frame-mode reporting for the GPU batch path.
 
-    The harness passes ``--batch-frame-mode`` straight to the integrator, so the
-    requested and effective modes are identical; the DOP853 truth always runs in
-    the rotating dynamics-engine frame.
+    Historical CLI tokens are accepted at the boundary, but metadata records the
+    effective physics frame canonically. ``precomputed_slerp`` is an execution
+    strategy, not a separate physical frame.
     """
-    requested = str(getattr(args, "batch_frame_mode", "match_dynamics_engine"))
+    requested = str(
+        getattr(args, "batch_frame_mode", FRAME_MODE_MOON_FIXED_EPHEMERIS)
+        or FRAME_MODE_MOON_FIXED_EPHEMERIS
+    ).strip()
+    effective = canonical_frame_mode(requested)
     return {
         "requested_batch_frame_mode": requested,
-        "effective_batch_frame_mode": requested,
-        "gpu_frame_mode": requested,
-        "truth_frame_mode": "match_dynamics_engine",
+        "effective_batch_frame_mode": effective,
+        "gpu_frame_mode": effective,
+        "truth_frame_mode": FRAME_MODE_MOON_FIXED_EPHEMERIS,
+        "frame_interpolation": (
+            "precomputed_slerp"
+            if requested.lower() == "precomputed_slerp"
+            else "dynamic_slerp"
+        ),
     }
 
 
@@ -1122,12 +1142,10 @@ def _build_gpu_batch_summary(
         "effective_batch_frame_mode": frame["effective_batch_frame_mode"],
         "gpu_frame_mode": frame["gpu_frame_mode"],
         "truth_frame_mode": frame["truth_frame_mode"],
-        "uses_lunar_rotation": frame["effective_batch_frame_mode"] in {
-            "match_dynamics_engine",
-            "precomputed_slerp",
-        },
+        "frame_interpolation": frame["frame_interpolation"],
+        "uses_lunar_rotation": frame_mode_uses_rotation(frame["effective_batch_frame_mode"]),
         "matches_dynamics_engine_frame":
-            frame["effective_batch_frame_mode"] == "match_dynamics_engine",
+            frame["effective_batch_frame_mode"] == FRAME_MODE_MOON_FIXED_EPHEMERIS,
         # Model accounting (Fix 2).
         "requested_models": breakdown["requested_models"],
         "completed_models": breakdown["completed_models"],

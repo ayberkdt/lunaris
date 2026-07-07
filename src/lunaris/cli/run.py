@@ -22,6 +22,7 @@ from lunaris.cli.common_args import (
 from lunaris.cli.options import parse_args
 from lunaris.cli.summary import median_dt, print_summary
 from lunaris.common.constants import DAY_S, DEG2RAD, MU_MOON, R_MOON
+from lunaris.common.force_requirements import force_requirements_for_config
 from lunaris.common.type_defs import InitialState, PropagationResult
 from lunaris.core.config import SimConfig, load_default_config
 
@@ -79,27 +80,11 @@ def init_ephemeris(cfg: SimConfig, tf_s: float) -> EphemerisManager:
 
     tf_s_buffered = float(tf_s) + 0.1 * DAY_S
     time_cfg = replace(cfg.time, duration_s=tf_s_buffered)
-    flags = cfg.flags
-    thermal_mode = (
-        str(getattr(getattr(cfg, "thermal", None), "thermal_mode", "constant_temperature")).strip().lower()
+    req = force_requirements_for_config(
+        cfg,
+        request_external_relativity=True,
     )
-    thermal_needs_sun = bool(
-        flags.enable_thermal
-        and thermal_mode in {"equilibrium", "equilibrium_temperature", "instantaneous_equilibrium"}
-    )
-
-    need_body_vectors = bool(
-        flags.enable_3rd_body_sun
-        or flags.enable_3rd_body_earth
-        or flags.enable_earth_j2
-        or flags.enable_srp
-        or flags.enable_albedo
-        or thermal_needs_sun
-        or flags.enable_tides_k2
-        or flags.enable_tides_k3
-        or flags.enable_relativity_1pn
-    )
-    spice_cfg = replace(cfg.spice, include_third_body=need_body_vectors)
+    spice_cfg = replace(cfg.spice, include_third_body=req.need_body_vectors)
 
     # Local import: lunaris.physics.ephemeris can be heavy (spiceypy/numba)
     from lunaris.physics.ephemeris import EphemerisManager

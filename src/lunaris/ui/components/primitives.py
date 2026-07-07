@@ -387,10 +387,13 @@ class SegmentedControl(QtWidgets.QFrame):
     def current_index(self) -> int:
         return self.group.checkedId()
 
-    def set_current_index(self, index: int) -> None:
+    def set_current_index(self, index: int, *, emit: bool = False) -> None:
+        previous = self.current_index()
         button = self.group.button(index)
         if button is not None:
             button.setChecked(True)
+            if emit and index != previous:
+                self.current_changed.emit(index)
 
 
 class EmptyState(QtWidgets.QFrame):

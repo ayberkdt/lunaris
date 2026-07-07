@@ -34,6 +34,28 @@ TRAJECTORY_ERROR = "trajectory_error"
 PHASE_CORRECTED_ERROR = "phase_corrected_error"
 RUNTIME_METRICS = "runtime_metrics"
 
+CANONICAL_METRIC_CATEGORIES: dict[str, str] = {
+    "field_error.accel_rms_m_s2": MODEL_ERROR_FIELD,
+    "field_error.accel_p95_m_s2": MODEL_ERROR_FIELD,
+    "field_error.accel_max_m_s2": MODEL_ERROR_FIELD,
+    "orbit_error.position_rms_m": TRAJECTORY_ERROR,
+    "orbit_error.position_p95_m": TRAJECTORY_ERROR,
+    "orbit_error.velocity_rms_m_s": TRAJECTORY_ERROR,
+    "integrator_error.position_rms_m": INTEGRATOR_ERROR,
+    "integrator_error.velocity_rms_m_s": INTEGRATOR_ERROR,
+    "phase_corrected_error.position_rms_m": PHASE_CORRECTED_ERROR,
+    "runtime.samples_per_second": RUNTIME_METRICS,
+    "runtime.wall_time_s": RUNTIME_METRICS,
+}
+
+_CANONICAL_PREFIX_CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("field_error.", MODEL_ERROR_FIELD),
+    ("orbit_error.", TRAJECTORY_ERROR),
+    ("integrator_error.", INTEGRATOR_ERROR),
+    ("phase_corrected_error.", PHASE_CORRECTED_ERROR),
+    ("runtime.", RUNTIME_METRICS),
+)
+
 # --- Paper-safe claim taxonomy ------------------------------------------------
 # What a paper-safe benchmark is *claiming*. This decides whether field-level
 # evidence (model_error_field) is mandatory. A trajectory benchmark that never
@@ -142,6 +164,11 @@ def classify_metric(name: str) -> str | None:
     non-evidence rather than silently promoting them.
     """
     lowered = str(name).strip().lower()
+    if lowered in CANONICAL_METRIC_CATEGORIES:
+        return CANONICAL_METRIC_CATEGORIES[lowered]
+    for prefix, category in _CANONICAL_PREFIX_CATEGORIES:
+        if lowered.startswith(prefix):
+            return category
     for category, markers in _CLASSIFY_RULES:
         if any(marker in lowered for marker in markers):
             return category
@@ -244,6 +271,7 @@ __all__ = [
     "TRAJECTORY_ERROR",
     "PHASE_CORRECTED_ERROR",
     "RUNTIME_METRICS",
+    "CANONICAL_METRIC_CATEGORIES",
     "EVIDENCE_CATEGORIES",
     "CLAIM_TRAJECTORY_ONLY",
     "CLAIM_FIELD_ACCURACY",

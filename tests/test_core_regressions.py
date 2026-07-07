@@ -81,6 +81,46 @@ def test_load_batch_result_restores_npz_metadata_into_diagnostics(tmp_path: Path
     assert loaded.diagnostics["backend"] == "cpu"
 
 
+def test_npz_writer_publishes_archive_only_on_finalize(tmp_path: Path) -> None:
+    output_path = tmp_path / "atomic_batch.npz"
+    t = np.asarray([0.0, 30.0], dtype=np.float64)
+    writer = _NPZWriter(output_path, n_samples=1, t_grid=t)
+    writer.write_metadata(
+        archive_schema_version=2,
+        n_samples=1,
+        seed=7,
+        duration_s=30.0,
+        output_dt_s=30.0,
+        backend="cpu",
+        requested_batch_backend="cpu_sh",
+        actual_batch_backend="cpu_sh",
+        batch_backend="cpu_sh",
+        detect_impact=True,
+        compute_impact_statistics=True,
+    )
+    writer.write_sample_batch(
+        0,
+        1,
+        np.zeros((2, 1, 6), dtype=np.float64),
+    )
+    writer.write_final(
+        sc_samples=np.asarray([[1000.0, 5.0, 2.2, 1.5]], dtype=np.float64),
+        impact_flags=np.asarray([0.0], dtype=np.float64),
+        t_impact=np.asarray([np.nan], dtype=np.float64),
+        valid_mask=np.asarray([1.0], dtype=np.float64),
+        impact_position_inertial_m=np.full((1, 3), np.nan),
+        impact_position_fixed_m=np.full((1, 3), np.nan),
+    )
+
+    assert not output_path.exists()
+    assert writer._part_path.exists()
+
+    writer.finalize()
+
+    assert output_path.exists()
+    assert not writer._part_path.exists()
+
+
 def test_cpu_batch_propagator_preserves_precise_impact_times(monkeypatch) -> None:
     sim_cfg = SimpleNamespace(
         time=TimeConfig(start_date="2027-03-02T23:32:37", duration_s=10.0, output_dt_s=5.0),

@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.constants import DAY_S
+from lunaris.common.force_requirements import force_requirements_for_config
 from lunaris.common.math_utils import quat_rotate_np, quat_slerp_np
 
 
@@ -58,21 +59,11 @@ def _need_ephemeris(cfg: Any, *, topo_requested: bool) -> bool:
     behavior.
     """
 
-    flags = cfg.flags
-    physics_need = (
-        flags.enable_sh
-        or flags.enable_3rd_body_sun
-        or flags.enable_3rd_body_earth
-        or flags.enable_earth_j2
-        or flags.enable_srp
-        or flags.enable_albedo
-        or flags.enable_thermal
-        or flags.enable_surface_forces
-        or flags.enable_tides_k2
-        or flags.enable_tides_k3
-        or flags.enable_relativity_1pn
+    req = force_requirements_for_config(
+        cfg,
+        request_external_relativity=True,
     )
-    return bool(physics_need or topo_requested)
+    return bool(req.need_ephem or topo_requested)
 
 
 def _need_body_vectors(cfg: Any) -> bool:
@@ -84,25 +75,11 @@ def _need_body_vectors(cfg: Any) -> bool:
     keeps ephemeris initialization lighter and avoids misleading SPICE warnings.
     """
 
-    flags = cfg.flags
-    thermal_mode = (
-        str(getattr(getattr(cfg, "thermal", None), "thermal_mode", "constant_temperature")).strip().lower()
+    req = force_requirements_for_config(
+        cfg,
+        request_external_relativity=True,
     )
-    thermal_needs_sun = bool(
-        flags.enable_thermal
-        and thermal_mode in {"equilibrium", "equilibrium_temperature", "instantaneous_equilibrium"}
-    )
-    return bool(
-        flags.enable_3rd_body_sun
-        or flags.enable_3rd_body_earth
-        or flags.enable_earth_j2
-        or flags.enable_srp
-        or flags.enable_albedo
-        or thermal_needs_sun
-        or flags.enable_tides_k2
-        or flags.enable_tides_k3
-        or flags.enable_relativity_1pn
-    )
+    return bool(req.need_body_vectors)
 
 
 def _build_ephemeris_manager(cfg: Any) -> Any:

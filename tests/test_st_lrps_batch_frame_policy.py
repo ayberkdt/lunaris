@@ -1,4 +1,4 @@
-"""Regression tests for the legacy ST-LRPS ``--batch-rk4`` frame contract."""
+"""Regression tests for the ST-LRPS ``--batch-rk4`` frame policy contract."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from lunaris.surrogate.st_lrps.evaluation._gravity_benchmark.compute import (
-    _legacy_batch_frame_modes,
+    _resolve_batch_frame_modes,
     _run_batch_rk4_cpu,
     run_st_lrps_batch_rk4,
 )
@@ -16,7 +16,7 @@ from lunaris.surrogate.st_lrps.evaluation._gravity_benchmark.compute import (
 
 def _args(**overrides) -> argparse.Namespace:
     base = {
-        "batch_frame_mode": "match_dynamics_engine",
+        "batch_frame_mode": "moon_fixed_ephemeris",
         "batch_size": None,
         "gpu_fallback": "cpu",
         "torch_dtype": "float64",
@@ -25,12 +25,14 @@ def _args(**overrides) -> argparse.Namespace:
     return argparse.Namespace(**base)
 
 
-def test_legacy_batch_precomputed_request_uses_dynamic_effective_frame() -> None:
-    requested, effective = _legacy_batch_frame_modes(
+def test_batch_precomputed_request_uses_canonical_effective_frame() -> None:
+    frame = _resolve_batch_frame_modes(
         _args(batch_frame_mode="precomputed_slerp")
     )
-    assert requested == "precomputed_slerp"
-    assert effective == "match_dynamics_engine"
+    assert frame.requested_frame_mode == "precomputed_slerp"
+    assert frame.effective_frame_mode == "moon_fixed_ephemeris"
+    assert frame.frame_interpolation == "dynamic_slerp"
+    assert frame.uses_frame_rotation is True
 
 
 def test_legacy_batch_default_frame_requires_ephemeris_before_cuda_probe() -> None:
@@ -41,7 +43,7 @@ def test_legacy_batch_default_frame_requires_ephemeris_before_cuda_probe() -> No
             duration_s=60.0,
             dt_s=10.0,
             output_dt_s=60.0,
-            args=_args(batch_frame_mode="match_dynamics_engine"),
+            args=_args(batch_frame_mode="moon_fixed_ephemeris"),
             ephem=None,
         )
 
@@ -74,8 +76,8 @@ def test_cpu_batch_rk4_rotates_fixed_acceleration_back_to_inertial() -> None:
         dt_s=1.0,
         output_dt_s=1.0,
         ephem=_QuarterTurnEphem(),
-        requested_frame_mode="match_dynamics_engine",
-        effective_frame_mode="match_dynamics_engine",
+        requested_frame_mode="moon_fixed_ephemeris",
+        effective_frame_mode="moon_fixed_ephemeris",
     )
     legacy = _run_batch_rk4_cpu(
         surrogate,
@@ -84,8 +86,8 @@ def test_cpu_batch_rk4_rotates_fixed_acceleration_back_to_inertial() -> None:
         dt_s=1.0,
         output_dt_s=1.0,
         ephem=None,
-        requested_frame_mode="inertial_fixed_legacy",
-        effective_frame_mode="inertial_fixed_legacy",
+        requested_frame_mode="identity_diagnostic",
+        effective_frame_mode="identity_diagnostic",
     )
 
     # The surrogate always returns +Y in fixed coordinates. With a 90 degree

@@ -22,6 +22,15 @@ if str(ROOT) not in sys.path:
 
 from lunaris.surrogate.st_lrps.evaluation import compare_gravity_models as cgm  # noqa: E402
 
+
+def _torch_or_skip():
+    torch = pytest.importorskip("torch")
+    required = ("device", "float32", "float64", "tensor", "as_tensor", "cuda")
+    if not all(hasattr(torch, name) for name in required):
+        pytest.skip("optional dependency 'torch' is not functional.")
+    return torch
+
+
 # ---------------------------------------------------------------------------
 # Fake-data builders
 # ---------------------------------------------------------------------------
@@ -34,7 +43,7 @@ def _make_args(**over) -> argparse.Namespace:
         sampling_method="random", inclination_sampling="uniform_deg",
         altitude_min_km=200.0, altitude_max_km=400.0, dt_out=60.0,
         gpu_integrator="medium", workers=1, torch_dtype="float64",
-        gpu_models="sh20,sh80,st_lrps", batch_frame_mode="match_dynamics_engine",
+        gpu_models="sh20,sh80,st_lrps", batch_frame_mode="moon_fixed_ephemeris",
         rk4_dt_s=10.0, st_lrps_rk4_dt=30.0,
         plot_best_scenario_id=None, plot_worst_scenario_id=None,
         plot_representative_scenario_id=None,
@@ -287,10 +296,10 @@ _STAGE_OFFSETS = {
 
 @pytest.mark.parametrize("integrator", ["light", "medium", "robust"])
 def test_frame_cache_matches_dynamic_quaternions(integrator):
-    torch = pytest.importorskip("torch")
+    torch = _torch_or_skip()
     eph = _FakeEphem(_rot_z_quat_table(10), dt_s=100.0)
     dev, dtype = torch.device("cpu"), torch.float64
-    dyn = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="match_dynamics_engine")
+    dyn = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="moon_fixed_ephemeris")
     pre = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="precomputed_slerp")
 
     dt_eff, total_steps = 10.0, 20
@@ -307,7 +316,7 @@ def test_frame_cache_matches_dynamic_quaternions(integrator):
 
 
 def test_frame_cache_inverse_is_conjugate():
-    torch = pytest.importorskip("torch")
+    torch = _torch_or_skip()
     eph = _FakeEphem(_rot_z_quat_table(10), dt_s=100.0)
     pre = cgm.TorchFrameProvider(eph, device=torch.device("cpu"), dtype=torch.float64,
                                  mode="precomputed_slerp")
@@ -319,11 +328,11 @@ def test_frame_cache_inverse_is_conjugate():
 def test_frame_cache_out_of_range_holds_last_quaternion():
     """Beyond the ephemeris table the cache must hold the last quaternion
     (like the dynamic path), not extrapolate."""
-    torch = pytest.importorskip("torch")
+    torch = _torch_or_skip()
     n, dt_s = 10, 100.0
     eph = _FakeEphem(_rot_z_quat_table(n), dt_s=dt_s)
     dev, dtype = torch.device("cpu"), torch.float64
-    dyn = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="match_dynamics_engine")
+    dyn = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="moon_fixed_ephemeris")
     pre = cgm.TorchFrameProvider(eph, device=dev, dtype=dtype, mode="precomputed_slerp")
 
     dt_eff = 10.0
@@ -336,7 +345,7 @@ def test_frame_cache_out_of_range_holds_last_quaternion():
 
 def _run_two_modes(integrator, dtype_name, monkeypatch):
     """Propagate a deterministic point-mass system in both frame modes."""
-    torch = pytest.importorskip("torch")
+    torch = _torch_or_skip()
     from lunaris.common.constants import MU_MOON
 
     # Replace the SH/ST-LRPS accelerator with a cheap, deterministic point mass
@@ -366,7 +375,7 @@ def _run_two_modes(integrator, dtype_name, monkeypatch):
               device=torch.device("cpu"), dtype=dtype, dtype_name=dtype_name,
               gpu_integrator=integrator)
     res_dyn = cgm.propagate_gpu_batch_model(
-        "sh20", None, y0, frame_mode="match_dynamics_engine", **kw)
+        "sh20", None, y0, frame_mode="moon_fixed_ephemeris", **kw)
     res_pre = cgm.propagate_gpu_batch_model(
         "sh20", None, y0, frame_mode="precomputed_slerp", **kw)
     assert res_dyn.status == "ok" and res_pre.status == "ok"
@@ -388,12 +397,8 @@ def test_precomputed_matches_dynamic_trajectory_float32(monkeypatch):
     assert rel < 1e-5, f"float32 precomputed vs dynamic rel diff {rel}"
 
 
-@pytest.mark.skipif(
-    not (lambda: __import__("importlib").util.find_spec("torch"))(),
-    reason="torch not installed",
-)
 def test_precomputed_cuda_smoke(monkeypatch):
-    torch = pytest.importorskip("torch")
+    torch = _torch_or_skip()
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
     from lunaris.common.constants import MU_MOON

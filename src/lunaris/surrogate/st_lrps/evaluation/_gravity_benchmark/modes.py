@@ -1616,7 +1616,7 @@ def run_random_scenario_mode(
                         ephem=ephem,
                         frame_mode=str(batch_result.get(
                             "effective_frame_mode",
-                            getattr(args, "batch_frame_mode", "match_dynamics_engine"),
+                            getattr(args, "batch_frame_mode", "moon_fixed_ephemeris"),
                         )),
                     )
                 except Exception as exc:
@@ -1659,6 +1659,7 @@ def run_random_scenario_mode(
                 "integrator_error_sh200_rk4_vs_dop853": agg_integr,
                 "requested_batch_frame_mode": batch_result.get("requested_frame_mode"),
                 "effective_batch_frame_mode": batch_result.get("effective_frame_mode"),
+                "frame_interpolation": batch_result.get("frame_interpolation"),
                 "uses_frame_rotation": batch_result.get("uses_frame_rotation"),
             }
             with open(out_dir / "batch_rk4_summary.json", "w") as f:
@@ -1688,6 +1689,7 @@ def run_random_scenario_mode(
                     "torch_dtype": batch_result.get("torch_dtype", args.torch_dtype),
                     "requested_batch_frame_mode": batch_result.get("requested_frame_mode"),
                     "effective_batch_frame_mode": batch_result.get("effective_frame_mode"),
+                    "frame_interpolation": batch_result.get("frame_interpolation"),
                     "uses_frame_rotation": batch_result.get("uses_frame_rotation"),
                 }
             ]

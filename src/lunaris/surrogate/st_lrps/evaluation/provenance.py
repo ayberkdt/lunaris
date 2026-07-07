@@ -9,6 +9,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.frame_policy import (
+    FRAME_MODE_MOON_FIXED_EPHEMERIS,
+    canonical_frame_mode,
+    frame_mode_uses_rotation,
+)
 from lunaris.common.hashing import canonical_json_sha256, canonical_json_text
 from lunaris.common.provenance import sha256_file as _sha256_file
 from lunaris.common.provenance import sha256_text as sha256_text  # noqa: PLC0414 -- re-export
@@ -200,14 +205,11 @@ def build_benchmark_manifest(
                 propagation.get("dtype"), surrogate_enabled=bool(surrogate.get("enabled"))
             ),
             "duration_days": propagation.get("duration_days"),
-            # Frame provenance: the config-driven benchmark always propagates the
-            # GPU batch in the rotating Moon-fixed frame (match_dynamics_engine);
-            # the identity/inertial_fixed_legacy approximation is only reachable
-            # through the explicit CLI harness and must never back a paper claim.
-            # Recording it here lets validate_benchmark_outputs fail closed if a
-            # paper-safe manifest ever reports an identity frame mode.
+            # Frame provenance: record the physical frame canonically; any old
+            # user token is kept separately as a request value.
             "frame_mode": _frame_mode(propagation),
-            "uses_frame_rotation": _frame_mode(propagation) != "inertial_fixed_legacy",
+            "requested_frame_mode": _requested_frame_mode(propagation),
+            "uses_frame_rotation": frame_mode_uses_rotation(_frame_mode(propagation)),
         },
         "environment": collect_environment(),
     }
@@ -217,11 +219,16 @@ def build_benchmark_manifest(
 def _frame_mode(propagation: Mapping[str, Any]) -> str:
     """Resolved GPU-batch frame mode for the config-driven benchmark.
 
-    Defaults to ``match_dynamics_engine`` (rotating Moon-fixed frame), which is
-    the only mode ``config_to_legacy_argv`` ever selects. An explicit config
-    override is honored so provenance stays truthful if the mapping is extended.
+    Defaults to ``moon_fixed_ephemeris`` (rotating Moon-fixed frame). Historical
+    tokens are normalized here so downstream validation does not need an alias
+    table.
     """
-    return str(propagation.get("frame_mode", "match_dynamics_engine")).strip() or "match_dynamics_engine"
+    return canonical_frame_mode(propagation.get("frame_mode", FRAME_MODE_MOON_FIXED_EPHEMERIS))
+
+
+def _requested_frame_mode(propagation: Mapping[str, Any]) -> str:
+    value = propagation.get("frame_mode", FRAME_MODE_MOON_FIXED_EPHEMERIS)
+    return str(value).strip() or FRAME_MODE_MOON_FIXED_EPHEMERIS
 
 
 def _dtype_provenance(requested_dtype: Any, *, surrogate_enabled: bool) -> dict[str, Any]:

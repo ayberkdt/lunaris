@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.force_requirements import force_requirements
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
 
 
@@ -224,7 +225,10 @@ def extract_surface_provider_strict(surface_provider: Any) -> dict[str, Any]:
 
 def need_ephemeris(flags: PerturbationFlags) -> bool:
     """Return True if any enabled perturbation requires ephemeris tables."""
-    return bool(flags.enable_third_body or flags.enable_srp or flags.enable_albedo or flags.enable_thermal or flags.enable_tides)
+    return force_requirements(
+        flags,
+        request_external_relativity=True,
+    ).need_ephem
 
 
 def require_srp_props(sc: SpacecraftProps) -> tuple[float, float, float]:

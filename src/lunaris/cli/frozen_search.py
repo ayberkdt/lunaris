@@ -160,6 +160,10 @@ def main(argv: list[str] | None = None) -> int:
         build_ephemeris_manager_for_frozen_search,
         normalize_third_body_selection,
     )
+    from lunaris.common.frame_policy import (
+        FRAME_MODE_IDENTITY_DIAGNOSTIC,
+        FRAME_MODE_MOON_FIXED_EPHEMERIS,
+    )
 
     try:
         screening_third_body = normalize_third_body_selection(args.screening_third_body)
@@ -234,6 +238,11 @@ def main(argv: list[str] | None = None) -> int:
     # Paper-safe / strict-frame requires the rotating Moon-fixed frame on every
     # backend, so an ephemeris must be built even when no third-body is active.
     strict_frame_required = bool(args.paper_safe or args.strict_frame)
+    strict_frame_mode = (
+        FRAME_MODE_MOON_FIXED_EPHEMERIS
+        if strict_frame_required
+        else FRAME_MODE_IDENTITY_DIAGNOSTIC
+    )
     ephem_manager = None
     needs_ephemeris = (
         screening_backend == "st-lrps"
@@ -269,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
                 torch_dtype=str(args.screening_torch_dtype),
                 chunk_size=args.screening_chunk_size,
                 ephem_manager=ephem_manager,
-                allow_identity_rotation=False,
+                frame_mode=FRAME_MODE_MOON_FIXED_EPHEMERIS,
                 third_body=screening_third_body,
                 strict_domain=True,
             )
@@ -285,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
                 # Under paper-safe/strict-frame, wire the ephemeris so classic-SH
                 # screening runs in the rotating Moon-fixed frame, not identity.
                 ephem_manager=ephem_manager if strict_frame_required else None,
-                allow_identity_rotation=not strict_frame_required,
+                frame_mode=strict_frame_mode,
             )
     except (ImportError, RuntimeError, ValueError) as exc:
         print(f"[FATAL] screening backend unavailable: {exc}", file=sys.stderr)
@@ -301,7 +310,11 @@ def main(argv: list[str] | None = None) -> int:
             gravity_file=args.gravity_file,
             third_body=validation_third_body,
             ephem_manager=ephem_manager if validation_needs_ephem else None,
-            allow_identity_rotation=False if strict_frame_required else None,
+            frame_mode=(
+                FRAME_MODE_MOON_FIXED_EPHEMERIS
+                if validation_needs_ephem
+                else FRAME_MODE_IDENTITY_DIAGNOSTIC
+            ),
         )
     except (RuntimeError, ValueError) as exc:
         print(f"[FATAL] validation backend unavailable: {exc}", file=sys.stderr)
@@ -314,7 +327,11 @@ def main(argv: list[str] | None = None) -> int:
                 gravity_file=args.gravity_file,
                 third_body=validation_third_body,
                 ephem_manager=ephem_manager if validation_needs_ephem else None,
-                allow_identity_rotation=False if strict_frame_required else None,
+                frame_mode=(
+                    FRAME_MODE_MOON_FIXED_EPHEMERIS
+                    if validation_needs_ephem
+                    else FRAME_MODE_IDENTITY_DIAGNOSTIC
+                ),
             )
         )
 

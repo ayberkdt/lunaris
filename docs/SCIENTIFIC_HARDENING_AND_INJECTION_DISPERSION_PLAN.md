@@ -370,9 +370,9 @@ Implementation note, 2026-07-06:
 - Audit found the enforcement path already largely fail-closed:
   `DynamicsEngine._validate_dependencies` raises when body-fixed gravity needs
   `q_i2f` but no ephemeris is present and `allow_identity_rotation=False`
-  (default); `_validate_legacy_batch_frame_inputs` rejects a non-legacy
+  (default); `_validate_batch_frame_inputs` rejects a rotating
   `--batch-rk4` frame mode without an ephemeris; the config-driven
-  `lunaris-benchmark` always emits `match_dynamics_engine` (rotating) via
+  `lunaris-benchmark` emits `moon_fixed_ephemeris` (rotating) via
   `config_to_legacy_argv` and can never select identity; TorchBatchPropagator
   diagnostics already record `frame_mode`/`uses_frame_rotation`.
 - Added provenance: `build_benchmark_manifest` now records
@@ -384,7 +384,7 @@ Implementation note, 2026-07-06:
   gravity without ephemeris; `test_benchmark_validation.py` paper-safe identity
   frame error / rotating-frame pass / non-paper-safe identity allowed;
   `test_benchmark_provenance.py` manifest frame-mode default + override.
-  Existing coverage (`test_st_lrps_legacy_batch_frame.py`,
+  Existing coverage (`test_st_lrps_batch_frame_policy.py`,
   `test_dynamics.py::test_cpu_sh_rhs_uses_i2f_then_conjugate_frame_bridge`,
   `test_torch_sh_batch_propagator.py` slerp/quaternion tests) retained.
 
@@ -626,7 +626,7 @@ Status: done
   `test_sh_convention_lock.py` (26), `test_dataset_contract.py` (16),
   `test_benchmark_validation.py` + `test_benchmark_provenance.py` (29),
   `test_benchmark_evidence_taxonomy.py` (9), `test_dynamics.py` +
-  `test_st_lrps_legacy_batch_frame.py` (16 + 1 skipped),
+  `test_st_lrps_batch_frame_policy.py` (16 + 1 skipped),
   `test_propagator_physics.py` (17), `test_injection_dispersion_terminology.py`
   (8), `test_backend_fallback_and_scaler_consolidation.py` (12),
   `test_classic_sh_policy.py`, `test_mc_gpu_policy.py`,

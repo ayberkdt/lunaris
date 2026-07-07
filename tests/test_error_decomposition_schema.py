@@ -29,7 +29,7 @@ def _complete_block(**overrides):
         actual_backend="gpu_st_lrps_potential",
         requested_dtype="float64",
         effective_dtype="float64",
-        frame_mode="moon_fixed_slerp",
+        frame_mode="moon_fixed_ephemeris",
         identity_rotation_used=False,
         synthetic=False,
         paper_safe=True,

@@ -412,7 +412,7 @@ class OrbitBenchmarkTab(QWidget):
         self.gpu_fallback.addItem("error (require CUDA)", "error")
         self.gpu_fallback.addItem("cpu (fallback)", "cpu")
         self.gpu_frame_mode = NoScrollComboBox()
-        self.gpu_frame_mode.addItem("dynamic (per-step)", "match_dynamics_engine")
+        self.gpu_frame_mode.addItem("dynamic (per-step)", "moon_fixed_ephemeris")
         self.gpu_frame_mode.addItem("precomputed SLERP (faster)", "precomputed_slerp")
         self.gpu_frame_mode.setCurrentIndex(1)  # Default to precomputed SLERP
         self.gpu_frame_mode.setToolTip(
@@ -1382,7 +1382,7 @@ class OrbitBenchmarkTab(QWidget):
             args += ["--workers", str(self.truth_workers.value())]
             args += ["--torch-dtype", self.torch_dtype.currentData() or "float32"]
             args += ["--gpu-fallback", self.gpu_fallback.currentData() or "error"]
-            args += ["--batch-frame-mode", self.gpu_frame_mode.currentData() or "match_dynamics_engine"]
+            args += ["--batch-frame-mode", self.gpu_frame_mode.currentData() or "moon_fixed_ephemeris"]
             args += ["--gpu-finite-check-mode", self.gpu_finite_check_mode.currentData() or "snapshot"]
         else:
             args += ["--models", ",".join(models)]
@@ -1548,7 +1548,10 @@ class OrbitBenchmarkTab(QWidget):
 
         def _combo(combo, key):
             if s.contains(key):
-                idx = combo.findData(str(s.value(key)))
+                value = str(s.value(key))
+                if key == "gpu_frame_mode" and value == "match_dynamics_engine":
+                    value = "moon_fixed_ephemeris"
+                idx = combo.findData(value)
                 if idx >= 0:
                     combo.setCurrentIndex(idx)
 

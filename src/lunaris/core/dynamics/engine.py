@@ -66,6 +66,8 @@ from lunaris.common.constants import (
     SIGMA_SB,
     SOLAR_FLUX_1AU,
 )
+from lunaris.common.force_requirements import force_requirements
+from lunaris.common.frame_policy import FrameModeInput, resolve_frame_policy
 from lunaris.common.math_utils import (
     # Numba-callable kernels for use inside @njit code (the public
     # sample_*/sample_grid_* wrappers validate in Python and cannot be called
@@ -111,7 +113,6 @@ from lunaris.physics.spherical_harmonics import (
 from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig, accel_albedo_simple
 from lunaris.physics.thermal_ir import (
     THERMAL_MODE_CONSTANT,
-    THERMAL_MODE_EQUILIBRIUM,
     THERMAL_MODE_TEMPERATURE_GRID,
     accel_thermal_ir_facets_numba,
     build_latlon_facets,
@@ -120,6 +121,19 @@ from lunaris.physics.thermal_ir import (
 from lunaris.physics.third_body_effects import accel_j2_oblate_diff_numba, accel_third_body_numba
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_rhs_state_vector(y: Any) -> np.ndarray:
+    """Return a 1D state vector accepted by the dynamics RHS."""
+
+    arr = np.asarray(y, dtype=np.float64)
+    if arr.ndim != 1 or arr.shape[0] not in (6, 7):
+        raise ValueError(
+            "DynamicsEngine RHS supports state vectors with exactly 6 elements "
+            "or 7 elements when y[6] is spacecraft mass."
+        )
+    return arr
+
 
 # =============================================================================
 # 1.                             DYNAMICS ENGINE
@@ -148,6 +162,7 @@ class DynamicsEngine:
         albedo: Any = None,
         solid_tides: SolidTideConfig | None = None,
         allow_identity_rotation: bool = False,
+        frame_mode: FrameModeInput = None,
     ) -> None:
         self.sc_props = sc_props
         self.flags = flags
@@ -164,7 +179,13 @@ class DynamicsEngine:
 
         # If True, q_i2f is treated as identity when ephemeris is absent.
         # This only substitutes for frame rotation (q), NOT for Sun/Earth vectors.
-        self.allow_identity_rotation = bool(allow_identity_rotation)
+        self.frame_policy = resolve_frame_policy(
+            ephem_manager=self.ephem,
+            allow_identity_rotation=bool(allow_identity_rotation),
+            frame_mode=frame_mode,
+        )
+        self.frame_mode = self.frame_policy.mode
+        self.allow_identity_rotation = self.frame_policy.allow_identity_rotation
 
         self._rhs_cache: Callable[[float, np.ndarray], np.ndarray] | None = None
         self._prep: dict[str, Any] = {}  # debug/reporting packs + requirements
@@ -175,33 +196,9 @@ class DynamicsEngine:
     # Requirements / validation
     # -------------------------------------------------------------------------
     def _requirements(self) -> dict[str, Any]:
-        f = self.flags
-
-        use_sh = bool(getattr(f, "enable_sh", False))
-        use_surrogate_gravity = bool(use_sh and _is_surrogate_gravity_provider(self.grav))
-        use_albedo = bool(getattr(f, "enable_albedo", False))
-
         alb_cfg = self.albedo if self.albedo is not None else AlbedoConfig()
         albedo_model = str(getattr(alb_cfg, "albedo_model", "lambert_facets")).strip().lower()
-        albedo_source = normalize_albedo_mode(getattr(alb_cfg, "albedo_mode", "constant_albedo"))
-        albedo_needs_provider = bool(
-            use_albedo
-            and (
-                albedo_source != ALBEDO_SOURCE_CONSTANT
-                or bool(getattr(alb_cfg, "require_surface_provider", False))
-            )
-        )
 
-        use_thermal = bool(getattr(f, "enable_thermal", getattr(f, "enable_thermal_ir", False)))
-        use_srp = bool(getattr(f, "enable_srp", False))
-        use_3rd_sun = bool(getattr(f, "enable_3rd_body_sun", False))
-        use_3rd_earth = bool(getattr(f, "enable_3rd_body_earth", False))
-        use_tides_k2 = bool(getattr(f, "enable_tides_k2", False))
-        use_tides_k3 = bool(getattr(f, "enable_tides_k3", False))
-        use_tides = bool(use_tides_k2 or use_tides_k3)
-
-        # Backwards compatibility: enable_relativity_1pn or enable_relativity
-        use_rel = bool(getattr(f, "enable_relativity_1pn", getattr(f, "enable_relativity", False)))
         # Design (#4): there is intentionally no separate "external relativity"
         # flag. The external-body Schwarzschild differential and the de Sitter
         # geodetic term are the physically dominant relativistic effects for a
@@ -213,74 +210,44 @@ class DynamicsEngine:
         # (interp_vec3_derivative_safe, O(dt^2), the same scheme used on the GPU
         # via _interp3_derivative_cuda) rather than the Catmull-Rom position
         # interpolant's analytic derivative — adequate for the ~1e-11 m/s^2 term.
-        use_rel_external = bool(use_rel and self.ephem is not None)
-
-        use_earth_j2_flag = bool(getattr(f, "enable_earth_j2", False))
-        use_earth_j2 = bool(use_earth_j2_flag and (self.earth_j2 is not None))
-        tide_bodies = getattr(self.solid_tides, "tide_bodies", ("earth", "sun"))
-        use_tide_earth = bool(use_tides and ("earth" in tide_bodies))
-        use_tide_sun = bool(use_tides and ("sun" in tide_bodies))
-        thermal_mode = normalize_thermal_mode(getattr(self.thermal, "thermal_mode", "constant_temperature"))
-        use_thermal_equilibrium = bool(use_thermal and thermal_mode == THERMAL_MODE_EQUILIBRIUM)
-        use_thermal_grid = bool(use_thermal and thermal_mode == THERMAL_MODE_TEMPERATURE_GRID)
-        use_thermal_eclipse = bool(
-            use_thermal_equilibrium
-            and bool(getattr(self.thermal, "enable_eclipse", True))
+        req = force_requirements(
+            self.flags,
+            gravity_uses_st_lrps=_is_surrogate_gravity_provider(self.grav),
+            earth_j2_available=self.earth_j2 is not None,
+            albedo=alb_cfg,
+            thermal=self.thermal,
+            solid_tides=self.solid_tides,
+            allow_identity_rotation=self.allow_identity_rotation,
+            request_external_relativity=self.ephem is not None,
         )
-
-        # What data do we need from ephemeris?
-        need_sun = bool(
-            use_srp
-            or use_3rd_sun
-            or use_albedo
-            or use_tide_sun
-            or use_thermal_equilibrium
-            or use_rel_external
-        )
-        need_earth = bool(
-            use_3rd_earth
-            or use_earth_j2
-            or use_tide_earth
-            or use_thermal_eclipse
-            or use_rel_external
-        )
-        need_q = bool(use_sh or use_surrogate_gravity or use_albedo or use_tides or use_thermal)
-
-        # Ephemeris manager is required if Sun/Earth vectors are needed.
-        need_vectors = bool(need_sun or need_earth)
-
-        # Quaternion can be substituted with identity if explicitly allowed.
-        need_quat_from_ephem = bool(need_q and (not self.allow_identity_rotation))
-
-        need_ephem = bool(need_vectors or need_quat_from_ephem)
 
         return {
-            "use_sh": use_sh,
-            "use_surrogate_gravity": use_surrogate_gravity,
-            "use_albedo": use_albedo,
+            "use_sh": req.use_sh,
+            "use_surrogate_gravity": req.use_surrogate_gravity,
+            "use_albedo": req.use_albedo,
             "albedo_model": albedo_model,
-            "albedo_needs_provider": albedo_needs_provider,
-            "use_thermal": use_thermal,
-            "use_thermal_equilibrium": use_thermal_equilibrium,
-            "use_thermal_eclipse": use_thermal_eclipse,
-            "use_thermal_grid": use_thermal_grid,
-            "use_srp": use_srp,
-            "use_3rd_sun": use_3rd_sun,
-            "use_3rd_earth": use_3rd_earth,
-            "use_tides": use_tides,
-            "use_tides_k2": use_tides_k2,
-            "use_tides_k3": use_tides_k3,
-            "use_tide_earth": use_tide_earth,
-            "use_tide_sun": use_tide_sun,
-            "use_rel": use_rel,
-            "use_rel_external": use_rel_external,
-            "use_earth_j2": use_earth_j2,
-            "need_sun": need_sun,
-            "need_earth": need_earth,
-            "need_q": need_q,
-            "need_vectors": need_vectors,
-            "need_quat_from_ephem": need_quat_from_ephem,
-            "need_ephem": need_ephem,
+            "albedo_needs_provider": req.albedo_needs_provider,
+            "use_thermal": req.use_thermal,
+            "use_thermal_equilibrium": req.use_thermal_equilibrium,
+            "use_thermal_eclipse": req.use_thermal_eclipse,
+            "use_thermal_grid": req.use_thermal_grid,
+            "use_srp": req.use_srp,
+            "use_3rd_sun": req.use_3rd_sun,
+            "use_3rd_earth": req.use_3rd_earth,
+            "use_tides": req.use_tides,
+            "use_tides_k2": req.use_tides_k2,
+            "use_tides_k3": req.use_tides_k3,
+            "use_tide_earth": req.use_tide_earth,
+            "use_tide_sun": req.use_tide_sun,
+            "use_rel": req.use_rel,
+            "use_rel_external": req.use_rel_external,
+            "use_earth_j2": req.use_earth_j2,
+            "need_sun": req.need_sun,
+            "need_earth": req.need_earth,
+            "need_q": req.need_q_i2f,
+            "need_vectors": req.need_body_vectors,
+            "need_quat_from_ephem": req.need_quat_from_ephem,
+            "need_ephem": req.need_ephem,
         }
 
     def _validate_dependencies(self) -> None:
@@ -1049,6 +1016,7 @@ class DynamicsEngine:
             surrogate = self.grav
 
             def rhs(t: float, y: np.ndarray) -> np.ndarray:
+                y = _validate_rhs_state_vector(y)
                 rx, ry, rz = float(y[0]), float(y[1]), float(y[2])
                 vx, vy, vz = float(y[3]), float(y[4]), float(y[5])
 
@@ -1362,6 +1330,7 @@ class DynamicsEngine:
                 return dydt
 
             def rhs(t: float, y: np.ndarray) -> np.ndarray:
+                y = _validate_rhs_state_vector(y)
                 return _rhs_sh_only_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
 
             self._rhs_cache = rhs
@@ -1749,6 +1718,7 @@ class DynamicsEngine:
             return dydt
 
         def rhs(t: float, y: np.ndarray) -> np.ndarray:  # type: ignore[no-redef]
+            y = _validate_rhs_state_vector(y)
             return _rhs_kernel_numba(t, y, WS_P, WS_DP, WS_COS, WS_SIN)
 
         self._rhs_cache = rhs

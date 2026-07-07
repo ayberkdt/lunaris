@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from lunaris.common.frame_policy import canonical_frame_mode, is_identity_frame_mode
 from lunaris.common.hashing import canonical_json_text
 from lunaris.common.provenance import utc_now_iso
 
@@ -255,11 +256,6 @@ def _check_evidence_consistency(
         )
 
 
-#: Frame modes that evaluate Moon-fixed gravity in inertial coordinates with an
-#: identity rotation. Physically approximate; never valid for paper-safe claims.
-_IDENTITY_FRAME_MODES = frozenset({"inertial_fixed_legacy", "identity", "inertial"})
-
-
 def _manifest_frame_mode(manifest_json: Any) -> str | None:
     if not isinstance(manifest_json, Mapping):
         return None
@@ -289,7 +285,12 @@ def _check_paper_safe_frame_mode(
     frame_mode = _manifest_frame_mode(manifest_json)
     if frame_mode is None:
         return  # missing-manifest provenance is handled by _evidence_block
-    if str(frame_mode).strip().lower() in _IDENTITY_FRAME_MODES:
+    try:
+        canonical = canonical_frame_mode(frame_mode)
+    except ValueError as exc:
+        errors.append(str(exc))
+        return
+    if is_identity_frame_mode(canonical):
         errors.append(
             f"paper_safe run recorded frame_mode={frame_mode!r}: Moon-fixed gravity "
             "evaluated in inertial coordinates with identity rotation can never be "
@@ -420,7 +421,10 @@ def _error_decomposition_block(
     numerics = _manifest_numerics(manifest_json)
     backend, requested_dtype, effective_dtype = _decomposition_backend_provenance(numerics)
     frame_mode = _manifest_frame_mode(manifest_json)
-    identity = bool(frame_mode is not None and str(frame_mode).strip().lower() in _IDENTITY_FRAME_MODES)
+    try:
+        identity = bool(frame_mode is not None and is_identity_frame_mode(frame_mode))
+    except ValueError:
+        identity = False
     return build_error_decomposition_schema(
         field_error=_category_metrics(taxonomy, MODEL_ERROR_FIELD),
         orbit_error=_category_metrics(taxonomy, TRAJECTORY_ERROR),
