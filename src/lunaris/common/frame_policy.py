@@ -11,8 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-FRAME_MODE_MOON_FIXED_EPHEMERIS = "moon_fixed_ephemeris"
-FRAME_MODE_IDENTITY_DIAGNOSTIC = "identity_diagnostic"
+FRAME_MODE_MOON_FIXED_EPHEMERIS: Literal["moon_fixed_ephemeris"] = "moon_fixed_ephemeris"
+FRAME_MODE_IDENTITY_DIAGNOSTIC: Literal["identity_diagnostic"] = "identity_diagnostic"
 
 FrameMode = Literal["moon_fixed_ephemeris", "identity_diagnostic"]
 FrameModeInput = FrameMode | str | None
