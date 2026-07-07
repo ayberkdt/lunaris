@@ -125,6 +125,15 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
     # dict means "reset to placeholders" (e.g. after Clear All).
     sample_updated = QtCore.Signal(dict)
 
+    # Canonical plot names, in segmented-control order. Session persistence
+    # stores/restores by name, so these strings are a stable contract.
+    _PLOT_NAMES = (
+        "Altitude vs Time",
+        "Velocity vs Time",
+        "Eccentricity vs Time",
+        "Ground Track",
+    )
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -250,13 +259,21 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
     # ------------------------------------------------------------------
     def _on_plot_segment_changed(self, index: int) -> None:
         """Map a segmented-control index to the corresponding plot."""
-        names = [
-            "Altitude vs Time",
-            "Velocity vs Time",
-            "Eccentricity vs Time",
-            "Ground Track",
-        ]
+        names = self._PLOT_NAMES
         self._switch_plot(names[index] if 0 <= index < len(names) else names[0])
+
+    def current_plot_name(self) -> str:
+        """Return the canonical name of the currently selected plot (for session save)."""
+        segment = getattr(self, "plot_segment", None)
+        if segment is None:
+            return ""
+        idx = segment.current_index()
+        return self._PLOT_NAMES[idx] if 0 <= idx < len(self._PLOT_NAMES) else ""
+
+    def set_plot_by_name(self, name: str) -> None:
+        """Select a plot by its canonical name (for session restore). No-op if unknown."""
+        if name in self._PLOT_NAMES:
+            self._switch_plot(name)
 
     def _build_scale_popover(self, ctrl_h: int) -> QtWidgets.QToolButton:
         """Build the "Scale" popover holding the expert axis-scaling controls.
@@ -534,12 +551,7 @@ class MultiTelemetryPlot(QtWidgets.QWidget):
 
     def _switch_plot(self, plot_name):
         """Switch between different plot types."""
-        plot_map = {
-            "Altitude vs Time": 0,
-            "Velocity vs Time": 1,
-            "Eccentricity vs Time": 2,
-            "Ground Track": 3
-        }
+        plot_map = {name: i for i, name in enumerate(self._PLOT_NAMES)}
 
         idx = plot_map.get(plot_name, 0)
         self.plot_stack.setCurrentIndex(idx)

@@ -1973,13 +1973,10 @@ class MainWindow(QtWidgets.QMainWindow):
         telemetry_plot_type = ""
         telemetry_time_unit = ""
         try:
-            mp = getattr(getattr(self, "page_telemetry", None), "multi_plot", None)
-            if mp is None:
-                mp = getattr(self, "page_telemetry", None)
+            mp = getattr(getattr(self, "page_telemetry", None), "telemetry_multiplot", None)
             if mp is not None:
-                combo = getattr(mp, "plot_type_combo", None)
-                if combo:
-                    telemetry_plot_type = combo.currentText()
+                if hasattr(mp, "current_plot_name"):
+                    telemetry_plot_type = mp.current_plot_name()
                 tu = getattr(mp, "time_axis_combo", None)
                 if tu:
                     telemetry_time_unit = tu.currentText()
