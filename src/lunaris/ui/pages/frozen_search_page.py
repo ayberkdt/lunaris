@@ -15,7 +15,15 @@ from pathlib import Path
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.components.primitives import FormGrid, InlineNotice, Section
-from lunaris.ui.core.ui_commons import THEME, find_project_root, get_icon, normalize_path
+from lunaris.ui.core.ui_commons import (
+    THEME,
+    NoWheelComboBox,
+    NoWheelDoubleSpinBox,
+    NoWheelSpinBox,
+    find_project_root,
+    get_icon,
+    normalize_path,
+)
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
 
@@ -158,7 +166,7 @@ class FrozenSearchPage(QtWidgets.QWidget):
         form.add_row("Samples", self.spin_n_samples)
         self.spin_seed = self._spin_int(0, 2_147_483_647, 0)
         form.add_row("Seed", self.spin_seed)
-        self.cb_sampling = QtWidgets.QComboBox()
+        self.cb_sampling = NoWheelComboBox()
         for label, value in (
             ("Sobol scrambled", "sobol_scrambled"),
             ("Sobol deterministic", "sobol"),
@@ -192,7 +200,7 @@ class FrozenSearchPage(QtWidgets.QWidget):
         form.add_row("RK step", self.spin_screen_dt)
         self.spin_screen_out_dt = self._spin_float(1.0, 86_400.0, 3600.0, suffix=" s")
         form.add_row("Output cadence", self.spin_screen_out_dt)
-        self.cb_screen_device = QtWidgets.QComboBox()
+        self.cb_screen_device = NoWheelComboBox()
         self.cb_screen_device.addItem("Auto", "auto")
         self.cb_screen_device.addItem("CPU", "cpu")
         self.cb_screen_device.addItem("CUDA", "cuda")
@@ -558,7 +566,7 @@ class FrozenSearchPage(QtWidgets.QWidget):
 
     @staticmethod
     def _spin_int(minimum: int, maximum: int, value: int) -> QtWidgets.QSpinBox:
-        spin = QtWidgets.QSpinBox()
+        spin = NoWheelSpinBox()
         spin.setRange(minimum, maximum)
         spin.setValue(value)
         spin.setAccelerated(True)
@@ -573,7 +581,7 @@ class FrozenSearchPage(QtWidgets.QWidget):
         decimals: int = 3,
         suffix: str = "",
     ) -> QtWidgets.QDoubleSpinBox:
-        spin = QtWidgets.QDoubleSpinBox()
+        spin = NoWheelDoubleSpinBox()
         spin.setRange(minimum, maximum)
         spin.setDecimals(decimals)
         spin.setValue(value)

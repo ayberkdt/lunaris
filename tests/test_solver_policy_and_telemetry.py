@@ -188,7 +188,9 @@ def test_live_telemetry_auto_y_range_keeps_following_new_data() -> None:
     widget.show()
     app.processEvents()
 
-    widget.plot_type_combo.setCurrentText("Altitude vs Time")
+    # Plot selection moved from a combo box to a segmented control; index 0 is
+    # the Altitude vs Time plot.
+    widget.plot_segment.set_current_index(0, emit=True)
     widget.chk_auto_y.setChecked(True)
 
     widget.add_datapoint({"t_s": 0.0, "alt_km": 100.0})

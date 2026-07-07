@@ -296,6 +296,87 @@ def get_icon(icon_name: str, color: str | None = None) -> QtGui.QIcon:
         return QtGui.QIcon()
 
 
+def stepper_arrow_icons() -> dict[str, str]:
+    """Render themed chevrons for spin-box / combo-box arrows and cache them.
+
+    Qt draws no arrow inside a stylesheet-styled spin box unless one is supplied
+    as an image, which is why the native steppers looked broken once the inputs
+    were themed. We rasterize ``fa6s.chevron-up`` / ``chevron-down`` in the muted
+    foreground color to PNGs and hand their paths to the QSS builder. The files
+    are cached under the OS temp dir keyed by color + size, so the work happens
+    once. Returns ``{}`` when qtawesome is unavailable (the QSS then falls back
+    to native arrows rather than emitting a broken ``url()``).
+    """
+    if not HAS_QTAWESOME:
+        return {}
+
+    import tempfile
+
+    color = THEME['fg_soft']
+    size = 12
+    key = color.lstrip('#')
+    cache_dir = Path(tempfile.gettempdir()) / "lunaris_ui_icons"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        out: dict[str, str] = {}
+        for name, glyph in (("up", "fa6s.chevron-up"), ("down", "fa6s.chevron-down")):
+            path = cache_dir / f"chevron_{name}_{key}_{size}.png"
+            if not path.exists():
+                pixmap = qta.icon(glyph, color=color).pixmap(size, size)
+                if not pixmap.save(str(path), "PNG"):
+                    return {}
+            # QSS url() wants forward slashes on every platform.
+            out[name] = str(path).replace("\\", "/")
+        return out
+    except Exception:
+        return {}
+
+
+class NoWheelSpinBox(QtWidgets.QSpinBox):
+    """A spin box that never changes value on mouse-wheel scroll.
+
+    Scrolling a long form must never silently mutate a physical parameter the
+    pointer happens to hover. The wheel event is ignored (propagated to the
+    parent scroll area) even when the box holds focus; keyboard stepping
+    (arrows / PageUp / PageDown) is unaffected. ``StrongFocus`` also drops the
+    default ``WheelFocus`` so a scroll cannot focus the control first.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+
+    def wheelEvent(self, event):  # noqa: N802 (Qt override)
+        event.ignore()
+
+
+class NoWheelDoubleSpinBox(QtWidgets.QDoubleSpinBox):
+    """Double-precision counterpart of :class:`NoWheelSpinBox`."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+
+    def wheelEvent(self, event):  # noqa: N802 (Qt override)
+        event.ignore()
+
+
+class NoWheelComboBox(QtWidgets.QComboBox):
+    """A combo box that never changes selection on mouse-wheel scroll.
+
+    Same rationale as :class:`NoWheelSpinBox`: scrolling a page must not flip a
+    selection (e.g. the plot type or a backend) under the pointer. The dropdown
+    still opens on click and is fully keyboard-navigable.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
+
+    def wheelEvent(self, event):  # noqa: N802 (Qt override)
+        event.ignore()
+
+
 # =============================================================================
 # 4.                          UTILITY HELPERS
 # =============================================================================

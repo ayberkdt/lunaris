@@ -48,7 +48,7 @@ from PySide6 import QtCore, QtWidgets
 
 try:
     from lunaris.ui.components import Section
-    from lunaris.ui.core.ui_commons import THEME, StatusBadge, get_icon
+    from lunaris.ui.core.ui_commons import THEME, NoWheelSpinBox, StatusBadge, get_icon
     from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:
         # Only handle the "ran as a script" case; don't mask real import errors.
@@ -245,7 +245,7 @@ class DataPage(QtWidgets.QWidget):
         res_row.setSpacing(DESIGN_TOKENS.spacing.sm)
         res_row.addWidget(self._field_label("LDEM resolution"))
 
-        self.spin_ldem_ppd = QtWidgets.QSpinBox()
+        self.spin_ldem_ppd = NoWheelSpinBox()
         self.spin_ldem_ppd.setRange(1, 128)
         self.spin_ldem_ppd.setValue(4)
         self.spin_ldem_ppd.setSuffix(" ppd")

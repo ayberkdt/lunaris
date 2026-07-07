@@ -1155,8 +1155,7 @@ class OrbitPage(QtWidgets.QWidget):
         """Orbit parameters card with Modern Segmented Control."""
         gb = self._create_card(
             "Initial Orbit State",
-            "Choose the orbit entry style you prefer. Related values stay "
-            "synchronized automatically so you can review the full orbit shape at a glance.",
+            "Entry mode determines which elements are editable; the rest are derived.",
         )
         layout = gb.content_layout
         layout.setSpacing(16)
@@ -1308,9 +1307,7 @@ class OrbitPage(QtWidgets.QWidget):
         """3D orbit preview card."""
         gb = self._create_card(
             "Orbit Preview",
-            "Two-body Keplerian preview for geometry, viewing angle, and period — "
-            "the mission run adds the selected perturbations, so the propagated "
-            "trajectory will differ from this idealized orbit.",
+            "Two-body preview. The mission run adds the selected perturbations.",
         )
         layout = gb.content_layout
         layout.setSpacing(14)

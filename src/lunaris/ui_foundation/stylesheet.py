@@ -20,6 +20,9 @@ def build_app_stylesheet(
     theme: dict[str, str],
     log_colors: dict[str, str],
     density: str = "comfortable",
+    *,
+    spin_up_icon: str | None = None,
+    spin_down_icon: str | None = None,
 ) -> str:
     """Return the full application QSS string for the given palettes.
 
@@ -33,6 +36,11 @@ def build_app_stylesheet(
         ``"comfortable"`` (default) or ``"compact"``. Compact tightens control
         heights and vertical paddings for long working sessions on small screens
         without changing colors, radii, or the spacing scale used by layouts.
+    spin_up_icon, spin_down_icon:
+        Optional filesystem paths (forward-slashed) to chevron images for the
+        spin-box / combo-box arrows. Passed as plain strings so this builder
+        stays Qt-binding-neutral. When omitted, the steppers are styled but keep
+        Qt's native arrow glyphs rather than emitting a broken ``url()``.
     """
 
     compact = str(density).lower() == "compact"
@@ -80,6 +88,52 @@ def build_app_stylesheet(
     field_pad_v = 4 if compact else 7
     button_pad_v = 4 if compact else 7
     nav_pad_v = 7 if compact else 11
+
+    # Spin-box / combo-box stepper chrome. Once the inputs are themed, Qt draws
+    # no native arrow inside a styled spin box, so the up/down controls looked
+    # broken. We render them as a full-height strip on the right (a larger,
+    # themed click target — Fitts) and drop in chevron images when supplied.
+    # The arrow rules are only emitted when real image paths are available, so a
+    # missing-qtawesome fallback keeps Qt's native arrows instead of blanks.
+    if spin_up_icon and spin_down_icon:
+        _stepper_arrow_qss = f"""
+        QSpinBox::up-arrow, QDoubleSpinBox::up-arrow {{
+            image: url({spin_up_icon});
+            width: 10px; height: 10px;
+        }}
+        QSpinBox::down-arrow, QDoubleSpinBox::down-arrow,
+        QComboBox::down-arrow {{
+            image: url({spin_down_icon});
+            width: 10px; height: 10px;
+        }}"""
+    else:
+        _stepper_arrow_qss = ""
+
+    stepper_qss = f"""
+        QSpinBox::up-button, QDoubleSpinBox::up-button {{
+            subcontrol-origin: border;
+            subcontrol-position: top right;
+            width: 22px;
+            border-left: 1px solid {theme['border_soft']};
+            border-top-right-radius: 8px;
+            background: {theme['bg_card_alt']};
+        }}
+        QSpinBox::down-button, QDoubleSpinBox::down-button {{
+            subcontrol-origin: border;
+            subcontrol-position: bottom right;
+            width: 22px;
+            border-left: 1px solid {theme['border_soft']};
+            border-bottom-right-radius: 8px;
+            background: {theme['bg_card_alt']};
+        }}
+        QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+        QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover {{
+            background: {theme['bg_hover']};
+        }}
+        QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,
+        QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed {{
+            background: {theme['bg_inset']};
+        }}{_stepper_arrow_qss}"""
 
     return f"""
         /* GLOBAL FOUNDATION — flat space-black canvas */
@@ -192,11 +246,32 @@ def build_app_stylesheet(
             border-radius: 8px;
             padding: 2px 8px;
         }}
-        QFrame#missionStatusBar,
         QFrame#toolbar {{
             background: {theme['bg_card']};
             border: 1px solid {theme['border_soft']};
             border-radius: 10px;
+        }}
+        /* Header context chips — quiet, clickable summaries of the two mission
+           settings worth seeing at all times (gravity model, output path). They
+           replace the separate status ribbon: an elevated pill on the shell so
+           they read as chips, not buttons, and carry a leading icon + value. */
+        QPushButton#headerContextChip {{
+            background: {theme['bg_card_alt']};
+            border: 1px solid {theme['border_soft']};
+            border-radius: {DESIGN_TOKENS.radii.pill}px;
+            color: {theme['fg_soft']};
+            font-weight: 600;
+            padding: 4px 12px;
+            min-height: {metrics.status_badge_height}px;
+            text-align: left;
+        }}
+        QPushButton#headerContextChip:hover {{
+            border-color: {acc_hover_border};
+            background: {theme['bg_hover']};
+            color: {theme['fg_main']};
+        }}
+        QPushButton#headerContextChip:pressed {{
+            background: {theme['bg_inset']};
         }}
 
         /* TEXT */
@@ -226,6 +301,11 @@ def build_app_stylesheet(
             color: {theme['fg_muted']};
             font-size: {type_tokens.size_caption_pt:g}pt;
         }}
+        QLabel#panelTitle {{
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_subsection_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+        }}
         QLabel#sectionTitle,
         QLabel#emptyStateTitle {{
             color: {theme['fg_main']};
@@ -248,6 +328,9 @@ def build_app_stylesheet(
         QLabel#valueLabel[kind="warning"], QLabel#metricValue[kind="warning"] {{
             color: {theme['warning']};
         }}
+        /* Compact caption/value pair used by page-local detail rows (data,
+           results, batch, force pages). Formerly also drove the mission-status
+           ribbon, which is gone; these remain in use by those pages. */
         QLabel#statusLabel {{
             color: {theme['fg_muted']};
             font-size: 9pt;
@@ -256,16 +339,6 @@ def build_app_stylesheet(
             color: {theme['fg_soft']};
             font-size: 9pt;
             font-weight: 600;
-        }}
-        /* Thin vertical rule between status groups — replaces literal "|" text
-           separators with a real divider. Uses the visible ``border`` token
-           (not ``border_soft``) so the grouping cue meets WCAG 1.4.11 (3:1);
-           border_soft (#1F2833) was ~1.2:1 here and effectively invisible. */
-        QFrame#statusDivider {{
-            background: {theme['border']};
-            border: none;
-            max-width: 1px;
-            min-width: 1px;
         }}
 
         /* NAVIGATION — flat shell; active = left border + tinted background */
@@ -411,6 +484,7 @@ def build_app_stylesheet(
             border: 1px solid {theme['border']};
             selection-background-color: {acc_dim};
         }}
+        {stepper_qss}
         QProgressBar {{
             background: {theme['bg_entry']};
             border: 1px solid {theme['border']};
@@ -454,7 +528,9 @@ def build_app_stylesheet(
             font-weight: 700;
         }}
 
-        /* BUTTONS (default / secondary) — flat */
+        /* BUTTONS (default / secondary) — flat. A shared min-width keeps text
+           actions from collapsing to a few pixels ("Fit", "Clear") so buttons
+           read as one size class; icon-only and fixed-width chips override it. */
         QPushButton {{
             background: {theme['bg_card_alt']};
             color: {theme['fg_main']};
@@ -462,6 +538,7 @@ def build_app_stylesheet(
             border-radius: 8px;
             padding: {button_pad_v}px 16px;
             min-height: {input_min_h}px;
+            min-width: 72px;
             font-weight: 600;
         }}
         QPushButton:hover {{
@@ -487,6 +564,15 @@ def build_app_stylesheet(
         QPushButton#quickChip:hover {{
             background: {acc_18};
             border-color: {theme['accent']};
+        }}
+        /* Icon-only square button (e.g. a settings gear). Overrides the shared
+           text-button min-width so it stays a compact square target. */
+        QPushButton#iconButton {{
+            min-width: {metrics.icon_button_size}px;
+            max-width: {metrics.icon_button_size}px;
+            min-height: {metrics.icon_button_size}px;
+            max-height: {metrics.icon_button_size}px;
+            padding: 0;
         }}
 
         /* PRIMARY BUTTON (RUN) — the one place a gradient is welcome */
@@ -728,6 +814,29 @@ def build_app_stylesheet(
             background: {theme['bg_card']};
             border: 1px solid {theme['border_soft']};
             border-radius: 10px;
+        }}
+        /* "Scale" popover trigger — styled like a secondary button, not a bare
+           tool button, so it sits consistently among the toolbar controls. */
+        QToolButton#telemetryScaleButton {{
+            background: {theme['bg_card_alt']};
+            border: 1px solid {theme['border']};
+            border-radius: 8px;
+            color: {theme['fg_soft']};
+            padding: 4px 12px;
+            font-weight: 600;
+        }}
+        QToolButton#telemetryScaleButton:hover {{
+            border-color: {acc_hover_border};
+            background: {theme['bg_hover']};
+            color: {theme['fg_main']};
+        }}
+        QToolButton#telemetryScaleButton::menu-indicator {{
+            image: none;
+            width: 0px;
+        }}
+        QWidget#telemetryScalePanel {{
+            background: {theme['bg_card']};
+            min-width: 320px;
         }}
         QWidget#telemetryEmpty {{
             background: transparent;

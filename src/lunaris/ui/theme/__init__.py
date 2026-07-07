@@ -27,11 +27,15 @@ from lunaris.ui_foundation.tokens import (
 )
 
 
-def build_app_stylesheet(theme, log_colors, density="comfortable"):
-    """Import the Qt-facing stylesheet builder only when it is requested."""
+def build_app_stylesheet(theme, log_colors, density="comfortable", **kwargs):
+    """Import the Qt-facing stylesheet builder only when it is requested.
+
+    Extra keyword arguments (e.g. ``spin_up_icon`` / ``spin_down_icon``) are
+    forwarded verbatim to the foundation builder.
+    """
     from lunaris.ui_foundation.stylesheet import build_app_stylesheet as _build
 
-    return _build(theme, log_colors, density)
+    return _build(theme, log_colors, density, **kwargs)
 
 
 __all__ = [

@@ -53,6 +53,7 @@ try:
     from lunaris.ui.components.primitives import DataTable, InlineNotice, Section
     from lunaris.ui.core.ui_commons import (
         THEME,
+        NoWheelComboBox,
         NumericDragLineEdit,
         ToggleSwitch,
         get_icon,
@@ -431,7 +432,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         intro = _label(
             "Each row generates a ready-to-paste batch_runner.py command line.\n"
             "Click 'Copy Command' on a row, or use 'Copy All' to copy all commands.\n"
-            "Paste into a terminal to run. No comparison is performed automatically.",
+            "Paste into a terminal to run. Comparisons are manual.",
             muted=True,
         )
         intro.setWordWrap(True)
@@ -656,7 +657,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         grid.addWidget(self.ent_n_samples, 0, 1)
 
         grid.addWidget(_label("Sampling:"), 1, 0)
-        self.cb_sampling_method = QtWidgets.QComboBox()
+        self.cb_sampling_method = NoWheelComboBox()
         self.cb_sampling_method.setAccessibleName("Ensemble sampling method")
         self.cb_sampling_method.addItem("Random (Monte Carlo)", "random")
         self.cb_sampling_method.addItem("Latin Hypercube (LHS)", "lhs")
@@ -786,7 +787,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         gravity_row = QtWidgets.QHBoxLayout()
         gravity_row.addWidget(_label("Central Gravity Source:"))
-        self.cb_batch_gravity_mode = QtWidgets.QComboBox()
+        self.cb_batch_gravity_mode = NoWheelComboBox()
         self.cb_batch_gravity_mode.setAccessibleName("Central gravity source")
         self.cb_batch_gravity_mode.addItem("Follow Mission Setup", "follow_mission")
         self.cb_batch_gravity_mode.addItem("Force Classical Gravity", "classic_sh")
@@ -805,7 +806,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         backend_row = QtWidgets.QHBoxLayout()
         backend_row.addWidget(_label("Batch Backend:"))
-        self.cb_batch_backend = QtWidgets.QComboBox()
+        self.cb_batch_backend = NoWheelComboBox()
         self.cb_batch_backend.setAccessibleName("Batch propagation backend")
         self.cb_batch_backend.addItem("Auto Policy", "auto")
         self.cb_batch_backend.addItem("CPU Spherical Harmonics", "cpu_sh")
@@ -1053,7 +1054,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         )
         self.ent_vram.setToolTip(
             "Maximum GPU memory used per sub-batch.\n"
-            "Large ensembles are automatically tiled to stay within this budget."
+            "Large ensembles are tiled to stay within this budget."
         )
         grid.addWidget(self.ent_vram, 1, 1)
         grid.addWidget(_label("GB"), 1, 2)
@@ -1069,7 +1070,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         # Format
         fmt_row = QtWidgets.QHBoxLayout()
         fmt_row.addWidget(_label("Format:"))
-        self.cb_format = QtWidgets.QComboBox()
+        self.cb_format = NoWheelComboBox()
         self.cb_format.setAccessibleName("Output archive format")
         self.cb_format.addItems(["hdf5", "npz"])
         self.cb_format.setCurrentText(self.batch_cfg.output_format)
@@ -1084,7 +1085,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.ent_output.setAccessibleName("Output archive path")
         self.ent_output.setPlaceholderText("outputs/ensemble/batch_output.h5")
         btn_browse = QtWidgets.QPushButton("Browse…")
-        btn_browse.setFixedHeight(30)
+        btn_browse.setFixedHeight(DESIGN_TOKENS.controls.compact_height)
         btn_browse.clicked.connect(self._browse_output)
         path_row.addWidget(self.ent_output, 1)
         path_row.addWidget(btn_browse)
@@ -1160,7 +1161,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.badge_batch = QtWidgets.QLabel("IDLE")
         self.badge_batch.setObjectName("statusBadge")
         self.badge_batch.setAlignment(QtCore.Qt.AlignCenter)
-        self.badge_batch.setFixedHeight(24)
+        self.badge_batch.setFixedHeight(DESIGN_TOKENS.controls.status_badge_height)
         self.badge_batch.setContentsMargins(10, 4, 10, 4)
         self.badge_batch.setProperty("kind", "info")
         status_row.addWidget(self.badge_batch)
@@ -1206,13 +1207,13 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.btn_run_batch.setObjectName("primaryBtn")
         self.btn_run_batch.setIcon(get_icon("fa6s.dice", THEME["fg_main"]))
         self.btn_run_batch.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_run_batch.setFixedHeight(36)
+        self.btn_run_batch.setFixedHeight(DESIGN_TOKENS.controls.primary_height)
         self.btn_run_batch.clicked.connect(self._on_run_clicked)
 
         self.btn_open_folder = QtWidgets.QPushButton("  Open Folder")
         self.btn_open_folder.setIcon(get_icon("fa6s.folder-open", THEME["fg_muted"]))
         self.btn_open_folder.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_open_folder.setFixedHeight(36)
+        self.btn_open_folder.setFixedHeight(DESIGN_TOKENS.controls.primary_height)
         self.btn_open_folder.clicked.connect(self._open_output_folder)
 
         btn_row.addWidget(self.btn_run_batch, 2)
@@ -1274,7 +1275,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.btn_open_report = QtWidgets.QPushButton("  Open PDF Report")
         self.btn_open_report.setIcon(get_icon("fa6s.file-pdf", THEME["fg_muted"]))
         self.btn_open_report.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_open_report.setFixedHeight(32)
+        self.btn_open_report.setFixedHeight(DESIGN_TOKENS.controls.minimum_height)
         self.btn_open_report.setEnabled(False)
         self.btn_open_report.clicked.connect(self._open_report)
         layout.addWidget(self.btn_open_report)
@@ -1282,7 +1283,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.btn_copy_metrics = QtWidgets.QPushButton("  Copy Metrics (CSV)")
         self.btn_copy_metrics.setIcon(get_icon("fa6s.table-list", THEME["fg_muted"]))
         self.btn_copy_metrics.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_copy_metrics.setFixedHeight(32)
+        self.btn_copy_metrics.setFixedHeight(DESIGN_TOKENS.controls.minimum_height)
         self.btn_copy_metrics.clicked.connect(self._copy_metrics_csv)
         layout.addWidget(self.btn_copy_metrics)
 

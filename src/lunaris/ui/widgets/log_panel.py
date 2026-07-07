@@ -34,7 +34,13 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.components.primitives import CompactSearchField, OverflowMenuButton
 from lunaris.ui.core.log_stream import is_near_bottom
-from lunaris.ui.core.ui_commons import LOG_COLORS, THEME, find_project_root, get_icon
+from lunaris.ui.core.ui_commons import (
+    LOG_COLORS,
+    THEME,
+    NoWheelComboBox,
+    find_project_root,
+    get_icon,
+)
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
 # Maximum number of retained log lines. A long propagation run must never make
@@ -219,7 +225,7 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
         self.search_field.textChanged.connect(self._rebuild_console)
         tl.addWidget(self.search_field, 1)
 
-        self.severity_filter = QtWidgets.QComboBox()
+        self.severity_filter = NoWheelComboBox()
         self.severity_filter.setAccessibleName("Severity filter")
         self.severity_filter.addItems(
             ["All levels", "Errors", "Warnings", "Info", "System", "Success", "Debug"]

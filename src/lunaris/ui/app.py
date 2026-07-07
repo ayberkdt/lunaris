@@ -37,6 +37,7 @@ from lunaris.ui.core.ui_commons import (
     THEME,
     WINDOW_SETTINGS,
     prefers_reduced_motion,
+    stepper_arrow_icons,
 )
 from lunaris.ui.core.ui_commons import (
     ASSETS_DIR as UI_ASSETS_DIR,
@@ -70,7 +71,7 @@ PAGE_DESCRIPTIONS = {
     "Forces": "Select and configure the physical models used by the propagator.",
     "Propagation": "Set the mission timeline, integrator, and output cadence.",
     "Output": "Choose result destinations and inspect generated artifacts.",
-    "Telemetry": "Monitor the active run and compare live engineering signals.",
+    "Telemetry": "Signals from the active run.",
     "Data": "Locate, validate, and manage mission data sources.",
     "BatchPropagation": "Configure ensemble sampling, execute batch propagation, and inspect distributions.",
     "FrozenSearch": "Run the staged frozen-orbit search and inspect its output contract.",
@@ -165,28 +166,6 @@ from lunaris.ui.pages.mission_propagation_page import SolverSettingsDialog, Spac
 # =============================================================================
 # 16.                       UI HELPERS
 # =============================================================================
-
-def _make_lbl(text: str, style: str = "") -> QtWidgets.QLabel:
-    """Small helper to create a plain styled QLabel without importing Qt in tests."""
-    lbl = QtWidgets.QLabel(text)
-    if style:
-        lbl.setStyleSheet(style)
-    return lbl
-
-
-def _status_divider() -> QtWidgets.QFrame:
-    """A 1px vertical rule for separating status-bar groups.
-
-    Replaces the previous literal ``"|"`` text separators, which read as an
-    amateur tell; the rule is styled from the ``border_soft`` token via the
-    ``#statusDivider`` QSS selector.
-    """
-    rule = QtWidgets.QFrame()
-    rule.setObjectName("statusDivider")
-    rule.setFrameShape(QtWidgets.QFrame.VLine)
-    rule.setFixedWidth(1)
-    return rule
-
 
 # =============================================================================
 # 17.                       MAIN WINDOW APPLICATION
@@ -381,6 +360,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.badge_page = StatusBadge("Orbit", "info")
         h_layout.addWidget(self.badge_page)
 
+        # Header context chips. The separate mission-status ribbon (which showed
+        # idle "Preflight/Run IDLE" badges carrying no information) is gone; the
+        # two settings genuinely worth seeing from every page — the gravity model
+        # and the output destination — live here as quiet, clickable chips. Each
+        # opens its owning control (gravity dialog / output picker). Execution
+        # readiness is reported by the run dot + progress on the right, only while
+        # a run is active, so nothing here shouts when the app is idle.
+        def _header_chip(icon_name: str, initial: str,
+                         on_click) -> QtWidgets.QPushButton:
+            chip = QtWidgets.QPushButton(initial)
+            chip.setObjectName("headerContextChip")
+            chip.setCursor(QtCore.Qt.PointingHandCursor)
+            chip.setIcon(get_icon(icon_name, THEME['fg_muted']))
+            chip.clicked.connect(lambda _=False: on_click())
+            return chip
+
+        h_layout.addSpacing(DESIGN_TOKENS.spacing.md)
+        self.lbl_gravity_status = _header_chip(
+            "fa6s.atom", "SH [100]", self._on_gravity_settings)
+        self.lbl_gravity_status.setToolTip("Gravity model — click to configure")
+        h_layout.addWidget(self.lbl_gravity_status)
+
+        self.lbl_output_status = _header_chip(
+            "fa6s.folder-open", "Not set", self._browse_out_dir)
+        self.lbl_output_status.setToolTip("Output directory — click to choose")
+        self.lbl_output_status.setMaximumWidth(300)
+        h_layout.addWidget(self.lbl_output_status)
+
         h_layout.addStretch(1)
 
         # Progress Bar in Header
@@ -453,75 +460,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.state_frame.hide()
 
         root.addWidget(header_frame)
-
-        # ---------------------------------------------------------------------
-        # A2. Mission Readiness Ribbon
-        #
-        # The bar answers one question — "is the mission ready to run?" — and is
-        # split to read left-to-right as configure -> run: the LEFT group
-        # summarises what you have set up (gravity model, output destination);
-        # the RIGHT group reports execution readiness (pre-flight + run state).
-        # Small leading icons make each field scannable at a glance, so the strip
-        # reads as a purposeful status ribbon rather than a loose row of text.
-        # ---------------------------------------------------------------------
-        status_bar_frame = QtWidgets.QFrame()
-        status_bar_frame.setObjectName("missionStatusBar")
-        sb_layout = QtWidgets.QHBoxLayout(status_bar_frame)
-        # Match the header's horizontal margin (spacing.lg) for a shared left edge.
-        _sp = DESIGN_TOKENS.spacing
-        sb_layout.setContentsMargins(_sp.lg, _sp.xs, _sp.lg, _sp.xs)
-        sb_layout.setSpacing(_sp.sm)
-
-        def _status_icon(icon_name: str) -> QtWidgets.QLabel:
-            """A small muted leading glyph for a status field."""
-            lbl = QtWidgets.QLabel()
-            lbl.setObjectName("statusIcon")
-            lbl.setPixmap(get_icon(icon_name, THEME['fg_muted']).pixmap(13, 13))
-            return lbl
-
-        def _status_field(layout: QtWidgets.QHBoxLayout, icon_name: str,
-                          caption: str) -> None:
-            layout.addWidget(_status_icon(icon_name))
-            cap = _make_lbl(caption)
-            cap.setObjectName("statusLabel")
-            layout.addWidget(cap)
-
-        # --- Left group: mission configuration summary ---
-        _status_field(sb_layout, "fa6s.atom", "Gravity")
-        self.lbl_gravity_status = QtWidgets.QLabel("SH [100]")
-        self.lbl_gravity_status.setObjectName("statusValue")
-        sb_layout.addWidget(self.lbl_gravity_status)
-
-        sb_layout.addSpacing(_sp.md)
-        sb_layout.addWidget(_status_divider())
-        sb_layout.addSpacing(_sp.md)
-
-        _status_field(sb_layout, "fa6s.folder-open", "Output")
-        self.lbl_output_status = QtWidgets.QLabel("Not set")
-        self.lbl_output_status.setObjectName("statusValue")
-        self.lbl_output_status.setMaximumWidth(280)
-        self.lbl_output_status.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
-        sb_layout.addWidget(self.lbl_output_status)
-
-        # Configure | Run separation — the dead space here is intentional.
-        sb_layout.addStretch(1)
-
-        # --- Right group: execution readiness ---
-        _status_field(sb_layout, "fa6s.clipboard-check", "Preflight")
-        self.lbl_preflight_status = StatusBadge("IDLE", "info")
-        self.lbl_preflight_status.setFixedWidth(70)
-        sb_layout.addWidget(self.lbl_preflight_status)
-
-        sb_layout.addSpacing(_sp.md)
-        sb_layout.addWidget(_status_divider())
-        sb_layout.addSpacing(_sp.md)
-
-        _status_field(sb_layout, "fa6s.satellite", "Run")
-        self.lbl_run_status = StatusBadge("IDLE", "info")
-        self.lbl_run_status.setFixedWidth(70)
-        sb_layout.addWidget(self.lbl_run_status)
-
-        root.addWidget(status_bar_frame)
 
         # ---------------------------------------------------------------------
         # B. Main Content Area (Splitter: Nav+Pages | Log)
@@ -811,8 +749,18 @@ class MainWindow(QtWidgets.QMainWindow):
         # 2. Build the global QSS from the Lunar Graphite palette.
         #    The large stylesheet now lives in lunaris.ui.theme.stylesheet
         #    so app.py stays an orchestration layer, not a design-token dump.
+        #    Chevron images for the spin/combo steppers are rasterized here
+        #    (needs a running QApplication) and passed to the binding-neutral
+        #    QSS builder as plain paths.
+        arrows = stepper_arrow_icons()
         self.setStyleSheet(
-            build_app_stylesheet(THEME, LOG_COLORS, getattr(self, "_density", "comfortable"))
+            build_app_stylesheet(
+                THEME,
+                LOG_COLORS,
+                getattr(self, "_density", "comfortable"),
+                spin_up_icon=arrows.get("up"),
+                spin_down_icon=arrows.get("down"),
+            )
         )
 
     # -------------------------------------------------------------------------
@@ -2308,11 +2256,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_status_bar(self) -> None:
         """
-        Refresh the mission status summary bar from current UI state.
-        Called from _ui_tick every 250ms.
+        Refresh the two header context chips (gravity model, output directory)
+        from current UI state. Called from _ui_tick every 250ms. Execution
+        readiness (preflight/run) is no longer summarised here — it is reported
+        by the header run dot + progress while a run is active.
         """
         try:
-            # Gravity backend label
+            # Gravity backend chip
             if hasattr(self, "gravity_cfg"):
                 backend = str(getattr(self.gravity_cfg, "backend", "classic_sh") or "classic_sh")
                 if backend == "st_lrps":
@@ -2328,7 +2278,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pass
 
         try:
-            # Output directory (shortened)
+            # Output directory chip (shortened tail, full path in tooltip)
             if hasattr(self, "page_output"):
                 out_dir = self.page_output.get_state().output_dir.strip()
                 if not out_dir:
@@ -2339,31 +2289,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     out_text = out_dir
                 if hasattr(self, "lbl_output_status"):
                     self.lbl_output_status.setText(out_text)
-        except Exception:
-            pass
-
-        try:
-            # Preflight state badge
-            if hasattr(self, "lbl_preflight_status") and hasattr(self, "preflight_worker"):
-                if self.preflight_worker is not None and self.preflight_worker.isRunning():
-                    self.lbl_preflight_status.set_status("warning", "CHECK")
-        except Exception:
-            pass
-
-        try:
-            # Run state badge
-            if hasattr(self, "lbl_run_status") and hasattr(self, "sim_state"):
-                status = self.sim_state.status if hasattr(self.sim_state, "status") else "idle"
-                status_map = {
-                    "idle": ("IDLE", "info"),
-                    "running": ("RUN", "success"),
-                    "done": ("DONE", "success"),
-                    "error": ("ERROR", "error"),
-                    "stopped": ("STOP", "warning"),
-                    "preflight": ("CHECK", "warning"),
-                }
-                kind_text, kind = status_map.get(status, ("IDLE", "info"))
-                self.lbl_run_status.set_status(kind, kind_text)
+                    self.lbl_output_status.setToolTip(
+                        out_dir if out_dir else "Output directory — click to choose"
+                    )
         except Exception:
             pass
 

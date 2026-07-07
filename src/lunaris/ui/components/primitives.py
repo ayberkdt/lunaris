@@ -147,7 +147,11 @@ class Section(QtWidgets.QFrame):
         root.setSpacing(DESIGN_TOKENS.spacing.md)
         if title:
             title_label = QtWidgets.QLabel(title)
-            title_label.setObjectName("sectionTitle")
+            # A card/panel heading sits one tier above the inner-group labels
+            # (which use ``#sectionTitle``); ``#panelTitle`` renders at the
+            # 14 pt subsection size so the hierarchy page -> panel -> group is
+            # perceptible by size, not just weight.
+            title_label.setObjectName("panelTitle")
             root.addWidget(title_label)
         if description:
             description_label = QtWidgets.QLabel(description)

@@ -38,7 +38,8 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from lunaris.common.constants import DAY_S
 
 try:
-    from lunaris.ui.core.ui_commons import THEME, get_icon
+    from lunaris.ui.core.ui_commons import THEME, NoWheelComboBox, get_icon
+    from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
         import sys
@@ -328,7 +329,7 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
             """
         )
         btn_browse = QtWidgets.QPushButton("Browse…")
-        btn_browse.setFixedHeight(40)
+        btn_browse.setFixedHeight(DESIGN_TOKENS.controls.minimum_height)
         btn_browse.setMinimumWidth(120)
         btn_browse.clicked.connect(self._browse_result_file)
         path_row.addWidget(self.ent_result_path, 1)
@@ -356,7 +357,7 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
         status_row.setSpacing(12)
         self.badge_status = QtWidgets.QLabel("READY")
         self.badge_status.setAlignment(QtCore.Qt.AlignCenter)
-        self.badge_status.setFixedHeight(28)
+        self.badge_status.setFixedHeight(DESIGN_TOKENS.controls.status_badge_height)
         self.badge_status.setContentsMargins(10, 4, 10, 4)
         status_row.addWidget(self.badge_status)
 
@@ -373,20 +374,20 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
         self.btn_analyze.setObjectName("primaryBtn")
         self.btn_analyze.setIcon(get_icon("fa6s.chart-line", THEME["fg_main"]))
         self.btn_analyze.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_analyze.setFixedHeight(42)
+        self.btn_analyze.setFixedHeight(DESIGN_TOKENS.controls.primary_height)
         self.btn_analyze.clicked.connect(self._start_analysis)
 
         self.btn_export_report = QtWidgets.QPushButton("  Export PDF Report")
         self.btn_export_report.setIcon(get_icon("fa6s.file-pdf", THEME["fg_muted"]))
         self.btn_export_report.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_export_report.setFixedHeight(42)
+        self.btn_export_report.setFixedHeight(DESIGN_TOKENS.controls.primary_height)
         self.btn_export_report.setEnabled(False)
         self.btn_export_report.clicked.connect(self._export_pdf_report)
 
         self.btn_open_folder = QtWidgets.QPushButton("  Open Folder")
         self.btn_open_folder.setIcon(get_icon("fa6s.folder-open", THEME["fg_muted"]))
         self.btn_open_folder.setCursor(QtCore.Qt.PointingHandCursor)
-        self.btn_open_folder.setFixedHeight(42)
+        self.btn_open_folder.setFixedHeight(DESIGN_TOKENS.controls.primary_height)
         self.btn_open_folder.clicked.connect(self._open_result_folder)
 
         btn_row.addWidget(self.btn_analyze, 2)
@@ -519,7 +520,7 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
         top_row = QtWidgets.QHBoxLayout()
         top_row.setSpacing(12)
         top_row.addWidget(_label("Plot:"))
-        self.cb_plot = QtWidgets.QComboBox()
+        self.cb_plot = NoWheelComboBox()
         self.cb_plot.setAccessibleName("Analysis plot type")
         self.cb_plot.addItems(
             [
@@ -547,7 +548,7 @@ class EnsembleAnalysisPanel(QtWidgets.QWidget):
         top_row.addWidget(self.cb_plot, 1)
 
         self.btn_refresh_plot = QtWidgets.QPushButton("Refresh Plot")
-        self.btn_refresh_plot.setFixedHeight(40)
+        self.btn_refresh_plot.setFixedHeight(DESIGN_TOKENS.controls.minimum_height)
         self.btn_refresh_plot.setMinimumWidth(140)
         self.btn_refresh_plot.clicked.connect(self._render_selected_plot)
         self.btn_refresh_plot.setEnabled(False)
