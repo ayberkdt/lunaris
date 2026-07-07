@@ -8,7 +8,6 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.time_grid_contract import build_output_time_grid
 from lunaris.core.dynamics import DynamicsEngine

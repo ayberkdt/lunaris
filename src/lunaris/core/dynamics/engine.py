@@ -85,7 +85,6 @@ from lunaris.core.dynamics.perturbation_packs import (
     _TidePack,
 )
 from lunaris.core.dynamics.preparation import (
-    DynamicsRequirements,
     compute_requirements,
     prepare_albedo,
     prepare_earth_j2,

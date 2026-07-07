@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import math
 import warnings
-from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -31,7 +30,7 @@ from lunaris.common.constants import (
     SIGMA_SB,
     SOLAR_FLUX_1AU,
 )
-from lunaris.common.force_requirements import ForceRequirements, force_requirements
+from lunaris.common.force_requirements import force_requirements
 from lunaris.common.math_utils import sample_grid_bilinear
 from lunaris.common.type_defs import SpacecraftProps
 from lunaris.core.dynamics.adaptive_degree import _sample_albedo_dn_scaled

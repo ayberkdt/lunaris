@@ -57,15 +57,6 @@ from lunaris.core.propagation.plans import (
     resolve_step_size_policy,
     resolve_time_grid_plan,
 )
-from lunaris.core.propagation.plans import (
-    IntegrationPlan,
-    StepSizePlan,
-    TimeGridPlan,
-    _osculating_periapsis_alt_km,
-    resolve_integration_plan,
-    resolve_step_size_policy,
-    resolve_time_grid_plan,
-)
 from lunaris.core.propagation.result import _as_state_array
 from lunaris.core.propagation.telemetry import (
     _build_surface_radius_sampler,
