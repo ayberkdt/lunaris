@@ -43,5 +43,11 @@ advanced subsystem.
 | [UI Design System](UI_DESIGN_SYSTEM.md) | Desktop UI design rules |
 | [UI Page Architecture](UI_PAGE_ARCHITECTURE.md) | Page/component layout and ownership |
 
+## Development Notes
+
+| Document | Use it for |
+| --- | --- |
+| [Frame Handling And Physics Refactor](development/FRAME_HANDLING_AND_PHYSICS_REFACTOR.md) | GPU smoke checklist, optional force-probe boundary, and future third-body generalization notes |
+
 Generated outputs belong under `outputs/` or an explicit runtime output
 directory, never under `src/`.

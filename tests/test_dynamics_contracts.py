@@ -189,7 +189,7 @@ def test_thermal_constant_mode_is_supported_without_surface_provider():
         thermal=ThermalConfig(thermal_mode="constant_temperature", facet_lat_count=2, facet_lon_count=4),
         allow_identity_rotation=True,
     )
-    assert eng._requirements()["use_thermal"] is True
+    assert eng._requirements().use_thermal is True
 
 
 def test_thermal_equilibrium_eclipse_requests_earth_vector():
@@ -205,8 +205,8 @@ def test_thermal_equilibrium_eclipse_requests_earth_vector():
         ephem_manager=object(),
     )
     req = eng._requirements()
-    assert req["need_sun"] is True
-    assert req["need_earth"] is True
+    assert req.need_sun is True
+    assert req.need_earth is True
 
 
 def test_thermal_equilibrium_without_eclipse_only_requests_sun_vector():
@@ -222,8 +222,8 @@ def test_thermal_equilibrium_without_eclipse_only_requests_sun_vector():
         ephem_manager=object(),
     )
     req = eng._requirements()
-    assert req["need_sun"] is True
-    assert req["need_earth"] is False
+    assert req.need_sun is True
+    assert req.need_earth is False
 
 
 def test_thermal_equilibrium_requires_sun_ephemeris():
@@ -264,8 +264,8 @@ def test_engine_routes_surrogate_provider_through_python_path():
                          gravity_model=_StubSurrogate(), ephem_manager=None,
                          allow_identity_rotation=True)
     req = eng._requirements()
-    assert req["use_sh"] is True
-    assert req["use_surrogate_gravity"] is True
+    assert req.use_sh is True
+    assert req.use_surrogate_gravity is True
 
 
 # =============================================================================
@@ -361,3 +361,92 @@ def test_extract_gravity_strict_rejects_nonpositive_scalars(attr, value):
     setattr(type(g), attr, value)
     with pytest.raises(ValueError, match="must be positive"):
         extract_gravity_strict(g)
+
+
+# =============================================================================
+# Typed DynamicsRequirements contract (P1: no more dict drift)
+# =============================================================================
+
+def _compute_req(flags: PerturbationFlags, *, have_ephem: bool):
+    from lunaris.core.dynamics.preparation import compute_requirements
+
+    return compute_requirements(
+        flags=flags,
+        gravity_model=None,
+        earth_j2=None,
+        albedo=None,
+        thermal=None,
+        solid_tides=None,
+        allow_identity_rotation=True,
+        have_ephem=have_ephem,
+    )
+
+
+def test_compute_requirements_returns_frozen_typed_object():
+    from lunaris.core.dynamics.preparation import DynamicsRequirements
+
+    req = _compute_req(
+        PerturbationFlags(enable_sh=False, enable_srp=True), have_ephem=True
+    )
+    assert isinstance(req, DynamicsRequirements)
+    # mypy-friendly usage: attribute access, no dict lookups.
+    assert req.use_srp is True
+    assert req.need_sun is True
+    # Historical aliases stay wired to the shared ForceRequirements fields.
+    assert req.need_q == req.force.need_q_i2f
+    assert req.need_vectors == req.force.need_body_vectors
+    import dataclasses
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        req.albedo_model = "simple"  # type: ignore[misc]  # frozen dataclass
+
+
+def test_external_1pn_downgrade_returns_new_object_and_never_mutates_raw():
+    from lunaris.core.dynamics.ephemeris_pack import _EphemPack
+    from lunaris.core.dynamics.preparation import resolve_effective_requirements
+
+    raw = _compute_req(
+        PerturbationFlags(enable_sh=False, enable_relativity_1pn=True),
+        have_ephem=True,
+    )
+    assert raw.use_rel_external is True
+
+    q_ident = np.array([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
+    zeros = np.zeros((2, 3))
+    degenerate = _EphemPack(
+        dt_s=1.0, r_sun_tab_m=zeros, r_earth_tab_m=zeros, q_i2f_tab=q_ident
+    )
+    with pytest.warns(RuntimeWarning, match="external-body relativity terms disabled"):
+        eff = resolve_effective_requirements(raw, degenerate)
+
+    assert eff is not raw
+    assert eff.use_rel_external is False
+    assert raw.use_rel_external is True  # raw requirements never mutated
+    assert eff.use_rel is True  # central-body Schwarzschild term survives
+
+
+def test_effective_requirements_pass_through_when_tables_present():
+    from lunaris.core.dynamics.ephemeris_pack import _EphemPack
+    from lunaris.core.dynamics.preparation import resolve_effective_requirements
+
+    raw = _compute_req(
+        PerturbationFlags(enable_sh=False, enable_relativity_1pn=True),
+        have_ephem=True,
+    )
+    q_ident = np.array([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
+    ones = np.ones((2, 3))
+    ep = _EphemPack(dt_s=1.0, r_sun_tab_m=ones, r_earth_tab_m=ones, q_i2f_tab=q_ident)
+    eff = resolve_effective_requirements(raw, ep)
+    assert eff.use_rel_external is True
+
+
+def test_requirements_to_dict_is_a_provenance_boundary_with_legacy_keys():
+    req = _compute_req(
+        PerturbationFlags(enable_sh=False, enable_srp=True), have_ephem=True
+    )
+    d = req.to_dict()
+    # Historical key names preserved for serialization/provenance consumers.
+    for key in ("need_q", "need_vectors", "albedo_model", "use_srp", "need_ephem"):
+        assert key in d
+    assert d["need_q"] == req.force.need_q_i2f
+    assert d["use_srp"] is True

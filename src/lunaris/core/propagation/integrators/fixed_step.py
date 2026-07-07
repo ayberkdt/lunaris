@@ -175,6 +175,7 @@ def _integrate_fixed_step(
     heartbeat_hours: float,
     stop_file: str | None,
     checkpoint_path: str | None,
+    checkpoint_metadata: dict[str, Any] | None = None,
 ) -> tuple[Any, bool, float | None, np.ndarray | None, bool, str | None, float | None]:
     """Integrate with an in-house fixed-step method (symplectic, RKN, or RK4).
 
@@ -401,7 +402,12 @@ def _integrate_fixed_step(
 
     if checkpoint_path:
         try:
-            _atomic_save_npz(checkpoint_path, t=t_arr, y_row=y_arr)
+            _atomic_save_npz(
+                checkpoint_path,
+                t=t_arr,
+                y_row=y_arr,
+                **(checkpoint_metadata or {}),
+            )
         except Exception as exc:
             import warnings
             warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)

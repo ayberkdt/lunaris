@@ -23,7 +23,8 @@ import pytest
 
 from lunaris.common.constants import R_MOON
 from lunaris.common.type_defs import PropagatorConfig
-from lunaris.core.propagation.propagator import _find_event_index, build_events
+from lunaris.core.propagation.events import _find_event_index
+from lunaris.core.propagation.propagator import build_events
 from lunaris.loaders.io_surface import (
     ConstantTopography,
     InMemorySurfaceProvider,

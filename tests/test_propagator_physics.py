@@ -25,6 +25,10 @@ import pytest
 
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.type_defs import EventConfig, PropagatorConfig, TimeConfig
+from lunaris.core.propagation.checkpoint import (
+    CHECKPOINT_SCHEMA_VERSION,
+    load_propagation_checkpoint,
+)
 from lunaris.core.propagation.propagator import _clamp_output_dt, make_time_grid, propagate
 
 MU = float(MU_MOON)
@@ -56,6 +60,12 @@ class FakePointMassDynamics:
             return dy
 
         return rhs
+
+
+class FakePreparedDynamics(FakePointMassDynamics):
+    def __init__(self, rhs_path, grav=None):
+        self._prep = {"rhs_path": rhs_path}
+        self.grav = grav
 
 
 def _circular_state(alt_m: float):
@@ -198,6 +208,53 @@ def test_unknown_method_falls_back_to_dop853_and_runs():
     assert np.all(np.isfinite(res.y))
 
 
+def test_diagnostics_schema_backend_integrator_and_rhs_path_are_present():
+    y0, _, _ = _circular_state(120e3)
+    tc = TimeConfig(duration_s=60.0, output_dt_s=20.0, samples_per_period=3)
+    res = propagate(FakePointMassDynamics(), y0, _cfg(), time_cfg=tc)
+
+    assert res.diagnostics["diagnostics_schema_version"] == 1
+    assert res.diagnostics["integration_backend"] == "scipy"
+    assert res.diagnostics["integrator"] == "DOP853"
+    assert res.diagnostics["rhs_path"] == "point_mass_python"
+
+
+def test_surrogate_python_autograd_rhs_sets_cpu_warning_provenance():
+    y0, _, _ = _circular_state(120e3)
+    tc = TimeConfig(duration_s=60.0, output_dt_s=20.0, samples_per_period=3)
+    grav = SimpleNamespace(
+        model_kind="st_lrps",
+        R_ref_m=R,
+        GM_m3s2=MU,
+        degree_max=4,
+    )
+    res = propagate(
+        FakePreparedDynamics("surrogate_python", grav=grav),
+        y0,
+        _cfg(events=EventConfig(detect_impact=False, enable_peri_apo_events=False)),
+        time_cfg=tc,
+    )
+
+    assert res.diagnostics["rhs_path"] == "surrogate_python_autograd"
+    assert res.diagnostics["single_run_stlrps_cpu_warning"] is True
+    assert res.diagnostics["benchmark_comparable_to_numba_sh"] is False
+
+
+def test_classical_sh_rhs_does_not_set_stlrps_cpu_warning():
+    y0, _, _ = _circular_state(120e3)
+    tc = TimeConfig(duration_s=60.0, output_dt_s=20.0, samples_per_period=3)
+    res = propagate(
+        FakePreparedDynamics("sh_only_numba"),
+        y0,
+        _cfg(events=EventConfig(detect_impact=False, enable_peri_apo_events=False)),
+        time_cfg=tc,
+    )
+
+    assert res.diagnostics["rhs_path"] == "sh_only_numba"
+    assert "single_run_stlrps_cpu_warning" not in res.diagnostics
+    assert "benchmark_comparable_to_numba_sh" not in res.diagnostics
+
+
 # =============================================================================
 # Output-grid monotonicity and chunk invariance (Phase 9 behaviour locks)
 # =============================================================================
@@ -297,7 +354,16 @@ def test_checkpoint_npz_is_written(tmp_path):
     assert ckpt.exists()
     with np.load(ckpt) as data:
         assert "t" in data and "y_row" in data
+        assert int(data["checkpoint_schema_version"]) == CHECKPOINT_SCHEMA_VERSION
+        assert data["method"].item() == "DOP853"
+        assert str(data["config_hash"].item())
         assert data["t"].shape[0] == res.t.shape[0]
+    loaded = load_propagation_checkpoint(ckpt)
+    assert loaded.checkpoint_schema_version == CHECKPOINT_SCHEMA_VERSION
+    assert loaded.t_current == pytest.approx(float(res.t[-1]))
+    np.testing.assert_allclose(loaded.y_current, res.y[-1])
+    assert loaded.method == "DOP853"
+    assert loaded.config_hash
 
 
 def test_failed_adaptive_chunk_is_not_checkpointed(monkeypatch, tmp_path):
@@ -376,9 +442,12 @@ def test_terminal_adaptive_chunk_checkpoint_uses_event_endpoint(monkeypatch, tmp
     res = propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc, extra_events=[terminal_event])
 
     assert ckpt.exists()
-    with np.load(ckpt) as data:
-        np.testing.assert_allclose(data["t"], [4.0])
-        np.testing.assert_allclose(data["y_row"], event_state.reshape(1, -1))
+    loaded = load_propagation_checkpoint(ckpt)
+    assert loaded.checkpoint_schema_version == CHECKPOINT_SCHEMA_VERSION
+    assert loaded.t_current == pytest.approx(4.0)
+    np.testing.assert_allclose(loaded.y_current, event_state)
+    np.testing.assert_allclose(loaded.t, [4.0])
+    np.testing.assert_allclose(loaded.y_row, event_state.reshape(1, -1))
     assert res.stopped_early is True
     assert res.stop_reason == "event"
     np.testing.assert_allclose(res.t[-1], 4.0)
@@ -426,9 +495,12 @@ def test_chunked_adaptive_impact_event_reports_impact_reason(monkeypatch, tmp_pa
     res = propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc)
 
     assert ckpt.exists()
-    with np.load(ckpt) as data:
-        np.testing.assert_allclose(data["t"], [4.0])
-        np.testing.assert_allclose(data["y_row"], impact_state.reshape(1, -1))
+    loaded = load_propagation_checkpoint(ckpt)
+    assert loaded.checkpoint_schema_version == CHECKPOINT_SCHEMA_VERSION
+    assert loaded.t_current == pytest.approx(4.0)
+    np.testing.assert_allclose(loaded.y_current, impact_state)
+    np.testing.assert_allclose(loaded.t, [4.0])
+    np.testing.assert_allclose(loaded.y_row, impact_state.reshape(1, -1))
     assert res.impacted is True
     assert res.stopped_early is True
     assert res.stop_reason == "impact"

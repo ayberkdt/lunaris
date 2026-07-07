@@ -474,10 +474,10 @@ def test_build_rhs_degrades_external_1pn_on_zero_tables_with_warning() -> None:
     )
     with pytest.warns(RuntimeWarning, match="external-body relativity terms disabled"):
         rhs = eng.build_rhs(force_rebuild=True)
-    assert eng._prep["req"]["use_rel_external"] is False
+    assert eng._prep["req"].use_rel_external is False
     # The downgrade lives only in the *effective* requirements captured above;
     # the raw config-derived requirements are never mutated as a side effect.
-    assert eng._requirements()["use_rel_external"] is True
+    assert eng._requirements().use_rel_external is True
     dy = rhs(0.0, _build_default_state())
     assert np.all(np.isfinite(dy))
 

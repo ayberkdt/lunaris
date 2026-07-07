@@ -6,25 +6,21 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.core.state import OrbitState
+from lunaris.common.state_vector import normalize_cartesian_state
 
-STATE_MIN_SIZE = 6  # [x,y,z,vx,vy,vz]
+STATE_MIN_SIZE = 6  # [x,y,z,vx,vy,vz]; kept for backward compatibility
 
 
 def _as_state_array(y0: Any) -> np.ndarray:
     """
     Normalize initial state to a contiguous float64 1D array.
-    Accepts OrbitState or array-like. Requires at least 6 elements.
+
+    Accepts OrbitState-like objects (via ``.y``/``to_array()``) or array-likes.
+    The dynamics RHS supports exactly 6 elements [x,y,z,vx,vy,vz] or 7
+    (same + mass); anything else is rejected here instead of failing later
+    inside DynamicsEngine.
     """
-    if isinstance(y0, OrbitState):
-        y = np.asarray(y0.y, dtype=np.float64).reshape(-1)
-    else:
-        y = np.asarray(y0, dtype=np.float64).reshape(-1)
-
-    if y.size < STATE_MIN_SIZE:
-        raise ValueError("Initial state must have at least 6 elements: [x,y,z,vx,vy,vz].")
-
-    return np.array(y, dtype=np.float64, copy=True)
+    return normalize_cartesian_state(y0, allow_mass=True, name="Initial state")
 
 
 __all__ = ["STATE_MIN_SIZE", "_as_state_array"]

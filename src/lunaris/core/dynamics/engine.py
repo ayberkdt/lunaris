@@ -85,6 +85,7 @@ from lunaris.core.dynamics.perturbation_packs import (
     _TidePack,
 )
 from lunaris.core.dynamics.preparation import (
+    DynamicsRequirements,
     compute_requirements,
     prepare_albedo,
     prepare_earth_j2,
@@ -187,7 +188,7 @@ class DynamicsEngine:
     # -------------------------------------------------------------------------
     # Requirements / validation
     # -------------------------------------------------------------------------
-    def _requirements(self) -> dict[str, Any]:
+    def _requirements(self) -> DynamicsRequirements:
         """Raw config-derived requirement set (see ``dynamics.preparation``)."""
         return compute_requirements(
             flags=self.flags,
@@ -239,19 +240,19 @@ class DynamicsEngine:
         self._prep = {"req": req, "grav": gp, "eph": ep, "alb": ap, "earth_j2": ej, "tides": tp, "thermal": th}
 
         # Flags captured into closure
-        USE_SH = bool(req["use_sh"])
-        USE_SURROGATE = bool(req.get("use_surrogate_gravity", False))
-        USE_3RD_SUN = bool(req["use_3rd_sun"])
-        USE_3RD_EARTH = bool(req["use_3rd_earth"])
-        USE_SRP = bool(req["use_srp"])
-        USE_ALBEDO = bool(req["use_albedo"])
-        USE_REL = bool(req["use_rel"])
-        USE_REL_EXTERNAL = bool(req["use_rel_external"])
-        USE_EJ2 = bool(req["use_earth_j2"])
-        USE_TIDES = bool(req["use_tides"])
-        USE_TIDE_EARTH = bool(req["use_tide_earth"])
-        USE_TIDE_SUN = bool(req["use_tide_sun"])
-        USE_THERMAL = bool(req["use_thermal"])
+        USE_SH = bool(req.use_sh)
+        USE_SURROGATE = bool(req.use_surrogate_gravity)
+        USE_3RD_SUN = bool(req.use_3rd_sun)
+        USE_3RD_EARTH = bool(req.use_3rd_earth)
+        USE_SRP = bool(req.use_srp)
+        USE_ALBEDO = bool(req.use_albedo)
+        USE_REL = bool(req.use_rel)
+        USE_REL_EXTERNAL = bool(req.use_rel_external)
+        USE_EJ2 = bool(req.use_earth_j2)
+        USE_TIDES = bool(req.use_tides)
+        USE_TIDE_EARTH = bool(req.use_tide_earth)
+        USE_TIDE_SUN = bool(req.use_tide_sun)
+        USE_THERMAL = bool(req.use_thermal)
         SH_ONLY_FAST_PATH = bool(
             USE_SH
             and not USE_SURROGATE
@@ -270,7 +271,7 @@ class DynamicsEngine:
 
         # Ephemeris fetch needed inside kernel only if we actually have ephem_manager.
         HAVE_EPH = bool(self.ephem is not None)
-        NEED_EPH = bool(HAVE_EPH and (req["need_sun"] or req["need_earth"] or req["need_q"]))
+        NEED_EPH = bool(HAVE_EPH and (req.need_sun or req.need_earth or req.need_q))
 
         # Spacecraft constants
         SC_MASS = float(self.sc_props.mass_kg)
@@ -1121,7 +1122,7 @@ class DynamicsEngine:
         if not self._prep:
             self.build_rhs(force_rebuild=False)
 
-        req: dict[str, bool] = self._prep["req"]
+        req: DynamicsRequirements = self._prep["req"]
         gp: _GravPack = self._prep["grav"]
         ep: _EphemPack = self._prep["eph"]
         ap: _AlbedoPack = self._prep["alb"]
@@ -1143,7 +1144,7 @@ class DynamicsEngine:
         q = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
 
         have_eph = bool(self.ephem is not None)
-        need_eph = bool(have_eph and (req["need_sun"] or req["need_earth"] or req["need_q"]))
+        need_eph = bool(have_eph and (req.need_sun or req.need_earth or req.need_q))
         if need_eph:
             sx, sy, sz, ex, ey, ez, q0, q1, q2, q3 = get_ephem_state(
                 float(t),
@@ -1160,8 +1161,8 @@ class DynamicsEngine:
             return float(math.sqrt(ax * ax + ay * ay + az * az))
 
         # Gravity
-        if req["use_sh"]:
-            if bool(req.get("use_surrogate_gravity", False)):
+        if req.use_sh:
+            if bool(req.use_surrogate_gravity):
                 rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
                 ax_f, ay_f, az_f = self.grav.acceleration_fixed((rfx, rfy, rfz))
                 ax_i, ay_i, az_i = quat_rotate_vec(
@@ -1217,15 +1218,15 @@ class DynamicsEngine:
             out["Gravity (PM)"] = _norm3(ax0, ay0, az0)
 
         # Third body
-        if req["use_3rd_sun"]:
+        if req.use_3rd_sun:
             ax3, ay3, az3 = accel_third_body_numba(r[0], r[1], r[2], sun[0], sun[1], sun[2], float(MU_SUN))
             out["3rd Body (Sun)"] = _norm3(ax3, ay3, az3)
 
-        if req["use_3rd_earth"]:
+        if req.use_3rd_earth:
             ax3, ay3, az3 = accel_third_body_numba(r[0], r[1], r[2], earth[0], earth[1], earth[2], float(MU_EARTH))
             out["3rd Body (Earth)"] = _norm3(ax3, ay3, az3)
 
-        if req["use_earth_j2"]:
+        if req.use_earth_j2:
             j2x, j2y, j2z = accel_j2_oblate_diff_numba(
                 float(r[0]),
                 float(r[1]),
@@ -1243,13 +1244,13 @@ class DynamicsEngine:
             out["3rd Body (Earth J2)"] = _norm3(j2x, j2y, j2z)
 
         # Solid-body tides
-        if req["use_tides"]:
+        if req.use_tides:
             rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
             tide_x = 0.0
             tide_y = 0.0
             tide_z = 0.0
 
-            if req["use_tide_earth"]:
+            if req.use_tide_earth:
                 efx, efy, efz = quat_rotate_vec(q[0], q[1], q[2], q[3], earth[0], earth[1], earth[2])
                 atx_f, aty_f, atz_f = accel_solid_tides_numba(
                     rfx,
@@ -1272,7 +1273,7 @@ class DynamicsEngine:
                 tide_y += aty_i
                 tide_z += atz_i
 
-            if req["use_tide_sun"]:
+            if req.use_tide_sun:
                 sfx, sfy, sfz = quat_rotate_vec(q[0], q[1], q[2], q[3], sun[0], sun[1], sun[2])
                 atx_f, aty_f, atz_f = accel_solid_tides_numba(
                     rfx,
@@ -1298,7 +1299,7 @@ class DynamicsEngine:
             out["Solid Tides"] = _norm3(tide_x, tide_y, tide_z)
 
         # SRP
-        if req["use_srp"]:
+        if req.use_srp:
             srp_cfg = self.srp
             earth_r2 = float(earth[0] * earth[0] + earth[1] * earth[1] + earth[2] * earth[2])
             enable_earth = bool(getattr(srp_cfg, "enable_earth_eclipse", False)) and bool(earth_r2 > 1.0e12)
@@ -1326,7 +1327,7 @@ class DynamicsEngine:
             out["SRP"] = _norm3(asx, asy, asz)
 
         # Albedo (reflected solar radiation pressure)
-        if req["use_albedo"]:
+        if req.use_albedo:
             rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
             sfx, sfy, sfz = quat_rotate_vec(q[0], q[1], q[2], q[3], sun[0], sun[1], sun[2])
 
@@ -1423,7 +1424,7 @@ class DynamicsEngine:
             out["Albedo"] = _norm3(aax_i, aay_i, aaz_i)
 
         # Lunar thermal IR radiation pressure
-        if req["use_thermal"]:
+        if req.use_thermal:
             rfx, rfy, rfz = quat_rotate_vec(q[0], q[1], q[2], q[3], r[0], r[1], r[2])
             sfx, sfy, sfz = quat_rotate_vec(q[0], q[1], q[2], q[3], sun[0], sun[1], sun[2])
             efx, efy, efz = quat_rotate_vec(q[0], q[1], q[2], q[3], earth[0], earth[1], earth[2])
@@ -1462,14 +1463,14 @@ class DynamicsEngine:
             out["Thermal IR"] = _norm3(athx_i, athy_i, athz_i)
 
         # Relativity
-        if req["use_rel"]:
+        if req.use_rel:
             arx, ary, arz = _schwarzschild_components(r[0], r[1], r[2], v[0], v[1], v[2], float(mu_m))
             rel_x = arx
             rel_y = ary
             rel_z = arz
             out["Relativity (Moon Schwarzschild)"] = _norm3(arx, ary, arz)
 
-            if req.get("use_rel_external", False):
+            if req.use_rel_external:
                 svx, svy, svz = interp_vec3_derivative_safe(
                     float(t),
                     float(ep.dt_s),

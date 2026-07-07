@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -18,6 +19,171 @@ from lunaris.core.events import (
 )
 from lunaris.core.propagation.checkpoint import _stop_requested
 from lunaris.core.propagation.time_grid import _get_ref_radius_and_mu
+
+
+@dataclass(frozen=True, slots=True)
+class EventOutcome:
+    """Normalized terminal-event/impact/stop-file outcome."""
+
+    impacted: bool
+    t_impact_s: float | None
+    y_impact: np.ndarray | None
+    stopped_early: bool
+    stop_reason: str | None
+    t_stop_s: float | None
+
+    def __post_init__(self) -> None:
+        impacted = bool(self.impacted)
+        stopped_early = bool(self.stopped_early)
+        stop_reason = self.stop_reason
+        t_stop_s = self.t_stop_s
+
+        y_impact = None
+        if self.y_impact is not None:
+            y_impact = np.ascontiguousarray(self.y_impact, dtype=np.float64)
+
+        if impacted:
+            stopped_early = True
+            stop_reason = "impact"
+            if self.t_impact_s is not None and t_stop_s is None:
+                t_stop_s = float(self.t_impact_s)
+
+        if stop_reason:
+            stopped_early = True
+
+        object.__setattr__(self, "impacted", impacted)
+        object.__setattr__(self, "t_impact_s", None if self.t_impact_s is None else float(self.t_impact_s))
+        object.__setattr__(self, "y_impact", y_impact)
+        object.__setattr__(self, "stopped_early", stopped_early)
+        object.__setattr__(self, "stop_reason", stop_reason)
+        object.__setattr__(self, "t_stop_s", None if t_stop_s is None else float(t_stop_s))
+
+
+def _first_event_time(
+    t_events: list[np.ndarray],
+    index: int | None,
+) -> float | None:
+    if index is None or index >= len(t_events):
+        return None
+    try:
+        t_ev = np.asarray(t_events[index], dtype=np.float64).reshape(-1)
+    except Exception:
+        return None
+    if t_ev.size == 0:
+        return None
+    t0 = float(t_ev[0])
+    return t0 if np.isfinite(t0) else None
+
+
+def _first_event_state(
+    y_events: list[np.ndarray],
+    index: int | None,
+) -> np.ndarray | None:
+    if index is None or index >= len(y_events):
+        return None
+    try:
+        y_ev = np.asarray(y_events[index], dtype=np.float64)
+    except Exception:
+        return None
+    if y_ev.size == 0:
+        return None
+    if y_ev.ndim == 1:
+        y_ev = y_ev.reshape(1, -1)
+    return np.asarray(y_ev[0], dtype=np.float64).reshape(-1)
+
+
+def _earliest_terminal_event_time(
+    events: list[Callable[[float, np.ndarray], float]] | None,
+    t_events: list[np.ndarray],
+) -> float | None:
+    if not events:
+        return None
+
+    best: float | None = None
+    for i, ev in enumerate(events):
+        if not bool(getattr(ev, "terminal", False)):
+            continue
+        t0 = _first_event_time(t_events, i)
+        if t0 is None:
+            continue
+        if best is None or t0 < best:
+            best = t0
+    return best
+
+
+def event_outcome_from_solver_events(
+    *,
+    events: list[Callable[[float, np.ndarray], float]] | None,
+    t_events: list[np.ndarray],
+    y_events: list[np.ndarray],
+    stopped_early: bool,
+    stop_reason: str | None,
+    stop_file: str | None,
+    stop_event_in_scipy: bool,
+) -> EventOutcome:
+    """Normalize SciPy/fake-SciPy event payloads into a stable outcome object."""
+    impacted = False
+    t_imp: float | None = None
+    y_imp: np.ndarray | None = None
+
+    idx_impact = _find_event_index(events, "impact")
+    if idx_impact is not None and _first_event_time(t_events, idx_impact) is not None:
+        try:
+            t_imp = _first_event_time(t_events, idx_impact)
+            y_imp = _first_event_state(y_events, idx_impact)
+            if t_imp is None or y_imp is None:
+                raise ValueError("missing impact event time or state")
+            impacted = True
+        except Exception as exc:
+            # Losing the impact flag silently would flip a result-affecting
+            # boolean (R29b): a malformed solver event payload must be visible.
+            import warnings
+            warnings.warn(
+                f"Impact-event extraction failed on malformed solver output: {exc}. "
+                "The trajectory is reported as non-impacting.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            t_imp = None
+            y_imp = None
+
+    if impacted:
+        return EventOutcome(
+            impacted=True,
+            t_impact_s=t_imp,
+            y_impact=y_imp,
+            stopped_early=True,
+            stop_reason="impact",
+            t_stop_s=t_imp,
+        )
+
+    reason = stop_reason
+    t_stop: float | None = None
+
+    idx_stop = _find_event_index(events, "stop")
+    if stop_file and bool(stop_event_in_scipy) and idx_stop is not None:
+        t_stop_candidate = _first_event_time(t_events, idx_stop)
+        if t_stop_candidate is not None:
+            reason = "stop file"
+            t_stop = t_stop_candidate
+
+    if reason is None and bool(stopped_early):
+        t_terminal = _earliest_terminal_event_time(events, t_events)
+        if t_terminal is not None:
+            reason = "event"
+            t_stop = t_terminal
+
+    if t_stop is None and reason == "event":
+        t_stop = _earliest_terminal_event_time(events, t_events)
+
+    return EventOutcome(
+        impacted=False,
+        t_impact_s=None,
+        y_impact=None,
+        stopped_early=bool(stopped_early),
+        stop_reason=reason,
+        t_stop_s=t_stop,
+    )
 
 
 def _build_r_i_to_bf_from_rot_table(
@@ -379,6 +545,7 @@ def _refine_event_time_bisect(
 
 
 __all__ = [
+    "EventOutcome",
     "_build_r_i_to_bf_from_rot_table",
     "_wrap_event_first6",
     "_get_event_cfg",
@@ -389,6 +556,7 @@ __all__ = [
     "_get_enable_peri_apo_events",
     "_find_event_index",
     "_terminal_event_endpoint",
+    "event_outcome_from_solver_events",
     "build_events",
     "_event_crossed",
     "_refine_event_time_bisect",

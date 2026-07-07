@@ -29,15 +29,18 @@ from lunaris.common.math_utils import (
 )
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig, TimeConfig
 from lunaris.core.dynamics import DynamicsEngine
-from lunaris.core.propagation.checkpoint import _atomic_save_npz, _stop_requested
+from lunaris.core.propagation.checkpoint import (
+    _atomic_save_npz,
+    _checkpoint_metadata,
+    _stop_requested,
+)
 from lunaris.core.propagation.events import (
+    EventOutcome,
     _build_r_i_to_bf_from_rot_table,
-    _find_event_index,
-    _get_detect_impact,
-    _get_impact_alt_km,
     _terminal_event_endpoint,
     _wrap_event_first6,
     build_events,
+    event_outcome_from_solver_events,
 )
 from lunaris.core.propagation.integrators.fixed_step import (
     _ACCEL_METHODS,
@@ -58,6 +61,15 @@ from lunaris.core.propagation.integrators.symplectic import (
     _Y6_WEIGHTS,
     _Y8_WEIGHTS,
     _composition_weights,
+)
+from lunaris.core.propagation.plans import (
+    IntegrationPlan,
+    StepSizePlan,
+    TimeGridPlan,
+    _osculating_periapsis_alt_km,
+    resolve_integration_plan,
+    resolve_step_size_policy,
+    resolve_time_grid_plan,
 )
 from lunaris.core.propagation.result import _as_state_array
 from lunaris.core.propagation.telemetry import (
@@ -89,7 +101,7 @@ def _resolve_atol(cfg: PropagatorConfig, n_state: int) -> float | np.ndarray:
         return atol_scalar
 
     n = int(n_state)
-    vec = np.full(n, atol_scalar, dtype=np.float64)
+    vec: np.ndarray = np.full(n, atol_scalar, dtype=np.float64)
     if n >= 6:
         if atol_pos is not None:
             vec[0:3] = float(atol_pos)
@@ -98,42 +110,44 @@ def _resolve_atol(cfg: PropagatorConfig, n_state: int) -> float | np.ndarray:
     return vec
 
 
-def _osculating_periapsis_alt_km(y: Any, mu_m3s2: float, R_ref_m: float) -> float | None:
-    """Return osculating conic periapsis altitude from a Cartesian state.
+def _rhs_path_for_diagnostics(dynamics: Any) -> str:
+    """Return the RHS implementation path stamped into run diagnostics."""
 
-    The p/(1+e) form works for elliptic, parabolic, and hyperbolic conics when
-    angular momentum is non-zero. ``None`` means the state is too degenerate to
-    infer a useful periapsis for step-size policy.
-    """
-    arr = np.asarray(y, dtype=np.float64).reshape(-1)
-    if arr.size < 6:
-        return None
+    raw: Any = None
+    prep = getattr(dynamics, "_prep", None)
+    if isinstance(prep, dict):
+        raw = prep.get("rhs_path")
+    elif prep is not None:
+        try:
+            raw = prep["rhs_path"]
+        except Exception:
+            raw = None
 
-    mu = float(mu_m3s2)
-    R_ref = float(R_ref_m)
-    if (not np.isfinite(mu)) or mu <= 0.0 or (not np.isfinite(R_ref)) or R_ref <= 0.0:
-        return None
+    if raw is not None:
+        text = str(raw).strip()
+        if text == "surrogate_python":
+            return "surrogate_python_autograd"
+        if text:
+            return text
 
-    r = arr[0:3]
-    v = arr[3:6]
-    if not (np.all(np.isfinite(r)) and np.all(np.isfinite(v))):
-        return None
+    grav = getattr(dynamics, "grav", None)
+    if getattr(grav, "model_kind", None) == "st_lrps":
+        return "surrogate_python_autograd"
+    if grav is None:
+        return "point_mass_python"
+    return "unknown"
 
-    rn = float(np.linalg.norm(r))
-    h_vec = np.cross(r, v)
-    h2 = float(np.dot(h_vec, h_vec))
-    if rn <= 0.0 or h2 <= 0.0:
-        return None
 
-    ecc_vec = np.cross(v, h_vec) / mu - r / rn
-    ecc = float(np.linalg.norm(ecc_vec))
-    if (not np.isfinite(ecc)) or ecc < 0.0:
-        return None
+def _uses_surrogate_python_autograd(dynamics: Any, rhs_path: str) -> bool:
+    """True when a single-trajectory run is using the interpreted ST-LRPS path."""
 
-    rp = (h2 / mu) / (1.0 + ecc)
-    if (not np.isfinite(rp)) or rp <= 0.0:
-        return None
-    return float((rp - R_ref) / 1000.0)
+    if rhs_path == "surrogate_python_autograd":
+        return True
+    grav = getattr(dynamics, "grav", None)
+    return bool(
+        getattr(grav, "model_kind", None) == "st_lrps"
+        and "surrogate" in str(rhs_path)
+    )
 
 
 def propagate(
@@ -183,60 +197,21 @@ def propagate(
     # -------------------------------------------------------------------------
     # 1) Resolve time grid (STRICT: TimeConfig required)
     # -------------------------------------------------------------------------
-    if time_cfg is None:
-        raise ValueError("time_cfg is required (STRICT). Provide TimeConfig(duration_s=..., output_dt_s=...).")
-
-    if getattr(time_cfg, "duration_s", None) is None:
-        raise ValueError("time_cfg.duration_s is required and must be finite/positive.")
-    dt_out_raw = getattr(time_cfg, "output_dt_s", None)
-    dur_s = float(time_cfg.duration_s)
-    if dur_s <= 0.0 or (not np.isfinite(dur_s)):
-        raise ValueError("Duration must be positive and finite.")
-
-    # Start/end times (t0 belongs to TimeConfig; default 0 if omitted)
-    t0 = float(getattr(time_cfg, "t0_s", 0.0) or 0.0)
-    if not np.isfinite(t0):
-        raise ValueError("time_cfg.t0_s must be finite.")
-    tf = t0 + dur_s
-
-    # Resolve output sampling step
-    if dt_out_raw is None:
-        # Allow "output_dt_s=None" by deriving a reasonable sampling step from the
-        # osculating Keplerian period estimated from the initial state (Kepler two-body).
-        # (This matches the intent of TimeConfig.samples_per_period.)
-        _, mu = _get_ref_radius_and_mu(dynamics)
-        mu = float(mu)
-
-        r0 = float(np.linalg.norm(y0_arr[:3]))
-        v0 = float(np.linalg.norm(y0_arr[3:6]))
-        if not (math.isfinite(r0) and math.isfinite(v0) and r0 > 0.0 and mu > 0.0):
-            raise ValueError("Cannot derive output_dt_s: invalid initial state or mu.")
-
-        denom = (2.0 / r0) - (v0 * v0 / mu)
-        if denom <= 0.0 or (not math.isfinite(denom)):
-            raise ValueError(
-                "time_cfg.output_dt_s is None, but the orbit appears unbound/degenerate. "
-                "Set output_dt_s explicitly."
-            )
-
-        a = 1.0 / denom
-        T = 2.0 * math.pi * math.sqrt((a * a * a) / mu)
-
-        spp = int(getattr(time_cfg, "samples_per_period", 360) or 360)
-        spp = max(1, spp)
-        dt_out_user = float(T) / float(spp)
-    else:
-        dt_out_user = float(dt_out_raw)
-
-    if dt_out_user <= 0.0 or (not np.isfinite(dt_out_user)):
-        raise ValueError("time_cfg.output_dt_s must be positive and finite.")
-    # Cap output points (owned by PropagatorConfig; TimeConfig may optionally override)
-    max_points_cap = int(getattr(time_cfg, "max_points_cap", getattr(cfg, "max_points_cap", 200_000)))
-
-    dt_out = _clamp_output_dt(t0, tf, float(dt_out_user), max_points_cap, verbose)
-    t_eval = make_time_grid(t0, tf, dt_out)
+    time_plan = resolve_time_grid_plan(
+        dynamics=dynamics,
+        y0=y0_arr,
+        cfg=cfg,
+        time_cfg=time_cfg,
+        verbose=verbose,
+    )
+    t0 = time_plan.t0
+    tf = time_plan.tf
+    dur_s = time_plan.duration_s
+    dt_out = time_plan.realized_output_dt_s
+    t_eval = time_plan.t_eval
 
     rhs = dynamics.build_rhs()
+    rhs_path = _rhs_path_for_diagnostics(dynamics)
     R_ref_m, mu_m3s2 = _get_ref_radius_and_mu(dynamics)
 
     # Terrain-aware telemetry is optional. The actual hybrid impact event uses a
@@ -298,46 +273,37 @@ def propagate(
     # -------------------------------------------------------------------------
     degree = _get_sh_degree(dynamics)
     topo_present = topo_grid is not None
-
-    nyq_max: float | None = None
-    nyq_r_min_alt_km: float | None = None
-    if bool(getattr(cfg, "use_nyquist_max_step", False)):
-        try:
-            guard_alt_km = float(_get_impact_alt_km(cfg) if _get_detect_impact(cfg) else 0.0)
-            if topo_present:
-                guard_alt_km = 0.0
-            peri_alt_km = _osculating_periapsis_alt_km(y0_arr, float(mu_m3s2), float(R_ref_m))
-            nyq_r_min_alt_km = (
-                max(float(guard_alt_km), float(peri_alt_km))
-                if peri_alt_km is not None
-                else float(guard_alt_km)
-            )
-            nyq_max = float(nyquist_max_step_s(
-                R_ref_m=float(R_ref_m),
-                mu_m3s2=float(mu_m3s2),
-                degree=int(max(1, degree)),
-                r_min_alt_km=float(nyq_r_min_alt_km),
-                safety_div=float(getattr(cfg, "nyquist_safety_div", 8.0)),
-                v_margin=float(getattr(cfg, "nyquist_v_margin", 1.2)),
-            ))
-        except Exception:
-            nyq_max = None
-
-    if nyq_max is None or (not np.isfinite(nyq_max)) or nyq_max <= 0.0:
-        nyq_max = float(dt_out)
-
-    user_max_step_s = getattr(cfg, "user_max_step_s", None)
-    if user_max_step_s is None:
-        max_step = float(nyq_max)
-        if verbose:
-            logger.info(f"[STEP] Nyquist max_step_s={max_step:.6f} (deg={degree})")
-    else:
-        max_step = min(float(user_max_step_s), float(nyq_max))
+    step_plan = resolve_step_size_policy(
+        cfg=cfg,
+        y0=y0_arr,
+        R_ref_m=float(R_ref_m),
+        mu_m3s2=float(mu_m3s2),
+        sh_degree=int(degree),
+        output_dt_s=float(dt_out),
+        topo_present=topo_present,
+        nyquist_func=nyquist_max_step_s,
+    )
+    max_step = step_plan.actual_max_step_s
+    if step_plan.user_max_step_s is None:
         if verbose:
             logger.info(
-                f"[STEP] user_max_step={float(user_max_step_s):g}s, "
-                f"nyquist={nyq_max:.6f}s -> using {max_step:.6f}s"
+                "[STEP] max_step_s=%0.6f (reason=%s, deg=%d)",
+                max_step,
+                step_plan.limiting_reason,
+                step_plan.sh_degree,
             )
+    else:
+        if verbose:
+            logger.info(
+                "[STEP] user_max_step=%gs, nyquist=%0.6fs -> using %0.6fs (reason=%s)",
+                step_plan.user_max_step_s,
+                step_plan.nyquist_max_step_s,
+                max_step,
+                step_plan.limiting_reason,
+            )
+
+    integration_plan = resolve_integration_plan(cfg, duration_s=dur_s)
+    checkpoint_meta = _checkpoint_metadata(method=integration_plan.method, config=cfg)
 
     # -------------------------------------------------------------------------
     # 4) Events
@@ -396,8 +362,8 @@ def propagate(
     # -------------------------------------------------------------------------
     # 5) Integrate
     # -------------------------------------------------------------------------
-    if _is_fixed_step_method(getattr(cfg, "method", "DOP853")):
-        meth_name = str(getattr(cfg, "method", "VV"))
+    if integration_plan.backend == "fixed_step":
+        meth_name = integration_plan.method
         if verbose:
             logger.info(
                 f"[PROP] Fixed-step {meth_name}: dt_out={dt_out:g}s, max_step={max_step:.6f}s"
@@ -426,21 +392,32 @@ def propagate(
             heartbeat_hours=float(getattr(cfg, "heartbeat_hours", 0.0)),
             stop_file=stop_file,
             checkpoint_path=checkpoint_path,
+            checkpoint_metadata=checkpoint_meta,
         )
 
         t_out = np.asarray(ode_like.t, dtype=np.float64)
         y_row = np.asarray(ode_like.y, dtype=np.float64).T  # (N,6)
-
-        res = PropagationResult(
-            t=t_out,
-            y=y_row,
-            ode=ode_like,
+        outcome = EventOutcome(
             impacted=bool(impacted),
             t_impact_s=(float(t_imp) if t_imp is not None else None),
             y_impact=(np.asarray(y_imp, dtype=np.float64) if y_imp is not None else None),
             stopped_early=bool(stopped_early),
             stop_reason=stop_reason if stop_reason else ("impact" if impacted else None),
             t_stop_s=t_stop,
+        )
+
+        res = PropagationResult(
+            t=t_out,
+            y=y_row,
+            ode=ode_like,
+            t_events=list(getattr(ode_like, "t_events", [])),
+            y_events=list(getattr(ode_like, "y_events", [])),
+            impacted=outcome.impacted,
+            t_impact_s=outcome.t_impact_s,
+            y_impact=outcome.y_impact,
+            stopped_early=outcome.stopped_early,
+            stop_reason=outcome.stop_reason,
+            t_stop_s=outcome.t_stop_s,
             diagnostics={},
         )
 
@@ -448,7 +425,7 @@ def propagate(
         if solve_ivp is None:
             raise ImportError("SciPy is required for adaptive integration (solve_ivp not available).")
 
-        method = _resolve_scipy_method(getattr(cfg, "method", "DOP853"))
+        method = integration_plan.method
 
         # Per-component (vector) atol when configured: position and velocity differ
         # by ~3 orders of magnitude, so a single scalar over-tightens one of them.
@@ -480,12 +457,7 @@ def propagate(
                 vectorized=False,
             )
 
-        total_span = tf - t0
-        chunk_s = getattr(cfg, "chunk_s", None)
-        if chunk_s is not None:
-            chunk_s = float(chunk_s)
-            if chunk_s <= 0.0 or chunk_s >= total_span:
-                chunk_s = None
+        chunk_s = integration_plan.chunk_s
 
         checkpoint_every_chunk = bool(getattr(cfg, "checkpoint_every_chunk", False))
         integration_failed = False
@@ -595,20 +567,32 @@ def propagate(
                                 checkpoint_path,
                                 t=np.asarray([t_curr], dtype=np.float64),
                                 y_row=y_curr.reshape(1, -1),
+                                **checkpoint_meta,
                             )
                         elif ck_mode in ("chunks", "chunk"):
                             base = str(checkpoint_path)
                             chunk_path = f"{base}.chunk{chunk_idx:06d}.npz"
-                            _atomic_save_npz(chunk_path, t=sol_t, y_row=sol_y.T)
+                            _atomic_save_npz(
+                                chunk_path,
+                                t=sol_t,
+                                y_row=sol_y.T,
+                                **checkpoint_meta,
+                            )
                             _atomic_save_npz(
                                 checkpoint_path,
                                 t=np.asarray([t_curr], dtype=np.float64),
                                 y_row=y_curr.reshape(1, -1),
+                                **checkpoint_meta,
                             )
                         else:
                             t_tmp = np.concatenate(t_parts) if t_parts else np.array([], dtype=np.float64)
                             y_tmp = np.concatenate(y_parts, axis=1) if y_parts else np.zeros((y0_arr.size, 0), dtype=np.float64)
-                            _atomic_save_npz(checkpoint_path, t=t_tmp, y_row=y_tmp.T)
+                            _atomic_save_npz(
+                                checkpoint_path,
+                                t=t_tmp,
+                                y_row=y_tmp.T,
+                                **checkpoint_meta,
+                            )
                     except Exception as exc:
                         warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
@@ -643,57 +627,24 @@ def propagate(
 
         y_row = np.asarray(y_cat, dtype=np.float64).T
 
-        impacted = False
-        t_imp = None
-        y_imp = None
-        idx_impact = _find_event_index(events, "impact")
-        if idx_impact is not None:
-            try:
-                if idx_impact < len(t_events) and np.asarray(t_events[idx_impact]).size > 0:
-                    impacted = True
-                    t_imp = float(np.asarray(t_events[idx_impact])[0])
-                    y_imp = np.asarray(np.asarray(y_events[idx_impact])[0], dtype=np.float64)
-            except Exception as exc:
-                # Losing the impact flag silently would flip a result-affecting
-                # boolean (R29b): a malformed solver event payload must be visible.
-                warnings.warn(
-                    f"Impact-event extraction failed on malformed solver output: {exc}. "
-                    "The trajectory is reported as non-impacting.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-
-        try:
-            if impacted:
-                stop_reason = "impact"
-            elif stop_reason is None:
-                idx_stop = _find_event_index(events, "stop")
-                if (
-                    stop_file and bool(getattr(cfg, "stop_event_in_scipy", False))
-                    and idx_stop is not None and idx_stop < len(t_events)
-                    and np.asarray(t_events[idx_stop]).size > 0
-                ):
-                    stop_reason = "stop file"
-                if stop_reason is None and any((te is not None and np.asarray(te).size > 0) for te in t_events):
-                    stop_reason = "event"
-        except Exception:
-            # R29b-justified: stop_reason is a human-readable label; the actual
-            # termination behavior was already decided by the solver events.
-            pass
-
-        t_stop = None
-        if stop_file and bool(getattr(cfg, "stop_event_in_scipy", False)) and (not impacted):
-            idx_stop = _find_event_index(events, "stop")
-            if idx_stop is not None:
-                try:
-                    if idx_stop < len(t_events) and np.asarray(t_events[idx_stop]).size > 0:
-                        t_stop = float(np.asarray(t_events[idx_stop])[0])
-                except Exception:
-                    pass
+        outcome = event_outcome_from_solver_events(
+            events=events,
+            t_events=list(t_events),
+            y_events=list(y_events),
+            stopped_early=bool(stopped_early),
+            stop_reason=stop_reason,
+            stop_file=stop_file,
+            stop_event_in_scipy=bool(getattr(cfg, "stop_event_in_scipy", False)),
+        )
 
         if checkpoint_path and (not integration_failed) and not (chunk_s is not None and checkpoint_every_chunk):
             try:
-                _atomic_save_npz(checkpoint_path, t=np.asarray(t_cat, dtype=np.float64), y_row=y_row)
+                _atomic_save_npz(
+                    checkpoint_path,
+                    t=np.asarray(t_cat, dtype=np.float64),
+                    y_row=y_row,
+                    **checkpoint_meta,
+                )
             except Exception as exc:
                 warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
@@ -703,12 +654,12 @@ def propagate(
             ode=sol,
             t_events=list(t_events),
             y_events=list(y_events),
-            impacted=bool(impacted),
-            t_impact_s=(float(t_imp) if t_imp is not None else None),
-            y_impact=(np.asarray(y_imp, dtype=np.float64) if y_imp is not None else None),
-            stopped_early=bool(stopped_early) or bool(impacted),
-            stop_reason=stop_reason,
-            t_stop_s=t_stop,
+            impacted=outcome.impacted,
+            t_impact_s=outcome.t_impact_s,
+            y_impact=outcome.y_impact,
+            stopped_early=outcome.stopped_early,
+            stop_reason=outcome.stop_reason,
+            t_stop_s=outcome.t_stop_s,
             diagnostics={},
         )
 
@@ -718,17 +669,33 @@ def propagate(
     wall = time.perf_counter() - t_wall0
     nfev = float(getattr(res.ode, "nfev", np.nan)) if res.ode is not None else np.nan
     res.diagnostics = {
+        "diagnostics_schema_version": 1,
         "wall_time_s": float(wall),
         "output_dt_s": float(dt_out),
+        "requested_output_dt_s": time_plan.requested_output_dt_s,
+        "realized_output_dt_s": time_plan.realized_output_dt_s,
+        "output_grid_max_points_cap": float(time_plan.max_points_cap),
         "max_step_s": float(max_step),
+        "requested_user_max_step_s": step_plan.user_max_step_s,
+        "nyquist_max_step_s": float(step_plan.nyquist_max_step_s),
+        "actual_max_step_s": float(step_plan.actual_max_step_s),
+        "max_step_limiting_reason": step_plan.limiting_reason,
+        "nyquist_r_min_alt_km": step_plan.nyquist_r_min_alt_km,
+        "sh_degree_for_step_policy": float(step_plan.sh_degree),
+        "periapsis_alt_km_for_step_policy": step_plan.periapsis_alt_km,
         "degree": float(degree),
         "n_points": float(res.t.size),
         "nfev": float(nfev) if np.isfinite(nfev) else float("nan"),
+        "integration_backend": integration_plan.backend,
+        "integrator": integration_plan.method,
+        "integration_chunk_s": integration_plan.chunk_s,
+        "rhs_path": rhs_path,
         "method_symplectic": float(1.0 if _is_symplectic_method(getattr(cfg, "method", "DOP853")) else 0.0),
         "symplectic_violation": float(1.0 if _violations else 0.0),
     }
-    if nyq_r_min_alt_km is not None:
-        res.diagnostics["nyquist_r_min_alt_km"] = float(nyq_r_min_alt_km)
+    if _uses_surrogate_python_autograd(dynamics, rhs_path):
+        res.diagnostics["single_run_stlrps_cpu_warning"] = True
+        res.diagnostics["benchmark_comparable_to_numba_sh"] = False
     if _violations:
         res.diagnostics["symplectic_violation_forces"] = list(_violations)
 
@@ -820,7 +787,7 @@ def _compute_2body_baseline(
         ay = -mu * ry * inv_r3
         az = -mu * rz * inv_r3
 
-        dy = np.empty(6, dtype=np.float64)
+        dy: np.ndarray = np.empty(6, dtype=np.float64)
         dy[0] = vx
         dy[1] = vy
         dy[2] = vz
@@ -910,8 +877,17 @@ def _compute_2body_baseline(
 __all__ = [
     "propagate",
     "PropagationResult",
+    "EventOutcome",
+    "IntegrationPlan",
+    "StepSizePlan",
+    "TimeGridPlan",
     "make_time_grid",
     "build_events",
+    "event_outcome_from_solver_events",
+    "resolve_integration_plan",
+    "resolve_step_size_policy",
+    "resolve_time_grid_plan",
+    "_clamp_output_dt",
     "_ACCEL_METHODS",
     "_RHS_METHODS",
     "_Y4_WEIGHTS",

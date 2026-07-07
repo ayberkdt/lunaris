@@ -20,6 +20,7 @@ def test_propagation_responsibility_modules_import() -> None:
 
     assert callable(events.build_events)
     assert callable(checkpoint._atomic_save_npz)
+    assert callable(checkpoint.load_propagation_checkpoint)
     assert callable(time_grid.make_time_grid)
     assert callable(fixed_step._build_fixed_stepper)
     assert callable(rk._rk4_step_full)

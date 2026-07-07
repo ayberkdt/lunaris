@@ -28,7 +28,7 @@ def test_thermal_ir_is_supported_in_dynamics():
         thermal=ThermalConfig(facet_lat_count=2, facet_lon_count=4),
         allow_identity_rotation=True,
     )
-    assert engine._requirements()["use_thermal"] is True
+    assert engine._requirements().use_thermal is True
 
 def test_fail_fast_on_missing_j2_radius():
     sc = SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3)

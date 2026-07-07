@@ -8,15 +8,16 @@ frozen Numba-friendly packs consumed by ``engine.build_rhs``.
 
 Every function is a pure module-level function with explicit inputs — no
 engine state, no side effects on its arguments (``resolve_effective_requirements``
-returns a new dict rather than mutating the raw one). The jitted RHS closures
-intentionally remain inside ``engine.py`` so this split does not alter hot-loop
-object boundaries (see ``rhs_numba``).
+returns a new :class:`DynamicsRequirements` rather than mutating the raw one).
+The jitted RHS closures intentionally remain inside ``engine.py`` so this split
+does not alter hot-loop object boundaries (see ``rhs_numba``).
 """
 
 from __future__ import annotations
 
 import math
 import warnings
+from dataclasses import dataclass, replace
 from typing import Any
 
 import numpy as np
@@ -30,7 +31,7 @@ from lunaris.common.constants import (
     SIGMA_SB,
     SOLAR_FLUX_1AU,
 )
-from lunaris.common.force_requirements import force_requirements
+from lunaris.common.force_requirements import ForceRequirements, force_requirements
 from lunaris.common.math_utils import sample_grid_bilinear
 from lunaris.common.type_defs import SpacecraftProps
 from lunaris.core.dynamics.adaptive_degree import _sample_albedo_dn_scaled
@@ -65,6 +66,159 @@ from lunaris.physics.thermal_ir import (
 # 1.                     Requirements / dependency validation
 # =============================================================================
 
+@dataclass(frozen=True, slots=True)
+class DynamicsRequirements:
+    """Typed requirement set consumed by dependency validation and pack prep.
+
+    Wraps the shared :class:`ForceRequirements` decision tree and adds the
+    dynamics-layer albedo-model selector. All flags are exposed as typed
+    read-only properties so a typo fails at type-check time instead of as a
+    runtime ``KeyError``. ``to_dict()`` exists only for serialization /
+    provenance boundaries and preserves the historical key names
+    (``need_q``, ``need_vectors``).
+    """
+
+    force: ForceRequirements
+    albedo_model: str
+
+    @property
+    def use_sh(self) -> bool:
+        return self.force.use_sh
+
+    @property
+    def use_surrogate_gravity(self) -> bool:
+        return self.force.use_surrogate_gravity
+
+    @property
+    def use_albedo(self) -> bool:
+        return self.force.use_albedo
+
+    @property
+    def albedo_needs_provider(self) -> bool:
+        return self.force.albedo_needs_provider
+
+    @property
+    def use_thermal(self) -> bool:
+        return self.force.use_thermal
+
+    @property
+    def use_thermal_equilibrium(self) -> bool:
+        return self.force.use_thermal_equilibrium
+
+    @property
+    def use_thermal_eclipse(self) -> bool:
+        return self.force.use_thermal_eclipse
+
+    @property
+    def use_thermal_grid(self) -> bool:
+        return self.force.use_thermal_grid
+
+    @property
+    def use_srp(self) -> bool:
+        return self.force.use_srp
+
+    @property
+    def use_3rd_sun(self) -> bool:
+        return self.force.use_3rd_sun
+
+    @property
+    def use_3rd_earth(self) -> bool:
+        return self.force.use_3rd_earth
+
+    @property
+    def use_tides(self) -> bool:
+        return self.force.use_tides
+
+    @property
+    def use_tides_k2(self) -> bool:
+        return self.force.use_tides_k2
+
+    @property
+    def use_tides_k3(self) -> bool:
+        return self.force.use_tides_k3
+
+    @property
+    def use_tide_earth(self) -> bool:
+        return self.force.use_tide_earth
+
+    @property
+    def use_tide_sun(self) -> bool:
+        return self.force.use_tide_sun
+
+    @property
+    def use_rel(self) -> bool:
+        return self.force.use_rel
+
+    @property
+    def use_rel_external(self) -> bool:
+        return self.force.use_rel_external
+
+    @property
+    def use_earth_j2(self) -> bool:
+        return self.force.use_earth_j2
+
+    @property
+    def need_sun(self) -> bool:
+        return self.force.need_sun
+
+    @property
+    def need_earth(self) -> bool:
+        return self.force.need_earth
+
+    @property
+    def need_q(self) -> bool:
+        """Historical alias for ``force.need_q_i2f``."""
+        return self.force.need_q_i2f
+
+    @property
+    def need_vectors(self) -> bool:
+        """Historical alias for ``force.need_body_vectors``."""
+        return self.force.need_body_vectors
+
+    @property
+    def need_quat_from_ephem(self) -> bool:
+        return self.force.need_quat_from_ephem
+
+    @property
+    def need_ephem(self) -> bool:
+        return self.force.need_ephem
+
+    def without_external_relativity(self) -> DynamicsRequirements:
+        """Return a new requirement set with the external-1PN terms downgraded."""
+        return replace(self, force=replace(self.force, use_rel_external=False))
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialization/provenance boundary only — not for flag lookups."""
+        return {
+            "use_sh": self.use_sh,
+            "use_surrogate_gravity": self.use_surrogate_gravity,
+            "use_albedo": self.use_albedo,
+            "albedo_model": self.albedo_model,
+            "albedo_needs_provider": self.albedo_needs_provider,
+            "use_thermal": self.use_thermal,
+            "use_thermal_equilibrium": self.use_thermal_equilibrium,
+            "use_thermal_eclipse": self.use_thermal_eclipse,
+            "use_thermal_grid": self.use_thermal_grid,
+            "use_srp": self.use_srp,
+            "use_3rd_sun": self.use_3rd_sun,
+            "use_3rd_earth": self.use_3rd_earth,
+            "use_tides": self.use_tides,
+            "use_tides_k2": self.use_tides_k2,
+            "use_tides_k3": self.use_tides_k3,
+            "use_tide_earth": self.use_tide_earth,
+            "use_tide_sun": self.use_tide_sun,
+            "use_rel": self.use_rel,
+            "use_rel_external": self.use_rel_external,
+            "use_earth_j2": self.use_earth_j2,
+            "need_sun": self.need_sun,
+            "need_earth": self.need_earth,
+            "need_q": self.need_q,
+            "need_vectors": self.need_vectors,
+            "need_quat_from_ephem": self.need_quat_from_ephem,
+            "need_ephem": self.need_ephem,
+        }
+
+
 def compute_requirements(
     *,
     flags: Any,
@@ -75,7 +229,7 @@ def compute_requirements(
     solid_tides: Any,
     allow_identity_rotation: bool,
     have_ephem: bool,
-) -> dict[str, Any]:
+) -> DynamicsRequirements:
     """Raw config-derived requirement set for the active perturbation flags."""
     alb_cfg = albedo if albedo is not None else AlbedoConfig()
     albedo_model = str(getattr(alb_cfg, "albedo_model", "lambert_facets")).strip().lower()
@@ -102,39 +256,12 @@ def compute_requirements(
         request_external_relativity=have_ephem,
     )
 
-    return {
-        "use_sh": req.use_sh,
-        "use_surrogate_gravity": req.use_surrogate_gravity,
-        "use_albedo": req.use_albedo,
-        "albedo_model": albedo_model,
-        "albedo_needs_provider": req.albedo_needs_provider,
-        "use_thermal": req.use_thermal,
-        "use_thermal_equilibrium": req.use_thermal_equilibrium,
-        "use_thermal_eclipse": req.use_thermal_eclipse,
-        "use_thermal_grid": req.use_thermal_grid,
-        "use_srp": req.use_srp,
-        "use_3rd_sun": req.use_3rd_sun,
-        "use_3rd_earth": req.use_3rd_earth,
-        "use_tides": req.use_tides,
-        "use_tides_k2": req.use_tides_k2,
-        "use_tides_k3": req.use_tides_k3,
-        "use_tide_earth": req.use_tide_earth,
-        "use_tide_sun": req.use_tide_sun,
-        "use_rel": req.use_rel,
-        "use_rel_external": req.use_rel_external,
-        "use_earth_j2": req.use_earth_j2,
-        "need_sun": req.need_sun,
-        "need_earth": req.need_earth,
-        "need_q": req.need_q_i2f,
-        "need_vectors": req.need_body_vectors,
-        "need_quat_from_ephem": req.need_quat_from_ephem,
-        "need_ephem": req.need_ephem,
-    }
+    return DynamicsRequirements(force=req, albedo_model=albedo_model)
 
 
 def validate_dependencies(
     *,
-    req: dict[str, Any],
+    req: DynamicsRequirements,
     gravity_model: Any,
     surface_provider: Any,
     albedo: Any,
@@ -145,10 +272,10 @@ def validate_dependencies(
     earth_j2: Any,
 ) -> None:
     """Fail fast when an enabled perturbation is missing a provider/config."""
-    if req["use_sh"] and gravity_model is None:
+    if req.use_sh and gravity_model is None:
         raise ValueError("enable_sh=True but gravity_model is None.")
 
-    if req["albedo_needs_provider"] and surface_provider is None:
+    if req.albedo_needs_provider and surface_provider is None:
         cfg = albedo if albedo is not None else AlbedoConfig()
         raise ValueError(
             f"enable_albedo with albedo_mode={cfg.albedo_mode!r} requires a "
@@ -157,14 +284,14 @@ def validate_dependencies(
             "supply a surface_provider (e.g. --albedo-root)."
         )
 
-    if req["use_thermal_grid"] and surface_provider is None:
+    if req.use_thermal_grid and surface_provider is None:
         raise ValueError(
             "ThermalConfig.thermal_mode='temperature_grid' requires surface_provider "
             "with thermal_temperature_cells_K, temperature_cells_K, or temperature_grid."
         )
 
     # SRP / Albedo / Thermal IR require valid spacecraft optical area and mass
-    if req["use_srp"] or req["use_albedo"] or req["use_thermal"]:
+    if req.use_srp or req.use_albedo or req.use_thermal:
         if sc_props.mass_kg <= 0.0:
             raise ValueError(f"mass_kg must be > 0, got {sc_props.mass_kg}")
         if sc_props.area_m2 <= 0.0:
@@ -172,18 +299,18 @@ def validate_dependencies(
     # The SRP and simple/legacy albedo backends reuse the spacecraft SRP
     # coefficient cr; the lambert_facets albedo backend does not (it uses
     # albedo_pressure_coefficient), so cr is only enforced when actually used.
-    if req["use_srp"] or (req["use_albedo"] and req["albedo_model"] == "simple"):
+    if req.use_srp or (req.use_albedo and req.albedo_model == "simple"):
         if not (0.0 < sc_props.cr <= 2.5):
             raise ValueError(f"cr looks invalid, got {sc_props.cr}")
 
-    if req["need_ephem"] and (ephem_manager is None):
+    if req.need_ephem and (ephem_manager is None):
         reasons: list[str] = []
-        if req["need_vectors"]:
-            if req["need_sun"]:
+        if req.need_vectors:
+            if req.need_sun:
                 reasons.append("Sun vector (SRP / 3rd-body Sun / Albedo / Thermal IR equilibrium / solid tides)")
-            if req["need_earth"]:
+            if req.need_earth:
                 reasons.append("Earth vector (3rd-body Earth / Earth J2 / Thermal IR eclipse / solid tides)")
-        if req["need_quat_from_ephem"]:
+        if req.need_quat_from_ephem:
             reasons.append("q_i2f (SH / Albedo / Thermal IR / solid tides)")
 
         why = "; ".join(reasons) if reasons else "Sun/Earth vectors and/or q_i2f"
@@ -193,7 +320,7 @@ def validate_dependencies(
             "Note: allow_identity_rotation only replaces q_i2f, not Sun/Earth vectors."
         )
 
-    if req["use_tides_k3"] and getattr(solid_tides, "k3", None) is None:
+    if req.use_tides_k3 and getattr(solid_tides, "k3", None) is None:
         raise ValueError(
             "enable_tides_k3=True requires solid_tides.k3 to be set explicitly; "
             "no degree-3 lunar Love number default is assumed."
@@ -397,7 +524,7 @@ def prepare_gravity(gravity_model: Any, *, gravity_adaptive: Any = None) -> _Gra
     )
 
 
-def prepare_ephem(ephem_manager: Any, req: dict[str, Any]) -> _EphemPack:
+def prepare_ephem(ephem_manager: Any, req: DynamicsRequirements) -> _EphemPack:
     """Validated ephemeris pack; fails closed on degenerate body tables."""
     if ephem_manager is None:
         # Only valid if we do NOT need Sun/Earth vectors AND we allow identity rotation for q_i2f.
@@ -421,17 +548,17 @@ def prepare_ephem(ephem_manager: Any, req: dict[str, Any]) -> _EphemPack:
     # vectors are unavailable, so a quaternion-only ephemeris downgrades
     # them (with a warning) instead of failing the run.
     explicit_sun = bool(
-        req["use_srp"]
-        or req["use_3rd_sun"]
-        or req["use_albedo"]
-        or req["use_tide_sun"]
-        or req["use_thermal_equilibrium"]
+        req.use_srp
+        or req.use_3rd_sun
+        or req.use_albedo
+        or req.use_tide_sun
+        or req.use_thermal_equilibrium
     )
     explicit_earth = bool(
-        req["use_3rd_earth"]
-        or req["use_earth_j2"]
-        or req["use_tide_earth"]
-        or req["use_thermal_eclipse"]
+        req.use_3rd_earth
+        or req.use_earth_j2
+        or req.use_tide_earth
+        or req.use_thermal_eclipse
     )
     sun_degenerate = not np.any(sun_tab)
     earth_degenerate = not np.any(earth_tab)
@@ -454,19 +581,19 @@ def prepare_ephem(ephem_manager: Any, req: dict[str, Any]) -> _EphemPack:
     return _EphemPack(dt_s=float(dt_s), r_sun_tab_m=sun_tab, r_earth_tab_m=earth_tab, q_i2f_tab=qtab)
 
 
-def resolve_effective_requirements(req: dict[str, Any], ep: _EphemPack) -> dict[str, Any]:
+def resolve_effective_requirements(req: DynamicsRequirements, ep: _EphemPack) -> DynamicsRequirements:
     """Derive the effective runtime requirements from the raw config-derived ones.
 
     The external-1PN relativity terms are documented to silently degrade to
     the central-body Schwarzschild term when the ephemeris lacks Sun/Earth
     position tables (see ``prepare_ephem``). That downgrade is resolved
-    here, in one explicit step that returns a *new* dict: the raw
+    here, in one explicit step that returns a *new* object: the raw
     requirements are never mutated, so no consumer can observe a stale flag
     depending on when it reads ``req``.
     """
     sun_degenerate = not np.any(ep.r_sun_tab_m)
     earth_degenerate = not np.any(ep.r_earth_tab_m)
-    if req["use_rel_external"] and (sun_degenerate or earth_degenerate):
+    if req.use_rel_external and (sun_degenerate or earth_degenerate):
         warnings.warn(
             "1PN external-body relativity terms disabled: the ephemeris does not "
             "provide Sun/Earth position tables (all zeros). Only the central-body "
@@ -474,18 +601,18 @@ def resolve_effective_requirements(req: dict[str, Any], ep: _EphemPack) -> dict[
             RuntimeWarning,
             stacklevel=3,
         )
-        return {**req, "use_rel_external": False}
+        return req.without_external_relativity()
     return req
 
 
 def prepare_albedo(
-    req: dict[str, Any],
+    req: DynamicsRequirements,
     *,
     albedo: Any,
     surface_provider: Any,
 ) -> _AlbedoPack:
     """Validated albedo pack (lambert_facets or legacy simple backend)."""
-    if not req["use_albedo"]:
+    if not req.use_albedo:
         return _AlbedoPack(backend=1, mode=2, alb_const=0.12, alb_scale=1.0, k_lambert=1.0)
 
     cfg = albedo if albedo is not None else AlbedoConfig()
@@ -637,9 +764,9 @@ def _sample_facet_albedo_from_provider(
     return out
 
 
-def prepare_earth_j2(req: dict[str, Any], earth_j2: Any) -> _EarthJ2Pack:
+def prepare_earth_j2(req: DynamicsRequirements, earth_j2: Any) -> _EarthJ2Pack:
     """Earth-J2 pack (inert when the force is disabled or params missing)."""
-    if not req["use_earth_j2"] or (earth_j2 is None):
+    if not req.use_earth_j2 or (earth_j2 is None):
         return _EarthJ2Pack(j2=0.0, r_ref_m=1.0, ax=0.0, ay=0.0, az=1.0)
 
     j2 = float(earth_j2.j2_coeff)
@@ -648,9 +775,9 @@ def prepare_earth_j2(req: dict[str, Any], earth_j2: Any) -> _EarthJ2Pack:
     return _EarthJ2Pack(j2=j2, r_ref_m=r_ref, ax=float(kx), ay=float(ky), az=float(kz))
 
 
-def prepare_solid_tides(req: dict[str, Any], solid_tides: Any) -> _TidePack:
+def prepare_solid_tides(req: DynamicsRequirements, solid_tides: Any) -> _TidePack:
     """Solid-tide pack (k2/k3 Love numbers, per-body switches)."""
-    if not req["use_tides"]:
+    if not req.use_tides:
         return _TidePack(
             use_k2=False,
             use_k3=False,
@@ -663,17 +790,17 @@ def prepare_solid_tides(req: dict[str, Any], solid_tides: Any) -> _TidePack:
 
     cfg = solid_tides
     k3_raw = getattr(cfg, "k3", None)
-    if req["use_tides_k3"] and k3_raw is None:
+    if req.use_tides_k3 and k3_raw is None:
         raise ValueError(
             "enable_tides_k3=True requires solid_tides.k3 to be set explicitly; "
             "no degree-3 lunar Love number default is assumed."
         )
 
     return _TidePack(
-        use_k2=bool(req["use_tides_k2"]),
-        use_k3=bool(req["use_tides_k3"]),
-        use_earth=bool(req["use_tide_earth"]),
-        use_sun=bool(req["use_tide_sun"]),
+        use_k2=bool(req.use_tides_k2),
+        use_k3=bool(req.use_tides_k3),
+        use_earth=bool(req.use_tide_earth),
+        use_sun=bool(req.use_tide_sun),
         k2=float(getattr(cfg, "k2", 0.0)),
         k3=0.0 if k3_raw is None else float(k3_raw),
         r_ref_m=float(getattr(cfg, "r_ref_m", R_MOON)),
@@ -681,13 +808,13 @@ def prepare_solid_tides(req: dict[str, Any], solid_tides: Any) -> _TidePack:
 
 
 def prepare_thermal(
-    req: dict[str, Any],
+    req: DynamicsRequirements,
     *,
     thermal: Any,
     surface_provider: Any,
 ) -> _ThermalPack:
     """Thermal-IR pack (constant / equilibrium / temperature-grid modes)."""
-    if not req["use_thermal"]:
+    if not req.use_thermal:
         return _ThermalPack(
             mode=THERMAL_MODE_CONSTANT,
             surface_emissivity=1.0,
@@ -773,6 +900,7 @@ def prepare_thermal(
 
 
 __all__ = [
+    "DynamicsRequirements",
     "compute_requirements",
     "validate_dependencies",
     "prepare_adaptive_gravity_policy",

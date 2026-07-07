@@ -11,42 +11,73 @@ import numpy as np
 from lunaris.common.constants import DAY_S
 from lunaris.common.force_requirements import force_requirements_for_config
 from lunaris.common.math_utils import quat_rotate_np, quat_slerp_np
+from lunaris.common.state_vector import normalize_position_velocity_state
 
 
 def _state_to_array(state_like: Any) -> np.ndarray:
     """
     Convert the configured nominal state to a plain row-major float64 vector.
 
-    batch sampling works in Cartesian state space, so we accept the same state
-    container styles as the single-run pipeline: ``InitialState``,
-    ``OrbitState``-like objects exposing ``.y``, or raw array-likes.
+    batch sampling works in a strictly 6D Cartesian state space, so we accept
+    the same state container styles as the single-run pipeline (``InitialState``,
+    ``OrbitState``-like objects exposing ``.y``, raw array-likes) but keep only
+    [x,y,z,vx,vy,vz]. A 7-element state's mass entry is intentionally dropped
+    (``drop_mass=True`` documents that); any other size fails loudly instead of
+    being truncated.
     """
 
-    if state_like is None:
-        raise ValueError("Nominal state is None.")
+    return normalize_position_velocity_state(
+        state_like, drop_mass=True, name="Nominal state"
+    )
 
-    if hasattr(state_like, "to_array"):
-        arr = np.asarray(state_like.to_array(), dtype=np.float64).reshape(-1)
-    elif hasattr(state_like, "y"):
-        arr = np.asarray(state_like.y, dtype=np.float64).reshape(-1)
-    else:
-        arr = np.asarray(state_like, dtype=np.float64).reshape(-1)
 
-    if arr.size < 6:
-        raise ValueError(f"Nominal state must contain at least 6 elements, got {arr.size}.")
-    return np.ascontiguousarray(arr[:6], dtype=np.float64)
+def _surface_provider_present(surface_provider: Any) -> bool:
+    """Return True when any surface provider object was supplied."""
+
+    return surface_provider is not None
+
+
+def _surface_provider_topography_grid(surface_provider: Any) -> Any:
+    if not _surface_provider_present(surface_provider):
+        return None
+    grids_attr = getattr(surface_provider, "grids", None)
+    if grids_attr is None:
+        return None
+    try:
+        grids = grids_attr() if callable(grids_attr) else grids_attr
+    except Exception:
+        return None
+    if isinstance(grids, dict):
+        return grids.get("topo")
+    return getattr(grids, "topo", None)
+
+
+def _topography_requested(surface_provider: Any, topo_grid: Any) -> bool:
+    """
+    Return True when terrain/topography data is actually available for the batch run.
+
+    A provider that only carries albedo or thermal grids is still a surface
+    provider, but it is not terrain. Keeping this split avoids initializing
+    topography-dependent ephemeris for albedo-only provider plumbing.
+    """
+
+    return bool(topo_grid is not None or _surface_provider_topography_grid(surface_provider) is not None)
+
+
+def _surface_force_provider_requested(cfg: Any) -> bool:
+    """Return True when active surface-force models require provider-backed grids."""
+
+    req = force_requirements_for_config(
+        cfg,
+        request_external_relativity=True,
+    )
+    return bool(req.need_surface_provider)
 
 
 def _surface_topography_requested(surface_provider: Any, topo_grid: Any) -> bool:
-    """
-    Return True when the batch run needs Moon-fixed ephemeris because terrain is active.
+    """Compatibility alias for the old helper name."""
 
-    Topography can influence both surface-force sampling and impact detection, so
-    the batch bootstrap mirrors the main runner by treating terrain availability as
-    an ephemeris requirement even when third-body vectors are disabled.
-    """
-
-    return bool(surface_provider is not None or topo_grid is not None)
+    return _topography_requested(surface_provider, topo_grid)
 
 
 def _need_ephemeris(cfg: Any, *, topo_requested: bool) -> bool:
@@ -147,6 +178,9 @@ def _impact_positions_fixed(
 
 __all__ = [
     "_state_to_array",
+    "_surface_provider_present",
+    "_topography_requested",
+    "_surface_force_provider_requested",
     "_surface_topography_requested",
     "_need_ephemeris",
     "_need_body_vectors",
