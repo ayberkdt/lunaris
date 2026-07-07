@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -392,12 +392,14 @@ _NUMBA_SH_REQUESTS = frozenset({"numba_cuda_sh"})
 _TORCH_SH_REQUESTS = frozenset({"torch_cuda_sh", "torch_cpu_sh"})
 
 
-@dataclass
+@dataclass(frozen=True)
 class BatchBackendPlan:
     """
     Fully resolved backend decision including availability diagnostics.
 
-    Consumers should treat this as read-only after construction.
+    Immutable: a GPU->CPU downgrade after a failed backend init produces a
+    fresh plan via :meth:`as_cpu_fallback` instead of rewriting this one, so
+    provenance consumers can never observe a half-downgraded plan.
     """
 
     final_backend: BatchBackend
@@ -445,9 +447,9 @@ class BatchBackendPlan:
 
                 caps = get_capabilities(self.actual_backend)
                 if not self.backend_family:
-                    self.backend_family = caps.family
+                    object.__setattr__(self, "backend_family", caps.family)
                 if not self.backend_implementation:
-                    self.backend_implementation = caps.implementation
+                    object.__setattr__(self, "backend_implementation", caps.implementation)
             except Exception:
                 # R29b-justified: family/implementation are cosmetic provenance
                 # labels; an unknown backend name must not break plan creation
@@ -457,9 +459,44 @@ class BatchBackendPlan:
         # value), mirror it into requested/effective so every plan carries the
         # provenance pair without per-site duplication.
         if not self.effective_dtype:
-            self.effective_dtype = self.dtype
+            object.__setattr__(self, "effective_dtype", self.dtype)
         if not self.requested_dtype:
-            self.requested_dtype = self.effective_dtype
+            object.__setattr__(self, "requested_dtype", self.effective_dtype)
+
+    def as_cpu_fallback(self, reason: str) -> BatchBackendPlan:
+        """Return a copy of this plan rewritten to the CPU backend.
+
+        Used after a GPU propagator failed to build. Keeps provenance honest:
+        a run that actually executes on CPU must not be labeled with a GPU
+        backend, device, dtype, or integrator (task section 13). The receiver
+        is left untouched.
+        """
+        prior_requested = self.requested_dtype or self.dtype or "float64"
+        return replace(
+            self,
+            final_backend=BatchBackend.CPU,
+            use_gpu=False,
+            actual_backend="cpu_st_lrps" if self.gravity_backend == "st_lrps" else "cpu_sh",
+            actual_sh_degree=None,
+            actual_device="cpu",
+            cuda_device_name=None,
+            # CPU full-fidelity path runs float64; record the effective change
+            # and flag it as a downgrade when the request was something else.
+            dtype="float64",
+            effective_dtype="float64",
+            requested_dtype=prior_requested,
+            dtype_downgraded=bool(
+                self.dtype_downgraded or (prior_requested and prior_requested != "float64")
+            ),
+            integrator="adaptive (DOP853)",
+            fallback_applied=True,
+            fallback_reason=reason,
+            # Clearing these lets __post_init__ (re-run by replace) repopulate
+            # family/implementation for the CPU backend instead of keeping the
+            # stale GPU labels.
+            backend_family="",
+            backend_implementation="",
+        )
 
     def log_summary(self) -> None:
         """Log a one-line backend decision summary suitable for the batch log."""

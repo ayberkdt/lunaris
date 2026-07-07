@@ -546,8 +546,22 @@ class DynamicsEngine:
                 "table is all zeros. Rebuild the ephemeris with include_third_body=True, "
                 "or disable those perturbations."
             )
+        return _EphemPack(dt_s=float(dt_s), r_sun_tab_m=sun_tab, r_earth_tab_m=earth_tab, q_i2f_tab=qtab)
+
+    @staticmethod
+    def _resolve_effective_requirements(req: dict[str, Any], ep: _EphemPack) -> dict[str, Any]:
+        """Derive the effective runtime requirements from the raw config-derived ones.
+
+        The external-1PN relativity terms are documented to silently degrade to
+        the central-body Schwarzschild term when the ephemeris lacks Sun/Earth
+        position tables (see ``_prepare_ephem``). That downgrade is resolved
+        here, in one explicit step that returns a *new* dict: the raw
+        requirements are never mutated, so no consumer can observe a stale flag
+        depending on when it reads ``req``.
+        """
+        sun_degenerate = not np.any(ep.r_sun_tab_m)
+        earth_degenerate = not np.any(ep.r_earth_tab_m)
         if req["use_rel_external"] and (sun_degenerate or earth_degenerate):
-            req["use_rel_external"] = False
             warnings.warn(
                 "1PN external-body relativity terms disabled: the ephemeris does not "
                 "provide Sun/Earth position tables (all zeros). Only the central-body "
@@ -555,8 +569,8 @@ class DynamicsEngine:
                 RuntimeWarning,
                 stacklevel=3,
             )
-
-        return _EphemPack(dt_s=float(dt_s), r_sun_tab_m=sun_tab, r_earth_tab_m=earth_tab, q_i2f_tab=qtab)
+            return {**req, "use_rel_external": False}
+        return req
 
     def _prepare_albedo(self, req: dict[str, bool]) -> _AlbedoPack:
         if not req["use_albedo"]:
@@ -846,6 +860,11 @@ class DynamicsEngine:
         req = self._requirements()
         gp = self._prepare_gravity()
         ep = self._prepare_ephem(req)
+        # Raw config-derived requirements -> effective runtime requirements.
+        # Kept as an explicit, side-effect-free step: _prepare_ephem never
+        # mutates `req`, so the closure captures below cannot silently depend
+        # on call order.
+        req = self._resolve_effective_requirements(req, ep)
         ap = self._prepare_albedo(req)
         ej = self._prepare_earth_j2(req)
         tp = self._prepare_solid_tides(req)

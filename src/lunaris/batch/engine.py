@@ -587,47 +587,10 @@ class BatchPropagationEngine:
             ) from exc
         self._backend_note = note
         warnings.warn(note, RuntimeWarning, stacklevel=3)
-        self._downgrade_plan_to_cpu(plan, note)
-
-    @staticmethod
-    def _downgrade_plan_to_cpu(plan: Any, reason: str) -> None:
-        """Rewrite a backend plan to CPU after a GPU propagator failed to build.
-
-        Keeps provenance honest: a run that actually executes on CPU must not be
-        labeled with a GPU backend, device, or integrator (task section 13).
-        """
-        from lunaris.batch.backend_policy import BatchBackend
-
-        plan.final_backend = BatchBackend.CPU
-        plan.use_gpu = False
-        plan.actual_backend = "cpu_st_lrps" if plan.gravity_backend == "st_lrps" else "cpu_sh"
-        plan.actual_sh_degree = None
-        plan.actual_device = "cpu"
-        plan.cuda_device_name = None
-        # CPU full-fidelity path runs float64; keep dtype provenance honest by
-        # recording the effective change and flagging it as a downgrade when the
-        # request was something else.
-        prior_requested = getattr(plan, "requested_dtype", "") or getattr(plan, "dtype", "float64")
-        plan.dtype = "float64"
-        plan.effective_dtype = "float64"
-        if not getattr(plan, "requested_dtype", ""):
-            plan.requested_dtype = prior_requested
-        if prior_requested and prior_requested != "float64":
-            plan.dtype_downgraded = True
-        plan.integrator = "adaptive (DOP853)"
-        plan.fallback_applied = True
-        plan.fallback_reason = reason
-        # Refresh family/implementation labels for the new actual backend.
-        try:
-            from lunaris.core.backend_capabilities import get_capabilities
-
-            caps = get_capabilities(plan.actual_backend)
-            plan.backend_family = caps.family
-            plan.backend_implementation = caps.implementation
-        except Exception:
-            # R29b-justified: cosmetic provenance labels only; the downgrade
-            # itself is already recorded via fallback_applied/fallback_reason.
-            pass
+        # BatchBackendPlan is immutable: the downgrade produces a fresh plan and
+        # replaces the stored one, so no consumer can observe a half-rewritten
+        # plan (provenance stays honest, task section 13).
+        self._backend_plan = plan.as_cpu_fallback(note)
 
     # ----------------------------------------------------------------
     # Public: run
@@ -728,9 +691,10 @@ class BatchPropagationEngine:
         # Human-readable backend label derived from the *resolved plan's* actual
         # backend - never from the propagator class name. The class name cannot
         # distinguish torch_cuda_sh from torch_cpu_sh (same TorchSHBatchPropagator
-        # class) and would mislabel a CPU run as GPU. After a GPU-build failure the
-        # plan has already been downgraded to CPU (see _downgrade_plan_to_cpu), so
-        # this label stays consistent with what actually executes.
+        # class) and would mislabel a CPU run as GPU. After a GPU-build failure
+        # the stored plan has already been replaced by its CPU fallback (see
+        # BatchBackendPlan.as_cpu_fallback), so this label stays consistent with
+        # what actually executes.
         _plan_actual = str(getattr(self._backend_plan, "actual_backend", "") or "")
         backend_name = _BACKEND_DISPLAY_NAMES.get(_plan_actual, "CPU")
         backend_diag = prop.diagnostics_snapshot() if hasattr(prop, "diagnostics_snapshot") else {}

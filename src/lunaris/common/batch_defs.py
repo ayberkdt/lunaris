@@ -4,8 +4,8 @@ Batch Propagation Configuration Definitions
 ===========================================
 
 Configuration dataclasses for batch/ensemble injection-dispersion propagation.
-Random Monte Carlo is one sampling design; Latin-hypercube and Sobol designs
-are also available for validation-oriented batch propagation. All types follow
+Independent random sampling is one sampling design; Latin-hypercube and Sobol
+designs are also available for validation-oriented batch propagation. All types follow
 the project SSOT pattern: frozen dataclasses with __post_init__ validation.
 
 Layers

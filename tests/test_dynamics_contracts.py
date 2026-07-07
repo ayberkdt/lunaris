@@ -278,6 +278,36 @@ def test_extract_gravity_strict_accepts_valid_model():
     assert r_ref > 0.0 and gm > 0.0
 
 
+# =============================================================================
+# RHS state-vector length contract
+# =============================================================================
+
+def test_rhs_state_vector_guard_accepts_6_and_7_elements():
+    from lunaris.core.dynamics.engine import _validate_rhs_state_vector
+
+    y6 = _validate_rhs_state_vector(np.arange(6, dtype=np.float64))
+    y7 = _validate_rhs_state_vector(np.arange(7, dtype=np.float64))
+    assert y6.shape == (6,) and y7.shape == (7,)
+
+
+@pytest.mark.parametrize("bad_length", [0, 5, 8, 12])
+def test_rhs_state_vector_guard_hard_fails_on_other_lengths(bad_length):
+    """Scientific-code contract: an RHS must never return a derivative with
+    uninitialized entries. Lengths outside (6, 7) fail loudly instead of
+    silently producing np.empty_like garbage for the extra components."""
+    from lunaris.core.dynamics.engine import _validate_rhs_state_vector
+
+    with pytest.raises(ValueError, match="6 elements"):
+        _validate_rhs_state_vector(np.zeros(bad_length, dtype=np.float64))
+
+
+def test_rhs_state_vector_guard_rejects_2d_input():
+    from lunaris.core.dynamics.engine import _validate_rhs_state_vector
+
+    with pytest.raises(ValueError, match="6 elements"):
+        _validate_rhs_state_vector(np.zeros((2, 3), dtype=np.float64))
+
+
 def test_extract_gravity_strict_rejects_none():
     with pytest.raises(ValueError, match="gravity_model is None"):
         extract_gravity_strict(None)
