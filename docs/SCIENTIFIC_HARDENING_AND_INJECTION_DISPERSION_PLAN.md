@@ -54,7 +54,7 @@ Primary review targets:
 
 Terminology targets:
 
-- `src/lunaris/ui/pages/monte_carlo_page.py`
+- `src/lunaris/ui/pages/batch_propagation_page.py`
 - `src/lunaris/common/batch_defs.py`
 - `src/lunaris/cli/batch_runner.py`
 - `src/lunaris/analysis/ensemble/uq_report.py`
@@ -99,7 +99,7 @@ Implementation note, 2026-07-06:
 - The dispersion-model dataclass names `StateUncertainty` and
   `SpacecraftUncertainty` are preserved. (After merging main's batch-subsystem
   rework, the top-level config is `BatchPropagationConfig`; the older
-  `MonteCarloConfig` name was retired by that rework, not by this branch.)
+  random-sampling config name was retired by that rework, not by this branch.)
 - The UQ covariance report terminology was left intact where it specifically
   describes the provenance-stamped covariance artifact.
 
@@ -120,14 +120,14 @@ Plan:
    - Keep `force-model uncertainty` in the perturbation-budget subsystem.
    - Keep `tolerance` for numerical solver tolerances and validation thresholds.
 2. Update user-facing UI labels and help text first:
-   - page title / workspace copy in `monte_carlo_page.py`,
+   - page title / workspace copy in `batch_propagation_page.py`,
    - cards currently labelled `Initial State Uncertainty` and
      `Spacecraft Property Uncertainty`,
    - CLI help in `batch_runner.py`.
 3. Preserve public Python dataclass names initially:
    - `StateUncertainty`,
    - `SpacecraftUncertainty`,
-   - `MonteCarloConfig` compatibility aliases.
+   - the retired top-level config compatibility aliases.
    These are public API terms; rename only through a deprecation plan if a later
    session decides the API should change.
 4. Update docs to state the relationship:
@@ -260,7 +260,7 @@ Implementation note, 2026-07-06:
   (`test_spherical_harmonics.py` FD-oracle tesseral test,
   `test_torch_sh_evaluator.py` torch-vs-numba, `test_st_lrps_sh_baseline.py`
   potential-path parity, `test_st_lrps_generator_phase_parity.py` odd-m phase,
-  `test_torch_sh_mc_propagator.py` degree-never-clipped + provenance).
+  `test_torch_sh_batch_propagator.py` degree-never-clipped + provenance).
 - Added `tests/test_sh_convention_lock.py` (26 tests) for the remaining gap:
   SINGLE-coefficient artificial fields (C20/C21/S21/C22/S22/C31/S33/C43)
   compared as full vectors across `GravityModel.accel_fixed`,
@@ -386,7 +386,7 @@ Implementation note, 2026-07-06:
   `test_benchmark_provenance.py` manifest frame-mode default + override.
   Existing coverage (`test_st_lrps_legacy_batch_frame.py`,
   `test_dynamics.py::test_cpu_sh_rhs_uses_i2f_then_conjugate_frame_bridge`,
-  `test_torch_sh_mc_propagator.py` slerp/quaternion tests) retained.
+  `test_torch_sh_batch_propagator.py` slerp/quaternion tests) retained.
 
 Problem:
 
@@ -483,7 +483,7 @@ Implementation note, 2026-07-06:
   requires_error, `compatible_gpu`→torch, `cpu`→cpu, degree never clipped),
   `test_mc_gpu_policy.py` (st_lrps torch true/false, unsupported physics +
   third-body fallback provenance, high-degree fallback without clipping),
-  `test_torch_sh_mc_propagator.py` (degree above loaded raises not clips,
+  `test_torch_sh_batch_propagator.py` (degree above loaded raises not clips,
   provenance records requested==actual degree),
   `test_backend_fallback_and_scaler_consolidation.py` (`_fallback_forbidden`
   on policy=error and paper_safe/strict_backend/benchmark_mode flags,
@@ -631,7 +631,7 @@ Status: done
   (8), `test_backend_fallback_and_scaler_consolidation.py` (12),
   `test_classic_sh_policy.py`, `test_mc_gpu_policy.py`,
   `test_surrogate_architecture_upgrades.py`, `test_surrogate_upgrades.py`,
-  `test_monte_carlo_page.py`. Combined non-torch batch: 145 passed / 1 skipped;
+  `test_batch_propagation_page.py`. Combined non-torch batch: 145 passed / 1 skipped;
   torch/UI batch: 59 passed.
 - `mypy` — the touched files introduced **zero new errors**. Pre-existing
   baseline errors remain in `runtime/force_model.py` + `training/engine.py`

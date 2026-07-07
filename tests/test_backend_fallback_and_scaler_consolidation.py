@@ -83,6 +83,57 @@ def test_surrogate_to_device_float64_moves_model_and_scalers(tmp_path):
     assert diag["dtype_downgraded"] is False
 
 
+def test_surrogate_to_device_float32_roundtrip_moves_all_tensors(tmp_path):
+    """float64 -> float32 round-trip: every cached tensor follows, none is left behind."""
+    art = make_contract_run(tmp_path, degree_min=1)
+    model = SurrogateGravityModel.from_model_dir(str(art["run_dir"]), device_preference="cpu")
+    model.to_device(torch.device("cpu"), dtype=torch.float64)
+    model.to_device(torch.device("cpu"), dtype=torch.float32)
+
+    assert next(model.model.parameters()).dtype == torch.float32
+    assert model._x_mean.dtype == torch.float32
+    assert model._x_scale.dtype == torch.float32
+    assert model._u_mean.dtype == torch.float32
+    assert model._u_scale.dtype == torch.float32
+    assert model._mu_tensor.dtype == torch.float32
+
+    diag = model.dtype_diagnostics(requested_dtype=torch.float32)
+    assert diag["requested_dtype"] == "float32"
+    assert diag["effective_dtype"] == "float32"
+    assert diag["model_dtype"] == "float32"
+    assert diag["scaler_dtype"] == "float32"
+    assert diag["dtype_downgraded"] is False
+
+
+def test_surrogate_dtype_diagnostics_flags_downgrade(tmp_path):
+    """Requesting float64 against a float32 runtime must be reported as a downgrade."""
+    art = make_contract_run(tmp_path, degree_min=1)
+    model = SurrogateGravityModel.from_model_dir(str(art["run_dir"]), device_preference="cpu")
+    model.to_device(torch.device("cpu"), dtype=torch.float32)
+
+    diag = model.dtype_diagnostics(requested_dtype=torch.float64)
+    assert diag["requested_dtype"] == "float64"
+    assert diag["effective_dtype"] == "float32"
+    assert diag["dtype_downgraded"] is True
+
+
+def test_surrogate_runtime_rejects_unsupported_dtype(tmp_path):
+    """float16/bfloat16 are not valid surrogate runtime dtypes, via helper AND public path."""
+    from lunaris.surrogate.runtime.gravity_provider import _coerce_torch_dtype
+
+    with pytest.raises(ValueError, match="float32 or float64"):
+        _coerce_torch_dtype("float16")
+    with pytest.raises(ValueError, match="float32 or float64"):
+        _coerce_torch_dtype("bfloat16")
+    with pytest.raises(ValueError, match="float32 or float64"):
+        _coerce_torch_dtype(torch.float16)  # dtype object, not just the string form
+
+    art = make_contract_run(tmp_path, degree_min=1)
+    model = SurrogateGravityModel.from_model_dir(str(art["run_dir"]), device_preference="cpu")
+    with pytest.raises(ValueError, match="float32 or float64"):
+        model.to_device(torch.device("cpu"), dtype="float16")
+
+
 def test_torch_batch_diagnostics_report_effective_surrogate_dtype(tmp_path, monkeypatch):
     from lunaris.core.torch_batch_propagator import TorchBatchPropagator
 

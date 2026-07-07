@@ -245,6 +245,7 @@ files = [
   "src/lunaris/surrogate/st_lrps/evaluation/progress.py",
   "src/lunaris/surrogate/st_lrps/evaluation/provenance.py",
   "src/lunaris/surrogate/st_lrps/evaluation/benchmark_config.py",
+  "src/lunaris/surrogate/st_lrps/evaluation/error_decomposition.py",
   "src/lunaris/surrogate/st_lrps/runtime/profiling.py",
 ]
 

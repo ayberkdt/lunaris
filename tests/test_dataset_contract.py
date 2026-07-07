@@ -144,6 +144,46 @@ def test_altitude_bounds_are_validated(tmp_path):
         validate_dataset_contract(meta, data_path=path)
 
 
+def test_missing_altitude_bounds_fail(tmp_path):
+    """A dataset with no altitude envelope cannot bound the training shell."""
+    path = _write_h5(tmp_path / "data.h5", alt_min_km=None, alt_max_km=None)
+    meta = DatasetMeta.from_h5(path)
+    assert meta.alt_min_km is None and meta.alt_max_km is None
+    with pytest.raises(ValueError, match="altitude bounds"):
+        validate_training_dataset_convention(meta, data_path=path)
+
+
+@pytest.mark.parametrize("missing", ["alt_min_km", "alt_max_km"])
+def test_partially_missing_altitude_bounds_fail(tmp_path, missing):
+    path = _write_h5(tmp_path / "data.h5", **{missing: None})
+    meta = DatasetMeta.from_h5(path)
+    with pytest.raises(ValueError, match="altitude bounds"):
+        validate_training_dataset_convention(meta, data_path=path)
+
+
+def test_equal_altitude_bounds_fail(tmp_path):
+    """alt_min == alt_max is a zero-thickness shell, not a training envelope."""
+    path = _write_h5(tmp_path / "data.h5", alt_min_km=500.0, alt_max_km=500.0)
+    meta = DatasetMeta.from_h5(path)
+    with pytest.raises(ValueError, match="altitude bounds"):
+        validate_training_dataset_convention(meta, data_path=path)
+
+
+def test_invalid_target_mode_value_fails(tmp_path):
+    path = _write_h5(tmp_path / "data.h5", target_mode="hybrid")
+    meta = DatasetMeta.from_h5(path)
+    with pytest.raises(ValueError, match="target_mode"):
+        validate_training_dataset_convention(meta, data_path=path)
+
+
+def test_equal_degree_bounds_fail(tmp_path):
+    """degree_max == degree_min is an empty residual band."""
+    path = _write_h5(tmp_path / "data.h5", degree_min=60, degree_max=60)
+    meta = DatasetMeta.from_h5(path)
+    with pytest.raises(ValueError, match="degree_max"):
+        validate_training_dataset_convention(meta, data_path=path)
+
+
 def test_units_are_validated(tmp_path):
     path = _write_h5(tmp_path / "data.h5", unit_system="mystery")
     meta = DatasetMeta.from_h5(path)

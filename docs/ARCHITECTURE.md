@@ -79,7 +79,7 @@ Post-processing and presentation.
 - `analysis/reporting/` — report `manager`, `plotting`, `styling`.
 - `analysis/ensemble/` — canonical ensemble dispersion `statistics`,
   `plotting`, UQ reports, linear covariance checks, and result audits. The
-  historical `analysis/monte_carlo/` analysis namespace has been removed; use
+  historical random-sampling analysis namespace has been removed; use
   `analysis/ensemble/` directly.
 - `analysis/frozen/` — frozen-orbit candidate metrics, scoring, and
   candidate-vs-validated classification for the staged search workflow.
