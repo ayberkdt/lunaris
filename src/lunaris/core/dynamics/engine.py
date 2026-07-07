@@ -1,7 +1,6 @@
 # lunaris.core.dynamics
 """
 Core Dynamics Engine (EOM / RHS Builder)
-=======================================
 
 This module builds the equations of motion (RHS) used by numerical integrators
 (e.g. SciPy ``solve_ivp`` or fixed-step propagators).
