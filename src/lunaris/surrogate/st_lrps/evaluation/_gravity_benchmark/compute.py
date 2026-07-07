@@ -19,6 +19,13 @@ matplotlib.use("Agg")
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 
 from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.common.frame_policy import (
+    FRAME_MODE_IDENTITY_DIAGNOSTIC,
+    FRAME_MODE_MOON_FIXED_EPHEMERIS,
+    canonical_frame_mode,
+    frame_mode_uses_rotation,
+    is_identity_frame_mode,
+)
 from lunaris.core.config import SimConfig, replace_sim_config
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagation.propagator import propagate
@@ -136,18 +143,19 @@ class TorchFrameProvider:
     """
     Torch-side inertial/body-fixed frame provider for the batch RK4 path.
 
-    ``match_dynamics_engine`` samples the same q_i2f table used by
-    ``DynamicsEngine``.  Interpolation is normalized linear interpolation, which
-    is close to SLERP for the small ephemeris cadence used here and keeps the
-    GPU path free of host round-trips.
+    ``moon_fixed_ephemeris`` samples the same q_i2f table used by
+    ``DynamicsEngine``. The old ``match_dynamics_engine`` and
+    ``precomputed_slerp`` tokens are accepted at the CLI boundary and normalized
+    before they reach the frame logic.
     """
 
     def __init__(self, ephem: Any, *, device: Any, dtype: Any, mode: str) -> None:
         import torch
-        self.mode = str(mode)
+        self.requested_mode = str(mode)
+        self.mode = canonical_frame_mode(mode)
         self.device = device
         self.dtype = dtype
-        if self.mode == "inertial_fixed_legacy":
+        if self.mode == FRAME_MODE_IDENTITY_DIAGNOSTIC:
             self.dt_s = 1.0
             self.q_tab = torch.tensor([[1.0, 0.0, 0.0, 0.0],
                                        [1.0, 0.0, 0.0, 0.0]],
@@ -155,9 +163,9 @@ class TorchFrameProvider:
             self.uses_rotation = False
             return
 
-        if self.mode in ("match_dynamics_engine", "precomputed_slerp") and ephem is None:
+        if self.mode == FRAME_MODE_MOON_FIXED_EPHEMERIS and ephem is None:
             raise ValueError(
-                f"batch-frame-mode={self.mode} requires an EphemerisManager."
+                f"batch-frame-mode={self.requested_mode} requires an EphemerisManager."
             )
         provider = ephem.get_data_provider()
         q_np = np.asarray(provider["q_i2f_tab"], dtype=np.float64)
@@ -408,7 +416,9 @@ def propagate_gpu_batch_model(
     n_snaps = max(1, round(duration_s / output_dt_s))
     t_out = np.linspace(0.0, n_snaps * output_dt_s, n_snaps + 1, dtype=np.float64)
 
-    frame = TorchFrameProvider(ephem, device=device, dtype=dtype, mode=frame_mode)
+    requested_frame_mode = str(frame_mode)
+    canonical_mode = canonical_frame_mode(requested_frame_mode)
+    frame = TorchFrameProvider(ephem, device=device, dtype=dtype, mode=canonical_mode)
     accel_fixed, backend = _make_gpu_accelerator(model_name, gravity_model, device=device, dtype=dtype)
 
     state = torch.as_tensor(y0_batch, device=device, dtype=dtype)
@@ -417,7 +427,7 @@ def propagate_gpu_batch_model(
 
     total_steps = int(n_snaps * steps_per_snap)
 
-    if frame_mode == "precomputed_slerp":
+    if requested_frame_mode.strip().lower() == "precomputed_slerp":
         frame_cache = frame.precompute_rk_stage_quaternions(total_steps, dt_eff, gpu_integrator)
         step_idx = 0
         stage_idx = 0
@@ -925,24 +935,35 @@ class _BatchCfg:
         self.torch_dtype = str(torch_dtype)
 
 
-def _legacy_batch_frame_modes(args: argparse.Namespace) -> tuple[str, str]:
-    """Return requested/effective frame modes for the legacy ``--batch-rk4`` path."""
-
-    requested = str(getattr(args, "batch_frame_mode", "match_dynamics_engine") or "match_dynamics_engine")
-    allowed = {"match_dynamics_engine", "precomputed_slerp", "inertial_fixed_legacy"}
-    if requested not in allowed:
-        raise ValueError(f"Unsupported batch frame mode for --batch-rk4: {requested!r}")
-    # ``precomputed_slerp`` is implemented by the newer --gpu-batch-compare path.
-    # This legacy ST-LRPS-only path remains frame-correct but uses dynamic SLERP.
-    effective = "match_dynamics_engine" if requested == "precomputed_slerp" else requested
-    return requested, effective
+@dataclass(frozen=True)
+class BatchFrameResolution:
+    requested_frame_mode: str
+    effective_frame_mode: str
+    frame_interpolation: str
+    uses_frame_rotation: bool
 
 
-def _validate_legacy_batch_frame_inputs(effective_frame_mode: str, ephem: Any | None) -> None:
-    if effective_frame_mode != "inertial_fixed_legacy" and ephem is None:
+def _resolve_batch_frame_modes(args: argparse.Namespace) -> BatchFrameResolution:
+    """Resolve CLI frame tokens to the canonical benchmark frame contract."""
+
+    requested = str(
+        getattr(args, "batch_frame_mode", FRAME_MODE_MOON_FIXED_EPHEMERIS)
+        or FRAME_MODE_MOON_FIXED_EPHEMERIS
+    ).strip()
+    effective = canonical_frame_mode(requested)
+    return BatchFrameResolution(
+        requested_frame_mode=requested,
+        effective_frame_mode=effective,
+        frame_interpolation="identity" if is_identity_frame_mode(effective) else "dynamic_slerp",
+        uses_frame_rotation=frame_mode_uses_rotation(effective),
+    )
+
+
+def _validate_batch_frame_inputs(frame: BatchFrameResolution, ephem: Any | None) -> None:
+    if frame.uses_frame_rotation and ephem is None:
         raise RuntimeError(
             "--batch-rk4 requires an ephemeris q_i2f timeline for frame-correct "
-            "Moon-fixed gravity. Use --batch-frame-mode inertial_fixed_legacy only "
+            "Moon-fixed gravity. Use --batch-frame-mode identity_diagnostic only "
             "for explicit diagnostic legacy runs."
         )
 
@@ -965,22 +986,22 @@ def run_st_lrps_batch_rk4(
     Default frame mode rotates each inertial RK stage into the Moon-fixed frame
     before ST-LRPS evaluation and rotates acceleration back to inertial. The old
     inertial==fixed approximation is available only through the explicit
-    ``inertial_fixed_legacy`` frame mode and must not be used for paper claims.
+    ``identity_diagnostic`` frame mode and must not be used for paper claims.
     """
-    requested_frame_mode, effective_frame_mode = _legacy_batch_frame_modes(args)
-    _validate_legacy_batch_frame_inputs(effective_frame_mode, ephem)
+    frame = _resolve_batch_frame_modes(args)
+    _validate_batch_frame_inputs(frame, ephem)
     if (
-        requested_frame_mode != effective_frame_mode
-        and not bool(getattr(args, "_legacy_batch_frame_notice_emitted", False))
+        str(frame.requested_frame_mode).strip().lower() == "precomputed_slerp"
+        and not bool(getattr(args, "_batch_frame_strategy_notice_emitted", False))
     ):
         print(
-            "[batch-rk4] requested frame mode precomputed_slerp is implemented "
-            "by --gpu-batch-compare; legacy --batch-rk4 will use dynamic "
-            "match_dynamics_engine rotation.",
+            "[batch-rk4] requested frame strategy precomputed_slerp is implemented "
+            "by --gpu-batch-compare; --batch-rk4 uses canonical "
+            "moon_fixed_ephemeris with dynamic SLERP.",
             flush=True,
         )
         try:
-            args._legacy_batch_frame_notice_emitted = True
+            args._batch_frame_strategy_notice_emitted = True
         except Exception:
             pass
 
@@ -1029,9 +1050,10 @@ def run_st_lrps_batch_rk4(
             "chunk_size": chunk_size,
             "torch_dtype": getattr(args, "torch_dtype", "float64"),
             "y_layout": "time_scenario_state",
-            "requested_frame_mode": requested_frame_mode,
-            "effective_frame_mode": effective_frame_mode,
-            "uses_frame_rotation": bool(effective_frame_mode != "inertial_fixed_legacy"),
+            "requested_frame_mode": frame.requested_frame_mode,
+            "effective_frame_mode": frame.effective_frame_mode,
+            "frame_interpolation": frame.frame_interpolation,
+            "uses_frame_rotation": frame.uses_frame_rotation,
         }
 
     # Warn if dt > output_dt
@@ -1057,8 +1079,7 @@ def run_st_lrps_batch_rk4(
     if cuda_ok:
         return _run_batch_rk4_gpu(surrogate_model, y0_batch, duration_s, dt_eff,
                                    output_dt_s, args, ephem=ephem,
-                                   requested_frame_mode=requested_frame_mode,
-                                   effective_frame_mode=effective_frame_mode)
+                                   frame=frame)
     else:
         fallback = getattr(args, "gpu_fallback", "cpu")
         if fallback == "error":
@@ -1070,8 +1091,7 @@ def run_st_lrps_batch_rk4(
         return _run_batch_rk4_cpu(
             surrogate_model, y0_batch, duration_s, dt_eff, output_dt_s,
             ephem=ephem,
-            requested_frame_mode=requested_frame_mode,
-            effective_frame_mode=effective_frame_mode,
+            frame=frame,
         )
 
 
@@ -1084,8 +1104,7 @@ def _run_batch_rk4_gpu(
     args: argparse.Namespace,
     *,
     ephem: Any | None,
-    requested_frame_mode: str,
-    effective_frame_mode: str,
+    frame: BatchFrameResolution,
 ) -> dict[str, Any]:
     import torch
 
@@ -1098,13 +1117,13 @@ def _run_batch_rk4_gpu(
     surrogate_model.to_device(device, dtype=_torch_dtype_from_name(getattr(args, "torch_dtype", "float32")))
 
     batch_cfg = _BatchCfg(dt_s=dt_s, torch_dtype=getattr(args, "torch_dtype", "float32"))
-    use_legacy_identity = effective_frame_mode == "inertial_fixed_legacy"
+    use_identity = is_identity_frame_mode(frame.effective_frame_mode)
     prop = TorchBatchPropagator(
         surrogate_model,
         batch_cfg,
         device_id=0,
-        ephem=None if use_legacy_identity else ephem,
-        allow_identity_rotation=use_legacy_identity,
+        ephem=None if use_identity else ephem,
+        allow_identity_rotation=use_identity,
     )
     N      = y0_batch.shape[0]
     ones_N = np.ones(N, dtype=np.float64)
@@ -1136,9 +1155,10 @@ def _run_batch_rk4_gpu(
         "mode": "gpu_rk4",
         "torch_dtype": getattr(args, "torch_dtype", "float64"),
         "y_layout": "time_scenario_state",
-        "requested_frame_mode": requested_frame_mode,
-        "effective_frame_mode": effective_frame_mode,
-        "uses_frame_rotation": not use_legacy_identity,
+        "requested_frame_mode": frame.requested_frame_mode,
+        "effective_frame_mode": frame.effective_frame_mode,
+        "frame_interpolation": frame.frame_interpolation,
+        "uses_frame_rotation": frame.uses_frame_rotation,
     }
 
 
@@ -1150,11 +1170,21 @@ def _run_batch_rk4_cpu(
     output_dt_s: float,
     *,
     ephem: Any | None,
-    requested_frame_mode: str,
-    effective_frame_mode: str,
+    frame: BatchFrameResolution | None = None,
+    requested_frame_mode: str | None = None,
+    effective_frame_mode: str | None = None,
 ) -> dict[str, Any]:
     """CPU sequential batch RK4 using acceleration_fixed_batch."""
-    use_legacy_identity = effective_frame_mode == "inertial_fixed_legacy"
+    if frame is None:
+        frame = BatchFrameResolution(
+            requested_frame_mode=str(requested_frame_mode or FRAME_MODE_MOON_FIXED_EPHEMERIS),
+            effective_frame_mode=canonical_frame_mode(effective_frame_mode or requested_frame_mode),
+            frame_interpolation="identity"
+            if is_identity_frame_mode(effective_frame_mode or requested_frame_mode)
+            else "dynamic_slerp",
+            uses_frame_rotation=frame_mode_uses_rotation(effective_frame_mode or requested_frame_mode),
+        )
+    use_identity = is_identity_frame_mode(frame.effective_frame_mode)
     N = y0_batch.shape[0]
     steps_per_snap = max(1, round(output_dt_s / dt_s))
     n_snaps = max(1, round(duration_s / output_dt_s))
@@ -1162,7 +1192,7 @@ def _run_batch_rk4_cpu(
     Y_out = np.empty((n_snaps + 1, N, 6), dtype=np.float64)
 
     def _batch_accel(t_s: float, Y: np.ndarray) -> np.ndarray:
-        if use_legacy_identity:
+        if use_identity:
             return surrogate_model.acceleration_fixed_batch(Y[:, :3])
 
         if ephem is None:
@@ -1219,9 +1249,10 @@ def _run_batch_rk4_cpu(
         "mode": "cpu_rk4",
         "torch_dtype": "numpy_float64",
         "y_layout": "time_scenario_state",
-        "requested_frame_mode": requested_frame_mode,
-        "effective_frame_mode": effective_frame_mode,
-        "uses_frame_rotation": not use_legacy_identity,
+        "requested_frame_mode": frame.requested_frame_mode,
+        "effective_frame_mode": frame.effective_frame_mode,
+        "frame_interpolation": frame.frame_interpolation,
+        "uses_frame_rotation": frame.uses_frame_rotation,
     }
 
 
@@ -1238,19 +1269,20 @@ def run_sh200_cpu_rk4_reference(
     *,
     cfg_base: SimConfig | None = None,
     ephem: Any | None = None,
-    frame_mode: str = "match_dynamics_engine",
+    frame_mode: str = FRAME_MODE_MOON_FIXED_EPHEMERIS,
 ) -> dict[str, Any]:
     """
     Run SH200 fixed-step CPU RK4 for N scenarios sequentially.
 
     The default path uses DynamicsEngine's Moon-fixed frame transform at every
     RK4 stage. The old no-rotation subtraction reference is retained only for
-    explicit ``inertial_fixed_legacy`` diagnostic runs.
+    explicit ``identity_diagnostic`` diagnostic runs.
     """
     from lunaris.physics.spherical_harmonics import sh_accel_fixed_numba
 
-    use_legacy_identity = str(frame_mode) == "inertial_fixed_legacy"
-    if not use_legacy_identity and (cfg_base is None or ephem is None):
+    canonical_mode = canonical_frame_mode(frame_mode)
+    use_identity = is_identity_frame_mode(canonical_mode)
+    if not use_identity and (cfg_base is None or ephem is None):
         raise RuntimeError("Frame-correct SH200 RK4 reference requires cfg_base and ephem.")
 
     N = y0_batch.shape[0]
@@ -1273,7 +1305,7 @@ def run_sh200_cpu_rk4_reference(
         )
         return np.array([ax, ay, az], dtype=np.float64)
 
-    if use_legacy_identity:
+    if use_identity:
         def rhs(t_s: float, y: np.ndarray) -> np.ndarray:
             r, v = y[:3], y[3:]
             return np.concatenate([v, sh_accel(r)])
@@ -1322,5 +1354,5 @@ def run_sh200_cpu_rk4_reference(
     return {"t": t_out, "Y": Y_out, "runtime_s": runtime_s, "device": "cpu",
             "dt_s": dt_s, "n_scenarios": N, "n_steps": n_steps,
             "samples_per_second": N * n_steps / max(runtime_s, 1e-9),
-            "frame_mode": str(frame_mode),
-            "uses_frame_rotation": not use_legacy_identity}
+            "frame_mode": canonical_mode,
+            "uses_frame_rotation": not use_identity}

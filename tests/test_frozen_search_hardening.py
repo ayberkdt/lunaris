@@ -22,6 +22,7 @@ top-K tie ambiguity).
 from __future__ import annotations
 
 import json
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -42,7 +43,7 @@ from lunaris.analysis.frozen.search import (
 MU = 4.9028001224453001e12
 R_REF = 1.7374e6
 
-MOON_FIXED_FRAME = "moon_fixed_slerp (ephemeris-wired q_i2f)"
+MOON_FIXED_FRAME = "moon_fixed_ephemeris (ephemeris-wired q_i2f)"
 IDENTITY_FRAME = "identity (gravity field fixed in the integration frame)"
 UNRESOLVED_FRAME = "unresolved (ephemeris required)"
 
@@ -375,11 +376,38 @@ def test_classical_validation_ephemeris_without_third_body_is_rotating(monkeypat
     enforce_strict_frame_rule(prop.provenance, strict_frame_required=True, role="validation")
 
 
+def test_classical_validation_default_without_ephemeris_stays_diagnostic_identity(monkeypatch):
+    import lunaris.analysis.frozen.search_backends as backends
+    import lunaris.core.dynamics as dynamics_mod
+
+    monkeypatch.setattr(backends, "_load_gravity_model", lambda *a, **k: _dummy_gravity_model())
+    monkeypatch.setattr(dynamics_mod, "DynamicsEngine", lambda **kwargs: SimpleNamespace(**kwargs))
+
+    prop = backends.ClassicalSHValidationPropagator(degree=8, third_body=())
+
+    assert prop.provenance["frame_mode"] == "identity_diagnostic"
+    assert is_identity_or_unresolved_frame(prop.provenance) is True
+
+
 def test_torch_sh_screening_accepts_ephemeris_and_reports_rotating_frame(monkeypatch):
     import lunaris.analysis.frozen.search_backends as backends
     import lunaris.core.dynamics as dynamics_mod
     import lunaris.core.torch_sh_propagator as torch_sh_mod
 
+    class _FakeTorchDevice:
+        def __init__(self, value):
+            self._value = str(value)
+            self.type = "cuda" if self._value.startswith("cuda") else "cpu"
+            self.index = None
+
+        def __str__(self):
+            return self._value
+
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: False),
+        device=_FakeTorchDevice,
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setattr(backends, "_load_gravity_model", lambda *a, **k: _dummy_gravity_model())
     monkeypatch.setattr(dynamics_mod, "DynamicsEngine", lambda **kwargs: SimpleNamespace(**kwargs))
     monkeypatch.setattr(

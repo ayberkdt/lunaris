@@ -477,6 +477,16 @@ class BatchPropagationConfig:
 # 4.                          RESULT CONTAINERS
 # =============================================================================
 
+
+def _as_bool_mask(value: Any, name: str) -> np.ndarray:
+    arr = np.asarray(value)
+    if arr.ndim != 1:
+        raise ValueError(f"{name} must be a 1D mask, got {arr.shape}")
+    if arr.dtype == np.bool_:
+        return np.ascontiguousarray(arr, dtype=np.bool_)
+    return np.ascontiguousarray(np.asarray(arr, dtype=np.float64) > 0.5, dtype=np.bool_)
+
+
 @dataclass(slots=True)
 class BatchPropagationResult:
     """
@@ -499,15 +509,17 @@ class BatchPropagationResult:
     t: F64Array                              # (T,)
     Y: Any                                   # ndarray or read-only lazy trajectory view
     sc_samples: F64Array                     # (N, 4) [mass_kg, area_m2, cd, cr]
-    impact_mask: F64Array                    # (N,) bool-like float64 (0/1)
+    impact_mask: np.ndarray                  # (N,) boolean impact mask
     t_impact: F64Array                       # (N,) NaN if no impact
     diagnostics: dict = field(default_factory=dict)
-    # (N,) 1.0=valid sample, 0.0=failed/invalid (e.g. a CPU sample that raised
-    # and was NaN-filled under allow_sample_failures). ``None`` means "all
-    # samples valid" — the batch GPU/torch paths never partially fail. Lets
-    # consumers exclude failed samples from ensemble statistics instead of
-    # treating NaN-filled trajectories as if they were real states.
-    valid_mask: F64Array | None = None
+    # (N,) boolean validity mask: True=valid sample, False=failed/invalid (e.g.
+    # a CPU sample that raised and was NaN-filled under allow_sample_failures).
+    # ``None`` means "all samples valid" — the batch GPU/torch paths never
+    # partially fail. Lets consumers exclude failed samples from ensemble
+    # statistics instead of treating NaN-filled trajectories as if they were real
+    # states. Archive writers may store this as compact 0/1 values; the in-memory
+    # API exposes bools.
+    valid_mask: np.ndarray | None = None
     impact_position_inertial_m: F64Array | None = None
     impact_position_fixed_m: F64Array | None = None
     archive_path: str | None = None
@@ -518,10 +530,10 @@ class BatchPropagationResult:
         if not is_lazy:
             self.Y = np.ascontiguousarray(self.Y, dtype=np.float64)
         self.sc_samples = np.ascontiguousarray(self.sc_samples, dtype=np.float64)
-        self.impact_mask = np.ascontiguousarray(self.impact_mask, dtype=np.float64)
+        self.impact_mask = _as_bool_mask(self.impact_mask, "impact_mask")
         self.t_impact = np.ascontiguousarray(self.t_impact, dtype=np.float64)
         if self.valid_mask is not None:
-            self.valid_mask = np.ascontiguousarray(self.valid_mask, dtype=np.float64)
+            self.valid_mask = _as_bool_mask(self.valid_mask, "valid_mask")
         if self.impact_position_inertial_m is not None:
             self.impact_position_inertial_m = np.ascontiguousarray(
                 self.impact_position_inertial_m, dtype=np.float64
@@ -574,13 +586,13 @@ class BatchPropagationResult:
         """Number of valid (non-failed) samples; all samples when no mask is set."""
         if self.valid_mask is None:
             return int(self.Y.shape[1])
-        return int(np.sum(self.valid_mask > 0.5))
+        return int(np.sum(self.valid_mask))
 
     def valid_sample_mask(self) -> np.ndarray:
         """Canonical boolean validity mask used by analysis and reporting."""
         if self.valid_mask is None:
             return np.ones(self.n_samples, dtype=bool)
-        return np.asarray(self.valid_mask > 0.5, dtype=bool)
+        return np.asarray(self.valid_mask, dtype=bool)
 
     @property
     def n_steps(self) -> int:
@@ -589,7 +601,7 @@ class BatchPropagationResult:
     @property
     def n_survived(self) -> int:
         """Number of samples that completed without impact."""
-        return int(np.sum(self.valid_sample_mask() & (self.impact_mask < 0.5)))
+        return int(np.sum(self.valid_sample_mask() & ~self.impact_mask))
 
     @property
     def impact_fraction(self) -> float:
@@ -598,11 +610,11 @@ class BatchPropagationResult:
         n_valid = int(np.sum(valid))
         if n_valid == 0:
             raise ValueError("impact fraction is undefined: no valid samples")
-        return float(np.sum(valid & (self.impact_mask > 0.5)) / n_valid)
+        return float(np.sum(valid & self.impact_mask) / n_valid)
 
     def survived_trajectories(self) -> F64Array:
         """Return Y[:, mask, :] for non-impacting samples only."""
-        mask = self.valid_sample_mask() & (self.impact_mask < 0.5)
+        mask = self.valid_sample_mask() & ~self.impact_mask
         return self.Y[:, mask, :]
 
     @property

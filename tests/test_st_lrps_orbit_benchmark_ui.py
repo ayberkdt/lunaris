@@ -48,13 +48,19 @@ def test_harness_file_moved_on_disk():
 # ---------------------------------------------------------------------------
 @pytest.fixture(autouse=True)
 def _clear_settings():
-    from PySide6.QtCore import QSettings
+    try:
+        from PySide6.QtCore import QSettings
+    except Exception:
+        yield
+        return
     QSettings("ST_LRPS_Project", "ST_LRPS_Dashboard").clear()
+    yield
 
 
 @pytest.fixture(scope="module")
 def qapp():
-    pytest.importorskip("PySide6")
+    pytest.importorskip("PySide6.QtCore")
+    pytest.importorskip("PySide6.QtWidgets")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
@@ -1493,9 +1499,9 @@ def test_ui_gpu_mode_emits_frame_mode(qapp):
     args = tab._build_args(show_errors=False)
     assert args[args.index("--batch-frame-mode") + 1] == "precomputed_slerp"
     # User can switch to the conservative dynamic path.
-    tab.gpu_frame_mode.setCurrentIndex(tab.gpu_frame_mode.findData("match_dynamics_engine"))
+    tab.gpu_frame_mode.setCurrentIndex(tab.gpu_frame_mode.findData("moon_fixed_ephemeris"))
     args = tab._build_args(show_errors=False)
-    assert args[args.index("--batch-frame-mode") + 1] == "match_dynamics_engine"
+    assert args[args.index("--batch-frame-mode") + 1] == "moon_fixed_ephemeris"
     tab.deleteLater()
 
 
@@ -1629,7 +1635,7 @@ def test_backend_run_metadata_enriched_fields(tmp_path, monkeypatch):
     assert meta["gpu_finite_check_mode"] == "end"
     # Frame metadata is explicit and never collapses to one field.
     assert meta["effective_batch_frame_mode"] == meta["requested_batch_frame_mode"]
-    assert meta["truth_frame_mode"] == "match_dynamics_engine"
+    assert meta["truth_frame_mode"] == "moon_fixed_ephemeris"
     assert "sampling" in meta and meta["sampling"]["scenario_count"] == 3
 
 
@@ -1677,12 +1683,13 @@ def test_backend_summary_requested_vs_completed_breakdown(monkeypatch):
     assert summary["models_in_metrics"] == ["NUMBA_CUDA_SH20_RK4"]
     assert summary["summary_scope"] == "completed_models_only"
     assert "1/3" in summary["summary_note"]
-    # Frame metadata must not collapse to "match_dynamics_engine".
+    # Frame metadata keeps raw request separate from canonical effective mode.
     assert summary["requested_batch_frame_mode"] == "precomputed_slerp"
-    assert summary["effective_batch_frame_mode"] == "precomputed_slerp"
-    assert summary["truth_frame_mode"] == "match_dynamics_engine"
+    assert summary["effective_batch_frame_mode"] == "moon_fixed_ephemeris"
+    assert summary["truth_frame_mode"] == "moon_fixed_ephemeris"
+    assert summary["frame_interpolation"] == "precomputed_slerp"
     assert summary["uses_lunar_rotation"] is True
-    assert summary["matches_dynamics_engine_frame"] is False
+    assert summary["matches_dynamics_engine_frame"] is True
     warns = " ".join(summary["metadata_warnings"])
     assert "NUMBA_CUDA_SH60_RK4" in warns and "GPU_ST_LRPS_RK4" in warns
 

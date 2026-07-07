@@ -367,7 +367,7 @@ def enforce_strict_frame_rule(
             f"paper_safe/strict_frame forbids the {role} backend's rotation frame "
             f"provenance {frame!r}: Moon-fixed gravity evaluated in an identity/"
             "unresolved integration frame can never back a paper-grade frozen-orbit "
-            "claim. Wire an ephemeris manager (moon_fixed_slerp) or drop the "
+            "claim. Wire an ephemeris manager (moon_fixed_ephemeris) or drop the "
             "paper_safe/strict_frame flag for exploratory runs."
         )
 

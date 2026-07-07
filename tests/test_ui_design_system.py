@@ -23,6 +23,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _pyside6_widgets_or_skip():
+    pytest.importorskip("PySide6.QtCore")
+    pytest.importorskip("PySide6.QtGui")
+    return pytest.importorskip("PySide6.QtWidgets")
+
+
 def _luminance(hex_color: str) -> float:
     channels = [int(hex_color[i : i + 2], 16) / 255 for i in (1, 3, 5)]
     linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in channels]
@@ -122,7 +128,7 @@ def test_semantic_text_contrast_meets_wcag_aa(foreground: str, background: str) 
 
 
 def test_theme_facade_tracks_typed_tokens() -> None:
-    pytest.importorskip("PySide6")
+    _pyside6_widgets_or_skip()
     from lunaris.ui.core.ui_commons import THEME
 
     assert THEME["accent"] == DESIGN_TOKENS.colors.accent
@@ -131,7 +137,7 @@ def test_theme_facade_tracks_typed_tokens() -> None:
 
 
 def test_global_stylesheet_has_shared_component_selectors() -> None:
-    pytest.importorskip("PySide6")
+    _pyside6_widgets_or_skip()
     from lunaris.ui.core.ui_commons import LOG_COLORS, THEME
     from lunaris.ui.theme import build_app_stylesheet
 
@@ -150,8 +156,7 @@ def test_global_stylesheet_has_shared_component_selectors() -> None:
 
 
 def test_shared_primitives_construct_offscreen() -> None:
-    pytest.importorskip("PySide6")
-    from PySide6 import QtWidgets
+    QtWidgets = _pyside6_widgets_or_skip()
 
     from lunaris.ui.components import (
         CompactSearchField,
@@ -185,6 +190,31 @@ def test_shared_primitives_construct_offscreen() -> None:
     finally:
         for widget in widgets:
             widget.deleteLater()
+    _ = app
+
+
+def test_segmented_control_programmatic_emit_is_explicit() -> None:
+    QtWidgets = _pyside6_widgets_or_skip()
+
+    from lunaris.ui.components import SegmentedControl
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    widget = SegmentedControl(["A", "B", "C"])
+    seen: list[int] = []
+    widget.current_changed.connect(seen.append)
+    try:
+        widget.set_current_index(1)
+        assert widget.current_index() == 1
+        assert seen == []
+
+        widget.set_current_index(2, emit=True)
+        assert widget.current_index() == 2
+        assert seen == [2]
+
+        widget.set_current_index(2, emit=True)
+        assert seen == [2]
+    finally:
+        widget.deleteLater()
     _ = app
 
 

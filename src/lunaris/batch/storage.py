@@ -288,9 +288,9 @@ class _HDF5Writer:
                     f"{expected}, got {actual}"
                 )
         self._f.create_dataset("sc_samples",  data=sc_samples)
-        self._f.create_dataset("impact_flags", data=impact_flags)
+        self._f.create_dataset("impact_flags", data=np.asarray(impact_flags, dtype=np.uint8))
         self._f.create_dataset("t_impact",    data=t_impact)
-        self._f.create_dataset("valid_mask", data=valid_mask)
+        self._f.create_dataset("valid_mask", data=np.asarray(valid_mask, dtype=np.uint8))
         self._f.create_dataset(
             "impact_position_inertial_m", data=impact_position_inertial_m
         )
@@ -353,7 +353,7 @@ class _SummaryOnlyWriter:
 
 
 class _NPZWriter:
-    """Writes an eager trajectory archive in one compressed NPZ operation."""
+    """Writes an eager trajectory archive through an atomic ``.part.npz`` file."""
 
     def __init__(
         self,
@@ -364,9 +364,13 @@ class _NPZWriter:
     ) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._path = path
+        self._part_path = path.with_name(f"{path.stem}.part{path.suffix or '.npz'}")
+        if self._part_path.exists():
+            self._part_path.unlink()
         self._t = np.ascontiguousarray(t_grid, dtype=np.float64)
         self._Y = np.empty((len(self._t), n_samples, n_state), dtype=np.float64)
         self._metadata: dict[str, Any] = {}
+        self._final_payload_written = False
 
     def write_sample_batch(self, start: int, end: int, Y: np.ndarray) -> None:
         self._Y[:, start:end, :] = Y
@@ -389,23 +393,31 @@ class _NPZWriter:
         impact_position_fixed_m: np.ndarray,
     ) -> None:
         np.savez_compressed(
-            str(self._path),
+            str(self._part_path),
             t=self._t,
             Y=self._Y,
             sc_samples=sc_samples,
-            impact_flags=impact_flags,
+            impact_flags=np.asarray(impact_flags, dtype=np.uint8),
             t_impact=t_impact,
-            valid_mask=valid_mask,
+            valid_mask=np.asarray(valid_mask, dtype=np.uint8),
             impact_position_inertial_m=impact_position_inertial_m,
             impact_position_fixed_m=impact_position_fixed_m,
             metadata_json=np.asarray(json.dumps(self._metadata, sort_keys=True), dtype=np.str_),
         )
+        self._final_payload_written = True
 
     def finalize(self) -> None:
-        pass
+        if not self._final_payload_written:
+            raise RuntimeError(
+                "Cannot finalize NPZ archive before final result arrays are written"
+            )
+        self._part_path.replace(self._path)
 
     def abort(self) -> None:
-        pass
+        try:
+            self._part_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _make_writer(
@@ -478,8 +490,8 @@ def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> 
         Return a disk-backed, read-only trajectory view instead of loading the
         full ``Y`` ensemble into memory (HDF5 only).
     strict : bool
-        Ignored. The loader always requires a complete schema-v2 manifest and
-        the full set of current batch result datasets.
+        Deprecated. ``False`` no longer relaxes validation; the loader always
+        requires a complete schema-v2 manifest and the current result datasets.
 
     Returns
     ----------
@@ -487,6 +499,13 @@ def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> 
     """
     p = Path(path).expanduser().resolve()
     suffix = p.suffix.lower()
+    if strict is not True:
+        warnings.warn(
+            "load_batch_result(strict=False) is deprecated and no longer relaxes "
+            "schema-v2 archive validation.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     if suffix in (".h5", ".hdf5"):
         try:

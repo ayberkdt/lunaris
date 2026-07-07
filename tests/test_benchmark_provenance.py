@@ -71,7 +71,8 @@ def test_manifest_captures_config_model_and_environment_hashes(tmp_path):
     assert manifest["environment"]["python_version"]
     # Frame provenance: config-driven benchmark always propagates the GPU batch
     # in the rotating Moon-fixed frame (never identity rotation).
-    assert manifest["numerics"]["frame_mode"] == "match_dynamics_engine"
+    assert manifest["numerics"]["frame_mode"] == "moon_fixed_ephemeris"
+    assert manifest["numerics"]["requested_frame_mode"] == "moon_fixed_ephemeris"
     assert manifest["numerics"]["uses_frame_rotation"] is True
 
 
@@ -91,5 +92,6 @@ def test_manifest_frame_mode_honors_explicit_override(tmp_path):
         output_dir=tmp_path,
         cwd=tmp_path,
     )
-    assert manifest["numerics"]["frame_mode"] == "inertial_fixed_legacy"
+    assert manifest["numerics"]["frame_mode"] == "identity_diagnostic"
+    assert manifest["numerics"]["requested_frame_mode"] == "inertial_fixed_legacy"
     assert manifest["numerics"]["uses_frame_rotation"] is False

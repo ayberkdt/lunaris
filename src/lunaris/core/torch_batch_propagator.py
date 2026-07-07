@@ -57,6 +57,10 @@ import numpy as np
 
 from lunaris.common.batch_defs import build_batch_output_grid
 from lunaris.common.constants import R_MOON
+from lunaris.common.frame_policy import (
+    FRAME_MODE_IDENTITY_DIAGNOSTIC,
+    FRAME_MODE_MOON_FIXED_EPHEMERIS,
+)
 
 logger = logging.getLogger(__name__)
 from lunaris.core.batched_fixed_step import (
@@ -360,7 +364,11 @@ class TorchBatchPropagator:
             "scaler_dtype": dtype_diag.get("scaler_dtype"),
             "force_runtime_scaler_dtype": dtype_diag.get("force_runtime_scaler_dtype"),
             "acceleration_output_dtype": str(self._dtype).replace("torch.", ""),
-            "frame_mode": "moon_fixed_slerp" if self._frame.uses_rotation else "identity",
+            "frame_mode": (
+                FRAME_MODE_MOON_FIXED_EPHEMERIS
+                if self._frame.uses_rotation
+                else FRAME_MODE_IDENTITY_DIAGNOSTIC
+            ),
             "frame_interpolation": "slerp_shortest_path",
             "uses_frame_rotation": bool(self._frame.uses_rotation),
             "impact_position_method": (

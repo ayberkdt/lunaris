@@ -54,6 +54,22 @@ def test_classify_metric_returns_none_for_non_metric():
     assert classify_metric("model") is None
 
 
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("field_error.accel_rms_m_s2", MODEL_ERROR_FIELD),
+        ("field_error.accel_p95_m_s2", MODEL_ERROR_FIELD),
+        ("field_error.custom_component_m_s2", MODEL_ERROR_FIELD),
+        ("orbit_error.position_rms_m", TRAJECTORY_ERROR),
+        ("integrator_error.position_rms_m", INTEGRATOR_ERROR),
+        ("phase_corrected_error.position_rms_m", PHASE_CORRECTED_ERROR),
+        ("runtime.samples_per_second", RUNTIME_METRICS),
+    ],
+)
+def test_canonical_metric_names_classify_before_substring_fallback(name, expected):
+    assert classify_metric(name) == expected
+
+
 def test_field_marker_wins_over_trajectory_marker():
     # A field metric that also mentions position must classify as field, not
     # trajectory (order of the classification rules).

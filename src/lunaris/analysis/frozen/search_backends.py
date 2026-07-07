@@ -26,6 +26,8 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.frame_policy import FrameModeInput, resolve_frame_policy
+
 DEG2RAD = np.pi / 180.0
 
 
@@ -83,14 +85,6 @@ def _third_body_provenance(bodies: tuple[str, ...]) -> dict[str, bool]:
     return {"earth": "earth" in selected, "sun": "sun" in selected}
 
 
-def _frame_provenance(ephem_manager: Any, *, allow_identity_rotation: bool) -> str:
-    if ephem_manager is not None:
-        return "moon_fixed_slerp (ephemeris-wired q_i2f)"
-    if allow_identity_rotation:
-        return "identity (gravity field fixed in the integration frame)"
-    return "unresolved (ephemeris required)"
-
-
 def _gravity_provenance(
     model: Any,
     degree: int,
@@ -99,7 +93,13 @@ def _gravity_provenance(
     third_body: tuple[str, ...] = (),
     ephem_manager: Any = None,
     allow_identity_rotation: bool = True,
+    frame_mode: FrameModeInput = None,
 ) -> dict[str, Any]:
+    frame_policy = resolve_frame_policy(
+        ephem_manager=ephem_manager,
+        allow_identity_rotation=allow_identity_rotation,
+        frame_mode=frame_mode,
+    )
     return {
         "gravity_model": {
             "name": str(getattr(model, "name", "unknown")),
@@ -109,9 +109,9 @@ def _gravity_provenance(
         },
         "third_body": _third_body_provenance(third_body),
         "force_model_scope": "gravity_plus_third_body" if third_body else "gravity_only",
-        "frame": _frame_provenance(
-            ephem_manager, allow_identity_rotation=allow_identity_rotation
-        ),
+        "frame": frame_policy.provenance,
+        "frame_mode": frame_policy.mode,
+        "uses_frame_rotation": frame_policy.uses_frame_rotation,
     }
 
 
@@ -160,6 +160,7 @@ class TorchSHScreeningPropagator:
         chunk_size: int | None = None,
         ephem_manager: Any = None,
         allow_identity_rotation: bool = True,
+        frame_mode: FrameModeInput = None,
     ) -> None:
         import torch
 
@@ -177,6 +178,11 @@ class TorchSHScreeningPropagator:
         # is why paper-safe frozen search must wire an ephemeris even for the
         # classic-SH screening backend.
         model = _load_gravity_model(gravity_file, degree)
+        frame_policy = resolve_frame_policy(
+            ephem_manager=ephem_manager,
+            allow_identity_rotation=allow_identity_rotation,
+            frame_mode=frame_mode,
+        )
         engine = DynamicsEngine(
             sc_props=SpacecraftProps(mass_kg=100.0, area_m2=1.0, cr=1.3),
             flags=PerturbationFlags(enable_sh=True),
@@ -184,7 +190,8 @@ class TorchSHScreeningPropagator:
             ephem_manager=ephem_manager,
             surface_provider=None,
             earth_j2=None,
-            allow_identity_rotation=bool(allow_identity_rotation),
+            allow_identity_rotation=frame_policy.allow_identity_rotation,
+            frame_mode=frame_policy.mode,
         )
         batch_cfg = BatchPropagationConfig(
             n_samples=2,  # not used by direct propagate(Y0, ...) calls
@@ -210,7 +217,8 @@ class TorchSHScreeningPropagator:
                 degree,
                 gravity_file,
                 ephem_manager=ephem_manager,
-                allow_identity_rotation=bool(allow_identity_rotation),
+                allow_identity_rotation=frame_policy.allow_identity_rotation,
+                frame_mode=frame_policy.mode,
             ),
             "backend": self.backend_name,
             "device": str(self._device),
@@ -249,6 +257,7 @@ class STLRPSScreeningPropagator:
         chunk_size: int | None = None,
         ephem_manager: Any = None,
         allow_identity_rotation: bool = False,
+        frame_mode: FrameModeInput = None,
         third_body: Any = (),
         strict_domain: bool = True,
     ) -> None:
@@ -267,6 +276,11 @@ class STLRPSScreeningPropagator:
             )
 
         valid_dir = validate_st_lrps_model_dir(model_dir)
+        frame_policy = resolve_frame_policy(
+            ephem_manager=ephem_manager,
+            allow_identity_rotation=allow_identity_rotation,
+            frame_mode=frame_mode,
+        )
         model = SurrogateGravityModel.from_model_dir(
             str(valid_dir),
             device_preference="cpu",
@@ -293,7 +307,7 @@ class STLRPSScreeningPropagator:
             batch_cfg=batch_cfg,
             device_id=int(device_id),
             ephem=ephem_manager,
-            allow_identity_rotation=bool(allow_identity_rotation),
+            allow_identity_rotation=frame_policy.allow_identity_rotation,
             third_body=_torch_third_body_selectors(bodies),
         )
         runtime_kind = str(
@@ -319,10 +333,9 @@ class STLRPSScreeningPropagator:
             "force_model_scope": (
                 "st_lrps_plus_third_body" if bodies else "st_lrps_gravity_only"
             ),
-            "frame": _frame_provenance(
-                ephem_manager,
-                allow_identity_rotation=bool(allow_identity_rotation),
-            ),
+            "frame": frame_policy.provenance,
+            "frame_mode": frame_policy.mode,
+            "uses_frame_rotation": frame_policy.uses_frame_rotation,
             "strict_domain": bool(strict_domain),
         }
 
@@ -357,6 +370,7 @@ class ClassicalSHValidationPropagator:
         third_body: Any = False,
         ephem_manager: Any = None,
         allow_identity_rotation: bool | None = None,
+        frame_mode: FrameModeInput = None,
     ) -> None:
         from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
         from lunaris.core.dynamics import DynamicsEngine
@@ -368,8 +382,16 @@ class ClassicalSHValidationPropagator:
                 "third-body validation requires an ephemeris-wired configuration "
                 "(Sun/Earth position tables plus Moon-fixed rotation)."
             )
-        if allow_identity_rotation is None:
-            allow_identity_rotation = ephem_manager is None
+        legacy_allow_identity = (
+            ephem_manager is None
+            if allow_identity_rotation is None and frame_mode is None
+            else allow_identity_rotation
+        )
+        frame_policy = resolve_frame_policy(
+            ephem_manager=ephem_manager,
+            allow_identity_rotation=legacy_allow_identity,
+            frame_mode=frame_mode,
+        )
         flags = PerturbationFlags(
             enable_sh=True,
             enable_3rd_body_sun="sun" in bodies,
@@ -382,7 +404,8 @@ class ClassicalSHValidationPropagator:
             ephem_manager=ephem_manager,
             surface_provider=None,
             earth_j2=None,
-            allow_identity_rotation=bool(allow_identity_rotation),
+            allow_identity_rotation=frame_policy.allow_identity_rotation,
+            frame_mode=frame_policy.mode,
         )
         self._rtol = float(rtol)
         self._atol = float(atol)
@@ -396,7 +419,8 @@ class ClassicalSHValidationPropagator:
                 gravity_file,
                 third_body=bodies,
                 ephem_manager=ephem_manager,
-                allow_identity_rotation=bool(allow_identity_rotation),
+                allow_identity_rotation=frame_policy.allow_identity_rotation,
+                frame_mode=frame_policy.mode,
             ),
             "backend": self.backend_label,
             "integrator": self._method,

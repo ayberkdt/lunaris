@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from lunaris.cli.common_args import apply_args_to_config
+from lunaris.cli.options import parse_args
 from lunaris.common.type_defs import GravityConfig, InitialState, PerturbationFlags
 from lunaris.core.config import SimConfig, replace_sim_config
 
@@ -77,3 +79,34 @@ def test_replace_sim_config_validates_the_result() -> None:
             cfg,
             flags=PerturbationFlags(enable_srp=True),
         )
+
+
+def test_cli_enable_force_flags_create_required_model_configs() -> None:
+    cfg = SimConfig(
+        gravity=GravityConfig(file_path="gravity.tab"),
+        spice=SimpleNamespace(include_third_body=True, kernels=()),
+        initial_state=InitialState(x=1.0, y=0.0, z=0.0, vx=0.0, vy=1.0, vz=0.0),
+    )
+    args = parse_args(["--enable-srp", "on", "--enable-earth-j2", "on"])
+
+    updated = apply_args_to_config(cfg, args)
+
+    assert updated.flags.enable_srp is True
+    assert updated.srp is not None
+    assert updated.flags.enable_earth_j2 is True
+    assert updated.earth_j2 is not None
+
+
+def test_albedo_root_selects_grid_mode_without_implicitly_enabling_force(tmp_path: Path) -> None:
+    cfg = SimConfig(
+        gravity=GravityConfig(file_path="gravity.tab"),
+        spice=SimpleNamespace(include_third_body=True, kernels=()),
+        initial_state=InitialState(x=1.0, y=0.0, z=0.0, vx=0.0, vy=1.0, vz=0.0),
+    )
+    args = parse_args(["--albedo-root", str(tmp_path)])
+
+    updated = apply_args_to_config(cfg, args)
+
+    assert updated.albedo is not None
+    assert updated.albedo.albedo_mode == "scaled_dn_grid"
+    assert updated.flags.enable_albedo is False

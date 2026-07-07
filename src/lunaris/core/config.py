@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 # --- Local Imports: Common (dependency-light) ---
 from lunaris.common.constants import DAY_S
+from lunaris.common.force_requirements import force_requirements_for_config
 from lunaris.common.paths import data_dir_from_root, project_root_from_file
 from lunaris.common.type_defs import (
     GravityConfig,
@@ -250,6 +251,10 @@ class SimConfig:
     def validate(self) -> None:
         """Cross-field consistency checks."""
         f = self.flags
+        req = force_requirements_for_config(
+            self,
+            request_external_relativity=False,
+        )
 
         # A) Earth J2
         if f.enable_earth_j2 and self.earth_j2 is None:
@@ -271,32 +276,8 @@ class SimConfig:
                 "SimConfig: enable_tides_k3=True requires solid_tides.k3 to be set explicitly."
             )
 
-        tide_bodies = self.solid_tides.tide_bodies if (f.enable_tides and self.solid_tides is not None) else ()
-        thermal_mode = (
-            str(getattr(self.thermal, "thermal_mode", "constant_temperature")).strip().lower()
-            if self.thermal is not None
-            else "constant_temperature"
-        )
-        thermal_needs_sun = bool(
-            f.enable_thermal
-            and thermal_mode in {"equilibrium", "equilibrium_temperature", "instantaneous_equilibrium"}
-        )
-
         # C) Ephemeris requirements (Sun/Earth vectors)
-        need_sun_vec = (
-            f.enable_srp
-            or f.enable_albedo
-            or thermal_needs_sun
-            or f.enable_3rd_body_sun
-            or ("sun" in tide_bodies)
-        )
-        need_earth_vec = (
-            f.enable_3rd_body_earth
-            or f.enable_earth_j2
-            or ("earth" in tide_bodies)
-        )
-        need_vectors = bool(need_sun_vec or need_earth_vec)
-        if need_vectors and (not getattr(self.spice, "include_third_body", True)):
+        if req.need_body_vectors and (not getattr(self.spice, "include_third_body", True)):
             raise ValueError(
                 "SimConfig: active physics flags require Sun/Earth ephemeris vectors, "
                 "but spice.include_third_body is False."
@@ -314,6 +295,57 @@ def replace_sim_config(cfg: SimConfig, **changes: Any) -> SimConfig:
     updated = replace(cfg, **changes)
     updated.validate()
     return updated
+
+
+def ensure_model_configs(cfg: SimConfig) -> SimConfig:
+    """Create missing model configs required by enabled perturbation flags."""
+
+    changes: dict[str, Any] = {}
+
+    if cfg.flags.enable_srp and cfg.srp is None:
+        try:
+            from lunaris.physics.solar_effects import SRPConfig
+        except Exception as e:
+            raise ImportError(
+                "SRP is enabled but lunaris.physics.solar_effects could not be imported."
+            ) from e
+        changes["srp"] = SRPConfig()
+
+    if cfg.flags.enable_albedo and cfg.albedo is None:
+        try:
+            from lunaris.physics.surface_effects import AlbedoConfig
+        except Exception as e:
+            raise ImportError(
+                "Albedo is enabled but lunaris.physics.surface_effects could not be imported."
+            ) from e
+        changes["albedo"] = AlbedoConfig()
+
+    if cfg.flags.enable_thermal and cfg.thermal is None:
+        try:
+            from lunaris.physics.surface_effects import ThermalConfig
+        except Exception as e:
+            raise ImportError(
+                "Thermal IR is enabled but lunaris.physics.surface_effects could not be imported."
+            ) from e
+        changes["thermal"] = ThermalConfig()
+
+    if cfg.flags.enable_earth_j2 and cfg.earth_j2 is None:
+        try:
+            from lunaris.physics.third_body_effects import EarthJ2Params
+        except Exception as e:
+            raise ImportError(
+                "Earth J2 is enabled but lunaris.physics.third_body_effects could not be imported."
+            ) from e
+        changes["earth_j2"] = EarthJ2Params(
+            j2_coeff=1.08262668e-3,
+            r_eq_m=6_378_136.3,
+            spin_axis_i=(0.0, 0.0, 1.0),
+        )
+
+    if not changes:
+        return cfg
+
+    return replace(cfg, **changes)
 
 
 # =============================================================================

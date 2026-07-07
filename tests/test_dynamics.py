@@ -105,6 +105,24 @@ def test_rhs_shape_and_inward_acceleration(engine_point_mass: tuple[DynamicsEngi
     assert dot_ar < 0.0
 
 
+def test_rhs_supports_optional_mass_state(engine_point_mass: tuple[DynamicsEngine, callable]) -> None:
+    _, rhs = engine_point_mass
+    y7 = np.concatenate([_build_default_state(), np.asarray([12.0])])
+
+    dy = rhs(0.0, y7)
+
+    assert dy.shape == y7.shape
+    assert dy[6] == 0.0
+
+
+def test_rhs_rejects_unknown_augmented_state(engine_point_mass: tuple[DynamicsEngine, callable]) -> None:
+    _, rhs = engine_point_mass
+    y8 = np.concatenate([_build_default_state(), np.asarray([12.0, 1.0])])
+
+    with pytest.raises(ValueError, match="exactly 6 elements or 7 elements"):
+        rhs(0.0, y8)
+
+
 def test_one_step_consistency_smoke(engine_point_mass: tuple[DynamicsEngine, callable]) -> None:
     _, rhs = engine_point_mass
 

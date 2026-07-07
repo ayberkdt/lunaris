@@ -175,7 +175,7 @@ def test_paper_safe_with_identity_frame_mode_is_error(tmp_path):
         encoding="utf-8",
     )
     (out / "benchmark_manifest.json").write_text(
-        json.dumps({"numerics": {"frame_mode": "inertial_fixed_legacy"}}),
+        json.dumps({"numerics": {"frame_mode": "identity_diagnostic"}}),
         encoding="utf-8",
     )
     report = validate_benchmark_outputs(out, expected_count=1)
@@ -190,7 +190,7 @@ def test_paper_safe_with_rotating_frame_mode_passes(tmp_path):
         encoding="utf-8",
     )
     (out / "benchmark_manifest.json").write_text(
-        json.dumps({"numerics": {"frame_mode": "match_dynamics_engine"}}),
+        json.dumps({"numerics": {"frame_mode": "moon_fixed_ephemeris"}}),
         encoding="utf-8",
     )
     report = validate_benchmark_outputs(out, expected_count=1)
@@ -210,7 +210,7 @@ def test_validation_report_includes_evidence_taxonomy(tmp_path):
     assert "evidence_taxonomy_field_vs_trajectory" in report["checked_metrics"]
 
 
-def _paper_safe_manifest(frame_mode: str = "match_dynamics_engine") -> str:
+def _paper_safe_manifest(frame_mode: str = "moon_fixed_ephemeris") -> str:
     """A manifest with the numerics provenance a real paper-safe run records."""
     return json.dumps(
         {
@@ -278,7 +278,7 @@ def test_error_decomposition_block_present_in_report(tmp_path):
     assert block["orbit_error"]["present"] is True
     assert block["runtime"]["present"] is True
     assert block["field_error"]["present"] is False
-    assert block["provenance"]["frame_mode"] == "match_dynamics_engine"
+    assert block["provenance"]["frame_mode"] == "moon_fixed_ephemeris"
     assert block["provenance"]["effective_dtype"] == "float64"
 
 
@@ -297,7 +297,7 @@ def test_paper_safe_error_decomposition_requires_provenance(tmp_path):
         encoding="utf-8",
     )
     (out / "benchmark_manifest.json").write_text(
-        json.dumps({"numerics": {"frame_mode": "match_dynamics_engine"}}),
+        json.dumps({"numerics": {"frame_mode": "moon_fixed_ephemeris"}}),
         encoding="utf-8",
     )
     report = validate_benchmark_outputs(out, expected_count=1)
@@ -320,7 +320,7 @@ def test_paper_safe_error_decomposition_rejects_identity_frame(tmp_path):
         encoding="utf-8",
     )
     (out / "benchmark_manifest.json").write_text(
-        _paper_safe_manifest(frame_mode="inertial_fixed_legacy"), encoding="utf-8"
+        _paper_safe_manifest(frame_mode="identity_diagnostic"), encoding="utf-8"
     )
     report = validate_benchmark_outputs(out, expected_count=1)
     assert report["passed"] is False
@@ -338,7 +338,7 @@ def test_non_paper_safe_identity_frame_mode_is_not_error(tmp_path):
         encoding="utf-8",
     )
     (out / "benchmark_manifest.json").write_text(
-        json.dumps({"numerics": {"frame_mode": "inertial_fixed_legacy"}}),
+        json.dumps({"numerics": {"frame_mode": "identity_diagnostic"}}),
         encoding="utf-8",
     )
     report = validate_benchmark_outputs(out, expected_count=1)

@@ -270,14 +270,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         "and integrator settings. Numerical results are identical "
                         "across modes.")
     p.add_argument("--batch-frame-mode",
-                   choices=["match_dynamics_engine", "inertial_fixed_legacy", "precomputed_slerp"],
-                   default="match_dynamics_engine",
+                   choices=[
+                       "moon_fixed_ephemeris",
+                       "identity_diagnostic",
+                       "precomputed_slerp",
+                       "match_dynamics_engine",
+                       "inertial_fixed_legacy",
+                   ],
+                   default="moon_fixed_ephemeris",
                    help=(
-                       "Frame convention for GPU batch RK4. Default matches the "
-                       "DynamicsEngine Moon-fixed transform. inertial_fixed_legacy "
-                       "is a diagnostic no-rotation approximation only. "
-                       "precomputed_slerp is optimized for --gpu-batch-compare; "
-                       "legacy --batch-rk4 falls back to dynamic match_dynamics_engine."
+                       "Frame convention for GPU batch RK4. moon_fixed_ephemeris "
+                       "uses the ephemeris-backed Moon-fixed transform; "
+                       "identity_diagnostic is a no-rotation diagnostic mode only. "
+                       "precomputed_slerp selects the optimized GPU-batch "
+                       "interpolation strategy. Legacy aliases match_dynamics_engine "
+                       "and inertial_fixed_legacy are accepted at the CLI boundary."
                    ))
     p.add_argument("--cache-truth", action="store_true",
                    help="Save SH200 DOP853 truth trajectories under output_dir/truth")

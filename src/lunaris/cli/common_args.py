@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lunaris.common.constants import DAY_S, R_MOON
+from lunaris.common.force_requirements import force_requirements_for_config
 from lunaris.common.type_defs import SolidTideConfig
 
 if TYPE_CHECKING:
@@ -176,21 +177,11 @@ def init_surface_provider(args: argparse.Namespace) -> Any | None:
 
 def need_ephemeris(cfg: SimConfig, topo_requested: bool) -> bool:
     """Return True if any enabled physics (or topo) requires ephemeris tables."""
-    f = cfg.flags
-    physics_need = (
-        f.enable_sh
-        or f.enable_3rd_body_sun
-        or f.enable_3rd_body_earth
-        or f.enable_earth_j2
-        or f.enable_srp
-        or f.enable_albedo
-        or f.enable_thermal
-        or f.enable_surface_forces
-        or f.enable_tides_k2
-        or f.enable_tides_k3
-        or f.enable_relativity_1pn
+    req = force_requirements_for_config(
+        cfg,
+        request_external_relativity=True,
     )
-    return bool(physics_need or topo_requested)
+    return bool(req.need_ephem or topo_requested)
 
 
 def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
@@ -309,6 +300,7 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
 
     # --- Lunar albedo configuration ---
     albedo_arg_names = (
+        "albedo_root",
         "albedo_model",
         "albedo_mode",
         "albedo_const",
@@ -421,6 +413,9 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
         cfg = replace(cfg, spice=replace(cfg.spice, kernels=new_kernels))
 
     # Final validation (fail-fast)
+    from lunaris.core.config import ensure_model_configs
+
+    cfg = ensure_model_configs(cfg)
     cfg.validate()
     return cfg
 
