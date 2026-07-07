@@ -1753,7 +1753,7 @@ tzdata==2026.2 \
     --hash=sha256:9173fde7d80d9018e02a662e168e5a2d04f87c41ea174b139fbef642eda62d10 \
     --hash=sha256:bbe9af844f658da81a5f95019480da3a89415801f6cc966806612cc7169bffe7
     # via pandas
-virtualenv==21.5.2 \
-    --hash=sha256:465da6db2a5b615258cddefb749ceeb3627e4fddda93be88c97ba8321ca3c6d1 \
-    --hash=sha256:4d9f76b4363ed04a4837e812110eb301367eb470f616b62399a50d39dee70e47
+virtualenv==21.6.0 \
+    --hash=sha256:bce9d097950fef9d81129b333babfb7767072850c2f1acce0ec536708401bfd1 \
+    --hash=sha256:e18a4d750f2b64dea73e72ffde3922f3c52365fabdc8157ebd3da20d031c4734
     # via pre-commit
