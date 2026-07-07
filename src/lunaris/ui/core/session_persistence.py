@@ -517,14 +517,13 @@ def _restore_log_collapsed(mw: Any, collapsed: bool) -> None:
 
 def _restore_telemetry_visual(telem: Any, plot_type: str, time_unit: str) -> None:
     try:
-        mp = getattr(telem, "multi_plot", None)
+        mp = getattr(telem, "telemetry_multiplot", None)
         if mp is None:
             mp = telem
-        combo = getattr(mp, "plot_type_combo", None)
-        if combo is not None and plot_type:
-            idx = combo.findText(plot_type)
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
+        # Plot selection restores by canonical name (stable across the combo ->
+        # segmented-control change); set_plot_by_name is a no-op for unknown names.
+        if plot_type and hasattr(mp, "set_plot_by_name"):
+            mp.set_plot_by_name(plot_type)
         tu_combo = getattr(mp, "time_axis_combo", None)
         if tu_combo is not None and time_unit:
             idx = tu_combo.findText(time_unit)

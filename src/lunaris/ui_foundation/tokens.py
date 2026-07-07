@@ -128,6 +128,13 @@ class TypographyTokens:
     size_caption_pt: float = 9.0
     size_body_pt: float = 10.0
     size_section_pt: float = 12.0
+    # Panel/card heading tier that sits between the page title (20 pt) and the
+    # inner-group section label (12 pt). Without it, a card title ("Orbit
+    # Preview") and an inner group label ("Orbit size and shape") were both
+    # 12 pt, collapsing two hierarchy levels into one; 14 pt (= body x 1.4)
+    # gives the card its own perceptible step so the scan path reads
+    # page -> panel -> group -> body by size alone (holds in grayscale).
+    size_subsection_pt: float = 14.0
     size_app_title_pt: float = 15.0
     size_page_title_pt: float = 20.0
     weight_regular: int = 400

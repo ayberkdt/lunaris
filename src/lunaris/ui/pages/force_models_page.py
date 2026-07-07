@@ -1,4 +1,4 @@
-﻿# ST_LRPS/ui_parts/force_models_page.py
+# ST_LRPS/ui_parts/force_models_page.py
 
 """
 Force Models Page (UI Part) for Lunaris Mission Studio.
@@ -111,6 +111,9 @@ try:
     from lunaris.ui.core.ui_commons import (
         THEME,
         CostIndicator,
+        NoWheelComboBox,
+        NoWheelDoubleSpinBox,
+        NoWheelSpinBox,
         QuickChip,
         ToggleSwitch,
         find_project_root,
@@ -361,7 +364,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         backend_group = QtWidgets.QGroupBox("Gravity Computation Mode")
         backend_layout = QtWidgets.QVBoxLayout(backend_group)
 
-        self.cb_backend = QtWidgets.QComboBox()
+        self.cb_backend = NoWheelComboBox()
         self.cb_backend.addItem("Classical Spherical Harmonics", "classic_sh")
         self.cb_backend.addItem("ST-LRPS Gravity Surrogate", "st_lrps")
         self.cb_backend.currentIndexChanged.connect(self._on_backend_changed)
@@ -378,7 +381,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         self.degree_group = QtWidgets.QGroupBox("Maximum Spherical Harmonic Degree")
         deg_layout = QtWidgets.QHBoxLayout(self.degree_group)
 
-        self.sp_degree = QtWidgets.QSpinBox()
+        self.sp_degree = NoWheelSpinBox()
         self.sp_degree.setRange(0, 2000)
         self.sp_degree.setValue(self._cfg.degree)
         self.sp_degree.setFixedWidth(100)
@@ -481,7 +484,7 @@ class GravitySettingsDialog(QtWidgets.QDialog):
         presets_group = QtWidgets.QGroupBox("Optimization Profile")
         presets_layout = QtWidgets.QVBoxLayout(presets_group)
 
-        self.cb_preset = QtWidgets.QComboBox()
+        self.cb_preset = NoWheelComboBox()
         self.cb_preset.addItems(list(ADAPTIVE_GRAVITY_PROFILES.keys()) + [ADAPTIVE_CUSTOM_ID])
         self.cb_preset.currentTextChanged.connect(self._on_preset_change)
         presets_layout.addWidget(self.cb_preset)
@@ -775,7 +778,7 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         layout.addWidget(header)
 
         desc = QtWidgets.QLabel(
-            "Automatically reduce Spherical Harmonic degree at higher altitudes to save computation time.\n"
+            "Reduce Spherical Harmonic degree at higher altitudes to save computation time.\n"
             "Define thresholds below. The engine interpolates between steps."
         )
         desc.setObjectName("dialogDescription")
@@ -790,18 +793,18 @@ class AdaptiveDegreeDialog(QtWidgets.QDialog):
         form_layout.setVerticalSpacing(12)
 
         # Preset Selector
-        self.cb_preset = QtWidgets.QComboBox()
+        self.cb_preset = NoWheelComboBox()
         self.cb_preset.addItems(list(ADAPTIVE_GRAVITY_PROFILES.keys()) + [ADAPTIVE_CUSTOM_ID])
         self.cb_preset.setCurrentText(cfg.preset_name if cfg.preset_name in ADAPTIVE_GRAVITY_PROFILES else ADAPTIVE_CUSTOM_ID)
         self.cb_preset.currentTextChanged.connect(self._on_preset_change)
 
         # Interpolation Method
-        self.cb_interp = QtWidgets.QComboBox()
+        self.cb_interp = NoWheelComboBox()
         self.cb_interp.addItems(["linear", "smoothstep"])
         self.cb_interp.setCurrentText(cfg.interp_method)
 
         # Blend Width
-        self.sp_blend = QtWidgets.QDoubleSpinBox()
+        self.sp_blend = NoWheelDoubleSpinBox()
         self.sp_blend.setRange(0.0, 500.0)
         self.sp_blend.setValue(cfg.blend_width_km)
         self.sp_blend.setSuffix(" km")
@@ -1012,32 +1015,32 @@ class AlbedoSettingsDialog(QtWidgets.QDialog):
         form.setContentsMargins(16, 16, 16, 16)
         form.setSpacing(12)
 
-        self.cb_model = QtWidgets.QComboBox()
+        self.cb_model = NoWheelComboBox()
         self.cb_model.addItem("Lambertian facets (recommended)", "lambert_facets")
         self.cb_model.addItem("Simple cannonball (legacy)", "simple")
         form.addRow("Backend:", self.cb_model)
 
-        self.cb_source = QtWidgets.QComboBox()
+        self.cb_source = NoWheelComboBox()
         self.cb_source.addItem("Constant albedo", "constant_albedo")
         self.cb_source.addItem("Surface grid (LOLA Albedo Root)", "scaled_dn_grid")
         form.addRow("Albedo source:", self.cb_source)
 
-        self.sp_const = QtWidgets.QDoubleSpinBox()
+        self.sp_const = NoWheelDoubleSpinBox()
         self.sp_const.setRange(0.0, 1.0)
         self.sp_const.setSingleStep(0.01)
         self.sp_const.setDecimals(3)
         form.addRow("Constant albedo:", self.sp_const)
 
-        self.sp_pcoef = QtWidgets.QDoubleSpinBox()
+        self.sp_pcoef = NoWheelDoubleSpinBox()
         self.sp_pcoef.setRange(0.0, 5.0)
         self.sp_pcoef.setSingleStep(0.1)
         self.sp_pcoef.setDecimals(2)
         form.addRow("Pressure coefficient (C_R):", self.sp_pcoef)
 
         facet_row = QtWidgets.QHBoxLayout()
-        self.sp_lat = QtWidgets.QSpinBox()
+        self.sp_lat = NoWheelSpinBox()
         self.sp_lat.setRange(1, 180)
-        self.sp_lon = QtWidgets.QSpinBox()
+        self.sp_lon = NoWheelSpinBox()
         self.sp_lon.setRange(1, 360)
         facet_row.addWidget(self.sp_lat)
         facet_row.addWidget(QtWidgets.QLabel("x"))
@@ -1378,7 +1381,7 @@ class ForceModelsPage(QtWidgets.QWidget):
 
         # Settings button
         self.btn_gravity_settings = QtWidgets.QPushButton()
-        self.btn_gravity_settings.setFixedSize(32, 32)
+        self.btn_gravity_settings.setObjectName("iconButton")
         self.btn_gravity_settings.setIcon(get_icon("fa6s.gear", THEME["fg_main"]))
         self.btn_gravity_settings.setToolTip("Configure Gravity Model")
         self.btn_gravity_settings.setAccessibleName("Configure gravity model")
@@ -1514,7 +1517,7 @@ class ForceModelsPage(QtWidgets.QWidget):
 
         # Albedo settings button
         self.btn_albedo_settings = QtWidgets.QPushButton()
-        self.btn_albedo_settings.setFixedSize(28, 28)
+        self.btn_albedo_settings.setObjectName("iconButton")
         self.btn_albedo_settings.setIcon(get_icon("fa6s.gear", THEME["fg_main"]))
         self.btn_albedo_settings.setToolTip("Configure Albedo Model")
         self.btn_albedo_settings.setAccessibleName("Configure albedo model")

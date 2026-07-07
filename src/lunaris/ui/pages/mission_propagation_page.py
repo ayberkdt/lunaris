@@ -55,6 +55,7 @@ try:
     )
     from lunaris.ui.core.ui_commons import (
         THEME,
+        NoWheelComboBox,
         NumericDragLineEdit,
         QuickChip,
         StatusBadge,
@@ -428,7 +429,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
     def _group_mission_summary(self) -> QtWidgets.QWidget:
         section = Section(
             "Propagation Setup",
-            "Current timeline, cadence, and numerical method at a glance.",
+            "Current timeline, cadence, and numerical method.",
             elevated=True,
         )
         summary = MetricRow()
@@ -512,7 +513,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
         self.ent_duration.setAccessibleName("Propagation duration")
         value_row.addWidget(self.ent_duration, 1)
 
-        self.cb_duration_unit = QtWidgets.QComboBox()
+        self.cb_duration_unit = NoWheelComboBox()
         self.cb_duration_unit.addItems(["Days", "Hours"])
         self.cb_duration_unit.setAccessibleName("Propagation duration unit")
         value_row.addWidget(self.cb_duration_unit)
@@ -545,12 +546,12 @@ class MissionPropagationPage(QtWidgets.QWidget):
     def _group_integrator_settings(self) -> QtWidgets.QWidget:
         section = Section(
             "Numerical Integrator",
-            "Pick a method, review its characteristics, then tune only the settings it uses.",
+            "Integration method, its characteristics, and the settings it uses.",
         )
 
         # --- Method selector (grouped by family) -----------------------------
         method_grid = FormGrid()
-        self.cb_integrator = QtWidgets.QComboBox()
+        self.cb_integrator = NoWheelComboBox()
         first_group = True
         for _family_label, labels in grouped_labels():
             if not first_group:
@@ -638,7 +639,7 @@ class MissionPropagationPage(QtWidgets.QWidget):
         cadence_grid.setColumnStretch(1, 1)
 
         mode_label = self._field_label("Output mode")
-        self.cb_output_mode = QtWidgets.QComboBox()
+        self.cb_output_mode = NoWheelComboBox()
         self.cb_output_mode.addItem("Fixed Interval (dt)", "dt")
         self.cb_output_mode.addItem("Samples per Period", "spp")
         self.cb_output_mode.setVisible(False)

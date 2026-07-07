@@ -42,7 +42,14 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 try:
     from lunaris.ui.components.primitives import EmptyState, KeyValueList, Section
-    from lunaris.ui.core.ui_commons import THEME, StatusBadge, ToggleSwitch, get_icon
+    from lunaris.ui.core.ui_commons import (
+        THEME,
+        NoWheelComboBox,
+        NoWheelSpinBox,
+        StatusBadge,
+        ToggleSwitch,
+        get_icon,
+    )
     from lunaris.ui.theme.tokens import DESIGN_TOKENS
 except ImportError:
     if __name__ == "__main__" and (__package__ is None or __package__ == ""):
@@ -251,7 +258,7 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         downsample_row = QtWidgets.QHBoxLayout()
         downsample_row.addWidget(QtWidgets.QLabel("3D downsample"))
-        self.spin_downsample_3d = QtWidgets.QSpinBox()
+        self.spin_downsample_3d = NoWheelSpinBox()
         self.spin_downsample_3d.setRange(1, 1000)
         self.spin_downsample_3d.setValue(1)
         self.spin_downsample_3d.setToolTip("1 means full density. Higher values lighten 3D post-processing.")
@@ -396,7 +403,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         layout = section.content_layout
 
         info = QtWidgets.QLabel(
-            "The following outputs are generated automatically after a successful propagation run:"
+            "The following outputs are generated after a successful propagation run:"
         )
         info.setWordWrap(True)
         info.setObjectName("fieldHint")
@@ -592,7 +599,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         # --- Row 2: filter + recursive controls ---
         filter_row = QtWidgets.QHBoxLayout()
         filter_row.addWidget(QtWidgets.QLabel("Filter"))
-        self.cb_artifact_filter = QtWidgets.QComboBox()
+        self.cb_artifact_filter = NoWheelComboBox()
         self.cb_artifact_filter.setAccessibleName("Artifact type filter")
         self.cb_artifact_filter.addItems(list(self._FILTER_TYPES.keys()))
         self.cb_artifact_filter.setFixedWidth(100)
