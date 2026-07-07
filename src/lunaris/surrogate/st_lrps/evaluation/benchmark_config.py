@@ -10,6 +10,8 @@ from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any
 
+from .benchmark_evidence_taxonomy import normalize_claim_type
+
 SUPPORTED_DTYPES = {"float32", "float64"}
 SUPPORTED_SCENARIO_TYPES = {"bounded_keplerian", "near_circular_altitude"}
 SUPPORTED_TRUTH_MODELS = {"spherical_harmonics"}
@@ -113,6 +115,26 @@ def is_paper_safe_requested(config: Mapping[str, Any], *, flag: bool = False) ->
     return bool(flag or config.get("paper_safe") or run_options.get("paper_safe"))
 
 
+def resolve_paper_safe_claim_type(config: Mapping[str, Any]) -> str:
+    """Resolve the paper-safe claim type from config, honoring the default.
+
+    Looked up (first hit wins) at top-level ``paper_safe_claim_type``, then in
+    ``validation.paper_safe_claim_type``, then ``run_options.paper_safe_claim_type``.
+    Unrecognized values raise :class:`BenchmarkConfigError` (fail closed).
+    """
+    validation = config.get("validation")
+    run_options = config.get("run_options")
+    raw = config.get("paper_safe_claim_type")
+    if raw is None and isinstance(validation, Mapping):
+        raw = validation.get("paper_safe_claim_type")
+    if raw is None and isinstance(run_options, Mapping):
+        raw = run_options.get("paper_safe_claim_type")
+    try:
+        return normalize_claim_type(raw)
+    except ValueError as exc:
+        raise BenchmarkConfigError(str(exc)) from exc
+
+
 def apply_paper_safe(config: MutableMapping[str, Any]) -> dict[str, Any]:
     """Enforce paper-safe settings in-place; raise on unsafe configuration.
 
@@ -154,7 +176,13 @@ def apply_paper_safe(config: MutableMapping[str, Any]) -> dict[str, Any]:
             "artifact contract and altitude domain can be verified against the benchmark."
         )
 
+    # Resolve + validate the claim type here so a typo fails before any
+    # scientific-looking output is produced, and stamp it canonically so
+    # downstream validation and the error-decomposition artifact agree.
+    claim_type = resolve_paper_safe_claim_type(config)
+
     config["paper_safe"] = True
+    config["paper_safe_claim_type"] = claim_type
     run_options["paper_safe"] = True
     run_options["synthetic"] = False
     validation["strict_domain"] = True
@@ -166,6 +194,7 @@ def apply_paper_safe(config: MutableMapping[str, Any]) -> dict[str, Any]:
 
     enforced = {
         "paper_safe": True,
+        "paper_safe_claim_type": claim_type,
         "synthetic": False,
         "quick": False,
         "allow_contract_mismatch": False,

@@ -126,6 +126,11 @@ def run_configured_benchmark(
         "validated_at_utc": utc_now_iso(),
         "report_path": "validation_report.json",
     }
+    # Surface the error-decomposition contract in the manifest itself so a
+    # reviewer sees the field/orbit/integrator/phase/runtime split and the
+    # backend/dtype/frame provenance without opening validation_report.json.
+    if isinstance(validation_report.get("error_decomposition"), Mapping):
+        manifest["error_decomposition"] = validation_report["error_decomposition"]
     write_json(output_dir / "benchmark_manifest.json", manifest)
 
     if not validation_report["passed"] and not allow_validation_fail:

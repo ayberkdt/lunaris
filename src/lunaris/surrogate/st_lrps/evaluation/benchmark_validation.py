@@ -13,10 +13,19 @@ from typing import Any
 from lunaris.common.hashing import canonical_json_text
 from lunaris.common.provenance import utc_now_iso
 
-from .benchmark_config import SYNTHETIC_BANNER
+from .benchmark_config import SYNTHETIC_BANNER, resolve_paper_safe_claim_type
 from .benchmark_evidence_taxonomy import (
+    INTEGRATOR_ERROR,
+    MODEL_ERROR_FIELD,
+    PHASE_CORRECTED_ERROR,
+    RUNTIME_METRICS,
+    TRAJECTORY_ERROR,
     field_evidence_error_for_paper_safe,
     summarize_evidence_taxonomy,
+)
+from .error_decomposition import (
+    build_error_decomposition_schema,
+    validate_paper_safe_error_decomposition,
 )
 
 REQUIRED_OUTPUT_FILES = (
@@ -128,12 +137,18 @@ def validate_benchmark_outputs(
     taxonomy = _evidence_taxonomy_block(metrics_rows, scenario_rows, runtime_rows, evidence)
     _check_paper_safe_field_evidence(evidence, taxonomy, errors, warnings, checked_metrics)
 
+    error_decomposition = _error_decomposition_block(manifest_json, taxonomy, evidence)
+    _check_paper_safe_error_decomposition(
+        evidence, error_decomposition, errors, checked_metrics
+    )
+
     report = {
         "passed": not errors,
         "errors": errors,
         "warnings": warnings,
         "evidence": evidence,
         "evidence_taxonomy": taxonomy,
+        "error_decomposition": error_decomposition,
         "checked_files": checked_files,
         "checked_metrics": sorted(set(checked_metrics)),
     }
@@ -203,6 +218,7 @@ def _evidence_block(
         "synthetic": synthetic,
         "quick": quick,
         "paper_safe": paper_safe,
+        "paper_safe_claim_type": resolve_paper_safe_claim_type(config),
         "scientific_evidence": scientific,
         "banner": None if scientific else SYNTHETIC_BANNER,
         "resolved_config_sha256": resolved_hash,
@@ -319,7 +335,10 @@ def _check_paper_safe_field_evidence(
     """
     checked.append("evidence_taxonomy_field_vs_trajectory")
     paper_safe = bool(evidence.get("paper_safe"))
-    error = field_evidence_error_for_paper_safe(taxonomy, paper_safe=paper_safe)
+    claim_type = evidence.get("paper_safe_claim_type")
+    error = field_evidence_error_for_paper_safe(
+        taxonomy, paper_safe=paper_safe, claim_type=claim_type
+    )
     if error is not None:
         errors.append(error)
     elif taxonomy.get("trajectory_error_only"):
@@ -328,6 +347,123 @@ def _check_paper_safe_field_evidence(
             "model_error_field metrics); this measures propagated orbit error, "
             "not ST-LRPS gravity-field accuracy"
         )
+
+
+def _manifest_numerics(manifest_json: Any) -> Mapping[str, Any]:
+    if isinstance(manifest_json, Mapping):
+        numerics = manifest_json.get("numerics")
+        if isinstance(numerics, Mapping):
+            return numerics
+    return {}
+
+
+def _decomposition_backend_provenance(numerics: Mapping[str, Any]) -> tuple[str | None, str | None, str | None]:
+    """Return ``(backend, requested_dtype, effective_dtype)`` from the manifest.
+
+    The config-driven benchmark plans its GPU backend deterministically and
+    paper-safe mode forbids silent fallback, so the planned backend is recorded
+    as both requested and actual. Prefers the surrogate backend when the run
+    exercised it, else the classic torch-SH backend.
+    """
+    provenance = numerics.get("dtype_provenance")
+    if not isinstance(provenance, Mapping):
+        dtype = numerics.get("dtype")
+        return None, (str(dtype) if dtype else None), (str(dtype) if dtype else None)
+    backend = None
+    for candidate in ("gpu_st_lrps_potential", "torch_cuda_sh"):
+        if isinstance(provenance.get(candidate), Mapping):
+            backend = candidate
+            break
+    requested = provenance.get("requested") or numerics.get("dtype")
+    effective = None
+    if backend is not None:
+        entry = provenance.get(backend)
+        if isinstance(entry, Mapping):
+            effective = entry.get("effective") or entry.get("requested")
+    return (
+        backend,
+        str(requested) if requested else None,
+        str(effective) if effective else (str(requested) if requested else None),
+    )
+
+
+def _category_metrics(taxonomy: Mapping[str, Any], category: str) -> dict[str, Any] | None:
+    """Return ``{"columns": [...]}`` for a taxonomy category, or None if empty.
+
+    The error-decomposition block records *which measured columns* constitute
+    each error category's evidence — it never fabricates numeric values.
+    """
+    categories = taxonomy.get("categories")
+    if not isinstance(categories, Mapping):
+        return None
+    entry = categories.get(category)
+    if not isinstance(entry, Mapping):
+        return None
+    columns = entry.get("metrics")
+    if not columns:
+        return None
+    return {"columns": list(columns)}
+
+
+def _error_decomposition_block(
+    manifest_json: Any,
+    taxonomy: Mapping[str, Any],
+    evidence: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Assemble the versioned error-decomposition artifact from real outputs.
+
+    Presence of each ``*_error``/``runtime`` block is derived from the metric
+    columns the run actually produced (via the evidence taxonomy); provenance
+    is read from the benchmark manifest. This makes the decomposition a first-
+    class artifact contract rather than an unreferenced schema helper.
+    """
+    numerics = _manifest_numerics(manifest_json)
+    backend, requested_dtype, effective_dtype = _decomposition_backend_provenance(numerics)
+    frame_mode = _manifest_frame_mode(manifest_json)
+    identity = bool(frame_mode is not None and str(frame_mode).strip().lower() in _IDENTITY_FRAME_MODES)
+    return build_error_decomposition_schema(
+        field_error=_category_metrics(taxonomy, MODEL_ERROR_FIELD),
+        orbit_error=_category_metrics(taxonomy, TRAJECTORY_ERROR),
+        integrator_error=_category_metrics(taxonomy, INTEGRATOR_ERROR),
+        phase_corrected_error=_category_metrics(taxonomy, PHASE_CORRECTED_ERROR),
+        runtime=_category_metrics(taxonomy, RUNTIME_METRICS),
+        requested_backend=backend,
+        actual_backend=backend,
+        requested_dtype=requested_dtype,
+        effective_dtype=effective_dtype,
+        frame_mode=frame_mode,
+        identity_rotation_used=identity,
+        synthetic=bool(evidence.get("synthetic") or evidence.get("quick")),
+        paper_safe=bool(evidence.get("paper_safe")),
+        paper_safe_claim_type=evidence.get("paper_safe_claim_type"),
+    )
+
+
+def _check_paper_safe_error_decomposition(
+    evidence: Mapping[str, Any],
+    error_decomposition: Mapping[str, Any],
+    errors: list[str],
+    checked: list[str],
+) -> None:
+    """Enforce the error-decomposition contract under paper_safe.
+
+    A paper-safe benchmark must carry a decomposition that separates orbit
+    error from runtime (and field error, unless claim_type='trajectory_only'),
+    records backend/dtype/frame provenance, is non-synthetic, and used no
+    identity rotation. Every violation becomes a validation error.
+    """
+    checked.append("paper_safe_error_decomposition")
+    if not evidence.get("paper_safe"):
+        return
+    try:
+        validate_paper_safe_error_decomposition(
+            error_decomposition, claim_type=evidence.get("paper_safe_claim_type")
+        )
+    except ValueError as exc:
+        for line in str(exc).splitlines():
+            stripped = line.strip().lstrip("- ").strip()
+            if stripped and not stripped.startswith("error decomposition is not paper-safe"):
+                errors.append(f"error_decomposition: {stripped}")
 
 
 def _check_no_nan_inf(

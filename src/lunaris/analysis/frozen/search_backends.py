@@ -158,6 +158,8 @@ class TorchSHScreeningPropagator:
         device: str = "auto",
         gravity_file: str | None = None,
         chunk_size: int | None = None,
+        ephem_manager: Any = None,
+        allow_identity_rotation: bool = True,
     ) -> None:
         import torch
 
@@ -170,15 +172,19 @@ class TorchSHScreeningPropagator:
             device = "cuda:0" if torch.cuda.is_available() else "cpu"
         self._device = torch.device(device)
 
+        # An ephemeris manager selects the rotating Moon-fixed frame (paper-safe);
+        # without one the engine can only use the identity approximation, which
+        # is why paper-safe frozen search must wire an ephemeris even for the
+        # classic-SH screening backend.
         model = _load_gravity_model(gravity_file, degree)
         engine = DynamicsEngine(
             sc_props=SpacecraftProps(mass_kg=100.0, area_m2=1.0, cr=1.3),
             flags=PerturbationFlags(enable_sh=True),
             gravity_model=model,
-            ephem_manager=None,
+            ephem_manager=ephem_manager,
             surface_provider=None,
             earth_j2=None,
-            allow_identity_rotation=True,
+            allow_identity_rotation=bool(allow_identity_rotation),
         )
         batch_cfg = BatchPropagationConfig(
             n_samples=2,  # not used by direct propagate(Y0, ...) calls
@@ -199,7 +205,13 @@ class TorchSHScreeningPropagator:
             "torch_cuda_sh" if self._device.type == "cuda" else "torch_cpu_sh"
         )
         self.provenance = {
-            **_gravity_provenance(model, degree, gravity_file),
+            **_gravity_provenance(
+                model,
+                degree,
+                gravity_file,
+                ephem_manager=ephem_manager,
+                allow_identity_rotation=bool(allow_identity_rotation),
+            ),
             "backend": self.backend_name,
             "device": str(self._device),
             "dtype": "float64",

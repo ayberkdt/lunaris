@@ -10,13 +10,19 @@ from __future__ import annotations
 import pytest
 
 from lunaris.surrogate.st_lrps.evaluation.benchmark_evidence_taxonomy import (
+    CLAIM_FIELD_ACCURACY,
+    CLAIM_FULL_SURROGATE_VALIDATION,
+    CLAIM_TRAJECTORY_ONLY,
+    DEFAULT_PAPER_SAFE_CLAIM_TYPE,
     INTEGRATOR_ERROR,
     MODEL_ERROR_FIELD,
     PHASE_CORRECTED_ERROR,
     RUNTIME_METRICS,
     TRAJECTORY_ERROR,
+    claim_type_requires_field_evidence,
     classify_metric,
     field_evidence_error_for_paper_safe,
+    normalize_claim_type,
     summarize_evidence_taxonomy,
 )
 
@@ -85,11 +91,48 @@ def test_paper_safe_synthetic_is_error():
     assert err is not None and "synthetic" in err
 
 
-def test_paper_safe_trajectory_only_is_not_a_hard_error():
-    # An honest trajectory benchmark is legitimate trajectory evidence; the
-    # taxonomy labels it, it does not forbid it.
+def test_paper_safe_trajectory_only_claim_is_not_a_hard_error():
+    # An explicit trajectory-only benchmark is legitimate trajectory evidence;
+    # the taxonomy labels it, it does not forbid it.
     tax = summarize_evidence_taxonomy(["median_rms_pos_err_km"], synthetic=False)
-    assert field_evidence_error_for_paper_safe(tax, paper_safe=True) is None
+    assert (
+        field_evidence_error_for_paper_safe(
+            tax, paper_safe=True, claim_type=CLAIM_TRAJECTORY_ONLY
+        )
+        is None
+    )
+
+
+def test_paper_safe_default_claim_requires_field_evidence():
+    # No claim_type -> strict default (full_surrogate_validation): a field claim
+    # on trajectory error alone is a hard error.
+    tax = summarize_evidence_taxonomy(["median_rms_pos_err_km"], synthetic=False)
+    err = field_evidence_error_for_paper_safe(tax, paper_safe=True)
+    assert err is not None and "model_error_field" in err
+    # Explicit field_accuracy / full_surrogate_validation also require it.
+    for claim in (CLAIM_FIELD_ACCURACY, CLAIM_FULL_SURROGATE_VALIDATION):
+        assert field_evidence_error_for_paper_safe(tax, paper_safe=True, claim_type=claim)
+
+
+def test_paper_safe_field_claim_passes_with_field_evidence():
+    tax = summarize_evidence_taxonomy(
+        ["model_error_rms_mgal", "median_rms_pos_err_km"], synthetic=False
+    )
+    for claim in (CLAIM_FIELD_ACCURACY, CLAIM_FULL_SURROGATE_VALIDATION):
+        assert (
+            field_evidence_error_for_paper_safe(tax, paper_safe=True, claim_type=claim)
+            is None
+        )
+
+
+def test_claim_type_normalization_and_field_requirement():
+    assert normalize_claim_type(None) == DEFAULT_PAPER_SAFE_CLAIM_TYPE
+    assert normalize_claim_type("Field_Accuracy") == CLAIM_FIELD_ACCURACY
+    assert claim_type_requires_field_evidence(CLAIM_TRAJECTORY_ONLY) is False
+    assert claim_type_requires_field_evidence(CLAIM_FIELD_ACCURACY) is True
+    assert claim_type_requires_field_evidence(None) is True  # strict default
+    with pytest.raises(ValueError, match="unknown paper_safe_claim_type"):
+        normalize_claim_type("orbit_ish")
 
 
 def test_non_paper_safe_never_errors():

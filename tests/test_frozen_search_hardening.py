@@ -22,6 +22,7 @@ top-K tie ambiguity).
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -344,3 +345,58 @@ def test_screened_candidates_cannot_be_persisted_with_identity_frame(tmp_path):
     with pytest.raises(RuntimeError, match="screening backend"):
         pipeline.stage2_candidates(manifest, elements, screening, resume=False)
     assert not (tmp_path / "stage2_candidates.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Gap 3 — real backends usable under paper-safe with a rotating Moon-fixed frame
+# ---------------------------------------------------------------------------
+
+
+def _dummy_gravity_model():
+    return SimpleNamespace(name="dummy_sh", degree_max=8, R_ref_m=1.7374e6, GM_m3s2=MU)
+
+
+def test_classical_validation_ephemeris_without_third_body_is_rotating(monkeypatch):
+    """A rotating Moon-fixed SH validation (ephemeris wired, no third-body) must
+    report a non-identity frame that the strict-frame guard accepts."""
+    import lunaris.analysis.frozen.search_backends as backends
+    import lunaris.core.dynamics as dynamics_mod
+
+    monkeypatch.setattr(backends, "_load_gravity_model", lambda *a, **k: _dummy_gravity_model())
+    monkeypatch.setattr(dynamics_mod, "DynamicsEngine", lambda **kwargs: SimpleNamespace(**kwargs))
+
+    prop = backends.ClassicalSHValidationPropagator(
+        degree=8, third_body=(), ephem_manager=object(), allow_identity_rotation=False
+    )
+    frame = prop.provenance["frame"]
+    assert "moon_fixed" in frame and "ephemeris-wired" in frame
+    assert is_identity_or_unresolved_frame(prop.provenance) is False
+    # The strict guard accepts it (no raise).
+    enforce_strict_frame_rule(prop.provenance, strict_frame_required=True, role="validation")
+
+
+def test_torch_sh_screening_accepts_ephemeris_and_reports_rotating_frame(monkeypatch):
+    import lunaris.analysis.frozen.search_backends as backends
+    import lunaris.core.dynamics as dynamics_mod
+    import lunaris.core.torch_sh_propagator as torch_sh_mod
+
+    monkeypatch.setattr(backends, "_load_gravity_model", lambda *a, **k: _dummy_gravity_model())
+    monkeypatch.setattr(dynamics_mod, "DynamicsEngine", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(
+        torch_sh_mod, "TorchSHBatchPropagator", lambda *a, **k: SimpleNamespace()
+    )
+
+    # With an ephemeris and identity disabled: rotating frame, guard passes.
+    rotating = backends.TorchSHScreeningPropagator(
+        degree=8, device="cpu", ephem_manager=object(), allow_identity_rotation=False
+    )
+    assert "moon_fixed" in rotating.provenance["frame"]
+    enforce_strict_frame_rule(rotating.provenance, strict_frame_required=True, role="screening")
+
+    # Default (no ephemeris, identity allowed): identity frame, guard rejects.
+    identity = backends.TorchSHScreeningPropagator(degree=8, device="cpu")
+    assert is_identity_or_unresolved_frame(identity.provenance) is True
+    with pytest.raises(RuntimeError, match="screening backend"):
+        enforce_strict_frame_rule(
+            identity.provenance, strict_frame_required=True, role="screening"
+        )
