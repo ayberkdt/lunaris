@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
@@ -237,6 +238,14 @@ def terrain_segment_intersection(
     return bracket, alpha
 
 
+@dataclass(frozen=True, slots=True)
+class TorchFrameCache:
+    """Precomputed per-step, per-RK-stage frame quaternions (i2f and its conjugate)."""
+
+    q_i2f: Any
+    q_f2i: Any
+
+
 class TorchMoonFrame:
     """SLERP-interpolated Moon inertial-to-fixed quaternion timeline."""
 
@@ -329,8 +338,64 @@ class TorchMoonFrame:
             vectors,
         )
 
+    def precompute_rk_stage_quaternions(
+        self, total_steps: int, dt_eff: float, stage_time_offsets: list[float]
+    ) -> TorchFrameCache:
+        """Vectorized SLERP of ``q_i2f`` for every step x RK-stage epoch.
+
+        ``stage_time_offsets`` are the per-step stage times relative to the step
+        start (e.g. ``[0, dt/2, dt/2, dt]`` for classic RK4). Returns tensors of
+        shape ``(total_steps, n_stages, 4)`` matching the per-epoch semantics of
+        :meth:`quat_i2f`, including the held-endpoint behaviour past the table.
+        """
+        import torch
+
+        t_base = torch.arange(total_steps, dtype=torch.float64, device=self.device) * dt_eff
+        t_rel = torch.tensor(stage_time_offsets, dtype=torch.float64, device=self.device)
+        t_all = t_base[:, None] + t_rel[None, :]
+
+        if not self.uses_rotation or self.q_tab.shape[0] <= 1:
+            q_i2f = self.q_tab[0].expand(*t_all.shape, 4).clone()
+        else:
+            u = (t_all / max(self.dt_s, EPS_1E12)).clamp_min(0.0)
+            i0 = torch.floor(u).long()
+            max_idx = self.q_tab.shape[0] - 2
+            i0 = i0.clamp(max=max_idx)
+
+            # Match the dynamic quat_i2f() out-of-range behaviour: beyond the
+            # final ephemeris interval (u >= N-1) hold the LAST quaternion rather
+            # than extrapolating. Clamping i0 alone would leave frac > 1 and
+            # extrapolate; clamping frac to [0, 1] reproduces the held endpoint.
+            frac = (u - i0).clamp(0.0, 1.0).to(dtype=self.dtype)
+            qa = self.q_tab[i0]
+            qb = self.q_tab[i0 + 1]
+
+            dot = (qa * qb).sum(dim=-1)
+            sign = torch.where(dot < 0.0, -torch.ones_like(dot), torch.ones_like(dot))
+            qb = qb * sign.unsqueeze(-1)
+            dot = (dot * sign).clamp(-1.0, 1.0)
+
+            q_linear = (1.0 - frac.unsqueeze(-1)) * qa + frac.unsqueeze(-1) * qb
+
+            theta_0 = torch.acos(dot)
+            sin_theta_0 = torch.sin(theta_0).clamp_min(EPS_1E30)
+            theta = theta_0 * frac
+
+            s0 = (torch.sin(theta_0 - theta) / sin_theta_0).unsqueeze(-1)
+            s1 = (torch.sin(theta) / sin_theta_0).unsqueeze(-1)
+
+            q_slerp = s0 * qa + s1 * qb
+            q_i2f = torch.where((dot > 0.9995).unsqueeze(-1), q_linear, q_slerp)
+            q_i2f = q_i2f / torch.linalg.norm(q_i2f, dim=-1, keepdim=True).clamp_min(EPS_1E30)
+
+        q_f2i = q_i2f.clone()
+        q_f2i[..., 1:] = -q_f2i[..., 1:]
+
+        return TorchFrameCache(q_i2f=q_i2f, q_f2i=q_f2i)
+
 
 __all__ = [
+    "TorchFrameCache",
     "TorchFrameError",
     "TorchMoonFrame",
     "line_sphere_alpha",
