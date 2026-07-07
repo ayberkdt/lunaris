@@ -251,7 +251,8 @@ def test_gpu_batch_propagator_avoids_per_step_host_syncs():
     assert source.count(".detach().cpu().numpy()") == 1
     assert "y_gpu" in source
 
-    frame_source = inspect.getsource(TorchFrameProvider.quat_i2f)
+    from lunaris.core.torch_frame import TorchMoonFrame
+    frame_source = inspect.getsource(TorchMoonFrame.quat_i2f)
     assert "if dot <" not in frame_source
     assert "if dot >" not in frame_source
 

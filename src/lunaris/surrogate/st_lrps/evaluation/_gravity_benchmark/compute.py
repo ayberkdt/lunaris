@@ -30,7 +30,13 @@ from lunaris.core.config import SimConfig, replace_sim_config
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagation.propagator import propagate
 from lunaris.core.state import calculate_ae_from_altitudes, create_state_from_keplerian
-from lunaris.core.torch_frame import quat_rotate_torch as _quat_rotate_torch
+from lunaris.core.torch_frame import (
+    TorchFrameCache,
+    TorchMoonFrame,
+)
+from lunaris.core.torch_frame import (
+    quat_rotate_torch as _quat_rotate_torch,
+)
 from lunaris.surrogate.st_lrps.evaluation import progress
 
 # --- intra-package wiring (auto-generated split) ---
@@ -133,11 +139,6 @@ def _torch_dtype_from_name(dtype_name: str) -> Any:
     return torch.float64 if str(dtype_name).lower() == "float64" else torch.float32
 
 
-@dataclass
-class TorchFrameCache:
-    q_i2f: Any
-    q_f2i: Any
-
 
 class TorchFrameProvider:
     """
@@ -150,70 +151,42 @@ class TorchFrameProvider:
     """
 
     def __init__(self, ephem: Any, *, device: Any, dtype: Any, mode: str) -> None:
-        import torch
         self.requested_mode = str(mode)
         self.mode = canonical_frame_mode(mode)
         self.device = device
         self.dtype = dtype
-        if self.mode == FRAME_MODE_IDENTITY_DIAGNOSTIC:
-            self.dt_s = 1.0
-            self.q_tab = torch.tensor([[1.0, 0.0, 0.0, 0.0],
-                                       [1.0, 0.0, 0.0, 0.0]],
-                                      device=device, dtype=dtype)
-            self.uses_rotation = False
-            return
 
         if self.mode == FRAME_MODE_MOON_FIXED_EPHEMERIS and ephem is None:
             raise ValueError(
                 f"batch-frame-mode={self.requested_mode} requires an EphemerisManager."
             )
-        provider = ephem.get_data_provider()
-        q_np = np.asarray(provider["q_i2f_tab"], dtype=np.float64)
-        if q_np.ndim != 2 or q_np.shape[1] != 4:
-            raise ValueError(f"q_i2f_tab must be shape (N,4), got {q_np.shape}")
-        self.dt_s = float(provider["dt_s"])
-        self.q_tab = torch.as_tensor(q_np, device=device, dtype=dtype)
-        self.uses_rotation = True
+
+        # Delegate frame math to the core TorchMoonFrame (single SLERP source).
+        # Identity-diagnostic mode historically ignored any supplied ephemeris,
+        # so pass None and opt in to the core's explicit identity path.
+        allow_id = self.mode == FRAME_MODE_IDENTITY_DIAGNOSTIC
+        self._core = TorchMoonFrame(
+            None if allow_id else ephem,
+            device=device,
+            dtype=dtype,
+            allow_identity=allow_id,
+        )
+
+        # Attribute proxies kept for benchmark consumers of the old provider.
+        self.dt_s = self._core.dt_s
+        self.q_tab = self._core.q_tab
+        self.uses_rotation = self._core.uses_rotation
 
     def quat_i2f(self, t_s: float) -> Any:
-        import torch
-        if self.q_tab.shape[0] <= 1:
-            return self.q_tab[0]
-        u = max(0.0, float(t_s) / max(self.dt_s, 1e-12))
-        i0 = int(math.floor(u))
-        if i0 >= self.q_tab.shape[0] - 1:
-            return self.q_tab[-1]
-        frac = torch.tensor(u - i0, device=self.device, dtype=self.dtype)
-        qa = self.q_tab[i0]
-        qb = self.q_tab[i0 + 1]
-        dot = torch.dot(qa, qb)
-        sign = torch.where(dot < 0.0, -torch.ones_like(dot), torch.ones_like(dot))
-        qb = qb * sign
-        dot = torch.clamp(dot * sign, -1.0, 1.0)
-        q_linear = (1.0 - frac) * qa + frac * qb
-        theta_0 = torch.acos(dot)
-        sin_theta_0 = torch.sin(theta_0).clamp_min(1e-30)
-        theta = theta_0 * frac
-        s0 = torch.sin(theta_0 - theta) / sin_theta_0
-        s1 = torch.sin(theta) / sin_theta_0
-        q_slerp = s0 * qa + s1 * qb
-        q = torch.where(dot > 0.9995, q_linear, q_slerp)
-        return q / torch.linalg.norm(q).clamp_min(1e-30)
+        return self._core.quat_i2f(t_s)
 
     def inertial_to_fixed(self, t_s: float, r_i: Any) -> Any:
-        if not self.uses_rotation:
-            return r_i
-        return _quat_rotate_torch(self.quat_i2f(t_s), r_i)
+        return self._core.inertial_to_fixed(t_s, r_i)
 
     def fixed_to_inertial(self, t_s: float, a_f: Any) -> Any:
-        if not self.uses_rotation:
-            return a_f
-        q = self.quat_i2f(t_s).clone()
-        q[1:] = -q[1:]
-        return _quat_rotate_torch(q, a_f)
+        return self._core.fixed_to_inertial(t_s, a_f)
 
     def precompute_rk_stage_quaternions(self, total_steps: int, dt_eff: float, gpu_integrator: str) -> TorchFrameCache:
-        import torch
         if gpu_integrator == "light":
             rel_t = [0.0, 0.5 * dt_eff]
         elif gpu_integrator == "robust":
@@ -223,49 +196,7 @@ class TorchFrameProvider:
         else:
             rel_t = [0.0, 0.5 * dt_eff, 0.5 * dt_eff, dt_eff]
 
-        t_base = torch.arange(total_steps, dtype=torch.float64, device=self.device) * dt_eff
-        t_rel = torch.tensor(rel_t, dtype=torch.float64, device=self.device)
-        t_all = t_base[:, None] + t_rel[None, :]
-
-        if self.q_tab.shape[0] <= 1:
-            q_i2f = self.q_tab[0].expand(*t_all.shape, 4).clone()
-        else:
-            u = (t_all / max(self.dt_s, 1e-12)).clamp_min(0.0)
-            i0 = torch.floor(u).long()
-            max_idx = self.q_tab.shape[0] - 2
-            i0 = i0.clamp(max=max_idx)
-
-            # Match the dynamic quat_i2f() out-of-range behaviour: beyond the
-            # final ephemeris interval (u >= N-1) hold the LAST quaternion rather
-            # than extrapolating. Clamping i0 alone would leave frac > 1 and
-            # extrapolate; clamping frac to [0, 1] reproduces the held endpoint.
-            frac = (u - i0).clamp(0.0, 1.0).to(dtype=self.dtype)
-            qa = self.q_tab[i0]
-            qb = self.q_tab[i0 + 1]
-
-            dot = (qa * qb).sum(dim=-1)
-            sign = torch.where(dot < 0.0, -torch.ones_like(dot), torch.ones_like(dot))
-            qb = qb * sign.unsqueeze(-1)
-            dot = (dot * sign).clamp(-1.0, 1.0)
-
-            q_linear = (1.0 - frac.unsqueeze(-1)) * qa + frac.unsqueeze(-1) * qb
-
-            theta_0 = torch.acos(dot)
-            sin_theta_0 = torch.sin(theta_0).clamp_min(1e-30)
-            theta = theta_0 * frac
-
-            s0 = (torch.sin(theta_0 - theta) / sin_theta_0).unsqueeze(-1)
-            s1 = (torch.sin(theta) / sin_theta_0).unsqueeze(-1)
-
-            q_slerp = s0 * qa + s1 * qb
-            q_i2f = torch.where((dot > 0.9995).unsqueeze(-1), q_linear, q_slerp)
-            q_i2f = q_i2f / torch.linalg.norm(q_i2f, dim=-1, keepdim=True).clamp_min(1e-30)
-
-        q_f2i = q_i2f.clone()
-        q_f2i[..., 1:] = -q_f2i[..., 1:]
-
-        return TorchFrameCache(q_i2f=q_i2f, q_f2i=q_f2i)
-
+        return self._core.precompute_rk_stage_quaternions(total_steps, dt_eff, rel_t)
 
 # Canonicalized (task §5): the Torch SH evaluator now has a single source of
 # truth in lunaris.physics.torch_spherical_harmonics. The previous in-file

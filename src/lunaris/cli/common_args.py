@@ -12,6 +12,7 @@ inside the functions that need them, never at import time.
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -184,6 +185,90 @@ def need_ephemeris(cfg: SimConfig, topo_requested: bool) -> bool:
     return bool(req.need_ephem or topo_requested)
 
 
+_FieldPatch = tuple[str, str, Callable[[Any], Any]]
+
+def patch_dataclass(obj, args: argparse.Namespace, patches: Sequence[_FieldPatch]):
+    """Apply a table of (arg_name, field_name, caster) patches to a frozen dataclass."""
+    replacements: dict[str, Any] = {}
+    for arg_name, field_name, caster in patches:
+        val = getattr(args, arg_name, None)
+        if val is not None:
+            replacements[field_name] = caster(val)
+    return replace(obj, **replacements) if replacements else obj
+
+_TIME_PATCHES: tuple[_FieldPatch, ...] = (
+    ("output_dt_s", "output_dt_s", float),
+    ("samples_per_period", "samples_per_period", int),
+)
+
+_SPACECRAFT_PATCHES: tuple[_FieldPatch, ...] = (
+    ("mass_kg", "mass_kg", float),
+    ("area_m2", "area_m2", float),
+    ("cd", "cd", float),
+    ("cr", "cr", float),
+)
+
+_FLAGS_PATCHES: tuple[_FieldPatch, ...] = (
+    ("enable_sh", "enable_sh", bool),
+    ("enable_3rd_body_sun", "enable_3rd_body_sun", bool),
+    ("enable_3rd_body_earth", "enable_3rd_body_earth", bool),
+    ("enable_earth_j2", "enable_earth_j2", bool),
+    ("enable_srp", "enable_srp", bool),
+    ("enable_albedo", "enable_albedo", bool),
+    ("enable_thermal", "enable_thermal", bool),
+    ("enable_relativity_1pn", "enable_relativity_1pn", bool),
+)
+
+_TIDES_PATCHES: tuple[_FieldPatch, ...] = (
+    ("tide_bodies", "tide_bodies", tuple),
+    ("tide_k2", "k2", float),
+    ("tide_k3", "k3", float),
+    ("tide_r_ref_m", "r_ref_m", float),
+)
+
+_GRAVITY_PATCHES: tuple[_FieldPatch, ...] = (
+    ("gravity_file_path", "file_path", str),
+    ("degree", "degree", int),
+)
+
+_PROPAGATOR_PATCHES: tuple[_FieldPatch, ...] = (
+    ("method", "method", lambda v: str(v).strip()),
+    ("user_max_step_s", "user_max_step_s", float),
+    ("rtol", "rtol", float),
+    ("atol", "atol", float),
+    ("compute_2body_baseline", "compute_2body_baseline", bool),
+    ("enable_telemetry", "enable_telemetry", bool),
+    ("telem_cadence_s", "telem_cadence_s", float),
+)
+
+_OUTPUT_PATCHES: tuple[_FieldPatch, ...] = (
+    ("out_dir", "out_dir", lambda v: Path(str(v)).expanduser()),
+    ("make_3d_plots", "make_3d_plots", bool),
+    ("downsample_3d", "downsample_3d", int),
+)
+
+_THERMAL_PATCHES: tuple[_FieldPatch, ...] = (
+    ("thermal_mode", "thermal_mode", str),
+    ("thermal_temperature_k", "temperature_K", float),
+    ("thermal_night_temperature_k", "night_temperature_K", float),
+    ("thermal_emissivity", "surface_emissivity", float),
+    ("thermal_surface_albedo", "surface_albedo", float),
+    ("thermal_floor_flux_w_m2", "thermal_floor_flux_W_m2", float),
+    ("thermal_facet_lat_count", "facet_lat_count", int),
+    ("thermal_facet_lon_count", "facet_lon_count", int),
+)
+
+_ALBEDO_PATCHES: tuple[_FieldPatch, ...] = (
+    ("albedo_model", "albedo_model", str),
+    ("albedo_mode", "albedo_mode", str),
+    ("albedo_pressure_coefficient", "albedo_pressure_coefficient", float),
+    ("albedo_facet_lat_count", "facet_lat_count", int),
+    ("albedo_facet_lon_count", "facet_lon_count", int),
+    ("albedo_require_provider", "require_surface_provider", bool),
+    ("albedo_enable_eclipse", "enable_eclipse", bool),
+)
+
+
 def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
     # Lazy import keeps module import light: common.time_utils transitively
     # pulls numba/scipy, which we only need when actually applying overrides.
@@ -207,39 +292,13 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
     elif args.hours is not None:
         cfg = replace(cfg, time=replace(cfg.time, duration_s=float(args.hours) * 3600.0))
 
-    if args.output_dt_s is not None:
-        cfg = replace(cfg, time=replace(cfg.time, output_dt_s=float(args.output_dt_s)))
-    if args.samples_per_period is not None:
-        cfg = replace(cfg, time=replace(cfg.time, samples_per_period=int(args.samples_per_period)))
+    cfg = replace(cfg, time=patch_dataclass(cfg.time, args, _TIME_PATCHES))
 
     # --- Spacecraft ---
-    sc = cfg.spacecraft
-    if args.mass_kg is not None:
-        sc = replace(sc, mass_kg=float(args.mass_kg))
-    if args.area_m2 is not None:
-        sc = replace(sc, area_m2=float(args.area_m2))
-    if args.cd is not None:
-        sc = replace(sc, cd=float(args.cd))
-    if args.cr is not None:
-        sc = replace(sc, cr=float(args.cr))
-    cfg = replace(cfg, spacecraft=sc)
+    cfg = replace(cfg, spacecraft=patch_dataclass(cfg.spacecraft, args, _SPACECRAFT_PATCHES))
 
     # --- Flags (PerturbationFlags) ---
-    flags = cfg.flags
-    if args.enable_sh is not None:
-        flags = replace(flags, enable_sh=bool(args.enable_sh))
-    if args.enable_3rd_body_sun is not None:
-        flags = replace(flags, enable_3rd_body_sun=bool(args.enable_3rd_body_sun))
-    if args.enable_3rd_body_earth is not None:
-        flags = replace(flags, enable_3rd_body_earth=bool(args.enable_3rd_body_earth))
-    if args.enable_earth_j2 is not None:
-        flags = replace(flags, enable_earth_j2=bool(args.enable_earth_j2))
-    if args.enable_srp is not None:
-        flags = replace(flags, enable_srp=bool(args.enable_srp))
-    if args.enable_albedo is not None:
-        flags = replace(flags, enable_albedo=bool(args.enable_albedo))
-    if args.enable_thermal is not None:
-        flags = replace(flags, enable_thermal=bool(args.enable_thermal))
+    flags = patch_dataclass(cfg.flags, args, _FLAGS_PATCHES)
 
     # Tides mapping: clean CLI -> internal k2/k3 booleans (dataclass constraint: k3 => k2)
     if args.enable_tides is not None or args.tides_kind is not None:
@@ -252,9 +311,6 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
                 flags = replace(flags, enable_tides_k2=True, enable_tides_k3=True)
             else:
                 flags = replace(flags, enable_tides_k2=True, enable_tides_k3=False)
-
-    if args.enable_relativity_1pn is not None:
-        flags = replace(flags, enable_relativity_1pn=bool(args.enable_relativity_1pn))
 
     cfg = replace(cfg, flags=flags)
 
@@ -277,25 +333,10 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
         from lunaris.physics.surface_effects import ThermalConfig
 
         th = cfg.thermal if cfg.thermal is not None else ThermalConfig()
-        if getattr(args, "thermal_mode", None) is not None:
-            th = replace(th, thermal_mode=str(args.thermal_mode))
-        if getattr(args, "thermal_temperature_k", None) is not None:
-            th = replace(th, temperature_K=float(args.thermal_temperature_k))
-        if getattr(args, "thermal_night_temperature_k", None) is not None:
-            th = replace(th, night_temperature_K=float(args.thermal_night_temperature_k))
-        if getattr(args, "thermal_emissivity", None) is not None:
-            th = replace(th, surface_emissivity=float(args.thermal_emissivity))
-        if getattr(args, "thermal_surface_albedo", None) is not None:
-            th = replace(th, surface_albedo=float(args.thermal_surface_albedo))
+        th = patch_dataclass(th, args, _THERMAL_PATCHES)
         if getattr(args, "thermal_ir_coefficient", None) is not None:
             coeff = float(args.thermal_ir_coefficient)
             th = replace(th, ir_pressure_coefficient=coeff, k_thermal=coeff)
-        if getattr(args, "thermal_floor_flux_w_m2", None) is not None:
-            th = replace(th, thermal_floor_flux_W_m2=float(args.thermal_floor_flux_w_m2))
-        if getattr(args, "thermal_facet_lat_count", None) is not None:
-            th = replace(th, facet_lat_count=int(args.thermal_facet_lat_count))
-        if getattr(args, "thermal_facet_lon_count", None) is not None:
-            th = replace(th, facet_lon_count=int(args.thermal_facet_lon_count))
         cfg = replace(cfg, thermal=th)
 
     # --- Lunar albedo configuration ---
@@ -317,39 +358,19 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
         from lunaris.physics.surface_effects import AlbedoConfig
 
         alb = cfg.albedo if cfg.albedo is not None else AlbedoConfig()
-        if getattr(args, "albedo_model", None) is not None:
-            alb = replace(alb, albedo_model=str(args.albedo_model))
+        alb = patch_dataclass(alb, args, _ALBEDO_PATCHES)
         # Convenience: supplying an albedo raster but no explicit mode selects the
         # scaled-DN grid source, preserving the historical "--albedo-root drives
         # albedo" behavior with the facet model.
-        if getattr(args, "albedo_mode", None) is not None:
-            alb = replace(alb, albedo_mode=str(args.albedo_mode))
-        elif getattr(args, "albedo_root", None) is not None:
+        if getattr(args, "albedo_mode", None) is None and getattr(args, "albedo_root", None) is not None:
             alb = replace(alb, albedo_mode="scaled_dn_grid")
         if getattr(args, "albedo_const", None) is not None:
             alb = replace(alb, albedo_const=float(args.albedo_const), A_moon=float(args.albedo_const))
-        if getattr(args, "albedo_pressure_coefficient", None) is not None:
-            alb = replace(alb, albedo_pressure_coefficient=float(args.albedo_pressure_coefficient))
-        if getattr(args, "albedo_facet_lat_count", None) is not None:
-            alb = replace(alb, facet_lat_count=int(args.albedo_facet_lat_count))
-        if getattr(args, "albedo_facet_lon_count", None) is not None:
-            alb = replace(alb, facet_lon_count=int(args.albedo_facet_lon_count))
-        if getattr(args, "albedo_require_provider", None) is not None:
-            alb = replace(alb, require_surface_provider=bool(args.albedo_require_provider))
-        if getattr(args, "albedo_enable_eclipse", None) is not None:
-            alb = replace(alb, enable_eclipse=bool(args.albedo_enable_eclipse))
         cfg = replace(cfg, albedo=alb)
 
     # --- Solid tide configuration ---
     tide_cfg = cfg.solid_tides if cfg.solid_tides is not None else SolidTideConfig()
-    if getattr(args, "tide_bodies", None) is not None:
-        tide_cfg = replace(tide_cfg, tide_bodies=tuple(args.tide_bodies))
-    if getattr(args, "tide_k2", None) is not None:
-        tide_cfg = replace(tide_cfg, k2=float(args.tide_k2))
-    if getattr(args, "tide_k3", None) is not None:
-        tide_cfg = replace(tide_cfg, k3=float(args.tide_k3))
-    if getattr(args, "tide_r_ref_m", None) is not None:
-        tide_cfg = replace(tide_cfg, r_ref_m=float(args.tide_r_ref_m))
+    tide_cfg = patch_dataclass(tide_cfg, args, _TIDES_PATCHES)
     cfg = replace(cfg, solid_tides=tide_cfg)
 
     # --- Gravity config (GravityConfig) ---
@@ -361,10 +382,7 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
     if args.surrogate_gravity_model_dir is not None:
         new_surrogate_dir = str(Path(str(args.surrogate_gravity_model_dir)).expanduser().resolve())
     grav_cfg = replace(grav_cfg, backend=new_backend, st_lrps_model_dir=new_surrogate_dir)
-    if args.gravity_file_path is not None:
-        grav_cfg = replace(grav_cfg, file_path=str(args.gravity_file_path))
-    if args.degree is not None:
-        grav_cfg = replace(grav_cfg, degree=int(args.degree))
+    grav_cfg = patch_dataclass(grav_cfg, args, _GRAVITY_PATCHES)
 
     if args.adaptive_enabled is not None:
         grav_cfg = replace(grav_cfg, adaptive=replace(grav_cfg.adaptive, enabled=bool(args.adaptive_enabled)))
@@ -376,34 +394,11 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
     cfg = replace(cfg, gravity=grav_cfg)
 
     # --- Propagator config (PropagatorConfig) ---
-    prop_cfg = cfg.propagator
-    if args.method is not None:
-        prop_cfg = replace(prop_cfg, method=str(args.method).strip())
-    if args.user_max_step_s is not None:
-        prop_cfg = replace(prop_cfg, user_max_step_s=float(args.user_max_step_s))
-    if args.rtol is not None:
-        prop_cfg = replace(prop_cfg, rtol=float(args.rtol))
-    if args.atol is not None:
-        prop_cfg = replace(prop_cfg, atol=float(args.atol))
-    if getattr(args, "compute_2body_baseline", None) is not None:
-        prop_cfg = replace(prop_cfg, compute_2body_baseline=bool(args.compute_2body_baseline))
-    # Not every entry point defines the telemetry options (the batch batch runner
-    # has its own parser without them), so probe defensively like the other
-    # optional blocks above.
-    if getattr(args, "enable_telemetry", None) is not None:
-        prop_cfg = replace(prop_cfg, enable_telemetry=bool(args.enable_telemetry))
-    if getattr(args, "telem_cadence_s", None) is not None:
-        prop_cfg = replace(prop_cfg, telem_cadence_s=float(args.telem_cadence_s))
+    prop_cfg = patch_dataclass(cfg.propagator, args, _PROPAGATOR_PATCHES)
     cfg = replace(cfg, propagator=prop_cfg)
 
     # --- Output config (OutputConfig) ---
-    out_cfg = cfg.output
-    if args.out_dir is not None:
-        out_cfg = replace(out_cfg, out_dir=Path(str(args.out_dir)).expanduser())
-    if args.make_3d_plots is not None:
-        out_cfg = replace(out_cfg, make_3d_plots=bool(args.make_3d_plots))
-    if args.downsample_3d is not None:
-        out_cfg = replace(out_cfg, downsample_3d=int(args.downsample_3d))
+    out_cfg = patch_dataclass(cfg.output, args, _OUTPUT_PATCHES)
     cfg = replace(cfg, output=out_cfg)
 
     # --- Kernel dir remap (strict by filename) ---

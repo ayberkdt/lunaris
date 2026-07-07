@@ -186,22 +186,48 @@ def test_fallback_forbidden_by_explicit_flag(flag):
     assert _engine(sh_fallback_policy="compatible_gpu", **{flag: True})._fallback_forbidden() is True
 
 
+def _gpu_plan(**overrides):
+    """Real BatchBackendPlan resolved to a GPU backend, ready to be downgraded."""
+    from lunaris.batch.backend_policy import BatchBackend, BatchBackendPlan
+
+    base = dict(
+        final_backend=BatchBackend.GPU_ST_LRPS,
+        use_gpu=True,
+        gravity_backend="st_lrps",
+        torch_cuda_available=True,
+        numba_cuda_available=False,
+        actual_backend="gpu_st_lrps_potential",
+        actual_sh_degree=200,
+        actual_device="cuda:0",
+        cuda_device_name="FakeGPU",
+        dtype="float32",
+        integrator="fixed RK4",
+    )
+    base.update(overrides)
+    return BatchBackendPlan(**base)
+
+
 def test_handle_backend_init_failure_raises_when_forbidden():
     eng = _engine(sh_fallback_policy="error")
-    plan = SimpleNamespace(gravity_backend="st_lrps")
+    plan = _gpu_plan()
     with pytest.raises(RuntimeError, match="fallback is forbidden"):
         eng._handle_backend_init_failure(plan, "[BATCH] GPU init failed.", RuntimeError("cuda oom"))
     # The plan must NOT have been quietly downgraded.
-    assert not getattr(plan, "fallback_applied", False)
+    assert plan.fallback_applied is False
+    assert plan.use_gpu is True
 
 
 def test_handle_backend_init_failure_downgrades_when_allowed():
     eng = _engine(sh_fallback_policy="compatible_gpu")
-    plan = SimpleNamespace(gravity_backend="st_lrps")
+    plan = _gpu_plan()
     with pytest.warns(RuntimeWarning):
         eng._handle_backend_init_failure(plan, "[BATCH] GPU init failed.", RuntimeError("cuda oom"))
-    assert plan.fallback_applied is True
-    assert plan.use_gpu is False
+    # Immutable plan: the downgrade replaces the stored plan, the original
+    # decision object is untouched.
+    assert eng._backend_plan.fallback_applied is True
+    assert eng._backend_plan.use_gpu is False
+    assert plan.fallback_applied is False
+    assert plan.use_gpu is True
     assert eng._backend_note is not None
 
 
@@ -210,45 +236,50 @@ def test_downgrade_to_cpu_rewrites_full_provenance_st_lrps():
     never presented as a GPU run (Phase 8: no run labelled GPU when CPU used)."""
     from lunaris.batch.backend_policy import BatchBackend
 
-    plan = SimpleNamespace(
-        gravity_backend="st_lrps",
-        final_backend=BatchBackend.GPU_ST_LRPS,
-        use_gpu=True,
-        actual_backend="gpu_st_lrps",
-        actual_sh_degree=200,
-        actual_device="cuda:0",
-        cuda_device_name="FakeGPU",
-        dtype="float32",
-        integrator="fixed RK4",
-    )
-    BatchPropagationEngine._downgrade_plan_to_cpu(plan, "cuda unavailable")
+    plan = _gpu_plan()
+    cpu_plan = plan.as_cpu_fallback("cuda unavailable")
 
-    assert plan.final_backend == BatchBackend.CPU
-    assert plan.use_gpu is False
-    assert plan.actual_backend == "cpu_st_lrps"
-    assert plan.actual_sh_degree is None
-    assert plan.actual_device == "cpu"
-    assert plan.cuda_device_name is None
-    assert plan.dtype == "float64"
-    assert "DOP853" in plan.integrator
-    assert plan.fallback_applied is True
-    assert plan.fallback_reason == "cuda unavailable"
+    assert cpu_plan.final_backend == BatchBackend.CPU
+    assert cpu_plan.use_gpu is False
+    assert cpu_plan.actual_backend == "cpu_st_lrps"
+    assert cpu_plan.actual_sh_degree is None
+    assert cpu_plan.actual_device == "cpu"
+    assert cpu_plan.cuda_device_name is None
+    assert cpu_plan.dtype == "float64"
+    assert cpu_plan.effective_dtype == "float64"
+    assert cpu_plan.requested_dtype == "float32"
+    assert cpu_plan.dtype_downgraded is True
+    assert "DOP853" in cpu_plan.integrator
+    assert cpu_plan.fallback_applied is True
+    assert cpu_plan.fallback_reason == "cuda unavailable"
+    # The original plan is a frozen decision object and must be unchanged.
+    assert plan.final_backend == BatchBackend.GPU_ST_LRPS
+    assert plan.use_gpu is True
+    assert plan.actual_backend == "gpu_st_lrps_potential"
+    assert plan.fallback_applied is False
 
 
 def test_downgrade_to_cpu_uses_cpu_sh_for_classic_backend():
     from lunaris.batch.backend_policy import BatchBackend
 
-    plan = SimpleNamespace(
-        gravity_backend="sh",
+    plan = _gpu_plan(
         final_backend=BatchBackend.GPU_CLASSIC_SH,
-        use_gpu=True,
+        gravity_backend="sh",
+        torch_cuda_available=False,
+        numba_cuda_available=True,
         actual_backend="numba_cuda_sh",
         actual_sh_degree=24,
-        actual_device="cuda:0",
-        cuda_device_name="FakeGPU",
-        dtype="float32",
-        integrator="fixed RK4",
     )
-    BatchPropagationEngine._downgrade_plan_to_cpu(plan, "cuda oom")
-    assert plan.actual_backend == "cpu_sh"
-    assert plan.use_gpu is False
+    cpu_plan = plan.as_cpu_fallback("cuda oom")
+    assert cpu_plan.actual_backend == "cpu_sh"
+    assert cpu_plan.use_gpu is False
+    assert plan.actual_backend == "numba_cuda_sh"
+
+
+def test_backend_plan_is_immutable():
+    """BatchBackendPlan is a frozen decision object: consumers cannot mutate it."""
+    import dataclasses
+
+    plan = _gpu_plan()
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        plan.use_gpu = False  # type: ignore[misc]

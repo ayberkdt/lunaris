@@ -175,42 +175,26 @@ def main() -> int:
         print(f"[FATAL] Gravity model init failed: {e}")
         return 1
 
-    # Surface grids (CLI-requested only)
+    # Surface grids (CLI-requested only). Whether the active force set needs a
+    # surface provider comes from the shared force-requirements SSOT, so this
+    # stays in lockstep with SimConfig.validate() and DynamicsEngine.
     topo_requested = bool(args.ldem_root or args.albedo_root)
     surface_provider: Any | None = None
-    thermal_mode = (
-        str(getattr(cfg.thermal, "thermal_mode", "constant_temperature")).strip().lower()
-        if cfg.thermal is not None
-        else "constant_temperature"
-    )
-    thermal_needs_surface = bool(cfg.flags.enable_thermal and thermal_mode == "temperature_grid")
-    albedo_mode = (
-        str(getattr(cfg.albedo, "albedo_mode", "constant_albedo")).strip().lower()
-        if cfg.albedo is not None
-        else "constant_albedo"
-    )
-    albedo_needs_surface = bool(
-        cfg.flags.enable_albedo
-        and (
-            albedo_mode in ("albedo_grid", "scaled_dn_grid")
-            or bool(getattr(cfg.albedo, "require_surface_provider", False))
-        )
-    )
-    surface_force_needs_provider = bool(albedo_needs_surface or thermal_needs_surface)
-    if topo_requested or surface_force_needs_provider:
+    surface_req = force_requirements_for_config(cfg)
+    if topo_requested or surface_req.need_surface_provider:
         try:
             surface_provider = init_surface_provider(args)
         except Exception as e:
             print(f"[FATAL] Surface grids load failed: {e}")
             return 1
 
-        if albedo_needs_surface and surface_provider is None:
+        if surface_req.albedo_needs_provider and surface_provider is None:
             print(
                 "[FATAL] Albedo grid mode enabled, but no albedo grids loaded. "
                 "Provide --albedo-root or use --albedo-mode constant_albedo."
             )
             return 1
-        if thermal_needs_surface and surface_provider is None:
+        if surface_req.use_thermal_grid and surface_provider is None:
             print("[FATAL] Thermal temperature_grid mode requires surface temperature data. Provide a compatible surface provider.")
             return 1
 
