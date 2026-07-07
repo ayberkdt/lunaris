@@ -12,7 +12,6 @@ import numpy as np
 from lunaris.common.contracts.checkpoint import CHECKPOINT_SCHEMA_VERSION
 from lunaris.common.hashing import canonical_json_sha256
 
-
 @dataclass(frozen=True, slots=True)
 class PropagationCheckpoint:
     """Loaded propagation checkpoint metadata.
