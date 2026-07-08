@@ -77,7 +77,21 @@ else
   bad "output dir not writable: ${LUNARIS_OUTPUT_DIR}"
 fi
 
-# 5. Scheduler tooling.
+# 5. Optional strict data verification (opt-in). The default checks above only
+#    confirm the data dir exists; they do not prove the SPICE/gravity assets are
+#    present and runtime-readable. Set LUNARIS_PREFLIGHT_VERIFY_DATA=1 to run the
+#    full strict runtime check here and fail closed before spending queue time.
+if [[ "${LUNARIS_PREFLIGHT_VERIFY_DATA:-0}" == "1" ]]; then
+  if lunaris-data verify --strict --runtime; then
+    ok "strict runtime data verification passed"
+  else
+    bad "strict runtime data verification failed (lunaris-data verify --strict --runtime)"
+  fi
+else
+  warn "strict data verification skipped (set LUNARIS_PREFLIGHT_VERIFY_DATA=1 to enable)"
+fi
+
+# 6. Scheduler tooling.
 command -v sbatch >/dev/null 2>&1 && ok "sbatch on PATH" || warn "sbatch not found (not on a Slurm host?)"
 
 echo "--------------------------------------------------------------"

@@ -23,7 +23,7 @@
       "sha256": "ee0ff6ddfcc9cb4bb2fe83992f3951471c468a169804f1fdb582dc2df99540e1",
       "manifest_status": "not_catalogued",
       "product_identity": "LRO Diviner DGDR_RA rock abundance, not LOLA albedo",
-      "runtime_status": "risk: can be mis-selected as albedo by current generic cylindrical raster selection",
+      "runtime_status": "not used as albedo: the albedo resolver accepts only LOLA LDAM products and rejects DGDR products even when their labels parse (see loaders/io_surface.py:_looks_like_lola_ldam_albedo_label)",
       "source_url": "https://pds-geosciences.wustl.edu/lro/urn-nasa-pds-lro_diviner_derived1/data_derived_gdr_l3/cylindrical/img/dgdr_ra_avg_cyl_032_img.img"
     },
     {

@@ -1,4 +1,4 @@
 # Single source of truth for versions is pyproject.toml. This file installs the
-# package with the full optional stack (ML/GPU, both Qt bindings, reports, test
+# package with the full optional stack (ML/GPU, PySide6 desktop UI, reports, test
 # deps) so `pip install -r requirements.txt` matches `pip install .[all]`.
 .[all]

@@ -30,11 +30,19 @@ headless `lunaris-data` tool to list, download, verify, and locate files:
 
 ```bash
 lunaris-data list
-lunaris-data download --group ephemeris
-lunaris-data download --group gravity
-lunaris-data verify
+lunaris-data download --preset full-gravity
 lunaris-data verify --strict --runtime
 lunaris-data path
+```
+
+The `full-gravity` preset fetches every asset that `verify --strict --runtime`
+treats as mandatory (including the strict-only `gm_de440.tpc`). To download by
+group instead, add `--include-optional` to the ephemeris step so the strict-only
+kernels are also fetched:
+
+```bash
+lunaris-data download --group ephemeris --include-optional
+lunaris-data download --group gravity
 ```
 
 Entries with an official provider URL download directly from that provider
@@ -51,9 +59,10 @@ covers both file presence and runtime readability.
 Physical lunar `MOON_PA` validation requires the manifest-backed NAIF kernel set:
 `naif0012.tls`, `moon_de440_250416.tf`, `moon_pa_de440_200625.bpc`,
 `pck00011.tpc`, `gm_de440.tpc`, and a DE440 SPK (`de440.bsp` or `de440s.bsp`).
-Use `lunaris-data download --preset minimal` to acquire the official entries
-recorded in `data_sources.json`; older `moon_de440_220930.tf[.txt]` files are
-accepted only as legacy aliases.
+Use `lunaris-data download --preset full-gravity` to acquire the official
+entries recorded in `data_sources.json` — it includes `gm_de440.tpc`, which the
+`minimal` preset omits; older `moon_de440_220930.tf[.txt]` files are accepted
+only as legacy aliases.
 
 ## Generated Datasets
 

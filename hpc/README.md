@@ -17,7 +17,9 @@ bash hpc/setup_env.sh
 
 # 3. Check, then submit.
 bash hpc/preflight.sh
-hpc/submit.sh train -- --epochs 300 --batch-size 8192 \
+hpc/submit.sh train -- \
+    --data "$LUNARIS_DATA_DIR/datasets/st_lrps_cloud_suite.h5" \
+    --epochs 300 --batch-size 8192 \
     --out-dir "$LUNARIS_OUTPUT_DIR/training/run1"
 ```
 

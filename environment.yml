@@ -22,5 +22,5 @@ dependencies:
   - tqdm>=4.64,<5
   - pip
   - pip:
-      - spiceypy>=5.1,<9
+      - spiceypy>=5.1,<8.1.1
       - pytest>=7.2,<10
