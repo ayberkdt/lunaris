@@ -1456,8 +1456,11 @@ def _write_evaluation_csvs(a_cross, a_pred_vec_np, a_r, a_true_norms, a_true_vec
     _mape_a_bins  = {(b["alt_km_lo"], b["alt_km_hi"]): b for b in spatial_a_mape.get("bins", [])}
     _all_bin_keys = sorted(set(_rmse_u_bins) | set(_rmse_a_vec_bins) | set(_rmse_a_mag_bins) | set(_mape_u_bins) | set(_mape_a_bins))
     for _k in _all_bin_keys:
-        _ru = _rmse_u_bins.get(_k, {}); _ra_vec = _rmse_a_vec_bins.get(_k, {}); _ra_mag = _rmse_a_mag_bins.get(_k, {})
-        _mu = _mape_u_bins.get(_k, {}); _ma = _mape_a_bins.get(_k, {})
+        _ru = _rmse_u_bins.get(_k, {})
+        _ra_vec = _rmse_a_vec_bins.get(_k, {})
+        _ra_mag = _rmse_a_mag_bins.get(_k, {})
+        _mu = _mape_u_bins.get(_k, {})
+        _ma = _mape_a_bins.get(_k, {})
         _n = _ru.get("n", _ra_vec.get("n", _ra_mag.get("n", _mu.get("n", _ma.get("n", 0)))))
         _mask_bin = (alt_km_all.reshape(-1) >= float(_k[0])) & (alt_km_all.reshape(-1) < float(_k[1]))
         if np.any(_mask_bin):

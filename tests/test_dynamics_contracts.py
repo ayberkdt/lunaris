@@ -21,9 +21,9 @@ import pytest
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
 from lunaris.core.dynamics import (
     DynamicsEngine,
-    _is_surrogate_gravity_provider,
     extract_gravity_strict,
 )
+from lunaris.core.dynamics.surrogate_bridge import _is_surrogate_gravity_provider
 from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig
 
 

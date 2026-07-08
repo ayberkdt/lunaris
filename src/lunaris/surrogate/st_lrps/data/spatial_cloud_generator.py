@@ -475,7 +475,9 @@ def _worker_compute_chunk(start: int, n: int, seed: int) -> tuple[int, np.ndarra
 
 
     if bool(_G["canonical"]):
-        DU = float(_G["DU"]); TU = float(_G["TU"]); VU = float(_G["VU"])
+        DU = float(_G["DU"])
+        TU = float(_G["TU"])
+        VU = float(_G["VU"])
         out[:, 0:3] /= DU
         out[:, 3] /= (VU * VU)
         out[:, 4:7] /= (DU / (TU * TU))

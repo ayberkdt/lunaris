@@ -54,7 +54,38 @@ from lunaris.common.paths import project_root_from_file
 from lunaris.ui_foundation import DESIGN_TOKENS, THEME, with_alpha
 
 from .dataset_introspection import inspect_h5_metadata
-from .qt_common import *
+from .qt_common import (
+    QBoxLayout,
+    QCheckBox,
+    QComboBox,
+    QDesktopServices,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QGuiApplication,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QProcess,
+    QPushButton,
+    QSettings,
+    QSizePolicy,
+    QSpinBox,
+    QSplitter,
+    QStackedWidget,
+    Qt,
+    QTabWidget,
+    QUrl,
+    QVBoxLayout,
+    QWidget,
+    pyqtgraph_matches_qt,
+    pyqtSignal,
+)
 
 # pyqtgraph — optional, graceful fallback
 try:
@@ -153,8 +184,10 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
     SUITE_PRESETS = {}  # type: ignore[assignment]
 
 
-from .common_widgets import *
 from .common_widgets import (
+    ImageGallery,
+    ProcessPane,
+    ValidatedPathEdit,
     _cfg_value,
     _default_dataset_report_dir,
     _format_command,

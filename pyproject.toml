@@ -32,7 +32,7 @@ keywords = [
   "st-lrps",
 ]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -173,26 +173,42 @@ select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [
   # E501 (line length): not enforced to avoid mass reflow churn; revisit later.
   "E501",
-  # E402 (import-not-at-top): this optional-dependency-heavy codebase pervasively
-  # uses deliberate pre-import bootstraps — Qt platform setup, sys.path fixes for
-  # run-as-script, and guarded optional imports (torch/PySide6/spice/h5py).
-  "E402",
-  # E701/E702 (compound statements / semicolons): the numerical kernels and plot
-  # adapters intentionally write compact one-liners (e.g. vector component
-  # assignment `out[0]=0; out[1]=0; out[2]=0` in numba kernels). Consistent with
-  # the E501 stance above.
-  "E701",
-  "E702",
+  # E402 / E701 / E702 are NOT globally ignored. They are enforced everywhere
+  # except the specific files listed under `per-file-ignores` below, where the
+  # ignore is a deliberate, auditable exception (numba/CUDA compact kernels for
+  # E701/E702; pre-import bootstraps and cycle-avoidance imports for E402). This
+  # keeps new files from silently inheriting a blanket amnesty.
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# The ST-LRPS Studio pages share one internal widget/import hub (`qt_common`) via
-# a deliberate `from .qt_common import *`. Star-import diagnostics are expected and
-# intentional only for these page modules; the rest of the tree is fully enforced.
-"src/lunaris/surrogate/st_lrps/ui/studio_parts/*.py" = ["F403", "F405"]
-# qt_common is that hub: it imports the shared Qt surface purely to re-export it
-# through `import *`, so its own imports read as unused (F401) but must be kept.
-"src/lunaris/surrogate/st_lrps/ui/studio_parts/qt_common.py" = ["F401"]
+# --- E701/E702: compact one-liners in numba/CUDA kernels only ---
+# These modules host the numerical hot-path kernels where component-wise vector
+# assignments are written as intentional compact one-liners (e.g.
+# `out[0]=0.0; out[1]=0.0; out[2]=0.0`). Everywhere else E701/E702 are enforced.
+"src/lunaris/core/batch_propagator.py" = ["E702"]
+"src/lunaris/common/math_utils.py" = ["E702"]
+
+# --- E402: deliberate pre-import bootstraps / cycle-avoidance imports ---
+# Each file below imports below the top of the module for a concrete reason that
+# cannot be reordered away: matplotlib backend selection before `pyplot`, Qt
+# platform/env setup before the Qt import, guarded optional torch/h5py imports
+# behind availability flags, run-as-script `sys.path` fixes, sectioned UI entry
+# modules, or imports placed after the helpers they would otherwise pull in at
+# module-load time (cycle avoidance). Enumerated explicitly so the rest of the
+# tree stays E402-clean.
+"src/lunaris/analysis/reporting/manager.py" = ["E402"]
+"src/lunaris/ui/app.py" = ["E402"]
+"src/lunaris/ui/core/session_persistence.py" = ["E402"]
+"src/lunaris/core/torch_sh_propagator.py" = ["E402"]
+"src/lunaris/core/torch_batch_propagator.py" = ["E402"]
+"src/lunaris/surrogate/st_lrps/evaluation/cli.py" = ["E402"]
+"src/lunaris/surrogate/st_lrps/runtime/canonical_runtime.py" = ["E402"]
+
+# The ST-LRPS Studio pages import their shared Qt/widget surface explicitly from
+# the `qt_common` / `common_widgets` hubs (no `import *`), so star-import
+# diagnostics no longer apply. They still import below module-level Qt/theme setup
+# and sectioned constants (E402).
+"src/lunaris/surrogate/st_lrps/ui/studio_parts/*.py" = ["E402"]
 # studio.py is the Studio facade and training/cli.py the training entry point;
 # both deliberately re-export tabs / CLI helpers / dataset utilities consumed by
 # tests and external callers, so their re-export imports must not be pruned.
@@ -202,7 +218,9 @@ ignore = [
 # imported from its canonical path?"), fixture registration, and import-time
 # side effects, so an unused-import there is signal, not noise. Enforcing F401
 # in tests also tempts autofix into deleting those intentional imports.
-"tests/*" = ["F401"]
+# E402: tests frequently guard imports behind `pytest.importorskip(...)` or a
+# feature-availability flag, which must run before the guarded import.
+"tests/*" = ["F401", "E402"]
 # Qt model/view overrides require the framework signature `def rowCount(self,
 # parent=QModelIndex())`; the default-arg call is idiomatic and unavoidable.
 "src/lunaris/surrogate/st_lrps/ui/dashboard_widgets.py" = ["B008"]

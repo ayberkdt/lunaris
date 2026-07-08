@@ -310,10 +310,12 @@ def test_streaming_metrics_mag_error_can_be_zero_when_vector_error_nonzero():
     rng = np.random.default_rng(0)
     n = 50
     x = np.tile([[R_REF + 100e3, 0.0, 0.0]], (n, 1)).astype(np.float64)
-    dirs = rng.standard_normal((n, 3)); dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
+    dirs = rng.standard_normal((n, 3))
+    dirs /= np.linalg.norm(dirs, axis=1, keepdims=True)
     a_true = dirs * 1e-3
     # same magnitude, random direction → magnitude error ~0, vector error large
-    pred_dirs = rng.standard_normal((n, 3)); pred_dirs /= np.linalg.norm(pred_dirs, axis=1, keepdims=True)
+    pred_dirs = rng.standard_normal((n, 3))
+    pred_dirs /= np.linalg.norm(pred_dirs, axis=1, keepdims=True)
     a_pred = pred_dirs * 1e-3
     sm.update(x, a_true, a_pred, np.zeros(n), np.zeros(n), R_REF)
     res = sm.finalize()
@@ -398,7 +400,8 @@ def _write_scaler_h5(tmp_path: Path, *, outlier: bool) -> Path:
     rng = np.random.default_rng(0)
     n = 2000
     r = R_REF + rng.uniform(50e3, 200e3, n)
-    d = rng.standard_normal((n, 3)); d /= np.linalg.norm(d, axis=1, keepdims=True)
+    d = rng.standard_normal((n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
     x = (r[:, None] * d).astype(np.float32)
     u = (rng.standard_normal(n) * 10.0).astype(np.float32)
     a = (rng.standard_normal((n, 3)) * 1e-4).astype(np.float32)
@@ -568,7 +571,8 @@ def test_evaluation_report_contains_architecture_and_metric_blocks(tmp_path):
     n = 256
     rng = np.random.default_rng(0)
     r = R_REF + rng.uniform(60e3, 280e3, n)
-    d = rng.standard_normal((n, 3)); d /= np.linalg.norm(d, axis=1, keepdims=True)
+    d = rng.standard_normal((n, 3))
+    d /= np.linalg.norm(d, axis=1, keepdims=True)
     x = (r[:, None] * d).astype(np.float64)
     u = (rng.standard_normal(n) * 1e3).astype(np.float64)
     a = (rng.standard_normal((n, 3)) * 1e-5).astype(np.float64)
@@ -625,7 +629,8 @@ def _make_lap_trainer(mode):
 
 def _lap_loader():
     from torch.utils.data import DataLoader, TensorDataset
-    g = torch.Generator(); g.manual_seed(0)
+    g = torch.Generator()
+    g.manual_seed(0)
     x = torch.randn(8, 3, generator=g) * 1.85e6
     u = torch.randn(8, 1, generator=g)
     a = torch.randn(8, 3, generator=g) * 1e-3
@@ -673,7 +678,8 @@ def _error_csv(tmp_path: Path, n=5) -> Path:
         w = csv.writer(f)
         for _ in range(n):
             r = R_REF + rng.uniform(60e3, 250e3)
-            d = rng.standard_normal(3); d /= np.linalg.norm(d)
+            d = rng.standard_normal(3)
+            d /= np.linalg.norm(d)
             x, y, z = (r * d).tolist()
             w.writerow([x, y, z] + [0.0] * 8 + [1e-4, 0.01, (r - R_REF) / 1000.0])
     return p
@@ -737,7 +743,8 @@ def test_active_refinement_rejects_out_of_shell_points(tmp_path):
     )
     _run_active_refinement(ns, _AP())
     data = np.load(tmp_path / "active_refinement_positions.npz")
-    x = data["x"]; data.close()
+    x = data["x"]
+    data.close()
     alt_km = (np.linalg.norm(x, axis=1) - R_REF) / 1000.0
     # allow a tiny numerical margin around the shell
     assert alt_km.min() >= 80.0 - 1.0

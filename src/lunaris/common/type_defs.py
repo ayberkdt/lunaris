@@ -41,7 +41,7 @@ layer that parses them. This module stores configuration only; it does not defin
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Annotated, Any, TypeAlias
+from typing import Annotated, Any, Literal, TypeAlias
 
 import numpy as np
 import numpy.typing as npt
@@ -188,6 +188,13 @@ class AdaptiveDegreeConfig:
             prev_alt = alt_km
 
 
+# Central-gravity backend selector. ``classic_sh`` reads a spherical-harmonics
+# coefficient file; ``st_lrps`` loads a trained neural surrogate. Typed as a
+# Literal so callers and static analysis catch typos at the boundary; the
+# ``__post_init__`` guard still normalizes/validates dynamically-built values.
+GravityBackend: TypeAlias = Literal["classic_sh", "st_lrps"]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GravityConfig:
     """
@@ -207,7 +214,7 @@ class GravityConfig:
     file_path: str
     degree: int | None = None
     use_mmap: bool = True
-    backend: str = "classic_sh"
+    backend: GravityBackend = "classic_sh"
     st_lrps_model_dir: str = ""
     adaptive: AdaptiveDegreeConfig = field(default_factory=AdaptiveDegreeConfig)
 

@@ -15,7 +15,8 @@ import pytest
 
 from lunaris.common.constants import AU, C_LIGHT, R_MOON, SOLAR_FLUX_1AU
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
-from lunaris.core.dynamics import DynamicsEngine, _AlbedoPack
+from lunaris.core.dynamics import DynamicsEngine
+from lunaris.core.dynamics.perturbation_packs import _AlbedoPack
 from lunaris.physics.lunar_albedo import (
     accel_albedo_facets_numba,
     albedo_single_facet_accel_numba,

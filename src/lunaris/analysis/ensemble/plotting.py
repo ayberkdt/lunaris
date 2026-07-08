@@ -468,8 +468,10 @@ def plot_covariance_tubes_3d(
     zs = r_moon_km * np.outer(np.ones_like(u_s), np.cos(v_s))
     ax.plot_surface(xs, ys, zs, color="#d0c0a0", alpha=0.20, linewidth=0)
 
-    ax.set_xlabel("X [km]", fontsize=9); ax.set_ylabel("Y [km]", fontsize=9)
-    ax.set_zlabel("Z [km]", fontsize=9); ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.set_xlabel("X [km]", fontsize=9)
+    ax.set_ylabel("Y [km]", fontsize=9)
+    ax.set_zlabel("Z [km]", fontsize=9)
+    ax.set_title(title, fontsize=11, fontweight="bold")
     ax.legend(fontsize=9)
     fig.tight_layout()
     return fig
@@ -507,7 +509,8 @@ def plot_position_covariance_history(
     ax1 = axes[1]
     pairs = [(0, 1, "ρ_xy"), (0, 2, "ρ_xz"), (1, 2, "ρ_yz")]
     for i, j, lbl in pairs:
-        si = stats.std[:, i]; sj = stats.std[:, j]
+        si = stats.std[:, i]
+        sj = stats.std[:, j]
         denom = si * sj
         denom = np.where(denom > 1e-30, denom, np.nan)
         rho   = stats.cov[:, i, j] / denom

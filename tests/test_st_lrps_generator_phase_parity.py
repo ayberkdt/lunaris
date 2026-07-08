@@ -37,9 +37,12 @@ def _synthetic_field_with_odd_m() -> tuple[np.ndarray, np.ndarray]:
     c[2, 0] = -9.0e-5  # J2 (zonal, phase-insensitive — included for realism)
     c[2, 1] = 1.1e-5            # odd m
     s[2, 2] = 2.0e-6            # even m sectoral
-    c[3, 1] = 2.1e-5; s[3, 1] = -1.3e-5  # odd m
-    c[3, 3] = 4.0e-6; s[3, 3] = 3.0e-6   # odd m sectoral
-    c[4, 1] = -5.0e-6; s[4, 3] = 1.5e-6  # odd m at higher degree
+    c[3, 1] = 2.1e-5
+    s[3, 1] = -1.3e-5  # odd m
+    c[3, 3] = 4.0e-6
+    s[3, 3] = 3.0e-6   # odd m sectoral
+    c[4, 1] = -5.0e-6
+    s[4, 3] = 1.5e-6  # odd m at higher degree
     return c, s
 
 

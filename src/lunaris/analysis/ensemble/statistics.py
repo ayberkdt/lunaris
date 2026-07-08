@@ -448,12 +448,17 @@ def compute_oe_dispersion(
     # element. Order does not affect the per-epoch mean/std dispersion statistics.
     idx = np.sort(idx)
 
-    a_mean  = np.zeros(T); a_std  = np.zeros(T)
-    e_mean  = np.zeros(T); e_std  = np.zeros(T)
-    inc_mean= np.zeros(T); inc_std= np.zeros(T)
+    a_mean  = np.zeros(T)
+    a_std  = np.zeros(T)
+    e_mean  = np.zeros(T)
+    e_std  = np.zeros(T)
+    inc_mean= np.zeros(T)
+    inc_std= np.zeros(T)
 
     for k, block in enumerate(_iter_epoch_state_blocks(result.Y, idx)):
-        a_arr   = np.zeros(sub); e_arr   = np.zeros(sub); inc_arr = np.zeros(sub)
+        a_arr   = np.zeros(sub)
+        e_arr   = np.zeros(sub)
+        inc_arr = np.zeros(sub)
         for j in range(sub):
             try:
                 state = block[j]

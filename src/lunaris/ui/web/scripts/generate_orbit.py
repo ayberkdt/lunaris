@@ -57,7 +57,8 @@ def generate_satellite_data(r_inner, r_outer, tilt_angle, phase_offset):
                 theta_p = 0.0
                 speed = speed_coast_0
             else:
-                if frame_in_phase == coast_frames: burn_1_theta_p = current_theta
+                if frame_in_phase == coast_frames:
+                    burn_1_theta_p = current_theta
                 t = (frame_in_phase - coast_frames) / burn_frames
                 r_opp = r_inner * (1-t) + r_outer * t
                 a, e = (r_inner + r_opp) / 2, (r_opp - r_inner) / (r_opp + r_inner)
@@ -71,7 +72,8 @@ def generate_satellite_data(r_inner, r_outer, tilt_angle, phase_offset):
                 theta_p = burn_1_theta_p
                 speed = speed_coast_1
             else:
-                if frame_in_phase == coast_frames: burn_2_theta_p = current_theta - math.pi
+                if frame_in_phase == coast_frames:
+                    burn_2_theta_p = current_theta - math.pi
                 t = (frame_in_phase - coast_frames) / burn_frames
                 r_peri = r_inner * (1-t) + r_outer * t
                 a, e = (r_peri + r_outer) / 2, (r_outer - r_peri) / (r_outer + r_peri)
@@ -83,7 +85,8 @@ def generate_satellite_data(r_inner, r_outer, tilt_angle, phase_offset):
                 a, e, theta_p = r_outer, 0.0, 0.0
                 speed = speed_coast_2
             else:
-                if frame_in_phase == coast_frames: burn_3_theta_p = current_theta - math.pi
+                if frame_in_phase == coast_frames:
+                    burn_3_theta_p = current_theta - math.pi
                 t = (frame_in_phase - coast_frames) / burn_frames
                 r_peri = r_outer * (1-t) + r_inner * t
                 a, e = (r_peri + r_outer) / 2, (r_outer - r_peri) / (r_outer + r_peri)
@@ -97,7 +100,8 @@ def generate_satellite_data(r_inner, r_outer, tilt_angle, phase_offset):
                 theta_p = burn_3_theta_p
                 speed = speed_coast_3
             else:
-                if frame_in_phase == coast_frames: burn_4_theta_p = current_theta
+                if frame_in_phase == coast_frames:
+                    burn_4_theta_p = current_theta
                 t = (frame_in_phase - coast_frames) / burn_frames
                 r_apo = r_outer * (1-t) + r_inner * t
                 a, e = (r_inner + r_apo) / 2, (r_apo - r_inner) / (r_apo + r_inner)

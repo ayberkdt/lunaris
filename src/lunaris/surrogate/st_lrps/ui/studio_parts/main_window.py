@@ -56,7 +56,17 @@ from .orbit_benchmark_pages import (
     OrbitBenchmarkPlotsTab,
     OrbitBenchmarkTab,
 )
-from .qt_common import *
+from .qt_common import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+    pyqtgraph_matches_qt,
+)
 from .runtime_pages import RuntimePerformancePage, STLRPSProfilingTab
 from .training_pages import STLRPSTrainTab
 
@@ -150,7 +160,6 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
 
 from lunaris.ui_foundation import DESIGN_TOKENS
 
-from .common_widgets import *
 from .common_widgets import (
     _apply_status_tips,
 )

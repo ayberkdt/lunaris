@@ -884,7 +884,9 @@ def render_orbit_animation_from_history(
             grad_ax = fig.add_axes([g_left, g_bottom, g_width, g_height], zorder=23)
             grad_ax.set_facecolor((0, 0, 0, 0.35))
             for sp in grad_ax.spines.values():
-                sp.set_edgecolor("#2C4A7A"); sp.set_linewidth(1.0); sp.set_alpha(0.9)
+                sp.set_edgecolor("#2C4A7A")
+                sp.set_linewidth(1.0)
+                sp.set_alpha(0.9)
 
             _grad = np.linspace(0.0, 1.0, 256, dtype=float)[None, :]
             grad_ax.imshow(_grad, aspect="auto", cmap=THEME.trail_cmap,
@@ -1033,7 +1035,8 @@ def render_orbit_animation_from_history(
             nxy = math.sqrt(sx * sx + sy * sy)
             if nxy < 1e-12:
                 sx, sy, nxy = 0.0, 1.0, 1.0
-            sx /= nxy; sy /= nxy
+            sx /= nxy
+            sy /= nxy
             if sun_arrow2d_glow is not None:
                 sun_arrow2d_glow.set_data([0.0, sx], [0.0, sy])
             sun_arrow2d.set_data([0.0, sx], [0.0, sy])
@@ -1054,7 +1057,8 @@ def render_orbit_animation_from_history(
         u = np.cross(s, ax_ref)
         nu = np.linalg.norm(u)
         if nu < 1e-12:
-            u = np.array([1.0, 0.0, 0.0]); nu = 1.0
+            u = np.array([1.0, 0.0, 0.0])
+            nu = 1.0
         u = u / nu
 
         head_len = 0.12 * L

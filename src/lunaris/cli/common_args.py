@@ -15,11 +15,11 @@ import argparse
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from lunaris.common.constants import DAY_S, R_MOON
 from lunaris.common.force_requirements import force_requirements_for_config
-from lunaris.common.type_defs import SolidTideConfig
+from lunaris.common.type_defs import GravityBackend, SolidTideConfig
 
 if TYPE_CHECKING:
     # Typing-only import keeps this module import-safe.
@@ -381,7 +381,14 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
         new_backend = str(args.gravity_backend)
     if args.surrogate_gravity_model_dir is not None:
         new_surrogate_dir = str(Path(str(args.surrogate_gravity_model_dir)).expanduser().resolve())
-    grav_cfg = replace(grav_cfg, backend=new_backend, st_lrps_model_dir=new_surrogate_dir)
+    # ``new_backend`` is a raw CLI string; GravityConfig.__post_init__ is the SSOT
+    # that validates/normalizes it (no duplicate CLI-side validation). The cast
+    # only bridges the static Literal type at this argparse boundary.
+    grav_cfg = replace(
+        grav_cfg,
+        backend=cast(GravityBackend, new_backend),
+        st_lrps_model_dir=new_surrogate_dir,
+    )
     grav_cfg = patch_dataclass(grav_cfg, args, _GRAVITY_PATCHES)
 
     if args.adaptive_enabled is not None:
