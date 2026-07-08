@@ -305,7 +305,7 @@ def ensure_model_configs(cfg: SimConfig) -> SimConfig:
     if cfg.flags.enable_srp and cfg.srp is None:
         try:
             from lunaris.physics.solar_effects import SRPConfig
-        except Exception as e:
+        except ImportError as e:
             raise ImportError(
                 "SRP is enabled but lunaris.physics.solar_effects could not be imported."
             ) from e
@@ -314,7 +314,7 @@ def ensure_model_configs(cfg: SimConfig) -> SimConfig:
     if cfg.flags.enable_albedo and cfg.albedo is None:
         try:
             from lunaris.physics.surface_effects import AlbedoConfig
-        except Exception as e:
+        except ImportError as e:
             raise ImportError(
                 "Albedo is enabled but lunaris.physics.surface_effects could not be imported."
             ) from e
@@ -323,7 +323,7 @@ def ensure_model_configs(cfg: SimConfig) -> SimConfig:
     if cfg.flags.enable_thermal and cfg.thermal is None:
         try:
             from lunaris.physics.surface_effects import ThermalConfig
-        except Exception as e:
+        except ImportError as e:
             raise ImportError(
                 "Thermal IR is enabled but lunaris.physics.surface_effects could not be imported."
             ) from e
@@ -332,7 +332,7 @@ def ensure_model_configs(cfg: SimConfig) -> SimConfig:
     if cfg.flags.enable_earth_j2 and cfg.earth_j2 is None:
         try:
             from lunaris.physics.third_body_effects import EarthJ2Params
-        except Exception as e:
+        except ImportError as e:
             raise ImportError(
                 "Earth J2 is enabled but lunaris.physics.third_body_effects could not be imported."
             ) from e
@@ -376,7 +376,7 @@ def load_default_config() -> SimConfig:
         # Defaults are stable strings; keep config import-safe by not importing these at module scope.
         DEFAULT_INERTIAL_FRAME = "J2000"
         DEFAULT_FIXED_FRAME = "MOON_PA"
-    except Exception as e:
+    except ImportError as e:
         raise ImportError(
             "Failed to import lunaris.physics.ephemeris (requires 'spiceypy' and 'numba' to be installed and compatible)."
         ) from e
@@ -433,7 +433,7 @@ def load_default_config() -> SimConfig:
     if flags.enable_srp:
         try:
             from lunaris.physics.solar_effects import SRPConfig
-        except Exception as e:
+        except ImportError as e:
             raise ImportError(
                 "SRP is enabled but lunaris.physics.solar_effects could not be imported (numba dependency)."
             ) from e
@@ -442,7 +442,7 @@ def load_default_config() -> SimConfig:
     if flags.enable_albedo or flags.enable_thermal:
         try:
             from lunaris.physics.surface_effects import AlbedoConfig, ThermalConfig
-        except Exception as e:
+        except ImportError as e:
             raise ImportError(
                 "Albedo/Thermal is enabled but lunaris.physics.surface_effects could not be imported (numba dependency)."
             ) from e
@@ -457,7 +457,7 @@ def load_default_config() -> SimConfig:
     if flags.enable_earth_j2:
         try:
             from lunaris.physics.third_body_effects import EarthJ2Params
-        except Exception as e:
+        except ImportError as e:
             raise ImportError(
                 "Earth J2 requested (enable_earth_j2=True) but lunaris.physics.third_body_effects is unavailable."
             ) from e
@@ -515,48 +515,13 @@ def get_default_config() -> SimConfig:
     return load_default_config()
 
 
-# =============================================================================
-# 5) SMOKE TEST
-# =============================================================================
-
-if __name__ == "__main__":
-    print("\n" + "=" * 60)
-    print("LUNARIS CONFIGURATION CHECK")
-    print("=" * 60 + "\n")
-
-    try:
-        test_cfg = load_default_config()
-        print("✅ [PASS] load_default_config() successful.")
-    except Exception as e:
-        print(f"❌ [FAIL] Could not load config: {e}")
-        raise
-
-    print("\n📂 [PATHS]")
-    print(f"   Gravity Model : {test_cfg.gravity.file_path}")
-    print(f"   SPICE Kernels : {len(test_cfg.spice.kernels)} selected.")
-
-    print("\n⚙️  [PHYSICS FLAGS]")
-    print(f"   Spherical Harmonics : {test_cfg.flags.enable_sh}")
-    print(f"   3rd Body (Sun/Earth): {test_cfg.flags.enable_3rd_body_sun} / {test_cfg.flags.enable_3rd_body_earth}")
-    print(f"   Earth J2            : {test_cfg.flags.enable_earth_j2}")
-    print(f"   Tides (K2/K3)       : {test_cfg.flags.enable_tides_k2} / {test_cfg.flags.enable_tides_k3}")
-    print(f"   Relativity (1PN)    : {test_cfg.flags.enable_relativity_1pn}")
-
-    print("\n🚀 [MISSION PARAMETERS]")
-    print(f"   Spacecraft Mass : {test_cfg.spacecraft.mass_kg} kg")
-    print(f"   Total Duration  : {test_cfg.total_seconds / DAY_S:.2f} days")
-    dt_display = test_cfg.time.output_dt_s
-    dt_str = f"{dt_display}s" if dt_display is not None else "Auto (Variable)"
-    print(f"   Time Step (Out) : {dt_str}")
-    print(f"   Propagator      : {test_cfg.propagator.method} (Tol: {test_cfg.propagator.rtol})")
-
-    print("\n" + "=" * 60)
-    print("✅ CONFIGURATION INTEGRITY CHECK COMPLETE.")
-    print("=" * 60 + "\n")
+# A human-runnable smoke check for the default configuration lives in
+# ``tools/check_config.py`` (kept out of this module so importing the core
+# library never prints or triggers asset discovery as a side effect).
 
 
 # =============================================================================
-# 6) PUBLIC API
+# 5) PUBLIC API
 # =============================================================================
 
 __all__ = [

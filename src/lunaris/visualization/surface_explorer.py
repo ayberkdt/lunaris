@@ -312,7 +312,9 @@ def plot_topography_3d(
     )
 
     ax.set_box_aspect((1, 1, 1))
-    ax.set_xticks([]); ax.set_yticks([]); ax.set_zticks([])
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
     ax.grid(False)
     ax.view_init(elev=elev, azim=azim)
 

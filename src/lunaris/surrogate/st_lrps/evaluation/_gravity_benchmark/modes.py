@@ -320,8 +320,10 @@ def run_single_orbit_mode(args: argparse.Namespace, cfg: SimConfig, ephem: Any) 
         err = np.linalg.norm(y_m[:, :3] - r_ref, axis=1) / 1_000.0
         ax.semilogy(t_ref, np.maximum(err, 1e-9), color=_color(m), label=m.upper())
     ax.set_title(f"Position Error vs {truth.upper()}")
-    ax.set_xlabel("Time [days]"); ax.set_ylabel("Position Error [km]")
-    ax.grid(True, alpha=0.25, which="both"); ax.legend()
+    ax.set_xlabel("Time [days]")
+    ax.set_ylabel("Position Error [km]")
+    ax.grid(True, alpha=0.25, which="both")
+    ax.legend()
     fig.savefig(out_dir / "position_error.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
 

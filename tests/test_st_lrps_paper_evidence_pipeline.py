@@ -77,7 +77,8 @@ def test_benchmark_configs_are_paper_safe():
 
 def test_field_metrics_new_keys():
     n = 100
-    xyz = np.zeros((n, 3)); xyz[:, 0] = R_MOON_SI + np.linspace(100e3, 300e3, n)
+    xyz = np.zeros((n, 3))
+    xyz[:, 0] = R_MOON_SI + np.linspace(100e3, 300e3, n)
     a_true = np.tile([1.0, 0.0, 0.0], (n, 1))
     a_pred = a_true + np.tile([0.0, 2.0e-3, 0.0], (n, 1))
     u = np.zeros(n)

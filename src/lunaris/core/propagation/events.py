@@ -67,7 +67,7 @@ def _first_event_time(
         return None
     try:
         t_ev = np.asarray(t_events[index], dtype=np.float64).reshape(-1)
-    except Exception:
+    except (TypeError, ValueError):
         return None
     if t_ev.size == 0:
         return None
@@ -83,7 +83,7 @@ def _first_event_state(
         return None
     try:
         y_ev = np.asarray(y_events[index], dtype=np.float64)
-    except Exception:
+    except (TypeError, ValueError):
         return None
     if y_ev.size == 0:
         return None
@@ -134,7 +134,7 @@ def event_outcome_from_solver_events(
             if t_imp is None or y_imp is None:
                 raise ValueError("missing impact event time or state")
             impacted = True
-        except Exception as exc:
+        except (TypeError, ValueError) as exc:
             # Losing the impact flag silently would flip a result-affecting
             # boolean (R29b): a malformed solver event payload must be visible.
             import warnings
@@ -226,14 +226,14 @@ def _build_r_i_to_bf_from_rot_table(
                 tab = eph.tables
                 dt = float(getattr(tab, "dt_s", 0.0))
                 q = getattr(tab, "q_i2f_tab", None)
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 dt = 0.0
                 q = None
             if dt > 0.0 and q is not None:
                 try:
                     qtab = np.asarray(q, dtype=np.float64)
                     return dt, qtab
-                except Exception:
+                except (TypeError, ValueError):
                     pass
 
         return None
@@ -308,12 +308,12 @@ def _get_cfg_bool(cfg: Any, name: str, default: bool) -> bool:
     if evc is not None and hasattr(evc, name):
         try:
             return bool(getattr(evc, name))
-        except Exception:
+        except (TypeError, ValueError):
             pass
     if hasattr(cfg, name):
         try:
             return bool(getattr(cfg, name))
-        except Exception:
+        except (TypeError, ValueError):
             pass
     return bool(default)
 
@@ -322,12 +322,12 @@ def _get_cfg_float(cfg: Any, name: str, default: float) -> float:
     if evc is not None and hasattr(evc, name):
         try:
             return float(getattr(evc, name))
-        except Exception:
+        except (TypeError, ValueError):
             pass
     if hasattr(cfg, name):
         try:
             return float(getattr(cfg, name))
-        except Exception:
+        except (TypeError, ValueError):
             pass
     return float(default)
 
@@ -368,7 +368,7 @@ def _terminal_event_endpoint(
             continue
         try:
             t_ev = np.asarray(sol.t_events[i], dtype=np.float64).reshape(-1)
-        except Exception:
+        except (TypeError, ValueError):
             # R29b-justified: a malformed per-event array from the solver means
             # "this event did not fire usably"; other terminal events are still
             # considered, and no-event runs keep their full trajectory.
@@ -378,7 +378,7 @@ def _terminal_event_endpoint(
 
         try:
             y_ev = np.asarray(y_events_raw[i], dtype=np.float64)
-        except Exception:
+        except (TypeError, ValueError):
             # R29b-justified: same rationale as t_events above.
             continue
         if y_ev.size == 0:

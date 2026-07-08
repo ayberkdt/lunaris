@@ -20,8 +20,6 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 from lunaris.common.constants import R_MOON
-
-logger = logging.getLogger(__name__)
 from lunaris.common.math_utils import nyquist_max_step_s, specific_energy_drift_stats
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig, TimeConfig
 from lunaris.core.dynamics import DynamicsEngine
@@ -68,6 +66,8 @@ from lunaris.core.propagation.time_grid import (
     make_time_grid,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def _resolve_atol(cfg: PropagatorConfig, n_state: int) -> float | np.ndarray:
     """Resolve the absolute-tolerance argument for solve_ivp.
@@ -104,7 +104,7 @@ def _rhs_path_for_diagnostics(dynamics: Any) -> str:
     elif prep is not None:
         try:
             raw = prep["rhs_path"]
-        except Exception:
+        except (KeyError, TypeError):
             raw = None
 
     if raw is not None:
@@ -156,14 +156,14 @@ def propagate(
     try:
         sf = getattr(cfg, "stop_file", None)
         stop_file = (str(sf) if sf else None)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         stop_file = None
 
     checkpoint_path: str | None = None
     try:
         cp = getattr(cfg, "checkpoint_path", None)
         checkpoint_path = (str(cp) if cp else None)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         checkpoint_path = None
 
     # -------------------------------------------------------------------------
@@ -197,7 +197,7 @@ def propagate(
             telem_r_i_to_bf = _build_r_i_to_bf_from_rot_table(dynamics)
             if telem_r_i_to_bf is not None:
                 telem_surface_radius_m = _build_surface_radius_sampler(topo_grid)
-        except Exception:
+        except (AttributeError, KeyError, IndexError, TypeError, ValueError):
             telem_r_i_to_bf = None
             telem_surface_radius_m = None
 
@@ -526,7 +526,7 @@ def propagate(
                                 y_row=y_tmp.T,
                                 **checkpoint_meta,
                             )
-                    except Exception as exc:
+                    except (OSError, ValueError) as exc:
                         warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
                 if sol_k_status == 1:
@@ -578,7 +578,7 @@ def propagate(
                     y_row=y_row,
                     **checkpoint_meta,
                 )
-            except Exception as exc:
+            except (OSError, ValueError) as exc:
                 warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
 
         res = PropagationResult(
@@ -729,7 +729,10 @@ def _compute_2body_baseline(
             dense_output=False,
             vectorized=False,
         )
-    except Exception:
+    except (ValueError, TypeError):
+        # Only an unsupported/misspecified integrator method falls back to the
+        # DOP853 baseline; a genuine integration failure must surface, not be
+        # silently retried with a different method.
         sol = solve_ivp(
             fun=rhs2,
             t_span=(float(t_eval[0]), float(t_eval[-1])),

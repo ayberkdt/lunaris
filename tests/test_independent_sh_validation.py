@@ -39,7 +39,9 @@ def _point_at(unit_xyz, radius):
 # =============================================================================
 
 def test_point_mass_matches_newton_closed_form():
-    C = np.zeros((3, 3)); S = np.zeros((3, 3)); C[0, 0] = 1.0
+    C = np.zeros((3, 3))
+    S = np.zeros((3, 3))
+    C[0, 0] = 1.0
     pos = np.array([2.0e6, 5.0e5, 8.0e5])
     a = iref.acceleration(pos, mu=MU, r_ref=R_REF, c_coeffs=C, s_coeffs=S, degree=0)
     r = np.linalg.norm(pos)
@@ -49,7 +51,8 @@ def test_point_mass_matches_newton_closed_form():
 
 def test_j2_potential_matches_closed_form():
     j2 = 2.03e-4
-    C = np.zeros((3, 3)); S = np.zeros((3, 3))
+    C = np.zeros((3, 3))
+    S = np.zeros((3, 3))
     C[0, 0] = 1.0
     C[2, 0] = -j2 / np.sqrt(5.0)   # 4π-normalized C20 = -J2/sqrt(5)
     pos = np.array([1.9e6, -7.0e5, 3.0e5])
@@ -76,7 +79,8 @@ def _build_synthetic_model(degree: int, seed: int):
     from lunaris.physics.spherical_harmonics import GravityModel
 
     rng = np.random.default_rng(seed)
-    c = np.zeros((degree + 1, degree + 1)); s = np.zeros((degree + 1, degree + 1))
+    c = np.zeros((degree + 1, degree + 1))
+    s = np.zeros((degree + 1, degree + 1))
     c[0, 0] = 1.0
     for n in range(2, degree + 1):
         for m in range(0, n + 1):
@@ -112,7 +116,8 @@ def test_independent_matches_lunaris_with_nonzero_degree1_terms():
     from lunaris.physics.spherical_harmonics import GravityModel
 
     degree = 3
-    c = np.zeros((degree + 1, degree + 1)); s = np.zeros((degree + 1, degree + 1))
+    c = np.zeros((degree + 1, degree + 1))
+    s = np.zeros((degree + 1, degree + 1))
     c[0, 0] = 1.0
     c[1, 0] = 3.0e-5   # deliberate non-zero degree-1 (non-centre-of-mass frame)
     c[1, 1] = -2.0e-5
@@ -214,7 +219,8 @@ def test_pyshtools_agrees_with_scipy_reference():
     from validation.independent import pyshtools_reference as pysh
 
     model = _build_synthetic_model(6, seed=7)
-    c = np.array(model.c_coeffs); s = np.array(model.s_coeffs)
+    c = np.array(model.c_coeffs)
+    s = np.array(model.s_coeffs)
     for pos in _spread_points():
         a_scipy = iref.acceleration(pos, mu=MU, r_ref=R_REF, c_coeffs=c, s_coeffs=s, degree=6)
         a_pysh = pysh.acceleration(pos, mu=MU, r_ref=R_REF, c_coeffs=c, s_coeffs=s, degree=6)
@@ -234,7 +240,8 @@ def test_tudatpy_agrees_with_scipy_reference():
     from validation.independent import tudatpy_reference as tud
 
     model = _build_synthetic_model(6, seed=7)
-    c = np.array(model.c_coeffs); s = np.array(model.s_coeffs)
+    c = np.array(model.c_coeffs)
+    s = np.array(model.s_coeffs)
     for pos in _spread_points():
         a_scipy = iref.acceleration(pos, mu=MU, r_ref=R_REF, c_coeffs=c, s_coeffs=s, degree=6)
         a_tud = tud.acceleration(pos, mu=MU, r_ref=R_REF, c_coeffs=c, s_coeffs=s, degree=6)

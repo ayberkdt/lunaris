@@ -22,7 +22,9 @@ def _norm_method(method: Any) -> str:
     return m
 
 def make_time_grid(t0: float, tf: float, dt: float) -> np.ndarray:
-    t0 = float(t0); tf = float(tf); dt = float(dt)
+    t0 = float(t0)
+    tf = float(tf)
+    dt = float(dt)
     if (not np.isfinite(t0)) or (not np.isfinite(tf)) or (tf <= t0) or (dt <= 0.0) or (not np.isfinite(dt)):
         return np.array([t0, tf], dtype=np.float64)
 

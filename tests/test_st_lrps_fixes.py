@@ -592,7 +592,8 @@ def test_old_raw_checkpoint_strict_reload(tmp_path):
     model2.load_state_dict(ckpt["model_state_dict"], strict=True)
 
     x = torch.randn(3, 3, dtype=torch.float32)
-    model.eval(); model2.eval()
+    model.eval()
+    model2.eval()
     with torch.no_grad():
         assert torch.allclose(model(x), model2(x), atol=1e-6)
 
@@ -682,7 +683,9 @@ def test_active_refinement_degree_min_zero_preserved(tmp_path, monkeypatch):
 
     def fake_load_icgem_gfc(file_path, max_degree, **kw):
         n = max_degree + 1
-        C = np.zeros((n, n)); S = np.zeros((n, n)); C[0, 0] = 1.0
+        C = np.zeros((n, n))
+        S = np.zeros((n, n))
+        C[0, 0] = 1.0
         return C, S, {"mu_si": MU_MOON_SI, "r_ref_m": R_MOON_SI,
                       "degree": max_degree, "central_body": "moon"}
 
@@ -694,7 +697,8 @@ def test_active_refinement_degree_min_zero_preserved(tmp_path, monkeypatch):
     header = ",".join(cols)
     row1 = f"{r0},0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1e-5,0.0,300.0"
     err_csv.write_text(f"{header}\n{row1}\n")
-    gfc_file = tmp_path / "fake.gfc"; gfc_file.write_text("")
+    gfc_file = tmp_path / "fake.gfc"
+    gfc_file.write_text("")
 
     class _Ap:
         def error(self, msg): raise SystemExit(msg)

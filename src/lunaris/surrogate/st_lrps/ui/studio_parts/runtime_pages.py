@@ -48,7 +48,35 @@ from pathlib import Path
 
 from lunaris.common.paths import project_root_from_file
 
-from .qt_common import *
+from .qt_common import (
+    THEME,
+    QCheckBox,
+    QComboBox,
+    QDesktopServices,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QGuiApplication,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QProcess,
+    QPushButton,
+    QSizePolicy,
+    QSpinBox,
+    QSplitter,
+    Qt,
+    QTabWidget,
+    QUrl,
+    QVBoxLayout,
+    QWidget,
+    pyqtgraph_matches_qt,
+)
 
 # pyqtgraph — optional, graceful fallback
 try:
@@ -139,8 +167,10 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
     SUITE_PRESETS = {}  # type: ignore[assignment]
 
 
-from .common_widgets import *
 from .common_widgets import (
+    ImageGallery,
+    ProcessPane,
+    ValidatedPathEdit,
     _default_runtime_output_dir,
     _format_command,
     _inspect_run_artifacts,

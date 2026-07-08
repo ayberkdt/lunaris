@@ -27,6 +27,7 @@ Configuration policy
 from __future__ import annotations
 
 import argparse
+import dataclasses as _dataclasses
 import datetime
 import json
 import os
@@ -559,8 +560,6 @@ def apply_run_preset(
         _enforce_paper_bool(cfg, explicit, field, target)
     return cfg
 
-
-import dataclasses as _dataclasses
 
 _TC_DEFAULTS: dict = {
     f.name: f.default

@@ -799,11 +799,16 @@ _AGG_KEYS = [
 
 
 def _stat(arr: np.ndarray, stat: str) -> float:
-    if stat == "mean":   return float(np.mean(arr))
-    if stat == "median": return float(np.median(arr))
-    if stat == "std":    return float(np.std(arr))
-    if stat == "total":  return float(np.sum(arr))
-    if stat == "max":    return float(np.max(arr))
+    if stat == "mean":
+        return float(np.mean(arr))
+    if stat == "median":
+        return float(np.median(arr))
+    if stat == "std":
+        return float(np.std(arr))
+    if stat == "total":
+        return float(np.sum(arr))
+    if stat == "max":
+        return float(np.max(arr))
     pct = int(stat[1:])
     return float(np.percentile(arr, pct))
 

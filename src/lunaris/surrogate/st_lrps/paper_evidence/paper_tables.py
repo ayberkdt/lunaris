@@ -147,10 +147,14 @@ def generate_paper_figures(evidence_root: str | Path, out_dir: str | Path) -> di
             ax.bar(x - 0.25, [v or 0 for v in radial], width=0.25, label="radial")
             ax.bar(x, [v or 0 for v in along], width=0.25, label="along")
             ax.bar(x + 0.25, [v or 0 for v in cross], width=0.25, label="cross")
-            ax.set_xticks(x); ax.set_xticklabels(models, rotation=30, ha="right")
-            ax.set_ylabel("median RIC RMS [km]"); ax.set_title("RIC error decomposition"); ax.legend()
+            ax.set_xticks(x)
+            ax.set_xticklabels(models, rotation=30, ha="right")
+            ax.set_ylabel("median RIC RMS [km]")
+            ax.set_title("RIC error decomposition")
+            ax.legend()
             path = out / "ric_error_decomposition.png"
-            fig.savefig(path, dpi=160); plt.close(fig)
+            fig.savefig(path, dpi=160)
+            plt.close(fig)
             rendered["ric_error_decomposition.png"] = str(path)
 
     runtime = _find_csv(evidence_root, "runtime_summary.csv")
@@ -167,11 +171,14 @@ def generate_paper_figures(evidence_root: str | Path, out_dir: str | Path) -> di
             for m in common:
                 ax.scatter(rt_by_model[m], err_by_model[m])
                 ax.annotate(m, (rt_by_model[m], err_by_model[m]))
-            ax.set_xscale("log"); ax.set_yscale("log")
-            ax.set_xlabel("runtime [s]"); ax.set_ylabel("median RMS pos err [km]")
+            ax.set_xscale("log")
+            ax.set_yscale("log")
+            ax.set_xlabel("runtime [s]")
+            ax.set_ylabel("median RMS pos err [km]")
             ax.set_title("Error vs runtime trade-off")
             path = out / "error_runtime_tradeoff.png"
-            fig.savefig(path, dpi=160); plt.close(fig)
+            fig.savefig(path, dpi=160)
+            plt.close(fig)
             rendered["error_runtime_tradeoff.png"] = str(path)
 
     # Field acceleration error vs altitude.
@@ -191,10 +198,14 @@ def generate_paper_figures(evidence_root: str | Path, out_dir: str | Path) -> di
             pts.sort()
             ax.plot([p[0] for p in pts], [p[1] for p in pts], marker="o", label=policy)
         if by_policy:
-            ax.set_yscale("log"); ax.set_xlabel("altitude [km]"); ax.set_ylabel("accel RMSE [m/s²]")
-            ax.set_title("Field acceleration error vs altitude"); ax.legend()
+            ax.set_yscale("log")
+            ax.set_xlabel("altitude [km]")
+            ax.set_ylabel("accel RMSE [m/s²]")
+            ax.set_title("Field acceleration error vs altitude")
+            ax.legend()
             path = out / "field_acceleration_error_vs_altitude.png"
-            fig.savefig(path, dpi=160); plt.close(fig)
+            fig.savefig(path, dpi=160)
+            plt.close(fig)
             rendered["field_acceleration_error_vs_altitude.png"] = str(path)
 
     return {"rendered": rendered, "skipped": False}

@@ -52,8 +52,42 @@ from typing import Any
 
 from lunaris.common.paths import project_root_from_file
 
-from .qt_common import *
-from .qt_common import NoScrollComboBox
+from .qt_common import (
+    THEME,
+    NoScrollComboBox,
+    QCheckBox,
+    QColor,
+    QDesktopServices,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QGuiApplication,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPlainTextEdit,
+    QProcess,
+    QProcessEnvironment,
+    QPushButton,
+    QSizePolicy,
+    QSpinBox,
+    QSplitter,
+    Qt,
+    QTimer,
+    QUrl,
+    QVBoxLayout,
+    QWidget,
+    pyqtgraph_matches_qt,
+    pyqtSignal,
+    with_alpha,
+)
 
 # pyqtgraph — optional, graceful fallback
 try:
@@ -155,8 +189,12 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
     SUITE_PRESETS = {}  # type: ignore[assignment]
 
 
-from .common_widgets import *
 from .common_widgets import (
+    CollapsibleSection,
+    DatasetInfoLabel,
+    LiveLossPlot,
+    ProcessPane,
+    ValidatedPathEdit,
     _cfg_value,
     _format_command,
     _inspect_run_artifacts,
@@ -3132,7 +3170,8 @@ class STLRPSTrainTab(QWidget):
             for k in keys:
                 if cfg.get(k) is not None:
                     try:
-                        widget.setValue(int(cfg[k])); return
+                        widget.setValue(int(cfg[k]))
+                        return
                     except Exception:
                         pass
 
@@ -3140,14 +3179,16 @@ class STLRPSTrainTab(QWidget):
             for k in keys:
                 if cfg.get(k) is not None:
                     try:
-                        widget.setValue(float(cfg[k])); return
+                        widget.setValue(float(cfg[k]))
+                        return
                     except Exception:
                         pass
 
         def _set_bool(widget, *keys):
             for k in keys:
                 if cfg.get(k) is not None:
-                    widget.setChecked(bool(cfg[k])); return
+                    widget.setChecked(bool(cfg[k]))
+                    return
 
         # Core architecture (config.json uses TrainConfig field names).
         _set_int(self.hidden, "hidden")

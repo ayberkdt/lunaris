@@ -381,10 +381,14 @@ def plot_selected_scenario(
     ax.set_title(f"3D Orbit — scenario {scenario.scenario_id}\n"
                  f"hp={scenario.hp_km:.0f} km  ha={scenario.ha_km:.0f} km  "
                  f"i={scenario.inc_deg:.1f} deg")
-    ax.set_xlabel("X [km]"); ax.set_ylabel("Y [km]"); ax.set_zlabel("Z [km]")
+    ax.set_xlabel("X [km]")
+    ax.set_ylabel("Y [km]")
+    ax.set_zlabel("Z [km]")
     ax.legend(fontsize=8)
     p = out_dir / f"{prefix}_orbit_3d.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     # Altitude
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -396,10 +400,14 @@ def plot_selected_scenario(
         alt = (np.linalg.norm(y_m[:, :3], axis=1) - R_MOON) / 1_000.0
         ax.plot(t_ref, alt, color=_color(m), lw=1, alpha=0.85, label=m.upper())
     ax.set_title(f"Altitude — scenario {scenario.scenario_id}")
-    ax.set_xlabel("Time [days]"); ax.set_ylabel("Altitude [km]")
-    ax.grid(True, alpha=0.25); ax.legend()
+    ax.set_xlabel("Time [days]")
+    ax.set_ylabel("Altitude [km]")
+    ax.grid(True, alpha=0.25)
+    ax.legend()
     p = out_dir / f"{prefix}_altitude.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     # Position error
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -409,10 +417,14 @@ def plot_selected_scenario(
         dr  = np.linalg.norm(y_m[:, :3] - r_ref, axis=1) / 1_000.0
         ax.semilogy(t_ref, np.maximum(dr, 1e-9), color=_color(m), lw=1.2, label=m.upper())
     ax.set_title(f"Position Error vs {truth_model.upper()} — scenario {scenario.scenario_id}")
-    ax.set_xlabel("Time [days]"); ax.set_ylabel("Position Error [km]")
-    ax.grid(True, alpha=0.25, which="both"); ax.legend()
+    ax.set_xlabel("Time [days]")
+    ax.set_ylabel("Position Error [km]")
+    ax.grid(True, alpha=0.25, which="both")
+    ax.legend()
     p = out_dir / f"{prefix}_position_error.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     # Velocity error
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -422,10 +434,14 @@ def plot_selected_scenario(
         dv  = np.linalg.norm(y_m[:, 3:] - v_ref, axis=1)
         ax.semilogy(t_ref, np.maximum(dv, 1e-9), color=_color(m), lw=1.2, label=m.upper())
     ax.set_title(f"Velocity Error vs {truth_model.upper()} — scenario {scenario.scenario_id}")
-    ax.set_xlabel("Time [days]"); ax.set_ylabel("Velocity Error [m/s]")
-    ax.grid(True, alpha=0.25, which="both"); ax.legend()
+    ax.set_xlabel("Time [days]")
+    ax.set_ylabel("Velocity Error [m/s]")
+    ax.grid(True, alpha=0.25, which="both")
+    ax.legend()
     p = out_dir / f"{prefix}_velocity_error.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     # RIC error
     fig, axes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
@@ -444,7 +460,9 @@ def plot_selected_scenario(
     axes[2].set_xlabel("Time [days]")
     fig.tight_layout()
     p = out_dir / f"{prefix}_ric_error.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     return saved
 
@@ -483,7 +501,9 @@ def plot_aggregate_stats(
     ax.set_title("RMS Position Error Distribution vs Truth")
     ax.grid(True, alpha=0.2, axis="y")
     p = out_dir / "aggregate_boxplot_rms_error.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     # P95 bar
     p95_vals = [agg[m].get("rms_pos_err_km__p95", 0) for m in models_sorted]
@@ -499,7 +519,9 @@ def plot_aggregate_stats(
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
                 f"{val:.4f}", ha="center", va="bottom", fontsize=8)
     p = out_dir / "aggregate_p95_error_bar.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     # Runtime vs accuracy
     fig, ax = plt.subplots(figsize=(8, 6))
@@ -512,9 +534,12 @@ def plot_aggregate_stats(
     ax.set_xlabel("Mean Runtime per Scenario [s]")
     ax.set_ylabel("Median RMS Position Error [km]")
     ax.set_title("Runtime vs Accuracy (DOP853)")
-    ax.grid(True, alpha=0.2); ax.legend()
+    ax.grid(True, alpha=0.2)
+    ax.legend()
     p = out_dir / "runtime_vs_accuracy.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     return saved
 
@@ -547,7 +572,9 @@ def plot_batch_rk4_results(
     ax.set_title("Batch Runtime vs Accuracy")
     ax.grid(True, alpha=0.2)
     p = out_dir / "batch_runtime_vs_accuracy.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     # RMS distribution histogram
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -558,9 +585,12 @@ def plot_batch_rk4_results(
     ax.set_xlabel("RMS Position Error [km]")
     ax.set_ylabel("Count")
     ax.set_title("ST-LRPS Batch RK4 vs SH200 DOP853 — RMS Error Distribution")
-    ax.legend(); ax.grid(True, alpha=0.2)
+    ax.legend()
+    ax.grid(True, alpha=0.2)
     p = out_dir / "batch_rms_error_distribution.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     # Error decomposition bar chart (if decomposition available)
     if model_rows and integr_rows:
@@ -586,7 +616,9 @@ def plot_batch_rk4_results(
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
                     f"{val:.4f}", ha="center", va="bottom", fontsize=9)
         p = out_dir / "batch_error_decomposition_bar.png"
-        fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+        fig.savefig(p, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        saved.append(p)
 
     # RMS error vs inclination
     inc_vals = np.array([r["inc_deg"] for r in ok_total])
@@ -598,7 +630,9 @@ def plot_batch_rk4_results(
     ax.set_title("ST-LRPS Batch RK4 Error vs Inclination")
     ax.grid(True, alpha=0.2)
     p = out_dir / "batch_error_vs_inclination.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     return saved
 
@@ -645,7 +679,9 @@ def plot_batch_selected_scenario(
     ax.set_ylabel("Position Error [km]")
     ax.grid(True, alpha=0.25, which="both")
     p = out_dir / "batch_selected_position_error.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     ric_km = compute_ric_errors(y_truth[:, :3], y_truth[:, 3:], y_st[:, :3]) / 1_000.0
     fig, axes = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
@@ -658,7 +694,9 @@ def plot_batch_selected_scenario(
     axes[-1].set_xlabel("Time [days]")
     fig.tight_layout()
     p = out_dir / "batch_selected_ric_error.png"
-    fig.savefig(p, dpi=150, bbox_inches="tight"); plt.close(fig); saved.append(p)
+    fig.savefig(p, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    saved.append(p)
 
     return saved
 
@@ -897,7 +935,9 @@ def plot_gpu_batch_report_figures(
         _highlight_ticklabels(ax, labels, axis="y")
         fig.tight_layout()
         p = plots_dir / "gpu_accuracy_ranking_bar.png"
-        fig.savefig(p); plt.close(fig); saved.append(p)
+        fig.savefig(p)
+        plt.close(fig)
+        saved.append(p)
 
     # ----- 2. Runtime vs accuracy ----------------------------------------
     if models:
@@ -941,7 +981,9 @@ def plot_gpu_batch_report_figures(
                   subtitle=f"Lower-left is better (faster + more accurate).  {ctx}")
         fig.tight_layout()
         p = plots_dir / "gpu_runtime_vs_accuracy.png"
-        fig.savefig(p); plt.close(fig); saved.append(p)
+        fig.savefig(p)
+        plt.close(fig)
+        saved.append(p)
 
     # ----- 3. RMS error distribution -------------------------------------
     data = [_model_vals(m) for m in models]
@@ -990,7 +1032,9 @@ def plot_gpu_batch_report_figures(
         _style_ax(ax, title="RMS Position Error Distribution", subtitle=ctx)
     fig.tight_layout()
     p = plots_dir / "gpu_rms_error_distribution_boxplot.png"
-    fig.savefig(p); plt.close(fig); saved.append(p)
+    fig.savefig(p)
+    plt.close(fig)
+    saved.append(p)
 
     # ----- 4. Histograms --------------------------------------------------
     if models:
@@ -1014,7 +1058,9 @@ def plot_gpu_batch_report_figures(
         axes[0].set_title("RMS Error Histograms per Model")
         fig.tight_layout()
         p = plots_dir / "gpu_rms_error_histograms.png"
-        fig.savefig(p); plt.close(fig); saved.append(p)
+        fig.savefig(p)
+        plt.close(fig)
+        saved.append(p)
 
     # ----- 5. ST-LRPS equivalent SH degree -------------------------------
     sh_points = []
@@ -1075,7 +1121,9 @@ def plot_gpu_batch_report_figures(
               subtitle=f"Where ST-LRPS sits on the SH error ladder.  {ctx}")
     fig.tight_layout()
     p = plots_dir / "stlrps_equivalent_sh_degree.png"
-    fig.savefig(p); plt.close(fig); saved.append(p)
+    fig.savefig(p)
+    plt.close(fig)
+    saved.append(p)
 
     # ----- 6-7. Error vs inclination / altitude --------------------------
     for xkey, xlabel, fname in [
@@ -1107,7 +1155,9 @@ def plot_gpu_batch_report_figures(
                   ylabel=f"RMS Position Error [{unit}]", subtitle=ctx)
         fig.tight_layout()
         p = plots_dir / fname
-        fig.savefig(p); plt.close(fig); saved.append(p)
+        fig.savefig(p)
+        plt.close(fig)
+        saved.append(p)
 
     # ----- Ensemble time-series ------------------------------------------
     if scenarios and truth.t_by_scenario:
@@ -1154,7 +1204,9 @@ def plot_gpu_batch_report_figures(
                   subtitle=f"Median across scenarios; shaded band = 25–75%.  {ctx}")
         fig.tight_layout()
         p = plots_dir / "ensemble_mean_position_error_vs_time.png"
-        fig.savefig(p); plt.close(fig); saved.append(p)
+        fig.savefig(p)
+        plt.close(fig)
+        saved.append(p)
 
         ric_curves = {name: np.sqrt(np.mean(arr ** 2, axis=0)) for name, arr in ric_by_model.items()}
         ric_max_km = max(_finite_positive(
@@ -1179,7 +1231,9 @@ def plot_gpu_batch_report_figures(
             _legend(axes_ric[0], outside=True)
         fig_ric.tight_layout()
         p = plots_dir / "ensemble_ric_rms_vs_time.png"
-        fig_ric.savefig(p); plt.close(fig_ric); saved.append(p)
+        fig_ric.savefig(p)
+        plt.close(fig_ric)
+        saved.append(p)
 
     # ----- Phase diagnostics summary (raw vs phase-corrected RMS) --------
     # Diagnostic-only view: the corrected RMS uses a <=3-parameter time
@@ -1227,7 +1281,9 @@ def plot_gpu_batch_report_figures(
                   subtitle=ctx)
         fig_ph.tight_layout()
         p = plots_dir / "phase_diagnostics_summary.png"
-        fig_ph.savefig(p); plt.close(fig_ph); saved.append(p)
+        fig_ph.savefig(p)
+        plt.close(fig_ph)
+        saved.append(p)
 
     # ----- Selected ST-LRPS scenarios ------------------------------------
     scenario_by_id = {s.scenario_id: s for s in scenarios}
@@ -1287,7 +1343,9 @@ def plot_gpu_batch_report_figures(
                   xlabel="Time [days]", ylabel=f"Position Error [{unit}]", subtitle=sub)
         fig_pos.tight_layout()
         p = plots_dir / f"selected_{label}_position_error_all_models.png"
-        fig_pos.savefig(p); plt.close(fig_pos); saved.append(p)
+        fig_pos.savefig(p)
+        plt.close(fig_pos)
+        saved.append(p)
 
         # Altitude error
         alt_max_km = max(_finite_positive(
@@ -1306,7 +1364,9 @@ def plot_gpu_batch_report_figures(
                   xlabel="Time [days]", ylabel=f"Altitude Error [{aunit}]", subtitle=sub)
         fig_alt.tight_layout()
         p = plots_dir / f"selected_{label}_altitude_error_all_models.png"
-        fig_alt.savefig(p); plt.close(fig_alt); saved.append(p)
+        fig_alt.savefig(p)
+        plt.close(fig_alt)
+        saved.append(p)
 
         # RIC error
         ric_max_km = max(_finite_positive(
@@ -1331,7 +1391,9 @@ def plot_gpu_batch_report_figures(
             _legend(axes_sel[0], outside=True)
         fig_ric_sel.tight_layout()
         p = plots_dir / f"selected_{label}_ric_error_all_models.png"
-        fig_ric_sel.savefig(p); plt.close(fig_ric_sel); saved.append(p)
+        fig_ric_sel.savefig(p)
+        plt.close(fig_ric_sel)
+        saved.append(p)
 
         # Phase lag tau(t): + = model leads truth, - = model falls behind.
         if tau_by_model:
@@ -1349,7 +1411,9 @@ def plot_gpu_batch_report_figures(
                       subtitle=sub)
             fig_tau.tight_layout()
             p = plots_dir / f"selected_{label}_phase_lag_all_models.png"
-            fig_tau.savefig(p); plt.close(fig_tau); saved.append(p)
+            fig_tau.savefig(p)
+            plt.close(fig_tau)
+            saved.append(p)
 
         # 3D trajectory (optional)
         if getattr(args, "plot_3d", False):
@@ -1365,10 +1429,14 @@ def plot_gpu_batch_report_figures(
                 ax_3d.plot(rk[:, 0], rk[:, 1], rk[:, 2], color=model_color(result.display_name),
                            lw=model_linewidth(result.display_name), label=display_label(result.display_name))
             ax_3d.set_title(f"{label.title()} ST-LRPS Scenario {sid}: 3D Trajectory")
-            ax_3d.set_xlabel("X [km]"); ax_3d.set_ylabel("Y [km]"); ax_3d.set_zlabel("Z [km]")
+            ax_3d.set_xlabel("X [km]")
+            ax_3d.set_ylabel("Y [km]")
+            ax_3d.set_zlabel("Z [km]")
             ax_3d.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0), frameon=False)
             p = plots_dir / f"selected_{label}_trajectory_3d_all_models.png"
-            fig_3d.savefig(p, bbox_inches="tight"); plt.close(fig_3d); saved.append(p)
+            fig_3d.savefig(p, bbox_inches="tight")
+            plt.close(fig_3d)
+            saved.append(p)
 
     return saved
 # =============================================================================

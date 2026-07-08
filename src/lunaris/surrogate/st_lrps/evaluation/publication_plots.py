@@ -205,15 +205,18 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
                       medianprops=dict(color="k", lw=1.2),
                       whiskerprops=dict(lw=0.8), capprops=dict(lw=0.8))
     for patch, col in zip(bp["boxes"], colors_ordered, strict=False):
-        patch.set_facecolor(col); patch.set_alpha(0.3)
-        patch.set_edgecolor(col); patch.set_linewidth(1.0)
+        patch.set_facecolor(col)
+        patch.set_alpha(0.3)
+        patch.set_edgecolor(col)
+        patch.set_linewidth(1.0)
     rng = np.random.default_rng(42)
     for pos, k, col in zip(positions, keys_ordered, colors_ordered, strict=False):
         jitter = rng.uniform(-0.15, 0.15, size=len(model_errs[k]))
         ax2a.scatter(pos + jitter, model_errs[k], s=8, color=col, alpha=0.6,
                      edgecolors="none", zorder=4)
     ax2a.set_yscale("log")
-    ax2a.set_xticks(positions); ax2a.set_xticklabels(keys_ordered, fontsize=8)
+    ax2a.set_xticks(positions)
+    ax2a.set_xticklabels(keys_ordered, fontsize=8)
     ax2a.set_ylabel("RMS position error [m]")
     ax2a.set_title("(a)", loc="left", fontsize=9, pad=4)
     for k, col, ls in zip(keys_ordered, colors_ordered, [LS["SH20"], LS["STLRPS"], LS["SH60"]], strict=False):
@@ -221,7 +224,8 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
         ecdf = np.arange(1, len(vals) + 1) / len(vals)
         ax2b.step(vals, ecdf, where="post", color=col, lw=1.5, ls=ls, label=k)
     ax2b.set_xscale("log")
-    ax2b.set_xlabel("RMS position error [m]"); ax2b.set_ylabel("ECDF")
+    ax2b.set_xlabel("RMS position error [m]")
+    ax2b.set_ylabel("ECDF")
     ax2b.set_ylim(-0.02, 1.04)
     ax2b.set_title("(b)", loc="left", fontsize=9, pad=4)
     ax2b.legend(loc="lower right", frameon=True)
@@ -239,7 +243,8 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
         finite = err_m[np.isfinite(err_m) & (err_m > 0)]
         vmin = float(np.percentile(finite, 2)) if finite.size else 1e-3
         vmax = float(np.percentile(finite, 98)) if finite.size else 1.0
-        vmin = max(vmin, 1e-6); vmax = max(vmax, vmin * 10)
+        vmin = max(vmin, 1e-6)
+        vmax = max(vmax, vmin * 10)
         if {"hp_km", "inc_deg"}.issubset(df.columns):
             sc = ax.scatter(df["hp_km"], df["inc_deg"], c=err_m, cmap="RdYlGn_r",
                             norm=LogNorm(vmin=vmin, vmax=vmax), s=14,
@@ -293,10 +298,12 @@ def generate_figures(stlrps_run: Path, multi_run: Path, out_dir: Path) -> None:
             panel_ax.scatter(vals, yy, marker=mk, s=28, color=col, edgecolors="k",
                              linewidths=0.2, zorder=5, label=name)
         panel_ax.set_xscale("log")
-        panel_ax.set_yticks(y_pos); panel_ax.set_yticklabels(components)
+        panel_ax.set_yticks(y_pos)
+        panel_ax.set_yticklabels(components)
         panel_ax.set_xlabel("RMS error [m]")
         panel_ax.set_title(panel_title, loc="left", fontsize=8, pad=3)
-        panel_ax.invert_yaxis(); panel_ax.tick_params(axis="y", length=0)
+        panel_ax.invert_yaxis()
+        panel_ax.tick_params(axis="y", length=0)
     ax4a.legend(loc="lower right", fontsize=7, frameon=True, borderpad=0.3)
     _save(fig4, out_dir, "fig4_ric_decomposition")
 

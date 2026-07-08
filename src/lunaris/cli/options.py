@@ -3,6 +3,13 @@
 This module is intentionally import-safe: it defines argparse surfaces and
 performs lightweight validation only. Heavy artifact helpers are imported lazily
 inside validation branches that need them.
+
+Structure
+---------
+``parse_args`` composes a set of small ``_add_*_args`` group builders (one per
+config surface) and then runs a set of focused ``_validate_*`` checks. Splitting
+the previously monolithic parser/validator keeps each argument group and each
+validation concern independently readable and testable.
 """
 
 from __future__ import annotations
@@ -17,15 +24,11 @@ from lunaris.cli.common_args import parse_adaptive_table, parse_tide_bodies, str
 from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string
 
 
-def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Lunaris Runner (STRICT; config.py + common.type_defs aligned)",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
-
-    # ---------------------------
-    # Time (TimeConfig)
-    # ---------------------------
+# ---------------------------------------------------------------------------
+# Argument-group builders (one per config surface)
+# ---------------------------------------------------------------------------
+def _add_time_args(parser: argparse.ArgumentParser) -> None:
+    """Time (TimeConfig)."""
     g_time = parser.add_argument_group("Time")
     g_time.add_argument(
         "--start-date",
@@ -44,9 +47,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     g_time.add_argument("--output-dt-s", type=float, help="Fixed output spacing [s] (omit to keep config default)")
     g_time.add_argument("--samples-per-period", type=int, help="Used when output_dt_s is None")
 
-    # ---------------------------
-    # Orbit init
-    # ---------------------------
+
+def _add_orbit_args(parser: argparse.ArgumentParser) -> None:
+    """Orbit init."""
     g_orbit = parser.add_argument_group("Orbit Init (choose one)")
     g_orbit.add_argument("--hp-km", type=float, help="Periselene altitude [km]")
     g_orbit.add_argument("--ha-km", type=float, help="Aposelene altitude [km]")
@@ -59,9 +62,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     g_orbit.add_argument("--argp-deg", type=float, help="Argument of periapsis [deg]")
     g_orbit.add_argument("--ta-deg", type=float, help="True anomaly [deg]")
 
-    # ---------------------------
-    # Physics flags (PerturbationFlags)
-    # ---------------------------
+
+def _add_physics_args(parser: argparse.ArgumentParser) -> None:
+    """Physics flags (PerturbationFlags) plus thermal/albedo/tide model knobs."""
     g_phys = parser.add_argument_group("Physics Flags")
     g_phys.add_argument("--enable-sh", type=str2bool, help="Enable spherical harmonics gravity (on/off)")
     g_phys.add_argument("--enable-3rd-body-sun", type=str2bool, help="Enable Sun third-body (on/off)")
@@ -113,9 +116,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     g_phys.add_argument("--enable-relativity-1pn", type=str2bool, help="Enable relativity 1PN (on/off)")
 
-    # ---------------------------
-    # Gravity model (GravityConfig)
-    # ---------------------------
+
+def _add_gravity_args(parser: argparse.ArgumentParser) -> None:
+    """Gravity model (GravityConfig)."""
     g_grav = parser.add_argument_group("Gravity Model")
     g_grav.add_argument(
         "--gravity-backend",
@@ -132,18 +135,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     g_grav.add_argument("--adaptive-enabled", type=str2bool, help="Enable adaptive SH degree (on/off)")
     g_grav.add_argument("--adaptive-table", type=parse_adaptive_table, help="alt:deg,alt:deg (ascending)")
 
-    # ---------------------------
-    # Spacecraft (SpacecraftProps)
-    # ---------------------------
+
+def _add_spacecraft_args(parser: argparse.ArgumentParser) -> None:
+    """Spacecraft (SpacecraftProps)."""
     g_sc = parser.add_argument_group("Spacecraft")
     g_sc.add_argument("--mass-kg", type=float, help="Mass [kg]")
     g_sc.add_argument("--area-m2", type=float, help="Area [m^2]")
     g_sc.add_argument("--cd", type=float, help="Cd [-]")
     g_sc.add_argument("--cr", type=float, help="Cr [-]")
 
-    # ---------------------------
-    # Numerics (PropagatorConfig)
-    # ---------------------------
+
+def _add_numerics_args(parser: argparse.ArgumentParser) -> None:
+    """Numerics (PropagatorConfig)."""
     g_num = parser.add_argument_group("Numerics")
     g_num.add_argument("--method", type=str, help="Integrator method string (e.g. DOP853, RK45, VV)")
     g_num.add_argument("--user-max-step-s", type=float, help="Max internal solver step [s]")
@@ -163,9 +166,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Alias for --telem-cadence-s",
     )
 
-    # ---------------------------
-    # Output & Assets (OutputConfig + assets)
-    # ---------------------------
+
+def _add_io_args(parser: argparse.ArgumentParser) -> None:
+    """Output & Assets (OutputConfig + assets)."""
     g_io = parser.add_argument_group("I/O & Assets")
     g_io.add_argument("--out-dir", type=str, help="Output directory")
     g_io.add_argument("--make-3d-plots", type=str2bool, help="Generate 3D plots/animation outputs (on/off)")
@@ -175,13 +178,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     g_io.add_argument("--albedo-root", type=str, help="LOLA Albedo root directory")
     g_io.add_argument("--ldem-ppd", type=int, help="Surface resolution (pixels per degree)")
 
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Lunaris Runner (STRICT; config.py + common.type_defs aligned)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    _add_time_args(parser)
+    _add_orbit_args(parser)
+    _add_physics_args(parser)
+    _add_gravity_args(parser)
+    _add_spacecraft_args(parser)
+    _add_numerics_args(parser)
+    _add_io_args(parser)
+
     args = parser.parse_args(args=argv)
     validate_args(parser, args)
     return args
 
 
-def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
-    # Orbit init validation
+# ---------------------------------------------------------------------------
+# Validation (focused checks, each raising via ``parser.error``)
+# ---------------------------------------------------------------------------
+def _validate_orbit_init(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     hp_ha_any = (args.hp_km is not None) or (args.ha_km is not None)
     a_e_any = (args.a_km is not None) or (args.e is not None)
     alt = args.alt_km is not None
@@ -196,7 +216,6 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         parser.error("Choose ONE orbit init mode: (--hp-km,--ha-km) OR (--a-km,--e) OR (--alt-km).")
     if alt and (hp_ha_any or a_e_any):
         parser.error("Choose ONE orbit init mode: (--alt-km) cannot be combined with other orbit init flags.")
-
 
     # If user provides orbital angles without an explicit orbit-init mode, fail fast.
     angles_any = any(
@@ -214,19 +233,22 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
             "(--hp-km/--ha-km or --a-km/--e or --alt-km)."
         )
 
-    # start-date format (if provided)
-    if args.start_date is not None:
-        s = str(args.start_date).strip()
-        try:
-            normalize_iso_datetime_to_utc_string(s, precision=0)
-        except Exception as exc:
-            parser.error(
-                "--start-date must be an ISO-like timestamp such as "
-                "yyyy-MM-ddTHH:mm:ssZ or yyyy-MM-ddTHH:mm:ss+03:00 "
-                f"(details: {exc})"
-            )
 
-    # numeric sanity
+def _validate_start_date(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.start_date is None:
+        return
+    s = str(args.start_date).strip()
+    try:
+        normalize_iso_datetime_to_utc_string(s, precision=0)
+    except (ValueError, TypeError) as exc:
+        parser.error(
+            "--start-date must be an ISO-like timestamp such as "
+            "yyyy-MM-ddTHH:mm:ssZ or yyyy-MM-ddTHH:mm:ss+03:00 "
+            f"(details: {exc})"
+        )
+
+
+def _validate_numeric_ranges(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if args.days is not None and args.days <= 0:
         parser.error("--days must be positive.")
     if args.hours is not None and args.hours <= 0:
@@ -277,6 +299,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     if args.albedo_facet_lon_count is not None and args.albedo_facet_lon_count < 1:
         parser.error("--albedo-facet-lon-count must be >= 1.")
 
+
+def _validate_dependent_flags(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     # adaptive table implies adaptive enabled unless user explicitly disabled
     if args.adaptive_table is not None and args.adaptive_enabled is False:
         parser.error("--adaptive-table requires --adaptive-enabled on (or omit --adaptive-enabled).")
@@ -287,7 +311,8 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
     if args.tides_kind == "k3" and args.tide_k3 is None:
         parser.error("--tides-kind k3 requires an explicit --tide-k3 value.")
 
-    # path sanity
+
+def _validate_paths(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
     if args.kernel_dir is not None:
         kd = Path(str(args.kernel_dir)).expanduser()
         if not kd.exists() or not kd.is_dir():
@@ -303,34 +328,47 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         if not p.exists() or not p.is_dir():
             parser.error(f"--albedo-root must be an existing directory: {p}")
 
-    if args.surrogate_gravity_model_dir is not None:
-        # Artifact validation: directory existence, config.json, and a usable
-        # checkpoint (ckpt_best.pt OR ckpt_last.pt) are delegated to the
-        # canonical helper. Do NOT reimplement these checks here.
-        from lunaris.common.batch_defs import validate_st_lrps_model_dir
 
-        try:
-            model_dir = validate_st_lrps_model_dir(args.surrogate_gravity_model_dir)
-        except ValueError as exc:
-            parser.error(f"--surrogate-gravity-model-dir: {exc}")
+def _validate_surrogate_dir(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if args.surrogate_gravity_model_dir is None:
+        return
 
-        # Semantic validation (distinct from artifact validation above): confirm
-        # the run was trained on a lunar gravity config. Not covered by the
-        # artifact helper, so it is kept here and clearly separated.
-        looks_like_lunar_run_config: Callable[[Mapping[str, Any]], bool] | None
-        try:
-            from lunaris.surrogate.st_lrps.data.dataset_parameters import (
-                looks_like_lunar_run_config,
+    # Artifact validation: directory existence, config.json, and a usable
+    # checkpoint (ckpt_best.pt OR ckpt_last.pt) are delegated to the
+    # canonical helper. Do NOT reimplement these checks here.
+    from lunaris.common.batch_defs import validate_st_lrps_model_dir
+
+    try:
+        model_dir = validate_st_lrps_model_dir(args.surrogate_gravity_model_dir)
+    except ValueError as exc:
+        parser.error(f"--surrogate-gravity-model-dir: {exc}")
+
+    # Semantic validation (distinct from artifact validation above): confirm
+    # the run was trained on a lunar gravity config. Not covered by the
+    # artifact helper, so it is kept here and clearly separated.
+    looks_like_lunar_run_config: Callable[[Mapping[str, Any]], bool] | None
+    try:
+        from lunaris.surrogate.st_lrps.data.dataset_parameters import (
+            looks_like_lunar_run_config,
+        )
+    except ImportError:
+        looks_like_lunar_run_config = None
+    if looks_like_lunar_run_config is not None:
+        run_cfg = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
+        if not looks_like_lunar_run_config(run_cfg):
+            parser.error(
+                "--surrogate-gravity-model-dir does not look like a lunar-trained ST-LRPS run: "
+                f"{model_dir}"
             )
-        except ImportError:
-            looks_like_lunar_run_config = None
-        if looks_like_lunar_run_config is not None:
-            run_cfg = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
-            if not looks_like_lunar_run_config(run_cfg):
-                parser.error(
-                    "--surrogate-gravity-model-dir does not look like a lunar-trained ST-LRPS run: "
-                    f"{model_dir}"
-                )
+
+
+def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    _validate_orbit_init(parser, args)
+    _validate_start_date(parser, args)
+    _validate_numeric_ranges(parser, args)
+    _validate_dependent_flags(parser, args)
+    _validate_paths(parser, args)
+    _validate_surrogate_dir(parser, args)
 
 
 __all__ = ["parse_args", "validate_args"]

@@ -38,7 +38,7 @@ def _stop_requested(stop_file: str | None) -> bool:
         return False
     try:
         return Path(os.fspath(stop_file)).exists()
-    except Exception:
+    except (OSError, TypeError, ValueError):
         return False
 
 
@@ -48,7 +48,7 @@ def _config_payload(config: Any) -> Any:
     try:
         if is_dataclass(config) and not isinstance(config, type):
             return asdict(config)
-    except Exception:
+    except (TypeError, ValueError):
         return repr(config)
     return config
 
@@ -58,7 +58,7 @@ def _checkpoint_config_hash(config: Any) -> str:
 
     try:
         return canonical_json_sha256(_config_payload(config))
-    except Exception:
+    except (TypeError, ValueError):
         return ""
 
 
@@ -76,7 +76,7 @@ def _latest_t(t: Any) -> float:
         arr = np.asarray(t, dtype=np.float64).reshape(-1)
         if arr.size:
             return float(arr[-1])
-    except Exception:
+    except (TypeError, ValueError):
         pass
     return float("nan")
 
@@ -88,7 +88,7 @@ def _latest_y(y_row: Any) -> np.ndarray:
             return np.asarray(arr[-1], dtype=np.float64)
         if arr.ndim == 1 and arr.size > 0:
             return np.asarray(arr, dtype=np.float64)
-    except Exception:
+    except (TypeError, ValueError):
         pass
     return np.asarray([], dtype=np.float64)
 
@@ -123,7 +123,7 @@ def _read_int(data: Any, key: str, default: int) -> int:
         return int(default)
     try:
         return int(_scalar_item(data[key]))
-    except Exception:
+    except (TypeError, ValueError):
         return int(default)
 
 
@@ -132,7 +132,7 @@ def _read_float(data: Any, key: str, default: float) -> float:
         return float(default)
     try:
         return float(_scalar_item(data[key]))
-    except Exception:
+    except (TypeError, ValueError):
         return float(default)
 
 
@@ -141,7 +141,7 @@ def _read_str(data: Any, key: str) -> str | None:
         return None
     try:
         text = str(_scalar_item(data[key]) or "").strip()
-    except Exception:
+    except (TypeError, ValueError):
         text = ""
     return text or None
 
@@ -172,7 +172,7 @@ def _atomic_save_npz(path: str | os.PathLike[str], **arrays: Any) -> None:
             try:
                 if p.exists():
                     p.unlink()
-            except Exception:
+            except OSError:
                 # R29b-justified: temp-file cleanup on the (possibly failing)
                 # save path; masking the original np.savez error would be worse.
                 pass

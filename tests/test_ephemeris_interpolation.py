@@ -40,15 +40,21 @@ from lunaris.physics.ephemeris import (
 @njit(cache=True)
 def _interp3_cuda_mirror(t, dt_s, tab, n_tab, result):
     if n_tab <= 1 or dt_s <= 0.0:
-        result[0] = tab[0, 0]; result[1] = tab[0, 1]; result[2] = tab[0, 2]
+        result[0] = tab[0, 0]
+        result[1] = tab[0, 1]
+        result[2] = tab[0, 2]
         return
     tmax = dt_s * (n_tab - 1)
     if t <= 0.0:
-        result[0] = tab[0, 0]; result[1] = tab[0, 1]; result[2] = tab[0, 2]
+        result[0] = tab[0, 0]
+        result[1] = tab[0, 1]
+        result[2] = tab[0, 2]
         return
     if t >= tmax:
         j = n_tab - 1
-        result[0] = tab[j, 0]; result[1] = tab[j, 1]; result[2] = tab[j, 2]
+        result[0] = tab[j, 0]
+        result[1] = tab[j, 1]
+        result[2] = tab[j, 2]
         return
     u = t / dt_s
     i = int(u)

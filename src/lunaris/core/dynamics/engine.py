@@ -47,7 +47,7 @@ import logging
 import math
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 import numpy as np
 from numba import njit
@@ -125,6 +125,24 @@ def _validate_rhs_state_vector(y: Any) -> np.ndarray:
             "or 7 elements when y[6] is spacecraft mass."
         )
     return arr
+
+
+class _PreparedForces(NamedTuple):
+    """Bundle of prepared per-force data packs consumed by ``build_rhs``.
+
+    Groups the output of the ``prepare_*`` helpers into one named result so the
+    RHS builder's preparation step is a single call rather than an interleaved
+    block. Field order matches the historical local-variable order in
+    ``build_rhs`` (``req, gp, ep, ap, ej, tp, th``).
+    """
+
+    req: DynamicsRequirements
+    gravity: _GravPack
+    ephem: _EphemPack
+    albedo: _AlbedoPack
+    earth_j2: _EarthJ2Pack
+    tides: _TidePack
+    thermal: _ThermalPack
 
 
 # =============================================================================
@@ -214,14 +232,18 @@ class DynamicsEngine:
         )
 
     # -------------------------------------------------------------------------
-    # Public: build RHS
+    # Preparation: resolve requirements and build per-force data packs
     # -------------------------------------------------------------------------
-    def build_rhs(self, *, force_rebuild: bool = False) -> Callable[[float, np.ndarray], np.ndarray]:
-        if self._rhs_cache is not None and not force_rebuild:
-            return self._rhs_cache
+    def _prepare_force_packs(self) -> _PreparedForces:
+        """Resolve requirements and build every per-force data pack.
 
-        t0 = time.perf_counter()
-
+        This isolates the (numerics-free) preparation/orchestration step from the
+        hot-path RHS kernels in ``build_rhs``. It also stamps ``self._prep`` for
+        debug/reporting. Order of the ``prepare_*`` calls is significant: the raw
+        config-derived requirements are resolved to effective runtime
+        requirements only after ``prepare_ephem`` reports what the loaded
+        ephemeris can actually provide.
+        """
         req = self._requirements()
         gp = prepare_gravity(self.grav, gravity_adaptive=self.gravity_adaptive)
         ep = prepare_ephem(self.ephem, req)
@@ -237,7 +259,21 @@ class DynamicsEngine:
 
         # Cache for debug/reporting
         self._prep = {"req": req, "grav": gp, "eph": ep, "alb": ap, "earth_j2": ej, "tides": tp, "thermal": th}
+        return _PreparedForces(req, gp, ep, ap, ej, tp, th)
 
+    # -------------------------------------------------------------------------
+    # Public: build RHS
+    # -------------------------------------------------------------------------
+    def build_rhs(self, *, force_rebuild: bool = False) -> Callable[[float, np.ndarray], np.ndarray]:
+        if self._rhs_cache is not None and not force_rebuild:
+            return self._rhs_cache
+
+        t0 = time.perf_counter()
+
+        # --- 1) Prepare per-force data packs (orchestration; no numerics) ------
+        req, gp, ep, ap, ej, tp, th = self._prepare_force_packs()
+
+        # --- 2) Flatten pack fields into locals captured by the RHS kernels ----
         # Flags captured into closure
         USE_SH = bool(req.use_sh)
         USE_SURROGATE = bool(req.use_surrogate_gravity)

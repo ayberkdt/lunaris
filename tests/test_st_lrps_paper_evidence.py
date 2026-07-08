@@ -54,7 +54,8 @@ def test_configs_differ_only_by_seed_and_output():
         # Everything else identical.
         a, b = copy.deepcopy(base), copy.deepcopy(other)
         for d, _s in ((a, 42), (b, seed)):
-            d.pop("name"); d.pop("seed")
+            d.pop("name")
+            d.pop("seed")
             d["split"].pop("split_seed")
             d["output"].pop("out_dir")
             d.pop("description", None)
