@@ -115,9 +115,18 @@ Large mission data (SPICE kernels, gravity coefficients, topography, albedo) is
 
 ```bash
 lunaris-data list
-lunaris-data download --group ephemeris
+lunaris-data download --preset full-gravity
+lunaris-data verify --strict --runtime
+```
+
+The `full-gravity` preset bundles the ephemeris and gravity assets that strict
+runtime verification requires — including `gm_de440.tpc`, which is optional for a
+plain `download --group ephemeris` but mandatory under `--strict`. If you prefer
+to fetch by group, include the optional entries so strict verify passes:
+
+```bash
+lunaris-data download --group ephemeris --include-optional
 lunaris-data download --group gravity
-lunaris-data verify
 lunaris-data verify --strict --runtime
 ```
 

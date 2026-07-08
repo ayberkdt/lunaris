@@ -250,7 +250,7 @@ def classify_st_lrps_run(config: dict[str, Any], *, has_checkpoint: bool) -> tup
 # Discovery / I/O
 # ---------------------------------------------------------------------------
 
-_MC_REQUIRED_KEYS = {"Y", "t", "impact_flags", "sc_samples"}
+_BATCH_REQUIRED_KEYS = {"Y", "t", "impact_flags", "sc_samples"}
 
 
 def _is_batch_hdf5(path: Path) -> bool:
@@ -260,7 +260,7 @@ def _is_batch_hdf5(path: Path) -> bool:
         return False
     try:
         with h5py.File(str(path), "r") as f:
-            return _MC_REQUIRED_KEYS.issubset(set(f.keys()))
+            return _BATCH_REQUIRED_KEYS.issubset(set(f.keys()))
     except Exception:
         return False
 
@@ -269,7 +269,7 @@ def _is_batch_npz(path: Path) -> bool:
     try:
         with zipfile.ZipFile(str(path)) as zf:
             names = {Path(n).stem for n in zf.namelist()}
-        return _MC_REQUIRED_KEYS.issubset(names)
+        return _BATCH_REQUIRED_KEYS.issubset(names)
     except Exception:
         return False
 

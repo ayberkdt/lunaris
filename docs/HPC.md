@@ -41,7 +41,9 @@ bash hpc/setup_env.sh
 # 3. Sanity-check, then submit. submit.sh injects partition/account/qos/gres
 #    from cluster.env, so you never edit those into the .sbatch files.
 bash hpc/preflight.sh
-hpc/submit.sh train -- --epochs 300 --batch-size 8192 \
+hpc/submit.sh train -- \
+    --data "$LUNARIS_DATA_DIR/datasets/st_lrps_cloud_suite.h5" \
+    --epochs 300 --batch-size 8192 \
     --out-dir "$LUNARIS_OUTPUT_DIR/training/run1"
 ```
 
@@ -386,9 +388,15 @@ sbatch hpc/slurm_benchmark_gpu.sbatch \
 sbatch hpc/slurm_batch_array.sbatch \
   --sampling-method sobol_scrambled \
   --batch-backend auto \
-  --sh-degree 24 \
-  --out-dir "$LUNARIS_OUTPUT_DIR/ensemble/batch_run"
+  --sh-degree 24
 ```
+
+As an array job (`#SBATCH --array=0-9`) the script derives a distinct RNG seed
+and an `--batch-output-path` per task, so the tasks run different ensembles and
+write to separate files under `$LUNARIS_OUTPUT_DIR/ensemble/batch_<task>.h5`
+instead of colliding on one output. To write elsewhere, override
+`LUNARIS_OUTPUT_DIR` (the batch CLI's own output flag is `--batch-output-path`,
+not `--out-dir`, which the batch path accepts but ignores).
 
 Sampling and backend selection are explicit and recorded in ensemble outputs:
 
