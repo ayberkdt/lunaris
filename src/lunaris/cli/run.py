@@ -49,6 +49,19 @@ _EXPECTED_RUNTIME_EXCEPTIONS: tuple[type[Exception], ...] = (
 _T = TypeVar("_T")
 
 
+@dataclass(slots=True)
+class SurfaceSetup:
+    provider: Any | None
+    topo_grid: Any | None
+    topo_requested: bool
+
+
+@dataclass(slots=True)
+class PropagationRun:
+    result: PropagationResult
+    elapsed_s: float
+
+
 class CliStageError(RuntimeError):
     """Attach user-facing stage context while preserving the original exception."""
 
