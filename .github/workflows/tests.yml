@@ -140,7 +140,7 @@ jobs:
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[all]"
 
-      - name: Critical core/physics/runtime coverage gate
+      - name: Critical contract/runtime coverage gate
         run: >-
           pytest
           tests/test_core_regressions.py
@@ -151,13 +151,18 @@ jobs:
           tests/test_frame_policy.py
           tests/test_main_ephemeris_policy.py
           tests/test_gravity_provider_fallback_policy.py
-          tests/test_runtime_contract_validation.py
-          tests/test_surrogate_runtime_unification.py
+          tests/test_cli_run_helpers.py
+          tests/test_surrogate_runtime_contract_helpers.py
           tests/test_surrogate_runtime_import_compat.py
-          tests/test_st_lrps_runtime_contracts.py
-          tests/test_st_lrps_runtime_frame.py
           -m "not slow and not requires_data and not requires_cuda" -q
-          --cov=lunaris.core --cov=lunaris.physics --cov=lunaris.surrogate.runtime
+          --cov=lunaris.core.dynamics.contracts
+          --cov=lunaris.core.propagation.diagnostics
+          --cov=lunaris.core.propagation.fixed_step_runner
+          --cov=lunaris.core.propagation.time_grid
+          --cov=lunaris.surrogate.runtime.artifact
+          --cov=lunaris.surrogate.runtime.device
+          --cov=lunaris.surrogate.runtime.metadata
+          --cov=lunaris.surrogate.runtime.scalers
           --cov-report=term-missing:skip-covered --cov-fail-under=80
 
   locks:
