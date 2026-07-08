@@ -130,6 +130,9 @@ def _top_level_import_roots(path: Path) -> set[str]:
 
     try:
         text = path.read_text(encoding="utf-8")
+        # Fast path to avoid CPython ast.parse garbage-collection segfaults on massive suites
+        if "torch" not in text and "h5py" not in text:
+            return set()
         tree = ast.parse(text, filename=str(path))
     except Exception:
         return set()
