@@ -7,12 +7,14 @@ runtime providers lazily, propagate, and hand results to reporting.
 from __future__ import annotations
 
 import json
+import sys
 import time
 import traceback
 from argparse import Namespace
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 
@@ -44,6 +46,18 @@ _EXPECTED_RUNTIME_EXCEPTIONS: tuple[type[Exception], ...] = (
 )
 
 
+_T = TypeVar("_T")
+
+
+class CliStageError(RuntimeError):
+    """Attach user-facing stage context while preserving the original exception."""
+
+    def __init__(self, stage: str, cause: Exception) -> None:
+        super().__init__(f"{stage}: {cause}")
+        self.stage = str(stage)
+        self.cause = cause
+
+
 @dataclass(slots=True)
 class SurfaceSetup:
     provider: Any | None
@@ -57,20 +71,62 @@ class PropagationRun:
     elapsed_s: float
 
 
+def _run_stage(stage: str, operation: Callable[[], _T]) -> _T:
+    try:
+        return operation()
+    except Exception as exc:
+        raise CliStageError(stage, exc) from exc
+
+
+def _unwrap_stage_failure(stage: str, exc: Exception) -> tuple[str, Exception]:
+    if isinstance(exc, CliStageError):
+        return exc.stage, exc.cause
+    return stage, exc
+
+
 def _emit_failure(stage: str, exc: Exception, *, debug_tracebacks: bool) -> None:
-    expected = isinstance(exc, _EXPECTED_RUNTIME_EXCEPTIONS)
+    stage, root_exc = _unwrap_stage_failure(stage, exc)
+    expected = isinstance(root_exc, _EXPECTED_RUNTIME_EXCEPTIONS)
     prefix = "[FATAL]" if expected else "[FATAL:UNEXPECTED]"
-    print(f"{prefix} {stage}: {exc}")
+    print(f"{prefix} {stage}: {root_exc}")
     if not expected and debug_tracebacks:
-        traceback.print_exc()
+        traceback.print_exception(type(root_exc), root_exc, root_exc.__traceback__)
 
 
 def _emit_optional_failure(stage: str, exc: Exception, *, debug_tracebacks: bool) -> None:
-    expected = isinstance(exc, _EXPECTED_RUNTIME_EXCEPTIONS)
+    stage, root_exc = _unwrap_stage_failure(stage, exc)
+    expected = isinstance(root_exc, _EXPECTED_RUNTIME_EXCEPTIONS)
     prefix = "[ERROR]" if expected else "[ERROR:UNEXPECTED]"
-    print(f"{prefix} {stage}: {exc}")
+    print(f"{prefix} {stage}: {root_exc}")
     if not expected and debug_tracebacks:
-        traceback.print_exc()
+        traceback.print_exception(type(root_exc), root_exc, root_exc.__traceback__)
+
+
+def _debug_tracebacks_requested(argv: Sequence[str] | None = None) -> bool:
+    values = sys.argv[1:] if argv is None else argv
+    return "--debug-tracebacks" in values
+
+
+def _warn_optional_failure(stage: str, operation: Callable[[], None]) -> None:
+    try:
+        operation()
+    except Exception as exc:
+        print(f"[WARN] {stage}: {exc}")
+
+
+def _run_optional_output(
+    stage: str,
+    operation: Callable[[], None],
+    *,
+    debug_tracebacks: bool,
+    import_warning: str,
+) -> None:
+    try:
+        operation()
+    except ImportError:
+        print(import_warning)
+    except Exception as exc:
+        _emit_optional_failure(stage, exc, debug_tracebacks=debug_tracebacks)
 
 
 def load_runtime_config(args: Namespace) -> SimConfig:
@@ -412,105 +468,89 @@ def render_optional_3d(result: PropagationResult, cfg: SimConfig, out_dir: Path)
     )
 
 
-def main() -> int:
-    args = parse_args()
+def run_pipeline(args: Namespace) -> int:
+    """Execute the propagation command after argument parsing."""
     debug_tracebacks = bool(getattr(args, "debug_tracebacks", False))
 
-    try:
-        cfg = load_runtime_config(args)
-    except Exception as e:
-        _emit_failure("Config init failed", e, debug_tracebacks=debug_tracebacks)
-        return 1
+    cfg = _run_stage("Config init failed", lambda: load_runtime_config(args))
+    out_dir = _run_stage("Output directory failure", lambda: Path(cfg.output.ensure_out_dir()))
+    gravity_core, mu = _run_stage("Gravity model init failed", lambda: build_gravity_provider(cfg))
+    surface = _run_stage("Surface grids load failed", lambda: build_surface_provider_if_needed(cfg, args))
+    ephem_mgr = _run_stage(
+        "Ephemeris init failed",
+        lambda: build_ephemeris_if_needed(cfg, topo_requested=surface.topo_requested),
+    )
+    y0, orbit_params = _run_stage("Orbit init failed", lambda: resolve_initial_state(cfg, args, mu=mu))
+    _run_stage("Run summary failed", lambda: print_summary(cfg, orbit_params, y0))
 
-    try:
-        out_dir = Path(cfg.output.ensure_out_dir())
-    except Exception as e:
-        _emit_failure("Output directory failure", e, debug_tracebacks=debug_tracebacks)
-        return 1
-
-    try:
-        gravity_core, mu = build_gravity_provider(cfg)
-    except Exception as e:
-        _emit_failure("Gravity model init failed", e, debug_tracebacks=debug_tracebacks)
-        return 1
-
-    try:
-        surface = build_surface_provider_if_needed(cfg, args)
-    except Exception as e:
-        _emit_failure("Surface grids load failed", e, debug_tracebacks=debug_tracebacks)
-        return 1
-
-    try:
-        ephem_mgr = build_ephemeris_if_needed(cfg, topo_requested=surface.topo_requested)
-    except Exception as e:
-        _emit_failure("Ephemeris init failed", e, debug_tracebacks=debug_tracebacks)
-        return 1
-
-    try:
-        y0, orbit_params = resolve_initial_state(cfg, args, mu=mu)
-    except Exception as e:
-        _emit_failure("Orbit init failed", e, debug_tracebacks=debug_tracebacks)
-        return 1
-
-    print_summary(cfg, orbit_params, y0)
-
-    try:
-        engine = build_engine(
+    engine = _run_stage(
+        "Dynamics engine init failed",
+        lambda: build_engine(
             cfg,
             gravity_core=gravity_core,
             ephem_mgr=ephem_mgr,
             surface_provider=surface.provider,
-        )
-    except Exception as e:
-        _emit_failure("Dynamics engine init failed", e, debug_tracebacks=debug_tracebacks)
-        return 1
+        ),
+    )
 
-    try:
-        run = run_propagation(
+    run = _run_stage(
+        "Propagation failed",
+        lambda: run_propagation(
             engine,
             cfg,
             y0=y0,
             topo_grid=surface.topo_grid,
-        )
-    except Exception as e:
-        _emit_failure("Propagation failed", e, debug_tracebacks=debug_tracebacks)
-        return 1
+        ),
+    )
 
     diag_payload = build_run_diagnostics_payload(run.result, cfg.propagator.method)
-    try:
-        write_run_artifacts(out_dir, cfg, diag_payload)
-    except Exception as e:
-        print(f"[WARN] Could not write run artifacts: {e}")
+    _warn_optional_failure(
+        "Could not write run artifacts",
+        lambda: write_run_artifacts(out_dir, cfg, diag_payload),
+    )
 
     meta = build_run_meta(cfg, run.result, mu=mu, propagation_time_s=run.elapsed_s)
 
-    try:
-        render_reports(
+    _run_optional_output(
+        "Plot/report failed",
+        lambda: render_reports(
             result=run.result,
             engine=engine,
             cfg=cfg,
             out_dir=out_dir,
             meta=meta,
-        )
-    except ImportError:
-        print("[WARN] analysis.reporting.manager not found; skipping plots.")
-    except Exception as e:
-        _emit_optional_failure("Plot/report failed", e, debug_tracebacks=debug_tracebacks)
+        ),
+        debug_tracebacks=debug_tracebacks,
+        import_warning="[WARN] analysis.reporting.manager not found; skipping plots.",
+    )
 
-    try:
-        render_optional_3d(run.result, cfg, out_dir)
-    except ImportError:
-        print("[WARN] visualization.orbit_animation not found; skipping 3D render.")
-    except Exception as e:
-        _emit_optional_failure("3D render failed", e, debug_tracebacks=debug_tracebacks)
+    _run_optional_output(
+        "3D render failed",
+        lambda: render_optional_3d(run.result, cfg, out_dir),
+        debug_tracebacks=debug_tracebacks,
+        import_warning="[WARN] visualization.orbit_animation not found; skipping 3D render.",
+    )
 
     print("[OK] Finished.")
     return 0
 
 
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    return run_pipeline(args)
+
+
 def main_entry() -> int:
     """Console-script entry point."""
-    return main()
+    try:
+        return main()
+    except Exception as exc:
+        _emit_failure(
+            "Runtime failed",
+            exc,
+            debug_tracebacks=_debug_tracebacks_requested(),
+        )
+        return 1
 
 
 __all__ = [
@@ -528,6 +568,7 @@ __all__ = [
     "render_optional_3d",
     "render_reports",
     "resolve_initial_state",
+    "run_pipeline",
     "run_propagation",
     "write_run_artifacts",
     "_y0_to_array",

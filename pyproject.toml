@@ -319,7 +319,9 @@ exclude_also = [
 # (`-m "not slow and not requires_data and not requires_cuda"`) was 58% on
 # 2026-06-15 (1569 tests). The floor is held a few points below the baseline so
 # it guards against catastrophic regressions without blocking routine PRs;
-# ratchet it upward as coverage rises. pytest-cov honors this via fail_under.
+# ratchet it upward as coverage rises. Critical contract/runtime modules are
+# separately gated at 80% in `.github/workflows/tests.yml`.
+# pytest-cov honors this via fail_under.
 fail_under = 55
 
 # Enforces the documented layering: a layer never imports from a layer above it.

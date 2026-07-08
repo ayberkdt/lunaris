@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from lunaris.cli.run import build_run_meta, write_run_artifacts
+from lunaris.cli.run import CliStageError, build_run_meta, main_entry, write_run_artifacts
 from lunaris.core.config import load_default_config
 
 
@@ -41,3 +41,15 @@ def test_build_run_meta_uses_measured_output_spacing(monkeypatch) -> None:
     assert meta["propagation_time_s"] == 1.25
     assert meta["output_dt_s_measured"] == 10.0
     assert meta["output_epoch_count"] == 4
+
+
+def test_main_entry_is_the_single_runtime_failure_boundary(monkeypatch, capsys) -> None:
+    import lunaris.cli.run as run_module
+
+    def fail_main() -> int:
+        raise CliStageError("Config init failed", ValueError("bad config"))
+
+    monkeypatch.setattr(run_module, "main", fail_main)
+
+    assert main_entry() == 1
+    assert "[FATAL] Config init failed: bad config" in capsys.readouterr().out

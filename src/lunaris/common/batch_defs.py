@@ -27,23 +27,12 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, get_args
 
 import numpy as np
 
 from .time_grid_contract import build_output_time_grid
 from .type_defs import F64Array
-
-# =============================================================================
-# 0.                    SHARED BATCH OUTPUT GRID
-# =============================================================================
-
-BATCH_SAMPLING_METHODS: tuple[str, ...] = (
-    "random",
-    "lhs",
-    "sobol",
-    "sobol_scrambled",
-)
 
 SamplingMethod = Literal["random", "lhs", "sobol", "sobol_scrambled"]
 BatchBackend = Literal[
@@ -62,6 +51,28 @@ OutputFormat = Literal["hdf5", "npz"]
 ResultStorageMode = Literal["auto", "memory", "disk"]
 BatchOutputMode = Literal["full", "summary_only"]
 ImpactSurfaceMode = Literal["sphere", "terrain"]
+
+BATCH_SAMPLING_METHODS: tuple[str, ...] = tuple(get_args(SamplingMethod))
+BATCH_BACKENDS: tuple[str, ...] = tuple(get_args(BatchBackend))
+GRAVITY_MODE_OVERRIDES: tuple[str, ...] = tuple(get_args(GravityModeOverride))
+SH_FALLBACK_POLICIES: tuple[str, ...] = tuple(get_args(ShFallbackPolicy))
+TORCH_DTYPES: tuple[str, ...] = tuple(get_args(TorchDtype))
+OUTPUT_FORMATS: tuple[str, ...] = tuple(get_args(OutputFormat))
+RESULT_STORAGE_MODES: tuple[str, ...] = tuple(get_args(ResultStorageMode))
+BATCH_OUTPUT_MODES: tuple[str, ...] = tuple(get_args(BatchOutputMode))
+IMPACT_SURFACE_MODES: tuple[str, ...] = tuple(get_args(ImpactSurfaceMode))
+ST_LRPS_BATCH_BACKENDS: tuple[str, ...] = tuple(
+    backend for backend in BATCH_BACKENDS if backend.startswith("gpu_st_lrps_")
+)
+
+
+def _choice_list(choices: tuple[str, ...]) -> str:
+    return ", ".join(repr(choice) for choice in choices)
+
+
+# =============================================================================
+# 0.                    SHARED BATCH OUTPUT GRID
+# =============================================================================
 
 
 class TrajectoryArrayLike(Protocol):
@@ -353,41 +364,30 @@ class BatchPropagationConfig:
             raise ValueError(f"n_samples must be >= 2, got {self.n_samples}")
         if self.sampling_method not in BATCH_SAMPLING_METHODS:
             raise ValueError(
-                "sampling_method must be one of: "
-                + ", ".join(repr(method) for method in BATCH_SAMPLING_METHODS)
-                + f". Got {self.sampling_method!r}"
+                f"sampling_method must be one of: {_choice_list(BATCH_SAMPLING_METHODS)}. "
+                f"Got {self.sampling_method!r}"
             )
         if self.dt_s <= 0.0:
             raise ValueError(f"dt_s must be > 0, got {self.dt_s}")
-        if self.gravity_mode_override not in ("follow_mission", "classic_sh", "st_lrps"):
+        if self.gravity_mode_override not in GRAVITY_MODE_OVERRIDES:
             raise ValueError(
-                "gravity_mode_override must be one of: "
-                "'follow_mission', 'classic_sh', 'st_lrps'. "
+                f"gravity_mode_override must be one of: {_choice_list(GRAVITY_MODE_OVERRIDES)}. "
                 f"Got {self.gravity_mode_override!r}"
             )
-        if self.batch_backend not in (
-            "auto",
-            "cpu_sh",
-            "numba_cuda_sh",
-            "torch_cuda_sh",
-            "torch_cpu_sh",
-            "gpu_st_lrps_potential",
-            "gpu_st_lrps_third_body",
-        ):
+        if self.batch_backend not in BATCH_BACKENDS:
             raise ValueError(
-                "batch_backend must be one of: 'auto', 'cpu_sh', "
-                "'numba_cuda_sh', 'torch_cuda_sh', 'torch_cpu_sh', "
-                "'gpu_st_lrps_potential', 'gpu_st_lrps_third_body'. "
+                f"batch_backend must be one of: {_choice_list(BATCH_BACKENDS)}. "
                 f"Got {self.batch_backend!r}"
             )
-        if self.sh_fallback_policy not in ("compatible_gpu", "cpu", "error"):
+        if self.sh_fallback_policy not in SH_FALLBACK_POLICIES:
             raise ValueError(
-                "sh_fallback_policy must be one of: 'compatible_gpu', 'cpu', "
-                f"'error'. Got {self.sh_fallback_policy!r}"
+                f"sh_fallback_policy must be one of: {_choice_list(SH_FALLBACK_POLICIES)}. "
+                f"Got {self.sh_fallback_policy!r}"
             )
-        if str(self.torch_dtype).lower() not in ("float32", "float64"):
+        if str(self.torch_dtype).lower() not in TORCH_DTYPES:
             raise ValueError(
-                f"torch_dtype must be 'float32' or 'float64', got {self.torch_dtype!r}"
+                f"torch_dtype must be one of: {_choice_list(TORCH_DTYPES)}. "
+                f"Got {self.torch_dtype!r}"
             )
         if int(self.torch_sh_chunk_size) < 0:
             raise ValueError(
@@ -396,7 +396,7 @@ class BatchPropagationConfig:
         st_lrps_model_dir = str(self.st_lrps_model_dir or "").strip()
         if (
             self.gravity_mode_override == "st_lrps"
-            or self.batch_backend in ("gpu_st_lrps_potential", "gpu_st_lrps_third_body")
+            or self.batch_backend in ST_LRPS_BATCH_BACKENDS
         ) and not st_lrps_model_dir:
             raise ValueError(
                 "st_lrps_model_dir cannot be empty when ST-LRPS batch gravity is requested."
@@ -411,20 +411,22 @@ class BatchPropagationConfig:
                 f"gpu_threads_per_block must be in [32, 1024], "
                 f"got {self.gpu_threads_per_block}"
             )
-        if self.output_format not in ("hdf5", "npz"):
+        if self.output_format not in OUTPUT_FORMATS:
             raise ValueError(
-                f"output_format must be 'hdf5' or 'npz', got {self.output_format!r}"
+                f"output_format must be one of: {_choice_list(OUTPUT_FORMATS)}. "
+                f"Got {self.output_format!r}"
             )
-        if self.result_storage_mode not in ("auto", "memory", "disk"):
+        if self.result_storage_mode not in RESULT_STORAGE_MODES:
             raise ValueError(
-                "result_storage_mode must be 'auto', 'memory', or 'disk', "
-                f"got {self.result_storage_mode!r}"
+                f"result_storage_mode must be one of: {_choice_list(RESULT_STORAGE_MODES)}. "
+                f"Got {self.result_storage_mode!r}"
             )
         if self.result_storage_mode == "disk" and self.output_format != "hdf5":
             raise ValueError("result_storage_mode='disk' requires output_format='hdf5'.")
-        if self.output_mode not in ("full", "summary_only"):
+        if self.output_mode not in BATCH_OUTPUT_MODES:
             raise ValueError(
-                f"output_mode must be 'full' or 'summary_only', got {self.output_mode!r}"
+                f"output_mode must be one of: {_choice_list(BATCH_OUTPUT_MODES)}. "
+                f"Got {self.output_mode!r}"
             )
         if int(self.summary_top_k) < 1:
             raise ValueError(f"summary_top_k must be >= 1, got {self.summary_top_k}")
@@ -436,10 +438,10 @@ class BatchPropagationConfig:
             raise ValueError(f"max_vram_gb must be > 0, got {self.max_vram_gb}")
         if self.impact_alt_km < 0.0:
             raise ValueError(f"impact_alt_km must be >= 0, got {self.impact_alt_km}")
-        if self.impact_surface_mode not in ("sphere", "terrain"):
+        if self.impact_surface_mode not in IMPACT_SURFACE_MODES:
             raise ValueError(
-                "impact_surface_mode must be 'sphere' or 'terrain', "
-                f"got {self.impact_surface_mode!r}"
+                f"impact_surface_mode must be one of: {_choice_list(IMPACT_SURFACE_MODES)}. "
+                f"Got {self.impact_surface_mode!r}"
             )
         if self.compute_impact_probability is not None:
             warnings.warn(
@@ -650,7 +652,16 @@ class BatchPropagationResult:
 
 __all__ = [
     "build_batch_output_grid",
+    "BATCH_BACKENDS",
+    "BATCH_OUTPUT_MODES",
+    "GRAVITY_MODE_OVERRIDES",
+    "IMPACT_SURFACE_MODES",
+    "OUTPUT_FORMATS",
     "BATCH_SAMPLING_METHODS",
+    "RESULT_STORAGE_MODES",
+    "SH_FALLBACK_POLICIES",
+    "ST_LRPS_BATCH_BACKENDS",
+    "TORCH_DTYPES",
     "BatchBackend",
     "BatchOutputMode",
     "StateUncertainty",

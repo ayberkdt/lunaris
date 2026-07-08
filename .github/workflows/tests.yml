@@ -154,16 +154,21 @@ jobs:
           tests/test_cli_run_helpers.py
           tests/test_surrogate_runtime_contract_helpers.py
           tests/test_surrogate_runtime_import_compat.py
+          tests/test_time_grid_contract.py
+          tests/test_state_vector_contract.py
+          tests/test_batch_backend_dispatch.py
+          tests/test_batch_gpu_policy.py
+          tests/test_batch_result_validity.py
           -m "not slow and not requires_data and not requires_cuda" -q --assert=plain
           --cov=lunaris
           --cov-report=term-missing:skip-covered
           --cov-fail-under=0
         
-      - name: Enforce 50% coverage floor on critical contracts
+      - name: Enforce 80% coverage floor on critical contracts
         run: >-
           coverage report
-          --include="src/lunaris/core/dynamics/contracts.py,src/lunaris/core/propagation/diagnostics.py,src/lunaris/core/propagation/fixed_step_runner.py,src/lunaris/core/propagation/time_grid.py,src/lunaris/surrogate/runtime/artifact.py,src/lunaris/surrogate/runtime/device.py,src/lunaris/surrogate/runtime/metadata.py,src/lunaris/surrogate/runtime/scalers.py"
-          --fail-under=50
+          --include="src/lunaris/batch/backend_policy.py,src/lunaris/common/state_vector.py,src/lunaris/common/time_grid_contract.py,src/lunaris/core/dynamics/contracts.py,src/lunaris/core/propagation/diagnostics.py,src/lunaris/core/propagation/fixed_step_runner.py,src/lunaris/core/propagation/time_grid.py,src/lunaris/surrogate/runtime/artifact.py,src/lunaris/surrogate/runtime/device.py,src/lunaris/surrogate/runtime/metadata.py,src/lunaris/surrogate/runtime/scalers.py"
+          --fail-under=80
 
   locks:
     # Dependency-lock freshness gate. The committed locks/ files are hash-pinned

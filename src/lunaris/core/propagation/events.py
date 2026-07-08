@@ -12,6 +12,8 @@ from lunaris.common.math_utils import quat_rotate_np, quat_slerp_np
 from lunaris.common.type_defs import PropagatorConfig
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.events import (
+    EventFn,
+    EventSpec,
     make_aposelene_event,
     make_hybrid_impact_event,
     make_impact_event,
@@ -283,19 +285,17 @@ def _build_r_i_to_bf_from_rot_table(
 
     return r_i_to_bf
 
-def _wrap_event_first6(ev: Callable[[float, np.ndarray], float]) -> Callable[[float, np.ndarray], float]:
+def _wrap_event_first6(ev: EventFn, *, role: str | None = None) -> EventFn:
     """Wrap an event function so it ignores any augmented state beyond the first 6 elements."""
+    spec = EventSpec.from_event(ev, role=role)
+
     def g(t: float, y: np.ndarray) -> float:
         return float(ev(t, y[:6]))
-
-    # SciPy event attributes
-    g.terminal = bool(getattr(ev, "terminal", False))     # type: ignore[attr-defined]
-    g.direction = float(getattr(ev, "direction", 0.0))    # type: ignore[attr-defined]
 
     # Help debugging / introspection
     g.__name__ = getattr(ev, "__name__", "event_first6")
     g.__doc__ = getattr(ev, "__doc__", None)
-    return g
+    return spec.to_scipy_event(g)
 
 def _get_event_cfg(cfg: Any) -> Any:
     return getattr(cfg, "events", None)
@@ -430,18 +430,12 @@ def build_events(
         else:
             ev_imp = make_impact_event(R_ref_m=float(R_ref), impact_alt_m=float(impact_alt_m), terminal=True)
 
-        ev_imp6 = _wrap_event_first6(ev_imp)
-        ev_imp6._event_role = "impact"  # type: ignore[attr-defined]
-        events.append(ev_imp6)
+        events.append(_wrap_event_first6(ev_imp, role="impact"))
 
     # Peri/Apo events (non-terminal)
     if _get_enable_peri_apo_events(cfg):
-        ev_peri = _wrap_event_first6(make_periselene_event(terminal=False))
-        ev_apo = _wrap_event_first6(make_aposelene_event(terminal=False))
-        ev_peri._event_role = "peri"  # type: ignore[attr-defined]
-        ev_apo._event_role = "apo"  # type: ignore[attr-defined]
-        events.append(ev_peri)
-        events.append(ev_apo)
+        events.append(_wrap_event_first6(make_periselene_event(terminal=False), role="peri"))
+        events.append(_wrap_event_first6(make_aposelene_event(terminal=False), role="apo"))
 
     # Stop file event (optional) – use +/-1 for sign change
     stop_file = getattr(cfg, "stop_file", None)
@@ -450,10 +444,15 @@ def build_events(
         def _stop_ev(t: float, y: np.ndarray) -> float:
             # Use +/-1 so a change in stop-file state produces a sign change
             return -1.0 if _stop_requested(str(stop_file)) else 1.0
-        _stop_ev.terminal = True           # type: ignore[attr-defined]
-        _stop_ev.direction = 0.0           # type: ignore[attr-defined]
-        _stop_ev._event_role = "stop"  # type: ignore[attr-defined]
-        events.append(_stop_ev)
+
+        events.append(
+            EventSpec(
+                fn=_stop_ev,
+                terminal=True,
+                direction=0.0,
+                role="stop",
+            ).to_scipy_event()
+        )
 
     return events
 
@@ -546,6 +545,7 @@ def _refine_event_time_bisect(
 
 __all__ = [
     "EventOutcome",
+    "EventSpec",
     "_build_r_i_to_bf_from_rot_table",
     "_wrap_event_first6",
     "_get_event_cfg",
