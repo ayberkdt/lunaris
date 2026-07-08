@@ -11,6 +11,7 @@ from lunaris.core.config import load_default_config
 
 def test_write_run_artifacts_writes_diagnostics_and_config(tmp_path, capsys, monkeypatch) -> None:
     import pathlib
+
     import lunaris.core.config
     monkeypatch.setattr(lunaris.core.config, "_resolve_default_kernel_paths", lambda: ("mock",))
     monkeypatch.setattr(lunaris.core.config, "_resolve_default_gravity_path", lambda: pathlib.Path("mock"))
@@ -27,6 +28,7 @@ def test_write_run_artifacts_writes_diagnostics_and_config(tmp_path, capsys, mon
 
 def test_build_run_meta_uses_measured_output_spacing(monkeypatch) -> None:
     import pathlib
+
     import lunaris.core.config
     monkeypatch.setattr(lunaris.core.config, "_resolve_default_kernel_paths", lambda: ("mock",))
     monkeypatch.setattr(lunaris.core.config, "_resolve_default_gravity_path", lambda: pathlib.Path("mock"))
