@@ -4,14 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
+torch: Any | None
+nn: Any | None
+_TORCH_IMPORT_ERROR: Exception | None
 try:
-    import torch
-    import torch.nn as nn
+    import torch as _torch
+    import torch.nn as _nn
 except Exception as exc:  # pragma: no cover - exercised only on machines without torch
-    torch = None  # type: ignore[assignment]
-    nn = None  # type: ignore[assignment]
+    torch = None
+    nn = None
     _TORCH_IMPORT_ERROR = exc
 else:  # pragma: no cover - trivial branch
+    torch = _torch
+    nn = _nn
     _TORCH_IMPORT_ERROR = None
 
 

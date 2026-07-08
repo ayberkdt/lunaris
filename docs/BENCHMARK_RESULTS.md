@@ -123,6 +123,6 @@ accuracy tables.
 Earlier active tables were removed from this document because they were produced
 from pre-alignment datasets/artifacts and are not accepted evidence under the
 current benchmark contract. The current engine, label generator, and contracts
-use `4pi_geodesy_no_condon_shortley_v1`; see
-[SH_VALIDATION_REMEDIATION_PLAN.md](SH_VALIDATION_REMEDIATION_PLAN.md) for the
-audit trail.
+use `4pi_geodesy_no_condon_shortley_v1`. The remediation audit trail is kept as
+a local planning scratchpad under `PLANS/` when needed; public benchmark docs
+should not depend on ignored plan files.

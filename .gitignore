@@ -8,6 +8,12 @@
 *.log
 *.old
 
+# Local planning scratchpads
+PLANS/
+PLAN.md
+PLANNING.md
+*_PLAN.md
+
 # Python caches
 __pycache__/
 *.py[cod]

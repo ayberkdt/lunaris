@@ -922,7 +922,11 @@ class BatchPropagationEngine:
                     t_imp_b,
                     mu_m3s2=_summary_mu,
                     r_ref_m=_summary_r_ref,
-                    valid_mask=valid_b,
+                    valid_mask=(
+                        np.asarray(valid_b, dtype=np.bool_)
+                        if valid_b is not None
+                        else None
+                    ),
                 )
                 _summary_parts.append(_part)
                 _topk_buffer.offer_batch(

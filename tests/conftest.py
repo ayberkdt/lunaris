@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # tests/conftest.py
 """
 Shared pytest configuration for the Lunaris test suite.
@@ -15,7 +17,6 @@ CI additionally deselects them via ``-m "not requires_data"``; this hook is the
 belt-and-suspenders that keeps an *unfiltered* no-data run green too.
 """
 
-from __future__ import annotations
 
 import ast
 import importlib
@@ -120,27 +121,7 @@ def _tudatpy_available() -> bool:
     return True
 
 
-def _top_level_import_roots(path: Path) -> set[str]:
-    """Return module roots imported at test module top level.
 
-    This is used only as a pre-collection guard for optional-dependency tests:
-    tests that import torch/h5py before pytest can see their markers otherwise
-    fail as collection errors on a core-only install.
-    """
-
-    try:
-        text = path.read_text(encoding="utf-8")
-        tree = ast.parse(text, filename=str(path))
-    except Exception:
-        return set()
-
-    roots: set[str] = set()
-    for node in tree.body:
-        if isinstance(node, ast.Import):
-            roots.update(alias.name.split(".", 1)[0] for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            roots.add(node.module.split(".", 1)[0])
-    return roots
 
 
 def _source_mentions(path: Path, needles: tuple[str, ...]) -> bool:
@@ -158,35 +139,27 @@ def pytest_ignore_collect(collection_path: Path, config) -> bool:
     if path.suffix != ".py" or path.name == "conftest.py":
         return False
 
-    roots = _top_level_import_roots(path)
-
-    if not _torch_available() and (
-        "torch" in roots
-        or _source_mentions(
-            path,
-            (
-                "import torch",
-                "from torch",
-                "pytest.mark.requires_torch",
-                "lunaris.surrogate.st_lrps.runtime.profiling",
-            ),
-        )
+    if not _torch_available() and _source_mentions(
+        path,
+        (
+            "import torch",
+            "from torch",
+            "pytest.mark.requires_torch",
+            "lunaris.surrogate.st_lrps.runtime.profiling",
+        ),
     ):
         return True
 
-    if not _h5py_available() and (
-        "h5py" in roots
-        or _source_mentions(
-            path,
-            (
-                "import h5py",
-                "from h5py",
-                "dataset_pipeline_test_utils",
-                "lunaris.surrogate.st_lrps.evaluation.validation_suite",
-                "lunaris.surrogate.st_lrps.shared.scaling",
-                "lunaris.surrogate.st_lrps.training.config",
-            ),
-        )
+    if not _h5py_available() and _source_mentions(
+        path,
+        (
+            "import h5py",
+            "from h5py",
+            "dataset_pipeline_test_utils",
+            "lunaris.surrogate.st_lrps.evaluation.validation_suite",
+            "lunaris.surrogate.st_lrps.shared.scaling",
+            "lunaris.surrogate.st_lrps.training.config",
+        ),
     ):
         return True
 
