@@ -198,6 +198,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     _add_numerics_args(parser)
     _add_io_args(parser)
 
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Lunaris Runner (STRICT; config.py + common.type_defs aligned)",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    _add_time_args(parser)
+    _add_orbit_args(parser)
+    _add_physics_args(parser)
+    _add_gravity_args(parser)
+    _add_spacecraft_args(parser)
+    _add_numerics_args(parser)
+    _add_io_args(parser)
+
     args = parser.parse_args(args=argv)
     validate_args(parser, args)
     return args
