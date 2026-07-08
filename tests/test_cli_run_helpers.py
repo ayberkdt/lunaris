@@ -13,8 +13,8 @@ def test_write_run_artifacts_writes_diagnostics_and_config(tmp_path, capsys, mon
     import pathlib
 
     import lunaris.core.config
-    monkeypatch.setattr(lunaris.core.config, "_resolve_default_kernel_paths", lambda: ("mock",))
-    monkeypatch.setattr(lunaris.core.config, "_resolve_default_gravity_path", lambda: pathlib.Path("mock"))
+    monkeypatch.setattr(lunaris.core.config, "_resolve_default_kernel_paths", lambda *a, **k: ("mock",))
+    monkeypatch.setattr(lunaris.core.config, "_resolve_default_gravity_path", lambda *a, **k: pathlib.Path("mock"))
     cfg = load_default_config()
     diag = {"method": "DOP853", "impacted": False}
 
@@ -30,8 +30,8 @@ def test_build_run_meta_uses_measured_output_spacing(monkeypatch) -> None:
     import pathlib
 
     import lunaris.core.config
-    monkeypatch.setattr(lunaris.core.config, "_resolve_default_kernel_paths", lambda: ("mock",))
-    monkeypatch.setattr(lunaris.core.config, "_resolve_default_gravity_path", lambda: pathlib.Path("mock"))
+    monkeypatch.setattr(lunaris.core.config, "_resolve_default_kernel_paths", lambda *a, **k: ("mock",))
+    monkeypatch.setattr(lunaris.core.config, "_resolve_default_gravity_path", lambda *a, **k: pathlib.Path("mock"))
     cfg = load_default_config()
     result = SimpleNamespace(t=np.asarray([0.0, 10.0, 20.0, 30.0], dtype=np.float64))
 
