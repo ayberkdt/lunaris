@@ -1,12 +1,5 @@
 from __future__ import annotations
 
-import gc
-# Disable GC during collection to avoid pytest assertion rewrite segfaults
-gc.disable()
-
-def pytest_collection_finish(session):
-    gc.enable()
-
 # tests/conftest.py
 """
 Shared pytest configuration for the Lunaris test suite.

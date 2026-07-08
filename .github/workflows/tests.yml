@@ -154,7 +154,7 @@ jobs:
           tests/test_cli_run_helpers.py
           tests/test_surrogate_runtime_contract_helpers.py
           tests/test_surrogate_runtime_import_compat.py
-          -m "not slow and not requires_data and not requires_cuda" -q
+          -m "not slow and not requires_data and not requires_cuda" -q --assert=plain
           --cov=lunaris.core.dynamics.contracts
           --cov=lunaris.core.propagation.diagnostics
           --cov=lunaris.core.propagation.fixed_step_runner
