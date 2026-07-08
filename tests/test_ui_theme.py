@@ -302,5 +302,6 @@ def test_app_name_renamed_away_from_st_lrps() -> None:
 
     assert APP_NAME == "Lunaris Mission Studio"
     assert APP_NAME != "ST-LRPS Studio"
-    # The window title tracks the visible app name.
-    assert WINDOW_SETTINGS["title"] == APP_NAME
+    # The window title tracks the visible app name and carries the beta marker.
+    assert WINDOW_SETTINGS["title"].startswith(APP_NAME)
+    assert "(Beta)" in WINDOW_SETTINGS["title"]

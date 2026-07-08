@@ -8,6 +8,7 @@ import pytest
 from lunaris.batch.storage import (
     HDF5TrajectoryView,
     _HDF5Writer,
+    _NPZWriter,
     load_batch_result,
 )
 
@@ -91,6 +92,25 @@ def test_hdf5_writer_rejects_incomplete_or_out_of_order_stream(tmp_path) -> None
     assert (tmp_path / "incomplete.h5.part").exists()
     writer.abort()
     assert not (tmp_path / "incomplete.h5.part").exists()
+
+
+def test_npz_writer_rejects_out_of_order_and_bad_shape(tmp_path) -> None:
+    t, Y, *_ = _archive_arrays()
+    writer = _NPZWriter(tmp_path / "batch.npz", n_samples=4, t_grid=t)
+    writer.write_sample_batch(0, 2, Y[:, :2, :])
+
+    # Out-of-order start (skips sample 2) — must fail like the HDF5 writer.
+    with pytest.raises(ValueError, match="expected start=2"):
+        writer.write_sample_batch(3, 4, Y[:, 3:4, :])
+    # Wrong shape for the declared slice — must not silently broadcast.
+    with pytest.raises(ValueError, match="must have shape"):
+        writer.write_sample_batch(2, 4, Y[:, 2:3, :])
+    # Out-of-bounds end.
+    with pytest.raises(ValueError, match="outside"):
+        writer.write_sample_batch(2, 5, Y[:, 2:, :])
+
+    # The valid continuation still succeeds.
+    writer.write_sample_batch(2, 4, Y[:, 2:, :])
 
 
 def test_hdf5_writer_does_not_swallow_metadata_errors(tmp_path) -> None:
