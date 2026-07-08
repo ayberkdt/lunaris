@@ -1,3 +1,12 @@
+from __future__ import annotations
+
+import gc
+# Disable GC during collection to avoid pytest assertion rewrite segfaults
+gc.disable()
+
+def pytest_collection_finish(session):
+    gc.enable()
+
 # tests/conftest.py
 """
 Shared pytest configuration for the Lunaris test suite.
@@ -15,7 +24,6 @@ CI additionally deselects them via ``-m "not requires_data"``; this hook is the
 belt-and-suspenders that keeps an *unfiltered* no-data run green too.
 """
 
-from __future__ import annotations
 
 import ast
 import importlib
