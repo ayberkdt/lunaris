@@ -9,7 +9,9 @@ from lunaris.cli.run import build_run_meta, write_run_artifacts
 from lunaris.core.config import load_default_config
 
 
-def test_write_run_artifacts_writes_diagnostics_and_config(tmp_path, capsys) -> None:
+def test_write_run_artifacts_writes_diagnostics_and_config(tmp_path, capsys, monkeypatch) -> None:
+    import lunaris.core.config
+    monkeypatch.setattr(lunaris.core.config.KERNEL_DIR, "exists", lambda: True)
     cfg = load_default_config()
     diag = {"method": "DOP853", "impacted": False}
 
@@ -21,7 +23,9 @@ def test_write_run_artifacts_writes_diagnostics_and_config(tmp_path, capsys) -> 
     assert "[DIAG]" in capsys.readouterr().out
 
 
-def test_build_run_meta_uses_measured_output_spacing() -> None:
+def test_build_run_meta_uses_measured_output_spacing(monkeypatch) -> None:
+    import lunaris.core.config
+    monkeypatch.setattr(lunaris.core.config.KERNEL_DIR, "exists", lambda: True)
     cfg = load_default_config()
     result = SimpleNamespace(t=np.asarray([0.0, 10.0, 20.0, 30.0], dtype=np.float64))
 
