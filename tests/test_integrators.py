@@ -28,8 +28,19 @@ import pytest
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.math_utils import coe_to_rv, rv_to_coe_select
 from lunaris.common.type_defs import EventConfig, PropagatorConfig, TimeConfig
-from lunaris.core.propagation import propagator as P
+from lunaris.core.propagation.integrators.fixed_step import (
+    _ACCEL_METHODS,
+    _RHS_METHODS,
+    _accel_stepper,
+)
+from lunaris.core.propagation.integrators.rk import _rk4_step_full, _rk8_step_full
+from lunaris.core.propagation.integrators.symplectic import (
+    _Y4_WEIGHTS,
+    _Y6_WEIGHTS,
+    _Y8_WEIGHTS,
+)
 from lunaris.core.propagation.propagator import propagate
+from lunaris.core.propagation.time_grid import _norm_method
 
 MU = float(MU_MOON)
 R = float(R_MOON)
@@ -158,14 +169,14 @@ def _sho_error(method: str, n: int) -> float:
     h = T / n
     y = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
     t = 0.0
-    m = P._norm_method(method)
-    rhs_steppers = {"RK4": P._rk4_step_full, "RK8": P._rk8_step_full}
+    m = _norm_method(method)
+    rhs_steppers = {"RK4": _rk4_step_full, "RK8": _rk8_step_full}
     for _ in range(n):
-        if m in P._RHS_METHODS:
-            y = rhs_steppers[P._RHS_METHODS[m]](_sho_rhs, t, y, h)
+        if m in _RHS_METHODS:
+            y = rhs_steppers[_RHS_METHODS[m]](_sho_rhs, t, y, h)
         else:
-            canonical = P._ACCEL_METHODS[m]
-            y = P._accel_stepper(canonical)(_sho_accel, t, y, h)
+            canonical = _ACCEL_METHODS[m]
+            y = _accel_stepper(canonical)(_sho_accel, t, y, h)
         t += h
     return abs(y[0] - 1.0) + abs(y[3] - 0.0)
 
@@ -201,19 +212,19 @@ def test_raw_integrator_order(method, n_coarse, expected, tol):
 # -----------------------------------------------------------------------------
 
 def test_composition_weights_sum_to_one_and_count():
-    assert sum(P._Y4_WEIGHTS) == pytest.approx(1.0, abs=1e-13)
-    assert sum(P._Y6_WEIGHTS) == pytest.approx(1.0, abs=1e-13)
-    assert sum(P._Y8_WEIGHTS) == pytest.approx(1.0, abs=1e-13)
+    assert sum(_Y4_WEIGHTS) == pytest.approx(1.0, abs=1e-13)
+    assert sum(_Y6_WEIGHTS) == pytest.approx(1.0, abs=1e-13)
+    assert sum(_Y8_WEIGHTS) == pytest.approx(1.0, abs=1e-13)
     # Triple-jump: 3^levels sub-steps (orders 4/6/8 -> 1/2/3 levels).
-    assert len(P._Y4_WEIGHTS) == 3
-    assert len(P._Y6_WEIGHTS) == 9
-    assert len(P._Y8_WEIGHTS) == 27
+    assert len(_Y4_WEIGHTS) == 3
+    assert len(_Y6_WEIGHTS) == 9
+    assert len(_Y8_WEIGHTS) == 27
 
 
 def test_y4_weights_match_classic_yoshida_coefficients():
     w1 = 1.0 / (2.0 - 2.0 ** (1.0 / 3.0))
     w0 = -(2.0 ** (1.0 / 3.0)) / (2.0 - 2.0 ** (1.0 / 3.0))
-    assert P._Y4_WEIGHTS == pytest.approx((w1, w0, w1), rel=0, abs=1e-15)
+    assert _Y4_WEIGHTS == pytest.approx((w1, w0, w1), rel=0, abs=1e-15)
 
 
 # -----------------------------------------------------------------------------

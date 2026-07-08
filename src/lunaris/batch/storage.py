@@ -20,30 +20,10 @@ from lunaris.batch.provenance import (
     _metadata_value_to_jsonable,
 )
 from lunaris.common.batch_defs import BatchPropagationConfig, BatchPropagationResult
-
-REQUIRED_ARCHIVE_V2_FIELDS: tuple[str, ...] = (
-    "archive_schema_version",
-    "n_samples",
-    "seed",
-    "duration_s",
-    "output_dt_s",
-    "backend",
-    "requested_batch_backend",
-    "actual_batch_backend",
-    "batch_backend",
-    "detect_impact",
-    "compute_impact_statistics",
-)
-
-REQUIRED_ARCHIVE_V2_ARRAYS: tuple[str, ...] = (
-    "t",
-    "Y",
-    "sc_samples",
-    "impact_flags",
-    "t_impact",
-    "valid_mask",
-    "impact_position_inertial_m",
-    "impact_position_fixed_m",
+from lunaris.common.contracts.batch_archive import (
+    BATCH_ARCHIVE_SCHEMA_VERSION,
+    REQUIRED_ARCHIVE_V2_ARRAYS,
+    REQUIRED_ARCHIVE_V2_FIELDS,
 )
 
 
@@ -307,7 +287,7 @@ class _HDF5Writer:
             raise RuntimeError(
                 "Cannot finalize HDF5 archive before final result arrays are written"
             )
-        self._f.attrs["archive_schema_version"] = 2
+        self._f.attrs["archive_schema_version"] = BATCH_ARCHIVE_SCHEMA_VERSION
         self._f.flush()
         self._f.close()
         self._part_path.replace(self._path)
@@ -448,15 +428,15 @@ def _validate_archive_v2_manifest(metadata: dict[str, Any]) -> None:
             f"Batch archive has invalid archive_schema_version={raw_version!r}. "
             "Current Lunaris requires schema v2 archives."
         ) from None
-    if version < 2:
+    if version < BATCH_ARCHIVE_SCHEMA_VERSION:
         raise ValueError(
             f"Unsupported batch archive schema v{version}. Current Lunaris "
-            "requires schema v2 archives; regenerate the run."
+            f"requires schema v{BATCH_ARCHIVE_SCHEMA_VERSION} archives; regenerate the run."
         )
-    if version > 2:
+    if version > BATCH_ARCHIVE_SCHEMA_VERSION:
         raise ValueError(
             f"Unsupported batch archive schema v{version}. This loader expects "
-            "schema v2; upgrade the loader or regenerate the archive."
+            f"schema v{BATCH_ARCHIVE_SCHEMA_VERSION}; upgrade the loader or regenerate the archive."
         )
     missing = [f for f in REQUIRED_ARCHIVE_V2_FIELDS if f not in metadata]
     if missing:
@@ -565,6 +545,7 @@ def load_batch_result(path: str, *, lazy: bool = False, strict: bool = True) -> 
 
 
 __all__ = [
+    "BATCH_ARCHIVE_SCHEMA_VERSION",
     "REQUIRED_ARCHIVE_V2_FIELDS",
     "REQUIRED_ARCHIVE_V2_ARRAYS",
     "HDF5TrajectoryView",

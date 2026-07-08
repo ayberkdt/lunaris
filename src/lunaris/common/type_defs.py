@@ -590,8 +590,17 @@ class PropagatorConfig:
         if self.nyquist_v_margin <= 0.0:
             raise ValueError(f"nyquist_v_margin must be > 0, got {self.nyquist_v_margin!r}")
 
-        if self.user_max_step_s is not None and self.user_max_step_s <= 0.0:
-            raise ValueError(f"user_max_step_s must be > 0, got {self.user_max_step_s!r}")
+        if self.user_max_step_s is not None:
+            try:
+                user_max_step_s = float(self.user_max_step_s)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"user_max_step_s must be positive and finite, got {self.user_max_step_s!r}"
+                ) from exc
+            if not np.isfinite(user_max_step_s) or user_max_step_s <= 0.0:
+                raise ValueError(
+                    f"user_max_step_s must be positive and finite, got {self.user_max_step_s!r}"
+                )
 
         if self.max_internal_steps < 100:
             raise ValueError(f"max_internal_steps too small, got {self.max_internal_steps!r}")

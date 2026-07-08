@@ -1,11 +1,32 @@
-"""Package facade for the split propagation implementation."""
+"""Public facade for propagation orchestration and planning contracts."""
 
 from __future__ import annotations
 
-from . import propagator as _impl
+from lunaris.common.type_defs import PropagationResult
 
-for _name in dir(_impl):
-    if not _name.startswith("__"):
-        globals()[_name] = getattr(_impl, _name)
+from .events import EventOutcome, build_events, event_outcome_from_solver_events
+from .plans import (
+    IntegrationPlan,
+    StepSizePlan,
+    TimeGridPlan,
+    resolve_integration_plan,
+    resolve_step_size_policy,
+    resolve_time_grid_plan,
+)
+from .propagator import propagate
+from .time_grid import make_time_grid
 
-__all__ = list(getattr(_impl, "__all__", ()))
+__all__ = [
+    "propagate",
+    "PropagationResult",
+    "EventOutcome",
+    "TimeGridPlan",
+    "StepSizePlan",
+    "IntegrationPlan",
+    "build_events",
+    "make_time_grid",
+    "resolve_time_grid_plan",
+    "resolve_step_size_policy",
+    "resolve_integration_plan",
+    "event_outcome_from_solver_events",
+]

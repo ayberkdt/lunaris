@@ -7,7 +7,7 @@ one decision tree without importing physics kernels.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 _THERMAL_EQUILIBRIUM_MODES = {
@@ -49,6 +49,32 @@ class ForceRequirements:
     need_body_vectors: bool
     need_quat_from_ephem: bool
     need_ephem: bool
+
+    def without_external_relativity(self) -> ForceRequirements:
+        """Return a copy with external 1PN disabled and derived flags refreshed."""
+        need_sun = bool(
+            self.use_srp
+            or self.use_3rd_sun
+            or self.use_albedo
+            or self.use_tide_sun
+            or self.use_thermal_equilibrium
+        )
+        need_earth = bool(
+            self.use_3rd_earth
+            or self.use_earth_j2
+            or self.use_tide_earth
+            or self.use_thermal_eclipse
+        )
+        need_body_vectors = bool(need_sun or need_earth)
+        need_ephem = bool(need_body_vectors or self.need_quat_from_ephem)
+        return replace(
+            self,
+            use_rel_external=False,
+            need_sun=need_sun,
+            need_earth=need_earth,
+            need_body_vectors=need_body_vectors,
+            need_ephem=need_ephem,
+        )
 
 
 def _mode(value: Any, default: str) -> str:

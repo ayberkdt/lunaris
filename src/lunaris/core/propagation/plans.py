@@ -205,16 +205,27 @@ def resolve_step_size_policy(
         limiting_base = "output_dt_fallback"
 
     user_raw = getattr(cfg, "user_max_step_s", None)
-    user_max_step_s = None if user_raw is None else float(user_raw)
-    if user_max_step_s is None:
+    if user_raw is None:
+        user_max_step_s = None
         actual = float(nyq_max)
         limiting_reason = limiting_base
-    elif user_max_step_s <= float(nyq_max):
-        actual = float(user_max_step_s)
-        limiting_reason = "user"
     else:
-        actual = float(nyq_max)
-        limiting_reason = limiting_base
+        try:
+            user_max_step_s = float(user_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"user_max_step_s must be positive and finite, got {user_raw!r}"
+            ) from exc
+        if not np.isfinite(user_max_step_s) or user_max_step_s <= 0.0:
+            raise ValueError(
+                f"user_max_step_s must be positive and finite, got {user_max_step_s!r}"
+            )
+        if user_max_step_s <= float(nyq_max):
+            actual = float(user_max_step_s)
+            limiting_reason = "user"
+        else:
+            actual = float(nyq_max)
+            limiting_reason = limiting_base
 
     return StepSizePlan(
         user_max_step_s=user_max_step_s,

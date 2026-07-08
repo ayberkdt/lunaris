@@ -47,6 +47,7 @@ from lunaris.common.batch_defs import (
     build_batch_output_grid,
 )
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
+from lunaris.common.contracts.batch_archive import BATCH_ARCHIVE_SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -1101,7 +1102,7 @@ class BatchPropagationEngine:
 
         try:
             writer.write_metadata(
-                archive_schema_version=2,
+                archive_schema_version=BATCH_ARCHIVE_SCHEMA_VERSION,
                 n_samples=N,
                 seed=int(batch_cfg.seed),
                 sampling_method=sampling_method,

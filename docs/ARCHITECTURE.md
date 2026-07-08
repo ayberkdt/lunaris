@@ -14,9 +14,10 @@ CLI/loaders are declared sibling subsystems with enforced dependency directions.
 The import contracts in `pyproject.toml` are authoritative when prose and code
 disagree.
 
-Last verified: 2026-06-27, covering the P1-P6 modular refactor pass:
-`batch/`, `core/propagation/`, `core/dynamics/`, `surrogate/runtime/`, and the
-split main CLI surfaces.
+Last verified: 2026-07-07, covering the architecture seam cleanup pass:
+`common/time_grid_contract.py`, `common/contracts/`, `core/dynamics/contracts.py`,
+`core/propagation/{diagnostics,fixed_step_runner}.py`, the explicit
+`core.propagation` facade, and the first batch/CLI mypy expansion.
 
 ## Engine core layers
 
@@ -29,7 +30,12 @@ Dependency-light shared layer.
 - `type_defs.py` — configuration dataclasses (`PerturbationFlags`, `TimeConfig`,
   `SpacecraftProps`, `InitialState`, …).
 - `math_utils.py`, `time_utils.py` — pure helpers.
+- `time_grid_contract.py` — dependency-light output-grid construction shared
+  by single-trajectory propagation and batch/ensemble configuration.
 - `batch_defs.py` — canonical batch/ensemble configuration/result dataclasses.
+- `contracts/` — lightweight runtime contract registry for batch archive,
+  propagation checkpoint, and propagation diagnostics schema versions. ST-LRPS
+  keeps its richer artifact/training contracts under `lunaris.surrogate.st_lrps`.
 
 ### Layer 2 — `lunaris.physics`
 Numba-JIT-compiled force-model kernels. Each file is one force model:
@@ -58,7 +64,8 @@ Numerical engine and configuration.
   physics models together. `dynamics.engine` owns `DynamicsEngine` and the
   jitted RHS closure; `dynamics.preparation` owns the config->pack stage
   (requirement computation, dependency validation, and the `prepare_*`
-  provider-to-pack conversions) as pure module-level functions;
+  provider-to-pack conversions) as pure module-level functions; `contracts`
+  owns the dependency-light `DynamicsRequirements` dataclass;
   `requirements`, `gravity_pack`, `ephemeris_pack`, `perturbation_packs`,
   `adaptive_degree`, and `surrogate_bridge` own validation helpers, data packs,
   adaptive kernels, and surrogate-provider detection without changing the hot
@@ -67,7 +74,13 @@ Numerical engine and configuration.
 - `propagation/` — propagation orchestration, event wrapping, time-grid,
   checkpoint, telemetry, and integrator modules. `propagation.propagator` keeps
   the public `propagate(...)` orchestration while events, checkpointing,
-  telemetry, time-grid policy, and fixed-step steppers live in sibling modules.
+  telemetry, time-grid policy, diagnostics assembly, fixed-step orchestration,
+  and fixed-step steppers live in sibling modules. The `lunaris.core.propagation`
+  package facade explicitly exposes `propagate`, `PropagationResult`,
+  `EventOutcome`, `TimeGridPlan`, `StepSizePlan`, `IntegrationPlan`,
+  `build_events`, `make_time_grid`, `resolve_time_grid_plan`,
+  `resolve_step_size_policy`, `resolve_integration_plan`, and
+  `event_outcome_from_solver_events`.
 - The temporary `core/propagator.py` compatibility alias has been **removed**;
   import `lunaris.core.propagation.propagator` (or `lunaris.core.propagation`)
   directly. See `docs/refactor_notes.md` for the removal rationale.
@@ -308,7 +321,7 @@ coverage.
 | `common/batch_defs.py` | `BatchPropagationConfig`, `BatchPropagationResult`, `StateUncertainty`, `SpacecraftUncertainty`, sampling-method validation |
 | `batch/engine.py` | `BatchPropagationEngine.run()` orchestration, backend dispatch, HDF5/NPZ output |
 | `batch/sampling.py` | random/LHS/Sobol standard-normal designs, initial-state and spacecraft-property samples |
-| `batch/storage.py` | HDF5/NPZ writers, archive loading, storage policy |
+| `batch/storage.py` | HDF5/NPZ writers, archive loading, storage policy, and schema-v2 validation via `common/contracts/` |
 | `batch/requirements.py` | ephemeris/body-vector/topography and impact-frame preparation helpers |
 | `batch/backend_policy.py` | Backend capability matrix and policy resolver (`resolve_batch_backend_policy`) |
 | `core/batch_propagator.py` | `GPUBatchPropagator` (CUDA RK4), `CPUBatchPropagator` (process pool) |

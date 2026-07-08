@@ -75,6 +75,7 @@ from lunaris.core.dynamics.adaptive_degree import (
     _sample_albedo_dn_scaled,
     _select_adaptive_sh_degree,
 )
+from lunaris.core.dynamics.contracts import DynamicsRequirements
 from lunaris.core.dynamics.ephemeris_pack import _EphemPack
 from lunaris.core.dynamics.gravity_pack import _GravPack
 from lunaris.core.dynamics.perturbation_packs import (
@@ -84,7 +85,6 @@ from lunaris.core.dynamics.perturbation_packs import (
     _TidePack,
 )
 from lunaris.core.dynamics.preparation import (
-    DynamicsRequirements,
     compute_requirements,
     prepare_albedo,
     prepare_earth_j2,

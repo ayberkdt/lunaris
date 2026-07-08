@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from lunaris.cli.common_args import parse_adaptive_table, parse_tide_bodies, str2bool
 from lunaris.common.time_utils import normalize_iso_datetime_to_utc_string
@@ -316,6 +317,7 @@ def validate_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> 
         # Semantic validation (distinct from artifact validation above): confirm
         # the run was trained on a lunar gravity config. Not covered by the
         # artifact helper, so it is kept here and clearly separated.
+        looks_like_lunar_run_config: Callable[[Mapping[str, Any]], bool] | None
         try:
             from lunaris.surrogate.st_lrps.data.dataset_parameters import (
                 looks_like_lunar_run_config,
