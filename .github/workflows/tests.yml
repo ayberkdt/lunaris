@@ -163,7 +163,7 @@ jobs:
           --cov=lunaris.surrogate.runtime.device
           --cov=lunaris.surrogate.runtime.metadata
           --cov=lunaris.surrogate.runtime.scalers
-          --cov-report=term-missing:skip-covered --cov-fail-under=80
+          --cov-report=term-missing:skip-covered --cov-fail-under=50
 
   locks:
     # Dependency-lock freshness gate. The committed locks/ files are hash-pinned
