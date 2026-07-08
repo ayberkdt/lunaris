@@ -27,7 +27,7 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, Protocol
 
 import numpy as np
 
@@ -44,6 +44,38 @@ BATCH_SAMPLING_METHODS: tuple[str, ...] = (
     "sobol",
     "sobol_scrambled",
 )
+
+SamplingMethod = Literal["random", "lhs", "sobol", "sobol_scrambled"]
+BatchBackend = Literal[
+    "auto",
+    "cpu_sh",
+    "numba_cuda_sh",
+    "torch_cuda_sh",
+    "torch_cpu_sh",
+    "gpu_st_lrps_potential",
+    "gpu_st_lrps_third_body",
+]
+GravityModeOverride = Literal["follow_mission", "classic_sh", "st_lrps"]
+ShFallbackPolicy = Literal["compatible_gpu", "cpu", "error"]
+TorchDtype = Literal["float32", "float64"]
+OutputFormat = Literal["hdf5", "npz"]
+ResultStorageMode = Literal["auto", "memory", "disk"]
+BatchOutputMode = Literal["full", "summary_only"]
+ImpactSurfaceMode = Literal["sphere", "terrain"]
+
+
+class TrajectoryArrayLike(Protocol):
+    """Minimal eager/lazy trajectory surface consumed by batch result logic."""
+
+    shape: tuple[int, ...]
+    ndim: int
+    dtype: np.dtype[Any]
+
+    def __getitem__(self, key: Any) -> np.ndarray:
+        ...
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        ...
 
 
 def build_batch_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Array, int, float]:
@@ -266,7 +298,7 @@ class BatchPropagationConfig:
     # Ensemble
     n_samples: int = 1_000
     seed: int = 42
-    sampling_method: str = "random"
+    sampling_method: SamplingMethod = "random"
 
     # Injection-dispersion models
     state: StateUncertainty = field(default_factory=StateUncertainty)
@@ -274,9 +306,9 @@ class BatchPropagationConfig:
 
     # Backend selection
     use_gpu: bool = True
-    batch_backend: str = "auto"
+    batch_backend: BatchBackend = "auto"
     gpu_device_id: int = 0
-    gravity_mode_override: str = "follow_mission"
+    gravity_mode_override: GravityModeOverride = "follow_mission"
     st_lrps_model_dir: str | None = None
 
     # GPU physics fidelity
@@ -287,25 +319,25 @@ class BatchPropagationConfig:
     # request exceeds the degree-24 kernel limit: "compatible_gpu" (try
     # torch_cuda_sh, else CPU), "cpu" (force CPU), or "error" (raise instead of
     # substituting).  The requested degree is never clipped.
-    sh_fallback_policy: str = "compatible_gpu"
+    sh_fallback_policy: ShFallbackPolicy = "compatible_gpu"
 
     # Torch backend controls (torch_cuda_sh and GPU ST-LRPS paths).
-    torch_dtype: str = "float64"    # "float32" or "float64" for torch backends
+    torch_dtype: TorchDtype = "float64"    # "float32" or "float64" for torch backends
     torch_sh_chunk_size: int = 0    # 0 = auto (VRAM-aware); else samples per GPU chunk
 
     # Fixed-step RK4 integration (GPU path)
     dt_s: float = 60.0              # RK4 step [s]
 
     # Output
-    output_format: str = "hdf5"     # "hdf5" or "npz"
+    output_format: OutputFormat = "hdf5"     # "hdf5" or "npz"
     output_path: str = "outputs/ensemble/batch_output.h5"
     max_vram_gb: float = 4.0        # VRAM budget (caps batch size automatically)
-    result_storage_mode: str = "auto"  # "auto", "memory", or "disk"
+    result_storage_mode: ResultStorageMode = "auto"  # "auto", "memory", or "disk"
     max_result_memory_gb: float = 1.0
     # R23 screening output: "full" keeps every trajectory; "summary_only" keeps
     # the versioned per-sample screening summary plus the top-K full histories
     # (the (T, N, 6) ensemble tensor is never materialized or archived).
-    output_mode: str = "full"       # "full" or "summary_only"
+    output_mode: BatchOutputMode = "full"       # "full" or "summary_only"
     summary_top_k: int = 16         # full histories retained in summary mode
 
     # Statistical analysis
@@ -313,7 +345,7 @@ class BatchPropagationConfig:
     compute_impact_statistics: bool | None = None
     compute_impact_probability: bool | None = None
     impact_alt_km: float = 0.0      # Impact detection threshold [km]
-    impact_surface_mode: str = "sphere"  # "sphere" (constant R) or "terrain" (topo-aware freeze)
+    impact_surface_mode: ImpactSurfaceMode = "sphere"  # "sphere" or "terrain"
     sigma_levels: tuple[float, ...] = (1.0, 2.0, 3.0)
 
     def __post_init__(self) -> None:
@@ -497,7 +529,7 @@ class BatchPropagationResult:
     - ``t_impact[i]`` is the impact time (NaN if no impact).
     """
     t: F64Array                              # (T,)
-    Y: Any                                   # ndarray or read-only lazy trajectory view
+    Y: np.ndarray | TrajectoryArrayLike      # ndarray or read-only lazy trajectory view
     sc_samples: F64Array                     # (N, 4) [mass_kg, area_m2, cd, cr]
     impact_mask: np.ndarray                  # (N,) boolean impact mask
     t_impact: F64Array                       # (N,) NaN if no impact
@@ -619,9 +651,19 @@ class BatchPropagationResult:
 __all__ = [
     "build_batch_output_grid",
     "BATCH_SAMPLING_METHODS",
+    "BatchBackend",
+    "BatchOutputMode",
     "StateUncertainty",
     "SpacecraftUncertainty",
     "BatchPropagationConfig",
     "BatchPropagationResult",
+    "GravityModeOverride",
+    "ImpactSurfaceMode",
+    "OutputFormat",
+    "ResultStorageMode",
+    "SamplingMethod",
+    "ShFallbackPolicy",
+    "TorchDtype",
+    "TrajectoryArrayLike",
     "validate_st_lrps_model_dir",
 ]

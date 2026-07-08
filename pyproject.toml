@@ -272,6 +272,11 @@ files = [
   "src/lunaris/surrogate/st_lrps/evaluation/provenance.py",
   "src/lunaris/surrogate/st_lrps/evaluation/benchmark_config.py",
   "src/lunaris/surrogate/st_lrps/evaluation/error_decomposition.py",
+  "src/lunaris/surrogate/runtime/artifact.py",
+  "src/lunaris/surrogate/runtime/device.py",
+  "src/lunaris/surrogate/runtime/force_runtime.py",
+  "src/lunaris/surrogate/runtime/metadata.py",
+  "src/lunaris/surrogate/runtime/scalers.py",
   "src/lunaris/surrogate/st_lrps/runtime/profiling.py",
 ]
 
@@ -282,6 +287,13 @@ files = [
 # physics) keep treating surrogate imports as before. Modules listed explicitly
 # in `files` are still checked despite this skip — the override only governs how
 # *imported* modules are followed.
+[[tool.mypy.overrides]]
+module = [
+  "lunaris.analysis.*",
+  "lunaris.visualization.*",
+]
+follow_imports = "skip"
+
 [[tool.mypy.overrides]]
 module = "lunaris.surrogate.*"
 follow_imports = "skip"

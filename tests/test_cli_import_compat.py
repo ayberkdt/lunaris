@@ -29,6 +29,15 @@ def test_options_parse_empty_args_without_runtime_setup() -> None:
     assert args.start_date is None
     assert args.surrogate_gravity_model_dir is None
     assert args.compute_2body_baseline is None
+    assert args.debug_tracebacks is False
+
+
+def test_options_parse_debug_tracebacks_flag() -> None:
+    options = importlib.import_module("lunaris.cli.options")
+
+    args = options.parse_args(["--debug-tracebacks"])
+
+    assert args.debug_tracebacks is True
 
 
 def test_options_parse_compute_2body_baseline_toggle() -> None:

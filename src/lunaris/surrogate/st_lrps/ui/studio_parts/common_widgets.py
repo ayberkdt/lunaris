@@ -132,6 +132,7 @@ try:
 except ImportError:
     _HAS_H5PY = False
 
+_ARTIFACT_MANAGER_IMPORT_ERROR: str | None = None
 try:
     from lunaris.surrogate.st_lrps.artifacts.manager import (
         CHECKPOINT_SCHEMA_VERSION,
@@ -146,7 +147,8 @@ try:
     from lunaris.surrogate.st_lrps.artifacts.manager import (
         resolve_run_dir as resolve_artifact_run_dir,
     )
-except Exception:  # pragma: no cover - UI remains usable without artifact deps
+except ImportError as exc:  # pragma: no cover - UI remains usable without artifact deps
+    _ARTIFACT_MANAGER_IMPORT_ERROR = str(exc)
     CHECKPOINT_SCHEMA_VERSION = "st_lrps_checkpoint_v2"  # type: ignore[assignment]
     CRITICAL_CONFIG_FIELDS = tuple()  # type: ignore[assignment]
     compute_payload_sha256 = None  # type: ignore[assignment]
@@ -200,13 +202,15 @@ DATASET_SUITE_OUTPUT_ROOT = OUTPUT_ROOT / "datasets" / "cloud_suites"
 # UI defaults are intentionally read from the generator configuration module.
 # This keeps the dashboard from drifting away from the command-line SSOT when
 # dataset-suite sizes, altitude ranges, seeds, or sampling knobs are tuned.
+_SPATIAL_CLOUD_DEFAULTS_IMPORT_ERROR: str | None = None
 try:
     from lunaris.surrogate.st_lrps.data.spatial_cloud_parameters import (
         DEFAULT_CLOUD_SUITE_CONFIG,
         DEFAULT_SPATIAL_CLOUD_CONFIG,
         SUITE_PRESETS,
     )
-except Exception:  # pragma: no cover - UI remains usable without generator deps
+except ImportError as exc:  # pragma: no cover - UI remains usable without generator deps
+    _SPATIAL_CLOUD_DEFAULTS_IMPORT_ERROR = str(exc)
     DEFAULT_CLOUD_SUITE_CONFIG = None  # type: ignore[assignment]
     DEFAULT_SPATIAL_CLOUD_CONFIG = None  # type: ignore[assignment]
     SUITE_PRESETS = {}  # type: ignore[assignment]
@@ -2238,7 +2242,13 @@ def _inspect_run_artifacts(run_dir: str) -> dict[str, Any]:
         "warnings": [],
         "source": "fallback",
     }
-    if not run_dir or make_run_layout is None:
+    if make_run_layout is None:
+        if _ARTIFACT_MANAGER_IMPORT_ERROR:
+            status["warnings"].append(
+                f"artifact_manager_unavailable: {_ARTIFACT_MANAGER_IMPORT_ERROR}"
+            )
+        return status
+    if not run_dir:
         return status
     try:
         resolved = (

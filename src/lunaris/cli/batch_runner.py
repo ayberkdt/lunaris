@@ -33,6 +33,7 @@ import math
 import time
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 # ---------------------------------------------------------------------------
 # Shared, pure orbit/physics CLI helpers live in cli.common_args (import-safe;
@@ -47,12 +48,20 @@ from lunaris.cli.common_args import (  # noqa: E402
 )
 from lunaris.common.batch_defs import (  # noqa: E402
     BATCH_SAMPLING_METHODS,
+    BatchBackend,
     BatchPropagationConfig,
     BatchPropagationResult,
+    GravityModeOverride,
+    OutputFormat,
+    ResultStorageMode,
+    SamplingMethod,
+    ShFallbackPolicy,
     SpacecraftUncertainty,
     StateUncertainty,
+    TorchDtype,
 )
 from lunaris.common.constants import DAY_S, DEG2RAD, MU_MOON, R_MOON  # noqa: E402
+from lunaris.common.type_defs import GravityBackend  # noqa: E402
 from lunaris.core.config import load_default_config, replace_sim_config  # noqa: E402
 
 # =============================================================================
@@ -377,7 +386,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if str(args.batch_gravity_mode) != "follow_mission":
         try:
             from dataclasses import replace
-            forced_backend = str(args.batch_gravity_mode)
+            forced_backend = cast(GravityBackend, str(args.batch_gravity_mode))
             cfg = replace_sim_config(
                 cfg,
                 gravity=replace(cfg.gravity, backend=forced_backend),
@@ -393,11 +402,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             explicit_backend = str(args.batch_backend)
             if explicit_backend in {"cpu_sh", "numba_cuda_sh", "torch_cuda_sh", "torch_cpu_sh"}:
-                forced_backend = "classic_sh"
+                forced_backend = cast(GravityBackend, "classic_sh")
             elif explicit_backend in {"gpu_st_lrps_potential", "gpu_st_lrps_third_body"}:
-                forced_backend = "st_lrps"
+                forced_backend = cast(GravityBackend, "st_lrps")
             else:
-                forced_backend = str(getattr(cfg.gravity, "backend", "classic_sh"))
+                forced_backend = cast(
+                    GravityBackend,
+                    str(getattr(cfg.gravity, "backend", "classic_sh")),
+                )
             cfg = replace_sim_config(
                 cfg,
                 gravity=replace(cfg.gravity, backend=forced_backend),
@@ -453,16 +465,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sigma_cr      = float(args.sigma_cr),
                 sigma_area_m2 = float(args.sigma_area_m2),
             ),
-            sampling_method       = str(args.sampling_method),
+            sampling_method       = cast(SamplingMethod, str(args.sampling_method)),
             use_gpu               = bool(args.use_gpu),
-            batch_backend            = str(args.batch_backend),
+            batch_backend            = cast(BatchBackend, str(args.batch_backend)),
             gpu_device_id         = int(args.gpu_device_id),
             sh_degree         = int(args.sh_degree),
-            sh_fallback_policy = str(args.sh_fallback_policy),
-            torch_dtype           = str(args.torch_dtype),
+            sh_fallback_policy = cast(ShFallbackPolicy, str(args.sh_fallback_policy)),
+            torch_dtype           = cast(TorchDtype, str(args.torch_dtype)),
             torch_sh_chunk_size   = int(args.torch_sh_chunk_size),
             gpu_threads_per_block = int(args.gpu_threads_per_block),
-            gravity_mode_override = str(args.batch_gravity_mode),
+            gravity_mode_override = cast(GravityModeOverride, str(args.batch_gravity_mode)),
             st_lrps_model_dir       = (
                 str(Path(str(args.surrogate_gravity_model_dir)).expanduser().resolve())
                 if args.surrogate_gravity_model_dir
@@ -470,9 +482,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             dt_s                  = float(args.batch_dt_s),
             max_vram_gb           = float(args.max_vram_gb),
-            output_format         = str(args.batch_output_format),
+            output_format         = cast(OutputFormat, str(args.batch_output_format)),
             output_path           = str(args.batch_output_path),
-            result_storage_mode   = str(args.result_storage_mode),
+            result_storage_mode   = cast(ResultStorageMode, str(args.result_storage_mode)),
             max_result_memory_gb  = float(args.max_result_memory_gb),
             detect_impact         = bool(args.detect_impact),
             compute_impact_statistics = bool(args.compute_impact_statistics),

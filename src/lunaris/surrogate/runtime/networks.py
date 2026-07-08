@@ -20,7 +20,7 @@ if torch is not None and nn is not None:
             super().__init__()
             self.w0 = float(w0)
 
-        def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
             return torch.sin(self.w0 * x)
 
 
@@ -49,7 +49,7 @@ if torch is not None and nn is not None:
             layers.append(nn.Linear(hidden, 1))
             self.net = nn.Sequential(*layers)
 
-        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
             return self.net(x_scaled)
 
 
@@ -91,7 +91,7 @@ if torch is not None and nn is not None:
             layers.append(nn.Linear(width_in, 1))
             self.net = nn.Sequential(*layers)
 
-        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
             return self.net(x_scaled)
 
 
@@ -119,7 +119,7 @@ if torch is not None and nn is not None:
             self.append_raw = bool(append_raw)
             self.out_dim = (int(in_dim) if self.append_raw else 0) + (2 * int(n_features))
 
-        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
             proj = x_scaled @ self.B.T
             encoded = torch.cat(
                 [torch.sin(2.0 * math.pi * proj), torch.cos(2.0 * math.pi * proj)],
@@ -138,7 +138,7 @@ if torch is not None and nn is not None:
             self.backbone = backbone
             self.embedding = embedding
 
-        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:  # type: ignore[name-defined]
+        def forward(self, x_scaled: torch.Tensor) -> torch.Tensor:
             if self.embedding is not None:
                 x_scaled = self.embedding(x_scaled)
             return self.backbone(x_scaled)
@@ -239,7 +239,7 @@ def _load_checkpoint(path: Path, device: torch.device) -> dict[str, Any]:
     """Load a checkpoint with compatibility across PyTorch versions."""
 
     try:
-        obj = torch.load(path, map_location=device, weights_only=False)  # type: ignore[call-arg]
+        obj = torch.load(path, map_location=device, weights_only=False)
     except TypeError:
         obj = torch.load(path, map_location=device)
     if not isinstance(obj, dict):

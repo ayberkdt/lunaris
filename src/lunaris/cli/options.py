@@ -177,6 +177,11 @@ def _add_io_args(parser: argparse.ArgumentParser) -> None:
     g_io.add_argument("--ldem-root", type=str, help="LOLA LDEM root directory")
     g_io.add_argument("--albedo-root", type=str, help="LOLA Albedo root directory")
     g_io.add_argument("--ldem-ppd", type=int, help="Surface resolution (pixels per degree)")
+    g_io.add_argument(
+        "--debug-tracebacks",
+        action="store_true",
+        help="Print tracebacks for unexpected CLI runtime failures.",
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
