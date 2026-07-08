@@ -130,7 +130,15 @@ def _run_optional_output(
 
 
 def load_runtime_config(args: Namespace) -> SimConfig:
-    cfg = load_default_config()
+    # Thread asset-path overrides into the factory *before* default asset
+    # resolution, so --kernel-dir / --gravity-file-path work on a machine without
+    # the repo default data/ layout (otherwise load_default_config would fail
+    # while resolving defaults, before apply_args_to_config could override them).
+    cfg = load_default_config(
+        data_dir=getattr(args, "data_dir", None),
+        kernel_dir=getattr(args, "kernel_dir", None),
+        gravity_file_path=getattr(args, "gravity_file_path", None),
+    )
     return apply_args_to_config(cfg, args)
 
 

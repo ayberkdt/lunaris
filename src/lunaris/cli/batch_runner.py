@@ -376,8 +376,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
 
     # ---- Build SimConfig ----------------------------------------------------
+    # Thread asset-path overrides into the factory before default asset
+    # resolution (mirrors cli.run.load_runtime_config), so --kernel-dir /
+    # --gravity-file-path work without the repo default data/ layout.
     try:
-        cfg = load_default_config()
+        cfg = load_default_config(
+            data_dir=getattr(args, "data_dir", None),
+            kernel_dir=getattr(args, "kernel_dir", None),
+            gravity_file_path=getattr(args, "gravity_file_path", None),
+        )
         cfg = apply_args_to_config(cfg, args)
     except Exception as exc:
         print(f"[BATCH][FATAL] Config init failed: {exc}", flush=True)

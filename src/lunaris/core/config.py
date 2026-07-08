@@ -114,41 +114,64 @@ def _pick_optional_existing_file(folder: Path, candidates: tuple[str, ...]) -> P
     return None
 
 
-def _resolve_default_kernel_paths() -> tuple[str, ...]:
+def _resolve_default_kernel_paths(kernel_dir: Path | str | None = None) -> tuple[str, ...]:
     """Default local SPICE-kernel resolver for the Lunaris config factory only.
 
     Dependency-light: resolves paths from local filename candidates without
     importing heavy loaders/model modules. Runtime kernel loading/validation is
     performed elsewhere (lunaris.physics.ephemeris).
+
+    ``kernel_dir`` overrides the default ``KERNEL_DIR`` (from ``LUNARIS_DATA_DIR``
+    or the repo ``data/``). CLI callers thread ``--kernel-dir`` here so a custom
+    kernel location is honored *before* asset resolution, not after the factory
+    has already failed.
     """
-    if not KERNEL_DIR.exists():
+    base = Path(kernel_dir).expanduser().resolve() if kernel_dir is not None else KERNEL_DIR
+    if not base.exists():
         raise FileNotFoundError(
-            f"CRITICAL: Lunaris SPICE kernel directory not found: {KERNEL_DIR}\n"
-            f"Expected folder structure: {DATA_DIR}/ephemeris_models"
+            f"CRITICAL: Lunaris SPICE kernel directory not found: {base}\n"
+            f"Expected folder structure: <data_dir>/ephemeris_models"
         )
 
     out: list[str] = []
     for purpose, candidates in _KERNEL_CANDIDATES:
-        out.append(str(_pick_existing_file(KERNEL_DIR, candidates, what=f"SPICE kernel ({purpose})")))
+        out.append(str(_pick_existing_file(base, candidates, what=f"SPICE kernel ({purpose})")))
     for _purpose, candidates in _OPTIONAL_KERNEL_CANDIDATES:
-        optional = _pick_optional_existing_file(KERNEL_DIR, candidates)
+        optional = _pick_optional_existing_file(base, candidates)
         if optional is not None:
             out.append(str(optional))
     return tuple(out)
 
 
-def _resolve_default_gravity_path() -> Path:
+def _resolve_default_gravity_path(
+    grav_dir: Path | str | None = None,
+    grav_file_path: Path | str | None = None,
+) -> Path:
     """Default local gravity-model resolver for the Lunaris config factory only.
 
     Dependency-light: resolves the default gravity file from local filename
     candidates without importing heavy loaders/model modules.
+
+    ``grav_file_path`` names an explicit gravity file directly (CLI
+    ``--gravity-file-path``); when given it is verified and returned as-is.
+    Otherwise ``grav_dir`` overrides the default ``GRAV_DIR`` and the known
+    filename candidates are scanned inside it. Both let a custom asset location be
+    honored before the factory would otherwise raise.
     """
-    if not GRAV_DIR.exists():
+    if grav_file_path is not None:
+        p = Path(grav_file_path).expanduser().resolve()
+        if not p.exists():
+            raise FileNotFoundError(
+                f"CRITICAL: Lunaris gravity model file not found: {p}"
+            )
+        return p
+    base = Path(grav_dir).expanduser().resolve() if grav_dir is not None else GRAV_DIR
+    if not base.exists():
         raise FileNotFoundError(
-            f"CRITICAL: Lunaris gravity model directory not found: {GRAV_DIR}\n"
-            f"Expected folder structure: {DATA_DIR}/gravity_models"
+            f"CRITICAL: Lunaris gravity model directory not found: {base}\n"
+            f"Expected folder structure: <data_dir>/gravity_models"
         )
-    return _pick_existing_file(GRAV_DIR, _GRAVITY_CANDIDATES, what="gravity model")
+    return _pick_existing_file(base, _GRAVITY_CANDIDATES, what="gravity model")
 
 
 # =============================================================================
@@ -352,19 +375,46 @@ def ensure_model_configs(cfg: SimConfig) -> SimConfig:
 # 3) FACTORY
 # =============================================================================
 
-def load_default_config() -> SimConfig:
+def load_default_config(
+    *,
+    data_dir: Path | str | None = None,
+    kernel_dir: Path | str | None = None,
+    gravity_file_path: Path | str | None = None,
+) -> SimConfig:
     """
     Create, validate, and return the default simulation configuration.
 
     This function may import heavy modules (lunaris.physics.ephemeris / numba / spiceypy)
     and will raise ImportError with a helpful message if the environment is incomplete.
+
+    Parameters
+    ----------
+    data_dir :
+        External data root to resolve assets from, overriding the default
+        (``LUNARIS_DATA_DIR`` / repo ``data/``). ``ephemeris_models`` and
+        ``gravity_models`` subdirectories are resolved beneath it.
+    kernel_dir :
+        SPICE-kernel directory override (takes precedence over ``data_dir`` for
+        kernels). Maps the CLI ``--kernel-dir``.
+    gravity_file_path :
+        Explicit gravity model file override. Maps the CLI ``--gravity-file-path``.
+
+    These overrides are applied *before* asset resolution so a caller supplying a
+    custom asset location on a machine without the default ``data/`` layout still
+    builds a config, instead of failing during default resolution. Passing nothing
+    preserves the historical default-resolution behavior exactly.
     """
 
     # -------------------------------------------------------------------------
     # STEP 1: Resolve & validate assets (no heavy imports)
     # -------------------------------------------------------------------------
-    kernel_paths = _resolve_default_kernel_paths()
-    grav_path = _resolve_default_gravity_path()
+    resolved_data_dir = Path(data_dir).expanduser().resolve() if data_dir is not None else None
+    if kernel_dir is None and resolved_data_dir is not None:
+        kernel_dir = resolved_data_dir / "ephemeris_models"
+    grav_dir = resolved_data_dir / "gravity_models" if resolved_data_dir is not None else None
+
+    kernel_paths = _resolve_default_kernel_paths(kernel_dir)
+    grav_path = _resolve_default_gravity_path(grav_dir=grav_dir, grav_file_path=gravity_file_path)
 
     # -------------------------------------------------------------------------
     # STEP 2: Build sub-configurations
