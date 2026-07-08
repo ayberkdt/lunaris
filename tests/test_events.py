@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 
 from lunaris.core.events import (
+    EventSpec,
     default_events,
     make_altitude_crossing_event,
     make_aposelene_event,
@@ -187,6 +188,19 @@ def test_default_events_bundle_is_scipy_compatible():
     assert events[0].terminal is True
     assert events[1].terminal is False
     assert events[2].terminal is False
+
+
+def test_event_spec_binds_scipy_metadata_at_adapter_boundary():
+    def core(t: float, y: np.ndarray) -> float:
+        return float(t + y[0])
+
+    ev = EventSpec(core, terminal=True, direction=-1.0, role="impact").to_scipy_event()
+
+    assert ev is core
+    assert ev.terminal is True
+    assert ev.direction == pytest.approx(-1.0)
+    assert ev._event_role == "impact"
+    assert ev(2.0, _state(3.0)) == pytest.approx(5.0)
 
 
 def test_default_events_without_periapo_and_with_topo():

@@ -1,8 +1,9 @@
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
-from lunaris.common import GravityConfig
+from lunaris.common import GravityConfig, batch_defs
 from lunaris.common.batch_defs import BatchPropagationConfig, validate_st_lrps_model_dir
 
 
@@ -54,6 +55,13 @@ def test_batch_sampling_method_validation() -> None:
 def test_batch_backend_requires_canonical_names() -> None:
     with pytest.raises(ValueError, match="batch_backend must be one of"):
         BatchPropagationConfig(n_samples=8, batch_backend="unknown_backend")
+
+
+def test_batch_runtime_choices_are_derived_from_literal_aliases() -> None:
+    assert batch_defs.BATCH_SAMPLING_METHODS == get_args(batch_defs.SamplingMethod)
+    assert batch_defs.BATCH_BACKENDS == get_args(batch_defs.BatchBackend)
+    assert batch_defs.OUTPUT_FORMATS == get_args(batch_defs.OutputFormat)
+    assert batch_defs.RESULT_STORAGE_MODES == get_args(batch_defs.ResultStorageMode)
 
 
 def test_batch_impact_and_storage_contracts() -> None:

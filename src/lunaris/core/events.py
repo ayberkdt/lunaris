@@ -90,6 +90,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -190,11 +191,49 @@ def _los_blocked_by_sphere_center(
 
 EventFn = Callable[[float, NDArray[np.float64]], float]
 
+
+@dataclass(frozen=True, slots=True)
+class EventSpec:
+    """Typed metadata envelope for a SciPy-compatible event callable.
+
+    SciPy still consumes attributes on callables, but Lunaris keeps the metadata
+    in a real object until the final adapter boundary.
+    """
+
+    fn: EventFn
+    terminal: bool = False
+    direction: float = 0.0
+    role: str | None = None
+
+    @classmethod
+    def from_event(
+        cls,
+        fn: EventFn,
+        *,
+        role: str | None = None,
+        terminal: bool | None = None,
+        direction: float | None = None,
+    ) -> EventSpec:
+        resolved_role = role if role is not None else getattr(fn, "_event_role", None)
+        return cls(
+            fn=fn,
+            terminal=bool(getattr(fn, "terminal", False) if terminal is None else terminal),
+            direction=float(getattr(fn, "direction", 0.0) if direction is None else direction),
+            role=None if resolved_role is None else str(resolved_role),
+        )
+
+    def to_scipy_event(self, fn: EventFn | None = None) -> EventFn:
+        event = self.fn if fn is None else fn
+        event.terminal = bool(self.terminal)  # type: ignore[attr-defined]
+        event.direction = float(self.direction)  # type: ignore[attr-defined]
+        if self.role is not None:
+            event._event_role = self.role  # type: ignore[attr-defined]
+        return event
+
+
 def _set_event_props(fn: EventFn, *, terminal: bool, direction: float) -> EventFn:
     """Attach SciPy-style event attributes and return the same callable."""
-    fn.terminal = bool(terminal)   # type: ignore[attr-defined]
-    fn.direction = float(direction)  # type: ignore[attr-defined]
-    return fn
+    return EventSpec(fn=fn, terminal=terminal, direction=direction).to_scipy_event()
 
 
 def make_altitude_crossing_event(
@@ -1161,6 +1200,9 @@ if __name__ == "__main__":
 # =============================================================================
 
 __all__ = (
+    "EventFn",
+    "EventSpec",
+
     # -------------------------------------------------------------------------
     # Impact & geometry events
     # -------------------------------------------------------------------------

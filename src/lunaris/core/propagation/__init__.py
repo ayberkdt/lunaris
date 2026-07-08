@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from lunaris.common.type_defs import PropagationResult
 
-from .events import EventOutcome, build_events, event_outcome_from_solver_events
+from .events import EventOutcome, EventSpec, build_events, event_outcome_from_solver_events
 from .plans import (
     IntegrationPlan,
     StepSizePlan,
@@ -20,6 +20,7 @@ __all__ = [
     "propagate",
     "PropagationResult",
     "EventOutcome",
+    "EventSpec",
     "TimeGridPlan",
     "StepSizePlan",
     "IntegrationPlan",
