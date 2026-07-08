@@ -89,6 +89,20 @@ class TrajectoryArrayLike(Protocol):
         ...
 
 
+class TrajectoryArrayLike(Protocol):
+    """Minimal eager/lazy trajectory surface consumed by batch result logic."""
+
+    shape: tuple[int, ...]
+    ndim: int
+    dtype: np.dtype[Any]
+
+    def __getitem__(self, key: Any) -> np.ndarray:
+        ...
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        ...
+
+
 def build_batch_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64Array, int, float]:
     """Single source of truth for the batch/ensemble output time grid.
 

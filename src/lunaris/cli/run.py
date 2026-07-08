@@ -58,19 +58,6 @@ class CliStageError(RuntimeError):
         self.cause = cause
 
 
-@dataclass(slots=True)
-class SurfaceSetup:
-    provider: Any | None
-    topo_grid: Any | None
-    topo_requested: bool
-
-
-@dataclass(slots=True)
-class PropagationRun:
-    result: PropagationResult
-    elapsed_s: float
-
-
 def _run_stage(stage: str, operation: Callable[[], _T]) -> _T:
     try:
         return operation()
