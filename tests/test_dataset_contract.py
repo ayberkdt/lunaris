@@ -334,14 +334,24 @@ def test_compatibility_report_rejects_gravity_label_contract_mismatch():
 
 def test_npz_writer_finalize_checks_incomplete_stream(tmp_path):
     from lunaris.batch.storage import _NPZWriter
-    # R24: _NPZWriter.finalize() must raise ValueError if the stream terminates early
+    # R24: _NPZWriter.finalize() must raise RuntimeError if the stream terminates early
     path = tmp_path / "test.npz"
-    writer = _NPZWriter(path, 10, ["Y", "Y_summary"])
+    t_grid = np.zeros(2)
+    writer = _NPZWriter(path, n_samples=10, t_grid=t_grid, n_state=6)
 
     # Write 5 sub-batches of 1
-    for _ in range(5):
-        writer.write({"Y": np.zeros(1), "Y_summary": np.zeros(1)})
+    for i in range(5):
+        writer.write_sample_batch(i, i + 1, np.zeros((2, 1, 6)))
 
-    with pytest.raises(ValueError, match="Expected 10 samples"):
+    writer.write_final(
+        sc_samples=np.zeros((10, 4)),
+        impact_flags=np.zeros(10),
+        t_impact=np.zeros(10),
+        valid_mask=np.zeros(10),
+        impact_position_inertial_m=np.zeros((10, 3)),
+        impact_position_fixed_m=np.zeros((10, 3)),
+    )
+
+    with pytest.raises(RuntimeError, match="expected 10 samples, got 5"):
         writer.finalize()
 
