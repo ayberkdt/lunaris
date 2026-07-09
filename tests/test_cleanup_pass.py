@@ -1,4 +1,5 @@
 import pytest
+
 try:
     import torch
     import torch.nn

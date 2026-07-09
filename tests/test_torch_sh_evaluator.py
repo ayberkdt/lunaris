@@ -13,7 +13,9 @@ Validates (task §17 / §5), CPU-only with torch:
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

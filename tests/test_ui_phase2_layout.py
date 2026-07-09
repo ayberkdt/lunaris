@@ -1,7 +1,9 @@
 """Phase 2 visual hierarchy and responsive-shell contracts."""
 
 from __future__ import annotations
+
 import pytest
+
 pytest.importorskip('PySide6.QtWidgets')
 
 

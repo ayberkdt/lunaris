@@ -367,7 +367,7 @@ def apply_args_to_config(cfg: SimConfig, args: argparse.Namespace) -> SimConfig:
         if getattr(args, "albedo_const", None) is not None:
             alb = replace(alb, albedo_const=float(args.albedo_const), A_moon=float(args.albedo_const))
         cfg = replace(cfg, albedo=alb)
-        
+
         # User explicitly supplied albedo settings -> automatically enable the force
         # unless they explicitly turned it off via --enable-albedo=False.
         if any(getattr(args, name, None) is not None for name in albedo_arg_names):

@@ -1,7 +1,9 @@
 """Task 7 — ST-LRPS A0..A9 ablation suite."""
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

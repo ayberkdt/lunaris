@@ -16,7 +16,9 @@ Qt ``offscreen`` platform so they run headless in CI.
 """
 
 from __future__ import annotations
+
 import pytest
+
 pytest.importorskip('PySide6.QtWidgets')
 
 

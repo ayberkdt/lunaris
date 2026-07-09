@@ -1,7 +1,9 @@
 """Regression tests for the ST-LRPS ``--batch-rk4`` frame policy contract."""
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

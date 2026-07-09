@@ -879,12 +879,12 @@ class BatchPropagationEngine:
         duration_s  = float(cfg.time.duration_s)
         output_dt_s = float(cfg.time.output_dt_s or batch_cfg.dt_s * 10)
         t_out_contract, _, _ = build_batch_output_grid(duration_s, output_dt_s)
-        
+
         # R23: summary-only screening mode never materializes or archives the
         # full (T, N, 6) ensemble tensor. Each sub-batch is reduced to the
         # versioned screening summary; only the top-K full histories survive.
         summary_only = str(getattr(batch_cfg, "output_mode", "full")) == "summary_only"
-        
+
         if summary_only:
             storage_mode = "summary_only"
             result_bytes = 0

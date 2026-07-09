@@ -12,7 +12,9 @@ user-visible behaviors that recently regressed:
 """
 
 from __future__ import annotations
+
 import pytest
+
 pytest.importorskip('PySide6.QtWidgets')
 
 

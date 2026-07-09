@@ -8,7 +8,9 @@ draws are reproducible. RNG-state checkpoint/resume is exercised elsewhere.
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

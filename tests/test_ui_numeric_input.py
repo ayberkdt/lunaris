@@ -7,7 +7,9 @@ suppression, programmatic synchronization, and cursor reset.
 """
 
 from __future__ import annotations
+
 import pytest
+
 pytest.importorskip('PySide6.QtWidgets')
 
 

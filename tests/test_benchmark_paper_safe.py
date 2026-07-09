@@ -6,7 +6,9 @@ the permissive ``allow_*`` flags. It must also write the provenance files.
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

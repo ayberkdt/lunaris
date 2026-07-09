@@ -12,7 +12,9 @@ CPU reference is expected.
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

@@ -7,7 +7,9 @@ when PyQt is unavailable.
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

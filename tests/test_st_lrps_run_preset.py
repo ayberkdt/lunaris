@@ -17,7 +17,9 @@ These are pure-Python tests (no torch / h5py / dataset files) plus a couple of
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

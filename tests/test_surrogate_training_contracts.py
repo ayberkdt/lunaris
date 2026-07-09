@@ -9,7 +9,9 @@ These tests protect the exact areas that previously caused silent mistakes:
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

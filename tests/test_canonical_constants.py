@@ -8,7 +8,9 @@ values in ``lunaris.surrogate.st_lrps.shared.contracts`` and
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

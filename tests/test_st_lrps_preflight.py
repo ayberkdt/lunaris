@@ -7,7 +7,9 @@ whose inputs are absent (independent train/val files).
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

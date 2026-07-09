@@ -12,7 +12,9 @@ Covers two fixes to ``lunaris.surrogate.runtime.gravity_provider``:
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

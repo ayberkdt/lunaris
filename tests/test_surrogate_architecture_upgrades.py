@@ -15,7 +15,9 @@ All tests use tiny synthetic tensors / a tiny HDF5 file.
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

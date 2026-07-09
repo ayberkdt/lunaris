@@ -7,7 +7,9 @@ buffering and follow-output rules are pinned independently of rendering.
 """
 
 from __future__ import annotations
+
 import pytest
+
 pytest.importorskip('PySide6.QtWidgets')
 
 

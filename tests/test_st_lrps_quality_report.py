@@ -1,7 +1,9 @@
 """Unit coverage for the ST-LRPS dataset quality report."""
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

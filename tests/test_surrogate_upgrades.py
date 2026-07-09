@@ -21,7 +21,9 @@ These are intentionally lightweight: tiny synthetic tensors / HDF5 files only.
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

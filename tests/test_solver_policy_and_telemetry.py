@@ -7,7 +7,9 @@ These tests target the small pure/helper functions that back the UI fixes:
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn

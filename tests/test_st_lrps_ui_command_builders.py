@@ -1,7 +1,9 @@
 """Lightweight ST-LRPS Studio command-builder tests."""
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn
@@ -12,6 +14,7 @@ except (ImportError, AttributeError, ModuleNotFoundError):
 
 
 import pytest
+
 pytest.importorskip('PySide6.QtWidgets')
 
 

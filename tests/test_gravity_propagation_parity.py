@@ -21,7 +21,9 @@ What is checked, and why a silent break would matter:
 """
 
 from __future__ import annotations
+
 import pytest
+
 try:
     import torch
     import torch.nn
