@@ -22,8 +22,8 @@ behavior.
 
 | Backend | Family | Device | Integrator | SH degree limit | Dtypes | Supported force models | Notes |
 |---|---|---|---|---|---|---|---|
-| `cpu_sh` | classic SH | CPU | adaptive DOP853 | coefficient file / memory | float64 | SH, third-body Sun/Earth, Earth J2, SRP, albedo, thermal IR, solid tides, 1PN relativity | Full-fidelity CPU fallback and default non-GPU route. |
-| `numba_cuda_sh` | classic SH | CUDA | fixed-step RK4 | 24 | float64 | SH, third-body Sun/Earth, Earth J2, SRP, 1PN relativity | Low-degree screening backend. The degree-24 ceiling is a CUDA workspace limit, not a physical limit. |
+| `cpu_sh` | classic SH | CPU | adaptive DOP853 | coefficient file / memory | float64 | SH, third-body Sun/Earth, Earth J2, SRP, albedo, thermal IR, solid tides, selected 1PN corrections | Full-fidelity CPU fallback and default non-GPU route. Surface-radiation eclipse models are engineering approximations and are labeled in `force_model_fidelity`. |
+| `numba_cuda_sh` | classic SH | CUDA | fixed-step RK4 | 24 | float64 | SH, third-body Sun/Earth, Earth J2, SRP, selected 1PN corrections | Low-degree screening backend. The degree-24 ceiling is a CUDA workspace limit, not a physical limit. SRP uses a cannonball Cr*A/m area model; shadowing is reduced-fidelity on this path: cylindrical Moon umbra, no Earth eclipse. Archives disclose this as `srp_force_model` and `srp_shadow_model`. |
 | `torch_cuda_sh` | classic SH | CUDA | fixed-step RK4 | coefficient file / VRAM / batch | float32, float64 | SH only | High-degree GPU SH route. Any added perturbation causes an explicit recorded fallback. |
 | `torch_cpu_sh` | classic SH | CPU | fixed-step RK4 | coefficient file / memory | float32, float64 | SH only | CUDA-free validation route for the torch SH evaluator. |
 | `gpu_st_lrps_potential` | ST-LRPS | CUDA | fixed-step RK4 | surrogate artifact | float32, float64 | ST-LRPS gravity only | Uses potential-autograd runtime artifacts. Added perturbations fall back to CPU. |
@@ -64,3 +64,12 @@ Batch archives should keep these fields aligned with the backend plan:
 | `fallback_reason` | Human-readable reason for fallback. Empty when no fallback occurred. |
 | `backend_family` | `classic_sh`, `st_lrps`, or `meta` before resolution. |
 | `backend_implementation` | Implementation family such as `numba_cuda`, `torch`, or `numpy_numba_cpu`. |
+| `requested_dt_s` | User/config requested fixed-step RK4 substep. For CPU adaptive runs this is recorded as the batch request, not a solver step. |
+| `effective_dt_s` | Realized fixed-step RK4 substep after aligning the snapshot grid; present for fixed-step backends. |
+| `steps_per_snapshot` | Number of RK4 substeps per recorded snapshot for fixed-step backends. |
+| `effective_output_dt_s` | Realized snapshot spacing after forcing the final epoch to land exactly on `duration_s`. |
+| `srp_shadow_model` | SRP eclipse/shadow implementation used by the backend when SRP is active. |
+| `srp_shadow_model_fidelity` | Whether the SRP shadow model is full-fidelity or a recorded backend approximation. |
+| `srp_force_model` | SRP area/attitude force model, currently `cannonball_cr_area_over_mass` rather than attitude-dependent flat plate. |
+| `relativity_model` | Relativity scope label, currently `selected_1pn_corrections`, not full relativistic N-body dynamics. |
+| `force_model_fidelity` | Nested copy of active non-gravity fidelity labels for paper/report consumers. |

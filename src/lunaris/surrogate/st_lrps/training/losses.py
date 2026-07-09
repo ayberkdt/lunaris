@@ -291,6 +291,13 @@ class GradNormWeights:
         if self._step_counter % self.update_interval != 1 and self._step_counter > 1:
             return self.w_u, self.w_a
         raw = self._compute_grad_norm_ratio(loss_u, loss_a, shared_params)
+        if self.last_gradnorm_status != "ok":
+            logging.getLogger(__name__).warning(
+                "Dynamic GradNorm update skipped (status=%s); keeping w_a=%.4f unchanged.",
+                self.last_gradnorm_status,
+                float(self.w_a),
+            )
+            return self.w_u, self.w_a
         self._ema_ratio = self.ema_beta * self._ema_ratio + (1.0 - self.ema_beta) * raw
         self._ema_ratio = min(max(self._ema_ratio, float(self.w_a_min)), float(self.w_a_max))
         self.w_u = 1.0

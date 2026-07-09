@@ -54,8 +54,6 @@ from numba import njit
 
 from lunaris.common.constants import (
     AU,
-    MU_EARTH,
-    MU_SUN,
     P_SUN_1AU,
     R_EARTH_MEAN,
     R_MOON,
@@ -315,8 +313,8 @@ class DynamicsEngine:
 
         # Core constants
         MU_M = float(gp.gm_m3s2)  # prefer model GM even if SH is disabled
-        MU_S = float(MU_SUN)
-        MU_E = float(MU_EARTH)
+        MU_S = float(ep.mu_sun_m3s2)
+        MU_E = float(ep.mu_earth_m3s2)
 
         srp_cfg = self.srp
         RMOON = float(getattr(srp_cfg, "R_moon_m", R_MOON))
@@ -1170,6 +1168,8 @@ class DynamicsEngine:
         mass = float(y[6]) if (y.size > 6) else float(self.sc_props.mass_kg)
 
         mu_m = float(gp.gm_m3s2)  # consistent with RHS
+        mu_s = float(ep.mu_sun_m3s2)
+        mu_e = float(ep.mu_earth_m3s2)
 
         out: dict[str, float] = {}
 
@@ -1254,11 +1254,11 @@ class DynamicsEngine:
 
         # Third body
         if req.use_3rd_sun:
-            ax3, ay3, az3 = accel_third_body_numba(r[0], r[1], r[2], sun[0], sun[1], sun[2], float(MU_SUN))
+            ax3, ay3, az3 = accel_third_body_numba(r[0], r[1], r[2], sun[0], sun[1], sun[2], mu_s)
             out["3rd Body (Sun)"] = _norm3(ax3, ay3, az3)
 
         if req.use_3rd_earth:
-            ax3, ay3, az3 = accel_third_body_numba(r[0], r[1], r[2], earth[0], earth[1], earth[2], float(MU_EARTH))
+            ax3, ay3, az3 = accel_third_body_numba(r[0], r[1], r[2], earth[0], earth[1], earth[2], mu_e)
             out["3rd Body (Earth)"] = _norm3(ax3, ay3, az3)
 
         if req.use_earth_j2:
@@ -1269,7 +1269,7 @@ class DynamicsEngine:
                 float(earth[0]),
                 float(earth[1]),
                 float(earth[2]),
-                float(MU_EARTH),
+                mu_e,
                 float(ej.r_ref_m),
                 float(ej.j2),
                 float(ej.ax),
@@ -1294,7 +1294,7 @@ class DynamicsEngine:
                     efx,
                     efy,
                     efz,
-                    float(MU_EARTH),
+                    mu_e,
                     float(tp.r_ref_m),
                     float(tp.k2),
                     float(tp.k3),
@@ -1317,7 +1317,7 @@ class DynamicsEngine:
                     sfx,
                     sfy,
                     sfz,
-                    float(MU_SUN),
+                    mu_s,
                     float(tp.r_ref_m),
                     float(tp.k2),
                     float(tp.k3),
@@ -1516,7 +1516,7 @@ class DynamicsEngine:
                     float(v[0]), float(v[1]), float(v[2]),
                     float(sun[0]), float(sun[1]), float(sun[2]),
                     float(svx), float(svy), float(svz),
-                    float(MU_SUN),
+                    mu_s,
                 )
                 evx, evy, evz = interp_vec3_derivative_safe(
                     float(t),
@@ -1528,7 +1528,7 @@ class DynamicsEngine:
                     float(v[0]), float(v[1]), float(v[2]),
                     float(earth[0]), float(earth[1]), float(earth[2]),
                     float(evx), float(evy), float(evz),
-                    float(MU_EARTH),
+                    mu_e,
                 )
                 ext_x = exx + eex
                 ext_y = exy + eey

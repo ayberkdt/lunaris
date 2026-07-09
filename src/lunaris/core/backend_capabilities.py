@@ -176,7 +176,7 @@ _NUMBA_CUDA_SH = BackendCapabilities(
     description=(
         "Numba CUDA classic-SH fixed-step RK4, one batch sample per CUDA thread "
         "(degree <= 24, a thread-local workspace limit — NOT a physical one). "
-        "Supports third-body Sun/Earth, Earth J2, SRP, and 1PN relativity; "
+        "Supports third-body Sun/Earth, Earth J2, SRP, and selected 1PN corrections; "
         "albedo, thermal IR, and solid tides require the CPU backend. Use for "
         "low-degree, high-throughput batch screening."
     ),

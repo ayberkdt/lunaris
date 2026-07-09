@@ -122,6 +122,17 @@ def test_build_output_grid_delegates_to_canonical_contract() -> None:
     assert snap_interval == pytest.approx(500.0)
 
 
+def test_fixed_step_metrics_record_effective_grid_aligned_dt() -> None:
+    Y0 = np.stack([_circular_state(100.0)])
+    res = _run(Y0, duration_s=1000.0, output_dt_s=600.0, dt_s=60.0)
+
+    assert res.metrics["requested_dt_s"] == pytest.approx(60.0)
+    assert res.metrics["requested_output_dt_s"] == pytest.approx(600.0)
+    assert res.metrics["effective_output_dt_s"] == pytest.approx(500.0)
+    assert res.metrics["steps_per_snapshot"] == 8
+    assert res.metrics["effective_dt_s"] == pytest.approx(62.5)
+
+
 def test_chunking_is_result_invariant() -> None:
     rng = np.random.default_rng(3)
     Y0 = np.repeat(_circular_state(150.0)[None, :], 5, axis=0)

@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
+pytest.importorskip("torch.nn")
 
 from lunaris.surrogate.st_lrps.evaluation.cli import (
     _build_eval_warnings,
@@ -389,6 +390,24 @@ def test_gradnorm_valid_ratio_still_clamps_normally():
     assert gn.last_gradnorm_status == "ok"
     assert out == pytest.approx(gn.w_a_max)
     assert gn.w_a_min <= out <= gn.w_a_max
+
+
+def test_dynamic_gradnorm_invalid_ratio_skips_ema_update():
+    gn, p = _gradnorm_setup()
+    gn.mode = "dynamic"
+    gn.w_a = 1.25
+    gn._ema_ratio = 0.8
+    gn.update_interval = 1
+    loss_u = (p ** 2).sum()
+    loss_a = (torch.randn(3, requires_grad=True) ** 2).sum()
+
+    w_u, w_a = gn.compute_gradnorm_weights(loss_u, loss_a, [p])
+
+    assert gn.last_gradnorm_status == "empty_grad_a"
+    assert w_u == pytest.approx(1.0)
+    assert w_a == pytest.approx(1.25)
+    assert gn.w_a == pytest.approx(1.25)
+    assert gn._ema_ratio == pytest.approx(0.8)
 
 
 # ---------------------------------------------------------------------------

@@ -14,9 +14,10 @@ GPU path  — ``GPUBatchPropagator``
       * Spherical harmonics gravity up to degree 24 (compile-time fixed workspace).
       * Point-mass fallback (when ``sh_degree=0``).
       * Third-body Sun / Earth point-mass perturbations.
-      * Solar Radiation Pressure (flat-plate, eclipse-checked).
-      * 1PN relativistic corrections (Moon Schwarzschild plus external-body
-        Schwarzschild/de Sitter terms when ephemeris tables are present).
+      * Solar Radiation Pressure (cannonball Cr*A/m area model with
+        reduced-fidelity CUDA shadow: cylindrical Moon umbra, no Earth eclipse).
+      * Selected 1PN corrections (Moon Schwarzschild plus external-body
+        differential Schwarzschild/de Sitter terms when ephemeris tables are present).
 
     Physics CPU-only (not on GPU):
       * Albedo / thermal surface forces.
@@ -57,7 +58,7 @@ from typing import Any
 
 import numpy as np
 
-from lunaris.common.batch_defs import build_batch_output_grid
+from lunaris.common.batch_defs import build_batch_output_grid, build_fixed_step_grid_metadata
 from lunaris.common.constants import (
     AU,
     C_LIGHT,
@@ -108,8 +109,10 @@ def gpu_unsupported_features(flags: Any) -> tuple[str, ...]:
     Return the active physics options that the current CUDA backend cannot model.
 
     The GPU path now covers Moon SH gravity, Sun/Earth third-body terms, Earth
-    J2, SRP, and 1PN relativity.  Surface-lighting forces and solid tides still
-    require the CPU full-fidelity propagator.
+    J2, SRP, and selected 1PN corrections.  GPU SRP uses the cannonball Cr*A/m
+    area model with a reduced-fidelity shadow model (cylindrical Moon umbra, no
+    Earth eclipse); surface-lighting forces and solid tides still require the
+    CPU full-fidelity propagator.
     """
 
     unsupported: list[str] = []
@@ -657,10 +660,11 @@ if _CUDA_AVAILABLE:
         out,
     ):
         """
-        Solar Radiation Pressure acceleration with lunar shadow check.
+        Cannonball SRP acceleration with simplified lunar shadow.
 
-        Conical shadow (umbra only) using spherical Moon.
-        No Earth shadow on the GPU path (negligible contribution near Moon).
+        This CUDA screening path uses a cylindrical Moon umbra approximation
+        and omits Earth eclipse. CPU SRP remains the full conical Moon/Earth
+        shadow implementation; diagnostics disclose this reduced-fidelity path.
         """
         # Sun-spacecraft vector
         s2sc_x = rx - sun_x
@@ -689,7 +693,7 @@ if _CUDA_AVAILABLE:
         # Projection of (SC - Sun) onto shadow axis
         proj = s2sc_x * d_x + s2sc_y * d_y + s2sc_z * d_z
 
-        # Shadow cylinder check (simplified umbra)
+        # Shadow cylinder check (reduced-fidelity lunar umbra)
         in_shadow = 0
         if proj > 0.0:
             perp2 = (r2_sc_sun - proj * proj)
@@ -1251,6 +1255,7 @@ class GPUBatchPropagator:
         self._use_ej2   = int(bool(getattr(f, "enable_earth_j2", False)) and bool(self._earth_j2_pack["enabled"]))
         self._use_srp   = int(bool(getattr(f, "enable_srp", False)))
         self._use_rel   = int(bool(getattr(f, "enable_relativity_1pn", False)))
+        self._last_time_grid_metrics: dict[str, Any] = {}
 
         # Physical constants
         self._mu_sun   = float(MU_SUN)
@@ -1496,7 +1501,7 @@ class GPUBatchPropagator:
     def diagnostics_snapshot(self) -> dict[str, Any]:
         """Expose lightweight runtime diagnostics for logs, reports, and tests."""
 
-        return {
+        diagnostics = {
             "device_name": self._device_name,
             "device_id": int(self._device_id),
             "threads_per_block": int(self._launch_tpb),
@@ -1512,6 +1517,37 @@ class GPUBatchPropagator:
             "numba_cuda_sh_workspace": f"{_GPU_WS}x{_GPU_WS}",
             "numba_cuda_sh_workspace_policy": "compile_time_thread_local",
             "supports_earth_j2": bool(self._earth_j2_pack["enabled"]),
+            "srp_force_model": (
+                "cannonball_cr_area_over_mass" if int(getattr(self, "_use_srp", 0)) else ""
+            ),
+            "srp_attitude_model": "none" if int(getattr(self, "_use_srp", 0)) else "",
+            "srp_shadow_model": (
+                "cylindrical_moon_umbra_no_earth_eclipse"
+                if int(getattr(self, "_use_srp", 0))
+                else ""
+            ),
+            "srp_shadow_model_fidelity": (
+                "reduced_gpu_approximation" if int(getattr(self, "_use_srp", 0)) else ""
+            ),
+            "srp_earth_eclipse_supported": False if int(getattr(self, "_use_srp", 0)) else None,
+            "srp_shadow_model_note": (
+                "Numba CUDA SRP uses a simplified cylindrical Moon umbra check "
+                "and omits Earth eclipse; CPU SRP uses conical Moon/Earth shadow factors."
+                if int(getattr(self, "_use_srp", 0))
+                else ""
+            ),
+            "relativity_model": (
+                "selected_1pn_corrections" if int(getattr(self, "_use_rel", 0)) else ""
+            ),
+            "relativity_terms": (
+                [
+                    "central_body_schwarzschild",
+                    "external_body_schwarzschild_differential_when_ephemeris_available",
+                    "de_sitter_geodetic_when_ephemeris_available",
+                ]
+                if int(getattr(self, "_use_rel", 0))
+                else []
+            ),
             "impact_position_method": (
                 "terrain_bisection_hybrid"
                 if getattr(self, "_terrain_enabled", False)
@@ -1520,6 +1556,8 @@ class GPUBatchPropagator:
             "impact_surface_mode": "terrain" if getattr(self, "_terrain_enabled", False) else "sphere",
             "frame_interpolation": "slerp_shortest_path",
         }
+        diagnostics.update(getattr(self, "_last_time_grid_metrics", {}) or {})
+        return diagnostics
 
     # ----------------------------------------------------------------
     # Public: propagate batch
@@ -1545,7 +1583,7 @@ class GPUBatchPropagator:
         masses, areas, cds, crs : (N,) per-sample spacecraft properties.
             ``cds`` is accepted for API parity with CPUBatchPropagator but is
             not forwarded to the CUDA kernel (the GPU physics model has no drag
-            term — only gravity, third-body, SRP, and 1PN relativity).
+            term — only gravity, third-body, SRP, and selected 1PN corrections).
         duration_s : total propagation span [s]
         output_dt_s : snapshot interval [s]; must be a multiple of dt_s
         callback : optional ``f(progress_fraction)``
@@ -1566,9 +1604,14 @@ class GPUBatchPropagator:
         # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform. Steps
         # use dt_eff (grid-aligned) so snapshots land exactly on grid points and
         # the initial state is snapshot 0 (parity with the torch/CPU backends).
-        t_out, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
-        steps_per_snap = max(1, int(round(snap_interval / dt)))
-        dt_eff = snap_interval / steps_per_snap
+        t_out, n_snaps, _snap_interval = build_batch_output_grid(duration_s, output_dt_s)
+        self._last_time_grid_metrics = build_fixed_step_grid_metadata(
+            duration_s,
+            output_dt_s,
+            dt,
+        )
+        steps_per_snap = int(self._last_time_grid_metrics["steps_per_snapshot"])
+        dt_eff = float(self._last_time_grid_metrics["effective_dt_s"])
 
         ep = self._ephem_pack
         gp = self._grav_pack

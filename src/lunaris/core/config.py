@@ -274,8 +274,14 @@ class SimConfig:
     def validate(self) -> None:
         """Cross-field consistency checks."""
         f = self.flags
+        if self.gravity.uses_st_lrps and not f.enable_sh:
+            raise ValueError(
+                "SimConfig: ST-LRPS backend requires enable_sh=True because "
+                "enable_sh currently gates the central lunar gravity field."
+            )
         req = force_requirements_for_config(
             self,
+            gravity_uses_st_lrps=self.gravity.uses_st_lrps,
             request_external_relativity=False,
         )
 

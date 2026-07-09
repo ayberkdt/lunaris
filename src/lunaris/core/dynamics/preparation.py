@@ -24,7 +24,9 @@ import numpy as np
 from lunaris.common.constants import (
     AU,
     C_LIGHT,
+    MU_EARTH,
     MU_MOON,
+    MU_SUN,
     R_EARTH_MEAN,
     R_MOON,
     SIGMA_SB,
@@ -379,9 +381,19 @@ def prepare_ephem(ephem_manager: Any, req: DynamicsRequirements) -> _EphemPack:
         # Only valid if we do NOT need Sun/Earth vectors AND we allow identity rotation for q_i2f.
         q_ident = np.array([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]], dtype=np.float64)
         z23 = np.zeros((2, 3), dtype=np.float64)
-        return _EphemPack(dt_s=1.0, r_sun_tab_m=z23, r_earth_tab_m=z23, q_i2f_tab=q_ident)
+        return _EphemPack(
+            dt_s=1.0,
+            r_sun_tab_m=z23,
+            r_earth_tab_m=z23,
+            q_i2f_tab=q_ident,
+            mu_earth_m3s2=float(MU_EARTH),
+            mu_sun_m3s2=float(MU_SUN),
+        )
 
     dt_s, sun_tab, earth_tab, qtab = extract_ephem_tables_strict(ephem_manager)
+    provider = ephem_manager.get_data_provider()
+    mu_earth = float(provider.get("mu_earth_m3s2", MU_EARTH))
+    mu_sun = float(provider.get("mu_sun_m3s2", MU_SUN))
 
     # Fail closed on degenerate body tables. An ephemeris built with
     # include_third_body=False stores all-zero Sun/Earth rows; feeding those
@@ -427,7 +439,14 @@ def prepare_ephem(ephem_manager: Any, req: DynamicsRequirements) -> _EphemPack:
             "or disable those perturbations."
         )
 
-    return _EphemPack(dt_s=float(dt_s), r_sun_tab_m=sun_tab, r_earth_tab_m=earth_tab, q_i2f_tab=qtab)
+    return _EphemPack(
+        dt_s=float(dt_s),
+        r_sun_tab_m=sun_tab,
+        r_earth_tab_m=earth_tab,
+        q_i2f_tab=qtab,
+        mu_earth_m3s2=mu_earth,
+        mu_sun_m3s2=mu_sun,
+    )
 
 
 def resolve_effective_requirements(req: DynamicsRequirements, ep: _EphemPack) -> DynamicsRequirements:

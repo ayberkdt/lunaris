@@ -227,7 +227,7 @@ non-`None` (e.g. `enable_srp=True` requires `cfg.srp`).
 | `enable_earth_j2` | Earth oblateness (differential) | Implemented |
 | `enable_srp` | Solar radiation pressure | Implemented |
 | `enable_albedo` | Reflected-solar radiation pressure (facet Lambertian) | Implemented |
-| `enable_relativity_1pn` | First-order post-Newtonian: central-body Schwarzschild, and — when a Sun/Earth ephemeris is present — the external-body Schwarzschild differential plus de Sitter (geodetic) precession (no separate flag) | Implemented |
+| `enable_relativity_1pn` | Selected first-order post-Newtonian corrections: central-body Schwarzschild, and — when a Sun/Earth ephemeris is present — the external-body Schwarzschild differential plus de Sitter (geodetic) precession (no separate flag). This is not full EIH N-body relativity, frame dragging, J2-relativistic coupling, or a clock model. | Implemented |
 | `enable_thermal` | Lunar thermal IR radiation pressure | Implemented on CPU RHS |
 | `enable_tides_k2` / `enable_tides_k3` | Elastic lunar solid-body tides | Implemented on CPU RHS |
 
@@ -246,8 +246,10 @@ sources: `constant_albedo` (provider-free), `albedo_grid` (provider-supplied
 [0,1] grid), or `scaled_dn_grid` (provider digital-number grid via
 `A = scale*DN + offset`, with nodata falling back to `albedo_const`). The model
 uses a dedicated coefficient `albedo_pressure_coefficient` (C_R_albedo), **not**
-the SRP `cr`. An optional lunar-eclipse (Earth-umbra) dimming reuses the SRP
-conical-shadow geometry. The legacy `simple` cannonball backend remains
+the SRP `cr`. An optional lunar-eclipse (Earth-umbra) dimming applies one
+Moon-center conical shadow factor to the whole facet sum; this is an
+engineering eclipse approximation, not per-facet occultation. The legacy `simple`
+cannonball backend remains
 available for backward compatibility via `albedo_model='simple'`. The facet
 model is Lambertian only: it
 does not model non-Lambertian BRDFs, wavelength dependence, surface roughness,
@@ -261,8 +263,9 @@ and rotates the resulting acceleration back to the inertial integration frame.
 Supported modes are `constant_temperature`, `equilibrium_temperature`
 (instantaneous solar incidence with no thermal inertia), and `temperature_grid`
 (provider-supplied facet temperatures). In `equilibrium_temperature` mode, the
-solar-driven exitance is dimmed during lunar eclipses using the same conical
-Earth-umbra geometry as reflected-solar albedo. The model is a
+solar-driven exitance is dimmed during lunar eclipses using one Moon-center
+conical Earth-umbra factor, matching albedo's engineering eclipse approximation
+rather than per-facet occultation. The model is a
 radiation-pressure perturbation only; it does not alter lunar gravity.
 
 Solid tides are configured through `SolidTideConfig` and evaluated in
@@ -359,7 +362,11 @@ Analysis code imports from `lunaris.analysis.ensemble`.
   - **`numba_cuda_sh`** — the Numba CUDA RK4 kernel. Its workspace
     uses compile-time fixed `(26 x 26)` per-thread arrays, so its degree ceiling is
     **24**. That ceiling is a kernel-workspace limit, **not** a physical one. Best
-    for low-degree, high-throughput screening.
+    for low-degree, high-throughput screening. Its SRP is the same cannonball
+    `Cr*A/m` area model used by the CPU SRP kernel, but its shadowing is a
+    reduced-fidelity GPU approximation (cylindrical Moon umbra, no Earth
+    eclipse), recorded in batch provenance as `srp_force_model` and
+    `srp_shadow_model`.
   - **`torch_cuda_sh`** — the PyTorch CUDA RK4 path
     (`lunaris.core.torch_sh_propagator.TorchSHBatchPropagator`) using the canonical
     `TorchSHGravityEvaluator`. Arbitrary degree, bounded only by the loaded

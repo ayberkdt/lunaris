@@ -126,6 +126,35 @@ def build_batch_output_grid(duration_s: float, output_dt_s: float) -> tuple[F64A
     return build_output_time_grid(duration_s, output_dt_s)
 
 
+def build_fixed_step_grid_metadata(
+    duration_s: float,
+    output_dt_s: float,
+    dt_s: float,
+) -> dict[str, float | int]:
+    """Return provenance for fixed-step RK4 runs on the shared output grid.
+
+    Fixed-step backends intentionally adjust the effective substep so each
+    snapshot lands exactly on the canonical output grid. Keep the requested and
+    realized values together so benchmark reports cannot confuse ``dt_s`` with
+    the step that was actually integrated.
+    """
+
+    _t_out, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
+    requested_dt = float(dt_s)
+    if requested_dt <= 0.0:
+        raise ValueError(f"dt_s must be > 0, got {requested_dt!r}")
+    steps_per_snapshot = max(1, int(round(snap_interval / requested_dt)))
+    effective_dt = snap_interval / steps_per_snapshot
+    return {
+        "requested_dt_s": requested_dt,
+        "effective_dt_s": float(effective_dt),
+        "steps_per_snapshot": int(steps_per_snapshot),
+        "requested_output_dt_s": float(output_dt_s),
+        "effective_output_dt_s": float(snap_interval),
+        "n_output_snapshots": int(n_snaps + 1),
+    }
+
+
 # =============================================================================
 # 1.                       STATE UNCERTAINTY
 # =============================================================================
@@ -292,8 +321,10 @@ class BatchPropagationConfig:
     -----------------
     - Point-mass + SH gravity up to the resolved ``sh_degree``.
     - Third-body Sun / Earth (if enabled in SimConfig flags).
-    - SRP (if enabled in SimConfig flags).
-    - 1PN relativity (if enabled in SimConfig flags).
+    - SRP (if enabled in SimConfig flags); Numba CUDA uses the cannonball
+      Cr*A/m area model with a reduced-fidelity cylindrical Moon umbra and no
+      Earth eclipse, recorded in provenance.
+    - Selected 1PN corrections (if enabled in SimConfig flags).
     - Albedo / thermal / tides: CPU-only (not available on GPU path).
 
     Output
@@ -655,6 +686,7 @@ class BatchPropagationResult:
 
 __all__ = [
     "build_batch_output_grid",
+    "build_fixed_step_grid_metadata",
     "BATCH_BACKENDS",
     "BATCH_OUTPUT_MODES",
     "GRAVITY_MODE_OVERRIDES",

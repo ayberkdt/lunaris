@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from lunaris.common.constants import MU_EARTH, MU_SUN
 from lunaris.common.type_defs import F64Array
 from lunaris.core.dynamics.requirements import _as_f64_c
 
@@ -21,10 +22,16 @@ class _EphemPack:
     r_sun_tab_m: F64Array     # (N,3) or (1,3)
     r_earth_tab_m: F64Array   # (N,3) or (1,3)
     q_i2f_tab: F64Array       # (N,4)
+    mu_earth_m3s2: float = float(MU_EARTH)
+    mu_sun_m3s2: float = float(MU_SUN)
 
     def __post_init__(self) -> None:
         if self.dt_s <= 0.0:
             raise ValueError(f"dt_s must be > 0, got {self.dt_s}")
+        if self.mu_earth_m3s2 <= 0.0:
+            raise ValueError(f"mu_earth_m3s2 must be > 0, got {self.mu_earth_m3s2}")
+        if self.mu_sun_m3s2 <= 0.0:
+            raise ValueError(f"mu_sun_m3s2 must be > 0, got {self.mu_sun_m3s2}")
 
         sun = _as_f64_c(self.r_sun_tab_m, "r_sun_tab_m")
         earth = _as_f64_c(self.r_earth_tab_m, "r_earth_tab_m")
@@ -50,5 +57,7 @@ class _EphemPack:
         object.__setattr__(self, "r_sun_tab_m", sun)
         object.__setattr__(self, "r_earth_tab_m", earth)
         object.__setattr__(self, "q_i2f_tab", q)
+        object.__setattr__(self, "mu_earth_m3s2", float(self.mu_earth_m3s2))
+        object.__setattr__(self, "mu_sun_m3s2", float(self.mu_sun_m3s2))
 
 __all__ = ["_EphemPack"]

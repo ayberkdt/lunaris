@@ -81,6 +81,22 @@ def test_replace_sim_config_validates_the_result() -> None:
         )
 
 
+def test_st_lrps_backend_requires_central_gravity_flag() -> None:
+    cfg = SimConfig(
+        gravity=GravityConfig(
+            file_path="gravity.tab",
+            backend="st_lrps",
+            st_lrps_model_dir="runs/st_lrps_train_demo",
+        ),
+        spice=SimpleNamespace(include_third_body=True),
+        initial_state=InitialState(x=1.0, y=0.0, z=0.0, vx=0.0, vy=1.0, vz=0.0),
+        flags=PerturbationFlags(enable_sh=False),
+    )
+
+    with pytest.raises(ValueError, match="ST-LRPS backend requires enable_sh=True"):
+        cfg.validate()
+
+
 def test_cli_enable_force_flags_create_required_model_configs() -> None:
     cfg = SimConfig(
         gravity=GravityConfig(file_path="gravity.tab"),
