@@ -14,17 +14,12 @@ user-visible behaviors that recently regressed:
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import json
-import os
 import time
 from pathlib import Path
 
 import numpy as np
+import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.analysis.ensemble.plotting import plot_ensemble_report

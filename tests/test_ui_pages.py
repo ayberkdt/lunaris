@@ -10,14 +10,9 @@ entire desktop workflow for every assertion.
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
-import os
 from pathlib import Path
 
+import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.core.solver_policy import DEFAULT_ADAPTIVE_RTOL, DEFAULT_MAX_STEP_S

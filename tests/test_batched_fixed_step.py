@@ -554,8 +554,15 @@ def test_shared_rk4_step_builds_no_autograd_graph() -> None:
 
 
 def test_impact_at_t0_is_handled_correctly() -> None:
-    # R25: if initial altitude is already below topography/radius, impact is logged at t=0
-    # and propagation safely skips updating that state.
+    # R25 sphere-only regression: if initial altitude is already below the
+    # constant impact sphere at t=0, the sample is flagged as impacted and
+    # its state is frozen for the remainder of the propagation.
+    #
+    # NOTE: This covers the `r0 <= impact_r_m` (sphere) path in
+    # _propagate_chunk. The `topo is not None` (terrain) branch — where
+    # impact radius is sampled from a topography grid via
+    # sample_topo_radius_torch — requires a device-resident topo payload
+    # and is NOT exercised here. A terrain t=0 regression test is pending.
     Y0 = np.stack(
         [
             _circular_state(120.0),

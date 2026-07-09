@@ -9,13 +9,6 @@ keeping keyboard stepping intact.
 from __future__ import annotations
 
 import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
-import os
-
-import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.core.ui_commons import (

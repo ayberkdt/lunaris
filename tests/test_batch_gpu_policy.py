@@ -511,8 +511,6 @@ def test_policy_paper_safe_forces_error_semantics_for_classic_sh(monkeypatch) ->
         resolve_batch_backend_policy(batch_cfg, sim_cfg)
 
 
-
-
 def test_policy_classic_sh_numba_cuda_true(monkeypatch) -> None:
     """Classic SH + Numba CUDA available → GPU_CLASSIC_SH."""
     import lunaris.batch.backend_policy as policy_mod

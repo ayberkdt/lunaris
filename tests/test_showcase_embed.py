@@ -9,12 +9,6 @@ present or simulated absent, and with or without a built static export.
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
-import os
 from pathlib import Path
 
 import pytest

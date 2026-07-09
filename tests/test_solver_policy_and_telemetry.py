@@ -9,21 +9,10 @@ These tests target the small pure/helper functions that back the UI fixes:
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 import os
 
 import numpy as np
+import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.common.type_defs import PropagatorConfig

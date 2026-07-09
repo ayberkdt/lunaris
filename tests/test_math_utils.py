@@ -125,7 +125,6 @@ def test_clamp(val, lo, hi, expected):
     assert math_utils.clamp(val, lo, hi) == expected
 
 
-
 @pytest.mark.parametrize(
     "angle, expected",
     [
@@ -191,14 +190,11 @@ def test_latlon_from_xyz_m_lon_wrapping_toggle():
 # =============================================================================
 
 
-
 def test_quat_conj_basic():
     q = axis_angle_quat(np.array([0.0, 1.0, 0.0]), 0.7)
     qc = math_utils.quat_conj(float(q[0]), float(q[1]), float(q[2]), float(q[3]))
     # Conjugate should flip the vector part (scalar-first convention).
     assert_allclose(qc, [q[0], -q[1], -q[2], -q[3]], atol=0.0, rtol=0.0)
-
-
 
 
 def test_quat_rotate_vec_matches_numpy_wrapper():
@@ -663,7 +659,6 @@ def test_sampler_shape_mismatch_raises(fn_name, good_args, bad_data):
     fn = getattr(math_utils, fn_name)
     with pytest.raises(ValueError):
         fn(bad_data, *good_args)
-
 
 
 # ---------------------------------------------------------------------------

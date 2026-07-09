@@ -12,11 +12,6 @@ These guard the two contracts that make the hub useful:
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import os
 import subprocess
 import sys
@@ -26,7 +21,6 @@ import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 torch = pytest.importorskip('torch')
-
 
 
 def _run_isolated(body: str) -> subprocess.CompletedProcess:
