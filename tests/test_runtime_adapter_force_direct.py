@@ -15,6 +15,9 @@ torch = pytest.importorskip("torch")
 _ = pytest.importorskip("torch.nn")
 
 torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
+torch = pytest.importorskip("torch")
 
 from lunaris.surrogate.runtime import SurrogateGravityModel  # noqa: E402
 from lunaris.surrogate.st_lrps.artifacts.manager import read_artifact_contract  # noqa: E402
