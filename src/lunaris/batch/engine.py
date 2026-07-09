@@ -879,15 +879,16 @@ class BatchPropagationEngine:
         duration_s  = float(cfg.time.duration_s)
         output_dt_s = float(cfg.time.output_dt_s or batch_cfg.dt_s * 10)
         t_out_contract, _, _ = build_batch_output_grid(duration_s, output_dt_s)
-        storage_mode, result_bytes, memory_limit_bytes = _resolve_result_storage(
-            batch_cfg,
-            len(t_out_contract),
-        )
+        
         # R23: summary-only screening mode never materializes or archives the
         # full (T, N, 6) ensemble tensor. Each sub-batch is reduced to the
         # versioned screening summary; only the top-K full histories survive.
         summary_only = str(getattr(batch_cfg, "output_mode", "full")) == "summary_only"
+        
         if summary_only:
+            storage_mode = "summary_only"
+            result_bytes = 0
+            memory_limit_bytes = 0
             from lunaris.batch.summary import TopKTrajectoryBuffer, summarize_ensemble
 
             writer = _SummaryOnlyWriter()
@@ -900,6 +901,9 @@ class BatchPropagationEngine:
                 getattr(getattr(self._dyn, "grav", None), "R_ref_m", 0.0) or R_MOON
             )
         else:
+            storage_mode, result_bytes, memory_limit_bytes = _resolve_result_storage(
+                batch_cfg, len(t_out_contract)
+            )
             writer = _make_writer(batch_cfg, N, t_out_contract)
 
         logger.info(

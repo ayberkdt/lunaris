@@ -8,6 +8,15 @@ values in ``lunaris.surrogate.st_lrps.shared.contracts`` and
 """
 
 from __future__ import annotations
+import pytest
+try:
+    import torch
+    import torch.nn
+    _ = torch.cuda
+    _ = getattr(torch, "compile", None)
+except (ImportError, AttributeError, ModuleNotFoundError):
+    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
+
 
 import pytest
 

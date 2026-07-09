@@ -1,6 +1,9 @@
 """Smoke tests for the expandable execution console."""
 
 from __future__ import annotations
+import pytest
+pytest.importorskip('PySide6.QtWidgets')
+
 
 import os
 

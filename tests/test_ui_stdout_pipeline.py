@@ -8,6 +8,9 @@ the log stream — plus that the final partial line is flushed at process end.
 """
 
 from __future__ import annotations
+import pytest
+pytest.importorskip('PySide6.QtWidgets')
+
 
 import os
 

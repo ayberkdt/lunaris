@@ -1,6 +1,9 @@
 """Tests for the reusable DataTable primitive (Phase 3 data presentation)."""
 
 from __future__ import annotations
+import pytest
+pytest.importorskip('PySide6.QtWidgets')
+
 
 import pytest
 

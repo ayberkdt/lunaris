@@ -1,6 +1,9 @@
 """Keyboard-accessibility tests for the custom ToggleSwitch widget (Phase 1)."""
 
 from __future__ import annotations
+import pytest
+pytest.importorskip('PySide6.QtWidgets')
+
 
 import pytest
 

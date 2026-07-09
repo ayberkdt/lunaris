@@ -1,6 +1,16 @@
 """Task 7 — ST-LRPS A0..A9 ablation suite."""
 
 from __future__ import annotations
+import pytest
+try:
+    import torch
+    import torch.nn
+    _ = torch.cuda
+    _ = getattr(torch, "compile", None)
+except (ImportError, AttributeError, ModuleNotFoundError):
+    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
+
+
 
 from lunaris.surrogate.st_lrps.evaluation import ablation as ram
 

@@ -13,6 +13,9 @@ consolidation:
 """
 
 from __future__ import annotations
+import pytest
+pytest.importorskip('PySide6.QtWidgets')
+
 
 import os
 from dataclasses import dataclass
