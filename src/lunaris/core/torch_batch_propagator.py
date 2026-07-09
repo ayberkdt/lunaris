@@ -189,10 +189,12 @@ def _resolve_third_body_tables(
         from lunaris.core.dynamics import extract_ephem_tables_strict
         from lunaris.core.torch_third_body import TorchEphemerisTables
 
+        from lunaris.core.dynamics.preparation import _provider_get, _provider_has
+
         dt_s, sun_tab, earth_tab, _q_tab = extract_ephem_tables_strict(ephem)
         provider = ephem.get_data_provider()
-        has_mu_sun = "mu_sun_m3s2" in provider
-        has_mu_earth = "mu_earth_m3s2" in provider
+        has_mu_sun = _provider_has(provider, "mu_sun_m3s2")
+        has_mu_earth = _provider_has(provider, "mu_earth_m3s2")
         if has_mu_sun and has_mu_earth:
             mu_source = "ephemeris_provider"
         elif has_mu_sun or has_mu_earth:
@@ -207,8 +209,8 @@ def _resolve_third_body_tables(
             dtype=dtype,
             need_sun="third_body_sun" in bodies,
             need_earth="third_body_earth" in bodies,
-            mu_sun_m3s2=float(provider.get("mu_sun_m3s2", MU_SUN)),
-            mu_earth_m3s2=float(provider.get("mu_earth_m3s2", MU_EARTH)),
+            mu_sun_m3s2=float(_provider_get(provider, "mu_sun_m3s2", MU_SUN)),
+            mu_earth_m3s2=float(_provider_get(provider, "mu_earth_m3s2", MU_EARTH)),
             mu_source=mu_source,
         )
     except TorchSTLRPSPreflightError:

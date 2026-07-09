@@ -1258,8 +1258,11 @@ class GPUBatchPropagator:
         self._last_time_grid_metrics: dict[str, Any] = {}
 
         # Physical constants
-        self._mu_sun   = float(MU_SUN)
-        self._mu_earth = float(MU_EARTH)
+        from lunaris.core.dynamics.preparation import _provider_get
+        ep = getattr(dynamics_engine, "ephem", None)
+        prov = getattr(ep, "get_data_provider", lambda: {})() if ep is not None else {}
+        self._mu_sun   = float(_provider_get(prov, "mu_sun_m3s2", MU_SUN))
+        self._mu_earth = float(_provider_get(prov, "mu_earth_m3s2", MU_EARTH))
         self._r_moon   = float(R_MOON)
         self._r_earth  = float(R_EARTH_MEAN)
         self._au       = float(AU)

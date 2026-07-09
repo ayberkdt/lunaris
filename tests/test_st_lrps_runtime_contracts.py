@@ -117,7 +117,7 @@ def test_runtime_uses_model_dtype_for_inputs_and_scaler_tensors():
     fm = SurrogateForceModel(
         model=_LinearPotential(dtype=torch.float64),
         scaler=_scaler(1.0),
-        cfg={"coordinate_frame": "moon_fixed_cartesian"},
+        cfg={"coordinate_frame": "moon_fixed_cartesian", "dataset": {"target_mode": "residual", "degree_min": 20, "degree_max": 100, "altitude_min_km": 100.0, "altitude_max_km": 500.0}},
         device=torch.device("cpu"),
     )
 
@@ -131,7 +131,7 @@ def test_runtime_to_device_updates_effective_dtype():
     fm = SurrogateForceModel(
         model=_LinearPotential(dtype=torch.float32),
         scaler=_scaler(1.0),
-        cfg={"coordinate_frame": "moon_fixed_cartesian"},
+        cfg={"coordinate_frame": "moon_fixed_cartesian", "dataset": {"target_mode": "residual", "degree_min": 20, "degree_max": 100, "altitude_min_km": 100.0, "altitude_max_km": 500.0}},
         device=torch.device("cpu"),
     )
 
