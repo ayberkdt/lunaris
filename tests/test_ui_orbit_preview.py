@@ -19,11 +19,7 @@ pytest.importorskip('PySide6.QtWidgets')
 import os
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
-
-from PySide6 import QtWidgets
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.core.ui_commons import R_MOON_KM as R
 from lunaris.ui.pages.orbit_config_page import OrbitPage, OrbitViz3D, _OrbitState

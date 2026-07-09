@@ -18,6 +18,8 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+
+torch = pytest.importorskip('torch')
 from numpy.testing import assert_allclose
 
 # -----------------------------------------------------------------------------

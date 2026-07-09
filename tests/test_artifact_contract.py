@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI
 from lunaris.surrogate.st_lrps.shared.contracts import (
     PAPER_SAFE_REQUIRED_METADATA,

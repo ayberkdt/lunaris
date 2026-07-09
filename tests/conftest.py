@@ -37,6 +37,8 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 
 def _lunaris_data_available() -> bool:
     """Return True only when both the lunar gravity model and SPICE kernels exist.

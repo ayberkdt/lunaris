@@ -20,6 +20,9 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
 from lunaris.surrogate.st_lrps.paper_evidence import (
     PaperConfigError,
     build_training_argv,

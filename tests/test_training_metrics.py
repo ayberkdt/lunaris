@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 # Ensure repo root is on sys.path so st_lrps is importable
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:

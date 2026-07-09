@@ -34,6 +34,8 @@ import sys
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.training.config import (
     RUN_PRESETS,
     TrainConfig,

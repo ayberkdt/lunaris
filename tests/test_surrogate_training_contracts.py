@@ -30,6 +30,9 @@ import h5py
 import numpy as np
 import pytest
 
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.surrogate.runtime.networks import _build_model_from_config
 from lunaris.surrogate.st_lrps.data import spatial_cloud_generator as scg

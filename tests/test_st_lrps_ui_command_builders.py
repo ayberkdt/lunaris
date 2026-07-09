@@ -24,14 +24,15 @@ import sys
 from pathlib import Path
 
 import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+torch = pytest.importorskip('torch')
+
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 

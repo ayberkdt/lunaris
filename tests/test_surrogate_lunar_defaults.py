@@ -28,6 +28,8 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.lunar_data import (
     DEFAULT_LUNAR_GRAVITY_PATH as COMMON_DEFAULT_LUNAR_GRAVITY_PATH,

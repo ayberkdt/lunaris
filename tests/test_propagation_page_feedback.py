@@ -11,11 +11,9 @@ pytest.importorskip('PySide6.QtWidgets')
 import os
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 PySide6 = pytest.importorskip("PySide6")
-from PySide6 import QtWidgets  # noqa: E402
 
 from lunaris.ui.pages.mission_propagation_page import MissionPropagationPage  # noqa: E402
 

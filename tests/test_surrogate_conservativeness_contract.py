@@ -30,6 +30,9 @@ from pathlib import Path
 import pytest
 
 torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
+torch = pytest.importorskip("torch")
 
 from lunaris.surrogate.runtime import SurrogateGravityModel
 from lunaris.surrogate.st_lrps.runtime.force_model import (

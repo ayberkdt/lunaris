@@ -14,6 +14,8 @@ import json
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.analysis.ensemble.linear_check import (
     compare_covariance_histories,
     finite_difference_stm,

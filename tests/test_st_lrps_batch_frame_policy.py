@@ -19,6 +19,8 @@ import argparse
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.evaluation._gravity_benchmark.compute import (
     _resolve_batch_frame_modes,
     _run_batch_rk4_cpu,

@@ -32,6 +32,9 @@ import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
+torch = pytest.importorskip("torch")
 
 from lunaris.common.constants import MU_MOON, R_MOON  # noqa: E402
 from lunaris.common.lunar_data import resolve_lunar_gravity_path  # noqa: E402

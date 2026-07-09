@@ -19,6 +19,8 @@ import json
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from dataset_pipeline_test_utils import (
     make_toy_residual_rows,
     toy_baseline_fn,

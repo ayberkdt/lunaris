@@ -34,6 +34,8 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Built dynamically so the literal does not appear in this file's own source.

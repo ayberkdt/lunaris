@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.shared.capabilities import (
     CAPABILITIES,
     CapabilityStatus,

@@ -1,3 +1,4 @@
+
 """
 UI regression tests for the ensemble analysis workspace and log-panel collapse.
 
@@ -24,10 +25,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6 import QtWidgets
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.analysis.ensemble.plotting import plot_ensemble_report
 from lunaris.analysis.ensemble.statistics import compute_ensemble_report

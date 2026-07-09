@@ -1,3 +1,4 @@
+
 """
 Focused regression tests for restart safety and terrain-aware telemetry helpers.
 
@@ -23,7 +24,7 @@ except (ImportError, AttributeError, ModuleNotFoundError):
 import os
 
 import numpy as np
-from PySide6 import QtWidgets
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.common.type_defs import PropagatorConfig
 from lunaris.core.dynamics.adaptive_degree import _select_adaptive_sh_degree

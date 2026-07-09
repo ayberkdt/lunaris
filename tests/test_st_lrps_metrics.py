@@ -18,6 +18,8 @@ from types import SimpleNamespace
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 import lunaris.surrogate.st_lrps.training.metrics as metrics_mod
 from lunaris.surrogate.st_lrps.training.metrics import (
     LOWER_IS_BETTER,

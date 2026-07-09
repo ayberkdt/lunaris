@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ENTRY_FILES = (
     "src/lunaris/core/config.py",

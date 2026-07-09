@@ -30,6 +30,8 @@ except (ImportError, AttributeError, ModuleNotFoundError):
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.physics.spherical_harmonics import GravityModel
 from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import (
     _sh_potential_accel_batch_serial,

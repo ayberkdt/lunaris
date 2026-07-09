@@ -9,21 +9,17 @@ from __future__ import annotations
 
 import pytest
 
+_ = pytest.importorskip("PySide6.QtWidgets")
+
+import pytest
+
 pytest.importorskip('PySide6.QtWidgets')
 
 
 import os
 
-import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-try:
-    from PySide6.QtWidgets import QApplication
-
-    HAS_PYSIDE = True
-except ImportError:
-    HAS_PYSIDE = False
+from PySide6.QtWidgets import QApplication
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 
 def _app():
@@ -31,8 +27,6 @@ def _app():
 
 
 def test_force_models_icon_buttons_have_accessible_names() -> None:
-    if not HAS_PYSIDE:
-        pytest.skip("PySide6 not available")
     _app()
     from lunaris.ui.pages.force_models_page import ForceModelsPage
 
@@ -50,8 +44,6 @@ def test_force_models_icon_buttons_have_accessible_names() -> None:
 
 
 def test_batch_page_selectors_have_accessible_names() -> None:
-    if not HAS_PYSIDE:
-        pytest.skip("PySide6 not available")
     _app()
     from lunaris.ui.pages.batch_propagation_page import (
         BatchPropagationPage,

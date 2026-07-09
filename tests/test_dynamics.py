@@ -8,6 +8,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 # -----------------------------------------------------------------------------
 # Imports (skip cleanly if the package layout isn't available in this context)
 # -----------------------------------------------------------------------------

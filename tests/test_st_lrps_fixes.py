@@ -15,7 +15,11 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
+torch = pytest.importorskip('torch')
 
 from lunaris.surrogate.st_lrps.data.spatial_cloud_generator import (
     _run_active_refinement,

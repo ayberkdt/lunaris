@@ -13,6 +13,8 @@ import json
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.analysis.frozen.classify import (
     QUASI_FROZEN,
     STRICT_FROZEN,

@@ -13,6 +13,8 @@ from unittest.mock import patch
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.evaluation.ablation import build_matrix, parse_args
 
 

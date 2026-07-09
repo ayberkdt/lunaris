@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCENARIO_DIR = _REPO_ROOT / "hpc" / "scenarios"
 _LAUNCHER = _REPO_ROOT / "tools" / "hpc" / "run_training_scenario.py"

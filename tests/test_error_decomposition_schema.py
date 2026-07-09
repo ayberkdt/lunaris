@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.evaluation.error_decomposition import (
     ERROR_DECOMPOSITION_SCHEMA_VERSION,
     REQUIRED_TOP_LEVEL_BLOCKS,

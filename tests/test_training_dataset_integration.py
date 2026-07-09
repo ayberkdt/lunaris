@@ -17,6 +17,11 @@ import json
 import h5py
 import pytest
 
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
+torch = pytest.importorskip('torch')
+
 from dataset_pipeline_test_utils import make_toy_residual_rows, write_toy_contract_h5
 from lunaris.surrogate.st_lrps.data.dataset_contract import DatasetContractError
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI

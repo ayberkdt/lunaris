@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.training.config import (
     _ENCODING_FLAGS,
     MODEL_PRESETS,

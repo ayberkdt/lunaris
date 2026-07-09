@@ -19,6 +19,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.runtime import artifact, device, metadata, scalers
 
 

@@ -19,6 +19,9 @@ import json
 import numpy as np
 import pytest
 
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.evaluation.validation_suite import (
     SPLIT_KIND,

@@ -21,6 +21,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     DEFAULT_DATASET_CONFIG,
     MU_MOON_SI,

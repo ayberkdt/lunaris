@@ -1,3 +1,4 @@
+
 """
 Widget-level regression tests for the modular UI pages.
 
@@ -17,9 +18,7 @@ pytest.importorskip('PySide6.QtWidgets')
 import os
 from pathlib import Path
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-
-from PySide6 import QtCore, QtWidgets
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.core.solver_policy import DEFAULT_ADAPTIVE_RTOL, DEFAULT_MAX_STEP_S
 from lunaris.ui.core.ui_commons import THEME

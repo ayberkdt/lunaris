@@ -18,11 +18,7 @@ import os
 from pathlib import Path
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
-
-from PySide6 import QtWidgets  # noqa: E402
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.components import showcase_embed  # noqa: E402
 from lunaris.ui.components.showcase_embed import (  # noqa: E402

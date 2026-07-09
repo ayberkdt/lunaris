@@ -24,6 +24,9 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
 from lunaris.surrogate.st_lrps.evaluation.benchmark_config import (
     SYNTHETIC_BANNER,
     BenchmarkConfigError,

@@ -24,6 +24,9 @@ import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
+torch = pytest.importorskip("torch")
 
 from lunaris.common.math_utils import quat_rotate_np
 from lunaris.surrogate.st_lrps.runtime.force_model import (

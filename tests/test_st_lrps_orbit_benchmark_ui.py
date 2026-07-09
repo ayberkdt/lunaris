@@ -33,6 +33,9 @@ import textwrap
 from pathlib import Path
 
 import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
+
+torch = pytest.importorskip('torch')
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
