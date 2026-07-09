@@ -37,8 +37,6 @@ from pathlib import Path
 
 import pytest
 
-torch = pytest.importorskip('torch')
-
 
 def _lunaris_data_available() -> bool:
     """Return True only when both the lunar gravity model and SPICE kernels exist.
@@ -121,9 +119,6 @@ def _tudatpy_available() -> bool:
     except Exception:
         return False
     return True
-
-
-
 
 
 def _source_mentions(path: Path, needles: tuple[str, ...]) -> bool:

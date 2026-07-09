@@ -211,7 +211,6 @@ def test_external_1pn_wrapper_matches_kernel_sum() -> None:
     np.testing.assert_allclose(wrapper, kernel, rtol=0.0, atol=0.0)
 
 
-
 if __name__ == "__main__":
     import sys
 

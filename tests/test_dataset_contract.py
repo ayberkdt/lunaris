@@ -1,17 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 import json
 from pathlib import Path
 
@@ -330,28 +318,4 @@ def test_compatibility_report_rejects_gravity_label_contract_mismatch():
     assert report["compatible"] is False
     assert any("spherical_harmonic_convention" in error for error in report["errors"])
     assert any("gravity_label_engine_version" in error for error in report["errors"])
-
-
-def test_npz_writer_finalize_checks_incomplete_stream(tmp_path):
-    from lunaris.batch.storage import _NPZWriter
-    # R24: _NPZWriter.finalize() must raise RuntimeError if the stream terminates early
-    path = tmp_path / "test.npz"
-    t_grid = np.zeros(2)
-    writer = _NPZWriter(path, n_samples=10, t_grid=t_grid, n_state=6)
-
-    # Write 5 sub-batches of 1
-    for i in range(5):
-        writer.write_sample_batch(i, i + 1, np.zeros((2, 1, 6)))
-
-    writer.write_final(
-        sc_samples=np.zeros((10, 4)),
-        impact_flags=np.zeros(10),
-        t_impact=np.zeros(10),
-        valid_mask=np.zeros(10),
-        impact_position_inertial_m=np.zeros((10, 3)),
-        impact_position_fixed_m=np.zeros((10, 3)),
-    )
-
-    with pytest.raises(RuntimeError, match="expected 10 samples, got 5"):
-        writer.finalize()
 

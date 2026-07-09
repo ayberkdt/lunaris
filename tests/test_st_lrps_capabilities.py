@@ -3,18 +3,6 @@ the checked-in matrix document never drifts from it."""
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 from pathlib import Path
 
 import pytest

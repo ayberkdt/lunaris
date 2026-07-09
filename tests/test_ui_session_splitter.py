@@ -10,13 +10,7 @@ startup.
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import json
-import os
 
 import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets

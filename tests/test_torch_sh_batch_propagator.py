@@ -316,7 +316,6 @@ def test_cuda_matches_cpu_trajectory_float64() -> None:
     np.testing.assert_allclose(Y_cuda, Y_cpu, rtol=1e-10, atol=1e-4)
 
 
-
 class MockRotEphemeris:
     """Mock ephemeris that rotates 90 degrees around Z axis every 100 seconds."""
     def __init__(self):
@@ -344,7 +343,6 @@ class MockRotEphemeris:
 
     def get_earth_state(self, t_s: float) -> np.ndarray:
         return np.zeros(6)
-
 
 
 # ---------------------------------------------------------------------------

@@ -209,3 +209,18 @@ def test_archive_without_schema_version_is_rejected(tmp_path) -> None:
     )
     with pytest.raises(ValueError, match="missing archive_schema_version"):
         load_batch_result(str(path))
+
+
+def test_npz_writer_rejects_incomplete_stream_on_finalize(tmp_path) -> None:
+    """_NPZWriter.finalize() must raise RuntimeError when not all samples
+    have been written, even if write_final() has been called."""
+    t, Y, sc, impact, t_impact, valid, impact_i, impact_f = _archive_arrays()
+    writer = _NPZWriter(tmp_path / "incomplete.npz", n_samples=4, t_grid=t, n_state=6)
+
+    # Write only the first half of the samples (2 of 4).
+    writer.write_sample_batch(0, 2, Y[:, :2, :])
+    writer.write_metadata(**_v2_metadata())
+    writer.write_final(sc, impact, t_impact, valid, impact_i, impact_f)
+
+    with pytest.raises(RuntimeError, match=r"expected 4 samples.*got 2"):
+        writer.finalize()

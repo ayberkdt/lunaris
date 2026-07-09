@@ -2,21 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 import json
 
 import numpy as np
+import pytest
 
 from dataset_pipeline_test_utils import make_toy_residual_rows, write_toy_contract_h5
 from lunaris.surrogate.st_lrps.data.quality_report import build_dataset_quality_report

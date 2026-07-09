@@ -9,11 +9,6 @@ verify the new pure/helper modules introduced during the UI refactor:
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 from pathlib import Path
 
 import pytest
