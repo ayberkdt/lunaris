@@ -187,9 +187,8 @@ def _resolve_third_body_tables(
 
     try:
         from lunaris.core.dynamics import extract_ephem_tables_strict
-        from lunaris.core.torch_third_body import TorchEphemerisTables
-
         from lunaris.core.dynamics.preparation import _provider_get, _provider_has
+        from lunaris.core.torch_third_body import TorchEphemerisTables
 
         dt_s, sun_tab, earth_tab, _q_tab = extract_ephem_tables_strict(ephem)
         provider = ephem.get_data_provider()

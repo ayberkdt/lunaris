@@ -64,6 +64,7 @@ from lunaris.physics.thermal_ir import (
     normalize_thermal_mode,
 )
 
+
 def _provider_get(provider: Any, key: str, default: Any) -> Any:
     if isinstance(provider, dict):
         return provider.get(key, default)
