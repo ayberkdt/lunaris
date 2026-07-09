@@ -14,9 +14,16 @@ import numpy as np
 import pytest
 
 from lunaris.common.constants import C_LIGHT, MU_MOON
+from lunaris.common.force_requirements import force_requirements
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.physics.relativity_effects import _schwarzschild_components
+from lunaris.physics.spherical_harmonics import compute_point_mass_acceleration
+from lunaris.physics.third_body_effects import (
+    EarthJ2Params,
+    accel_j2_oblate_diff_numba,
+    accel_third_body_numba,
+)
 
 _SC = SpacecraftProps(mass_kg=12.0, area_m2=0.08, cr=1.3)
 
@@ -123,6 +130,77 @@ def test_srp_with_zero_area_raises() -> None:
             ephem_manager=None,
             allow_identity_rotation=True,
         )
+
+
+def test_surrogate_gravity_cannot_disable_central_gravity_gate() -> None:
+    with pytest.raises(ValueError, match="ST-LRPS backend requires enable_sh=True"):
+        force_requirements(
+            PerturbationFlags(enable_sh=False),
+            gravity_uses_st_lrps=True,
+        )
+
+
+def test_dynamics_uses_ephemeris_provider_gm_for_third_body_and_earth_j2() -> None:
+    class _Ephem:
+        sun = np.array([1.5e11, 2.0e9, 0.0], dtype=np.float64)
+        earth = np.array([3.84e8, -1.0e7, 2.0e6], dtype=np.float64)
+        mu_sun = 1.2345e20
+        mu_earth = 4.321e14
+
+        def get_data_provider(self):
+            return {
+                "dt_s": 60.0,
+                "r_sun_tab_m": np.vstack([self.sun, self.sun]),
+                "r_earth_tab_m": np.vstack([self.earth, self.earth]),
+                "q_i2f_tab": np.tile(np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64), (2, 1)),
+                "mu_sun_m3s2": self.mu_sun,
+                "mu_earth_m3s2": self.mu_earth,
+            }
+
+    y = np.array([1.84e6, 2.0e5, -5.0e4, 0.0, 1600.0, 0.0], dtype=np.float64)
+    flags = PerturbationFlags(
+        enable_sh=False,
+        enable_3rd_body_sun=True,
+        enable_3rd_body_earth=True,
+        enable_earth_j2=True,
+    )
+    earth_j2 = EarthJ2Params(spin_axis_i=(0.0, 0.0, 1.0))
+    engine = DynamicsEngine(
+        sc_props=_SC,
+        flags=flags,
+        gravity_model=None,
+        ephem_manager=_Ephem(),
+        earth_j2=earth_j2,
+        allow_identity_rotation=True,
+    )
+
+    dy = engine.build_rhs(force_rebuild=True)(0.0, y)
+    central = np.array(
+        compute_point_mass_acceleration(y[0], y[1], y[2], MU_MOON),
+        dtype=np.float64,
+    )
+    sun = np.array(accel_third_body_numba(y[0], y[1], y[2], *_Ephem.sun, _Ephem.mu_sun))
+    earth = np.array(accel_third_body_numba(y[0], y[1], y[2], *_Ephem.earth, _Ephem.mu_earth))
+    j2 = np.array(
+        accel_j2_oblate_diff_numba(
+            y[0],
+            y[1],
+            y[2],
+            *_Ephem.earth,
+            _Ephem.mu_earth,
+            earth_j2.r_eq_m,
+            earth_j2.j2_coeff,
+            0.0,
+            0.0,
+            1.0,
+        )
+    )
+
+    np.testing.assert_allclose(dy[3:6], central + sun + earth + j2, rtol=1e-12, atol=1e-18)
+    breakdown = engine.get_acceleration_breakdown(0.0, y)
+    assert breakdown["3rd Body (Sun)"] == pytest.approx(float(np.linalg.norm(sun)))
+    assert breakdown["3rd Body (Earth)"] == pytest.approx(float(np.linalg.norm(earth)))
+    assert breakdown["3rd Body (Earth J2)"] == pytest.approx(float(np.linalg.norm(j2)))
 
 
 # -----------------------------------------------------------------------------

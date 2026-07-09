@@ -95,7 +95,12 @@ def force_requirements(
     """Return the ephemeris/surface requirements for a config-like object."""
 
     use_sh = bool(getattr(flags, "enable_sh", False))
-    use_surrogate_gravity = bool(use_sh and gravity_uses_st_lrps)
+    if gravity_uses_st_lrps and not use_sh:
+        raise ValueError(
+            "ST-LRPS backend requires enable_sh=True because enable_sh currently "
+            "gates the central lunar gravity field."
+        )
+    use_surrogate_gravity = bool(gravity_uses_st_lrps)
     use_albedo = bool(getattr(flags, "enable_albedo", False))
     use_thermal = bool(getattr(flags, "enable_thermal", getattr(flags, "enable_thermal_ir", False)))
     use_srp = bool(getattr(flags, "enable_srp", False))
@@ -186,11 +191,16 @@ def force_requirements(
 def force_requirements_for_config(
     cfg: Any,
     *,
-    gravity_uses_st_lrps: bool = False,
+    gravity_uses_st_lrps: bool | None = None,
     allow_identity_rotation: bool = False,
     request_external_relativity: bool = False,
 ) -> ForceRequirements:
     """Return force requirements from a SimConfig-like object."""
+
+    if gravity_uses_st_lrps is None:
+        gravity = getattr(cfg, "gravity", None)
+        uses = getattr(gravity, "uses_st_lrps", False)
+        gravity_uses_st_lrps = bool(uses() if callable(uses) else uses)
 
     return force_requirements(
         cfg.flags,

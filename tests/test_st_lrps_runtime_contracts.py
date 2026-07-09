@@ -23,7 +23,7 @@ import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
-import torch.nn as nn  # noqa: E402
+nn = pytest.importorskip("torch.nn")
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (  # noqa: E402
     R_MOON_SI,
@@ -44,6 +44,17 @@ class _ToyPotential(nn.Module):
 
     def forward(self, x):  # x: (N, 3)
         return (x * x).sum(dim=1, keepdim=True)
+
+
+class _LinearPotential(nn.Module):
+    """U(x) = w*x so dtype mismatches surface immediately."""
+
+    def __init__(self, dtype=torch.float64):
+        super().__init__()
+        self.weight = nn.Parameter(torch.tensor([[1.0, 2.0, 3.0]], dtype=dtype))
+
+    def forward(self, x):
+        return x @ self.weight.t()
 
 
 def _scaler(x_scale: float = 1.0) -> ScalerPack:
@@ -100,6 +111,63 @@ def test_residual_accel_shapes_and_known_gradient():
     dab = fm.predict_residual_accel(np.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.0]]))
     assert dab.shape == (2, 3)
     np.testing.assert_allclose(dab, [[2.0, 0.0, 0.0], [0.0, 4.0, 0.0]], rtol=1e-5)
+
+
+def test_runtime_uses_model_dtype_for_inputs_and_scaler_tensors():
+    fm = SurrogateForceModel(
+        model=_LinearPotential(dtype=torch.float64),
+        scaler=_scaler(1.0),
+        cfg={"coordinate_frame": "moon_fixed_cartesian", "dataset": {"target_mode": "residual", "degree_min": 20, "degree_max": 100, "altitude_min_km": 100.0, "altitude_max_km": 500.0}},
+        device=torch.device("cpu"),
+    )
+
+    assert fm._torch_dtype == torch.float64
+    assert fm.scaler._x_mean.dtype == torch.float64
+    out = fm.predict_residual_accel(np.array([10.0, 20.0, 30.0], dtype=np.float64))
+    np.testing.assert_allclose(out, [1.0, 2.0, 3.0], rtol=1e-12, atol=1e-12)
+
+
+def test_runtime_to_device_updates_effective_dtype():
+    fm = SurrogateForceModel(
+        model=_LinearPotential(dtype=torch.float32),
+        scaler=_scaler(1.0),
+        cfg={"coordinate_frame": "moon_fixed_cartesian", "dataset": {"target_mode": "residual", "degree_min": 20, "degree_max": 100, "altitude_min_km": 100.0, "altitude_max_km": 500.0}},
+        device=torch.device("cpu"),
+    )
+
+    fm.to_device(torch.device("cpu"), dtype=torch.float64)
+
+    assert fm._torch_dtype == torch.float64
+    assert next(fm.model.parameters()).dtype == torch.float64
+    assert fm.scaler._x_mean.dtype == torch.float64
+
+
+def test_fixed_methods_accept_torch_tensor_without_numpy_coercion(monkeypatch):
+    import lunaris.surrogate.st_lrps.runtime.canonical_runtime as canonical
+
+    fm = _model(cfg={"coordinate_frame": "moon_fixed_cartesian"}, x_scale=R_MOON_SI + 600e3)
+    x = torch.tensor([R_MOON_SI + 300e3, 0.0, 0.0], dtype=torch.float32)
+    real_asarray = canonical.np.asarray
+
+    def guarded_asarray(obj, *args, **kwargs):
+        if isinstance(obj, torch.Tensor):
+            raise AssertionError("torch.Tensor should not be routed through np.asarray")
+        return real_asarray(obj, *args, **kwargs)
+
+    monkeypatch.setattr(canonical.np, "asarray", guarded_asarray)
+
+    u = fm.predict_residual_potential_fixed(x)
+    a = fm.predict_residual_accel_fixed(x)
+
+    assert isinstance(u, float)
+    assert a.shape == (3,)
+
+
+def test_potential_path_enforces_domain_guard():
+    fm = _model(x_scale=R_MOON_SI + 600e3, strict_domain=True)
+
+    with pytest.raises(RuntimeError, match="predict_residual_potential_fixed"):
+        fm.predict_residual_potential_fixed(np.array([R_MOON_SI + 1_000e3, 0.0, 0.0]))
 
 
 # =============================================================================

@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 
-from lunaris.common.batch_defs import build_batch_output_grid
+from lunaris.common.batch_defs import build_batch_output_grid, build_fixed_step_grid_metadata
 from lunaris.core.torch_frame import (
     line_sphere_intersection,
     terrain_segment_intersection,
@@ -244,9 +244,10 @@ def run_batched_fixed_step(
         )
 
     # Shared output grid contract: t[0]=0, t[-1]=duration_s, uniform.
-    t_out, n_snaps, snap_interval = build_output_grid(duration_s, output_dt_s)
-    steps_per_snap = max(1, int(round(snap_interval / dt)))
-    dt_eff = snap_interval / steps_per_snap
+    t_out, n_snaps, _snap_interval = build_output_grid(duration_s, output_dt_s)
+    time_grid_metrics = build_fixed_step_grid_metadata(duration_s, output_dt_s, dt)
+    steps_per_snap = int(time_grid_metrics["steps_per_snapshot"])
+    dt_eff = float(time_grid_metrics["effective_dt_s"])
     expected_output_shape = (n_snaps + 1, N, 6)
     output_buffer_reused = output_buffer is not None
     if output_buffer is None:
@@ -357,6 +358,7 @@ def run_batched_fixed_step(
             "terrain_bisection_hybrid" if topo is not None else "line_sphere_quadratic"
         ),
         "impact_time_resolution_s": float(dt_eff),
+        **time_grid_metrics,
         # R06 chunk provenance: what was asked for, what actually ran, and
         # every OOM-driven halving along the way.
         "chunk_size_requested": int(chunk_requested),

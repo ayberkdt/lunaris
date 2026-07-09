@@ -26,7 +26,11 @@ import pytest
 from lunaris.batch.engine import BatchPropagationEngine
 from lunaris.common.batch_defs import BatchPropagationConfig
 from lunaris.common.type_defs import PerturbationFlags
-from lunaris.core.batch_propagator import _sanitize_gpu_threads_per_block, gpu_unsupported_features
+from lunaris.core.batch_propagator import (
+    GPUBatchPropagator,
+    _sanitize_gpu_threads_per_block,
+    gpu_unsupported_features,
+)
 
 # =============================================================================
 # Existing tests — updated to also monkeypatch torch CUDA where needed
@@ -45,6 +49,58 @@ def test_gpu_unsupported_features_only_reports_cpu_only_models() -> None:
     assert "albedo" in unsupported
     assert "solid tides" in unsupported
     assert "Earth J2" not in unsupported
+
+
+def test_numba_cuda_srp_diagnostics_disclose_reduced_shadow_model() -> None:
+    prop = GPUBatchPropagator.__new__(GPUBatchPropagator)
+    prop._device_name = "Fake CUDA"
+    prop._device_id = 0
+    prop._launch_tpb = 128
+    prop._warp_size = 32
+    prop._free_mem_bytes = 0
+    prop._total_mem_bytes = 0
+    prop._recommended_max_batch = 1
+    prop._requested_sh_degree = 8
+    prop._grav_pack = SimpleNamespace(n_sh=8)
+    prop._earth_j2_pack = {"enabled": False}
+    prop._terrain_enabled = False
+    prop._use_srp = 1
+    prop._use_rel = 1
+    prop._last_time_grid_metrics = {
+        "requested_dt_s": 60.0,
+        "effective_dt_s": 62.5,
+        "steps_per_snapshot": 8,
+    }
+
+    diag = prop.diagnostics_snapshot()
+
+    assert diag["srp_force_model"] == "cannonball_cr_area_over_mass"
+    assert diag["srp_attitude_model"] == "none"
+    assert diag["srp_shadow_model"] == "cylindrical_moon_umbra_no_earth_eclipse"
+    assert diag["srp_shadow_model_fidelity"] == "reduced_gpu_approximation"
+    assert diag["srp_earth_eclipse_supported"] is False
+    assert diag["relativity_model"] == "selected_1pn_corrections"
+    assert "external_body_schwarzschild_differential" in " ".join(diag["relativity_terms"])
+    assert diag["effective_dt_s"] == pytest.approx(62.5)
+
+
+def test_gpu_batch_module_documents_srp_as_cannonball_not_flat_plate() -> None:
+    import lunaris.core.batch_propagator as batch_prop
+
+    doc = batch_prop.__doc__ or ""
+
+    assert "cannonball Cr*A/m area model" in doc
+    assert "flat-plate" not in doc
+
+
+def test_batch_backend_docstring_distinguishes_st_lrps_variants() -> None:
+    from lunaris.batch.backend_policy import BatchBackend
+
+    doc = BatchBackend.__doc__ or ""
+
+    assert "gpu_st_lrps_potential" in doc
+    assert "gpu_st_lrps_third_body" in doc
+    assert "Gravity only (no third-body / SRP / relativity)" not in doc
 
 
 def test_sanitize_gpu_threads_per_block_aligns_and_clamps() -> None:
@@ -610,6 +666,8 @@ torch = pytest.importorskip("torch")
 
 def _make_tiny_surrogate(tmp_path: Path) -> Any:  # noqa: F821
     """Create a minimal SurrogateGravityModel on CPU for inference tests."""
+    pytest.importorskip("torch.nn")
+
     from lunaris.common.constants import MU_MOON, R_MOON
     from lunaris.surrogate.runtime import SurrogateGravityModel
     from lunaris.surrogate.runtime.networks import _build_model_from_config
@@ -651,6 +709,91 @@ def _make_tiny_surrogate(tmp_path: Path) -> Any:  # noqa: F821
         r_ref_override=float(R_MOON),
         device_preference="cpu",
     )
+
+
+def test_torch_batch_warmup_uses_chunk_size_not_full_batch(monkeypatch) -> None:
+    import lunaris.core.torch_batch_propagator as tbp
+    from lunaris.common.constants import R_MOON
+
+    recorded_shapes: list[tuple[int, ...]] = []
+    recorded_run_kwargs: dict[str, object] = {}
+
+    def fake_rhs_batch(_torch, _provider, _t_s, state):
+        recorded_shapes.append(tuple(state.shape))
+        return state
+
+    def fake_run_batched_fixed_step(**kwargs):
+        recorded_run_kwargs.update(kwargs)
+        n = int(np.asarray(kwargs["Y0"]).shape[0])
+        return SimpleNamespace(
+            t_out=np.array([0.0, 1.0], dtype=np.float64),
+            Y_out=np.zeros((2, n, 6), dtype=np.float64),
+            impact_flags=np.zeros(n, dtype=np.float64),
+            t_impact=np.full(n, np.nan, dtype=np.float64),
+            impact_positions_inertial=np.full((n, 3), np.nan, dtype=np.float64),
+            metrics={
+                "propagation_elapsed_s": 1.0,
+                "raw_batch_state_steps_per_second": 10.0,
+                "active_state_steps_per_second": 10.0,
+                "total_raw_state_steps": 10,
+                "total_active_state_steps": 10,
+                "impacted_sample_count": 0,
+                "requested_dt_s": 1.0,
+                "effective_dt_s": 1.0,
+                "steps_per_snapshot": 1,
+                "requested_output_dt_s": 1.0,
+                "effective_output_dt_s": 1.0,
+                "n_output_snapshots": 2,
+                "chunk_size_requested": 2,
+                "chunk_size_effective": 2,
+                "oom_recoveries": [],
+            },
+        )
+
+    monkeypatch.setattr(tbp, "rhs_batch", fake_rhs_batch)
+    monkeypatch.setattr(tbp, "run_batched_fixed_step", fake_run_batched_fixed_step)
+    fake_cuda = SimpleNamespace(
+        get_device_name=lambda _idx: "FakeCUDA",
+        synchronize=lambda _device=None: None,
+        empty_cache=lambda: None,
+    )
+    fake_torch = SimpleNamespace(
+        as_tensor=lambda value, dtype=None, device=None: np.asarray(value),
+        cuda=fake_cuda,
+        float64="float64",
+    )
+
+    prop = tbp.TorchBatchPropagator.__new__(tbp.TorchBatchPropagator)
+    prop._torch = fake_torch
+    prop._device = SimpleNamespace(index=0)
+    prop._dtype = fake_torch.float64
+    prop._dt = 1.0
+    prop._impact_r = float(R_MOON)
+    prop._detect_impact = True
+    prop._impact_alt_m = 0.0
+    prop._terrain_enabled = False
+    prop._topo = None
+    prop._chunk_size = 2
+    prop._third_body = ()
+    prop._throughput_metrics = {}
+    prop._model = SimpleNamespace(config={}, degree_min=0, degree_max=0)
+    prop._frame = SimpleNamespace(uses_rotation=False)
+
+    y0 = np.zeros((5, 6), dtype=np.float64)
+    prop.propagate(
+        y0,
+        masses=np.ones(5),
+        areas=np.ones(5),
+        cds=np.ones(5),
+        crs=np.ones(5),
+        duration_s=1.0,
+        output_dt_s=1.0,
+    )
+
+    assert recorded_shapes == [(2, 6), (2, 6)]
+    assert recorded_run_kwargs["chunk_size"] == 2
+    assert prop._throughput_metrics["accel_warmup_sample_count"] == 2
+    assert prop._throughput_metrics["accel_warmup_full_batch"] is False
 
 
 @pytest.mark.requires_data

@@ -56,7 +56,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from lunaris.common.batch_defs import build_batch_output_grid
-from lunaris.common.constants import R_MOON
+from lunaris.common.constants import MU_EARTH, MU_SUN, R_MOON
 from lunaris.common.frame_policy import (
     FRAME_MODE_IDENTITY_DIAGNOSTIC,
     FRAME_MODE_MOON_FIXED_EPHEMERIS,
@@ -84,6 +84,15 @@ if TYPE_CHECKING:
 
 class TorchSTLRPSPreflightError(RuntimeError):
     """Hard ST-LRPS runtime contract violation that must not fall back silently."""
+
+
+def _is_torch_cuda_oom(torch_mod: Any, exc: BaseException) -> bool:
+    """Return True for typed or message-based torch CUDA OOM exceptions."""
+
+    oom_type = getattr(getattr(torch_mod, "cuda", None), "OutOfMemoryError", None)
+    if oom_type is not None and isinstance(exc, oom_type):
+        return True
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
 
 
 class _STLRPSAccelerationProvider:
@@ -178,9 +187,19 @@ def _resolve_third_body_tables(
 
     try:
         from lunaris.core.dynamics import extract_ephem_tables_strict
+        from lunaris.core.dynamics.preparation import _provider_get, _provider_has
         from lunaris.core.torch_third_body import TorchEphemerisTables
 
         dt_s, sun_tab, earth_tab, _q_tab = extract_ephem_tables_strict(ephem)
+        provider = ephem.get_data_provider()
+        has_mu_sun = _provider_has(provider, "mu_sun_m3s2")
+        has_mu_earth = _provider_has(provider, "mu_earth_m3s2")
+        if has_mu_sun and has_mu_earth:
+            mu_source = "ephemeris_provider"
+        elif has_mu_sun or has_mu_earth:
+            mu_source = "mixed_ephemeris_provider_and_module_constants"
+        else:
+            mu_source = "module_constants_fallback"
         return TorchEphemerisTables(
             dt_s=dt_s,
             r_sun_tab_m=sun_tab,
@@ -189,6 +208,9 @@ def _resolve_third_body_tables(
             dtype=dtype,
             need_sun="third_body_sun" in bodies,
             need_earth="third_body_earth" in bodies,
+            mu_sun_m3s2=float(_provider_get(provider, "mu_sun_m3s2", MU_SUN)),
+            mu_earth_m3s2=float(_provider_get(provider, "mu_earth_m3s2", MU_EARTH)),
+            mu_source=mu_source,
         )
     except TorchSTLRPSPreflightError:
         raise
@@ -351,6 +373,11 @@ class TorchBatchPropagator:
             "lunar_gravity_backend": "st_lrps",
             "third_body_backend": "analytic_vectorized" if third_body else "",
             "third_body_bodies": list(third_body),
+            "third_body_mu_source": str(
+                getattr(getattr(self, "_ephem_tables", None), "mu_source", "")
+            ),
+            "mu_sun_m3s2": getattr(getattr(self, "_ephem_tables", None), "mu_sun_m3s2", None),
+            "mu_earth_m3s2": getattr(getattr(self, "_ephem_tables", None), "mu_earth_m3s2", None),
             "runtime_model_kind": str(
                 getattr(getattr(self._model, "_force_runtime", None), "runtime_model_kind", "")
                 or getattr(self._model, "config", {}).get("runtime_model_kind", "potential_autograd")
@@ -440,20 +467,17 @@ class TorchBatchPropagator:
 
         third_body = tuple(getattr(self, "_third_body", ()) or ())
         if third_body:
-            from lunaris.common.constants import MU_EARTH, MU_SUN
-
             provider: _STLRPSAccelerationProvider = _STLRPSThirdBodyAccelerationProvider(
                 model,
                 frame,
                 ephem_tables=self._ephem_tables,
                 use_sun="third_body_sun" in third_body,
                 use_earth="third_body_earth" in third_body,
-                mu_sun=float(MU_SUN),
-                mu_earth=float(MU_EARTH),
+                mu_sun=float(getattr(self._ephem_tables, "mu_sun_m3s2", MU_SUN)),
+                mu_earth=float(getattr(self._ephem_tables, "mu_earth_m3s2", MU_EARTH)),
             )
         else:
             provider = _STLRPSAccelerationProvider(model, frame)
-        state = torch.as_tensor(Y0, dtype=self._dtype, device=device)
 
         # ------------------------------------------------------------------
         # Print run header
@@ -473,17 +497,43 @@ class TorchBatchPropagator:
             f"dtype={str(self._dtype).replace('torch.', '')}"
         )
 
-        # Time one batched acceleration call for the log
-        _ = rhs_batch(torch, provider, 0.0, state)
-        torch.cuda.synchronize(device)
-        _t0 = time.perf_counter()
-        _ = rhs_batch(torch, provider, 0.0, state)
-        torch.cuda.synchronize(device)
-        accel_ms = (time.perf_counter() - _t0) * 1_000.0
-        logger.info(
-            f"[BATCH][GPU-STLRPS] one batched accel call: {accel_ms:.2f} ms  "
-            f"state=[{N}, 6]"
-        )
+        # Time one batched acceleration call for the log. Keep this diagnostic
+        # sample no larger than the effective chunk so a large ensemble does not
+        # OOM before the VRAM-aware chunked propagation loop can recover.
+        warmup_chunk = int(getattr(self, "_chunk_size", 0) or N)
+        warmup_n = max(1, min(N, max(1, warmup_chunk)))
+        warmup_metrics: dict[str, Any] = {
+            "accel_warmup_sample_count": int(warmup_n),
+            "accel_warmup_full_batch": bool(warmup_n == N),
+        }
+        try:
+            state = torch.as_tensor(Y0[:warmup_n], dtype=self._dtype, device=device)
+            _ = rhs_batch(torch, provider, 0.0, state)
+            torch.cuda.synchronize(device)
+            _t0 = time.perf_counter()
+            _ = rhs_batch(torch, provider, 0.0, state)
+            torch.cuda.synchronize(device)
+            accel_ms = (time.perf_counter() - _t0) * 1_000.0
+            warmup_metrics["accel_warmup_ms"] = float(accel_ms)
+            logger.info(
+                f"[BATCH][GPU-STLRPS] one batched accel call: {accel_ms:.2f} ms  "
+                f"warmup_state=[{warmup_n}, 6] full_N={N}"
+            )
+        except Exception as exc:
+            if not _is_torch_cuda_oom(torch, exc):
+                raise
+            warmup_metrics["accel_warmup_skipped_reason"] = "cuda_oom"
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                # Best-effort after a diagnostic-only OOM; propagation below
+                # still gets the shared loop's chunk-halving recovery.
+                pass
+            logger.warning(
+                "[BATCH][GPU-STLRPS] skipped warmup/timing acceleration due to "
+                "CUDA OOM at warmup_n=%d; continuing with chunked propagation.",
+                warmup_n,
+            )
 
         # ------------------------------------------------------------------
         # Shared batched fixed-step RK4 + impact loop (R07)
@@ -524,10 +574,17 @@ class TorchBatchPropagator:
                 else "line_sphere_quadratic"
             ),
             "impact_time_resolution_s": float(dt_eff),
+            "requested_dt_s": float(result.metrics["requested_dt_s"]),
+            "effective_dt_s": float(result.metrics["effective_dt_s"]),
+            "steps_per_snapshot": int(result.metrics["steps_per_snapshot"]),
+            "requested_output_dt_s": float(result.metrics["requested_output_dt_s"]),
+            "effective_output_dt_s": float(result.metrics["effective_output_dt_s"]),
+            "n_output_snapshots": int(result.metrics["n_output_snapshots"]),
             # R06 chunk provenance from the shared loop (OOM recoveries included).
             "chunk_size_requested": int(result.metrics["chunk_size_requested"]),
             "chunk_size_effective": int(result.metrics["chunk_size_effective"]),
             "oom_recoveries": result.metrics["oom_recoveries"],
+            **warmup_metrics,
         }
         self._last_impact_positions_inertial = result.impact_positions_inertial
         logger.info(

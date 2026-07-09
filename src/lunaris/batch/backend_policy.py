@@ -342,12 +342,15 @@ class BatchBackend(str, Enum):
         PyTorch CUDA fixed-step RK4.  All N trajectories are kept as a single
         ``[N, 6]`` CUDA float32 tensor.  The ST-LRPS neural surrogate is
         evaluated as a batched PyTorch forward pass + ``autograd.grad`` for the
-        acceleration.  Gravity only (no third-body / SRP / relativity).
+        acceleration.  Request ``gpu_st_lrps_potential`` is lunar surrogate
+        gravity only; request ``gpu_st_lrps_third_body`` adds analytic
+        vectorized Sun/Earth third-body terms.  SRP, Earth J2, relativity,
+        albedo, thermal IR, and tides still require an explicit CPU fallback.
 
     ``GPU_CLASSIC_SH``
         Numba CUDA fixed-step RK4 with per-thread SH workspace (degree ≤ 24).
         Maps to the ``numba_cuda_sh`` backend.  Supports third-body Sun/Earth,
-        Earth J2, SRP, and 1PN relativity on GPU.
+        Earth J2, SRP, and selected 1PN corrections on GPU.
 
     ``GPU_TORCH_SH``
         PyTorch (CUDA or CPU) fixed-step RK4 evaluating classic spherical

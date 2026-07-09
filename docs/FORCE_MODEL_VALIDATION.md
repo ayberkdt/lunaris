@@ -67,7 +67,7 @@ magnitude tighter than before. Locked by
 `tests/test_ephemeris_interpolation.py`. End-to-end CPU/GPU parity remains covered
 by `tests/test_real_asset_cpu_gpu_validation.py` on a CUDA host.
 
-### 2.3 SRP + conical eclipse — reviewed, **no change**
+### 2.3 CPU SRP + conical eclipse — reviewed, **no change**
 Verified empirically (magnitude vs closed form, direction away from Sun,
 inverse-square `|a|·d²` invariance, umbra→0, penumbra continuity/monotonicity in
 [0,1]). The runtime `|r_earth|² > 1e12` test that gates Earth-shadow is a robust
@@ -75,6 +75,27 @@ detection of a real vs collapsed (`(1,3)` zero-row) Earth table and was
 intentionally left in place; replacing it with a build-time flag would change
 behaviour when the ephemeris carries a real Earth vector while no Earth
 perturbation is enabled. Locked by `tests/test_srp_eclipse.py`.
+
+SRP is a cannonball `Cr*A/m` area model, not an attitude-dependent flat-plate
+force. Batch manifests record this as `srp_force_model`.
+
+Numba CUDA SRP is intentionally lower fidelity for screening: cylindrical Moon
+umbra and no Earth eclipse. Batch archives record this under `srp_shadow_model`
+and `srp_shadow_model_fidelity`; CPU/GPU SRP parity claims must account for it.
+
+### 2.4 Selected 1PN relativity scope — reviewed, **no change**
+The relativity flag enables selected 1PN corrections: central-body
+Schwarzschild, external-body differential Schwarzschild, and de Sitter/geodetic
+terms when ephemeris tables are available. It is not full relativistic N-body
+dynamics: EIH terms, Lense-Thirring frame dragging, J2-relativistic coupling,
+and clock/time-dilation models are outside the current scope. Batch manifests
+record this as `relativity_model=selected_1pn_corrections`.
+
+### 2.5 Surface-radiation eclipse fidelity — reviewed, **no change**
+Albedo and equilibrium thermal-IR facet sums use one Moon-center Earth-shadow
+factor rather than per-facet occultation. This is an engineering approximation
+documented by the kernels and recorded in batch manifests through
+`force_model_fidelity`; high-accuracy surface-radiation claims must call it out.
 
 ## 3. Finite-difference gradient checks (`a = +∇U`)
 

@@ -45,6 +45,7 @@ from lunaris.common.batch_defs import (
     BatchPropagationConfig,
     BatchPropagationResult,
     build_batch_output_grid,
+    build_fixed_step_grid_metadata,
 )
 from lunaris.common.constants import DAY_S, MU_MOON, R_MOON
 from lunaris.common.contracts.batch_archive import BATCH_ARCHIVE_SCHEMA_VERSION
@@ -65,6 +66,173 @@ _BACKEND_DISPLAY_NAMES = {
     "gpu_st_lrps_potential": "GPU-ST-LRPS",
     "gpu_st_lrps_third_body": "GPU-ST-LRPS+3B",
 }
+
+_FIXED_STEP_BATCH_BACKENDS = frozenset(
+    {
+        "numba_cuda_sh",
+        "torch_cuda_sh",
+        "torch_cpu_sh",
+        "gpu_st_lrps_potential",
+        "gpu_st_lrps_third_body",
+    }
+)
+
+
+def _batch_timestep_provenance(
+    batch_cfg: Any,
+    *,
+    duration_s: float,
+    output_dt_s: float,
+    actual_backend: str,
+    backend_diag: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return manifest fields for requested vs realized batch time stepping."""
+
+    _t_out, n_snaps, snap_interval = build_batch_output_grid(duration_s, output_dt_s)
+    meta: dict[str, Any] = {
+        "requested_dt_s": float(getattr(batch_cfg, "dt_s", 0.0)),
+        "requested_output_dt_s": float(output_dt_s),
+        "effective_output_dt_s": float(snap_interval),
+        "n_output_snapshots": int(n_snaps + 1),
+        "fixed_step_grid_aligned": str(actual_backend) in _FIXED_STEP_BATCH_BACKENDS,
+    }
+    if str(actual_backend) in _FIXED_STEP_BATCH_BACKENDS:
+        meta.update(
+            build_fixed_step_grid_metadata(
+                duration_s,
+                output_dt_s,
+                float(getattr(batch_cfg, "dt_s", 0.0)),
+            )
+        )
+    diagnostics = backend_diag or {}
+    for key in (
+        "requested_dt_s",
+        "effective_dt_s",
+        "steps_per_snapshot",
+        "requested_output_dt_s",
+        "effective_output_dt_s",
+        "n_output_snapshots",
+    ):
+        if diagnostics.get(key) is not None:
+            meta[key] = diagnostics[key]
+    return meta
+
+
+def _force_model_fidelity_provenance(
+    sim_cfg: Any,
+    *,
+    backend_diag: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return paper-facing fidelity labels for enabled non-gravity models."""
+
+    flags = getattr(sim_cfg, "flags", None)
+    diagnostics = backend_diag or {}
+    meta: dict[str, Any] = {}
+
+    if bool(getattr(flags, "enable_srp", False)):
+        srp_cfg = getattr(sim_cfg, "srp", None)
+        moon_eclipse = bool(getattr(srp_cfg, "enable_moon_eclipse", True))
+        earth_eclipse = bool(getattr(srp_cfg, "enable_earth_eclipse", False))
+        meta.update(
+            {
+                "srp_force_model": "cannonball_cr_area_over_mass",
+                "srp_attitude_model": "none",
+                "srp_moon_eclipse_enabled": moon_eclipse,
+                "srp_earth_eclipse_enabled": earth_eclipse,
+            }
+        )
+        if diagnostics.get("srp_shadow_model"):
+            for key in (
+                "srp_shadow_model",
+                "srp_shadow_model_fidelity",
+                "srp_earth_eclipse_supported",
+                "srp_shadow_model_note",
+            ):
+                value = diagnostics.get(key)
+                if value is not None and value != "":
+                    meta[key] = value
+        else:
+            if moon_eclipse and earth_eclipse:
+                shadow_model = "conical_moon_and_earth_shadow_factor"
+            elif moon_eclipse:
+                shadow_model = "conical_moon_shadow_factor"
+            elif earth_eclipse:
+                shadow_model = "conical_earth_shadow_factor"
+            else:
+                shadow_model = "disabled"
+            meta.update(
+                {
+                    "srp_shadow_model": shadow_model,
+                    "srp_shadow_model_fidelity": "engineering_conical_shadow",
+                    "srp_earth_eclipse_supported": True,
+                }
+            )
+
+    if bool(getattr(flags, "enable_relativity_1pn", False)):
+        meta.update(
+            {
+                "relativity_model": "selected_1pn_corrections",
+                "relativity_terms": [
+                    "central_body_schwarzschild",
+                    "external_body_schwarzschild_differential_when_ephemeris_available",
+                    "de_sitter_geodetic_when_ephemeris_available",
+                ],
+                "relativity_excluded_terms": [
+                    "full_eih_n_body",
+                    "lense_thirring_frame_dragging",
+                    "j2_relativistic_coupling",
+                    "clock_time_dilation_model",
+                ],
+            }
+        )
+
+    if bool(getattr(flags, "enable_albedo", False)):
+        albedo_cfg = getattr(sim_cfg, "albedo", None)
+        albedo_model = str(getattr(albedo_cfg, "albedo_model", "lambert_facets") or "lambert_facets")
+        eclipse_enabled = bool(getattr(albedo_cfg, "enable_eclipse", True))
+        meta.update(
+            {
+                "albedo_radiation_model": albedo_model,
+                "albedo_model_fidelity": "engineering_approximation",
+                "albedo_eclipse_model": (
+                    "moon_center_global_earth_shadow_factor"
+                    if eclipse_enabled
+                    else "disabled"
+                ),
+                "albedo_eclipse_fidelity": (
+                    "global_moon_center_proxy_not_per_facet"
+                    if eclipse_enabled
+                    else "disabled"
+                ),
+            }
+        )
+
+    if bool(getattr(flags, "enable_thermal", False)):
+        thermal_cfg = getattr(sim_cfg, "thermal", None)
+        thermal_mode = str(
+            getattr(thermal_cfg, "thermal_mode", "equilibrium_temperature")
+            or "equilibrium_temperature"
+        )
+        eclipse_enabled = bool(getattr(thermal_cfg, "enable_eclipse", True))
+        eclipse_model = "disabled"
+        eclipse_fidelity = "disabled"
+        if eclipse_enabled and thermal_mode == "equilibrium_temperature":
+            eclipse_model = "moon_center_global_earth_shadow_factor_on_solar_input"
+            eclipse_fidelity = "global_moon_center_proxy_not_per_facet"
+        elif eclipse_enabled:
+            eclipse_model = "configured_but_only_equilibrium_temperature_uses_eclipse"
+            eclipse_fidelity = "not_applied_to_prescribed_temperature_modes"
+        meta.update(
+            {
+                "thermal_ir_radiation_model": "lambert_facets",
+                "thermal_ir_temperature_mode": thermal_mode,
+                "thermal_ir_model_fidelity": "engineering_approximation",
+                "thermal_ir_eclipse_model": eclipse_model,
+                "thermal_ir_eclipse_fidelity": eclipse_fidelity,
+            }
+        )
+
+    return meta
 
 
 def _st_lrps_kind_mismatch(expected_kind: Any, actual_kind: Any) -> str | None:
@@ -999,9 +1167,19 @@ class BatchPropagationEngine:
             actual_sh_degree = backend_diag.get("actual_sh_degree", backend_diag.get("sh_degree"))
             if actual_sh_degree is None and _grav_model is not None:
                 actual_sh_degree = getattr(_grav_model, "effective_degree_max", getattr(_grav_model, "degree", None))
+            actual_backend_name = str(
+                getattr(_plan, "actual_backend", _plan.final_backend.value)
+            )
+            _time_step_meta = _batch_timestep_provenance(
+                batch_cfg,
+                duration_s=duration_s,
+                output_dt_s=output_dt_s,
+                actual_backend=actual_backend_name,
+                backend_diag=backend_diag,
+            )
             _plan_meta: dict[str, Any] = {
                 "requested_batch_backend": getattr(_plan, "requested_backend", "auto"),
-                "actual_batch_backend": getattr(_plan, "actual_backend", _plan.final_backend.value),
+                "actual_batch_backend": actual_backend_name,
                 "batch_backend": _plan.final_backend.value,
                 "backend_family": getattr(_plan, "backend_family", ""),
                 "backend_implementation": backend_diag.get("backend_implementation")
@@ -1035,6 +1213,9 @@ class BatchPropagationEngine:
                 # statically unsupported force models (capability registry).
                 "third_body_backend": backend_diag.get("third_body_backend")
                     or getattr(_plan, "third_body_backend", ""),
+                "third_body_mu_source": backend_diag.get("third_body_mu_source"),
+                "mu_sun_m3s2": backend_diag.get("mu_sun_m3s2"),
+                "mu_earth_m3s2": backend_diag.get("mu_earth_m3s2"),
                 "unsupported_forces": list(getattr(_plan, "unsupported_forces", ())),
                 "state_dtype": backend_diag.get("state_dtype")
                     or backend_diag.get("dtype")
@@ -1058,6 +1239,14 @@ class BatchPropagationEngine:
                 "selection_reason": getattr(_plan, "reason", ""),
                 "physics_capabilities": _active_physics_capabilities(self._sim_cfg),
             }
+            _plan_meta.update(_time_step_meta)
+            _force_fidelity_meta = _force_model_fidelity_provenance(
+                self._sim_cfg,
+                backend_diag=backend_diag,
+            )
+            if _force_fidelity_meta:
+                _plan_meta.update(_force_fidelity_meta)
+                _plan_meta["force_model_fidelity"] = dict(_force_fidelity_meta)
         except Exception:
             # Even on the degenerate provenance path the required v2 manifest
             # fields must be present (and non-null) so the archive still loads
@@ -1069,6 +1258,28 @@ class BatchPropagationEngine:
                 "batch_backend": _fallback_backend,
                 "requested_sh_degree": int(batch_cfg.sh_degree),
             }
+            try:
+                _plan_meta.update(
+                    _batch_timestep_provenance(
+                        batch_cfg,
+                        duration_s=duration_s,
+                        output_dt_s=output_dt_s,
+                        actual_backend=_fallback_backend,
+                        backend_diag=backend_diag,
+                    )
+                )
+            except Exception:
+                pass
+            try:
+                _force_fidelity_meta = _force_model_fidelity_provenance(
+                    self._sim_cfg,
+                    backend_diag=backend_diag,
+                )
+                if _force_fidelity_meta:
+                    _plan_meta.update(_force_fidelity_meta)
+                    _plan_meta["force_model_fidelity"] = dict(_force_fidelity_meta)
+            except Exception:
+                pass
 
         # Artifact + coefficient + kernel hash provenance: a path string alone is
         # not reproducible evidence. Stamp content hashes so a reader can verify
@@ -1212,6 +1423,19 @@ class BatchPropagationEngine:
                     "requested_sh_degree": _plan_meta.get("requested_sh_degree"),
                     "actual_sh_degree": _plan_meta.get("actual_sh_degree"),
                     "runtime_model_kind": _plan_meta.get("runtime_model_kind"),
+                    "third_body_mu_source": _plan_meta.get("third_body_mu_source"),
+                    "mu_sun_m3s2": _plan_meta.get("mu_sun_m3s2"),
+                    "mu_earth_m3s2": _plan_meta.get("mu_earth_m3s2"),
+                    "requested_dt_s": _plan_meta.get("requested_dt_s"),
+                    "effective_dt_s": _plan_meta.get("effective_dt_s"),
+                    "steps_per_snapshot": _plan_meta.get("steps_per_snapshot"),
+                    "requested_output_dt_s": _plan_meta.get("requested_output_dt_s"),
+                    "effective_output_dt_s": _plan_meta.get("effective_output_dt_s"),
+                    "fixed_step_grid_aligned": _plan_meta.get("fixed_step_grid_aligned"),
+                    "srp_shadow_model": _plan_meta.get("srp_shadow_model"),
+                    "srp_shadow_model_fidelity": _plan_meta.get("srp_shadow_model_fidelity"),
+                    "srp_earth_eclipse_supported": _plan_meta.get("srp_earth_eclipse_supported"),
+                    "force_model_fidelity": _plan_meta.get("force_model_fidelity"),
                     "fallback_reason": _plan_meta.get("fallback_reason"),
                     "selection_reason": _plan_meta.get("selection_reason"),
                     # R23 summary-mode payload: full-N screening summary +
@@ -1266,6 +1490,19 @@ class BatchPropagationEngine:
                 "requested_sh_degree": _plan_meta.get("requested_sh_degree"),
                 "actual_sh_degree": _plan_meta.get("actual_sh_degree"),
                 "runtime_model_kind": _plan_meta.get("runtime_model_kind"),
+                "third_body_mu_source": _plan_meta.get("third_body_mu_source"),
+                "mu_sun_m3s2": _plan_meta.get("mu_sun_m3s2"),
+                "mu_earth_m3s2": _plan_meta.get("mu_earth_m3s2"),
+                "requested_dt_s": _plan_meta.get("requested_dt_s"),
+                "effective_dt_s": _plan_meta.get("effective_dt_s"),
+                "steps_per_snapshot": _plan_meta.get("steps_per_snapshot"),
+                "requested_output_dt_s": _plan_meta.get("requested_output_dt_s"),
+                "effective_output_dt_s": _plan_meta.get("effective_output_dt_s"),
+                "fixed_step_grid_aligned": _plan_meta.get("fixed_step_grid_aligned"),
+                "srp_shadow_model": _plan_meta.get("srp_shadow_model"),
+                "srp_shadow_model_fidelity": _plan_meta.get("srp_shadow_model_fidelity"),
+                "srp_earth_eclipse_supported": _plan_meta.get("srp_earth_eclipse_supported"),
+                "force_model_fidelity": _plan_meta.get("force_model_fidelity"),
                 "fallback_reason": _plan_meta.get("fallback_reason"),
                 "selection_reason": _plan_meta.get("selection_reason"),
                 "result_storage_mode": storage_mode,

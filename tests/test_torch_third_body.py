@@ -123,6 +123,37 @@ def test_ephemeris_tables_fail_closed_on_zero_tables():
     np.testing.assert_allclose(tables.sun_position(0.0).numpy(), sun[0])
 
 
+def test_resolve_third_body_tables_preserves_ephemeris_gm_values():
+    sun_tab, earth_tab = _make_tables(4, 600.0)
+    custom_mu_sun = float(MU_SUN) * 1.000001
+    custom_mu_earth = float(MU_EARTH) * 0.999999
+
+    class _Ephem:
+        def get_data_provider(self):
+            return {
+                "dt_s": 600.0,
+                "r_sun_tab_m": sun_tab,
+                "r_earth_tab_m": earth_tab,
+                "q_i2f_tab": np.tile(
+                    np.array([[1.0, 0.0, 0.0, 0.0]], dtype=np.float64),
+                    (sun_tab.shape[0], 1),
+                ),
+                "mu_sun_m3s2": custom_mu_sun,
+                "mu_earth_m3s2": custom_mu_earth,
+            }
+
+    tables = _resolve_third_body_tables(
+        ("third_body_sun", "third_body_earth"),
+        _Ephem(),
+        device=torch.device("cpu"),
+        dtype=torch.float64,
+    )
+
+    assert tables.mu_source == "ephemeris_provider"
+    assert tables.mu_sun_m3s2 == pytest.approx(custom_mu_sun)
+    assert tables.mu_earth_m3s2 == pytest.approx(custom_mu_earth)
+
+
 # ---------------------------------------------------------------------------
 # B. Policy routing (R03 acceptance #2: no fallback with third-body enabled)
 # ---------------------------------------------------------------------------

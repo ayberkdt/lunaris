@@ -168,12 +168,36 @@ def _find_checkpoint(run_dir: Path) -> Path:
     return ckpt_path
 
 
-def _to_tensor(x: np.ndarray | torch.Tensor, device: torch.device) -> torch.Tensor:
-    """Accept numpy or torch, return float32 tensor on device with shape (N,3)."""
+def _module_dtype(model: nn.Module, default: torch.dtype = torch.float32) -> torch.dtype:
+    try:
+        return next(model.parameters()).dtype
+    except StopIteration:
+        return default
+
+
+def _coerce_torch_dtype(dtype: torch.dtype | str | None, default: torch.dtype) -> torch.dtype:
+    if dtype is None:
+        return default
+    if isinstance(dtype, torch.dtype):
+        return dtype
+    name = str(dtype).replace("torch.", "").strip().lower()
+    if name == "float64":
+        return torch.float64
+    if name == "float32":
+        return torch.float32
+    raise ValueError(f"Unsupported ST-LRPS runtime dtype {dtype!r}; expected float32 or float64.")
+
+
+def _to_tensor(
+    x: np.ndarray | torch.Tensor,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Accept numpy or torch, return tensor on device/dtype with shape (N,3)."""
     if isinstance(x, torch.Tensor):
-        t = x.to(device=device, dtype=torch.float32)
+        t = x.to(device=device, dtype=dtype)
     else:
-        t = torch.from_numpy(np.asarray(x, dtype=np.float32)).to(device)
+        t = torch.from_numpy(np.asarray(x, dtype=np.float64)).to(device=device, dtype=dtype)
     if t.ndim == 1:
         if t.shape[0] != 3:
             raise ValueError(f"1-D input must have shape (3,). Got {t.shape}.")
@@ -181,6 +205,41 @@ def _to_tensor(x: np.ndarray | torch.Tensor, device: torch.device) -> torch.Tens
     if t.ndim != 2 or t.shape[1] != 3:
         raise ValueError(f"Input must have shape (3,) or (N,3). Got {t.shape}.")
     return t
+
+
+def _is_single_position_input(x: np.ndarray | torch.Tensor) -> bool:
+    if isinstance(x, torch.Tensor):
+        return x.ndim == 1
+    return np.asarray(x).ndim == 1
+
+
+def _as_numpy_positions(x: np.ndarray | torch.Tensor) -> np.ndarray:
+    if isinstance(x, torch.Tensor):
+        arr = x.detach().cpu().numpy().astype(np.float64, copy=False)
+    else:
+        arr = np.asarray(x, dtype=np.float64)
+    if arr.ndim == 1:
+        if arr.shape[0] != 3:
+            raise ValueError(f"1-D input must have shape (3,). Got {arr.shape}.")
+        arr = arr.reshape(1, 3)
+    if arr.ndim != 2 or arr.shape[1] != 3:
+        raise ValueError(f"Input must have shape (3,) or (N,3). Got {arr.shape}.")
+    return arr
+
+
+def _raise_if_nonfinite_positions(
+    x: np.ndarray | torch.Tensor,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+    caller: str,
+) -> None:
+    x_t = _to_tensor(x, device, dtype)
+    if not bool(torch.isfinite(x_t.detach()).all().item()):
+        raise ValueError(
+            f"{caller}: Input positions contain NaN or Inf values. "
+            "All position components must be finite real numbers."
+        )
 
 
 def enforce_altitude_envelope_torch(
@@ -297,9 +356,11 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         paper_safe_metadata: dict | None = None,
     ):
         self.model = model.eval()
-        self.scaler = scaler
         self.cfg = cfg
         self.device = device
+        self._torch_dtype = _module_dtype(self.model, torch.float32)
+        self.model = self.model.to(device=self.device, dtype=self._torch_dtype)
+        self.scaler = scaler.to_tensors(device=self.device, dtype=self._torch_dtype)
         self.chunk_size = int(chunk_size)
         self.checkpoint_path = checkpoint_path
         self.checkpoint_epoch = checkpoint_epoch
@@ -425,6 +486,16 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         if self.artifact_contract.altitude_max_km is not None:
             self._train_alt_max_km = float(self.artifact_contract.altitude_max_km)
 
+    def to_device(self, device: torch.device | str, dtype: torch.dtype | str | None = None) -> None:
+        """Move model and cached scaler tensors while keeping runtime dtype explicit."""
+
+        dev = torch.device(device)
+        resolved_dtype = _coerce_torch_dtype(dtype, self._torch_dtype)
+        self.model = self.model.to(device=dev, dtype=resolved_dtype).eval()
+        self.scaler.to_tensors(device=dev, dtype=resolved_dtype)
+        self.device = dev
+        self._torch_dtype = resolved_dtype
+
     def _predict_chunk(self, x_t: torch.Tensor) -> tuple:
         """Forward + autograd for one chunk. Returns (delta_u_np, delta_a_np)."""
         x_scaled = self.scaler.scale_x(x_t).requires_grad_(True)
@@ -450,7 +521,7 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         self, x: np.ndarray | torch.Tensor
     ) -> tuple:
         """Chunked inference over arbitrary-length inputs."""
-        x_t = _to_tensor(x, self.device)
+        x_t = _to_tensor(x, self.device, self._torch_dtype)
         N = x_t.shape[0]
         u_out = np.empty((N, 1), dtype=np.float64)
         a_out = np.empty((N, 3), dtype=np.float64)
@@ -486,14 +557,15 @@ class SurrogateForceModel(PotentialAutogradRuntime):
             Residual potential in m^2/s^2.
         """
         x_m = r_fixed_m
-        x_arr = np.asarray(x_m, dtype=np.float64)
-        if not np.all(np.isfinite(x_arr)):
-            raise ValueError(
-                "predict_residual_potential: Input positions contain NaN or Inf values. "
-                "All position components must be finite real numbers."
-            )
-        single = x_arr.ndim == 1
-        x_t = _to_tensor(x_arr, self.device)
+        _raise_if_nonfinite_positions(
+            x_m,
+            device=self.device,
+            dtype=self._torch_dtype,
+            caller="predict_residual_potential_fixed",
+        )
+        self._enforce_domain(x_m, caller="predict_residual_potential_fixed")
+        single = _is_single_position_input(x_m)
+        x_t = _to_tensor(x_m, self.device, self._torch_dtype)
         N = x_t.shape[0]
         u_out = np.empty((N, 1), dtype=np.float64)
         for s in range(0, N, self.chunk_size):
@@ -547,14 +619,14 @@ class SurrogateForceModel(PotentialAutogradRuntime):
             lies outside the trained domain (see :meth:`domain_status`).
         """
         x_m = r_fixed_m
-        x_arr = np.asarray(x_m, dtype=np.float64)
-        if not np.all(np.isfinite(x_arr)):
-            raise ValueError(
-                "predict_residual_accel_fixed: Input positions contain NaN or Inf values. "
-                "All position components must be finite real numbers."
-            )
-        self._enforce_domain(x_arr, caller="predict_residual_accel_fixed")
-        single = x_arr.ndim == 1
+        _raise_if_nonfinite_positions(
+            x_m,
+            device=self.device,
+            dtype=self._torch_dtype,
+            caller="predict_residual_accel_fixed",
+        )
+        self._enforce_domain(x_m, caller="predict_residual_accel_fixed")
+        single = _is_single_position_input(x_m)
         _, da = self._chunked_predict(x_m)
         return da[0] if single else da
 
@@ -573,16 +645,15 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         recommended_fallback : bool
         reason : str
         """
-        x_arr = np.asarray(x_m, dtype=np.float64)
-        if x_arr.ndim == 1:
-            x_arr = x_arr[None, :]
-        finite_input = bool(np.all(np.isfinite(x_arr)))
-        r_norm = np.linalg.norm(x_arr, axis=1)
-        alt_km_arr = (r_norm - self.r_ref_m) / 1000.0
-        alt_km_min = float(alt_km_arr.min())
-        alt_km_max = float(alt_km_arr.max())
+        x_t = _to_tensor(x_m, self.device, self._torch_dtype).detach()
+        finite_input = bool(torch.isfinite(x_t).all().item())
+        x_eval = x_t.to(dtype=torch.float64)
+        r_norm = torch.linalg.norm(x_eval, dim=1)
+        alt_km_arr = (r_norm - float(self.r_ref_m)) / 1000.0
+        alt_km_min = float(torch.min(alt_km_arr).detach().cpu().item())
+        alt_km_max = float(torch.max(alt_km_arr).detach().cpu().item())
         x_scale = float(self.scaler.x.scale)
-        norm_r_max = float(r_norm.max()) / max(x_scale, 1.0)
+        norm_r_max = float(torch.max(r_norm).detach().cpu().item()) / max(x_scale, 1.0)
         exceeds_scaler = norm_r_max > 1.05  # 5% tolerance
 
         in_range = None
@@ -650,16 +721,15 @@ class SurrogateForceModel(PotentialAutogradRuntime):
         """
         x_m = r_fixed_m
         base_accel_fn = base_accel_fixed_fn
-        single = np.asarray(x_m).ndim == 1
-        x_arr = np.asarray(x_m, dtype=np.float64)
-        if not np.all(np.isfinite(x_arr)):
-            raise ValueError(
-                "predict_total_accel_fixed: Input positions contain NaN or Inf values. "
-                "All position components must be finite real numbers."
-            )
-        self._enforce_domain(x_arr, caller="predict_total_accel_fixed")
-        if x_arr.ndim == 1:
-            x_arr = x_arr[None, :]
+        single = _is_single_position_input(x_m)
+        _raise_if_nonfinite_positions(
+            x_m,
+            device=self.device,
+            dtype=self._torch_dtype,
+            caller="predict_total_accel_fixed",
+        )
+        self._enforce_domain(x_m, caller="predict_total_accel_fixed")
+        x_arr = _as_numpy_positions(x_m)
 
         _, da = self._chunked_predict(x_arr)
 

@@ -29,6 +29,8 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.constants import MU_EARTH, MU_SUN
+
 # Same singularity-guard radius^2 as the CPU kernel (physics/third_body_effects).
 _MIN_R2 = 1.0
 
@@ -156,10 +158,20 @@ class TorchEphemerisTables:
         dtype: Any,
         need_sun: bool,
         need_earth: bool,
+        mu_sun_m3s2: float | None = None,
+        mu_earth_m3s2: float | None = None,
+        mu_source: str = "module_constants_fallback",
     ) -> None:
         import torch
 
         self.dt_s = float(dt_s)
+        self.mu_sun_m3s2 = float(MU_SUN if mu_sun_m3s2 is None else mu_sun_m3s2)
+        self.mu_earth_m3s2 = float(MU_EARTH if mu_earth_m3s2 is None else mu_earth_m3s2)
+        self.mu_source = str(mu_source or "module_constants_fallback")
+        if self.mu_sun_m3s2 <= 0.0:
+            raise ValueError(f"mu_sun_m3s2 must be > 0, got {self.mu_sun_m3s2}")
+        if self.mu_earth_m3s2 <= 0.0:
+            raise ValueError(f"mu_earth_m3s2 must be > 0, got {self.mu_earth_m3s2}")
         sun = np.ascontiguousarray(r_sun_tab_m, dtype=np.float64)
         earth = np.ascontiguousarray(r_earth_tab_m, dtype=np.float64)
         if need_sun and not np.any(sun):
