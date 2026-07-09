@@ -6,7 +6,9 @@ support.
 """
 
 from __future__ import annotations
+
 import pytest
+
 _ = pytest.importorskip("PySide6.QtWidgets")
 
 import pytest
@@ -15,6 +17,7 @@ pytest.importorskip('PySide6.QtWidgets')
 
 
 import os
+
 from PySide6.QtWidgets import QApplication
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
