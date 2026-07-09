@@ -415,6 +415,11 @@ class _NPZWriter:
             raise RuntimeError(
                 "Cannot finalize NPZ archive before final result arrays are written"
             )
+        if self._next_sample != self._n:
+            raise RuntimeError(
+                f"Cannot finalize NPZ archive: expected {self._n} samples, "
+                f"got {self._next_sample}"
+            )
         self._part_path.replace(self._path)
 
     def abort(self) -> None:

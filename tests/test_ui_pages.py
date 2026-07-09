@@ -9,6 +9,11 @@ entire desktop workflow for every assertion.
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip('PySide6.QtWidgets')
+
+
 import os
 from pathlib import Path
 

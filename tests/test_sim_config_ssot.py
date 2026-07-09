@@ -113,7 +113,7 @@ def test_cli_enable_force_flags_create_required_model_configs() -> None:
     assert updated.earth_j2 is not None
 
 
-def test_albedo_root_selects_grid_mode_without_implicitly_enabling_force(tmp_path: Path) -> None:
+def test_albedo_root_selects_grid_mode_and_implicitly_enables_force(tmp_path: Path) -> None:
     cfg = SimConfig(
         gravity=GravityConfig(file_path="gravity.tab"),
         spice=SimpleNamespace(include_third_body=True, kernels=()),
@@ -125,4 +125,4 @@ def test_albedo_root_selects_grid_mode_without_implicitly_enabling_force(tmp_pat
 
     assert updated.albedo is not None
     assert updated.albedo.albedo_mode == "scaled_dn_grid"
-    assert updated.flags.enable_albedo is False
+    assert updated.flags.enable_albedo is True

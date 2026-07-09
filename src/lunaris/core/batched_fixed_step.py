@@ -428,7 +428,17 @@ def _propagate_chunk(
     # step has impacted at t=0. Flag it (t_impact=0.0, position = initial state)
     # and freeze it from the start instead of propagating through the body.
     r0 = torch.linalg.norm(state[:, :3], dim=1)
-    at_surface0 = r0 <= impact_r_m
+    if topo is not None:
+        from lunaris.core.torch_frame import sample_topo_radius_torch
+        r_safe = r0.clamp_min(1e-30)
+        use_rot = frame is not None and bool(getattr(frame, "uses_rotation", False))
+        p_bf = frame.inertial_to_fixed(0.0, state[:, :3]) if use_rot else state[:, :3]
+        lat = torch.rad2deg(torch.asin((p_bf[:, 2] / r_safe).clamp(-1.0, 1.0)))
+        lon = torch.rad2deg(torch.atan2(p_bf[:, 1], p_bf[:, 0]))
+        terrain_r = sample_topo_radius_torch(topo, lat, lon)
+        at_surface0 = r0 <= terrain_r + float(impact_alt_m)
+    else:
+        at_surface0 = r0 <= impact_r_m
     if detect_impact:
         impact_step = torch.where(at_surface0, torch.zeros_like(impact_step), impact_step)
         impact_time = torch.where(at_surface0, torch.zeros_like(impact_time), impact_time)
