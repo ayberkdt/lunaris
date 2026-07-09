@@ -12,9 +12,9 @@ Design Goals
 ------------
 - Deterministic: Pure arithmetic, no external kernels, consistent across platforms.
 - Fast: Numba-accelerated arithmetic kernels.
-  Numba is required. This module intentionally keeps time conversions dependency-light
-  otherwise, but the hot-path scalar conversion kernels use `@njit`.
-- Portable: Works in pure Python when `numba` is unavailable.
+  Numba is required: the hot-path scalar conversion kernels are `@njit` and this
+  module imports `numba` at module scope. The module stays dependency-light
+  otherwise (no SPICE, no scipy), but it is not importable without numba.
 
 What’s Included
 ---------------

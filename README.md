@@ -1,10 +1,14 @@
-# Lunaris
+# Lunaris (Beta)
 
-**Lunar orbit propagation and gravity-modeling framework.**
+**Lunar orbit propagation and gravity-modeling framework — beta.**
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Status: Active Development](https://img.shields.io/badge/status-active%20development-blue.svg)](https://pypi.org/classifiers/)
+[![Status: Beta](https://img.shields.io/badge/status-beta-orange.svg)](https://pypi.org/classifiers/)
+
+> **Beta software.** Lunaris is released as a beta: interfaces, on-disk
+> contracts, and results may still change between versions. Pin a version for
+> reproducible work.
 
 Lunaris is a Python framework for lunar-orbit propagation and gravity modeling. It
 bundles spherical-harmonic lunar gravity, configurable physical force models, orbit
@@ -137,6 +141,12 @@ ephemeris table. Common locations: `data/ephemeris_models/`,
 `data/gravity_models/`, `data/topography_models/`, `data/albedo_models/`,
 `data/thermal_models/`, and `data/assets/`. ST-LRPS cloud suites are generated
 artifacts under `data/datasets/`, not external downloads.
+
+> **Installed / wheel use:** the repo `data/` fallback only resolves inside an
+> editable checkout (it is found via the project-root marker). If you install
+> Lunaris as a wheel/package, set `LUNARIS_DATA_DIR` to your data root — otherwise
+> the CLI can also take an explicit `--kernel-dir` / `--gravity-file-path`, which
+> are now honored even when no default `data/` layout is present.
 
 ## Quickstart
 

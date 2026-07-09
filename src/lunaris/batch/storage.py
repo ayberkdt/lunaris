@@ -348,12 +348,36 @@ class _NPZWriter:
         if self._part_path.exists():
             self._part_path.unlink()
         self._t = np.ascontiguousarray(t_grid, dtype=np.float64)
+        self._n = int(n_samples)
+        self._s = int(n_state)
         self._Y = np.empty((len(self._t), n_samples, n_state), dtype=np.float64)
+        self._next_sample = 0
         self._metadata: dict[str, Any] = {}
         self._final_payload_written = False
 
     def write_sample_batch(self, start: int, end: int, Y: np.ndarray) -> None:
+        """Write ``Y[:, start:end, :]`` with the same guards as the HDF5 writer.
+
+        Even though NPZ holds the full ensemble in memory, mismatched shapes or
+        out-of-order sub-batches must fail loudly here too — otherwise numpy
+        broadcasting could silently mis-write where the HDF5 path would raise.
+        """
+        start = int(start)
+        end = int(end)
+        if start != self._next_sample:
+            raise ValueError(
+                "NPZ sample batches must be contiguous and ordered: "
+                f"expected start={self._next_sample}, got {start}"
+            )
+        if end <= start or end > self._n:
+            raise ValueError(
+                f"NPZ sample batch [{start}:{end}] is outside [0:{self._n}]"
+            )
+        expected = (len(self._t), int(end - start), self._s)
+        if tuple(Y.shape) != expected:
+            raise ValueError(f"NPZ batch must have shape {expected}, got {Y.shape}")
         self._Y[:, start:end, :] = Y
+        self._next_sample = end
 
     @property
     def memory_buffer(self) -> np.ndarray:
