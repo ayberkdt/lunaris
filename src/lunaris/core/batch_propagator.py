@@ -1260,7 +1260,7 @@ class GPUBatchPropagator:
         # Physical constants
         from lunaris.core.dynamics.preparation import _provider_get
         ep = getattr(dynamics_engine, "ephem", None)
-        prov = getattr(ep, "get_data_provider", lambda: {})() if ep is not None else {}
+        prov: Any = getattr(ep, "get_data_provider", lambda: {})() if ep is not None else {}
         self._mu_sun   = float(_provider_get(prov, "mu_sun_m3s2", MU_SUN))
         self._mu_earth = float(_provider_get(prov, "mu_earth_m3s2", MU_EARTH))
         self._r_moon   = float(R_MOON)
