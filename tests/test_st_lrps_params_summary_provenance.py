@@ -2,24 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 import json
 from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
+
+torch = pytest.importorskip('torch')
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import (
     DEFAULT_DATASET_CONFIG,

@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
-import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 try:
     from PySide6.QtWidgets import QApplication
@@ -24,8 +20,6 @@ def _app():
 
 
 def test_data_table_unit_headers_and_csv() -> None:
-    if not HAS_PYSIDE:
-        pytest.skip("PySide6 not available")
     _app()
     table = DataTable(
         [("Altitude", "km"), ("Max Degree", ""), "Backend"],
@@ -48,8 +42,6 @@ def test_data_table_unit_headers_and_csv() -> None:
 
 
 def test_data_table_copy_selection_is_tsv() -> None:
-    if not HAS_PYSIDE:
-        pytest.skip("PySide6 not available")
     app = _app()
     table = DataTable(["A", "B"])
     table.append_row(["x", "y"])

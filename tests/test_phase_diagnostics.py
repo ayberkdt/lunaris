@@ -12,6 +12,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.analysis.ensemble.statistics import ric_basis_from_state
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.surrogate.st_lrps.evaluation.phase_diagnostics import (

@@ -10,6 +10,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.type_defs import (
     EventConfig,

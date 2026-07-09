@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
-pytest.importorskip('PySide6.QtWidgets')
-
-
-import pytest
+QtTest = pytest.importorskip('PySide6.QtTest')
 
 try:
     from PySide6.QtCore import Qt
@@ -26,8 +24,6 @@ def _app():
 
 
 def test_toggle_switch_is_keyboard_focusable() -> None:
-    if not HAS_PYSIDE:
-        pytest.skip("PySide6 not available")
     _app()
     sw = ToggleSwitch()
     # Must be reachable by Tab and able to hold keyboard focus.
@@ -37,8 +33,6 @@ def test_toggle_switch_is_keyboard_focusable() -> None:
 
 
 def test_toggle_switch_space_and_enter_toggle() -> None:
-    if not HAS_PYSIDE:
-        pytest.skip("PySide6 not available")
     _app()
     sw = ToggleSwitch()
     sw.show()
@@ -55,8 +49,6 @@ def test_toggle_switch_space_and_enter_toggle() -> None:
 
 
 def test_prefers_reduced_motion_reads_setting() -> None:
-    if not HAS_PYSIDE:
-        pytest.skip("PySide6 not available")
     from PySide6.QtCore import QSettings
 
     from lunaris.ui.core.ui_commons import prefers_reduced_motion

@@ -551,3 +551,21 @@ def test_shared_rk4_step_builds_no_autograd_graph() -> None:
         out = rk4_step(torch, provider, s, 0.0, 60.0)
     assert rhs.grad_fn is None and rhs.requires_grad is False
     assert out.grad_fn is None and out.requires_grad is False
+
+
+def test_impact_at_t0_is_handled_correctly() -> None:
+    # R25: if initial altitude is already below topography/radius, impact is logged at t=0
+    # and propagation safely skips updating that state.
+    Y0 = np.stack(
+        [
+            _circular_state(120.0),
+            np.array([R_REF - 1000.0, 0.0, 0.0, -700.0, 0.0, 0.0], dtype=np.float64),  # below surface at t=0
+        ]
+    )
+    res = _run(Y0, duration_s=600.0, output_dt_s=300.0, chunk_size=2)
+    assert res.impact_flags[1]
+    assert res.t_impact[1] == 0.0
+    # State should remain frozen at initial conditions
+    np.testing.assert_array_equal(res.Y_out[-1, 1], Y0[1])
+    # Active state steps must be less than full
+    assert res.metrics["total_active_state_steps"] < res.metrics["total_raw_state_steps"]

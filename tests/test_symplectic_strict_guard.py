@@ -16,6 +16,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.type_defs import PropagatorConfig, TimeConfig
 from lunaris.core.propagation.propagator import propagate

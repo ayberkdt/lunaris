@@ -17,18 +17,11 @@ Qt ``offscreen`` platform so they run headless in CI.
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import os
 from pathlib import Path
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.core.ui_commons import (
     LOG_COLORS,
@@ -235,7 +228,6 @@ def test_no_raw_legacy_accent_in_pages() -> None:
 # ---------------------------------------------------------------------------
 
 def _qapp():
-    from PySide6 import QtWidgets
 
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 

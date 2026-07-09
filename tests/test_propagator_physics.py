@@ -23,6 +23,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.contracts.diagnostics import PROPAGATION_DIAGNOSTICS_SCHEMA_VERSION
 from lunaris.common.type_defs import EventConfig, PropagatorConfig, TimeConfig

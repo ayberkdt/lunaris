@@ -12,20 +12,16 @@ These guard the two contracts that make the hub useful:
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import os
 import subprocess
 import sys
 import textwrap
 
 import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
+torch = pytest.importorskip('torch')
+
 
 
 def _run_isolated(body: str) -> subprocess.CompletedProcess:
@@ -57,7 +53,7 @@ def test_launcher_open_flow_shows_overlay_then_hides_launcher() -> None:
          workspace),
       4. show the launcher again when the workspace closes.
     """
-    from PySide6 import QtCore, QtWidgets
+
 
     import lunaris.ui.launcher as launcher
 

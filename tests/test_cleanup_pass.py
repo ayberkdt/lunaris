@@ -1,17 +1,9 @@
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
 import argparse
 from unittest.mock import patch
 
 import pytest
+
+torch = pytest.importorskip('torch')
 
 from lunaris.surrogate.st_lrps.evaluation.ablation import build_matrix, parse_args
 

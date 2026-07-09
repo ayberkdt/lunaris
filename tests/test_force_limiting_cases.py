@@ -13,6 +13,8 @@ import math
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.common.constants import C_LIGHT, MU_MOON
 from lunaris.common.force_requirements import force_requirements
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps

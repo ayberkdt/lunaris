@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import dataclasses
 import os
 from pathlib import Path
 
 import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
+
+torch = pytest.importorskip('torch')
 
 from lunaris.ui.theme.tokens import (
     DESIGN_TOKENS,
@@ -24,7 +22,6 @@ from lunaris.ui.theme.tokens import (
     VisualizationTokens,
 )
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -161,7 +158,6 @@ def test_global_stylesheet_has_shared_component_selectors() -> None:
 
 
 def test_shared_primitives_construct_offscreen() -> None:
-    QtWidgets = _pyside6_widgets_or_skip()
 
     from lunaris.ui.components import (
         CompactSearchField,
@@ -199,7 +195,6 @@ def test_shared_primitives_construct_offscreen() -> None:
 
 
 def test_segmented_control_programmatic_emit_is_explicit() -> None:
-    QtWidgets = _pyside6_widgets_or_skip()
 
     from lunaris.ui.components import SegmentedControl
 

@@ -19,6 +19,8 @@ from types import SimpleNamespace
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
 from lunaris.common.batch_defs import BatchPropagationConfig
 from lunaris.common.type_defs import PerturbationFlags

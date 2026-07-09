@@ -2,6 +2,8 @@ import os
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 
 def get_banned_strings():
     # Use dynamic strings to avoid this test file breaking its own checks

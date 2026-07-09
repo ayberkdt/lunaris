@@ -28,6 +28,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.analysis.frozen.domain_guard import FrozenSearchDomainGuard
 from lunaris.analysis.frozen.search import (
     STAGE1_OUTPUT_FULL,

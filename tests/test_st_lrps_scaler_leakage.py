@@ -8,20 +8,13 @@ test genuinely catches leakage rather than passing vacuously.
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 import numpy as np
 import pytest
+
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
+torch = pytest.importorskip('torch')
 
 from dataset_pipeline_test_utils import write_toy_contract_h5
 from lunaris.surrogate.st_lrps.data.dataset_parameters import MU_MOON_SI, R_MOON_SI

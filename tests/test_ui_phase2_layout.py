@@ -2,19 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import os
 
 import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
+torch = pytest.importorskip('torch')
 
-from PySide6 import QtWidgets
 
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
 

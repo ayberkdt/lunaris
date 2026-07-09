@@ -8,11 +8,6 @@ buffering and follow-output rules are pinned independently of rendering.
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 from lunaris.ui.core.log_stream import LineAssembler, is_near_bottom
 
 

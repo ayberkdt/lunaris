@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+
+torch = pytest.importorskip('torch')
 from validation.independent import independent_sh as iref
 
 # Moon-like constants (values are arbitrary for the math; SI units).

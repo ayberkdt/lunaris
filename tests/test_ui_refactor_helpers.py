@@ -9,12 +9,10 @@ verify the new pure/helper modules introduced during the UI refactor:
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 from pathlib import Path
+
+import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.loaders.io_surface import _iter_label_candidates
 from lunaris.ui.core.command_builder import build_batch_command, build_command

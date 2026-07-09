@@ -18,6 +18,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.common.type_defs import PerturbationFlags, SpacecraftProps
 from lunaris.core.dynamics import (
     DynamicsEngine,

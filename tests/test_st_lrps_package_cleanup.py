@@ -14,18 +14,6 @@ itself trip the "old name absent" scan.
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 import fnmatch
 import os
 import subprocess
@@ -33,6 +21,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+torch = pytest.importorskip('torch')
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 

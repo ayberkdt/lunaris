@@ -1,23 +1,14 @@
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 import json
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pytest
+
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.utils")
 
 from lunaris.surrogate.st_lrps.data.dataset_contract import (
     GRAVITY_LABEL_ENGINE_VERSION,
@@ -327,3 +318,18 @@ def test_compatibility_report_rejects_gravity_label_contract_mismatch():
     assert report["compatible"] is False
     assert any("spherical_harmonic_convention" in error for error in report["errors"])
     assert any("gravity_label_engine_version" in error for error in report["errors"])
+
+
+def test_npz_writer_finalize_checks_incomplete_stream(tmp_path):
+    from lunaris.batch.storage import _NPZWriter
+    # R24: _NPZWriter.finalize() must raise ValueError if the stream terminates early
+    path = tmp_path / "test.npz"
+    writer = _NPZWriter(path, 10, ["Y", "Y_summary"])
+
+    # Write 5 sub-batches of 1
+    for _ in range(5):
+        writer.write({"Y": np.zeros(1), "Y_summary": np.zeros(1)})
+
+    with pytest.raises(ValueError, match="Expected 10 samples"):
+        writer.finalize()
+

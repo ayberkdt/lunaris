@@ -1,21 +1,14 @@
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
 import json
 from pathlib import Path
 
 import h5py
 import numpy as np
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
+
+torch = pytest.importorskip('torch')
 
 from lunaris.surrogate.st_lrps.artifacts.manager import (
     CHECKPOINT_SCHEMA_VERSION,

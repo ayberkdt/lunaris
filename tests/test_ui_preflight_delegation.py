@@ -9,17 +9,13 @@ desktop mission-propagation path is the CPU full-fidelity backend.
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import os
 
 import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
+torch = pytest.importorskip('torch')
+
 
 from lunaris.core.preflight import check_backend_capability  # noqa: E402
 from lunaris.ui.core.preflight_validation import (  # noqa: E402

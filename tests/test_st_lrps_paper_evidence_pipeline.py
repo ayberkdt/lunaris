@@ -3,24 +3,15 @@ wiring, worst-case, multi-seed, tables, configs)."""
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 import csv
 import json
 from pathlib import Path
 
 import numpy as np
 import pytest
+
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
 
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.evaluation.validation_suite import (

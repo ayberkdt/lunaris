@@ -8,20 +8,11 @@ retained-line bound, and the collapse signal — without needing a display serve
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import os
 from pathlib import Path
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
-
-from PySide6 import QtWidgets
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.widgets.log_panel import (
     MAX_LOG_LINES,

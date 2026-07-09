@@ -14,21 +14,17 @@ consolidation:
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
+
+torch = pytest.importorskip('torch')
 
 # Qt pages must be importable; force offscreen so widget construction is headless.
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STALE_TOKENS = (
@@ -349,7 +345,6 @@ REMOVED_ALIASES = (
 
 
 def test_mainwindow_has_no_legacy_aliases() -> None:
-    from PySide6 import QtWidgets
 
     import lunaris.ui.app as ui
 

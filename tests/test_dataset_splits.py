@@ -5,6 +5,8 @@ import json
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from dataset_pipeline_test_utils import make_toy_dataset_contract
 from lunaris.surrogate.st_lrps.data.dataset_parameters import R_MOON_SI
 from lunaris.surrogate.st_lrps.data.splits import (

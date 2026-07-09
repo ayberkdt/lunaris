@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.evaluation.benchmark_config import (
     BenchmarkConfigError,
     load_benchmark_config,

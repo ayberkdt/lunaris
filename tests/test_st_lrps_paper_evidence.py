@@ -2,23 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
-
-try:
-    import torch
-    import torch.nn
-    _ = torch.cuda
-    _ = getattr(torch, "compile", None)
-except (ImportError, AttributeError, ModuleNotFoundError):
-    pytest.skip("PyTorch not installed or missing required attributes like cuda/compile", allow_module_level=True)
-
-
-
 import copy
 import json
 from pathlib import Path
 
 import pytest
+
+torch = pytest.importorskip("torch")
+_ = pytest.importorskip("torch.nn")
 
 from lunaris.surrogate.st_lrps.paper_evidence import (
     PaperConfigError,

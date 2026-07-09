@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.evaluation.benchmark_evidence_taxonomy import (
     CLAIM_FIELD_ACCURACY,
     CLAIM_FULL_SURROGATE_VALIDATION,

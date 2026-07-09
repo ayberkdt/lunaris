@@ -8,19 +8,10 @@ suppression, programmatic synchronization, and cursor reset.
 
 from __future__ import annotations
 
-import pytest
-
-pytest.importorskip('PySide6.QtWidgets')
-
-
 import os
 
 import pytest
-
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
-
-from PySide6 import QtCore, QtGui, QtWidgets
+from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 from lunaris.ui.core.ui_commons import NumericDragLineEdit
 

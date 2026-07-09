@@ -5,6 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+torch = pytest.importorskip('torch')
+
 from lunaris.surrogate.st_lrps.evaluation.orbit_drift import (
     circular_orbit_state,
     energy_drift,
