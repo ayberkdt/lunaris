@@ -9,6 +9,11 @@ desktop mission-propagation path is the CPU full-fidelity backend.
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip('PySide6.QtWidgets')
+
+
 import os
 
 import pytest

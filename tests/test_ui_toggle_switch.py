@@ -7,6 +7,11 @@ from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
 QtTest = pytest.importorskip('PySide6.QtTest')
 
+pytest.importorskip('PySide6.QtWidgets')
+
+
+import pytest
+
 try:
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest

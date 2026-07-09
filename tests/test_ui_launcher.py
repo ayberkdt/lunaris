@@ -12,6 +12,11 @@ These guard the two contracts that make the hub useful:
 
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip('PySide6.QtWidgets')
+
+
 import os
 import subprocess
 import sys

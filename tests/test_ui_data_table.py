@@ -5,6 +5,11 @@ from __future__ import annotations
 import pytest
 from tests.ui_qt_helpers import QtCore, QtGui, QtWidgets
 
+pytest.importorskip('PySide6.QtWidgets')
+
+
+import pytest
+
 try:
     from PySide6.QtWidgets import QApplication
 
