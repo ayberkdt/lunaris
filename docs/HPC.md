@@ -40,6 +40,10 @@ bash hpc/setup_env.sh
 
 # 3. Sanity-check, then submit. submit.sh injects partition/account/qos/gres
 #    from cluster.env, so you never edit those into the .sbatch files.
+#    Optional: LUNARIS_PREFLIGHT_VERIFY_DATA=1 bash hpc/preflight.sh runs the
+#    full strict data verification too (recommended before the first real job).
+#    On a GPU allocation, or with LUNARIS_REQUIRE_CUDA=1, CUDA visibility is a
+#    hard failure; on an unallocated login node it remains an informational warn.
 bash hpc/preflight.sh
 hpc/submit.sh train -- \
     --data "$LUNARIS_DATA_DIR/datasets/st_lrps_cloud_suite.h5" \
@@ -47,11 +51,27 @@ hpc/submit.sh train -- \
     --out-dir "$LUNARIS_OUTPUT_DIR/training/run1"
 ```
 
+> **The strong model needs no flags.** `TrainConfig` defaults *are* the strong
+> benchmark-candidate profile (physical radial-decay encoding, residual SIREN
+> blocks, 3-band multi-scale SIREN, altitude-balanced + radial/cross +
+> direction losses, hybrid checkpoint metric) — there is no separate YAML/JSON
+> "strong model" config to point at. The command above already trains it. For
+> a provenance-tracked, paper-posture production run use the committed
+> scenario `hpc/scenarios/st_lrps_strong_model_production.jsonl` (array `0-0`).
+
 `hpc/cluster.env` is git-ignored, so site-specific values never get committed.
 Every `hpc/*.sbatch` job sources `hpc/env_template.sh`, which loads `cluster.env`,
 runs the requested `module load`s, and activates your venv/conda env before the
 headless entry point runs. The manual installation and per-workflow details
 below still apply when you need finer control.
+
+> **HDF5 on parallel filesystems.** `env_template.sh` exports
+> `HDF5_USE_FILE_LOCKING=FALSE` by default. HDF5 ≥ 1.10 takes POSIX file locks
+> on open, and Lustre/GPFS/NFS mounts commonly reject them with
+> `OSError: unable to lock file` even for read-only access. Training only reads
+> its HDF5 clouds (read-only + SWMR), so disabling locking is safe. If your
+> site needs locking, export a different value before submitting — the template
+> never overrides an existing setting.
 
 ## Installation
 
@@ -235,6 +255,30 @@ sbatch hpc/slurm_train_stlrps.sbatch \
 (`lunaris-train` is the `lunaris.surrogate.st_lrps.training.cli` entry point; run
 `lunaris-train --help` for the full flag list.)
 
+> **Walltime and interruption.** The training templates set
+> `#SBATCH --signal=B:TERM@600`, and the trainer treats SIGTERM (and SIGUSR1,
+> for sites that use `--signal=B:USR1@...`) exactly like Ctrl+C: it finishes
+> the current epoch, saves `ckpt_last.pt`, marks the run manifest
+> `interrupted` with a resume hint, and exits. Resume with
+> `lunaris-train --resume-from <run_dir> --epochs <total>` — or, for scenario
+> arrays, resubmit with `--resume` as a common flag.
+
+> **One GPU per training job.** The trainer uses a single device (`cuda:0`);
+> there is no DDP/multi-GPU path. Requesting `--gres=gpu:2` wastes an
+> allocation. The templates also export `LUNARIS_REQUIRE_CUDA=1`, so a job
+> whose torch cannot see CUDA (wrong module, CPU-only wheel) fails at the
+> preflight gate instead of silently crawling through the walltime on CPU.
+
+> **Throughput hints (Linux compute nodes).** The Windows-only
+> HDF5-multiworker restriction does not apply on Linux: with the RAM-preload
+> path active (`--preload-data`, or `auto` for small datasets) you can raise
+> `--num-workers` toward the allocated CPUs (e.g. 6 of `--cpus-per-task=8`).
+> Prefer preload or independent train/val files on parallel filesystems —
+> large single-file streaming reads are expensive on Lustre/GPFS. If you
+> enable periodic evaluation during training, pass
+> `--periodic-eval-device cpu` on single-GPU allocations so the evaluation
+> subprocess does not compete with training for VRAM.
+
 > **Submit-time vs. job-time variables.** `$SLURM_JOB_ID` exists only *inside* the
 > running job, not reliably in the submit shell — putting it in the `sbatch`
 > command above would expand to an empty string and create a malformed output
@@ -264,10 +308,18 @@ The committed sweep files live under `hpc/scenarios/`:
 
 | File | Array range | Purpose |
 |------|-------------|---------|
+| `st_lrps_strong_model_production.jsonl` | `0-0` | Production strong-model run: TrainConfig defaults + `--run-preset paper` |
 | `st_lrps_potential_autograd_paper_ablation_A0_to_A6.jsonl` | `0-6` | Cumulative scalar-potential ablation A0→A6 (mirrors `lunaris-ablation`) |
 | `st_lrps_potential_autograd_capacity_sweep_A6_full.jsonl` | `0-4` | A6-full architecture-size sweep (4×256 … 5×768) |
 | `st_lrps_potential_autograd_encoding_and_loss_sweep.jsonl` | `0-6` | 5×512 direction-weight + input-encoding matrix |
 | `st_lrps_runtime_benchmark_smoke.jsonl` | `0-1` | CPU/CUDA timing smoke checks |
+
+> **A6 "FullRecommended" is not the production profile.** The ablation ladder
+> intentionally keeps `--model-preset baseline_raw` (raw XYZ input) and
+> `--direction-loss-weight 0.2` so each A-step isolates one component on a
+> fixed input representation. The production strong model instead uses the
+> TrainConfig defaults — the `recommended_physical_radial_decay` encoding and
+> direction weight 0.10 — via `st_lrps_strong_model_production.jsonl`.
 
 **How submission works.** The first positional argument to the `.sbatch` file is
 the scenario JSONL path; **everything after it is forwarded to every array task**
@@ -345,9 +397,20 @@ directory, where `%A` is the array job ID and `%a` the task ID.
 
 **Resume / overwrite.** A task refuses to start if its output directory already
 exists and is non-empty, so an accidental resubmission cannot clobber a finished
-run. Pass `--force` (alias `--overwrite`) as a common flag to reuse the
-directory. To preview without launching, run the launcher directly with
-`--dry-run`:
+run. Two escape hatches:
+
+- `--resume` (recommended after a walltime kill): when the task's output
+  directory contains `checkpoints/ckpt_last.pt` (or `ckpt_best.pt`), the
+  launcher relaunches with `--resume-from <run_dir>` instead of `--out`, so
+  every array task continues from its own last completed epoch. Tasks without
+  a previous run start fresh. The original `scenario.json` provenance is kept;
+  each resume attempt adds timestamped `scenario_resume_command_*.txt` /
+  `scenario_resume_environment_*.json` files.
+- `--force` (alias `--overwrite`): reuse the directory and OVERWRITE the run.
+  Mutually exclusive with `--resume`.
+
+To preview without launching, run the launcher directly with `--dry-run`
+(the printed `mode` line shows whether a task would start fresh or resume):
 
 ```bash
 python tools/hpc/run_training_scenario.py \

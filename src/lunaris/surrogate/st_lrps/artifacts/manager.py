@@ -1513,6 +1513,25 @@ def write_command_txt(layout: RunLayout, argv: Sequence[str] | None = None) -> s
 
 
 def capture_environment_snapshot(layout: RunLayout, *, extra: Mapping[str, Any] | None = None) -> Path:
+    pip_freeze: list[str] | None = None
+    pip_freeze_error: str | None = None
+    try:
+        freeze = subprocess.run(
+            [sys.executable, "-m", "pip", "freeze"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        if freeze.returncode == 0:
+            pip_freeze = [line for line in freeze.stdout.splitlines() if line.strip()]
+        else:
+            pip_freeze_error = (freeze.stderr or freeze.stdout).strip() or (
+                f"pip freeze exited with status {freeze.returncode}"
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        pip_freeze_error = str(exc)
+
     payload = {
         "created_at_utc": _utcnow_iso(),
         "python": sys.version,
@@ -1522,7 +1541,10 @@ def capture_environment_snapshot(layout: RunLayout, *, extra: Mapping[str, Any] 
         "argv": list(sys.argv),
         "torch_version": getattr(torch, "__version__", "unknown"),
         "cuda_available": bool(torch.cuda.is_available()),
+        "pip_freeze": pip_freeze,
     }
+    if pip_freeze_error:
+        payload["pip_freeze_error"] = pip_freeze_error
     if extra:
         payload.update(dict(extra))
     path = layout.provenance_dir / "environment.json"

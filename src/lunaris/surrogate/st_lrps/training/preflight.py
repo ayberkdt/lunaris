@@ -20,6 +20,7 @@ the run; ``warn`` is recorded but does not stop training.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
@@ -175,6 +176,65 @@ def check_determinism_consistency(
     return PreflightCheck("determinism_consistency", PASS, f"reproducibility mode: {mode}")
 
 
+# Environment variables that indicate the scheduler allocated a GPU to this job.
+_GPU_ALLOCATION_ENV_VARS = ("SLURM_JOB_GPUS", "SLURM_GPUS", "SLURM_GPUS_ON_NODE", "CUDA_VISIBLE_DEVICES")
+
+
+def check_cuda_visibility(
+    *,
+    device_type: str,
+    environ: Mapping[str, str] | None = None,
+) -> PreflightCheck:
+    """FAIL when the job context demands a GPU but training resolved to CPU.
+
+    The silent CPU-fallback is the classic HPC footgun: a wrong CUDA module or
+    a CPU-only torch wheel makes ``get_device()`` quietly return ``cpu`` and a
+    400-epoch job crawls through its GPU-queue walltime. Two demand signals:
+
+    * ``LUNARIS_REQUIRE_CUDA=1`` — explicit; exported by the ``hpc/*.sbatch``
+      training templates (and settable anywhere a CPU run would be a mistake);
+    * a scheduler GPU allocation — any of ``SLURM_JOB_GPUS`` / ``SLURM_GPUS`` /
+      ``SLURM_GPUS_ON_NODE`` / ``CUDA_VISIBLE_DEVICES`` set non-empty
+      (an empty string or ``-1`` explicitly disables GPUs and does not count).
+
+    With no demand signal a CPU device is a normal local run → ``skip``.
+    ``--allow-preflight-fail`` / ``--skip-preflight`` remain the escape hatches.
+    """
+    env = os.environ if environ is None else environ
+    require_raw = str(env.get("LUNARIS_REQUIRE_CUDA", "")).strip().lower()
+    require = require_raw in ("1", "true", "yes", "on")
+
+    def _demands_gpu(value: str | None) -> bool:
+        text = str(value or "").strip()
+        return text not in ("", "-1")
+
+    allocated = [k for k in _GPU_ALLOCATION_ENV_VARS if k in env and _demands_gpu(env.get(k))]
+
+    if str(device_type) == "cuda":
+        detail = "CUDA device resolved"
+        if allocated:
+            detail += f" (GPU allocation visible via {', '.join(allocated)})"
+        return PreflightCheck("cuda_visibility", PASS, detail)
+    if require:
+        return PreflightCheck(
+            "cuda_visibility", FAIL,
+            f"LUNARIS_REQUIRE_CUDA={require_raw!r} but training resolved device_type="
+            f"{device_type!r}. torch cannot see a CUDA device — check the CUDA module "
+            "and that the installed torch wheel is a CUDA build.",
+        )
+    if allocated:
+        return PreflightCheck(
+            "cuda_visibility", FAIL,
+            f"the scheduler allocated a GPU ({', '.join(allocated)}) but training resolved "
+            f"device_type={device_type!r}; a silent CPU run would burn the GPU walltime. "
+            "Check the CUDA module / torch build, or unset the GPU request for a CPU run.",
+        )
+    return PreflightCheck(
+        "cuda_visibility", SKIP,
+        f"no GPU demanded (device_type={device_type!r}; local/CPU run)",
+    )
+
+
 def check_resource_headroom(
     *,
     out_dir: str | Path,
@@ -233,6 +293,7 @@ def run_preflight(
             benchmark_cudnn=benchmark_cudnn,
             determinism_flags=determinism_flags,
         ),
+        check_cuda_visibility(device_type=device_type),
         check_resource_headroom(
             out_dir=out_dir, device_type=device_type, cuda_free_bytes=cuda_free_bytes
         ),
@@ -265,6 +326,7 @@ __all__ = [
     "check_ood_band_ordering",
     "check_scaler_train_only",
     "check_determinism_consistency",
+    "check_cuda_visibility",
     "check_resource_headroom",
     "run_preflight",
     "write_preflight_report",

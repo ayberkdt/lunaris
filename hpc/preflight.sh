@@ -46,9 +46,23 @@ for cmd in lunaris-train lunaris-eval lunaris-benchmark lunaris-batch lunaris-da
   fi
 done
 
-# 3. Torch + CUDA visibility (warning only — login nodes often lack GPUs).
+# 3. Torch + CUDA visibility. A login-node check remains a warning by default,
+#    but an explicit GPU demand (LUNARIS_REQUIRE_CUDA or a scheduler GPU
+#    allocation) fails closed just like the trainer's preflight gate.
 python - <<'PY'
+import os
 import sys
+
+def _active(value):
+    return str(value or '').strip() not in ('', '-1')
+
+required = str(os.environ.get('LUNARIS_REQUIRE_CUDA', '')).strip().lower() in {
+    '1', 'true', 'yes', 'on'
+}
+allocated = any(
+    key in os.environ and _active(os.environ.get(key))
+    for key in ('SLURM_JOB_GPUS', 'SLURM_GPUS', 'SLURM_GPUS_ON_NODE', 'CUDA_VISIBLE_DEVICES')
+)
 try:
     import torch
 except Exception as exc:  # pragma: no cover - diagnostics only
@@ -59,11 +73,17 @@ if torch.cuda.is_available():
     print(f"  [ ok ] CUDA available: {torch.cuda.device_count()} device(s), "
           f"gpu0={torch.cuda.get_device_name(0)}")
 else:
+    if required or allocated:
+        print("  [FAIL] CUDA is required by this environment, but torch cannot see a CUDA device")
+        sys.exit(4)
     print("  [warn] CUDA not available here (fine on a CPU login node; "
           "GPU jobs must run on a GPU partition)")
 PY
 torch_rc=$?
 [[ ${torch_rc} -eq 3 ]] && bad "torch is not importable — check the .[hpc] install"
+[[ ${torch_rc} -eq 4 ]] && bad "CUDA is required, but torch cannot see a CUDA device"
+[[ ${torch_rc} -ne 0 && ${torch_rc} -ne 3 && ${torch_rc} -ne 4 ]] && \
+  bad "torch/CUDA diagnostics failed (exit ${torch_rc})"
 
 # 4. Storage: data dir present, output dir writable.
 if [[ -d "${LUNARIS_DATA_DIR}" ]]; then

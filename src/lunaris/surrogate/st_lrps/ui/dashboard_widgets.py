@@ -37,6 +37,7 @@ try:
         QHBoxLayout,
         QHeaderView,
         QLabel,
+        QPushButton,
         QSizePolicy,
         QTableView,
         QTabWidget,
@@ -749,10 +750,75 @@ if _HAS_QT:
 
             self._tabs = QTabWidget()
 
+            # ── Toolbar: Severity Counters ──
+            self._warn_count = 0
+            self._error_count = 0
+            self._severity_filter: str | None = None
+
+            self._filter_bar = QWidget()
+            filter_layout = QHBoxLayout(self._filter_bar)
+            filter_layout.setContentsMargins(8, 4, 8, 4)
+            filter_layout.setSpacing(8)
+
+            self._lbl_title = QLabel("Progress & Logs")
+            self._lbl_title.setStyleSheet(f"color: {_COLORS['text_muted']}; font-weight: bold;")
+            filter_layout.addWidget(self._lbl_title)
+            filter_layout.addStretch()
+
+            self.btn_filter_warn = QPushButton("0 Warnings")
+            self.btn_filter_warn.setCheckable(True)
+            self.btn_filter_warn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+            self.btn_filter_err = QPushButton("0 Errors")
+            self.btn_filter_err.setCheckable(True)
+            self.btn_filter_err.setCursor(Qt.CursorShape.PointingHandCursor)
+
+            filter_style = """
+                QPushButton {
+                    background-color: transparent;
+                    border: 1px solid transparent;
+                    padding: 2px 8px;
+                    border-radius: 10px;
+                    color: %s;
+                }
+                QPushButton:checked {
+                    background-color: %s;
+                    border: 1px solid %s;
+                }
+            """
+            self.btn_filter_warn.setStyleSheet(filter_style % (_COLORS["warning"], _qt_color_alpha(_COLORS["warning"], 0.2).name(), _COLORS["warning"]))
+            self.btn_filter_err.setStyleSheet(filter_style % (_COLORS["danger"], _qt_color_alpha(_COLORS["danger"], 0.2).name(), _COLORS["danger"]))
+
+            filter_layout.addWidget(self.btn_filter_warn)
+            filter_layout.addWidget(self.btn_filter_err)
+
+            self.btn_filter_warn.toggled.connect(self._on_filter_warn)
+            self.btn_filter_err.toggled.connect(self._on_filter_err)
+
+            layout.addWidget(self._filter_bar)
+
             # ── Tab 1: Structured Progress ──
             self._model = ProgressTableModel()
+
+            from PySide6.QtCore import QSortFilterProxyModel
+            class SeverityProxyModel(QSortFilterProxyModel):
+                def __init__(self, parent=None):
+                    super().__init__(parent)
+                    self.severity_filter = None
+
+                def filterAcceptsRow(self, source_row, source_parent):
+                    if not self.severity_filter:
+                        return True
+                    model = self.sourceModel()
+                    if not hasattr(model, "_records") or source_row >= len(model._records):
+                        return True
+                    return model._records[source_row].severity == self.severity_filter
+
+            self._proxy = SeverityProxyModel()
+            self._proxy.setSourceModel(self._model)
+
             self._table = QTableView()
-            self._table.setModel(self._model)
+            self._table.setModel(self._proxy)
             self._table.setAlternatingRowColors(True)
             self._table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
             self._table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
@@ -853,8 +919,32 @@ if _HAS_QT:
             sb = self._table.verticalScrollBar()
             at_bottom = sb.value() >= sb.maximum() - 2
             self._model.append_record(record)
+
+            if record.severity == "warning":
+                self._warn_count += 1
+                self.btn_filter_warn.setText(f"{self._warn_count} Warnings")
+            elif record.severity == "error":
+                self._error_count += 1
+                self.btn_filter_err.setText(f"{self._error_count} Errors")
+
             if self._auto_scroll and at_bottom:
                 self._table.scrollToBottom()
+
+        def _on_filter_warn(self, checked: bool) -> None:
+            if checked:
+                self.btn_filter_err.setChecked(False)
+                self._proxy.severity_filter = "warning"
+            else:
+                self._proxy.severity_filter = None
+            self._proxy.invalidateFilter()
+
+        def _on_filter_err(self, checked: bool) -> None:
+            if checked:
+                self.btn_filter_warn.setChecked(False)
+                self._proxy.severity_filter = "error"
+            else:
+                self._proxy.severity_filter = None
+            self._proxy.invalidateFilter()
 
         def load_history_file(self, path: str) -> None:
             """Load the per-epoch training history table from a csv/jsonl file."""
@@ -871,6 +961,13 @@ if _HAS_QT:
 
         def clear(self) -> None:
             self._model.clear_records()
+            self._warn_count = 0
+            self._error_count = 0
+            self.btn_filter_warn.setText("0 Warnings")
+            self.btn_filter_err.setText("0 Errors")
+            self.btn_filter_warn.setChecked(False)
+            self.btn_filter_err.setChecked(False)
+
             if hasattr(self, "_history_model"):
                 self._history_model.set_rows([])
                 self._history_table.setVisible(False)

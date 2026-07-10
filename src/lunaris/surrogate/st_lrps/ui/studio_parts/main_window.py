@@ -46,6 +46,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from PySide6.QtGui import QKeySequence, QShortcut
+
 from lunaris.common.paths import project_root_from_file
 
 from .data_pages import CloudAnalysisTab, CloudGenTab, DataPage, TrainingReadinessPage
@@ -63,10 +65,12 @@ from .qt_common import (
     QMainWindow,
     QPushButton,
     QStackedWidget,
+    Qt,
     QVBoxLayout,
     QWidget,
     pyqtgraph_matches_qt,
 )
+from .runs_pages import RunsBrowserPage
 from .runtime_pages import RuntimePerformancePage, STLRPSProfilingTab
 from .training_pages import STLRPSTrainTab
 
@@ -206,8 +210,28 @@ class MainWindow(QMainWindow):
         self._runtime_page = RuntimePerformancePage(self._profile_tab)
         self._orbit_benchmark_page = OrbitBenchmarkPage(self._orbit_benchmark_tab)
         self._orbit_plots_page = OrbitBenchmarkPlotsPage(self._orbit_plots_tab)
+        self._runs_browser_page = RunsBrowserPage()
+
         self._readiness_page.inspect_panel.send_to_training.connect(self._on_dataset_to_training)
         self._train_tab.navigate_monitor_requested.connect(lambda: self._navigate(2))
+        self._train_tab.evaluate_requested.connect(lambda path: (
+            self._eval_tab.set_run_path(path),
+            self._navigate(3)
+        ))
+
+        self._runs_browser_page.resume_requested.connect(lambda path: (
+            self._train_tab.trigger_resume_from(path),
+            self._navigate(1)
+        ))
+        self._runs_browser_page.evaluate_requested.connect(lambda path: (
+            self._eval_tab.set_run_path(path),
+            self._navigate(3)
+        ))
+        self._runs_browser_page.benchmark_requested.connect(lambda path: (
+            self._orbit_benchmark_tab.set_run_path(path),
+            self._navigate(5)
+        ))
+        self._runs_browser_page.monitor_requested.connect(lambda: self._navigate(2))
 
         # Indices 0-6 are kept stable; the readiness page is appended at the end
         # of the stack so existing navigation targets do not shift, while the
@@ -221,6 +245,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._orbit_benchmark_page)   # index 5: Orbit-Level Benchmark
         self._stack.addWidget(self._orbit_plots_page)       # index 6: Gravity Plots
         self._readiness_page_index = self._stack.addWidget(self._readiness_page)  # index 7
+        self._runs_browser_index = self._stack.addWidget(self._runs_browser_page) # index 8
         self._page_titles = [
             "Data",
             "Training Setup",
@@ -230,6 +255,7 @@ class MainWindow(QMainWindow):
             "Orbit-Level Benchmark",
             "Gravity Plots",
             "Dataset Readiness",
+            "Runs",
         ]
 
         dep_info = []
@@ -272,6 +298,7 @@ class MainWindow(QMainWindow):
         root.setLayout(root_lo)
         self.setCentralWidget(root)
         self._update_responsive_chrome(self.width())
+        self._install_shortcuts()
 
         # --- Status bar: parameter descriptions are shown on hover ---
         sb = self.statusBar()
@@ -322,7 +349,8 @@ class MainWindow(QMainWindow):
             btn.setProperty("page_index", page_idx)
             btn.setAccessibleName(f"{label} workspace")
             if hint:
-                btn.setToolTip(hint)
+                shortcut = page_idx + 1 if page_idx < 9 else None
+                btn.setToolTip(f"{hint}\nCtrl+{shortcut} to open" if shortcut else hint)
             btn.clicked.connect(lambda _c, i=page_idx: self._navigate(i))
             self._nav_buttons.append(btn)
             return btn
@@ -346,6 +374,7 @@ class MainWindow(QMainWindow):
         # ── TRAINING (Readiness → Setup → Monitor, boxed together) ──
         lo.addWidget(_section_lbl("TRAINING", "train"))
         train_box, train_l = _group_box()
+        train_l.addWidget(_nav_btn("Runs", 8, "Browse past training runs.", "train"))
         train_l.addWidget(_nav_btn("Dataset Readiness", 7, "Validate the dataset and hand it off before launching a run.", "train"))
         train_l.addWidget(_nav_btn("Training Setup", 1, "Configure data, model, loss, resume, and launch readiness.", "train"))
         train_l.addWidget(_nav_btn("Training Monitor", 2, "Track lifecycle, loss, checkpoints, logs, and queue state.", "train"))
@@ -365,6 +394,34 @@ class MainWindow(QMainWindow):
 
         self._navigate(0)
         return sidebar
+
+    def _install_shortcuts(self) -> None:
+        """Expose the primary workspace and monitor accelerators."""
+        for index in range(min(9, self._stack.count())):
+            shortcut = QShortcut(QKeySequence(f"Ctrl+{index + 1}"), self)
+            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(lambda index=index: self._navigate(index))
+
+        focus_log = QShortcut(QKeySequence("Ctrl+L"), self)
+        focus_log.setContext(Qt.ShortcutContext.WindowShortcut)
+        focus_log.activated.connect(self._train_tab.focus_log)
+
+        start = QShortcut(QKeySequence("Ctrl+Return"), self)
+        start.setContext(Qt.ShortcutContext.WindowShortcut)
+        start.activated.connect(self._start_from_shortcut)
+
+        help_shortcut = QShortcut(QKeySequence("F1"), self)
+        help_shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
+        help_shortcut.activated.connect(self._show_focused_help)
+
+    def _start_from_shortcut(self) -> None:
+        if self._stack.currentIndex() == 1:
+            self._train_tab.start_from_shortcut()
+
+    def _show_focused_help(self) -> None:
+        widget = self.focusWidget()
+        if widget is not None and widget.toolTip():
+            self.statusBar().showMessage(widget.toolTip().replace("\n", "  ·  "), 10000)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

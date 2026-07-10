@@ -644,10 +644,29 @@ class H5BlockDataset(Dataset):
     def _load_cache_for(self, global_index: int) -> None:
         assert self._dset is not None
 
-        block_start = (global_index // self.cache_rows) * self.cache_rows
-        block_end = min(block_start + self.cache_rows, self.end)
-
-        arr = np.asarray(self._dset[block_start:block_end, :])
+        # When ``indices`` is present, the sampler operates in the local split
+        # index space while the old cache was keyed by global HDF5 rows.  A
+        # shuffled local block can therefore span multiple global cache
+        # windows, causing avoidable cache thrashing.  Cache the requested
+        # local block as one logical batch instead.  Split indices are normally
+        # sorted, but sorting here keeps the dataset correct for callers that
+        # provide an arbitrary permutation.
+        if self.indices is not None:
+            local_start = (int(global_index) // self.cache_rows) * self.cache_rows
+            local_end = min(local_start + self.cache_rows, int(self.indices.size))
+            local_global = np.asarray(self.indices[local_start:local_end], dtype=np.int64)
+            order = np.argsort(local_global, kind="stable")
+            sorted_global = local_global[order]
+            arr_sorted = np.asarray(self._dset[sorted_global, :])
+            inverse = np.empty_like(order)
+            inverse[order] = np.arange(order.size, dtype=order.dtype)
+            arr = arr_sorted[inverse]
+            block_start = local_start
+            block_end = local_end
+        else:
+            block_start = (int(global_index) // self.cache_rows) * self.cache_rows
+            block_end = min(block_start + self.cache_rows, self.end)
+            arr = np.asarray(self._dset[block_start:block_end, :])
 
         x = arr[:, 0:3]
         u = arr[:, 3:4]
@@ -664,8 +683,8 @@ class H5BlockDataset(Dataset):
         self._cache_u = np.ascontiguousarray(u, dtype=np.float32)
         self._cache_a = np.ascontiguousarray(a, dtype=np.float32)
 
-        self._cache_start = block_start
-        self._cache_end = block_end
+        self._cache_start = int(block_start)
+        self._cache_end = int(block_end)
 
     def __getitem__(self, idx: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         self._ensure_open()
@@ -680,10 +699,11 @@ class H5BlockDataset(Dataset):
         if not (self.start <= global_idx < self.end):
             raise IndexError(f"Index {idx} out of bounds.")
 
-        if self._cache_x is None or not (self._cache_start <= global_idx < self._cache_end):
-            self._load_cache_for(global_idx)
+        cache_query_idx = local_query_idx if self.indices is not None else global_idx
+        if self._cache_x is None or not (self._cache_start <= cache_query_idx < self._cache_end):
+            self._load_cache_for(cache_query_idx)
 
-        local_idx = global_idx - self._cache_start
+        local_idx = cache_query_idx - self._cache_start
 
         # _load_cache_for above guarantees the caches are populated here.
         assert self._cache_x is not None and self._cache_u is not None and self._cache_a is not None
@@ -752,12 +772,64 @@ class TensorMemoryDataset(Dataset):
     def __len__(self) -> int:
         return int(self._x.shape[0])
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: Any) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # Return torch tensors directly: the previous ``.numpy()`` round-trip was
         # pure overhead because the collate function only re-wrapped them as
         # tensors again. Returning tensors keeps the all-in-RAM path tensor-native
         # and pin_memory-friendly (collate_xyz_u_a stacks tensors without a copy).
         return self._x[idx], self._u[idx], self._a[idx]
+
+
+class TensorBatchSampler(Sampler[np.ndarray]):
+    """Yield whole index arrays for tensor-backed datasets.
+
+    ``DataLoader`` normally calls ``__getitem__`` once per sample and then
+    stacks the results in Python.  This sampler is paired with
+    ``batch_size=None`` so :class:`TensorMemoryDataset` receives one index
+    array per batch and performs a single tensor fancy-index operation.
+    """
+
+    def __init__(
+        self,
+        data_len: int,
+        batch_size: int,
+        *,
+        seed: int,
+        shuffle: bool,
+        drop_last: bool,
+    ) -> None:
+        self.data_len = int(data_len)
+        self.batch_size = max(1, int(batch_size))
+        self.seed = int(seed)
+        self.shuffle = bool(shuffle)
+        self.drop_last = bool(drop_last)
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        if self.shuffle:
+            rng = np.random.default_rng(self.seed + self.epoch * 1337)
+            order = rng.permutation(self.data_len)
+        else:
+            order = np.arange(self.data_len, dtype=np.int64)
+        stop = self.data_len - (self.data_len % self.batch_size) if self.drop_last else self.data_len
+        for start in range(0, stop, self.batch_size):
+            batch = order[start : min(start + self.batch_size, stop)]
+            if batch.size:
+                yield np.asarray(batch, dtype=np.int64)
+
+    def __len__(self) -> int:
+        if self.drop_last:
+            return self.data_len // self.batch_size
+        return (self.data_len + self.batch_size - 1) // self.batch_size
+
+
+def identity_collate(batch: Any) -> Any:
+    """Pickle-safe identity collate for ``TensorBatchSampler``."""
+
+    return batch
 
 
 # --- SIREN: Sinusoidal Representation Network (Sitzmann et al. 2020) ---
@@ -853,8 +925,8 @@ def infer_a_sign_from_data(
         ds = f[dset_name]
         total_rows = int(ds.shape[0])
         n = min(int(n_probe), total_rows)
-        start_idx = int(rng.integers(0, max(total_rows - n, 1)))
-        arr = np.asarray(ds[start_idx : start_idx + n, :], dtype=np.float64)
+        selected = np.sort(rng.choice(total_rows, size=n, replace=False).astype(np.int64, copy=False))
+        arr = np.asarray(ds[selected, :], dtype=np.float64)
 
     pos = arr[:, 0:3]
     pot = arr[:, 3]
@@ -876,9 +948,14 @@ def infer_a_sign_from_data(
         return 1.0
 
     c1 = float(np.corrcoef(pot, a_dot_r)[0, 1])
-    c2 = float(np.corrcoef(pot, -a_dot_r)[0, 1])
+    if not np.isfinite(c1):
+        logger.warning("Acceleration-sign correlation is non-finite; defaulting to +1.0.")
+        return 1.0
 
-    inferred_sign = -1.0 if c1 >= c2 else +1.0
+    # corr(potential, -a·r) is exactly -corr(potential, a·r); comparing both
+    # added work without changing the decision rule.  Random row sampling also
+    # avoids bias from a contiguous, spatially correlated HDF5 block.
+    inferred_sign = -1.0 if c1 >= 0.0 else +1.0
     logger.info(f"Inferred acceleration sign convention: {inferred_sign:+.1f}")
     return inferred_sign
 
@@ -891,7 +968,8 @@ def infer_a_sign_from_data(
 __all__ = [
     'DTYPE', 'DatasetMeta', 'H5BlockDataset', 'TensorMemoryDataset',
     'DatasetContract', 'DatasetContractError',
-    'BlockShuffleSampler', 'collate_xyz_u_a', 'collate_h5', '_resolve_loader_worker_count',
+    'BlockShuffleSampler', 'TensorBatchSampler', 'collate_xyz_u_a', 'collate_h5',
+    'identity_collate', '_resolve_loader_worker_count',
     '_build_train_val_indices', '_find_latest_dataset', '_discover_dataset_name',
     '_resolve_lunar_dataset_contract', 'infer_a_sign_from_data',
     'build_dataset_contract', 'read_dataset_contract_from_h5', 'validate_dataset_contract',

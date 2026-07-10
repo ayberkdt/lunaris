@@ -48,9 +48,15 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from lunaris.common.paths import project_root_from_file
+
+try:
+    from lunaris.surrogate.st_lrps.training.checkpoint_manager import resolve_best_ckpt_start_epoch
+except Exception:  # pragma: no cover - optional training dependencies
+    resolve_best_ckpt_start_epoch = None
 
 from .qt_common import (
     THEME,
@@ -189,6 +195,11 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
     SUITE_PRESETS = {}  # type: ignore[assignment]
 
 
+from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import (
+    CompactSearchField,
+    KeyValueList,
+)
+
 from .common_widgets import (
     CollapsibleSection,
     DatasetInfoLabel,
@@ -213,7 +224,8 @@ from .common_widgets import (
     _tune_inputs,
 )
 from .dataset_introspection import inspect_h5_metadata as _introspect_h5
-from .workspace_widgets import StudioStatusBadge
+from .monitor_widgets import PeriodicEvalTable, RunProvenancePanel
+from .workspace_widgets import StudioNotice, StudioStatusBadge
 
 
 def _base_preset(**overrides) -> dict[str, Any]:
@@ -258,6 +270,8 @@ def _base_preset(**overrides) -> dict[str, Any]:
         "pin_memory": True, "quick_check": False, "extra_args": "",
         "use_residual_blocks": True,
         "n_bands": 3,
+        "grad_accumulation_steps": 1,
+        "n_hutchinson_samples": 4,
     }
     base.update(overrides)
     return base
@@ -355,6 +369,14 @@ def _delete_user_preset(name: str) -> bool:
     return False
 
 
+class _ReorderableQueueList(QListWidget):
+    order_changed = pyqtSignal()
+
+    def dropEvent(self, event) -> None:
+        super().dropEvent(event)
+        self.order_changed.emit()
+
+
 class TrainingQueue(QWidget):
     """
     Sequential training queue — users can enqueue multiple configurations
@@ -390,8 +412,20 @@ class TrainingQueue(QWidget):
         self._status_lbl.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
 
         # --- List ---
-        self._list = QListWidget()
+        self._list = _ReorderableQueueList()
         self._list.setMinimumHeight(80)
+        self._list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self._list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._list.order_changed.connect(self._on_reordered)
+
+        policy_lbl = QLabel("On failure:")
+        policy_lbl.setObjectName("fieldLabel")
+        self.failure_policy = NoScrollComboBox()
+        self.failure_policy.addItem("Stop queue", "stop")
+        self.failure_policy.addItem("Continue queue", "continue")
+        self.failure_policy.setAccessibleName("Queue failure policy")
+        self.failure_policy.setToolTip("Choose whether a failed job stops or advances the queue.")
+        self.failure_policy.currentIndexChanged.connect(lambda *_: self._save_persisted())
 
         # --- Buttons ---
         self.btn_start_queue = QPushButton("Start Queue")
@@ -417,6 +451,8 @@ class TrainingQueue(QWidget):
         btn_row.setSpacing(8)
         btn_row.addWidget(self.btn_start_queue)
         btn_row.addWidget(self.btn_stop_queue)
+        btn_row.addWidget(policy_lbl)
+        btn_row.addWidget(self.failure_policy)
         btn_row.addStretch(1)
         btn_row.addWidget(btn_remove)
         btn_row.addWidget(btn_clear_q)
@@ -429,6 +465,7 @@ class TrainingQueue(QWidget):
         lo.addWidget(self._list, 1)
         lo.addLayout(btn_row)
         self.setLayout(lo)
+        self._restore_persisted()
         self._update_status()
 
     # --- Public API (called by STLRPSTrainTab) ---
@@ -451,6 +488,7 @@ class TrainingQueue(QWidget):
         self._queue.append(item_data)
         self._refresh_list()
         self._update_status()
+        self._save_persisted()
 
     def is_running(self) -> bool:
         return self._running
@@ -472,21 +510,16 @@ class TrainingQueue(QWidget):
             self._queue[self._current_index]["status"] = f"Error (exit={exit_code})"
 
         self._refresh_list()
+        self._save_persisted()
 
-        if not job_ok:
-            reply = QMessageBox.question(
-                self,
-                "Training Failed",
-                f"Job #{self._current_index + 1} failed (exit={exit_code}).\n"
-                "Continue with the queue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
+        if not job_ok and self.failure_policy.currentData() == "stop":
+            self._queue[self._current_index]["status"] = f"Stopped after failure (exit={exit_code})"
+            if self._current_index >= 0:
                 self._running = False
                 self._current_index = -1
                 self.btn_start_queue.setEnabled(True)
                 self.btn_stop_queue.setEnabled(False)
+                self._save_persisted()
                 self._update_status()
                 return
 
@@ -520,6 +553,7 @@ class TrainingQueue(QWidget):
             self.btn_start_queue.setEnabled(True)
             self.btn_stop_queue.setEnabled(False)
             self._update_status()
+            self._save_persisted()
             _send_os_notification("Lunar Potential Surrogate", "Training queue completed!")
             self.queue_finished.emit()
             return
@@ -528,6 +562,7 @@ class TrainingQueue(QWidget):
         self._queue[next_idx]["status"] = "Running…"
         self._refresh_list()
         self._update_status()
+        self._save_persisted()
         self.job_started.emit(next_idx, self._queue[next_idx]["args"])
 
     def _stop_queue(self) -> None:
@@ -553,6 +588,7 @@ class TrainingQueue(QWidget):
                 self._current_index -= 1
             self._refresh_list()
             self._update_status()
+            self._save_persisted()
 
     def _clear_queue(self) -> None:
         if self._running:
@@ -562,6 +598,7 @@ class TrainingQueue(QWidget):
         self._current_index = -1
         self._refresh_list()
         self._update_status()
+        self._save_persisted()
 
     def _refresh_list(self) -> None:
         self._list.clear()
@@ -571,6 +608,7 @@ class TrainingQueue(QWidget):
             )
             text = f"{icon}  [{i + 1}] {job['label']}  —  {job['status']}"
             item = QListWidgetItem(text)
+            item.setData(Qt.ItemDataRole.UserRole, i)
             if "Running" in job["status"]:
                 item.setForeground(QColor(THEME["accent"]))
             elif "Completed" in job["status"]:
@@ -578,6 +616,52 @@ class TrainingQueue(QWidget):
             elif "Error" in job["status"] or "Stopped" in job["status"]:
                 item.setForeground(QColor(THEME["error"]))
             self._list.addItem(item)
+
+    def _on_reordered(self) -> None:
+        if self._running:
+            self._refresh_list()
+            return
+        old = list(self._queue)
+        ordered: list[dict[str, Any]] = []
+        for row in range(self._list.count()):
+            old_index = self._list.item(row).data(Qt.ItemDataRole.UserRole)
+            if isinstance(old_index, int) and 0 <= old_index < len(old):
+                ordered.append(old[old_index])
+        if len(ordered) == len(old):
+            self._queue = ordered
+            self._refresh_list()
+            self._save_persisted()
+
+    def _save_persisted(self) -> None:
+        payload = [
+            {key: job.get(key) for key in ("label", "args", "out_dir", "config", "status")}
+            for job in self._queue
+        ]
+        settings = _settings()
+        settings.setValue("training_queue/jobs", json.dumps(payload, ensure_ascii=False))
+        settings.setValue("training_queue/failure_policy", self.failure_policy.currentData() or "stop")
+        settings.sync()
+
+    def _restore_persisted(self) -> None:
+        settings = _settings()
+        raw = settings.value("training_queue/jobs", "")
+        try:
+            payload = json.loads(str(raw)) if raw else []
+        except (TypeError, ValueError):
+            payload = []
+        if isinstance(payload, list):
+            for job in payload:
+                if not isinstance(job, dict) or not isinstance(job.get("args"), list):
+                    continue
+                restored = dict(job)
+                if str(restored.get("status", "Pending")).startswith("Running"):
+                    restored["status"] = "Pending"
+                self._queue.append(restored)
+        policy = settings.value("training_queue/failure_policy", "stop")
+        index = self.failure_policy.findData(str(policy))
+        if index >= 0:
+            self.failure_policy.setCurrentIndex(index)
+        self._refresh_list()
 
     def _update_status(self) -> None:
         pending = sum(1 for q in self._queue if q["status"] == "Pending")
@@ -597,8 +681,33 @@ class TrainingQueue(QWidget):
             )
 
 
+def _find_resumable_run() -> tuple[str, str] | None:
+    import json
+    import os
+    from pathlib import Path
+
+    from lunaris.common.paths import data_dir_from_root, find_project_root
+
+    training_dir = data_dir_from_root(find_project_root()) / "training"
+    if not training_dir.exists():
+        return None
+    try:
+        manifests = sorted(training_dir.glob("*/run_manifest.json"), key=os.path.getmtime, reverse=True)
+    except Exception:
+        manifests = []
+    for manifest_path in manifests:
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+                if manifest.get("status") in ("interrupted", "running"):
+                    return manifest_path.parent.name, str(manifest_path.parent)
+        except Exception:
+            pass
+    return None
+
 class STLRPSTrainTab(QWidget):
     navigate_monitor_requested = pyqtSignal()
+    evaluate_requested = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -624,7 +733,7 @@ class STLRPSTrainTab(QWidget):
         preset_bar.setSpacing(8)
         preset_lbl = QLabel("Profile:")
         preset_lbl.setStyleSheet(
-            f"font-weight: 600; color: {THEME['accent_hov']}; font-size: 13px;"
+            f"font-weight: 600; color: {THEME['fg_soft']}; font-size: 13px;"
         )
         preset_bar.addWidget(preset_lbl)
         preset_bar.addWidget(self._preset_combo, 1)
@@ -648,7 +757,7 @@ class STLRPSTrainTab(QWidget):
         self.workflow_mode.currentIndexChanged.connect(self._on_workflow_mode_changed)
         wf_lbl = QLabel("Workflow:")
         wf_lbl.setStyleSheet(
-            f"font-weight: 600; color: {THEME['warning']}; font-size: 13px;"
+            f"font-weight: 600; color: {THEME['fg_soft']}; font-size: 13px;"
         )
         workflow_bar = QHBoxLayout()
         workflow_bar.setContentsMargins(4, 2, 4, 2)
@@ -865,10 +974,26 @@ class STLRPSTrainTab(QWidget):
         _tune_inputs(resume_inner)
         resume_vbox = QVBoxLayout()
         resume_vbox.setContentsMargins(0, 0, 0, 0)
+
+        resumable = _find_resumable_run()
+
+        from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import InlineNotice
+        self.resume_notice = InlineNotice(
+            f"Resumable run found: {resumable[0]}" if resumable else "",
+            kind="info"
+        )
+        self.resume_notice.setVisible(bool(resumable))
+        resume_vbox.addWidget(self.resume_notice)
+
         resume_vbox.addWidget(resume_inner)
         self.resume_section.set_content_layout(resume_vbox)
-        self.resume_section._toggle_btn.setChecked(True)
-        self.resume_section._on_toggle(True)
+
+        if resumable:
+            self.resume_section.set_expanded(True)
+            # Pre-fill the path without triggering autoload early
+            self.resume_from.setText(resumable[1])
+        else:
+            self.resume_section.set_expanded(False)
         self.resume_enabled.toggled.connect(self._on_resume_toggled)
         # Autoload only on the genuine user toggle signal (NOT when _apply_config
         # re-invokes _on_resume_toggled directly, which would clobber a profile).
@@ -1726,14 +1851,21 @@ class STLRPSTrainTab(QWidget):
         # itself is not in the widget tree), self.window() does NOT reach it —
         # MainWindow injects a direct reference via set_experiment_header().
         self._hdr_ref = None
+        self._train_proc = None
 
         # --- Live Loss Plot (Feature #13) ---
         self._live_plot = LiveLossPlot()
+        self._live_plot.epoch_parsed.connect(self._update_window_title_progress)
         self._history_poll_timer = QTimer(self)
         self._history_poll_timer.setInterval(2000)
         self._history_poll_timer.timeout.connect(self._poll_training_history)
         self._history_poll_path: Path | None = None
         self._history_poll_mtime: float = 0.0
+        self._provenance_panel = RunProvenancePanel()
+        self._periodic_eval_table = PeriodicEvalTable()
+        self._monitor_artifact_timer = QTimer(self)
+        self._monitor_artifact_timer.setInterval(2500)
+        self._monitor_artifact_timer.timeout.connect(self._refresh_monitor_artifacts)
 
         # --- Dashboard v2: KPI strip, structured log, ETA, parser ---
         if _HAS_DASHBOARD_V2:
@@ -1841,6 +1973,28 @@ class STLRPSTrainTab(QWidget):
         launch_l.addWidget(self.btn_start_setup)
         launch_strip.setLayout(launch_l)
 
+        # Resolved values are visible before launch; the panel is fed from the
+        # current widgets and the engine's resolver in _refresh_launch_plan().
+        launch_plan_card = QFrame()
+        _style_surface(launch_plan_card, object_name="launchPlanCard")
+        launch_plan_l = QVBoxLayout(launch_plan_card)
+        launch_plan_l.setContentsMargins(16, 12, 16, 12)
+        launch_plan_header = QHBoxLayout()
+        launch_plan_title = QLabel("Launch Plan")
+        launch_plan_title.setObjectName("panelTitle")
+        launch_plan_header.addWidget(launch_plan_title)
+        self._deviation_label = QLabel("0 deviations")
+        self._deviation_label.setObjectName("fieldHint")
+        launch_plan_header.addWidget(self._deviation_label)
+        launch_plan_header.addStretch(1)
+        reset_defaults = QPushButton("Reset deviations")
+        reset_defaults.setProperty("kind", "ghost")
+        reset_defaults.clicked.connect(self._reset_to_defaults)
+        launch_plan_header.addWidget(reset_defaults)
+        launch_plan_l.addLayout(launch_plan_header)
+        self._launch_plan_values = KeyValueList()
+        launch_plan_l.addWidget(self._launch_plan_values)
+
         # ── 4. Main Configuration Workspace (Phase 2 & 5) ──
         workspace_grid = QGridLayout()
         workspace_grid.setContentsMargins(0, 0, 0, 0)
@@ -1914,7 +2068,20 @@ class STLRPSTrainTab(QWidget):
         ))
         setup_l.addWidget(saved_profiles_card)
         setup_l.addWidget(launch_strip)
+        setup_l.addWidget(launch_plan_card)
+        self._setup_search = CompactSearchField("Search setup fields")
+        self._setup_search.setToolTip("Filter configuration groups by name or field label. Press Escape to clear.")
+        self._setup_search.textChanged.connect(self._filter_setup_sections)
+        setup_l.addWidget(self._setup_search)
         setup_l.addWidget(params_page, 1)
+
+        self._setup_sections = [
+            self.resume_section, grp_data, grp_arch, grp_optim,
+            self._loss_physics_section, self._fourier_section,
+            self._dir_loss_section, self._field_loss_section,
+            self.advanced_section, self._model_repr_section,
+            self._periodic_eval_section, cmd_section,
+        ]
 
         self.setup_page.setLayout(setup_l)
 
@@ -1963,10 +2130,38 @@ class STLRPSTrainTab(QWidget):
         monitor_layout.setContentsMargins(0, 0, 0, 0)
         monitor_layout.setSpacing(12)
         monitor_layout.addWidget(train_ctrl_bar)
+
+        # Phase UX-1: Finish notice & actions panel
+        self._finish_panel = QWidget()
+        finish_l = QVBoxLayout(self._finish_panel)
+        finish_l.setContentsMargins(0, 0, 0, 0)
+        finish_l.setSpacing(8)
+        self._finish_notice = StudioNotice("Run Finished", "", kind="info")
+        finish_actions_l = QHBoxLayout()
+        self._btn_finish_eval = QPushButton("Evaluate Model")
+        self._btn_finish_eval.setProperty("kind", "primary")
+        self._btn_finish_folder = QPushButton("Open Folder")
+        self._btn_finish_report = QPushButton("View Report")
+        self._btn_finish_queue = QPushButton("Queue Next")
+        for btn in (self._btn_finish_eval, self._btn_finish_folder, self._btn_finish_report, self._btn_finish_queue):
+            finish_actions_l.addWidget(btn)
+        finish_actions_l.addStretch()
+        finish_l.addWidget(self._finish_notice)
+        finish_l.addLayout(finish_actions_l)
+        self._finish_panel.setVisible(False)
+        monitor_layout.addWidget(self._finish_panel)
+
+        self._btn_finish_eval.clicked.connect(lambda: self.evaluate_requested.emit(self.runner._output_dir))
+        self._btn_finish_folder.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.runner._output_dir)))
+        self._btn_finish_report.clicked.connect(self._open_finish_report)
+        self._btn_finish_queue.clicked.connect(lambda: self._scroll_area.ensureWidgetVisible(self._queue))
+
         if _HAS_DASHBOARD_V2 and self._kpi_strip is not None:
             monitor_layout.addWidget(self._kpi_strip)
         if _HAS_DASHBOARD_V2 and self._time_strip is not None:
             monitor_layout.addWidget(self._time_strip)
+        monitor_layout.addWidget(self._provenance_panel)
+        monitor_layout.addWidget(self._periodic_eval_table)
         monitor_layout.addWidget(self._live_plot)
         monitor_layout.addWidget(queue_collapsible)
         monitor_layout.addStretch(0)
@@ -2040,6 +2235,101 @@ class STLRPSTrainTab(QWidget):
         self._on_log_every_mode_changed()
         self._refresh_command_preview()
         self._refresh_checklist()
+        self._connect_launch_plan_signals()
+        self._refresh_launch_plan()
+
+    def _connect_launch_plan_signals(self) -> None:
+        """Keep the resolved launch summary and deviation count live."""
+        for cls in (QLineEdit, QCheckBox):
+            for widget in self.findChildren(cls):
+                signal = widget.textChanged if cls is QLineEdit else widget.toggled
+                signal.connect(lambda *_: self._refresh_launch_plan())
+        for cls in (QSpinBox, QDoubleSpinBox):
+            for widget in self.findChildren(cls):
+                widget.valueChanged.connect(lambda *_: self._refresh_launch_plan())
+
+    def _filter_setup_sections(self, query: str) -> None:
+        query = query.strip().casefold()
+        for section in getattr(self, "_setup_sections", []):
+            title = getattr(section, "_title", "")
+            if hasattr(section, "title"):
+                title = f"{title} {section.title()}"
+            labels = " ".join(label.text() for label in section.findChildren(QLabel))
+            section.setVisible(not query or query in f"{title} {labels}".casefold())
+
+    def _reset_to_defaults(self) -> None:
+        self._apply_config(_base_preset())
+        self._refresh_command_preview()
+        self._refresh_checklist()
+        self._refresh_launch_plan()
+
+    def _refresh_launch_plan(self) -> None:
+        if not hasattr(self, "_launch_plan_values"):
+            return
+        cfg = self._collect_config()
+        defaults = _base_preset()
+        deviations = 0
+        for key, default in defaults.items():
+            if key not in cfg:
+                continue
+            if str(cfg[key]) != str(default):
+                deviations += 1
+        self._deviation_label.setText(f"{deviations} deviation{'s' if deviations != 1 else ''} from defaults")
+        direction_ready = int(cfg.get("direction_loss_start_epoch", 0)) + int(cfg.get("direction_loss_ramp_epochs", 0)) + int(cfg.get("checkpoint_settle_epochs", 5))
+        best_start = int(cfg.get("best_ckpt_start_epoch", -1))
+        if resolve_best_ckpt_start_epoch is not None:
+            try:
+                best_start = resolve_best_ckpt_start_epoch(SimpleNamespace(**cfg)).start_epoch
+            except Exception:
+                if best_start < 0:
+                    best_start = direction_ready if float(cfg.get("direction_loss_weight", 0.0)) > 0.0 else 0
+        elif best_start < 0:
+            best_start = direction_ready if float(cfg.get("direction_loss_weight", 0.0)) > 0.0 else 0
+        self._replace_key_values(
+            [
+                ("Workflow", str(self.workflow_mode.currentText())),
+                ("Effective batch", f"{int(cfg.get('batch_size', 0)) * int(cfg.get('grad_accumulation_steps', 1)):,} samples"),
+                ("Best checkpoint from", f"epoch {best_start}"),
+                ("Direction-ready epoch", f"epoch {direction_ready}" if float(cfg.get("direction_loss_weight", 0.0)) > 0.0 else "disabled"),
+                ("Model preset", str(cfg.get("model_preset", "custom"))),
+                ("Device", str(self.device_hint.currentText())),
+                ("Workers", str(cfg.get("num_workers", "—"))),
+                ("Periodic eval", "enabled" if bool(cfg.get("periodic_eval_enabled")) else "disabled"),
+            ]
+        )
+
+    def _replace_key_values(self, items: list[tuple[str, str]]) -> None:
+        while self._launch_plan_values.layout_grid.count():
+            item = self._launch_plan_values.layout_grid.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for key, value in items:
+            self._launch_plan_values.add_item(key, value)
+
+    def _open_finish_report(self) -> None:
+        run_dir = Path(self.runner._output_dir or self.out_dir.text().strip())
+        for candidate in (run_dir / "report.md", run_dir / "reports" / "report.md", run_dir / "evals" / "report.md"):
+            if candidate.is_file():
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(candidate)))
+                return
+
+    def trigger_resume_from(self, path: str) -> None:
+        """Pre-fill and enable resume from a selected Runs record."""
+        self.resume_section.set_expanded(True)
+        self.resume_from.setText(path)
+        self.resume_enabled.setChecked(True)
+
+    def focus_log(self) -> None:
+        """Ctrl+L target: focus the parsed log when it exists."""
+        target = self._structured_log if self._structured_log is not None else self.runner.raw_log_widget()
+        if target is not None:
+            target.setFocus(Qt.FocusReason.ShortcutFocusReason)
+        self.navigate_monitor_requested.emit()
+
+    def start_from_shortcut(self) -> None:
+        """Ctrl+Enter starts through the same validation path as the button."""
+        if getattr(self, "btn_start_setup", None) is not None and self.btn_start_setup.isEnabled():
+            self._start()
 
     # -----------------------------------------------------------------
     # Dataset Introspection (Feature #14)
@@ -3730,6 +4020,8 @@ class STLRPSTrainTab(QWidget):
         if args is None:
             return
 
+        self._user_stopped = False
+        self._finish_panel.setVisible(False)
         out_dir = self.out_dir.text().strip()
         resume_source = out_dir or self.resume_from.text().strip()
         self.runner.set_stop_hint(self._resume_stop_hint(resume_source))
@@ -3739,6 +4031,7 @@ class STLRPSTrainTab(QWidget):
         self.runner.progress.setFormat("Epoch %v / %m")
 
         self._live_plot.clear()
+        self._live_plot.set_patience(self.patience.value())
         self.runner.set_output_dir(out_dir if out_dir else "")
         self._set_history_poll_dir(out_dir)
         self._update_run_dir_label(out_dir)
@@ -3798,6 +4091,7 @@ class STLRPSTrainTab(QWidget):
     def _on_queue_job_started(self, job_index: int, args: list[str]) -> None:
         """Called by the queue when it's time to start the next job."""
         self._live_plot.clear()
+        self._live_plot.set_patience(self.patience.value())
         self._epochs_max = int(self.epochs.value())
         self.runner.progress.setRange(0, self._epochs_max)
         self.runner.progress.setValue(0)
@@ -3860,10 +4154,23 @@ class STLRPSTrainTab(QWidget):
         self._history_poll_mtime = 0.0
         if not run_dir:
             self._history_poll_timer.stop()
+            self._monitor_artifact_timer.stop()
+            self._provenance_panel.set_run_dir(None)
+            self._periodic_eval_table.set_run_dir(None)
             return
         root = Path(run_dir)
         self._history_poll_path = root / "history.jsonl"
         self._history_poll_timer.start()
+        self._monitor_artifact_timer.start()
+        self._provenance_panel.set_run_dir(root)
+        self._periodic_eval_table.set_run_dir(root)
+
+    def _refresh_monitor_artifacts(self) -> None:
+        run_dir = self.runner._output_dir or self.out_dir.text().strip()
+        if not run_dir:
+            return
+        self._provenance_panel.set_run_dir(run_dir)
+        self._periodic_eval_table.set_run_dir(run_dir)
 
     def _poll_training_history(self) -> None:
         run_dir = self.runner._output_dir or self.out_dir.text().strip()
@@ -3911,6 +4218,13 @@ class STLRPSTrainTab(QWidget):
             status = "FAILED"
         if hasattr(self, "btn_start_setup"):
             self.btn_start_setup.setEnabled(True)
+        w = None
+        if h := self._header():
+            w = h.window()
+        if not w:
+            w = self.window()
+        if w:
+            w.setWindowTitle("ST-LRPS Studio")
 
         # Dashboard v2: stop ETA timer and update status
         if _HAS_DASHBOARD_V2:
@@ -3928,13 +4242,23 @@ class STLRPSTrainTab(QWidget):
                 self._time_strip.set_done(_dt.now().strftime("%H:%M"))
                 if self._eta_estimator is not None:
                     self._time_strip.elapsed.set_value(self._eta_estimator.format_elapsed())
+        user_stopped = bool(getattr(self, "_user_stopped", False))
         self._user_stopped = False
 
         self._poll_training_history()
         self._history_poll_timer.stop()
+        self._monitor_artifact_timer.stop()
         training_ok = (
             exit_status == QProcess.ExitStatus.NormalExit and exit_code == 0
         )
+
+        if training_ok:
+            self._finish_notice.set_notice("Run Complete", "Training finished successfully.", kind="success")
+        elif user_stopped:
+            self._finish_notice.set_notice("Run Interrupted", "Training was stopped by the user.", kind="warning")
+        else:
+            self._finish_notice.set_notice("Run Failed", "Training process encountered an error.", kind="danger")
+        self._finish_panel.setVisible(True)
 
         # --- Discover output dir from log if not already set ---
         if exit_status == QProcess.ExitStatus.NormalExit and not self.runner._output_dir:
@@ -3956,6 +4280,9 @@ class STLRPSTrainTab(QWidget):
 
         run_dir = self.runner._output_dir or self.out_dir.text().strip()
         self._update_run_dir_label(run_dir)
+        self._btn_finish_report.setEnabled(
+            any((Path(run_dir) / relative).is_file() for relative in ("report.md", "reports/report.md", "evals/report.md"))
+        )
 
         # --- Notify the queue so it can advance ---
         if self._queue.is_running():
@@ -4143,6 +4470,19 @@ class STLRPSTrainTab(QWidget):
         self._run_dir_label.setText(
             f"Output: {path}" if path else f"Output: {TRAINING_OUTPUT_ROOT}/st_lrps_train_<timestamp>"
         )
+
+    def _update_window_title_progress(self, current_epoch: int) -> None:
+        target_epochs = self.epochs.value()
+        if target_epochs > 0:
+            pct = int(min(100, max(0, (current_epoch / target_epochs) * 100)))
+            title = f"[{pct}% · ep {current_epoch}/{target_epochs}] ST-LRPS Studio"
+            w = None
+            if h := self._header():
+                w = h.window()
+            if not w:
+                w = self.window()
+            if w:
+                w.setWindowTitle(title)
 
     def _detect_device_badge(self) -> str:
         """Detect the training device once and cache it (avoid repeated torch imports)."""

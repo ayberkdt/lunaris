@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Any
 
 from lunaris.common.paths import project_root_from_file
+from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import PageHeader
 from lunaris.ui_foundation import DESIGN_TOKENS
 
 from .qt_common import (
@@ -89,6 +90,7 @@ from .qt_common import (
     QSizePolicy,
     QSpinBox,
     QSyntaxHighlighter,
+    QSystemTrayIcon,
     Qt,
     QTabWidget,
     QTextCharFormat,
@@ -270,25 +272,9 @@ def _mono_font() -> QFont:
 
 
 def _make_page_header(title: str, subtitle: str, eyebrow: str = "ST-LRPS Studio") -> QFrame:
-    """Compact page header used across long-lived Studio workspaces."""
-    frame = QFrame()
-    frame.setObjectName("studioPageHeader")
-    lo = QVBoxLayout(frame)
-    lo.setContentsMargins(0, 0, 0, 10)
-    lo.setSpacing(3)
-
-    eyebrow_lbl = QLabel(eyebrow.upper())
-    eyebrow_lbl.setObjectName("pageEyebrow")
-    title_lbl = QLabel(title)
-    title_lbl.setObjectName("pageTitle")
-    subtitle_lbl = QLabel(subtitle)
-    subtitle_lbl.setWordWrap(True)
-    subtitle_lbl.setObjectName("pageDescription")
-
-    lo.addWidget(eyebrow_lbl)
-    lo.addWidget(title_lbl)
-    lo.addWidget(subtitle_lbl)
-    return frame
+    """Use the shared Mission UI header contract for every Studio page."""
+    del eyebrow  # the shared header intentionally has one description hierarchy
+    return PageHeader(title, subtitle)
 
 
 def _style_surface(frame: QFrame, *, object_name: str = "studioSurface", padding: int = 0) -> QFrame:
@@ -422,6 +408,25 @@ def _send_os_notification(title: str, message: str) -> None:
             )
         elif system == "Linux":
             subprocess.Popen(["notify-send", title, message])
+        elif system == "Windows":
+            app = QApplication.instance()
+            if app:
+                tray = getattr(app, "_stlrps_tray_icon", None)
+                if tray is None:
+                    tray = QSystemTrayIcon(app)
+                    icon = app.windowIcon()
+                    if icon.isNull():
+                        icon = app.style().standardIcon(app.style().StandardPixmap.SP_ComputerIcon)
+                    tray.setIcon(icon)
+                    tray.show()
+                    app._stlrps_tray_icon = tray
+
+                msg_lower = (message + title).lower()
+                if "error" in msg_lower or "fail" in msg_lower:
+                    icon_type = QSystemTrayIcon.MessageIcon.Critical
+                else:
+                    icon_type = QSystemTrayIcon.MessageIcon.Information
+                tray.showMessage(title, message, icon_type, 5000)
     except Exception:
         pass
 
@@ -667,6 +672,10 @@ class LiveLossPlot(QWidget):
       - robust duplicate-epoch handling
     """
 
+    # Emitted with the latest parsed epoch number so the window title / task-bar
+    # can reflect training progress (Studio UX-0/UX-1).
+    epoch_parsed = pyqtSignal(int)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         from pyqtgraph.Qt import QtCore as pg_QtCore
@@ -720,8 +729,8 @@ class LiveLossPlot(QWidget):
             f"""
             QFrame#liveLossCard {{
                 background-color: {with_alpha(THEME['bg_card'], 0.96)};
-                border: 1px solid {with_alpha(THEME['accent'], 0.30)};
-                border-radius: 18px;
+                border: 1px solid {THEME['border']};
+                border-radius: {DESIGN_TOKENS.radii.section}px;
             }}
             QLabel#lossTitle {{
                 color: {THEME['fg_main']};
@@ -917,6 +926,14 @@ class LiveLossPlot(QWidget):
             self._best_line.setVisible(False)
             self._plot_widget.addItem(self._best_line)
 
+            self._best_epoch_line = pg.InfiniteLine(
+                angle=90,
+                movable=False,
+                pen=pg.mkPen(color=QColor(with_alpha(THEME["accent"], 0.5)), width=1.2, style=pg_QtCore.Qt.PenStyle.DashLine),
+            )
+            self._best_epoch_line.setVisible(False)
+            self._plot_widget.addItem(self._best_epoch_line)
+
             try:
                 self._legend = plot_item.addLegend(
                     offset=(12, 12),
@@ -1109,7 +1126,12 @@ class LiveLossPlot(QWidget):
         self._re_ckpt_best = re.compile(rf"\[checkpoint\].*best updated.*val_ref\s*[:=]\s*({_num}).*epoch\s*[:=]\s*(\d+)", re.IGNORECASE)
         self._re_ckpt_last = re.compile(r"\[checkpoint\].*last saved.*epoch\s*[:=]\s*(\d+)", re.IGNORECASE)
 
+        self._patience = None
         self._refresh_metric_labels()
+
+    def set_patience(self, patience: int) -> None:
+        """Inform the plot of the early-stopping patience for KPI formatting."""
+        self._patience = patience
 
     def set_compact(self, compact: bool = True) -> None:
         """Compact mode hides the in-card metric chips/help (shown elsewhere by
@@ -1165,6 +1187,7 @@ class LiveLossPlot(QWidget):
             return
 
         self._latest_epoch = int(epoch)
+        self.epoch_parsed.emit(self._latest_epoch)
         lower = line.lower()
         is_train_phase = "[train]" in lower or lower.startswith("train ") or " train opt" in f" {lower}"
         is_val_phase = "[val" in lower or " validation " in f" {lower} " or " val ref" in f" {lower}"
@@ -1631,8 +1654,12 @@ class LiveLossPlot(QWidget):
             line_value = math.log10(float(self._best_val)) if loss_log else float(self._best_val)
             self._best_line.setValue(line_value)
             self._best_line.setVisible(True)
+            if self._best_epoch is not None:
+                self._best_epoch_line.setValue(self._best_epoch)
+                self._best_epoch_line.setVisible(True)
         else:
             self._best_line.setVisible(False)
+            self._best_epoch_line.setVisible(False)
 
         self._set_group_title(self._plot_widget, "Loss overview", bool(t_val or to_val or v_val or vb_val))
         self._set_group_title(self._direction_plot, "Acceleration and direction losses", bool(tr_a_val or a_val or tr_dir_val or dir_val))
@@ -1671,10 +1698,20 @@ class LiveLossPlot(QWidget):
             "Best Epoch",
             str(self._best_epoch) if self._best_epoch is not None else "—",
         ))
-        self._lbl_no_improve.setText(_chip(
-            "No Improvement",
-            str(self._epochs_since_improvement) if self._epochs_since_improvement is not None else "—",
-        ))
+        no_improve_val = self._epochs_since_improvement
+        if no_improve_val is not None:
+            if self._patience is not None and self._patience > 0:
+                p_text = f"{no_improve_val}/{self._patience}"
+                # Warn if > 2/3
+                ratio = no_improve_val / self._patience
+                if ratio > 0.66:
+                    p_text = f"<span style='color:{THEME['warning']};font-weight:bold'>{p_text}</span>"
+            else:
+                p_text = str(no_improve_val)
+        else:
+            p_text = "—"
+
+        self._lbl_no_improve.setText(_chip("No Improvement", p_text))
         self._lbl_lam_dir.setText(_chip("λ Dir Weight", self._fmt_metric(self._latest_lam_dir)))
         self._lbl_lr.setText(_chip("Learning Rate", self._fmt_metric(latest_lr)))
 
