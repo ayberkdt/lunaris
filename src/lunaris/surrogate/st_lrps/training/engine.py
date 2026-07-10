@@ -65,11 +65,13 @@ from lunaris.surrogate.st_lrps.data.datasets import (
     DatasetMeta,
     H5BlockDataset,
     TensorMemoryDataset,
+    TensorBatchSampler,
     _discover_dataset_name,
     _resolve_loader_worker_count,
     _resolve_lunar_dataset_contract,
     build_dataset_contract,
     collate_xyz_u_a,
+    identity_collate,
     infer_a_sign_from_data,
     validate_training_dataset_convention,
 )
@@ -1740,6 +1742,16 @@ def _resolve_data_splits(
         if split_policy not in {"seeded_random", "random"}:
             with h5py.File(primary_path, "r", swmr=True) as f:
                 xyz_all = np.asarray(f[dset_name][:, 0:3], dtype=np.float64)
+            if meta.unit_system == "canonical":
+                # Absolute altitude thresholds are physical km.  Convert the
+                # coordinate-only split input before deriving the envelope;
+                # the --no-si + canonical combination is rejected earlier.
+                if not meta.can_convert_to_si():
+                    raise ValueError(
+                        "Canonical dataset lacks DU_m/TU_s/VU_m_s required for physical split altitudes."
+                    )
+                assert meta.DU_m is not None
+                xyz_all = xyz_all * float(meta.DU_m)
             altitude_all = (np.linalg.norm(xyz_all, axis=1) - float(meta.r_ref_m or R_MOON_SI)) / 1000.0
         _raw_split_options = {
             "spatial_lon_bins": int(getattr(cfg, "spatial_lon_bins", 12)),
@@ -1870,6 +1882,47 @@ def _fit_residual_scalers(
     if scaler_path.exists():
         logger.info(f"Loading existing scaler from {scaler_path.name}")
         scaler = ScalerPack.load_json(scaler_path)
+        # A scaler is train data, not a generic cache.  Reusing it in a fresh
+        # run is safe only when its split and dataset identity match exactly.
+        # Compute the content hash once if an older contract did not embed it.
+        from lunaris.surrogate.st_lrps.data.dataset_contract import content_sha256_for_hdf5_dataset
+
+        split_index_hashes = (split_manifest.get("index_hashes", {}) if isinstance(split_manifest, dict) else {}) or {}
+        expected_content_sha = (
+            getattr(dataset_contract_obj, "content_sha256", None)
+            or (split_manifest.get("dataset_content_sha256") if isinstance(split_manifest, dict) else None)
+            or content_sha256_for_hdf5_dataset(primary_path, dataset_name=dset_name)
+        )
+        expected_provenance = {
+            "fit_scope": "train_only",
+            "split_policy": ("independent_files" if independent_val else split_policy),
+            "split_seed": int(split_seed),
+            "train_count": int(n_train),
+            "val_count": int(n_val),
+            "test_count": int(split_manifest.get("test_count", 0)) if isinstance(split_manifest, dict) else 0,
+            "train_index_hash": split_index_hashes.get("train"),
+            "val_index_hash": split_index_hashes.get("val"),
+            "test_index_hash": split_index_hashes.get("test"),
+            "dataset_content_sha256": expected_content_sha,
+            "dataset_contract_hash": compute_payload_sha256(dataset_contract_obj.to_dict()),
+        }
+        stored_provenance = dict(getattr(scaler, "provenance", {}) or {})
+        mismatches = []
+        for key, expected in expected_provenance.items():
+            # Independent-file runs intentionally have no in-file split hashes.
+            if expected is None and key.endswith("_index_hash"):
+                continue
+            if stored_provenance.get(key) != expected:
+                mismatches.append((key, stored_provenance.get(key), expected))
+        if stored_provenance.get("fit_scope") != "train_only":
+            mismatches.append(("fit_scope", stored_provenance.get("fit_scope"), "train_only"))
+        if mismatches:
+            detail = ", ".join(f"{k}={old!r} (expected {new!r})" for k, old, new in mismatches)
+            raise ValueError(
+                f"Existing scaler provenance does not match the current dataset/split: {detail}. "
+                "Use a fresh output directory or remove scaler.json; stale scalers are refused."
+            )
+        logger.info("Existing scaler provenance matches the current dataset contract and train split.")
         scaler_hash_info = {
             "scaler_hash": compute_payload_sha256(asdict(scaler)),
             "scaler_file_sha256": compute_file_sha256(scaler_path),
@@ -2058,11 +2111,20 @@ def _build_dataloaders(
         # global torch RNG.
         _loader_generator = torch.Generator()
         _loader_generator.manual_seed(int(cfg.seed))
-        train_loader = DataLoader(
-            train_ds, shuffle=True, drop_last=True,
-            generator=_loader_generator, **_dl_kw,
+        train_sampler = TensorBatchSampler(
+            len(train_ds), cfg.batch_size, seed=cfg.seed + 100, shuffle=True, drop_last=True
         )
-        val_loader   = DataLoader(val_ds,   shuffle=False, drop_last=False, **_dl_kw)
+        val_sampler = TensorBatchSampler(
+            len(val_ds), cfg.batch_size, seed=cfg.seed + 200, shuffle=False, drop_last=False
+        )
+        _dl_kw.pop("collate_fn", None)
+        _dl_kw.pop("worker_init_fn", None)
+        train_loader = DataLoader(
+            train_ds, sampler=train_sampler, batch_size=None, collate_fn=identity_collate, **_dl_kw,
+        )
+        val_loader = DataLoader(
+            val_ds, sampler=val_sampler, batch_size=None, collate_fn=identity_collate, **_dl_kw,
+        )
     else:
         logger.info("Data mode: HDF5 streaming")
         if independent_val:
@@ -2460,7 +2522,16 @@ def _build_model_and_optim(
             "weight_decay": 0.0,
         }
     )
-    opt = AdamW(param_groups)
+    opt: AdamW
+    if bool(getattr(cfg, "use_fused_optimizer", True)) and device.type == "cuda":
+        try:
+            opt = AdamW(param_groups, fused=True)
+            logger.info("Optimizer: using fused AdamW on CUDA.")
+        except (TypeError, RuntimeError) as exc:
+            logger.warning("Fused AdamW unavailable; falling back to regular AdamW: %s", exc)
+            opt = AdamW(param_groups)
+    else:
+        opt = AdamW(param_groups)
     logger.info(
         f"Optimizer groups: body_lr={cfg.lr:.2e}, body_wd={cfg.weight_decay:.2e}, "
         f"head_lr={cfg.lr * float(cfg.output_head_lr_mult):.2e}, head_wd=0.00e+00"
@@ -2485,9 +2556,17 @@ def _build_model_and_optim(
             )
         else:
             logger.warning("[resume] checkpoint has no optimizer_state_dict; continuing with a fresh optimizer.")
-        # Re-assert the manual-cosine base LR per group (load_state_dict may not carry it).
-        for group in opt.param_groups:
-            group.setdefault("initial_lr", float(group["lr"]))
+        # The checkpoint stores the previous run's scheduler base.  A resume
+        # command is allowed to override --lr, so re-assert the current config
+        # explicitly rather than silently inheriting the old base LR.
+        expected_lrs = [float(cfg.lr)]
+        if len(opt.param_groups) > 1:
+            expected_lrs.append(float(cfg.lr) * float(cfg.output_head_lr_mult))
+        for index, group in enumerate(opt.param_groups):
+            base_lr = expected_lrs[min(index, len(expected_lrs) - 1)]
+            group["initial_lr"] = base_lr
+            group["lr"] = base_lr
+        logger.info("[resume] optimizer base LR override applied from config: %s", expected_lrs)
 
     return _ModelBundle(
         model=model,

@@ -66,6 +66,7 @@ class TrainConfig:
     # passed explicitly, read by apply_model_preset to distinguish an explicit
     # preset from the default.
     _model_preset_explicit = False
+    _altitude_bounds_explicit = False
 
     data: str
     out: str
@@ -152,6 +153,10 @@ class TrainConfig:
     fit_seed: int = 123
     fit_chunk_rows: int = 131_072
 
+    # CUDA-only optimizer fusion is an opt-in performance detail with a safe
+    # AdamW fallback when the installed torch build does not support it.
+    use_fused_optimizer: bool = True
+
     amp: bool = False
 
     # Architecture preset layer. "baseline_raw" keeps all input encodings off
@@ -189,6 +194,7 @@ class TrainConfig:
     quick_check: bool = False
     max_train_batches: int | None = None  # cap training batches (None = full epoch)
     max_val_batches: int | None = None    # cap validation batches (None = full epoch)
+    overfit_batches: int | None = None    # repeat the first N train batches every epoch
 
     # Acceleration direction loss -> penalises angular error between a_pred and a_true.
     # L_dir = mean(1 - cos_sim(a_pred, a_true)) for points where ||a_true|| > floor.
@@ -355,10 +361,17 @@ class TrainConfig:
     periodic_eval_dataset: str = "val"                 # "val" | "test" | "ood"
     periodic_eval_max_samples: int = 200_000           # keep monitoring eval lightweight
     periodic_eval_batch_size: int | None = None     # None = reuse training batch_size
-    periodic_eval_device: str = "auto"                 # "auto" | "cpu" | "cuda" | "mps"
+    # CPU avoids competing with the live training process for a single CUDA
+    # device. Users can explicitly request cuda/mps when a separate device is
+    # available.
+    periodic_eval_device: str = "cpu"                 # "auto" | "cpu" | "cuda" | "mps"
     periodic_eval_prefer_checkpoint: str = "last"      # "last" (default) | "best"
     periodic_eval_timeout_sec: int | None = None    # per-eval subprocess timeout
     periodic_eval_continue_on_fail: bool = True        # failure must not abort training
+
+    # Optional exponential-moving-average weights. Raw weights remain the
+    # checkpoint-selection source; evaluation must opt into EMA explicitly.
+    ema_decay: float | None = None
 
 
 MODEL_PRESETS = (
@@ -463,6 +476,7 @@ RUN_PRESET_EXPLICIT_FLAGS: dict[str, tuple[str, ...]] = {
     "skip_preflight": ("--skip-preflight",),
     "allow_preflight_fail": ("--allow-preflight-fail",),
     "allow_dataset_validation_fail": ("--allow-dataset-validation-fail",),
+    "use_si": ("--use-si", "--no-si"),
 }
 
 # Boolean posture for the "paper" preset: (field -> required value). These are
@@ -476,6 +490,7 @@ _PAPER_BOOL_POSTURE: dict[str, bool] = {
     "skip_preflight": False,
     "allow_preflight_fail": False,
     "allow_dataset_validation_fail": False,
+    "use_si": True,
 }
 
 
@@ -532,6 +547,10 @@ def apply_run_preset(
         # Fast interpolation default: only soft-default the split policy.
         if "split_policy" not in explicit:
             cfg.split_policy = "seeded_random"
+        if "deterministic" not in explicit:
+            cfg.deterministic = False
+        if "benchmark_cudnn" not in explicit:
+            cfg.benchmark_cudnn = True
         return cfg
 
     if preset == "quick":
@@ -685,10 +704,10 @@ def parse_args() -> TrainConfig:
         default=_TC_DEFAULTS.get("output_dim", 1),
         help="Model output dimension. potential_autograd uses 1.",
     )
-    group_arch.add_argument("--w0-first", type=float, default=_TC_DEFAULTS["w0_first"],
-                            help="SIREN w0 for first layer.")
-    group_arch.add_argument("--w0-hidden", type=float, default=_TC_DEFAULTS["w0_hidden"],
-                            help="SIREN w0 for hidden layers.")
+    group_arch.add_argument("--w0-first", type=float, default=None,
+                            help="SIREN w0 for first layer (default: auto from dataset degree_max; fallback 30.0).")
+    group_arch.add_argument("--w0-hidden", type=float, default=None,
+                            help="SIREN w0 for hidden layers (default: auto from dataset degree_max; fallback 30.0).")
     group_arch.add_argument("--dropout", type=float, default=_TC_DEFAULTS["dropout"])
     fourier_group = group_arch.add_mutually_exclusive_group()
     fourier_group.add_argument("--use-fourier", action="store_true", dest="use_fourier",
@@ -765,7 +784,13 @@ def parse_args() -> TrainConfig:
     group_perf = ap.add_argument_group("Performance & Scaler")
     group_perf.add_argument("--num-workers", type=int, default=_TC_DEFAULTS["num_workers"])
     group_perf.add_argument("--cache-rows", type=int, default=_TC_DEFAULTS["cache_rows"], help="H5BlockDataset cache size.")
+    group_perf.add_argument("--sampler-block-size", type=int, default=_TC_DEFAULTS["sampler_block_size"],
+                            help="Local block size used by the streaming shuffle sampler.")
     group_perf.add_argument("--fit-rows", type=int, default=_TC_DEFAULTS["fit_rows"], help="Rows for isometric scaler fitting.")
+    group_perf.add_argument("--fit-seed", type=int, default=_TC_DEFAULTS["fit_seed"],
+                            help="Seed used when sampling rows for scaler fitting.")
+    group_perf.add_argument("--fit-chunk-rows", type=int, default=_TC_DEFAULTS["fit_chunk_rows"],
+                            help="HDF5 row chunk size used during scaler fitting.")
     group_perf.add_argument("--seed", type=int, default=_TC_DEFAULTS["seed"])
     pin_group = group_perf.add_mutually_exclusive_group()
     pin_group.add_argument("--pin-memory", action="store_true", dest="pin_memory",
@@ -835,8 +860,8 @@ def parse_args() -> TrainConfig:
     alt_bal_group.add_argument("--no-altitude-balanced-loss", action="store_false", dest="use_altitude_balanced_loss",
                                help="Use the raw per-sample mean instead of altitude-binned balancing.")
     group_alt.add_argument("--altitude-bin-width-km", type=float, default=_TC_DEFAULTS["altitude_bin_width_km"], help="Bin width in km.")
-    group_alt.add_argument("--altitude-min-km", type=float, default=_DEFAULT_ALT_MIN_KM, help="Min altitude in km.")
-    group_alt.add_argument("--altitude-max-km", type=float, default=_DEFAULT_ALT_MAX_KM, help="Max altitude in km.")
+    group_alt.add_argument("--altitude-min-km", type=float, default=_TC_DEFAULTS["altitude_min_km"], help="Min altitude in km.")
+    group_alt.add_argument("--altitude-max-km", type=float, default=_TC_DEFAULTS["altitude_max_km"], help="Max altitude in km.")
 
     # Radial / Cross-Radial Loss
     group_rad = ap.add_argument_group("Radial/Cross-Radial Loss")
@@ -848,7 +873,7 @@ def parse_args() -> TrainConfig:
     group_rad.add_argument("--radial-loss-weight", type=float, default=_TC_DEFAULTS["radial_loss_weight"],
                            help="Weight for radial loss (default: 0.05).")
     group_rad.add_argument("--cross-loss-weight", type=float, default=_TC_DEFAULTS["cross_loss_weight"],
-                           help="Weight for cross-radial loss (default: 0.10).")
+                           help="Weight for cross-radial loss (default: 0.05).")
 
     # Sparse Laplacian Regularization
     group_lap = ap.add_argument_group("Sparse Laplacian Regularization")
@@ -870,8 +895,9 @@ def parse_args() -> TrainConfig:
              "diagnostic = logs the physics (Laplace) violation only, no gradient is backpropagated; "
              "train = backpropagates the Laplacian penalty into model weights (create_graph=True); "
              "off = skip entirely. Default: diagnostic.")
-    group_lap.add_argument("--collocation-laplacian-every", type=int, default=25,
-        help="Optimizer steps between collocation Laplacian evaluations (default: 25).")
+    group_lap.add_argument("--collocation-laplacian-every", type=int,
+        default=_TC_DEFAULTS["collocation_laplacian_every"],
+        help="Optimizer steps between collocation Laplacian evaluations.")
     group_lap.add_argument("--collocation-alt-min-km", type=float, default=None,
         help="Min altitude in km for collocation Laplacian points (default: use altitude-min-km).")
     group_lap.add_argument("--collocation-alt-max-km", type=float, default=None,
@@ -899,8 +925,9 @@ def parse_args() -> TrainConfig:
         help="Disable SH angular polynomial encoding (default).",
     )
     group_enc.add_argument(
-        "--sh-encoding-degree", type=int, default=_TC_DEFAULTS.get("sh_encoding_degree", 4),
-        help="Max polynomial degree for SH-inspired angular encoding (1..8, default: 4).",
+        "--sh-encoding-degree", type=int, choices=range(0, 17),
+        default=_TC_DEFAULTS.get("sh_encoding_degree", 4),
+        help="Max polynomial degree for SH-inspired angular encoding (0..16).",
     )
     sh_raw_group = group_enc.add_mutually_exclusive_group()
     sh_raw_group.add_argument(
@@ -1031,8 +1058,9 @@ def parse_args() -> TrainConfig:
         help="Disable real SH basis encoding (default).",
     )
     group_enc.add_argument(
-        "--real-sh-degree", type=int, default=_TC_DEFAULTS.get("real_sh_degree", 4),
-        help="Max degree L for RealSHBasisEncoding ((L+1)^2 angular terms, default: 4).",
+        "--real-sh-degree", type=int, choices=range(0, 9),
+        default=_TC_DEFAULTS.get("real_sh_degree", 4),
+        help="Max degree L for RealSHBasisEncoding ((L+1)^2 angular terms, 0..8).",
     )
     rsh_raw_group = group_enc.add_mutually_exclusive_group()
     rsh_raw_group.add_argument(
@@ -1086,7 +1114,7 @@ def parse_args() -> TrainConfig:
                             help="Multi-scale composition when n_bands>1: 'concat_shared' "
                                  "(parallel bands -> concat -> shared trunk, default) or "
                                  "'additive' (per-band trunks summed; experimental).")
-    group_pinn.add_argument("--grad-accumulation-steps", type=int, default=1,
+    group_pinn.add_argument("--grad-accumulation-steps", type=int, default=_TC_DEFAULTS["grad_accumulation_steps"],
                             help="Accumulate gradients over N batches before optimizer step. "
                                  "Effective batch = batch_size × N. (default: 1 = no accumulation)")
 
@@ -1137,6 +1165,8 @@ def parse_args() -> TrainConfig:
                            help="Cap the number of training batches per epoch (None = full epoch).")
     group_log.add_argument("--max-val-batches", type=int, default=None,
                            help="Cap the number of validation batches per epoch (None = full epoch).")
+    group_log.add_argument("--overfit-batches", type=int, default=_TC_DEFAULTS["overfit_batches"],
+                           help="Repeat the first N training batches every epoch for pipeline sanity checks.")
 
     # Resume / Continuation
     group_resume = ap.add_argument_group("Resume / Continuation")
@@ -1184,29 +1214,32 @@ def parse_args() -> TrainConfig:
              "Mutually exclusive with --periodic-eval-count. Disabled by default.",
     )
     group_peval.add_argument(
-        "--periodic-eval-dataset", choices=["val", "test", "ood"], default="val",
+        "--periodic-eval-dataset", choices=["val", "test", "ood"],
+        default=_TC_DEFAULTS["periodic_eval_dataset"],
         help="Dataset used for periodic evaluation (default: val). val falls back to "
              "--data for single-dataset runs.",
     )
     group_peval.add_argument(
-        "--periodic-eval-max-samples", type=int, default=200_000,
-        help="Cap rows evaluated per periodic evaluation to keep it lightweight (default: 200000).",
+        "--periodic-eval-max-samples", type=int, default=_TC_DEFAULTS["periodic_eval_max_samples"],
+        help="Cap rows evaluated per periodic evaluation to keep it lightweight.",
     )
     group_peval.add_argument(
-        "--periodic-eval-batch-size", type=int, default=None,
+        "--periodic-eval-batch-size", type=int, default=_TC_DEFAULTS["periodic_eval_batch_size"],
         help="Batch size for periodic evaluation (default: reuse the training batch size).",
     )
     group_peval.add_argument(
-        "--periodic-eval-device", choices=["auto", "cpu", "cuda", "mps"], default="auto",
-        help="Device for the periodic evaluation subprocess (default: auto).",
+        "--periodic-eval-device", choices=["auto", "cpu", "cuda", "mps"],
+        default=_TC_DEFAULTS["periodic_eval_device"],
+        help="Device for the periodic evaluation subprocess (default: cpu to avoid single-GPU contention).",
     )
     group_peval.add_argument(
-        "--periodic-eval-prefer-checkpoint", choices=["last", "best"], default="last",
+        "--periodic-eval-prefer-checkpoint", choices=["last", "best"],
+        default=_TC_DEFAULTS["periodic_eval_prefer_checkpoint"],
         help="Which checkpoint periodic evaluation should use (default: last — ckpt_best "
              "may not be active during early training).",
     )
     group_peval.add_argument(
-        "--periodic-eval-timeout-sec", type=int, default=None,
+        "--periodic-eval-timeout-sec", type=int, default=_TC_DEFAULTS["periodic_eval_timeout_sec"],
         help="Optional per-evaluation subprocess timeout in seconds (default: no timeout).",
     )
     peval_fail_group = group_peval.add_mutually_exclusive_group()
@@ -1218,7 +1251,24 @@ def parse_args() -> TrainConfig:
         "--periodic-eval-fail-fast", action="store_false", dest="periodic_eval_continue_on_fail",
         help="Abort training if a periodic evaluation fails.",
     )
-    ap.set_defaults(periodic_eval_continue_on_fail=True)
+    ap.set_defaults(periodic_eval_continue_on_fail=_TC_DEFAULTS["periodic_eval_continue_on_fail"])
+
+    group_ema = ap.add_argument_group("EMA (optional ablation)")
+    group_ema.add_argument(
+        "--ema-decay", type=float, default=_TC_DEFAULTS["ema_decay"],
+        help="Enable exponential-moving-average weights with this decay (e.g. 0.999); raw weights remain the selection source.",
+    )
+
+    fused_group = group_opt.add_mutually_exclusive_group()
+    fused_group.add_argument(
+        "--fused-optimizer", action="store_true", dest="use_fused_optimizer",
+        help="Try CUDA fused AdamW when supported; otherwise fall back to regular AdamW.",
+    )
+    fused_group.add_argument(
+        "--no-fused-optimizer", action="store_false", dest="use_fused_optimizer",
+        help="Disable the CUDA fused AdamW attempt.",
+    )
+    ap.set_defaults(use_fused_optimizer=_TC_DEFAULTS["use_fused_optimizer"])
 
     # ---------------------------------------------------------------------------
     # TrainConfig is the single source of truth for the current default
@@ -1449,6 +1499,10 @@ def parse_args() -> TrainConfig:
         pin_memory=bool(a.pin_memory),
         prefetch_factor=(int(a.prefetch_factor) if a.prefetch_factor is not None else None),
         fit_rows=a.fit_rows,
+        fit_seed=int(a.fit_seed),
+        fit_chunk_rows=max(1, int(a.fit_chunk_rows)),
+        sampler_block_size=max(1, int(a.sampler_block_size)),
+        use_fused_optimizer=bool(a.use_fused_optimizer),
         amp=bool(a.amp),
         model_preset=str(a.model_preset),
         runtime_model_kind=str(a.runtime_model_kind),
@@ -1466,6 +1520,7 @@ def parse_args() -> TrainConfig:
         quick_check=bool(a.quick_check),
         max_train_batches=(int(a.max_train_batches) if a.max_train_batches is not None else None),
         max_val_batches=(int(a.max_val_batches) if a.max_val_batches is not None else None),
+        overfit_batches=(max(1, int(a.overfit_batches)) if a.overfit_batches is not None and int(a.overfit_batches) > 0 else None),
         direction_loss_weight=float(a.direction_loss_weight),
         direction_loss_start_epoch=max(0, int(a.direction_loss_start_epoch)),
         direction_loss_ramp_epochs=max(1, int(a.direction_loss_ramp_epochs)),
@@ -1485,7 +1540,7 @@ def parse_args() -> TrainConfig:
         laplacian_subset_size=max(1, int(a.laplacian_subset_size)),
         n_hutchinson_samples=max(1, int(a.n_hutchinson_samples)),
         use_sh_encoding=bool(a.use_sh_encoding),
-        sh_encoding_degree=max(1, min(8, int(a.sh_encoding_degree))),
+        sh_encoding_degree=int(a.sh_encoding_degree),
         sh_append_raw=bool(a.sh_append_raw),
         use_radial_separation=bool(a.use_radial_separation),
         radial_append_raw=bool(a.radial_append_raw),
@@ -1498,7 +1553,7 @@ def parse_args() -> TrainConfig:
         physical_radial_decay_include_unit=bool(a.physical_radial_decay_include_unit),
         physical_radial_decay_include_r_scaled=bool(a.physical_radial_decay_include_r_scaled),
         use_real_sh_basis=bool(a.use_real_sh_basis),
-        real_sh_degree=max(0, min(8, int(a.real_sh_degree))),
+        real_sh_degree=int(a.real_sh_degree),
         real_sh_append_raw=bool(a.real_sh_append_raw),
         real_sh_include_radial=bool(a.real_sh_include_radial),
         use_residual_blocks=bool(a.use_residual_blocks),
@@ -1544,6 +1599,7 @@ def parse_args() -> TrainConfig:
             int(a.periodic_eval_timeout_sec) if a.periodic_eval_timeout_sec is not None else None
         ),
         periodic_eval_continue_on_fail=bool(a.periodic_eval_continue_on_fail),
+        ema_decay=(float(a.ema_decay) if a.ema_decay is not None else None),
     )
     # Mutual-exclusivity is enforced by the argparse group, but guard explicitly
     # in case TrainConfig is constructed programmatically.
@@ -1554,6 +1610,10 @@ def parse_args() -> TrainConfig:
         )
         sys.exit(1)
     cfg._model_preset_explicit = bool(preset_explicit)
+    cfg._altitude_bounds_explicit = any(
+        tok.split("=", 1)[0] in {"--altitude-min-km", "--altitude-max-km"}
+        for tok in argv_tokens
+    )
     # Run-level preset is applied BEFORE the architecture preset. It may flip the
     # split policy and reproducibility flags; an explicit conflicting flag under
     # --run-preset paper is a hard error (see apply_run_preset).

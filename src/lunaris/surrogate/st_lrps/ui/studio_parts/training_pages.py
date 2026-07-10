@@ -686,9 +686,9 @@ def _find_resumable_run() -> tuple[str, str] | None:
     import os
     from pathlib import Path
 
-    from lunaris.utils.env import get_output_dir
+    from lunaris.common.paths import data_dir_from_root, find_project_root
 
-    training_dir = Path(get_output_dir()) / "training"
+    training_dir = data_dir_from_root(find_project_root()) / "training"
     if not training_dir.exists():
         return None
     try:

@@ -253,7 +253,7 @@ class TestCudaVisibility:
         text = (_REPO_ROOT / "hpc" / "preflight.sh").read_text(encoding="utf-8")
         assert "LUNARIS_REQUIRE_CUDA" in text
         assert "sys.exit(4)" in text
-        assert "torch_rc -eq 4" in text
+        assert "${torch_rc} -eq 4" in text
 
 
 # --------------------------------------------------------------------------- #
