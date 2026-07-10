@@ -2293,8 +2293,29 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
             N = int(f[dset_name].shape[0])
             bytes_est = N * 7 * (4 if str(f[dset_name].dtype) == "float32" else 8)
 
+    if not bool(cfg.use_si) and meta.unit_system == "canonical":
+        raise ValueError(
+            "--no-si is unsafe for canonical ST-LRPS datasets: canonical coordinates "
+            "are nondimensional and cannot be combined with SI lunar constants. "
+            "Use --use-si or provide an SI dataset."
+        )
     if cfg.use_si and meta.unit_system == "canonical" and not meta.can_convert_to_si():
         raise ValueError("Configuration demands SI units, but dataset is missing DU_m/TU_s/VU_m_s attributes.")
+
+    # Dataset metadata is the authoritative training shell.  CLI values remain
+    # available for deliberate experiments, but an ordinary run should not
+    # silently retain the global 100--1000 km defaults for a different cloud.
+    if (
+        not bool(getattr(cfg, "_altitude_bounds_explicit", False))
+        and meta.alt_min_km is not None
+        and meta.alt_max_km is not None
+    ):
+        cfg.altitude_min_km = float(meta.alt_min_km)
+        cfg.altitude_max_km = float(meta.alt_max_km)
+        logger.info(
+            "Altitude-balanced loss bounds resolved from dataset metadata: "
+            f"[{cfg.altitude_min_km:.3f}, {cfg.altitude_max_km:.3f}] km"
+        )
 
     dataset_contract_obj = DatasetContract.from_hdf5(
         primary_path,
