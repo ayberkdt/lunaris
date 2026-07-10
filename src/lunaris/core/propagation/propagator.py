@@ -13,7 +13,6 @@ import math
 import time
 import warnings
 from collections.abc import Callable, Sequence
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -23,16 +22,11 @@ from lunaris.common.constants import R_MOON
 from lunaris.common.math_utils import nyquist_max_step_s, specific_energy_drift_stats
 from lunaris.common.type_defs import PropagationResult, PropagatorConfig, TimeConfig
 from lunaris.core.dynamics import DynamicsEngine
-from lunaris.core.propagation.checkpoint import (
-    _atomic_save_npz,
-    _checkpoint_metadata,
-    _stop_requested,
-)
+from lunaris.core.propagation.checkpoint import _checkpoint_metadata
 from lunaris.core.propagation.diagnostics import build_propagation_diagnostics
 from lunaris.core.propagation.events import (
     EventOutcome,
     _build_r_i_to_bf_from_rot_table,
-    _terminal_event_endpoint,
     _wrap_event_first6,
     build_events,
     event_outcome_from_solver_events,
@@ -56,6 +50,7 @@ from lunaris.core.propagation.plans import (
     resolve_time_grid_plan,
 )
 from lunaris.core.propagation.result import _as_state_array
+from lunaris.core.propagation.scipy_runner import run_scipy_propagation
 from lunaris.core.propagation.telemetry import (
     _build_surface_radius_sampler,
     _make_telem_dict,
@@ -67,31 +62,6 @@ from lunaris.core.propagation.time_grid import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _resolve_atol(cfg: PropagatorConfig, n_state: int) -> float | np.ndarray:
-    """Resolve the absolute-tolerance argument for solve_ivp.
-
-    Returns the scalar ``cfg.atol`` unless ``atol_pos``/``atol_vel`` are set, in
-    which case it returns a length-``n_state`` vector that applies the
-    position/velocity bounds to the first six components and keeps the scalar
-    ``atol`` for any extra (augmented) components. Keeping the scalar path
-    byte-identical preserves the existing default behavior.
-    """
-    atol_scalar = float(getattr(cfg, "atol", 1e-12))
-    atol_pos = getattr(cfg, "atol_pos", None)
-    atol_vel = getattr(cfg, "atol_vel", None)
-    if atol_pos is None and atol_vel is None:
-        return atol_scalar
-
-    n = int(n_state)
-    vec: np.ndarray = np.full(n, atol_scalar, dtype=np.float64)
-    if n >= 6:
-        if atol_pos is not None:
-            vec[0:3] = float(atol_pos)
-        if atol_vel is not None:
-            vec[3:6] = float(atol_vel)
-    return vec
 
 
 def _rhs_path_for_diagnostics(dynamics: Any) -> str:
@@ -369,247 +339,23 @@ def propagate(
         )
 
     else:
-        # TODO(P3): extract the SciPy/chunked branch into ``scipy_runner.py` once
-        # the diagnostics and fixed-step seams have stayed stable.
-        if solve_ivp is None:
-            raise ImportError("SciPy is required for adaptive integration (solve_ivp not available).")
-
-        method = integration_plan.method
-
-        # Per-component (vector) atol when configured: position and velocity differ
-        # by ~3 orders of magnitude, so a single scalar over-tightens one of them.
-        atol_arg = _resolve_atol(cfg, int(y0_arr.size))
-
-        if verbose:
-            if isinstance(atol_arg, np.ndarray):
-                logger.info(
-                    f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s "
-                    f"| atol=vector(pos={getattr(cfg, 'atol_pos', None)}, vel={getattr(cfg, 'atol_vel', None)})"
-                )
-            else:
-                logger.info(
-                    f"[PROP] solve_ivp method={method} | dt_out={dt_out:g}s | max_step={max_step:.6f}s"
-                )
-
-        def _solve_span(t_start: float, t_end: float, y_start: np.ndarray, t_eval_span: np.ndarray):
-            return solve_ivp(
-                fun=rhs,
-                t_span=(float(t_start), float(t_end)),
-                y0=np.asarray(y_start, dtype=np.float64),
-                method=method,
-                t_eval=np.asarray(t_eval_span, dtype=np.float64),
-                rtol=float(getattr(cfg, "rtol", 1e-9)),
-                atol=atol_arg,
-                max_step=float(max_step),
-                events=(events if events else None),
-                dense_output=False,
-                vectorized=False,
-            )
-
-        chunk_s = integration_plan.chunk_s
-
-        checkpoint_every_chunk = bool(getattr(cfg, "checkpoint_every_chunk", False))
-        integration_failed = False
-        integration_failure_message: str | None = None
-        stopped_early = False
-        stop_reason = None
-        chunk_idx = 0
-
-        if chunk_s is None:
-            sol = _solve_span(t0, tf, y0_arr, t_eval)
-            t_cat = np.asarray(sol.t, dtype=np.float64)
-            y_cat = np.asarray(sol.y, dtype=np.float64)
-            t_events = [np.asarray(te, dtype=np.float64) for te in (sol.t_events or [])]
-            y_events = [np.asarray(ye, dtype=np.float64) for ye in (sol.y_events or [])]
-            # Keep stopped_early consistent with a terminal-event stop (status==1)
-            # so callers never see stop_reason set while stopped_early is False.
-            if int(getattr(sol, "status", 0)) == 1:
-                stopped_early = True
-            elif not bool(getattr(sol, "success", True)):
-                stopped_early = True
-                stop_reason = "integration failed"
-                integration_failed = True
-                integration_failure_message = str(getattr(sol, "message", "integration failed"))
-        else:
-            t_parts: list[np.ndarray] = []
-            y_parts: list[np.ndarray] = []
-
-            n_ev = len(events) if events else 0
-            t_events_acc: list[list[np.ndarray]] = [[] for _ in range(n_ev)]
-            y_events_acc: list[list[np.ndarray]] = [[] for _ in range(n_ev)]
-
-            y_curr = y0_arr.copy()
-            t_curr = float(t0)
-
-            while t_curr < tf - 1e-12:
-                if _stop_requested(stop_file) and (not bool(getattr(cfg, "stop_event_in_scipy", False))):
-                    stopped_early = True
-                    stop_reason = "stop file"
-                    break
-
-                t_next = min(tf, t_curr + float(chunk_s))
-                mask = (t_eval >= t_curr - 1e-12) & (t_eval <= t_next + 1e-12)
-                t_eval_span = t_eval[mask]
-                if t_eval_span.size < 2:
-                    t_eval_span = np.array([t_curr, t_next], dtype=np.float64)
-
-                sol_k = _solve_span(t_curr, t_next, y_curr, t_eval_span)
-
-                sol_k_status = int(getattr(sol_k, "status", 0))
-                if sol_k_status != 1 and not bool(getattr(sol_k, "success", True)):
-                    stopped_early = True
-                    stop_reason = "integration failed"
-                    integration_failed = True
-                    integration_failure_message = str(getattr(sol_k, "message", "integration failed"))
-                    break
-
-                sol_t = np.asarray(sol_k.t, dtype=np.float64)
-                sol_y = np.asarray(sol_k.y, dtype=np.float64)
-                if sol_t.size == 0 or sol_y.ndim != 2 or sol_y.shape[1] != sol_t.size:
-                    stopped_early = True
-                    stop_reason = "integration failed"
-                    integration_failed = True
-                    integration_failure_message = "solve_ivp returned an invalid chunk shape"
-                    break
-
-                terminal_endpoint = (
-                    _terminal_event_endpoint(sol_k, events, state_size=y0_arr.size)
-                    if sol_k_status == 1
-                    else None
-                )
-                if terminal_endpoint is not None:
-                    t_terminal, y_terminal = terminal_endpoint
-                    keep = sol_t <= (t_terminal + 1e-9)
-                    sol_t = sol_t[keep]
-                    sol_y = sol_y[:, keep]
-                    if sol_t.size == 0 or abs(float(sol_t[-1]) - t_terminal) > 1e-9:
-                        sol_t = np.concatenate([sol_t, np.asarray([t_terminal], dtype=np.float64)])
-                        sol_y = np.concatenate([sol_y, y_terminal.reshape(-1, 1)], axis=1)
-                    else:
-                        sol_y[:, -1] = y_terminal
-
-                if not t_parts:
-                    t_parts.append(sol_t)
-                    y_parts.append(sol_y)
-                else:
-                    t_parts.append(sol_t[1:])
-                    y_parts.append(sol_y[:, 1:])
-
-                if getattr(sol_k, "t_events", None) is not None:
-                    for i in range(n_ev):
-                        te = sol_k.t_events[i] if i < len(sol_k.t_events) else np.array([], dtype=np.float64)
-                        ye = sol_k.y_events[i] if i < len(sol_k.y_events) else np.zeros((0, y0_arr.size), dtype=np.float64)
-                        t_events_acc[i].append(np.asarray(te, dtype=np.float64))
-                        y_events_acc[i].append(np.asarray(ye, dtype=np.float64))
-
-                # Advance the running state to the END of this completed chunk
-                # BEFORE checkpointing, so a "latest/state/last" checkpoint records
-                # the chunk end (a valid resume point) rather than its start.
-                y_curr = np.asarray(sol_y[:, -1], dtype=np.float64).copy()
-                t_curr = float(sol_t[-1])
-
-                if checkpoint_path and checkpoint_every_chunk:
-                    try:
-                        ck_mode = str(getattr(cfg, "checkpoint_mode", "full")).strip().lower()
-                        if ck_mode in ("latest", "state", "last"):
-                            _atomic_save_npz(
-                                checkpoint_path,
-                                t=np.asarray([t_curr], dtype=np.float64),
-                                y_row=y_curr.reshape(1, -1),
-                                **checkpoint_meta,
-                            )
-                        elif ck_mode in ("chunks", "chunk"):
-                            base = str(checkpoint_path)
-                            chunk_path = f"{base}.chunk{chunk_idx:06d}.npz"
-                            _atomic_save_npz(
-                                chunk_path,
-                                t=sol_t,
-                                y_row=sol_y.T,
-                                **checkpoint_meta,
-                            )
-                            _atomic_save_npz(
-                                checkpoint_path,
-                                t=np.asarray([t_curr], dtype=np.float64),
-                                y_row=y_curr.reshape(1, -1),
-                                **checkpoint_meta,
-                            )
-                        else:
-                            t_tmp = np.concatenate(t_parts) if t_parts else np.array([], dtype=np.float64)
-                            y_tmp = np.concatenate(y_parts, axis=1) if y_parts else np.zeros((y0_arr.size, 0), dtype=np.float64)
-                            _atomic_save_npz(
-                                checkpoint_path,
-                                t=t_tmp,
-                                y_row=y_tmp.T,
-                                **checkpoint_meta,
-                            )
-                    except (OSError, ValueError) as exc:
-                        warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
-
-                if sol_k_status == 1:
-                    stopped_early = True
-                    stop_reason = "event"
-                    break
-
-                # y_curr/t_curr were already advanced to the chunk end above.
-                chunk_idx += 1
-
-            t_cat = np.concatenate(t_parts) if t_parts else np.array([t0], dtype=np.float64)
-            y_cat = np.concatenate(y_parts, axis=1) if y_parts else y0_arr.reshape(-1, 1)
-
-            t_events = [np.concatenate(ch) if ch else np.array([], dtype=np.float64) for ch in t_events_acc]
-            y_events = [np.concatenate(ch, axis=0) if ch else np.zeros((0, y0_arr.size), dtype=np.float64) for ch in y_events_acc]
-
-            sol = SimpleNamespace(
-                t=t_cat,
-                y=y_cat,
-                t_events=t_events,
-                y_events=y_events,
-                success=not integration_failed,
-                status=(-1 if integration_failed else (1 if stopped_early else 0)),
-                message=(
-                    integration_failure_message
-                    if integration_failed
-                    else ("chunked ok" if not stopped_early else "stopped early")
-                ),
-                nfev=np.nan,
-            )
-
-        y_row = np.asarray(y_cat, dtype=np.float64).T
-
-        outcome = event_outcome_from_solver_events(
+        res = run_scipy_propagation(
+            rhs=rhs,
+            t_eval=t_eval,
+            y0=y0_arr,
+            t0=float(t0),
+            tf=float(tf),
+            method=integration_plan.method,
+            max_step_s=float(max_step),
+            chunk_s=integration_plan.chunk_s,
+            cfg=cfg,
             events=events,
-            t_events=list(t_events),
-            y_events=list(y_events),
-            stopped_early=bool(stopped_early),
-            stop_reason=stop_reason,
             stop_file=stop_file,
-            stop_event_in_scipy=bool(getattr(cfg, "stop_event_in_scipy", False)),
-        )
-
-        if checkpoint_path and (not integration_failed) and not (chunk_s is not None and checkpoint_every_chunk):
-            try:
-                _atomic_save_npz(
-                    checkpoint_path,
-                    t=np.asarray(t_cat, dtype=np.float64),
-                    y_row=y_row,
-                    **checkpoint_meta,
-                )
-            except (OSError, ValueError) as exc:
-                warnings.warn(f"Checkpoint write failed: {exc}", RuntimeWarning, stacklevel=2)
-
-        res = PropagationResult(
-            t=np.asarray(t_cat, dtype=np.float64),
-            y=y_row,
-            ode=sol,
-            t_events=list(t_events),
-            y_events=list(y_events),
-            impacted=outcome.impacted,
-            t_impact_s=outcome.t_impact_s,
-            y_impact=outcome.y_impact,
-            stopped_early=outcome.stopped_early,
-            stop_reason=outcome.stop_reason,
-            t_stop_s=outcome.t_stop_s,
-            diagnostics={},
+            checkpoint_path=checkpoint_path,
+            checkpoint_metadata=checkpoint_meta,
+            output_dt_s=float(dt_out),
+            verbose=verbose,
+            logger=logger,
         )
 
     # -------------------------------------------------------------------------
