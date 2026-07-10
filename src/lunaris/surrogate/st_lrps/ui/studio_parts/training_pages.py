@@ -684,7 +684,6 @@ class TrainingQueue(QWidget):
 def _find_resumable_run() -> tuple[str, str] | None:
     import json
     import os
-    from pathlib import Path
 
     from lunaris.common.paths import data_dir_from_root, find_project_root
 
