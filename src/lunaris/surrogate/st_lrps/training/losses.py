@@ -27,12 +27,14 @@ def _direction_loss_factor(epoch: int, cfg: TrainConfig) -> float:
     """Effective direction-loss weight lam_dir for the current epoch.
 
     Ramped linearly from 0 to direction_loss_weight over direction_loss_ramp_epochs,
-    starting at direction_loss_start_epoch.  Returns 0 before start_epoch.
+    starting at direction_loss_start_epoch.  The start epoch is the first active
+    ramp step; the factor is 0 only before that epoch.
     """
     if epoch < cfg.direction_loss_start_epoch:
         return 0.0
     ramp = max(1, int(cfg.direction_loss_ramp_epochs))
-    t = min(1.0, (epoch - cfg.direction_loss_start_epoch) / ramp)
+    ramp_step = int(epoch) - int(cfg.direction_loss_start_epoch) + 1
+    t = min(1.0, max(0.0, ramp_step / ramp))
     return float(cfg.direction_loss_weight) * t
 
 def _altitude_km_from_positions(x_phys: torch.Tensor, r_ref_m: float) -> torch.Tensor:
@@ -64,25 +66,31 @@ def _altitude_balanced_mean_square(
     alt_hi = float(altitude_max_km)
     alt_km = _altitude_km_from_positions(x_phys, r_ref_m=float(r_ref_m))
 
-    bin_terms: list[torch.Tensor] = []
-    cursor = alt_lo
-    while cursor < alt_hi - 1e-9:
-        upper = min(cursor + bin_width, alt_hi)
-        if upper >= alt_hi - 1e-9:
-            mask = (alt_km >= cursor) & (alt_km <= alt_hi)
-        else:
-            mask = (alt_km >= cursor) & (alt_km < upper)
-        if torch.any(mask):
-            bin_terms.append(sample_sq[mask].mean())
-        cursor = upper
-
-    outside_mask = (alt_km < alt_lo) | (alt_km > alt_hi)
-    if torch.any(outside_mask):
-        bin_terms.append(sample_sq[outside_mask].mean())
-
-    if not bin_terms:
+    if alt_hi <= alt_lo:
         return sample_sq.mean()
-    return torch.stack(bin_terms).mean()
+
+    # A floor-based local bin index preserves the old half-open bins and the
+    # inclusive final upper edge.  scatter_add performs one tensorized pass;
+    # empty bins are masked exactly as the previous Python loop did.
+    n_bins = max(1, int(math.ceil((alt_hi - alt_lo) / bin_width)))
+    inside = (alt_km >= alt_lo) & (alt_km <= alt_hi)
+    local_idx = torch.floor((alt_km - alt_lo) / bin_width).to(torch.long)
+    local_idx = local_idx.clamp(min=0, max=n_bins - 1)
+    bin_sums = torch.zeros(n_bins, device=sample_sq.device, dtype=sample_sq.dtype)
+    bin_counts = torch.zeros(n_bins, device=sample_sq.device, dtype=sample_sq.dtype)
+    bin_sums.scatter_add_(0, local_idx[inside], sample_sq[inside])
+    bin_counts.scatter_add_(0, local_idx[inside], torch.ones_like(sample_sq[inside]))
+
+    valid_bins = bin_counts > 0
+    bin_means = bin_sums / bin_counts.clamp_min(1.0)
+
+    outside = ~inside
+    outside_count = outside.to(sample_sq.dtype).sum()
+    outside_mean = sample_sq[outside].sum() / outside_count.clamp_min(1.0)
+    outside_term = torch.where(outside_count > 0, outside_mean, torch.zeros_like(outside_mean))
+    n_terms = valid_bins.to(sample_sq.dtype).sum() + (outside_count > 0).to(sample_sq.dtype)
+    total = bin_means[valid_bins].sum() + outside_term
+    return torch.where(n_terms > 0, total / n_terms, sample_sq.mean())
 
 def _radial_cross_components(
     err_vec: torch.Tensor,
@@ -488,7 +496,8 @@ class SobolevLoss(nn.Module):
         laplacian_mode: str = "diagnostic",
     ) -> torch.Tensor:
         """
-        In-batch stochastic Laplacian penalty via the Hutchinson trace estimator.
+        In-batch Laplacian penalty with an exact 3D trace and a Hutchinson
+        fallback for non-3D inputs.
 
         Enforces the Laplace equation ∇²U = 0 (satisfied by any gravitational
         potential in free space) as a soft physics constraint, reusing the
@@ -496,7 +505,8 @@ class SobolevLoss(nn.Module):
 
         Algorithm
         ---------
-        Tr(∇²U) ≈ (1/K) Σₖ vₖᵀ ∇²U vₖ,   vₖ ~ Rademacher{±1}³
+        In 3D, Tr(∇²U) = Σᵢ eᵢᵀ ∇²U eᵢ. Other input dimensions use
+        Tr(∇²U) ≈ (1/K) Σₖ vₖᵀ ∇²U vₖ,   vₖ ~ Rademacher{±1}ᵈ.
 
         Using the identity  vᵀ ∇²U v = ∂(∇U · v)/∂x · v,  each sample requires
         one additional autograd call.
@@ -534,23 +544,35 @@ class SobolevLoss(nn.Module):
         g_sub = grad_u_scaled[idx]   # (k, 3), still part of the autograd graph
 
         trace_acc = torch.zeros((k,), device=x_scaled.device, dtype=x_scaled.dtype)
-        for _ in range(K):
-            v = 2.0 * (torch.rand_like(g_sub) > 0.5).float() - 1.0  # Rademacher (k, 3)
-            Jv = (g_sub * v).sum()                                    # scalar
-            # ∂Jv/∂x_scaled. In diagnostic mode create_graph=False (first-order
-            # only, detached → diagnostic). In train mode create_graph=True so the
-            # penalty can backprop into the model weights.
-            # retain_graph=True: the main computational graph (shared with the
-            # acceleration loss) must survive for loss.backward() after this call.
-            Hv_full = torch.autograd.grad(
-                Jv, x_scaled,
-                create_graph=create_graph,
-                retain_graph=True,
-                only_inputs=True,
-            )[0]                                     # (B, 3)
-            trace_acc = trace_acc + (Hv_full[idx] * v).sum(dim=-1)   # (k,)
+        if int(x_scaled.shape[-1]) == 3:
+            # In three dimensions the coordinate-basis HVPs give the exact
+            # Hessian trace in three passes.  Hutchinson's squared estimator
+            # would add a positive off-diagonal bias even for a truly harmonic
+            # potential, so K is intentionally ignored in this path.
+            for dim in range(3):
+                J_dim = g_sub[:, dim].sum()
+                H_full = torch.autograd.grad(
+                    J_dim,
+                    x_scaled,
+                    create_graph=create_graph,
+                    retain_graph=True,
+                    only_inputs=True,
+                )[0]
+                trace_acc = trace_acc + H_full[idx, dim]
+        else:
+            for _ in range(K):
+                v = 2.0 * (torch.rand_like(g_sub) > 0.5).float() - 1.0
+                Jv = (g_sub * v).sum()
+                H_full = torch.autograd.grad(
+                    Jv, x_scaled,
+                    create_graph=create_graph,
+                    retain_graph=True,
+                    only_inputs=True,
+                )[0]
+                trace_acc = trace_acc + (H_full[idx] * v).sum(dim=-1)
+            trace_acc = trace_acc / float(K)
 
-        trace_est = trace_acc / float(K)
+        trace_est = trace_acc
         # Chain-rule scaling to physical units (R25): ∇²U_phys [s⁻²] =
         # ∇²U_scaled · (u_scale / x_scale²). collocation_laplacian_loss() applies
         # the identical factor so both estimators report mean((∇²U_phys)²) [s⁻⁴].
@@ -678,18 +700,28 @@ class SobolevLoss(nn.Module):
         if lambda_dir > 0.0:
             norms_true = delta_a_true.norm(dim=-1, keepdim=True)  # (B,1)
             mask = (norms_true > float(direction_floor_abs)).squeeze(-1)  # (B,)
-            mask_frac_val = float(mask.float().mean().item())
+            mask_frac_tensor = mask.float().mean()
+            mask_frac_val = float(mask_frac_tensor.detach().cpu().item())
             if mask.any():
                 a_pred_m = delta_a_pred_phys[mask]
                 a_true_m = delta_a_true[mask]
                 cos_sim = torch.nn.functional.cosine_similarity(a_pred_m, a_true_m, dim=-1)  # (M,)
                 loss_dir_t = (1.0 - cos_sim).mean()
-                cossim_mean_val = float(cos_sim.detach().mean().item())
-                loss_dir_val = float(loss_dir_t.detach().item())
                 _ang_rad = torch.acos(cos_sim.detach().clamp(-1.0 + 1e-7, 1.0 - 1e-7))
-                angular_mean_deg_val = float(_ang_rad.mean().item()) * 57.29577951308232
-                _ang_p90 = float(torch.quantile(_ang_rad, 0.90).item()) * 57.29577951308232
-                angular_p90_deg_val = _ang_p90
+                # Transfer all scalar diagnostics together so CUDA performs one
+                # synchronization instead of one .item() per metric.
+                _direction_diag = torch.stack(
+                    [
+                        cos_sim.detach().mean(),
+                        loss_dir_t.detach(),
+                        _ang_rad.mean(),
+                        torch.quantile(_ang_rad, 0.90),
+                    ]
+                ).cpu().tolist()
+                cossim_mean_val = float(_direction_diag[0])
+                loss_dir_val = float(_direction_diag[1])
+                angular_mean_deg_val = float(_direction_diag[2]) * 57.29577951308232
+                angular_p90_deg_val = float(_direction_diag[3]) * 57.29577951308232
                 dir_loss_active = True
 
         radial_lambda = float(max(0.0, radial_lambda))
@@ -698,26 +730,67 @@ class SobolevLoss(nn.Module):
         loss_cross_t = torch.zeros((), device=x_phys.device, dtype=x_phys.dtype)
         loss_radial_val = 0.0
         loss_cross_val = 0.0
+        radial_cross_equal_weight_fastpath = False
         if use_radial_cross_loss and (radial_lambda > 0.0 or cross_lambda > 0.0):
-            radial_err, cross_err = _radial_cross_components(delta_a_pred_phys - delta_a_true, x_phys)
-            loss_radial_t = self._maybe_balance(
-                radial_err ** 2,
-                x_phys,
-                enabled=bool(use_altitude_balanced_loss),
-                altitude_bin_width_km=altitude_bin_width_km,
-                altitude_min_km=altitude_min_km,
-                altitude_max_km=altitude_max_km,
-            )
-            loss_cross_t = self._maybe_balance(
-                cross_err ** 2,
-                x_phys,
-                enabled=bool(use_altitude_balanced_loss),
-                altitude_bin_width_km=altitude_bin_width_km,
-                altitude_min_km=altitude_min_km,
-                altitude_max_km=altitude_max_km,
-            )
-            loss_radial_val = float(loss_radial_t.detach().item())
-            loss_cross_val = float(loss_cross_t.detach().item())
+            accel_err_phys = delta_a_pred_phys - delta_a_true
+            if math.isclose(radial_lambda, cross_lambda, rel_tol=0.0, abs_tol=1e-15):
+                # With equal weights, radial² + cross² is exactly ||error||².
+                # Keep the objective on the one-pass combined path; retain
+                # detached component diagnostics for the history fields.
+                combined_sq = torch.sum(accel_err_phys ** 2, dim=-1)
+                loss_combined_t = self._maybe_balance(
+                    combined_sq,
+                    x_phys,
+                    enabled=bool(use_altitude_balanced_loss),
+                    altitude_bin_width_km=altitude_bin_width_km,
+                    altitude_min_km=altitude_min_km,
+                    altitude_max_km=altitude_max_km,
+                )
+                with torch.no_grad():
+                    radial_err, cross_err = _radial_cross_components(accel_err_phys, x_phys)
+                    radial_diag_t = self._maybe_balance(
+                        radial_err ** 2,
+                        x_phys,
+                        enabled=bool(use_altitude_balanced_loss),
+                        altitude_bin_width_km=altitude_bin_width_km,
+                        altitude_min_km=altitude_min_km,
+                        altitude_max_km=altitude_max_km,
+                    )
+                    cross_diag_t = self._maybe_balance(
+                        cross_err ** 2,
+                        x_phys,
+                        enabled=bool(use_altitude_balanced_loss),
+                        altitude_bin_width_km=altitude_bin_width_km,
+                        altitude_min_km=altitude_min_km,
+                        altitude_max_km=altitude_max_km,
+                    )
+                    _radial_cross_diag = torch.stack([radial_diag_t, cross_diag_t]).cpu().tolist()
+                    loss_radial_val = float(_radial_cross_diag[0])
+                    loss_cross_val = float(_radial_cross_diag[1])
+                loss_radial_t = loss_combined_t
+                loss_cross_t = torch.zeros_like(loss_combined_t)
+                radial_cross_equal_weight_fastpath = True
+            else:
+                radial_err, cross_err = _radial_cross_components(accel_err_phys, x_phys)
+                loss_radial_t = self._maybe_balance(
+                    radial_err ** 2,
+                    x_phys,
+                    enabled=bool(use_altitude_balanced_loss),
+                    altitude_bin_width_km=altitude_bin_width_km,
+                    altitude_min_km=altitude_min_km,
+                    altitude_max_km=altitude_max_km,
+                )
+                loss_cross_t = self._maybe_balance(
+                    cross_err ** 2,
+                    x_phys,
+                    enabled=bool(use_altitude_balanced_loss),
+                    altitude_bin_width_km=altitude_bin_width_km,
+                    altitude_min_km=altitude_min_km,
+                    altitude_max_km=altitude_max_km,
+                )
+                _radial_cross_diag = torch.stack([loss_radial_t.detach(), loss_cross_t.detach()]).cpu().tolist()
+                loss_radial_val = float(_radial_cross_diag[0])
+                loss_cross_val = float(_radial_cross_diag[1])
 
         # In-batch Laplacian. "diagnostic" is a metric ONLY — it must never enter
         # the objective (loss_ref/loss_opt) or it would pollute the reported loss
@@ -736,7 +809,7 @@ class SobolevLoss(nn.Module):
                 n_hutchinson_samples=int(laplacian_n_hutchinson),
                 laplacian_mode=_lap_mode,
             )
-            loss_lap_val = float(loss_lap_t.detach().item())
+            loss_lap_val = float(loss_lap_t.detach().cpu().item())
             laplacian_applied = True
             if _lap_mode == "train":
                 loss_lap_train = loss_lap_val
@@ -756,12 +829,15 @@ class SobolevLoss(nn.Module):
             loss_opt = loss_opt + (float(laplacian_lambda) * loss_lap_t)
             loss_ref = loss_ref + (float(laplacian_lambda) * loss_lap_t)
 
+        _loss_diag = torch.stack(
+            [loss_ref.detach(), loss_opt.detach(), mse_u.detach(), mse_a.detach()]
+        ).cpu().tolist()
         stats = {
-            "loss": loss_ref.detach().item(),
-            "loss_ref": loss_ref.detach().item(),
-            "loss_opt": loss_opt.detach().item(),
-            "mse_u": mse_u.detach().item(),
-            "mse_a": mse_a.detach().item(),
+            "loss": float(_loss_diag[0]),
+            "loss_ref": float(_loss_diag[0]),
+            "loss_opt": float(_loss_diag[1]),
+            "mse_u": float(_loss_diag[2]),
+            "mse_a": float(_loss_diag[3]),
             "w_u": w_u,
             "w_a_raw": float(w_a),
             "w_a_base": float(w_a),     # alias for w_a_raw (pre-accel_factor base weight)
@@ -775,6 +851,7 @@ class SobolevLoss(nn.Module):
             "mask_frac": mask_frac_val,
             "loss_radial": loss_radial_val,
             "loss_cross": loss_cross_val,
+            "radial_cross_equal_weight_fastpath": bool(radial_cross_equal_weight_fastpath),
             # Laplacian metrics are mean((∇²U_phys)²) in PHYSICAL units [s⁻⁴]
             # (∇²U_phys in s⁻²), consistent with collocation_laplacian_loss (R25).
             "loss_laplacian": loss_lap_val,
@@ -890,11 +967,14 @@ def collocation_laplacian_loss(
     Generates ``n_points`` random collocation points inside a spherical shell
     ``[r_min_m, r_max_m]`` (in physical metres) and evaluates the squared mean
     Laplacian of the network's prediction using a Hutchinson stochastic-trace
-    estimator with ``n_hutchinson`` Rademacher samples.
+    estimator with ``n_hutchinson`` Rademacher samples. In the supported 3D
+    Cartesian path the trace is exact; the knob remains a backward-compatible
+    fallback for other input dimensions.
 
     Units (R25)
     -----------
-    The raw Hutchinson trace estimates ``∇²U`` in *scaled network coordinates*.
+    The raw trace estimate (exact in 3D, Hutchinson otherwise) represents
+    ``∇²U`` in *scaled network coordinates*.
     It is converted to physical units via the isotropic chain-rule factor
     ``u_scale / x_scale²`` so the returned loss is ``mean((∇²U_phys)²)`` with
     ``∇²U_phys`` in ``s⁻²`` (loss in ``s⁻⁴``). This matches
@@ -932,22 +1012,38 @@ def collocation_laplacian_loss(
     x_scaled = scaler.scale_x(x_phys).detach().clone().requires_grad_(True)
     u_pred = model(x_scaled)  # (N,1)
 
+    grad_u = torch.autograd.grad(
+        u_pred,
+        x_scaled,
+        grad_outputs=torch.ones_like(u_pred),
+        create_graph=True,
+        retain_graph=True,
+    )[0]
     lap_acc = torch.zeros(n_points, device=device, dtype=dtype)
-    for _ in range(K):
-        v = torch.randint(0, 2, (n_points, 3), device=device, dtype=dtype) * 2 - 1
-        grad_u = torch.autograd.grad(
-            u_pred, x_scaled, grad_outputs=torch.ones_like(u_pred),
-            create_graph=True, retain_graph=True,   # always True: needed for HVP
-        )[0]
-        Jv = (grad_u * v).sum(dim=-1, keepdim=True)
-        hvp_cg = (mode == "train")  # True in train mode so grad flows to weights
-        hvp = torch.autograd.grad(
-            Jv, x_scaled, grad_outputs=torch.ones_like(Jv),
-            create_graph=hvp_cg, retain_graph=True,
-        )[0]
-        lap_acc = lap_acc + (hvp * v).sum(dim=-1)
-
-    lap_scaled = lap_acc / float(K)  # ∇²U in scaled network coordinates
+    hvp_cg = mode == "train"
+    if int(x_scaled.shape[-1]) == 3:
+        # Exact 3D trace: three coordinate-basis HVPs, independent of the
+        # legacy Hutchinson knob.  This removes the squared-estimator bias from
+        # the diagnostic/train metric while also reducing passes from K to 3.
+        for dim in range(3):
+            h_col = torch.autograd.grad(
+                grad_u[:, dim].sum(),
+                x_scaled,
+                create_graph=hvp_cg,
+                retain_graph=True,
+            )[0][:, dim]
+            lap_acc = lap_acc + h_col
+        lap_scaled = lap_acc
+    else:
+        for _ in range(K):
+            v = torch.randint(0, 2, (n_points, x_scaled.shape[-1]), device=device, dtype=dtype) * 2 - 1
+            Jv = (grad_u * v).sum(dim=-1, keepdim=True)
+            hvp = torch.autograd.grad(
+                Jv, x_scaled, grad_outputs=torch.ones_like(Jv),
+                create_graph=hvp_cg, retain_graph=True,
+            )[0]
+            lap_acc = lap_acc + (hvp * v).sum(dim=-1)
+        lap_scaled = lap_acc / float(K)
     # Chain-rule to physical units so this matches SobolevLoss._laplacian_penalty
     # (R25): ∇²U_phys [s⁻²] = ∇²U_scaled · (u_scale / x_scale²). Without this
     # factor the collocation penalty lived in scaled units while the in-batch

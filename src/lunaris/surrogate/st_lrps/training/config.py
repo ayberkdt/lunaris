@@ -237,7 +237,8 @@ class TrainConfig:
     cross_loss_weight: float = 0.05
 
     # Optional sparse Laplacian regularisation for the residual potential.
-    # Uses the Hutchinson stochastic trace estimator (AMP-compatible, O(K) passes).
+    # Uses an exact 3D coordinate-basis trace (Hutchinson fallback for other
+    # dimensions; AMP-compatible).
     use_laplacian_regularization: bool = True
     laplacian_weight: float = 2e-9
     laplacian_every_n_batches: int = 100
@@ -1377,7 +1378,7 @@ def parse_args() -> TrainConfig:
         try:
             DatasetMeta, _ = _load_dataset_helpers()
             meta_early = DatasetMeta.from_h5(data_path)
-            degree_max_meta = meta_early.requested_degree
+            degree_max_meta = meta_early.degree_max or meta_early.requested_degree
             degree_min_meta = meta_early.degree_min
             # Also check cloud_config for degree_max
             if degree_max_meta is None and meta_early.cloud_config is not None:
@@ -1609,6 +1610,8 @@ def parse_args() -> TrainConfig:
             "exclusive. Set at most one."
         )
         sys.exit(1)
+    if cfg.ema_decay is not None and not (0.0 < float(cfg.ema_decay) < 1.0):
+        raise ValueError(f"--ema-decay must be in (0, 1), got {cfg.ema_decay!r}")
     cfg._model_preset_explicit = bool(preset_explicit)
     cfg._altitude_bounds_explicit = any(
         tok.split("=", 1)[0] in {"--altitude-min-km", "--altitude-max-km"}

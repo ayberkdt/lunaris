@@ -474,14 +474,28 @@ def iter_h5_batches(
     batch_size: int,
     start: int = 0,
     end: int | None = None,
+    exclude_indices: np.ndarray | None = None,
+    limit_rows: int | None = None,
 ) -> Iterator[np.ndarray]:
     h5py = _load_h5py()
     with h5py.File(path, "r") as handle:
         ds = handle[dataset_name]
         stop = int(ds.shape[0]) if end is None else min(int(end), int(ds.shape[0]))
+        remaining = None if limit_rows is None else max(0, int(limit_rows))
         for lo in range(int(start), stop, int(batch_size)):
+            if remaining is not None and remaining <= 0:
+                break
             hi = min(lo + int(batch_size), stop)
-            yield np.asarray(ds[lo:hi, :], dtype=np.float64)
+            arr = np.asarray(ds[lo:hi, :], dtype=np.float64)
+            if exclude_indices is not None and arr.size:
+                rows = np.arange(lo, hi, dtype=np.int64)
+                arr = arr[~np.isin(rows, exclude_indices, assume_unique=False)]
+            if arr.size:
+                if remaining is not None and arr.shape[0] > remaining:
+                    arr = arr[:remaining]
+                if remaining is not None:
+                    remaining -= int(arr.shape[0])
+                yield arr
 
 
 def iter_pt_batches(
@@ -490,6 +504,8 @@ def iter_pt_batches(
     batch_size: int,
     start: int = 0,
     end: int | None = None,
+    exclude_indices: np.ndarray | None = None,
+    limit_rows: int | None = None,
 ) -> Iterator[np.ndarray]:
     obj = torch.load(path, map_location="cpu")
     if isinstance(obj, dict):
@@ -499,9 +515,21 @@ def iter_pt_batches(
                 break
     arr = obj.detach().cpu().numpy() if isinstance(obj, torch.Tensor) else np.asarray(obj)
     stop = int(arr.shape[0]) if end is None else min(int(end), int(arr.shape[0]))
+    remaining = None if limit_rows is None else max(0, int(limit_rows))
     for lo in range(int(start), stop, int(batch_size)):
+        if remaining is not None and remaining <= 0:
+            break
         hi = min(lo + int(batch_size), stop)
-        yield np.asarray(arr[lo:hi, :], dtype=np.float64)
+        batch = np.asarray(arr[lo:hi, :], dtype=np.float64)
+        if exclude_indices is not None and batch.size:
+            rows = np.arange(lo, hi, dtype=np.int64)
+            batch = batch[~np.isin(rows, exclude_indices, assume_unique=False)]
+        if batch.size:
+            if remaining is not None and batch.shape[0] > remaining:
+                batch = batch[:remaining]
+            if remaining is not None:
+                remaining -= int(batch.shape[0])
+            yield batch
 
 
 def _canonical_to_si_batch(
@@ -1776,6 +1804,9 @@ def evaluate(
     plot_sample_limit: int = 500_000,
     allow_config_mismatch: bool = False,
     prefer: str = "best",
+    exclude_train_indices: Path | None = None,
+    use_ema: bool = False,
+    max_samples: int | None = None,
 ) -> None:
     model_dir = resolve_run_dir(model_dir)
     layout = make_run_layout(model_dir)
@@ -1846,6 +1877,15 @@ def evaluate(
         prefer=_prefer,
         allow_config_mismatch=allow_config_mismatch,
     )
+    if use_ema:
+        ema_state = _ckpt_full.get("ema_state_dict") if isinstance(_ckpt_full, Mapping) else None
+        if not isinstance(ema_state, Mapping):
+            raise ValueError(
+                "--use-ema was requested, but the selected checkpoint has no ema_state_dict. "
+                "Train with --ema-decay first."
+            )
+        model.load_state_dict(dict(ema_state), strict=True)
+        print("[eval] using EMA checkpoint weights (raw weights remain the selection source)")
     print(
         f"[eval] reconstruction: source={_recon_report['checkpoint_config_source']} "
         f"schema={_recon_report.get('checkpoint_schema_version')} "
@@ -2026,7 +2066,28 @@ def evaluate(
 
     model.eval()
 
+    excluded_train_rows: np.ndarray | None = None
+    if exclude_train_indices is not None:
+        split_path = Path(exclude_train_indices).expanduser().resolve()
+        if not split_path.is_file():
+            raise FileNotFoundError(f"Train-index exclusion artifact not found: {split_path}")
+        with np.load(split_path, allow_pickle=False) as split_payload:
+            if "train" not in split_payload.files:
+                raise ValueError(f"Train-index exclusion artifact has no 'train' array: {split_path}")
+            excluded_train_rows = np.sort(
+                np.asarray(split_payload["train"], dtype=np.int64).reshape(-1)
+            )
+        print(
+            f"[eval] excluding {excluded_train_rows.size:,} train rows from periodic/held-out evaluation "
+            f"using {split_path}"
+        )
+
     suffix = data_path.suffix.lower()
+    # When train rows are excluded, ``max_samples`` must count retained
+    # held-out rows rather than raw file offsets.  An explicit ``end`` still
+    # wins, matching the CLI contract.
+    retained_limit = None if end is not None else max_samples
+
     if suffix in [".h5", ".hdf5"]:
         dset_name = dataset_name
         h5py = _load_h5py()
@@ -2035,9 +2096,24 @@ def evaluate(
                 _ = f[dset_name]
         except Exception:
             dset_name = _discover_h5_dataset_name(data_path, preferred=dataset_name)
-        batch_iter = iter_h5_batches(data_path, dset_name, batch_size=batch_size, start=start, end=end)
+        batch_iter = iter_h5_batches(
+            data_path,
+            dset_name,
+            batch_size=batch_size,
+            start=start,
+            end=end,
+            exclude_indices=excluded_train_rows,
+            limit_rows=retained_limit,
+        )
     elif suffix == ".pt":
-        batch_iter = iter_pt_batches(data_path, batch_size=batch_size, start=start, end=end)
+        batch_iter = iter_pt_batches(
+            data_path,
+            batch_size=batch_size,
+            start=start,
+            end=end,
+            exclude_indices=excluded_train_rows,
+            limit_rows=retained_limit,
+        )
     else:
         raise ValueError("Unsupported data format. Use .h5/.hdf5 or .pt")
 
@@ -2810,6 +2886,14 @@ def parse_args() -> argparse.Namespace:
                     help="Evaluate at most this many rows starting from --start (a lightweight "
                          "alternative to --end; ignored when --end is set). Used by periodic "
                          "evaluation during training.")
+    ap.add_argument(
+        "--exclude-train-indices", type=str, default=None,
+        help="Path to provenance/split_indices.npz; exclude its train array from evaluation.",
+    )
+    ap.add_argument(
+        "--use-ema", action="store_true", default=False,
+        help="Evaluate the optional EMA weights stored in the selected checkpoint.",
+    )
     ap.add_argument("--checkpoint-prefer", choices=["best", "last"], default="best",
                     help="Which checkpoint to evaluate when both exist (default: best). "
                          "Periodic evaluation during training uses 'last'.")
@@ -3173,9 +3257,19 @@ def main() -> None:
 
     # --max-samples is a lightweight alternative to --end: evaluate at most N rows
     # starting from --start. Explicit --end wins when both are provided.
+    exclude_train_indices_path = (
+        Path(args.exclude_train_indices).resolve()
+        if getattr(args, "exclude_train_indices", None)
+        else None
+    )
+    requested_max_samples = (
+        int(args.max_samples) if getattr(args, "max_samples", None) is not None else None
+    )
     resolved_end: int | None = int(args.end) if args.end is not None else None
-    if resolved_end is None and getattr(args, "max_samples", None) is not None:
-        resolved_end = int(args.start) + int(args.max_samples)
+    # For a held-out in-file view, scan past train rows until the requested
+    # number of retained validation rows has been collected.
+    if resolved_end is None and requested_max_samples is not None and exclude_train_indices_path is None:
+        resolved_end = int(args.start) + requested_max_samples
 
     eval_timestamp = time.strftime("%Y%m%d_%H%M%S")
     def _job_out(label: str, path: Path, *, primary: bool = False) -> Path:
@@ -3230,6 +3324,9 @@ def main() -> None:
             plot_sample_limit=int(getattr(args, "plot_sample_limit", 500_000)),
             allow_config_mismatch=bool(getattr(args, "allow_config_mismatch", False)),
             prefer=str(getattr(args, "checkpoint_prefer", "best")),
+            exclude_train_indices=exclude_train_indices_path,
+            use_ema=bool(getattr(args, "use_ema", False)),
+            max_samples=(requested_max_samples if resolved_end is None else None),
         )
         completed_jobs.append((label, job_data_path, job_out_dir))
 

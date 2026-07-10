@@ -406,6 +406,17 @@ class MultiScaleSirenMLP(nn.Module):
         h = self.shared(h)
         return self.head(h)
 
+    @torch.no_grad()
+    def band_diagnostics(self, x_scaled: torch.Tensor) -> tuple[str, torch.Tensor]:
+        """Return per-band activation RMS for one lightweight diagnostic pass."""
+
+        acts = [
+            torch.sin(self.w0_bands[i] * self.band_layers[i](x_scaled))
+            for i in range(len(self.band_layers))
+        ]
+        rms = torch.stack([activation.square().mean().sqrt() for activation in acts])
+        return "activation_rms", rms
+
 
 class AdditiveMultiBandSirenMLP(nn.Module):
     """
@@ -488,6 +499,14 @@ class AdditiveMultiBandSirenMLP(nn.Module):
         for band in self.bands[1:]:
             out = out + band(x_scaled)
         return out
+
+    @torch.no_grad()
+    def band_diagnostics(self, x_scaled: torch.Tensor) -> tuple[str, torch.Tensor]:
+        """Return per-band output RMS for the additive diagnostic path."""
+
+        outputs = [band(x_scaled) for band in self.bands]
+        rms = torch.stack([output.square().mean().sqrt() for output in outputs])
+        return "output_rms", rms
 
 
 # ---------------------------------------------------------------------------
@@ -872,6 +891,15 @@ class PhysicsNet(nn.Module):
         if self.embedding is not None:
             x_scaled = self.embedding(x_scaled)
         return self.backbone(x_scaled)
+
+    @torch.no_grad()
+    def band_diagnostics(self, x_scaled: torch.Tensor) -> tuple[str, torch.Tensor] | None:
+        """Forward a diagnostic request through the optional input embedding."""
+
+        if self.embedding is not None:
+            x_scaled = self.embedding(x_scaled)
+        method = getattr(self.backbone, "band_diagnostics", None)
+        return method(x_scaled) if callable(method) else None
 
 
 # ---------------------------------------------------------------------------

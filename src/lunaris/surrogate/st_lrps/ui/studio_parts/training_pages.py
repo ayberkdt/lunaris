@@ -1756,7 +1756,7 @@ class STLRPSTrainTab(QWidget):
 
         self.periodic_eval_device = NoScrollComboBox()
         self.periodic_eval_device.addItems(["auto", "cpu", "cuda", "mps"])
-        self.periodic_eval_device.setCurrentText("auto")
+        self.periodic_eval_device.setCurrentText("cpu")
         self.periodic_eval_device.setToolTip("Device for the evaluation subprocess.")
 
         self.periodic_eval_continue_on_fail = QCheckBox("Continue training if an evaluation fails")

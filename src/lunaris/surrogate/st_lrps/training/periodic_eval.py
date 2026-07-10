@@ -118,7 +118,7 @@ class PeriodicEvalPlan:
     prefer_checkpoint: str = "last"
     max_samples: int = 200_000
     batch_size: int = 8192
-    device: str = "auto"
+    device: str = "cpu"
     timeout_sec: int | None = None
     continue_on_fail: bool = True
 
@@ -171,7 +171,7 @@ def resolve_periodic_eval_plan(cfg: Any, *, start_epoch: int = 1) -> PeriodicEva
         prefer_checkpoint=prefer,
         max_samples=int(_cfg_get(cfg, "periodic_eval_max_samples", 200_000) or 200_000),
         batch_size=pe_bs,
-        device=str(_cfg_get(cfg, "periodic_eval_device", "auto") or "auto").strip().lower(),
+        device=str(_cfg_get(cfg, "periodic_eval_device", "cpu") or "cpu").strip().lower(),
         timeout_sec=timeout,
         continue_on_fail=bool(_cfg_get(cfg, "periodic_eval_continue_on_fail", True)),
     )
@@ -198,6 +198,22 @@ def resolve_eval_dataset_path(cfg: Any, dataset: str) -> str | None:
     return None
 
 
+def resolve_eval_exclude_train_indices(
+    cfg: Any, dataset: str, run_dir: str | Path
+) -> str | None:
+    """Return the split-index artifact for single-file validation monitoring.
+
+    Independent ``--val-data`` runs already evaluate a disjoint file.  For a
+    single ``--data`` run, periodic ``val`` must exclude the persisted train
+    rows or its metric is a train+validation mixture.
+    """
+
+    if str(dataset).strip().lower() != "val" or _cfg_get(cfg, "val_data", None):
+        return None
+    candidate = Path(run_dir) / "provenance" / "split_indices.npz"
+    return str(candidate) if candidate.is_file() else None
+
+
 # ---------------------------------------------------------------------------
 # Pure command builder
 # ---------------------------------------------------------------------------
@@ -209,8 +225,9 @@ def build_periodic_eval_command(
     prefer_checkpoint: str = "last",
     max_samples: int = 200_000,
     batch_size: int = 8192,
-    device: str = "auto",
+    device: str = "cpu",
     dataset_name: str = "data",
+    exclude_train_indices: str | Path | None = None,
     python_exe: str | None = None,
 ) -> list[str]:
     """Build the argv list that invokes the evaluation CLI for one epoch.
@@ -235,6 +252,8 @@ def build_periodic_eval_command(
     ]
     if dataset_name and str(dataset_name) != "data":
         cmd += ["--dataset-name", str(dataset_name)]
+    if exclude_train_indices:
+        cmd += ["--exclude-train-indices", str(exclude_train_indices)]
     return cmd
 
 
@@ -388,6 +407,7 @@ def run_periodic_eval(
     t0 = time.perf_counter()
 
     data_path = resolve_eval_dataset_path(cfg, plan.dataset)
+    exclude_train_indices = resolve_eval_exclude_train_indices(cfg, plan.dataset, run_dir)
     if not data_path or not Path(str(data_path)).exists():
         lg.warning(
             f"[periodic-eval] epoch={epoch} skipped: dataset={plan.dataset!r} path "
@@ -402,6 +422,8 @@ def run_periodic_eval(
             "command": None,
             "output_dir": str(out_dir),
             "metrics_summary_path": None,
+            "scope": "held_out_non_train_rows" if exclude_train_indices else "configured_dataset",
+            "exclude_train_indices": exclude_train_indices,
             "error": f"dataset path missing for {plan.dataset!r}",
         })
         return True
@@ -416,6 +438,7 @@ def run_periodic_eval(
         batch_size=plan.batch_size,
         device=plan.device,
         dataset_name=dataset_name,
+        exclude_train_indices=exclude_train_indices,
         python_exe=python_exe,
     )
 
@@ -465,6 +488,8 @@ def run_periodic_eval(
         "epoch": int(epoch),
         "status": status,
         "dataset": plan.dataset,
+        "scope": "held_out_non_train_rows" if exclude_train_indices else "configured_dataset",
+        "exclude_train_indices": exclude_train_indices,
         "checkpoint_prefer": plan.prefer_checkpoint,
         "started_at": started_at,
         "finished_at": finished_at,
@@ -496,6 +521,7 @@ __all__ = [
     "compute_periodic_eval_epochs",
     "resolve_periodic_eval_plan",
     "resolve_eval_dataset_path",
+    "resolve_eval_exclude_train_indices",
     "build_periodic_eval_command",
     "periodic_evals_dir",
     "history_path",
