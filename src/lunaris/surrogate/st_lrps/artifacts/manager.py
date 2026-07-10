@@ -11,6 +11,7 @@ import random
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -170,6 +171,35 @@ def _canonical_json_text(payload: Mapping[str, Any], *, indent: int = 2) -> str:
     return canonical_json_text(_json_safe(dict(payload)), indent=indent)
 
 
+def _replace_with_retry(tmp_path: Path, target_path: Path) -> None:
+    """Atomically replace a target, tolerating short Windows reader locks."""
+
+    delays = (0.0, 0.05, 0.10, 0.20, 0.20)
+    last_error: PermissionError | None = None
+    for attempt, delay in enumerate(delays):
+        if delay:
+            time.sleep(delay)
+        try:
+            os.replace(tmp_path, target_path)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            if attempt < len(delays) - 1:
+                logger.warning(
+                    "Atomic replace is temporarily locked; retrying %s/%s for %s",
+                    attempt + 1,
+                    len(delays) - 1,
+                    target_path,
+                )
+                continue
+            raise PermissionError(
+                f"Could not atomically replace {target_path!s}; the target may be "
+                "open by another process (for example a Windows UI poller)."
+            ) from exc
+    if last_error is not None:  # pragma: no cover - defensive loop exhaust guard
+        raise last_error
+
+
 def atomic_write_json(path: Path, payload: dict, *, indent: int = 2) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -181,7 +211,7 @@ def atomic_write_json(path: Path, payload: dict, *, indent: int = 2) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
+        _replace_with_retry(tmp_path, path)
     except Exception:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -200,7 +230,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
+        _replace_with_retry(tmp_path, path)
     except Exception:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -219,7 +249,7 @@ def _atomic_torch_save(path: Path, payload: Any) -> None:
             torch.save(payload, handle)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(tmp_path, path)
+        _replace_with_retry(tmp_path, path)
     except Exception:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -622,6 +652,8 @@ def normalize_checkpoint_payload(ckpt: dict) -> dict:
         normalized["run_provenance"] = dict(normalized["config"]["run_provenance"])
     if "model" in ckpt or "model_state_dict" not in ckpt:
         normalized["model"] = state_dict
+    if isinstance(ckpt.get("ema_state_dict"), Mapping):
+        normalized["ema_state_dict"] = dict(ckpt["ema_state_dict"])
     return normalized
 
 
@@ -716,33 +748,45 @@ def _checkpoint_manifest_path(layout: RunLayout) -> Path:
     return layout.checkpoints_dir / "checkpoints_manifest.json"
 
 
-def _write_checkpoints_manifest(layout: RunLayout) -> None:
-    entries = []
-    for path in sorted(layout.checkpoints_dir.glob("ckpt_*.pt")):
+def _write_checkpoints_manifest(
+    layout: RunLayout,
+    updated_entries: Iterable[Mapping[str, Any]] = (),
+) -> None:
+    """Update the checkpoint manifest without deserializing old checkpoints.
+
+    ``save_checkpoint`` already has the validated kind/epoch/signature and can
+    hash the file immediately after writing it.  Re-loading every historical
+    checkpoint here made each save O(number of checkpoints) in full tensor
+    deserializations.  Existing manifest entries are carried forward and stale
+    files are pruned by path.
+    """
+
+    manifest_path = _checkpoint_manifest_path(layout)
+    entries_by_name: dict[str, dict[str, Any]] = {}
+    if manifest_path.is_file():
         try:
-            ckpt = load_checkpoint(path, torch.device("cpu"))
-            entries.append(
-                {
-                    "path": str(path),
-                    "name": path.name,
-                    "sha256": compute_file_sha256(path),
-                    "schema_version": ckpt.get("schema_version"),
-                    "kind": ckpt.get("kind"),
-                    "epoch": ckpt.get("epoch"),
-                    "epoch_display": ckpt.get("epoch_display"),
-                    "architecture_signature": (ckpt.get("architecture") or {}).get("signature"),
-                }
-            )
-        except Exception as exc:
-            entries.append(
-                {
-                    "path": str(path),
-                    "name": path.name,
-                    "error": str(exc),
-                }
-            )
+            previous = json.loads(manifest_path.read_text(encoding="utf-8"))
+            for entry in previous.get("checkpoints", []):
+                if isinstance(entry, Mapping) and entry.get("name"):
+                    entries_by_name[str(entry["name"])] = dict(entry)
+        except (OSError, ValueError, TypeError):
+            logger.warning("Could not read existing checkpoint manifest; rebuilding incrementally.")
+
+    for path in sorted(layout.checkpoints_dir.glob("ckpt_*.pt")):
+        entries_by_name.setdefault(
+            path.name,
+            {"path": str(path), "name": path.name, "metadata": "pending_save"},
+        )
+    for entry in updated_entries:
+        if entry.get("name"):
+            entries_by_name[str(entry["name"])] = dict(entry)
+
+    entries = [
+        entry for name, entry in sorted(entries_by_name.items())
+        if Path(str(entry.get("path", layout.checkpoints_dir / name))).exists()
+    ]
     atomic_write_json(
-        _checkpoint_manifest_path(layout),
+        manifest_path,
         {
             "schema_version": CHECKPOINTS_MANIFEST_SCHEMA_VERSION,
             "updated_at_utc": _utcnow_iso(),
@@ -758,7 +802,8 @@ def save_checkpoint(
     payload: dict,
     epoch: int,
     write_epoch_snapshot: bool = False,
-) -> Path:
+    return_metadata: bool = False,
+) -> Path | dict[str, Any]:
     ensure_run_layout(layout.run_dir)
     ckpt = dict(payload)
     ckpt["schema_version"] = CHECKPOINT_SCHEMA_VERSION
@@ -782,14 +827,46 @@ def save_checkpoint(
 
     _atomic_torch_save(target, ckpt)
 
+    target_sha256 = compute_file_sha256(target)
+    manifest_entries: list[dict[str, Any]] = [
+        {
+            "path": str(target),
+            "name": target.name,
+            "sha256": target_sha256,
+            "schema_version": ckpt.get("schema_version"),
+            "kind": ckpt.get("kind"),
+            "epoch": ckpt.get("epoch"),
+            "epoch_display": ckpt.get("epoch_display"),
+            "architecture_signature": (ckpt.get("architecture") or {}).get("signature"),
+        }
+    ]
+
     if write_epoch_snapshot and kind in {"best", "last"}:
         snapshot = dict(ckpt)
         snapshot["kind"] = "epoch"
         snapshot = validate_checkpoint_schema(snapshot, strict=True)
         snapshot_path = Path(layout.ckpt_epoch_pattern.format(epoch_display=int(epoch) + 1))
         _atomic_torch_save(snapshot_path, snapshot)
+        manifest_entries.append(
+            {
+                "path": str(snapshot_path),
+                "name": snapshot_path.name,
+                "sha256": compute_file_sha256(snapshot_path),
+                "schema_version": snapshot.get("schema_version"),
+                "kind": snapshot.get("kind"),
+                "epoch": snapshot.get("epoch"),
+                "epoch_display": snapshot.get("epoch_display"),
+                "architecture_signature": (snapshot.get("architecture") or {}).get("signature"),
+            }
+        )
 
-    _write_checkpoints_manifest(layout)
+    _write_checkpoints_manifest(layout, manifest_entries)
+    if return_metadata:
+        return {
+            "path": target,
+            "sha256": target_sha256,
+            "manifest_entries": manifest_entries,
+        }
     return target
 
 
@@ -1389,6 +1466,7 @@ def build_checkpoint_payload(
     dataset_meta: Mapping[str, Any],
     architecture_signature: str,
     global_step: int | None,
+    ema_state_dict: Mapping[str, Any] | None = None,
 ) -> dict:
     cfg_dict = dict(cfg)
     scaler_payload = canonical_scaler_payload(scaler)
@@ -1451,14 +1529,19 @@ def build_checkpoint_payload(
         "gradnorm_weights": train_stats.get("gradnorm_weights"),
     }
 
+    # Keep the legacy ``model`` alias for schema compatibility, but point both
+    # keys at one state-dict object.  torch.save deduplicates tensor storage,
+    # while a single state_dict() call also avoids an unnecessary module walk.
+    model_state = model.state_dict()
+
     payload = {
         "schema_version": CHECKPOINT_SCHEMA_VERSION,
         "kind": kind,
         "epoch": int(epoch),
         "epoch_display": int(epoch) + 1,
         "global_step": _coerce_int_or_none(global_step),
-        "model_state_dict": model.state_dict(),
-        "model": model.state_dict(),
+        "model_state_dict": model_state,
+        "model": model_state,
         "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
         "scheduler_state_dict": (scheduler.state_dict() if hasattr(scheduler, "state_dict") else scheduler),
         "config": dict(cfg_dict),
@@ -1502,6 +1585,11 @@ def build_checkpoint_payload(
         ),
         "created_at_utc": _utcnow_iso(),
     }
+    if ema_state_dict is not None:
+        payload["ema_state_dict"] = {
+            str(key): value.detach().clone() if isinstance(value, torch.Tensor) else value
+            for key, value in ema_state_dict.items()
+        }
     return validate_checkpoint_schema(payload, strict=True)
 
 

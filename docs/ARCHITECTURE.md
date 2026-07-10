@@ -14,9 +14,9 @@ CLI/loaders are declared sibling subsystems with enforced dependency directions.
 The import contracts in `pyproject.toml` are authoritative when prose and code
 disagree.
 
-Last verified: 2026-07-07, covering the architecture seam cleanup pass:
+Last verified: 2026-07-11, covering the architecture seam cleanup pass:
 `common/time_grid_contract.py`, `common/contracts/`, `core/dynamics/contracts.py`,
-`core/propagation/{diagnostics,fixed_step_runner}.py`, the explicit
+`core/propagation/{diagnostics,fixed_step_runner,scipy_runner}.py`, the explicit
 `core.propagation` facade, and the first batch/CLI mypy expansion.
 
 ## Engine core layers
@@ -75,7 +75,8 @@ Numerical engine and configuration.
   checkpoint, telemetry, and integrator modules. `propagation.propagator` keeps
   the public `propagate(...)` orchestration while events, checkpointing,
   telemetry, time-grid policy, diagnostics assembly, fixed-step orchestration,
-  and fixed-step steppers live in sibling modules. The `lunaris.core.propagation`
+  SciPy (`solve_ivp`) normal/chunked orchestration, and fixed-step steppers
+  live in sibling modules. The `lunaris.core.propagation`
   package facade explicitly exposes `propagate`, `PropagationResult`,
   `EventOutcome`, `TimeGridPlan`, `StepSizePlan`, `IntegrationPlan`,
   `build_events`, `make_time_grid`, `resolve_time_grid_plan`,

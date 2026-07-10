@@ -64,8 +64,8 @@ from lunaris.surrogate.st_lrps.data.datasets import (
     BlockShuffleSampler,
     DatasetMeta,
     H5BlockDataset,
-    TensorMemoryDataset,
     TensorBatchSampler,
+    TensorMemoryDataset,
     _discover_dataset_name,
     _resolve_loader_worker_count,
     _resolve_lunar_dataset_contract,
@@ -656,6 +656,8 @@ class STLRPSTrainer:
         cfg: TrainConfig,
         collocation_r_min_m: float | None = None,
         collocation_r_max_m: float | None = None,
+        ema_decay: float | None = None,
+        ema_state_dict: Mapping[str, Any] | None = None,
     ):
         self.model = model
         self.loss_fn = loss_fn
@@ -663,6 +665,27 @@ class STLRPSTrainer:
         self.weights = weights
         self.device = device
         self.cfg = cfg
+        self._band_diagnostic_epoch: int | None = None
+        self.ema_decay = None if ema_decay is None else float(ema_decay)
+        if self.ema_decay is not None and not (0.0 < self.ema_decay < 1.0):
+            raise ValueError(f"ema_decay must be in (0, 1), got {self.ema_decay!r}")
+        self.ema_state_dict: dict[str, torch.Tensor] | None = None
+        if self.ema_decay is not None:
+            self.ema_state_dict = {}
+            current_state = model.state_dict()
+            for name, current in current_state.items():
+                previous = ema_state_dict.get(name) if ema_state_dict is not None else None
+                if isinstance(previous, torch.Tensor) and previous.shape == current.shape:
+                    self.ema_state_dict[name] = previous.detach().to(
+                        device=current.device, dtype=current.dtype
+                    ).clone()
+                else:
+                    self.ema_state_dict[name] = current.detach().clone()
+            logger.info(
+                "EMA enabled: decay=%.6f source=%s",
+                self.ema_decay,
+                "checkpoint" if ema_state_dict is not None else "initial_model",
+            )
         self.curriculum = LossCurriculum(
             potential_only_epochs=cfg.potential_only_epochs,
             accel_ramp_epochs=cfg.accel_ramp_epochs,
@@ -681,8 +704,8 @@ class STLRPSTrainer:
 
         # bfloat16 instead of float16: SIREN sin(w0 · x) overflows fp16 mantissa.
         # bfloat16 has fp32 exponent range; disable AMP entirely if unavailable.
-        # Laplacian regularization now uses the Hutchinson trace estimator which only
-        # requires create_graph=False for its second autodiff pass → AMP-compatible.
+        # Laplacian regularization uses exact coordinate-basis trace HVPs in 3D
+        # (and Hutchinson only for non-3D inputs), which remain AMP-compatible.
         self.use_amp = bool(cfg.amp and device.type == "cuda")
         if self.use_amp:
             if torch.cuda.is_bf16_supported():
@@ -709,7 +732,7 @@ class STLRPSTrainer:
         epoch: int,
         max_batches: int | None = None,
     ) -> dict[str, float]:
-        if isinstance(loader.sampler, BlockShuffleSampler):
+        if is_train and hasattr(loader.sampler, "set_epoch"):
             loader.sampler.set_epoch(epoch)
 
         self.model.train(is_train)
@@ -722,6 +745,27 @@ class STLRPSTrainer:
 
         state = _EpochState()
 
+        # A fixed batch cache makes --overfit-batches a genuine repeated-batch
+        # diagnostic. It is intentionally training-only; validation remains a
+        # fixed sampler view of the configured validation split.
+        overfit_n = int(getattr(self.cfg, "overfit_batches", 0) or 0)
+        if is_train and overfit_n > 0:
+            if not hasattr(self, "_overfit_batch_cache"):
+                cache: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+                for cached_batch in loader:
+                    cache.append(tuple(item.detach().cpu().clone() for item in cached_batch))
+                    if len(cache) >= overfit_n:
+                        break
+                if not cache:
+                    raise RuntimeError("--overfit-batches requested but the training loader is empty.")
+                self._overfit_batch_cache = cache
+                logger.info("Overfit sanity mode: caching %d fixed training batch(es).", len(cache))
+            batch_source = iter(self._overfit_batch_cache)
+            total_loader_batches = len(self._overfit_batch_cache)
+        else:
+            batch_source = iter(loader)
+            total_loader_batches = len(loader)
+
         if is_train:
             lambda_dir_eff = _direction_loss_factor(epoch, self.cfg)
         else:
@@ -730,7 +774,7 @@ class STLRPSTrainer:
 
         phase = "train" if is_train else "val "
         log_every = int(max(0, self.cfg.log_every))
-        total_batches_est = len(loader)
+        total_batches_est = total_loader_batches
         if max_batches is not None:
             total_batches_est = min(total_batches_est, int(max_batches))
 
@@ -743,15 +787,17 @@ class STLRPSTrainer:
         phase_t0 = time.perf_counter()
 
         with torch.set_grad_enabled(True):  # keep grads for val: a = ∇U
-            for batch_idx, (xb, ub, ab) in enumerate(loader):
+            for batch_idx, (xb, ub, ab) in enumerate(batch_source):
                 if max_batches is not None and batch_idx >= int(max_batches):
                     break
 
                 xb, ub, ab = self._prepare_batch(xb, ub, ab)
+                if batch_idx == 0:
+                    self._log_band_diagnostics_once(xb, epoch)
 
                 # Gradient accumulation bookkeeping
                 is_last_batch = (
-                    (batch_idx + 1 == len(loader))
+                    (batch_idx + 1 == total_loader_batches)
                     or (max_batches is not None and batch_idx + 1 >= int(max_batches))
                 )
                 is_accum_boundary = (batch_idx + 1) % grad_accum == 0 or is_last_batch
@@ -792,12 +838,16 @@ class STLRPSTrainer:
 
                 if is_train:
                     col_lap_loss_val, col_lap_scalar, col_lap_weight = (
-                        self._collocation_laplacian_step(state, epoch)
+                        self._collocation_laplacian_step(
+                            state, epoch, is_accum_boundary=is_accum_boundary
+                        )
                     )
 
-                    # Scale loss by accumulation steps so gradients average over the
-                    # effective batch rather than summing (preserves LR invariance).
-                    scaled_loss = loss / float(grad_accum)
+                    # Average by the actual accumulation-group size. The final
+                    # group may be shorter when max_batches is used.
+                    group_start = batch_idx - (batch_idx % grad_accum)
+                    group_size = min(total_batches_est, group_start + grad_accum) - group_start
+                    scaled_loss = loss / float(max(1, group_size))
 
                     # Add collocation laplacian to loss in "train" mode
                     if (
@@ -807,7 +857,7 @@ class STLRPSTrainer:
                     ):
                         scaled_loss = scaled_loss + (
                             col_lap_weight * col_lap_loss_val
-                        ) / float(grad_accum)
+                        ) / float(max(1, group_size))
                         # NaN/Inf guard for collocation Laplacian contribution
                         _cl_check = float(scaled_loss.item())
                         if math.isnan(_cl_check) or math.isinf(_cl_check):
@@ -869,6 +919,33 @@ class STLRPSTrainer:
         """Move one loader batch to the training device."""
         return move_batch_to_device(xb, ub, ab, self.device)
 
+    def _log_band_diagnostics_once(self, x_phys: torch.Tensor, epoch: int) -> None:
+        """Log multi-band contribution diagnostics once per epoch."""
+
+        if self._band_diagnostic_epoch == int(epoch):
+            return
+        if int(getattr(self.cfg, "n_bands", 1)) <= 1:
+            self._band_diagnostic_epoch = int(epoch)
+            return
+        diagnostic_fn = getattr(self.model, "band_diagnostics", None)
+        if not callable(diagnostic_fn):
+            self._band_diagnostic_epoch = int(epoch)
+            return
+        try:
+            with torch.no_grad():
+                kind, values = diagnostic_fn(self.loss_fn.scale_x(x_phys))
+            values_cpu = [float(value) for value in values.detach().cpu().tolist()]
+            logger.info(
+                "[bands] epoch=%d %s=%s w0_bands=%s",
+                int(epoch) + 1,
+                kind,
+                [f"{value:.3e}" for value in values_cpu],
+                getattr(getattr(self.model, "backbone", None), "w0_bands", None),
+            )
+        except Exception as exc:  # pragma: no cover - diagnostic must not stop training
+            logger.warning("[bands] diagnostic failed at epoch=%d: %s", int(epoch) + 1, exc)
+        self._band_diagnostic_epoch = int(epoch)
+
     def _compute_loss(
         self,
         xb: torch.Tensor,
@@ -883,7 +960,11 @@ class STLRPSTrainer:
     ) -> tuple[torch.Tensor, dict[str, float]]:
         """Evaluate the Sobolev loss under the configured autocast policy."""
         with torch.autocast(
-            device_type=self.device.type, dtype=self._amp_dtype, enabled=self.use_amp
+            device_type=self.device.type,
+            dtype=self._amp_dtype,
+            # Validation is a checkpoint-selection input and is deliberately
+            # evaluated in FP32 even when training uses bf16 AMP.
+            enabled=bool(self.use_amp and is_train),
         ):
             return self.loss_fn(
                 self.model,
@@ -974,19 +1055,15 @@ class STLRPSTrainer:
     ) -> None:
         try:
             fm_path = Path(self.cfg.out) / "failure_manifest.json"
-            fm_path.parent.mkdir(parents=True, exist_ok=True)
-            fm_path.write_text(
-                json.dumps(
-                    {"epoch": epoch, "batch": batch, "reason": reason, **extra},
-                    indent=2,
-                    default=str,
-                )
+            atomic_write_json(
+                fm_path,
+                {"epoch": epoch, "batch": batch, "reason": reason, **extra},
             )
         except Exception:  # R29b-justified: the abort itself must still propagate
             pass
 
     def _collocation_laplacian_step(
-        self, state: _EpochState, epoch: int
+        self, state: _EpochState, epoch: int, *, is_accum_boundary: bool
     ) -> tuple[torch.Tensor | None, float, float]:
         """Collocation Laplacian, computed BEFORE backward so it can be added
         to the loss in "train" mode or logged only in "diagnostic" mode.
@@ -1000,6 +1077,7 @@ class STLRPSTrainer:
             and self.laplacian_mode in ("diagnostic", "train")
             and self.collocation_r_min_m is not None
             and self.collocation_r_max_m is not None
+            and bool(is_accum_boundary)
             and state.optimizer_steps_done % col_lap_every == 0
         )
         col_lap_loss_val: torch.Tensor | None = None
@@ -1088,6 +1166,17 @@ class STLRPSTrainer:
                     "Consider lower lr or max_grad_norm."
                 )
 
+        def _update_ema() -> None:
+            if self.ema_state_dict is None or self.ema_decay is None:
+                return
+            one_minus = 1.0 - self.ema_decay
+            for name, current in self.model.state_dict().items():
+                shadow = self.ema_state_dict[name]
+                if torch.is_floating_point(current):
+                    shadow.mul_(self.ema_decay).add_(current.detach(), alpha=one_minus)
+                else:
+                    shadow.copy_(current.detach())
+
         if self.use_amp and self.scaler_amp is not None:
             self.scaler_amp.scale(scaled_loss).backward()
             if is_accum_boundary:
@@ -1096,12 +1185,14 @@ class STLRPSTrainer:
                 self.scaler_amp.step(self.optimizer)
                 self.scaler_amp.update()
                 _record_grad_norm(grad_norm)
+                _update_ema()
         else:
             scaled_loss.backward()
             if is_accum_boundary:
                 grad_norm = _clip_grad_norm()
                 self.optimizer.step()
                 _record_grad_norm(grad_norm)
+                _update_ema()
 
     def _update_metrics(
         self,
@@ -1228,8 +1319,9 @@ class STLRPSTrainer:
         col_lap_weight_eff = float(getattr(self.cfg, "collocation_laplacian_weight", 0.0))
         physics_loss = (
             state.total_dir + state.total_radial + state.total_cross
-            + state.total_lap + col_lap_train_avg
+            + state.total_lap
         ) / n_safe
+        physics_loss += col_lap_train_avg
         return {
             "loss": state.total_loss / n_safe,
             "objective_loss": state.total_opt_loss / n_safe,
@@ -1257,7 +1349,7 @@ class STLRPSTrainer:
             "w_a": float(state.last_stats.get("w_a", self.cfg.w_a)),
             "w_a_raw": float(state.last_stats.get("w_a_raw", self.cfg.w_a)),
             "accel_factor": float(state.last_stats.get("accel_factor", accel_factor)),
-            "grad_norm": state.total_grad_norm / n_safe,
+            "grad_norm": state.total_grad_norm / max(1, state.optimizer_steps_done),
             "val_base_loss": (state.total_u + state.total_a) / n_safe,  # U + accel MSE only
             "val_physics_loss": physics_loss,
             "val_total_loss": state.total_loss / n_safe,   # alias for "loss"
@@ -1331,6 +1423,10 @@ def _dataset_meta_snapshot(
     resolved_mu_si: float,
     resolved_r_ref_m: float,
 ) -> dict[str, Any]:
+    _hash_path = data_path if data_path is not None and Path(data_path).exists() else train_data_path
+    if _hash_path is not None and Path(_hash_path).exists():
+        size_gb = Path(_hash_path).stat().st_size / float(1024 ** 3)
+        logger.info("Hashing dataset for run provenance: %s (%.3f GiB)", _hash_path, size_gb)
     snapshot = {
         "schema_version": 1,
         "dataset_sha256": (
@@ -2106,11 +2202,6 @@ def _build_dataloaders(
         )
         if pf is not None:
             _dl_kw["prefetch_factor"] = pf
-        # Seed the shuffle RNG explicitly so the per-epoch ordering is reproducible
-        # (and resumable via the checkpointed RNG state) instead of riding on the
-        # global torch RNG.
-        _loader_generator = torch.Generator()
-        _loader_generator.manual_seed(int(cfg.seed))
         train_sampler = TensorBatchSampler(
             len(train_ds), cfg.batch_size, seed=cfg.seed + 100, shuffle=True, drop_last=True
         )
@@ -2293,8 +2384,29 @@ def _load_dataset_context(cfg: TrainConfig, *, layout: Any) -> _DatasetContext:
             N = int(f[dset_name].shape[0])
             bytes_est = N * 7 * (4 if str(f[dset_name].dtype) == "float32" else 8)
 
+    if not bool(cfg.use_si) and meta.unit_system == "canonical":
+        raise ValueError(
+            "--no-si is unsafe for canonical ST-LRPS datasets: canonical coordinates "
+            "are nondimensional and cannot be combined with SI lunar constants. "
+            "Use --use-si or provide an SI dataset."
+        )
     if cfg.use_si and meta.unit_system == "canonical" and not meta.can_convert_to_si():
         raise ValueError("Configuration demands SI units, but dataset is missing DU_m/TU_s/VU_m_s attributes.")
+
+    # Dataset metadata is the authoritative training shell.  CLI values remain
+    # available for deliberate experiments, but an ordinary run should not
+    # silently retain the global 100--1000 km defaults for a different cloud.
+    if (
+        not bool(getattr(cfg, "_altitude_bounds_explicit", False))
+        and meta.alt_min_km is not None
+        and meta.alt_max_km is not None
+    ):
+        cfg.altitude_min_km = float(meta.alt_min_km)
+        cfg.altitude_max_km = float(meta.alt_max_km)
+        logger.info(
+            "Altitude-balanced loss bounds resolved from dataset metadata: "
+            f"[{cfg.altitude_min_km:.3f}, {cfg.altitude_max_km:.3f}] km"
+        )
 
     dataset_contract_obj = DatasetContract.from_hdf5(
         primary_path,
@@ -2614,6 +2726,7 @@ class _TrainingSession:
     _ckpt_start: int
     _resume_requested: bool
     _resume_ckpt: dict[str, Any] | None
+    _resume_prev_manifest: dict[str, Any]
     _resume_best_val: float
     _resume_best_epoch: int
     _resume_epochs_without_improve: int
@@ -3384,6 +3497,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         _ckpt_start=_ckpt_start,
         _resume_requested=_resume_requested,
         _resume_ckpt=_resume_ckpt,
+        _resume_prev_manifest=_resume_prev_manifest,
         _resume_best_val=_resume_best_val,
         _resume_best_epoch=_resume_best_epoch,
         _resume_epochs_without_improve=_resume_epochs_without_improve,
@@ -3467,6 +3581,7 @@ def _run_training_loop(session: _TrainingSession) -> None:
     _ckpt_start = session._ckpt_start
     _resume_requested = session._resume_requested
     _resume_ckpt = session._resume_ckpt
+    _resume_prev_manifest = session._resume_prev_manifest
     _resume_best_val = session._resume_best_val
     _resume_best_epoch = session._resume_best_epoch
     _resume_epochs_without_improve = session._resume_epochs_without_improve
@@ -3509,6 +3624,12 @@ def _run_training_loop(session: _TrainingSession) -> None:
         model, loss_fn, opt, weights, device, cfg,
         collocation_r_min_m=_col_r_min_m,
         collocation_r_max_m=_col_r_max_m,
+        ema_decay=getattr(cfg, "ema_decay", None),
+        ema_state_dict=(
+            _resume_ckpt.get("ema_state_dict")
+            if _resume_requested and isinstance(_resume_ckpt, Mapping)
+            else None
+        ),
     )
 
     # Best-checkpoint selection + early-stopping policy (CheckpointManager).
@@ -3523,6 +3644,23 @@ def _run_training_loop(session: _TrainingSession) -> None:
     _prev_val_mse_a = float("inf")
     best_path = layout.ckpt_best
     last_path = layout.ckpt_last
+    _previous_checkpoint_hashes = (
+        _resume_prev_manifest.get("checkpoint_hashes", {})
+        if isinstance(_resume_prev_manifest, Mapping)
+        else {}
+    )
+    best_ckpt_hash: str | None = (
+        str(_previous_checkpoint_hashes.get("best"))
+        if isinstance(_previous_checkpoint_hashes, Mapping)
+        and _previous_checkpoint_hashes.get("best")
+        else None
+    )
+    last_ckpt_hash: str | None = (
+        str(_previous_checkpoint_hashes.get("last"))
+        if isinstance(_previous_checkpoint_hashes, Mapping)
+        and _previous_checkpoint_hashes.get("last")
+        else None
+    )
     log_path = layout.history_jsonl
     history: list[dict[str, float]] = []
     _prev_mse_a: float | None = None  # for epoch-level explosion detection
@@ -3682,8 +3820,10 @@ def _run_training_loop(session: _TrainingSession) -> None:
                     f"Training stopped at epoch {epoch+1} due to NaN/Inf loss. "
                     f"Saving failure manifest to {outdir / 'failure_manifest.json'}."
                 )
-                with open(outdir / "failure_manifest.json", "w", encoding="utf-8") as _fmf:
-                    json.dump({"epoch": epoch, "reason": "nan_loss", "config": asdict(cfg)}, _fmf, indent=2, default=str)
+                atomic_write_json(
+                    outdir / "failure_manifest.json",
+                    {"epoch": epoch, "reason": "nan_loss", "config": asdict(cfg)},
+                )
                 update_run_manifest(
                     layout,
                     {
@@ -3772,17 +3912,10 @@ def _run_training_loop(session: _TrainingSession) -> None:
                 dataset_meta=dataset_snapshot,
                 architecture_signature=_arch_signature,
                 global_step=global_step,
+                ema_state_dict=trainer.ema_state_dict,
             )
             verify_critical_config_fields_match(payload_readback, checkpoint_payload["config"])
 
-            {
-                "kind": "last",
-                "score": float(_ckpt_score),
-                "formula": str(checkpoint_report["formula"]),
-                "best_metric": str(checkpoint_report["best_metric"]),
-                "path": str(last_path),
-                "best_epoch": int(best_epoch + 1) if best_epoch >= 0 else None,
-            }
             checkpoint_report["is_best_update"] = False
             checkpoint_report["best_epoch"] = int(best_epoch + 1) if best_epoch >= 0 else None
             checkpoint_report["best_score"] = float(best_val) if math.isfinite(best_val) else None
@@ -3817,18 +3950,16 @@ def _run_training_loop(session: _TrainingSession) -> None:
                     checkpoint_report["best_score"] = float(best_val)
                     checkpoint_payload["config"]["checkpoint_report"] = dict(checkpoint_report)
                     checkpoint_payload["scoring"].update(dict(checkpoint_report))
-                    save_checkpoint(layout, kind="best", payload=checkpoint_payload, epoch=epoch)
-                    best_ckpt_hash = compute_file_sha256(best_path)
+                    best_save_info = save_checkpoint(
+                        layout,
+                        kind="best",
+                        payload=checkpoint_payload,
+                        epoch=epoch,
+                        return_metadata=True,
+                    )
+                    best_ckpt_hash = str(best_save_info["sha256"])
                     logger.info(f"[artifacts] checkpoint saved: kind=best epoch={epoch + 1}")
                     logger.info(f"[checkpoint] best updated: val_ref={va['loss']:.6e} score={_ckpt_score:.6e} epoch={best_epoch + 1}")
-                    {
-                        "kind": "best",
-                        "score": float(_ckpt_score),
-                        "formula": str(checkpoint_report["formula"]),
-                        "best_metric": str(checkpoint_report["best_metric"]),
-                        "path": str(best_path),
-                        "best_epoch": int(best_epoch + 1),
-                    }
                     update_run_manifest(
                         layout,
                         {
@@ -3841,7 +3972,7 @@ def _run_training_loop(session: _TrainingSession) -> None:
                             "latest_epoch": int(epoch + 1),
                             "checkpoint_hashes": {
                                 "best": best_ckpt_hash,
-                                "last": (compute_file_sha256(last_path) if last_path.exists() else None),
+                                "last": last_ckpt_hash,
                             },
                         },
                     )
@@ -3858,17 +3989,18 @@ def _run_training_loop(session: _TrainingSession) -> None:
             checkpoint_payload["config"]["checkpoint_report"] = dict(checkpoint_report)
             checkpoint_payload["scoring"].update(dict(checkpoint_report))
             checkpoint_payload["config"]["epochs_since_improvement"] = int(epochs_without_improve)
-            save_checkpoint(
+            last_save_info = save_checkpoint(
                 layout,
                 kind="last",
                 payload=checkpoint_payload,
                 epoch=epoch,
+                return_metadata=True,
                 write_epoch_snapshot=bool(
                     getattr(cfg, "save_epoch_snapshots", False)
                     and ((epoch + 1) % max(1, int(getattr(cfg, "epoch_snapshot_every", 1))) == 0)
                 ),
             )
-            last_ckpt_hash = compute_file_sha256(last_path)
+            last_ckpt_hash = str(last_save_info["sha256"])
             logger.info(f"[artifacts] checkpoint saved: kind=last epoch={epoch + 1}")
             logger.info(f"[checkpoint] last saved: epoch={epoch + 1}")
             update_run_manifest(
@@ -3880,7 +4012,7 @@ def _run_training_loop(session: _TrainingSession) -> None:
                     "checkpoint_selection": dict(checkpoint_selection),
                     "last_checkpoint_path": str(last_path),
                     "checkpoint_hashes": {
-                        "best": (compute_file_sha256(best_path) if best_path.exists() else None),
+                        "best": best_ckpt_hash,
                         "last": last_ckpt_hash,
                     },
                 },
@@ -3938,12 +4070,6 @@ def _run_training_loop(session: _TrainingSession) -> None:
                         )
                         break
 
-            _lde = float(tr.get("lambda_dir_eff", 0.0))
-            _dir_log = (
-                f" | dir={tr.get('loss_dir',0.0):.2e}/val={va.get('loss_dir',0.0):.2e}"
-                f" cossim={tr.get('cossim_mean',1.0):.4f} lam={_lde:.2e}"
-                if _lde > 0.0 else ""
-            )
             logger.info(format_epoch_summary(row, total_epochs=int(cfg.epochs)))
 
             if tracker.should_early_stop():
@@ -4026,8 +4152,8 @@ def _run_training_loop(session: _TrainingSession) -> None:
             "checkpoint_selection": dict(checkpoint_selection),
             "latest_epoch": (int(history[-1]["epoch"]) + 1) if history else 0,
             "checkpoint_hashes": {
-                "best": (compute_file_sha256(best_path) if best_path.exists() else None),
-                "last": (compute_file_sha256(last_path) if last_path.exists() else None),
+                "best": best_ckpt_hash,
+                "last": last_ckpt_hash,
             },
             "compute_accounting": compute_accounting_dict,
         },

@@ -418,7 +418,7 @@ def test_failed_adaptive_chunk_is_not_checkpointed(monkeypatch, tmp_path):
             nfev=1,
         )
 
-    monkeypatch.setattr("lunaris.core.propagation.propagator.solve_ivp", fake_solve_ivp)
+    monkeypatch.setattr("lunaris.core.propagation.scipy_runner.solve_ivp", fake_solve_ivp)
 
     res = propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc)
 
@@ -466,7 +466,7 @@ def test_terminal_adaptive_chunk_checkpoint_uses_event_endpoint(monkeypatch, tmp
             nfev=1,
         )
 
-    monkeypatch.setattr("lunaris.core.propagation.propagator.solve_ivp", fake_solve_ivp)
+    monkeypatch.setattr("lunaris.core.propagation.scipy_runner.solve_ivp", fake_solve_ivp)
 
     res = propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc, extra_events=[terminal_event])
 
@@ -519,7 +519,7 @@ def test_chunked_adaptive_impact_event_reports_impact_reason(monkeypatch, tmp_pa
             nfev=1,
         )
 
-    monkeypatch.setattr("lunaris.core.propagation.propagator.solve_ivp", fake_solve_ivp)
+    monkeypatch.setattr("lunaris.core.propagation.scipy_runner.solve_ivp", fake_solve_ivp)
 
     res = propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc)
 
