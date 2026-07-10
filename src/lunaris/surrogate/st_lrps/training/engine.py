@@ -813,12 +813,16 @@ class STLRPSTrainer:
 
                 if is_train:
                     col_lap_loss_val, col_lap_scalar, col_lap_weight = (
-                        self._collocation_laplacian_step(state, epoch)
+                        self._collocation_laplacian_step(
+                            state, epoch, is_accum_boundary=is_accum_boundary
+                        )
                     )
 
-                    # Scale loss by accumulation steps so gradients average over the
-                    # effective batch rather than summing (preserves LR invariance).
-                    scaled_loss = loss / float(grad_accum)
+                    # Average by the actual accumulation-group size. The final
+                    # group may be shorter when max_batches is used.
+                    group_start = batch_idx - (batch_idx % grad_accum)
+                    group_size = min(total_batches_est, group_start + grad_accum) - group_start
+                    scaled_loss = loss / float(max(1, group_size))
 
                     # Add collocation laplacian to loss in "train" mode
                     if (
@@ -828,7 +832,7 @@ class STLRPSTrainer:
                     ):
                         scaled_loss = scaled_loss + (
                             col_lap_weight * col_lap_loss_val
-                        ) / float(grad_accum)
+                        ) / float(max(1, group_size))
                         # NaN/Inf guard for collocation Laplacian contribution
                         _cl_check = float(scaled_loss.item())
                         if math.isnan(_cl_check) or math.isinf(_cl_check):
@@ -904,7 +908,11 @@ class STLRPSTrainer:
     ) -> tuple[torch.Tensor, dict[str, float]]:
         """Evaluate the Sobolev loss under the configured autocast policy."""
         with torch.autocast(
-            device_type=self.device.type, dtype=self._amp_dtype, enabled=self.use_amp
+            device_type=self.device.type,
+            dtype=self._amp_dtype,
+            # Validation is a checkpoint-selection input and is deliberately
+            # evaluated in FP32 even when training uses bf16 AMP.
+            enabled=bool(self.use_amp and is_train),
         ):
             return self.loss_fn(
                 self.model,
