@@ -22,7 +22,8 @@ from lunaris.common.type_defs import (
 )
 from lunaris.core.dynamics import DynamicsEngine
 from lunaris.core.propagation import propagator as prop_mod
-from lunaris.core.propagation.propagator import _osculating_periapsis_alt_km, _resolve_atol
+from lunaris.core.propagation.propagator import _osculating_periapsis_alt_km
+from lunaris.core.propagation.scipy_runner import _resolve_atol
 
 # ---------------------------------------------------------------------------
 # 1) Vector atol

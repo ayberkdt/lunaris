@@ -709,7 +709,7 @@ class STLRPSTrainer:
         epoch: int,
         max_batches: int | None = None,
     ) -> dict[str, float]:
-        if isinstance(loader.sampler, BlockShuffleSampler):
+        if is_train and hasattr(loader.sampler, "set_epoch"):
             loader.sampler.set_epoch(epoch)
 
         self.model.train(is_train)
@@ -722,6 +722,27 @@ class STLRPSTrainer:
 
         state = _EpochState()
 
+        # A fixed batch cache makes --overfit-batches a genuine repeated-batch
+        # diagnostic. It is intentionally training-only; validation remains a
+        # fixed sampler view of the configured validation split.
+        overfit_n = int(getattr(self.cfg, "overfit_batches", 0) or 0)
+        if is_train and overfit_n > 0:
+            if not hasattr(self, "_overfit_batch_cache"):
+                cache: list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = []
+                for cached_batch in loader:
+                    cache.append(tuple(item.detach().cpu().clone() for item in cached_batch))
+                    if len(cache) >= overfit_n:
+                        break
+                if not cache:
+                    raise RuntimeError("--overfit-batches requested but the training loader is empty.")
+                self._overfit_batch_cache = cache
+                logger.info("Overfit sanity mode: caching %d fixed training batch(es).", len(cache))
+            batch_source = iter(self._overfit_batch_cache)
+            total_loader_batches = len(self._overfit_batch_cache)
+        else:
+            batch_source = iter(loader)
+            total_loader_batches = len(loader)
+
         if is_train:
             lambda_dir_eff = _direction_loss_factor(epoch, self.cfg)
         else:
@@ -730,7 +751,7 @@ class STLRPSTrainer:
 
         phase = "train" if is_train else "val "
         log_every = int(max(0, self.cfg.log_every))
-        total_batches_est = len(loader)
+        total_batches_est = total_loader_batches
         if max_batches is not None:
             total_batches_est = min(total_batches_est, int(max_batches))
 
@@ -743,7 +764,7 @@ class STLRPSTrainer:
         phase_t0 = time.perf_counter()
 
         with torch.set_grad_enabled(True):  # keep grads for val: a = ∇U
-            for batch_idx, (xb, ub, ab) in enumerate(loader):
+            for batch_idx, (xb, ub, ab) in enumerate(batch_source):
                 if max_batches is not None and batch_idx >= int(max_batches):
                     break
 
@@ -751,7 +772,7 @@ class STLRPSTrainer:
 
                 # Gradient accumulation bookkeeping
                 is_last_batch = (
-                    (batch_idx + 1 == len(loader))
+                    (batch_idx + 1 == total_loader_batches)
                     or (max_batches is not None and batch_idx + 1 >= int(max_batches))
                 )
                 is_accum_boundary = (batch_idx + 1) % grad_accum == 0 or is_last_batch
@@ -2106,11 +2127,6 @@ def _build_dataloaders(
         )
         if pf is not None:
             _dl_kw["prefetch_factor"] = pf
-        # Seed the shuffle RNG explicitly so the per-epoch ordering is reproducible
-        # (and resumable via the checkpointed RNG state) instead of riding on the
-        # global torch RNG.
-        _loader_generator = torch.Generator()
-        _loader_generator.manual_seed(int(cfg.seed))
         train_sampler = TensorBatchSampler(
             len(train_ds), cfg.batch_size, seed=cfg.seed + 100, shuffle=True, drop_last=True
         )
