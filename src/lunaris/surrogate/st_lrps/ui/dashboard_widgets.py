@@ -37,6 +37,7 @@ try:
         QHBoxLayout,
         QHeaderView,
         QLabel,
+        QPushButton,
         QSizePolicy,
         QTableView,
         QTabWidget,
@@ -758,7 +759,7 @@ if _HAS_QT:
             filter_layout = QHBoxLayout(self._filter_bar)
             filter_layout.setContentsMargins(8, 4, 8, 4)
             filter_layout.setSpacing(8)
-            
+
             self._lbl_title = QLabel("Progress & Logs")
             self._lbl_title.setStyleSheet(f"color: {_COLORS['text_muted']}; font-weight: bold;")
             filter_layout.addWidget(self._lbl_title)
@@ -767,11 +768,11 @@ if _HAS_QT:
             self.btn_filter_warn = QPushButton("0 Warnings")
             self.btn_filter_warn.setCheckable(True)
             self.btn_filter_warn.setCursor(Qt.CursorShape.PointingHandCursor)
-            
+
             self.btn_filter_err = QPushButton("0 Errors")
             self.btn_filter_err.setCheckable(True)
             self.btn_filter_err.setCursor(Qt.CursorShape.PointingHandCursor)
-            
+
             filter_style = """
                 QPushButton {
                     background-color: transparent;
@@ -790,7 +791,7 @@ if _HAS_QT:
 
             filter_layout.addWidget(self.btn_filter_warn)
             filter_layout.addWidget(self.btn_filter_err)
-            
+
             self.btn_filter_warn.toggled.connect(self._on_filter_warn)
             self.btn_filter_err.toggled.connect(self._on_filter_err)
 
@@ -798,13 +799,13 @@ if _HAS_QT:
 
             # ── Tab 1: Structured Progress ──
             self._model = ProgressTableModel()
-            
+
             from PySide6.QtCore import QSortFilterProxyModel
             class SeverityProxyModel(QSortFilterProxyModel):
                 def __init__(self, parent=None):
                     super().__init__(parent)
                     self.severity_filter = None
-                
+
                 def filterAcceptsRow(self, source_row, source_parent):
                     if not self.severity_filter:
                         return True
@@ -815,7 +816,7 @@ if _HAS_QT:
 
             self._proxy = SeverityProxyModel()
             self._proxy.setSourceModel(self._model)
-            
+
             self._table = QTableView()
             self._table.setModel(self._proxy)
             self._table.setAlternatingRowColors(True)
@@ -918,7 +919,7 @@ if _HAS_QT:
             sb = self._table.verticalScrollBar()
             at_bottom = sb.value() >= sb.maximum() - 2
             self._model.append_record(record)
-            
+
             if record.severity == "warning":
                 self._warn_count += 1
                 self.btn_filter_warn.setText(f"{self._warn_count} Warnings")
@@ -936,7 +937,7 @@ if _HAS_QT:
             else:
                 self._proxy.severity_filter = None
             self._proxy.invalidateFilter()
-            
+
         def _on_filter_err(self, checked: bool) -> None:
             if checked:
                 self.btn_filter_warn.setChecked(False)
@@ -966,7 +967,7 @@ if _HAS_QT:
             self.btn_filter_err.setText("0 Errors")
             self.btn_filter_warn.setChecked(False)
             self.btn_filter_err.setChecked(False)
-            
+
             if hasattr(self, "_history_model"):
                 self._history_model.set_rows([])
                 self._history_table.setVisible(False)
