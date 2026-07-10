@@ -147,15 +147,17 @@ class FrozenSearchPage(QtWidgets.QWidget):
         gravity_layout.addWidget(gravity_browse)
         form.add_row("Gravity file", gravity_row, hint="Optional. Leave blank to use the default config gravity model.")
 
+        # Checkbox rows carry their own sentence label; an additional left
+        # caption would duplicate it ("Resume | Resume existing stage files").
         self.chk_resume = QtWidgets.QCheckBox("Resume existing stage files")
         self.chk_resume.setChecked(True)
-        form.add_row("Resume", self.chk_resume)
+        form.add_row("", self.chk_resume)
         self.chk_figures = QtWidgets.QCheckBox("Generate report figures")
         self.chk_figures.setChecked(True)
-        form.add_row("Figures", self.chk_figures)
+        form.add_row("", self.chk_figures)
         self.chk_verbose = QtWidgets.QCheckBox("Verbose run log")
         self.chk_verbose.setChecked(True)
-        form.add_row("Log level", self.chk_verbose)
+        form.add_row("", self.chk_verbose)
         section.content_layout.addWidget(form)
         return section
 
@@ -267,7 +269,10 @@ class FrozenSearchPage(QtWidgets.QWidget):
         self.btn_open = QtWidgets.QPushButton("  Open Output")
         self.btn_open.setIcon(get_icon("fa6s.folder-open", THEME["fg_muted"]))
         self.btn_open.clicked.connect(self._open_output_dir)
-        btn_row.addWidget(self.btn_run, 2)
+        # Primary action on its own full-width row, secondary actions below:
+        # three labeled buttons side by side exceed the rail's minimum width
+        # and the layout clipped their text ("Run Searc…" / "Open Outp…").
+        section.content_layout.addWidget(self.btn_run)
         btn_row.addWidget(self.btn_cancel, 1)
         btn_row.addWidget(self.btn_open, 1)
         section.content_layout.addLayout(btn_row)

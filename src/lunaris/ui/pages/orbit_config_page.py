@@ -1115,6 +1115,14 @@ class OrbitPage(QtWidgets.QWidget):
         self._params_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         self._params_scroll.setWidget(self.group_params)
         self._params_scroll.setMinimumWidth(360)
+        # A scroll area's own minimum-size hint is tiny (~2 scrollbar widths),
+        # so in the stacked compact layout the splitter could crush the whole
+        # form into an unusable sliver. Guarantee roughly six visible form
+        # rows in either orientation.
+        from lunaris.ui.theme.tokens import DESIGN_TOKENS
+        self._params_scroll.setMinimumHeight(
+            DESIGN_TOKENS.controls.minimum_height * 7
+        )
 
         # Right pane: the fixed 3D preview.
         self.group_viz = self._create_viz_group()
@@ -1140,12 +1148,20 @@ class OrbitPage(QtWidgets.QWidget):
         """Stack the form above the preview only when the workspace is narrow."""
         if not hasattr(self, "_split"):
             return
-        compact = self.width() < 1000
+        # 900, not 1000: at the default 1280x860 window the page content is
+        # ~980 px wide, which must stay in the two-pane layout. Below 900 the
+        # side-by-side panes drop under their comfortable minimums (360+380px
+        # plus handle/margins) and stacking wins.
+        compact = self.width() < 900
         if compact == self._compact_layout:
             return
         self._compact_layout = compact
         if compact:
             self._split.setOrientation(QtCore.Qt.Vertical)
+            # Explicit sizes: without them the splitter leaves the form pane
+            # at its (tiny) hint and the preview swallows the page.
+            total = max(self.height(), 1)
+            self._split.setSizes([int(total * 0.55), int(total * 0.45)])
         else:
             self._split.setOrientation(QtCore.Qt.Horizontal)
             total = max(self.width(), 1)

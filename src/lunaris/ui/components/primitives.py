@@ -414,7 +414,12 @@ class EmptyState(QtWidgets.QFrame):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(DESIGN_TOKENS.spacing.sm)
-        layout.setAlignment(QtCore.Qt.AlignCenter)
+        # No layout-level AlignCenter: centered children are laid out at their
+        # size-hint width, so a word-wrapped description gets a height computed
+        # for a wider line and clips mid-line (seen on the Run Diagnostics
+        # card). Children span the full width — the text centers itself — and
+        # the stretches keep the block vertically centered in tall frames.
+        layout.addStretch(1)
         self.title_label = QtWidgets.QLabel(title)
         self.title_label.setObjectName("emptyStateTitle")
         self.title_label.setAlignment(QtCore.Qt.AlignCenter)
@@ -427,6 +432,7 @@ class EmptyState(QtWidgets.QFrame):
         layout.addWidget(self.description_label)
         if action is not None:
             layout.addWidget(action, 0, QtCore.Qt.AlignCenter)
+        layout.addStretch(1)
 
     def set_message(self, title: str, description: str = "") -> None:
         """Update the empty-state text in place (so one widget can cover several cases)."""

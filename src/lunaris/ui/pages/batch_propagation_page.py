@@ -380,7 +380,9 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         self.analysis_panel = EnsembleAnalysisPanel(parent=self)
 
-        self.tabs.addTab(run_tab, "Setup & Run")
+        # "&&" renders a literal ampersand; a single "&" would become a
+        # mnemonic and draw as an underscore in the tab title.
+        self.tabs.addTab(run_tab, "Setup && Run")
         self.tabs.addTab(self.analysis_panel, "Result Analysis")
 
     # ------------------------------------------------------------------
@@ -1173,9 +1175,11 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.progress_batch.setRange(0, 100)
         self.progress_batch.setValue(0)
         self.progress_batch.setTextVisible(True)
-        self.progress_batch.setFormat("Waiting…")
         self.progress_batch.setFixedHeight(16)
-        # Bar/chunk styling comes from the global QProgressBar rules.
+        # Bar/chunk styling comes from the global QProgressBar rules. Hidden
+        # while idle: the summary/meta labels below already carry the waiting
+        # state, so an empty bar would only add noise.
+        self.progress_batch.setVisible(False)
         layout.addWidget(self.progress_batch)
 
         self.lbl_progress_summary = _label("Waiting for run", muted=False)
@@ -1216,8 +1220,11 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.btn_open_folder.setFixedHeight(DESIGN_TOKENS.controls.primary_height)
         self.btn_open_folder.clicked.connect(self._open_output_folder)
 
-        btn_row.addWidget(self.btn_run_batch, 2)
-        btn_row.addWidget(self.btn_open_folder, 1)
+        # Primary action on its own full-width row, the secondary action
+        # below: side by side they exceed the rail's minimum width and the
+        # layout clipped the secondary label ("Open Fold…").
+        layout.addWidget(self.btn_run_batch)
+        btn_row.addWidget(self.btn_open_folder)
         layout.addLayout(btn_row)
 
         return gb
@@ -1333,6 +1340,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
             total = max(1, self._parse_int(self.ent_n_samples.text(), self.batch_cfg.n_samples))
             self._last_progress_payload = {}
             self._set_badge("RUNNING", "running")
+            self.progress_batch.setVisible(True)
             # Reduced motion: keep the bar determinate instead of a marquee.
             if prefers_reduced_motion():
                 self.progress_batch.setRange(0, 1000)
