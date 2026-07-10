@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,60 @@ def _active_physics_capabilities(sim_cfg: Any) -> list[str]:
         if bool(getattr(flags, attr, False)):
             active.append(canonical)
     return active
+
+
+def _provenance_text(value: Any) -> str | None:
+    """Return a non-empty provenance label, unwrapping enum-like values."""
+
+    if value is None:
+        return None
+    text = str(getattr(value, "value", value)).strip()
+    return text or None
+
+
+def build_degraded_batch_backend_metadata(
+    *,
+    requested_backend: Any,
+    backend_plan: Any | None,
+    backend_diagnostics: Mapping[str, Any] | None,
+    requested_sh_degree: int,
+    error: Exception,
+) -> dict[str, Any]:
+    """Build an honest manifest when optional provenance enrichment fails.
+
+    A completed batch run should remain loadable when supplementary provenance
+    assembly raises. The fallback must never copy a requested backend into
+    ``actual_batch_backend``: that would turn a recorded CPU fallback into a
+    false GPU claim. Prefer post-run diagnostics, then the resolved policy plan;
+    when neither source is available, make the uncertainty explicit as
+    ``"unknown"``.
+    """
+
+    diagnostics = backend_diagnostics or {}
+    requested = (
+        _provenance_text(getattr(backend_plan, "requested_backend", None))
+        or _provenance_text(requested_backend)
+        or "unknown"
+    )
+    actual = (
+        _provenance_text(diagnostics.get("actual_backend"))
+        or _provenance_text(getattr(backend_plan, "actual_backend", None))
+        or _provenance_text(diagnostics.get("backend"))
+        or "unknown"
+    )
+    resolved = (
+        _provenance_text(getattr(backend_plan, "final_backend", None))
+        or _provenance_text(diagnostics.get("backend"))
+        or actual
+    )
+    return {
+        "requested_batch_backend": requested,
+        "actual_batch_backend": actual,
+        "batch_backend": resolved,
+        "requested_sh_degree": int(requested_sh_degree),
+        "provenance_status": "degraded",
+        "provenance_error_type": type(error).__name__,
+    }
 
 
 def _metadata_value_to_jsonable(value: Any) -> Any:
@@ -107,6 +162,7 @@ def _decode_metadata_value(raw: Any) -> Any:
 __all__ = [
     "_sha256_file",
     "_active_physics_capabilities",
+    "build_degraded_batch_backend_metadata",
     "_metadata_value_to_jsonable",
     "_decode_archive_metadata",
     "_decode_metadata_value",

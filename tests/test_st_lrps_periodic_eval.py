@@ -16,8 +16,6 @@ from types import SimpleNamespace
 
 import pytest
 
-torch = pytest.importorskip('torch')
-
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -278,15 +276,14 @@ def test_runner_success_records_and_extracts_metrics(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# 5. UI command builder (skipped without PyQt)
+# 5. UI command builder (skipped without a complete PySide6 install)
 # ---------------------------------------------------------------------------
 @pytest.fixture(scope="module")
 def qapp():
-    pytest.importorskip("PySide6")
+    qt_widgets = pytest.importorskip("PySide6.QtWidgets")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PySide6.QtWidgets import QApplication
 
-    return QApplication.instance() or QApplication([])
+    return qt_widgets.QApplication.instance() or qt_widgets.QApplication([])
 
 
 def test_ui_disabled_emits_no_periodic_flags(qapp):

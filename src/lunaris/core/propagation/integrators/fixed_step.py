@@ -10,6 +10,7 @@ from typing import Any
 
 import numpy as np
 
+from lunaris.common.integrator_methods import FIXED_STEP_METHOD_ALIASES
 from lunaris.core.propagation.checkpoint import _atomic_save_npz, _stop_requested
 from lunaris.core.propagation.events import _event_crossed, _refine_event_time_bisect
 from lunaris.core.propagation.integrators.rk import _rk4_step_full, _rk8_step_full, _rkn4_step
@@ -37,6 +38,9 @@ _ACCEL_METHODS: dict[str, str] = {
 }
 _SYMPLECTIC_CANONICAL = frozenset({"VV", "Y4", "Y6", "Y8", "PEFRL"})
 _RHS_METHODS: dict[str, str] = {"RK4": "RK4", "RK8": "RK8"}
+
+if set(_ACCEL_METHODS) | set(_RHS_METHODS) != set(FIXED_STEP_METHOD_ALIASES):
+    raise RuntimeError("Fixed-step method registry drifted from lunaris.common.integrator_methods.")
 
 def _is_symplectic_method(method: str) -> bool:
     """True for the structure-preserving fixed-step methods (Verlet/PEFRL/Yoshida)."""
@@ -161,6 +165,43 @@ def _build_fixed_stepper(
 
     return step_accel, True
 
+
+def _event_label(index: int, event: Callable[[float, np.ndarray], float]) -> str:
+    """Return stable context for failures in an event callback."""
+    role = str(getattr(event, "_event_role", "") or "").strip()
+    return f"event index {index}" + (f" ({role})" if role else "")
+
+
+def _evaluate_event(
+    event: Callable[[float, np.ndarray], float],
+    *,
+    index: int,
+    t_s: float,
+    y: np.ndarray,
+) -> float:
+    """Evaluate one fixed-step event without hiding callback failures."""
+    label = _event_label(index, event)
+    try:
+        value = float(event(float(t_s), y))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Fixed-step {label} evaluation failed at t={float(t_s):.12g} s."
+        ) from exc
+    if not np.isfinite(value):
+        raise ValueError(
+            f"Fixed-step {label} returned non-finite value {value!r} "
+            f"at t={float(t_s):.12g} s."
+        )
+    return value
+
+
+def _planned_fixed_step_count(t_eval: np.ndarray, max_step: float) -> int:
+    """Return the exact number of fixed substeps implied by the output grid."""
+    return sum(
+        max(1, int(math.ceil(float(t_eval[i + 1] - t_eval[i]) / max_step)))
+        for i in range(t_eval.size - 1)
+    )
+
 def _integrate_fixed_step(
     rhs: Callable[[float, np.ndarray], np.ndarray],
     t_eval: np.ndarray,
@@ -176,6 +217,7 @@ def _integrate_fixed_step(
     stop_file: str | None,
     checkpoint_path: str | None,
     checkpoint_metadata: dict[str, Any] | None = None,
+    max_internal_steps: int | None = None,
 ) -> tuple[Any, bool, float | None, np.ndarray | None, bool, str | None, float | None]:
     """Integrate with an in-house fixed-step method (symplectic, RKN, or RK4).
 
@@ -203,6 +245,18 @@ def _integrate_fixed_step(
     if (not np.isfinite(max_step)) or max_step <= 0.0:
         raise ValueError("max_step must be positive and finite for fixed-step integration.")
 
+    planned_internal_steps = _planned_fixed_step_count(t_eval, max_step)
+    if max_internal_steps is not None:
+        limit = int(max_internal_steps)
+        if limit < 1:
+            raise ValueError("max_internal_steps must be >= 1 for fixed-step integration.")
+        if planned_internal_steps > limit:
+            raise ValueError(
+                "Fixed-step propagation would require "
+                f"{planned_internal_steps} internal steps, exceeding "
+                f"max_internal_steps={limit}. Increase the limit or use a larger max_step."
+            )
+
     # Acceleration adapter: avoid extra allocations when rhs already returns ndarray
     def accel(t: float, y6: np.ndarray) -> np.ndarray:
         dy = rhs(t, y6)
@@ -225,12 +279,10 @@ def _integrate_fixed_step(
 
     # Initialize previous event values at the start time
     t_start = float(t_eval[0])
-    g_prev: list[float] = []
-    for ev in ev_list:
-        try:
-            g_prev.append(float(ev(t_start, y0)))
-        except Exception:
-            g_prev.append(float("nan"))
+    g_prev = [
+        _evaluate_event(ev, index=i, t_s=t_start, y=y0)
+        for i, ev in enumerate(ev_list)
+    ]
 
     t_list: list[float] = [t_start]
     y_list: list[np.ndarray] = [y0.copy()]
@@ -280,12 +332,13 @@ def _integrate_fixed_step(
             earliest_terminal: tuple[float, int, np.ndarray] | None = None  # (t_event, idx, y_event)
 
             for i, ev in enumerate(ev_list):
-                try:
-                    g0 = float(g_prev[i])
-                    g1 = float(ev(t_next, y_next))
-                except Exception:
-                    g_prev[i] = float("nan")
-                    continue
+                g0 = float(g_prev[i])
+                if not np.isfinite(g0):
+                    raise ValueError(
+                        f"Fixed-step {_event_label(i, ev)} has a non-finite prior value "
+                        f"at t={tj:.12g} s."
+                    )
+                g1 = _evaluate_event(ev, index=i, t_s=t_next, y=y_next)
 
                 direction = float(getattr(ev, "direction", 0.0))
                 terminal = bool(getattr(ev, "terminal", False))
@@ -304,15 +357,17 @@ def _integrate_fixed_step(
                             max_iter=refine_max_iter,
                             tol_s=refine_tol_s,
                         )
-                    except Exception:
-                        # Fallback: linear interpolation in event function value
-                        denom = (g0 - g1)
-                        if denom != 0.0 and np.isfinite(denom):
-                            tau = float(min(1.0, max(0.0, g0 / denom)))
-                        else:
-                            tau = 0.5
-                        t_ev = tj + tau * h
-                        y_ev = np.asarray(y_curr + tau * (y_next - y_curr), dtype=np.float64)
+                    except Exception as exc:
+                        raise RuntimeError(
+                            f"Fixed-step {_event_label(i, ev)} refinement failed "
+                            f"inside [{tj:.12g}, {t_next:.12g}] s."
+                        ) from exc
+
+                    if not np.isfinite(t_ev) or not np.all(np.isfinite(y_ev)):
+                        raise ValueError(
+                            f"Fixed-step {_event_label(i, ev)} refinement returned "
+                            "a non-finite time or state."
+                        )
 
                     t_events_acc[i].append(float(t_ev))
                     y_events_acc[i].append(np.asarray(y_ev, dtype=np.float64))
@@ -396,6 +451,8 @@ def _integrate_fixed_step(
         status=(1 if (impacted or stopped_early) else 0),
         message=("fixed-step ok" if not stopped_early else "stopped early"),
         nfev=np.nan,
+        internal_step_count=int(planned_internal_steps),
+        max_internal_steps=(None if max_internal_steps is None else int(max_internal_steps)),
         t_events=t_events,
         y_events=y_events,
     )
@@ -436,5 +493,7 @@ __all__ = [
     "_fixed_step_requires_6d",
     "_accel_stepper",
     "_build_fixed_stepper",
+    "_evaluate_event",
     "_integrate_fixed_step",
+    "_planned_fixed_step_count",
 ]

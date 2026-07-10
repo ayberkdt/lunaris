@@ -275,6 +275,21 @@ def propagate(
             )
 
     integration_plan = resolve_integration_plan(cfg, duration_s=dur_s)
+    max_internal_steps = int(getattr(cfg, "max_internal_steps", 1_000_000))
+    if integration_plan.backend == "scipy":
+        # ``solve_ivp`` does not expose an accepted-step hard limit. Its
+        # max_step still establishes a strict lower bound, which lets us reject
+        # configurations guaranteed to exceed the requested safety budget before
+        # expensive integration begins. Fixed-step receives an exact count in
+        # ``_integrate_fixed_step`` below.
+        minimum_internal_steps = int(math.ceil((tf - t0) / float(max_step)))
+        if minimum_internal_steps > max_internal_steps:
+            raise ValueError(
+                "Adaptive propagation requires at least "
+                f"{minimum_internal_steps} internal steps from duration/max_step, "
+                f"exceeding max_internal_steps={max_internal_steps}. "
+                "Increase the limit or use a larger max_step."
+            )
     checkpoint_meta = _checkpoint_metadata(method=integration_plan.method, config=cfg)
 
     # -------------------------------------------------------------------------
@@ -349,6 +364,7 @@ def propagate(
             stop_file=stop_file,
             checkpoint_path=checkpoint_path,
             checkpoint_metadata=checkpoint_meta,
+            max_internal_steps=max_internal_steps,
             logger=logger,
         )
 
@@ -715,37 +731,19 @@ def _compute_2body_baseline(
     rtol = float(getattr(cfg, "baseline_rtol", getattr(cfg, "rtol", 1e-9)))
     atol = float(getattr(cfg, "baseline_atol", getattr(cfg, "atol", 1e-12)))
 
-    try:
-        sol = solve_ivp(
-            fun=rhs2,
-            t_span=(float(t_eval[0]), float(t_eval[-1])),
-            y0=y0,
-            method=method,
-            t_eval=t_eval,
-            rtol=rtol,
-            atol=atol,
-            max_step=float(max_step),
-            events=None,
-            dense_output=False,
-            vectorized=False,
-        )
-    except (ValueError, TypeError):
-        # Only an unsupported/misspecified integrator method falls back to the
-        # DOP853 baseline; a genuine integration failure must surface, not be
-        # silently retried with a different method.
-        sol = solve_ivp(
-            fun=rhs2,
-            t_span=(float(t_eval[0]), float(t_eval[-1])),
-            y0=y0,
-            method="DOP853",
-            t_eval=t_eval,
-            rtol=rtol,
-            atol=atol,
-            max_step=float(max_step),
-            events=None,
-            dense_output=False,
-            vectorized=False,
-        )
+    sol = solve_ivp(
+        fun=rhs2,
+        t_span=(float(t_eval[0]), float(t_eval[-1])),
+        y0=y0,
+        method=method,
+        t_eval=t_eval,
+        rtol=rtol,
+        atol=atol,
+        max_step=float(max_step),
+        events=None,
+        dense_output=False,
+        vectorized=False,
+    )
 
     t_b = np.asarray(sol.t, dtype=np.float64)
     y_b = np.asarray(sol.y, dtype=np.float64).T

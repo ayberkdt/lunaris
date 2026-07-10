@@ -489,10 +489,10 @@ def _refine_event_time_bisect(
     main integrator's state advancement (y_next is still computed once in the main loop), so
     symplectic stepping remains unchanged; we only improve the reported event time/state.
     """
-    # Ensure a valid bracket
+    # Refinement is used for terminal event state/time reporting. A malformed
+    # bracket must fail loudly rather than quietly turn into a start-point hit.
     if not (np.isfinite(g0) and np.isfinite(g1)):
-        t_lin = t0
-        return t_lin, y0
+        raise ValueError("event refinement requires finite bracket values")
 
     a = 0.0
     b = 1.0
@@ -515,6 +515,8 @@ def _refine_event_time_bisect(
         hm = m * h
         ym = step(t0, y0, hm)
         gm = float(ev(t0 + hm, ym))
+        if not np.isfinite(gm):
+            raise ValueError("event refinement callback returned a non-finite midpoint value")
 
         # Narrow the bracket by sign
         if (ga > 0.0) == (gm > 0.0):
@@ -529,6 +531,8 @@ def _refine_event_time_bisect(
     if yb is None:
         yb = step(t0, y0, b * h)
         gb = float(ev(t0 + b * h, yb))
+    if not np.isfinite(gb):
+        raise ValueError("event refinement callback returned a non-finite bracket value")
 
     # Final linear-in-g correction inside last bracket (a,b)
     denom = (gb - ga)
@@ -540,6 +544,8 @@ def _refine_event_time_bisect(
 
     ht = tau * h
     yt = step(t0, y0, ht)
+    if not np.all(np.isfinite(yt)):
+        raise ValueError("event refinement step returned a non-finite state")
     return float(t0 + ht), np.asarray(yt, dtype=np.float64)
 
 

@@ -7,6 +7,7 @@ import json
 import os
 import re
 from collections.abc import Mapping, MutableMapping
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -293,11 +294,11 @@ def _load_config_payload(path: Path) -> Any:
 
 def _load_yaml_payload(text: str) -> Any:
     try:
-        import yaml
-    except Exception:
+        yaml_module: Any = import_module("yaml")
+        safe_load = yaml_module.safe_load
+    except (AttributeError, ImportError):
         return _parse_simple_yaml(text)
-    data = yaml.safe_load(text)
-    return data
+    return safe_load(text)
 
 
 def _parse_simple_yaml(text: str) -> Any:

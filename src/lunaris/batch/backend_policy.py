@@ -59,6 +59,16 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Populated by the availability probes during one policy-resolution pass. The
+# boolean probe API remains stable for existing callers/tests, while the plan
+# carries the real import/driver error instead of reducing it to plain "False".
+_CUDA_PROBE_ERRORS: dict[str, str] = {}
+
+
+def _record_cuda_probe_error(name: str, exc: Exception) -> None:
+    detail = str(exc).strip()
+    _CUDA_PROBE_ERRORS[name] = f"{type(exc).__name__}: {detail or 'no detail provided'}"
+
 # =============================================================================
 # 1.                      CUDA AVAILABILITY PROBES
 # =============================================================================
@@ -69,8 +79,11 @@ def _torch_cuda_available() -> bool:
     try:
         import torch
 
-        return bool(torch.cuda.is_available())
-    except Exception:
+        available = bool(torch.cuda.is_available())
+        _CUDA_PROBE_ERRORS.pop("torch", None)
+        return available
+    except Exception as exc:
+        _record_cuda_probe_error("torch", exc)
         return False
 
 
@@ -79,8 +92,11 @@ def _numba_cuda_available() -> bool:
     try:
         from numba import cuda
 
-        return bool(cuda.is_available())
-    except Exception:
+        available = bool(cuda.is_available())
+        _CUDA_PROBE_ERRORS.pop("numba", None)
+        return available
+    except Exception as exc:
+        _record_cuda_probe_error("numba", exc)
         return False
 
 
@@ -127,10 +143,19 @@ def _numba_cuda_sh_limits() -> tuple[int, tuple[int, ...]]:
         from lunaris.core.backend_capabilities import (
             numba_cuda_sh_max_degree,
             numba_cuda_sh_supported_tiers,
+            numba_cuda_sh_workspace_error,
         )
 
-        return numba_cuda_sh_max_degree(), numba_cuda_sh_supported_tiers()
-    except Exception:
+        max_degree = numba_cuda_sh_max_degree()
+        tiers = numba_cuda_sh_supported_tiers()
+        workspace_error = numba_cuda_sh_workspace_error()
+        if workspace_error:
+            _CUDA_PROBE_ERRORS["numba_cuda_sh_limits"] = workspace_error
+        else:
+            _CUDA_PROBE_ERRORS.pop("numba_cuda_sh_limits", None)
+        return max_degree, tiers
+    except Exception as exc:
+        _record_cuda_probe_error("numba_cuda_sh_limits", exc)
         return 24, (24,)
 
 
@@ -410,6 +435,9 @@ class BatchBackendPlan:
     gravity_backend: str
     torch_cuda_available: bool
     numba_cuda_available: bool
+    torch_cuda_probe_error: str | None = None
+    numba_cuda_probe_error: str | None = None
+    numba_cuda_sh_limits_error: str | None = None
     requested_backend: str = "auto"
     actual_backend: str = "cpu_sh"
     backend_family: str = ""
@@ -441,6 +469,17 @@ class BatchBackendPlan:
     batch_note: str = ""
 
     def __post_init__(self) -> None:
+        if self.torch_cuda_probe_error is None and not self.torch_cuda_available:
+            object.__setattr__(self, "torch_cuda_probe_error", _CUDA_PROBE_ERRORS.get("torch"))
+        if self.numba_cuda_probe_error is None and not self.numba_cuda_available:
+            object.__setattr__(self, "numba_cuda_probe_error", _CUDA_PROBE_ERRORS.get("numba"))
+        if self.numba_cuda_sh_limits_error is None:
+            object.__setattr__(
+                self,
+                "numba_cuda_sh_limits_error",
+                _CUDA_PROBE_ERRORS.get("numba_cuda_sh_limits"),
+            )
+
         # Auto-populate provenance family/implementation from the central
         # capability registry based on the resolved backend, unless explicitly
         # set. Keeps every return site labeled without per-site duplication.
@@ -514,6 +553,15 @@ class BatchBackendPlan:
         )
         if self.batch_note:
             logger.info("[BATCH] %s", self.batch_note)
+        if self.torch_cuda_probe_error:
+            logger.warning("[BATCH] PyTorch CUDA probe failed: %s", self.torch_cuda_probe_error)
+        if self.numba_cuda_probe_error:
+            logger.warning("[BATCH] Numba CUDA probe failed: %s", self.numba_cuda_probe_error)
+        if self.numba_cuda_sh_limits_error:
+            logger.warning(
+                "[BATCH] Numba CUDA SH workspace-limit probe failed: %s",
+                self.numba_cuda_sh_limits_error,
+            )
 
 
 # =============================================================================
@@ -589,6 +637,7 @@ def resolve_batch_backend_policy(
     warns: list[str] = []
 
     # --- Hardware probes ------------------------------------------------------
+    _CUDA_PROBE_ERRORS.clear()
     torch_cuda = _torch_cuda_available()
     numba_cuda = _numba_cuda_available()
     numba_cuda_sh_max_degree, numba_cuda_sh_tiers = _numba_cuda_sh_limits()

@@ -1,9 +1,4 @@
-import argparse
-from unittest.mock import patch
-
 import pytest
-
-torch = pytest.importorskip('torch')
 
 from lunaris.surrogate.st_lrps.evaluation.ablation import build_matrix, parse_args
 
@@ -43,9 +38,10 @@ def test_ablation_eval_commands_generation():
     assert "--data" in cmd_ood
     assert "ood.h5" in cmd_ood
 
-def test_ui_import_safety():
-    """Verify ui_st_lrps can be imported without PySide6 immediately failing (using try-except logic)."""
-    try:
-        import lunaris.surrogate.st_lrps.ui.studio
-    except ImportError:
-        pytest.fail("ui_st_lrps should handle missing PySide6 gracefully or import successfully.")
+def test_studio_imports_when_the_required_qt_binding_is_available() -> None:
+    """The optional Studio imports only when its actual Qt dependency is present."""
+
+    pytest.importorskip("PySide6.QtWidgets")
+    import lunaris.surrogate.st_lrps.ui.studio as studio
+
+    assert studio.STLRPSTrainTab is not None

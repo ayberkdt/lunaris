@@ -31,6 +31,7 @@ def run_fixed_step_propagation(
     stop_file: str | None,
     checkpoint_path: str | None,
     checkpoint_metadata: dict[str, Any] | None,
+    max_internal_steps: int | None,
     logger: logging.Logger,
 ) -> PropagationResult:
     """Run the fixed-step branch and assemble a propagation result."""
@@ -74,6 +75,7 @@ def run_fixed_step_propagation(
         stop_file=stop_file,
         checkpoint_path=checkpoint_path,
         checkpoint_metadata=checkpoint_metadata,
+        max_internal_steps=max_internal_steps,
     )
 
     t_out = np.asarray(ode_like.t, dtype=np.float64)

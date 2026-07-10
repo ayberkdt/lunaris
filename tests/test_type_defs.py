@@ -286,11 +286,15 @@ def test_propagator_config_defaults_and_validation():
     pc2 = PropagatorConfig(rtol=1e-9, atol=1e-11)
     assert pc2.rtol == 1e-9
     assert pc2.atol == 1e-11
+    assert PropagatorConfig(method="radau").method == "RADAU"
 
     with pytest.raises(ValueError):
         PropagatorConfig(rtol=0.0, atol=1e-12)
     with pytest.raises(ValueError):
         PropagatorConfig(rtol=1e-12, atol=0.0)
+
+    with pytest.raises(ValueError, match="Unsupported propagation method"):
+        PropagatorConfig(method="RK54_typo")
 
     with pytest.raises(ValueError):
         PropagatorConfig(heartbeat_hours=0.0)

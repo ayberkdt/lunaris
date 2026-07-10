@@ -25,6 +25,7 @@ import math
 import numpy as np
 import pytest
 
+import lunaris.core.propagation.integrators.fixed_step as fixed_step_module
 from lunaris.common.constants import MU_MOON, R_MOON
 from lunaris.common.math_utils import coe_to_rv, rv_to_coe_select
 from lunaris.common.type_defs import EventConfig, PropagatorConfig, TimeConfig
@@ -388,6 +389,104 @@ def test_fixed_step_impact_event_is_detected(method):
     assert res.impacted and res.stop_reason == "impact"
     alt_km = (float(np.linalg.norm(res.y_impact[:3])) - R) / 1000.0
     assert abs(alt_km) < 1.0  # impact recorded at ~surface
+
+
+def _linear_crossing_rhs(_t: float, _y: np.ndarray) -> np.ndarray:
+    return np.asarray([1.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float64)
+
+
+def _terminal_linear_event(_t: float, y: np.ndarray) -> float:
+    return float(y[0] - 0.5)
+
+
+_terminal_linear_event.terminal = True
+_terminal_linear_event.direction = 0.0
+_terminal_linear_event._event_role = "impact"
+
+
+def test_fixed_step_event_callback_failure_is_not_silenced() -> None:
+    def failing_event(t: float, y: np.ndarray) -> float:
+        if t > 0.0:
+            raise RuntimeError("forced event callback failure")
+        return _terminal_linear_event(t, y)
+
+    failing_event.terminal = True
+    failing_event.direction = 0.0
+    failing_event._event_role = "impact"
+
+    with pytest.raises(RuntimeError, match="event index 0.*impact.*evaluation failed"):
+        fixed_step_module._integrate_fixed_step(
+            _linear_crossing_rhs,
+            np.asarray([0.0, 1.0]),
+            np.zeros(6),
+            max_step=1.0,
+            method="RK4",
+            events=[failing_event],
+            R_ref_m=1.0,
+            mu_m3s2=1.0,
+            verbose=False,
+            heartbeat_hours=0.0,
+            stop_file=None,
+            checkpoint_path=None,
+        )
+
+
+def test_fixed_step_event_refinement_failure_is_not_silenced(monkeypatch) -> None:
+    def fail_refinement(**_kwargs):
+        raise RuntimeError("forced refinement failure")
+
+    monkeypatch.setattr(fixed_step_module, "_refine_event_time_bisect", fail_refinement)
+
+    with pytest.raises(RuntimeError, match="event index 0.*impact.*refinement failed"):
+        fixed_step_module._integrate_fixed_step(
+            _linear_crossing_rhs,
+            np.asarray([0.0, 1.0]),
+            np.zeros(6),
+            max_step=1.0,
+            method="RK4",
+            events=[_terminal_linear_event],
+            R_ref_m=1.0,
+            mu_m3s2=1.0,
+            verbose=False,
+            heartbeat_hours=0.0,
+            stop_file=None,
+            checkpoint_path=None,
+        )
+
+
+def test_fixed_step_respects_max_internal_steps() -> None:
+    y0, _period_s = _state_from_coe(alt_peri_m=100e3, e=0.0)
+    cfg = _cfg("RK4", h=1.0)
+    cfg = PropagatorConfig(
+        method=cfg.method,
+        verbose=False,
+        compute_2body_baseline=False,
+        use_nyquist_max_step=False,
+        user_max_step_s=1.0,
+        max_internal_steps=100,
+        events=cfg.events,
+    )
+    tc = TimeConfig(duration_s=101.0, output_dt_s=101.0, samples_per_period=2)
+
+    with pytest.raises(ValueError, match="would require 101 internal steps"):
+        propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc)
+
+
+def test_adaptive_preflight_respects_max_internal_steps() -> None:
+    y0, _period_s = _state_from_coe(alt_peri_m=100e3, e=0.0)
+    cfg = PropagatorConfig(
+        method="DOP853",
+        verbose=False,
+        compute_2body_baseline=False,
+        use_nyquist_max_step=False,
+        user_max_step_s=1.0,
+        max_internal_steps=100,
+        events=EventConfig(detect_impact=False, impact_alt_km=0.0, enable_peri_apo_events=False),
+    )
+    tc = TimeConfig(duration_s=101.0, output_dt_s=101.0, samples_per_period=2)
+
+    with pytest.raises(ValueError, match="requires at least 101 internal steps"):
+        propagate(FakePointMassDynamics(), y0, cfg, time_cfg=tc)
 
 
 if __name__ == "__main__":
