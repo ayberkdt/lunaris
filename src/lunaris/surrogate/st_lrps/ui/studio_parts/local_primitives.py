@@ -10,6 +10,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from lunaris.ui_foundation import DESIGN_TOKENS
 
+
 class StatusBadge(QtWidgets.QLabel):
     def __init__(self, text: str = "WAITING", kind: str = "info", parent=None):
         super().__init__(text, parent)
