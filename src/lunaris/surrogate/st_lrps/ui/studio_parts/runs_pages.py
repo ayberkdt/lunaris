@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from lunaris.common.paths import project_root_from_file
-from lunaris.ui.components.primitives import (
+from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import (
     ActionBar,
     CompactSearchField,
     DataTable,

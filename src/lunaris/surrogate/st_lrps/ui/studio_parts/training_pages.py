@@ -195,7 +195,7 @@ except Exception:  # pragma: no cover - UI remains usable without generator deps
     SUITE_PRESETS = {}  # type: ignore[assignment]
 
 
-from lunaris.ui.components.primitives import CompactSearchField, KeyValueList
+from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import CompactSearchField, KeyValueList
 
 from .common_widgets import (
     CollapsibleSection,
@@ -974,7 +974,7 @@ class STLRPSTrainTab(QWidget):
 
         resumable = _find_resumable_run()
 
-        from lunaris.ui.components.primitives import InlineNotice
+        from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import InlineNotice
         self.resume_notice = InlineNotice(
             f"Resumable run found: {resumable[0]}" if resumable else "",
             kind="info"

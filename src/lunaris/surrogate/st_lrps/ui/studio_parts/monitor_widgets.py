@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QLabel
 
-from lunaris.ui.components.primitives import DataTable, EmptyState, KeyValueList, Section
+from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import DataTable, EmptyState, KeyValueList, Section
 
 from .run_inspection import provenance_items, read_periodic_evals
 

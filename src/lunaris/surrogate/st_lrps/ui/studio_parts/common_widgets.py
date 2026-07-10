@@ -56,7 +56,7 @@ from pathlib import Path
 from typing import Any
 
 from lunaris.common.paths import project_root_from_file
-from lunaris.ui.components.primitives import PageHeader
+from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import PageHeader
 from lunaris.ui_foundation import DESIGN_TOKENS
 
 from .qt_common import (
