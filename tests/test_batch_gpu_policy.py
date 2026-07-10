@@ -16,6 +16,7 @@ New in this revision
 from __future__ import annotations
 
 import json
+import sys
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -268,6 +269,33 @@ def test_policy_cpu_explicit(monkeypatch) -> None:
     plan = resolve_batch_backend_policy(batch_cfg, sim_cfg)
     assert plan.final_backend == BatchBackend.CPU
     assert not plan.use_gpu
+
+
+def test_policy_records_torch_cuda_probe_error(monkeypatch) -> None:
+    import lunaris.batch.backend_policy as policy_mod
+    from lunaris.batch.backend_policy import BatchBackend, resolve_batch_backend_policy
+
+    class FailingCuda:
+        @staticmethod
+        def is_available() -> bool:
+            raise RuntimeError("driver initialization failed")
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=FailingCuda()))
+    monkeypatch.setattr(policy_mod, "_numba_cuda_available", lambda: False)
+
+    plan = resolve_batch_backend_policy(
+        SimpleNamespace(use_gpu=True, gravity_mode_override="follow_mission"),
+        SimpleNamespace(
+            flags=PerturbationFlags(),
+            gravity=SimpleNamespace(uses_st_lrps=False),
+        ),
+    )
+
+    assert plan.final_backend == BatchBackend.CPU
+    assert plan.torch_cuda_available is False
+    assert plan.torch_cuda_probe_error is not None
+    assert "RuntimeError" in plan.torch_cuda_probe_error
+    assert "driver initialization failed" in plan.torch_cuda_probe_error
 
 
 def test_policy_st_lrps_torch_cuda_true(monkeypatch) -> None:

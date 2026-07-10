@@ -19,7 +19,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from lunaris.batch.provenance import _active_physics_capabilities, _sha256_file
+from lunaris.batch.provenance import (
+    _active_physics_capabilities,
+    _sha256_file,
+    build_degraded_batch_backend_metadata,
+)
 from lunaris.batch.requirements import (
     _build_ephemeris_manager,
     _impact_positions_fixed,
@@ -1251,39 +1255,32 @@ class BatchPropagationEngine:
             if _force_fidelity_meta:
                 _plan_meta.update(_force_fidelity_meta)
                 _plan_meta["force_model_fidelity"] = dict(_force_fidelity_meta)
-        except Exception:
-            # Even on the degenerate provenance path the required v2 manifest
-            # fields must be present (and non-null) so the archive still loads
-            # under load_batch_result(strict=True).
-            _fallback_backend = str(getattr(batch_cfg, "batch_backend", "auto") or "auto")
-            _plan_meta = {
-                "requested_batch_backend": _fallback_backend,
-                "actual_batch_backend": _fallback_backend,
-                "batch_backend": _fallback_backend,
-                "requested_sh_degree": int(batch_cfg.sh_degree),
-            }
-            try:
-                _plan_meta.update(
-                    _batch_timestep_provenance(
-                        batch_cfg,
-                        duration_s=duration_s,
-                        output_dt_s=output_dt_s,
-                        actual_backend=_fallback_backend,
-                        backend_diag=backend_diag,
-                    )
-                )
-            except Exception:
-                pass
-            try:
-                _force_fidelity_meta = _force_model_fidelity_provenance(
-                    self._sim_cfg,
+        except Exception as exc:
+            # Do not fabricate a successful provenance record after a completed
+            # propagation. The fallback preserves required schema-v2 fields,
+            # records the failure, and uses only observed diagnostics or the
+            # resolved policy plan for the actual backend.
+            logger.warning(
+                "Batch backend provenance is degraded; archive records the "
+                "available runtime facts instead of guessing.",
+                exc_info=exc,
+            )
+            _plan_meta = build_degraded_batch_backend_metadata(
+                requested_backend=getattr(batch_cfg, "batch_backend", "auto"),
+                backend_plan=_plan,
+                backend_diagnostics=backend_diag,
+                requested_sh_degree=int(batch_cfg.sh_degree),
+                error=exc,
+            )
+            _plan_meta.update(
+                _batch_timestep_provenance(
+                    batch_cfg,
+                    duration_s=duration_s,
+                    output_dt_s=output_dt_s,
+                    actual_backend=_plan_meta["actual_batch_backend"],
                     backend_diag=backend_diag,
                 )
-                if _force_fidelity_meta:
-                    _plan_meta.update(_force_fidelity_meta)
-                    _plan_meta["force_model_fidelity"] = dict(_force_fidelity_meta)
-            except Exception:
-                pass
+            )
 
         # Artifact + coefficient + kernel hash provenance: a path string alone is
         # not reproducible evidence. Stamp content hashes so a reader can verify

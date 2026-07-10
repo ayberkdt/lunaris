@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from lunaris.common.constants import MU_MOON, R_MOON
+from lunaris.common.integrator_methods import normalize_integrator_method
 from lunaris.common.time_grid_contract import build_output_time_grid
 from lunaris.core.dynamics import DynamicsEngine
 
@@ -17,9 +18,7 @@ logger = logging.getLogger(__name__)
 
 def _norm_method(method: Any) -> str:
     """Normalize integrator method names to a stable canonical form."""
-    m = str(method).strip().upper()
-    m = m.replace("-", "_").replace(" ", "_")
-    return m
+    return normalize_integrator_method(method)
 
 def make_time_grid(t0: float, tf: float, dt: float) -> np.ndarray:
     t0 = float(t0)

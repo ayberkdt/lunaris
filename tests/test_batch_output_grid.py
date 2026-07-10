@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from lunaris.batch.engine import _batch_timestep_provenance, _force_model_fidelity_provenance
+from lunaris.batch.provenance import build_degraded_batch_backend_metadata
 from lunaris.common.batch_defs import (
     build_batch_output_grid,
     build_fixed_step_grid_metadata,
@@ -120,6 +121,42 @@ def test_force_model_fidelity_provenance_labels_engineering_scope() -> None:
         == "moon_center_global_earth_shadow_factor_on_solar_input"
     )
     assert meta["thermal_ir_model_fidelity"] == "engineering_approximation"
+
+
+def test_degraded_backend_provenance_never_copies_request_as_actual() -> None:
+    plan = SimpleNamespace(
+        requested_backend="numba_cuda_sh",
+        actual_backend="cpu_sh",
+        final_backend=SimpleNamespace(value="cpu"),
+    )
+
+    meta = build_degraded_batch_backend_metadata(
+        requested_backend="numba_cuda_sh",
+        backend_plan=plan,
+        backend_diagnostics={},
+        requested_sh_degree=80,
+        error=RuntimeError("metadata enrichment failed"),
+    )
+
+    assert meta["requested_batch_backend"] == "numba_cuda_sh"
+    assert meta["actual_batch_backend"] == "cpu_sh"
+    assert meta["batch_backend"] == "cpu"
+    assert meta["provenance_status"] == "degraded"
+    assert meta["provenance_error_type"] == "RuntimeError"
+
+
+def test_degraded_backend_provenance_marks_unknown_actual_backend() -> None:
+    meta = build_degraded_batch_backend_metadata(
+        requested_backend="numba_cuda_sh",
+        backend_plan=None,
+        backend_diagnostics={},
+        requested_sh_degree=80,
+        error=RuntimeError("metadata enrichment failed"),
+    )
+
+    assert meta["requested_batch_backend"] == "numba_cuda_sh"
+    assert meta["actual_batch_backend"] == "unknown"
+    assert meta["batch_backend"] == "unknown"
 
 
 @pytest.mark.parametrize("bad", [0.0, -1.0])

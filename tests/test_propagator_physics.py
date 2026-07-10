@@ -202,14 +202,9 @@ def test_propagate_requires_time_cfg():
         propagate(FakePointMassDynamics(), y0, _cfg(), time_cfg=None)
 
 
-def test_unknown_method_falls_back_to_dop853_and_runs():
-    y0, r0, _ = _circular_state(120e3)
-    T = _period(r0)
-    tc = TimeConfig(duration_s=T / 4.0, output_dt_s=T / 200.0, samples_per_period=200)
-    # An unrecognised non-symplectic method must degrade gracefully, not crash.
-    res = propagate(FakePointMassDynamics(), y0, _cfg(method="NOT_A_METHOD"), time_cfg=tc)
-    assert res.t.size >= 2
-    assert np.all(np.isfinite(res.y))
+def test_unknown_method_is_rejected_before_propagation():
+    with pytest.raises(ValueError, match="Unsupported propagation method"):
+        _cfg(method="NOT_A_METHOD")
 
 
 def test_diagnostics_schema_backend_integrator_and_rhs_path_are_present():

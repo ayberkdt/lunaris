@@ -112,6 +112,16 @@ def _h5py_available() -> bool:
     return _module_available("h5py")
 
 
+@lru_cache(maxsize=1)
+def _pyside6_available() -> bool:
+    """Return True only when the Qt modules used by Lunaris are importable."""
+
+    return all(
+        _module_available(module_name)
+        for module_name in ("PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets")
+    )
+
+
 def _tudatpy_available() -> bool:
     """Return True only when the optional ``tudatpy`` library is importable."""
     try:
@@ -141,8 +151,21 @@ def pytest_ignore_collect(collection_path: Path, config) -> bool:
         (
             "import torch",
             "from torch",
+            "pytest.importorskip('torch')",
+            'pytest.importorskip("torch")',
             "pytest.mark.requires_torch",
             "lunaris.surrogate.st_lrps.runtime.profiling",
+        ),
+    ):
+        return True
+
+    if not _pyside6_available() and _source_mentions(
+        path,
+        (
+            "import PySide6",
+            "from PySide6",
+            "pytest.importorskip('PySide6')",
+            'pytest.importorskip("PySide6")',
         ),
     ):
         return True
@@ -168,6 +191,7 @@ def pytest_collection_modifyitems(config, items):
     data_available = _lunaris_data_available()
     torch_available = _torch_available()
     h5py_available = _h5py_available()
+    pyside6_available = _pyside6_available()
     pyshtools_available = _pyshtools_available()
     tudatpy_available = _tudatpy_available()
     skip_no_data = pytest.mark.skip(
@@ -183,6 +207,9 @@ def pytest_collection_modifyitems(config, items):
     skip_no_h5py = pytest.mark.skip(
         reason="optional dependency 'h5py' is not installed."
     )
+    skip_no_pyside6 = pytest.mark.skip(
+        reason="optional dependency 'PySide6' is missing or incomplete."
+    )
     skip_no_tudatpy = pytest.mark.skip(
         reason="optional dependency 'tudatpy' is not installed."
     )
@@ -193,6 +220,8 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_no_torch)
         if not h5py_available and "requires_h5py" in item.keywords:
             item.add_marker(skip_no_h5py)
+        if not pyside6_available and "requires_pyside6" in item.keywords:
+            item.add_marker(skip_no_pyside6)
         if not pyshtools_available and "requires_pyshtools" in item.keywords:
             item.add_marker(skip_no_pyshtools)
         if not tudatpy_available and "requires_tudatpy" in item.keywords:

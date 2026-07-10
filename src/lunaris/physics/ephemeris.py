@@ -228,6 +228,10 @@ class EphemerisTables:
     inertial_frame: str = DEFAULT_INERTIAL_FRAME
     fixed_frame: str = DEFAULT_FIXED_FRAME
     observer: str = DEFAULT_OBSERVER
+    # Initialization provenance only; runtime interpolation consumes the arrays
+    # above and never calls SPICE again.
+    third_body_sampling_mode: str = "not_requested"
+    third_body_sampling_fallback_reason: str | None = None
 
     def __post_init__(self) -> None:
         # Basic numeric sanity
@@ -338,31 +342,34 @@ def _try_fill_spkpos_table_m(
     et_tab: np.ndarray,
     frame: str,
     observer: str,
-) -> bool:
+) -> tuple[bool, str | None]:
     """
     Attempts vectorized SPICE sampling for positions.
 
-    Returns True on success and fills `out_m` (shape (N,3)) in meters.
-    Returns False if vectorized sampling is unsupported or returns an unexpected shape.
+    Returns ``(True, None)`` on success and fills ``out_m`` (shape ``(N,3)``)
+    in meters. Returns ``(False, reason)`` if vectorized sampling is unsupported
+    or returns an unexpected shape.
     """
     try:
         pos_km, _ = spkpos(target, et_tab, frame, "NONE", observer)
         arr = np.asarray(pos_km, dtype=np.float64)
         if arr.ndim != 2:
-            return False
+            return False, f"unexpected ndim={arr.ndim}"
 
         n = int(out_m.shape[0])
         if arr.shape == (3, n):
             arr = arr.T
         if arr.shape != (n, 3):
-            return False
+            return False, f"unexpected shape={arr.shape}; expected {(n, 3)}"
 
         out_m[:] = arr
         out_m *= KM_TO_M
-        return True
-    except Exception:
-        # Any failure here should fall back to the scalar loop path.
-        return False
+        return True, None
+    except Exception as exc:
+        # Any failure here falls back to the scalar loop path, but the caller
+        # records the exact reason in table metadata and emits a warning.
+        detail = str(exc).strip()
+        return False, f"{type(exc).__name__}: {detail or 'no detail provided'}"
 
 
 @contextmanager
@@ -484,15 +491,28 @@ def build_tables(
 
         # B) Third-body states: target relative to observer
         if include_third_body:
-            ok_e = _try_fill_spkpos_table_m(
+            ok_e, earth_vectorized_reason = _try_fill_spkpos_table_m(
                 rE, spkpos=spkpos, target=earth_target, et_tab=et_tab, frame=inertial_frame, observer=observer
             )
-            ok_s = _try_fill_spkpos_table_m(
+            ok_s, sun_vectorized_reason = _try_fill_spkpos_table_m(
                 rS, spkpos=spkpos, target=sun_target, et_tab=et_tab, frame=inertial_frame, observer=observer
             )
 
             if not (ok_e and ok_s):
                 # Fallback scalar path (robust, slightly slower)
+                reasons = []
+                if not ok_e:
+                    reasons.append(f"Earth: {earth_vectorized_reason}")
+                if not ok_s:
+                    reasons.append(f"Sun: {sun_vectorized_reason}")
+                third_body_sampling_mode = "scalar_fallback"
+                third_body_sampling_fallback_reason = "; ".join(reasons)
+                warnings.warn(
+                    "[SPICE] Vectorized third-body position sampling unavailable "
+                    f"({third_body_sampling_fallback_reason}); using scalar SPICE calls.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
                 for i in range(Nt):
                     et = float(et_tab[i])
                     try:
@@ -508,6 +528,12 @@ def build_tables(
                     rS[i, 0] = float(pos_sun_km[0]) * KM_TO_M
                     rS[i, 1] = float(pos_sun_km[1]) * KM_TO_M
                     rS[i, 2] = float(pos_sun_km[2]) * KM_TO_M
+            else:
+                third_body_sampling_mode = "vectorized"
+                third_body_sampling_fallback_reason = None
+        else:
+            third_body_sampling_mode = "not_requested"
+            third_body_sampling_fallback_reason = None
 
         # GM retrieval (must occur while kernels are loaded).
         # Populate even if third-body ephemerides are disabled (zeros hide misconfigurations).
@@ -530,6 +556,8 @@ def build_tables(
         inertial_frame=str(inertial_frame),
         fixed_frame=str(out_fixed_frame),
         observer=str(observer),
+        third_body_sampling_mode=third_body_sampling_mode,
+        third_body_sampling_fallback_reason=third_body_sampling_fallback_reason,
     )
 
 

@@ -42,6 +42,7 @@ from lunaris.physics.ephemeris import (
     EphemerisManager,
     EphemerisTables,
     _build_time_grid,
+    _try_fill_spkpos_table_m,
     get_ephem_state,
     interp_vec3_derivative_safe,
 )
@@ -112,6 +113,25 @@ def test_build_time_grid_covers_noninteger_duration() -> None:
     """Table grids remain uniform but extend far enough to cover the run span."""
     np.testing.assert_allclose(_build_time_grid(100.0, 60.0), np.array([0.0, 60.0, 120.0]))
     np.testing.assert_allclose(_build_time_grid(120.0, 60.0), np.array([0.0, 60.0, 120.0]))
+
+
+def test_vectorized_spice_probe_reports_the_fallback_cause() -> None:
+    def failing_spkpos(*_args, **_kwargs):
+        raise RuntimeError("vectorized ET arrays unsupported")
+
+    ok, reason = _try_fill_spkpos_table_m(
+        np.empty((2, 3), dtype=np.float64),
+        spkpos=failing_spkpos,
+        target="EARTH",
+        et_tab=np.asarray([0.0, 60.0]),
+        frame="J2000",
+        observer="MOON",
+    )
+
+    assert not ok
+    assert reason is not None
+    assert "RuntimeError" in reason
+    assert "vectorized ET arrays unsupported" in reason
 
 
 def test_ephemeris_case_a_linear_interp_clamp_and_out_buffer() -> None:

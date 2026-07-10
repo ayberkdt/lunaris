@@ -20,6 +20,26 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  minimal-optional-boundaries:
+    # The documented .[dev] path intentionally excludes ML/UI extras. Keep the
+    # import-safe core and every console --help contract executable there.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install core + development tooling without optional ML/UI extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Verify optional-dependency boundaries on the minimal install
+        run: pytest tests/test_optional_dependency_boundaries.py -q
+
   pytest:
     runs-on: ubuntu-latest
     strategy:

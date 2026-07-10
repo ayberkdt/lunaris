@@ -29,6 +29,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+_NUMBA_CUDA_SH_WORKSPACE_ERROR: str | None = None
+
+
+def _record_numba_cuda_sh_workspace_error(exc: Exception) -> None:
+    global _NUMBA_CUDA_SH_WORKSPACE_ERROR
+    detail = str(exc).strip()
+    _NUMBA_CUDA_SH_WORKSPACE_ERROR = (
+        f"{type(exc).__name__}: {detail or 'no detail provided'}"
+    )
+
 # Mapping of canonical force-model name -> the PerturbationFlags attribute that
 # enables it. Used to translate an active-flags object into the set of force
 # models a backend cannot honor.
@@ -478,22 +488,39 @@ def numba_cuda_sh_max_degree() -> int:
     historical default of 24 if that import is unavailable. This is the limit of
     the ``numba_cuda_sh`` backend only; ``torch_cuda_sh`` has no such cap.
     """
+    global _NUMBA_CUDA_SH_WORKSPACE_ERROR
     try:
         from lunaris.core.batch_propagator import NUMBA_CUDA_SH_MAX_DEGREE
 
-        return int(NUMBA_CUDA_SH_MAX_DEGREE)
-    except Exception:
+        value = int(NUMBA_CUDA_SH_MAX_DEGREE)
+        _NUMBA_CUDA_SH_WORKSPACE_ERROR = None
+        return value
+    except Exception as exc:
+        _record_numba_cuda_sh_workspace_error(exc)
         return 24
 
 
 def numba_cuda_sh_supported_tiers() -> tuple[int, ...]:
     """Return the supported Numba CUDA classic-SH degree tiers."""
+    global _NUMBA_CUDA_SH_WORKSPACE_ERROR
     try:
         from lunaris.core.batch_propagator import NUMBA_CUDA_SH_SUPPORTED_TIERS
 
-        return tuple(int(v) for v in NUMBA_CUDA_SH_SUPPORTED_TIERS)
-    except Exception:
-        return (numba_cuda_sh_max_degree(),)
+        tiers = tuple(int(v) for v in NUMBA_CUDA_SH_SUPPORTED_TIERS)
+        _NUMBA_CUDA_SH_WORKSPACE_ERROR = None
+        return tiers
+    except Exception as exc:
+        _record_numba_cuda_sh_workspace_error(exc)
+        fallback_degree = numba_cuda_sh_max_degree()
+        # ``max_degree`` may itself import successfully and clear the original
+        # tiers-specific failure; preserve the cause for batch provenance.
+        _record_numba_cuda_sh_workspace_error(exc)
+        return (fallback_degree,)
+
+
+def numba_cuda_sh_workspace_error() -> str | None:
+    """Return the latest lazy workspace-import failure, if any."""
+    return _NUMBA_CUDA_SH_WORKSPACE_ERROR
 
 
 __all__ = [
@@ -510,4 +537,5 @@ __all__ = [
     "resolve_effective_dtype",
     "numba_cuda_sh_max_degree",
     "numba_cuda_sh_supported_tiers",
+    "numba_cuda_sh_workspace_error",
 ]

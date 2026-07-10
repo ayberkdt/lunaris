@@ -47,6 +47,11 @@ import numpy as np
 import numpy.typing as npt
 
 from .constants import DAY_S, R_MOON, R_MOON_MEAN
+from .integrator_methods import (
+    is_supported_integrator_method,
+    normalize_integrator_method,
+    supported_integrator_methods,
+)
 
 # =============================================================================
 # 1.                            TYPE ALIASES
@@ -551,7 +556,8 @@ class PropagatorConfig:
     nyquist_safety_div: float = 4.0
     nyquist_v_margin: float = 1.10
 
-    # Safety guard
+    # Safety guard: hard cap for fixed-step integration; conservative
+    # duration/max_step feasibility check for SciPy adaptive integration.
     max_internal_steps: int = 1_000_000
 
     # Runtime / logging
@@ -583,6 +589,15 @@ class PropagatorConfig:
     events: EventConfig = field(default_factory=EventConfig)
 
     def __post_init__(self) -> None:
+        method = normalize_integrator_method(self.method)
+        if not is_supported_integrator_method(method):
+            supported = ", ".join(supported_integrator_methods())
+            raise ValueError(
+                f"Unsupported propagation method: {self.method!r}. "
+                f"Supported methods: {supported}."
+            )
+        object.__setattr__(self, "method", method)
+
         if self.rtol <= 0.0 or self.atol <= 0.0:
             raise ValueError(f"rtol/atol must be > 0 (rtol={self.rtol!r}, atol={self.atol!r})")
 
