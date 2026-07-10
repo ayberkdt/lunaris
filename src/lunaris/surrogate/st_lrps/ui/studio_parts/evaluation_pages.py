@@ -362,6 +362,10 @@ class STLRPSEvalTab(QWidget):
         self._restore_settings()
         self._refresh_run_artifact_summary()
 
+    def set_run_path(self, path: str) -> None:
+        """Called by RunsBrowserPage to auto-fill the model dir from a run."""
+        self.model_dir.setText(path)
+
     def _pick_model_dir(self):
         d = QFileDialog.getExistingDirectory(
             self, "Model Folder", self.model_dir.text() or str(SCRIPT_DIR)

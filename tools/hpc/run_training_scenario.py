@@ -250,6 +250,45 @@ def build_command(
     return cmd
 
 
+# Entrypoints whose CLI understands --resume-from (training only).
+_RESUMABLE_ENTRYPOINTS = frozenset({"lunaris-train"})
+
+
+def find_resumable_checkpoint(run_dir: Path) -> Path | None:
+    """Return the checkpoint a ``--resume`` launch would continue from, or None.
+
+    ``ckpt_last.pt`` is preferred (full optimizer/RNG continuation);
+    ``ckpt_best.pt`` is accepted as a fallback for runs that died before the
+    first "last" save survived.
+    """
+    for name in ("ckpt_last.pt", "ckpt_best.pt"):
+        candidate = run_dir / "checkpoints" / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def build_resume_command(
+    scenario: Mapping[str, Any],
+    run_dir: Path,
+    common_flags: Sequence[str],
+) -> list[str]:
+    """Build the resume variant of the scenario command.
+
+    ``--resume-from <run_dir>`` replaces the ``--out`` injection: the training
+    CLI infers the output directory (and locks architecture/scaler fields) from
+    the resumed run itself. Scenario and common flags are still forwarded so
+    the epoch target / data paths apply; architecture-critical fields are
+    locked to the previous run by the engine regardless.
+    """
+    module = ENTRYPOINT_MODULES[scenario["entrypoint"]]
+    cmd: list[str] = [sys.executable, "-m", module]
+    cmd += [str(tok) for tok in scenario["flags"]]
+    cmd += list(common_flags)
+    cmd += ["--resume-from", str(run_dir)]
+    return cmd
+
+
 def command_to_str(cmd: Sequence[str]) -> str:
     parts = []
     for tok in cmd:
@@ -307,6 +346,23 @@ def _write_provenance(
     )
 
 
+def _write_resume_provenance(
+    run_dir: Path,
+    cmd: Sequence[str],
+    scenario_file: Path,
+    index: int,
+) -> None:
+    """Record a resume attempt WITHOUT touching the original launch provenance."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    (run_dir / f"scenario_resume_command_{stamp}.txt").write_text(
+        command_to_str(cmd) + "\n", encoding="utf-8"
+    )
+    (run_dir / f"scenario_resume_environment_{stamp}.json").write_text(
+        json.dumps(_environment_snapshot(scenario_file, index), indent=2),
+        encoding="utf-8",
+    )
+
+
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
@@ -340,6 +396,17 @@ def parse_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, l
         action="store_true",
         default=False,
         help="Reuse the output directory even if it already exists.",
+    )
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        default=False,
+        help=(
+            "Continue an interrupted run: when the scenario's output directory "
+            "already contains checkpoints/ckpt_last.pt (or ckpt_best.pt), launch "
+            "with --resume-from instead of --out. Starts fresh when no previous "
+            "run exists. Training scenarios only; mutually exclusive with --force."
+        ),
     )
     ap.add_argument(
         "--dry-run",
@@ -392,16 +459,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         output_root = resolve_output_root(args.output_root)
         run_dir = output_root / name
         _assert_not_under_src(run_dir)
-        cmd = build_command(scenario, run_dir, common_flags)
+
+        resume_ckpt: Path | None = None
+        if args.resume:
+            if args.force:
+                raise ScenarioError(
+                    "--resume and --force are mutually exclusive: resume continues "
+                    "the existing run, force overwrites it."
+                )
+            if scenario["entrypoint"] not in _RESUMABLE_ENTRYPOINTS:
+                raise ScenarioError(
+                    f"Scenario {name!r}: --resume is only supported for training "
+                    f"entrypoints ({', '.join(sorted(_RESUMABLE_ENTRYPOINTS))}), "
+                    f"got {scenario['entrypoint']!r}."
+                )
+            resume_ckpt = find_resumable_checkpoint(run_dir)
+            if resume_ckpt is None and run_dir.exists() and any(run_dir.iterdir()):
+                raise ScenarioError(
+                    f"--resume requested but {run_dir} is non-empty and contains no "
+                    "resumable checkpoint (checkpoints/ckpt_last.pt or ckpt_best.pt). "
+                    "Inspect the directory; --force would overwrite it."
+                )
+
+        if resume_ckpt is not None:
+            cmd = build_resume_command(scenario, run_dir, common_flags)
+        else:
+            cmd = build_command(scenario, run_dir, common_flags)
     except ScenarioError as exc:
         print(f"[scenario] ERROR: {exc}", file=sys.stderr)
         return 2
 
+    mode = f"resume (from {resume_ckpt.name})" if resume_ckpt is not None else "fresh"
     print(f"[scenario] file        : {scenario_file}")
     print(f"[scenario] index       : {index} / {len(scenarios) - 1}")
     print(f"[scenario] name        : {name}")
     print(f"[scenario] entrypoint  : {scenario['entrypoint']}")
     print(f"[scenario] kind        : {scenario['runtime_model_kind']}")
+    print(f"[scenario] mode        : {mode}")
     print(f"[scenario] output dir  : {run_dir}")
     print(f"[scenario] command     : {command_to_str(cmd)}")
 
@@ -409,16 +503,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("[scenario] DRY RUN: nothing launched.")
         return 0
 
-    if run_dir.exists() and any(run_dir.iterdir()) and not args.force:
+    if resume_ckpt is None and run_dir.exists() and any(run_dir.iterdir()) and not args.force:
         print(
             f"[scenario] ERROR: output directory already exists and is not empty: "
-            f"{run_dir}\n[scenario] Pass --force/--overwrite to reuse it.",
+            f"{run_dir}\n[scenario] Pass --force/--overwrite to reuse it, or "
+            "--resume to continue from its last checkpoint.",
             file=sys.stderr,
         )
         return 3
 
-    _write_provenance(run_dir, scenario, cmd, scenario_file, index)
-    print(f"[scenario] provenance written -> {run_dir}")
+    if resume_ckpt is not None:
+        # The original scenario.json/command/environment stay untouched; the
+        # resume attempt gets its own timestamped provenance (the engine also
+        # records resume_command_*.txt under provenance/).
+        _write_resume_provenance(run_dir, cmd, scenario_file, index)
+        print(f"[scenario] resume provenance written -> {run_dir}")
+    else:
+        _write_provenance(run_dir, scenario, cmd, scenario_file, index)
+        print(f"[scenario] provenance written -> {run_dir}")
     print(f"[scenario] launching {scenario['entrypoint']} ...")
     result = subprocess.run(cmd, cwd=str(_repo_root()))
     if result.returncode != 0:

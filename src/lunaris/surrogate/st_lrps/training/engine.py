@@ -297,20 +297,161 @@ def _cuda_memory_string(device: torch.device) -> str:
     )
 
 
-def _available_ram_mb() -> float | None:
-    """Return available system RAM in MB using psutil, or None if unavailable.
+_CGROUP_LIMIT_FILES = (
+    # (limit file, current-usage file) — cgroup v2 first, then v1.
+    ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory.current"),
+    ("/sys/fs/cgroup/memory/memory.limit_in_bytes", "/sys/fs/cgroup/memory/memory.usage_in_bytes"),
+)
 
-    psutil is an optional dependency: when it is missing we simply skip the
-    RAM-safety check rather than failing the run.
+# Values at/above this are the kernel's "no limit" sentinel (v1 reports
+# PAGE_COUNTER_MAX, ~2^63; v2 reports the literal string "max").
+_CGROUP_UNLIMITED_BYTES = float(2**60)
+
+
+def _candidate_cgroup_limit_files() -> tuple[tuple[str, str], ...]:
+    """Find memory-controller files for the process cgroup and its fallbacks.
+
+    Slurm commonly places a job in a nested cgroup (for example below
+    ``/sys/fs/cgroup/slurm/...``), so checking only the cgroup mount root can
+    accidentally read the container/host budget instead of the job budget.
+    The canonical mount-root candidates remain as a fallback for containers
+    that hide ``/proc/self/cgroup``.
     """
+    candidates: list[tuple[str, str]] = []
+    try:
+        entries = Path("/proc/self/cgroup").read_text(encoding="ascii").splitlines()
+    except OSError:
+        entries = []
+    cgroup_root = Path("/sys/fs/cgroup")
+    for entry in entries:
+        try:
+            _hierarchy, controllers, rel = entry.split(":", 2)
+        except ValueError:
+            continue
+        rel_path = Path(rel.lstrip("/"))
+        if not controllers:
+            base = cgroup_root / rel_path
+        elif "memory" in controllers.split(","):
+            base = cgroup_root / "memory" / rel_path
+        else:
+            continue
+        candidates.append((str(base / "memory.max"), str(base / "memory.current")))
+        candidates.append(
+            (str(base / "memory.limit_in_bytes"), str(base / "memory.usage_in_bytes"))
+        )
+    candidates.extend(_CGROUP_LIMIT_FILES)
+    return tuple(dict.fromkeys(candidates))
+
+
+def _cgroup_available_mb(
+    limit_files: tuple[tuple[str, str], ...] | None = None,
+) -> float | None:
+    """Remaining memory (MB) inside this process's cgroup, or ``None``.
+
+    Slurm enforces ``--mem`` through cgroups, so on a shared compute node the
+    node-wide "available RAM" can be far larger than what THIS job may touch.
+    Returns ``limit - current_usage`` when both are readable, the bare limit
+    when only the limit is, and ``None`` when there is no (finite) cgroup
+    limit — e.g. on a laptop or an unconfined container.
+    """
+    for limit_path, usage_path in (
+        _candidate_cgroup_limit_files() if limit_files is None else limit_files
+    ):
+        try:
+            raw = Path(limit_path).read_text(encoding="ascii").strip()
+        except OSError:
+            continue
+        if raw == "max":
+            continue
+        try:
+            limit_b = float(raw)
+        except ValueError:
+            continue
+        if limit_b <= 0 or limit_b >= _CGROUP_UNLIMITED_BYTES:
+            continue
+        used_b = 0.0
+        try:
+            used_b = float(Path(usage_path).read_text(encoding="ascii").strip())
+        except (OSError, ValueError):
+            used_b = 0.0
+        return max(0.0, limit_b - used_b) / (1024.0 * 1024.0)
+    return None
+
+
+def _slurm_mem_limit_mb(environ: Mapping[str, str] | None = None) -> float | None:
+    """Job memory limit (MB) implied by Slurm environment, or ``None``.
+
+    ``SLURM_MEM_PER_NODE`` is the ``--mem`` request in MB. When only
+    ``SLURM_MEM_PER_CPU`` is set, the job limit is per-CPU × allocated CPUs
+    (``SLURM_CPUS_ON_NODE``, falling back to ``SLURM_CPUS_PER_TASK``).
+    Values may carry a K/M/G/T suffix in some site configurations.
+    """
+    env = os.environ if environ is None else environ
+
+    def _mb(raw: str | None) -> float | None:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        factor = 1.0  # plain numbers are MB per Slurm documentation
+        suffix = text[-1].upper()
+        if suffix in "KMGT":
+            factor = {"K": 1.0 / 1024.0, "M": 1.0, "G": 1024.0, "T": 1024.0 * 1024.0}[suffix]
+            text = text[:-1]
+        try:
+            value = float(text)
+        except ValueError:
+            return None
+        return value * factor if value > 0 else None
+
+    per_node = _mb(env.get("SLURM_MEM_PER_NODE"))
+    if per_node is not None:
+        return per_node
+    per_cpu = _mb(env.get("SLURM_MEM_PER_CPU"))
+    if per_cpu is None:
+        return None
+    cpus = 1.0
+    for key in ("SLURM_CPUS_ON_NODE", "SLURM_CPUS_PER_TASK"):
+        try:
+            cpus = float(str(env.get(key, "")).strip())
+            if cpus > 0:
+                break
+        except ValueError:
+            cpus = 1.0
+    return per_cpu * max(1.0, cpus)
+
+
+def _available_ram_mb() -> float | None:
+    """Return the RAM budget (MB) actually available to THIS process, or None.
+
+    Takes the minimum of three independent signals so the preload safety veto
+    holds on HPC nodes, not just workstations:
+
+    * ``psutil.virtual_memory().available`` — node-wide availability (optional
+      dependency; skipped when psutil is missing);
+    * the cgroup limit minus current usage — what Slurm's ``--mem`` actually
+      enforces on a shared node (node-wide RAM can be far larger);
+    * the Slurm-declared job limit from the environment — a fallback when the
+      cgroup files are not readable from inside the job.
+
+    Returns ``None`` only when none of the signals is available; the caller
+    then skips the RAM-safety veto (and says so in the preload decision log).
+    """
+    candidates: list[float] = []
     try:
         import psutil  # optional
+
+        candidates.append(float(psutil.virtual_memory().available) / (1024.0 * 1024.0))
     except Exception:
+        pass
+    cgroup_mb = _cgroup_available_mb()
+    if cgroup_mb is not None:
+        candidates.append(cgroup_mb)
+    slurm_mb = _slurm_mem_limit_mb()
+    if slurm_mb is not None:
+        candidates.append(slurm_mb)
+    if not candidates:
         return None
-    try:
-        return float(psutil.virtual_memory().available) / (1024.0 * 1024.0)
-    except Exception:
-        return None
+    return min(candidates)
 
 
 def _estimate_preload_ram_mb(n_rows: int) -> float:
@@ -345,6 +486,11 @@ def _decide_preload(
     if policy == "never":
         return False, "policy=never"
     if policy == "always":
+        if avail_ram_mb is None:
+            return True, (
+                "policy=always (WARNING: unknown RAM budget; the RAM-safety "
+                "veto cannot be evaluated — explicit preload request honoured)"
+            )
         if over_ram:
             return True, (
                 f"policy=always (WARNING: estimated {est_ram_mb:.0f} MB exceeds 60% of "
@@ -360,6 +506,11 @@ def _decide_preload(
         return False, (
             f"policy=auto: estimated {est_ram_mb:.0f} MB > 60% of available "
             f"{avail_ram_mb:.0f} MB (RAM safety veto)"
+        )
+    if avail_ram_mb is None:
+        return False, (
+            "policy=auto: unknown RAM budget; RAM-safety veto is unavailable "
+            "(using HDF5 streaming)"
         )
     return True, (
         f"policy=auto: dataset {dataset_mb:.1f} MB <= auto_preload_mb {auto_preload_mb:.1f} MB"
@@ -1518,9 +1669,9 @@ def _log_data_loading_policy(N, _avail_ram_mb, _est_ram_mb, _policy, _preload_re
     logger.info(f"  auto_preload_mb        : {float(getattr(cfg, 'auto_preload_mb', 2048.0)):.1f} MB")
     logger.info(f"  estimated preload RAM  : {_est_ram_mb:.0f} MB")
     if _avail_ram_mb is not None:
-        logger.info(f"  available system RAM   : {_avail_ram_mb:.0f} MB (psutil)")
+        logger.info(f"  available RAM budget   : {_avail_ram_mb:.0f} MB (tightest detected limit)")
     else:
-        logger.info("  available system RAM   : unknown (psutil not installed; RAM safety check skipped)")
+        logger.info("  available RAM budget   : unknown (preload safety veto unavailable)")
     logger.info(f"  decision               : {'RAM preload' if should_preload else 'HDF5 streaming'}")
     logger.info(f"  reason                 : {_preload_reason}")
 
@@ -2429,6 +2580,18 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
         handlers=[logging.StreamHandler(), logging.FileHandler(layout.train_log)]
     )
 
+    if device.type == "cuda":
+        try:
+            _n_gpu = int(torch.cuda.device_count())
+            if _n_gpu > 1:
+                logger.info(
+                    f"{_n_gpu} CUDA devices are visible but ST-LRPS training uses a single "
+                    f"device ({torch.cuda.get_device_name(device)}); the extra GPUs stay idle. "
+                    "Request one GPU per job (e.g. --gres=gpu:1)."
+                )
+        except Exception:  # pragma: no cover - driver dependent
+            pass
+
     # -----------------------------------------------------------------------
     # Resume resolution (epoch-level). When cfg.resume_from is set, restore
     # model/optimizer/GradNorm/RNG state (below) and continue from the last
@@ -3149,6 +3312,52 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
     )
 
 
+def _stop_signal_list() -> list[int]:
+    """Signals that request a graceful, epoch-level training stop.
+
+    SIGINT (Ctrl+C) and SIGTERM (Slurm walltime/preemption, plain ``kill``)
+    everywhere; SIGUSR1 additionally where it exists (POSIX; the target of
+    ``sbatch --signal=B:USR1@<sec>`` early-warning configurations).
+    """
+    import signal as _signal
+
+    sigs: list[int] = [int(_signal.SIGINT), int(_signal.SIGTERM)]
+    usr1 = getattr(_signal, "SIGUSR1", None)
+    if usr1 is not None:
+        sigs.append(int(usr1))
+    return sigs
+
+
+def _install_stop_signal_handlers(handler: Any) -> dict[int, Any]:
+    """Register ``handler`` for every stop signal; return the replaced handlers.
+
+    Best-effort: registration requires the main thread (``ValueError``
+    otherwise) and a signal may be unsupported on a platform (``OSError``);
+    such signals are skipped and absent from the returned mapping, so training
+    still runs (interruption then falls back to plain ``KeyboardInterrupt``).
+    """
+    import signal as _signal
+
+    orig: dict[int, Any] = {}
+    for sig in _stop_signal_list():
+        try:
+            orig[sig] = _signal.signal(sig, handler)
+        except (ValueError, OSError):  # pragma: no cover - platform/thread dependent
+            continue
+    return orig
+
+
+def _restore_stop_signal_handlers(orig: Mapping[int, Any]) -> None:
+    """Best-effort restore of handlers captured by ``_install_stop_signal_handlers``."""
+    import signal as _signal
+
+    for sig, old in orig.items():
+        try:
+            _signal.signal(sig, old)
+        except Exception:  # pragma: no cover - platform/thread dependent
+            pass
+
+
 def _run_training_loop(session: _TrainingSession) -> None:
     """Execute the Sobolev training loop (phase 11) for a built session.
 
@@ -3341,30 +3550,34 @@ def _run_training_loop(session: _TrainingSession) -> None:
             if _already:
                 logger.info(f"[periodic-eval] already recorded (resume) — will skip: {_already}")
 
-    # Graceful, epoch-level interruption. A single Ctrl+C (SIGINT) sets a flag;
+    # Graceful, epoch-level interruption. The first stop signal sets a flag;
     # the loop finishes the current epoch, saves ckpt_last, marks the manifest
-    # "interrupted", and exits. A second Ctrl+C restores default handling for a
-    # hard stop. Installing a handler requires the main thread; if unavailable
-    # (e.g. tests in a worker thread) we fall back to plain KeyboardInterrupt.
+    # "interrupted", and exits. A second signal restores the original handlers
+    # for a hard stop. Beyond Ctrl+C (SIGINT), Slurm delivers SIGTERM at
+    # walltime/preemption and sites commonly configure `sbatch
+    # --signal=B:USR1@<sec>` as an early warning, so all three take the same
+    # graceful path (see hpc/*.sbatch). Installing a handler requires the main
+    # thread; if unavailable (e.g. tests in a worker thread) we fall back to
+    # plain KeyboardInterrupt.
     import signal as _signal
     _interrupt = {"flag": False}
-    _orig_sigint = None
+    _orig_handlers: dict[int, Any] = {}
 
-    def _on_sigint(_signum, _frame):  # pragma: no cover - signal timing dependent
+    def _on_stop_signal(_signum, _frame):  # pragma: no cover - signal timing dependent
         if _interrupt["flag"]:
-            if _orig_sigint is not None:
-                _signal.signal(_signal.SIGINT, _orig_sigint)
+            _restore_stop_signal_handlers(_orig_handlers)
             raise KeyboardInterrupt
         _interrupt["flag"] = True
+        try:
+            _name = _signal.Signals(_signum).name
+        except ValueError:
+            _name = str(_signum)
         logger.warning(
-            "[interrupt] Stop requested — will finish the current epoch, save, and exit. "
-            "Press Ctrl+C again to force-quit."
+            f"[interrupt] Stop requested ({_name}) — will finish the current epoch, "
+            "save, and exit. Send the signal again to force-quit."
         )
 
-    try:
-        _orig_sigint = _signal.signal(_signal.SIGINT, _on_sigint)
-    except (ValueError, OSError):
-        _orig_sigint = None
+    _orig_handlers = _install_stop_signal_handlers(_on_stop_signal)
 
     with open(log_path, _hist_mode, encoding="utf-8") as logf:
         for epoch in range(start_epoch, cfg.epochs):
@@ -3680,12 +3893,8 @@ def _run_training_loop(session: _TrainingSession) -> None:
                 )
                 break
 
-    # Restore the original SIGINT handler (best-effort).
-    if _orig_sigint is not None:
-        try:
-            _signal.signal(_signal.SIGINT, _orig_sigint)
-        except Exception:  # pragma: no cover
-            pass
+    # Restore the original stop-signal handlers (best-effort).
+    _restore_stop_signal_handlers(_orig_handlers)
 
     _write_training_history_csv(history, layout.history_csv)
     _save_training_plots(history, outdir)

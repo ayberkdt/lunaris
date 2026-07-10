@@ -31,6 +31,12 @@ export LUNARIS_OUTPUT_DIR="${LUNARIS_OUTPUT_DIR:-/scratch/$USER/lunaris_outputs}
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-4}"
 
+# HDF5 >= 1.10 acquires POSIX file locks by default, which parallel filesystems
+# (Lustre, GPFS, some NFS mounts) frequently do not support — reads then fail
+# with "unable to lock file". Lunaris training only ever READS its HDF5 clouds
+# (read-only + SWMR), so disabling locking is safe here. Site override wins.
+export HDF5_USE_FILE_LOCKING="${HDF5_USE_FILE_LOCKING:-FALSE}"
+
 # 3. Load Environment Modules listed in cluster.env (LUNARIS_MODULES), e.g.
 #    "cuda/12.1 cudnn/8.9". No-op when the variable is empty or `module` is
 #    unavailable.

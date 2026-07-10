@@ -10,6 +10,9 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
+# Send SIGTERM 10 minutes before walltime so each training task can finish its
+# current epoch, save ckpt_last, and exit resumable instead of dying mid-epoch.
+#SBATCH --signal=B:TERM@600
 # #SBATCH --partition=gpu
 # #SBATCH --qos=normal
 # Do NOT hard-code an account here; pass `--account=<your_account>` at submit
@@ -19,6 +22,10 @@ set -euo pipefail
 
 # Source the cluster-agnostic environment template (paths, threads, modules).
 source "$(dirname "$0")/env_template.sh"
+
+# This template requests a GPU, so a silent CPU fallback (wrong CUDA module /
+# CPU-only torch wheel) must abort at preflight instead of burning walltime.
+export LUNARIS_REQUIRE_CUDA="${LUNARIS_REQUIRE_CUDA:-1}"
 
 # The scenario JSONL file is the first positional argument; everything after it
 # is forwarded to the launcher as common flags applied to every array task.

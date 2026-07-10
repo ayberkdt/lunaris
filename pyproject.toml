@@ -62,10 +62,14 @@ dependencies = [
 ml = [
   "torch>=2.0,<3",
   "h5py>=3.8,<4",
+  # RAM-preload safety veto: without psutil the trainer cannot see available
+  # memory and silently skips the check (risky on cgroup-limited HPC nodes).
+  "psutil>=5.9,<8",
 ]
 hpc = [
   "torch>=2.0,<3",
   "h5py>=3.8,<4",
+  "psutil>=5.9,<8",
 ]
 # Single Qt binding: both the mission UI and the ST-LRPS studio use PySide6
 # (Phase 3 consolidation; PyQt6 was dropped to remove the dual-binding bug class).
@@ -90,6 +94,7 @@ dev = [
 all = [
   "torch>=2.0,<3",
   "h5py>=3.8,<4",
+  "psutil>=5.9,<8",
   "PySide6>=6.5,<7",
   "pyqtgraph>=0.13,<0.16",
   "PyOpenGL>=3.1,<4",

@@ -657,6 +657,10 @@ class OrbitBenchmarkTab(QWidget):
         self._on_mode_changed()
         self._reset_dashboard()
 
+    def set_run_path(self, path: str) -> None:
+        """Called by RunsBrowserPage to auto-fill the ST-LRPS model dir."""
+        self.st_lrps_dir.setText(path)
+
     # ------------------------------------------------------------------
     # Mode dependence
     # ------------------------------------------------------------------

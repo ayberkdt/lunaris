@@ -1,0 +1,23 @@
+# ST-LRPS strong-model production run (single scenario; array range 0-0).
+#
+# The strong benchmark-candidate profile IS the TrainConfig default (config.py
+# policy: physical radial-decay encoding preset, residual SIREN blocks, 3-band
+# multi-scale SIREN, altitude-balanced + radial/cross + direction losses,
+# hybrid checkpoint metric). This scenario therefore sets NO architecture
+# flags — TrainConfig remains the single source of truth — and only pins the
+# run posture: --run-preset paper (generalization split, deterministic
+# execution, enforced preflight, no AMP/quick shortcuts) and the seed.
+#
+# NOTE: this differs from the A0-A6 ablation ladder on purpose. A6
+# "FullRecommended" uses --model-preset baseline_raw (raw XYZ input) and
+# --direction-loss-weight 0.2 because the ladder isolates loss/architecture
+# components on a fixed raw-input representation; the production profile uses
+# the recommended physical radial-decay encoding and the default direction
+# weight (0.10). See docs/HPC.md.
+#
+# Submit: sbatch --array=0-0 hpc/slurm_train_scenario_array.sbatch <this file> \
+#   --train-data "$TRAIN_DATA" --val-data "$VAL_DATA" \
+#   --test-data "$TEST_DATA" --ood-data "$OOD_DATA" \
+#   --epochs 400 --batch-size 8192
+# Resume after a walltime kill: add --resume to the common flags.
+{"name": "PotentialAutograd_StrongModel_Production_TrainConfigDefaults_PaperPosture_Seed42", "entrypoint": "lunaris-train", "description": "Production strong-model run: TrainConfig defaults (recommended_physical_radial_decay preset, residual blocks, 3-band multi-scale SIREN, altitude-balanced + radial/cross + direction 0.10, hybrid checkpoint metric) under the 'paper' run posture (generalization split, deterministic, enforced preflight, no AMP).", "runtime_model_kind": "potential_autograd", "tags": ["potential_autograd", "production", "strong-model", "paper", "trainconfig-defaults"], "flags": ["--run-preset", "paper", "--seed", "42"]}
