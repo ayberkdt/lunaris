@@ -406,6 +406,16 @@ class LossCurriculum:
 
 class SobolevLoss(nn.Module):
     """Sobolev loss: w_u·MSE(ΔU_scaled) + w_a·MSE(Δa_scaled). Isometric + GradNorm-ready."""
+
+    # Registered buffers (torch's Module.__getattr__ stub returns Tensor | Module;
+    # these annotations pin the concrete buffer type for the type checker).
+    x_mean: torch.Tensor
+    x_scale: torch.Tensor
+    u_mean: torch.Tensor
+    u_scale: torch.Tensor
+    a_mean: torch.Tensor
+    a_scale: torch.Tensor
+
     def __init__(
         self,
         scaler: ScalerPack,
