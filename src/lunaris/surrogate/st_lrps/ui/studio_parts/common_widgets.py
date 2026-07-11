@@ -57,7 +57,6 @@ from typing import Any
 
 from lunaris.common.paths import project_root_from_file
 from lunaris.surrogate.st_lrps.ui.studio_parts.local_primitives import PageHeader
-from lunaris.ui_foundation import DESIGN_TOKENS
 
 from .qt_common import (
     THEME,
@@ -101,6 +100,7 @@ from .qt_common import (
     QWidget,
     pyqtgraph_matches_qt,
     pyqtSignal,
+    repolish,
     with_alpha,
 )
 
@@ -356,10 +356,6 @@ def _scroll_wrap(widget: QWidget) -> QScrollArea:
     area.setWidgetResizable(True)
     area.setFrameShape(QScrollArea.Shape.NoFrame)
     area.setWidget(widget)
-    area.setStyleSheet(
-        "QScrollArea { background: transparent; border: none; }"
-        "QScrollArea > QWidget > QWidget { background: transparent; }"
-    )
     return area
 
 
@@ -462,10 +458,6 @@ class ValidatedPathEdit(QLineEdit):
 
     path_validated = pyqtSignal(str, bool)  # (path, exists)
 
-    _STYLE_VALID = f"border: 1px solid {with_alpha(THEME['success'], 0.7)};"
-    _STYLE_INVALID = f"border: 1px solid {with_alpha(THEME['error'], 0.75)}; background-color: {with_alpha(THEME['error'], 0.08)};"
-    _STYLE_NEUTRAL = ""
-
     def __init__(
         self,
         placeholder: str = "",
@@ -478,15 +470,20 @@ class ValidatedPathEdit(QLineEdit):
             self.setPlaceholderText(placeholder)
         self.textChanged.connect(self._validate)
 
+    def _set_path_state(self, state: str) -> None:
+        """Flip the shared [pathState=...] QSS property (neutral/valid/invalid)."""
+        self.setProperty("pathState", state)
+        repolish(self)
+
     def _validate(self, text: str) -> None:
         path_str = text.strip()
         if not path_str:
-            self.setStyleSheet(self._STYLE_NEUTRAL)
+            self._set_path_state("neutral")
             self.path_validated.emit("", False)
             return
         p = Path(path_str)
         exists = p.is_file() if self._check_file else p.is_dir()
-        self.setStyleSheet(self._STYLE_VALID if exists else self._STYLE_INVALID)
+        self._set_path_state("valid" if exists else "invalid")
         self.path_validated.emit(path_str, exists)
 
 
@@ -499,16 +496,7 @@ class CollapsibleSection(QWidget):
         self._toggle_btn = QPushButton(f"▸  {title}")
         self._toggle_btn.setCheckable(True)
         self._toggle_btn.setChecked(False)
-        self._toggle_btn.setProperty("kind", "ghost")
-        self._toggle_btn.setStyleSheet(
-            f"QPushButton {{ text-align: left; padding: 8px 14px; font-weight: 600; "
-            f"color: {THEME['accent']}; border: 1px solid transparent; border-radius: 8px; "
-            f"background: {with_alpha(THEME['accent'], 0.04)}; }}"
-            f"QPushButton:hover {{ color: {THEME['fg_main']}; background: {with_alpha(THEME['accent'], 0.08)}; "
-            f"border-color: {with_alpha(THEME['accent'], 0.18)}; }}"
-            f"QPushButton:checked {{ color: {THEME['fg_main']}; background: {with_alpha(THEME['accent'], 0.10)}; "
-            f"border-color: {with_alpha(THEME['accent'], 0.22)}; }}"
-        )
+        self._toggle_btn.setObjectName("collapsibleToggle")
         self._toggle_btn.clicked.connect(self._on_toggle)
         self._content = QWidget()
         self._content.setVisible(False)
@@ -546,12 +534,7 @@ class DatasetInfoLabel(QLabel):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWordWrap(True)
-        self.setStyleSheet(
-            f"QLabel {{ color: {THEME['fg_soft']}; font-size: 11px; padding: 3px 10px;"
-            f" background: {with_alpha(THEME['accent'], 0.06)};"
-            f" border-left: 2px solid {with_alpha(THEME['accent'], 0.35)};"
-            f" border-radius: 0 6px 6px 0; }}"
-        )
+        self.setObjectName("datasetInfo")
         self.setVisible(False)
 
     def show_info(self, info: dict[str, Any]) -> None:
@@ -725,32 +708,6 @@ class LiveLossPlot(QWidget):
         self._card.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
-        self._card.setStyleSheet(
-            f"""
-            QFrame#liveLossCard {{
-                background-color: {with_alpha(THEME['bg_card'], 0.96)};
-                border: 1px solid {THEME['border']};
-                border-radius: {DESIGN_TOKENS.radii.section}px;
-            }}
-            QLabel#lossTitle {{
-                color: {THEME['fg_main']};
-                font-size: 14px;
-                font-weight: 700;
-            }}
-            QLabel#lossSubtitle {{
-                color: {THEME['fg_muted']};
-                font-size: 12px;
-            }}
-            QPushButton[plotControl='true'] {{
-                background: {with_alpha(THEME['bg_shell'], 0.5)};
-                border: 1px solid {THEME['border']};
-                border-radius: 4px;
-                color: {THEME['fg_main']};
-                padding: 4px 8px;
-            }}
-            QPushButton[plotControl='true']:hover {{ background: {THEME['border']}; }}
-            """
-        )
         card_layout = QVBoxLayout()
         card_layout.setContentsMargins(16, 14, 16, 16)
         card_layout.setSpacing(12)
@@ -767,7 +724,7 @@ class LiveLossPlot(QWidget):
         title_col.setContentsMargins(0, 0, 0, 0)
         title_col.setSpacing(3)
         title = QLabel("Live Training Monitor")
-        title.setObjectName("lossTitle")
+        title.setObjectName("panelTitle")
         subtitle = QLabel("Training / validation loss  ·  log scale recommended  ·  Ctrl + scroll to zoom")
         subtitle.setObjectName("lossSubtitle")
         title_col.addWidget(title)
@@ -830,7 +787,7 @@ class LiveLossPlot(QWidget):
             "Best metric selects ckpt_best.pt. Hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
         )
         self._help_label.setWordWrap(True)
-        self._help_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
+        self._help_label.setObjectName("fieldHint")
         self._help_label.setToolTip(
             "Best metric is the scalar score used to select ckpt_best.pt. "
             "For hybrid: score = val_base_loss + alpha * val_loss_dir. Lower is better."
@@ -840,7 +797,8 @@ class LiveLossPlot(QWidget):
         # status label (bottom-aligned)
         self._lbl_status = QLabel("Waiting for training…")
         self._lbl_status.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._lbl_status.setStyleSheet(f"color: {THEME['fg_disabled']}; font-size: 11px;")
+        self._lbl_status.setObjectName("fieldHint")
+        self._lbl_status.setProperty("kind", "disabled")
 
         # ----------------------------
         # Plot body
@@ -1028,18 +986,11 @@ class LiveLossPlot(QWidget):
                 box.setSizePolicy(
                     QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding
                 )
-                box.setStyleSheet(
-                    "QFrame#plotCell { background: transparent; border: none; }"
-                )
                 v = QVBoxLayout(box)
                 v.setContentsMargins(0, 0, 0, 0)
                 v.setSpacing(3)
                 lbl = QLabel(title)
-                lbl.setStyleSheet(
-                    f"color: {THEME['fg_soft']}; font-size: 11px; font-weight: 700;"
-                    f" background: transparent; border: none;"
-                    f" padding-left: 4px;"
-                )
+                lbl.setObjectName("plotCellTitle")
                 widget.setMinimumHeight(minh)
                 widget.setMinimumWidth(0)
                 widget.setSizePolicy(
@@ -1083,11 +1034,7 @@ class LiveLossPlot(QWidget):
                 "To install:  pip install pyqtgraph"
             )
             placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            placeholder.setStyleSheet(
-                f"color: {THEME['fg_muted']}; background-color: {with_alpha(THEME['bg_shell'], 0.72)}; "
-                f"border: 1px solid {with_alpha(THEME['border'], 0.12)}; border-radius: 14px; "
-                f"padding: 24px; font-style: italic;"
-            )
+            placeholder.setObjectName("placeholderPane")
             card_layout.addWidget(placeholder)
 
         card_layout.addWidget(self._lbl_status)
@@ -1876,27 +1823,16 @@ class ImageGallery(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self._header = QLabel("Result Plots")
-        self._header.setStyleSheet(
-            f"font-weight: 800; color: {THEME['fg_main']}; font-size: 13px; padding: 2px 2px;"
-        )
+        self._header.setObjectName("valueLabel")
         self._tabs = QTabWidget()
+        self._tabs.setObjectName("galleryTabs")
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.setUsesScrollButtons(True)
-        self._tabs.setStyleSheet(
-            "QTabBar::tab { padding: 5px 10px; font-size: 10px; max-width: 160px; "
-            "white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }"
-            "QTabBar::scroller { width: 22px; }"
-        )
         self._placeholder = QLabel(
             "Plots will appear here when evaluation completes."
         )
         self._placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._placeholder.setStyleSheet(
-            f"QLabel {{ color: {THEME['fg_muted']}; padding: 36px; font-size: 12px;"
-            f" background: {with_alpha(THEME['bg_log'], 0.45)};"
-            f" border: 1px dashed {with_alpha(THEME['border_strong'], 0.16)};"
-            f" border-radius: {DESIGN_TOKENS.radii.shell}px; }}"
-        )
+        self._placeholder.setObjectName("galleryPlaceholder")
         lo = QVBoxLayout()
         lo.setContentsMargins(0, 8, 0, 0)
         lo.setSpacing(8)
@@ -2020,9 +1956,7 @@ class ProcessPane(QWidget):
         self._auto_scroll = QCheckBox("Auto-scroll")
         self._auto_scroll.setChecked(True)
         self._auto_scroll.setToolTip("When enabled, scrolls to the bottom as new lines arrive.")
-        self._auto_scroll.setStyleSheet(
-            f"QCheckBox {{ font-size: 11px; color: {THEME['fg_muted']}; }}"
-        )
+        self._auto_scroll.setObjectName("captionCheck")
 
         self.btn_start = QPushButton("Start")
         self.btn_stop = QPushButton("Stop")
@@ -2054,16 +1988,12 @@ class ProcessPane(QWidget):
         btn_row.addWidget(self.btn_copy)
         btn_row.addWidget(self.btn_clear)
 
-        self.status.setStyleSheet(
-            f"QLabel {{ color: {THEME['fg_soft']}; font-size: 12px; font-weight: 600; padding: 2px 0; }}"
-        )
+        self.status.setObjectName("statusValue")
 
         _log_sep = QFrame()
+        _log_sep.setObjectName("hairline")
         _log_sep.setFrameShape(QFrame.Shape.HLine)
         _log_sep.setFixedHeight(1)
-        _log_sep.setStyleSheet(
-            f"background: {with_alpha(THEME['border_strong'], 0.10)}; border: none; margin: 2px 0;"
-        )
 
         layout = QVBoxLayout()
         layout.setContentsMargins(14, 12, 14, 12)

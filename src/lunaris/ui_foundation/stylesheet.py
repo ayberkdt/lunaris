@@ -550,6 +550,111 @@ def build_app_stylesheet(
             border-color: {with_alpha(theme['error'], 0.50)};
         }}
 
+        /* STUDIO SHARED WIDGETS — path validation, collapsible sections,
+           live-loss monitor card, plot cells and gallery placeholders. */
+        QLabel#fieldHint[kind="disabled"] {{
+            color: {theme['fg_disabled']};
+        }}
+        QLineEdit[pathState="valid"] {{
+            border: 1px solid {with_alpha(theme['success'], 0.70)};
+        }}
+        QLineEdit[pathState="invalid"] {{
+            border: 1px solid {with_alpha(theme['error'], 0.75)};
+            background-color: {with_alpha(theme['error'], 0.08)};
+        }}
+        QPushButton#collapsibleToggle {{
+            text-align: left;
+            padding: 8px 14px;
+            font-weight: {type_tokens.weight_semibold};
+            color: {theme['accent']};
+            border: 1px solid transparent;
+            border-radius: 8px;
+            background: {with_alpha(theme['accent'], 0.04)};
+        }}
+        QPushButton#collapsibleToggle:hover {{
+            color: {theme['fg_main']};
+            background: {with_alpha(theme['accent'], 0.08)};
+            border-color: {with_alpha(theme['accent'], 0.18)};
+        }}
+        QPushButton#collapsibleToggle:checked {{
+            color: {theme['fg_main']};
+            background: {with_alpha(theme['accent'], 0.10)};
+            border-color: {with_alpha(theme['accent'], 0.22)};
+        }}
+        /* Dataset introspection results: accent-edged inline info pill. */
+        QLabel#datasetInfo {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            padding: 3px 10px;
+            background: {with_alpha(theme['accent'], 0.06)};
+            border-left: 2px solid {with_alpha(theme['accent'], 0.35)};
+            border-radius: 0 6px 6px 0;
+        }}
+        QFrame#liveLossCard {{
+            background-color: {with_alpha(theme['bg_card'], 0.96)};
+            border: 1px solid {theme['border']};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QLabel#lossSubtitle {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
+        QPushButton[plotControl="true"] {{
+            background: {with_alpha(theme['bg_shell'], 0.5)};
+            border: 1px solid {theme['border']};
+            border-radius: 4px;
+            color: {theme['fg_main']};
+            padding: 4px 8px;
+        }}
+        QPushButton[plotControl="true"]:hover {{
+            background: {theme['border']};
+        }}
+        QFrame#plotCell {{
+            background: transparent;
+            border: none;
+        }}
+        QLabel#plotCellTitle {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+            padding-left: 4px;
+        }}
+        /* Missing-dependency / empty-content panes. */
+        QLabel#placeholderPane {{
+            color: {theme['fg_muted']};
+            background-color: {with_alpha(theme['bg_shell'], 0.72)};
+            border: 1px solid {with_alpha(theme['border'], 0.12)};
+            border-radius: 14px;
+            padding: 24px;
+            font-style: italic;
+        }}
+        QLabel#galleryPlaceholder {{
+            color: {theme['fg_muted']};
+            padding: 36px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            background: {with_alpha(theme['bg_log'], 0.45)};
+            border: 1px dashed {with_alpha(theme['border_strong'], 0.16)};
+            border-radius: {DESIGN_TOKENS.radii.shell}px;
+        }}
+        /* Result-plot gallery: many narrow tabs with scroll buttons. */
+        QTabWidget#galleryTabs QTabBar::tab {{
+            padding: 5px 10px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            max-width: 160px;
+        }}
+        QTabWidget#galleryTabs QTabBar::scroller {{
+            width: 22px;
+        }}
+        QCheckBox#captionCheck {{
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            color: {theme['fg_muted']};
+        }}
+        QFrame#hairline {{
+            background: {with_alpha(theme['border_strong'], 0.10)};
+            border: none;
+            margin: 2px 0;
+        }}
+
         /* NAVIGATION — flat shell; active = left border + tinted background */
         QListWidget#navDrawer {{
             background: {theme['bg_shell']};
