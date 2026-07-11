@@ -27,6 +27,16 @@ from lunaris.surrogate.runtime.networks import _build_model_from_config
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
+@pytest.fixture(autouse=True)
+def _allow_legacy_artifact(monkeypatch):
+    """These synthetic runs are pre-contract by construction, so they exercise
+    the legacy research loader — which is fail-closed by default and needs the
+    explicit opt-in (default-refusal itself is covered in
+    test_gravity_provider_fallback_policy.py)."""
+    monkeypatch.setenv("LUNARIS_ALLOW_LEGACY_ARTIFACT", "1")
+
+
 def _make_tiny_run(
     tmp_path: Path,
     run_name: str,
