@@ -35,7 +35,9 @@ from lunaris.core.propagation.fixed_step_runner import run_fixed_step_propagatio
 from lunaris.core.propagation.integrators.fixed_step import (
     _integrate_fixed_step,
     _is_fixed_step_method,
+    accel_form_velocity_dependence_violations,
     symplectic_breaks_separability,
+    symplectic_discontinuous_gravity,
     symplectic_nonconservative_gravity,
     symplectic_nonconservative_violations,
 )
@@ -319,6 +321,53 @@ def propagate(
                 "non-conservative forces for a paper/validation run."
             )
         warnings.warn(_msg, RuntimeWarning, stacklevel=2)
+
+    # Every acceleration-form stepper assumes ``a = f(t, r)``; a velocity-
+    # dependent force (1PN relativity) is sampled at a stale velocity. The
+    # symplectic branch above already reports this for VV/Yoshida/PEFRL, but
+    # RKN4 is acceleration-form without being symplectic, so it needs its own
+    # guard or the inconsistency passes silently.
+    _accel_violations = accel_form_velocity_dependence_violations(_method, _flags)
+    if _accel_violations and not symplectic_breaks_separability(_method, _flags):
+        _amsg = (
+            f"Acceleration-form method {str(_method)!r} assumes a = f(t, r), but "
+            f"velocity-dependent force(s) are active: {', '.join(_accel_violations)}. "
+            "Stage accelerations are evaluated with a stale/inconsistent "
+            "intermediate velocity, causing a silent accuracy loss. Prefer RK4 "
+            "or an adaptive method (DOP853/RK45) for velocity-dependent dynamics."
+        )
+        if bool(getattr(cfg, "strict_symplectic", False)):
+            raise ValueError(
+                _amsg + " strict_symplectic=True: refusing to run an acceleration-form "
+                "method with velocity-dependent forces for a paper/validation run."
+            )
+        warnings.warn(_amsg, RuntimeWarning, stacklevel=2)
+
+    # Adaptive-degree SH gravity switches degree at discrete altitude
+    # thresholds, so the field is a discontinuous function of position — the
+    # smooth-Hamiltonian assumption behind the symplectic bounded-drift
+    # argument. Read from the prepared gravity pack (build_rhs above stamped
+    # ``dynamics._prep``); absent/foreign dynamics objects skip the guard.
+    _prep = getattr(dynamics, "_prep", None)
+    _gpack = _prep.get("grav") if isinstance(_prep, dict) else None
+    _adaptive_violations = symplectic_discontinuous_gravity(_method, _gpack)
+    if _adaptive_violations:
+        _dmsg = (
+            f"Symplectic method {str(_method)!r} is active together with "
+            f"{', '.join(_adaptive_violations)}. The bounded-energy-drift "
+            "guarantee of symplectic integrators assumes a smooth Hamiltonian; "
+            "each degree-threshold crossing injects an energy kick, so drift "
+            "may accumulate on orbits that cross thresholds. Use a fixed SH "
+            "degree with symplectic methods, or prefer RK4 or an adaptive "
+            "method (DOP853/RK45) with adaptive degree."
+        )
+        if bool(getattr(cfg, "strict_symplectic", False)):
+            raise ValueError(
+                _dmsg + " strict_symplectic=True: refusing to run a symplectic method "
+                "with a discontinuous (adaptive-degree) gravity field for a "
+                "paper/validation run."
+            )
+        warnings.warn(_dmsg, RuntimeWarning, stacklevel=2)
 
     # -------------------------------------------------------------------------
     # 5) Integrate

@@ -106,6 +106,44 @@ def symplectic_nonconservative_gravity(method: str, gravity_model: Any) -> list[
         return ["non-conservative surrogate gravity (bounded energy drift not guaranteed)"]
     return []
 
+def accel_form_velocity_dependence_violations(method: str, flags: Any) -> list[str]:
+    """Return labels of active velocity-dependent forces under an acceleration-form method.
+
+    Every acceleration-based stepper (symplectic *and* RKN4) assumes
+    ``a = f(t, r)``: stage accelerations are evaluated with the step-start (or a
+    partially updated) velocity. A velocity-dependent force such as 1PN
+    relativity is therefore sampled at a stale/inconsistent velocity — a silent
+    accuracy loss that applies to RKN4 just as much as to the symplectic
+    methods, even though RKN4 carries no symplectic guarantee to void. Empty
+    when ``method`` is not acceleration-form or no velocity-dependent force is
+    active. ``flags`` follows the same duck-typed contract as
+    :func:`symplectic_nonconservative_violations`.
+    """
+    if flags is None or _norm_method(method) not in _ACCEL_METHODS:
+        return []
+    return [
+        label
+        for attr, label, breaks_sep in _SYMPLECTIC_VOIDING_FLAGS
+        if breaks_sep and bool(getattr(flags, attr, False))
+    ]
+
+def symplectic_discontinuous_gravity(method: str, gravity_pack: Any) -> list[str]:
+    """Return labels when adaptive-degree SH gravity voids the symplectic argument.
+
+    Adaptive-degree gravity switches the evaluated SH degree at discrete
+    altitude thresholds, so the acceleration is a *discontinuous* function of
+    position. The bounded-energy-drift argument of a symplectic integrator
+    assumes a smooth Hamiltonian; an orbit crossing a threshold each revolution
+    accumulates energy kicks. Empty when ``method`` is not symplectic or the
+    pack does not enable adaptive degree. ``gravity_pack`` is any object
+    exposing the ``_GravPack.adaptive_enabled`` boolean; ``None`` is safe.
+    """
+    if gravity_pack is None or not _is_symplectic_method(method):
+        return []
+    if bool(getattr(gravity_pack, "adaptive_enabled", False)):
+        return ["adaptive-degree SH gravity (field discontinuous at altitude thresholds)"]
+    return []
+
 def symplectic_breaks_separability(method: str, flags: Any) -> bool:
     """True when a *velocity-dependent* force is active under a symplectic method.
 
@@ -329,7 +367,10 @@ def _integrate_fixed_step(
             y_next = step(tj, y_curr, h)
             t_next = tj + h
 
-            earliest_terminal: tuple[float, int, np.ndarray] | None = None  # (t_event, idx, y_event)
+            # Phase 1: collect every refined crossing in this substep as a
+            # candidate. Nothing is committed yet — a terminal root may
+            # invalidate candidates that land after it.
+            crossings: list[tuple[int, float, np.ndarray, bool]] = []  # (idx, t_event, y_event, terminal)
 
             for i, ev in enumerate(ev_list):
                 g0 = float(g_prev[i])
@@ -369,15 +410,23 @@ def _integrate_fixed_step(
                             "a non-finite time or state."
                         )
 
-                    t_events_acc[i].append(float(t_ev))
-                    y_events_acc[i].append(np.asarray(y_ev, dtype=np.float64))
-
-                    if terminal:
-                        if (earliest_terminal is None) or (t_ev < earliest_terminal[0]):
-                            earliest_terminal = (float(t_ev), i, np.asarray(y_ev, dtype=np.float64))
+                    crossings.append((i, float(t_ev), np.asarray(y_ev, dtype=np.float64), terminal))
 
                 # Update previous value for next substep
                 g_prev[i] = g1
+
+            earliest_terminal: tuple[float, int, np.ndarray] | None = None  # (t_event, idx, y_event)
+            for i, t_ev, y_ev, terminal in crossings:
+                if terminal and ((earliest_terminal is None) or (t_ev < earliest_terminal[0])):
+                    earliest_terminal = (t_ev, i, y_ev)
+
+            # Phase 2: commit only roots at or before the earliest terminal
+            # root (SciPy parity: ``solve_ivp`` discards roots later than the
+            # terminal root, e.g. a periselene hit "after" the impact).
+            for i, t_ev, y_ev, _terminal in crossings:
+                if (earliest_terminal is None) or (t_ev <= earliest_terminal[0]):
+                    t_events_acc[i].append(t_ev)
+                    y_events_acc[i].append(y_ev)
 
             # Terminal event: stop at earliest terminal root in this substep
             if earliest_terminal is not None:
@@ -488,7 +537,9 @@ __all__ = [
     "_SYMPLECTIC_VOIDING_FLAGS",
     "symplectic_nonconservative_violations",
     "symplectic_nonconservative_gravity",
+    "symplectic_discontinuous_gravity",
     "symplectic_breaks_separability",
+    "accel_form_velocity_dependence_violations",
     "_is_fixed_step_method",
     "_fixed_step_requires_6d",
     "_accel_stepper",

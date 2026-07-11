@@ -404,6 +404,62 @@ _terminal_linear_event.direction = 0.0
 _terminal_linear_event._event_role = "impact"
 
 
+def _nonterminal_event_at(x_cross: float):
+    def ev(_t: float, y: np.ndarray) -> float:
+        return float(y[0] - x_cross)
+
+    ev.terminal = False
+    ev.direction = 0.0
+    return ev
+
+
+def test_fixed_step_discards_event_roots_after_terminal() -> None:
+    # Audit F2: with dx/dt = 1, the terminal event fires at t=0.5. A
+    # non-terminal event crossing at t=0.7 lies inside the same substep but
+    # *after* the terminal root, so it must be discarded (SciPy parity);
+    # the t=0.3 crossing (before the terminal root) must be kept.
+    events = [
+        _nonterminal_event_at(0.3),
+        _terminal_linear_event,
+        _nonterminal_event_at(0.7),
+    ]
+    ode_like, impacted, t_imp, _y_imp, stopped, _reason, _t_stop = (
+        fixed_step_module._integrate_fixed_step(
+            _linear_crossing_rhs,
+            np.asarray([0.0, 1.0]),
+            np.zeros(6),
+            max_step=1.0,
+            method="RK4",
+            events=events,
+            R_ref_m=1.0,
+            mu_m3s2=1.0,
+            verbose=False,
+            heartbeat_hours=0.0,
+            stop_file=None,
+            checkpoint_path=None,
+        )
+    )
+    assert impacted and stopped
+    assert t_imp == pytest.approx(0.5, abs=1e-5)
+    fixed_counts = [int(te.size) for te in ode_like.t_events]
+    assert fixed_counts == [1, 1, 0]
+    assert ode_like.t_events[0][0] == pytest.approx(0.3, abs=1e-5)
+    assert ode_like.y_events[2].shape == (0, 6)
+
+    # Mirror the identical scenario through SciPy and require identical counts.
+    from scipy.integrate import solve_ivp
+
+    sol = solve_ivp(
+        _linear_crossing_rhs,
+        (0.0, 1.0),
+        np.zeros(6),
+        events=events,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+    assert [int(te.size) for te in sol.t_events] == fixed_counts
+
+
 def test_fixed_step_event_callback_failure_is_not_silenced() -> None:
     def failing_event(t: float, y: np.ndarray) -> float:
         if t > 0.0:
