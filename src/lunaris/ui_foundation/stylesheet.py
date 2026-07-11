@@ -255,7 +255,8 @@ def build_app_stylesheet(
            settings worth seeing at all times (gravity model, output path). They
            replace the separate status ribbon: an elevated pill on the shell so
            they read as chips, not buttons, and carry a leading icon + value. */
-        QPushButton#headerContextChip {{
+        QPushButton#headerContextChip,
+        QLabel#headerContextChip {{
             background: {theme['bg_card_alt']};
             border: 1px solid {theme['border_soft']};
             border-radius: {DESIGN_TOKENS.radii.pill}px;
@@ -264,6 +265,14 @@ def build_app_stylesheet(
             padding: 4px 12px;
             min-height: {metrics.status_badge_height}px;
             text-align: left;
+        }}
+        /* Informational chips (frame, resolved backend) are QLabels: no hover
+           affordance. A backend that fell back from the requested one is
+           flagged in the warning color; the "(requested ...)" text carries the
+           meaning, color only reinforces it. */
+        QLabel#headerContextChip[kind="warning"] {{
+            color: {theme['warning']};
+            border-color: {theme['warning']};
         }}
         QPushButton#headerContextChip:hover {{
             border-color: {acc_hover_border};

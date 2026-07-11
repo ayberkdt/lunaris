@@ -388,6 +388,38 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_output_status.setMaximumWidth(300)
         h_layout.addWidget(self.lbl_output_status)
 
+        # Working reference frame — informational (not clickable): the engine
+        # propagates in one frame and every number on every page is expressed
+        # in it. The label resolves from the engine SSOT constant; if that
+        # import is unavailable the chip is omitted rather than guessed.
+        self.lbl_frame_status: QtWidgets.QLabel | None = None
+        try:
+            from lunaris.physics.ephemeris import DEFAULT_INERTIAL_FRAME
+        except Exception:
+            DEFAULT_INERTIAL_FRAME = ""
+        if DEFAULT_INERTIAL_FRAME:
+            frame_chip = QtWidgets.QLabel(f"Moon-centered {DEFAULT_INERTIAL_FRAME}")
+            frame_chip.setObjectName("headerContextChip")
+            frame_chip.setToolTip(
+                "Working reference frame: Moon-centered inertial, "
+                f"{DEFAULT_INERTIAL_FRAME} axes. All state vectors and "
+                "orbital elements shown in the app use this frame."
+            )
+            frame_chip.setAccessibleName("Working reference frame")
+            self.lbl_frame_status = frame_chip
+            h_layout.addWidget(frame_chip)
+
+        # Resolved-backend provenance for the most recent completed run.
+        # Hidden until a run that reports backend metadata finishes; on a
+        # requested!=actual fallback it switches to the warning style and
+        # carries the reported reason, so a silent GPU->CPU downgrade is
+        # visible from every page, not only inside the Batch workspace.
+        self.lbl_backend_status = QtWidgets.QLabel("")
+        self.lbl_backend_status.setObjectName("headerContextChip")
+        self.lbl_backend_status.setAccessibleName("Last run backend")
+        self.lbl_backend_status.hide()
+        h_layout.addWidget(self.lbl_backend_status)
+
         h_layout.addStretch(1)
 
         # Progress Bar in Header
@@ -948,6 +980,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._log_separator()
         self._log_message("[BATCH] Starting batch propagation run…", severity="system")
 
+        # A stale backend chip from the previous run must not be readable as
+        # this run's provenance.
+        if getattr(self, "lbl_backend_status", None) is not None:
+            self.lbl_backend_status.hide()
+
         self.batch_process = QtCore.QProcess(self)
         self.batch_process.readyReadStandardOutput.connect(self._on_batch_stdout)
         self.batch_process.readyReadStandardError.connect(self._on_batch_stderr)
@@ -1050,12 +1087,52 @@ class MainWindow(QtWidgets.QMainWindow):
                 metrics=metrics if exit_code == 0 else None,
             )
 
+        if exit_code == 0:
+            self._update_backend_chip(metrics)
+
         try:
             if self.batch_process is not None:
                 self.batch_process.deleteLater()
         except Exception:
             pass
         self.batch_process = None
+
+    def _update_backend_chip(self, metrics: dict) -> None:
+        """
+        Surface the resolved run backend in the header chip row.
+
+        Reads the same run metadata keys the Batch metrics panel uses
+        (``actual_batch_backend`` / ``requested_batch_backend`` /
+        ``fallback_reason``); when no backend was reported the chip stays
+        hidden instead of inventing a value.
+        """
+        chip = getattr(self, "lbl_backend_status", None)
+        if chip is None:
+            return
+        actual = str(
+            metrics.get("actual_batch_backend") or metrics.get("backend") or ""
+        ).strip()
+        if not actual:
+            chip.hide()
+            return
+        requested = str(metrics.get("requested_batch_backend") or "").strip()
+        fell_back = bool(requested) and requested.lower() != actual.lower()
+        if fell_back:
+            reason = str(
+                metrics.get("fallback_reason") or metrics.get("backend_note") or ""
+            ).strip()
+            chip.setText(f"Backend {actual} (requested {requested})")
+            chip.setToolTip(
+                reason or f"Requested {requested} but the run executed on {actual}."
+            )
+            chip.setProperty("kind", "warning")
+        else:
+            chip.setText(f"Backend {actual}")
+            chip.setToolTip("Backend that executed the last completed run.")
+            chip.setProperty("kind", "")
+        chip.style().unpolish(chip)
+        chip.style().polish(chip)
+        chip.show()
 
     # =========================================================================
     # 25. LOG PANEL BUILDER
