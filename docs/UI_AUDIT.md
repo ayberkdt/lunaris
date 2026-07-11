@@ -1,6 +1,6 @@
 # Lunaris Desktop UI Audit
 
-Date: 2026-06-13
+Date: 2026-06-13 (baseline counts updated 2026-07-11)
 
 ## Scope
 
@@ -11,9 +11,14 @@ execution workflow. Scientific behavior and command builders are out of scope.
 
 ## Baseline
 
-- 310 Python `setStyleSheet(...)` call sites under `src/lunaris`.
+- 310 Python `setStyleSheet(...)` call sites under `src/lunaris`
+  (as of 2026-07-11: 50 in the mission studio — mostly `ui_commons`
+  shared infrastructure — and 1 in the ST-LRPS UI, the global-stylesheet
+  application in `qt_common.py`).
 - 408 Python color literals under `src/lunaris`.
-- 121 inline stylesheet call sites under the ST-LRPS UI alone.
+- 121 inline stylesheet call sites under the ST-LRPS UI alone
+  (burned down to 1 across five passes ending 2026-07-11; page styling now
+  resolves through `ui_foundation.stylesheet.build_app_stylesheet` roles).
 - The main mission studio already has a centralized Lunar Graphite stylesheet,
   but page-local styles still override it frequently.
 - ST-LRPS carries a second cyan/violet visual language and a duplicated global
