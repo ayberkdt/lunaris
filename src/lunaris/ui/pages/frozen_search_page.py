@@ -466,7 +466,14 @@ class FrozenSearchPage(QtWidgets.QWidget):
         self.notice_validation.style().unpolish(self.notice_validation)
         self.notice_validation.style().polish(self.notice_validation)
         try:
-            self.txt_command.setPlainText(subprocess.list2cmdline(self.build_command()))
+            command = self.build_command()
+            # Lead with the informative part (module + flags): the interpreter's
+            # absolute path used to wrap over several lines and push the actual
+            # command out of view. The exact interpreter is in the tooltip and
+            # is still what the QProcess launches.
+            preview = subprocess.list2cmdline(["python", *command[1:]])
+            self.txt_command.setPlainText(preview)
+            self.txt_command.setToolTip(f"Interpreter used at launch: {command[0]}")
         except Exception as exc:
             self.txt_command.setPlainText(f"# PREVIEW ERROR\n{exc}")
 
