@@ -203,7 +203,7 @@ def test_expanded_visual_state_restores_splitter_size(main_window) -> None:
         {"log_collapsed": False, "splitter_sizes": [620, 260]},
         main_window=win,
     )
-    app.processEvents()
+    _finish_log_drawer_animation(win, app)
     sizes = win.main_splitter.sizes()
     assert win.log_panel.is_collapsed is False
     assert sizes[1] >= EXPANDED_MIN_HEIGHT

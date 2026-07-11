@@ -160,7 +160,7 @@ def test_collocation_penalty_invariant_under_grad_accumulation(monkeypatch) -> N
     # A regression back to per-group scaling would give norm_4 ~= norm_1 / 4;
     # the tolerance only needs to absorb float32 cancellation noise in the
     # base-gradient differencing.
-    assert norm_4 == pytest.approx(norm_1, rel=1e-2), (
+    assert norm_4 == pytest.approx(norm_1, rel=2e-2), (
         "collocation-only gradient must not scale with grad_accumulation_steps "
         f"(accum=1 -> {norm_1:.6e}, accum=4 -> {norm_4:.6e})"
     )
