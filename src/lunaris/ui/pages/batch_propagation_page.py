@@ -441,6 +441,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         body_layout.addWidget(intro)
 
         self.tbl_backend_compare = DataTable()
+        self.tbl_backend_compare.setAccessibleName("Backend comparison table")
         # Rows carry positional "Copy Command" buttons, so keep row order fixed.
         self.tbl_backend_compare.setSortingEnabled(False)
         self.tbl_backend_compare.setColumnCount(5)

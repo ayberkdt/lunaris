@@ -226,6 +226,7 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         dir_row = QtWidgets.QHBoxLayout()
         self.ent_out_dir = QtWidgets.QLineEdit()
+        self.ent_out_dir.setAccessibleName("Output directory")
         self.ent_out_dir.setPlaceholderText("Select an output directory...")
         dir_row.addWidget(self.ent_out_dir, 1)
 
@@ -259,6 +260,7 @@ class ResultsExportPage(QtWidgets.QWidget):
         downsample_row = QtWidgets.QHBoxLayout()
         downsample_row.addWidget(QtWidgets.QLabel("3D downsample"))
         self.spin_downsample_3d = NoWheelSpinBox()
+        self.spin_downsample_3d.setAccessibleName("3D downsample factor")
         self.spin_downsample_3d.setRange(1, 1000)
         self.spin_downsample_3d.setValue(1)
         self.spin_downsample_3d.setToolTip("1 means full density. Higher values lighten 3D post-processing.")
@@ -498,6 +500,7 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         self.txt_preview = QtWidgets.QPlainTextEdit()
         self.txt_preview.setObjectName("commandPreview")
+        self.txt_preview.setAccessibleName("Execution command preview")
         self.txt_preview.setReadOnly(True)
         self.txt_preview.setFixedHeight(120)
         layout.addWidget(self.txt_preview)
@@ -631,6 +634,7 @@ class ResultsExportPage(QtWidgets.QWidget):
 
         # --- Tree ---
         self.tree_artifacts = QtWidgets.QTreeWidget()
+        self.tree_artifacts.setAccessibleName("Artifact browser file list")
         self.tree_artifacts.setColumnCount(5)
         self.tree_artifacts.setHeaderLabels(["Name", "Type", "Size", "Modified", "Path"])
         self.tree_artifacts.setRootIsDecorated(False)

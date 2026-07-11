@@ -287,6 +287,7 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
 
         self.console = QtWidgets.QPlainTextEdit()
         self.console.setObjectName("logConsole")
+        self.console.setAccessibleName("Execution console log")
         self.console.setReadOnly(True)
         self.console.setMaximumBlockCount(MAX_LOG_LINES)
         self.console.setLineWrapMode(QtWidgets.QPlainTextEdit.NoWrap)

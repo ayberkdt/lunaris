@@ -515,6 +515,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # 1. Navigation Drawer
         self.nav_list = QtWidgets.QListWidget()
         self.nav_list.setObjectName("navDrawer")
+        self.nav_list.setAccessibleName("Workspace navigation")
         self.nav_list.setFixedWidth(DESIGN_TOKENS.layout.nav_width)
         self.nav_list.setMinimumHeight(0)
         self.nav_list.setSizePolicy(

@@ -124,6 +124,9 @@ class FrozenSearchPage(QtWidgets.QWidget):
         )
         form = FormGrid()
         self.ent_out_dir = QtWidgets.QLineEdit(str(self.project_root / "outputs" / "frozen_search" / "ui_run"))
+        # The FormGrid caption labels the row container, not the edit itself,
+        # so the edit needs its own accessible name.
+        self.ent_out_dir.setAccessibleName("Frozen search output directory")
         self.ent_out_dir.setClearButtonEnabled(True)
         browse = QtWidgets.QPushButton("Browse")
         browse.setIcon(get_icon("fa6s.folder-open", THEME["fg_muted"]))
@@ -136,6 +139,7 @@ class FrozenSearchPage(QtWidgets.QWidget):
         form.add_row("Output directory", out_row, hint="Resumable stage files and report JSON are written here.")
 
         self.ent_gravity_file = QtWidgets.QLineEdit("")
+        self.ent_gravity_file.setAccessibleName("Gravity coefficient file")
         self.ent_gravity_file.setClearButtonEnabled(True)
         gravity_browse = QtWidgets.QPushButton("Browse")
         gravity_browse.setIcon(get_icon("fa6s.file", THEME["fg_muted"]))
