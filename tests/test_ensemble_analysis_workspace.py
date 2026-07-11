@@ -36,6 +36,22 @@ def _app() -> QtWidgets.QApplication:
     return app
 
 
+def _wait_until(app: QtWidgets.QApplication, predicate, timeout_s: float = 2.0) -> bool:
+    """Drive the event loop until *predicate* holds or the timeout passes.
+
+    The console drawer now animates open/closed (~200 ms, skipped under
+    reduced motion), so its final geometry is asserted after the slide
+    finishes rather than one processEvents() later.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        app.processEvents()
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return bool(predicate())
+
+
 def test_log_panel_collapse_reduces_splitter_footprint() -> None:
     app = _app()
     win = MainWindow()
@@ -45,19 +61,17 @@ def test_log_panel_collapse_reduces_splitter_footprint() -> None:
 
         if not win.log_panel.is_collapsed:
             win._toggle_log_collapsed()
-            app.processEvents()
+            assert _wait_until(app, lambda: win.log_panel.is_collapsed)
 
-        collapsed_sizes = win.main_splitter.sizes()
-        assert collapsed_sizes[1] <= 60
+        assert _wait_until(app, lambda: win.main_splitter.sizes()[1] <= 60)
         assert win.log_panel.minimumHeight() >= 34
         assert win.log_panel.is_collapsed is True
 
         win._toggle_log_collapsed()
-        app.processEvents()
+        assert _wait_until(app, lambda: not win.log_panel.is_collapsed)
 
-        restored_sizes = win.main_splitter.sizes()
-        assert restored_sizes[1] >= 120
-        assert win.log_panel.minimumHeight() >= 150
+        assert _wait_until(app, lambda: win.main_splitter.sizes()[1] >= 120)
+        assert _wait_until(app, lambda: win.log_panel.minimumHeight() >= 150)
         assert win.log_panel.is_collapsed is False
     finally:
         win.tick_timer.stop()

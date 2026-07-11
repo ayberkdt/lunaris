@@ -900,10 +900,10 @@ class OrbitViz3D(QtWidgets.QWidget):
         # Line of nodes (through the focus, ascending <-> descending).
         self._ensure_line(
             'nodes_line', np.array([desc, asc]),
-            ORBIT_THEME['apoapsis'], 0.5, 1.6,
+            ORBIT_THEME['orbit_node'], 0.5, 1.6,
         )
-        self._update_marker('asc_node_marker', asc, ORBIT_THEME['apoapsis'], r_marker * 0.6)
-        self._update_marker('desc_node_marker', desc, ORBIT_THEME['apoapsis'], r_marker * 0.6)
+        self._update_marker('asc_node_marker', asc, ORBIT_THEME['orbit_node'], r_marker * 0.6)
+        self._update_marker('desc_node_marker', desc, ORBIT_THEME['orbit_node'], r_marker * 0.6)
 
         # Velocity arrow at the spacecraft — line + cone tip in the direction of
         # motion, scaled to the current orbital radius.
@@ -948,9 +948,9 @@ class OrbitViz3D(QtWidgets.QWidget):
         self._ensure_label('apo', np.asarray(apo, float) + _unit(apo) * off,
                            "Apoapsis", ORBIT_THEME['apoapsis'])
         self._ensure_label('asc', np.asarray(asc, float) + h_hat * off,
-                           "AN", ORBIT_THEME['apoapsis'])
+                           "AN", ORBIT_THEME['orbit_node'])
         self._ensure_label('desc', np.asarray(desc, float) - h_hat * off,
-                           "DN", ORBIT_THEME['apoapsis'])
+                           "DN", ORBIT_THEME['orbit_node'])
         self._ensure_label('sc', np.asarray(sc, dtype=float) + v_dir * (arrow_len * 1.15),
                            "S/C", ORBIT_THEME['spacecraft'])
 

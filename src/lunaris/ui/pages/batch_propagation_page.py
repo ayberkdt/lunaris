@@ -414,7 +414,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         # Prominent preview-only notice
         notice = InlineNotice(
-            "⚠  Preview only — commands are copied to clipboard, NOT executed.",
+            "Preview only — commands are copied to clipboard, NOT executed.",
             "warning",
         )
         outer.addWidget(notice)
@@ -1911,11 +1911,11 @@ class BatchPropagationPage(QtWidgets.QWidget):
     def _update_validation(self) -> None:
         ok, errors, warnings = self.validate_page_inputs()
         if not ok:
-            self.lbl_validation.setText("⚠ Errors:\n" + "\n".join(errors))
+            self.lbl_validation.setText("Errors:\n" + "\n".join(errors))
             self.lbl_validation.setProperty("kind", "error")
             self.btn_run_batch.setEnabled(False)
         elif warnings:
-            self.lbl_validation.setText("⚠ Warnings:\n" + "\n".join(warnings))
+            self.lbl_validation.setText("Warnings:\n" + "\n".join(warnings))
             self.lbl_validation.setProperty("kind", "warn")
             self.btn_run_batch.setEnabled(True)
         else:

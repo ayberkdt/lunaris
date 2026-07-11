@@ -29,6 +29,9 @@ adapters.
 
 ## Color Roles
 
+Values below mirror `lunaris.ui_foundation.tokens.ColorTokens`; when they
+disagree, the tokens are authoritative — update this table, never the reverse.
+
 | Role | Token | Value |
 | --- | --- | --- |
 | App canvas | `bg_space` | `#090C12` |
@@ -38,26 +41,39 @@ adapters.
 | Inset/read-only surface | `bg_inset` | `#0C1016` |
 | Input surface | `bg_entry` | `#0E131B` |
 | Console surface | `bg_log` | `#06090E` |
+| Hover surface | `bg_hover` | `#28333F` |
 | Primary text | `fg_main` | `#EEF2F8` |
 | Secondary text | `fg_soft` | `#BCC7D6` |
 | Muted text | `fg_muted` | `#8C99AA` |
 | Disabled text | `fg_disabled` | `#79848F` |
-| Primary accent | `accent` | `#3B86FF` |
+| Text on accent fills | `fg_inverse` | `#04070C` |
+| Links | `fg_link` | `#6FA8FF` |
+| Primary accent | `accent` | `#6AA9FF` |
 | Secondary accent | `secondary` | `#15D6A6` |
-| Success | `success` | `#14D49E` |
+| Tertiary accent (nav section identity) | `tertiary` | `#AE9BFF` |
+| Success | `success` | `#3DD17E` |
 | Warning | `warning` | `#F5B43C` |
 | Error | `error` | `#FF5D6C` |
-| Critical | `critical` | `#FF7088` |
+| Critical | `critical` | `#FF3355` |
 | Information | `info` | `#4A9DFF` |
+| Component border (WCAG 1.4.11) | `border` | `#6A7686` |
+| Quiet separator | `border_soft` | `#1F2833` |
 
 There are no decorative gradients. Semantic colors are used for statuses,
-not for generic card decoration.
+not for generic card decoration. The severity ladder is ordered by relative
+luminance (warning Y 0.52 > error 0.30 > critical 0.24) so it survives
+grayscale; status meaning always carries a text or icon channel as well,
+because red/green hues alone collapse under deuteranopia.
 
 ## Type Hierarchy
 
+A ~1.2 modular scale; each tier differs by size, not only weight, so the
+hierarchy holds when desaturated or rendered in grayscale.
+
 - Application title: 15 pt, semibold.
-- Page title: 18 pt, bold.
-- Section title: 11 pt, semibold.
+- Page title: 20 pt, bold.
+- Panel/card title (subsection): 14 pt, semibold.
+- Section title: 12 pt, semibold.
 - Body/control text: 10 pt.
 - Helper text and metadata: 9 pt.
 - Console: 9.5 pt monospace.
@@ -66,7 +82,7 @@ not for generic card decoration.
 
 - Shell margin: 16 px; shell gap: 12 px.
 - Navigation width: 216 px wide, 188 px compact.
-- Readable page width: 1180 px maximum, centered when extra space exists.
+- Readable page width: 1440 px maximum, centered when extra space exists.
 - Page vertical gap: 16 px.
 - Section padding: 16 px.
 - Form rows align labels and fields; units are separate muted labels.

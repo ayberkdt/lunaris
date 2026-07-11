@@ -601,8 +601,12 @@ class TrainingQueue(QWidget):
     def _refresh_list(self) -> None:
         self._list.clear()
         for i, job in enumerate(self._queue):
-            icon = {"Pending": "⏳", "Running…": "▶️", "Stopped": "⏹️"}.get(
-                job["status"], "✅" if "Completed" in job["status"] else "❌"
+            # Monochrome geometric glyphs instead of color emoji: they inherit
+            # the item's themed foreground color (emoji ignore setForeground)
+            # and render identically across platforms. The status word at the
+            # end of the row keeps the meaning color-independent.
+            icon = {"Pending": "○", "Running…": "▶", "Stopped": "■"}.get(
+                job["status"], "●" if "Completed" in job["status"] else "✕"
             )
             text = f"{icon}  [{i + 1}] {job['label']}  —  {job['status']}"
             item = QListWidgetItem(text)
@@ -2814,16 +2818,19 @@ class STLRPSTrainTab(QWidget):
     # Preset System
     # -----------------------------------------------------------------
     def _refresh_preset_list(self) -> None:
+        # Built-in vs user presets are told apart by an explicit text suffix
+        # (plus the separator), not by emoji prefixes: color-emoji glyphs are
+        # font/platform dependent and ignore the theme's foreground color.
         self._preset_combo.clear()
         for name in _BUILTIN_PRESETS:
             if str(name).lower().startswith("quick"):
                 continue
-            self._preset_combo.addItem(f"⚙  {name}", name)
+            self._preset_combo.addItem(str(name), name)
         user = _load_user_presets()
         if user:
             self._preset_combo.insertSeparator(self._preset_combo.count())
             for name in user:
-                self._preset_combo.addItem(f"👤  {name}", name)
+                self._preset_combo.addItem(f"{name} (user)", name)
 
     def _current_preset_key(self) -> str:
         return self._preset_combo.currentData() or ""

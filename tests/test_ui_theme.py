@@ -80,6 +80,34 @@ def test_log_colors_has_required_keys(key: str) -> None:
     assert key in LOG_COLORS, f"LOG_COLORS is missing required key {key!r}"
 
 
+def test_ui_theme_doc_palette_matches_tokens() -> None:
+    """The UI_THEME.md palette table must mirror the live tokens exactly.
+
+    The docs drifted once (accent/success/critical and the type scale were a
+    generation behind the tokens); this guard makes the drift a test failure
+    instead of a silent lie. Every `token`/`#hex` row in the table is compared
+    against THEME, and every solid-color THEME token must appear in the table.
+    """
+    import re
+
+    doc = (REPO_ROOT / "docs" / "UI_THEME.md").read_text(encoding="utf-8")
+    rows = re.findall(r"^\|\s*`(\w+)`\s*\|\s*`(#[0-9A-Fa-f]{6})`\s*\|", doc, re.MULTILINE)
+    assert rows, "UI_THEME.md palette table not found or empty"
+    for token, value in rows:
+        assert token in THEME, f"UI_THEME.md documents unknown token {token!r}"
+        assert THEME[token].lower() == value.lower(), (
+            f"UI_THEME.md palette drift: {token} documented as {value}, "
+            f"tokens say {THEME[token]}"
+        )
+    documented = {token for token, _ in rows}
+    solid = {
+        name for name, value in THEME.items()
+        if isinstance(value, str) and value.startswith("#")
+    }
+    missing = solid - documented
+    assert not missing, f"UI_THEME.md palette table is missing tokens: {sorted(missing)}"
+
+
 def test_theme_accent_is_lunar_graphite_blue() -> None:
     # The Lunar Graphite primary accent is a restrained orbital blue, not the old
     # ion-cyan. It was refined to the lighter, calmer #6AA9FF (less edge vibration

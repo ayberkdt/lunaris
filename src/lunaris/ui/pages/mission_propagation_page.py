@@ -121,7 +121,7 @@ class SolverSettingsDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setSpacing(16)
 
         header = QtWidgets.QLabel("Numerical Solver Settings")
         header.setObjectName("dialogTitle")
@@ -138,7 +138,7 @@ class SolverSettingsDialog(QtWidgets.QDialog):
         tol_frame = QtWidgets.QFrame()
         tol_frame.setObjectName("section")
         tol_layout = QtWidgets.QVBoxLayout(tol_frame)
-        tol_layout.setContentsMargins(15, 15, 15, 15)
+        tol_layout.setContentsMargins(16, 16, 16, 16)
         tol_layout.setSpacing(12)
 
         rtol_row = QtWidgets.QHBoxLayout()
@@ -217,7 +217,7 @@ class SpacecraftBusDialog(QtWidgets.QDialog):
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setSpacing(16)
 
         header = QtWidgets.QLabel("Spacecraft Physical Properties")
         header.setObjectName("dialogTitle")
@@ -231,7 +231,7 @@ class SpacecraftBusDialog(QtWidgets.QDialog):
         prop_frame = QtWidgets.QFrame()
         prop_frame.setObjectName("section")
         prop_layout = QtWidgets.QGridLayout(prop_frame)
-        prop_layout.setContentsMargins(15, 15, 15, 15)
+        prop_layout.setContentsMargins(16, 16, 16, 16)
         prop_layout.setVerticalSpacing(12)
         prop_layout.setHorizontalSpacing(20)
 

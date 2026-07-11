@@ -27,6 +27,7 @@ ORBIT_THEME = {
     "spacecraft": DESIGN_TOKENS.visualization.spacecraft,
     "periapsis": DESIGN_TOKENS.visualization.periapsis,
     "apoapsis": DESIGN_TOKENS.visualization.apoapsis,
+    "orbit_node": DESIGN_TOKENS.visualization.orbit_node,
     "orbit_plane": DESIGN_TOKENS.visualization.orbit_plane,
     "axis_x": DESIGN_TOKENS.visualization.axis_x,
     "axis_y": DESIGN_TOKENS.visualization.axis_y,

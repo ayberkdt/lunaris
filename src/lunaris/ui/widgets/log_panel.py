@@ -139,6 +139,7 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
 
         self._collapsed = False
         self._paused = False
+        self._toggle_handler: Callable[[], None] | None = None
         self._show_timestamps = True
         self._status_revert_timer: QtCore.QTimer | None = None
         self._severity_counts = {"warning": 0, "error": 0}
@@ -174,7 +175,7 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
         self.btn_collapse.setFixedSize(28, 28)
         self.btn_collapse.setAccessibleName("Collapse execution console")
         self.btn_collapse.setToolTip("Collapse console")
-        self.btn_collapse.clicked.connect(self.toggle_collapsed)
+        self.btn_collapse.clicked.connect(self._on_collapse_clicked)
         hl.addWidget(self.btn_collapse)
 
         self.lbl_title = QtWidgets.QLabel("Execution Console")
@@ -413,6 +414,21 @@ class ExecutionConsoleDock(QtWidgets.QWidget):
 
     def toggle_collapsed(self) -> None:
         self.set_collapsed(not self._collapsed)
+
+    def set_toggle_handler(self, handler: Callable[[], None] | None) -> None:
+        """Route the header collapse button through *handler*.
+
+        A host that animates the surrounding splitter registers its own toggle
+        here so the header button and any external shortcut share one code
+        path; without a handler the button toggles the widget directly.
+        """
+        self._toggle_handler = handler
+
+    def _on_collapse_clicked(self) -> None:
+        if self._toggle_handler is not None:
+            self._toggle_handler()
+        else:
+            self.toggle_collapsed()
 
     def focus_search(self) -> None:
         """Expand the console (if collapsed) and move keyboard focus to its search field.
