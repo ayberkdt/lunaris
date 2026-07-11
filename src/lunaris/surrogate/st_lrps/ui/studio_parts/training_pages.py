@@ -92,7 +92,7 @@ from .qt_common import (
     QWidget,
     pyqtgraph_matches_qt,
     pyqtSignal,
-    with_alpha,
+    repolish,
 )
 
 # pyqtgraph — optional, graceful fallback
@@ -404,12 +404,10 @@ class TrainingQueue(QWidget):
 
         # --- Header ---
         lbl = QLabel("Training Queue")
-        lbl.setStyleSheet(
-            f"font-weight: 600; color: {THEME['accent_hov']}; font-size: 13px; padding: 2px 0;"
-        )
+        lbl.setObjectName("accentGroupLabel")
 
         self._status_lbl = QLabel("")
-        self._status_lbl.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
+        self._status_lbl.setObjectName("fieldHint")
 
         # --- List ---
         self._list = _ReorderableQueueList()
@@ -731,9 +729,7 @@ class STLRPSTrainTab(QWidget):
         preset_bar.setContentsMargins(4, 0, 4, 0)
         preset_bar.setSpacing(8)
         preset_lbl = QLabel("Profile:")
-        preset_lbl.setStyleSheet(
-            f"font-weight: 600; color: {THEME['fg_soft']}; font-size: 13px;"
-        )
+        preset_lbl.setObjectName("statusValue")
         preset_bar.addWidget(preset_lbl)
         preset_bar.addWidget(self._preset_combo, 1)
         preset_bar.addWidget(btn_load_preset)
@@ -755,9 +751,7 @@ class STLRPSTrainTab(QWidget):
         )
         self.workflow_mode.currentIndexChanged.connect(self._on_workflow_mode_changed)
         wf_lbl = QLabel("Workflow:")
-        wf_lbl.setStyleSheet(
-            f"font-weight: 600; color: {THEME['fg_soft']}; font-size: 13px;"
-        )
+        wf_lbl.setObjectName("statusValue")
         workflow_bar = QHBoxLayout()
         workflow_bar.setContentsMargins(4, 2, 4, 2)
         workflow_bar.setSpacing(8)
@@ -767,11 +761,7 @@ class STLRPSTrainTab(QWidget):
         # Readiness checklist (compact, shown above Start)
         self._checklist_label = QLabel("")
         self._checklist_label.setWordWrap(True)
-        self._checklist_label.setStyleSheet(
-            f"QLabel {{ font-size: 11px; color: {THEME['fg_muted']}; "
-            f"background: {with_alpha(THEME['bg_inset'], 0.70)}; "
-            "border-radius: 6px; padding: 4px 8px; }"
-        )
+        self._checklist_label.setObjectName("insetHint")
         self._checklist_label.setVisible(False)
         self._launch_badge = StudioStatusBadge("Checking", "info")
         self._launch_summary = QLabel("Readiness checks will appear here.")
@@ -779,9 +769,8 @@ class STLRPSTrainTab(QWidget):
         self._launch_summary.setWordWrap(True)
         self._launch_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._launch_summary.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self._launch_summary.setStyleSheet(
-            f"color: {THEME['fg_soft']}; font-size: 11px;"
-        )
+        self._launch_summary.setObjectName("fieldHint")
+        self._launch_summary.setProperty("kind", "soft")
 
         # =====================================================================
         # GROUP 1: Data & I/O
@@ -902,7 +891,7 @@ class STLRPSTrainTab(QWidget):
         self.val_ratio.setToolTip("Validation fraction in single-dataset mode. 0.1 -> 10% val, 90% train.")
 
         self._suite_manifest_label = QLabel("(no suite applied)")
-        self._suite_manifest_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
+        self._suite_manifest_label.setObjectName("fieldHint")
         self._suite_manifest_label.setWordWrap(True)
 
         form_data.addRow("Dataset Mode", self.dataset_mode)
@@ -960,7 +949,7 @@ class STLRPSTrainTab(QWidget):
             "training resumes from the last completed checkpoint."
         )
         resume_help.setWordWrap(True)
-        resume_help.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
+        resume_help.setObjectName("fieldHint")
 
         form_resume.addRow(self.resume_enabled)
         form_resume.addRow("Resume From", resume_path_widget)
@@ -1081,7 +1070,8 @@ class STLRPSTrainTab(QWidget):
         )
         self.fourier_info = QLabel("SIREN and Fourier/RFF are mutually exclusive.")
         self.fourier_info.setWordWrap(True)
-        self.fourier_info.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
+        self.fourier_info.setObjectName("fieldHint")
+        self.fourier_info.setProperty("kind", "warning")
         self.fourier_n = QSpinBox()
         self.fourier_n.setRange(16, 4096)
         self.fourier_n.setValue(256)
@@ -1407,7 +1397,8 @@ class STLRPSTrainTab(QWidget):
             "This computes second derivatives and can be expensive. Keep subset size small."
         )
         lap_warn.setWordWrap(True)
-        lap_warn.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
+        lap_warn.setObjectName("fieldHint")
+        lap_warn.setProperty("kind", "warning")
         self.laplacian_weight = QDoubleSpinBox()
         self.laplacian_weight.setDecimals(10)
         self.laplacian_weight.setRange(0.0, 1.0)
@@ -1591,13 +1582,7 @@ class STLRPSTrainTab(QWidget):
         self.max_train_batches.setVisible(False)
         self.max_val_batches.setVisible(False)
         _adv_sep = QLabel("  PINN Architecture")
-        _adv_sep.setStyleSheet(
-            f"color: {THEME['accent_hov']}; font-size: 11px; font-weight: 600;"
-            " padding: 4px 10px; margin-top: 4px;"
-            f" background: {with_alpha(THEME['accent'], 0.08)};"
-            f" border-left: 2px solid {with_alpha(THEME['accent'], 0.40)};"
-            " border-radius: 0 6px 6px 0;"
-        )
+        _adv_sep.setObjectName("accentGroupBar")
         form_adv.addRow(_adv_sep)
         form_adv.addRow(self.use_residual_blocks)
         form_adv.addRow("Frequency Band Count (n_bands)", self.n_bands)
@@ -1643,7 +1628,8 @@ class STLRPSTrainTab(QWidget):
 
         self.model_preset_note = QLabel("")
         self.model_preset_note.setWordWrap(True)
-        self.model_preset_note.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
+        self.model_preset_note.setObjectName("fieldHint")
+        self.model_preset_note.setProperty("kind", "warning")
 
         self.use_radial_separation = QCheckBox("Radial separation encoding [r, ux, uy, uz]")
         self.use_radial_decay_encoding = QCheckBox("Radial decay encoding (scaled inverse-radius)")
@@ -1771,7 +1757,7 @@ class STLRPSTrainTab(QWidget):
             "best-checkpoint selection. On resume, already-completed evaluations are skipped."
         )
         periodic_help.setWordWrap(True)
-        periodic_help.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
+        periodic_help.setObjectName("fieldHint")
 
         form_periodic.addRow(self.periodic_eval_enabled)
         form_periodic.addRow("Mode", self.periodic_eval_mode)
@@ -1826,7 +1812,8 @@ class STLRPSTrainTab(QWidget):
         )
         self.command_warning = QLabel("")
         self.command_warning.setWordWrap(True)
-        self.command_warning.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
+        self.command_warning.setObjectName("fieldHint")
+        self.command_warning.setProperty("kind", "warning")
 
         for grp in (grp_data, grp_arch, grp_optim, grp_phys):
             _tune_inputs(grp)
@@ -1929,11 +1916,9 @@ class STLRPSTrainTab(QWidget):
         saved_profiles_l.setContentsMargins(16, 12, 16, 12)
         saved_profiles_l.setSpacing(8)
         _profiles_heading = QLabel("Saved Profiles")
-        _profiles_heading.setStyleSheet(
-            f"font-weight: 700; color: {THEME['fg_main']}; font-size: 13px;"
-        )
+        _profiles_heading.setObjectName("panelTitle")
         _profiles_hint = QLabel("Load a saved hyperparameter set, or save the current configuration.")
-        _profiles_hint.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
+        _profiles_hint.setObjectName("fieldHint")
         saved_profiles_l.addWidget(_profiles_heading)
         saved_profiles_l.addLayout(preset_bar)
         saved_profiles_l.addWidget(_profiles_hint)
@@ -1956,11 +1941,9 @@ class STLRPSTrainTab(QWidget):
         output_mode_box = QHBoxLayout()
         output_mode_box.setSpacing(6)
         out_mode_lbl = QLabel("Output:")
-        out_mode_lbl.setStyleSheet(
-            f"font-weight: 600; color: {THEME['fg_muted']}; font-size: 13px;"
-        )
+        out_mode_lbl.setObjectName("statusLabel")
         self._output_mode_short = QLabel("auto")
-        self._output_mode_short.setStyleSheet(f"color: {THEME['fg_soft']}; font-size: 13px;")
+        self._output_mode_short.setObjectName("statusValue")
         output_mode_box.addWidget(out_mode_lbl)
         output_mode_box.addWidget(self._output_mode_short)
 
@@ -2030,7 +2013,7 @@ class STLRPSTrainTab(QWidget):
 
         extra_row_layout = QHBoxLayout()
         extra_lbl = QLabel("Extra CLI Arguments:")
-        extra_lbl.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 12px;")
+        extra_lbl.setObjectName("fieldLabel")
         extra_row_layout.addWidget(extra_lbl)
         extra_row_layout.addWidget(self.extra_args, 1)
 
@@ -2468,13 +2451,6 @@ class STLRPSTrainTab(QWidget):
         working, and adds secondary/ghost actions next to them."""
         bar = QFrame()
         bar.setObjectName("trainRunBar")
-        bar.setStyleSheet(
-            f"QFrame#trainRunBar {{"
-            f"  background: {with_alpha(THEME['bg_card'], 0.88)};"
-            f"  border: 1px solid {with_alpha(THEME['accent'], 0.22)};"
-            f"  border-radius: 10px;"
-            f"}}"
-        )
 
         # Flag a user-requested stop so the finish hook can show INTERRUPTED.
         self.runner.btn_stop.clicked.connect(
@@ -2535,9 +2511,7 @@ class STLRPSTrainTab(QWidget):
 
         # Run/output info row.
         self._run_dir_label = QLabel(f"Output: {TRAINING_OUTPUT_ROOT}/st_lrps_train_<timestamp>")
-        self._run_dir_label.setStyleSheet(
-            f"color: {THEME['fg_muted']}; font-size: 11px;"
-        )
+        self._run_dir_label.setObjectName("fieldHint")
         self._run_dir_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
@@ -2547,9 +2521,8 @@ class STLRPSTrainTab(QWidget):
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
         self._workflow_label = QLabel("")
-        self._workflow_label.setStyleSheet(
-            f"color: {THEME['accent']}; font-size: 11px; font-weight: 600;"
-        )
+        self._workflow_label.setObjectName("fieldHint")
+        self._workflow_label.setProperty("kind", "accent")
         info_row = QHBoxLayout()
         info_row.setContentsMargins(2, 0, 2, 0)
         info_row.setSpacing(12)
@@ -3124,12 +3097,13 @@ class STLRPSTrainTab(QWidget):
             self.applied_suite_manifest_path = str(cfg["suite_manifest"] or "")
             if self.applied_suite_manifest_path:
                 self._suite_manifest_label.setText(self.applied_suite_manifest_path)
-                self._suite_manifest_label.setStyleSheet(f"color: {THEME['success']}; font-size: 10px;")
+                self._suite_manifest_label.setProperty("kind", "success")
                 if not self.dataset_suite_dir.text().strip():
                     self.dataset_suite_dir.setText(str(Path(self.applied_suite_manifest_path).parent))
             else:
                 self._suite_manifest_label.setText("(no suite applied)")
-                self._suite_manifest_label.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 10px;")
+                self._suite_manifest_label.setProperty("kind", "")
+            repolish(self._suite_manifest_label)
         # Periodic evaluation (monitoring only) — backward compatible: old profiles
         # without these keys keep the current (disabled) widget values.
         for _pk, _spin in (
@@ -3361,11 +3335,12 @@ class STLRPSTrainTab(QWidget):
         if manifest_path.exists():
             self.applied_suite_manifest_path = str(manifest_path.resolve())
             self._suite_manifest_label.setText(self.applied_suite_manifest_path)
-            self._suite_manifest_label.setStyleSheet(f"color: {THEME['success']}; font-size: 10px;")
+            self._suite_manifest_label.setProperty("kind", "success")
         else:
             self.applied_suite_manifest_path = ""
             self._suite_manifest_label.setText(f"(folder scan: {suite_dir})")
-            self._suite_manifest_label.setStyleSheet(f"color: {THEME['info']}; font-size: 10px;")
+            self._suite_manifest_label.setProperty("kind", "info")
+        repolish(self._suite_manifest_label)
         self._suite_manifest_label.setToolTip(
             f"Source: {source}\nTrain: {train_path}\nValidation: {val_path}\n"
             f"Test: {test_path or '(not selected)'}\nOOD: {ood_path or '(not selected)'}"

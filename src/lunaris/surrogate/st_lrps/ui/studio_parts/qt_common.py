@@ -97,6 +97,13 @@ class NoScrollComboBox(QComboBox):
         event.ignore()
 
 
+def repolish(widget) -> None:
+    """Re-evaluate a widget's dynamic QSS properties after a state change."""
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+
+
 def apply_premium_dark_theme(app: QApplication) -> None:
     """Apply the shared Lunaris palette and global stylesheet."""
     # Same font pipeline as Mission Studio (registers platform font files, so
@@ -192,5 +199,6 @@ __all__ = [
     "build_app_stylesheet",
     "pyqtSignal",
     "pyqtgraph_matches_qt",
+    "repolish",
     "with_alpha",
 ]

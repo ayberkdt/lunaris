@@ -49,7 +49,6 @@ from pathlib import Path
 from lunaris.common.paths import project_root_from_file
 
 from .qt_common import (
-    THEME,
     QCheckBox,
     QComboBox,
     QDesktopServices,
@@ -308,7 +307,8 @@ class STLRPSProfilingTab(QWidget):
         )
         self.command_warning = QLabel("")
         self.command_warning.setWordWrap(True)
-        self.command_warning.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
+        self.command_warning.setObjectName("fieldHint")
+        self.command_warning.setProperty("kind", "warning")
         btn_preview = QPushButton("Preview Command")
         btn_preview.clicked.connect(self._refresh_profile_preview)
         btn_copy = QPushButton("Copy Command")
@@ -775,7 +775,7 @@ class ModelReportPanel(QWidget):
         super().__init__(parent)
 
         title = QLabel("Model Report")
-        title.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {THEME['fg_main']};")
+        title.setObjectName("panelTitle")
 
         self.run_edit = ValidatedPathEdit(
             placeholder="Select a trained run directory", check_file=False

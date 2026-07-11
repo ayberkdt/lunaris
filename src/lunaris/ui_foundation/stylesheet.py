@@ -310,6 +310,62 @@ def build_app_stylesheet(
             color: {theme['fg_muted']};
             font-size: {type_tokens.size_caption_pt:g}pt;
         }}
+        /* Hint variants: state-colored inline guidance (validation warnings,
+           applied-manifest confirmations). Text always carries the meaning;
+           color only reinforces it. */
+        QLabel#fieldHint[kind="warning"] {{
+            color: {theme['warning']};
+        }}
+        QLabel#fieldHint[kind="success"] {{
+            color: {theme['success']};
+        }}
+        QLabel#fieldHint[kind="info"] {{
+            color: {theme['info']};
+        }}
+        QLabel#fieldHint[kind="soft"] {{
+            color: {theme['fg_soft']};
+        }}
+        QLabel#fieldHint[kind="accent"] {{
+            color: {theme['accent']};
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        /* Soft inset note: multi-line guidance rendered on a recessed pill
+           (readiness checklists, generation summaries). */
+        QLabel#insetHint {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            background: {with_alpha(theme['bg_inset'], 0.70)};
+            border-radius: 6px;
+            padding: 4px 8px;
+        }}
+        /* Small in-card group heading with the accent tint (used by the
+           studio's queue/architecture separators). */
+        QLabel#accentGroupLabel {{
+            color: {theme['accent_hov']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+            padding: 4px 0;
+        }}
+        /* Always-visible run control bar (studio training pages): elevated
+           card tint with a faint accent outline so the run controls read as
+           one unit above the log. */
+        QFrame#trainRunBar {{
+            background: {with_alpha(theme['bg_card'], 0.88)};
+            border: 1px solid {with_alpha(theme['accent'], 0.22)};
+            border-radius: 10px;
+        }}
+        /* Same heading rendered as a tinted separator bar with an accent
+           left edge (in-form group divider). */
+        QLabel#accentGroupBar {{
+            color: {theme['accent_hov']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+            padding: 4px 10px;
+            margin-top: 4px;
+            background: {with_alpha(theme['accent'], 0.08)};
+            border-left: 2px solid {with_alpha(theme['accent'], 0.40)};
+            border-radius: 0 6px 6px 0;
+        }}
         QLabel#panelTitle {{
             color: {theme['fg_main']};
             font-size: {type_tokens.size_subsection_pt:g}pt;
