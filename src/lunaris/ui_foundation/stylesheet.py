@@ -411,6 +411,145 @@ def build_app_stylesheet(
             font-weight: 600;
         }}
 
+        /* STUDIO RUN DASHBOARD — translucent monitor cards, slim progress
+           bars, run-state pill and pipeline chips (benchmark/monitor pages).
+           Text always carries the state; color only reinforces it. */
+        QFrame#dashCard {{
+            background: {with_alpha(theme['bg_card'], 0.72)};
+            border: 1px solid {with_alpha(theme['border_soft'], 0.90)};
+            border-radius: {DESIGN_TOKENS.radii.section}px;
+        }}
+        QLabel#dashCaption {{
+            color: {theme['fg_muted']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        QLabel#dashValue {{
+            color: {theme['fg_main']};
+            font-size: {type_tokens.size_body_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QProgressBar#slimBar {{
+            background: {with_alpha(theme['bg_log'], 0.85)};
+            border: 1px solid {with_alpha(theme['border_strong'], 0.18)};
+            border-radius: 5px;
+        }}
+        QProgressBar#slimBar::chunk {{
+            border-radius: 5px;
+            background: {theme['accent']};
+        }}
+        QProgressBar#slimBar[kind="success"]::chunk {{
+            background: {theme['success']};
+        }}
+        QLabel#dashBadge {{
+            color: {theme['fg_soft']};
+            background: {with_alpha(theme['fg_soft'], 0.12)};
+            border-radius: 9px;
+            padding: 3px 12px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#dashBadge[kind="running"] {{
+            color: {theme['warning']};
+            background: {with_alpha(theme['warning'], 0.16)};
+        }}
+        QLabel#dashBadge[kind="completed"] {{
+            color: {theme['success']};
+            background: {with_alpha(theme['success'], 0.16)};
+        }}
+        QLabel#dashBadge[kind="failed"] {{
+            color: {theme['error']};
+            background: {with_alpha(theme['error'], 0.18)};
+        }}
+        /* Pipeline chip: the frame tint and the status-label color move
+           together through the same "kind" property. */
+        QFrame#pipelineChip {{
+            background: {with_alpha(theme['fg_soft'], 0.10)};
+            border: 1px solid {with_alpha(theme['fg_soft'], 0.30)};
+            border-radius: 8px;
+        }}
+        QFrame#pipelineChip QLabel {{
+            background: transparent;
+            border: none;
+        }}
+        QLabel#pipelineChipName {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_bold};
+        }}
+        QLabel#pipelineChipStatus {{
+            color: {theme['fg_soft']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        QFrame#pipelineChip[kind="pending"] {{
+            background: {with_alpha(theme['fg_muted'], 0.10)};
+            border-color: {with_alpha(theme['fg_muted'], 0.28)};
+        }}
+        QLabel#pipelineChipStatus[kind="pending"] {{
+            color: {theme['fg_muted']};
+        }}
+        QFrame#pipelineChip[kind="running"] {{
+            background: {with_alpha(theme['warning'], 0.16)};
+            border-color: {with_alpha(theme['warning'], 0.60)};
+        }}
+        QLabel#pipelineChipStatus[kind="running"] {{
+            color: {theme['warning']};
+        }}
+        QFrame#pipelineChip[kind="completed"] {{
+            background: {with_alpha(theme['success'], 0.16)};
+            border-color: {with_alpha(theme['success'], 0.55)};
+        }}
+        QLabel#pipelineChipStatus[kind="completed"] {{
+            color: {theme['success']};
+        }}
+        QFrame#pipelineChip[kind="cached"] {{
+            background: {with_alpha(theme['success'], 0.10)};
+            border-color: {with_alpha(theme['success'], 0.42)};
+        }}
+        QLabel#pipelineChipStatus[kind="cached"] {{
+            color: {theme['success']};
+        }}
+        QFrame#pipelineChip[kind="failed"] {{
+            background: {with_alpha(theme['error'], 0.18)};
+            border-color: {with_alpha(theme['error'], 0.60)};
+        }}
+        QLabel#pipelineChipStatus[kind="failed"] {{
+            color: {theme['error']};
+        }}
+        QFrame#pipelineChip[kind="skipped"] {{
+            background: {with_alpha(theme['fg_muted'], 0.06)};
+            border-color: {with_alpha(theme['fg_muted'], 0.20)};
+        }}
+        QLabel#pipelineChipStatus[kind="skipped"] {{
+            color: {theme['fg_muted']};
+        }}
+        /* Color-coded plain-language run summary banner. */
+        QLabel#resultBanner {{
+            color: {theme['fg_soft']};
+            background: {with_alpha(theme['fg_soft'], 0.12)};
+            border: 1px solid {with_alpha(theme['fg_soft'], 0.30)};
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: {type_tokens.size_caption_pt:g}pt;
+            font-weight: {type_tokens.weight_semibold};
+        }}
+        QLabel#resultBanner[kind="success"] {{
+            color: {theme['success']};
+            background: {with_alpha(theme['success'], 0.14)};
+            border-color: {with_alpha(theme['success'], 0.45)};
+        }}
+        QLabel#resultBanner[kind="warning"] {{
+            color: {theme['warning']};
+            background: {with_alpha(theme['warning'], 0.14)};
+            border-color: {with_alpha(theme['warning'], 0.45)};
+        }}
+        QLabel#resultBanner[kind="error"] {{
+            color: {theme['error']};
+            background: {with_alpha(theme['error'], 0.16)};
+            border-color: {with_alpha(theme['error'], 0.50)};
+        }}
+
         /* NAVIGATION — flat shell; active = left border + tinted background */
         QListWidget#navDrawer {{
             background: {theme['bg_shell']};

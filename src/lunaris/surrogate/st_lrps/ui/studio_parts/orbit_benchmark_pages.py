@@ -25,7 +25,6 @@ from pathlib import Path
 from lunaris.common.constants import DAY_S
 from lunaris.common.paths import project_root_from_file
 from lunaris.surrogate.st_lrps.evaluation import progress as _progress
-from lunaris.ui_foundation import DESIGN_TOKENS
 
 from .common_widgets import (
     CollapsibleSection,
@@ -44,7 +43,6 @@ from .common_widgets import (
     _tune_inputs,
 )
 from .qt_common import (
-    THEME,
     NoScrollComboBox,
     QCheckBox,
     QDoubleSpinBox,
@@ -67,7 +65,7 @@ from .qt_common import (
     Qt,
     QVBoxLayout,
     QWidget,
-    with_alpha,
+    repolish,
 )
 from .workspace_widgets import StudioNotice, StudioWorkflowOverview
 
@@ -100,22 +98,24 @@ def _valid_model_name(name: str) -> bool:
 
 
 # Pipeline chip status -> (glyph, label, text-color, fill, border).
+# Pipeline chip status -> (glyph, label). Colors live in the shared
+# stylesheet's #pipelineChip[kind=...] rules; text carries the state.
 _STATUS_STYLE = {
-    "pending":   ("○", "Pending",  THEME["fg_muted"], with_alpha(THEME["fg_muted"], 0.10), with_alpha(THEME["fg_muted"], 0.28)),
-    "queued":    ("○", "Queued",   THEME["fg_soft"], with_alpha(THEME["fg_soft"], 0.10), with_alpha(THEME["fg_soft"], 0.30)),
-    "running":   ("●", "Running",  THEME["warning"], with_alpha(THEME["warning"], 0.16), with_alpha(THEME["warning"], 0.60)),
-    "completed": ("✓", "Done",     THEME["success"], with_alpha(THEME["success"], 0.16), with_alpha(THEME["success"], 0.55)),
-    "cached":    ("✓", "Cached",   THEME["success"], with_alpha(THEME["success"], 0.10), with_alpha(THEME["success"], 0.42)),
-    "failed":    ("✕", "Failed",   THEME["error"], with_alpha(THEME["error"], 0.18), with_alpha(THEME["error"], 0.60)),
-    "skipped":   ("–", "Skipped",  THEME["fg_muted"], with_alpha(THEME["fg_muted"], 0.06), with_alpha(THEME["fg_muted"], 0.20)),
+    "pending":   ("○", "Pending"),
+    "queued":    ("○", "Queued"),
+    "running":   ("●", "Running"),
+    "completed": ("✓", "Done"),
+    "cached":    ("✓", "Cached"),
+    "failed":    ("✕", "Failed"),
+    "skipped":   ("–", "Skipped"),
 }
 
-# Run-status badge -> (text, text-color, fill).
+# Run-status badge -> text. Colors live in #dashBadge[kind=...].
 _BADGE_STYLE = {
-    "idle":      ("Idle",      THEME["fg_soft"], with_alpha(THEME["fg_soft"], 0.12)),
-    "running":   ("Running",   THEME["warning"], with_alpha(THEME["warning"], 0.16)),
-    "completed": ("Completed", THEME["success"], with_alpha(THEME["success"], 0.16)),
-    "failed":    ("Failed",    THEME["error"], with_alpha(THEME["error"], 0.18)),
+    "idle":      "Idle",
+    "running":   "Running",
+    "completed": "Completed",
+    "failed":    "Failed",
 }
 
 # Phase keys (from [progress] phase=...) -> human label.
@@ -259,7 +259,7 @@ class OrbitBenchmarkTab(QWidget):
             "directory (auto-detected if left empty)."
         )
         models_hint.setWordWrap(True)
-        models_hint.setStyleSheet(f"color: {THEME['fg_muted']}; font-size: 11px;")
+        models_hint.setObjectName("fieldHint")
         models_lo.addWidget(models_hint)
         grp_models.setLayout(models_lo)
 
@@ -534,7 +534,8 @@ class OrbitBenchmarkTab(QWidget):
         self.command_preview.setMaximumHeight(96)
         self.command_warning = QLabel("")
         self.command_warning.setWordWrap(True)
-        self.command_warning.setStyleSheet(f"color: {THEME['warning']}; font-size: 11px;")
+        self.command_warning.setObjectName("fieldHint")
+        self.command_warning.setProperty("kind", "warning")
         btn_preview = QPushButton("Preview Command")
         btn_preview.clicked.connect(self._refresh_command_preview)
         btn_copy = QPushButton("Copy Command")
@@ -679,21 +680,14 @@ class OrbitBenchmarkTab(QWidget):
     # Run-monitor dashboard — builders
     # ------------------------------------------------------------------
     @staticmethod
-    def _card(object_name: str) -> QFrame:
+    def _card() -> QFrame:
         frame = QFrame()
-        frame.setObjectName(object_name)
-        frame.setStyleSheet(
-            f"#{object_name} {{"
-            f" background: {with_alpha(THEME['bg_card'], 0.72)};"
-            f" border: 1px solid {with_alpha(THEME['border_soft'], 0.90)};"
-            f" border-radius: {DESIGN_TOKENS.radii.section}px;"
-            "}"
-        )
+        frame.setObjectName("dashCard")
         return frame
 
     def _build_control_header(self) -> QWidget:
         """Run / Stop / Open-folder controls plus a run-status badge."""
-        frame = self._card("benchHeader")
+        frame = self._card()
         lo = QHBoxLayout()
         lo.setContentsMargins(14, 10, 14, 10)
         lo.setSpacing(10)
@@ -703,13 +697,14 @@ class OrbitBenchmarkTab(QWidget):
         lo.addWidget(self.runner.btn_open_folder)
         lo.addStretch(1)
         self._status_badge = QLabel()
+        self._status_badge.setObjectName("dashBadge")
         lo.addWidget(self._status_badge)
         frame.setLayout(lo)
         return frame
 
     def _build_metrics_card(self) -> QWidget:
         """Top status dashboard: the key run metrics at a glance."""
-        frame = self._card("benchMetrics")
+        frame = self._card()
         lo = QHBoxLayout()
         lo.setContentsMargins(14, 10, 14, 10)
         lo.setSpacing(20)
@@ -719,9 +714,9 @@ class OrbitBenchmarkTab(QWidget):
             cell.setContentsMargins(0, 0, 0, 0)
             cell.setSpacing(1)
             cap = QLabel(caption)
-            cap.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:10px; font-weight:600;")
+            cap.setObjectName("dashCaption")
             val = QLabel("-")
-            val.setStyleSheet(f"color:{THEME['fg_main']}; font-size:14px; font-weight:700;")
+            val.setObjectName("dashValue")
             cell.addWidget(cap)
             cell.addWidget(val)
             holder = QWidget()
@@ -743,12 +738,12 @@ class OrbitBenchmarkTab(QWidget):
 
     def _build_pipeline_card(self) -> QWidget:
         """Horizontal model pipeline / queue tracker."""
-        frame = self._card("benchPipeline")
+        frame = self._card()
         outer = QVBoxLayout()
         outer.setContentsMargins(14, 8, 14, 10)
         outer.setSpacing(6)
         cap = QLabel("Model Pipeline")
-        cap.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:10px; font-weight:600;")
+        cap.setObjectName("dashCaption")
         outer.addWidget(cap)
 
         self._pipeline_host = QWidget()
@@ -762,7 +757,6 @@ class OrbitBenchmarkTab(QWidget):
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setFixedHeight(62)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         scroll.setWidget(self._pipeline_host)
         outer.addWidget(scroll)
         frame.setLayout(outer)
@@ -770,23 +764,16 @@ class OrbitBenchmarkTab(QWidget):
 
     def _build_progress_card(self) -> QWidget:
         """Compact overall + current-phase progress bars and telemetry toggle."""
-        frame = self._card("benchProgress")
+        frame = self._card()
         v = QVBoxLayout()
         v.setContentsMargins(14, 12, 14, 12)
         v.setSpacing(7)
 
-        slim = (
-            f"QProgressBar {{ background: {with_alpha(THEME['bg_log'], 0.85)}; "
-            f"border: 1px solid {with_alpha(THEME['border_strong'], 0.18)}; border-radius: 5px; height: 10px; }}"
-            "QProgressBar::chunk { border-radius: 5px; background: %s; }"
-        )
-
         cap1 = QLabel("Overall Progress")
-        cap1.setStyleSheet(f"color:{THEME['fg_soft']}; font-size:11px; font-weight:600;")
+        cap1.setObjectName("statusValue")
         self._overall_value = QLabel("-")
-        self._overall_value.setStyleSheet(
-            f"color:{THEME['success']}; font-size:11px; font-weight:700;"
-        )
+        self._overall_value.setObjectName("fieldHint")
+        self._overall_value.setProperty("kind", "success")
         row1 = QHBoxLayout()
         row1.setContentsMargins(0, 0, 0, 0)
         row1.addWidget(cap1)
@@ -794,17 +781,17 @@ class OrbitBenchmarkTab(QWidget):
         row1.addWidget(self._overall_value)
         v.addLayout(row1)
         self.overall_bar = QProgressBar()
+        self.overall_bar.setObjectName("slimBar")
+        self.overall_bar.setProperty("kind", "success")
         self.overall_bar.setTextVisible(False)
         self.overall_bar.setFixedHeight(10)
-        self.overall_bar.setStyleSheet(slim % THEME["success"])
         v.addWidget(self.overall_bar)
 
         self._phase_caption = QLabel("Current Phase: -")
-        self._phase_caption.setStyleSheet(f"color:{THEME['fg_soft']}; font-size:11px; font-weight:600;")
+        self._phase_caption.setObjectName("statusValue")
         self._phase_value = QLabel("-")
-        self._phase_value.setStyleSheet(
-            f"color:{THEME['accent']}; font-size:11px; font-weight:700;"
-        )
+        self._phase_value.setObjectName("fieldHint")
+        self._phase_value.setProperty("kind", "accent")
         row2 = QHBoxLayout()
         row2.setContentsMargins(0, 0, 0, 0)
         row2.addWidget(self._phase_caption)
@@ -812,13 +799,13 @@ class OrbitBenchmarkTab(QWidget):
         row2.addWidget(self._phase_value)
         v.addLayout(row2)
         self.phase_bar = QProgressBar()
+        self.phase_bar.setObjectName("slimBar")
         self.phase_bar.setTextVisible(False)
         self.phase_bar.setFixedHeight(10)
-        self.phase_bar.setStyleSheet(slim % THEME["accent"])
         v.addWidget(self.phase_bar)
 
         self._phase_detail = QLabel("")
-        self._phase_detail.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:10px;")
+        self._phase_detail.setObjectName("fieldHint")
         v.addWidget(self._phase_detail)
 
         self.show_telemetry = QCheckBox("Show raw telemetry lines")
@@ -829,7 +816,7 @@ class OrbitBenchmarkTab(QWidget):
         )
         self.show_telemetry.toggled.connect(self._on_telemetry_toggled)
         self._telemetry_note = QLabel("")
-        self._telemetry_note.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:10px;")
+        self._telemetry_note.setObjectName("fieldHint")
         trow = QHBoxLayout()
         trow.setContentsMargins(0, 0, 0, 0)
         trow.addWidget(self.show_telemetry)
@@ -926,12 +913,10 @@ class OrbitBenchmarkTab(QWidget):
     # Run-monitor dashboard — state helpers
     # ------------------------------------------------------------------
     def _set_badge(self, state: str) -> None:
-        text, fg, bg = _BADGE_STYLE.get(state, _BADGE_STYLE["idle"])
-        self._status_badge.setText(text)
-        self._status_badge.setStyleSheet(
-            f"color:{fg}; background:{bg}; border-radius:9px; "
-            "padding:3px 12px; font-size:11px; font-weight:700;"
-        )
+        state = state if state in _BADGE_STYLE else "idle"
+        self._status_badge.setText(_BADGE_STYLE[state])
+        self._status_badge.setProperty("kind", state)
+        repolish(self._status_badge)
 
     def _reset_dashboard(self) -> None:
         for lbl in (
@@ -986,12 +971,11 @@ class OrbitBenchmarkTab(QWidget):
         v = QVBoxLayout()
         v.setContentsMargins(11, 5, 11, 5)
         v.setSpacing(1)
+        frame.setObjectName("pipelineChip")
         name = QLabel(_pipeline_label(key))
-        name.setStyleSheet(
-            f"color:{THEME['fg_soft']}; font-size:12px; font-weight:700; "
-            "background:transparent; border:none;"
-        )
+        name.setObjectName("pipelineChipName")
         status = QLabel("○ Pending")
+        status.setObjectName("pipelineChipStatus")
         v.addWidget(name)
         v.addWidget(status)
         frame.setLayout(v)
@@ -1040,16 +1024,12 @@ class OrbitBenchmarkTab(QWidget):
         if chip is None:
             return
         self._model_status[key] = status
-        glyph, label, fg, bg, border = _STATUS_STYLE.get(status, _STATUS_STYLE["queued"])
-        chip["frame"].setStyleSheet(
-            f"QFrame {{ background:{bg}; border:1px solid {border}; border-radius:8px; }}"
-            "QLabel { background: transparent; border: none; }"
-        )
+        status = status if status in _STATUS_STYLE else "queued"
+        glyph, label = _STATUS_STYLE[status]
         chip["status"].setText(f"{glyph} {label}")
-        chip["status"].setStyleSheet(
-            f"color:{fg}; font-size:11px; font-weight:600; "
-            "background:transparent; border:none;"
-        )
+        for widget in (chip["frame"], chip["status"]):
+            widget.setProperty("kind", status)
+            repolish(widget)
 
     # ------------------------------------------------------------------
     # Log filtering / tools
@@ -1739,7 +1719,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
             "Choose a results folder above — the models cached in it are listed here."
         )
         self._models_status.setWordWrap(True)
-        self._models_status.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:11px;")
+        self._models_status.setObjectName("fieldHint")
         models_lo.addWidget(self._models_status)
         grp_models.setLayout(models_lo)
 
@@ -1770,10 +1750,10 @@ class OrbitBenchmarkPlotsTab(QWidget):
         rescan_row_w.setLayout(rescan_row)
         self._scan_status = QLabel("")
         self._scan_status.setWordWrap(True)
-        self._scan_status.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:11px;")
+        self._scan_status.setObjectName("fieldHint")
 
         detected_note = QLabel("Detected from the cache — edit only if a value is wrong:")
-        detected_note.setStyleSheet(f"color:{THEME['fg_muted']}; font-size:11px;")
+        detected_note.setObjectName("fieldHint")
         self.truth = NoScrollComboBox()
         for t in _TRUTH_CHOICES:
             self.truth.addItem(t.upper(), t)
@@ -1806,13 +1786,15 @@ class OrbitBenchmarkPlotsTab(QWidget):
         self.command_preview.setMaximumHeight(80)
         self.command_warning = QLabel("")
         self.command_warning.setWordWrap(True)
-        self.command_warning.setStyleSheet(f"color:{THEME['warning']}; font-size:11px;")
+        self.command_warning.setObjectName("fieldHint")
+        self.command_warning.setProperty("kind", "warning")
         safe_note = QLabel(
             "Plot-only: regenerates plots/report from cached trajectories. "
             "Does NOT propagate, run a benchmark, or train."
         )
         safe_note.setWordWrap(True)
-        safe_note.setStyleSheet(f"color:{THEME['success']}; font-size:11px; font-weight:600;")
+        safe_note.setObjectName("fieldHint")
+        safe_note.setProperty("kind", "success")
 
         # -- Runner + results ---------------------------------------------
         self.runner = ProcessPane()
@@ -1826,6 +1808,7 @@ class OrbitBenchmarkPlotsTab(QWidget):
         # Outcome banner: always-visible, plain-language result of the last run
         # so the page can never finish silently (success, empty, or failure).
         self._result_banner = QLabel("")
+        self._result_banner.setObjectName("resultBanner")
         self._result_banner.setWordWrap(True)
         self._result_banner.setVisible(False)
 
@@ -2125,24 +2108,19 @@ class OrbitBenchmarkPlotsTab(QWidget):
         QGuiApplication.clipboard().setText(self.command_preview.toPlainText())
 
     # -- outcome banner ----------------------------------------------------
-    _BANNER_STYLES = {
-        "running": (THEME["fg_soft"], with_alpha(THEME["fg_soft"], 0.12), with_alpha(THEME["fg_soft"], 0.30)),
-        "success": (THEME["success"], with_alpha(THEME["success"], 0.14), with_alpha(THEME["success"], 0.45)),
-        "warning": (THEME["warning"], with_alpha(THEME["warning"], 0.14), with_alpha(THEME["warning"], 0.45)),
-        "error":   (THEME["error"], with_alpha(THEME["error"], 0.16), with_alpha(THEME["error"], 0.50)),
-    }
+    # Colors live in the shared #resultBanner[kind=...] rules.
+    _BANNER_KINDS = ("running", "success", "warning", "error")
 
     def _set_banner(self, kind: str, text: str) -> None:
         """Show a colour-coded, plain-language summary of the last run."""
         if not text:
             self._result_banner.setVisible(False)
             return
-        fg, fill, border = self._BANNER_STYLES.get(kind, self._BANNER_STYLES["running"])
         self._result_banner.setText(text)
-        self._result_banner.setStyleSheet(
-            f"QLabel {{ color:{fg}; background:{fill}; border:1px solid {border}; "
-            f"border-radius:6px; padding:8px 12px; font-size:12px; font-weight:600; }}"
+        self._result_banner.setProperty(
+            "kind", kind if kind in self._BANNER_KINDS else "running"
         )
+        repolish(self._result_banner)
         self._result_banner.setVisible(True)
 
     # -- run / results -----------------------------------------------------
