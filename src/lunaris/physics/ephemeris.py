@@ -172,10 +172,10 @@ _FALLBACK_GM_M3S2: dict[str, float] = {
 }
 
 
-
 # =============================================================================
 # 2.                        DATA STRUCTURES (CONFIG)
 # =============================================================================
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SpiceBuildConfig:
@@ -185,6 +185,7 @@ class SpiceBuildConfig:
     This recipe defines which kernels to load and what frames to use.
     Simulation duration and step size belong to TimeConfig.
     """
+
     kernels: tuple[str, ...] = (
         "naif0012.tls",
         "de440.bsp",
@@ -214,13 +215,14 @@ class EphemerisTables:
     Intended for high-performance interpolation in the simulation loop.
     Arrays are expected to be float64 and C-contiguous where possible.
     """
+
     dt_s: float
-    t_tab_s: F64Array        # shape (N,)
+    t_tab_s: F64Array  # shape (N,)
     et0: float
 
-    q_i2f_tab: F64Array     # shape (N, 4) [w,x,y,z]
+    q_i2f_tab: F64Array  # shape (N, 4) [w,x,y,z]
     r_earth_tab_m: F64Array  # shape (N, 3) or (1, 3) if disabled
-    r_sun_tab_m: F64Array    # shape (N, 3) or (1, 3) if disabled
+    r_sun_tab_m: F64Array  # shape (N, 3) or (1, 3) if disabled
 
     mu_earth_m3s2: float
     mu_sun_m3s2: float
@@ -247,16 +249,18 @@ class EphemerisTables:
             raise ValueError(f"q_i2f_tab must have shape (N,4); got {self.q_i2f_tab.shape}.")
 
         if self.r_earth_tab_m.shape not in ((n, 3), (1, 3)):
-            raise ValueError(f"r_earth_tab_m must be (N,3) or (1,3); got {self.r_earth_tab_m.shape}.")
+            raise ValueError(
+                f"r_earth_tab_m must be (N,3) or (1,3); got {self.r_earth_tab_m.shape}."
+            )
 
         if self.r_sun_tab_m.shape not in ((n, 3), (1, 3)):
             raise ValueError(f"r_sun_tab_m must be (N,3) or (1,3); got {self.r_sun_tab_m.shape}.")
 
 
-
 # =============================================================================
 # 3.                PRIVATE SPICE POOL QUERIES (GM, ETC)
 # =============================================================================
+
 
 def get_body_gm_m3s2(
     body_name: str,
@@ -297,10 +301,10 @@ def get_body_gm_m3s2(
         return float(effective_fallback)
 
 
-
 # =============================================================================
 # 6.                       PUBLIC BUILDERS (MAIN API)
 # =============================================================================
+
 
 def _require_positive(name: str, value: float) -> float:
     v = float(value)
@@ -398,18 +402,14 @@ def build_tables(
     duration_s: float,
     output_dt_s: float,
     kernels: tuple[str, ...] | list[str],
-
     inertial_frame: str = DEFAULT_INERTIAL_FRAME,
     fixed_frame: str = DEFAULT_FIXED_FRAME,
     observer: str = DEFAULT_OBSERVER,
-
     include_third_body: bool = True,
     clear_kernels_after: bool = True,
     clean_kernels_before: bool = True,
-
     earth_target: str = "EARTH",
     sun_target: str = "SUN",
-
     auto_fix_kernel_paths: bool = True,
     need_moon_fixed_rotation: bool = True,
 ) -> EphemerisTables:
@@ -492,10 +492,20 @@ def build_tables(
         # B) Third-body states: target relative to observer
         if include_third_body:
             ok_e, earth_vectorized_reason = _try_fill_spkpos_table_m(
-                rE, spkpos=spkpos, target=earth_target, et_tab=et_tab, frame=inertial_frame, observer=observer
+                rE,
+                spkpos=spkpos,
+                target=earth_target,
+                et_tab=et_tab,
+                frame=inertial_frame,
+                observer=observer,
             )
             ok_s, sun_vectorized_reason = _try_fill_spkpos_table_m(
-                rS, spkpos=spkpos, target=sun_target, et_tab=et_tab, frame=inertial_frame, observer=observer
+                rS,
+                spkpos=spkpos,
+                target=sun_target,
+                et_tab=et_tab,
+                frame=inertial_frame,
+                observer=observer,
             )
 
             if not (ok_e and ok_s):
@@ -519,7 +529,9 @@ def build_tables(
                         pos_earth_km, _ = spkpos(earth_target, et, inertial_frame, "NONE", observer)
                         pos_sun_km, _ = spkpos(sun_target, et, inertial_frame, "NONE", observer)
                     except SpiceyError as e:
-                        raise RuntimeError(f"SPICE position lookup failed at i={i}, et={et:.3f}") from e
+                        raise RuntimeError(
+                            f"SPICE position lookup failed at i={i}, et={et:.3f}"
+                        ) from e
 
                     rE[i, 0] = float(pos_earth_km[0]) * KM_TO_M
                     rE[i, 1] = float(pos_earth_km[1]) * KM_TO_M
@@ -597,11 +609,10 @@ def build_spice_tables(
     )
 
 
-
-
 # =============================================================================
 # 7.                  HIGH-LEVEL MANAGER (RUNTIME INTERFACE)
 # =============================================================================
+
 
 class EphemerisManager:
     """Runtime interface for querying ephemeris tables (read-only)."""
@@ -736,8 +747,13 @@ class EphemerisManager:
 
         w, x, y, z = self._interp_quat_i2f(t_s)
         xo, yo, zo = quat_rotate_vec(
-            float(w), float(x), float(y), float(z),
-            float(v[0]), float(v[1]), float(v[2]),
+            float(w),
+            float(x),
+            float(y),
+            float(z),
+            float(v[0]),
+            float(v[1]),
+            float(v[2]),
         )
         return self._write_vec3(out, xo, yo, zo)
 
@@ -754,16 +770,21 @@ class EphemerisManager:
         cw, cx, cy, cz = quat_conj(float(w), float(x), float(y), float(z))
 
         xo, yo, zo = quat_rotate_vec(
-            cw, cx, cy, cz,
-            float(v[0]), float(v[1]), float(v[2]),
+            cw,
+            cx,
+            cy,
+            cz,
+            float(v[0]),
+            float(v[1]),
+            float(v[2]),
         )
         return self._write_vec3(out, xo, yo, zo)
-
 
 
 # =============================================================================
 # 8.           NUMBA-FRIENDLY EPHEMERIS SAMPLER (CORE KERNEL API)
 # =============================================================================
+
 
 @njit(cache=True, nogil=True, inline="always")
 def _row3(tab: np.ndarray, i: int) -> tuple[float, float, float]:
@@ -787,18 +808,17 @@ def _clamp_u_to_index_and_frac(u: float, n: int) -> tuple[int, float]:
     if u >= umax:
         return n - 2, 1.0
 
-    i0 = int(u)            # truncation == floor for u>=0
+    i0 = int(u)  # truncation == floor for u>=0
     if i0 > n - 2:
         i0 = n - 2
         return i0, 1.0
-    f = u - float(i0)      # in [0,1)
+    f = u - float(i0)  # in [0,1)
     return i0, f
 
 
 @njit(cache=True, nogil=True, inline="always")
 def _lerp(a: float, b: float, f: float) -> float:
     return a + (b - a) * f
-
 
 
 @njit(cache=True, nogil=True)
@@ -827,47 +847,62 @@ def interp_vec3_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, f
 
 
 @njit(cache=True, nogil=True)
-def interp_vec3_derivative_safe(t_s: float, dt_s: float, tab: np.ndarray) -> tuple[float, float, float]:
+def interp_vec3_derivative_safe(
+    t_s: float, dt_s: float, tab: np.ndarray
+) -> tuple[float, float, float]:
     """
-    Finite-difference derivative for a uniformly sampled vec3 table.
+    Analytic derivative of :func:`interp_vec3_safe` for a uniform vec3 table.
 
-    The ephemeris provider currently stores positions only. This helper gives
-    hot-loop force models a bounded velocity estimate without changing the
-    provider contract. Degenerate/constant tables return zero velocity.
+    For ``n >= 4`` this differentiates the same clamped-control-point
+    Catmull-Rom polynomial used by ``interp_vec3_safe``. Position and velocity
+    therefore describe one C1 interpolant at interior table knots, which is
+    required by the external 1PN terms. The ``n < 4`` fallback differentiates
+    the linear position interpolation exactly (with its unavoidable knot
+    discontinuities); degenerate/constant tables return zero.
     """
     n = int(tab.shape[0])
     if n <= 1 or dt_s <= 0.0:
         return 0.0, 0.0, 0.0
 
-    if n == 2:
-        x0, y0, z0 = _row3(tab, 0)
-        x1, y1, z1 = _row3(tab, 1)
-        inv_dt = 1.0 / dt_s
-        return (x1 - x0) * inv_dt, (y1 - y0) * inv_dt, (z1 - z0) * inv_dt
-
     u = t_s / dt_s
     if u <= 0.0:
-        x0, y0, z0 = _row3(tab, 0)
-        x1, y1, z1 = _row3(tab, 1)
-        inv_dt = 1.0 / dt_s
-        return (x1 - x0) * inv_dt, (y1 - y0) * inv_dt, (z1 - z0) * inv_dt
-
-    if u >= float(n - 1):
-        x0, y0, z0 = _row3(tab, n - 2)
-        x1, y1, z1 = _row3(tab, n - 1)
-        inv_dt = 1.0 / dt_s
-        return (x1 - x0) * inv_dt, (y1 - y0) * inv_dt, (z1 - z0) * inv_dt
-
-    i = int(u)
-    if i < 1:
-        i = 1
-    elif i > n - 2:
+        i = 0
+        f = 0.0
+    elif u >= float(n - 1):
         i = n - 2
+        f = 1.0
+    else:
+        i = int(u)
+        if i > n - 2:
+            i = n - 2
+            f = 1.0
+        else:
+            f = u - float(i)
 
-    xm, ym, zm = _row3(tab, i - 1)
-    xp, yp, zp = _row3(tab, i + 1)
-    inv_2dt = 0.5 / dt_s
-    return (xp - xm) * inv_2dt, (yp - ym) * inv_2dt, (zp - zm) * inv_2dt
+    if n < 4:
+        x0, y0, z0 = _row3(tab, i)
+        x1, y1, z1 = _row3(tab, i + 1)
+        inv_dt = 1.0 / dt_s
+        return (x1 - x0) * inv_dt, (y1 - y0) * inv_dt, (z1 - z0) * inv_dt
+
+    i0 = i - 1 if i > 0 else 0
+    i3 = i + 2 if i < n - 2 else n - 1
+    p0x, p0y, p0z = _row3(tab, i0)
+    p1x, p1y, p1z = _row3(tab, i)
+    p2x, p2y, p2z = _row3(tab, i + 1)
+    p3x, p3y, p3z = _row3(tab, i3)
+
+    f2 = f * f
+    dw0 = -1.0 + 4.0 * f - 3.0 * f2
+    dw1 = -10.0 * f + 9.0 * f2
+    dw2 = 1.0 + 8.0 * f - 9.0 * f2
+    dw3 = -2.0 * f + 3.0 * f2
+    scale = 0.5 / dt_s
+    return (
+        scale * (p0x * dw0 + p1x * dw1 + p2x * dw2 + p3x * dw3),
+        scale * (p0y * dw0 + p1y * dw1 + p2y * dw2 + p3y * dw3),
+        scale * (p0z * dw0 + p1z * dw1 + p2z * dw2 + p3z * dw3),
+    )
 
 
 @njit(cache=True, nogil=True)
@@ -903,28 +938,23 @@ def get_ephem_state(
     return sx, sy, sz, ex, ey, ez, qw, qx, qy, qz
 
 
-
 # =============================================================================
 # 9.                          PUBLIC API
 # =============================================================================
 
 __all__ = (
     # --- Configuration & data structures ---
-    "SpiceBuildConfig",     # Build recipe: which kernels/frames to load (time-agnostic)
-    "EphemerisTables",      # Immutable precomputed tables (quats + Sun/Earth positions + GM)
-
+    "SpiceBuildConfig",  # Build recipe: which kernels/frames to load (time-agnostic)
+    "EphemerisTables",  # Immutable precomputed tables (quats + Sun/Earth positions + GM)
     # --- Builders ---
-    "build_spice_tables",   # Recommended builder: TimeConfig + SpiceBuildConfig -> EphemerisTables
-    "build_tables",         # Low-level/legacy builder: explicit args -> EphemerisTables
-
+    "build_spice_tables",  # Recommended builder: TimeConfig + SpiceBuildConfig -> EphemerisTables
+    "build_tables",  # Low-level/legacy builder: explicit args -> EphemerisTables
     # --- Runtime manager ---
-    "EphemerisManager",     # Runtime interface: interpolation, queries, and frame transforms
-
+    "EphemerisManager",  # Runtime interface: interpolation, queries, and frame transforms
     # --- Low-level kernel (dynamics loop) ---
-    "get_ephem_state",      # Numba-friendly, allocation-free ephemeris sampler for the integrator loop
+    "get_ephem_state",  # Numba-friendly, allocation-free ephemeris sampler for the integrator loop
     "interp_vec3_derivative_safe",
-
     # --- Utilities (debug/tools) ---
-    "resolve_kernel_paths", # Validates kernel paths and tries common extension fixes (e.g., .tls vs .tls.txt)
-    "get_body_gm_m3s2",     # Reads GM from SPICE kernel pool; falls back to defaults (returns SI m^3/s^2)
+    "resolve_kernel_paths",  # Validates kernel paths and tries common extension fixes (e.g., .tls vs .tls.txt)
+    "get_body_gm_m3s2",  # Reads GM from SPICE kernel pool; falls back to defaults (returns SI m^3/s^2)
 )

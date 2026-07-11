@@ -12,6 +12,14 @@ from lunaris.ui.core.ui_commons import StatusBadge
 from lunaris.ui.theme.tokens import DESIGN_TOKENS
 
 
+def _repolish(widget: QtWidgets.QWidget) -> None:
+    """Re-evaluate a widget's QSS after a dynamic property change."""
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
+
+
 class PageHeader(QtWidgets.QFrame):
     def __init__(
         self,
@@ -81,9 +89,7 @@ class PageShell(QtWidgets.QWidget):
             # Readable page width: cap the column and centre it when the workspace
             # is wider, so dense forms stay scannable on ultrawide displays.
             body.setMaximumWidth(DESIGN_TOKENS.layout.page_max_width)
-            body.setSizePolicy(
-                QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred
-            )
+            body.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Preferred)
             centerer = QtWidgets.QWidget()
             centerer.setObjectName("pageShellCenterer")
             center_layout = QtWidgets.QHBoxLayout(centerer)
@@ -173,6 +179,25 @@ class Subsection(Section):
         self.setObjectName("subsection")
 
 
+def apply_tab_order(widgets: Sequence[QtWidgets.QWidget | None]) -> None:
+    """Chain keyboard tab focus through *widgets* in the given visual order.
+
+    Qt's default tab order follows widget *construction* order, which drifts
+    from visual order whenever a page builds controls out of order or across
+    several containers. Passing the widgets in the order they should be reached
+    makes ``Tab`` predictable. ``None`` entries and duplicates are skipped.
+    """
+    chain: list[QtWidgets.QWidget] = []
+    seen: set[int] = set()
+    for widget in widgets:
+        if widget is None or id(widget) in seen:
+            continue
+        seen.add(id(widget))
+        chain.append(widget)
+    for earlier, later in zip(chain, chain[1:], strict=False):
+        QtWidgets.QWidget.setTabOrder(earlier, later)
+
+
 class FormGrid(QtWidgets.QWidget):
     def __init__(self, parent: QtWidgets.QWidget | None = None):
         super().__init__(parent)
@@ -183,6 +208,13 @@ class FormGrid(QtWidgets.QWidget):
         self.grid.setVerticalSpacing(DESIGN_TOKENS.spacing.sm)
         self.grid.setColumnStretch(1, 1)
         self._row = 0
+        # Field widgets in add (visual) order, for deterministic tab order.
+        self.fields: list[QtWidgets.QWidget] = []
+        self._required: set[QtWidgets.QWidget] = set()
+        self._invalid: list[QtWidgets.QWidget] = []
+        self._error_labels: dict[QtWidgets.QWidget, QtWidgets.QLabel] = {}
+        self._base_tooltips: dict[QtWidgets.QWidget, str] = {}
+        self._base_descriptions: dict[QtWidgets.QWidget, str] = {}
 
     def add_row(
         self,
@@ -190,8 +222,11 @@ class FormGrid(QtWidgets.QWidget):
         field: QtWidgets.QWidget,
         unit: str = "",
         hint: str = "",
+        *,
+        required: bool = False,
     ) -> None:
-        label_widget = QtWidgets.QLabel(label)
+        label_text = f"{label} *" if (required and label) else label
+        label_widget = QtWidgets.QLabel(label_text)
         label_widget.setObjectName("fieldLabel")
         label_widget.setMinimumWidth(DESIGN_TOKENS.controls.form_label_width)
         label_widget.setBuddy(field)
@@ -200,8 +235,29 @@ class FormGrid(QtWidgets.QWidget):
         # override a name the caller set explicitly.
         if label and not field.accessibleName():
             field.setAccessibleName(label.rstrip(": ").strip())
+        if required:
+            self._required.add(field)
+            field.setProperty("required", True)
+            if not field.accessibleDescription():
+                field.setAccessibleDescription("required")
+        self._base_tooltips[field] = field.toolTip()
+        self._base_descriptions[field] = field.accessibleDescription()
         self.grid.addWidget(label_widget, self._row, 0, QtCore.Qt.AlignVCenter)
-        self.grid.addWidget(field, self._row, 1)
+        # Keep feedback inside the field cell. Showing an error then grows only
+        # this field block, preserving the form's label/field/unit columns.
+        field_block = QtWidgets.QWidget()
+        field_layout = QtWidgets.QVBoxLayout(field_block)
+        field_layout.setContentsMargins(0, 0, 0, 0)
+        field_layout.setSpacing(DESIGN_TOKENS.spacing.xxs)
+        field_layout.addWidget(field)
+        error_label = QtWidgets.QLabel("")
+        error_label.setObjectName("fieldErrorText")
+        error_label.setWordWrap(True)
+        error_label.setVisible(False)
+        field_layout.addWidget(error_label)
+        self.grid.addWidget(field_block, self._row, 1)
+        self.fields.append(field)
+        self._error_labels[field] = error_label
         unit_widget = QtWidgets.QLabel(unit)
         unit_widget.setObjectName("fieldUnit")
         unit_widget.setVisible(bool(unit))
@@ -213,6 +269,48 @@ class FormGrid(QtWidgets.QWidget):
             self.grid.addWidget(hint_widget, self._row + 1, 1, 1, 2)
             self._row += 1
         self._row += 1
+        # Reassert the full chain whenever a visual row is added, so every
+        # FormGrid consumer gets deterministic keyboard navigation by default.
+        self.apply_tab_order()
+
+    def apply_tab_order(self) -> None:
+        """Wire Tab focus through this grid's fields in visual (add) order."""
+        apply_tab_order(self.fields)
+
+    def set_error(self, field: QtWidgets.QWidget, message: str | None) -> None:
+        """Mark *field* valid (``None``) or invalid (a message).
+
+        A dense form grid keeps its label/field/unit columns aligned by placing
+        the visible error message inside the field's own grid cell. The message,
+        tooltip, and accessible description identify the error beyond the red
+        ``fieldError`` border; ``focus_first_invalid`` jumps to the first one.
+        """
+        is_error = bool(message)
+        field.setProperty("fieldError", True if is_error else False)
+        field.setToolTip(message or self._base_tooltips.get(field, ""))
+        field.setAccessibleDescription(message or self._base_descriptions.get(field, ""))
+        error_label = self._error_labels.get(field)
+        if error_label is not None:
+            error_label.setText(message or "")
+            error_label.setVisible(is_error)
+        _repolish(field)
+        if is_error:
+            if field not in self._invalid:
+                self._invalid.append(field)
+        elif field in self._invalid:
+            self._invalid.remove(field)
+
+    def clear_errors(self) -> None:
+        for field in list(self._invalid):
+            self.set_error(field, None)
+
+    def focus_first_invalid(self) -> bool:
+        """Focus the first field currently marked invalid; return whether one existed."""
+        for field in self.fields:
+            if field in self._invalid:
+                field.setFocus(QtCore.Qt.OtherFocusReason)
+                return True
+        return False
 
 
 class LabeledField(QtWidgets.QWidget):
@@ -222,17 +320,27 @@ class LabeledField(QtWidgets.QWidget):
         field: QtWidgets.QWidget,
         *,
         hint: str = "",
+        required: bool = False,
         parent: QtWidgets.QWidget | None = None,
     ):
         super().__init__(parent)
+        self.field = field
+        self._required = required
+        self._has_error = False
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(DESIGN_TOKENS.spacing.xxs)
-        label_widget = QtWidgets.QLabel(label)
+        label_widget = QtWidgets.QLabel(f"{label} *" if (required and label) else label)
         label_widget.setObjectName("fieldLabel")
         label_widget.setBuddy(field)
         if label and not field.accessibleName():
             field.setAccessibleName(label.rstrip(": ").strip())
+        if required:
+            field.setProperty("required", True)
+            if not field.accessibleDescription():
+                field.setAccessibleDescription("required")
+        self._base_tooltip = field.toolTip()
+        self._base_accessible_description = field.accessibleDescription()
         layout.addWidget(label_widget)
         layout.addWidget(field)
         if hint:
@@ -240,6 +348,29 @@ class LabeledField(QtWidgets.QWidget):
             hint_widget.setObjectName("fieldHint")
             hint_widget.setWordWrap(True)
             layout.addWidget(hint_widget)
+        # Inline error text, below the field. Hidden until set_error() so it
+        # adds no height in the valid state (this is a VBox, so revealing it
+        # grows the field's own block without disturbing sibling widgets).
+        self._error_label = QtWidgets.QLabel("")
+        self._error_label.setObjectName("fieldErrorText")
+        self._error_label.setWordWrap(True)
+        self._error_label.setVisible(False)
+        layout.addWidget(self._error_label)
+
+    def set_error(self, message: str | None) -> None:
+        """Show an inline error under the field (message) or clear it (``None``)."""
+        is_error = bool(message)
+        self._has_error = is_error
+        self.field.setProperty("fieldError", True if is_error else False)
+        self.field.setToolTip(message or self._base_tooltip)
+        self.field.setAccessibleDescription(message or self._base_accessible_description)
+        _repolish(self.field)
+        self._error_label.setText(message or "")
+        self._error_label.setVisible(is_error)
+
+    def has_error(self) -> bool:
+        """Return the validation state even when this field's parent is hidden."""
+        return self._has_error
 
 
 class UnitField(QtWidgets.QWidget):
@@ -381,12 +512,44 @@ class SegmentedControl(QtWidgets.QFrame):
             button = QtWidgets.QPushButton(label)
             button.setObjectName("segmentButton")
             button.setCheckable(True)
+            # Arrow keys move selection within the group (WAI-ARIA radiogroup
+            # pattern); the frame filters their key events below.
+            button.installEventFilter(self)
             self.group.addButton(button, index)
             layout.addWidget(button)
             self.buttons.append(button)
         if self.buttons:
             self.buttons[0].setChecked(True)
         self.group.idClicked.connect(self.current_changed)
+
+    def eventFilter(self, obj, event):
+        """Left/Up select the previous segment, Right/Down the next (wrapping).
+
+        A segmented control is a single mutually-exclusive choice, so arrow keys
+        should move the selection the way they do in a native radio group rather
+        than doing nothing. Selection and keyboard focus move together and
+        ``current_changed`` fires, matching a mouse click.
+        """
+        if event.type() == QtCore.QEvent.KeyPress and obj in self.buttons:
+            key = event.key()
+            if key in (QtCore.Qt.Key_Left, QtCore.Qt.Key_Up):
+                self._step_selection(-1)
+                return True
+            if key in (QtCore.Qt.Key_Right, QtCore.Qt.Key_Down):
+                self._step_selection(1)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _step_selection(self, delta: int) -> None:
+        if not self.buttons:
+            return
+        current = max(0, self.current_index())
+        target = (current + delta) % len(self.buttons)
+        if target == current:
+            return
+        self.buttons[target].setChecked(True)
+        self.buttons[target].setFocus(QtCore.Qt.TabFocusReason)
+        self.current_changed.emit(target)
 
     def current_index(self) -> int:
         return self.group.checkedId()
@@ -565,10 +728,7 @@ class DataTable(QtWidgets.QTableWidget):
         rows: dict[int, dict[int, str]] = {}
         for item in items:
             rows.setdefault(item.row(), {})[item.column()] = item.text()
-        lines = [
-            "\t".join(cols[c] for c in sorted(cols))
-            for _, cols in sorted(rows.items())
-        ]
+        lines = ["\t".join(cols[c] for c in sorted(cols)) for _, cols in sorted(rows.items())]
         QtWidgets.QApplication.clipboard().setText("\n".join(lines))
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
@@ -581,6 +741,7 @@ class DataTable(QtWidgets.QTableWidget):
 
 __all__ = [
     "ActionBar",
+    "apply_tab_order",
     "CompactSearchField",
     "DataTable",
     "EmptyState",

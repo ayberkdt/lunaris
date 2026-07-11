@@ -14,7 +14,7 @@ import json
 import numpy as np
 import pytest
 
-torch = pytest.importorskip('torch')
+torch = pytest.importorskip("torch")
 
 from lunaris.analysis.ensemble.linear_check import (
     compare_covariance_histories,
@@ -26,15 +26,11 @@ from lunaris.analysis.ensemble.statistics import (
     compute_ric_uncertainty,
     ric_basis_from_state,
 )
-from lunaris.analysis.ensemble.uq_report import (
-    COVARIANCE_DEFINITION,
-    build_uq_report,
-    ensemble_content_sha256,
-)
+from lunaris.analysis.ensemble.uq_report import build_uq_report, ensemble_content_sha256
 from lunaris.common.batch_defs import BatchPropagationResult
 
 MU_MOON = 4.9048695e12  # [m^3/s^2]
-R_ORBIT = 1.9e6         # [m] ~163 km altitude circular orbit
+R_ORBIT = 1.9e6  # [m] ~163 km altitude circular orbit
 
 
 def _circular_state() -> np.ndarray:
@@ -65,8 +61,8 @@ def _make_result(
         ],
         axis=1,
     )
-    y_init = y0[None, :] + dy                                    # (N, 6)
-    t = np.linspace(0.0, 600.0, n_epochs)                        # (T,)
+    y_init = y0[None, :] + dy  # (N, 6)
+    t = np.linspace(0.0, 600.0, n_epochs)  # (T,)
     Y = np.empty((n_epochs, n_samples, 6), dtype=np.float64)
     for k, tk in enumerate(t):
         Y[k, :, :3] = y_init[:, :3] + y_init[:, 3:] * tk
@@ -84,6 +80,7 @@ def _make_result(
 # ---------------------------------------------------------------------------
 # Covariance validity
 # ---------------------------------------------------------------------------
+
 
 def test_covariance_is_symmetric_psd_at_every_epoch():
     ens = compute_ensemble_statistics(_make_result(11))
@@ -104,6 +101,7 @@ def test_zero_dispersion_yields_zero_covariance():
 # ---------------------------------------------------------------------------
 # RIC decomposition
 # ---------------------------------------------------------------------------
+
 
 def test_ric_basis_hand_case():
     # r along +x, v along +y  =>  R=+x, C=+z (r x v), I=+y.
@@ -126,8 +124,8 @@ def test_ric_covariance_diagonal_hand_case():
     # Overwrite with a controlled case: mean state along axes, diagonal P_pos.
     ens.mean[:] = np.array([R_ORBIT, 0, 0, 0, 1000.0, 0])
     ens.cov[:] = 0.0
-    ens.cov[:, 0, 0] = 4.0   # sigma_x^2 -> radial
-    ens.cov[:, 1, 1] = 9.0   # sigma_y^2 -> along
+    ens.cov[:, 0, 0] = 4.0  # sigma_x^2 -> radial
+    ens.cov[:, 1, 1] = 9.0  # sigma_y^2 -> along
     ens.cov[:, 2, 2] = 16.0  # sigma_z^2 -> cross
     ric = compute_ric_uncertainty(ens)
     np.testing.assert_allclose(ric.sigma_ric_m[:, 0], 2.0, atol=1e-12)
@@ -155,6 +153,7 @@ def test_ric_matches_benchmark_decomposition():
 # Report bundle + provenance
 # ---------------------------------------------------------------------------
 
+
 def test_uq_report_same_seed_identical_content_hash(tmp_path):
     m1 = build_uq_report(_make_result(42), tmp_path / "a", make_figures=False)
     m2 = build_uq_report(_make_result(42), tmp_path / "b", make_figures=False)
@@ -174,9 +173,11 @@ def test_uq_manifest_completeness_and_files(tmp_path):
     )
     on_disk = json.loads((out / "uq_manifest.json").read_text(encoding="utf-8"))
     assert on_disk["covariance_content_sha256"] == manifest["covariance_content_sha256"]
-    assert on_disk["covariance_definition"] == COVARIANCE_DEFINITION
+    assert on_disk["covariance_estimator_kind"] == "sample_covariance_estimator"
+    assert on_disk["sampling_method"] == "random"
+    assert "Sample covariance estimator" in on_disk["covariance_definition"]
     assert "orbit-determination" in on_disk["covariance_definition"]
-    assert on_disk["schema_version"] == 1
+    assert on_disk["schema_version"] == 2
     assert on_disk["ensemble"]["n_samples"] == 64
     assert on_disk["run_config"]["seed"] == 42
     assert on_disk["run_config_hash"]
@@ -194,10 +195,28 @@ def test_uq_manifest_completeness_and_files(tmp_path):
     # Summary CSV has the promised columns and one row per epoch.
     header = (out / "uq_summary.csv").read_text(encoding="utf-8").splitlines()
     assert header[0].split(",")[:6] == [
-        "t_s", "sigma_pos_m", "sigma_vel_ms",
-        "sigma_radial_m", "sigma_along_m", "sigma_cross_m",
+        "t_s",
+        "sigma_pos_m",
+        "sigma_vel_ms",
+        "sigma_radial_m",
+        "sigma_along_m",
+        "sigma_cross_m",
     ]
     assert len(header) == 1 + int(result.t.shape[0])
+
+
+def test_uq_manifest_labels_qmc_covariance_as_empirical(tmp_path):
+    manifest = build_uq_report(
+        _make_result(42),
+        tmp_path / "report_qmc",
+        run_config={"sampling_method": "sobol", "n_samples": 64},
+        make_figures=False,
+    )
+
+    assert manifest["sampling_method"] == "sobol"
+    assert manifest["covariance_estimator_kind"] == "empirical_ensemble_covariance"
+    assert "non-IID sobol" in manifest["covariance_definition"]
+    assert "not make this an unbiased" in manifest["covariance_definition"]
 
 
 def test_uq_report_writes_figures(tmp_path):
@@ -232,6 +251,7 @@ def test_uq_report_records_plot_build_importerror(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Linear (STM) cross-check
 # ---------------------------------------------------------------------------
+
 
 def _propagate_drift(y0: np.ndarray) -> np.ndarray:
     """Exact linear drift dynamics on a fixed grid: r += v t."""

@@ -562,6 +562,17 @@ def build_app_stylesheet(
             border: 1px solid {with_alpha(theme['error'], 0.75)};
             background-color: {with_alpha(theme['error'], 0.08)};
         }}
+        /* Field-level validation error (FormGrid/LabeledField set_error). */
+        QLineEdit[fieldError="true"], QComboBox[fieldError="true"],
+        QDoubleSpinBox[fieldError="true"], QSpinBox[fieldError="true"],
+        QPlainTextEdit[fieldError="true"] {{
+            border: 1px solid {with_alpha(theme['error'], 0.75)};
+            background-color: {with_alpha(theme['error'], 0.08)};
+        }}
+        QLabel#fieldErrorText {{
+            color: {theme['error']};
+            font-size: {type_tokens.size_caption_pt:g}pt;
+        }}
         QPushButton#collapsibleToggle {{
             text-align: left;
             padding: 8px 14px;

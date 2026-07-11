@@ -30,6 +30,7 @@ from lunaris.physics.ephemeris import (
     EphemerisTables,
     get_ephem_state,
     interp_quat_safe,
+    interp_vec3_derivative_safe,
     interp_vec3_safe,
 )
 
@@ -83,6 +84,52 @@ def _interp3_cuda_mirror(t, dt_s, tab, n_tab, result):
     result[0] = 0.5 * (tab[i0, 0] * w0 + tab[i, 0] * w1 + tab[i + 1, 0] * w2 + tab[i3, 0] * w3)
     result[1] = 0.5 * (tab[i0, 1] * w0 + tab[i, 1] * w1 + tab[i + 1, 1] * w2 + tab[i3, 1] * w3)
     result[2] = 0.5 * (tab[i0, 2] * w0 + tab[i, 2] * w1 + tab[i + 1, 2] * w2 + tab[i3, 2] * w3)
+
+
+@njit(cache=True)
+def _interp3_derivative_cuda_mirror(t, dt_s, tab, n_tab, result):
+    if n_tab <= 1 or dt_s <= 0.0:
+        result[0] = 0.0
+        result[1] = 0.0
+        result[2] = 0.0
+        return
+    u = t / dt_s
+    if u <= 0.0:
+        i = 0
+        f = 0.0
+    elif u >= float(n_tab - 1):
+        i = n_tab - 2
+        f = 1.0
+    else:
+        i = int(u)
+        if i > n_tab - 2:
+            i = n_tab - 2
+            f = 1.0
+        else:
+            f = u - float(i)
+    inv_dt = 1.0 / dt_s
+    if n_tab < 4:
+        result[0] = (tab[i + 1, 0] - tab[i, 0]) * inv_dt
+        result[1] = (tab[i + 1, 1] - tab[i, 1]) * inv_dt
+        result[2] = (tab[i + 1, 2] - tab[i, 2]) * inv_dt
+        return
+    i0 = i - 1 if i > 0 else 0
+    i3 = i + 2 if i < n_tab - 2 else n_tab - 1
+    f2 = f * f
+    dw0 = -1.0 + 4.0 * f - 3.0 * f2
+    dw1 = -10.0 * f + 9.0 * f2
+    dw2 = 1.0 + 8.0 * f - 9.0 * f2
+    dw3 = -2.0 * f + 3.0 * f2
+    scale = 0.5 * inv_dt
+    result[0] = scale * (
+        tab[i0, 0] * dw0 + tab[i, 0] * dw1 + tab[i + 1, 0] * dw2 + tab[i3, 0] * dw3
+    )
+    result[1] = scale * (
+        tab[i0, 1] * dw0 + tab[i, 1] * dw1 + tab[i + 1, 1] * dw2 + tab[i3, 1] * dw3
+    )
+    result[2] = scale * (
+        tab[i0, 2] * dw0 + tab[i, 2] * dw1 + tab[i + 1, 2] * dw2 + tab[i3, 2] * dw3
+    )
 
 
 def _smooth_vec_table(n: int, dt: float) -> np.ndarray:
@@ -165,6 +212,41 @@ def test_vec3_clamps_outside_span() -> None:
     np.testing.assert_allclose(interp_vec3_safe(1e9, dt, tab), tab[-1], atol=1e-6)
 
 
+def test_catmull_rom_derivative_is_the_position_interpolants_derivative() -> None:
+    """External 1PN velocities must be kinematically consistent with positions."""
+    dt = 1.0
+    t = np.arange(10, dtype=np.float64)
+    tab = np.ascontiguousarray(np.stack((t**3, -2.0 * t**3 + 3.0 * t, 0.5 * t**3 - t**2), axis=1))
+    h = 1.0e-5
+    for tq in (1.2, 2.7, 5.4, 7.8):
+        analytic = np.asarray(interp_vec3_derivative_safe(tq, dt, tab))
+        finite_difference = (
+            np.asarray(interp_vec3_safe(tq + h, dt, tab))
+            - np.asarray(interp_vec3_safe(tq - h, dt, tab))
+        ) / (2.0 * h)
+        np.testing.assert_allclose(analytic, finite_difference, rtol=1e-9, atol=1e-8)
+
+    # Catmull-Rom has one derivative on either side of each interior table
+    # knot; the old finite-difference velocity instead jumped per cell.
+    knot_h = 1.0e-8
+    for knot in range(1, len(tab) - 1):
+        left = np.asarray(interp_vec3_derivative_safe(knot * dt - knot_h, dt, tab))
+        right = np.asarray(interp_vec3_derivative_safe(knot * dt + knot_h, dt, tab))
+        np.testing.assert_allclose(left, right, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("n", [1, 2, 3, 4, 8])
+def test_gpu_vec3_derivative_matches_cpu_interpolant_derivative(n: int) -> None:
+    dt = 60.0
+    tab = _smooth_vec_table(n, dt)
+    times = np.linspace(0.0, dt * max(0, n - 1), 17)
+    out = np.zeros(3)
+    for tq in times:
+        expected = np.asarray(interp_vec3_derivative_safe(float(tq), dt, tab))
+        _interp3_derivative_cuda_mirror(float(tq), dt, tab, n, out)
+        np.testing.assert_allclose(out, expected, rtol=1e-13, atol=1e-12)
+
+
 # -----------------------------------------------------------------------------
 # Quaternion interpolation
 # -----------------------------------------------------------------------------
@@ -226,7 +308,9 @@ def test_get_ephem_state_matches_component_samplers() -> None:
             float(tq), dt, sun, np.ascontiguousarray(earth), q
         )
         np.testing.assert_allclose((sx, sy, sz), interp_vec3_safe(float(tq), dt, sun), atol=1e-6)
-        np.testing.assert_allclose((ex, ey, ez), interp_vec3_safe(float(tq), dt, np.ascontiguousarray(earth)), atol=1e-9)
+        np.testing.assert_allclose(
+            (ex, ey, ez), interp_vec3_safe(float(tq), dt, np.ascontiguousarray(earth)), atol=1e-9
+        )
         np.testing.assert_allclose((qw, qx, qy, qz), interp_quat_safe(float(tq), dt, q), atol=1e-12)
 
 
@@ -266,8 +350,12 @@ def test_manager_rotation_matches_raw_quaternion() -> None:
     v = np.array([1.2e6, -3.4e5, 7.8e5])
     q = mgr.get_inertial_to_fixed_rotation(tq)
     expected = np.array(quat_rotate_vec(q[0], q[1], q[2], q[3], v[0], v[1], v[2]))
-    np.testing.assert_allclose(mgr.transform_inertial_to_fixed(tq, v), expected, rtol=1e-12, atol=1e-9)
+    np.testing.assert_allclose(
+        mgr.transform_inertial_to_fixed(tq, v), expected, rtol=1e-12, atol=1e-9
+    )
     # And the inverse uses the conjugate, not the same quaternion.
     cw, cx, cy, cz = quat_conj(q[0], q[1], q[2], q[3])
     expected_inv = np.array(quat_rotate_vec(cw, cx, cy, cz, v[0], v[1], v[2]))
-    np.testing.assert_allclose(mgr.transform_fixed_to_inertial(tq, v), expected_inv, rtol=1e-12, atol=1e-9)
+    np.testing.assert_allclose(
+        mgr.transform_fixed_to_inertial(tq, v), expected_inv, rtol=1e-12, atol=1e-9
+    )
