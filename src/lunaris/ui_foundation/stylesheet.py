@@ -315,6 +315,11 @@ def build_app_stylesheet(
         QLabel#fieldLabel, QLabel#keyLabel, QLabel#metricLabel {{
             color: {theme['fg_muted']};
         }}
+        /* Derived (display-only) form values: the label echoes the field's
+           ghost styling so read-only state is announced at the label too. */
+        QLabel#fieldLabel[derived="true"] {{
+            font-style: italic;
+        }}
         QLabel#fieldUnit {{
             color: {theme['fg_muted']};
             min-width: 40px;
@@ -461,10 +466,17 @@ def build_app_stylesheet(
             background: {theme['bg_inset']};
             border: 1px dashed {theme['border']};
         }}
-        QLineEdit[ghost="true"] {{
+        /* The :read-only:enabled variant outranks the generic read-only rule
+           above (two pseudo-classes vs. one attribute) — without it ghost
+           fields keep the dashed "editable but locked" border. */
+        QLineEdit[ghost="true"],
+        QLineEdit[ghost="true"]:read-only:enabled {{
             color: {theme['fg_muted']};
             background: {theme['bg_inset']};
-            border: 1px dashed {theme['border_soft']};
+            /* Transparent (not dashed) border: a derived, display-only value
+               must not read as an editable input; the 1px box is kept so the
+               field does not shift when input modes swap. */
+            border: 1px solid transparent;
             font-style: italic;
         }}
         QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled,

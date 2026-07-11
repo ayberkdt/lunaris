@@ -172,6 +172,10 @@ class ControlMetrics:
     icon_button_size: int = 30
     status_badge_height: int = 24
     form_label_width: int = 156
+    # Standard cap for single-value form inputs (numbers, short strings):
+    # wide enough for scientific notation plus a unit suffix, narrow enough
+    # that the value stays visually attached to its label.
+    input_width_standard: int = 240
 
 
 @dataclass(frozen=True, slots=True)

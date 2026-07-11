@@ -102,8 +102,8 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         family_label="Adaptive", badge_kind="info",
         title="LSODA (auto stiff / non-stiff)", order="variable",
         metric_type="Multistep", step_mode="Adaptive", metric_error="Variable",
-        recommended="Use when stiffness is unknown — it switches between stiff and "
-                    "non-stiff methods automatically.",
+        recommended="Use when stiffness is unknown — it detects stiffness and "
+                    "switches methods during integration.",
         notice_kind="info",
     ),
     # --- Symplectic (in-house fixed step) ----------------------------------
@@ -115,7 +115,7 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         recommended="Low-cost, energy-stable long-duration runs in smooth, conservative "
                     "fields. Bounded drift holds only for conservative forces (gravity, "
                     "third-body, J2); enabling SRP, albedo, thermal IR or relativity voids "
-                    "the symplectic guarantee — prefer RK4/DOP853 there.",
+                    "the symplectic guarantee — use RK4/DOP853 there.",
         notice_kind="info",
     ),
     IntegratorSpec(
@@ -126,7 +126,7 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         recommended="Strong 4th-order symplectic default: a low error constant makes it "
                     "excellent for long, smooth arcs. Valid only for conservative forces "
                     "(gravity, third-body, J2); enabling SRP, albedo, thermal IR or "
-                    "relativity voids the symplectic guarantee — prefer RK4/DOP853 there.",
+                    "relativity voids the symplectic guarantee — use RK4/DOP853 there.",
         notice_kind="info",
     ),
     IntegratorSpec(
@@ -136,7 +136,7 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
         recommended="4th-order symplectic with bounded energy drift over many revolutions "
                     "— for conservative forces only (gravity, third-body, J2). SRP, albedo, "
-                    "thermal IR or relativity void the symplectic guarantee; prefer "
+                    "thermal IR or relativity void the symplectic guarantee; use "
                     "RK4/DOP853 there.",
         notice_kind="info",
     ),
@@ -147,7 +147,7 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
         recommended="High-precision long-arc symplectic propagation for conservative "
                     "forces only (gravity, third-body, J2). SRP, albedo, thermal IR or "
-                    "relativity void the symplectic guarantee; prefer RK4/DOP853 there.",
+                    "relativity void the symplectic guarantee; use RK4/DOP853 there.",
         notice_kind="info",
     ),
     IntegratorSpec(
@@ -157,7 +157,7 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         metric_type="Symplectic", step_mode="Fixed", metric_error="Bounded drift",
         recommended="Maximum-precision symplectic integration for very long arcs — "
                     "conservative forces only (gravity, third-body, J2). SRP, albedo, "
-                    "thermal IR or relativity void the symplectic guarantee; prefer "
+                    "thermal IR or relativity void the symplectic guarantee; use "
                     "RK4/DOP853 there.",
         notice_kind="info",
     ),
@@ -168,7 +168,7 @@ INTEGRATOR_CATALOG: tuple[IntegratorSpec, ...] = (
         title="Runge–Kutta–Nyström (4th order)", order="4",
         metric_type="Nyström", step_mode="Fixed", metric_error="None",
         recommended="Efficient for position/time-only gravity. Accuracy drops when "
-                    "velocity-dependent forces (drag, relativity) dominate — prefer RK4 "
+                    "velocity-dependent forces (drag, relativity) dominate — use RK4 "
                     "or a symplectic method there.",
         notice_kind="warning",
     ),

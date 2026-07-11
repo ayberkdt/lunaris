@@ -775,8 +775,8 @@ class MissionPropagationPage(QtWidgets.QWidget):
                 self.lbl_max_step.setText("Max step")
                 self.ent_max_step.setPlaceholderText("Auto (Nyquist)")
                 self.step_desc.setText(
-                    "Optional cap on the adaptive solver step. Leave blank to let the "
-                    "engine choose a Nyquist-safe limit automatically."
+                    "Optional cap on the adaptive solver step. Leave blank and the "
+                    "engine picks a Nyquist-safe limit."
                 )
             else:
                 self.lbl_max_step.setText("Fixed step")

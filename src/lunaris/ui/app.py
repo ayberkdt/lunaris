@@ -2336,7 +2336,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.warning(
                     self,
                     "Session Save Warning",
-                    "Could not save the current session automatically.\n\n"
+                    "Autosave failed; the current session was not saved.\n\n"
                     f"{exc}",
                 )
             return False

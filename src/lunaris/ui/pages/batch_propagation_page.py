@@ -650,7 +650,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         grid.setVerticalSpacing(10)
         grid.setHorizontalSpacing(12)
 
-        grid.addWidget(_label("Number of Samples:"), 0, 0)
+        grid.addWidget(_label("Number of Samples"), 0, 0)
         self.ent_n_samples = NumericDragLineEdit(
             str(self.batch_cfg.n_samples),
             step=50, min_value=2, max_value=100_000, decimals=0,
@@ -658,7 +658,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.ent_n_samples.setToolTip("Total number of ensemble trajectories (N >= 2)")
         grid.addWidget(self.ent_n_samples, 0, 1)
 
-        grid.addWidget(_label("Sampling:"), 1, 0)
+        grid.addWidget(_label("Sampling"), 1, 0)
         self.cb_sampling_method = NoWheelComboBox()
         self.cb_sampling_method.setAccessibleName("Ensemble sampling method")
         self.cb_sampling_method.addItem("Random (Monte Carlo)", "random")
@@ -674,7 +674,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.cb_sampling_method.setCurrentIndex(sampling_idx if sampling_idx >= 0 else 0)
         grid.addWidget(self.cb_sampling_method, 1, 1)
 
-        grid.addWidget(_label("Seed:"), 2, 0)
+        grid.addWidget(_label("Seed"), 2, 0)
         self.ent_seed = NumericDragLineEdit(
             str(self.batch_cfg.seed),
             step=1, min_value=0, max_value=2**31 - 1, decimals=0,
@@ -702,7 +702,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         grid.setVerticalSpacing(8)
         grid.setHorizontalSpacing(12)
 
-        grid.addWidget(_label("Position σᵣ  [m]:"), 0, 0)
+        grid.addWidget(_label("Position σᵣ  [m]"), 0, 0)
         self.ent_sigma_r = NumericDragLineEdit(
             str(self.batch_cfg.sigma_r_m),
             step=100, min_value=0, max_value=1e7, decimals=1,
@@ -710,7 +710,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         self.ent_sigma_r.setToolTip("1-sigma injection position dispersion (isotropic, all axes)")
         grid.addWidget(self.ent_sigma_r, 0, 1)
 
-        grid.addWidget(_label("Velocity σ_v  [m/s]:"), 1, 0)
+        grid.addWidget(_label("Velocity σ_v  [m/s]"), 1, 0)
         self.ent_sigma_v = NumericDragLineEdit(
             str(self.batch_cfg.sigma_v_m_s),
             step=0.1, min_value=0, max_value=1e4, decimals=3,
@@ -752,19 +752,19 @@ class BatchPropagationPage(QtWidgets.QWidget):
         grid.setVerticalSpacing(8)
         grid.setHorizontalSpacing(12)
 
-        grid.addWidget(_label("σ Mass  [kg]:"), 0, 0)
+        grid.addWidget(_label("σ Mass  [kg]"), 0, 0)
         self.ent_sigma_mass = NumericDragLineEdit(str(self.batch_cfg.sigma_mass_kg), step=1, min_value=0, decimals=2)
         grid.addWidget(self.ent_sigma_mass, 0, 1)
 
-        grid.addWidget(_label("σ Area  [m²]:"), 1, 0)
+        grid.addWidget(_label("σ Area  [m²]"), 1, 0)
         self.ent_sigma_area = NumericDragLineEdit(str(self.batch_cfg.sigma_area_m2), step=0.01, min_value=0, decimals=3)
         grid.addWidget(self.ent_sigma_area, 1, 1)
 
-        grid.addWidget(_label("σ C_D  [-]:"), 2, 0)
+        grid.addWidget(_label("σ C_D  [-]"), 2, 0)
         self.ent_sigma_cd = NumericDragLineEdit(str(self.batch_cfg.sigma_cd), step=0.01, min_value=0, decimals=3)
         grid.addWidget(self.ent_sigma_cd, 2, 1)
 
-        grid.addWidget(_label("σ C_R  [-]:"), 3, 0)
+        grid.addWidget(_label("σ C_R  [-]"), 3, 0)
         self.ent_sigma_cr = NumericDragLineEdit(str(self.batch_cfg.sigma_cr), step=0.01, min_value=0, decimals=3)
         grid.addWidget(self.ent_sigma_cr, 3, 1)
 
@@ -778,7 +778,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         # GPU / CPU toggle row
         toggle_row = QtWidgets.QHBoxLayout()
-        toggle_row.addWidget(_label("Use GPU Acceleration:"))
+        toggle_row.addWidget(_label("Use GPU Acceleration"))
         self.toggle_gpu = ToggleSwitch()
         self.toggle_gpu.setAccessibleName("Use GPU acceleration")
         self.toggle_gpu.setChecked(self.batch_cfg.use_gpu)
@@ -788,7 +788,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         layout.addLayout(toggle_row)
 
         gravity_row = QtWidgets.QHBoxLayout()
-        gravity_row.addWidget(_label("Central Gravity Source:"))
+        gravity_row.addWidget(_label("Central Gravity Source"))
         self.cb_batch_gravity_mode = NoWheelComboBox()
         self.cb_batch_gravity_mode.setAccessibleName("Central gravity source")
         self.cb_batch_gravity_mode.addItem("Follow Mission Setup", "follow_mission")
@@ -807,7 +807,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         layout.addWidget(gravity_hint)
 
         backend_row = QtWidgets.QHBoxLayout()
-        backend_row.addWidget(_label("Batch Backend:"))
+        backend_row.addWidget(_label("Batch Backend"))
         self.cb_batch_backend = NoWheelComboBox()
         self.cb_batch_backend.setAccessibleName("Batch propagation backend")
         self.cb_batch_backend.addItem("Auto Policy", "auto")
@@ -898,7 +898,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         gpu_grid.setVerticalSpacing(8)
         gpu_grid.setHorizontalSpacing(12)
 
-        gpu_grid.addWidget(_label("Requested SH Degree:"), 0, 0)
+        gpu_grid.addWidget(_label("Requested SH Degree"), 0, 0)
         self.ent_sh_degree = NumericDragLineEdit(
             str(self.batch_cfg.sh_degree),
             step=1, min_value=0, max_value=200, decimals=0,
@@ -910,7 +910,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         )
         gpu_grid.addWidget(self.ent_sh_degree, 0, 1)
 
-        gpu_grid.addWidget(_label("Threads/Block:"), 1, 0)
+        gpu_grid.addWidget(_label("Threads/Block"), 1, 0)
         self.ent_tpb = NumericDragLineEdit(
             str(self.batch_cfg.gpu_threads_per_block),
             step=32, min_value=32, max_value=1024, decimals=0,
@@ -921,7 +921,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         )
         gpu_grid.addWidget(self.ent_tpb, 1, 1)
 
-        gpu_grid.addWidget(_label("GPU Device ID:"), 2, 0)
+        gpu_grid.addWidget(_label("GPU Device ID"), 2, 0)
         self.ent_gpu_dev = NumericDragLineEdit(
             str(self.batch_cfg.gpu_device_id),
             step=1, min_value=0, max_value=7, decimals=0,
@@ -1037,7 +1037,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         grid.setVerticalSpacing(10)
         grid.setHorizontalSpacing(12)
 
-        grid.addWidget(_label("RK4 Step  dt [s]:"), 0, 0)
+        grid.addWidget(_label("RK4 Step  dt [s]"), 0, 0)
         self.ent_dt = NumericDragLineEdit(
             str(self.batch_cfg.dt_s),
             step=10, min_value=0.1, max_value=3600, decimals=1,
@@ -1049,7 +1049,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         grid.addWidget(self.ent_dt, 0, 1)
         grid.addWidget(_label("s"), 0, 2)
 
-        grid.addWidget(_label("VRAM Budget  [GB]:"), 1, 0)
+        grid.addWidget(_label("VRAM Budget  [GB]"), 1, 0)
         self.ent_vram = NumericDragLineEdit(
             str(self.batch_cfg.max_vram_gb),
             step=0.5, min_value=0.5, max_value=80.0, decimals=1,
@@ -1071,7 +1071,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
 
         # Format
         fmt_row = QtWidgets.QHBoxLayout()
-        fmt_row.addWidget(_label("Format:"))
+        fmt_row.addWidget(_label("Format"))
         self.cb_format = NoWheelComboBox()
         self.cb_format.setAccessibleName("Output archive format")
         self.cb_format.addItems(["hdf5", "npz"])
@@ -1127,7 +1127,7 @@ class BatchPropagationPage(QtWidgets.QWidget):
         grid.setVerticalSpacing(10)
         grid.setHorizontalSpacing(12)
 
-        grid.addWidget(_label("Impact Altitude Threshold:"), 0, 0)
+        grid.addWidget(_label("Impact Altitude Threshold"), 0, 0)
         self.ent_impact_alt = NumericDragLineEdit(
             str(self.batch_cfg.impact_alt_km),
             step=1, min_value=0, max_value=100, decimals=1,
