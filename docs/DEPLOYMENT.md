@@ -46,9 +46,11 @@ checks the recorded SHA-256 digest of every entry that has one.
    --manifest internal_data_sources.json`. Keep the `sha256` fields — they are
    verified regardless of the URL host.
 3. **Data root.** Set `LUNARIS_DATA_DIR=/srv/lunaris-data` (or pass
-   `--data-dir`). Wheel installs have no repo `data/` folder; the environment
-   variable is the supported mechanism. Verify with
-   `lunaris-data verify --strict --runtime`.
+   `--data-dir`) — recommended for managed deployments. Without it, wheel
+   installs default to the per-user data directory
+   (`%LOCALAPPDATA%\lunaris\data` on Windows, `$XDG_DATA_HOME/lunaris/data` or
+   `~/.local/share/lunaris/data` on Linux); mission data is never written into
+   `site-packages`. Verify with `lunaris-data verify --strict --runtime`.
 4. **Reproducibility.** Hash-pinned resolutions for Linux + CPython 3.11 live
    in `locks/*.lock.txt`; use them for byte-stable environments
    (`pip install --require-hashes -r locks/requirements-hpc-linux-py311.lock.txt`).
