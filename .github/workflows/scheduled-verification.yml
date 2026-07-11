@@ -1,0 +1,97 @@
+# Weekly verification lanes that are too heavy or too network-dependent for
+# per-PR CI:
+#
+#  1. data-dependent-tests — downloads the real external assets (SPICE kernels,
+#     GRAIL gravity) with `lunaris-data`, verifies their recorded SHA-256
+#     digests, and runs the `requires_data` test selection that per-PR CI
+#     deselects. Without this lane those ~29 tests only ever run on developer
+#     machines.
+#  2. dependency-audit — pip-audit over the full installed environment
+#     (core + ml + ui extras), so a CVE published against a pinned dependency
+#     surfaces within a week instead of at the next manual audit.
+#
+# Both lanes are manually triggerable via workflow_dispatch.
+
+name: scheduled-verification
+
+on:
+  schedule:
+    # Mondays 05:00 UTC — before the work week starts.
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  data-dependent-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install headless Qt system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libegl1 libxkbcommon0 libdbus-1-3 libglib2.0-0
+
+      - name: Install CPU stack
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[all]"
+
+      - name: Cache external data assets
+        uses: actions/cache@v4
+        with:
+          path: data-cache
+          key: lunaris-data-${{ hashFiles('data/data_sources.json') }}
+
+      - name: Download + verify external data (manifest-pinned hashes)
+        env:
+          LUNARIS_DATA_DIR: ${{ github.workspace }}/data-cache
+        run: |
+          set -euo pipefail
+          lunaris-data download --preset full-gravity
+          lunaris-data verify --strict --runtime
+
+      - name: Run the data-dependent test selection
+        env:
+          LUNARIS_DATA_DIR: ${{ github.workspace }}/data-cache
+        run: >-
+          pytest tests -q
+          -m "requires_data and not requires_cuda and not slow"
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install full environment (CPU torch + all extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[all]"
+
+      - name: Audit the installed environment for known vulnerabilities
+        run: |
+          pip install pip-audit
+          # Audit what is actually installed (covers ml/ui extras, unlike a
+          # requirements.txt-only scan). The local project itself cannot be
+          # audited on PyPI and is skipped explicitly.
+          pip-audit --skip-editable

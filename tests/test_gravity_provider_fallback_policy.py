@@ -79,9 +79,21 @@ def _force_canonical_failure(monkeypatch) -> None:
     monkeypatch.setattr(fr, "load_force_runtime", _boom)
 
 
-def test_pre_contract_artifact_falls_back_with_runtime_warning(tmp_path, monkeypatch):
+def test_pre_contract_artifact_is_refused_by_default(tmp_path, monkeypatch):
+    """Fail-closed: the unvalidated legacy path must be an explicit opt-in."""
     run_dir = _make_legacy_run(tmp_path)
     _force_canonical_failure(monkeypatch)
+    monkeypatch.delenv("LUNARIS_ALLOW_LEGACY_ARTIFACT", raising=False)
+    with pytest.raises(RuntimeError, match="LUNARIS_ALLOW_LEGACY_ARTIFACT"):
+        SurrogateGravityModel.from_model_dir(run_dir, device_preference="cpu")
+
+
+def test_pre_contract_artifact_falls_back_with_runtime_warning_when_opted_in(
+    tmp_path, monkeypatch
+):
+    run_dir = _make_legacy_run(tmp_path)
+    _force_canonical_failure(monkeypatch)
+    monkeypatch.setenv("LUNARIS_ALLOW_LEGACY_ARTIFACT", "1")
     with pytest.warns(RuntimeWarning, match="legacy local runtime"):
         model = SurrogateGravityModel.from_model_dir(run_dir, device_preference="cpu")
     assert model._force_runtime is None  # legacy path was taken
@@ -105,7 +117,11 @@ def test_runtime_kind_key_alone_blocks_the_fallback(tmp_path, monkeypatch):
         SurrogateGravityModel.from_model_dir(run_dir, device_preference="cpu")
 
 
-def test_config_checkpoint_divergence_warns(tmp_path):
+def test_config_checkpoint_divergence_warns(tmp_path, monkeypatch):
+    # This test targets the divergence warning, not the fallback policy; the
+    # canonical runtime rejects the mismatched config, so reaching the merge
+    # path needs the explicit legacy opt-in.
+    monkeypatch.setenv("LUNARIS_ALLOW_LEGACY_ARTIFACT", "1")
     run_dir = _make_legacy_run(tmp_path, "diverged_run")
     cfg = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
     cfg["degree_max"] = 60  # checkpoint still embeds 50
@@ -116,7 +132,8 @@ def test_config_checkpoint_divergence_warns(tmp_path):
     assert model.degree_max == 50
 
 
-def test_matching_configs_do_not_warn_about_divergence(tmp_path):
+def test_matching_configs_do_not_warn_about_divergence(tmp_path, monkeypatch):
+    monkeypatch.setenv("LUNARIS_ALLOW_LEGACY_ARTIFACT", "1")
     run_dir = _make_legacy_run(tmp_path, "clean_run")
     with warnings.catch_warnings(record=True) as rec:
         warnings.simplefilter("always")
