@@ -225,9 +225,9 @@ def _load_h5_meta(path: Path) -> tuple[h5py.File, h5py.Dataset, CloudMeta]:
 
 
 def _load_pt(path: Path) -> tuple[np.ndarray, CloudMeta]:
-    import torch  # type: ignore
+    from lunaris.surrogate.serialization import safe_torch_load
 
-    obj = torch.load(str(path), map_location="cpu")
+    obj = safe_torch_load(str(path), map_location="cpu")
     if not isinstance(obj, dict) or "data" not in obj:
         raise ValueError("Unsupported .pt format. Expected dict with key 'data'.")
     data = obj["data"]
@@ -599,9 +599,9 @@ def _autodetect_input(script_dir: Path) -> Path | None:
                         r_ref_m = float(attrs["r_ref_m"]) if "r_ref_m" in attrs else None
                         return bool(checker(mu_si=mu_si, r_ref_m=r_ref_m))
             if suffix == ".pt":
-                import torch  # type: ignore
+                from lunaris.surrogate.serialization import safe_torch_load
 
-                obj = torch.load(str(p), map_location="cpu")
+                obj = safe_torch_load(str(p), map_location="cpu")
                 meta = obj.get("meta", {}) if isinstance(obj, dict) else {}
                 if isinstance(meta, dict):
                     body = str(meta.get("central_body", "") or "").strip().lower()

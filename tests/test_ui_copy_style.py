@@ -28,7 +28,7 @@ def _docstring_nodes(tree: ast.AST) -> set[int]:
     """Return ids of Constant nodes that are docstrings."""
     doc_ids: set[int] = set()
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             body = getattr(node, "body", [])
             if body and isinstance(body[0], ast.Expr):
                 value = body[0].value

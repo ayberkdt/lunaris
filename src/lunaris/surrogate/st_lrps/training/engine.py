@@ -89,7 +89,7 @@ from lunaris.surrogate.st_lrps.networks.models import (
     build_model_from_config,
     compute_architecture_signature,
 )
-from lunaris.surrogate.st_lrps.shared.contracts import TargetContract
+from lunaris.surrogate.st_lrps.shared.contracts import TargetContract, resolve_dataset_hash
 from lunaris.surrogate.st_lrps.shared.scaling import ScalerPack, fit_scaler_streaming
 from lunaris.surrogate.st_lrps.training.checkpoint_manager import (
     BestCheckpointTracker,
@@ -2808,6 +2808,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             cfg.resume_from,
             prefer=str(getattr(cfg, "resume_checkpoint", "last")),
             device=device,
+            trust_artifact=bool(getattr(cfg, "trust_artifact", False)),
         )
         if _resume_layout.run_dir != layout.run_dir:
             logger.warning(
@@ -3468,8 +3469,7 @@ def build_training_session(cfg: TrainConfig) -> _TrainingSession:
             "split_manifest": split_manifest,
             "dataset_validation_passed": bool(validation_report.get("passed")),
             "dataset_safety_overrides": dataset_snapshot.get("dataset_safety_overrides"),
-            "dataset_hash": (payload.get("dataset_contract") or {}).get("dataset_sha256")
-            if isinstance(payload.get("dataset_contract"), dict) else None,
+            "dataset_hash": resolve_dataset_hash(payload.get("dataset_contract")),
             "w0_bands": payload.get("w0_bands"),
             "status": "running",
         },
